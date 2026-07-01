@@ -1,4 +1,6 @@
 .easymde-rendered-content {
+  --easymde-theme-font-family: inherit;
+  --easymde-code-font-family: "Operator Mono", Consolas, Monaco, Menlo, monospace;
   word-break: break-word;
   overflow-wrap: break-word;
 }
@@ -21,7 +23,7 @@
 .easymde-rendered-content.easymde-font-overrides em,
 .easymde-rendered-content.easymde-font-overrides figcaption,
 .easymde-rendered-content.easymde-font-overrides .content {
-  font-family: var(--easymde-content-font-family) !important;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family)) !important;
 }
 
 .easymde-rendered-content.easymde-font-overrides pre,
@@ -29,7 +31,7 @@
 .easymde-rendered-content.easymde-font-overrides kbd,
 .easymde-rendered-content.easymde-font-overrides samp,
 .easymde-rendered-content.easymde-font-overrides pre * {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace !important;
+  font-family: var(--easymde-code-font-family) !important;
 }
 
 .easymde-rendered-content table {
@@ -65,6 +67,7 @@
 .easymde-rendered-content.easymde-markdown-theme-minimal-black,
 .easymde-rendered-content.easymde-markdown-theme-orange-blue,
 .easymde-rendered-content.easymde-markdown-theme-frontend-peak {
+  --easymde-theme-font-family: Optima-Regular, Optima, PingFangSC-light, PingFangTC-light, 'PingFang SC', Cambria, Cochin, Georgia, Times, 'Times New Roman', serif;
   font-size: 16px;
   color: black;
   padding: 0 10px;
@@ -74,7 +77,7 @@
   word-break: break-word;
   word-wrap: break-word;
   text-align: left;
-  font-family: Optima-Regular, Optima, PingFangSC-light, PingFangTC-light, 'PingFang SC', Cambria, Cochin, Georgia, Times, 'Times New Roman', serif;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
 }
 
 .easymde-rendered-content.easymde-markdown-theme-md2html-normal p,
@@ -931,7 +934,7 @@
 .easymde-rendered-content.easymde-markdown-theme-orange-blue pre code,
 .easymde-rendered-content.easymde-markdown-theme-frontend-peak pre code {
   display: -webkit-box;
-  font-family: Operator Mono, Consolas, Monaco, Menlo, monospace;
+  font-family: var(--easymde-code-font-family);
   border-radius: 0px;
   font-size: 12px;
   -webkit-overflow-scrolling: touch;
@@ -998,7 +1001,7 @@
   margin: 0 2px;
   color: #1e6bb8;
   background-color: rgba(27,31,35,.05);
-  font-family: Operator Mono, Consolas, Monaco, Menlo, monospace;
+  font-family: var(--easymde-code-font-family);
   word-break: break-all;
 }
 
@@ -1445,7 +1448,7 @@
   white-space: pre;
   display: flex;
   position: relative;
-  font-family: Consolas,"Liberation Mono",Menlo,Courier,monospace;
+  font-family: var(--easymde-code-font-family);
   padding: 0px;
 }
 
@@ -1534,7 +1537,7 @@
   font-size: 80%;
   opacity: 0.6;
   line-height: 26px;
-  font-family: ptima-Regular, Optima, PingFangSC-light, PingFangTC-light, 'PingFang SC', Cambria, Cochin, Georgia, Times, 'Times New Roman', serif;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
 }
 
 .easymde-rendered-content.easymde-markdown-theme-md2html-normal .footnote-item p,
@@ -1918,33 +1921,183 @@
 /* Markdown2Html-style theme: md2html-normal. */
 
 /* Markdown2Html-style theme: orange-heart. */
+.easymde-rendered-content.easymde-markdown-theme-orange-heart {
+  --easymde-theme-font-family: Inter, "Microsoft YaHei", PingFangSC-regular, sans-serif;
+  width: min(650px, calc(100vw - 50px));
+  max-width: none;
+  box-sizing: border-box;
+  margin-right: auto;
+  margin-left: auto;
+  padding: 0;
+  color: rgba(0, 0, 0, 0.8);
+  font-family: Inter, "Microsoft YaHei", PingFangSC-regular, sans-serif !important;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22.001px;
+  letter-spacing: normal;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart *,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart *::before,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart *::after {
+  box-sizing: border-box;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart p,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart blockquote,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart li,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart li section,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart table,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart th,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart td,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart h1,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart h2,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart h3,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart h4,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart h5,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart h6,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart a,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart strong,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart em,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart figcaption,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart .content,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart .footnote-num,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart .footnote-item p {
+  box-sizing: border-box;
+  font-family: Inter, "Microsoft YaHei", PingFangSC-regular, sans-serif !important;
+  letter-spacing: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart p {
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 28.8px;
+  color: rgb(0, 0, 0);
+  margin: 0;
+  padding: 8px 0;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart h1,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart h2,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart h3,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart h4,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart h5,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart h6 {
+  margin: 30px 0 15px;
+  padding: 0;
+  color: rgb(0, 0, 0);
+  font-weight: 700;
+  letter-spacing: normal;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
 .easymde-rendered-content.easymde-markdown-theme-orange-heart h2 {
   border-bottom: 2px solid rgb(239, 112, 96);
-  font-size: 1.3em;
+  border-top-color: rgb(0, 0, 0);
+  border-right-color: rgb(0, 0, 0);
+  border-left-color: rgb(0, 0, 0);
+  color: rgba(0, 0, 0, 0.85);
+  display: flex;
+  position: relative;
+  font-size: 21px;
+  font-weight: 500;
+  line-height: 23.1px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-orange-heart h2 .content {
   display: inline-block;
-  font-weight: bold;
+  position: relative;
   background: rgb(239, 112, 96);
   color: #ffffff;
+  border-color: rgb(0, 0, 0);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 33px;
   padding: 3px 10px 1px;
   border-top-right-radius: 3px;
   border-top-left-radius: 3px;
-  margin-right: 3px;
+  margin-right: 5px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-orange-heart h2:after {
   display: inline-block;
   content: " ";
+  flex: 0 0 auto;
+  align-self: flex-end;
   vertical-align: bottom;
   border-bottom: 36px solid #efebe9;
   border-right: 20px solid transparent;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-orange-heart blockquote {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 20px 0;
+  padding: 10px 10px 10px 20px;
+  border-left: 3px solid rgb(239, 112, 96);
   border-left-color: rgb(239, 112, 96);
+  border-top-color: rgba(0, 0, 0, 0.4);
+  border-right-color: rgba(0, 0, 0, 0.4);
+  border-bottom-color: rgba(0, 0, 0, 0.4);
   background: #fff9f9;
+  color: rgba(0, 0, 0, 0.8);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22.001px;
+  overflow: auto;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart blockquote p {
+  color: rgb(0, 0, 0);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 27px;
+  margin: 0;
+  padding: 8px 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart ul,
+.easymde-rendered-content.easymde-markdown-theme-orange-heart ol {
+  margin: 8px 0;
+  padding-left: 25px;
+  color: rgb(0, 0, 0);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22.001px;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart li {
+  margin: 0;
+  color: rgb(0, 0, 0);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22.001px;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart li section {
+  margin: 5px 0;
+  color: rgb(1, 1, 1);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 28.8px;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart a {
+  color: rgb(239, 112, 96);
+  border-bottom: 1px solid rgb(239, 112, 96);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-orange-heart a span {
@@ -2225,7 +2378,8 @@
 
 /* Markdown2Html-style theme: red-crimson. */
 .easymde-rendered-content.easymde-markdown-theme-red-crimson {
-  font-family: Optima-Regular, Optima, PingFangSC-light, PingFangTC-light, "PingFang SC", Cambria, Cochin, Georgia, Times, "Times New Roman", serif;
+  --easymde-theme-font-family: Optima-Regular, Optima, PingFangSC-light, PingFangTC-light, "PingFang SC", Cambria, Cochin, Georgia, Times, "Times New Roman", serif;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
   padding: 5px;
   font-size: 16px;
   color: #353535;
@@ -2458,7 +2612,8 @@
 
 /* Markdown2Html-style theme: blue-ying. */
 .easymde-rendered-content.easymde-markdown-theme-blue-ying {
-  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  --easymde-theme-font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
   word-break: break-all;
 }
 
@@ -2741,15 +2896,23 @@
 .easymde-rendered-content.easymde-markdown-theme-yamabuki em,
 .easymde-rendered-content.easymde-markdown-theme-yamabuki figcaption,
 .easymde-rendered-content.easymde-markdown-theme-yamabuki .content {
+  box-sizing: border-box;
   font-family: Inter, "Microsoft YaHei", PingFangSC-regular, sans-serif !important;
   font-weight: 400;
+  letter-spacing: normal;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki {
+  --easymde-theme-font-family: Inter, "Microsoft YaHei", PingFangSC-regular, sans-serif;
+  font-family: Inter, "Microsoft YaHei", PingFangSC-regular, sans-serif;
   font-size: 14px;
   line-height: 22.001px;
   color: rgba(0, 0, 0, 0.8);
   padding: 0;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki p {
@@ -2769,8 +2932,9 @@
   padding: 0;
   font-size: 28px;
   font-weight: 500;
-  line-height: 1.5em;
+  line-height: 1.6em;
   border: 0;
+  color: rgba(0, 0, 0, 0.85);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h1 .content {
@@ -2795,7 +2959,10 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h2 {
+  font-size: 21px;
   line-height: 1.5em;
+  position: relative;
+  color: rgba(0, 0, 0, 0.85);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h2 .content {
@@ -2809,12 +2976,16 @@
   padding: 2px 13px;
   margin: 0;
   width: auto;
+  position: relative;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h3 {
+  font-size: 16.38px;
   line-height: 1.5em;
   padding: 0;
   margin: 30px 0 15px;
+  position: relative;
+  color: rgba(0, 0, 0, 0.85);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h3 .content {
@@ -2826,9 +2997,13 @@
   padding-left: 20px;
   padding-right: 0;
   border-left: 3px solid #ffb11b;
+  position: relative;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki blockquote {
+  border-top-color: rgba(0, 0, 0, 0.4);
+  border-right-color: rgba(0, 0, 0, 0.4);
+  border-bottom-color: rgba(0, 0, 0, 0.4);
   border-left-color: #ffb11b;
   background: #fff5e3;
   border-radius: 0;
@@ -2859,7 +3034,16 @@
   color: #000;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-yamabuki li,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki li {
+  margin: 0;
+  color: #000;
+  font-size: 14px;
+  font-weight: normal;
+  line-height: 22.001px;
+  letter-spacing: normal;
+  text-align: start;
+}
+
 .easymde-rendered-content.easymde-markdown-theme-yamabuki li section {
   margin: 5px 0;
   color: #3a3a3a;
@@ -2900,6 +3084,12 @@
   box-shadow: rgba(0, 0, 0, 0) 0 0 0 0;
 }
 
+.easymde-rendered-content.easymde-markdown-theme-yamabuki img[src$="logo.svg"] {
+  width: 100%;
+  aspect-ratio: 2 / 1;
+  object-fit: contain;
+}
+
 .easymde-rendered-content.easymde-markdown-theme-yamabuki figcaption {
   color: #dda52d;
   font-size: 14px;
@@ -2914,7 +3104,7 @@
   padding: 2px 4px;
   margin: 0 2px;
   border-radius: 4px;
-  font-family: "Operator Mono", Consolas, Monaco, Menlo, monospace !important;
+  font-family: var(--easymde-code-font-family) !important;
   font-weight: 400;
 }
 
@@ -2948,18 +3138,42 @@
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki .footnote-word {
   color: #ffb11b;
-  padding: 3px;
+  padding: 0;
+  font-weight: 700;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki .footnote-ref {
   color: #dda52d;
-  margin: 2px;
-  padding: 3px;
+  margin: 0;
+  padding: 0;
+  font-weight: 700;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki .footnotes-sep {
+  margin: 30px 0 15px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki .footnotes-sep span {
+  display: none;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki .footnotes-sep:before {
-  margin: 30px 0px 15px 0px;
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.5em;
   font-weight: 800;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki .footnote-num {
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 80%;
+  line-height: 1.8em;
+  padding-top: 2px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki .footnote-item,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki .footnote-item p {
+  line-height: 1.8em;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki .imageflow-img {
@@ -2970,6 +3184,7 @@
 
 /* Markdown2Html-style theme: grid-black. */
 .easymde-rendered-content.easymde-markdown-theme-grid-black {
+  --easymde-theme-font-family: "Helvetica Neue", Helvetica, "Segoe UI", Arial, freesans, sans-serif;
   background-image: linear-gradient(90deg, rgba(50, 0, 0, 0.05) 3%, rgba(0, 0, 0, 0) 3%), linear-gradient(360deg,rgba(50, 0, 0, 0.05) 3%, rgba(0, 0, 0, 0) 3%);
   background-size: 20px 20px;
   background-position: center center;
@@ -2978,7 +3193,7 @@
 .easymde-rendered-content.easymde-markdown-theme-grid-black p {
   box-sizing: border-box;
   margin-bottom: 16px;
-  font-family: "Helvetica Neue", Helvetica, "Segoe UI", Arial, freesans, sans-serif;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
   font-size: 14px;
   text-align: start;
   white-space: normal;
@@ -3060,7 +3275,7 @@
 .easymde-rendered-content.easymde-markdown-theme-grid-black li section,
 .easymde-rendered-content.easymde-markdown-theme-grid-black li {
   font-size: 14px;
-  font-family: "Helvetica Neue", Helvetica, "Segoe UI", Arial, freesans, sans-serif;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
 }
 
 .easymde-rendered-content.easymde-markdown-theme-grid-black blockquote {
@@ -3076,7 +3291,7 @@
 
 .easymde-rendered-content.easymde-markdown-theme-grid-black blockquote p {
   font-size: 14px;
-  font-family: -apple-system-font, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", Arial, sans-serif;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
   color: rgb(119, 119, 119);
   line-height: 1.75em;
 }
@@ -3100,10 +3315,14 @@
 }
 
 /* Markdown2Html-style theme: geek-black. */
+.easymde-rendered-content.easymde-markdown-theme-geek-black {
+  --easymde-theme-font-family: "Helvetica Neue", Helvetica, "Segoe UI", Arial, freesans, sans-serif;
+}
+
 .easymde-rendered-content.easymde-markdown-theme-geek-black p {
   box-sizing: border-box;
   margin-bottom: 16px;
-  font-family: "Helvetica Neue", Helvetica, "Segoe UI", Arial, freesans, sans-serif;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
   font-size: 14px;
   text-align: start;
   white-space: normal;
@@ -3187,7 +3406,7 @@
 .easymde-rendered-content.easymde-markdown-theme-geek-black li section,
 .easymde-rendered-content.easymde-markdown-theme-geek-black li {
   font-size: 14px;
-  font-family: "Helvetica Neue", Helvetica, "Segoe UI", Arial, freesans, sans-serif;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
 }
 
 .easymde-rendered-content.easymde-markdown-theme-geek-black blockquote {
@@ -3203,7 +3422,7 @@
 
 .easymde-rendered-content.easymde-markdown-theme-geek-black blockquote p {
   font-size: 14px;
-  font-family: -apple-system-font, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", Arial, sans-serif;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
   color: rgb(119, 119, 119);
   line-height: 1.75em;
 }
@@ -3228,112 +3447,174 @@
 
 /* Markdown2Html-style theme: rose-purple. */
 .easymde-rendered-content.easymde-markdown-theme-rose-purple {
-  line-height: 1.75;
-  color: #595959;
-  font-family: Optima-Regular, Optima, PingFangTC-Light, PingFangSC-light, PingFangTC-light;
-  letter-spacing: 2px;
-  background-image: linear-gradient(90deg, rgba(50, 0, 0, 0.05) 3%, rgba(0, 0, 0, 0) 3%), linear-gradient(360deg, rgba(50, 0, 0, 0.05) 3%, rgba(0, 0, 0, 0) 3%);
-  background-size: 20px 20px;
-  background-position: center center;
+  --easymde-theme-font-family: Optima, "Microsoft YaHei", PingFangSC-regular, serif;
+  color: rgb(0, 0, 0);
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
+  font-size: 16px;
+  line-height: 1.5em;
+  letter-spacing: 0em;
+  word-spacing: 0em;
+  box-sizing: border-box;
+  max-width: 650px;
+  padding: 0 10px;
+  background-color: rgba(0, 0, 0, 0);
+  background-image: linear-gradient(90deg, rgba(50, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0) 6.76%), linear-gradient(360deg, rgba(50, 0, 0, 0.05) 0%, rgba(249, 247, 252, 0) 9.46%);
+  background-repeat: repeat, repeat;
+  background-size: 20px 20px, 20px 20px;
+  background-position: 0% 0%;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  text-align: left;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple p {
-  color: #595959;
-  margin: 10px 0px;
-  letter-spacing: 2px;
+  color: rgb(89, 89, 89);
   font-size: 14px;
-  word-spacing: 2px;
+  line-height: 1.8em;
+  letter-spacing: 0.02em;
+  text-align: left;
+  text-indent: 0em;
+  margin: 0;
+  padding: 8px 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple h1 {
-  font-size: 25px;
+  font-size: 24px;
+  line-height: 1.5em;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple h1 .content {
   display: inline-block;
   font-weight: bold;
-  color: #595959;
+  color: rgb(89, 89, 89);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple h2 {
+  color: rgba(0, 0, 0, 0.85);
   text-align: left;
-  margin: 20px 10px 0px 0px;
+  margin: 30px 0 15px;
+  padding: 0;
+  display: block;
+  line-height: 1.5em;
+  font-size: 24px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple h2 .content {
   font-size: 18px;
   font-weight: bold;
-  display: inline-block;
+  display: block;
   padding-left: 10px;
-  border-left: 5px solid #DEC6FB;
-  color: #595959;
+  padding-right: 0;
+  border-left: 5px solid rgb(222, 198, 251);
+  color: rgb(89, 89, 89);
+  line-height: 1.8em;
+  letter-spacing: 0em;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple h3 {
-  font-size: 16px;
+  color: rgba(0, 0, 0, 0.85);
+  display: flex;
+  justify-content: center;
+  margin: 30px 0 15px;
+  padding: 0;
+  font-size: 18.72px;
+  line-height: 1.5em;
   font-weight: bold;
-  text-align: center;
+  text-align: left;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple h3 .content {
-  border-bottom: 2px solid #DEC6FB;
-  color: #595959;
+  display: inline;
+  color: rgb(89, 89, 89);
+  font-size: 17px;
+  line-height: 1.5em;
+  letter-spacing: 0em;
+  border-bottom: 2px solid rgb(222, 198, 251);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple ul {
-  font-size: 15px;
-  color: #595959;
+  margin: 8px 0;
+  padding: 0 0 0 25px;
+  color: rgb(0, 0, 0);
+  font-size: 16px;
+  line-height: 1.5em;
   list-style-type: circle;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple ol {
-  font-size: 15px;
-  color: #595959;
+  margin: 8px 0;
+  padding: 0 0 0 25px;
+  color: rgb(0, 0, 0);
+  font-size: 16px;
+  line-height: 1.5em;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-rose-purple li section,
 .easymde-rendered-content.easymde-markdown-theme-rose-purple li {
+  color: rgb(0, 0, 0);
+  font-size: 16px;
+  line-height: 1.5em;
+  letter-spacing: 0em;
+  margin: 0;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple li section {
   font-size: 14px;
   font-weight: normal;
-  color: #595959;
+  color: rgb(89, 89, 89);
+  line-height: 1.8em;
+  letter-spacing: 0em;
+  margin-top: 5px;
+  margin-bottom: 5px;
+  text-align: left;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple blockquote::before {
-  content: "❝";
-  color: #DEC6FB;
-  font-size: 34px;
-  line-height: 1;
+  content: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple blockquote > span:first-child {
+  display: block;
+  color: rgb(222, 198, 251);
+  font-size: 28px;
+  line-height: 1.5em;
+  letter-spacing: 0em;
+  text-align: left;
   font-weight: 700;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple blockquote {
-  text-size-adjust: 100%;
-  line-height: 1.55em;
-  font-weight: 400;
-  border-radius: 6px;
-  color: #595959;
-  font-style: normal;
-  text-align: left;
-  box-sizing: inherit;
-  border-left: none;
-  border: 1px solid #DEC6FB;
-  background: #F6EEFF;
+  margin: 20px 0;
+  padding: 10px 10px 10px 20px;
+  border: 1px solid rgba(222, 198, 251, 0.4);
+  border-radius: 4px;
+  color: rgb(0, 0, 0);
+  background: rgb(246, 238, 255);
+  box-shadow: rgba(0, 0, 0, 0) 0px 0px 0px 0px;
+  display: block;
+  overflow: auto;
+  font-size: 16px;
+  line-height: 1.5em;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple blockquote p {
-  color: #595959;
+  color: rgb(0, 0, 0);
+  font-size: 14px;
+  line-height: 1.8em;
+  letter-spacing: 0em;
+  font-weight: normal;
+  margin: 0;
+  padding: 8px 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple blockquote::after {
-  content: "❞";
-  float: right;
-  color: #DEC6FB;
+  content: none;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple a span {
-  color: #664D9D;
+  color: rgb(145, 109, 213);
   font-weight: normal;
-  border-bottom: 1px solid #664D9D;
+  border-bottom: 1px solid rgb(145, 109, 213);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple strong::before {
@@ -3341,7 +3622,7 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple strong {
-  color: #595959;
+  color: rgb(89, 89, 89);
   font-weight: bold;
 }
 
@@ -3351,16 +3632,16 @@
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple em {
   font-style: normal;
-  color: #595959;
-  background: #F6EEFF;
+  color: rgb(89, 89, 89);
+  background: rgba(0, 0, 0, 0);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple em strong {
-  color: #595959;
+  color: rgb(89, 89, 89);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple del {
-  color: #595959;
+  color: rgb(89, 89, 89);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple hr {
@@ -3371,21 +3652,24 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple img {
-  border-radius: 6px;
+  border-radius: 8px;
   display: block;
-  margin: 20px auto;
-  object-fit: contain;
+  margin: 0 auto;
+  max-width: 100%;
+  border: none;
+  object-fit: fill;
+  box-shadow: rgba(0, 0, 0, 0) 0px 0px 0px 0px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple figcaption {
   display: block;
   font-size: 13px;
-  color: #595959;
+  color: rgb(89, 89, 89);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple p code,
 .easymde-rendered-content.easymde-markdown-theme-rose-purple li code {
-  color: #595959;
+  color: rgb(89, 89, 89);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple .code-snippet__fix {
@@ -3393,51 +3677,131 @@
   border-radius: 2px;
 }
 
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table {
+  display: table;
+  width: auto;
+  max-width: 100%;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table tr {
+  color: rgb(89, 89, 89);
+  background-color: rgb(255, 255, 255);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table tr:nth-child(2n) {
+  background-color: rgb(248, 248, 248);
+}
+
 .easymde-rendered-content.easymde-markdown-theme-rose-purple table tr th,
 .easymde-rendered-content.easymde-markdown-theme-rose-purple table tr td {
+  box-sizing: border-box;
   font-size: 14px;
-  color: #595959;
+  line-height: 1.5em;
+  color: rgb(89, 89, 89);
+  padding: 5px 10px;
+  min-width: 85px;
+  border: 1px solid rgba(204, 204, 204, 0.4);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table tr th {
+  font-weight: bold;
+  background-color: rgb(240, 240, 240);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple .table-container {
+  overflow-x: auto;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple .footnotes {
-  background: #F6EEFF;
-  padding: 20px 20px 20px 20px;
-  font-size: 14px;
-  border: 0.8px solid #DEC6FB;
-  border-radius: 6px;
-  border: 1px solid #DEC6FB;
+  margin: 0;
+  padding: 20px;
+  font-size: 16px;
+  line-height: 1.5em;
+  border: 1px solid rgb(222, 198, 251);
+  border-radius: 4px;
+  background: rgb(246, 238, 255);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple .footnote-word {
-  font-weight: normal;
-  color: #595959;
+  font-weight: bold;
+  color: rgb(145, 109, 213);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple .footnote-ref {
-  font-weight: normal;
-  color: #595959;
+  font-size: 75%;
+  line-height: 0;
+  font-weight: bold;
+  color: rgb(145, 109, 213);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple .footnote-item em {
-  background: #F6EEFF;
+  margin: 0;
+  padding: 0;
+  background: rgba(0, 0, 0, 0);
   font-size: 14px;
-  color: #595959;
-  display: block;
+  color: rgb(89, 89, 89);
+  font-weight: normal;
+  font-style: normal;
+  display: inline;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple .footnotes-sep:before {
-  content: 'Reference';
-  color: #595959;
-  letter-spacing: 1px;
-  border-bottom: 2px solid #DEC6FB;
+  content: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple .footnotes-sep {
+  margin: 30px 0 15px;
+  padding: 0;
+  border-bottom: 1px solid rgba(222, 198, 251, 0.4);
+  background: rgba(0, 0, 0, 0);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple .footnotes-sep span {
+  display: block;
+  color: rgb(0, 0, 0);
+  font-size: 18px;
+  line-height: 1.5em;
+  letter-spacing: 0em;
+  text-align: center;
+  font-weight: bold;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple .footnote-item {
+  display: flex;
+  font-size: 14px;
+  line-height: 1.8em;
+  letter-spacing: 0em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple .footnote-num {
   display: inline;
-  background: linear-gradient(white 60%, #F6EEFF 40%);
-  font-size: 20px;
+  width: 10%;
+  padding-top: 2px;
+  color: rgba(89, 89, 89, 0.6);
+  background: none;
+  font-size: 80%;
+  line-height: 1.8em;
+  letter-spacing: 0em;
+  opacity: 1;
+  font-family: ptima-Regular, Optima, PingFangSC-light, PingFangTC-light, "PingFang SC", Cambria, Cochin, Georgia, Times, "Times New Roman", serif;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple .footnote-item p {
-  color: #595959;
+  display: inline;
+  flex-basis: 0%;
+  flex-grow: 1;
+  width: auto;
+  color: rgb(89, 89, 89);
   font-weight: bold;
+  font-size: 14px;
+  line-height: 1.8em;
+  letter-spacing: 0em;
+  text-align: left;
+  text-indent: 0em;
+  word-break: break-all;
+  margin: 0;
+  padding: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple .footnote-item p em {
@@ -3446,8 +3810,17 @@
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple .imageflow-img {
   display: inline-block;
-  width:100%;
+  width: 100%;
   margin-bottom: 0;
+}
+
+@media (max-width: 700px) {
+  .easymde-rendered-content.easymde-markdown-theme-rose-purple {
+    width: calc(100vw - 50px);
+    max-width: calc(100vw - 50px);
+    margin-left: calc((100% - (100vw - 50px)) / 2);
+    margin-right: calc((100% - (100vw - 50px)) / 2);
+  }
 }
 
 /* Markdown2Html-style theme: cute-green. */
@@ -3584,7 +3957,7 @@
 .easymde-rendered-content.easymde-markdown-theme-cute-green figcaption {
   display:block;
   font-size:12px;
-  font-family:PingFangSC-Light;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
 }
 
 .easymde-rendered-content.easymde-markdown-theme-cute-green p code,
@@ -3651,9 +4024,10 @@
 
 /* Markdown2Html-style theme: fullstack-blue. */
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue {
+  --easymde-theme-font-family: Optima, PingFangSC-light, serif;
   line-height: 1.5em;
   color: #000000;
-  font-family: Optima, PingFangSC-light, serif;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
   letter-spacing: 0;
   background-image:
     linear-gradient(90deg, rgba(50, 0, 0, 0.03) 0%, rgba(255, 255, 255, 0) 11.49%),
@@ -3916,7 +4290,7 @@
   border-radius:4px;
   line-height:1.8em;
   letter-spacing: 0;
-  font-family: Operator Mono, Consolas, Monaco, Menlo, monospace;
+  font-family: var(--easymde-code-font-family);
   word-break: break-all;
 }
 
@@ -4525,7 +4899,7 @@
 .easymde-rendered-content.easymde-markdown-theme-frontend-peak figcaption {
   display:block;
   font-size:12px;
-  font-family:PingFangSC-Light;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
 }
 
 .easymde-rendered-content.easymde-markdown-theme-frontend-peak p code,
@@ -4705,6 +5079,42 @@
   box-shadow: rgba(0, 0, 0, 0.35) 0 2px 10px;
 }
 
+.easymde-rendered-content.easymde-markdown-theme-orange-heart.easymde-code-mac pre {
+  padding-top: 30px;
+  border-radius: 5px;
+  background: #282c34;
+  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart.easymde-code-mac pre::before {
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  border-radius: 5px;
+  background-color: #282c34;
+  background-image:
+    radial-gradient(ellipse 5px 5px at 16px 16px, #ed6c60 0 70%, #dc3c36 72% 100%, transparent 102%),
+    radial-gradient(ellipse 5px 5px at 30px 16px, #f7c151 0 70%, #da9721 72% 100%, transparent 102%),
+    radial-gradient(ellipse 5px 5px at 44px 16px, #64c856 0 70%, #1ba125 72% 100%, transparent 102%);
+  background-repeat: no-repeat;
+  box-shadow: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart.easymde-code-mac pre code.hljs {
+  display: -webkit-box;
+  padding: 15px 16px 16px;
+  border-radius: 0;
+  background: #282c34;
+  color: #abb2bf;
+  font-family: var(--easymde-code-font-family) !important;
+  font-size: 12px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart pre code.hljs span {
+  line-height: 26px;
+}
+
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue.easymde-code-mac pre {
   padding-top: 30px;
   border-radius: 5px;
@@ -4758,9 +5168,10 @@
   border-radius: 0;
   background: #282c34;
   color: #abb2bf;
-  font-family: "Operator Mono", Consolas, Monaco, Menlo, monospace !important;
+  font-family: var(--easymde-code-font-family) !important;
   font-size: 12px;
   font-weight: 400;
+  line-height: 18.858px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki pre code.hljs span {

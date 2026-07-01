@@ -53,7 +53,7 @@ final class EasyMDE_Plugin
         add_action('admin_menu', array($this, 'register_admin_menu'));
         add_action('rest_api_init', array($this, 'register_rest_routes'));
         add_action('save_post', array($this, 'save_post_meta'), 10, 3);
-        add_filter('the_content', array($this, 'render_markdown_content'), 8);
+        add_filter('the_content', array($this, 'render_markdown_content'), 12);
         add_filter('wp_insert_post_data', array($this, 'render_markdown_post_content'), 10, 2);
 
         $this->register_default_toolbar_buttons();
@@ -131,6 +131,7 @@ final class EasyMDE_Plugin
             'Grid black' => '网格黑',
             'Geek black' => '极客黑',
             'Rose purple' => '蔷薇紫',
+            'Ningye purple' => '凝夜紫',
             'Cute green' => '萌绿风',
             'Fullstack blue' => '全栈蓝',
             'Minimal black' => '极简黑',
@@ -828,6 +829,13 @@ final class EasyMDE_Plugin
         $windows_font = $this->sanitize_font_option_id('windowsFonts', isset($_POST['easymde_windows_font']) ? wp_unslash($_POST['easymde_windows_font']) : '', 'microsoft-yahei');
         $apple_font = $this->sanitize_font_option_id('appleFonts', isset($_POST['easymde_apple_font']) ? wp_unslash($_POST['easymde_apple_font']) : '', 'pingfang-sc-light');
         $serif_font = $this->sanitize_font_option_id('serifOptions', isset($_POST['easymde_serif_font']) ? wp_unslash($_POST['easymde_serif_font']) : '', 'yes');
+        $theme_font_defaults = $this->get_theme_font_defaults($markdown_theme);
+        if ($theme_font_defaults && $this->should_apply_theme_font_defaults($custom_font, $windows_font, $apple_font, $serif_font)) {
+            $custom_font = $theme_font_defaults['customFont'];
+            $windows_font = $theme_font_defaults['windowsFont'];
+            $apple_font = $theme_font_defaults['appleFont'];
+            $serif_font = $theme_font_defaults['serifFont'];
+        }
         $custom_css = '';
 
         if ('custom' === $markdown_theme && '' !== $custom_css_id) {
@@ -1025,6 +1033,7 @@ final class EasyMDE_Plugin
             'grid-black' => __('Grid black', 'easymde'),
             'geek-black' => __('Geek black', 'easymde'),
             'rose-purple' => __('Rose purple', 'easymde'),
+            'ningye-purple' => __('Ningye purple', 'easymde'),
             'cute-green' => __('Cute green', 'easymde'),
             'fullstack-blue' => __('Fullstack blue', 'easymde'),
             'minimal-black' => __('Minimal black', 'easymde'),
@@ -1039,6 +1048,11 @@ final class EasyMDE_Plugin
                 'label' => $label,
                 'className' => 'easymde-markdown-theme-' . $id,
             );
+
+            $font_defaults = $this->get_theme_font_defaults($id);
+            if ($font_defaults) {
+                $registered[$id]['fontDefaults'] = $font_defaults;
+            }
         }
 
         return $registered;
@@ -1115,6 +1129,21 @@ final class EasyMDE_Plugin
                     'fontFamily' => '"Optima-Regular", "Optima"',
                 ),
                 array(
+                    'id' => 'orange-heart-inter',
+                    'label' => 'Inter (orange-heart)',
+                    'fontFamily' => 'Inter',
+                ),
+                array(
+                    'id' => 'rose-purple-optima',
+                    'label' => 'Optima (rose-purple)',
+                    'fontFamily' => 'Optima',
+                ),
+                array(
+                    'id' => 'ningye-purple-inter',
+                    'label' => 'Inter (ningye-purple)',
+                    'fontFamily' => 'Inter',
+                ),
+                array(
                     'id' => 'georgia',
                     'label' => 'Georgia',
                     'fontFamily' => '"Georgia"',
@@ -1141,12 +1170,32 @@ final class EasyMDE_Plugin
                     'label' => __('Microsoft YaHei', 'easymde'),
                     'fontFamily' => '"Microsoft YaHei", "微软雅黑"',
                 ),
+                array(
+                    'id' => 'orange-heart-microsoft-yahei',
+                    'label' => 'Microsoft YaHei (orange-heart)',
+                    'fontFamily' => '"Microsoft YaHei"',
+                ),
+                array(
+                    'id' => 'rose-purple-microsoft-yahei',
+                    'label' => 'Microsoft YaHei (rose-purple)',
+                    'fontFamily' => '"Microsoft YaHei"',
+                ),
+                array(
+                    'id' => 'ningye-purple-microsoft-yahei',
+                    'label' => 'Microsoft YaHei (ningye-purple)',
+                    'fontFamily' => '"Microsoft YaHei"',
+                ),
             ),
             'appleFonts' => array(
                 array(
                     'id' => 'pingfang-sc-light',
                     'label' => __('PingFang SC Light', 'easymde'),
                     'fontFamily' => '"PingFangSC-light", "PingFangSC-Light"',
+                ),
+                array(
+                    'id' => 'pingfang-sc-regular-raw',
+                    'label' => 'PingFangSC-regular',
+                    'fontFamily' => 'PingFangSC-regular',
                 ),
                 array(
                     'id' => 'pingfang-sc-regular',
@@ -1169,6 +1218,16 @@ final class EasyMDE_Plugin
                     'id' => 'yes',
                     'label' => __('Yes', 'easymde'),
                     'fontFamily' => '"Optima-Regular", "Optima", "PingFangSC-light", "PingFangTC-light", "PingFang SC", "Cambria", "Cochin", "Georgia", "Times", "Times New Roman", serif',
+                ),
+                array(
+                    'id' => 'serif-only',
+                    'label' => 'serif',
+                    'fontFamily' => 'serif',
+                ),
+                array(
+                    'id' => 'sans-serif-only',
+                    'label' => 'sans-serif',
+                    'fontFamily' => 'sans-serif',
                 ),
                 array(
                     'id' => 'no',
@@ -1290,6 +1349,13 @@ final class EasyMDE_Plugin
         $windows_font = $this->sanitize_font_option_id('windowsFonts', $windows_font, 'microsoft-yahei');
         $apple_font = $this->sanitize_font_option_id('appleFonts', $apple_font, 'pingfang-sc-light');
         $serif_font = $this->sanitize_font_option_id('serifOptions', $serif_font, 'yes');
+        $theme_font_defaults = $this->get_theme_font_defaults($markdown_theme);
+        if ($theme_font_defaults && $this->should_apply_theme_font_defaults($custom_font, $windows_font, $apple_font, $serif_font)) {
+            $custom_font = $theme_font_defaults['customFont'];
+            $windows_font = $theme_font_defaults['windowsFont'];
+            $apple_font = $theme_font_defaults['appleFont'];
+            $serif_font = $theme_font_defaults['serifFont'];
+        }
 
         if ('custom' === $markdown_theme && '' === $custom_css) {
             $custom_item = $this->get_custom_css_item($custom_css_id);
@@ -1346,6 +1412,67 @@ final class EasyMDE_Plugin
             'appleFont' => $this->sanitize_font_option_id('appleFonts', isset($stored['appleFont']) ? $stored['appleFont'] : 'pingfang-sc-light', 'pingfang-sc-light'),
             'serifFont' => $this->sanitize_font_option_id('serifOptions', isset($stored['serifFont']) ? $stored['serifFont'] : 'yes', 'yes'),
         );
+    }
+
+    private function get_theme_font_defaults($markdown_theme)
+    {
+        switch (sanitize_key((string) $markdown_theme)) {
+            case 'orange-heart':
+                return array(
+                    'customFont' => 'orange-heart-inter',
+                    'windowsFont' => 'orange-heart-microsoft-yahei',
+                    'appleFont' => 'pingfang-sc-regular-raw',
+                    'serifFont' => 'sans-serif-only',
+                );
+
+            case 'rose-purple':
+                return array(
+                    'customFont' => 'rose-purple-optima',
+                    'windowsFont' => 'rose-purple-microsoft-yahei',
+                    'appleFont' => 'pingfang-sc-regular-raw',
+                    'serifFont' => 'serif-only',
+                );
+
+            case 'ningye-purple':
+                return array(
+                    'customFont' => 'ningye-purple-inter',
+                    'windowsFont' => 'ningye-purple-microsoft-yahei',
+                    'appleFont' => 'pingfang-sc-regular-raw',
+                    'serifFont' => 'sans-serif-only',
+                );
+        }
+
+        return null;
+    }
+
+    private function is_legacy_default_font_stack($custom_font, $windows_font, $apple_font, $serif_font)
+    {
+        return 'optima' === $custom_font
+            && 'microsoft-yahei' === $windows_font
+            && 'pingfang-sc-light' === $apple_font
+            && 'yes' === $serif_font;
+    }
+
+    private function should_apply_theme_font_defaults($custom_font, $windows_font, $apple_font, $serif_font)
+    {
+        if ($this->is_legacy_default_font_stack($custom_font, $windows_font, $apple_font, $serif_font)) {
+            return true;
+        }
+
+        foreach (array('orange-heart', 'rose-purple', 'ningye-purple') as $theme_id) {
+            $defaults = $this->get_theme_font_defaults($theme_id);
+            if (
+                $defaults
+                && $defaults['customFont'] === $custom_font
+                && $defaults['windowsFont'] === $windows_font
+                && $defaults['appleFont'] === $apple_font
+                && $defaults['serifFont'] === $serif_font
+            ) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function sanitize_markdown_theme_id($id)

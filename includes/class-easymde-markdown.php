@@ -127,7 +127,7 @@ final class EasyMDE_Markdown
     private static function restore_math($html, array $math)
     {
         foreach ($math as $token => $item) {
-            $tex = trim((string) $item['tex']);
+            $tex = self::normalize_math_tex(trim((string) $item['tex']));
             $escaped = esc_html($tex);
             $node = $item['block']
                 ? '<div class="easymde-math easymde-math-block">$$' . $escaped . '$$</div>'
@@ -141,6 +141,42 @@ final class EasyMDE_Markdown
         }
 
         return $html;
+    }
+
+    private static function normalize_math_tex($tex)
+    {
+        $tex = (string) $tex;
+
+        if ('' === $tex) {
+            return $tex;
+        }
+
+        $command_patterns = array(
+            '/(?<![A-Za-z\\\\])(begin|end)(?=\s*\{)/',
+            '/(?<![A-Za-z\\\\])(frac|dfrac|tfrac|binom|sqrt)(?=\s*\{)/',
+            '/(?<![A-Za-z\\\\])(left|right)(?=\s*(?:[()\[\]{}|.]|\\\\[{}]))/',
+            '/(?<![A-Za-z\\\\])(log|ln|exp|lim|sin|cos|tan|cot|sec|csc|min|max|sup|inf)(?![A-Za-z])/',
+            '/(?<![A-Za-z\\\\])(cdots|ldots|dots|vdots|ddots|cdot|times|div|pm|mp|leq|geq|neq|approx|infty)(?![A-Za-z])/',
+        );
+
+        foreach ($command_patterns as $pattern) {
+            $tex = preg_replace($pattern, '\\\\$1', $tex);
+        }
+
+        return self::normalize_matrix_row_separators($tex);
+    }
+
+    private static function normalize_matrix_row_separators($tex)
+    {
+        return preg_replace_callback(
+            '/\\\\begin\{([A-Za-z]*matrix|array)\}([\s\S]*?)\\\\end\{\1\}/',
+            function ($matches) {
+                $body = preg_replace('/(?<!\\\\)\\\\(?![\\\\A-Za-z{])/', '\\\\\\\\\\\\\\\\', $matches[2]);
+
+                return '\\begin{' . $matches[1] . '}' . $body . '\\end{' . $matches[1] . '}';
+            },
+            $tex
+        );
     }
 
     private static function post_process_html($html, $theme = '')
@@ -162,7 +198,14 @@ final class EasyMDE_Markdown
             return $html;
         }
 
-        if (false === stripos($html, '<h') && false === stripos($html, '<a') && false === stripos($html, '<li')) {
+        $needs_markup = false !== stripos($html, '<h')
+            || false !== stripos($html, '<a')
+            || false !== stripos($html, '<li')
+            || false !== stripos($html, '<img')
+            || ('ningye-purple' === $theme && false !== stripos($html, '<table'))
+            || ('rose-purple' === $theme && false !== stripos($html, '<blockquote'));
+
+        if (!$needs_markup) {
             return $html;
         }
 
@@ -184,10 +227,30 @@ final class EasyMDE_Markdown
             return $html;
         }
 
-        self::wrap_theme_headings($document, $root, $theme);
-        self::wrap_theme_links($document, $root);
+        $rose_purple_footnotes = '';
 
-        return self::inner_html($root, $document);
+        self::wrap_theme_headings($document, $root, $theme);
+        self::wrap_theme_list_items($document, $root);
+        self::wrap_theme_images($document, $root);
+        if ('rose-purple' === $theme) {
+            self::add_rose_purple_blockquote_marks($document, $root);
+            $rose_purple_footnotes = self::convert_theme_links_to_footnotes($document, $root, 'Reference', true, false);
+        } elseif ('ningye-purple' === $theme) {
+            self::wrap_theme_tables($document, $root);
+            $rose_purple_footnotes = self::convert_theme_links_to_footnotes($document, $root, 'Reference', true, false, '参考资料');
+        } elseif ('yamabuki' === $theme) {
+            $rose_purple_footnotes = self::convert_theme_links_to_footnotes($document, $root, '参考资料', false, true);
+            self::wrap_theme_links($document, $root);
+        } else {
+            self::wrap_theme_links($document, $root);
+        }
+
+        $html = self::inner_html($root, $document);
+        if (in_array($theme, array('rose-purple', 'yamabuki', 'ningye-purple'), true)) {
+            $html = self::normalize_rose_purple_blockquote_marks($html) . $rose_purple_footnotes;
+        }
+
+        return $html;
     }
 
     private static function theme_uses_markdown2html_markup($theme)
@@ -207,6 +270,7 @@ final class EasyMDE_Markdown
                 'grid-black',
                 'geek-black',
                 'rose-purple',
+                'ningye-purple',
                 'cute-green',
                 'fullstack-blue',
                 'minimal-black',
@@ -253,11 +317,75 @@ final class EasyMDE_Markdown
         }
     }
 
+    private static function wrap_theme_list_items(DOMDocument $document, DOMElement $root)
+    {
+        $items = $root->getElementsByTagName('li');
+        foreach (iterator_to_array($items) as $item) {
+            if (self::direct_child_with_name($item, 'section')) {
+                continue;
+            }
+
+            $section = $document->createElement('section');
+            while ($item->firstChild) {
+                $section->appendChild($item->firstChild);
+            }
+            $item->appendChild($section);
+        }
+    }
+
+    private static function wrap_theme_images(DOMDocument $document, DOMElement $root)
+    {
+        $paragraphs = iterator_to_array($root->getElementsByTagName('p'));
+        foreach ($paragraphs as $paragraph) {
+            if (!($paragraph instanceof DOMElement) || self::element_has_ancestor_class($paragraph, 'footnotes')) {
+                continue;
+            }
+
+            $media = self::single_media_child($paragraph);
+            if (!$media) {
+                continue;
+            }
+
+            $image = 'img' === strtolower($media->nodeName) ? $media : self::first_descendant_image($media);
+            if (!$image) {
+                continue;
+            }
+
+            $figure = $document->createElement('figure');
+            $paragraph->parentNode->insertBefore($figure, $paragraph);
+            $figure->appendChild($media);
+
+            $alt = trim((string) $image->getAttribute('alt'));
+            if ('' !== $alt) {
+                $caption = $document->createElement('figcaption');
+                $caption->appendChild($document->createTextNode($alt));
+                $figure->appendChild($caption);
+            }
+
+            $paragraph->parentNode->removeChild($paragraph);
+        }
+    }
+
+    private static function wrap_theme_tables(DOMDocument $document, DOMElement $root)
+    {
+        $tables = iterator_to_array($root->getElementsByTagName('table'));
+        foreach ($tables as $table) {
+            if (!($table instanceof DOMElement) || self::element_has_ancestor_class($table, 'table-container')) {
+                continue;
+            }
+
+            $container = $document->createElement('section');
+            $container->setAttribute('class', 'table-container');
+            $table->parentNode->insertBefore($container, $table);
+            $container->appendChild($table);
+        }
+    }
+
     private static function wrap_theme_links(DOMDocument $document, DOMElement $root)
     {
         $links = $root->getElementsByTagName('a');
         foreach (iterator_to_array($links) as $link) {
-            if (self::direct_child_with_name($link, 'span')) {
+            if (self::direct_child_with_name($link, 'span') || self::first_descendant_image($link)) {
                 continue;
             }
 
@@ -269,6 +397,159 @@ final class EasyMDE_Markdown
         }
     }
 
+    private static function add_rose_purple_blockquote_marks(DOMDocument $document, DOMElement $root)
+    {
+        $quote_mark = html_entity_decode('&#10077;', ENT_QUOTES, 'UTF-8');
+        $blockquotes = $root->getElementsByTagName('blockquote');
+        foreach (iterator_to_array($blockquotes) as $blockquote) {
+            if (!($blockquote instanceof DOMElement)) {
+                continue;
+            }
+
+            $first_element = null;
+            foreach ($blockquote->childNodes as $child) {
+                if ($child instanceof DOMElement) {
+                    $first_element = $child;
+                    break;
+                }
+            }
+
+            if ($first_element && 'span' === $first_element->nodeName && $quote_mark === trim((string) $first_element->textContent)) {
+                continue;
+            }
+
+            $mark = $document->createElement('span');
+            $mark->appendChild($document->createTextNode($quote_mark));
+            $blockquote->insertBefore($mark, $blockquote->firstChild);
+        }
+    }
+
+    private static function convert_theme_links_to_footnotes(DOMDocument $document, DOMElement $root, $reference_label, $insert_heading, $require_title, $separator_label = null)
+    {
+        $reference_label = (string) $reference_label;
+        $separator_text = null === $separator_label ? $reference_label : (string) $separator_label;
+        $links = iterator_to_array($root->getElementsByTagName('a'));
+        $footnotes = array();
+        $reference_heading = self::find_reference_heading($root, $reference_label);
+
+        foreach ($links as $link) {
+            if (!($link instanceof DOMElement) || self::element_has_ancestor_class($link, 'footnotes')) {
+                continue;
+            }
+
+            if ($reference_heading && self::element_is_after_root_child($link, $reference_heading, $root)) {
+                continue;
+            }
+
+            $href = trim((string) $link->getAttribute('href'));
+            if ('' === $href || 0 === strpos($href, '#')) {
+                continue;
+            }
+
+            $index = count($footnotes) + 1;
+            $label = trim((string) $link->textContent);
+            if ('' === $label) {
+                $label = $href;
+            }
+
+            $title = trim((string) $link->getAttribute('title'));
+            if ((bool) $require_title && '' === $title) {
+                continue;
+            }
+
+            if (0 === stripos($href, 'mailto:') || self::first_descendant_image($link) || ('' === $title && $label === $href)) {
+                continue;
+            }
+
+            if ('' === $title) {
+                $title = $label;
+            }
+
+            $word = $document->createElement('span');
+            $word->setAttribute('class', 'footnote-word');
+            $word->appendChild($document->createTextNode($label));
+
+            $ref = $document->createElement('sup');
+            $ref->setAttribute('class', 'footnote-ref');
+            $ref->appendChild($document->createTextNode('[' . $index . ']'));
+
+            $link->parentNode->insertBefore($word, $link);
+            $link->parentNode->insertBefore($ref, $link);
+            $link->parentNode->removeChild($link);
+
+            $footnotes[] = array(
+                'index' => $index,
+                'title' => $title,
+                'href' => $href,
+            );
+        }
+
+        if (empty($footnotes)) {
+            return '';
+        }
+
+        if ($insert_heading && !$reference_heading) {
+            $heading = $document->createElement('h2');
+            $prefix = $document->createElement('span');
+            $prefix->setAttribute('class', 'prefix');
+            $content = $document->createElement('span');
+            $content->setAttribute('class', 'content');
+            $content->appendChild($document->createTextNode($reference_label));
+            $suffix = $document->createElement('span');
+            $suffix->setAttribute('class', 'suffix');
+            $heading->appendChild($prefix);
+            $heading->appendChild($content);
+            $heading->appendChild($suffix);
+            $root->appendChild($heading);
+        }
+
+        $separator = $document->createElement('section');
+        $separator->setAttribute('class', 'footnotes-sep');
+        $separator_span = $document->createElement('span');
+        $separator_span->appendChild($document->createTextNode($separator_text));
+        $separator->appendChild($separator_span);
+        $root->appendChild($separator);
+
+        return self::build_theme_footnotes_html($footnotes);
+    }
+
+    private static function build_theme_footnotes_html(array $footnotes)
+    {
+        $html = '<section class="footnotes">';
+        foreach ($footnotes as $footnote) {
+            $index = absint($footnote['index']);
+            $html .= '<span id="fn' . esc_attr((string) $index) . '" class="footnote-item">';
+            $html .= '<span class="footnote-num">[' . esc_html((string) $index) . '] </span>';
+            $html .= '<p>' . esc_html($footnote['title'] . ': ') . '<em>' . esc_html($footnote['href']) . '</em></p>';
+            $html .= '</span>';
+        }
+        $html .= '</section>';
+
+        return $html;
+    }
+
+    private static function normalize_rose_purple_blockquote_marks($html)
+    {
+        $quote_mark = html_entity_decode('&#10077;', ENT_QUOTES, 'UTF-8');
+
+        return preg_replace(
+            '/(<blockquote\b[^>]*>)\s*<p>\s*(<span\b[^>]*>\s*' . preg_quote($quote_mark, '/') . '\s*<\/span>)\s*<\/p>/u',
+            '$1$2',
+            $html
+        );
+    }
+
+    private static function find_reference_heading(DOMElement $root, $reference_label)
+    {
+        foreach ($root->getElementsByTagName('h2') as $heading) {
+            if ($heading instanceof DOMElement && $reference_label === trim((string) $heading->textContent)) {
+                return $heading;
+            }
+        }
+
+        return null;
+    }
+
     private static function direct_child_with_class(DOMElement $element, $class_name)
     {
         foreach ($element->childNodes as $child) {
@@ -278,6 +559,102 @@ final class EasyMDE_Markdown
                     return true;
                 }
             }
+        }
+
+        return false;
+    }
+
+    private static function single_media_child(DOMElement $element)
+    {
+        $media = null;
+        foreach ($element->childNodes as $child) {
+            if ($child instanceof DOMText && '' === trim($child->nodeValue)) {
+                continue;
+            }
+
+            if (!($child instanceof DOMElement)) {
+                return null;
+            }
+
+            $node_name = strtolower($child->nodeName);
+            if (!in_array($node_name, array('img', 'a'), true)) {
+                return null;
+            }
+
+            if ('a' === $node_name && !self::first_descendant_image($child)) {
+                return null;
+            }
+
+            if ($media) {
+                return null;
+            }
+
+            $media = $child;
+        }
+
+        return $media;
+    }
+
+    private static function first_descendant_image(DOMElement $element)
+    {
+        if ('img' === strtolower($element->nodeName)) {
+            return $element;
+        }
+
+        foreach ($element->getElementsByTagName('img') as $image) {
+            if ($image instanceof DOMElement) {
+                return $image;
+            }
+        }
+
+        return null;
+    }
+
+    private static function element_has_ancestor_class(DOMElement $element, $class_name)
+    {
+        $parent = $element->parentNode;
+        while ($parent instanceof DOMElement) {
+            $classes = preg_split('/\s+/', (string) $parent->getAttribute('class'));
+            if (in_array($class_name, $classes, true)) {
+                return true;
+            }
+
+            $parent = $parent->parentNode;
+        }
+
+        return false;
+    }
+
+    private static function element_is_after_root_child(DOMElement $element, DOMElement $anchor, DOMElement $root)
+    {
+        $seen_anchor = false;
+        foreach ($root->childNodes as $child) {
+            if ($child === $anchor) {
+                $seen_anchor = true;
+                continue;
+            }
+
+            if (!$seen_anchor) {
+                continue;
+            }
+
+            if ($child === $element || self::node_contains($child, $element)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function node_contains(DOMNode $container, DOMNode $target)
+    {
+        $node = $target;
+        while ($node instanceof DOMNode) {
+            if ($node === $container) {
+                return true;
+            }
+
+            $node = $node->parentNode;
         }
 
         return false;

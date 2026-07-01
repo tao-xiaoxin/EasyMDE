@@ -685,6 +685,10 @@
         return findById(getFontGroup(group), id);
     }
 
+    function getMarkdownTheme(id) {
+        return findById(themeOptions.markdownThemes || [], id);
+    }
+
     function renderFontSelect($select, group, selected) {
         $select.empty();
 
@@ -730,6 +734,27 @@
         });
 
         return parts.join(', ');
+    }
+
+    function applyThemeFontDefaults(themeId) {
+        var theme = getMarkdownTheme(themeId);
+        var defaults = theme && theme.fontDefaults ? theme.fontDefaults : null;
+
+        if (!defaults) {
+            return;
+        }
+
+        renderState.customFont = defaults.customFont || renderState.customFont;
+        renderState.windowsFont = defaults.windowsFont || renderState.windowsFont;
+        renderState.appleFont = defaults.appleFont || renderState.appleFont;
+        renderState.serifFont = defaults.serifFont || renderState.serifFont;
+    }
+
+    function syncFontControls() {
+        $('#easymde-custom-font-select').val(renderState.customFont || 'optima');
+        $('#easymde-windows-font-select').val(renderState.windowsFont || 'microsoft-yahei');
+        $('#easymde-apple-font-select').val(renderState.appleFont || 'pingfang-sc-light');
+        $('#easymde-serif-font-select').val(renderState.serifFont || 'yes');
     }
 
     function syncThemeFields() {
@@ -811,6 +836,7 @@
         }
 
         syncThemeFields();
+        syncFontControls();
         applyCodeThemeLink();
         setCustomCssStyle(renderState.markdownTheme === 'custom' ? selectedCustomCss() : '');
     }
@@ -881,6 +907,7 @@
                 renderState.customCssId = '';
                 renderState.customCss = '';
                 renderState.scopedCustomCss = '';
+                applyThemeFontDefaults(renderState.markdownTheme);
             }
 
             applyRenderState($preview);

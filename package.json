@@ -1,0 +1,16 @@
+{
+  "name": "easymde-wordpress-assets",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local frontend assets for the EasyMDE WordPress plugin.",
+  "scripts": {
+    "prepare:assets": "node scripts/copy-vendor-assets.mjs",
+    "postinstall": "node scripts/copy-vendor-assets.mjs"
+  },
+  "dependencies": {
+    "@highlightjs/cdn-assets": "^11.11.1",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.16.22",
+    "mermaid": "^10.9.3"
+  }
+}

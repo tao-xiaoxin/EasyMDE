@@ -1,0 +1,87 @@
+.easymde-rendered-content .easymde-toc,
+.easymde-preview .easymde-toc,
+.entry-content .easymde-toc,
+.wp-block-post-content .easymde-toc {
+    margin: 0 0 1.25em;
+    padding: 12px 14px;
+    border: 1px solid #dcdcde;
+    border-radius: 4px;
+    background: #fbfbfc;
+}
+
+.easymde-toc ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.easymde-toc li {
+    margin: 4px 0;
+}
+
+.easymde-toc-level-3 {
+    margin-left: 14px;
+}
+
+.easymde-toc-level-4 {
+    margin-left: 28px;
+}
+
+.easymde-toc a {
+    text-decoration: none;
+}
+
+.easymde-toc a:hover,
+.easymde-toc a:focus {
+    text-decoration: underline;
+}
+
+.easymde-rendered-content .easymde-mermaid,
+.easymde-preview .easymde-mermaid,
+.entry-content .easymde-mermaid,
+.wp-block-post-content .easymde-mermaid {
+    margin: 1.25em 0;
+    overflow-x: auto;
+    text-align: center;
+}
+
+.easymde-mermaid svg {
+    max-width: 100%;
+    height: auto;
+}
+
+.easymde-rendered-content .easymde-math-block,
+.easymde-preview .easymde-math-block,
+.entry-content .easymde-math-block,
+.wp-block-post-content .easymde-math-block {
+    display: block;
+    margin: 1.25em 0;
+    overflow-x: auto;
+    text-align: center;
+}
+
+.easymde-render-error {
+    position: relative;
+    border-color: #b32d2e !important;
+}
+
+.easymde-render-error::after {
+    content: attr(data-easymde-error);
+    display: block;
+    margin-top: 8px;
+    color: #b32d2e;
+    font-size: 12px;
+}
+
+.easymde-rendered-content pre,
+.easymde-preview pre,
+.entry-content pre,
+.wp-block-post-content pre {
+    overflow: auto;
+}
+
+.easymde-rendered-content pre code.hljs,
+.easymde-preview pre code.hljs,
+.entry-content pre code.hljs,
+.wp-block-post-content pre code.hljs {
+    border-radius: 4px;
+}

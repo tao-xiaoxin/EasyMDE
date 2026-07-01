@@ -1,0 +1,111 @@
+services:
+  wordpress:
+    image: ${WORDPRESS_IMAGE:-wordpress:php8.3-apache}
+    restart: unless-stopped
+    ports:
+      - "${WORDPRESS_PORT:-8088}:80"
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_USER: ${WORDPRESS_DB_USER:?Set WORDPRESS_DB_USER in .env}
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD:?Set WORDPRESS_DB_PASSWORD in .env}
+      WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME:?Set WORDPRESS_DB_NAME in .env}
+      WORDPRESS_DEBUG: "1"
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./:/var/www/html/wp-content/plugins/easymde
+    depends_on:
+      db:
+        condition: service_healthy
+
+  wpcli:
+    image: ${WORDPRESS_CLI_IMAGE:-wordpress:cli-php8.3}
+    user: "33:33"
+    restart: "no"
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_USER: ${WORDPRESS_DB_USER:?Set WORDPRESS_DB_USER in .env}
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD:?Set WORDPRESS_DB_PASSWORD in .env}
+      WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME:?Set WORDPRESS_DB_NAME in .env}
+      WORDPRESS_CORE_VERSION: ${WORDPRESS_CORE_VERSION:-6.9}
+      WORDPRESS_LOCALE: ${WORDPRESS_LOCALE:-zh_CN}
+      WORDPRESS_SITE_URL: ${WORDPRESS_SITE_URL:-http://localhost:8088}
+      WORDPRESS_SITE_TITLE: ${WORDPRESS_SITE_TITLE:-EasyMDE Test}
+      WORDPRESS_ADMIN_USER: ${WORDPRESS_ADMIN_USER:-admin}
+      WORDPRESS_ADMIN_PASSWORD: ${WORDPRESS_ADMIN_PASSWORD:?Set WORDPRESS_ADMIN_PASSWORD in .env}
+      WORDPRESS_ADMIN_EMAIL: ${WORDPRESS_ADMIN_EMAIL:-admin@example.test}
+      WP_CLI_CACHE_DIR: /tmp/wp-cli-cache
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./:/var/www/html/wp-content/plugins/easymde
+    depends_on:
+      wordpress:
+        condition: service_started
+      db:
+        condition: service_healthy
+    command: >
+      sh -c '
+        set -e;
+        wp() {
+          php -d memory_limit=512M /usr/local/bin/wp "$$@";
+        }
+
+        until [ -f wp-config.php ] && wp db check --allow-root; do
+          echo "Waiting for WordPress and database...";
+          sleep 3;
+        done;
+
+        if [ -n "$${WORDPRESS_CORE_VERSION}" ]; then
+          current_version="$$(wp core version --allow-root 2>/dev/null || true)";
+          if [ "$${current_version}" != "$${WORDPRESS_CORE_VERSION}" ]; then
+            if wp core is-installed --allow-root >/dev/null 2>&1; then
+              wp core update --version="$${WORDPRESS_CORE_VERSION}" --force --allow-root;
+            else
+              wp core download --version="$${WORDPRESS_CORE_VERSION}" --locale="$${WORDPRESS_LOCALE}" --force --allow-root;
+            fi;
+          fi;
+        fi;
+
+        if ! wp core is-installed --allow-root; then
+          wp core install --url="$${WORDPRESS_SITE_URL}" --title="$${WORDPRESS_SITE_TITLE}" --admin_user="$${WORDPRESS_ADMIN_USER}" --admin_password="$${WORDPRESS_ADMIN_PASSWORD}" --admin_email="$${WORDPRESS_ADMIN_EMAIL}" --locale="$${WORDPRESS_LOCALE}" --skip-email --allow-root;
+        fi;
+
+        wp core update-db --allow-root;
+        wp language core install "$${WORDPRESS_LOCALE}" --activate --allow-root;
+        wp option update WPLANG "$${WORDPRESS_LOCALE}" --allow-root;
+        wp user meta update "$${WORDPRESS_ADMIN_USER}" locale "$${WORDPRESS_LOCALE}" --allow-root;
+        wp plugin activate easymde --allow-root;
+        wp rewrite structure "/%postname%/" --allow-root;
+      '
+
+  composer:
+    image: composer:2
+    profiles:
+      - tools
+    restart: "no"
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: >
+      sh -lc 'git config --global --add safe.directory /app &&
+      composer install --no-interaction --prefer-dist ||
+      composer install --no-interaction --prefer-source'
+
+  db:
+    image: ${WORDPRESS_DB_IMAGE:-mariadb:11.4}
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${WORDPRESS_DB_NAME:?Set WORDPRESS_DB_NAME in .env}
+      MYSQL_USER: ${WORDPRESS_DB_USER:?Set WORDPRESS_DB_USER in .env}
+      MYSQL_PASSWORD: ${WORDPRESS_DB_PASSWORD:?Set WORDPRESS_DB_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${WORDPRESS_DB_ROOT_PASSWORD:?Set WORDPRESS_DB_ROOT_PASSWORD in .env}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  wordpress_data:
+  db_data:

@@ -1,0 +1,1474 @@
+(function ($, window, document) {
+    'use strict';
+
+    var config = window.EasyMDEConfig || {};
+    var themeOptions = config.themeOptions || {};
+    var renderState = normalizeRenderState(themeOptions.state || {});
+    var customCssLibrary = themeOptions.customCss || [];
+    var previewTimer = null;
+    var draftTimer = null;
+    var syncLock = false;
+    var flashTimer = null;
+    var commandMap = buildCommandMap(config.commands || []);
+    var isMac = detectMacPlatform();
+    var openPopovers = [];
+    var COPY_STYLE_PROPS = [
+        'display',
+        'position',
+        'float',
+        'clear',
+        'box-sizing',
+        'overflow',
+        'overflow-x',
+        'overflow-y',
+        'width',
+        'max-width',
+        'min-width',
+        'height',
+        'max-height',
+        'min-height',
+        'margin-top',
+        'margin-right',
+        'margin-bottom',
+        'margin-left',
+        'padding-top',
+        'padding-right',
+        'padding-bottom',
+        'padding-left',
+        'border-top-width',
+        'border-right-width',
+        'border-bottom-width',
+        'border-left-width',
+        'border-top-style',
+        'border-right-style',
+        'border-bottom-style',
+        'border-left-style',
+        'border-top-color',
+        'border-right-color',
+        'border-bottom-color',
+        'border-left-color',
+        'border-collapse',
+        'border-spacing',
+        'border-radius',
+        'background',
+        'background-color',
+        'color',
+        'font',
+        'font-family',
+        'font-size',
+        'font-style',
+        'font-weight',
+        'line-height',
+        'letter-spacing',
+        'text-align',
+        'text-decoration',
+        'text-transform',
+        'text-indent',
+        'white-space',
+        'word-break',
+        'overflow-wrap',
+        'vertical-align',
+        'list-style-type',
+        'list-style-position',
+        'box-shadow',
+        'tab-size'
+    ];
+
+    function getString(key, fallback) {
+        return config.strings && config.strings[key] ? config.strings[key] : fallback;
+    }
+
+    function detectMacPlatform() {
+        var platform = window.navigator && (window.navigator.userAgentData && window.navigator.userAgentData.platform
+            ? window.navigator.userAgentData.platform
+            : window.navigator.platform);
+
+        return typeof platform === 'string' && platform.toLowerCase().indexOf('mac') !== -1;
+    }
+
+    function buildCommandMap(commands) {
+        var map = {};
+
+        (commands || []).forEach(function (command) {
+            if (command && command.id) {
+                map[String(command.id)] = command;
+            }
+        });
+
+        return map;
+    }
+
+    function normalizeRenderState(state) {
+        state = state || {};
+
+        return {
+            markdownTheme: state.markdownTheme || 'default',
+            codeTheme: state.codeTheme || 'atom-one-dark',
+            codeMacStyle: state.codeMacStyle === undefined ? true : !!state.codeMacStyle,
+            customCssId: state.customCssId || '',
+            customCss: state.customCss || '',
+            scopedCustomCss: state.scopedCustomCss || ''
+        };
+    }
+
+    function findById(items, id) {
+        var found = null;
+
+        (items || []).some(function (item) {
+            if (item.id === id) {
+                found = item;
+                return true;
+            }
+
+            return false;
+        });
+
+        return found;
+    }
+
+    function selectedCustomCssItem() {
+        if (renderState.markdownTheme !== 'custom' || !renderState.customCssId) {
+            return null;
+        }
+
+        return findById(customCssLibrary, renderState.customCssId);
+    }
+
+    function selectedCustomCss() {
+        var item = selectedCustomCssItem();
+
+        if (item) {
+            return item.scopedCss || '';
+        }
+
+        return renderState.scopedCustomCss || '';
+    }
+
+    function storageAvailable() {
+        try {
+            var testKey = '__easymde_test__';
+            window.localStorage.setItem(testKey, '1');
+            window.localStorage.removeItem(testKey);
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function normalizeStorage($root) {
+        var storage = config.storage || {};
+        var postId = $root.data('post-id') || storage.postId || 'new';
+
+        if (storage.siteKey && storage.userId !== undefined) {
+            storage.postId = postId;
+            storage.draftKey = 'easymde:draft:' + storage.siteKey + ':' + storage.userId + ':' + postId;
+        }
+
+        config.storage = storage;
+
+        return storage;
+    }
+
+    function readDraft(storage) {
+        if (!storage.draftKey || !storageAvailable()) {
+            return null;
+        }
+
+        try {
+            return JSON.parse(window.localStorage.getItem(storage.draftKey) || 'null');
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function writeDraft(storage, markdown) {
+        if (!storage.draftKey || !storageAvailable()) {
+            return;
+        }
+
+        window.localStorage.setItem(
+            storage.draftKey,
+            JSON.stringify({
+                content: markdown,
+                updatedAt: Date.now()
+            })
+        );
+    }
+
+    function discardDraft(storage) {
+        if (!storage.draftKey || !storageAvailable()) {
+            return;
+        }
+
+        window.localStorage.removeItem(storage.draftKey);
+    }
+
+    function formatDraftTime(timestamp) {
+        if (!timestamp) {
+            return '';
+        }
+
+        try {
+            return new Date(timestamp).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function getCommand(id) {
+        return commandMap[id] || null;
+    }
+
+    function getSurfaceCommands(surface) {
+        return Object.keys(commandMap).map(function (id) {
+            return commandMap[id];
+        }).filter(function (command) {
+            return command.surface === surface;
+        });
+    }
+
+    function getGroupCommands(surface, group) {
+        return getSurfaceCommands(surface).filter(function (command) {
+            return command.group === group;
+        });
+    }
+
+    function getShortcutForCommand(commandId) {
+        var shortcuts = config.shortcuts || {};
+        var shortcut = shortcuts[commandId] || {};
+
+        return isMac ? (shortcut.mac || '') : (shortcut.win || '');
+    }
+
+    function getCommandLabel(command) {
+        return command && command.label ? command.label : (command ? command.id : '');
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function applyTextChange(textarea, value, selectionStart, selectionEnd) {
+        textarea.value = value;
+        textarea.focus();
+
+        if (typeof selectionStart === 'number' && typeof selectionEnd === 'number') {
+            textarea.selectionStart = selectionStart;
+            textarea.selectionEnd = selectionEnd;
+        }
+
+        $(textarea).trigger('input');
+    }
+
+    function insertAround(textarea, prefix, suffix, placeholder) {
+        var start = textarea.selectionStart;
+        var end = textarea.selectionEnd;
+        var value = textarea.value;
+        var selected = value.slice(start, end) || (placeholder || '');
+        var replacement = prefix + selected + suffix;
+
+        applyTextChange(
+            textarea,
+            value.slice(0, start) + replacement + value.slice(end),
+            start + prefix.length,
+            start + prefix.length + selected.length
+        );
+    }
+
+    function transformSelectedLines(textarea, transform) {
+        var start = textarea.selectionStart;
+        var end = textarea.selectionEnd;
+        var value = textarea.value;
+        var lineStart = value.lastIndexOf('\n', start - 1) + 1;
+        var lineEnd = value.indexOf('\n', end);
+
+        if (lineEnd === -1) {
+            lineEnd = value.length;
+        }
+
+        var block = value.slice(lineStart, lineEnd);
+        var lines = block.split('\n');
+        var updatedLines = transform(lines);
+        var replacement = updatedLines.join('\n');
+
+        applyTextChange(
+            textarea,
+            value.slice(0, lineStart) + replacement + value.slice(lineEnd),
+            lineStart,
+            lineStart + replacement.length
+        );
+    }
+
+    function stripLineMarkup(line) {
+        return String(line)
+            .replace(/^\s{0,3}#{1,6}\s+/, '')
+            .replace(/^\s{0,3}>\s?/, '')
+            .replace(/^\s{0,3}(?:[-+*]\s+|\d+\.\s+)/, '');
+    }
+
+    function applyLinePrefix(textarea, prefix) {
+        transformSelectedLines(textarea, function (lines) {
+            return lines.map(function (line) {
+                if (!line) {
+                    return prefix.trim();
+                }
+
+                return prefix + stripLineMarkup(line);
+            });
+        });
+    }
+
+    function applyOrderedList(textarea) {
+        transformSelectedLines(textarea, function (lines) {
+            var index = 1;
+
+            return lines.map(function (line) {
+                if (!line.trim()) {
+                    return '';
+                }
+
+                var updated = index + '. ' + stripLineMarkup(line);
+                index += 1;
+
+                return updated;
+            });
+        });
+    }
+
+    function setHeadingLevel(textarea, level) {
+        transformSelectedLines(textarea, function (lines) {
+            return lines.map(function (line) {
+                var content = stripLineMarkup(line).trim();
+
+                if (!content) {
+                    return '';
+                }
+
+                if (!level) {
+                    return content;
+                }
+
+                return new Array(level + 1).join('#') + ' ' + content;
+            });
+        });
+    }
+
+    function insertBlock(textarea, prefix, suffix, placeholder) {
+        var start = textarea.selectionStart;
+        var end = textarea.selectionEnd;
+        var value = textarea.value;
+        var selected = value.slice(start, end);
+        var content = selected || (placeholder || '');
+        var needsLeadingNewline = start > 0 && value.charAt(start - 1) !== '\n';
+        var needsTrailingNewline = end < value.length && value.charAt(end) !== '\n';
+        var blockPrefix = (needsLeadingNewline ? '\n' : '') + prefix;
+        var blockSuffix = suffix + (needsTrailingNewline ? '\n' : '');
+        var replacement = blockPrefix + content + blockSuffix;
+
+        applyTextChange(
+            textarea,
+            value.slice(0, start) + replacement + value.slice(end),
+            start + blockPrefix.length,
+            start + blockPrefix.length + content.length
+        );
+    }
+
+    function openMediaPicker(textarea) {
+        if (!window.wp || !window.wp.media) {
+            insertAround(textarea, '![alt text](', ')');
+            return;
+        }
+
+        var frame = window.wp.media({
+            title: getString('insertMedia', 'Insert Media'),
+            multiple: false
+        });
+
+        frame.on('select', function () {
+            var attachment = frame.state().get('selection').first().toJSON();
+            var alt = attachment.alt || attachment.title || 'image';
+            var markdown = '![' + alt + '](' + attachment.url + ')';
+            var start = textarea.selectionStart;
+            var end = textarea.selectionEnd;
+            var value = textarea.value;
+
+            applyTextChange(
+                textarea,
+                value.slice(0, start) + markdown + value.slice(end),
+                start + markdown.length,
+                start + markdown.length
+            );
+        });
+
+        frame.open();
+    }
+
+    function triggerSavePost() {
+        var $button = $('#save-post');
+
+        if ($button.length && !$button.prop('disabled')) {
+            $button.trigger('click');
+            return;
+        }
+
+        $button = $('#publish');
+        if ($button.length && !$button.prop('disabled')) {
+            $button.trigger('click');
+            return;
+        }
+
+        $('#post').trigger('submit');
+    }
+
+    function createIconContent(command, options) {
+        var $fragment = $(document.createDocumentFragment());
+        var label = getCommandLabel(command);
+        var icon = command.icon || '';
+        var compact = options && options.compact;
+        var iconTextMap = {
+            mediacode: '</>',
+            'media-code': '</>',
+            heading: 'H',
+            copy: '微'
+        };
+        var $icon = null;
+
+        if (compact && icon === 'copy') {
+            $icon = $('<span class="easymde-wechat-glyph" aria-hidden="true"></span>').text('微');
+        } else if (icon === 'copy') {
+            $icon = $('<span class="easymde-wechat-glyph" aria-hidden="true"></span>').text('微');
+        } else if (iconTextMap[icon]) {
+            $icon = $('<span class="easymde-toolbar-text-icon" aria-hidden="true"></span>').text(iconTextMap[icon]);
+        } else {
+            $icon = $('<span class="dashicons" aria-hidden="true"></span>').addClass('dashicons-' + icon);
+        }
+
+        $fragment.append($icon);
+
+        if (!compact) {
+            $fragment.append($('<span class="easymde-toolbar-label"></span>').text(label));
+        }
+
+        return $fragment;
+    }
+
+    function createCommandButton(command, options) {
+        var $button = $('<button type="button" class="easymde-toolbar-button"></button>');
+        var shortcut = getShortcutForCommand(command.id);
+        var label = getCommandLabel(command);
+        var compact = !options || options.compact !== false;
+
+        if (options && options.className) {
+            $button.addClass(options.className);
+        }
+
+        $button.attr('data-easymde-command', command.id);
+        $button.attr('aria-label', label);
+        $button.attr('title', shortcut ? label + ' (' + shortcut + ')' : label);
+        $button.toggleClass('easymde-toolbar-button-compact', compact);
+        $button.append(createIconContent(command, { compact: compact }));
+
+        $button.on('click', function () {
+            executeCommand(command.id, options && options.context ? options.context : {});
+        });
+
+        return $button;
+    }
+
+    function registerPopover($button, $panel) {
+        openPopovers.push({
+            button: $button,
+            panel: $panel
+        });
+
+        $button.on('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            var isOpen = !$panel.prop('hidden');
+            closePopovers();
+            $panel.prop('hidden', isOpen);
+            $button.toggleClass('is-active', !isOpen);
+        });
+
+        $panel.on('click', function (event) {
+            event.stopPropagation();
+        });
+    }
+
+    function closePopovers() {
+        openPopovers.forEach(function (popover) {
+            popover.panel.prop('hidden', true);
+            popover.button.removeClass('is-active');
+        });
+    }
+
+    function createMenuAnchor(extraClass) {
+        return $('<div class="easymde-toolbar-popover-anchor"></div>').addClass(extraClass || '');
+    }
+
+    function createHeadingMenu($container, textarea) {
+        var headingCommands = getSurfaceCommands('heading-menu');
+
+        if (!headingCommands.length) {
+            return;
+        }
+
+        var $anchor = createMenuAnchor('easymde-toolbar-popover-headings');
+        var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-menu easymde-toolbar-button-compact"></button>');
+        var $panel = $('<div class="easymde-toolbar-popover" hidden></div>');
+
+        $button.attr('title', getString('headings', 'Headings'));
+        $button.attr('aria-label', getString('headings', 'Headings'));
+        $button.append(
+            $('<span class="easymde-toolbar-text-icon" aria-hidden="true"></span>').text('H'),
+            $('<span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>')
+        );
+
+        headingCommands.forEach(function (command) {
+            var $item = $('<button type="button" class="easymde-popover-item"></button>');
+            var shortcut = getShortcutForCommand(command.id);
+
+            $item.append(
+                $('<span class="easymde-popover-item-label"></span>').text(getCommandLabel(command)),
+                $('<span class="easymde-popover-item-shortcut"></span>').text(shortcut)
+            );
+
+            $item.on('click', function () {
+                closePopovers();
+                executeCommand(command.id, { textarea: textarea });
+            });
+
+            $panel.append($item);
+        });
+
+        registerPopover($button, $panel);
+        $anchor.append($button, $panel);
+        $container.append($anchor);
+    }
+
+    function createSelectControl(label, className) {
+        var $control = $('<label class="easymde-toolbar-control"></label>');
+        var $label = $('<span class="easymde-toolbar-control-label"></span>').text(label);
+        var $select = $('<select></select>').addClass(className);
+
+        $control.append($label, $select);
+
+        return {
+            root: $control,
+            select: $select
+        };
+    }
+
+    function renderThemeSelect($select) {
+        var selected = renderState.markdownTheme === 'custom' && renderState.customCssId
+            ? 'custom:' + renderState.customCssId
+            : 'theme:' + renderState.markdownTheme;
+
+        $select.empty();
+
+        (themeOptions.markdownThemes || []).forEach(function (theme) {
+            $select.append($('<option></option>').attr('value', 'theme:' + theme.id).text(theme.label || theme.id));
+        });
+
+        if (customCssLibrary.length) {
+            var $group = $('<optgroup></optgroup>').attr('label', getString('namedCustomCss', 'Named custom CSS'));
+
+            customCssLibrary.forEach(function (item) {
+                $group.append($('<option></option>').attr('value', 'custom:' + item.id).text(item.name));
+            });
+
+            $select.append($group);
+        }
+
+        $select.val(selected);
+
+        if (!$select.val()) {
+            $select.val('theme:default');
+        }
+    }
+
+    function renderCodeThemeSelect($select) {
+        $select.empty();
+
+        (themeOptions.codeThemes || []).forEach(function (theme) {
+            $select.append($('<option></option>').attr('value', theme.id).text(theme.label || theme.id));
+        });
+
+        $select.val(renderState.codeTheme || 'atom-one-dark');
+    }
+
+    function syncThemeFields() {
+        $('#easymde-markdown-theme-field').val(renderState.markdownTheme || 'default');
+        $('#easymde-code-theme-field').val(renderState.codeTheme || 'atom-one-dark');
+        $('#easymde-code-mac-style-field').val(renderState.codeMacStyle ? '1' : '0');
+        $('#easymde-custom-css-id-field').val(renderState.markdownTheme === 'custom' ? renderState.customCssId : '');
+    }
+
+    function replaceClassPrefix(element, prefix, className) {
+        var classes = (element.className || '').split(/\s+/).filter(function (name) {
+            return name && name.indexOf(prefix) !== 0;
+        });
+
+        classes.push(className);
+        element.className = classes.join(' ');
+    }
+
+    function setCustomCssStyle(css) {
+        var id = 'easymde-custom-css-preview';
+        var style = document.getElementById(id);
+
+        if (!style) {
+            style = document.createElement('style');
+            style.id = id;
+            document.head.appendChild(style);
+        }
+
+        style.textContent = css || '';
+    }
+
+    function applyCodeThemeLink() {
+        var codeTheme = findById(themeOptions.codeThemes || [], renderState.codeTheme);
+        var href = codeTheme && codeTheme.cssUrl ? codeTheme.cssUrl : '';
+        var link = document.getElementById('easymde-highlight-theme-css');
+
+        if (!href) {
+            return;
+        }
+
+        if (!link) {
+            link = document.createElement('link');
+            link.id = 'easymde-highlight-theme-css';
+            link.rel = 'stylesheet';
+            document.head.appendChild(link);
+        }
+
+        if (link.href !== href) {
+            link.href = href;
+        }
+    }
+
+    function applyRenderState($preview) {
+        var preview = $preview[0];
+        var markdownClass = renderState.markdownTheme === 'custom'
+            ? 'easymde-markdown-theme-custom'
+            : 'easymde-markdown-theme-' + renderState.markdownTheme;
+
+        if (!preview) {
+            return;
+        }
+
+        replaceClassPrefix(preview, 'easymde-markdown-theme-', markdownClass);
+        replaceClassPrefix(preview, 'easymde-code-theme-', 'easymde-code-theme-' + renderState.codeTheme);
+        $preview.addClass('easymde-rendered-content');
+        $preview.toggleClass('easymde-code-mac', !!renderState.codeMacStyle);
+        $preview.toggleClass('easymde-custom-css-active', renderState.markdownTheme === 'custom');
+
+        syncThemeFields();
+        applyCodeThemeLink();
+        setCustomCssStyle(renderState.markdownTheme === 'custom' ? selectedCustomCss() : '');
+    }
+
+    function fillCustomPanel($panel) {
+        var item = selectedCustomCssItem();
+
+        $panel.find('.easymde-custom-css-name').val(item ? item.name : '');
+        $panel.find('.easymde-custom-css-code').val(item ? item.css : '');
+    }
+
+    function createAppearanceMenu($container, $root, $preview, refreshPreview) {
+        var $anchor = createMenuAnchor('easymde-toolbar-popover-appearance');
+        var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-menu easymde-toolbar-button-compact"></button>');
+        var $panel = $('<div class="easymde-toolbar-popover easymde-toolbar-popover-appearance-panel" hidden></div>');
+        var themeControl = createSelectControl(getString('articleTheme', 'Article theme'), 'easymde-theme-select');
+        var codeControl = createSelectControl(getString('codeTheme', 'Code theme'), 'easymde-code-theme-select');
+        var $macLabel = $('<label class="easymde-toolbar-check"></label>');
+        var $macToggle = $('<input type="checkbox">').prop('checked', !!renderState.codeMacStyle);
+        var $customToggle = $('<button type="button" class="button button-secondary easymde-custom-css-toggle"></button>').text(getString('customCss', 'Custom CSS'));
+        var $customPanel = $('<div class="easymde-custom-css-panel" hidden></div>');
+        var $name = $('<input type="text" class="regular-text easymde-custom-css-name">').attr('placeholder', getString('cssName', 'CSS name'));
+        var $code = $('<textarea class="easymde-custom-css-code" spellcheck="false"></textarea>');
+        var $save = $('<button type="button" class="button button-primary"></button>').text(getString('saveCss', 'Save CSS'));
+        var $status = $('<span class="easymde-custom-css-status" aria-live="polite"></span>');
+
+        $button.attr('title', getString('appearance', 'Appearance'));
+        $button.attr('aria-label', getString('appearance', 'Appearance'));
+        $button.append(
+            $('<span class="dashicons dashicons-admin-customizer" aria-hidden="true"></span>'),
+            $('<span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>')
+        );
+
+        renderThemeSelect(themeControl.select);
+        renderCodeThemeSelect(codeControl.select);
+
+        $macLabel.append($macToggle, $('<span></span>').text(getString('macCodeFrame', 'Mac code frame')));
+        $customPanel.append(
+            $('<div class="easymde-custom-css-row"></div>').append($name, $save, $status),
+            $code
+        );
+        fillCustomPanel($customPanel);
+
+        $panel.append(
+            themeControl.root,
+            codeControl.root,
+            $macLabel,
+            $('<div class="easymde-custom-css-toggle-row"></div>').append($customToggle),
+            $customPanel
+        );
+
+        themeControl.select.on('change', function () {
+            var value = String($(this).val() || 'theme:default');
+            var parts = value.split(':');
+            var item = null;
+
+            if (parts[0] === 'custom') {
+                item = findById(customCssLibrary, parts[1]);
+                if (item) {
+                    renderState.markdownTheme = 'custom';
+                    renderState.customCssId = item.id;
+                    renderState.customCss = item.css || '';
+                    renderState.scopedCustomCss = item.scopedCss || '';
+                    fillCustomPanel($customPanel);
+                }
+            } else {
+                renderState.markdownTheme = parts[1] || 'default';
+                renderState.customCssId = '';
+                renderState.customCss = '';
+                renderState.scopedCustomCss = '';
+            }
+
+            applyRenderState($preview);
+            refreshPreview();
+        });
+
+        codeControl.select.on('change', function () {
+            renderState.codeTheme = String($(this).val() || 'atom-one-dark');
+            applyRenderState($preview);
+        });
+
+        $macToggle.on('change', function () {
+            renderState.codeMacStyle = !!this.checked;
+            applyRenderState($preview);
+        });
+
+        $customToggle.on('click', function () {
+            $customPanel.prop('hidden', !$customPanel.prop('hidden'));
+            fillCustomPanel($customPanel);
+        });
+
+        $save.on('click', function () {
+            if (!window.wp || !window.wp.apiFetch || !config.customCssUrl) {
+                $status.text(getString('cssSaveFailed', 'CSS save failed.'));
+                return;
+            }
+
+            $status.text('');
+            window.wp.apiFetch({
+                url: config.customCssUrl,
+                method: 'POST',
+                headers: {
+                    'X-WP-Nonce': config.nonce
+                },
+                data: {
+                    id: renderState.markdownTheme === 'custom' ? renderState.customCssId : '',
+                    name: $name.val(),
+                    css: $code.val()
+                }
+            }).then(function (response) {
+                customCssLibrary = response.customCss || customCssLibrary;
+                renderState.markdownTheme = 'custom';
+                renderState.customCssId = response.item.id;
+                renderState.customCss = response.item.css || '';
+                renderState.scopedCustomCss = response.item.scopedCss || '';
+                themeOptions.state = renderState;
+
+                renderThemeSelect(themeControl.select);
+                themeControl.select.val('custom:' + response.item.id);
+                applyRenderState($preview);
+                refreshPreview();
+                $status.text(getString('cssSaved', 'Saved CSS.'));
+            }).catch(function () {
+                $status.text(getString('cssSaveFailed', 'CSS save failed.'));
+            });
+        });
+
+        registerPopover($button, $panel);
+        $anchor.append($button, $panel);
+        $container.append($anchor);
+    }
+
+    function createThemeToggleButton($container, $root, refreshPreview) {
+        if (!window.EasyMDEEnhancements || !config.features || config.features.darkMode === false) {
+            return;
+        }
+
+        var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-compact"></button>');
+
+        function updateState() {
+            var isDark = $root.hasClass('easymde-theme-dark');
+
+            $button.empty();
+            $button.toggleClass('is-active', isDark);
+            $button.attr('title', isDark ? getString('lightMode', 'Light mode') : getString('darkMode', 'Dark mode'));
+            $button.attr('aria-label', isDark ? getString('lightMode', 'Light mode') : getString('darkMode', 'Dark mode'));
+            $button.append($('<span class="dashicons dashicons-lightbulb" aria-hidden="true"></span>'));
+        }
+
+        $button.on('click', function () {
+            window.EasyMDEEnhancements.toggleTheme($root[0], config);
+            updateState();
+            refreshPreview();
+        });
+
+        updateState();
+        $container.append($button);
+    }
+
+    function createFlash($root) {
+        var $flash = $('<div class="easymde-editor-flash" hidden aria-live="polite"></div>');
+
+        $root.find('.easymde-toolbar').after($flash);
+
+        return $flash;
+    }
+
+    function showFlash($flash, type, message) {
+        window.clearTimeout(flashTimer);
+        $flash
+            .removeClass('is-success is-error is-info')
+            .addClass('is-' + type)
+            .text(message)
+            .prop('hidden', false);
+
+        flashTimer = window.setTimeout(function () {
+            $flash.prop('hidden', true).text('');
+        }, 3200);
+    }
+
+    function createDraftNotice($root, textarea, storage, $flash) {
+        var draft = readDraft(storage);
+
+        if (!draft || !draft.content || draft.content === textarea.value) {
+            return;
+        }
+
+        var $notice = $('<div class="easymde-draft-notice"></div>');
+        var $message = $('<span></span>').text(getString('draftAvailable', 'A newer local draft is available.'));
+        var $restore = $('<button type="button" class="button button-small"></button>').text(getString('restoreDraft', 'Restore draft'));
+        var $discard = $('<button type="button" class="button button-small"></button>').text(getString('discardDraft', 'Discard draft'));
+
+        $restore.on('click', function () {
+            textarea.value = draft.content;
+            $(textarea).trigger('input');
+            $notice.remove();
+            showFlash($flash, 'success', getString('draftRestored', 'Draft restored.'));
+        });
+
+        $discard.on('click', function () {
+            discardDraft(storage);
+            $notice.remove();
+            showFlash($flash, 'info', getString('draftDiscarded', 'Draft discarded.'));
+        });
+
+        if ($root.find('.easymde-editor-flash').length) {
+            $root.find('.easymde-editor-flash').after($notice);
+        } else {
+            $root.find('.easymde-toolbar').after($notice);
+        }
+    }
+
+    function createDraftStatus($toolbar) {
+        var $status = $('<span class="easymde-draft-status" aria-live="polite"></span>');
+        $toolbar.find('.easymde-toolbar-section-secondary').append($status);
+
+        return $status;
+    }
+
+    function mirrorToPostContent(markdown) {
+        var editor = $('#content');
+        var markdownField = $('#easymde-markdown-field');
+
+        markdownField.val(markdown);
+        editor.val(markdown);
+        syncThemeFields();
+    }
+
+    function previewFallback(markdown) {
+        if (!markdown.trim()) {
+            return '<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty', '')) + '</p>';
+        }
+
+        return '<pre class="easymde-preview-fallback">' + escapeHtml(markdown) + '</pre>';
+    }
+
+    function enhancePreview($preview) {
+        if (window.EasyMDEEnhancements) {
+            window.EasyMDEEnhancements.enhance($preview[0], config);
+        }
+    }
+
+    function updatePreview($preview, markdown) {
+        window.clearTimeout(previewTimer);
+        previewTimer = window.setTimeout(function () {
+            if (!markdown.trim()) {
+                $preview.html('<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty', '')) + '</p>');
+                applyRenderState($preview);
+                return;
+            }
+
+            if (!window.wp || !window.wp.apiFetch || !config.restUrl) {
+                $preview.html(previewFallback(markdown));
+                applyRenderState($preview);
+                enhancePreview($preview);
+                return;
+            }
+
+            window.wp.apiFetch({
+                url: config.restUrl,
+                method: 'POST',
+                headers: {
+                    'X-WP-Nonce': config.nonce
+                },
+                data: {
+                    markdown: markdown,
+                    post_id: $('#easymde-editor').data('post-id') || 0,
+                    markdown_theme: renderState.markdownTheme,
+                    code_theme: renderState.codeTheme,
+                    code_mac_style: renderState.codeMacStyle,
+                    custom_css_id: renderState.customCssId
+                }
+            }).then(function (response) {
+                $preview.html(response.html || previewFallback(markdown));
+                applyRenderState($preview);
+                enhancePreview($preview);
+            }).catch(function () {
+                $preview.html('<p class="easymde-preview-error">' + escapeHtml(getString('previewError', '')) + '</p>');
+                applyRenderState($preview);
+            });
+        }, 180);
+    }
+
+    function bindScrollSync(textarea, preview) {
+        $(textarea).on('scroll', function () {
+            if (syncLock) {
+                return;
+            }
+
+            syncLock = true;
+            var ratio = textarea.scrollTop / Math.max(1, textarea.scrollHeight - textarea.clientHeight);
+            preview.scrollTop = ratio * Math.max(1, preview.scrollHeight - preview.clientHeight);
+            window.setTimeout(function () {
+                syncLock = false;
+            }, 30);
+        });
+
+        $(preview).on('scroll', function () {
+            if (syncLock) {
+                return;
+            }
+
+            syncLock = true;
+            var ratio = preview.scrollTop / Math.max(1, preview.scrollHeight - preview.clientHeight);
+            textarea.scrollTop = ratio * Math.max(1, textarea.scrollHeight - textarea.clientHeight);
+            window.setTimeout(function () {
+                syncLock = false;
+            }, 30);
+        });
+    }
+
+    function normalizeEventKey(key) {
+        if (!key) {
+            return '';
+        }
+
+        var map = {
+            Tab: 'Tab',
+            Enter: 'Enter',
+            Escape: 'Escape',
+            Esc: 'Escape',
+            Backspace: 'Backspace',
+            Delete: 'Delete',
+            ArrowUp: 'Up',
+            ArrowDown: 'Down',
+            ArrowLeft: 'Left',
+            ArrowRight: 'Right',
+            Home: 'Home',
+            End: 'End',
+            PageUp: 'PageUp',
+            PageDown: 'PageDown',
+            ' ': 'Space'
+        };
+
+        if (map[key]) {
+            return map[key];
+        }
+
+        if (key === 'Shift' || key === 'Alt' || key === 'Control' || key === 'Meta') {
+            return '';
+        }
+
+        if (/^F([1-9]|1[0-2])$/.test(key)) {
+            return key;
+        }
+
+        if (key.length === 1) {
+            if (/[a-z]/i.test(key)) {
+                return key.toUpperCase();
+            }
+
+            if (/[0-9\[\]`\\/\.,\-=]/.test(key)) {
+                return key;
+            }
+        }
+
+        return '';
+    }
+
+    function normalizeEventShortcut(event) {
+        var key = normalizeEventKey(event.key);
+        var parts = [];
+
+        if (!key) {
+            return '';
+        }
+
+        if (isMac) {
+            if (event.metaKey) {
+                parts.push('Cmd');
+            }
+            if (event.ctrlKey) {
+                parts.push('Ctrl');
+            }
+            if (event.altKey) {
+                parts.push('Option');
+            }
+            if (event.shiftKey) {
+                parts.push('Shift');
+            }
+        } else {
+            if (event.ctrlKey) {
+                parts.push('Ctrl');
+            }
+            if (event.altKey) {
+                parts.push('Alt');
+            }
+            if (event.shiftKey) {
+                parts.push('Shift');
+            }
+            if (event.metaKey) {
+                parts.push('Meta');
+            }
+        }
+
+        if (!parts.length) {
+            return '';
+        }
+
+        parts.push(key);
+
+        return parts.join('+');
+    }
+
+    function shouldHandleShortcut(event, $root, textarea) {
+        var target = event.target;
+
+        if (!target || event.isComposing) {
+            return false;
+        }
+
+        if (!$.contains($root[0], target) && target !== $root[0]) {
+            return false;
+        }
+
+        if (target === textarea) {
+            return true;
+        }
+
+        if ($(target).is('input, textarea, select')) {
+            return false;
+        }
+
+        return true;
+    }
+
+    function bindShortcuts($root, textarea, context) {
+        document.addEventListener('keydown', function (event) {
+            var shortcut;
+            var matchedCommand = null;
+
+            if (!shouldHandleShortcut(event, $root, textarea)) {
+                return;
+            }
+
+            shortcut = normalizeEventShortcut(event);
+            if (!shortcut) {
+                if ('Escape' === normalizeEventKey(event.key)) {
+                    closePopovers();
+                }
+                return;
+            }
+
+            Object.keys(commandMap).some(function (commandId) {
+                if (getShortcutForCommand(commandId) === shortcut) {
+                    matchedCommand = commandId;
+                    return true;
+                }
+
+                return false;
+            });
+
+            if (!matchedCommand) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            executeCommand(matchedCommand, context);
+        }, true);
+
+        document.addEventListener('click', function () {
+            closePopovers();
+        });
+    }
+
+    function shouldKeepStyle(prop, value, sourceNode) {
+        if (!value) {
+            return false;
+        }
+
+        if (value === 'rgba(0, 0, 0, 0)' && prop !== 'color') {
+            return false;
+        }
+
+        if (value === 'normal' && (prop === 'letter-spacing' || prop === 'font-style' || prop === 'text-transform')) {
+            return false;
+        }
+
+        if (value === 'auto' && (prop === 'width' || prop === 'height')) {
+            return false;
+        }
+
+        if (sourceNode.tagName === 'A' && prop === 'text-decoration' && value === 'none') {
+            return false;
+        }
+
+        return true;
+    }
+
+    function inlineStyles(sourceNode, cloneNode) {
+        if (!sourceNode || !cloneNode || sourceNode.nodeType !== 1 || cloneNode.nodeType !== 1) {
+            return;
+        }
+
+        var computed = window.getComputedStyle(sourceNode);
+        var declarations = [];
+
+        COPY_STYLE_PROPS.forEach(function (prop) {
+            var value = computed.getPropertyValue(prop);
+
+            if (shouldKeepStyle(prop, value, sourceNode)) {
+                declarations.push(prop + ':' + value);
+            }
+        });
+
+        if (declarations.length) {
+            cloneNode.setAttribute('style', declarations.join(';'));
+        }
+
+        cloneNode.removeAttribute('class');
+        cloneNode.removeAttribute('id');
+        cloneNode.removeAttribute('aria-live');
+        cloneNode.removeAttribute('data-easymde-highlighted');
+        cloneNode.removeAttribute('data-easymde-rendered');
+
+        Array.prototype.forEach.call(sourceNode.childNodes, function (child, index) {
+            inlineStyles(child, cloneNode.childNodes[index]);
+        });
+    }
+
+    function createClipboardMarkup(preview) {
+        if (!preview) {
+            return null;
+        }
+
+        var clone = preview.cloneNode(true);
+
+        clone.querySelectorAll('script, style').forEach(function (node) {
+            node.parentNode.removeChild(node);
+        });
+
+        inlineStyles(preview, clone);
+        clone.setAttribute('style', (clone.getAttribute('style') || '') + ';max-width:100%;margin:0 auto;');
+
+        return clone;
+    }
+
+    function legacyCopyHtml(html) {
+        var selection = window.getSelection();
+        var ranges = [];
+        var container = document.createElement('div');
+        var range = document.createRange();
+        var success = false;
+
+        container.className = 'easymde-copy-sandbox';
+        container.setAttribute('contenteditable', 'true');
+        container.innerHTML = html;
+        document.body.appendChild(container);
+
+        if (selection) {
+            for (var index = 0; index < selection.rangeCount; index += 1) {
+                ranges.push(selection.getRangeAt(index));
+            }
+
+            selection.removeAllRanges();
+            range.selectNodeContents(container);
+            selection.addRange(range);
+        }
+
+        try {
+            success = document.execCommand('copy');
+        } catch (error) {
+            success = false;
+        }
+
+        if (selection) {
+            selection.removeAllRanges();
+            ranges.forEach(function (storedRange) {
+                selection.addRange(storedRange);
+            });
+        }
+
+        document.body.removeChild(container);
+
+        return success;
+    }
+
+    function copyPreviewToWechat(context) {
+        var preview = context && context.preview ? context.preview : document.getElementById('easymde-preview');
+        var clone;
+        var html;
+        var text;
+
+        if (preview && preview.jquery) {
+            preview = preview[0];
+        }
+
+        if (!preview || !preview.innerHTML.trim()) {
+            showFlash(context.flash, 'error', getString('copyWechatFailed', 'Copy for WeChat failed. Please try again in this browser.'));
+            return;
+        }
+
+        clone = createClipboardMarkup(preview);
+        if (!clone) {
+            showFlash(context.flash, 'error', getString('copyWechatFailed', 'Copy for WeChat failed. Please try again in this browser.'));
+            return;
+        }
+
+        html = clone.outerHTML;
+        text = preview.innerText || preview.textContent || '';
+
+        if (window.navigator.clipboard && window.ClipboardItem && window.Blob) {
+            window.navigator.clipboard.write([
+                new window.ClipboardItem({
+                    'text/html': new window.Blob([html], { type: 'text/html' }),
+                    'text/plain': new window.Blob([text], { type: 'text/plain' })
+                })
+            ]).then(function () {
+                showFlash(context.flash, 'success', getString('copyWechatSuccess', 'Copied preview for WeChat.'));
+            }).catch(function () {
+                if (legacyCopyHtml(html)) {
+                    showFlash(context.flash, 'success', getString('copyWechatSuccess', 'Copied preview for WeChat.'));
+                    return;
+                }
+
+                showFlash(context.flash, 'error', getString('copyWechatFailed', 'Copy for WeChat failed. Please try again in this browser.'));
+            });
+
+            return;
+        }
+
+        if (legacyCopyHtml(html)) {
+            showFlash(context.flash, 'success', getString('copyWechatSuccess', 'Copied preview for WeChat.'));
+            return;
+        }
+
+        showFlash(context.flash, 'error', getString('copyWechatUnsupported', 'Clipboard access is not available in this browser.'));
+    }
+
+    function executeCommand(commandId, context) {
+        var command = getCommand(commandId);
+        var textarea = context && context.textarea ? context.textarea : document.getElementById('easymde-source');
+
+        if (!command || !textarea) {
+            return;
+        }
+
+        switch (command.action) {
+        case 'wrap':
+            insertAround(textarea, command.prefix || '', command.suffix || '', command.placeholder || '');
+            break;
+        case 'heading':
+            setHeadingLevel(textarea, command.level || 2);
+            break;
+        case 'paragraph':
+            setHeadingLevel(textarea, 0);
+            break;
+        case 'quote':
+            applyLinePrefix(textarea, command.linePrefix || '> ');
+            break;
+        case 'unorderedList':
+            applyLinePrefix(textarea, command.linePrefix || '- ');
+            break;
+        case 'orderedList':
+            applyOrderedList(textarea);
+            break;
+        case 'codeFence':
+            insertBlock(textarea, '```\n', '\n```', 'code');
+            break;
+        case 'mathBlock':
+            insertBlock(textarea, '$$\n', '\n$$', 'E = mc^2');
+            break;
+        case 'link':
+            insertAround(textarea, '[', '](https://)', 'link text');
+            break;
+        case 'image':
+            openMediaPicker(textarea);
+            break;
+        case 'savePost':
+            triggerSavePost();
+            break;
+        case 'copyWechat':
+            copyPreviewToWechat(context);
+            break;
+        case 'linePrefix':
+            applyLinePrefix(textarea, command.linePrefix || '');
+            break;
+        default:
+            if (command.prefix || command.suffix) {
+                insertAround(textarea, command.prefix || '', command.suffix || '', command.placeholder || '');
+            } else if (command.linePrefix) {
+                applyLinePrefix(textarea, command.linePrefix);
+            }
+        }
+    }
+
+    function createToolbar($toolbar, context) {
+        var $main = $('<div class="easymde-toolbar-section easymde-toolbar-section-main"></div>');
+        var $secondary = $('<div class="easymde-toolbar-section easymde-toolbar-section-secondary"></div>');
+
+        $toolbar.empty().append($main, $secondary);
+
+        getGroupCommands('main', 'format').forEach(function (command) {
+            $main.append(createCommandButton(command, { compact: true, context: context }));
+        });
+
+        createHeadingMenu($main, context.textarea);
+
+        if (getGroupCommands('main', 'block').length) {
+            $main.append($('<span class="easymde-toolbar-divider" aria-hidden="true"></span>'));
+            getGroupCommands('main', 'block').forEach(function (command) {
+                $main.append(createCommandButton(command, { compact: true, context: context }));
+            });
+        }
+
+        if (getGroupCommands('main', 'insert').length) {
+            $main.append($('<span class="easymde-toolbar-divider" aria-hidden="true"></span>'));
+            getGroupCommands('main', 'insert').forEach(function (command) {
+                $main.append(createCommandButton(command, { compact: true, context: context }));
+            });
+        }
+
+        createThemeToggleButton($secondary, context.root, context.refreshPreview);
+        createAppearanceMenu($secondary, context.root, context.preview, context.refreshPreview);
+    }
+
+    function createSideActions($aside, context) {
+        var sideCommands = getSurfaceCommands('side');
+
+        $aside.empty();
+
+        sideCommands.forEach(function (command) {
+            $aside.append(createCommandButton(command, {
+                compact: false,
+                className: 'easymde-side-action',
+                context: context
+            }));
+        });
+    }
+
+    function initEditor() {
+        var $root = $('#easymde-editor');
+        var $source = $('#easymde-source');
+        var $preview = $('#easymde-preview');
+        var $content = $('#postdivrich');
+        var $toolbar = $root.find('.easymde-toolbar');
+        var $sideActions = $root.find('.easymde-side-actions');
+        var storage = normalizeStorage($root);
+        var $flash;
+        var $draftStatus;
+        var context;
+
+        if (!$root.length || !$source.length || !$preview.length) {
+            return;
+        }
+
+        if ($content.length) {
+            $content.addClass('easymde-native-editor-hidden');
+        }
+
+        if (window.EasyMDEEnhancements) {
+            window.EasyMDEEnhancements.initTheme($root[0], config);
+        }
+
+        function refreshPreview() {
+            updatePreview($preview, $source.val());
+        }
+
+        $flash = createFlash($root);
+
+        context = {
+            root: $root,
+            textarea: $source[0],
+            preview: $preview,
+            refreshPreview: refreshPreview,
+            flash: $flash
+        };
+
+        createToolbar($toolbar, context);
+        $draftStatus = createDraftStatus($toolbar);
+        createSideActions($sideActions, context);
+        createDraftNotice($root, $source[0], storage, $flash);
+        bindScrollSync($source[0], $preview[0]);
+        bindShortcuts($root, $source[0], context);
+
+        $source.on('input', function () {
+            mirrorToPostContent(this.value);
+            updatePreview($preview, this.value);
+
+            if (!config.features || config.features.localDrafts !== false) {
+                window.clearTimeout(draftTimer);
+                draftTimer = window.setTimeout(function () {
+                    writeDraft(storage, $source.val());
+                    $draftStatus.text(getString('draftSaved', 'Local draft saved') + ' ' + formatDraftTime(Date.now()));
+                }, 500);
+            }
+        });
+
+        $('#post').on('submit', function () {
+            mirrorToPostContent($source.val());
+        });
+
+        mirrorToPostContent($source.val());
+        updatePreview($preview, $source.val());
+    }
+
+    $(initEditor);
+})(jQuery, window, document);

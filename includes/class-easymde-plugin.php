@@ -113,6 +113,7 @@ final class EasyMDE_Plugin
             'Copy to WeChat' => '复制到公众号',
             'Output actions' => '输出操作',
             'Appearance' => '外观',
+            'Font' => '字体',
             'Headings' => '标题',
             'Dark mode' => '深色模式',
             'Light mode' => '浅色模式',
@@ -144,6 +145,19 @@ final class EasyMDE_Plugin
             'Saved CSS.' => 'CSS 已保存。',
             'CSS save failed.' => 'CSS 保存失败。',
             'No custom CSS saved yet.' => '尚未保存自定义 CSS。',
+            'Custom font' => '自定义',
+            'Windows font' => 'Windows字体',
+            'Apple font' => '苹果字体',
+            'Serif font' => '衬线字体',
+            'No custom font' => '无',
+            'Microsoft YaHei' => '微软雅黑',
+            'PingFang SC Light' => '苹方细体',
+            'PingFang SC Regular' => '苹方常规体',
+            'PingFang TC Light' => '苹方繁体细体',
+            'PingFang TC Regular' => '苹方繁体常规体',
+            'Yes' => '是',
+            'No' => '否',
+            'Fonts are applied in custom, Windows, Apple, and serif fallback order when supported by the current system.' => '注：Windows、苹果、Android不同操作系统支持的字体不相同，没有字体可以在所有系统都生效，在当前操作系统中按照自定义、Windows字体、苹果字体、衬线字体顺序生效',
             'Local draft saved' => '本地草稿已保存',
             'A newer local draft is available.' => '检测到更新的本地草稿。',
             'Restore draft' => '恢复草稿',
@@ -453,6 +467,7 @@ final class EasyMDE_Plugin
                     'darkMode' => __('Dark mode', 'easymde'),
                     'lightMode' => __('Light mode', 'easymde'),
                     'appearance' => __('Appearance', 'easymde'),
+                    'font' => __('Font', 'easymde'),
                     'headings' => __('Headings', 'easymde'),
                     'articleTheme' => __('Article theme', 'easymde'),
                     'codeTheme' => __('Code theme', 'easymde'),
@@ -464,6 +479,11 @@ final class EasyMDE_Plugin
                     'cssSaved' => __('Saved CSS.', 'easymde'),
                     'cssSaveFailed' => __('CSS save failed.', 'easymde'),
                     'noCustomCss' => __('No custom CSS saved yet.', 'easymde'),
+                    'customFont' => __('Custom font', 'easymde'),
+                    'windowsFont' => __('Windows font', 'easymde'),
+                    'appleFont' => __('Apple font', 'easymde'),
+                    'serifFont' => __('Serif font', 'easymde'),
+                    'fontStackHelp' => __('Fonts are applied in custom, Windows, Apple, and serif fallback order when supported by the current system.', 'easymde'),
                     'draftSaved' => __('Local draft saved', 'easymde'),
                     'draftAvailable' => __('A newer local draft is available.', 'easymde'),
                     'restoreDraft' => __('Restore draft', 'easymde'),
@@ -544,6 +564,10 @@ final class EasyMDE_Plugin
             <input type="hidden" id="easymde-code-theme-field" name="easymde_code_theme" value="<?php echo esc_attr($theme_state['codeTheme']); ?>">
             <input type="hidden" id="easymde-code-mac-style-field" name="easymde_code_mac_style" value="<?php echo $theme_state['codeMacStyle'] ? '1' : '0'; ?>">
             <input type="hidden" id="easymde-custom-css-id-field" name="easymde_custom_css_id" value="<?php echo esc_attr($theme_state['customCssId']); ?>">
+            <input type="hidden" id="easymde-custom-font-field" name="easymde_custom_font" value="<?php echo esc_attr($theme_state['customFont']); ?>">
+            <input type="hidden" id="easymde-windows-font-field" name="easymde_windows_font" value="<?php echo esc_attr($theme_state['windowsFont']); ?>">
+            <input type="hidden" id="easymde-apple-font-field" name="easymde_apple_font" value="<?php echo esc_attr($theme_state['appleFont']); ?>">
+            <input type="hidden" id="easymde-serif-font-field" name="easymde_serif_font" value="<?php echo esc_attr($theme_state['serifFont']); ?>">
             <div class="easymde-toolbar" role="toolbar" aria-label="<?php esc_attr_e('Markdown toolbar', 'easymde'); ?>"></div>
             <div class="easymde-workspace">
                 <section class="easymde-pane easymde-pane-source">
@@ -552,7 +576,7 @@ final class EasyMDE_Plugin
                 </section>
                 <section class="easymde-pane easymde-pane-preview">
                     <header class="easymde-pane-header"><?php esc_html_e('Preview', 'easymde'); ?></header>
-                    <article id="easymde-preview" class="<?php echo esc_attr($this->get_rendered_content_classes($theme_state, 'easymde-preview')); ?>" aria-live="polite"></article>
+                    <article id="easymde-preview" class="<?php echo esc_attr($this->get_rendered_content_classes($theme_state, 'easymde-preview')); ?>" style="<?php echo esc_attr($this->get_rendered_content_style($theme_state)); ?>" aria-live="polite"></article>
                 </section>
                 <aside class="easymde-side-actions" aria-label="<?php esc_attr_e('Output actions', 'easymde'); ?>"></aside>
             </div>
@@ -764,8 +788,9 @@ final class EasyMDE_Plugin
         $theme_state = $this->get_theme_state($post_id);
 
         return sprintf(
-            '<div class="%s">%s</div>',
+            '<div class="%s"%s>%s</div>',
             esc_attr($this->get_rendered_content_classes($theme_state)),
+            '' !== $this->get_rendered_content_style($theme_state) ? ' style="' . esc_attr($this->get_rendered_content_style($theme_state)) . '"' : '',
             EasyMDE_Markdown::render($markdown, $theme_state['markdownTheme'])
         );
     }
@@ -799,6 +824,10 @@ final class EasyMDE_Plugin
         $code_theme = $this->sanitize_code_theme_id(isset($_POST['easymde_code_theme']) ? wp_unslash($_POST['easymde_code_theme']) : '');
         $code_mac_style = !empty($_POST['easymde_code_mac_style']) && '0' !== (string) wp_unslash($_POST['easymde_code_mac_style']);
         $custom_css_id = sanitize_key(isset($_POST['easymde_custom_css_id']) ? wp_unslash($_POST['easymde_custom_css_id']) : '');
+        $custom_font = $this->sanitize_font_option_id('customFonts', isset($_POST['easymde_custom_font']) ? wp_unslash($_POST['easymde_custom_font']) : '', 'optima');
+        $windows_font = $this->sanitize_font_option_id('windowsFonts', isset($_POST['easymde_windows_font']) ? wp_unslash($_POST['easymde_windows_font']) : '', 'microsoft-yahei');
+        $apple_font = $this->sanitize_font_option_id('appleFonts', isset($_POST['easymde_apple_font']) ? wp_unslash($_POST['easymde_apple_font']) : '', 'pingfang-sc-light');
+        $serif_font = $this->sanitize_font_option_id('serifOptions', isset($_POST['easymde_serif_font']) ? wp_unslash($_POST['easymde_serif_font']) : '', 'yes');
         $custom_css = '';
 
         if ('custom' === $markdown_theme && '' !== $custom_css_id) {
@@ -820,6 +849,10 @@ final class EasyMDE_Plugin
         update_post_meta($post_id, '_easymde_code_mac_style', $code_mac_style ? '1' : '0');
         update_post_meta($post_id, '_easymde_custom_css_id', $custom_css_id);
         update_post_meta($post_id, '_easymde_custom_css_snapshot', $custom_css);
+        update_post_meta($post_id, '_easymde_custom_font', $custom_font);
+        update_post_meta($post_id, '_easymde_windows_font', $windows_font);
+        update_post_meta($post_id, '_easymde_apple_font', $apple_font);
+        update_post_meta($post_id, '_easymde_serif_font', $serif_font);
 
         update_user_meta(
             get_current_user_id(),
@@ -829,6 +862,10 @@ final class EasyMDE_Plugin
                 'codeTheme' => $code_theme,
                 'codeMacStyle' => $code_mac_style,
                 'customCssId' => $custom_css_id,
+                'customFont' => $custom_font,
+                'windowsFont' => $windows_font,
+                'appleFont' => $apple_font,
+                'serifFont' => $serif_font,
                 'defaultsVersion' => EASYMDE_VERSION,
             )
         );
@@ -966,6 +1003,7 @@ final class EasyMDE_Plugin
         return array(
             'markdownThemes' => array_values($this->get_markdown_themes()),
             'codeThemes' => array_values($this->get_code_themes()),
+            'fontOptions' => $this->get_font_options(),
             'customCss' => array_values(array_map(array($this, 'format_custom_css_item'), $library)),
             'state' => $this->get_theme_state($post_id),
         );
@@ -1062,6 +1100,132 @@ final class EasyMDE_Plugin
         return $themes[$id];
     }
 
+    private function get_font_options()
+    {
+        return array(
+            'customFonts' => array(
+                array(
+                    'id' => 'none',
+                    'label' => __('No custom font', 'easymde'),
+                    'fontFamily' => '',
+                ),
+                array(
+                    'id' => 'optima',
+                    'label' => 'Optima',
+                    'fontFamily' => '"Optima-Regular", "Optima"',
+                ),
+                array(
+                    'id' => 'georgia',
+                    'label' => 'Georgia',
+                    'fontFamily' => '"Georgia"',
+                ),
+                array(
+                    'id' => 'times',
+                    'label' => 'Times',
+                    'fontFamily' => '"Times", "Times New Roman"',
+                ),
+                array(
+                    'id' => 'cochin',
+                    'label' => 'Cochin',
+                    'fontFamily' => '"Cochin"',
+                ),
+                array(
+                    'id' => 'helvetica-neue',
+                    'label' => 'Helvetica Neue',
+                    'fontFamily' => '"Helvetica Neue"',
+                ),
+            ),
+            'windowsFonts' => array(
+                array(
+                    'id' => 'microsoft-yahei',
+                    'label' => __('Microsoft YaHei', 'easymde'),
+                    'fontFamily' => '"Microsoft YaHei", "微软雅黑"',
+                ),
+            ),
+            'appleFonts' => array(
+                array(
+                    'id' => 'pingfang-sc-light',
+                    'label' => __('PingFang SC Light', 'easymde'),
+                    'fontFamily' => '"PingFangSC-light", "PingFangSC-Light"',
+                ),
+                array(
+                    'id' => 'pingfang-sc-regular',
+                    'label' => __('PingFang SC Regular', 'easymde'),
+                    'fontFamily' => '"PingFang SC"',
+                ),
+                array(
+                    'id' => 'pingfang-tc-light',
+                    'label' => __('PingFang TC Light', 'easymde'),
+                    'fontFamily' => '"PingFangTC-light", "PingFangTC-Light"',
+                ),
+                array(
+                    'id' => 'pingfang-tc-regular',
+                    'label' => __('PingFang TC Regular', 'easymde'),
+                    'fontFamily' => '"PingFang TC"',
+                ),
+            ),
+            'serifOptions' => array(
+                array(
+                    'id' => 'yes',
+                    'label' => __('Yes', 'easymde'),
+                    'fontFamily' => '"Optima-Regular", "Optima", "PingFangSC-light", "PingFangTC-light", "PingFang SC", "Cambria", "Cochin", "Georgia", "Times", "Times New Roman", serif',
+                ),
+                array(
+                    'id' => 'no',
+                    'label' => __('No', 'easymde'),
+                    'fontFamily' => '"Roboto", "Oxygen", "Ubuntu", "Cantarell", "PingFangSC-light", "PingFangTC-light", "Open Sans", "Helvetica Neue", sans-serif',
+                ),
+            ),
+        );
+    }
+
+    private function get_font_option($group, $id)
+    {
+        $options = $this->get_font_options();
+        if (empty($options[$group]) || !is_array($options[$group])) {
+            return null;
+        }
+
+        foreach ($options[$group] as $option) {
+            if ($option['id'] === $id) {
+                return $option;
+            }
+        }
+
+        return null;
+    }
+
+    private function get_font_stack($custom_font, $windows_font, $apple_font, $serif_font)
+    {
+        $parts = array();
+        $seen = array();
+        $choices = array(
+            array('customFonts', $custom_font),
+            array('windowsFonts', $windows_font),
+            array('appleFonts', $apple_font),
+            array('serifOptions', $serif_font),
+        );
+
+        foreach ($choices as $choice) {
+            $option = $this->get_font_option($choice[0], $choice[1]);
+            if (!$option || empty($option['fontFamily'])) {
+                continue;
+            }
+
+            foreach (explode(',', $option['fontFamily']) as $font) {
+                $font = trim($font);
+                $key = strtolower($font);
+
+                if ('' !== $font && !isset($seen[$key])) {
+                    $seen[$key] = true;
+                    $parts[] = $font;
+                }
+            }
+        }
+
+        return implode(', ', $parts);
+    }
+
     private function get_theme_state($post_id)
     {
         $post_id = absint($post_id);
@@ -1071,6 +1235,10 @@ final class EasyMDE_Plugin
         $code_theme = $defaults['codeTheme'];
         $code_mac_style = $defaults['codeMacStyle'];
         $custom_css_id = $defaults['customCssId'];
+        $custom_font = $defaults['customFont'];
+        $windows_font = $defaults['windowsFont'];
+        $apple_font = $defaults['appleFont'];
+        $serif_font = $defaults['serifFont'];
         $custom_css = '';
 
         if ($post_id) {
@@ -1092,11 +1260,36 @@ final class EasyMDE_Plugin
 
             $custom_css_id = sanitize_key((string) get_post_meta($post_id, '_easymde_custom_css_id', true));
             $custom_css = $this->sanitize_custom_css((string) get_post_meta($post_id, '_easymde_custom_css_snapshot', true));
+
+            $stored_custom_font = get_post_meta($post_id, '_easymde_custom_font', true);
+            $stored_windows_font = get_post_meta($post_id, '_easymde_windows_font', true);
+            $stored_apple_font = get_post_meta($post_id, '_easymde_apple_font', true);
+            $stored_serif_font = get_post_meta($post_id, '_easymde_serif_font', true);
+
+            if ('' !== $stored_custom_font) {
+                $custom_font = $stored_custom_font;
+            }
+
+            if ('' !== $stored_windows_font) {
+                $windows_font = $stored_windows_font;
+            }
+
+            if ('' !== $stored_apple_font) {
+                $apple_font = $stored_apple_font;
+            }
+
+            if ('' !== $stored_serif_font) {
+                $serif_font = $stored_serif_font;
+            }
         }
 
         $markdown_theme = $this->sanitize_markdown_theme_id($markdown_theme);
         $code_theme = $this->sanitize_code_theme_id($code_theme);
         $custom_css_id = sanitize_key($custom_css_id);
+        $custom_font = $this->sanitize_font_option_id('customFonts', $custom_font, 'optima');
+        $windows_font = $this->sanitize_font_option_id('windowsFonts', $windows_font, 'microsoft-yahei');
+        $apple_font = $this->sanitize_font_option_id('appleFonts', $apple_font, 'pingfang-sc-light');
+        $serif_font = $this->sanitize_font_option_id('serifOptions', $serif_font, 'yes');
 
         if ('custom' === $markdown_theme && '' === $custom_css) {
             $custom_item = $this->get_custom_css_item($custom_css_id);
@@ -1120,6 +1313,11 @@ final class EasyMDE_Plugin
             'customCssId' => $custom_css_id,
             'customCss' => $custom_css,
             'scopedCustomCss' => $this->scope_custom_css($custom_css),
+            'customFont' => $custom_font,
+            'windowsFont' => $windows_font,
+            'appleFont' => $apple_font,
+            'serifFont' => $serif_font,
+            'fontFamily' => $this->get_font_stack($custom_font, $windows_font, $apple_font, $serif_font),
         );
     }
 
@@ -1143,6 +1341,10 @@ final class EasyMDE_Plugin
             'codeTheme' => $this->sanitize_code_theme_id($stored_code_theme),
             'codeMacStyle' => $stored_code_mac_style,
             'customCssId' => sanitize_key(isset($stored['customCssId']) ? $stored['customCssId'] : ''),
+            'customFont' => $this->sanitize_font_option_id('customFonts', isset($stored['customFont']) ? $stored['customFont'] : 'optima', 'optima'),
+            'windowsFont' => $this->sanitize_font_option_id('windowsFonts', isset($stored['windowsFont']) ? $stored['windowsFont'] : 'microsoft-yahei', 'microsoft-yahei'),
+            'appleFont' => $this->sanitize_font_option_id('appleFonts', isset($stored['appleFont']) ? $stored['appleFont'] : 'pingfang-sc-light', 'pingfang-sc-light'),
+            'serifFont' => $this->sanitize_font_option_id('serifOptions', isset($stored['serifFont']) ? $stored['serifFont'] : 'yes', 'yes'),
         );
     }
 
@@ -1164,6 +1366,13 @@ final class EasyMDE_Plugin
         $themes = $this->get_code_themes();
 
         return isset($themes[$id]) ? $id : 'atom-one-dark';
+    }
+
+    private function sanitize_font_option_id($group, $id, $default)
+    {
+        $id = sanitize_key((string) $id);
+
+        return $this->get_font_option($group, $id) ? $id : $default;
     }
 
     private function get_custom_css_library($user_id)
@@ -1305,7 +1514,20 @@ final class EasyMDE_Plugin
             $classes[] = 'easymde-code-mac';
         }
 
+        if (!empty($theme_state['fontFamily'])) {
+            $classes[] = 'easymde-font-overrides';
+        }
+
         return implode(' ', array_filter($classes));
+    }
+
+    private function get_rendered_content_style(array $theme_state)
+    {
+        if (empty($theme_state['fontFamily'])) {
+            return '';
+        }
+
+        return '--easymde-content-font-family: ' . $theme_state['fontFamily'] . ';';
     }
 
     private function get_feature_config()

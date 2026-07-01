@@ -3,6 +3,35 @@
   overflow-wrap: break-word;
 }
 
+.easymde-rendered-content.easymde-font-overrides,
+.easymde-rendered-content.easymde-font-overrides p,
+.easymde-rendered-content.easymde-font-overrides blockquote,
+.easymde-rendered-content.easymde-font-overrides li,
+.easymde-rendered-content.easymde-font-overrides table,
+.easymde-rendered-content.easymde-font-overrides th,
+.easymde-rendered-content.easymde-font-overrides td,
+.easymde-rendered-content.easymde-font-overrides h1,
+.easymde-rendered-content.easymde-font-overrides h2,
+.easymde-rendered-content.easymde-font-overrides h3,
+.easymde-rendered-content.easymde-font-overrides h4,
+.easymde-rendered-content.easymde-font-overrides h5,
+.easymde-rendered-content.easymde-font-overrides h6,
+.easymde-rendered-content.easymde-font-overrides a,
+.easymde-rendered-content.easymde-font-overrides strong,
+.easymde-rendered-content.easymde-font-overrides em,
+.easymde-rendered-content.easymde-font-overrides figcaption,
+.easymde-rendered-content.easymde-font-overrides .content {
+  font-family: var(--easymde-content-font-family) !important;
+}
+
+.easymde-rendered-content.easymde-font-overrides pre,
+.easymde-rendered-content.easymde-font-overrides code,
+.easymde-rendered-content.easymde-font-overrides kbd,
+.easymde-rendered-content.easymde-font-overrides samp,
+.easymde-rendered-content.easymde-font-overrides pre * {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace !important;
+}
+
 .easymde-rendered-content table {
   width: 100%;
   border-collapse: collapse;
@@ -2694,25 +2723,63 @@
 }
 
 /* Markdown2Html-style theme: yamabuki. */
-.easymde-rendered-content.easymde-markdown-theme-yamabuki p {
-  margin: 0 0 20px;
+.easymde-rendered-content.easymde-markdown-theme-yamabuki,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki p,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki blockquote,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki li,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki table,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki th,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki td,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki h1,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki h2,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki h3,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki h4,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki h5,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki h6,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki a,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki strong,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki em,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki figcaption,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki .content {
+  font-family: Inter, "Microsoft YaHei", PingFangSC-regular, sans-serif !important;
+  font-weight: 400;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki {
+  font-size: 14px;
+  line-height: 22.001px;
+  color: rgba(0, 0, 0, 0.8);
   padding: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki p {
+  margin: 0;
+  padding: 8px 0;
+  font-size: 16px;
   line-height: 1.8em;
   color: #3a3a3a;
+  letter-spacing: 0;
+  text-align: left;
+  text-indent: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h1 {
-  font-size: 2.1em;
-  line-height: 1.1em;
-  padding-top: 16px;
-  padding-bottom: 10px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid #c99833;
+  display: block;
+  margin: 30px 0 15px;
+  padding: 0;
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1.5em;
+  border: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h1 .content {
-  color: #515151;
+  display: block;
+  color: #000;
+  font-size: 24px;
+  line-height: 1.5em;
   font-weight: 700;
+  text-align: left;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h2,
@@ -2721,45 +2788,86 @@
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h5,
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h6 {
   line-height: 1.5em;
-  margin-top: 2.2em;
-  margin-bottom: 4px;
+  margin: 30px 0 15px;
+  padding: 0;
+  color: #000;
+  font-weight: 500;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h2 {
-  margin-bottom: 35px;
+  line-height: 1.5em;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h2 .content {
-  display: inline-block;
+  display: block;
   font-weight: bold;
-  background: linear-gradient(#fff 60%, #ffb11b 40%);
+  font-size: 22px;
+  line-height: 1.5em;
+  background-image: linear-gradient(0deg, #ffb11b 40%, transparent 40%);
+  background-color: transparent;
   color: #515151;
-  padding: 2px 13px 2px;
-  margin-right: 3px;
-  height: 50%;
+  padding: 2px 13px;
+  margin: 0;
+  width: auto;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h3 {
-  line-height: 1.4;
-  padding-top: 10px;
-  margin: 10px 0 5px;
+  line-height: 1.5em;
+  padding: 0;
+  margin: 30px 0 15px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki h3 .content {
-  color: #515151;
+  display: block;
+  color: #222;
   font-weight: 700;
-  font-size: 1.0em;
+  font-size: 18px;
+  line-height: 1.8em;
   padding-left: 20px;
-  border-left: 3px solid #f9bf45;
+  padding-right: 0;
+  border-left: 3px solid #ffb11b;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki blockquote {
   border-left-color: #ffb11b;
   background: #fff5e3;
+  border-radius: 0;
+  color: rgba(0, 0, 0, 0.8);
+  font-size: 14px;
+  margin: 20px 0 !important;
+  box-shadow: rgba(0, 0, 0, 0) 0 0 0 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki blockquote p {
-  color: #595959;
+  color: #3a3a3a;
+  margin: 0;
+  padding: 8px 0;
+  font-size: 16px;
+  line-height: 1.8em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki strong,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki em strong {
+  color: #000;
+  font-weight: bold;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki ul,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki ol {
+  margin: 8px 0;
+  padding: 0 0 0 25px;
+  color: #000;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki li,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki li section {
+  margin: 5px 0;
+  color: #3a3a3a;
+  font-size: 16px;
+  font-weight: normal;
+  line-height: 1.8em;
+  letter-spacing: 0;
+  text-align: left;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki a span {
@@ -2783,11 +2891,13 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki img {
-  width: 100%;
-  border-radius: 5px;
+  width: auto;
+  max-width: 100%;
+  border-radius: 4px;
   display: block;
-  margin-bottom: 15px;
+  margin: 0 auto;
   height: auto;
+  box-shadow: rgba(0, 0, 0, 0) 0 0 0 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki figcaption {
@@ -2799,13 +2909,41 @@
 .easymde-rendered-content.easymde-markdown-theme-yamabuki li code {
   color: #9b6e23;
   background-color: #fff5e3;
-  padding: 3px;
-  margin: 3px;
+  font-size: 14px;
+  line-height: 1.8em;
+  padding: 2px 4px;
+  margin: 0 2px;
+  border-radius: 4px;
+  font-family: "Operator Mono", Consolas, Monaco, Menlo, monospace !important;
+  font-weight: 400;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki table tr th,
 .easymde-rendered-content.easymde-markdown-theme-yamabuki table tr td {
+  border-color: rgba(204, 204, 204, 0.4);
+  color: #000;
+  line-height: 1.5em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki table {
+  width: auto;
+  display: table;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki table tr th[align="left"],
+.easymde-rendered-content.easymde-markdown-theme-yamabuki table tr td[align="left"] {
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki table tr th[align="center"],
+.easymde-rendered-content.easymde-markdown-theme-yamabuki table tr td[align="center"] {
   text-align: center;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki table tr th[align="right"],
+.easymde-rendered-content.easymde-markdown-theme-yamabuki table tr td[align="right"] {
+  text-align: right;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki .footnote-word {
@@ -4590,6 +4728,43 @@
   border-radius: 0 0 5px 5px;
   background: #282c34;
   color: #abb2bf;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki.easymde-code-mac pre {
+  padding-top: 30px;
+  border-radius: 5px;
+  background: #282c34;
+  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki.easymde-code-mac pre::before {
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  border-radius: 5px;
+  background-color: #282c34;
+  background-image:
+    radial-gradient(ellipse 5px 5px at 16px 16px, #ed6c60 0 70%, #dc3c36 72% 100%, transparent 102%),
+    radial-gradient(ellipse 5px 5px at 30px 16px, #f7c151 0 70%, #da9721 72% 100%, transparent 102%),
+    radial-gradient(ellipse 5px 5px at 44px 16px, #64c856 0 70%, #1ba125 72% 100%, transparent 102%);
+  background-repeat: no-repeat;
+  box-shadow: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki.easymde-code-mac pre code.hljs {
+  display: -webkit-box;
+  padding: 15px 16px 16px;
+  border-radius: 0;
+  background: #282c34;
+  color: #abb2bf;
+  font-family: "Operator Mono", Consolas, Monaco, Menlo, monospace !important;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki pre code.hljs span {
+  line-height: 26px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue pre code.hljs .hljs-title,

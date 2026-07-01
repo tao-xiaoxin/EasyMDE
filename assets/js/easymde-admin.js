@@ -3,6 +3,7 @@
 
     var config = window.EasyMDEConfig || {};
     var themeOptions = config.themeOptions || {};
+    var fontOptions = themeOptions.fontOptions || {};
     var renderState = normalizeRenderState(themeOptions.state || {});
     var customCssLibrary = themeOptions.customCss || [];
     var previewTimer = null;
@@ -107,7 +108,11 @@
             codeMacStyle: state.codeMacStyle === undefined ? true : !!state.codeMacStyle,
             customCssId: state.customCssId || '',
             customCss: state.customCss || '',
-            scopedCustomCss: state.scopedCustomCss || ''
+            scopedCustomCss: state.scopedCustomCss || '',
+            customFont: state.customFont || 'optima',
+            windowsFont: state.windowsFont || 'microsoft-yahei',
+            appleFont: state.appleFont || 'pingfang-sc-light',
+            serifFont: state.serifFont || 'yes'
         };
     }
 
@@ -672,11 +677,70 @@
         $select.val(renderState.codeTheme || 'atom-one-dark');
     }
 
+    function getFontGroup(group) {
+        return fontOptions && fontOptions[group] ? fontOptions[group] : [];
+    }
+
+    function getFontOption(group, id) {
+        return findById(getFontGroup(group), id);
+    }
+
+    function renderFontSelect($select, group, selected) {
+        $select.empty();
+
+        getFontGroup(group).forEach(function (font) {
+            $select.append($('<option></option>').attr('value', font.id).text(font.label || font.id));
+        });
+
+        $select.val(selected);
+
+        if (!$select.val() && getFontGroup(group).length) {
+            $select.val(getFontGroup(group)[0].id);
+        }
+    }
+
+    function appendFontStackPart(parts, seen, value) {
+        String(value || '').split(',').forEach(function (part) {
+            var font = part.trim();
+            var key = font.toLowerCase();
+
+            if (font && !seen[key]) {
+                seen[key] = true;
+                parts.push(font);
+            }
+        });
+    }
+
+    function buildFontStack() {
+        var parts = [];
+        var seen = {};
+        var groups = [
+            ['customFonts', renderState.customFont],
+            ['windowsFonts', renderState.windowsFont],
+            ['appleFonts', renderState.appleFont],
+            ['serifOptions', renderState.serifFont]
+        ];
+
+        groups.forEach(function (entry) {
+            var option = getFontOption(entry[0], entry[1]);
+
+            if (option && option.fontFamily) {
+                appendFontStackPart(parts, seen, option.fontFamily);
+            }
+        });
+
+        return parts.join(', ');
+    }
+
     function syncThemeFields() {
         $('#easymde-markdown-theme-field').val(renderState.markdownTheme || 'default');
         $('#easymde-code-theme-field').val(renderState.codeTheme || 'atom-one-dark');
         $('#easymde-code-mac-style-field').val(renderState.codeMacStyle ? '1' : '0');
         $('#easymde-custom-css-id-field').val(renderState.markdownTheme === 'custom' ? renderState.customCssId : '');
+        $('#easymde-custom-font-field').val(renderState.customFont || 'optima');
+        $('#easymde-windows-font-field').val(renderState.windowsFont || 'microsoft-yahei');
+        $('#easymde-apple-font-field').val(renderState.appleFont || 'pingfang-sc-light');
+        $('#easymde-serif-font-field').val(renderState.serifFont || 'yes');
     }
 
     function replaceClassPrefix(element, prefix, className) {
@@ -727,6 +791,7 @@
         var markdownClass = renderState.markdownTheme === 'custom'
             ? 'easymde-markdown-theme-custom'
             : 'easymde-markdown-theme-' + renderState.markdownTheme;
+        var fontStack = buildFontStack();
 
         if (!preview) {
             return;
@@ -737,6 +802,13 @@
         $preview.addClass('easymde-rendered-content');
         $preview.toggleClass('easymde-code-mac', !!renderState.codeMacStyle);
         $preview.toggleClass('easymde-custom-css-active', renderState.markdownTheme === 'custom');
+        $preview.toggleClass('easymde-font-overrides', !!fontStack);
+
+        if (fontStack) {
+            preview.style.setProperty('--easymde-content-font-family', fontStack);
+        } else {
+            preview.style.removeProperty('--easymde-content-font-family');
+        }
 
         syncThemeFields();
         applyCodeThemeLink();
@@ -865,6 +937,59 @@
                 $status.text(getString('cssSaveFailed', 'CSS save failed.'));
             });
         });
+
+        registerPopover($button, $panel);
+        $anchor.append($button, $panel);
+        $container.append($anchor);
+    }
+
+    function createFontMenu($container, $preview) {
+        var $anchor = createMenuAnchor('easymde-toolbar-popover-font');
+        var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-menu easymde-toolbar-button-compact"></button>');
+        var $panel = $('<div class="easymde-toolbar-popover easymde-toolbar-popover-font-panel" hidden></div>');
+        var customControl = createSelectControl(getString('customFont', 'Custom font'), 'easymde-custom-font-select');
+        var windowsControl = createSelectControl(getString('windowsFont', 'Windows font'), 'easymde-windows-font-select');
+        var appleControl = createSelectControl(getString('appleFont', 'Apple font'), 'easymde-apple-font-select');
+        var serifControl = createSelectControl(getString('serifFont', 'Serif font'), 'easymde-serif-font-select');
+        var controls = [
+            [customControl, 'customFonts', 'customFont'],
+            [windowsControl, 'windowsFonts', 'windowsFont'],
+            [appleControl, 'appleFonts', 'appleFont'],
+            [serifControl, 'serifOptions', 'serifFont']
+        ];
+
+        if (!getFontGroup('customFonts').length) {
+            return;
+        }
+
+        $button.attr('title', getString('font', 'Font'));
+        $button.attr('aria-label', getString('font', 'Font'));
+        $button.append(
+            $('<span class="easymde-toolbar-text-icon easymde-font-glyph" aria-hidden="true"></span>').text('A'),
+            $('<span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>')
+        );
+
+        controls.forEach(function (entry) {
+            var control = entry[0];
+            var group = entry[1];
+            var stateKey = entry[2];
+
+            renderFontSelect(control.select, group, renderState[stateKey]);
+
+            control.select.on('change', function () {
+                renderState[stateKey] = String($(this).val() || '');
+                applyRenderState($preview);
+            });
+
+            $panel.append(control.root);
+        });
+
+        $panel.append(
+            $('<p class="easymde-toolbar-help"></p>').text(getString(
+                'fontStackHelp',
+                'Fonts are applied in custom, Windows, Apple, and serif fallback order when supported by the current system.'
+            ))
+        );
 
         registerPopover($button, $panel);
         $anchor.append($button, $panel);
@@ -1516,6 +1641,7 @@
         }
 
         createThemeToggleButton($secondary, context.root, context.refreshPreview);
+        createFontMenu($secondary, context.preview);
         createAppearanceMenu($secondary, context.root, context.preview, context.refreshPreview);
     }
 

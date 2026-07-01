@@ -119,9 +119,10 @@ Current implementation:
 
 The editor uses a compact icon toolbar instead of large text buttons. Common
 formatting actions stay in the top bar, headings move into a popover, and theme
-controls live in an appearance panel so the writing surface keeps more room for
-source and preview. Theme choices are still saved per post, and the most recent
-choice is also saved as the current user's default for new posts.
+and font controls live in compact popovers so the writing surface keeps more
+room for source and preview. Theme and font choices are still saved per post,
+and the most recent choices are also saved as the current user's defaults for
+new posts.
 
 EasyMDE ships with Typora-inspired shortcut defaults for formatting, headings,
 lists, code, links, images, saving, and WeChat copy. Administrators can change
@@ -141,6 +142,13 @@ entry.
 Custom CSS is scoped to EasyMDE-rendered content and is sanitized before storage.
 Remote CSS imports and `url(...)` values are stripped so the editor and frontend
 do not depend on external assets by default.
+
+The font popover builds an mdnice-compatible fallback stack from custom Latin
+fonts, Windows fonts, Apple fonts, and a serif/sans-serif final fallback. System
+font names such as Optima, Microsoft YaHei, PingFang, Cochin, and Helvetica Neue
+are tried when the visitor's device has them installed. The selected stack is
+applied to rendered article text in the editor preview and on the frontend while
+code remains monospace.
 
 The built-in article themes include the Markdown2Html-style set: default,
 orange-heart, chazi-purple, nenqing-green, green-vitality, red-crimson,

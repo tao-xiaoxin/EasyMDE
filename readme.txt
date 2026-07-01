@@ -42,9 +42,9 @@ The plugin is designed to be self-contained. It does not require Jetpack, Classi
 
 == Themes and Custom CSS ==
 
-Article theme, code theme, and Mac-style code frame choices are saved per post.
-The current user's most recent choices are reused as defaults for new posts.
-The editor surface keeps these controls inside a compact appearance panel so the
+Article theme, code theme, Mac-style code frame, and font choices are saved per
+post. The current user's most recent choices are reused as defaults for new
+posts. The editor surface keeps these controls inside compact popovers so the
 toolbar can stay icon-focused.
 
 EasyMDE uses Typora-inspired shortcut defaults for formatting, headings, lists,
@@ -60,6 +60,12 @@ deleted.
 
 Custom CSS is scoped to EasyMDE-rendered content. Remote CSS imports and url()
 values are stripped to keep local assets as the default behavior.
+
+The font popover builds an mdnice-compatible fallback stack from custom Latin
+fonts, Windows fonts, Apple fonts, and a serif/sans-serif final fallback. System
+font names are tried when the visitor's device has them installed. The selected
+stack affects rendered article text in preview and on the frontend while code
+remains monospace.
 
 Built-in article themes include the Markdown2Html-style set: default,
 orange-heart, chazi-purple, nenqing-green, green-vitality, red-crimson,

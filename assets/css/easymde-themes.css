@@ -3455,7 +3455,8 @@
   letter-spacing: 0em;
   word-spacing: 0em;
   box-sizing: border-box;
-  max-width: 650px;
+  width: 650px;
+  max-width: none !important;
   padding: 0 10px;
   background-color: rgba(0, 0, 0, 0);
   background-image: linear-gradient(90deg, rgba(50, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0) 6.76%), linear-gradient(360deg, rgba(50, 0, 0, 0.05) 0%, rgba(249, 247, 252, 0) 9.46%);
@@ -3680,7 +3681,6 @@
 .easymde-rendered-content.easymde-markdown-theme-rose-purple table {
   display: table;
   width: auto;
-  max-width: 100%;
   text-align: left;
 }
 
@@ -3817,7 +3817,6 @@
 @media (max-width: 700px) {
   .easymde-rendered-content.easymde-markdown-theme-rose-purple {
     width: calc(100vw - 50px);
-    max-width: calc(100vw - 50px);
     margin-left: calc((100% - (100vw - 50px)) / 2);
     margin-right: calc((100% - (100vw - 50px)) / 2);
   }

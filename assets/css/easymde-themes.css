@@ -3513,21 +3513,26 @@
 
 /* Markdown2Html-style theme: fullstack-blue. */
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue {
-  line-height: 1.25;
-  color: #2b2b2b;
-  font-family: Optima-Regular, Optima, PingFangTC-Light, PingFangSC-light, PingFangTC-light;
-  letter-spacing: 2px;
-  background-image: linear-gradient(90deg, rgba(50, 0, 0, 0.04) 3%, rgba(0, 0, 0, 0) 3%), linear-gradient(360deg, rgba(50, 0, 0, 0.04) 3%, rgba(0, 0, 0, 0) 3%);
+  line-height: 1.5em;
+  color: #000000;
+  font-family: Optima, PingFangSC-light, serif;
+  letter-spacing: 0;
+  background-image:
+    linear-gradient(90deg, rgba(50, 0, 0, 0.03) 0%, rgba(255, 255, 255, 0) 11.49%),
+    linear-gradient(360deg, rgba(50, 0, 0, 0.04) 0%, rgba(255, 255, 255, 0) 12.16%);
   background-size: 20px 20px;
-  background-position: center center;
+  background-position: 0% 0%;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue p {
   color: #2b2b2b;
-  margin: 10px 0px;
-  letter-spacing: 2px;
+  margin: 0;
+  padding: 8px 0;
+  line-height: 1.8em;
+  letter-spacing: 0.02em;
   font-size: 14px;
-  word-spacing: 2px;
+  text-align: left;
+  text-indent: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h1 {
@@ -3543,6 +3548,9 @@
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h2 {
   display:block;
   border-bottom: 4px solid #40B8FA;
+  line-height: 1.5em;
+  margin: 30px 0 15px;
+  padding: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h2 .content {
@@ -3550,14 +3558,20 @@
   color: #40B8FA;
   font-size: 20px;
   margin-left: 25px;
+  line-height: 1.5em;
+  letter-spacing: 0;
+  padding: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h2 .prefix {
   display: flex;
   width: 20px;
   height: 20px;
+  background-image: url("../images/fullstack-blue-h2.svg");
+  background-repeat: no-repeat;
   background-size: 20px 20px;
-  margin-bottom: -22px;
+  background-position: 0 0;
+  margin-bottom: -25px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h2 .suffix {
@@ -3578,63 +3592,75 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h3 {
-  font-size: 17px;
-  font-weight: bold;
-  text-align: center;
+  display: flex;
+  justify-content: center;
+  background-image: url("../images/fullstack-blue-h3.svg");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 30px 30px;
+  line-height: 1.5em;
+  text-align: left;
   position:relative;
-  margin-top: 20px;
-  margin-bottom: 20px;
+  margin-top: 30px;
+  margin-bottom: 15px;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h3 .content {
-  border-bottom: 2px solid rgba(79, 177, 249, .65);
+  display: inline-block;
+  height: 38px;
+  margin: 38px 0 10px;
   color: #2b2b2b;
-  padding-bottom:2px
+  font-size: 18px;
+  font-weight: bold;
+  line-height: 2.4em;
+  letter-spacing: 0;
+  text-align: center;
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h3 .content:before {
-  content:'';
-  width:30px;
-  height:30px;
-  display:block;
-  background-position:center;
-  background-size:30px;
-  margin:auto;
-  opacity:1;
-  background-repeat:no-repeat;
-  margin-bottom:-8px;
+  content: none;
+  display: none;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h4 .content {
-  height:16px;
-  line-height:16px;
+  display: inline-block;
+  height:auto;
+  color: #2b2b2b;
   font-size: 16px;
+  font-weight: bold;
+  line-height:1.5em;
+  letter-spacing: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h4 .content:before {
   content:'';
+  background-image: url("../images/fullstack-blue-h4.svg");
   display:inline-block;
-  width:16px;
-  height:16px;
-  background-size:100% ;
+  width:15px;
+  height:15px;
+  background-size:15px 15px;
   background-position:left bottom;
   background-repeat:no-repeat;
-  width: 16px;
-  height: 15px;
   line-height:15px;
-  margin-right:6px;
+  margin-right:8px;
   margin-bottom:-2px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue ul {
-  font-size: 15px;
-  color: #595959;
-  list-style-type: circle;
+  margin: 8px 0;
+  padding: 0 0 0 25px;
+  color: #000000;
+  list-style-type: disc;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue ol {
-  font-size: 15px;
-  color: #595959;
+  margin: 8px 0;
+  padding: 0 0 0 25px;
+  color: #000000;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue li section,
@@ -3642,13 +3668,19 @@
   font-size: 14px;
   font-weight: normal;
   color: #595959;
+  line-height: 1.8em;
+  letter-spacing: 0.02em;
+  text-align: left;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue blockquote::before {
   content: "❝";
+  display: block;
   color: rgba(64, 184, 250, .5);
-  font-size: 34px;
-  line-height: 1;
+  font-size: 28px;
+  line-height: 1.5em;
+  letter-spacing: 0;
+  text-align: left;
   font-weight: 700;
 }
 
@@ -3656,24 +3688,26 @@
   text-size-adjust: 100%;
   line-height: 1.55em;
   font-weight: 400;
-  border-radius: 6px;
+  border-radius: 8px;
   color: #595959;
   font-style: normal;
   text-align: left;
   box-sizing: inherit;
   border-left: none;
-  border: 1px solid rgba(64, 184, 250, .4);
+  border: 1px solid rgba(64, 184, 255, .4);
   background: rgba(64, 184, 250, .1);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue blockquote p {
-  color: #595959;
+  color: #3b3b3b;
+  font-size: 14px;
+  line-height: 1.8em;
+  letter-spacing: 0.02em;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue blockquote::after {
-  content: "❞";
-  float: right;
-  color: rgba(64, 184, 250, .5);
+  content: none;
+  display: none;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue a span {
@@ -3696,9 +3730,9 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue em {
-  font-style: normal;
+  font-style: italic;
   color: #3594F7;
-  font-weight:bold;
+  font-weight: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue em strong {
@@ -3732,6 +3766,7 @@
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue figcaption:before {
   content:'';
+  background-image: url("../images/fullstack-blue-caption.svg");
   display:inline-block;
   width:18px;
   height:18px;
@@ -3745,16 +3780,27 @@
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue p code,
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue li code {
   color: #3594F7;
-  background: rgba(59, 170, 250, .1);
-  padding:0 2px;
-  border-radius:2px;
-  height:21px;
-  line-height:22px;
+  background: rgba(27,31,35,.05);
+  padding:2px 4px;
+  margin: 0 2px;
+  border-radius:4px;
+  line-height:1.8em;
+  letter-spacing: 0;
+  font-family: Operator Mono, Consolas, Monaco, Menlo, monospace;
+  word-break: break-all;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue .code-snippet__fix {
   background: #f7f7f7;
   border-radius: 2px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue pre {
+  margin: 10px 0;
+  padding: 0;
+  border-radius: 5px;
+  box-shadow: rgba(0, 0, 0, 0.55) 0px 2px 10px;
+  text-align: left;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue pre code {
@@ -3777,13 +3823,13 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue .footnote-word {
-  font-weight: normal;
-  color: #595959;
+  font-weight: bold;
+  color: #3594F7;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue .footnote-ref {
-  font-weight: normal;
-  color: #595959;
+  font-weight: bold;
+  color: #3594F7;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue .footnote-item em {
@@ -3793,21 +3839,37 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue .footnotes {
-  background: rgba(53, 148, 247, .4);
+  background: rgba(53, 148, 247, .3);
   padding: 20px 20px 20px 20px;
   font-size: 14px;
-  border-radius: 6px;
-  border: 1px solid rgba(53, 148, 247, 1);
+  border-radius: 8px;
+  border: 2px solid #40b8fa;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue .footnotes-sep:before {
   content: 'Reference';
   color: #595959;
   letter-spacing: 1px;
-  border-bottom: 2px solid rgba(64, 184, 250, 1);
+  border-bottom: 2px solid #40b8fa;
   display: inline;
-  background: linear-gradient(white 60%, rgba(64, 184, 250, .4) 40%);
-  font-size: 20px;
+  background: linear-gradient(rgba(255, 255, 255, .7) 0%, rgba(64, 184, 250, .4) 100%);
+  font-size: 18px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue .footnotes-sep {
+  width: fit-content;
+  margin: 30px auto 15px;
+  border-bottom: 2px solid #40b8fa;
+  background: linear-gradient(rgba(255, 255, 255, .7) 0%, rgba(64, 184, 250, .4) 100%);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue .footnotes .footnote-num {
+  color: rgba(0, 0, 0, .6);
+  padding-top: 2px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue .footnotes .footnote-item p {
+  color: #595959;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue .footnote-item p {
@@ -4400,25 +4462,15 @@
 
 /* Local replacements for remote decorative images in the visual references. */
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h2 .prefix {
-  border: 2px solid #40b8fa;
-  border-radius: 50%;
-  background:
-    linear-gradient(90deg, transparent 7px, #40b8fa 7px, #40b8fa 11px, transparent 11px),
-    linear-gradient(0deg, transparent 7px, #40b8fa 7px, #40b8fa 11px, transparent 11px);
+  background-image: url("../images/fullstack-blue-h2.svg");
 }
 
-.easymde-rendered-content.easymde-markdown-theme-fullstack-blue h3 .content::before {
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 50% 50%, #40b8fa 0 4px, transparent 5px),
-    linear-gradient(45deg, transparent 0 13px, rgba(64, 184, 250, 0.55) 13px 17px, transparent 17px);
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue h3 {
+  background-image: url("../images/fullstack-blue-h3.svg");
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h4 .content::before {
-  border-radius: 50%;
-  background:
-    linear-gradient(90deg, transparent 4px, #40b8fa 4px, #40b8fa 8px, transparent 8px),
-    linear-gradient(0deg, transparent 4px, #40b8fa 4px, #40b8fa 8px, transparent 8px);
+  background-image: url("../images/fullstack-blue-h4.svg");
 }
 
 .easymde-rendered-content.easymde-markdown-theme-cute-green h1::before,

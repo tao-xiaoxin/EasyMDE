@@ -101,6 +101,25 @@
     white-space: nowrap;
 }
 
+.easymde-toolbar-copy-action {
+    border-color: rgba(7, 192, 96, 0.36);
+    background: linear-gradient(180deg, #f7fffa 0%, #edf9f1 100%);
+    color: #0f7d3b;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.easymde-toolbar-copy-action:hover,
+.easymde-toolbar-copy-action:focus {
+    border-color: #07c060;
+    background: linear-gradient(180deg, #f2fff7 0%, #e5f8eb 100%);
+    color: #075f2c;
+    box-shadow: 0 8px 18px rgba(7, 192, 96, 0.16);
+}
+
+.easymde-toolbar-copy-action .easymde-wechat-glyph {
+    background: #fff;
+}
+
 .easymde-toolbar-text-icon,
 .easymde-wechat-glyph {
     display: inline-flex;
@@ -119,12 +138,22 @@
 }
 
 .easymde-wechat-glyph {
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
     border-radius: 999px;
-    background: linear-gradient(135deg, #2cc15f 0%, #1b9d4a 100%);
-    color: #fff;
-    box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.08);
+    background: rgba(7, 192, 96, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(7, 192, 96, 0.18);
+}
+
+.easymde-wechat-glyph svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+    overflow: visible;
+}
+
+.easymde-wechat-glyph path {
+    fill: #07c060;
 }
 
 .easymde-toolbar-popover-anchor {
@@ -150,6 +179,13 @@
 
 .easymde-toolbar-popover-appearance-panel {
     width: min(360px, calc(100vw - 48px));
+}
+
+.easymde-toolbar-popover-headings .easymde-toolbar-popover {
+    right: auto;
+    left: 0;
+    width: 232px;
+    max-width: calc(100vw - 48px);
 }
 
 .easymde-popover-item {
@@ -296,7 +332,7 @@
 
 .easymde-workspace {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 88px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
     height: max(720px, calc(100vh - 250px));
     min-height: 640px;
@@ -369,45 +405,65 @@
     display: flex;
     flex-direction: column;
     justify-content: center;
+    align-items: center;
     gap: 12px;
-    padding: 16px 12px;
+    padding: 20px 10px;
     border-left: 1px solid #dcdcde;
-    background:
-        linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(243, 246, 248, 0.92));
+    background: linear-gradient(180deg, #fbfcfd 0%, #f4f7f8 100%);
+}
+
+.easymde-side-actions[hidden] {
+    display: none;
 }
 
 .easymde-side-action {
-    width: 100%;
-    min-height: 136px;
-    padding: 14px 10px;
-    border-radius: 18px;
-    background: linear-gradient(180deg, #1fad53 0%, #178e44 100%);
-    border-color: #178e44;
+    width: 68px;
+    min-width: 68px;
+    min-height: 164px;
+    padding: 18px 9px 16px;
+    border: 1px solid #159447;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #22b95a 0%, #149347 100%);
     color: #fff;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
     text-align: center;
-    box-shadow: 0 16px 24px rgba(24, 142, 68, 0.22);
+    box-shadow:
+        0 18px 30px rgba(20, 147, 71, 0.26),
+        inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
 .easymde-side-action:hover,
 .easymde-side-action:focus {
-    border-color: #14813d;
+    border-color: #0d7f39;
+    background: linear-gradient(180deg, #26c763 0%, #108841 100%);
     color: #fff;
-    box-shadow: 0 18px 28px rgba(24, 142, 68, 0.28);
+    box-shadow:
+        0 20px 34px rgba(20, 147, 71, 0.32),
+        inset 0 1px 0 rgba(255, 255, 255, 0.26);
 }
 
 .easymde-side-action .easymde-toolbar-label {
-    font-size: 12px;
-    line-height: 1.45;
+    max-width: 4.5em;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.25;
+    white-space: normal;
 }
 
 .easymde-side-action .easymde-wechat-glyph {
-    width: 34px;
-    height: 34px;
-    font-size: 18px;
-    background: rgba(255, 255, 255, 0.18);
-    box-shadow: none;
+    width: 46px;
+    height: 46px;
+    background: #fff;
+    box-shadow:
+        0 8px 18px rgba(12, 112, 51, 0.22),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.84);
+}
+
+.easymde-side-action .easymde-wechat-glyph svg {
+    width: 33px;
+    height: 33px;
 }
 
 .easymde-copy-sandbox {
@@ -455,6 +511,19 @@
     border-color: #60a5fa;
     color: #bfdbfe;
     background: #13233c;
+}
+
+.easymde-theme-dark .easymde-toolbar-copy-action {
+    border-color: rgba(34, 197, 94, 0.48);
+    background: #10281b;
+    color: #bbf7d0;
+}
+
+.easymde-theme-dark .easymde-toolbar-copy-action:hover,
+.easymde-theme-dark .easymde-toolbar-copy-action:focus {
+    border-color: #22c55e;
+    background: #12351f;
+    color: #dcfce7;
 }
 
 .easymde-theme-dark .easymde-toolbar-text-icon {
@@ -521,6 +590,31 @@
 
 .easymde-theme-dark .easymde-side-actions {
     background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(17, 24, 39, 0.96));
+}
+
+.easymde-theme-dark .easymde-side-action {
+    border-color: #16a34a;
+    background: linear-gradient(180deg, #22b95a 0%, #138a43 100%);
+    color: #fff;
+}
+
+.easymde-theme-dark .easymde-side-action:hover,
+.easymde-theme-dark .easymde-side-action:focus {
+    border-color: #22c55e;
+    background: linear-gradient(180deg, #28c866 0%, #119044 100%);
+    color: #fff;
+}
+
+.easymde-theme-dark .easymde-wechat-glyph {
+    background: rgba(7, 192, 96, 0.14);
+    box-shadow: inset 0 0 0 1px rgba(7, 192, 96, 0.24);
+}
+
+.easymde-theme-dark .easymde-side-action .easymde-wechat-glyph {
+    background: #f8fffb;
+    box-shadow:
+        0 8px 18px rgba(0, 0, 0, 0.2),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.86);
 }
 
 .easymde-preview h1,
@@ -619,16 +713,35 @@
     .easymde-side-actions {
         flex-direction: row;
         justify-content: flex-end;
+        align-items: center;
+        padding: 12px 14px;
         border-left: 0;
         border-top: 1px solid #dcdcde;
     }
 
     .easymde-side-action {
         width: auto;
-        min-width: 220px;
-        min-height: 52px;
+        min-width: 190px;
+        min-height: 58px;
+        padding: 8px 18px;
         flex-direction: row;
         justify-content: center;
+        gap: 10px;
+    }
+
+    .easymde-side-action .easymde-toolbar-label {
+        max-width: none;
+        white-space: nowrap;
+    }
+
+    .easymde-side-action .easymde-wechat-glyph {
+        width: 38px;
+        height: 38px;
+    }
+
+    .easymde-side-action .easymde-wechat-glyph svg {
+        width: 27px;
+        height: 27px;
     }
 
     .easymde-source,

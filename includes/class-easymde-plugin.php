@@ -1773,7 +1773,7 @@ final class EasyMDE_Plugin
             array(
                 'label' => 'Copy to WeChat',
                 'icon' => 'copy',
-                'surface' => 'side',
+                'surface' => 'main',
                 'action' => 'copyWechat',
                 'group' => 'export',
                 'defaultShortcutWin' => 'Ctrl+Shift+W',

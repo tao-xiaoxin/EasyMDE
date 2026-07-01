@@ -256,16 +256,53 @@
             .replace(/'/g, '&#039;');
     }
 
+    function focusWithoutScrolling(element) {
+        if (!element || typeof element.focus !== 'function') {
+            return;
+        }
+
+        try {
+            element.focus({ preventScroll: true });
+        } catch (error) {
+            element.focus();
+        }
+    }
+
+    function restoreScrollPosition(target, top, left) {
+        if (!target) {
+            return;
+        }
+
+        if (typeof top === 'number') {
+            target.scrollTop = top;
+        }
+
+        if (typeof left === 'number') {
+            target.scrollLeft = left;
+        }
+    }
+
     function applyTextChange(textarea, value, selectionStart, selectionEnd) {
+        var scrollTop = textarea.scrollTop;
+        var scrollLeft = textarea.scrollLeft;
+        var windowScrollX = window.pageXOffset;
+        var windowScrollY = window.pageYOffset;
+
         textarea.value = value;
-        textarea.focus();
+        focusWithoutScrolling(textarea);
 
         if (typeof selectionStart === 'number' && typeof selectionEnd === 'number') {
             textarea.selectionStart = selectionStart;
             textarea.selectionEnd = selectionEnd;
         }
 
+        restoreScrollPosition(textarea, scrollTop, scrollLeft);
+        window.scrollTo(windowScrollX, windowScrollY);
         $(textarea).trigger('input');
+        window.setTimeout(function () {
+            restoreScrollPosition(textarea, scrollTop, scrollLeft);
+            window.scrollTo(windowScrollX, windowScrollY);
+        }, 0);
     }
 
     function insertAround(textarea, prefix, suffix, placeholder) {
@@ -428,6 +465,26 @@
         $('#post').trigger('submit');
     }
 
+    var wechatIconPaths = [
+        'M38.7,15.3c-3.7-4.9-10.2-6.2-16.1-4.1c0.2,0.1,0.4,0.1,0.6,0.2c8.7,2.9,13.3,12.3,10.4,21 c-0.8,2.3-2,4.3-3.5,6c1.9-0.5,3.8-1.3,5.4-2.5C42.1,30.8,43.4,21.4,38.7,15.3z',
+        'M17,10.4L17,10.4C17,10.4,17,10.4,17,10.4c0.4-0.3,0.7-0.5,1.1-0.8c0,0,0,0,0.1,0c0.4-0.2,0.8-0.4,1.1-0.7 c0,0,0.1,0,0.1-0.1c0.8-0.4,1.6-0.7,2.4-1c0.1,0,0.1,0,0.2-0.1c0.4-0.1,0.8-0.3,1.2-0.4c0,0,0.1,0,0.1,0c0.4-0.1,0.8-0.2,1.2-0.2 c0.1,0,0.1,0,0.2,0C25.3,7,25.7,7,26.1,7c0.1,0,0.2,0,0.3,0c0.4,0,0.9-0.1,1.3-0.1c0.5,0,1,0,1.5,0.1c0.1,0,0.1,0,0.2,0 c0.5,0,0.9,0.1,1.4,0.2c0.1,0,0.2,0,0.2,0c0.5,0.1,0.9,0.2,1.3,0.3c0.1,0,0.1,0,0.2,0.1C33,7.7,33.5,7.8,33.9,8 c-0.2-0.4-0.4-0.7-0.4-0.7C30.6,2.7,25.8,0,20.6,0c-3.1,0-7.9,1.1-11.5,5.4c-2.4,2.9-3.2,6.3-2.7,9.7c0.3,2.3,1.6,5.4,3.5,7.3 C10.6,17.5,13.2,13.2,17,10.4z',
+        'M20.6,30.9c-1.3,0-2.6-0.2-3.8-0.4c-0.1,0-0.3,0-0.5,0c-0.4,0-0.7,0.1-1,0.3l-4,2.6 c-0.1,0.1-0.2,0.1-0.4,0.1c-0.3,0-0.6-0.3-0.7-0.6c0-0.2,0-0.3,0.1-0.5c0-0.1,0.4-2,0.7-3.2c0-0.1,0.1-0.3,0-0.4 c0-0.4-0.2-0.8-0.6-1c-4.3-2.9-7.2-7.5-7.8-12.2c-1.1,1.7-1.6,3-2.2,5c-2.1,7.3,2.5,16,9.9,18.4c8.6,2.8,16.7-0.3,19.5-7.6 c0.3-0.9,0.7-2.4,0.8-3.6C27.7,29.9,24.6,30.9,20.6,30.9z'
+    ];
+
+    function createWechatIcon() {
+        var paths = wechatIconPaths.map(function (path) {
+            return '<path d="' + path + '"></path>';
+        }).join('');
+
+        return $(
+            '<span class="easymde-wechat-glyph" aria-hidden="true">' +
+                '<svg viewBox="0 0 40 40" focusable="false" aria-hidden="true">' +
+                    paths +
+                '</svg>' +
+            '</span>'
+        );
+    }
+
     function createIconContent(command, options) {
         var $fragment = $(document.createDocumentFragment());
         var label = getCommandLabel(command);
@@ -436,15 +493,12 @@
         var iconTextMap = {
             mediacode: '</>',
             'media-code': '</>',
-            heading: 'H',
-            copy: '微'
+            heading: 'H'
         };
         var $icon = null;
 
-        if (compact && icon === 'copy') {
-            $icon = $('<span class="easymde-wechat-glyph" aria-hidden="true"></span>').text('微');
-        } else if (icon === 'copy') {
-            $icon = $('<span class="easymde-wechat-glyph" aria-hidden="true"></span>').text('微');
+        if (icon === 'copy') {
+            $icon = createWechatIcon();
         } else if (iconTextMap[icon]) {
             $icon = $('<span class="easymde-toolbar-text-icon" aria-hidden="true"></span>').text(iconTextMap[icon]);
         } else {
@@ -476,6 +530,10 @@
         $button.toggleClass('easymde-toolbar-button-compact', compact);
         $button.append(createIconContent(command, { compact: compact }));
 
+        $button.on('mousedown', function (event) {
+            event.preventDefault();
+        });
+
         $button.on('click', function () {
             executeCommand(command.id, options && options.context ? options.context : {});
         });
@@ -487,6 +545,10 @@
         openPopovers.push({
             button: $button,
             panel: $panel
+        });
+
+        $button.on('mousedown', function (event) {
+            event.preventDefault();
         });
 
         $button.on('click', function (event) {
@@ -541,6 +603,10 @@
                 $('<span class="easymde-popover-item-label"></span>').text(getCommandLabel(command)),
                 $('<span class="easymde-popover-item-shortcut"></span>').text(shortcut)
             );
+
+            $item.on('mousedown', function (event) {
+                event.preventDefault();
+            });
 
             $item.on('click', function () {
                 closePopovers();
@@ -915,19 +981,63 @@
         }
     }
 
+    function capturePreviewScroll(preview) {
+        var scrollRange;
+
+        if (!preview) {
+            return null;
+        }
+
+        scrollRange = Math.max(1, preview.scrollHeight - preview.clientHeight);
+
+        return {
+            top: preview.scrollTop,
+            left: preview.scrollLeft,
+            ratio: preview.scrollTop / scrollRange
+        };
+    }
+
+    function restorePreviewScroll(preview, state) {
+        var nextRange;
+
+        if (!preview || !state) {
+            return;
+        }
+
+        nextRange = Math.max(1, preview.scrollHeight - preview.clientHeight);
+        syncLock = true;
+        preview.scrollTop = Math.min(nextRange, Math.max(0, state.ratio * nextRange || state.top));
+        preview.scrollLeft = state.left || 0;
+        window.setTimeout(function () {
+            syncLock = false;
+        }, 30);
+    }
+
     function updatePreview($preview, markdown) {
+        var previewNode = $preview[0];
+
+        function finishPreviewUpdate(scrollState) {
+            applyRenderState($preview);
+            restorePreviewScroll(previewNode, scrollState);
+        }
+
         window.clearTimeout(previewTimer);
         previewTimer = window.setTimeout(function () {
+            var scrollState;
+
             if (!markdown.trim()) {
+                scrollState = capturePreviewScroll(previewNode);
                 $preview.html('<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty', '')) + '</p>');
-                applyRenderState($preview);
+                finishPreviewUpdate(scrollState);
                 return;
             }
 
             if (!window.wp || !window.wp.apiFetch || !config.restUrl) {
+                scrollState = capturePreviewScroll(previewNode);
                 $preview.html(previewFallback(markdown));
-                applyRenderState($preview);
+                finishPreviewUpdate(scrollState);
                 enhancePreview($preview);
+                restorePreviewScroll(previewNode, scrollState);
                 return;
             }
 
@@ -946,12 +1056,15 @@
                     custom_css_id: renderState.customCssId
                 }
             }).then(function (response) {
+                scrollState = capturePreviewScroll(previewNode);
                 $preview.html(response.html || previewFallback(markdown));
-                applyRenderState($preview);
+                finishPreviewUpdate(scrollState);
                 enhancePreview($preview);
+                restorePreviewScroll(previewNode, scrollState);
             }).catch(function () {
+                scrollState = capturePreviewScroll(previewNode);
                 $preview.html('<p class="easymde-preview-error">' + escapeHtml(getString('previewError', '')) + '</p>');
-                applyRenderState($preview);
+                finishPreviewUpdate(scrollState);
             });
         }, 180);
     }
@@ -1216,6 +1329,8 @@
         var ranges = [];
         var container = document.createElement('div');
         var range = document.createRange();
+        var scrollX = window.pageXOffset;
+        var scrollY = window.pageYOffset;
         var success = false;
 
         container.className = 'easymde-copy-sandbox';
@@ -1247,6 +1362,7 @@
         }
 
         document.body.removeChild(container);
+        window.scrollTo(scrollX, scrollY);
 
         return success;
     }
@@ -1363,6 +1479,7 @@
     function createToolbar($toolbar, context) {
         var $main = $('<div class="easymde-toolbar-section easymde-toolbar-section-main"></div>');
         var $secondary = $('<div class="easymde-toolbar-section easymde-toolbar-section-secondary"></div>');
+        var exportCommands = getGroupCommands('main', 'export');
 
         $toolbar.empty().append($main, $secondary);
 
@@ -1386,6 +1503,18 @@
             });
         }
 
+        exportCommands.forEach(function (command) {
+            $secondary.append(createCommandButton(command, {
+                compact: true,
+                className: 'easymde-toolbar-copy-action',
+                context: context
+            }));
+        });
+
+        if (exportCommands.length) {
+            $secondary.append($('<span class="easymde-toolbar-divider" aria-hidden="true"></span>'));
+        }
+
         createThemeToggleButton($secondary, context.root, context.refreshPreview);
         createAppearanceMenu($secondary, context.root, context.preview, context.refreshPreview);
     }
@@ -1394,6 +1523,7 @@
         var sideCommands = getSurfaceCommands('side');
 
         $aside.empty();
+        $aside.prop('hidden', !sideCommands.length);
 
         sideCommands.forEach(function (command) {
             $aside.append(createCommandButton(command, {

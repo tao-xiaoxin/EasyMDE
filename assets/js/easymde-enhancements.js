@@ -16,6 +16,55 @@
         return !!(root && root.closest && root.closest('.easymde-theme-dark'));
     }
 
+    function normalizeFullstackBlueHighlight(code) {
+        var highlighted;
+        var builtInTokens = {
+            'let': true,
+            'log': true,
+            'return': true,
+            'source': true,
+            'type': true
+        };
+        var plainTokens = {
+            'boolean': true,
+            'class': true,
+            'const': true,
+            'extends': true,
+            'implements': true,
+            'interface': true,
+            'keyof': true,
+            'new': true,
+            'number': true,
+            'string': true,
+            'void': true
+        };
+
+        if (!code.closest || !code.closest('.easymde-markdown-theme-fullstack-blue')) {
+            return;
+        }
+
+        highlighted = code.querySelectorAll('.hljs-built_in, .hljs-keyword, .hljs-meta, .hljs-number, .hljs-title, .hljs-type');
+        highlighted.forEach(function (span) {
+            var token = span.textContent.trim();
+
+            span.classList.remove('easymde-mdnice-built-in', 'easymde-mdnice-keyword', 'easymde-mdnice-plain');
+
+            if (builtInTokens[token]) {
+                span.classList.add('easymde-mdnice-built-in');
+                return;
+            }
+
+            if ('function' === token) {
+                span.classList.add('easymde-mdnice-keyword');
+                return;
+            }
+
+            if (plainTokens[token] || span.classList.contains('hljs-title') || span.classList.contains('hljs-meta') || span.classList.contains('hljs-number')) {
+                span.classList.add('easymde-mdnice-plain');
+            }
+        });
+    }
+
     function highlightCode(root, config) {
         if (!featureEnabled(config, 'syntaxHighlight') || !window.hljs) {
             return;
@@ -27,6 +76,7 @@
             }
 
             window.hljs.highlightElement(code);
+            normalizeFullstackBlueHighlight(code);
             code.dataset.easymdeHighlighted = '1';
         });
     }

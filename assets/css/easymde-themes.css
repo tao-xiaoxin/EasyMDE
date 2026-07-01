@@ -3567,7 +3567,7 @@
   display: flex;
   width: 20px;
   height: 20px;
-  background-image: url("../images/fullstack-blue-h2.svg");
+  background-image: url("../images/fullstack-blue-h2.png");
   background-repeat: no-repeat;
   background-size: 20px 20px;
   background-position: 0 0;
@@ -3594,7 +3594,7 @@
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h3 {
   display: flex;
   justify-content: center;
-  background-image: url("../images/fullstack-blue-h3.svg");
+  background-image: url("../images/fullstack-blue-h3.png");
   background-position: center;
   background-repeat: no-repeat;
   background-size: 30px 30px;
@@ -3638,7 +3638,7 @@
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h4 .content:before {
   content:'';
-  background-image: url("../images/fullstack-blue-h4.svg");
+  background-image: url("../images/fullstack-blue-h4.png");
   display:inline-block;
   width:15px;
   height:15px;
@@ -3765,16 +3765,8 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue figcaption:before {
-  content:'';
-  background-image: url("../images/fullstack-blue-caption.svg");
-  display:inline-block;
-  width:18px;
-  height:18px;
-  background-size:18px;
-  background-repeat:no-repeat;
-  background-position:center;
-  margin-right:5px;
-  margin-bottom:-5px;
+  content: none;
+  display: none;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue p code,
@@ -4462,15 +4454,15 @@
 
 /* Local replacements for remote decorative images in the visual references. */
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h2 .prefix {
-  background-image: url("../images/fullstack-blue-h2.svg");
+  background-image: url("../images/fullstack-blue-h2.png");
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h3 {
-  background-image: url("../images/fullstack-blue-h3.svg");
+  background-image: url("../images/fullstack-blue-h3.png");
 }
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h4 .content::before {
-  background-image: url("../images/fullstack-blue-h4.svg");
+  background-image: url("../images/fullstack-blue-h4.png");
 }
 
 .easymde-rendered-content.easymde-markdown-theme-cute-green h1::before,
@@ -4573,4 +4565,47 @@
 
 .easymde-rendered-content.easymde-code-mac[class*="easymde-markdown-theme-"] pre {
   box-shadow: rgba(0, 0, 0, 0.35) 0 2px 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue.easymde-code-mac pre {
+  padding-top: 30px;
+  border-radius: 5px;
+  background: #282c34;
+  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue.easymde-code-mac pre::before {
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  border-radius: 5px;
+  background: #282c34 url("../images/fullstack-blue-code-window.svg") 10px 10px / 40px auto no-repeat;
+  box-shadow: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue.easymde-code-mac pre code.hljs {
+  display: block;
+  padding: 15px 16px 16px;
+  border-radius: 0 0 5px 5px;
+  background: #282c34;
+  color: #abb2bf;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue pre code.hljs .hljs-title,
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue pre code.hljs .hljs-meta,
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue pre code.hljs .hljs-number {
+  color: #abb2bf;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue pre code.hljs .easymde-mdnice-plain {
+  color: #abb2bf;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue pre code.hljs .easymde-mdnice-built-in {
+  color: #e6c07b;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue pre code.hljs .easymde-mdnice-keyword {
+  color: #c678dd;
 }

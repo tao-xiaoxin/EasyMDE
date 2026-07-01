@@ -69,8 +69,9 @@ remains monospace.
 
 Built-in article themes include the Markdown2Html-style set: default,
 orange-heart, chazi-purple, nenqing-green, green-vitality, red-crimson,
-blue-ying, lanqing, yamabuki, grid-black, geek-black, rose-purple, cute-green,
-fullstack-blue, minimal-black, orange-blue, and frontend-peak. They style
+blue-ying, lanqing, yamabuki, grid-black, geek-black, rose-purple,
+ningye-purple, cute-green, fullstack-blue, minimal-black, orange-blue, and
+frontend-peak. They style
 colors, headings, typography, blockquotes, inline code, lists, tables, images,
 table of contents, and math blocks through scoped CSS.
 

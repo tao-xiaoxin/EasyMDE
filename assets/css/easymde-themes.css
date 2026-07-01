@@ -3822,6 +3822,458 @@
   }
 }
 
+/* mdnice rendered theme: ningye-purple. */
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple {
+  --easymde-theme-font-family: Inter, "Microsoft YaHei", PingFangSC-regular, sans-serif;
+  color: rgb(0, 0, 0);
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
+  font-size: 16px;
+  line-height: 1.5em;
+  letter-spacing: 0em;
+  word-spacing: 0em;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 650px;
+  margin: 0 auto;
+  padding: 0;
+  background-color: rgba(0, 0, 0, 0);
+  background-image: none;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple *,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple *::before,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple *::after {
+  box-sizing: border-box;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple p {
+  color: rgb(0, 0, 0);
+  font-size: 14px;
+  line-height: 1.8em;
+  letter-spacing: 0.02em;
+  text-align: left;
+  text-indent: 0em;
+  font-weight: normal;
+  margin: 0;
+  padding: 8px 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h1,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h2,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h3,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h4,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h5,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h6 {
+  font-weight: bold;
+  color: rgb(0, 0, 0);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h1 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h2 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h3 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h4 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h5 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h6 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h1 .suffix,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h2 .suffix,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h3 .suffix,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h4 .suffix,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h5 .suffix,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h6 .suffix {
+  display: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h1 {
+  margin: 30px 0 15px;
+  padding: 0;
+  font-size: 24px;
+  line-height: 1.5em;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h1 .content {
+  display: inline-block;
+  color: rgb(0, 0, 0);
+  font-size: 24px;
+  font-weight: bold;
+  line-height: 1.5em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h2 {
+  display: block;
+  margin: 30px 0 15px;
+  padding: 0;
+  background-color: unset;
+  background-image: none;
+  border: none;
+  box-shadow: none;
+  line-height: 1.5em;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h2 .content {
+  display: block;
+  color: rgb(34, 34, 34);
+  font-size: 18px;
+  font-weight: bold;
+  line-height: 1.8em;
+  letter-spacing: 0em;
+  margin: 0;
+  padding: 0 0 0 10px;
+  border-left: 5px solid rgb(145, 109, 213);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h3 {
+  display: flex;
+  justify-content: center;
+  margin: 30px 0 15px;
+  padding: 0;
+  background-color: transparent;
+  background-image: none;
+  border: none;
+  box-shadow: none;
+  line-height: 1.5em;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h3 .content {
+  display: inline;
+  color: rgb(0, 0, 0);
+  font-size: 17px;
+  font-weight: bold;
+  line-height: 1.5em;
+  letter-spacing: 0em;
+  margin: 0;
+  padding: 0;
+  border-bottom: 2px solid rgb(216, 156, 246);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h4 {
+  margin: 30px 0 15px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1.5em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple h4 .content {
+  color: rgb(0, 0, 0);
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple ul,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple ol {
+  margin: 8px 0;
+  padding: 0 0 0 25px;
+  color: rgb(0, 0, 0);
+  font-size: 16px;
+  line-height: 1.5em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple ul {
+  list-style-type: circle;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple ol {
+  list-style-type: decimal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple li section,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple li {
+  color: rgb(1, 1, 1);
+  font-size: 14px;
+  font-weight: normal;
+  line-height: 1.8em;
+  letter-spacing: 0em;
+  margin-top: 5px;
+  margin-bottom: 5px;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple blockquote::before,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple blockquote::after {
+  content: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple blockquote > span:first-child {
+  display: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple blockquote {
+  display: block;
+  overflow: auto;
+  margin: 20px 0;
+  padding: 10px 10px 10px 20px;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  border-left: 3px solid rgb(216, 156, 246);
+  border-radius: 0;
+  color: rgb(0, 0, 0);
+  background-color: rgb(244, 238, 255);
+  background-image: none;
+  box-shadow: rgba(0, 0, 0, 0) 0 0 0 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple blockquote p {
+  color: rgb(0, 0, 0);
+  font-size: 14px;
+  font-weight: normal;
+  line-height: 1.8em;
+  letter-spacing: 0em;
+  text-align: left;
+  text-indent: 0em;
+  margin: 0;
+  padding: 8px 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple a,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple a span {
+  color: rgb(145, 109, 213);
+  font-weight: normal;
+  text-decoration: none;
+  border-bottom: 1px solid rgb(145, 109, 213);
+  word-wrap: break-word;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple strong {
+  color: rgb(0, 0, 0);
+  font-weight: bold;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple em,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple em strong {
+  color: rgb(145, 109, 213);
+  font-style: normal;
+  font-weight: normal;
+  background-color: rgba(0, 0, 0, 0);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple del {
+  color: rgb(0, 0, 0);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple hr {
+  height: 1px;
+  margin: 10px 0;
+  padding: 0;
+  border: none;
+  border-top: 2px solid rgb(216, 156, 246);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple figure {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  margin: 10px 0;
+  padding: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple img {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  border: none;
+  border-radius: 8px;
+  object-fit: fill;
+  box-shadow: rgba(153, 153, 153, 0.3) 2px 4px 8px 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple figcaption {
+  display: block;
+  margin-top: 5px;
+  color: rgb(0, 0, 0);
+  font-size: 13px;
+  line-height: 1.5em;
+  text-align: center;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple p code,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple li code {
+  color: rgb(145, 109, 213);
+  background-color: rgb(244, 238, 255);
+  font-family: var(--easymde-code-font-family);
+  font-size: 14px;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: 0 2px;
+  word-break: break-all;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple pre {
+  margin: 10px 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple pre code {
+  display: block;
+  font-family: var(--easymde-code-font-family);
+  font-size: 12px;
+  line-height: 26px;
+  border-radius: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple pre code span {
+  line-height: 26px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .code-snippet__fix {
+  word-wrap: break-word !important;
+  color: #333;
+  font-size: 14px;
+  line-height: 20px;
+  display: flex;
+  position: relative;
+  margin: 10px 0;
+  background-color: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgb(240, 240, 240);
+  border-radius: 2px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .table-container {
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple table {
+  display: table;
+  width: auto;
+  max-width: 100%;
+  text-align: left;
+  border-collapse: collapse;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple table tr {
+  color: rgb(0, 0, 0);
+  background-color: rgb(255, 255, 255);
+  border: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple table tr:nth-child(2n) {
+  background-color: rgb(248, 248, 248);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple table tr th,
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple table tr td {
+  color: rgb(0, 0, 0);
+  font-size: 14px;
+  line-height: 1.5em;
+  letter-spacing: 0em;
+  text-align: left;
+  padding: 5px 10px;
+  min-width: 85px;
+  border: 1px solid rgba(204, 204, 204, 0.4);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple table tr th {
+  font-weight: bold;
+  background-color: rgb(240, 240, 240);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .footnotes {
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background-color: rgba(0, 0, 0, 0);
+  background-image: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .footnote-word {
+  color: rgb(145, 109, 213);
+  font-weight: bold;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .footnote-ref {
+  color: rgb(145, 109, 213);
+  font-weight: bold;
+  line-height: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .footnotes-sep:before {
+  content: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .footnotes-sep {
+  margin: 30px 0 15px;
+  padding: 0;
+  border: none;
+  background-color: rgba(0, 0, 0, 0);
+  background-image: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .footnotes-sep span {
+  display: block;
+  color: rgb(0, 0, 0);
+  font-size: 18px;
+  font-weight: bold;
+  line-height: 1.5em;
+  letter-spacing: 0em;
+  text-align: center;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .footnote-item {
+  display: flex;
+  font-size: 14px;
+  line-height: 1.8em;
+  letter-spacing: 0em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .footnote-num {
+  display: inline;
+  width: 10%;
+  padding-top: 2px;
+  color: rgba(145, 109, 213, 0.6);
+  background: none;
+  font-family: ptima-Regular, Optima, PingFangSC-light, PingFangTC-light, "PingFang SC", Cambria, Cochin, Georgia, Times, "Times New Roman", serif;
+  font-size: 80%;
+  line-height: 1.8em;
+  letter-spacing: 0em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .footnote-item p {
+  display: inline;
+  flex-basis: 0%;
+  flex-grow: 1;
+  width: auto;
+  color: rgb(145, 109, 213);
+  font-weight: bold;
+  font-size: 14px;
+  line-height: 1.8em;
+  letter-spacing: 0em;
+  text-align: left;
+  text-indent: 0em;
+  word-break: break-all;
+  margin: 0;
+  padding: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .footnote-item p em {
+  color: rgb(145, 109, 213);
+  font-weight: normal;
+  font-style: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-ningye-purple .imageflow-img {
+  display: inline-block;
+  width: 100%;
+  margin-bottom: 0;
+}
+
+@media (max-width: 700px) {
+  .easymde-rendered-content.easymde-markdown-theme-ningye-purple {
+    width: calc(100vw - 50px);
+    margin-left: calc((100% - (100vw - 50px)) / 2);
+    margin-right: calc((100% - (100vw - 50px)) / 2);
+  }
+}
+
 /* Markdown2Html-style theme: cute-green. */
 .easymde-rendered-content.easymde-markdown-theme-cute-green {
   line-height: 1.6;

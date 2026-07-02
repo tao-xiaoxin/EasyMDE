@@ -1,6 +1,6 @@
 <p align="center">
-  <a href="./docs/assets/easymde-logo-rounded.png">
-    <img src="./docs/assets/easymde-logo-rounded.png" alt="EasyMDE" width="460" />
+  <a href="./docs/assets/easymde-logo.png">
+    <img src="./docs/assets/easymde-logo.png" alt="EasyMDE" width="460" />
   </a>
 </p>
 

@@ -28,6 +28,7 @@ The plugin is designed to be self-contained. It does not require Jetpack, Classi
 * Browser local draft autosave.
 * Right-side "Copy to WeChat" rich-text export action.
 * Dark mode toggle.
+* Temporary immersive writing mode.
 * Local code highlighting.
 * Per-post Markdown theme selection with the full Markdown2Html-style article theme set.
 * Per-post code theme selection.
@@ -46,6 +47,11 @@ Article theme, code theme, Mac-style code frame, and font choices are saved per
 post. The current user's most recent choices are reused as defaults for new
 posts. The editor surface keeps these controls inside compact popovers so the
 toolbar can stay icon-focused.
+
+The toolbar includes an immersive writing toggle. It temporarily expands the
+EasyMDE editor over the WordPress edit screen so the Markdown source and live
+preview can use the full viewport. The mode is session-only: refreshing or
+opening another post returns to the normal WordPress editor layout.
 
 EasyMDE uses Typora-inspired shortcut defaults for formatting, headings, lists,
 code, links, images, saving, and WeChat copy. Administrators can override the

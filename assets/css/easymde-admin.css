@@ -385,6 +385,11 @@
     color: #1d2327;
 }
 
+html.easymde-immersive-active,
+body.easymde-immersive-active {
+    overflow: hidden;
+}
+
 .easymde-workspace {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -392,6 +397,41 @@
     height: max(720px, calc(100vh - 250px));
     min-height: 640px;
     overflow: hidden;
+}
+
+.easymde-editor-immersive {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    display: flex;
+    flex-direction: column;
+    width: auto;
+    max-width: none;
+    height: 100vh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.easymde-editor-immersive .easymde-toolbar,
+.easymde-editor-immersive .easymde-editor-flash,
+.easymde-editor-immersive .easymde-draft-notice {
+    flex: 0 0 auto;
+}
+
+.easymde-editor-immersive .easymde-workspace {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+}
+
+body.easymde-immersive-active .media-modal {
+    z-index: 160100;
+}
+
+body.easymde-immersive-active .media-modal-backdrop {
+    z-index: 160090;
 }
 
 .easymde-pane {
@@ -806,6 +846,16 @@
         height: 420px;
         min-height: 360px;
         max-height: 58vh;
+    }
+
+    .easymde-editor-immersive .easymde-workspace {
+        overflow: auto;
+    }
+
+    .easymde-editor-immersive .easymde-source,
+    .easymde-editor-immersive .easymde-preview {
+        height: min(46vh, 420px);
+        max-height: none;
     }
 }
 

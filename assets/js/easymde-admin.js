@@ -1165,6 +1165,98 @@
         }, 30);
     }
 
+    function getPreviewNode(context) {
+        var preview = context && context.preview ? context.preview : null;
+
+        if (preview && preview.jquery) {
+            return preview[0];
+        }
+
+        return preview || null;
+    }
+
+    function captureEditorScrollState(context) {
+        var textarea = context && context.textarea ? context.textarea : null;
+        var preview = getPreviewNode(context);
+
+        return {
+            sourceTop: textarea ? textarea.scrollTop : 0,
+            sourceLeft: textarea ? textarea.scrollLeft : 0,
+            preview: capturePreviewScroll(preview)
+        };
+    }
+
+    function restoreEditorScrollState(context, state) {
+        if (!state) {
+            return;
+        }
+
+        restoreScrollPosition(context.textarea, state.sourceTop, state.sourceLeft);
+        restorePreviewScroll(getPreviewNode(context), state.preview);
+    }
+
+    function captureWindowScroll() {
+        return {
+            x: window.pageXOffset || document.documentElement.scrollLeft || document.body.scrollLeft || 0,
+            y: window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0
+        };
+    }
+
+    function updateImmersiveToggle(context) {
+        var $button = context && context.immersiveButton ? context.immersiveButton : null;
+        var isImmersive = context && context.root && context.root.hasClass('easymde-editor-immersive');
+        var label = isImmersive
+            ? getString('exitImmersive', 'Exit immersive writing')
+            : getString('enterImmersive', 'Enter immersive writing');
+
+        if (!$button || !$button.length) {
+            return;
+        }
+
+        $button.empty();
+        $button.attr('title', label);
+        $button.attr('aria-label', label);
+        $button.attr('aria-pressed', isImmersive ? 'true' : 'false');
+        $button.toggleClass('is-active', !!isImmersive);
+        $button.append(
+            $('<span class="dashicons" aria-hidden="true"></span>').addClass(
+                isImmersive ? 'dashicons-fullscreen-exit-alt' : 'dashicons-fullscreen-alt'
+            )
+        );
+    }
+
+    function setImmersiveMode(context, enabled) {
+        var $root = context && context.root ? context.root : $();
+        var isImmersive = $root.hasClass('easymde-editor-immersive');
+        var scrollState;
+
+        if (!$root.length || enabled === isImmersive) {
+            return;
+        }
+
+        scrollState = captureEditorScrollState(context);
+        closePopovers();
+
+        if (enabled) {
+            context.immersiveWindowScroll = captureWindowScroll();
+        }
+
+        $root.toggleClass('easymde-editor-immersive', enabled);
+        $('html, body').toggleClass('easymde-immersive-active', enabled);
+        updateImmersiveToggle(context);
+
+        window.requestAnimationFrame(function () {
+            restoreEditorScrollState(context, scrollState);
+
+            if (!enabled && context.immersiveWindowScroll) {
+                window.scrollTo(context.immersiveWindowScroll.x, context.immersiveWindowScroll.y);
+                context.immersiveWindowScroll = null;
+            }
+
+            focusWithoutScrolling(context.textarea);
+        });
+    }
+
     function updatePreview($preview, markdown) {
         var previewNode = $preview[0];
 
@@ -1668,8 +1760,26 @@
         }
 
         createThemeToggleButton($secondary, context.root, context.refreshPreview);
+        createImmersiveToggleButton($secondary, context);
         createFontMenu($secondary, context.preview);
         createAppearanceMenu($secondary, context.root, context.preview, context.refreshPreview);
+    }
+
+    function createImmersiveToggleButton($container, context) {
+        var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-compact easymde-toolbar-immersive-toggle"></button>');
+
+        context.immersiveButton = $button;
+        updateImmersiveToggle(context);
+
+        $button.on('mousedown', function (event) {
+            event.preventDefault();
+        });
+
+        $button.on('click', function () {
+            setImmersiveMode(context, !context.root.hasClass('easymde-editor-immersive'));
+        });
+
+        $container.append($button);
     }
 
     function createSideActions($aside, context) {
@@ -1684,6 +1794,21 @@
                 className: 'easymde-side-action',
                 context: context
             }));
+        });
+    }
+
+    function bindImmersiveModeShortcuts(context) {
+        $(document).on('keydown.easymdeImmersive', function (event) {
+            if (event.key !== 'Escape' || !context.root.hasClass('easymde-editor-immersive')) {
+                return;
+            }
+
+            if ($(event.target).closest('.media-modal, .media-frame, .media-modal-backdrop').length) {
+                return;
+            }
+
+            event.preventDefault();
+            setImmersiveMode(context, false);
         });
     }
 
@@ -1731,6 +1856,7 @@
         createDraftNotice($root, $source[0], storage, $flash);
         bindScrollSync($source[0], $preview[0]);
         bindShortcuts($root, $source[0], context);
+        bindImmersiveModeShortcuts(context);
 
         $source.on('input', function () {
             mirrorToPostContent(this.value);

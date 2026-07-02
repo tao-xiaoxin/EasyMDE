@@ -102,6 +102,7 @@ Current implementation:
 - Browser local draft autosave and restore prompt.
 - Right-side "Copy to WeChat" rich-text export action.
 - Dark mode toggle for the editor surface.
+- Temporary immersive writing mode that expands the editor over the WordPress edit screen.
 - Local highlight.js code highlighting.
 - Per-post Markdown theme selection, including the full Markdown2Html-style article theme set.
 - Per-post code theme selection with local highlight.js styles.
@@ -123,6 +124,11 @@ and font controls live in compact popovers so the writing surface keeps more
 room for source and preview. Theme and font choices are still saved per post,
 and the most recent choices are also saved as the current user's defaults for
 new posts.
+
+The toolbar includes an immersive writing toggle. It temporarily expands the
+EasyMDE editor over the WordPress edit screen so the Markdown source and live
+preview can use the full viewport. The mode is session-only: refreshing or
+opening another post returns to the normal WordPress editor layout.
 
 EasyMDE ships with Typora-inspired shortcut defaults for formatting, headings,
 lists, code, links, images, saving, and WeChat copy. Administrators can change

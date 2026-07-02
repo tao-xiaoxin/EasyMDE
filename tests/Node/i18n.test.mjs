@@ -114,6 +114,59 @@ function jsFrontendStringKeys() {
   return keys;
 }
 
+function phpTranslationCallPattern() {
+  const singleQuoted = "'(?:\\\\.|[^'\\\\])*'";
+  const doubleQuoted = '"(?:\\\\.|[^"\\\\])*"';
+  const nonParen = '[^()\'"]+';
+  const shallowParen = '\\([^()]*\\)';
+  const argumentChunk = `(?:${singleQuoted}|${doubleQuoted}|${shallowParen}|${nonParen})*?`;
+
+  return new RegExp(`(?<![A-Za-z0-9_])(${translationFunctions.join('|')})\\s*\\((${argumentChunk})\\)`, 'gs');
+}
+
+function decodePhpStringLiteral(value) {
+  if (!value || value.length < 2) {
+    return '';
+  }
+
+  return value.slice(1, -1).replace(/\\(['"\\])/g, '$1');
+}
+
+function phpStringArguments(source) {
+  return [...source.matchAll(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g)].map((match) => decodePhpStringLiteral(match[0]));
+}
+
+function expectedTextDomainArgumentIndex(functionName) {
+  if (['_x', '_ex', 'esc_html_x', 'esc_attr_x'].includes(functionName)) {
+    return 2;
+  }
+
+  if (['_n'].includes(functionName)) {
+    return 2;
+  }
+
+  if (['_nx'].includes(functionName)) {
+    return 4;
+  }
+
+  return 1;
+}
+
+function phpTranslationDomainOffenders(source, file = 'source.php') {
+  const offenders = [];
+
+  for (const match of source.matchAll(phpTranslationCallPattern())) {
+    const stringArguments = phpStringArguments(match[2]);
+    const domainIndex = expectedTextDomainArgumentIndex(match[1]);
+
+    if ('easymde' !== stringArguments[domainIndex]) {
+      offenders.push(`${file}: ${match[1]}(${match[2].replace(/\s+/g, ' ')})`);
+    }
+  }
+
+  return offenders;
+}
+
 test('legacy runtime translations are not loaded from production code', () => {
   assert.equal(existsSync(join(repoRoot, 'src/Support/LegacyTranslations.php')), false);
 
@@ -125,19 +178,41 @@ test('legacy runtime translations are not loaded from production code', () => {
 });
 
 test('PHP translation calls use the EasyMDE text domain', () => {
-  const callPattern = new RegExp(`(?<![A-Za-z0-9_])(${translationFunctions.join('|')})\\\\s*\\\\(([^;]+?)\\\\)`, 'gs');
   const offenders = [];
 
   collectPhpSourceFiles(repoRoot).forEach((file) => {
     const source = readFileSync(join(repoRoot, file), 'utf8');
-    for (const match of source.matchAll(callPattern)) {
-      if (!/['"]easymde['"]/.test(match[2])) {
-        offenders.push(`${file}: ${match[1]}(${match[2].replace(/\s+/g, ' ')})`);
-      }
-    }
+    offenders.push(...phpTranslationDomainOffenders(source, file));
   });
 
   assert.deepEqual(offenders, []);
+});
+
+test('PHP translation domain check matches real gettext calls', () => {
+  const source = [
+    "<?php",
+    "__('Foo', 'easymde');",
+    "_x('Foo', 'context', 'easymde');",
+    "esc_html__('Foo', 'easymde');",
+    "__('Invalid shortcut value for %1$s (%2$s).', 'easymde');",
+    "__('easymde literal text', 'wrong-domain');",
+    "__('Foo', 'wrong-domain');"
+  ].join('\n');
+
+  const matches = [...source.matchAll(phpTranslationCallPattern())].map((match) => [match[1], match[2]]);
+
+  assert.deepEqual(matches, [
+    ['__', "'Foo', 'easymde'"],
+    ['_x', "'Foo', 'context', 'easymde'"],
+    ['esc_html__', "'Foo', 'easymde'"],
+    ['__', "'Invalid shortcut value for %1$s (%2$s).', 'easymde'"],
+    ['__', "'easymde literal text', 'wrong-domain'"],
+    ['__', "'Foo', 'wrong-domain'"]
+  ]);
+  assert.deepEqual(phpTranslationDomainOffenders(source, 'fixture.php'), [
+    "fixture.php: __('easymde literal text', 'wrong-domain')",
+    "fixture.php: __('Foo', 'wrong-domain')"
+  ]);
 });
 
 test('PHP-injected string config covers JavaScript user-facing string reads', () => {

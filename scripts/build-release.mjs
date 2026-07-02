@@ -15,6 +15,27 @@ const directoryPackagePaths = new Set([
   'languages',
   'vendor'
 ]);
+const excludedReleaseSegments = new Set([
+  '.cache',
+  '.git',
+  '.github',
+  '.idea',
+  '.vscode',
+  '__tests__',
+  'coverage',
+  'node_modules',
+  'test',
+  'tests'
+]);
+const excludedReleaseFiles = new Set([
+  '.DS_Store',
+  '.env',
+  '.env.local',
+  '.phpunit.result.cache',
+  'appveyor.yml',
+  'phpunit.xml',
+  'phpunit.xml.dist'
+]);
 
 const baseRequirements = [
   { path: 'vendor/autoload.php', type: 'file' },
@@ -80,8 +101,17 @@ function composerPackageRequirements(root) {
 
 export function shouldCopyReleaseFile(root, file) {
   const segments = relative(root, file).split(/[\\/]+/);
+  const filename = segments[segments.length - 1] || '';
 
-  return !segments.includes('node_modules') && !segments.includes('.git');
+  if (segments.some((segment) => excludedReleaseSegments.has(segment))) {
+    return false;
+  }
+
+  if (excludedReleaseFiles.has(filename)) {
+    return false;
+  }
+
+  return !/\.(?:log|tmp|bak|swp)$/i.test(filename);
 }
 
 function registeredAssetRequirements(root) {

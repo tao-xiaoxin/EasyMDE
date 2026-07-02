@@ -69,6 +69,11 @@ function createCompleteFixture(root) {
       writeText(root, `${requirement.path}/.keep`);
     }
   }
+
+  writeText(root, 'vendor/league/commonmark/tests/bootstrap.php');
+  writeText(root, 'vendor/league/commonmark/.github/workflows/ci.yml');
+  writeText(root, 'vendor/league/commonmark/.phpunit.result.cache');
+  writeText(root, 'vendor/league/commonmark/runtime/Parser.php');
 }
 
 test('release build succeeds for a complete runtime fixture', () => {
@@ -81,6 +86,10 @@ test('release build succeeds for a complete runtime fixture', () => {
 
     assert.ok(existsSync(join(packageRoot, 'easymde.php')));
     assert.ok(existsSync(join(packageRoot, 'vendor/autoload.php')));
+    assert.ok(existsSync(join(packageRoot, 'vendor/league/commonmark/runtime/Parser.php')));
+    assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/tests/bootstrap.php')), false);
+    assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/.github/workflows/ci.yml')), false);
+    assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/.phpunit.result.cache')), false);
     assert.deepEqual(findMissingReleaseRequirements(root), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -135,6 +144,11 @@ test('release copy filter excludes development directories by path segment', () 
     assert.equal(shouldCopyReleaseFile(root, join(root, 'assets/vendor/highlight/highlight.min.js')), true);
     assert.equal(shouldCopyReleaseFile(root, join(root, 'node_modules/highlight.js/lib/index.js')), false);
     assert.equal(shouldCopyReleaseFile(root, join(root, '.git/config')), false);
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/tests/bootstrap.php')), false);
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/.github/workflows/ci.yml')), false);
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/coverage/clover.xml')), false);
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/runtime/debug.log')), false);
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/runtime/Parser.php')), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

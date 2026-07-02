@@ -232,8 +232,9 @@ final class ThemeStateRepository
         return $id;
     }
 
-    public function sanitize_theme_state_from_request($source)
+    public function sanitize_theme_state_from_request($source, $post_id = 0)
     {
+        $post_id = absint($post_id);
         $markdown_theme = $this->sanitize_markdown_theme_id(isset($source['easymde_markdown_theme']) ? wp_unslash($source['easymde_markdown_theme']) : '');
         $code_theme = $this->sanitize_code_theme_id(isset($source['easymde_code_theme']) ? wp_unslash($source['easymde_code_theme']) : '');
         $code_mac_style = !empty($source['easymde_code_mac_style']) && '0' !== (string) wp_unslash($source['easymde_code_mac_style']);
@@ -256,6 +257,8 @@ final class ThemeStateRepository
             $custom_item = $this->get_custom_css_item($custom_css_id);
             if ($custom_item) {
                 $custom_css = $custom_item['css'];
+            } elseif ($this->can_preserve_post_custom_css_snapshot($post_id, $custom_css_id)) {
+                $custom_css = (string) get_post_meta($post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, true);
             }
         } else {
             $custom_css_id = '';
@@ -277,6 +280,20 @@ final class ThemeStateRepository
             'appleFont' => $apple_font,
             'serifFont' => $serif_font,
         );
+    }
+
+    private function can_preserve_post_custom_css_snapshot($post_id, $custom_css_id)
+    {
+        if (!$post_id || '' === $custom_css_id) {
+            return false;
+        }
+
+        $stored_custom_css_id = sanitize_key((string) get_post_meta($post_id, PostDocument::META_CUSTOM_CSS_ID, true));
+        if ($stored_custom_css_id !== $custom_css_id) {
+            return false;
+        }
+
+        return '' !== trim((string) get_post_meta($post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, true));
     }
 
     public function save_user_defaults(array $state)

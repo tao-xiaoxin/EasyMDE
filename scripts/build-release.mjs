@@ -1,5 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const defaultRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -64,7 +64,7 @@ function uniqueRequirements(requirements) {
 function composerPackageRequirements(root) {
   const lockPath = fromRoot(root, 'composer.lock');
   if (!existsSync(lockPath)) {
-    return [];
+    throw new Error('composer.lock not found; run composer install before building a release.');
   }
 
   const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
@@ -76,6 +76,12 @@ function composerPackageRequirements(root) {
       path: `vendor/${pkg.name}`,
       type: 'non-empty-dir'
     }));
+}
+
+export function shouldCopyReleaseFile(root, file) {
+  const segments = relative(root, file).split(/[\\/]+/);
+
+  return !segments.includes('node_modules') && !segments.includes('.git');
 }
 
 function registeredAssetRequirements(root) {
@@ -168,7 +174,7 @@ export function buildRelease(options = {}) {
     cpSync(source, join(packageRoot, path), {
       recursive: statSync(source).isDirectory(),
       dereference: true,
-      filter: (file) => !file.includes('/node_modules/') && !file.includes('/.git/')
+      filter: (file) => shouldCopyReleaseFile(root, file)
     });
   }
 

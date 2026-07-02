@@ -9,7 +9,8 @@ import test from 'node:test';
 import {
   buildRelease,
   collectReleaseRequirements,
-  findMissingReleaseRequirements
+  findMissingReleaseRequirements,
+  shouldCopyReleaseFile
 } from '../../scripts/build-release.mjs';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -105,6 +106,35 @@ test('release build fails when Composer runtime package or registered theme asse
     assert.equal(result.status, 1);
     assert.match(result.stderr, /vendor\/sabberworm\/php-css-parser/);
     assert.match(result.stderr, /assets\/themes\/article\/default\.css/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build fails fast when composer.lock is missing', () => {
+  const root = makeTempRoot();
+
+  try {
+    createRegistryFiles(root);
+
+    const result = spawnSync(process.execPath, [scriptPath, '--root', root], {
+      encoding: 'utf8'
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /composer\.lock not found/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release copy filter excludes development directories by path segment', () => {
+  const root = makeTempRoot();
+
+  try {
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'assets/vendor/highlight/highlight.min.js')), true);
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'node_modules/highlight.js/lib/index.js')), false);
+    assert.equal(shouldCopyReleaseFile(root, join(root, '.git/config')), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -52,8 +52,14 @@ final class EditorSaveHandler
             return;
         }
 
+        if (!$this->is_renderer_available()) {
+            $this->abort_renderer_unavailable();
+
+            return;
+        }
+
         $markdown = wp_unslash($_POST['easymde_markdown']);
-        $theme_state = $this->theme_state_repository->sanitize_theme_state_from_request($_POST);
+        $theme_state = $this->theme_state_repository->sanitize_theme_state_from_request($_POST, $post_id);
 
         $this->post_document->mark_enabled($post_id);
         update_post_meta($post_id, PostDocument::META_MARKDOWN, $markdown);
@@ -91,7 +97,7 @@ final class EditorSaveHandler
         }
 
         $markdown = wp_unslash($_POST['easymde_markdown']);
-        $theme_state = $this->theme_state_repository->sanitize_theme_state_from_request($_POST);
+        $theme_state = $this->theme_state_repository->sanitize_theme_state_from_request($_POST, isset($postarr['ID']) ? absint($postarr['ID']) : 0);
 
         try {
             $data['post_content'] = MarkdownRenderer::render($markdown, $theme_state['markdownTheme']);

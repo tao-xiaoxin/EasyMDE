@@ -139,6 +139,104 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_missing_renderer_aborts_save_post_meta_before_meta_changes()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '<p>Old HTML</p>',
+            )
+        );
+
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Old Markdown');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
+
+        wp_set_current_user($user_id);
+        add_filter('wp_die_handler', array($this, 'throwing_wp_die_handler'));
+
+        $previous_post = $_POST;
+        $_POST = array(
+            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+            'easymde_enabled' => '1',
+            'easymde_markdown' => '# New Markdown',
+            'easymde_markdown_theme' => 'orange-heart',
+        );
+
+        try {
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $this->theme_state_repository(),
+                function () {
+                    return false;
+                }
+            );
+
+            try {
+                $handler->save_post_meta($post_id, get_post($post_id), true);
+                $this->fail('Expected EasyMDE meta save to abort when the renderer is unavailable.');
+            } catch (\RuntimeException $exception) {
+                $this->assertStringContainsString('Markdown rendering is unavailable', $exception->getMessage());
+            }
+
+            $this->assertSame('# Old Markdown', get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+            $this->assertSame('default', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
+            $this->assertSame('<p>Old HTML</p>', get_post($post_id)->post_content);
+        } finally {
+            $_POST = $previous_post;
+            remove_filter('wp_die_handler', array($this, 'throwing_wp_die_handler'));
+        }
+    }
+
+    public function test_existing_custom_css_snapshot_survives_save_by_editor_without_library_item()
+    {
+        $owner_id = self::factory()->user->create(array('role' => 'editor'));
+        $editor_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $owner_id,
+            )
+        );
+
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Old Markdown');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'custom');
+        update_post_meta($post_id, PostDocument::META_CUSTOM_CSS_ID, 'owner-style');
+        update_post_meta($post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, ':root { --brand: red; } h2 { color: var(--brand); }');
+
+        wp_set_current_user($editor_id);
+
+        $previous_post = $_POST;
+        $_POST = array(
+            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+            'easymde_enabled' => '1',
+            'easymde_markdown' => '# Updated Markdown',
+            'easymde_markdown_theme' => 'custom',
+            'easymde_custom_css_id' => 'owner-style',
+        );
+
+        try {
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $this->theme_state_repository(),
+                function () {
+                    return true;
+                }
+            );
+            $handler->save_post_meta($post_id, get_post($post_id), true);
+
+            $this->assertSame('# Updated Markdown', get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+            $this->assertSame('custom', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
+            $this->assertSame('owner-style', get_post_meta($post_id, PostDocument::META_CUSTOM_CSS_ID, true));
+            $this->assertSame(':root { --brand: red; } h2 { color: var(--brand); }', get_post_meta($post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, true));
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
     public function throwing_wp_die_handler()
     {
         return array($this, 'throw_wp_die_exception');

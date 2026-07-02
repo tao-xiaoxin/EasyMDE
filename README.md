@@ -1,9 +1,9 @@
+<h1 align="center">EasyMDE</h1>
 <p align="center">
   <a href="./docs/assets/easymde-logo-rounded.png">
     <img src="./docs/assets/easymde-logo-rounded.png" alt="EasyMDE" width="460" />
   </a>
 </p>
-<h1 align="center">EasyMDE</h1>
 <p align="center">A full-featured Markdown editor plugin for WordPress.</p>
 
 <p align="center">

@@ -1,6 +1,6 @@
 === EasyMDE ===
 Contributors: tao-xiaoxin
-Tags: markdown, editor, writing, preview, posts
+Tags: markdown, editor, writing, preview, wechat
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 7.4
@@ -8,129 +8,168 @@ Stable tag: 0.1.7
 License: Apache-2.0
 License URI: https://www.apache.org/licenses/LICENSE-2.0
 
-A standalone WordPress Markdown editor with split-pane live preview.
+A standalone WordPress Markdown editor with split-pane live preview, local rendering tools, themes, and WeChat rich-text export.
 
 == Description ==
 
-EasyMDE replaces the default post/page authoring surface with a scoped Markdown editor: source on the left, live preview on the right, and toolbar actions for common writing tasks.
+EasyMDE replaces the editing surface on supported WordPress post and page screens with a focused Markdown writing experience.
 
-The plugin is designed to be self-contained. It does not require Jetpack, Classic Editor, or another Markdown plugin.
+Write Markdown on the left and review a live preview on the right. EasyMDE provides commonly used writing tools, media insertion, local rendering support, article themes, code highlighting, and rich-text export for the WeChat Official Accounts editor.
 
-== Current Features ==
+EasyMDE is self-contained and does not require Jetpack, Classic Editor, another Markdown plugin, or external CDN assets.
 
-* Scoped post/page editor integration.
-* Split-pane Markdown source and preview.
-* Scroll synchronization.
-* Compact icon toolbar for common Markdown actions.
-* Typora-inspired keyboard shortcuts with plugin settings overrides.
-* WordPress media insertion.
+== Features ==
+
+* Split-pane Markdown source editing and live preview.
+* Scroll synchronization between source and preview panes.
+* Compact icon toolbar for common Markdown formatting actions.
+* Heading, appearance, and output controls in compact popovers.
+* Typora-inspired keyboard shortcuts with configurable Windows/Linux and macOS bindings.
+* WordPress media library insertion.
 * REST-powered server preview.
-* Browser local draft autosave.
-* Right-side "Copy to WeChat" rich-text export action.
-* Dark mode toggle.
-* Temporary immersive writing mode.
-* Local code highlighting.
-* Per-post Markdown theme selection with the full Markdown2Html-style article theme set.
-* Per-post code theme selection.
-* Named per-user custom CSS styles for reuse on future posts.
-* Local Mermaid rendering.
-* Local KaTeX rendering.
-* [TOC] table of contents generation.
-* Markdown source stored in post meta.
-* Rendered HTML saved into post content.
-* No activation redirect.
-* No unrelated admin-page redirect.
+* Browser local draft autosave and recovery.
+* Temporary immersive writing mode for a larger editing workspace.
+* Dark mode for the editor surface.
+* Local Highlight.js code highlighting.
+* Local Mermaid diagram rendering.
+* Local KaTeX math rendering.
+* `[TOC]` and `[toc]` table of contents generation.
+* Per-post article themes and code themes.
+* Optional Mac-style code block framing.
+* Per-post article font stack selection.
+* Named reusable custom CSS styles.
+* Rich-text “Copy to WeChat” export from the rendered preview.
+* Markdown source stored in post meta and rendered HTML stored in post content.
+* No activation redirect and no unrelated admin-page redirect.
 
-== Themes and Custom CSS ==
+== Themes and Appearance ==
 
-Article theme, code theme, Mac-style code frame, and font choices are saved per
-post. The current user's most recent choices are reused as defaults for new
-posts. The editor surface keeps these controls inside compact popovers so the
-toolbar can stay icon-focused.
+EasyMDE includes multiple built-in article themes inspired by Markdown2Html and mdnice-style layouts. Themes are implemented locally with scoped CSS and do not load remote decorative assets.
 
-The toolbar includes an immersive writing toggle. It temporarily expands the
-EasyMDE editor over the WordPress edit screen so the Markdown source and live
-preview can use the full viewport. The mode is session-only: refreshing or
-opening another post returns to the normal WordPress editor layout.
+Article theme, code theme, Mac-style code frame, font stack, and custom CSS choices are saved per post. The current user's latest appearance choices are reused as defaults for future posts.
 
-EasyMDE uses Typora-inspired shortcut defaults for formatting, headings, lists,
-code, links, images, saving, and WeChat copy. Administrators can override the
-Windows/Linux and macOS bindings independently from the plugin settings page.
-The built-in default code presentation is atom-one-dark with the CSS-only
-Mac-style frame enabled.
+The editor includes article themes such as:
 
-Authors can save custom CSS with a name, then choose it again on later posts.
-When a post uses custom CSS, EasyMDE stores a sanitized snapshot with the post so
-the published article keeps its appearance if the saved style is later changed or
-deleted.
+* Default
+* Orange Heart
+* Chazi Purple
+* Nenqing Green
+* Green Vitality
+* Red Crimson
+* Blue Ying
+* Lanqing
+* Yamabuki
+* Grid Black
+* Geek Black
+* Rose Purple
+* Ningye Purple
+* Tech Blue
+* Cute Green
+* Fullstack Blue
+* Minimal Black
+* Orange Blue
+* Frontend Peak
+* Cupid Busy
 
-Custom CSS is scoped to EasyMDE-rendered content. Remote CSS imports and url()
-values are stripped to keep local assets as the default behavior.
+EasyMDE also provides code theme options including GitHub, GitHub Dark, Atom One Dark, Atom One Light, Monokai, VS2015, Xcode, and a WeChat-inspired style.
 
-The font popover builds an mdnice-compatible fallback stack from custom Latin
-fonts, Windows fonts, Apple fonts, and a serif/sans-serif final fallback. System
-font names are tried when the visitor's device has them installed. The selected
-stack affects rendered article text in preview and on the frontend while code
-remains monospace.
+== Custom CSS ==
 
-Built-in article themes include the Markdown2Html-style set: default,
-orange-heart, chazi-purple, nenqing-green, green-vitality, red-crimson,
-blue-ying, lanqing, yamabuki, grid-black, geek-black, rose-purple,
-ningye-purple, tech-blue, cute-green, fullstack-blue, minimal-black,
-orange-blue, and frontend-peak. They style
-colors, headings, typography, blockquotes, inline code, lists, tables, images,
-table of contents, and math blocks through scoped CSS.
+Authors can save custom CSS styles with a name and reuse them on later posts.
 
-These themes are local CSS recreations based on Markdown2Html visual references.
-The plugin does not copy GPL-licensed Markdown2Html source files or load remote
-decorative theme images.
+When a post uses custom CSS, EasyMDE stores a sanitized CSS snapshot with the post so published content can retain its appearance if the original saved style is later changed or removed.
+
+Custom CSS is scoped to EasyMDE-rendered content. Remote CSS imports and external `url(...)` values are removed to keep the plugin self-contained by default.
 
 == WeChat Copy ==
 
-The editor includes a right-side "Copy to WeChat" action that copies the
-current preview as rich text. EasyMDE clones the rendered preview and inlines
-the key computed styles for typography, code, tables, and images before writing
-clipboard data when the browser allows it.
+EasyMDE includes a **Copy to WeChat** action that copies the current preview as rich text.
 
-If the browser does not expose rich-text clipboard APIs, EasyMDE falls back to
-older copy mechanisms when available and otherwise shows a clear non-destructive
-error message instead of silently failing.
+The plugin clones the rendered preview and inlines important computed styles for typography, code blocks, tables, and images before copying. When supported by the browser, the copied content can be pasted directly into the WeChat Official Accounts editor.
+
+If rich-text clipboard access is unavailable, EasyMDE uses available fallback methods or shows a clear error message without affecting article content.
 
 == Installation ==
 
-1. Upload the plugin directory to `/wp-content/plugins/easymde`.
-2. Activate EasyMDE from the WordPress Plugins screen.
-3. Edit a post or page.
+1. Upload the EasyMDE plugin folder to the `/wp-content/plugins/` directory, or install the plugin ZIP from **Plugins > Add New > Upload Plugin**.
+2. Activate EasyMDE from the **Plugins** screen in WordPress.
+3. Create or edit a post or page.
+4. Use the EasyMDE Markdown editor to write and preview your content.
+
+== Frequently Asked Questions ==
+
+= Does EasyMDE require Jetpack or Classic Editor? =
+
+No. EasyMDE is a standalone WordPress plugin and does not require Jetpack, Classic Editor, or another Markdown plugin.
+
+= Does EasyMDE use external CDN assets? =
+
+No. Mermaid, KaTeX, Highlight.js, and plugin assets are bundled locally.
+
+= Can I use Mermaid diagrams? =
+
+Yes. EasyMDE supports local Mermaid rendering in the preview and frontend output.
+
+= Can I write mathematical formulas? =
+
+Yes. EasyMDE supports KaTeX math rendering for inline and block formulas.
+
+= Can I add a table of contents? =
+
+Yes. Add `[TOC]` or `[toc]` on its own line in the Markdown source.
+
+= Can I insert WordPress media? =
+
+Yes. Use the media button in the EasyMDE toolbar to insert an image from the WordPress media library.
+
+= Can I copy an article into the WeChat Official Accounts editor? =
+
+Yes. Use the **Copy to WeChat** action in the editor. EasyMDE copies the current rendered preview as rich text when browser clipboard support is available.
+
+= What happens if I deactivate EasyMDE? =
+
+Published posts retain their rendered WordPress HTML. EasyMDE Markdown source and appearance settings remain stored with the post and can be used again after the plugin is reactivated.
 
 == Changelog ==
 
 = 0.1.7 =
+
 * Replace large text toolbar controls with a compact icon toolbar and appearance popover.
-* Add Typora-inspired shortcut defaults with site-wide settings for Windows/Linux and macOS overrides.
-* Add a right-side "Copy to WeChat" rich-text export action for the editor preview.
-* Add the mdnice tech-blue article theme with source-verified typography, headings, inline code, lists, images, and Mac-style code framing.
+* Add Typora-inspired shortcut defaults with site-wide Windows/Linux and macOS overrides.
+* Add rich-text Copy to WeChat export from the editor preview.
+* Add the Tech Blue article theme with themed typography, headings, inline code, lists, images, and Mac-style code framing.
+* Add temporary immersive writing mode.
+* Add per-post font stack selection.
 
 = 0.1.6 =
+
 * Add the full Markdown2Html-style article theme set as local scoped CSS recreations.
-* Extend theme markup processing so headings and links support the full built-in theme set.
+* Extend theme markup processing for built-in theme heading and link styles.
 
 = 0.1.5 =
-* Add fullstack-blue, yamabuki, and orange-heart article themes inspired by mdnice rendered examples.
-* Make atom-one-dark with Mac-style framing the default code presentation.
-* Tune rose-purple colors to match mdnice reference values more closely.
-* Keep dark code backgrounds visible before highlight.js enhancement.
+
+* Add Fullstack Blue, Yamabuki, and Orange Heart article themes.
+* Make Atom One Dark with Mac-style framing the default code presentation.
+* Refine built-in article theme styling.
 
 = 0.1.4 =
-* Add per-post Markdown themes, code theme switching, Mac-style code frames, and named reusable custom CSS.
+
+* Add per-post article themes and code theme switching.
+* Add optional Mac-style code frames.
+* Add named reusable custom CSS styles.
 
 = 0.1.3 =
-* Keep editor panes scrollable inside the larger editor workspace.
+
+* Improve editor pane scrolling inside the writing workspace.
 
 = 0.1.2 =
+
 * Refine editor height and preview spacing.
 
 = 0.1.1 =
-* Add local code highlighting, Mermaid, KaTeX, TOC, dark mode, and browser drafts.
+
+* Add local code highlighting, Mermaid, KaTeX, table of contents support, dark mode, and browser draft recovery.
 
 = 0.1.0 =
-* Initial MVP.
+
+* Initial release.

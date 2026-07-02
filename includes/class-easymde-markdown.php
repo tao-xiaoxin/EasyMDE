@@ -271,6 +271,7 @@ final class EasyMDE_Markdown
                 'geek-black',
                 'rose-purple',
                 'ningye-purple',
+                'tech-blue',
                 'cute-green',
                 'fullstack-blue',
                 'minimal-black',

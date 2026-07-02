@@ -76,8 +76,8 @@ remains monospace.
 Built-in article themes include the Markdown2Html-style set: default,
 orange-heart, chazi-purple, nenqing-green, green-vitality, red-crimson,
 blue-ying, lanqing, yamabuki, grid-black, geek-black, rose-purple,
-ningye-purple, cute-green, fullstack-blue, minimal-black, orange-blue, and
-frontend-peak. They style
+ningye-purple, tech-blue, cute-green, fullstack-blue, minimal-black,
+orange-blue, and frontend-peak. They style
 colors, headings, typography, blockquotes, inline code, lists, tables, images,
 table of contents, and math blocks through scoped CSS.
 
@@ -108,6 +108,7 @@ error message instead of silently failing.
 * Replace large text toolbar controls with a compact icon toolbar and appearance popover.
 * Add Typora-inspired shortcut defaults with site-wide settings for Windows/Linux and macOS overrides.
 * Add a right-side "Copy to WeChat" rich-text export action for the editor preview.
+* Add the mdnice tech-blue article theme with source-verified typography, headings, inline code, lists, images, and Mac-style code framing.
 
 = 0.1.6 =
 * Add the full Markdown2Html-style article theme set as local scoped CSS recreations.

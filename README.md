@@ -159,8 +159,8 @@ code remains monospace.
 The built-in article themes include the Markdown2Html-style set: default,
 orange-heart, chazi-purple, nenqing-green, green-vitality, red-crimson,
 blue-ying, lanqing, yamabuki, grid-black, geek-black, rose-purple,
-ningye-purple, cute-green, fullstack-blue, minimal-black, orange-blue, and
-frontend-peak. They style
+ningye-purple, tech-blue, cute-green, fullstack-blue, minimal-black,
+orange-blue, and frontend-peak. They style
 colors, heading treatments, typography, blockquotes, inline code, lists, tables,
 image presentation, table of contents, and math blocks through scoped CSS.
 

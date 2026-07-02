@@ -1038,6 +1038,7 @@ final class EasyMDE_Plugin
             'geek-black' => __('Geek black', 'easymde'),
             'rose-purple' => __('Rose purple', 'easymde'),
             'ningye-purple' => __('Ningye purple', 'easymde'),
+            'tech-blue' => __('科技蓝', 'easymde'),
             'cute-green' => __('Cute green', 'easymde'),
             'fullstack-blue' => __('Fullstack blue', 'easymde'),
             'minimal-black' => __('Minimal black', 'easymde'),
@@ -1148,6 +1149,11 @@ final class EasyMDE_Plugin
                     'fontFamily' => 'Inter',
                 ),
                 array(
+                    'id' => 'tech-blue-optima',
+                    'label' => 'Optima (科技蓝)',
+                    'fontFamily' => 'Optima',
+                ),
+                array(
                     'id' => 'georgia',
                     'label' => 'Georgia',
                     'fontFamily' => '"Georgia"',
@@ -1187,6 +1193,11 @@ final class EasyMDE_Plugin
                 array(
                     'id' => 'ningye-purple-microsoft-yahei',
                     'label' => 'Microsoft YaHei (ningye-purple)',
+                    'fontFamily' => '"Microsoft YaHei"',
+                ),
+                array(
+                    'id' => 'tech-blue-microsoft-yahei',
+                    'label' => 'Microsoft YaHei (科技蓝)',
                     'fontFamily' => '"Microsoft YaHei"',
                 ),
             ),
@@ -1444,6 +1455,14 @@ final class EasyMDE_Plugin
                     'appleFont' => 'pingfang-sc-regular-raw',
                     'serifFont' => 'sans-serif-only',
                 );
+
+            case 'tech-blue':
+                return array(
+                    'customFont' => 'tech-blue-optima',
+                    'windowsFont' => 'tech-blue-microsoft-yahei',
+                    'appleFont' => 'pingfang-sc-regular-raw',
+                    'serifFont' => 'serif-only',
+                );
         }
 
         return null;
@@ -1463,7 +1482,7 @@ final class EasyMDE_Plugin
             return true;
         }
 
-        foreach (array('orange-heart', 'rose-purple', 'ningye-purple') as $theme_id) {
+        foreach (array('orange-heart', 'rose-purple', 'ningye-purple', 'tech-blue') as $theme_id) {
             $defaults = $this->get_theme_font_defaults($theme_id);
             if (
                 $defaults

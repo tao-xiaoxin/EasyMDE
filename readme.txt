@@ -2,7 +2,7 @@
 Contributors: tao-xiaoxin
 Tags: markdown, editor, writing, preview, wechat
 Requires at least: 6.0
-Tested up to: 6.9
+Tested up to: 7.0
 Requires PHP: 7.4
 Stable tag: 0.1.7
 License: Apache-2.0
@@ -133,6 +133,10 @@ Yes. Use the **Copy to WeChat** action in the editor. EasyMDE copies the current
 = What happens if I deactivate EasyMDE? =
 
 Published posts retain their rendered WordPress HTML. EasyMDE Markdown source and appearance settings remain stored with the post and can be used again after the plugin is reactivated.
+
+= Where can I find security, upgrade, and bundled dependency information? =
+
+See `SECURITY.md`, `UPGRADING.md`, and `THIRD-PARTY-NOTICES.md` in the release package.
 
 == Changelog ==
 

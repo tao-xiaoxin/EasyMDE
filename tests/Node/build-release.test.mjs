@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -234,6 +234,64 @@ test('release build fails when Composer runtime package or registered theme asse
     assert.equal(result.status, 1);
     assert.match(result.stderr, /vendor\/sabberworm\/php-css-parser/);
     assert.match(result.stderr, /assets\/themes\/article\/default\.css/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build fails when required runtime assets or templates are missing', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    rmSync(join(root, 'templates'), { recursive: true, force: true });
+    rmSync(join(root, 'assets/vendor/mermaid/mermaid.min.js'), { force: true });
+    rmSync(join(root, 'assets/vendor/katex/katex.min.css'), { force: true });
+    rmSync(join(root, 'assets/vendor/katex/fonts'), { recursive: true, force: true });
+    rmSync(join(root, 'assets/vendor/highlight/styles/github.min.css'), { force: true });
+    rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
+
+    const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
+    assert.ok(missing.includes('templates'));
+    assert.ok(missing.includes('assets/vendor/mermaid/mermaid.min.js'));
+    assert.ok(missing.includes('assets/vendor/katex/katex.min.css'));
+    assert.ok(missing.includes('assets/vendor/katex/fonts'));
+    assert.ok(missing.includes('assets/vendor/highlight/styles/github.min.css'));
+    assert.ok(missing.includes('THIRD-PARTY-NOTICES.md'));
+
+    const result = spawnSync(process.execPath, [scriptPath, '--root', root], {
+      encoding: 'utf8'
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /templates/);
+    assert.match(result.stderr, /assets\/vendor\/mermaid\/mermaid\.min\.js/);
+    assert.match(result.stderr, /THIRD-PARTY-NOTICES\.md/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build fails when Composer development packages are installed', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    createComposerLock(root);
+    const lockPath = join(root, 'composer.lock');
+    const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+    lock['packages-dev'] = [
+      { name: 'phpunit/phpunit' },
+      { name: 'squizlabs/php_codesniffer' }
+    ];
+    writeFileSync(lockPath, JSON.stringify(lock));
+    writeText(root, 'vendor/phpunit/phpunit/src/Framework/TestCase.php');
+    writeText(root, 'vendor/squizlabs/php_codesniffer/src/Runner.php');
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /composer install --no-dev/
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

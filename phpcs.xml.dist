@@ -1,22 +1,41 @@
 <?xml version="1.0"?>
 <ruleset name="EasyMDE">
-    <description>WordPress Coding Standards configuration for EasyMDE.</description>
+	<description>WordPress Coding Standards checks for EasyMDE-owned PHP.</description>
 
-    <file>easymde.php</file>
-    <file>uninstall.php</file>
-    <file>src</file>
-    <file>templates</file>
+	<arg name="basepath" value="."/>
+	<arg name="colors"/>
+	<arg name="extensions" value="php"/>
+	<arg name="parallel" value="8"/>
 
-    <exclude-pattern>vendor/*</exclude-pattern>
-    <exclude-pattern>node_modules/*</exclude-pattern>
-    <exclude-pattern>assets/vendor/*</exclude-pattern>
+	<config name="minimum_supported_wp_version" value="6.0"/>
 
-    <arg name="extensions" value="php"/>
-    <arg name="parallel" value="8"/>
+	<file>easymde.php</file>
+	<file>includes</file>
+	<file>src</file>
+	<file>templates</file>
+	<file>scripts/verify-wordpress-i18n.php</file>
 
-    <config name="testVersion" value="7.4-"/>
+	<exclude-pattern>*/vendor/*</exclude-pattern>
+	<exclude-pattern>*/node_modules/*</exclude-pattern>
+	<exclude-pattern>*/assets/vendor/*</exclude-pattern>
+	<exclude-pattern>*/languages/*</exclude-pattern>
+	<exclude-pattern>*/dist/*</exclude-pattern>
+	<exclude-pattern>*/coverage/*</exclude-pattern>
+	<exclude-pattern>*/tests/*</exclude-pattern>
+	<exclude-pattern>*/test-results/*</exclude-pattern>
+	<exclude-pattern>*/playwright-report/*</exclude-pattern>
 
-    <rule ref="WordPress"/>
-    <rule ref="WordPress-Extra"/>
-    <rule ref="WordPress-Docs"/>
+	<rule ref="WordPress-Extra"/>
+
+	<!-- The project uses PSR-4-style PascalCase class files under src/. -->
+	<rule ref="WordPress.Files.FileName">
+		<exclude name="WordPress.Files.FileName.InvalidClassFileName"/>
+		<exclude name="WordPress.Files.FileName.NotHyphenatedLowercase"/>
+	</rule>
+
+	<!-- PHP DOMDocument exposes camelCase public properties such as childNodes and parentNode. -->
+	<rule ref="WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase">
+		<exclude-pattern>*/src/Content/TocGenerator.php</exclude-pattern>
+		<exclude-pattern>*/src/Content/ThemeMarkupTransformer.php</exclude-pattern>
+	</rule>
 </ruleset>

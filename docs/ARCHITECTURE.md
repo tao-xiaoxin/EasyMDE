@@ -16,6 +16,8 @@ EasyMDE is wired from `easymde.php` into `EasyMDE\Plugin`. The global
 - `assets/themes/code/`: EasyMDE-owned code themes.
 - `assets/vendor/`: third-party assets such as Highlight.js, KaTeX, and Mermaid.
 - `scripts/`: local asset copy and release package assembly scripts.
+- `tests/Unit/` and `tests/Integration/`: real WordPress PHPUnit coverage for rendering, REST permissions, revisions, migration, editor gating, and compatibility facade behavior.
+- `tests/e2e/`: Chromium Playwright coverage for author workflows against an installed release ZIP.
 
 ## Data Model
 
@@ -71,7 +73,14 @@ picker, WeChat exporter, and bootstrap.
 `npm run build:release` assembles `dist/easymde` and `dist/easymde.zip` from
 runtime files. It refuses to run if Composer dependencies, local vendor assets,
 registered theme assets, translation files, or version metadata are missing or
-inconsistent.
+inconsistent. Release packaging also requires `composer install --no-dev`; if
+Composer development packages are installed, the build fails instead of copying a
+vendor tree with development autoload metadata.
+
+`scripts/run-plugin-check.sh` installs the built ZIP into a clean WordPress site,
+activates it, runs the official Plugin Check plugin, and fails on Plugin Check
+errors. Reviewed Plugin Check warnings and their release-policy rationale are
+tracked in `docs/PLUGIN_CHECK.md`.
 
 ## REST Boundaries
 
@@ -115,6 +124,9 @@ npm run i18n:make-pot
 npm run i18n:compile
 npm run i18n:check
 ```
+
+Third-party runtime notices are generated and checked separately with
+`npm run notices:write` and `npm run notices:check`.
 
 The repository does not use a runtime gettext filter, locale-specific PHP
 translation array, WordPress.org translation-platform integration, or remote CDN

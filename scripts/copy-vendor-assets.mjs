@@ -7,6 +7,7 @@ const fromRoot = (...parts) => join(root, ...parts);
 
 const assets = [
   ['node_modules/@highlightjs/cdn-assets/highlight.min.js', 'assets/vendor/highlight/highlight.min.js'],
+  ['node_modules/@highlightjs/cdn-assets/LICENSE', 'assets/vendor/highlight/LICENSE'],
   ['node_modules/@highlightjs/cdn-assets/styles/github.min.css', 'assets/vendor/highlight/styles/github.min.css'],
   ['node_modules/@highlightjs/cdn-assets/styles/github-dark.min.css', 'assets/vendor/highlight/styles/github-dark.min.css'],
   ['node_modules/@highlightjs/cdn-assets/styles/atom-one-dark.min.css', 'assets/vendor/highlight/styles/atom-one-dark.min.css'],
@@ -16,6 +17,7 @@ const assets = [
   ['node_modules/@highlightjs/cdn-assets/styles/xcode.min.css', 'assets/vendor/highlight/styles/xcode.min.css'],
   ['node_modules/katex/dist/katex.min.js', 'assets/vendor/katex/katex.min.js'],
   ['node_modules/katex/dist/katex.min.css', 'assets/vendor/katex/katex.min.css'],
+  ['node_modules/katex/LICENSE', 'assets/vendor/katex/LICENSE'],
   ['node_modules/mermaid/dist/mermaid.min.js', 'assets/vendor/mermaid/mermaid.min.js']
 ];
 

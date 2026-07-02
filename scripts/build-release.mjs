@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -34,6 +34,7 @@ const excludedReleaseFiles = new Set([
   '.env',
   '.env.local',
   '.gitattributes',
+  '.gitkeep',
   '.gitignore',
   '.phpunit.result.cache',
   '.scrutinizer.yml',
@@ -49,12 +50,17 @@ const excludedReleaseFiles = new Set([
 ]);
 
 const baseRequirements = [
+  { path: 'SECURITY.md', type: 'file' },
+  { path: 'UPGRADING.md', type: 'file' },
+  { path: 'THIRD-PARTY-NOTICES.md', type: 'file' },
   { path: 'composer.lock', type: 'file' },
   { path: 'vendor/autoload.php', type: 'file' },
   { path: 'vendor/composer/platform_check.php', type: 'file' },
   { path: 'assets/vendor/highlight/highlight.min.js', type: 'file' },
+  { path: 'assets/vendor/highlight/LICENSE', type: 'file' },
   { path: 'assets/vendor/katex/katex.min.css', type: 'file' },
   { path: 'assets/vendor/katex/katex.min.js', type: 'file' },
+  { path: 'assets/vendor/katex/LICENSE', type: 'file' },
   { path: 'assets/vendor/katex/fonts', type: 'non-empty-dir' },
   { path: 'assets/vendor/mermaid/mermaid.min.js', type: 'file' },
   { path: 'languages/easymde.pot', type: 'file' },
@@ -67,6 +73,9 @@ export const packagePaths = [
   'uninstall.php',
   'readme.txt',
   'README.md',
+  'SECURITY.md',
+  'UPGRADING.md',
+  'THIRD-PARTY-NOTICES.md',
   'LICENSE',
   'composer.json',
   'composer.lock',
@@ -83,6 +92,7 @@ const versionSources = {
   stableTag: { file: 'readme.txt', label: 'Stable tag' },
   packageJson: { file: 'package.json', label: 'version' }
 };
+const composerDevPackagePathCache = new Map();
 
 function fromRoot(root, path) {
   return join(root, path);
@@ -117,6 +127,61 @@ function composerPackageRequirements(root) {
       path: `vendor/${pkg.name}`,
       type: 'non-empty-dir'
     }));
+}
+
+function composerDevPackagePaths(root) {
+  if (composerDevPackagePathCache.has(root)) {
+    return composerDevPackagePathCache.get(root);
+  }
+
+  const lockPath = fromRoot(root, 'composer.lock');
+  if (!existsSync(lockPath)) {
+    composerDevPackagePathCache.set(root, new Set());
+    return composerDevPackagePathCache.get(root);
+  }
+
+  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+  const packages = Array.isArray(lock['packages-dev']) ? lock['packages-dev'] : [];
+  const paths = new Set(
+    packages
+      .filter((pkg) => pkg && typeof pkg.name === 'string' && pkg.name.includes('/'))
+      .map((pkg) => `vendor/${pkg.name}`)
+  );
+
+  composerDevPackagePathCache.set(root, paths);
+  return paths;
+}
+
+function isComposerDevPackageFile(root, file) {
+  const normalized = relative(root, file).split(/[\\/]+/).join('/');
+
+  for (const packagePath of composerDevPackagePaths(root)) {
+    if (normalized === packagePath || normalized.startsWith(`${packagePath}/`)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function findInstalledComposerDevPackages(root) {
+  return [...composerDevPackagePaths(root)].filter((packagePath) => existsSync(fromRoot(root, packagePath)));
+}
+
+function assertNoInstalledComposerDevPackages(root) {
+  const installed = findInstalledComposerDevPackages(root);
+
+  if (!installed.length) {
+    return;
+  }
+
+  throw new Error(
+    [
+      'Release build requires Composer runtime dependencies only; development packages are installed:',
+      ...installed.map((packagePath) => `- ${packagePath}`),
+      'Run composer install --no-dev before building a release package.'
+    ].join('\n')
+  );
 }
 
 function readText(root, path) {
@@ -197,6 +262,10 @@ export function shouldCopyReleaseFile(root, file) {
   }
 
   if (excludedReleaseFiles.has(filename)) {
+    return false;
+  }
+
+  if (isComposerDevPackageFile(root, file)) {
     return false;
   }
 
@@ -306,12 +375,38 @@ function buildReleaseZip(root, releaseRoot, packageRoot) {
   return zipPath;
 }
 
+function pruneEmptyDirectories(dir) {
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    return;
+  }
+
+  for (const entry of readdirSync(dir)) {
+    const child = join(dir, entry);
+    if (statSync(child).isDirectory()) {
+      pruneEmptyDirectories(child);
+    }
+  }
+
+  if (0 === readdirSync(dir).length) {
+    rmdirSync(dir);
+  }
+}
+
+function removeComposerDevPackages(root, packageRoot) {
+  for (const packagePath of composerDevPackagePaths(root)) {
+    rmSync(join(packageRoot, packagePath), { recursive: true, force: true });
+  }
+
+  pruneEmptyDirectories(join(packageRoot, 'vendor'));
+}
+
 export function buildRelease(options = {}) {
   const root = options.root || defaultRoot;
   const releaseRoot = options.releaseRoot || fromRoot(root, 'dist');
   const packageRoot = options.packageRoot || join(releaseRoot, 'easymde');
 
   assertReleaseVersionConsistency(root);
+  assertNoInstalledComposerDevPackages(root);
   assertReleaseRequirements(root);
 
   rmSync(packageRoot, { recursive: true, force: true });
@@ -330,6 +425,7 @@ export function buildRelease(options = {}) {
     });
   }
 
+  removeComposerDevPackages(root, packageRoot);
   buildReleaseZip(root, releaseRoot, packageRoot);
 
   return packageRoot;

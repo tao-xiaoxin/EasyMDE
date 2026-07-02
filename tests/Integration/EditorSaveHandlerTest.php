@@ -44,6 +44,51 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_legacy_markdown_post_is_lazy_migrated_on_valid_save()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+            )
+        );
+
+        add_post_meta($post_id, PostDocument::META_MARKDOWN, '');
+
+        $document = new PostDocument();
+        $this->assertTrue($document->is_easymde_post($post_id));
+        $this->assertFalse(metadata_exists('post', $post_id, PostDocument::META_ENABLED));
+
+        wp_set_current_user($user_id);
+
+        $previous_post = $_POST;
+        $_POST = array(
+            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+            'easymde_enabled' => '1',
+            'easymde_markdown' => '# Migrated',
+            'easymde_markdown_theme' => 'default',
+            'easymde_code_theme' => 'github',
+            'easymde_code_mac_style' => '1',
+        );
+
+        try {
+            $handler = new EditorSaveHandler(
+                $document,
+                $this->theme_state_repository(),
+                function () {
+                    return true;
+                }
+            );
+            $handler->save_post_meta($post_id, get_post($post_id), true);
+
+            $this->assertSame('1', get_post_meta($post_id, PostDocument::META_ENABLED, true));
+            $this->assertSame('# Migrated', get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
     public function test_missing_renderer_aborts_save_before_content_changes()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));

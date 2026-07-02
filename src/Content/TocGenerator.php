@@ -6,136 +6,132 @@ use DOMDocument;
 use DOMElement;
 use DOMXPath;
 
-if (!defined('ABSPATH')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
-final class TocGenerator
-{
-    public static function add_heading_ids_and_toc($html)
-    {
-        if (!class_exists('DOMDocument')) {
-            return $html;
-        }
+final class TocGenerator {
 
-        if (false === stripos($html, '<h') && false === strpos($html, '[TOC]')) {
-            return $html;
-        }
+	public static function add_heading_ids_and_toc( $html ) {
+		if ( ! class_exists( 'DOMDocument' ) ) {
+			return $html;
+		}
 
-        $document = new DOMDocument('1.0', 'UTF-8');
-        $previous_errors = libxml_use_internal_errors(true);
-        $loaded = $document->loadHTML(
-            '<?xml encoding="UTF-8"><div id="easymde-render-root">' . $html . '</div>',
-            LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
-        );
-        libxml_clear_errors();
-        libxml_use_internal_errors($previous_errors);
+		if ( false === stripos( $html, '<h' ) && false === strpos( $html, '[TOC]' ) ) {
+			return $html;
+		}
 
-        if (!$loaded) {
-            return $html;
-        }
+		$document        = new DOMDocument( '1.0', 'UTF-8' );
+		$previous_errors = libxml_use_internal_errors( true );
+		$loaded          = $document->loadHTML(
+			'<?xml encoding="UTF-8"><div id="easymde-render-root">' . $html . '</div>',
+			LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+		);
+		libxml_clear_errors();
+		libxml_use_internal_errors( $previous_errors );
 
-        $root = $document->getElementById('easymde-render-root');
-        if (!$root) {
-            return $html;
-        }
+		if ( ! $loaded ) {
+			return $html;
+		}
 
-        $toc_items = array();
-        $used_ids = array();
-        $headings = $root->getElementsByTagName('*');
+		$root = $document->getElementById( 'easymde-render-root' );
+		if ( ! $root ) {
+			return $html;
+		}
 
-        foreach ($headings as $heading) {
-            if (!in_array($heading->nodeName, array('h2', 'h3', 'h4'), true)) {
-                continue;
-            }
+		$toc_items = array();
+		$used_ids  = array();
+		$headings  = $root->getElementsByTagName( '*' );
 
-            $text = trim($heading->textContent);
-            if ('' === $text || in_array(strtolower($text), array('toc', 'table of contents'), true) || '目录' === $text) {
-                continue;
-            }
+		foreach ( $headings as $heading ) {
+			if ( ! in_array( $heading->nodeName, array( 'h2', 'h3', 'h4' ), true ) ) {
+				continue;
+			}
 
-            $id = $heading->getAttribute('id');
-            if ('' === $id) {
-                $id = self::unique_heading_id($text, $used_ids, count($toc_items) + 1);
-                $heading->setAttribute('id', $id);
-            } else {
-                $used_ids[$id] = true;
-            }
+			$text = trim( $heading->textContent );
+			if ( '' === $text || in_array( strtolower( $text ), array( 'toc', 'table of contents' ), true ) || '目录' === $text ) {
+				continue;
+			}
 
-            $toc_items[] = array(
-                'id' => $id,
-                'text' => $text,
-                'level' => (int) substr($heading->nodeName, 1),
-            );
-        }
+			$id = $heading->getAttribute( 'id' );
+			if ( '' === $id ) {
+				$id = self::unique_heading_id( $text, $used_ids, count( $toc_items ) + 1 );
+				$heading->setAttribute( 'id', $id );
+			} else {
+				$used_ids[ $id ] = true;
+			}
 
-        $xpath = new DOMXPath($document);
-        $toc_nodes = $xpath->query('.//p[translate(normalize-space(.), "toc", "TOC")="[TOC]"]', $root);
-        if ($toc_nodes && $toc_nodes->length) {
-            foreach (iterator_to_array($toc_nodes) as $toc_node) {
-                $toc_node->parentNode->replaceChild(self::create_toc_node($document, $toc_items), $toc_node);
-            }
-        }
+			$toc_items[] = array(
+				'id'    => $id,
+				'text'  => $text,
+				'level' => (int) substr( $heading->nodeName, 1 ),
+			);
+		}
 
-        return self::inner_html($root, $document);
-    }
+		$xpath     = new DOMXPath( $document );
+		$toc_nodes = $xpath->query( './/p[translate(normalize-space(.), "toc", "TOC")="[TOC]"]', $root );
+		if ( $toc_nodes && $toc_nodes->length ) {
+			foreach ( iterator_to_array( $toc_nodes ) as $toc_node ) {
+				$toc_node->parentNode->replaceChild( self::create_toc_node( $document, $toc_items ), $toc_node );
+			}
+		}
 
-    private static function unique_heading_id($text, array &$used_ids, $fallback_index)
-    {
-        $id = strtolower((string) preg_replace('/[^A-Za-z0-9]+/', '-', remove_accents($text)));
-        $id = trim($id, '-');
+		return self::inner_html( $root, $document );
+	}
 
-        if ('' === $id) {
-            $id = 'section-' . (int) $fallback_index;
-        }
+	private static function unique_heading_id( $text, array &$used_ids, $fallback_index ) {
+		$id = strtolower( (string) preg_replace( '/[^A-Za-z0-9]+/', '-', remove_accents( $text ) ) );
+		$id = trim( $id, '-' );
 
-        $base = $id;
-        $suffix = 2;
+		if ( '' === $id ) {
+			$id = 'section-' . (int) $fallback_index;
+		}
 
-        while (isset($used_ids[$id])) {
-            $id = $base . '-' . $suffix;
-            ++$suffix;
-        }
+		$base   = $id;
+		$suffix = 2;
 
-        $used_ids[$id] = true;
+		while ( isset( $used_ids[ $id ] ) ) {
+			$id = $base . '-' . $suffix;
+			++$suffix;
+		}
 
-        return $id;
-    }
+		$used_ids[ $id ] = true;
 
-    private static function create_toc_node(DOMDocument $document, array $items)
-    {
-        $toc = $document->createElement('div');
-        $toc->setAttribute('class', 'easymde-toc');
+		return $id;
+	}
 
-        if (empty($items)) {
-            return $toc;
-        }
+	private static function create_toc_node( DOMDocument $document, array $items ) {
+		$toc = $document->createElement( 'div' );
+		$toc->setAttribute( 'class', 'easymde-toc' );
 
-        $list = $document->createElement('ul');
-        foreach ($items as $item) {
-            $entry = $document->createElement('li');
-            $entry->setAttribute('class', 'easymde-toc-level-' . (int) $item['level']);
+		if ( empty( $items ) ) {
+			return $toc;
+		}
 
-            $link = $document->createElement('a');
-            $link->setAttribute('href', '#' . $item['id']);
-            $link->appendChild($document->createTextNode($item['text']));
+		$list = $document->createElement( 'ul' );
+		foreach ( $items as $item ) {
+			$entry = $document->createElement( 'li' );
+			$entry->setAttribute( 'class', 'easymde-toc-level-' . (int) $item['level'] );
 
-            $entry->appendChild($link);
-            $list->appendChild($entry);
-        }
+			$link = $document->createElement( 'a' );
+			$link->setAttribute( 'href', '#' . $item['id'] );
+			$link->appendChild( $document->createTextNode( $item['text'] ) );
 
-        $toc->appendChild($list);
+			$entry->appendChild( $link );
+			$list->appendChild( $entry );
+		}
 
-        return $toc;
-    }
+		$toc->appendChild( $list );
 
-    private static function inner_html(DOMElement $element, DOMDocument $document)
-    {
-        $html = '';
-        foreach ($element->childNodes as $child) {
-            $html .= $document->saveHTML($child);
-        }
+		return $toc;
+	}
 
-        return $html;
-    }
+	private static function inner_html( DOMElement $element, DOMDocument $document ) {
+		$html = '';
+		foreach ( $element->childNodes as $child ) {
+			$html .= $document->saveHTML( $child );
+		}
+
+		return $html;
+	}
 }

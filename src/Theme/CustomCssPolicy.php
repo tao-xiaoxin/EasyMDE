@@ -43,6 +43,15 @@ final class CustomCssPolicy
 
     private function render_css($css, $scope_selectors)
     {
+        $css = (string) $css;
+        if (strlen($css) > self::MAX_BYTES) {
+            return new WP_Error(
+                'easymde_custom_css_too_large',
+                __('Custom CSS is too large.', 'easymde'),
+                array('status' => 413)
+            );
+        }
+
         $css = $this->prepare_raw_css($css);
         if ('' === $css) {
             return '';
@@ -89,7 +98,7 @@ final class CustomCssPolicy
         $css = wp_strip_all_tags((string) $css);
         $css = str_replace(array("\0", '</style', '<style'), '', $css);
 
-        return trim(substr($css, 0, self::MAX_BYTES));
+        return trim($css);
     }
 
     private function find_blocked_token($css)
@@ -97,6 +106,7 @@ final class CustomCssPolicy
         $patterns = array(
             '/@import\b/i' => '@import',
             '/@charset\b/i' => '@charset',
+            '/@font-face\b/i' => '@font-face',
             '/url\s*\(/i' => 'url()',
             '/expression\s*\(/i' => 'expression()',
             '/\bbehavior\s*:/i' => 'behavior',
@@ -117,7 +127,7 @@ final class CustomCssPolicy
     {
         if ($node instanceof AtRule) {
             $name = strtolower((string) $node->atRuleName());
-            if (in_array($name, array('import', 'charset'), true)) {
+            if (in_array($name, array('import', 'charset', 'font-face'), true)) {
                 throw new \RuntimeException('@' . $name . ' is not allowed.');
             }
 

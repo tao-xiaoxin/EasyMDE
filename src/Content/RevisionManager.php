@@ -24,6 +24,7 @@ final class RevisionManager
     {
         add_filter('wp_post_revision_meta_keys', array($this, 'register_revision_meta_keys'));
         add_action('_wp_put_post_revision', array($this, 'save_revision_meta'), 10, 1);
+        add_action('save_post', array($this, 'sync_latest_revision_meta_after_save'), 20, 3);
         add_action('wp_restore_post_revision', array($this, 'restore_revision_meta'), 10, 2);
     }
 
@@ -54,6 +55,36 @@ final class RevisionManager
         }
     }
 
+    public function sync_latest_revision_meta_after_save($post_id, $post, $update)
+    {
+        unset($update);
+
+        if ($this->restoring || wp_is_post_revision($post_id) || !$post || !$this->post_document->is_easymde_post($post_id)) {
+            return;
+        }
+
+        $revisions = wp_get_post_revisions(
+            $post_id,
+            array(
+                'posts_per_page' => 5,
+                'orderby' => 'date',
+                'order' => 'DESC',
+            )
+        );
+
+        if (empty($revisions)) {
+            return;
+        }
+
+        foreach ($revisions as $revision) {
+            $revision_id = is_object($revision) && isset($revision->ID) ? absint($revision->ID) : absint($revision);
+            if ($revision_id > 0 && !wp_is_post_autosave($revision_id)) {
+                $this->save_revision_meta($revision_id);
+                break;
+            }
+        }
+    }
+
     public function restore_revision_meta($post_id, $revision_id)
     {
         if ($this->restoring || !$post_id || !$revision_id) {
@@ -74,19 +105,19 @@ final class RevisionManager
 
         $this->restoring = true;
 
-        foreach ($this->post_document->revision_meta_keys() as $key) {
-            if (metadata_exists('post', $revision_id, $key)) {
-                update_post_meta($post_id, $key, get_post_meta($revision_id, $key, true));
-            } else {
-                delete_post_meta($post_id, $key);
+        try {
+            foreach ($this->post_document->revision_meta_keys() as $key) {
+                if (metadata_exists('post', $revision_id, $key)) {
+                    update_post_meta($post_id, $key, get_post_meta($revision_id, $key, true));
+                } else {
+                    delete_post_meta($post_id, $key);
+                }
             }
-        }
 
-        if (MarkdownRenderer::is_available() && $this->post_document->is_easymde_post($post_id)) {
-            $theme_state = $this->theme_state_repository->get_theme_state($post_id);
-            $markdown = (string) get_post_meta($post_id, PostDocument::META_MARKDOWN, true);
+            if (MarkdownRenderer::is_available() && $this->post_document->is_easymde_post($post_id)) {
+                $theme_state = $this->theme_state_repository->get_theme_state($post_id);
+                $markdown = (string) get_post_meta($post_id, PostDocument::META_MARKDOWN, true);
 
-            try {
                 global $wpdb;
 
                 $wpdb->update(
@@ -97,11 +128,11 @@ final class RevisionManager
                     array('%d')
                 );
                 clean_post_cache($post_id);
-            } catch (\RuntimeException $exception) {
-                unset($exception);
             }
+        } catch (\RuntimeException $exception) {
+            unset($exception);
+        } finally {
+            $this->restoring = false;
         }
-
-        $this->restoring = false;
     }
 }

@@ -53,10 +53,10 @@ those revisions does not delete current EasyMDE meta automatically.
 Existing custom CSS library data remains readable from the current user's
 `easymde_custom_css_library` user meta.
 
-New and updated full custom CSS requires `unfiltered_html`. CSS is parsed with
+New, updated, and deleted full custom CSS requires `unfiltered_html`. CSS is parsed with
 `sabberworm/php-css-parser` before storage or scoping. Unsafe features such as
-`@import`, `@charset`, `url(...)`, `expression(...)`, `behavior`,
-`-moz-binding`, and `javascript:` are rejected.
+`@import`, `@charset`, `@font-face`, `url(...)`, `expression(...)`,
+`behavior`, `-moz-binding`, and `javascript:` are rejected.
 
 If legacy CSS cannot be parsed safely, the stored value is retained but scoped
 frontend output is omitted.

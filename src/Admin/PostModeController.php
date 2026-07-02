@@ -86,11 +86,19 @@ final class PostModeController
             return false;
         }
 
-        return $this->is_new_easymde_request($post_type) || $this->post_document->is_easymde_post($post_id);
+        if ($this->is_new_easymde_request($post_type)) {
+            return true;
+        }
+
+        return $post_id > 0 && $this->post_document->is_easymde_post($post_id);
     }
 
     public function is_new_easymde_request($post_type)
     {
+        if (!$this->is_post_new_screen() || !empty($_GET['post'])) {
+            return false;
+        }
+
         if (empty($_GET['easymde']) || '1' !== (string) wp_unslash($_GET['easymde'])) {
             return false;
         }
@@ -102,6 +110,17 @@ final class PostModeController
         }
 
         return current_user_can($this->create_post_capability($post_type));
+    }
+
+    private function is_post_new_screen()
+    {
+        global $pagenow;
+
+        if ('post-new.php' === $pagenow) {
+            return true;
+        }
+
+        return isset($_SERVER['PHP_SELF']) && 'post-new.php' === basename((string) wp_unslash($_SERVER['PHP_SELF']));
     }
 
     private function create_post_capability($post_type)

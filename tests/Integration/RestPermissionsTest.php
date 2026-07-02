@@ -35,4 +35,16 @@ final class RestPermissionsTest extends WP_UnitTestCase
 
         $this->assertTrue((new Capabilities())->can_preview($request));
     }
+
+    public function test_user_without_unfiltered_html_cannot_delete_custom_css()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'author'));
+        wp_set_current_user($user_id);
+
+        $request = new WP_REST_Request('DELETE', '/easymde/v1/custom-css/example');
+        $result = (new Capabilities())->can_delete_custom_css($request);
+
+        $this->assertWPError($result);
+        $this->assertSame(403, $result->get_error_data()['status']);
+    }
 }

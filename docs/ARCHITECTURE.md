@@ -78,7 +78,7 @@ All EasyMDE REST routes use namespace `easymde/v1`.
 Preview and theme requests with `post_id` require
 `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires
 `edit_posts`. Custom CSS endpoints only read and write the current user's user
-meta; full CSS create/update requires `unfiltered_html`.
+meta; full CSS create/update/delete requires `unfiltered_html`.
 
 Preview Markdown payloads are capped at 1 MiB.
 

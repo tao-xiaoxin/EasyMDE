@@ -14,11 +14,16 @@ final class EditorSaveHandler
 {
     private $post_document;
     private $theme_state_repository;
+    private $renderer_available_callback;
 
-    public function __construct(PostDocument $post_document, ThemeStateRepository $theme_state_repository)
-    {
+    public function __construct(
+        PostDocument $post_document,
+        ThemeStateRepository $theme_state_repository,
+        ?callable $renderer_available_callback = null
+    ) {
         $this->post_document = $post_document;
         $this->theme_state_repository = $theme_state_repository;
+        $this->renderer_available_callback = $renderer_available_callback ?: array(MarkdownRenderer::class, 'is_available');
     }
 
     public function register_hooks()
@@ -43,7 +48,7 @@ final class EditorSaveHandler
             return;
         }
 
-        if (!current_user_can('edit_post', $post_id) || !MarkdownRenderer::is_available()) {
+        if (!current_user_can('edit_post', $post_id) || !$this->is_renderer_available()) {
             return;
         }
 
@@ -67,7 +72,7 @@ final class EditorSaveHandler
 
     public function render_markdown_post_content($data, $postarr)
     {
-        if (!$this->has_valid_save_request() || !MarkdownRenderer::is_available()) {
+        if (!$this->has_valid_save_request()) {
             return $data;
         }
 
@@ -76,6 +81,12 @@ final class EditorSaveHandler
         }
 
         if (!empty($postarr['ID']) && !current_user_can('edit_post', absint($postarr['ID']))) {
+            return $data;
+        }
+
+        if (!$this->is_renderer_available()) {
+            $data['post_content'] = $this->existing_post_content($postarr);
+
             return $data;
         }
 
@@ -93,12 +104,32 @@ final class EditorSaveHandler
 
     private function has_valid_save_request()
     {
-        if (!isset($_POST['easymde_nonce'], $_POST['easymde_markdown'])) {
+        if (!isset($_POST['easymde_nonce'], $_POST['easymde_markdown'], $_POST['easymde_enabled'])) {
+            return false;
+        }
+
+        if ('1' !== (string) wp_unslash($_POST['easymde_enabled'])) {
             return false;
         }
 
         $nonce = sanitize_text_field(wp_unslash($_POST['easymde_nonce']));
 
         return wp_verify_nonce($nonce, 'easymde_save_markdown');
+    }
+
+    private function is_renderer_available()
+    {
+        return (bool) call_user_func($this->renderer_available_callback);
+    }
+
+    private function existing_post_content($postarr)
+    {
+        if (empty($postarr['ID'])) {
+            return '';
+        }
+
+        $post = get_post(absint($postarr['ID']));
+
+        return $post ? (string) $post->post_content : '';
     }
 }

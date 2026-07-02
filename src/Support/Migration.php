@@ -62,6 +62,10 @@ final class Migration
             PostDocument::META_CODE_MAC_STYLE,
             PostDocument::META_CUSTOM_CSS_ID,
             PostDocument::META_CUSTOM_CSS_SNAPSHOT,
+            PostDocument::META_CUSTOM_FONT,
+            PostDocument::META_WINDOWS_FONT,
+            PostDocument::META_APPLE_FONT,
+            PostDocument::META_SERIF_FONT,
         );
     }
 }

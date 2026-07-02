@@ -43,11 +43,7 @@ final class Capabilities
 
     public function can_delete_custom_css(WP_REST_Request $request)
     {
-        unset($request);
-
-        return current_user_can('edit_posts')
-            ? true
-            : $this->forbidden('easymde_rest_cannot_delete_custom_css');
+        return $this->can_manage_custom_css($request);
     }
 
     private function forbidden($code)

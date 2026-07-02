@@ -5743,6 +5743,360 @@
   margin-bottom: 0;
 }
 
+/* mdnice theme 3050: cupid-busy. Captured from rendered writingDetail.html. */
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy {
+  --easymde-theme-font-family: Inter, "Microsoft YaHei", PingFangSC-regular, sans-serif;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
+  font-size: 14px;
+  line-height: 22.001px;
+  letter-spacing: 0;
+  color: rgba(0, 0, 0, 0.8);
+  background: transparent;
+  padding: 0;
+  font-weight: 400;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy .block-1,
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy .block-3 {
+  margin: 20px 0;
+  padding: 10px 20px;
+  border: 3px none rgba(0, 0, 0, 0.4);
+  border-radius: 0;
+  background: rgb(250, 250, 250);
+  box-shadow: rgba(0, 0, 0, 0) 0 0 0 0;
+  display: block;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy .block-1 {
+  margin-top: 30px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy .block-2 {
+  margin: 20px 0;
+  padding: 10px 20px;
+  border: 1px dashed rgb(74, 179, 172);
+  border-radius: 8px;
+  background: rgb(223, 241, 238);
+  box-shadow: rgba(0, 0, 0, 0) 0 0 0 0;
+  display: block;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy .column {
+  display: flex;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy .column-left,
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy .column-right {
+  width: 50%;
+  text-align: center;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy .column-left {
+  padding-right: 5px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy .column-right {
+  padding-left: 5px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy p {
+  margin: 0;
+  padding: 8px 0;
+  color: rgb(0, 0, 0);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.8em;
+  letter-spacing: 0;
+  text-align: left;
+  text-indent: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h1,
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h2 {
+  margin: 30px 0 15px;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: unset;
+  position: relative;
+  line-height: 1.5em;
+  letter-spacing: 0;
+  color: rgba(0, 0, 0, 0.85);
+  background: transparent;
+  border: 1px none rgb(0, 0, 0);
+  box-shadow: none;
+  text-align: left;
+  text-shadow: none;
+  transform: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h1 {
+  margin-top: -35px;
+  font-size: 28px;
+  font-weight: 500;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h1 .content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 10px;
+  color: rgb(255, 255, 255);
+  background: rgb(130, 127, 196);
+  border: 1px none rgb(0, 0, 0);
+  border-radius: 30px;
+  box-shadow: none;
+  font-size: 20px;
+  font-weight: bold;
+  line-height: 1.5em;
+  letter-spacing: 0;
+  text-align: left;
+  text-indent: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h1 .prefix {
+  display: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h1 .suffix {
+  display: block;
+  position: relative;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  background: transparent url("../images/cupid-busy-heart.png") 0 0 / 100% 100% no-repeat;
+  border: 1px none rgb(0, 0, 0);
+  box-shadow: none;
+  color: rgb(0, 0, 0);
+  font-size: 22px;
+  font-weight: bold;
+  line-height: 1.5em;
+  letter-spacing: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h2 {
+  font-size: 21px;
+  font-weight: 500;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h2 .prefix {
+  display: block;
+  position: relative;
+  width: 35px;
+  height: 35px;
+  margin: 0 -20px 0 0;
+  padding: 0;
+  background: transparent url("../images/cupid-busy-h2-prefix.png") 0 0 / 100% 100% no-repeat;
+  border: 1px none rgb(0, 0, 0);
+  box-shadow: none;
+  color: rgb(0, 0, 0);
+  font-size: 22px;
+  font-weight: bold;
+  line-height: 1.5em;
+  letter-spacing: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h2 .content {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  color: rgb(130, 127, 196);
+  background: transparent;
+  border: 1px none rgb(0, 0, 0);
+  box-shadow: none;
+  font-size: 18px;
+  font-weight: bold;
+  line-height: 1.5em;
+  letter-spacing: 0;
+  text-align: left;
+  text-indent: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h2 .suffix {
+  display: block;
+  position: relative;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  padding: 0;
+  background: transparent url("../images/cupid-busy-heart.png") 0 0 / 100% 100% no-repeat;
+  border: 1px none rgb(0, 0, 0);
+  box-shadow: none;
+  color: rgb(0, 0, 0);
+  font-size: 22px;
+  font-weight: bold;
+  line-height: 1.5em;
+  letter-spacing: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h3 {
+  margin: 30px 0 15px;
+  padding: 0;
+  display: block;
+  color: rgba(0, 0, 0, 0.85);
+  font-size: 16.38px;
+  font-weight: 500;
+  line-height: 1.6em;
+  letter-spacing: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h3 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h3 .suffix {
+  display: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy h3 .content {
+  display: block;
+  color: rgb(0, 0, 0);
+  font-size: 20px;
+  font-weight: bold;
+  line-height: 1.5em;
+  letter-spacing: 0;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy ul,
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy ol {
+  margin: 8px 0;
+  padding: 0 0 0 25px;
+  color: rgb(0, 0, 0);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy ul {
+  list-style-type: disc;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy li section {
+  margin: 5px 0;
+  color: rgb(1, 1, 1);
+  font-size: 15px;
+  font-weight: normal;
+  line-height: 1.8em;
+  letter-spacing: 0;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy strong {
+  color: rgb(130, 127, 196);
+  font-weight: bold;
+  background: transparent;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy .block-2 strong {
+  color: rgb(255, 79, 121);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy em {
+  color: rgb(130, 127, 196);
+  font-style: italic;
+  background: transparent;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy a,
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy a span {
+  color: rgb(130, 127, 196);
+  font-weight: bold;
+  text-decoration: none;
+  border-bottom: 1px solid rgb(130, 127, 196);
+  overflow-wrap: break-word;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy figure {
+  margin: 10px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy img {
+  display: block;
+  max-width: 100%;
+  margin: 0 auto;
+  border: 3px none rgba(0, 0, 0, 0.4);
+  border-radius: 0;
+  object-fit: fill;
+  box-shadow: rgba(0, 0, 0, 0) 0 0 0 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy figcaption {
+  margin-top: 6px;
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy blockquote {
+  margin: 12px 0;
+  padding: 10px 14px;
+  border-left: 4px solid rgb(130, 127, 196);
+  background: rgba(130, 127, 196, 0.08);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy blockquote p {
+  color: rgb(1, 1, 1);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy p code,
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy li code {
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: rgb(130, 127, 196);
+  background: rgba(130, 127, 196, 0.1);
+  font-family: var(--easymde-code-font-family);
+  font-size: 0.92em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy table {
+  display: table;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy table tr th,
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy table tr td {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy .footnotes-sep,
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy .footnotes {
+  color: rgb(130, 127, 196);
+  font-size: 14px;
+}
+
+@media (max-width: 600px) {
+  .easymde-rendered-content.easymde-markdown-theme-cupid-busy {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .easymde-rendered-content.easymde-markdown-theme-cupid-busy .block-1,
+  .easymde-rendered-content.easymde-markdown-theme-cupid-busy .block-2,
+  .easymde-rendered-content.easymde-markdown-theme-cupid-busy .block-3 {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .easymde-rendered-content.easymde-markdown-theme-cupid-busy pre {
+    overflow-x: auto;
+  }
+}
+
 /* Local replacements for remote decorative images in the visual references. */
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h2 .prefix {
   background-image: url("../images/fullstack-blue-h2.png");

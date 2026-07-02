@@ -139,6 +139,7 @@ final class EasyMDE_Plugin
             'Minimal black' => '极简黑',
             'Orange blue' => '橙蓝风',
             'Frontend peak' => '前端之巅同款',
+            'Cupid busy' => '丘比特忙',
             'Code theme' => '代码主题',
             'Mac code frame' => 'Mac 代码框',
             'Custom CSS' => '自定义 CSS',
@@ -1044,6 +1045,7 @@ final class EasyMDE_Plugin
             'minimal-black' => __('Minimal black', 'easymde'),
             'orange-blue' => __('Orange blue', 'easymde'),
             'frontend-peak' => __('Frontend peak', 'easymde'),
+            'cupid-busy' => __('Cupid busy', 'easymde'),
         );
 
         $registered = array();
@@ -1149,6 +1151,11 @@ final class EasyMDE_Plugin
                     'fontFamily' => 'Inter',
                 ),
                 array(
+                    'id' => 'cupid-busy-inter',
+                    'label' => 'Inter (cupid-busy)',
+                    'fontFamily' => 'Inter',
+                ),
+                array(
                     'id' => 'tech-blue-optima',
                     'label' => 'Optima (科技蓝)',
                     'fontFamily' => 'Optima',
@@ -1193,6 +1200,11 @@ final class EasyMDE_Plugin
                 array(
                     'id' => 'ningye-purple-microsoft-yahei',
                     'label' => 'Microsoft YaHei (ningye-purple)',
+                    'fontFamily' => '"Microsoft YaHei"',
+                ),
+                array(
+                    'id' => 'cupid-busy-microsoft-yahei',
+                    'label' => 'Microsoft YaHei (cupid-busy)',
                     'fontFamily' => '"Microsoft YaHei"',
                 ),
                 array(
@@ -1456,6 +1468,14 @@ final class EasyMDE_Plugin
                     'serifFont' => 'sans-serif-only',
                 );
 
+            case 'cupid-busy':
+                return array(
+                    'customFont' => 'cupid-busy-inter',
+                    'windowsFont' => 'cupid-busy-microsoft-yahei',
+                    'appleFont' => 'pingfang-sc-regular-raw',
+                    'serifFont' => 'sans-serif-only',
+                );
+
             case 'tech-blue':
                 return array(
                     'customFont' => 'tech-blue-optima',
@@ -1482,7 +1502,7 @@ final class EasyMDE_Plugin
             return true;
         }
 
-        foreach (array('orange-heart', 'rose-purple', 'ningye-purple', 'tech-blue') as $theme_id) {
+        foreach (array('orange-heart', 'rose-purple', 'ningye-purple', 'cupid-busy', 'tech-blue') as $theme_id) {
             $defaults = $this->get_theme_font_defaults($theme_id);
             if (
                 $defaults

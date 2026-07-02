@@ -12,6 +12,7 @@ final class EasyMDE_Markdown
         $theme = sanitize_key((string) $theme);
         $math = array();
         $markdown = self::extract_math($markdown, $math);
+        $markdown = self::normalize_mdnice_container_markers($markdown, $theme);
 
         if (class_exists('League\\CommonMark\\GithubFlavoredMarkdownConverter')) {
             $converter = new League\CommonMark\GithubFlavoredMarkdownConverter(
@@ -124,6 +125,53 @@ final class EasyMDE_Markdown
         return $markdown;
     }
 
+    private static function normalize_mdnice_container_markers($markdown, $theme)
+    {
+        if ('cupid-busy' !== sanitize_key((string) $theme)) {
+            return $markdown;
+        }
+
+        $markdown = str_replace(array("\r\n", "\r"), "\n", (string) $markdown);
+        $markdown = preg_replace_callback(
+            '/!\[([^\]]*)\]\((\S+)\s+=([0-9]{1,3})%x\)/',
+            function ($matches) {
+                $width = max(1, min(100, (int) $matches[3]));
+
+                return '![EASYMDE_MDNICE_WIDTH_' . $width . '](' . $matches[2] . ')';
+            },
+            $markdown
+        );
+
+        $lines = explode("\n", $markdown);
+        $normalized = array();
+        $in_fence = false;
+
+        foreach ($lines as $line) {
+            if (preg_match('/^\s*(```|~~~)/', $line)) {
+                $in_fence = !$in_fence;
+                $normalized[] = $line;
+                continue;
+            }
+
+            if (
+                !$in_fence
+                && preg_match('/^\s*:{3,5}(?:\s+(?:block-[123]|column|column-left|column-right))?\s*$/', $line)
+            ) {
+                if (!empty($normalized) && '' !== end($normalized)) {
+                    $normalized[] = '';
+                }
+
+                $normalized[] = trim($line);
+                $normalized[] = '';
+                continue;
+            }
+
+            $normalized[] = $line;
+        }
+
+        return implode("\n", $normalized);
+    }
+
     private static function restore_math($html, array $math)
     {
         foreach ($math as $token => $item) {
@@ -202,6 +250,7 @@ final class EasyMDE_Markdown
             || false !== stripos($html, '<a')
             || false !== stripos($html, '<li')
             || false !== stripos($html, '<img')
+            || ('cupid-busy' === $theme && false !== strpos($html, ':::'))
             || ('ningye-purple' === $theme && false !== stripos($html, '<table'))
             || ('rose-purple' === $theme && false !== stripos($html, '<blockquote'));
 
@@ -228,6 +277,12 @@ final class EasyMDE_Markdown
         }
 
         $rose_purple_footnotes = '';
+
+        if ('cupid-busy' === $theme) {
+            self::wrap_cupid_busy_containers($document, $root);
+            self::apply_mdnice_image_dimensions($root);
+            self::restore_unparsed_strong_markers($document, $root);
+        }
 
         self::wrap_theme_headings($document, $root, $theme);
         self::wrap_theme_list_items($document, $root);
@@ -277,9 +332,130 @@ final class EasyMDE_Markdown
                 'minimal-black',
                 'orange-blue',
                 'frontend-peak',
+                'cupid-busy',
             ),
             true
         );
+    }
+
+    private static function wrap_cupid_busy_containers(DOMDocument $document, DOMElement $root)
+    {
+        $stack = array($root);
+        $children = iterator_to_array($root->childNodes);
+
+        foreach ($children as $child) {
+            if (!($child instanceof DOMElement) || 'p' !== strtolower($child->nodeName)) {
+                if (count($stack) > 1) {
+                    end($stack)->appendChild($child);
+                }
+                continue;
+            }
+
+            $marker = trim((string) $child->textContent);
+            if (!preg_match('/^:{3,5}(?:\s+(block-[123]|column|column-left|column-right))?\s*$/', $marker, $matches)) {
+                if (count($stack) > 1) {
+                    end($stack)->appendChild($child);
+                }
+                continue;
+            }
+
+            $class_name = isset($matches[1]) ? $matches[1] : '';
+            if ('' === $class_name) {
+                if ($child->parentNode) {
+                    $child->parentNode->removeChild($child);
+                }
+
+                if (count($stack) > 1) {
+                    array_pop($stack);
+                }
+                continue;
+            }
+
+            $section = $document->createElement('section');
+            $section->setAttribute('class', $class_name);
+            if (0 === strpos($class_name, 'block-') || 'column' === $class_name) {
+                $section->setAttribute('data-tool', 'mdnice编辑器');
+            }
+
+            $target = end($stack);
+            if ($target === $root && $child->parentNode === $root) {
+                $root->insertBefore($section, $child);
+            } else {
+                $target->appendChild($section);
+            }
+
+            if ($child->parentNode) {
+                $child->parentNode->removeChild($child);
+            }
+
+            if (0 === strpos($class_name, 'block-')) {
+                $inner = $document->createElement('section');
+                $inner->setAttribute('class', $class_name . '-inner');
+                $section->appendChild($inner);
+                $stack[] = $inner;
+            } else {
+                $stack[] = $section;
+            }
+        }
+    }
+
+    private static function apply_mdnice_image_dimensions(DOMElement $root)
+    {
+        $images = iterator_to_array($root->getElementsByTagName('img'));
+        foreach ($images as $image) {
+            if (!($image instanceof DOMElement)) {
+                continue;
+            }
+
+            $alt = (string) $image->getAttribute('alt');
+            if (!preg_match('/^EASYMDE_MDNICE_WIDTH_([0-9]{1,3})$/', $alt, $matches)) {
+                continue;
+            }
+
+            $width = max(1, min(100, (int) $matches[1]));
+            $image->setAttribute('width', $width . '%');
+            $image->setAttribute('alt', '');
+        }
+    }
+
+    private static function restore_unparsed_strong_markers(DOMDocument $document, DOMElement $root)
+    {
+        $xpath = new DOMXPath($document);
+        $nodes = $xpath->query('.//text()[contains(., "**")]', $root);
+        if (!$nodes) {
+            return;
+        }
+
+        foreach (iterator_to_array($nodes) as $node) {
+            if (!($node instanceof DOMText) || self::text_node_has_ancestor($node, array('code', 'pre'))) {
+                continue;
+            }
+
+            $text = (string) $node->nodeValue;
+            if (!preg_match('/\*\*([^*\n]+)\*\*/u', $text)) {
+                continue;
+            }
+
+            $fragment = $document->createDocumentFragment();
+            $parts = preg_split('/(\*\*[^*\n]+\*\*)/u', $text, -1, PREG_SPLIT_DELIM_CAPTURE);
+            foreach ($parts as $part) {
+                if ('' === $part) {
+                    continue;
+                }
+
+                if (preg_match('/^\*\*([^*\n]+)\*\*$/u', $part, $matches)) {
+                    $strong = $document->createElement('strong');
+                    $strong->appendChild($document->createTextNode($matches[1]));
+                    $fragment->appendChild($strong);
+                } else {
+                    $fragment->appendChild($document->createTextNode($part));
+                }
+            }
+
+            if ($node->parentNode) {
+                $node->parentNode->replaceChild($fragment, $node);
+            }
+        }
     }
 
     private static function wrap_theme_headings(DOMDocument $document, DOMElement $root, $theme)
@@ -656,6 +832,22 @@ final class EasyMDE_Markdown
             }
 
             $node = $node->parentNode;
+        }
+
+        return false;
+    }
+
+    private static function text_node_has_ancestor(DOMText $node, array $node_names)
+    {
+        $parent = $node->parentNode;
+        $node_names = array_map('strtolower', $node_names);
+
+        while ($parent instanceof DOMElement) {
+            if (in_array(strtolower($parent->nodeName), $node_names, true)) {
+                return true;
+            }
+
+            $parent = $parent->parentNode;
         }
 
         return false;

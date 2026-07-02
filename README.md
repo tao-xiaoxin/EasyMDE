@@ -4,6 +4,7 @@
   </a>
 </p>
 <h1 align="center">EasyMDE</h1>
+<p align="center">From Markdown to WordPress, without breaking your flow.</p>
 <p align="center">
   <a href="https://github.com/tao-xiaoxin/EasyMDE/releases">
     <img src="https://img.shields.io/badge/version-0.1.7-2563eb?style=flat-square&logo=github&logoColor=white" alt="Version 0.1.7" />

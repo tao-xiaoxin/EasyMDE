@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/0273051d6fc14cc4a5223801a397b52a.png" alt="EasyMDE" width="900">
+  <img src="docs/assets/0273051d6fc14cc4a5223801a397b52a.png" alt="EasyMDE" width="270">
 </p>
 
 # EasyMDE

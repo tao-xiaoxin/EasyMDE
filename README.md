@@ -26,6 +26,14 @@ EasyMDE is a full-featured WordPress Markdown editor plugin focused on a clean s
 
 The project name is EasyMDE, but the goal is broader than wrapping one editor library. The plugin should provide a self-contained WordPress Markdown workflow without depending on Jetpack, Classic Editor, or another Markdown plugin.
 
+## Editor Preview
+
+<p align="center">
+  <a href="./docs/assets/easymde-editor-showcase.png">
+    <img src="./docs/assets/easymde-editor-showcase.png" alt="EasyMDE split-pane Markdown editor with live preview, code highlighting, Mermaid, and KaTeX" width="1200" />
+  </a>
+</p>
+
 ## Goals
 
 - Provide a modern Markdown editor for WordPress posts and pages.

@@ -205,6 +205,36 @@ The copied highlight.js styles include `github`, `github-dark`,
 `assets/vendor/highlight/styles/`; the `wechat-inspired` style is maintained
 locally in `assets/themes/code/`.
 
+EasyMDE uses the standard WordPress text domain `easymde`. GitHub Release ZIPs
+include the bundled Simplified Chinese language files in `languages/`, including
+`easymde.pot`, `easymde-zh_CN.po`, and the gettext-compiled
+`easymde-zh_CN.mo`.
+
+Update and validate translation files with:
+
+```bash
+npm run i18n:make-pot
+npm run i18n:compile
+npm run i18n:check
+```
+
+These commands require GNU gettext tools such as `xgettext` and `msgfmt`.
+Running `npm install` installs JavaScript dependencies and copies local runtime
+assets, but it does not rewrite translation files.
+
+Build the installable release package with:
+
+```bash
+npm run build:release
+```
+
+The release build creates `dist/easymde` and `dist/easymde.zip`. It validates
+that the package is self-contained with Composer `vendor/`, `assets/vendor/`,
+article and code themes, templates, source files, local Mermaid, KaTeX,
+Highlight.js assets, KaTeX CSS/fonts, and bundled language files. It also checks
+that `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json` all
+carry the same version. The plugin does not require remote CDN assets.
+
 To test in WordPress, copy or symlink this repository into:
 
 ```text

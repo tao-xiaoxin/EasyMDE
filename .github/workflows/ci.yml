@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -44,6 +46,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -53,7 +57,7 @@ jobs:
           coverage: none
 
       - name: Validate Composer metadata
-        run: composer validate --no-check-publish --strict
+        run: composer validate --no-interaction --no-check-publish --strict
 
       - name: Install PHP dependencies
         run: composer install --no-interaction --no-progress --prefer-dist
@@ -65,6 +69,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -72,11 +78,113 @@ jobs:
           node-version: '20'
           cache: npm
 
+      - name: Install gettext and ZIP tools
+        run: sudo apt-get update && sudo apt-get install -y gettext zip unzip
+
       - name: Install Node dependencies
         run: npm ci
 
       - name: Check JavaScript syntax
         run: git ls-files -z -- '*.js' '*.mjs' | xargs -0 -n1 node --check
 
+      - name: Check i18n files
+        run: npm run i18n:check
+
       - name: Run Node tests
         run: npm test
+
+  wordpress-i18n:
+    name: WordPress i18n runtime
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: wordpress_test
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=root"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mysqli
+          tools: composer:v2
+          coverage: none
+
+      - name: Install WP-CLI
+        run: |
+          curl -fsSL -o wp-cli.phar https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+          php wp-cli.phar --info
+          chmod +x wp-cli.phar
+          sudo mv wp-cli.phar /usr/local/bin/wp
+
+      - name: Install PHP runtime dependencies
+        run: composer install --no-dev --no-interaction --no-progress --prefer-dist
+
+      - name: Install WordPress
+        run: |
+          mkdir -p /tmp/easymde-wp
+          wp core download --path=/tmp/easymde-wp --force
+          wp config create --path=/tmp/easymde-wp --dbname=wordpress_test --dbuser=root --dbpass=root --dbhost=127.0.0.1:3306 --skip-check
+          wp core install --path=/tmp/easymde-wp --url=http://example.test --title=EasyMDE --admin_user=admin --admin_password=password --admin_email=admin@example.test
+
+      - name: Activate EasyMDE and verify bundled translations
+        run: |
+          ln -s "$GITHUB_WORKSPACE" /tmp/easymde-wp/wp-content/plugins/easymde
+          wp plugin activate easymde --path=/tmp/easymde-wp
+          wp eval-file "$GITHUB_WORKSPACE/scripts/verify-wordpress-i18n.php" --path=/tmp/easymde-wp
+
+  release:
+    name: Release package validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          tools: composer:v2
+          coverage: none
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install release tools
+        run: sudo apt-get update && sudo apt-get install -y gettext zip unzip
+
+      - name: Install PHP runtime dependencies
+        run: composer install --no-dev --no-interaction --no-progress --prefer-dist
+
+      - name: Install Node dependencies and local assets
+        run: npm ci
+
+      - name: Refresh local runtime assets
+        run: npm run prepare:assets
+
+      - name: Check i18n files
+        run: npm run i18n:check
+
+      - name: Build release package
+        run: npm run build:release

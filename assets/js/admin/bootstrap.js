@@ -49,7 +49,7 @@
         return themeManager.selectedCustomCss(renderState, customCssLibrary, findById);
     } : selectedCustomCss;
     var previewFallback = previewClient.createFallback ? function (markdown) {
-        return previewClient.createFallback(markdown, getString('previewEmpty', ''), escapeHtml);
+        return previewClient.createFallback(markdown, getString('previewEmpty'), escapeHtml);
     } : previewFallback;
     var capturePreviewScroll = previewClient.captureScroll || capturePreviewScroll;
     var applyTextChange = commandTools.applyTextChange ? function (textarea, value, selectionStart, selectionEnd) {
@@ -71,8 +71,8 @@
         return commandTools.insertBlock(textarea, prefix, suffix, placeholder, getCommandServices());
     } : insertBlock;
 
-    function getString(key, fallback) {
-        return config.strings && config.strings[key] ? config.strings[key] : fallback;
+    function getString(key) {
+        return config.strings && config.strings[key] ? config.strings[key] : '';
     }
 
     function getCommandServices() {
@@ -493,8 +493,8 @@
         var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-menu easymde-toolbar-button-compact"></button>');
         var $panel = $('<div class="easymde-toolbar-popover" hidden></div>');
 
-        $button.attr('title', getString('headings', 'Headings'));
-        $button.attr('aria-label', getString('headings', 'Headings'));
+        $button.attr('title', getString('headings'));
+        $button.attr('aria-label', getString('headings'));
         $button.append(
             $('<span class="easymde-toolbar-text-icon" aria-hidden="true"></span>').text('H'),
             $('<span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>')
@@ -551,7 +551,7 @@
         });
 
         if (customCssLibrary.length) {
-            var $group = $('<optgroup></optgroup>').attr('label', getString('namedCustomCss', 'Named custom CSS'));
+            var $group = $('<optgroup></optgroup>').attr('label', getString('namedCustomCss'));
 
             customCssLibrary.forEach(function (item) {
                 $group.append($('<option></option>').attr('value', 'custom:' + item.id).text(item.name));
@@ -752,19 +752,19 @@
         var $anchor = createMenuAnchor('easymde-toolbar-popover-appearance');
         var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-menu easymde-toolbar-button-compact"></button>');
         var $panel = $('<div class="easymde-toolbar-popover easymde-toolbar-popover-appearance-panel" hidden></div>');
-        var themeControl = createSelectControl(getString('articleTheme', 'Article theme'), 'easymde-theme-select');
-        var codeControl = createSelectControl(getString('codeTheme', 'Code theme'), 'easymde-code-theme-select');
+        var themeControl = createSelectControl(getString('articleTheme'), 'easymde-theme-select');
+        var codeControl = createSelectControl(getString('codeTheme'), 'easymde-code-theme-select');
         var $macLabel = $('<label class="easymde-toolbar-check"></label>');
         var $macToggle = $('<input type="checkbox">').prop('checked', !!renderState.codeMacStyle);
-        var $customToggle = $('<button type="button" class="button button-secondary easymde-custom-css-toggle"></button>').text(getString('customCss', 'Custom CSS'));
+        var $customToggle = $('<button type="button" class="button button-secondary easymde-custom-css-toggle"></button>').text(getString('customCss'));
         var $customPanel = $('<div class="easymde-custom-css-panel" hidden></div>');
-        var $name = $('<input type="text" class="regular-text easymde-custom-css-name">').attr('placeholder', getString('cssName', 'CSS name'));
+        var $name = $('<input type="text" class="regular-text easymde-custom-css-name">').attr('placeholder', getString('cssName'));
         var $code = $('<textarea class="easymde-custom-css-code" spellcheck="false"></textarea>');
-        var $save = $('<button type="button" class="button button-primary"></button>').text(getString('saveCss', 'Save CSS'));
+        var $save = $('<button type="button" class="button button-primary"></button>').text(getString('saveCss'));
         var $status = $('<span class="easymde-custom-css-status" aria-live="polite"></span>');
 
-        $button.attr('title', getString('appearance', 'Appearance'));
-        $button.attr('aria-label', getString('appearance', 'Appearance'));
+        $button.attr('title', getString('appearance'));
+        $button.attr('aria-label', getString('appearance'));
         $button.append(
             $('<span class="dashicons dashicons-admin-customizer" aria-hidden="true"></span>'),
             $('<span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>')
@@ -773,7 +773,7 @@
         renderThemeSelect(themeControl.select);
         renderCodeThemeSelect(codeControl.select);
 
-        $macLabel.append($macToggle, $('<span></span>').text(getString('macCodeFrame', 'Mac code frame')));
+        $macLabel.append($macToggle, $('<span></span>').text(getString('macCodeFrame')));
         $customPanel.append(
             $('<div class="easymde-custom-css-row"></div>').append($name, $save, $status),
             $code
@@ -831,7 +831,7 @@
 
         $save.on('click', function () {
             if (!window.wp || !window.wp.apiFetch || !config.customCssUrl) {
-                $status.text(getString('cssSaveFailed', 'CSS save failed.'));
+                $status.text(getString('cssSaveFailed'));
                 return;
             }
 
@@ -859,9 +859,9 @@
                 themeControl.select.val('custom:' + response.item.id);
                 applyRenderState($preview);
                 refreshPreview();
-                $status.text(getString('cssSaved', 'Saved CSS.'));
+                $status.text(getString('cssSaved'));
             }).catch(function () {
-                $status.text(getString('cssSaveFailed', 'CSS save failed.'));
+                $status.text(getString('cssSaveFailed'));
             });
         });
 
@@ -874,10 +874,10 @@
         var $anchor = createMenuAnchor('easymde-toolbar-popover-font');
         var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-menu easymde-toolbar-button-compact"></button>');
         var $panel = $('<div class="easymde-toolbar-popover easymde-toolbar-popover-font-panel" hidden></div>');
-        var customControl = createSelectControl(getString('customFont', 'Custom font'), 'easymde-custom-font-select');
-        var windowsControl = createSelectControl(getString('windowsFont', 'Windows font'), 'easymde-windows-font-select');
-        var appleControl = createSelectControl(getString('appleFont', 'Apple font'), 'easymde-apple-font-select');
-        var serifControl = createSelectControl(getString('serifFont', 'Serif font'), 'easymde-serif-font-select');
+        var customControl = createSelectControl(getString('customFont'), 'easymde-custom-font-select');
+        var windowsControl = createSelectControl(getString('windowsFont'), 'easymde-windows-font-select');
+        var appleControl = createSelectControl(getString('appleFont'), 'easymde-apple-font-select');
+        var serifControl = createSelectControl(getString('serifFont'), 'easymde-serif-font-select');
         var controls = [
             [customControl, 'customFonts', 'customFont'],
             [windowsControl, 'windowsFonts', 'windowsFont'],
@@ -889,8 +889,8 @@
             return;
         }
 
-        $button.attr('title', getString('font', 'Font'));
-        $button.attr('aria-label', getString('font', 'Font'));
+        $button.attr('title', getString('font'));
+        $button.attr('aria-label', getString('font'));
         $button.append(
             $('<span class="easymde-toolbar-text-icon easymde-font-glyph" aria-hidden="true"></span>').text('A'),
             $('<span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>')
@@ -912,10 +912,7 @@
         });
 
         $panel.append(
-            $('<p class="easymde-toolbar-help"></p>').text(getString(
-                'fontStackHelp',
-                'Fonts are applied in custom, Windows, Apple, and serif fallback order when supported by the current system.'
-            ))
+            $('<p class="easymde-toolbar-help"></p>').text(getString('fontStackHelp'))
         );
 
         registerPopover($button, $panel);
@@ -935,8 +932,8 @@
 
             $button.empty();
             $button.toggleClass('is-active', isDark);
-            $button.attr('title', isDark ? getString('lightMode', 'Light mode') : getString('darkMode', 'Dark mode'));
-            $button.attr('aria-label', isDark ? getString('lightMode', 'Light mode') : getString('darkMode', 'Dark mode'));
+            $button.attr('title', isDark ? getString('lightMode') : getString('darkMode'));
+            $button.attr('aria-label', isDark ? getString('lightMode') : getString('darkMode'));
             $button.append($('<span class="dashicons dashicons-lightbulb" aria-hidden="true"></span>'));
         }
 
@@ -979,21 +976,21 @@
         }
 
         var $notice = $('<div class="easymde-draft-notice"></div>');
-        var $message = $('<span></span>').text(getString('draftAvailable', 'A newer local draft is available.'));
-        var $restore = $('<button type="button" class="button button-small"></button>').text(getString('restoreDraft', 'Restore draft'));
-        var $discard = $('<button type="button" class="button button-small"></button>').text(getString('discardDraft', 'Discard draft'));
+        var $message = $('<span></span>').text(getString('draftAvailable'));
+        var $restore = $('<button type="button" class="button button-small"></button>').text(getString('restoreDraft'));
+        var $discard = $('<button type="button" class="button button-small"></button>').text(getString('discardDraft'));
 
         $restore.on('click', function () {
             textarea.value = draft.content;
             $(textarea).trigger('input');
             $notice.remove();
-            showFlash($flash, 'success', getString('draftRestored', 'Draft restored.'));
+            showFlash($flash, 'success', getString('draftRestored'));
         });
 
         $discard.on('click', function () {
             window.EasyMDEDraftStorage.discard(storage);
             $notice.remove();
-            showFlash($flash, 'info', getString('draftDiscarded', 'Draft discarded.'));
+            showFlash($flash, 'info', getString('draftDiscarded'));
         });
 
         if ($root.find('.easymde-editor-flash').length) {
@@ -1021,7 +1018,7 @@
 
     function previewFallback(markdown) {
         if (!markdown.trim()) {
-            return '<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty', '')) + '</p>';
+            return '<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty')) + '</p>';
         }
 
         return '<pre class="easymde-preview-fallback">' + escapeHtml(markdown) + '</pre>';
@@ -1106,8 +1103,8 @@
         var $button = context && context.immersiveButton ? context.immersiveButton : null;
         var isImmersive = context && context.root && context.root.hasClass('easymde-editor-immersive');
         var label = isImmersive
-            ? getString('exitImmersive', 'Exit immersive writing')
-            : getString('enterImmersive', 'Enter immersive writing');
+            ? getString('exitImmersive')
+            : getString('enterImmersive');
 
         if (!$button || !$button.length) {
             return;
@@ -1171,7 +1168,7 @@
 
             if (!markdown.trim()) {
                 scrollState = capturePreviewScroll(previewNode);
-                $preview.html('<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty', '')) + '</p>');
+                $preview.html('<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty')) + '</p>');
                 finishPreviewUpdate(scrollState);
                 return;
             }
@@ -1207,7 +1204,7 @@
                 restorePreviewScroll(previewNode, scrollState);
             }).catch(function () {
                 scrollState = capturePreviewScroll(previewNode);
-                $preview.html('<p class="easymde-preview-error">' + escapeHtml(getString('previewError', '')) + '</p>');
+                $preview.html('<p class="easymde-preview-error">' + escapeHtml(getString('previewError')) + '</p>');
                 finishPreviewUpdate(scrollState);
             });
         }, 180);
@@ -1430,11 +1427,13 @@
             insertBlock(textarea, '$$\n', '\n$$', 'E = mc^2');
             break;
         case 'link':
-            insertAround(textarea, '[', '](https://)', 'link text');
+            insertAround(textarea, '[', '](https://)', getString('linkText'));
             break;
         case 'image':
             window.EasyMDEMediaPicker.open(textarea, {
-                title: getString('insertMedia', 'Insert Media'),
+                title: getString('insertMedia'),
+                altText: getString('mediaAltText'),
+                defaultAlt: getString('mediaDefaultAlt'),
                 insertAround: insertAround,
                 applyTextChange: applyTextChange
             });
@@ -1606,7 +1605,7 @@
                 window.clearTimeout(draftTimer);
                 draftTimer = window.setTimeout(function () {
                     window.EasyMDEDraftStorage.write(storage, $source.val());
-                    $draftStatus.text(getString('draftSaved', 'Local draft saved') + ' ' + window.EasyMDEDraftStorage.formatTime(Date.now()));
+                    $draftStatus.text(getString('draftSaved') + ' ' + window.EasyMDEDraftStorage.formatTime(Date.now()));
                 }, 500);
             }
         });

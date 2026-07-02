@@ -44,4 +44,4 @@ spl_autoload_register(
 
 require_once EASYMDE_PLUGIN_DIR . 'includes/class-easymde-plugin.php';
 
-add_action('plugins_loaded', array('EasyMDE_Plugin', 'init'));
+add_action('init', array('EasyMDE_Plugin', 'init'));

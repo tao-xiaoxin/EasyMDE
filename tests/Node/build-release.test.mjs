@@ -10,6 +10,9 @@ import {
   buildRelease,
   collectReleaseRequirements,
   findMissingReleaseRequirements,
+  findVersionMismatches,
+  readReleaseVersions,
+  releaseZipPath,
   shouldCopyReleaseFile
 } from '../../scripts/build-release.mjs';
 
@@ -52,7 +55,18 @@ function createComposerLock(root) {
   );
 }
 
+function createVersionFiles(root, version = '0.1.7') {
+  writeText(
+    root,
+    'easymde.php',
+    `<?php\n/**\n * Plugin Name: EasyMDE\n * Version: ${version}\n */\ndefine('EASYMDE_VERSION', '${version}');\n`
+  );
+  writeText(root, 'readme.txt', `=== EasyMDE ===\nStable tag: ${version}\n`);
+  writeText(root, 'package.json', JSON.stringify({ version }));
+}
+
 function createCompleteFixture(root) {
+  createVersionFiles(root);
   createRegistryFiles(root);
   createComposerLock(root);
 
@@ -73,7 +87,24 @@ function createCompleteFixture(root) {
   writeText(root, 'vendor/league/commonmark/tests/bootstrap.php');
   writeText(root, 'vendor/league/commonmark/.github/workflows/ci.yml');
   writeText(root, 'vendor/league/commonmark/.phpunit.result.cache');
+  writeText(root, 'vendor/league/commonmark/.editorconfig');
+  writeText(root, 'vendor/league/commonmark/.gitattributes');
+  writeText(root, 'vendor/league/commonmark/phpcs.xml.dist');
   writeText(root, 'vendor/league/commonmark/runtime/Parser.php');
+  writeText(root, 'node_modules/example/index.js');
+  writeText(root, '.git/config');
+  writeText(root, '.github/workflows/ci.yml');
+  writeText(root, 'tests/release-fixture.test.js');
+}
+
+function zipEntries(root) {
+  const result = spawnSync('unzip', ['-Z1', releaseZipPath(root)], {
+    encoding: 'utf8'
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+
+  return result.stdout.trim().split(/\r?\n/).filter(Boolean);
 }
 
 test('release build succeeds for a complete runtime fixture', () => {
@@ -83,14 +114,102 @@ test('release build succeeds for a complete runtime fixture', () => {
     createCompleteFixture(root);
 
     const packageRoot = buildRelease({ root });
+    const entries = zipEntries(root);
 
     assert.ok(existsSync(join(packageRoot, 'easymde.php')));
     assert.ok(existsSync(join(packageRoot, 'vendor/autoload.php')));
     assert.ok(existsSync(join(packageRoot, 'vendor/league/commonmark/runtime/Parser.php')));
+    assert.ok(existsSync(releaseZipPath(root)));
+    assert.ok(entries.includes('easymde/languages/easymde.pot'));
+    assert.ok(entries.includes('easymde/languages/easymde-zh_CN.po'));
+    assert.ok(entries.includes('easymde/languages/easymde-zh_CN.mo'));
+    assert.ok(entries.includes('easymde/vendor/league/commonmark/runtime/Parser.php'));
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/tests/bootstrap.php')), false);
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/.github/workflows/ci.yml')), false);
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/.phpunit.result.cache')), false);
+    assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/.editorconfig')), false);
+    assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/.gitattributes')), false);
+    assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/phpcs.xml.dist')), false);
+    assert.equal(entries.some((entry) => entry.includes('/node_modules/')), false);
+    assert.equal(entries.some((entry) => entry.includes('/.git/')), false);
+    assert.equal(entries.some((entry) => entry.includes('/.github/')), false);
+    assert.equal(entries.some((entry) => entry.includes('/tests/')), false);
     assert.deepEqual(findMissingReleaseRequirements(root), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build fails when translation files are missing', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    rmSync(join(root, 'languages/easymde-zh_CN.mo'), { force: true });
+
+    const result = spawnSync(process.execPath, [scriptPath, '--root', root], {
+      encoding: 'utf8'
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /languages\/easymde-zh_CN\.mo/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build fails when version fields do not match the plugin header', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(root, 'package.json', JSON.stringify({ version: '9.9.9' }));
+
+    const mismatches = findVersionMismatches(root);
+    assert.deepEqual(mismatches, [
+      {
+        field: 'packageJson',
+        file: 'package.json',
+        label: 'version',
+        value: '9.9.9',
+        expected: '0.1.7'
+      }
+    ]);
+
+    const result = spawnSync(process.execPath, [scriptPath, '--root', root], {
+      encoding: 'utf8'
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /package\.json version: 9\.9\.9; expected 0\.1\.7/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release version parser ignores unrelated Version comments before the plugin header', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(
+      root,
+      'easymde.php',
+      `<?php
+/**
+ * Example package metadata.
+ * Version: 9.9.9
+ */
+/**
+ * Plugin Name: EasyMDE
+ * Version: 0.1.7
+ */
+define('EASYMDE_VERSION', '0.1.7');
+`
+    );
+
+    assert.equal(readReleaseVersions(root).pluginHeader, '0.1.7');
+    assert.deepEqual(findVersionMismatches(root), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -124,6 +243,7 @@ test('release build fails fast when composer.lock is missing', () => {
   const root = makeTempRoot();
 
   try {
+    createVersionFiles(root);
     createRegistryFiles(root);
 
     const result = spawnSync(process.execPath, [scriptPath, '--root', root], {
@@ -147,6 +267,9 @@ test('release copy filter excludes development directories by path segment', () 
     assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/tests/bootstrap.php')), false);
     assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/.github/workflows/ci.yml')), false);
     assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/coverage/clover.xml')), false);
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/.editorconfig')), false);
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/.gitattributes')), false);
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/phpcs.xml.dist')), false);
     assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/runtime/debug.log')), false);
     assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/runtime/Parser.php')), true);
   } finally {

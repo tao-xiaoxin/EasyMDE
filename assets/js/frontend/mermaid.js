@@ -4,7 +4,7 @@
     var renderIndex = 0;
 
     function getString(config, key, fallback) {
-        return config && config.strings && config.strings[key] ? config.strings[key] : fallback;
+        return config && config.strings && config.strings[key] ? config.strings[key] : (fallback || '');
     }
 
     function featureEnabled(config, key) {
@@ -48,7 +48,7 @@
                 pre.parentNode.replaceChild(container, pre);
             }).catch(function () {
                 pre.classList.add('easymde-render-error');
-                pre.setAttribute('data-easymde-error', getString(config, 'renderingFailed', 'Rendering failed.'));
+                pre.setAttribute('data-easymde-error', getString(config, 'renderingFailed'));
             });
         });
     }

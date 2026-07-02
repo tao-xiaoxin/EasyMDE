@@ -244,6 +244,9 @@ final class AdminAssets
             'copyWechatSuccess' => __('Copied preview for WeChat.', 'easymde'),
             'copyWechatFailed' => __('Copy for WeChat failed. Please try again in this browser.', 'easymde'),
             'copyWechatUnsupported' => __('Clipboard access is not available in this browser.', 'easymde'),
+            'mediaAltText' => __('alt text', 'easymde'),
+            'mediaDefaultAlt' => __('image', 'easymde'),
+            'linkText' => __('link text', 'easymde'),
         );
     }
 }

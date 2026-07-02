@@ -1,29 +1,33 @@
-import { cpSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const fromRoot = (...parts) => join(root, ...parts);
-const releaseRoot = fromRoot('dist');
-const packageRoot = join(releaseRoot, 'easymde');
+const defaultRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const registryFiles = [
+  'src/Theme/ArticleThemeRegistry.php',
+  'src/Theme/CodeThemeRegistry.php'
+];
+const directoryPackagePaths = new Set([
+  'includes',
+  'src',
+  'templates',
+  'assets',
+  'languages',
+  'vendor'
+]);
 
-const requiredPaths = [
-  'vendor/autoload.php',
-  'assets/vendor/highlight/highlight.min.js',
-  'assets/vendor/highlight/styles/github.min.css',
-  'assets/vendor/highlight/styles/github-dark.min.css',
-  'assets/vendor/highlight/styles/atom-one-dark.min.css',
-  'assets/vendor/highlight/styles/atom-one-light.min.css',
-  'assets/vendor/highlight/styles/monokai.min.css',
-  'assets/vendor/highlight/styles/vs2015.min.css',
-  'assets/vendor/highlight/styles/xcode.min.css',
-  'assets/vendor/katex/katex.min.css',
-  'assets/vendor/katex/katex.min.js',
-  'assets/vendor/katex/fonts',
-  'assets/vendor/mermaid/mermaid.min.js'
+const baseRequirements = [
+  { path: 'vendor/autoload.php', type: 'file' },
+  { path: 'vendor/composer/platform_check.php', type: 'file' },
+  { path: 'assets/vendor/highlight/highlight.min.js', type: 'file' },
+  { path: 'assets/vendor/katex/katex.min.css', type: 'file' },
+  { path: 'assets/vendor/katex/katex.min.js', type: 'file' },
+  { path: 'assets/vendor/katex/fonts', type: 'non-empty-dir' },
+  { path: 'assets/vendor/mermaid/mermaid.min.js', type: 'file' },
+  { path: 'languages', type: 'dir' }
 ];
 
-const packagePaths = [
+export const packagePaths = [
   'easymde.php',
   'uninstall.php',
   'readme.txt',
@@ -39,31 +43,157 @@ const packagePaths = [
   'vendor'
 ];
 
-const missing = requiredPaths.filter((path) => !existsSync(fromRoot(path)));
-
-if (missing.length) {
-  console.error('Release build requires installed runtime dependencies:');
-  for (const path of missing) {
-    console.error(`- ${path}`);
-  }
-  console.error('Run composer install --no-dev and npm install before building a release package.');
-  process.exit(1);
+function fromRoot(root, path) {
+  return join(root, path);
 }
 
-rmSync(packageRoot, { recursive: true, force: true });
-mkdirSync(packageRoot, { recursive: true });
+function uniqueRequirements(requirements) {
+  const seen = new Set();
 
-for (const path of packagePaths) {
-  const source = fromRoot(path);
-  if (!existsSync(source)) {
-    continue;
-  }
+  return requirements.filter((requirement) => {
+    const key = `${requirement.type}:${requirement.path}`;
+    if (seen.has(key)) {
+      return false;
+    }
 
-  cpSync(source, join(packageRoot, path), {
-    recursive: statSync(source).isDirectory(),
-    dereference: true,
-    filter: (file) => !file.includes('/node_modules/') && !file.includes('/.git/')
+    seen.add(key);
+    return true;
   });
 }
 
-console.log(`Release package assembled at ${packageRoot}`);
+function composerPackageRequirements(root) {
+  const lockPath = fromRoot(root, 'composer.lock');
+  if (!existsSync(lockPath)) {
+    return [];
+  }
+
+  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+  const packages = Array.isArray(lock.packages) ? lock.packages : [];
+
+  return packages
+    .filter((pkg) => pkg && typeof pkg.name === 'string' && pkg.name.includes('/'))
+    .map((pkg) => ({
+      path: `vendor/${pkg.name}`,
+      type: 'non-empty-dir'
+    }));
+}
+
+function registeredAssetRequirements(root) {
+  const requirements = [];
+  const assetPattern = /assets\/(?:themes|vendor)\/[^'")\s]+\.css/g;
+
+  for (const registryFile of registryFiles) {
+    const registryPath = fromRoot(root, registryFile);
+    if (!existsSync(registryPath)) {
+      continue;
+    }
+
+    const source = readFileSync(registryPath, 'utf8');
+    for (const match of source.matchAll(assetPattern)) {
+      requirements.push({
+        path: match[0],
+        type: 'file'
+      });
+    }
+  }
+
+  return requirements;
+}
+
+export function collectReleaseRequirements(root = defaultRoot) {
+  return uniqueRequirements([
+    ...packagePaths.map((path) => ({
+      path,
+      type: directoryPackagePaths.has(path) ? 'dir' : 'file'
+    })),
+    ...baseRequirements,
+    ...composerPackageRequirements(root),
+    ...registeredAssetRequirements(root)
+  ]);
+}
+
+export function findMissingReleaseRequirements(root = defaultRoot) {
+  return collectReleaseRequirements(root).filter((requirement) => {
+    const absolute = fromRoot(root, requirement.path);
+    if (!existsSync(absolute)) {
+      return true;
+    }
+
+    if ('file' === requirement.type) {
+      return !statSync(absolute).isFile();
+    }
+
+    if ('non-empty-dir' === requirement.type) {
+      return !statSync(absolute).isDirectory() || 0 === readdirSync(absolute).length;
+    }
+
+    return !statSync(absolute).isDirectory();
+  });
+}
+
+function assertReleaseRequirements(root) {
+  const missing = findMissingReleaseRequirements(root);
+
+  if (!missing.length) {
+    return;
+  }
+
+  const error = new Error(
+    [
+      'Release build requires installed runtime dependencies:',
+      ...missing.map((requirement) => `- ${requirement.path}`),
+      'Run composer install --no-dev and npm install before building a release package.'
+    ].join('\n')
+  );
+  error.missing = missing;
+  throw error;
+}
+
+export function buildRelease(options = {}) {
+  const root = options.root || defaultRoot;
+  const releaseRoot = options.releaseRoot || fromRoot(root, 'dist');
+  const packageRoot = options.packageRoot || join(releaseRoot, 'easymde');
+
+  assertReleaseRequirements(root);
+
+  rmSync(packageRoot, { recursive: true, force: true });
+  mkdirSync(packageRoot, { recursive: true });
+
+  for (const path of packagePaths) {
+    const source = fromRoot(root, path);
+    if (!existsSync(source)) {
+      continue;
+    }
+
+    cpSync(source, join(packageRoot, path), {
+      recursive: statSync(source).isDirectory(),
+      dereference: true,
+      filter: (file) => !file.includes('/node_modules/') && !file.includes('/.git/')
+    });
+  }
+
+  return packageRoot;
+}
+
+function parseCliOptions(argv) {
+  const options = {};
+
+  for (let index = 0; index < argv.length; index += 1) {
+    if ('--root' === argv[index] && argv[index + 1]) {
+      options.root = argv[index + 1];
+      index += 1;
+    }
+  }
+
+  return options;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    const packageRoot = buildRelease(parseCliOptions(process.argv.slice(2)));
+    console.log(`Release package assembled at ${packageRoot}`);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+}

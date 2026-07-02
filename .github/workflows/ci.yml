@@ -77,3 +77,6 @@ jobs:
 
       - name: Check JavaScript syntax
         run: git ls-files -z -- '*.js' '*.mjs' | xargs -0 -n1 node --check
+
+      - name: Run Node tests
+        run: npm test

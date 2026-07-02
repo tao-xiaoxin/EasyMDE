@@ -6,15 +6,16 @@ EasyMDE is wired from `easymde.php` into `EasyMDE\Plugin`. The global
 ## Directories
 
 - `src/Admin/`: editor screen, per-post editor mode, admin settings, admin assets, and save handling.
-- `src/Content/`: Markdown rendering, post document state, and revision restore coordination.
+- `src/Content/`: Markdown rendering, TOC generation, theme markup transforms, post document state, and revision restore coordination.
 - `src/Theme/`: article/code theme registries, theme state, and custom CSS policy.
 - `src/Rest/`: `easymde/v1` REST controllers.
 - `src/Frontend/`: frontend content filtering and asset loading.
-- `src/Support/`: shared helpers, capabilities, legacy facade APIs, and the temporary zh_CN gettext shim.
+- `src/Support/`: shared helpers, capabilities, option access, lazy migration helpers, legacy facade APIs, and the temporary zh_CN gettext shim.
 - `templates/admin/`: admin templates that render prepared data.
 - `assets/themes/article/`: EasyMDE-owned article themes.
 - `assets/themes/code/`: EasyMDE-owned code themes.
 - `assets/vendor/`: third-party assets such as Highlight.js, KaTeX, and Mermaid.
+- `scripts/`: local asset copy and release package assembly scripts.
 
 ## Data Model
 
@@ -38,9 +39,10 @@ so empty Markdown drafts are still recognized.
 admin notice, preview requests fail with a REST error, and save/frontend paths
 avoid generating fallback HTML.
 
-Markdown is rendered with raw HTML stripped and unsafe links disabled, then
-post-processed for EasyMDE theme markup, math placeholders, and table of
-contents support.
+Markdown is rendered with raw HTML stripped and unsafe links disabled.
+`TocGenerator` owns heading IDs and `[TOC]` replacement.
+`ThemeMarkupTransformer` owns article-theme-specific DOM transforms and MDNice
+container normalization. Math placeholders remain in `MarkdownRenderer`.
 
 ## Theme And Asset Boundaries
 
@@ -58,6 +60,16 @@ Frontend EasyMDE posts load:
 - code frame CSS only when highlighting or Mac framing is needed
 - the selected code theme stylesheet only when code highlighting is needed
 - KaTeX, Mermaid, and Highlight.js scripts only when the current Markdown needs them
+
+The admin editor assets are also split by responsibility. `toolbar.css` and
+`popover.css` hold toolbar/control presentation while `editor.css` holds the
+workspace, preview, dark-mode, and responsive layout layer. Admin JavaScript is
+loaded as classic WordPress scripts: state helpers, command primitives, preview
+client helpers, theme manager helpers, toolbar helpers, draft storage, media
+picker, WeChat exporter, and bootstrap.
+
+`npm run build:release` assembles `dist/easymde` from runtime files and refuses
+to run if Composer or local vendor assets are missing.
 
 ## REST Boundaries
 

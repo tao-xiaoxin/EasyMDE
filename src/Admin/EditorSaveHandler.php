@@ -50,7 +50,7 @@ final class EditorSaveHandler
         $markdown = wp_unslash($_POST['easymde_markdown']);
         $theme_state = $this->theme_state_repository->sanitize_theme_state_from_request($_POST);
 
-        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        $this->post_document->mark_enabled($post_id);
         update_post_meta($post_id, PostDocument::META_MARKDOWN, $markdown);
         update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, $theme_state['markdownTheme']);
         update_post_meta($post_id, PostDocument::META_CODE_THEME, $theme_state['codeTheme']);

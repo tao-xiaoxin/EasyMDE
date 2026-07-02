@@ -16,6 +16,8 @@ use EasyMDE\Rest\PreviewController;
 use EasyMDE\Rest\ThemeController;
 use EasyMDE\Support\Capabilities;
 use EasyMDE\Support\LegacyTranslations;
+use EasyMDE\Support\Migration;
+use EasyMDE\Support\Options;
 use EasyMDE\Support\ToolbarRegistry;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
@@ -50,7 +52,9 @@ final class Plugin
 
     private function __construct()
     {
-        $post_document = new PostDocument();
+        $migration = new Migration();
+        $options = new Options();
+        $post_document = new PostDocument($migration);
         $capabilities = new Capabilities();
         $article_themes = new ArticleThemeRegistry();
         $code_themes = new CodeThemeRegistry();
@@ -59,7 +63,7 @@ final class Plugin
 
         $this->toolbar_registry = new ToolbarRegistry();
 
-        $settings_page = new SettingsPage($this->toolbar_registry);
+        $settings_page = new SettingsPage($this->toolbar_registry, $options);
         $post_mode_controller = new PostModeController($post_document);
         $frontend_assets = new FrontendAssets($post_document, $theme_state_repository);
 

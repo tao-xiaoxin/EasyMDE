@@ -53,13 +53,65 @@ final class AdminAssets
 
         wp_enqueue_style('dashicons');
         wp_enqueue_style(
+            'easymde-admin-toolbar',
+            Asset::url('assets/css/admin/toolbar.css'),
+            array(),
+            EASYMDE_VERSION
+        );
+        wp_enqueue_style(
+            'easymde-admin-popover',
+            Asset::url('assets/css/admin/popover.css'),
+            array('easymde-admin-toolbar'),
+            EASYMDE_VERSION
+        );
+        wp_enqueue_style(
             'easymde-admin',
             Asset::url('assets/css/admin/editor.css'),
-            array(),
+            array('easymde-admin-toolbar', 'easymde-admin-popover'),
             EASYMDE_VERSION
         );
 
         $this->frontend_assets->enqueue_render_assets($post_id, '', true);
+
+        wp_enqueue_script(
+            'easymde-editor-state',
+            Asset::url('assets/js/admin/editor-state.js'),
+            array(),
+            EASYMDE_VERSION,
+            true
+        );
+
+        wp_enqueue_script(
+            'easymde-commands',
+            Asset::url('assets/js/admin/commands.js'),
+            array('easymde-editor-state'),
+            EASYMDE_VERSION,
+            true
+        );
+
+        wp_enqueue_script(
+            'easymde-preview-client',
+            Asset::url('assets/js/admin/preview-client.js'),
+            array('easymde-editor-state'),
+            EASYMDE_VERSION,
+            true
+        );
+
+        wp_enqueue_script(
+            'easymde-theme-manager',
+            Asset::url('assets/js/admin/theme-manager.js'),
+            array('easymde-editor-state'),
+            EASYMDE_VERSION,
+            true
+        );
+
+        wp_enqueue_script(
+            'easymde-toolbar',
+            Asset::url('assets/js/admin/toolbar.js'),
+            array('jquery', 'easymde-commands'),
+            EASYMDE_VERSION,
+            true
+        );
 
         wp_enqueue_script(
             'easymde-draft-storage',
@@ -88,7 +140,19 @@ final class AdminAssets
         wp_enqueue_script(
             'easymde-admin',
             Asset::url('assets/js/admin/bootstrap.js'),
-            array('jquery', 'wp-api-fetch', 'easymde-enhancements', 'easymde-draft-storage', 'easymde-media-picker', 'easymde-wechat-exporter'),
+            array(
+                'jquery',
+                'wp-api-fetch',
+                'easymde-enhancements',
+                'easymde-editor-state',
+                'easymde-commands',
+                'easymde-preview-client',
+                'easymde-theme-manager',
+                'easymde-toolbar',
+                'easymde-draft-storage',
+                'easymde-media-picker',
+                'easymde-wechat-exporter',
+            ),
             EASYMDE_VERSION,
             true
         );

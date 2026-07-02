@@ -2,6 +2,8 @@
 
 namespace EasyMDE\Content;
 
+use EasyMDE\Support\Migration;
+
 if (!defined('ABSPATH')) {
     exit;
 }
@@ -19,6 +21,13 @@ final class PostDocument
     const META_WINDOWS_FONT = '_easymde_windows_font';
     const META_APPLE_FONT = '_easymde_apple_font';
     const META_SERIF_FONT = '_easymde_serif_font';
+
+    private $migration;
+
+    public function __construct(?Migration $migration = null)
+    {
+        $this->migration = $migration ?: new Migration();
+    }
 
     public function is_supported_post_type($post_type)
     {
@@ -39,39 +48,21 @@ final class PostDocument
             return false;
         }
 
-        if (metadata_exists('post', $post_id, self::META_ENABLED)) {
-            return '1' === (string) get_post_meta($post_id, self::META_ENABLED, true);
-        }
-
-        return metadata_exists('post', $post_id, self::META_MARKDOWN);
+        return $this->migration->is_easymde_enabled($post_id);
     }
 
     public function get_markdown($post)
     {
-        if (!$post) {
-            return '';
-        }
-
-        $post_id = is_object($post) ? absint($post->ID) : absint($post);
-        if ($post_id && metadata_exists('post', $post_id, self::META_MARKDOWN)) {
-            return (string) get_post_meta($post_id, self::META_MARKDOWN, true);
-        }
-
-        $post_object = is_object($post) ? $post : get_post($post_id);
-
-        return $post_object ? (string) $post_object->post_content : '';
+        return $this->migration->get_markdown($post);
     }
 
     public function revision_meta_keys()
     {
-        return array(
-            self::META_ENABLED,
-            self::META_MARKDOWN,
-            self::META_MARKDOWN_THEME,
-            self::META_CODE_THEME,
-            self::META_CODE_MAC_STYLE,
-            self::META_CUSTOM_CSS_ID,
-            self::META_CUSTOM_CSS_SNAPSHOT,
-        );
+        return $this->migration->revision_meta_keys();
+    }
+
+    public function mark_enabled($post_id)
+    {
+        $this->migration->mark_enabled($post_id);
     }
 }

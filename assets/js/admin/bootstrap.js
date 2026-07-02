@@ -4,6 +4,23 @@
     var config = window.EasyMDEConfig || {};
     var themeOptions = config.themeOptions || {};
     var fontOptions = themeOptions.fontOptions || {};
+    var editorStateTools = window.EasyMDEEditorState || {};
+    var themeManager = window.EasyMDEThemeManager || {};
+    var commandTools = window.EasyMDECommands || {};
+    var previewClient = window.EasyMDEPreviewClient || {};
+    var toolbarTools = window.EasyMDEToolbar || {};
+    var detectMacPlatform = editorStateTools.detectMacPlatform || detectMacPlatform;
+    var normalizeRenderState = themeManager.normalizeRenderState || normalizeRenderState;
+    var findById = editorStateTools.findById || findById;
+    var escapeHtml = editorStateTools.escapeHtml || escapeHtml;
+    var focusWithoutScrolling = editorStateTools.focusWithoutScrolling || focusWithoutScrolling;
+    var restoreScrollPosition = editorStateTools.restoreScrollPosition || restoreScrollPosition;
+    var replaceClassPrefix = editorStateTools.replaceClassPrefix || replaceClassPrefix;
+    var buildCommandMap = commandTools.buildCommandMap || buildCommandMap;
+    var getCommandLabel = commandTools.getCommandLabel || getCommandLabel;
+    var createWechatIcon = toolbarTools.createWechatIcon || createWechatIcon;
+    var createMenuAnchor = toolbarTools.createMenuAnchor || createMenuAnchor;
+    var createSelectControl = toolbarTools.createSelectControl || createSelectControl;
     var renderState = normalizeRenderState(themeOptions.state || {});
     var customCssLibrary = themeOptions.customCss || [];
     var previewTimer = null;
@@ -13,9 +30,57 @@
     var commandMap = buildCommandMap(config.commands || []);
     var isMac = detectMacPlatform();
     var openPopovers = [];
+    var getCommand = commandTools.getCommand ? function (id) {
+        return commandTools.getCommand(commandMap, id);
+    } : getCommand;
+    var getSurfaceCommands = commandTools.getSurfaceCommands ? function (surface) {
+        return commandTools.getSurfaceCommands(commandMap, surface);
+    } : getSurfaceCommands;
+    var getGroupCommands = commandTools.getGroupCommands ? function (surface, group) {
+        return commandTools.getGroupCommands(commandMap, surface, group);
+    } : getGroupCommands;
+    var getShortcutForCommand = commandTools.getShortcutForCommand ? function (commandId) {
+        return commandTools.getShortcutForCommand(config.shortcuts || {}, commandId, isMac);
+    } : getShortcutForCommand;
+    var selectedCustomCssItem = themeManager.selectedCustomCssItem ? function () {
+        return themeManager.selectedCustomCssItem(renderState, customCssLibrary, findById);
+    } : selectedCustomCssItem;
+    var selectedCustomCss = themeManager.selectedCustomCss ? function () {
+        return themeManager.selectedCustomCss(renderState, customCssLibrary, findById);
+    } : selectedCustomCss;
+    var previewFallback = previewClient.createFallback ? function (markdown) {
+        return previewClient.createFallback(markdown, getString('previewEmpty', ''), escapeHtml);
+    } : previewFallback;
+    var capturePreviewScroll = previewClient.captureScroll || capturePreviewScroll;
+    var applyTextChange = commandTools.applyTextChange ? function (textarea, value, selectionStart, selectionEnd) {
+        return commandTools.applyTextChange(textarea, value, selectionStart, selectionEnd, getCommandServices());
+    } : applyTextChange;
+    var insertAround = commandTools.insertAround ? function (textarea, prefix, suffix, placeholder) {
+        return commandTools.insertAround(textarea, prefix, suffix, placeholder, getCommandServices());
+    } : insertAround;
+    var applyLinePrefix = commandTools.applyLinePrefix ? function (textarea, prefix) {
+        return commandTools.applyLinePrefix(textarea, prefix, getCommandServices());
+    } : applyLinePrefix;
+    var applyOrderedList = commandTools.applyOrderedList ? function (textarea) {
+        return commandTools.applyOrderedList(textarea, getCommandServices());
+    } : applyOrderedList;
+    var setHeadingLevel = commandTools.setHeadingLevel ? function (textarea, level) {
+        return commandTools.setHeadingLevel(textarea, level, getCommandServices());
+    } : setHeadingLevel;
+    var insertBlock = commandTools.insertBlock ? function (textarea, prefix, suffix, placeholder) {
+        return commandTools.insertBlock(textarea, prefix, suffix, placeholder, getCommandServices());
+    } : insertBlock;
 
     function getString(key, fallback) {
         return config.strings && config.strings[key] ? config.strings[key] : fallback;
+    }
+
+    function getCommandServices() {
+        return {
+            $: $,
+            focusWithoutScrolling: focusWithoutScrolling,
+            restoreScrollPosition: restoreScrollPosition
+        };
     }
 
     function detectMacPlatform() {

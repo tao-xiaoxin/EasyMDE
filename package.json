@@ -5,6 +5,7 @@
   "description": "Local frontend assets for the EasyMDE WordPress plugin.",
   "scripts": {
     "prepare:assets": "node scripts/copy-vendor-assets.mjs",
+    "build:release": "node scripts/build-release.mjs",
     "postinstall": "node scripts/copy-vendor-assets.mjs"
   },
   "dependencies": {

@@ -1,0 +1,176 @@
+.easymde-toolbar-popover-anchor {
+    position: relative;
+}
+
+.easymde-toolbar-popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 30;
+    min-width: 240px;
+    padding: 12px;
+    border: 1px solid #d0d7de;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
+}
+
+.easymde-toolbar-popover-font-panel::before {
+    content: "";
+    position: absolute;
+    top: -8px;
+    right: 24px;
+    width: 14px;
+    height: 14px;
+    border-top: 1px solid #d0d7de;
+    border-left: 1px solid #d0d7de;
+    background: #fff;
+    transform: rotate(45deg);
+}
+
+.easymde-toolbar-popover[hidden] {
+    display: none;
+}
+
+.easymde-toolbar-popover-appearance-panel {
+    width: min(360px, calc(100vw - 48px));
+}
+
+.easymde-toolbar-popover-font-panel {
+    width: min(620px, calc(100vw - 48px));
+    padding: 24px 32px 28px;
+}
+
+.easymde-toolbar-popover-headings .easymde-toolbar-popover {
+    right: auto;
+    left: 0;
+    width: 232px;
+    max-width: calc(100vw - 48px);
+}
+
+.easymde-popover-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    width: 100%;
+    min-height: 34px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: #1f2937;
+    cursor: pointer;
+    text-align: left;
+}
+
+.easymde-popover-item:hover,
+.easymde-popover-item:focus {
+    background: #f5f8fb;
+    color: #0a4b78;
+    outline: none;
+}
+
+.easymde-popover-item-shortcut {
+    color: #6b7280;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.easymde-toolbar-control,
+.easymde-toolbar-check {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+    color: #111827;
+    font-size: 13px;
+}
+
+.easymde-toolbar-control-label {
+    font-weight: 600;
+}
+
+.easymde-toolbar-popover-font-panel .easymde-toolbar-control {
+    display: grid;
+    grid-template-columns: 170px minmax(0, 1fr);
+    align-items: center;
+    gap: 18px;
+    margin-bottom: 20px;
+    font-size: 20px;
+}
+
+.easymde-toolbar-popover-font-panel .easymde-toolbar-control-label {
+    font-weight: 500;
+}
+
+.easymde-toolbar-control select {
+    width: 100%;
+    max-width: none;
+    min-height: 36px;
+    margin: 0;
+    font-size: 13px;
+}
+
+.easymde-toolbar-popover-font-panel .easymde-toolbar-control select {
+    min-height: 38px;
+    font-size: 20px;
+}
+
+.easymde-toolbar-help {
+    margin: 4px 0 0;
+    color: #6b7280;
+    font-size: 20px;
+    line-height: 1.7;
+}
+
+.easymde-toolbar-check {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.easymde-toolbar-check input {
+    margin: 0;
+}
+
+.easymde-custom-css-toggle-row {
+    margin-bottom: 12px;
+}
+
+.easymde-custom-css-panel {
+    padding: 12px;
+    border: 1px solid #d0d7de;
+    border-radius: 12px;
+    background: #f8fafc;
+}
+
+.easymde-custom-css-panel[hidden] {
+    display: none;
+}
+
+.easymde-custom-css-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.easymde-custom-css-code {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 160px;
+    padding: 12px;
+    border: 1px solid #c8d0d7;
+    border-radius: 10px;
+    background: #fff;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.easymde-custom-css-status {
+    color: #4b5563;
+    font-size: 12px;
+}

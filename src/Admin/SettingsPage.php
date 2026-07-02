@@ -3,6 +3,8 @@
 namespace EasyMDE\Admin;
 
 use EasyMDE\Content\MarkdownRenderer;
+use EasyMDE\Support\Asset;
+use EasyMDE\Support\Options;
 use EasyMDE\Support\ToolbarRegistry;
 
 if (!defined('ABSPATH')) {
@@ -12,18 +14,19 @@ if (!defined('ABSPATH')) {
 final class SettingsPage
 {
     private $toolbar_registry;
-    private $editor_settings_option_key = 'easymde_editor_settings';
-    private $editor_settings_version = '0.1.7';
+    private $options;
 
-    public function __construct(ToolbarRegistry $toolbar_registry)
+    public function __construct(ToolbarRegistry $toolbar_registry, Options $options)
     {
         $this->toolbar_registry = $toolbar_registry;
+        $this->options = $options;
     }
 
     public function register_hooks()
     {
         add_action('admin_init', array($this, 'register_settings'));
         add_action('admin_menu', array($this, 'register_admin_menu'));
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_assets'));
     }
 
     public function register_admin_menu()
@@ -41,12 +44,26 @@ final class SettingsPage
     {
         register_setting(
             'easymde_settings',
-            $this->editor_settings_option_key,
+            $this->options->editor_settings_key(),
             array(
                 'type' => 'array',
                 'sanitize_callback' => array($this, 'sanitize_editor_settings'),
                 'default' => $this->get_editor_settings(),
             )
+        );
+    }
+
+    public function enqueue_assets($hook)
+    {
+        if ('settings_page_easymde' !== $hook) {
+            return;
+        }
+
+        wp_enqueue_style(
+            'easymde-admin-settings',
+            Asset::url('assets/css/admin/settings.css'),
+            array(),
+            EASYMDE_VERSION
         );
     }
 
@@ -60,8 +77,8 @@ final class SettingsPage
             'has_commonmark' => MarkdownRenderer::is_available(),
             'settings' => $this->get_editor_settings(),
             'commands' => $this->toolbar_registry->get_command_registry(),
-            'option_key' => $this->editor_settings_option_key,
-            'settings_version' => $this->editor_settings_version,
+            'option_key' => $this->options->editor_settings_key(),
+            'settings_version' => $this->options->editor_settings_version(),
             'supported_post_types' => apply_filters('easymde_supported_post_types', array('post', 'page')),
         );
 
@@ -73,7 +90,7 @@ final class SettingsPage
         $current = $this->get_editor_settings();
         $registry = $this->toolbar_registry->get_command_registry();
         $sanitized = array(
-            'version' => $this->editor_settings_version,
+            'version' => $this->options->editor_settings_version(),
             'toolbar_layout' => 'hybrid-icons',
             'shortcuts' => $this->get_default_shortcuts(),
         );
@@ -129,7 +146,7 @@ final class SettingsPage
         if (!empty($errors)) {
             foreach ($errors as $index => $message) {
                 add_settings_error(
-                    $this->editor_settings_option_key,
+                    $this->options->editor_settings_key(),
                     'easymde_shortcut_error_' . $index,
                     $message,
                     'error'
@@ -145,11 +162,11 @@ final class SettingsPage
     public function get_editor_settings()
     {
         $defaults = array(
-            'version' => $this->editor_settings_version,
+            'version' => $this->options->editor_settings_version(),
             'toolbar_layout' => 'hybrid-icons',
             'shortcuts' => $this->get_default_shortcuts(),
         );
-        $stored = get_option($this->editor_settings_option_key, array());
+        $stored = $this->options->get_editor_settings();
         if (!is_array($stored)) {
             return $defaults;
         }

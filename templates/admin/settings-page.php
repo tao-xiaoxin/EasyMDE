@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
     <p><?php esc_html_e('EasyMDE adds a scoped split-pane Markdown editor to supported post editing screens.', 'easymde'); ?></p>
     <?php settings_errors(); ?>
 
-    <table class="widefat striped" style="max-width: 920px; margin-bottom: 20px;">
+    <table class="widefat striped easymde-settings-summary">
         <tbody>
             <tr>
                 <th scope="row"><?php esc_html_e('Supported post types', 'easymde'); ?></th>
@@ -54,12 +54,12 @@ if (!defined('ABSPATH')) {
         <p><?php esc_html_e('Typora-inspired defaults are active unless overridden below.', 'easymde'); ?></p>
         <p class="description"><?php esc_html_e('Use the current Typora-inspired default by leaving the field blank.', 'easymde'); ?></p>
 
-        <table class="widefat striped" style="max-width: 1100px;">
+        <table class="widefat striped easymde-settings-shortcuts">
             <thead>
                 <tr>
-                    <th scope="col" style="width: 28%;"><?php esc_html_e('Command', 'easymde'); ?></th>
-                    <th scope="col" style="width: 36%;"><?php esc_html_e('Windows / Linux', 'easymde'); ?></th>
-                    <th scope="col" style="width: 36%;"><?php esc_html_e('macOS', 'easymde'); ?></th>
+                    <th scope="col" class="easymde-settings-command-column"><?php esc_html_e('Command', 'easymde'); ?></th>
+                    <th scope="col" class="easymde-settings-shortcut-column"><?php esc_html_e('Windows / Linux', 'easymde'); ?></th>
+                    <th scope="col" class="easymde-settings-shortcut-column"><?php esc_html_e('macOS', 'easymde'); ?></th>
                 </tr>
             </thead>
             <tbody>

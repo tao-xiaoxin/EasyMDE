@@ -239,6 +239,16 @@ test('default toolbar labels do not trigger gettext during plugin construction',
   assert.match(toolbarDefaults, /source_label\('Save post'\)/);
 });
 
+test('WordPress i18n verifier reloads text domains compatibly', () => {
+  const verifier = readFileSync(join(repoRoot, 'scripts/verify-wordpress-i18n.php'), 'utf8');
+  const runtimeChecks = sourceSlice('scripts/verify-wordpress-i18n.php', "if (!defined('ABSPATH'))");
+
+  assert.match(verifier, /new ReflectionFunction\('unload_textdomain'\)/);
+  assert.match(verifier, /unload_textdomain\(\$domain,\s*true\)/);
+  assert.doesNotMatch(runtimeChecks, /unload_textdomain\('easymde'\)/);
+  assert.match(runtimeChecks, /easymde_verify_i18n_unload_for_reload\('easymde'\)/);
+});
+
 test('gettext catalog files are current and contain real zh_CN translations', () => {
   checkI18n({ root: repoRoot });
 

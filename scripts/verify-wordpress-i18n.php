@@ -6,6 +6,23 @@ function easymde_verify_i18n_fail($message)
     exit(1);
 }
 
+function easymde_verify_i18n_unload_for_reload($domain)
+{
+    static $supports_reloadable = null;
+
+    if (null === $supports_reloadable) {
+        $function = new ReflectionFunction('unload_textdomain');
+        $supports_reloadable = $function->getNumberOfParameters() >= 2;
+    }
+
+    if ($supports_reloadable) {
+        unload_textdomain($domain, true);
+        return;
+    }
+
+    unload_textdomain($domain);
+}
+
 if (!defined('ABSPATH')) {
     easymde_verify_i18n_fail('WordPress is not loaded.');
 }
@@ -36,7 +53,7 @@ $zh_cn_locale = function () {
 
 add_filter('locale', $zh_cn_locale, 999);
 add_filter('determine_locale', $zh_cn_locale, 999);
-unload_textdomain('easymde');
+easymde_verify_i18n_unload_for_reload('easymde');
 
 $translated = __('Shortcut settings', 'easymde');
 if ('快捷键设置' !== $translated) {
@@ -49,7 +66,7 @@ if (!is_textdomain_loaded('easymde')) {
 
 remove_filter('locale', $zh_cn_locale, 999);
 remove_filter('determine_locale', $zh_cn_locale, 999);
-unload_textdomain('easymde');
+easymde_verify_i18n_unload_for_reload('easymde');
 
 $en_us_locale = function () {
     return 'en_US';
@@ -65,6 +82,6 @@ if ('Shortcut settings' !== $english) {
 
 remove_filter('locale', $en_us_locale, 999);
 remove_filter('determine_locale', $en_us_locale, 999);
-unload_textdomain('easymde');
+easymde_verify_i18n_unload_for_reload('easymde');
 
 fwrite(STDOUT, 'EasyMDE WordPress i18n runtime verification passed.' . PHP_EOL);

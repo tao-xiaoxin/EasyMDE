@@ -1141,6 +1141,11 @@ final class EasyMDE_Plugin
                     'fontFamily' => 'Inter',
                 ),
                 array(
+                    'id' => 'red-crimson-inter',
+                    'label' => 'Inter (red-crimson)',
+                    'fontFamily' => 'Inter',
+                ),
+                array(
                     'id' => 'rose-purple-optima',
                     'label' => 'Optima (rose-purple)',
                     'fontFamily' => 'Optima',
@@ -1190,6 +1195,11 @@ final class EasyMDE_Plugin
                 array(
                     'id' => 'orange-heart-microsoft-yahei',
                     'label' => 'Microsoft YaHei (orange-heart)',
+                    'fontFamily' => '"Microsoft YaHei"',
+                ),
+                array(
+                    'id' => 'red-crimson-microsoft-yahei',
+                    'label' => 'Microsoft YaHei (red-crimson)',
                     'fontFamily' => '"Microsoft YaHei"',
                 ),
                 array(
@@ -1452,6 +1462,14 @@ final class EasyMDE_Plugin
                     'serifFont' => 'sans-serif-only',
                 );
 
+            case 'red-crimson':
+                return array(
+                    'customFont' => 'red-crimson-inter',
+                    'windowsFont' => 'red-crimson-microsoft-yahei',
+                    'appleFont' => 'pingfang-sc-regular-raw',
+                    'serifFont' => 'sans-serif-only',
+                );
+
             case 'rose-purple':
                 return array(
                     'customFont' => 'rose-purple-optima',
@@ -1502,7 +1520,7 @@ final class EasyMDE_Plugin
             return true;
         }
 
-        foreach (array('orange-heart', 'rose-purple', 'ningye-purple', 'cupid-busy', 'tech-blue') as $theme_id) {
+        foreach (array('orange-heart', 'red-crimson', 'rose-purple', 'ningye-purple', 'cupid-busy', 'tech-blue') as $theme_id) {
             $defaults = $this->get_theme_font_defaults($theme_id);
             if (
                 $defaults

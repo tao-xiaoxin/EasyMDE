@@ -251,6 +251,7 @@ final class EasyMDE_Markdown
             || false !== stripos($html, '<li')
             || false !== stripos($html, '<img')
             || ('cupid-busy' === $theme && false !== strpos($html, ':::'))
+            || ('red-crimson' === $theme && (false !== stripos($html, '<table') || false !== stripos($html, '<blockquote')))
             || ('ningye-purple' === $theme && false !== stripos($html, '<table'))
             || ('rose-purple' === $theme && false !== stripos($html, '<blockquote'));
 
@@ -290,6 +291,10 @@ final class EasyMDE_Markdown
         if ('rose-purple' === $theme) {
             self::add_rose_purple_blockquote_marks($document, $root);
             $rose_purple_footnotes = self::convert_theme_links_to_footnotes($document, $root, 'Reference', true, false);
+        } elseif ('red-crimson' === $theme) {
+            self::add_red_crimson_blockquote_markup($document, $root);
+            self::wrap_theme_tables($document, $root);
+            $rose_purple_footnotes = self::convert_theme_links_to_footnotes($document, $root, '参考资料', false, true);
         } elseif ('ningye-purple' === $theme) {
             self::wrap_theme_tables($document, $root);
             $rose_purple_footnotes = self::convert_theme_links_to_footnotes($document, $root, 'Reference', true, false, '参考资料');
@@ -301,7 +306,7 @@ final class EasyMDE_Markdown
         }
 
         $html = self::inner_html($root, $document);
-        if (in_array($theme, array('rose-purple', 'yamabuki', 'ningye-purple'), true)) {
+        if (in_array($theme, array('red-crimson', 'rose-purple', 'yamabuki', 'ningye-purple'), true)) {
             $html = self::normalize_rose_purple_blockquote_marks($html) . $rose_purple_footnotes;
         }
 
@@ -581,6 +586,39 @@ final class EasyMDE_Markdown
         foreach (iterator_to_array($blockquotes) as $blockquote) {
             if (!($blockquote instanceof DOMElement)) {
                 continue;
+            }
+
+            $first_element = null;
+            foreach ($blockquote->childNodes as $child) {
+                if ($child instanceof DOMElement) {
+                    $first_element = $child;
+                    break;
+                }
+            }
+
+            if ($first_element && 'span' === $first_element->nodeName && $quote_mark === trim((string) $first_element->textContent)) {
+                continue;
+            }
+
+            $mark = $document->createElement('span');
+            $mark->appendChild($document->createTextNode($quote_mark));
+            $blockquote->insertBefore($mark, $blockquote->firstChild);
+        }
+    }
+
+    private static function add_red_crimson_blockquote_markup(DOMDocument $document, DOMElement $root)
+    {
+        $quote_mark = html_entity_decode('&ldquo;', ENT_QUOTES, 'UTF-8');
+        $blockquotes = $root->getElementsByTagName('blockquote');
+        foreach (iterator_to_array($blockquotes) as $blockquote) {
+            if (!($blockquote instanceof DOMElement)) {
+                continue;
+            }
+
+            $classes = preg_split('/\s+/', trim((string) $blockquote->getAttribute('class')));
+            if (!in_array('multiquote-1', $classes, true)) {
+                $classes[] = 'multiquote-1';
+                $blockquote->setAttribute('class', trim(implode(' ', array_filter($classes))));
             }
 
             $first_element = null;

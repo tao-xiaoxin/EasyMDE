@@ -2378,222 +2378,531 @@
 
 /* Markdown2Html-style theme: red-crimson. */
 .easymde-rendered-content.easymde-markdown-theme-red-crimson {
-  --easymde-theme-font-family: Optima-Regular, Optima, PingFangSC-light, PingFangTC-light, "PingFang SC", Cambria, Cochin, Georgia, Times, "Times New Roman", serif;
+  --easymde-theme-font-family: Inter, "Microsoft YaHei", PingFangSC-regular, sans-serif;
   font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
-  padding: 5px;
+  padding: 0 10px;
   font-size: 16px;
   color: #353535;
-  word-spacing: 0.8px;
-  letter-spacing: 0.8px;
-  border-radius: 16px;
+  line-height: 1.6;
+  word-spacing: 0;
+  letter-spacing: 0;
+  word-break: break-word;
+  word-wrap: break-word;
+  text-align: start;
+  font-weight: 400;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson p {
-  line-height: 1.75;
-  margin: 0.8em 0;
   font-size: 16px;
+  line-height: 1.8em;
+  letter-spacing: 0.04em;
   color: #353535;
+  text-align: left;
+  text-indent: 0;
+  margin: 0;
+  padding: 8px 0;
+  font-weight: normal;
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson h1 {
-  border-top: 2px solid rgb(248, 57, 41);
+  display: flex;
+  justify-content: center;
+  margin: 30px 0 15px;
+  padding: 0;
+  border-top: 2px solid #f83929;
+  border-right: none;
+  border-bottom: none;
+  border-left: none;
+  background: unset;
+  line-height: 1.5em;
   text-align: center;
-  font-size: 1.3em;
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: normal;
+  color: rgba(0, 0, 0, 0.85);
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson h1 .content {
-  display: inline-block;
-  font-weight: normal;
-  background: rgb(248, 57, 41);
+  display: block;
+  font-size: 20px;
+  line-height: 1.8em;
+  letter-spacing: 0;
   color: #ffffff;
-  padding: 3px 10px 1px;
+  background: #f83929;
+  font-weight: normal;
+  padding: 3px 5px 5px;
   border-radius: 0 0 13px 13px;
+  text-align: left;
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson h2 {
+  display: block;
   text-align: left;
-  margin: 20px 10px 0px 0px;
+  margin: 30px 0 15px;
+  padding: 0;
+  line-height: 1.5em;
+  border: none;
+  background: unset;
+  color: rgba(0, 0, 0, 0.85);
+  font-size: 21px;
+  font-weight: 500;
+  letter-spacing: normal;
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson h2 .content {
+  display: block;
   font-size: 18px;
-  font-weight: 700;
+  line-height: 1.8em;
+  letter-spacing: 0;
   color: #222;
-  display: inline-block;
+  font-weight: bold;
   padding-left: 10px;
-  border-left: 5px solid rgb(248, 57, 41);
+  border-left: 5px solid #f83929;
+  text-align: left;
+  word-break: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson h3 {
+  display: flex;
+  margin: 30px 0 15px;
+  padding: 0;
+  color: rgba(0, 0, 0, 0.85);
+  font-size: 16.38px;
+  line-height: 1.6;
+  font-weight: 500;
+  letter-spacing: normal;
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson h3 .content {
+  display: block;
   font-size: 16px;
-  color: #222;
+  line-height: 1.5em;
+  letter-spacing: 0;
+  color: #000000;
+  font-weight: bold;
+  word-break: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson h1 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson h1 .suffix,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson h2 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson h2 .suffix,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson h3 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson h3 .suffix {
+  display: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson ul,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson ol {
+  margin: 8px 0;
+  padding: 0 0 0 25px;
+  color: #000000;
+  font-size: 14px;
+  line-height: 22.001px;
+  font-weight: normal;
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson ul {
-  color: #f83929;
-  font-size: 16px;
+  list-style-type: disc;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson ul ul {
+  list-style-type: square;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson ol {
-  color: #f83929;
-  font-size: 16px;
+  list-style-type: decimal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson li section,
 .easymde-rendered-content.easymde-markdown-theme-red-crimson li {
   color: #353535;
+  font-size: 16px;
+  line-height: 1.8em;
+  letter-spacing: 0.04em;
+  text-align: left;
+  font-weight: normal;
+  word-break: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson li section {
+  margin: 5px 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson blockquote {
   font-style: normal;
-  border-left: none;
-  padding: 15px 10px;
-  line-height: 1.75;
-  border-radius: 13px;
-  color: #353535;
-  background: #f5f5f5;
+  border: none;
+  padding: 10px 10px 10px 20px;
+  font-size: 14px;
+  line-height: 22.001px;
+  font-weight: 400;
+  border-radius: 0;
+  color: rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 0.05);
+  margin: 20px 0;
+  border-color: rgba(0, 0, 0, 0.4);
+  box-shadow: rgba(0, 0, 0, 0) 0 0 0 0;
+  display: block;
+  overflow: auto;
+  word-break: normal;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-red-crimson blockquote:before {
-  content: "“";
+.easymde-rendered-content.easymde-markdown-theme-red-crimson blockquote::before,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson blockquote::after {
+  content: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson blockquote > span:first-child {
   display: block;
-  font-size: 2em;
-  color: rgb(248, 57, 41);
-  font-family: Arial, serif;
-  line-height: 1em;
-  font-weight: 700;
+  color: #f83929;
+  font-size: 28px;
+  line-height: 1.5em;
+  letter-spacing: 0;
+  text-align: left;
+  font-weight: bold;
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson blockquote p {
   color: #353535;
   font-size: 16px;
-  margin: 0 10px;
+  line-height: 1.8em;
+  letter-spacing: 0.04em;
+  font-weight: normal;
+  margin: 0;
+  padding: 8px 0;
   display: block;
+  word-break: normal;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-red-crimson blockquote:after {
-  content: "”";
-  float: right;
-  display: block;
-  font-size: 2em;
-  color: rgb(248, 57, 41);
-  font-family: Arial, serif;
-  line-height: 1em;
-  font-weight: 700;
+.easymde-rendered-content.easymde-markdown-theme-red-crimson a {
+  color: #f83929;
+  font-weight: bold;
+  border-bottom: 1px solid #f83929;
+  text-decoration: none;
+  overflow-wrap: break-word;
 }
 
+.easymde-rendered-content.easymde-markdown-theme-red-crimson a,
 .easymde-rendered-content.easymde-markdown-theme-red-crimson a span {
-  color: rgb(248, 57, 41);
-  font-weight: 400;
-  border-bottom: 1px solid rgb(248, 57, 41);
+  color: #f83929;
+  font-weight: bold;
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson strong {
-  font-weight: 700;
-  color: rgb(248, 57, 41);
+  font-weight: bold;
+  color: #f83929;
+  background: transparent;
+  word-break: normal;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-red-crimson em {
-  color: rgb(248, 57, 41);
-}
-
+.easymde-rendered-content.easymde-markdown-theme-red-crimson em,
 .easymde-rendered-content.easymde-markdown-theme-red-crimson em strong {
-  color: rgb(248, 57, 41);
+  color: #f83929;
+  font-style: italic;
+  word-break: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson del,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson s {
+  color: #f83929;
+  font-style: italic;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson hr {
   height: 1px;
+  margin: 10px 0;
   padding: 0;
   border: none;
-  border-top: medium solidid #333;
-  text-align: center;
-  background-image: linear-gradient(to right, rgba(248, 57, 41, 0), rgba(248, 57, 41, 0.75), rgba(248, 57, 41, 0));
+  background-color: transparent;
+  background-image: linear-gradient(90deg, rgba(248, 57, 41, 0) 0%, rgba(248, 57, 41, 0.75) 51.79%, rgba(248, 57, 41, 0) 100%);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson pre {
+  box-sizing: border-box;
+  position: static;
+  border-radius: 5px;
+  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
+  text-align: left;
+  margin: 10px 0;
+  padding: 0;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.8);
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  font-size: 14px;
+  line-height: 22.001px;
+  font-weight: 400;
+  border-color: rgba(0, 0, 0, 0.8);
+  overflow: auto;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson pre code.hljs,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson pre code {
+  overflow-x: auto;
+  color: #abb2bf;
+  padding: 15px 16px 16px;
+  background: #282c34;
+  border-radius: 5px;
+  display: -webkit-box;
+  font-family: var(--easymde-code-font-family);
+  font-size: 12px;
+  line-height: 1.572em;
+  font-weight: 400;
+  word-break: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson pre code.hljs span {
+  line-height: 26px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson.easymde-code-mac pre {
+  box-sizing: border-box;
+  position: static;
+  padding-top: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.8);
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace !important;
+  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
+  overflow: auto;
+  overflow-wrap: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson.easymde-code-mac pre::before {
+  position: static;
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin-bottom: -7px;
+  border-radius: 5px;
+  background:
+    radial-gradient(circle at 15px 15px, rgb(237, 108, 96) 0 5px, transparent 5.5px),
+    radial-gradient(circle at 29px 15px, rgb(247, 193, 81) 0 5px, transparent 5.5px),
+    radial-gradient(circle at 43px 15px, rgb(100, 200, 86) 0 5px, transparent 5.5px),
+    #282c34;
+  box-shadow: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson.easymde-code-mac pre code.hljs {
+  border-radius: 0;
+  padding-top: 15px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson figure {
-  border-radius: 16px;
-  overflow: hidden;
+  margin: 10px 0;
+  padding: 0;
+  border-radius: 0;
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  font-size: 14px;
+  line-height: 22.001px;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.8);
+  border-color: rgba(0, 0, 0, 0.8);
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson figure a img {
   border-radius: 16px;
-  width: 100%;
   max-width: 100%;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson img {
-  border-radius: 6px;
+  border-radius: 16px;
   display: block;
-  margin: 20px auto;
-  max-width: 95%;
-  object-fit: contain;
+  margin: 0 auto;
+  max-width: 100%;
+  object-fit: fill;
+  box-shadow: none;
+  font-size: 14px;
+  line-height: 22.001px;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.8);
+  border-color: rgba(0, 0, 0, 0.4);
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson figcaption {
   display: block;
   font-size: 12px;
+  line-height: 1.5em;
+  letter-spacing: 0;
+  text-align: center;
+  color: #888888;
+  font-weight: normal;
+  margin: 5px 0 0;
+  padding: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson p code,
 .easymde-rendered-content.easymde-markdown-theme-red-crimson li code {
-  color: rgb(271, 93, 108);
+  color: #f83929;
+  font-size: 14px;
+  line-height: 1.8em;
+  letter-spacing: 0;
+  background: rgba(27, 31, 35, 0.05);
+  margin: 0 2px;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 4px;
+  overflow-wrap: break-word;
+  font-family: var(--easymde-code-font-family);
+  word-break: break-all;
+  font-weight: 400;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .table-container {
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson table {
+  display: table;
+  text-align: left;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 22.001px;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.8);
+  border-color: rgba(0, 0, 0, 0.8);
+  word-break: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson tbody,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson table tr {
+  border: 0;
+  background: transparent;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson table tr th,
 .easymde-rendered-content.easymde-markdown-theme-red-crimson table tr td {
   font-size: 16px;
-  color: #645647;
+  line-height: 1.5em;
+  letter-spacing: 0.04em;
+  color: #353535;
+  border: 1px solid rgba(204, 204, 204, 0.4);
+  padding: 5px 10px;
+  min-width: 85px;
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson table tr th {
   color: #353535;
-  background-color: #dbd9d8;
+  font-weight: bold;
+  background: #dbd9d8;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson .footnotes {
-  font-size: 16px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  line-height: 22.001px;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.8);
+  border-left-color: rgba(0, 0, 0, 0.4);
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson .footnote-word {
-  font-weight: normal;
+  font-weight: bold;
   color: #f83929;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson .footnote-ref {
-  font-weight: normal;
+  line-height: 0;
+  font-size: 12px;
+  font-weight: bold;
   color: #f83929;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-red-crimson .footnote-item em {
-  font-size: 16px;
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .footnotes-sep {
+  margin: 30px 0 15px;
+  padding: 0;
+  border: none;
+  border-bottom: 3px double #f83929;
+  font-size: 14px;
+  line-height: 22.001px;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.8);
+  border-left-color: rgba(0, 0, 0, 0.4);
+  word-break: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .footnotes-sep span {
   display: block;
+  color: #f83929;
+  font-size: 20px;
+  line-height: 1.5em;
+  letter-spacing: 0;
+  text-align: left;
+  font-weight: bold;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson .footnotes-sep:before {
-  content: '参考资料 ';
-  color: #f83929;
-  letter-spacing: 1px;
-  text-align: left;
-  display: block;
-  font-weight: 500;
-  padding-bottom: .1em;
-  border-bottom: 3px double #f83929;
-  font-size: 20px;
+  content: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .footnote-item {
+  display: flex;
+  font-size: 14px;
+  line-height: 1.8em;
+  letter-spacing: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson .footnote-num {
-  color: #f83929;
+  line-height: 1.8em;
+  letter-spacing: 0;
+  color: rgba(0, 0, 0, 0.6);
+  display: inline;
+  width: 10%;
+  background: none;
+  font-size: 80%;
+  font-family: ptima-Regular, Optima, PingFangSC-light, PingFangTC-light, "PingFang SC", Cambria, Cochin, Georgia, Times, "Times New Roman", serif;
+  padding-top: 2px;
+  word-break: normal;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson .footnote-item p {
+  text-align: left;
+  text-indent: 0;
+  color: #353535;
   font-weight: 400;
-  color: #f83929;
+  display: inline;
+  padding: 0;
+  margin: 0;
+  word-break: break-all;
+  flex-basis: 0;
+  flex-grow: 1;
+  font-size: 14px;
+  line-height: 1.8em;
+  letter-spacing: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson .footnote-item p em {
-  font-weight: 400;
-  font-size: 14px;
   color: #353535;
+  font-weight: normal;
+  font-style: italic;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson sub,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson sup {
+  line-height: 0;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-red-crimson .easymde-math-block svg {
@@ -2608,6 +2917,54 @@
   display: inline-block;
   width: 100%;
   margin-bottom: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .imageflow-layer1 {
+  margin-top: 20px;
+  margin-bottom: 10px;
+  padding: 0;
+  border: none;
+  overflow-x: hidden;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .imageflow-layer2 {
+  display: flex;
+  overflow-x: scroll;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .imageflow-caption {
+  color: #353535;
+  font-size: 16px;
+  line-height: 1.8em;
+  letter-spacing: 0.04em;
+  text-align: center;
+  margin: 0;
+  padding: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .block-1,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .block-2,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .block-3 {
+  display: block;
+  margin: 20px 0;
+  padding: 10px 20px;
+  border: none;
+  background: #fafafa;
+  box-shadow: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .column {
+  display: flex;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .column-left {
+  text-align: center;
+  padding-right: 5px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson .column-right {
+  text-align: center;
+  padding-left: 5px;
 }
 
 /* Markdown2Html-style theme: blue-ying. */
@@ -6210,6 +6567,39 @@
 
 .easymde-rendered-content.easymde-code-mac[class*="easymde-markdown-theme-"] pre {
   box-shadow: rgba(0, 0, 0, 0.35) 0 2px 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson.easymde-code-mac pre {
+  box-sizing: border-box;
+  position: static;
+  padding-top: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.8);
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace !important;
+  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
+  overflow: auto;
+  overflow-wrap: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson.easymde-code-mac pre::before {
+  position: static;
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin-bottom: -7px;
+  border-radius: 5px;
+  background:
+    radial-gradient(circle at 15px 15px, rgb(237, 108, 96) 0 5px, transparent 5.5px),
+    radial-gradient(circle at 29px 15px, rgb(247, 193, 81) 0 5px, transparent 5.5px),
+    radial-gradient(circle at 43px 15px, rgb(100, 200, 86) 0 5px, transparent 5.5px),
+    #282c34;
+  box-shadow: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson.easymde-code-mac pre code.hljs {
+  border-radius: 0;
+  padding-top: 15px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-orange-heart.easymde-code-mac pre {

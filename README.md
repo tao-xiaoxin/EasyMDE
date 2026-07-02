@@ -3,9 +3,7 @@
     <img src="./docs/assets/easymde-logo-rounded.png" alt="EasyMDE" width="460" />
   </a>
 </p>
-<h1 align="center">EasyMDE</h1>
-<p align="center">A full-featured Markdown editor plugin for WordPress.</p>
-
+<h2 align="center">EasyMDE</h2>
 <p align="center">
   <a href="https://github.com/tao-xiaoxin/EasyMDE/releases">
     <img src="https://img.shields.io/badge/version-0.1.7-2563eb?style=flat-square&logo=github&logoColor=white" alt="Version 0.1.7" />
@@ -19,7 +17,7 @@
     <img src="https://img.shields.io/badge/license-Apache--2.0-8b5cf6?style=flat-square" alt="Apache-2.0 license" />
   </a>
 </p>
-
+---
 <p align="center">
   <a href="./docs/assets/easymde-editor-showcase.png">
     <img src="./docs/assets/easymde-editor-showcase.png" alt="EasyMDE split-pane Markdown editor with live preview, code highlighting, Mermaid, and KaTeX" width="1200" />

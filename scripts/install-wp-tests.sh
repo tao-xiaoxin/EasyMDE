@@ -53,7 +53,6 @@ create_database() {
 		--user="${DB_USER}" \
 		--password="${DB_PASS}" \
 		--protocol=tcp \
-		--ssl=0 \
 		-e "CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`;"
 }
 

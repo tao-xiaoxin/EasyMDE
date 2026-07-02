@@ -86,6 +86,45 @@ Rules:
 
 ---
 
+## Working Method
+
+### First-Principles Delivery
+
+Before editing, identify the actual user, system, security, compatibility, or release problem being solved. Do not adopt a pattern only because it is conventional, already present elsewhere, or commonly used by other plugins.
+
+For each material change:
+
+* State the invariant that must remain true and the observable outcome that proves the change works.
+* Break the work into the smallest independently testable hypotheses.
+* Trace the concrete input, state transition, output, and failure path before choosing an implementation.
+* Prefer the simplest design that satisfies the project rules, supported WordPress/PHP versions, and release constraints.
+* Add a dependency, abstraction, service, asset, script, or document only when it has a clear runtime, build, test, release, or documented extension purpose.
+* For material architecture, security, compatibility, migration, or release decisions, explain why the chosen approach is necessary, what constraint it satisfies, and why a simpler alternative is insufficient.
+* Treat green tests, existing code, and common practice as evidence only when they exercise the actual behavior and constraints of this repository.
+
+Do not confuse an implementation plan with proof of correctness. A change is complete only when its intended behavior and its relevant failure behavior have been verified.
+
+### Adversarial Pre-Delivery Review
+
+Before committing, opening a pull request, or declaring a task complete, switch from implementer to a deliberately skeptical reviewer.
+
+Attack the change from these angles:
+
+* **Logic and data flow:** Can an unexpected input, hook order, early return, race, retry, missing dependency, or partial failure produce an inconsistent state?
+* **Facts and contracts:** Does the implementation match WordPress APIs, supported PHP and WordPress versions, dependency behavior, release packaging rules, existing metadata, and public compatibility APIs?
+* **Simplicity and scope:** Is there a smaller change that solves the real problem? Did the work add unnecessary dependencies, files, abstractions, configuration, or operational burden?
+* **Test validity:** Could a test pass because it never reaches the changed path, uses an over-broad mock, relies on polluted global state, skips unavailable tooling, or checks only file presence instead of runtime behavior?
+
+For every non-trivial task, list the three to five most likely ways the change could fail. For each relevant risk, either:
+
+1. reproduce or test it;
+2. fix the underlying cause and rerun the affected checks; or
+3. record why it cannot be verified and what remains uncertain.
+
+Do not accept "looks correct", "should work", or a passing happy-path test as sufficient evidence. Report the commands, tests, manual checks, release-package checks, or negative cases actually performed, plus their results.
+
+---
+
 ## Themes and Assets
 
 Use these boundaries:
@@ -206,6 +245,7 @@ EasyMDE_Plugin::register_shortcode_helper()
 They may delegate to new registries internally, but existing extension code must not break unexpectedly.
 
 ---
+
 ## Code Review Guidelines
 
 When reviewing a pull request, first understand:

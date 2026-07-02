@@ -1,9 +1,24 @@
 <h1 align="center">EasyMDE</h1>
 
 <p align="center">A full-featured Markdown editor plugin for WordPress.</p>
+
 <p align="center">
   <a href="./docs/assets/easymde-logo.png">
     <img src="./docs/assets/easymde-logo.png" alt="EasyMDE" width="460" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/tao-xiaoxin/EasyMDE/releases">
+    <img src="https://img.shields.io/badge/version-0.1.7-2563eb?style=flat-square&logo=github&logoColor=white" alt="Version 0.1.7" />
+  </a>
+  <img src="https://img.shields.io/badge/WordPress-6.9%2B-21759b?style=flat-square&logo=wordpress&logoColor=white" alt="Requires WordPress 6.9+" />
+  <img src="https://img.shields.io/badge/PHP-7.4%2B-777BB4?style=flat-square&logo=php&logoColor=white" alt="Requires PHP 7.4+" />
+  <a href="https://github.com/tao-xiaoxin/EasyMDE/actions/workflows/ci.yml">
+    <img src="https://github.com/tao-xiaoxin/EasyMDE/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" />
+  </a>
+  <a href="https://github.com/tao-xiaoxin/EasyMDE/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-Apache--2.0-8b5cf6?style=flat-square" alt="Apache-2.0 license" />
   </a>
 </p>
 
@@ -264,7 +279,7 @@ http://localhost:8088
 ```
 
 The Docker test site is initialized with WordPress `6.9` and Simplified Chinese
-(`zh_CN`) by default. The plugin header declares WordPress `6.0` as the minimum
+(`zh_CN`) by default. The plugin header declares WordPress `6.9` as the minimum
 supported version.
 Set the local administrator and database passwords in `.env`; do not commit that
 file.

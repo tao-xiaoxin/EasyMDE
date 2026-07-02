@@ -1,4 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -29,15 +30,26 @@ const excludedReleaseSegments = new Set([
 ]);
 const excludedReleaseFiles = new Set([
   '.DS_Store',
+  '.editorconfig',
   '.env',
   '.env.local',
+  '.gitattributes',
+  '.gitignore',
   '.phpunit.result.cache',
+  '.scrutinizer.yml',
   'appveyor.yml',
+  'phpcs.xml',
+  'phpcs.xml.dist',
+  'phpstan.neon',
+  'phpstan.neon.dist',
   'phpunit.xml',
-  'phpunit.xml.dist'
+  'phpunit.xml.dist',
+  'psalm.xml',
+  'psalm.xml.dist'
 ]);
 
 const baseRequirements = [
+  { path: 'composer.lock', type: 'file' },
   { path: 'vendor/autoload.php', type: 'file' },
   { path: 'vendor/composer/platform_check.php', type: 'file' },
   { path: 'assets/vendor/highlight/highlight.min.js', type: 'file' },
@@ -45,7 +57,9 @@ const baseRequirements = [
   { path: 'assets/vendor/katex/katex.min.js', type: 'file' },
   { path: 'assets/vendor/katex/fonts', type: 'non-empty-dir' },
   { path: 'assets/vendor/mermaid/mermaid.min.js', type: 'file' },
-  { path: 'languages', type: 'dir' }
+  { path: 'languages/easymde.pot', type: 'file' },
+  { path: 'languages/easymde-zh_CN.po', type: 'file' },
+  { path: 'languages/easymde-zh_CN.mo', type: 'file' }
 ];
 
 export const packagePaths = [
@@ -63,6 +77,12 @@ export const packagePaths = [
   'languages',
   'vendor'
 ];
+const versionSources = {
+  pluginHeader: { file: 'easymde.php', label: 'plugin header Version' },
+  constant: { file: 'easymde.php', label: 'EASYMDE_VERSION' },
+  stableTag: { file: 'readme.txt', label: 'Stable tag' },
+  packageJson: { file: 'package.json', label: 'version' }
+};
 
 function fromRoot(root, path) {
   return join(root, path);
@@ -97,6 +117,63 @@ function composerPackageRequirements(root) {
       path: `vendor/${pkg.name}`,
       type: 'non-empty-dir'
     }));
+}
+
+function readText(root, path) {
+  return readFileSync(fromRoot(root, path), 'utf8');
+}
+
+function matchVersion(source, pattern, path, label) {
+  const match = source.match(pattern);
+
+  if (!match) {
+    throw new Error(`Could not read ${label} version from ${path}.`);
+  }
+
+  return match[1].trim();
+}
+
+export function readReleaseVersions(root = defaultRoot) {
+  const mainFile = readText(root, 'easymde.php');
+  const readme = readText(root, 'readme.txt');
+  const packageJson = JSON.parse(readText(root, 'package.json'));
+
+  return {
+    pluginHeader: matchVersion(mainFile, /^\s*\*\s*Version:\s*(.+)$/m, 'easymde.php', 'plugin header'),
+    constant: matchVersion(mainFile, /define\(\s*['"]EASYMDE_VERSION['"]\s*,\s*['"]([^'"]+)['"]\s*\)/, 'easymde.php', 'EASYMDE_VERSION'),
+    stableTag: matchVersion(readme, /^Stable tag:\s*(.+)$/m, 'readme.txt', 'Stable tag'),
+    packageJson: String(packageJson.version || '').trim()
+  };
+}
+
+export function findVersionMismatches(root = defaultRoot) {
+  const versions = readReleaseVersions(root);
+  const expected = versions.pluginHeader;
+
+  return Object.entries(versions)
+    .filter(([, value]) => value !== expected)
+    .map(([field, value]) => ({
+      field,
+      file: versionSources[field].file,
+      label: versionSources[field].label,
+      value,
+      expected
+    }));
+}
+
+function assertReleaseVersionConsistency(root) {
+  const mismatches = findVersionMismatches(root);
+
+  if (!mismatches.length) {
+    return;
+  }
+
+  throw new Error(
+    [
+      'Release version fields must match the easymde.php plugin header Version:',
+      ...mismatches.map((mismatch) => `- ${mismatch.file} ${mismatch.label}: ${mismatch.value || '(empty)'}; expected ${mismatch.expected}`)
+    ].join('\n')
+  );
 }
 
 export function shouldCopyReleaseFile(root, file) {
@@ -185,11 +262,44 @@ function assertReleaseRequirements(root) {
   throw error;
 }
 
+function assertZipCommand() {
+  const result = spawnSync('zip', ['--version'], {
+    encoding: 'utf8'
+  });
+
+  if (0 !== result.status) {
+    throw new Error('Release ZIP creation requires the zip command.');
+  }
+}
+
+export function releaseZipPath(root = defaultRoot, releaseRoot = fromRoot(root, 'dist')) {
+  return join(releaseRoot, 'easymde.zip');
+}
+
+function buildReleaseZip(root, releaseRoot, packageRoot) {
+  const zipPath = releaseZipPath(root, releaseRoot);
+
+  assertZipCommand();
+  rmSync(zipPath, { force: true });
+
+  const result = spawnSync('zip', ['-qr', zipPath, relative(releaseRoot, packageRoot)], {
+    cwd: releaseRoot,
+    encoding: 'utf8'
+  });
+
+  if (0 !== result.status) {
+    throw new Error(result.stderr || 'Release ZIP creation failed.');
+  }
+
+  return zipPath;
+}
+
 export function buildRelease(options = {}) {
   const root = options.root || defaultRoot;
   const releaseRoot = options.releaseRoot || fromRoot(root, 'dist');
   const packageRoot = options.packageRoot || join(releaseRoot, 'easymde');
 
+  assertReleaseVersionConsistency(root);
   assertReleaseRequirements(root);
 
   rmSync(packageRoot, { recursive: true, force: true });
@@ -207,6 +317,8 @@ export function buildRelease(options = {}) {
       filter: (file) => shouldCopyReleaseFile(root, file)
     });
   }
+
+  buildReleaseZip(root, releaseRoot, packageRoot);
 
   return packageRoot;
 }
@@ -226,8 +338,12 @@ function parseCliOptions(argv) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const packageRoot = buildRelease(parseCliOptions(process.argv.slice(2)));
+    const options = parseCliOptions(process.argv.slice(2));
+    const root = options.root || defaultRoot;
+    const releaseRoot = options.releaseRoot || fromRoot(root, 'dist');
+    const packageRoot = buildRelease(options);
     console.log(`Release package assembled at ${packageRoot}`);
+    console.log(`Release ZIP assembled at ${releaseZipPath(root, releaseRoot)}`);
   } catch (error) {
     console.error(error.message);
     process.exit(1);

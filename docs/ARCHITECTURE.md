@@ -68,8 +68,10 @@ loaded as classic WordPress scripts: state helpers, command primitives, preview
 client helpers, theme manager helpers, toolbar helpers, draft storage, media
 picker, WeChat exporter, and bootstrap.
 
-`npm run build:release` assembles `dist/easymde` from runtime files and refuses
-to run if Composer or local vendor assets are missing.
+`npm run build:release` assembles `dist/easymde` and `dist/easymde.zip` from
+runtime files. It refuses to run if Composer dependencies, local vendor assets,
+registered theme assets, translation files, or version metadata are missing or
+inconsistent.
 
 ## REST Boundaries
 
@@ -95,8 +97,25 @@ They delegate to `EasyMDE\Support\ToolbarRegistry`. Future extension APIs should
 move toward namespaced services, but this release keeps existing extension code
 working.
 
-## Internationalization Shim
+## Internationalization
 
-The existing Simplified Chinese gettext mapping was moved to
-`EasyMDE\Support\LegacyTranslations`. It is a temporary compatibility shim; new
-strings should move through normal translation files in a future i18n pass.
+EasyMDE uses the standard WordPress text domain `easymde` and loads bundled
+language files from `languages/` during the normal plugin initialization flow.
+The GitHub Release ZIP includes `languages/easymde.pot`,
+`languages/easymde-zh_CN.po`, and `languages/easymde-zh_CN.mo`.
+
+PHP remains the translation source for browser UI text. Admin JavaScript reads
+author-facing strings from `EasyMDEConfig.strings`, and frontend enhancement
+scripts read visitor-facing strings from `EasyMDEFrontendConfig.strings`.
+
+Translation maintenance uses gettext tooling:
+
+```bash
+npm run i18n:make-pot
+npm run i18n:compile
+npm run i18n:check
+```
+
+The repository does not use a runtime gettext filter, locale-specific PHP
+translation array, WordPress.org translation-platform integration, or remote CDN
+language assets.

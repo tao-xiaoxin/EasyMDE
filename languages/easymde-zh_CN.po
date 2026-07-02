@@ -1,0 +1,495 @@
+# Copyright (C) Tao Xiaoxin
+# This file is distributed under the Apache-2.0 license.
+msgid ""
+msgstr ""
+"Project-Id-Version: EasyMDE 0.1.7\n"
+"Report-Msgid-Bugs-To: https://github.com/tao-xiaoxin/EasyMDE/issues\n"
+"PO-Revision-Date: 2026-07-02 00:00+0000\n"
+"Last-Translator: EasyMDE contributors <noreply@example.com>\n"
+"Language-Team: Chinese (China) <noreply@example.com>\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"X-Generator: EasyMDE i18n script\n"
+"X-Domain: easymde\n"
+
+msgid "A custom CSS style with this name already exists."
+msgstr "已存在同名自定义 CSS 样式。"
+
+msgid "A newer local draft is available."
+msgstr "检测到更新的本地草稿。"
+
+msgid "Add EasyMDE Page"
+msgstr "新建 EasyMDE 页面"
+
+msgid "Add EasyMDE Post"
+msgstr "新建 EasyMDE 文章"
+
+msgid "Admin behavior"
+msgstr "后台行为"
+
+msgid "Appearance"
+msgstr "外观"
+
+msgid "Apple font"
+msgstr "苹果字体"
+
+msgid "Article theme"
+msgstr "文章主题"
+
+msgid "Atom One Dark"
+msgstr "Atom One Dark"
+
+msgid "Atom One Light"
+msgstr "Atom One Light"
+
+msgid "Blue ying"
+msgstr "蓝莹"
+
+msgid "Bold"
+msgstr "加粗"
+
+msgid "CSS name"
+msgstr "CSS 名称"
+
+msgid "CSS name and CSS content are required."
+msgstr "CSS 名称和 CSS 内容为必填项。"
+
+msgid "CSS save failed."
+msgstr "CSS 保存失败。"
+
+msgid "Chazi purple"
+msgstr "姹紫"
+
+msgid "Clipboard access is not available in this browser."
+msgstr "当前浏览器不支持剪贴板富文本复制。"
+
+msgid "Cochin"
+msgstr "Cochin"
+
+msgid "Code fence"
+msgstr "代码块"
+
+msgid "Code theme"
+msgstr "代码主题"
+
+msgid "Command"
+msgstr "命令"
+
+msgid "Copied preview for WeChat."
+msgstr "已复制当前预览，可直接粘贴到公众号编辑器。"
+
+msgid "Copy for WeChat failed. Please try again in this browser."
+msgstr "复制到公众号失败，请在当前浏览器中重试。"
+
+msgid "Copy preview for WeChat"
+msgstr "复制当前预览到公众号"
+
+msgid "Copy to WeChat"
+msgstr "复制到公众号"
+
+msgid "Cupid busy"
+msgstr "丘比特忙"
+
+msgid "Current preset"
+msgstr "当前预设"
+
+msgid "Custom CSS"
+msgstr "自定义 CSS"
+
+msgid "Custom CSS contains a blocked feature: %s"
+msgstr "自定义 CSS 包含被阻止的特性：%s"
+
+msgid "Custom CSS could not be parsed safely: %s"
+msgstr "无法安全解析自定义 CSS：%s"
+
+msgid "Custom CSS is too large."
+msgstr "自定义 CSS 过大。"
+
+msgid "Custom CSS style not found."
+msgstr "未找到自定义 CSS 样式。"
+
+msgid "Custom font"
+msgstr "自定义字体"
+
+msgid "Cute green"
+msgstr "萌绿风"
+
+msgid "Dark mode"
+msgstr "深色模式"
+
+msgid "Default theme"
+msgstr "默认主题"
+
+msgid "Default: %s"
+msgstr "默认：%s"
+
+msgid "Discard draft"
+msgstr "丢弃草稿"
+
+msgid "Draft discarded."
+msgstr "草稿已丢弃。"
+
+msgid "Draft restored."
+msgstr "草稿已恢复。"
+
+msgid "EasyMDE"
+msgstr "EasyMDE"
+
+msgid "EasyMDE adds a scoped split-pane Markdown editor to supported post editing screens."
+msgstr "EasyMDE 会在支持的内容编辑页面中添加作用域限定的分栏 Markdown 编辑器。"
+
+msgid "EasyMDE cannot save this post because Markdown rendering is unavailable. Install Composer dependencies and try again."
+msgstr "EasyMDE 无法保存此文章，因为 Markdown 渲染不可用。请安装 Composer 依赖后重试。"
+
+msgid "EasyMDE renderer unavailable"
+msgstr "EasyMDE 渲染器不可用"
+
+msgid "EasyMDE requires Composer dependencies before Markdown can be rendered or saved. Run composer install for development or include vendor/ in release packages."
+msgstr "EasyMDE 需要 Composer 依赖才能渲染或保存 Markdown。开发环境请运行 composer install，发布包请包含 vendor/。"
+
+msgid "Enter immersive writing"
+msgstr "进入沉浸写作"
+
+msgid "Exit immersive writing"
+msgstr "退出沉浸写作"
+
+msgid "Font"
+msgstr "字体"
+
+msgid "Fonts are applied in custom, Windows, Apple, and serif fallback order when supported by the current system."
+msgstr "字体会在当前系统支持时按自定义、Windows、苹果和衬线后备的顺序应用。"
+
+msgid "Frontend peak"
+msgstr "前端之巅同款"
+
+msgid "Fullstack blue"
+msgstr "全栈蓝"
+
+msgid "Geek black"
+msgstr "极客黑"
+
+msgid "Georgia"
+msgstr "Georgia"
+
+msgid "GitHub"
+msgstr "GitHub"
+
+msgid "GitHub Dark"
+msgstr "GitHub Dark"
+
+msgid "Green vitality"
+msgstr "绿意"
+
+msgid "Grid black"
+msgstr "网格黑"
+
+msgid "Heading 1"
+msgstr "一级标题"
+
+msgid "Heading 2"
+msgstr "二级标题"
+
+msgid "Heading 3"
+msgstr "三级标题"
+
+msgid "Heading 4"
+msgstr "四级标题"
+
+msgid "Heading 5"
+msgstr "五级标题"
+
+msgid "Heading 6"
+msgstr "六级标题"
+
+msgid "Headings"
+msgstr "标题"
+
+msgid "Helvetica Neue"
+msgstr "Helvetica Neue"
+
+msgid "Hybrid icon toolbar"
+msgstr "混合图标工具栏"
+
+msgid "Image"
+msgstr "图片"
+
+msgid "Inline code"
+msgstr "行内代码"
+
+msgid "Insert Media"
+msgstr "插入媒体"
+
+msgid "Inter (cupid-busy)"
+msgstr "Inter（丘比特忙）"
+
+msgid "Inter (ningye-purple)"
+msgstr "Inter（凝夜紫）"
+
+msgid "Inter (orange-heart)"
+msgstr "Inter（橙心）"
+
+msgid "Inter (red-crimson)"
+msgstr "Inter（红绯）"
+
+msgid "Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or Command+Option+C."
+msgstr "%1$s（%2$s）的快捷键格式无效。请使用 Ctrl+B 或 Command+Option+C 这类组合。"
+
+msgid "Italic"
+msgstr "斜体"
+
+msgid "Lanqing"
+msgstr "兰青"
+
+msgid "Light mode"
+msgstr "浅色模式"
+
+msgid "Link"
+msgstr "链接"
+
+msgid "Live preview"
+msgstr "实时预览"
+
+msgid "Local draft saved"
+msgstr "本地草稿已保存"
+
+msgid "Mac code frame"
+msgstr "Mac 代码框"
+
+msgid "Markdown"
+msgstr "Markdown"
+
+msgid "Markdown preview content is too large."
+msgstr "Markdown 预览内容过大。"
+
+msgid "Markdown rendering is unavailable because Composer dependencies are missing."
+msgstr "缺少 Composer 依赖，Markdown 渲染不可用。"
+
+msgid "Markdown source"
+msgstr "Markdown 源文"
+
+msgid "Markdown toolbar"
+msgstr "Markdown 工具栏"
+
+msgid "Markdown2Html default"
+msgstr "Markdown2Html 默认"
+
+msgid "Math block"
+msgstr "公式块"
+
+msgid "Microsoft YaHei"
+msgstr "微软雅黑"
+
+msgid "Microsoft YaHei (cupid-busy)"
+msgstr "微软雅黑（丘比特忙）"
+
+msgid "Microsoft YaHei (ningye-purple)"
+msgstr "微软雅黑（凝夜紫）"
+
+msgid "Microsoft YaHei (orange-heart)"
+msgstr "微软雅黑（橙心）"
+
+msgid "Microsoft YaHei (red-crimson)"
+msgstr "微软雅黑（红绯）"
+
+msgid "Microsoft YaHei (rose-purple)"
+msgstr "微软雅黑（蔷薇紫）"
+
+msgid "Microsoft YaHei (tech-blue)"
+msgstr "微软雅黑（科技蓝）"
+
+msgid "Minimal black"
+msgstr "极简黑"
+
+msgid "Monokai"
+msgstr "Monokai"
+
+msgid "Named custom CSS"
+msgstr "命名自定义 CSS"
+
+msgid "Nenqing green"
+msgstr "嫩青"
+
+msgid "Ningye purple"
+msgstr "凝夜紫"
+
+msgctxt "serif font fallback option"
+msgid "No"
+msgstr "否"
+
+msgid "No activation redirect and no unrelated admin-page redirect."
+msgstr "不会在启用插件后跳转，也不会重定向无关后台页面。"
+
+msgid "No custom CSS saved yet."
+msgstr "尚未保存自定义 CSS。"
+
+msgid "No custom font"
+msgstr "无自定义字体"
+
+msgid "Optima"
+msgstr "Optima"
+
+msgid "Optima (rose-purple)"
+msgstr "Optima（蔷薇紫）"
+
+msgid "Optima (tech-blue)"
+msgstr "Optima（科技蓝）"
+
+msgid "Orange blue"
+msgstr "橙蓝风"
+
+msgid "Orange heart"
+msgstr "橙心"
+
+msgid "Ordered list"
+msgstr "有序列表"
+
+msgid "Output actions"
+msgstr "输出操作"
+
+msgid "Paragraph"
+msgstr "正文"
+
+msgid "PingFang SC Light"
+msgstr "苹方简体细体"
+
+msgid "PingFang SC Regular"
+msgstr "苹方简体常规体"
+
+msgid "PingFang TC Light"
+msgstr "苹方繁体细体"
+
+msgid "PingFang TC Regular"
+msgstr "苹方繁体常规体"
+
+msgid "PingFangSC-regular"
+msgstr "苹方简体常规体"
+
+msgid "Preview"
+msgstr "预览"
+
+msgid "Preview failed. Please keep writing; saving is not affected."
+msgstr "预览失败。可以继续编写，保存不受影响。"
+
+msgid "Quote"
+msgstr "引用"
+
+msgid "Red crimson"
+msgstr "红绯"
+
+msgid "Rendering failed."
+msgstr "渲染失败。"
+
+msgid "Restore draft"
+msgstr "恢复草稿"
+
+msgid "Rose purple"
+msgstr "蔷薇紫"
+
+msgid "Save CSS"
+msgstr "保存 CSS"
+
+msgid "Save post"
+msgstr "保存文章"
+
+msgid "Saved CSS."
+msgstr "CSS 已保存。"
+
+msgid "Serif font"
+msgstr "衬线字体"
+
+msgid "Server renderer"
+msgstr "服务器端渲染器"
+
+msgid "Shortcut conflict: %1$s and %2$s both use %3$s on %4$s."
+msgstr "快捷键冲突：%1$s 与 %2$s 在 %4$s 上都使用了 %3$s。"
+
+msgid "Shortcut settings"
+msgstr "快捷键设置"
+
+msgid "Start writing Markdown to preview the article."
+msgstr "开始编写 Markdown 后将在此处预览文章。"
+
+msgid "Strikethrough"
+msgstr "删除线"
+
+msgid "Supported post types"
+msgstr "支持的内容类型"
+
+msgid "Tech blue"
+msgstr "科技蓝"
+
+msgid "The CSS parser dependency is unavailable. Custom CSS cannot be rendered safely."
+msgstr "CSS 解析器依赖不可用，无法安全渲染自定义 CSS。"
+
+msgid "Times"
+msgstr "Times"
+
+msgid "Toolbar layout"
+msgstr "工具栏布局"
+
+msgid "Typora-inspired defaults are active unless overridden below."
+msgstr "默认启用 Typora 风格快捷键，除非在下方覆盖。"
+
+msgid "Typora-inspired shortcuts"
+msgstr "Typora 风格快捷键"
+
+msgid "Unordered list"
+msgstr "无序列表"
+
+msgid "Use the current Typora-inspired default by leaving the field blank."
+msgstr "留空即可继续使用当前 Typora 风格默认值。"
+
+msgid "VS2015"
+msgstr "VS2015"
+
+msgid "Wechat inspired"
+msgstr "公众号风格"
+
+msgid "Windows / Linux"
+msgstr "Windows / Linux"
+
+msgid "Windows font"
+msgstr "Windows 字体"
+
+msgid "Xcode"
+msgstr "Xcode"
+
+msgid "Yamabuki"
+msgstr "山吹"
+
+msgctxt "serif font fallback option"
+msgid "Yes"
+msgstr "是"
+
+msgid "You are not allowed to create this EasyMDE post."
+msgstr "你无权创建此 EasyMDE 文章。"
+
+msgid "You are not allowed to perform this EasyMDE action."
+msgstr "你无权执行此 EasyMDE 操作。"
+
+msgid "alt text"
+msgstr "替代文本"
+
+msgid "image"
+msgstr "图片"
+
+msgid "league/commonmark is active."
+msgstr "league/commonmark 已启用。"
+
+msgid "league/commonmark is required but unavailable. Install Composer dependencies before rendering or saving EasyMDE Markdown."
+msgstr "league/commonmark 是必需依赖但当前不可用。请先安装 Composer 依赖，再渲染或保存 EasyMDE Markdown。"
+
+msgid "link text"
+msgstr "链接文本"
+
+msgid "macOS"
+msgstr "macOS"
+
+msgid "sans-serif"
+msgstr "无衬线"
+
+msgid "serif"
+msgstr "衬线"

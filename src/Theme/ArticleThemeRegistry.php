@@ -25,7 +25,7 @@ final class ArticleThemeRegistry
             'geek-black' => $this->theme('geek-black', __('Geek black', 'easymde'), 'assets/themes/article/geek-black.css'),
             'rose-purple' => $this->theme('rose-purple', __('Rose purple', 'easymde'), 'assets/themes/article/rose-purple.css'),
             'ningye-purple' => $this->theme('ningye-purple', __('Ningye purple', 'easymde'), 'assets/themes/article/ningye-purple.css'),
-            'tech-blue' => $this->theme('tech-blue', __('科技蓝', 'easymde'), 'assets/themes/article/tech-blue.css'),
+            'tech-blue' => $this->theme('tech-blue', __('Tech blue', 'easymde'), 'assets/themes/article/tech-blue.css'),
             'cute-green' => $this->theme('cute-green', __('Cute green', 'easymde'), 'assets/themes/article/cute-green.css'),
             'fullstack-blue' => $this->theme('fullstack-blue', __('Fullstack blue', 'easymde'), 'assets/themes/article/fullstack-blue.css'),
             'minimal-black' => $this->theme('minimal-black', __('Minimal black', 'easymde'), 'assets/themes/article/minimal-black.css'),

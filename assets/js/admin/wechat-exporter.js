@@ -182,7 +182,7 @@
         callbacks = callbacks || {};
 
         var getString = callbacks.getString || function (key, fallback) {
-            return fallback;
+            return fallback || '';
         };
         var showFlash = callbacks.showFlash || function () {};
         var preview = context && context.preview ? context.preview : document.getElementById('easymde-preview');
@@ -196,13 +196,13 @@
         }
 
         if (!preview || !preview.innerHTML.trim()) {
-            showFlash(flash, 'error', getString('copyWechatFailed', 'Copy for WeChat failed. Please try again in this browser.'));
+            showFlash(flash, 'error', getString('copyWechatFailed'));
             return;
         }
 
         clone = createClipboardMarkup(preview);
         if (!clone) {
-            showFlash(flash, 'error', getString('copyWechatFailed', 'Copy for WeChat failed. Please try again in this browser.'));
+            showFlash(flash, 'error', getString('copyWechatFailed'));
             return;
         }
 
@@ -216,25 +216,25 @@
                     'text/plain': new window.Blob([text], { type: 'text/plain' })
                 })
             ]).then(function () {
-                showFlash(flash, 'success', getString('copyWechatSuccess', 'Copied preview for WeChat.'));
+                showFlash(flash, 'success', getString('copyWechatSuccess'));
             }).catch(function () {
                 if (legacyCopyHtml(html)) {
-                    showFlash(flash, 'success', getString('copyWechatSuccess', 'Copied preview for WeChat.'));
+                    showFlash(flash, 'success', getString('copyWechatSuccess'));
                     return;
                 }
 
-                showFlash(flash, 'error', getString('copyWechatFailed', 'Copy for WeChat failed. Please try again in this browser.'));
+                showFlash(flash, 'error', getString('copyWechatFailed'));
             });
 
             return;
         }
 
         if (legacyCopyHtml(html)) {
-            showFlash(flash, 'success', getString('copyWechatSuccess', 'Copied preview for WeChat.'));
+            showFlash(flash, 'success', getString('copyWechatSuccess'));
             return;
         }
 
-        showFlash(flash, 'error', getString('copyWechatUnsupported', 'Clipboard access is not available in this browser.'));
+        showFlash(flash, 'error', getString('copyWechatUnsupported'));
     }
 
     window.EasyMDEWechatExporter = {

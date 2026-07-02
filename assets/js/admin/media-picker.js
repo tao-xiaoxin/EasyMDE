@@ -5,18 +5,18 @@
         options = options || {};
 
         if (!window.wp || !window.wp.media) {
-            options.insertAround(textarea, '![alt text](', ')');
+            options.insertAround(textarea, '![' + (options.altText || '') + '](', ')');
             return;
         }
 
         var frame = window.wp.media({
-            title: options.title || 'Insert Media',
+            title: options.title || '',
             multiple: false
         });
 
         frame.on('select', function () {
             var attachment = frame.state().get('selection').first().toJSON();
-            var alt = attachment.alt || attachment.title || 'image';
+            var alt = attachment.alt || attachment.title || options.defaultAlt || '';
             var markdown = '![' + alt + '](' + attachment.url + ')';
             var start = textarea.selectionStart;
             var end = textarea.selectionEnd;

@@ -84,7 +84,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'savepost',
             array(
-                'label' => 'Save post',
+                'label' => __('Save post', 'easymde'),
                 'icon' => 'saved',
                 'surface' => 'hidden',
                 'action' => 'savePost',
@@ -97,7 +97,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'bold',
             array(
-                'label' => 'Bold',
+                'label' => __('Bold', 'easymde'),
                 'icon' => 'editor-bold',
                 'surface' => 'main',
                 'action' => 'wrap',
@@ -112,7 +112,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'italic',
             array(
-                'label' => 'Italic',
+                'label' => __('Italic', 'easymde'),
                 'icon' => 'editor-italic',
                 'surface' => 'main',
                 'action' => 'wrap',
@@ -127,7 +127,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'strike',
             array(
-                'label' => 'Strikethrough',
+                'label' => __('Strikethrough', 'easymde'),
                 'icon' => 'editor-strikethrough',
                 'surface' => 'main',
                 'action' => 'wrap',
@@ -142,7 +142,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'paragraph',
             array(
-                'label' => 'Paragraph',
+                'label' => __('Paragraph', 'easymde'),
                 'icon' => 'editor-paragraph',
                 'surface' => 'heading-menu',
                 'action' => 'paragraph',
@@ -152,11 +152,20 @@ final class ToolbarRegistry
             )
         );
 
+        $heading_labels = array(
+            1 => __('Heading 1', 'easymde'),
+            2 => __('Heading 2', 'easymde'),
+            3 => __('Heading 3', 'easymde'),
+            4 => __('Heading 4', 'easymde'),
+            5 => __('Heading 5', 'easymde'),
+            6 => __('Heading 6', 'easymde'),
+        );
+
         for ($level = 1; $level <= 6; ++$level) {
             $this->register_toolbar_button(
                 'heading' . $level,
                 array(
-                    'label' => 'Heading ' . $level,
+                    'label' => $heading_labels[$level],
                     'icon' => 'heading',
                     'surface' => 'heading-menu',
                     'action' => 'heading',
@@ -171,7 +180,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'quote',
             array(
-                'label' => 'Quote',
+                'label' => __('Quote', 'easymde'),
                 'icon' => 'format-quote',
                 'surface' => 'main',
                 'action' => 'quote',
@@ -185,7 +194,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'unorderedlist',
             array(
-                'label' => 'Unordered list',
+                'label' => __('Unordered list', 'easymde'),
                 'icon' => 'editor-ul',
                 'surface' => 'main',
                 'action' => 'unorderedList',
@@ -199,7 +208,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'orderedlist',
             array(
-                'label' => 'Ordered list',
+                'label' => __('Ordered list', 'easymde'),
                 'icon' => 'editor-ol',
                 'surface' => 'main',
                 'action' => 'orderedList',
@@ -213,7 +222,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'inlinecode',
             array(
-                'label' => 'Inline code',
+                'label' => __('Inline code', 'easymde'),
                 'icon' => 'editor-code',
                 'surface' => 'main',
                 'action' => 'wrap',
@@ -228,7 +237,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'codefence',
             array(
-                'label' => 'Code fence',
+                'label' => __('Code fence', 'easymde'),
                 'icon' => 'media-code',
                 'surface' => 'main',
                 'action' => 'codeFence',
@@ -241,7 +250,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'mathblock',
             array(
-                'label' => 'Math block',
+                'label' => __('Math block', 'easymde'),
                 'icon' => 'editor-code',
                 'surface' => 'hidden',
                 'action' => 'mathBlock',
@@ -254,7 +263,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'link',
             array(
-                'label' => 'Link',
+                'label' => __('Link', 'easymde'),
                 'icon' => 'admin-links',
                 'surface' => 'main',
                 'action' => 'link',
@@ -267,7 +276,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'image',
             array(
-                'label' => 'Image',
+                'label' => __('Image', 'easymde'),
                 'icon' => 'format-image',
                 'surface' => 'main',
                 'action' => 'image',
@@ -280,7 +289,7 @@ final class ToolbarRegistry
         $this->register_toolbar_button(
             'copywechat',
             array(
-                'label' => 'Copy to WeChat',
+                'label' => __('Copy to WeChat', 'easymde'),
                 'icon' => 'copy',
                 'surface' => 'main',
                 'action' => 'copyWechat',

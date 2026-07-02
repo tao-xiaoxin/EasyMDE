@@ -13,13 +13,13 @@ final class CodeThemeRegistry
     public function all()
     {
         $themes = array(
-            'github' => $this->theme('github', 'github', 'assets/vendor/highlight/styles/github.min.css', 'vendor'),
-            'github-dark' => $this->theme('github-dark', 'github-dark', 'assets/vendor/highlight/styles/github-dark.min.css', 'vendor'),
-            'atom-one-dark' => $this->theme('atom-one-dark', 'atom-one-dark', 'assets/vendor/highlight/styles/atom-one-dark.min.css', 'vendor'),
-            'atom-one-light' => $this->theme('atom-one-light', 'atom-one-light', 'assets/vendor/highlight/styles/atom-one-light.min.css', 'vendor'),
-            'monokai' => $this->theme('monokai', 'monokai', 'assets/vendor/highlight/styles/monokai.min.css', 'vendor'),
-            'vs2015' => $this->theme('vs2015', 'vs2015', 'assets/vendor/highlight/styles/vs2015.min.css', 'vendor'),
-            'xcode' => $this->theme('xcode', 'xcode', 'assets/vendor/highlight/styles/xcode.min.css', 'vendor'),
+            'github' => $this->theme('github', __('GitHub', 'easymde'), 'assets/vendor/highlight/styles/github.min.css', 'vendor'),
+            'github-dark' => $this->theme('github-dark', __('GitHub Dark', 'easymde'), 'assets/vendor/highlight/styles/github-dark.min.css', 'vendor'),
+            'atom-one-dark' => $this->theme('atom-one-dark', __('Atom One Dark', 'easymde'), 'assets/vendor/highlight/styles/atom-one-dark.min.css', 'vendor'),
+            'atom-one-light' => $this->theme('atom-one-light', __('Atom One Light', 'easymde'), 'assets/vendor/highlight/styles/atom-one-light.min.css', 'vendor'),
+            'monokai' => $this->theme('monokai', __('Monokai', 'easymde'), 'assets/vendor/highlight/styles/monokai.min.css', 'vendor'),
+            'vs2015' => $this->theme('vs2015', __('VS2015', 'easymde'), 'assets/vendor/highlight/styles/vs2015.min.css', 'vendor'),
+            'xcode' => $this->theme('xcode', __('Xcode', 'easymde'), 'assets/vendor/highlight/styles/xcode.min.css', 'vendor'),
             'wechat-inspired' => $this->theme('wechat-inspired', __('Wechat inspired', 'easymde'), 'assets/themes/code/wechat-inspired.css', 'owned'),
         );
 

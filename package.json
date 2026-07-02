@@ -1,11 +1,14 @@
 {
   "name": "easymde-wordpress-assets",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.7",
   "description": "Local frontend assets for the EasyMDE WordPress plugin.",
   "scripts": {
     "prepare:assets": "node scripts/copy-vendor-assets.mjs",
     "build:release": "node scripts/build-release.mjs",
+    "i18n:make-pot": "node scripts/i18n.mjs make-pot",
+    "i18n:compile": "node scripts/i18n.mjs compile",
+    "i18n:check": "node scripts/i18n.mjs check",
     "postinstall": "node scripts/copy-vendor-assets.mjs",
     "test": "node --test tests/Node/*.test.mjs"
   },

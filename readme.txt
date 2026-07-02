@@ -106,6 +106,10 @@ No. EasyMDE is a standalone WordPress plugin and does not require Jetpack, Class
 
 No. Mermaid, KaTeX, Highlight.js, and plugin assets are bundled locally.
 
+= Does EasyMDE include translations? =
+
+EasyMDE uses the standard WordPress text domain `easymde`. GitHub Release ZIPs include the bundled Simplified Chinese files `languages/easymde.pot`, `languages/easymde-zh_CN.po`, and `languages/easymde-zh_CN.mo`.
+
 = Can I use Mermaid diagrams? =
 
 Yes. EasyMDE supports local Mermaid rendering in the preview and frontend output.

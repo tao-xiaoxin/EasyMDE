@@ -15,7 +15,6 @@ use EasyMDE\Rest\CustomCssController;
 use EasyMDE\Rest\PreviewController;
 use EasyMDE\Rest\ThemeController;
 use EasyMDE\Support\Capabilities;
-use EasyMDE\Support\LegacyTranslations;
 use EasyMDE\Support\Migration;
 use EasyMDE\Support\Options;
 use EasyMDE\Support\ToolbarRegistry;
@@ -37,6 +36,8 @@ final class Plugin
 
     public static function init()
     {
+        self::load_textdomain();
+
         if (null === self::$instance) {
             self::$instance = new self();
             self::$instance->register_hooks();
@@ -48,6 +49,15 @@ final class Plugin
     public static function instance()
     {
         return self::init();
+    }
+
+    public static function load_textdomain()
+    {
+        load_plugin_textdomain(
+            'easymde',
+            false,
+            dirname(plugin_basename(EASYMDE_PLUGIN_FILE)) . '/languages'
+        );
     }
 
     private function __construct()
@@ -68,7 +78,6 @@ final class Plugin
         $frontend_assets = new FrontendAssets($post_document, $theme_state_repository);
 
         $modules = array(
-            new LegacyTranslations(),
             $settings_page,
             $post_mode_controller,
             new EditorScreen($post_document, $post_mode_controller, $theme_state_repository),

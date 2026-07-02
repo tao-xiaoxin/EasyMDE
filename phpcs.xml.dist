@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<ruleset name="EasyMDE">
+    <description>WordPress Coding Standards configuration for EasyMDE.</description>
+
+    <file>easymde.php</file>
+    <file>uninstall.php</file>
+    <file>src</file>
+    <file>templates</file>
+
+    <exclude-pattern>vendor/*</exclude-pattern>
+    <exclude-pattern>node_modules/*</exclude-pattern>
+    <exclude-pattern>assets/vendor/*</exclude-pattern>
+
+    <arg name="extensions" value="php"/>
+    <arg name="parallel" value="8"/>
+
+    <config name="testVersion" value="7.4-"/>
+
+    <rule ref="WordPress"/>
+    <rule ref="WordPress-Extra"/>
+    <rule ref="WordPress-Docs"/>
+</ruleset>

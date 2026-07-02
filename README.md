@@ -11,7 +11,7 @@ The project name is EasyMDE, but the goal is broader than wrapping one editor li
 - Keep Markdown as the primary authoring format.
 - Work as one standalone WordPress plugin.
 - Store and render content predictably, without hijacking unrelated admin pages.
-- Make toolbar buttons, renderers, upload handling, and shortcode helpers extensible.
+- Make toolbar buttons and shortcode helpers extensible through compatibility APIs.
 - Keep assets local by default instead of relying on external CDNs.
 
 ## Non-Goals
@@ -70,12 +70,12 @@ The plugin should expose internal registration APIs instead of forcing every fea
 
 ```php
 EasyMDE_Plugin::register_toolbar_button(...);
-EasyMDE_Plugin::register_markdown_renderer(...);
 EasyMDE_Plugin::register_shortcode_helper(...);
-EasyMDE_Plugin::register_media_transform(...);
 ```
 
-The exact API shape is not final. The important constraint is that new features should be added through stable hooks or registries, not by patching editor internals.
+These compatibility APIs delegate to namespaced registries internally. The
+important constraint is that new features should be added through stable hooks
+or registries, not by patching editor internals.
 
 ## Safety Principles
 
@@ -93,7 +93,7 @@ Current implementation:
 
 - Standalone WordPress plugin bootstrap.
 - Scoped post/page editor integration.
-- Block editor disabled only for supported post types.
+- Block editor disabled only for posts explicitly enabled for EasyMDE, including legacy posts with stored EasyMDE Markdown.
 - Split Markdown source and preview panes.
 - Compact icon toolbar for common Markdown actions.
 - Typora-inspired keyboard shortcuts with site-wide overrides.
@@ -112,6 +112,7 @@ Current implementation:
 - Local KaTeX math rendering.
 - `[TOC]` / `[toc]` table of contents generation.
 - Markdown source stored in `_easymde_markdown`.
+- EasyMDE mode stored in `_easymde_enabled`, with lazy compatibility for legacy `_easymde_markdown` posts.
 - Rendered HTML saved into `post_content`.
 - Frontend content rendered from stored Markdown when available.
 - Settings page for status plus shortcut configuration, with no activation redirect.
@@ -187,7 +188,10 @@ Install PHP dependencies when Composer is available:
 composer install
 ```
 
-Without Composer dependencies, the plugin falls back to a small internal renderer so the editor can still be tested. For production-grade Markdown/GFM rendering, use `league/commonmark`.
+`league/commonmark` is the only Markdown renderer. A development checkout
+without Composer dependencies shows an administrator notice and avoids writing
+new fallback HTML. Production release packages must include Composer
+dependencies in `vendor/`.
 
 Install local frontend assets for highlighting, Mermaid, and KaTeX:
 
@@ -197,8 +201,9 @@ npm install
 
 This copies runtime assets into `assets/vendor/`. Do not commit `node_modules`.
 The copied highlight.js styles include `github`, `github-dark`,
-`atom-one-dark`, `atom-one-light`, `monokai`, `vs2015`, and `xcode`; the
-`wechat-inspired` style is maintained locally in this plugin.
+`atom-one-dark`, `atom-one-light`, `monokai`, `vs2015`, and `xcode` under
+`assets/vendor/highlight/styles/`; the `wechat-inspired` style is maintained
+locally in `assets/themes/code/`.
 
 To test in WordPress, copy or symlink this repository into:
 
@@ -222,7 +227,8 @@ http://localhost:8088
 ```
 
 The Docker test site is initialized with WordPress `6.9` and Simplified Chinese
-(`zh_CN`) by default, matching the minimum supported version for this project.
+(`zh_CN`) by default. The plugin header declares WordPress `6.0` as the minimum
+supported version.
 Set the local administrator and database passwords in `.env`; do not commit that
 file.
 
@@ -230,7 +236,7 @@ Useful checks inside the Docker environment:
 
 ```bash
 docker compose exec -T wordpress php -l wp-content/plugins/easymde/easymde.php
-docker compose exec -T wordpress php -l wp-content/plugins/easymde/includes/class-easymde-plugin.php
+docker compose exec -T wordpress sh -lc 'find wp-content/plugins/easymde/src wp-content/plugins/easymde/templates -name "*.php" -print0 | xargs -0 -n1 php -l'
 ```
 
 When documenting test results, use placeholder values from `.env.example` and do

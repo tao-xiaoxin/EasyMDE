@@ -12,7 +12,7 @@ A standalone WordPress Markdown editor with split-pane live preview, local rende
 
 == Description ==
 
-EasyMDE replaces the editing surface on supported WordPress post and page screens with a focused Markdown writing experience.
+EasyMDE replaces the editing surface only for posts and pages explicitly opened in EasyMDE mode, including legacy EasyMDE Markdown posts.
 
 Write Markdown on the left and review a live preview on the right. EasyMDE provides commonly used writing tools, media insertion, local rendering support, article themes, code highlighting, and rich-text export for the WeChat Official Accounts editor.
 

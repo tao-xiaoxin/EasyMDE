@@ -1,8 +1,34 @@
-# EasyMDE
+<p align="center">
+  <a href="./docs/assets/easymde-logo-rounded.png">
+    <img src="./docs/assets/easymde-logo-rounded.png" alt="EasyMDE" width="460" />
+  </a>
+</p>
+<h1 align="center">EasyMDE</h1>
+<p align="center">From Markdown to WordPress, without breaking your flow.</p>
+<p align="center">
+  <a href="https://github.com/tao-xiaoxin/EasyMDE/releases">
+    <img src="https://img.shields.io/badge/version-0.1.7-2563eb?style=flat-square&logo=github&logoColor=white" alt="Version 0.1.7" />
+  </a>
+  <img src="https://img.shields.io/badge/WordPress-6.0%2B-21759b?style=flat-square&logo=wordpress&logoColor=white" alt="Requires WordPress 6.0+" />
+  <img src="https://img.shields.io/badge/PHP-7.4%2B-777BB4?style=flat-square&logo=php&logoColor=white" alt="Requires PHP 7.4+" />
+  <a href="https://github.com/tao-xiaoxin/EasyMDE/actions/workflows/ci.yml">
+    <img src="https://github.com/tao-xiaoxin/EasyMDE/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" />
+  </a>
+  <a href="https://github.com/tao-xiaoxin/EasyMDE/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-Apache--2.0-8b5cf6?style=flat-square" alt="Apache-2.0 license" />
+  </a>
+</p>
+<p align="center">
+  <a href="./docs/assets/easymde-editor-showcase.png">
+    <img src="./docs/assets/easymde-editor-showcase.png" alt="EasyMDE split-pane Markdown editor with live preview, code highlighting, Mermaid, and KaTeX" width="1200" />
+  </a>
+</p>
+
 
 EasyMDE is a full-featured WordPress Markdown editor plugin focused on a clean split-pane writing experience: Markdown source on the left, live preview on the right, and enough extension points to grow into a serious publishing tool.
 
 The project name is EasyMDE, but the goal is broader than wrapping one editor library. The plugin should provide a self-contained WordPress Markdown workflow without depending on Jetpack, Classic Editor, or another Markdown plugin.
+
 
 ## Goals
 

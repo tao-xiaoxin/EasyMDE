@@ -62,9 +62,33 @@ final class AdminAssets
         $this->frontend_assets->enqueue_render_assets($post_id, '', true);
 
         wp_enqueue_script(
+            'easymde-draft-storage',
+            Asset::url('assets/js/admin/draft-storage.js'),
+            array(),
+            EASYMDE_VERSION,
+            true
+        );
+
+        wp_enqueue_script(
+            'easymde-media-picker',
+            Asset::url('assets/js/admin/media-picker.js'),
+            array(),
+            EASYMDE_VERSION,
+            true
+        );
+
+        wp_enqueue_script(
+            'easymde-wechat-exporter',
+            Asset::url('assets/js/admin/wechat-exporter.js'),
+            array(),
+            EASYMDE_VERSION,
+            true
+        );
+
+        wp_enqueue_script(
             'easymde-admin',
             Asset::url('assets/js/admin/bootstrap.js'),
-            array('jquery', 'wp-api-fetch', 'easymde-enhancements'),
+            array('jquery', 'wp-api-fetch', 'easymde-enhancements', 'easymde-draft-storage', 'easymde-media-picker', 'easymde-wechat-exporter'),
             EASYMDE_VERSION,
             true
         );

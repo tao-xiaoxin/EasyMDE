@@ -13,67 +13,6 @@
     var commandMap = buildCommandMap(config.commands || []);
     var isMac = detectMacPlatform();
     var openPopovers = [];
-    var COPY_STYLE_PROPS = [
-        'display',
-        'position',
-        'float',
-        'clear',
-        'box-sizing',
-        'overflow',
-        'overflow-x',
-        'overflow-y',
-        'width',
-        'max-width',
-        'min-width',
-        'height',
-        'max-height',
-        'min-height',
-        'margin-top',
-        'margin-right',
-        'margin-bottom',
-        'margin-left',
-        'padding-top',
-        'padding-right',
-        'padding-bottom',
-        'padding-left',
-        'border-top-width',
-        'border-right-width',
-        'border-bottom-width',
-        'border-left-width',
-        'border-top-style',
-        'border-right-style',
-        'border-bottom-style',
-        'border-left-style',
-        'border-top-color',
-        'border-right-color',
-        'border-bottom-color',
-        'border-left-color',
-        'border-collapse',
-        'border-spacing',
-        'border-radius',
-        'background',
-        'background-color',
-        'color',
-        'font',
-        'font-family',
-        'font-size',
-        'font-style',
-        'font-weight',
-        'line-height',
-        'letter-spacing',
-        'text-align',
-        'text-decoration',
-        'text-transform',
-        'text-indent',
-        'white-space',
-        'word-break',
-        'overflow-wrap',
-        'vertical-align',
-        'list-style-type',
-        'list-style-position',
-        'box-shadow',
-        'tab-size'
-    ];
 
     function getString(key, fallback) {
         return config.strings && config.strings[key] ? config.strings[key] : fallback;
@@ -147,80 +86,6 @@
         }
 
         return renderState.scopedCustomCss || '';
-    }
-
-    function storageAvailable() {
-        try {
-            var testKey = '__easymde_test__';
-            window.localStorage.setItem(testKey, '1');
-            window.localStorage.removeItem(testKey);
-            return true;
-        } catch (error) {
-            return false;
-        }
-    }
-
-    function normalizeStorage($root) {
-        var storage = config.storage || {};
-        var postId = $root.data('post-id') || storage.postId || 'new';
-
-        if (storage.siteKey && storage.userId !== undefined) {
-            storage.postId = postId;
-            storage.draftKey = 'easymde:draft:' + storage.siteKey + ':' + storage.userId + ':' + postId;
-        }
-
-        config.storage = storage;
-
-        return storage;
-    }
-
-    function readDraft(storage) {
-        if (!storage.draftKey || !storageAvailable()) {
-            return null;
-        }
-
-        try {
-            return JSON.parse(window.localStorage.getItem(storage.draftKey) || 'null');
-        } catch (error) {
-            return null;
-        }
-    }
-
-    function writeDraft(storage, markdown) {
-        if (!storage.draftKey || !storageAvailable()) {
-            return;
-        }
-
-        window.localStorage.setItem(
-            storage.draftKey,
-            JSON.stringify({
-                content: markdown,
-                updatedAt: Date.now()
-            })
-        );
-    }
-
-    function discardDraft(storage) {
-        if (!storage.draftKey || !storageAvailable()) {
-            return;
-        }
-
-        window.localStorage.removeItem(storage.draftKey);
-    }
-
-    function formatDraftTime(timestamp) {
-        if (!timestamp) {
-            return '';
-        }
-
-        try {
-            return new Date(timestamp).toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-        } catch (error) {
-            return '';
-        }
     }
 
     function getCommand(id) {
@@ -421,36 +286,6 @@
             start + blockPrefix.length,
             start + blockPrefix.length + content.length
         );
-    }
-
-    function openMediaPicker(textarea) {
-        if (!window.wp || !window.wp.media) {
-            insertAround(textarea, '![alt text](', ')');
-            return;
-        }
-
-        var frame = window.wp.media({
-            title: getString('insertMedia', 'Insert Media'),
-            multiple: false
-        });
-
-        frame.on('select', function () {
-            var attachment = frame.state().get('selection').first().toJSON();
-            var alt = attachment.alt || attachment.title || 'image';
-            var markdown = '![' + alt + '](' + attachment.url + ')';
-            var start = textarea.selectionStart;
-            var end = textarea.selectionEnd;
-            var value = textarea.value;
-
-            applyTextChange(
-                textarea,
-                value.slice(0, start) + markdown + value.slice(end),
-                start + markdown.length,
-                start + markdown.length
-            );
-        });
-
-        frame.open();
     }
 
     function triggerSavePost() {
@@ -1072,7 +907,7 @@
     }
 
     function createDraftNotice($root, textarea, storage, $flash) {
-        var draft = readDraft(storage);
+        var draft = window.EasyMDEDraftStorage.read(storage);
 
         if (!draft || !draft.content || draft.content === textarea.value) {
             return;
@@ -1091,7 +926,7 @@
         });
 
         $discard.on('click', function () {
-            discardDraft(storage);
+            window.EasyMDEDraftStorage.discard(storage);
             $notice.remove();
             showFlash($flash, 'info', getString('draftDiscarded', 'Draft discarded.'));
         });
@@ -1496,173 +1331,6 @@
         });
     }
 
-    function shouldKeepStyle(prop, value, sourceNode) {
-        if (!value) {
-            return false;
-        }
-
-        if (value === 'rgba(0, 0, 0, 0)' && prop !== 'color') {
-            return false;
-        }
-
-        if (value === 'normal' && (prop === 'letter-spacing' || prop === 'font-style' || prop === 'text-transform')) {
-            return false;
-        }
-
-        if (value === 'auto' && (prop === 'width' || prop === 'height')) {
-            return false;
-        }
-
-        if (sourceNode.tagName === 'A' && prop === 'text-decoration' && value === 'none') {
-            return false;
-        }
-
-        return true;
-    }
-
-    function inlineStyles(sourceNode, cloneNode) {
-        if (!sourceNode || !cloneNode || sourceNode.nodeType !== 1 || cloneNode.nodeType !== 1) {
-            return;
-        }
-
-        var computed = window.getComputedStyle(sourceNode);
-        var declarations = [];
-
-        COPY_STYLE_PROPS.forEach(function (prop) {
-            var value = computed.getPropertyValue(prop);
-
-            if (shouldKeepStyle(prop, value, sourceNode)) {
-                declarations.push(prop + ':' + value);
-            }
-        });
-
-        if (declarations.length) {
-            cloneNode.setAttribute('style', declarations.join(';'));
-        }
-
-        cloneNode.removeAttribute('class');
-        cloneNode.removeAttribute('id');
-        cloneNode.removeAttribute('aria-live');
-        cloneNode.removeAttribute('data-easymde-highlighted');
-        cloneNode.removeAttribute('data-easymde-rendered');
-
-        Array.prototype.forEach.call(sourceNode.childNodes, function (child, index) {
-            inlineStyles(child, cloneNode.childNodes[index]);
-        });
-    }
-
-    function createClipboardMarkup(preview) {
-        if (!preview) {
-            return null;
-        }
-
-        var clone = preview.cloneNode(true);
-
-        clone.querySelectorAll('script, style').forEach(function (node) {
-            node.parentNode.removeChild(node);
-        });
-
-        inlineStyles(preview, clone);
-        clone.setAttribute('style', (clone.getAttribute('style') || '') + ';max-width:100%;margin:0 auto;');
-
-        return clone;
-    }
-
-    function legacyCopyHtml(html) {
-        var selection = window.getSelection();
-        var ranges = [];
-        var container = document.createElement('div');
-        var range = document.createRange();
-        var scrollX = window.pageXOffset;
-        var scrollY = window.pageYOffset;
-        var success = false;
-
-        container.className = 'easymde-copy-sandbox';
-        container.setAttribute('contenteditable', 'true');
-        container.innerHTML = html;
-        document.body.appendChild(container);
-
-        if (selection) {
-            for (var index = 0; index < selection.rangeCount; index += 1) {
-                ranges.push(selection.getRangeAt(index));
-            }
-
-            selection.removeAllRanges();
-            range.selectNodeContents(container);
-            selection.addRange(range);
-        }
-
-        try {
-            success = document.execCommand('copy');
-        } catch (error) {
-            success = false;
-        }
-
-        if (selection) {
-            selection.removeAllRanges();
-            ranges.forEach(function (storedRange) {
-                selection.addRange(storedRange);
-            });
-        }
-
-        document.body.removeChild(container);
-        window.scrollTo(scrollX, scrollY);
-
-        return success;
-    }
-
-    function copyPreviewToWechat(context) {
-        var preview = context && context.preview ? context.preview : document.getElementById('easymde-preview');
-        var clone;
-        var html;
-        var text;
-
-        if (preview && preview.jquery) {
-            preview = preview[0];
-        }
-
-        if (!preview || !preview.innerHTML.trim()) {
-            showFlash(context.flash, 'error', getString('copyWechatFailed', 'Copy for WeChat failed. Please try again in this browser.'));
-            return;
-        }
-
-        clone = createClipboardMarkup(preview);
-        if (!clone) {
-            showFlash(context.flash, 'error', getString('copyWechatFailed', 'Copy for WeChat failed. Please try again in this browser.'));
-            return;
-        }
-
-        html = clone.outerHTML;
-        text = preview.innerText || preview.textContent || '';
-
-        if (window.navigator.clipboard && window.ClipboardItem && window.Blob) {
-            window.navigator.clipboard.write([
-                new window.ClipboardItem({
-                    'text/html': new window.Blob([html], { type: 'text/html' }),
-                    'text/plain': new window.Blob([text], { type: 'text/plain' })
-                })
-            ]).then(function () {
-                showFlash(context.flash, 'success', getString('copyWechatSuccess', 'Copied preview for WeChat.'));
-            }).catch(function () {
-                if (legacyCopyHtml(html)) {
-                    showFlash(context.flash, 'success', getString('copyWechatSuccess', 'Copied preview for WeChat.'));
-                    return;
-                }
-
-                showFlash(context.flash, 'error', getString('copyWechatFailed', 'Copy for WeChat failed. Please try again in this browser.'));
-            });
-
-            return;
-        }
-
-        if (legacyCopyHtml(html)) {
-            showFlash(context.flash, 'success', getString('copyWechatSuccess', 'Copied preview for WeChat.'));
-            return;
-        }
-
-        showFlash(context.flash, 'error', getString('copyWechatUnsupported', 'Clipboard access is not available in this browser.'));
-    }
-
     function executeCommand(commandId, context) {
         var command = getCommand(commandId);
         var textarea = context && context.textarea ? context.textarea : document.getElementById('easymde-source');
@@ -1700,13 +1368,20 @@
             insertAround(textarea, '[', '](https://)', 'link text');
             break;
         case 'image':
-            openMediaPicker(textarea);
+            window.EasyMDEMediaPicker.open(textarea, {
+                title: getString('insertMedia', 'Insert Media'),
+                insertAround: insertAround,
+                applyTextChange: applyTextChange
+            });
             break;
         case 'savePost':
             triggerSavePost();
             break;
         case 'copyWechat':
-            copyPreviewToWechat(context);
+            window.EasyMDEWechatExporter.copy(context, {
+                getString: getString,
+                showFlash: showFlash
+            });
             break;
         case 'linePrefix':
             applyLinePrefix(textarea, command.linePrefix || '');
@@ -1819,7 +1494,7 @@
         var $content = $('#postdivrich');
         var $toolbar = $root.find('.easymde-toolbar');
         var $sideActions = $root.find('.easymde-side-actions');
-        var storage = normalizeStorage($root);
+        var storage = window.EasyMDEDraftStorage.normalizeStorage(config, $root.data('post-id'));
         var $flash;
         var $draftStatus;
         var context;
@@ -1865,8 +1540,8 @@
             if (!config.features || config.features.localDrafts !== false) {
                 window.clearTimeout(draftTimer);
                 draftTimer = window.setTimeout(function () {
-                    writeDraft(storage, $source.val());
-                    $draftStatus.text(getString('draftSaved', 'Local draft saved') + ' ' + formatDraftTime(Date.now()));
+                    window.EasyMDEDraftStorage.write(storage, $source.val());
+                    $draftStatus.text(getString('draftSaved', 'Local draft saved') + ' ' + window.EasyMDEDraftStorage.formatTime(Date.now()));
                 }, 500);
             }
         });

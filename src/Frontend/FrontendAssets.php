@@ -138,6 +138,14 @@ final class FrontendAssets
                 EASYMDE_VERSION,
                 true
             );
+
+            wp_enqueue_script(
+                'easymde-math-renderer',
+                Asset::url('assets/js/frontend/math.js'),
+                array('easymde-katex'),
+                EASYMDE_VERSION,
+                true
+            );
         }
 
         if (!empty($features['toc'])) {
@@ -157,6 +165,14 @@ final class FrontendAssets
                 EASYMDE_VERSION,
                 true
             );
+
+            wp_enqueue_script(
+                'easymde-mermaid-renderer',
+                Asset::url('assets/js/frontend/mermaid.js'),
+                array('easymde-mermaid'),
+                EASYMDE_VERSION,
+                true
+            );
         }
 
         $dependencies = array();
@@ -165,11 +181,11 @@ final class FrontendAssets
         }
 
         if (!empty($features['math'])) {
-            $dependencies[] = 'easymde-katex';
+            $dependencies[] = 'easymde-math-renderer';
         }
 
         if (!empty($features['mermaid'])) {
-            $dependencies[] = 'easymde-mermaid';
+            $dependencies[] = 'easymde-mermaid-renderer';
         }
 
         wp_enqueue_script(

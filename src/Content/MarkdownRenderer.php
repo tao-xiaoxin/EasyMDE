@@ -11,6 +11,9 @@ if (!defined('ABSPATH')) {
 
 final class MarkdownRenderer
 {
+    const MAX_NESTING_LEVEL = 100;
+    const MAX_DELIMITERS_PER_LINE = 1000;
+
     public static function is_available()
     {
         return class_exists(GithubFlavoredMarkdownConverter::class);
@@ -32,6 +35,8 @@ final class MarkdownRenderer
             array(
                 'html_input' => 'strip',
                 'allow_unsafe_links' => false,
+                'max_nesting_level' => self::MAX_NESTING_LEVEL,
+                'max_delimiters_per_line' => self::MAX_DELIMITERS_PER_LINE,
             )
         );
 

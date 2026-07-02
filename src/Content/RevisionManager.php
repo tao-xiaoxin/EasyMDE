@@ -12,12 +12,17 @@ final class RevisionManager
 {
     private $post_document;
     private $theme_state_repository;
+    private $renderer_available_callback;
     private $restoring = false;
 
-    public function __construct(PostDocument $post_document, ThemeStateRepository $theme_state_repository)
-    {
+    public function __construct(
+        PostDocument $post_document,
+        ThemeStateRepository $theme_state_repository,
+        ?callable $renderer_available_callback = null
+    ) {
         $this->post_document = $post_document;
         $this->theme_state_repository = $theme_state_repository;
+        $this->renderer_available_callback = $renderer_available_callback ?: array(MarkdownRenderer::class, 'is_available');
     }
 
     public function register_hooks()
@@ -114,25 +119,53 @@ final class RevisionManager
                 }
             }
 
-            if (MarkdownRenderer::is_available() && $this->post_document->is_easymde_post($post_id)) {
-                $theme_state = $this->theme_state_repository->get_theme_state($post_id);
-                $markdown = (string) get_post_meta($post_id, PostDocument::META_MARKDOWN, true);
-
-                global $wpdb;
-
-                $wpdb->update(
-                    $wpdb->posts,
-                    array('post_content' => MarkdownRenderer::render($markdown, $theme_state['markdownTheme'])),
-                    array('ID' => $post_id),
-                    array('%s'),
-                    array('%d')
-                );
-                clean_post_cache($post_id);
+            if ($this->post_document->is_easymde_post($post_id)) {
+                $this->restore_post_content($post_id, $revision_id);
             }
         } catch (\RuntimeException $exception) {
             unset($exception);
         } finally {
             $this->restoring = false;
         }
+    }
+
+    private function restore_post_content($post_id, $revision_id)
+    {
+        $content = null;
+
+        if ($this->is_renderer_available()) {
+            try {
+                $theme_state = $this->theme_state_repository->get_theme_state($post_id);
+                $markdown = (string) get_post_meta($post_id, PostDocument::META_MARKDOWN, true);
+                $content = MarkdownRenderer::render($markdown, $theme_state['markdownTheme']);
+            } catch (\Throwable $exception) {
+                unset($exception);
+            }
+        }
+
+        if (null === $content) {
+            $revision = get_post(absint($revision_id));
+            if (!$revision) {
+                return;
+            }
+
+            $content = (string) $revision->post_content;
+        }
+
+        global $wpdb;
+
+        $wpdb->update(
+            $wpdb->posts,
+            array('post_content' => $content),
+            array('ID' => $post_id),
+            array('%s'),
+            array('%d')
+        );
+        clean_post_cache($post_id);
+    }
+
+    private function is_renderer_available()
+    {
+        return (bool) call_user_func($this->renderer_available_callback);
     }
 }

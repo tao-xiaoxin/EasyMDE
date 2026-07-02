@@ -72,6 +72,41 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertSame('serif-only', get_post_meta($post_id, PostDocument::META_SERIF_FONT, true));
     }
 
+    public function test_restore_revision_meta_uses_revision_content_when_renderer_unavailable()
+    {
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_content' => '<p>Current HTML</p>',
+            )
+        );
+        $revision_id = wp_insert_post(
+            array(
+                'post_parent' => $post_id,
+                'post_type' => 'revision',
+                'post_status' => 'inherit',
+                'post_title' => 'Revision',
+                'post_content' => '<p>Revision HTML</p>',
+            )
+        );
+
+        update_metadata('post', $revision_id, PostDocument::META_ENABLED, '1');
+        update_metadata('post', $revision_id, PostDocument::META_MARKDOWN, '# Restored while unavailable');
+        update_metadata('post', $revision_id, PostDocument::META_MARKDOWN_THEME, 'default');
+
+        $manager = new RevisionManager(
+            new PostDocument(),
+            $this->theme_state_repository(),
+            function () {
+                return false;
+            }
+        );
+        $manager->restore_revision_meta($post_id, $revision_id);
+
+        $this->assertSame('# Restored while unavailable', get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+        $this->assertSame('<p>Revision HTML</p>', get_post($post_id)->post_content);
+    }
+
     public function test_sync_latest_revision_meta_after_save_uses_current_parent_meta()
     {
         $post_id = self::factory()->post->create(array('post_type' => 'post'));

@@ -48,7 +48,7 @@ final class EditorSaveHandler
             return;
         }
 
-        if (!current_user_can('edit_post', $post_id) || !$this->is_renderer_available()) {
+        if (!current_user_can('edit_post', $post_id)) {
             return;
         }
 
@@ -85,7 +85,7 @@ final class EditorSaveHandler
         }
 
         if (!$this->is_renderer_available()) {
-            $data['post_content'] = $this->existing_post_content($postarr);
+            $this->abort_renderer_unavailable();
 
             return $data;
         }
@@ -95,8 +95,12 @@ final class EditorSaveHandler
 
         try {
             $data['post_content'] = MarkdownRenderer::render($markdown, $theme_state['markdownTheme']);
-        } catch (\RuntimeException $exception) {
+        } catch (\Throwable $exception) {
             unset($exception);
+
+            $this->abort_renderer_unavailable();
+
+            return $data;
         }
 
         return $data;
@@ -122,14 +126,15 @@ final class EditorSaveHandler
         return (bool) call_user_func($this->renderer_available_callback);
     }
 
-    private function existing_post_content($postarr)
+    private function abort_renderer_unavailable()
     {
-        if (empty($postarr['ID'])) {
-            return '';
-        }
-
-        $post = get_post(absint($postarr['ID']));
-
-        return $post ? (string) $post->post_content : '';
+        wp_die(
+            esc_html__('EasyMDE cannot save this post because Markdown rendering is unavailable. Install Composer dependencies and try again.', 'easymde'),
+            esc_html__('EasyMDE renderer unavailable', 'easymde'),
+            array(
+                'response' => 500,
+                'back_link' => true,
+            )
+        );
     }
 }

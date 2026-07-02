@@ -44,4 +44,26 @@ final class CustomCssPolicyTest extends WP_UnitTestCase
         $this->assertWPError($result);
         $this->assertSame(413, $result->get_error_data()['status']);
     }
+
+    public function test_rejects_unscoped_global_at_rules()
+    {
+        $policy = new CustomCssPolicy();
+
+        $this->assertWPError($policy->validate('@page { margin: 0; }'));
+        $this->assertWPError($policy->validate('@property --brand { syntax: "<color>"; inherits: true; initial-value: red; }'));
+        $this->assertSame('', $policy->scope('@page { margin: 0; }'));
+    }
+
+    public function test_scopes_root_custom_properties_to_easy_mde_container()
+    {
+        $policy = new CustomCssPolicy();
+        $css = $policy->scope(':root { --brand: red; } h2 { color: var(--brand); }');
+        $compact = str_replace(' ', '', $css);
+
+        $this->assertStringContainsString(CustomCssPolicy::SCOPE, $css);
+        $this->assertStringContainsString('--brand:red', $compact);
+        $this->assertStringContainsString(CustomCssPolicy::SCOPE . ' h2', $css);
+        $this->assertStringContainsString('var(--brand)', $css);
+        $this->assertStringNotContainsString(CustomCssPolicy::SCOPE . ' :root', $css);
+    }
 }

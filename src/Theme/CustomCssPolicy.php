@@ -127,13 +127,15 @@ final class CustomCssPolicy
     {
         if ($node instanceof AtRule) {
             $name = strtolower((string) $node->atRuleName());
-            if (in_array($name, array('import', 'charset', 'font-face'), true)) {
+            if (!in_array($name, array('media', 'supports', 'keyframes', '-webkit-keyframes'), true)) {
                 throw new \RuntimeException('@' . $name . ' is not allowed.');
             }
 
-            $args = strtolower((string) $node->atRuleArgs());
-            if (false !== strpos($args, 'url(') || false !== strpos($args, 'javascript:')) {
-                throw new \RuntimeException('@' . $name . ' contains a blocked value.');
+            if (method_exists($node, 'atRuleArgs')) {
+                $args = strtolower((string) $node->atRuleArgs());
+                if (false !== strpos($args, 'url(') || false !== strpos($args, 'javascript:')) {
+                    throw new \RuntimeException('@' . $name . ' contains a blocked value.');
+                }
             }
         }
 
@@ -181,6 +183,10 @@ final class CustomCssPolicy
 
                 if (0 === strpos($selector, self::SCOPE)) {
                     $scoped_selectors[] = $selector;
+                } elseif (':root' === $selector) {
+                    $scoped_selectors[] = self::SCOPE;
+                } elseif (0 === strpos($selector, ':root ')) {
+                    $scoped_selectors[] = self::SCOPE . substr($selector, 5);
                 } else {
                     $scoped_selectors[] = self::SCOPE . ' ' . $selector;
                 }

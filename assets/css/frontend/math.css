@@ -1,0 +1,9 @@
+.easymde-rendered-content .easymde-math-block,
+.easymde-preview .easymde-math-block,
+.entry-content .easymde-math-block,
+.wp-block-post-content .easymde-math-block {
+    display: block;
+    margin: 1.25em 0;
+    overflow-x: auto;
+    text-align: center;
+}

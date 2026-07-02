@@ -5,7 +5,9 @@
   "description": "Local frontend assets for the EasyMDE WordPress plugin.",
   "scripts": {
     "prepare:assets": "node scripts/copy-vendor-assets.mjs",
-    "postinstall": "node scripts/copy-vendor-assets.mjs"
+    "build:release": "node scripts/build-release.mjs",
+    "postinstall": "node scripts/copy-vendor-assets.mjs",
+    "test": "node --test tests/Node/*.test.mjs"
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "^11.11.1",

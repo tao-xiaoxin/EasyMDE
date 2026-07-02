@@ -1,0 +1,156 @@
+.easymde-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #dcdcde;
+    background:
+        radial-gradient(circle at top left, rgba(40, 167, 69, 0.08), transparent 30%),
+        linear-gradient(180deg, #fbfcfd 0%, #f3f6f8 100%);
+}
+
+.easymde-toolbar-section {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
+}
+
+.easymde-toolbar-section-secondary {
+    margin-left: auto;
+}
+
+.easymde-toolbar-divider {
+    width: 1px;
+    height: 22px;
+    background: #d0d7de;
+}
+
+.easymde-toolbar-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 36px;
+    padding: 0 12px;
+    border: 1px solid #c8d0d7;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.96);
+    color: #1f2937;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.easymde-toolbar-button:hover,
+.easymde-toolbar-button:focus {
+    border-color: #2271b1;
+    color: #0a4b78;
+    box-shadow: 0 8px 18px rgba(34, 113, 177, 0.12);
+    transform: translateY(-1px);
+}
+
+.easymde-toolbar-button:focus {
+    outline: 2px solid rgba(34, 113, 177, 0.2);
+    outline-offset: 2px;
+}
+
+.easymde-toolbar-button.is-active {
+    border-color: #2271b1;
+    background: #e8f3fb;
+    color: #0a4b78;
+}
+
+.easymde-toolbar-button-compact {
+    width: 38px;
+    min-width: 38px;
+    padding: 0;
+}
+
+.easymde-toolbar-button-menu {
+    gap: 4px;
+    width: auto;
+    min-width: 46px;
+    padding: 0 10px;
+}
+
+.easymde-toolbar-button .dashicons {
+    width: 18px;
+    height: 18px;
+    font-size: 18px;
+}
+
+.easymde-toolbar-label {
+    white-space: nowrap;
+}
+
+.easymde-toolbar-copy-action {
+    border-color: rgba(7, 192, 96, 0.36);
+    background: linear-gradient(180deg, #f7fffa 0%, #edf9f1 100%);
+    color: #0f7d3b;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.easymde-toolbar-copy-action:hover,
+.easymde-toolbar-copy-action:focus {
+    border-color: #07c060;
+    background: linear-gradient(180deg, #f2fff7 0%, #e5f8eb 100%);
+    color: #075f2c;
+    box-shadow: 0 8px 18px rgba(7, 192, 96, 0.16);
+}
+
+.easymde-toolbar-copy-action .easymde-wechat-glyph {
+    background: #fff;
+}
+
+.easymde-toolbar-text-icon,
+.easymde-wechat-glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.easymde-toolbar-text-icon {
+    position: relative;
+    border-radius: 6px;
+    background: #eff2f5;
+}
+
+.easymde-font-glyph::after {
+    content: "";
+    position: absolute;
+    right: 4px;
+    bottom: 3px;
+    left: 4px;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+}
+
+.easymde-wechat-glyph {
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    background: rgba(7, 192, 96, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(7, 192, 96, 0.18);
+}
+
+.easymde-wechat-glyph svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+    overflow: visible;
+}
+
+.easymde-wechat-glyph path {
+    fill: #07c060;
+}

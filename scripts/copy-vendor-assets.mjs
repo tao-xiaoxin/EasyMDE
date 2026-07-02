@@ -7,13 +7,13 @@ const fromRoot = (...parts) => join(root, ...parts);
 
 const assets = [
   ['node_modules/@highlightjs/cdn-assets/highlight.min.js', 'assets/vendor/highlight/highlight.min.js'],
-  ['node_modules/@highlightjs/cdn-assets/styles/github.min.css', 'assets/vendor/highlight/github.min.css'],
-  ['node_modules/@highlightjs/cdn-assets/styles/github-dark.min.css', 'assets/vendor/highlight/github-dark.min.css'],
-  ['node_modules/@highlightjs/cdn-assets/styles/atom-one-dark.min.css', 'assets/vendor/highlight/atom-one-dark.min.css'],
-  ['node_modules/@highlightjs/cdn-assets/styles/atom-one-light.min.css', 'assets/vendor/highlight/atom-one-light.min.css'],
-  ['node_modules/@highlightjs/cdn-assets/styles/monokai.min.css', 'assets/vendor/highlight/monokai.min.css'],
-  ['node_modules/@highlightjs/cdn-assets/styles/vs2015.min.css', 'assets/vendor/highlight/vs2015.min.css'],
-  ['node_modules/@highlightjs/cdn-assets/styles/xcode.min.css', 'assets/vendor/highlight/xcode.min.css'],
+  ['node_modules/@highlightjs/cdn-assets/styles/github.min.css', 'assets/vendor/highlight/styles/github.min.css'],
+  ['node_modules/@highlightjs/cdn-assets/styles/github-dark.min.css', 'assets/vendor/highlight/styles/github-dark.min.css'],
+  ['node_modules/@highlightjs/cdn-assets/styles/atom-one-dark.min.css', 'assets/vendor/highlight/styles/atom-one-dark.min.css'],
+  ['node_modules/@highlightjs/cdn-assets/styles/atom-one-light.min.css', 'assets/vendor/highlight/styles/atom-one-light.min.css'],
+  ['node_modules/@highlightjs/cdn-assets/styles/monokai.min.css', 'assets/vendor/highlight/styles/monokai.min.css'],
+  ['node_modules/@highlightjs/cdn-assets/styles/vs2015.min.css', 'assets/vendor/highlight/styles/vs2015.min.css'],
+  ['node_modules/@highlightjs/cdn-assets/styles/xcode.min.css', 'assets/vendor/highlight/styles/xcode.min.css'],
   ['node_modules/katex/dist/katex.min.js', 'assets/vendor/katex/katex.min.js'],
   ['node_modules/katex/dist/katex.min.css', 'assets/vendor/katex/katex.min.css'],
   ['node_modules/mermaid/dist/mermaid.min.js', 'assets/vendor/mermaid/mermaid.min.js']

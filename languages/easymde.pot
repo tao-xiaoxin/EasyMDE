@@ -53,7 +53,7 @@ msgstr ""
 msgid "Blue ying"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:100
+#: src/Support/ToolbarRegistry.php:105
 msgid "Bold"
 msgstr ""
 
@@ -81,7 +81,7 @@ msgstr ""
 msgid "Cochin"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:240
+#: src/Support/ToolbarRegistry.php:245
 msgid "Code fence"
 msgstr ""
 
@@ -105,7 +105,7 @@ msgstr ""
 msgid "Copy preview for WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:242 src/Support/ToolbarRegistry.php:292
+#: src/Admin/AdminAssets.php:242 src/Support/ToolbarRegistry.php:297
 msgid "Copy to WeChat"
 msgstr ""
 
@@ -252,27 +252,27 @@ msgstr ""
 msgid "Grid black"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:156
+#: src/Support/ToolbarRegistry.php:161
 msgid "Heading 1"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:157
+#: src/Support/ToolbarRegistry.php:162
 msgid "Heading 2"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:158
+#: src/Support/ToolbarRegistry.php:163
 msgid "Heading 3"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:159
+#: src/Support/ToolbarRegistry.php:164
 msgid "Heading 4"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:160
+#: src/Support/ToolbarRegistry.php:165
 msgid "Heading 5"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:161
+#: src/Support/ToolbarRegistry.php:166
 msgid "Heading 6"
 msgstr ""
 
@@ -288,11 +288,11 @@ msgstr ""
 msgid "Hybrid icon toolbar"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:279
+#: src/Support/ToolbarRegistry.php:284
 msgid "Image"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:225
+#: src/Support/ToolbarRegistry.php:230
 msgid "Inline code"
 msgstr ""
 
@@ -323,7 +323,7 @@ msgid ""
 "Command+Option+C."
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:115
+#: src/Support/ToolbarRegistry.php:120
 msgid "Italic"
 msgstr ""
 
@@ -335,7 +335,7 @@ msgstr ""
 msgid "Light mode"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:266
+#: src/Support/ToolbarRegistry.php:271
 msgid "Link"
 msgstr ""
 
@@ -376,7 +376,7 @@ msgstr ""
 msgid "Markdown2Html default"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:253
+#: src/Support/ToolbarRegistry.php:258
 msgid "Math block"
 msgstr ""
 
@@ -465,7 +465,7 @@ msgstr ""
 msgid "Orange heart"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:211
+#: src/Support/ToolbarRegistry.php:216
 msgid "Ordered list"
 msgstr ""
 
@@ -473,7 +473,7 @@ msgstr ""
 msgid "Output actions"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:145
+#: src/Support/ToolbarRegistry.php:150
 msgid "Paragraph"
 msgstr ""
 
@@ -505,7 +505,7 @@ msgstr ""
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:183
+#: src/Support/ToolbarRegistry.php:188
 msgid "Quote"
 msgstr ""
 
@@ -529,7 +529,7 @@ msgstr ""
 msgid "Save CSS"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:87
+#: src/Support/ToolbarRegistry.php:92
 msgid "Save post"
 msgstr ""
 
@@ -558,7 +558,7 @@ msgstr ""
 msgid "Start writing Markdown to preview the article."
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:130
+#: src/Support/ToolbarRegistry.php:135
 msgid "Strikethrough"
 msgstr ""
 
@@ -592,7 +592,7 @@ msgstr ""
 msgid "Typora-inspired shortcuts"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:197
+#: src/Support/ToolbarRegistry.php:202
 msgid "Unordered list"
 msgstr ""
 

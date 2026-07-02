@@ -87,6 +87,59 @@ jobs:
       - name: Run Node tests
         run: npm test
 
+  wordpress-i18n:
+    name: WordPress i18n runtime
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: wordpress_test
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=root"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mysqli
+          tools: composer:v2
+          coverage: none
+
+      - name: Install WP-CLI
+        run: |
+          curl -fsSL -o wp-cli.phar https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+          php wp-cli.phar --info
+          chmod +x wp-cli.phar
+          sudo mv wp-cli.phar /usr/local/bin/wp
+
+      - name: Install PHP runtime dependencies
+        run: composer install --no-dev --no-interaction --no-progress --prefer-dist
+
+      - name: Install WordPress
+        run: |
+          mkdir -p /tmp/easymde-wp
+          wp core download --path=/tmp/easymde-wp --force
+          wp config create --path=/tmp/easymde-wp --dbname=wordpress_test --dbuser=root --dbpass=root --dbhost=127.0.0.1:3306 --skip-check
+          wp core install --path=/tmp/easymde-wp --url=http://example.test --title=EasyMDE --admin_user=admin --admin_password=password --admin_email=admin@example.test
+
+      - name: Activate EasyMDE and verify bundled translations
+        run: |
+          ln -s "$GITHUB_WORKSPACE" /tmp/easymde-wp/wp-content/plugins/easymde
+          wp plugin activate easymde --path=/tmp/easymde-wp
+          wp eval-file "$GITHUB_WORKSPACE/scripts/verify-wordpress-i18n.php" --path=/tmp/easymde-wp
+
   release:
     name: Release package validation
     runs-on: ubuntu-latest

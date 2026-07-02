@@ -30,13 +30,14 @@ if (!defined('ABSPATH')) {
 final class Plugin
 {
     private static $instance = null;
+    private static $textdomain_loaded = false;
 
     private $toolbar_registry;
     private $rest_controllers = array();
 
     public static function init()
     {
-        self::load_textdomain();
+        self::maybe_load_textdomain();
 
         if (null === self::$instance) {
             self::$instance = new self();
@@ -53,11 +54,29 @@ final class Plugin
 
     public static function load_textdomain()
     {
+        if (self::$textdomain_loaded) {
+            return;
+        }
+
+        self::$textdomain_loaded = true;
+
         load_plugin_textdomain(
             'easymde',
             false,
             dirname(plugin_basename(EASYMDE_PLUGIN_FILE)) . '/languages'
         );
+    }
+
+    private static function maybe_load_textdomain()
+    {
+        if (did_action('init')) {
+            self::load_textdomain();
+            return;
+        }
+
+        if (!has_action('init', array(__CLASS__, 'load_textdomain'))) {
+            add_action('init', array(__CLASS__, 'load_textdomain'));
+        }
     }
 
     private function __construct()

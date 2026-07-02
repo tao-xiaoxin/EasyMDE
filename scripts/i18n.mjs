@@ -36,7 +36,8 @@ const gettextKeywords = [
   'esc_html_x:1,2c',
   'esc_attr__:1',
   'esc_attr_e:1',
-  'esc_attr_x:1,2c'
+  'esc_attr_x:1,2c',
+  'source_label:1'
 ];
 
 function fromRoot(root, path) {
@@ -71,7 +72,10 @@ function requireCommand(command) {
 
 function pluginVersion(root) {
   const mainFile = readFileSync(fromRoot(root, 'easymde.php'), 'utf8');
-  const match = mainFile.match(/^\s*\*\s*Version:\s*(.+)$/m);
+  const header = mainFile
+    .slice(0, 8192)
+    .match(/\/\*\*[\s\S]*?^\s*\*\s*Plugin Name:\s*EasyMDE\s*$[\s\S]*?\*\//m);
+  const match = header ? header[0].match(/^\s*\*\s*Version:\s*(.+)$/m) : null;
 
   if (!match) {
     throw new Error('Could not read plugin header Version from easymde.php.');
@@ -195,6 +199,13 @@ export function parsePoEntries(path) {
     }
 
     if (line.startsWith('#')) {
+      if (line.startsWith('#,')) {
+        entry.flags = line
+          .slice(2)
+          .split(',')
+          .map((flag) => flag.trim())
+          .filter(Boolean);
+      }
       return;
     }
 
@@ -254,6 +265,10 @@ function entryKey(entry) {
   return `${entry.msgctxt || ''}\u0004${entry.msgid || ''}`;
 }
 
+function hasPoFlag(entry, flag) {
+  return Array.isArray(entry.flags) && entry.flags.includes(flag);
+}
+
 function assertPoHeaders(entries) {
   const header = entries.find((entry) => '' === entry.msgid);
   const headerText = header && header.msgstr ? header.msgstr[0] || '' : '';
@@ -276,6 +291,7 @@ function assertPoCoversPot(root) {
   const poByKey = new Map(poEntries.map((entry) => [entryKey(entry), entry]));
   const missing = [];
   const untranslated = [];
+  const fuzzy = [];
 
   assertPoHeaders(poEntries);
 
@@ -284,6 +300,11 @@ function assertPoCoversPot(root) {
 
     if (!poEntry) {
       missing.push(potEntry.msgid);
+      return;
+    }
+
+    if (hasPoFlag(poEntry, 'fuzzy')) {
+      fuzzy.push(potEntry.msgid);
       return;
     }
 
@@ -299,11 +320,12 @@ function assertPoCoversPot(root) {
     }
   });
 
-  if (missing.length || untranslated.length) {
+  if (missing.length || untranslated.length || fuzzy.length) {
     throw new Error(
       [
         'languages/easymde-zh_CN.po must cover all POT messages.',
         ...missing.map((msgid) => `- missing: ${msgid}`),
+        ...fuzzy.map((msgid) => `- fuzzy: ${msgid}`),
         ...untranslated.map((msgid) => `- untranslated: ${msgid}`)
       ].join('\n')
     );

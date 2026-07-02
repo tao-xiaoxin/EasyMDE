@@ -11,6 +11,7 @@ import {
   collectReleaseRequirements,
   findMissingReleaseRequirements,
   findVersionMismatches,
+  readReleaseVersions,
   releaseZipPath,
   shouldCopyReleaseFile
 } from '../../scripts/build-release.mjs';
@@ -181,6 +182,34 @@ test('release build fails when version fields do not match the plugin header', (
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /package\.json version: 9\.9\.9; expected 0\.1\.7/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release version parser ignores unrelated Version comments before the plugin header', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(
+      root,
+      'easymde.php',
+      `<?php
+/**
+ * Example package metadata.
+ * Version: 9.9.9
+ */
+/**
+ * Plugin Name: EasyMDE
+ * Version: 0.1.7
+ */
+define('EASYMDE_VERSION', '0.1.7');
+`
+    );
+
+    assert.equal(readReleaseVersions(root).pluginHeader, '0.1.7');
+    assert.deepEqual(findVersionMismatches(root), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

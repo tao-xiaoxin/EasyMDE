@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import {
   checkI18n,
   collectPhpSourceFiles,
+  compileMo,
+  makePot,
   parsePoEntries
 } from '../../scripts/i18n.mjs';
 
@@ -69,6 +72,16 @@ function sourceSlice(file, marker) {
   assert.notEqual(index, -1, `${marker} not found in ${file}`);
 
   return source.slice(index);
+}
+
+function makeTempRoot() {
+  return mkdtempSync(join(tmpdir(), 'easymde-i18n-'));
+}
+
+function writeText(root, path, content) {
+  const target = join(root, path);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, content);
 }
 
 function phpStringKeys(source) {
@@ -141,6 +154,16 @@ test('PHP-injected string config covers JavaScript user-facing string reads', ()
   );
 });
 
+test('default toolbar labels do not trigger gettext during plugin construction', () => {
+  const mainFile = readFileSync(join(repoRoot, 'easymde.php'), 'utf8');
+  const toolbarDefaults = sourceSlice('src/Support/ToolbarRegistry.php', 'private function register_default_toolbar_buttons');
+
+  assert.match(mainFile, /add_action\(\s*'init'\s*,\s*array\('EasyMDE_Plugin', 'init'\)\s*\)/);
+  assert.doesNotMatch(mainFile, /add_action\(\s*'plugins_loaded'\s*,\s*array\('EasyMDE_Plugin', 'init'\)\s*\)/);
+  assert.doesNotMatch(toolbarDefaults, /(?<![A-Za-z0-9_])__\s*\(/);
+  assert.match(toolbarDefaults, /source_label\('Save post'\)/);
+});
+
 test('gettext catalog files are current and contain real zh_CN translations', () => {
   checkI18n({ root: repoRoot });
 
@@ -156,4 +179,50 @@ test('gettext catalog files are current and contain real zh_CN translations', ()
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /msgid "Shortcut settings"\nmsgstr "快捷键设置"/);
+});
+
+test('i18n check rejects fuzzy PO entries that msgfmt omits from the MO', () => {
+  const root = makeTempRoot();
+
+  try {
+    writeText(
+      root,
+      'easymde.php',
+      `<?php
+/**
+ * Plugin Name: EasyMDE
+ * Version: 0.1.7
+ */
+__('Shortcut settings', 'easymde');
+`
+    );
+    mkdirSync(join(root, 'languages'), { recursive: true });
+    makePot({ root });
+    writeText(
+      root,
+      'languages/easymde-zh_CN.po',
+      `msgid ""
+msgstr ""
+"Project-Id-Version: EasyMDE 0.1.7\\n"
+"Language: zh_CN\\n"
+"MIME-Version: 1.0\\n"
+"Content-Type: text/plain; charset=UTF-8\\n"
+"Content-Transfer-Encoding: 8bit\\n"
+"Plural-Forms: nplurals=1; plural=0;\\n"
+"X-Domain: easymde\\n"
+
+#, fuzzy
+msgid "Shortcut settings"
+msgstr "快捷键设置"
+`
+    );
+    compileMo({ root });
+
+    assert.throws(
+      () => checkI18n({ root }),
+      /fuzzy: Shortcut settings/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

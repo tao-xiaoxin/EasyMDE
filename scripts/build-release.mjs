@@ -133,13 +133,25 @@ function matchVersion(source, pattern, path, label) {
   return match[1].trim();
 }
 
+function readPluginHeaderVersion(source) {
+  const pluginHeaders = [...source.slice(0, 8192).matchAll(/\/\*\*[\s\S]*?\*\//g)]
+    .map((match) => match[0])
+    .filter((block) => /^\s*\*\s*Plugin Name:\s*EasyMDE\s*$/m.test(block));
+
+  if (1 !== pluginHeaders.length) {
+    throw new Error('Could not read a unique EasyMDE plugin header from easymde.php.');
+  }
+
+  return matchVersion(pluginHeaders[0], /^\s*\*\s*Version:\s*(.+)$/m, 'easymde.php', 'plugin header');
+}
+
 export function readReleaseVersions(root = defaultRoot) {
   const mainFile = readText(root, 'easymde.php');
   const readme = readText(root, 'readme.txt');
   const packageJson = JSON.parse(readText(root, 'package.json'));
 
   return {
-    pluginHeader: matchVersion(mainFile, /^\s*\*\s*Version:\s*(.+)$/m, 'easymde.php', 'plugin header'),
+    pluginHeader: readPluginHeaderVersion(mainFile),
     constant: matchVersion(mainFile, /define\(\s*['"]EASYMDE_VERSION['"]\s*,\s*['"]([^'"]+)['"]\s*\)/, 'easymde.php', 'EASYMDE_VERSION'),
     stableTag: matchVersion(readme, /^Stable tag:\s*(.+)$/m, 'readme.txt', 'Stable tag'),
     packageJson: String(packageJson.version || '').trim()

@@ -1,0 +1,36 @@
+.easymde-rendered-content .easymde-toc,
+.easymde-preview .easymde-toc,
+.entry-content .easymde-toc,
+.wp-block-post-content .easymde-toc {
+    margin: 0 0 1.25em;
+    padding: 12px 14px;
+    border: 1px solid #dcdcde;
+    border-radius: 4px;
+    background: #fbfbfc;
+}
+
+.easymde-toc ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.easymde-toc li {
+    margin: 4px 0;
+}
+
+.easymde-toc-level-3 {
+    margin-left: 14px;
+}
+
+.easymde-toc-level-4 {
+    margin-left: 28px;
+}
+
+.easymde-toc a {
+    text-decoration: none;
+}
+
+.easymde-toc a:hover,
+.easymde-toc a:focus {
+    text-decoration: underline;
+}

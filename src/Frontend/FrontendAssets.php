@@ -118,6 +118,13 @@ final class FrontendAssets
 
         if (!empty($features['math'])) {
             wp_enqueue_style(
+                'easymde-math',
+                Asset::url('assets/css/frontend/math.css'),
+                array('easymde-content'),
+                EASYMDE_VERSION
+            );
+
+            wp_enqueue_style(
                 'easymde-katex',
                 Asset::url('assets/vendor/katex/katex.min.css'),
                 array(),
@@ -130,6 +137,15 @@ final class FrontendAssets
                 array(),
                 EASYMDE_VERSION,
                 true
+            );
+        }
+
+        if (!empty($features['toc'])) {
+            wp_enqueue_style(
+                'easymde-toc',
+                Asset::url('assets/css/frontend/toc.css'),
+                array('easymde-content'),
+                EASYMDE_VERSION
             );
         }
 
@@ -178,7 +194,7 @@ final class FrontendAssets
             'syntaxHighlight' => $has_code_fence,
             'mermaid' => (bool) preg_match('/(^|\n)\s*(```|~~~)\s*mermaid\b/i', $markdown),
             'math' => (bool) preg_match('/(\$\$[\s\S]+?\$\$|\\\\\[|\\\\\(|(?<!\\\\)\$[^\n$]+?(?<!\\\\)\$)/', $markdown),
-            'toc' => true,
+            'toc' => (bool) preg_match('/^\s*\\[toc\\]\s*$/im', $markdown),
             'wechatCopy' => true,
         );
     }

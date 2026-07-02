@@ -206,6 +206,169 @@ EasyMDE_Plugin::register_shortcode_helper()
 They may delegate to new registries internally, but existing extension code must not break unexpectedly.
 
 ---
+## Code Review Guidelines
+
+When reviewing a pull request, first understand:
+
+* The stated goal of the pull request.
+* The changed diff and its immediate execution paths.
+* The relevant project constraints in this `AGENTS.md`.
+* Existing behavior that the change is expected to preserve.
+
+Review changes as a maintainer, not as a style linter.
+
+Focus on whether the pull request is correct, safe, compatible, maintainable, and complete for its stated goal.
+
+Do not force every review into the same checklist. Review the areas that are actually relevant to the changed code.
+
+If there is no concrete, actionable issue introduced or materially worsened by the pull request, return no findings.
+
+### Review Scope
+
+Review relevant changes for:
+
+* Functional correctness, regressions, edge cases, and error handling.
+* WordPress APIs, hooks, capabilities, nonces, REST behavior, metadata, revisions, and escaping.
+* Security boundaries involving Markdown, HTML, CSS, REST input, media, clipboard export, SVG, Mermaid, KaTeX, Highlight.js, and frontend DOM insertion.
+* Backward compatibility for existing `_easymde_*` metadata, stored posts, revisions, extension APIs, themes, and user settings.
+* Data integrity between Markdown source, rendered `post_content`, theme state, custom CSS snapshots, and revision restore behavior.
+* Performance risks caused by repeated rendering, large Markdown payloads, expensive DOM processing, excessive REST calls, large Mermaid diagrams, large code blocks, or unnecessary asset loading.
+* Whether new dependencies, assets, build files, scripts, or documentation are actually required and correctly integrated.
+* Whether release behavior remains self-contained and does not accidentally depend on local development files or remote CDN assets.
+* Whether tests and validation are sufficient for the risk and scope of the change.
+
+### What Deserves a Finding
+
+Report an issue when the pull request introduces or materially worsens a concrete problem, including:
+
+* A functional bug or likely regression.
+* A broken author, administrator, visitor, or release-consumer workflow.
+* A security issue, weakened authorization boundary, missing nonce, unsafe output path, or unsafe data handling.
+* Unauthorized access to another user's post, Markdown source, revision data, custom CSS, user settings, or protected metadata.
+* Data loss, metadata corruption, revision inconsistency, or undocumented migration risk.
+* An incompatibility with supported WordPress or PHP versions.
+* A meaningful performance, reliability, or resource-exhaustion risk.
+* A missing runtime dependency, asset, translation file, or release artifact.
+* A violation of an explicit project rule in this `AGENTS.md`.
+* A new file, dependency, asset, abstraction, script, or document without a clear runtime, build, test, release, or documented extension purpose.
+
+When an issue should block merging, explain the concrete reason and impact. Do not rely on a fixed severity label alone.
+
+### What Not to Report by Default
+
+Avoid low-value review noise.
+
+Do not comment on:
+
+* Personal formatting preferences.
+* Naming preferences when the existing name is clear and consistent enough.
+* Minor refactor opportunities unrelated to the pull request goal.
+* Documentation wording, punctuation, or typos without user-facing impact.
+* Hypothetical future requirements.
+* Broad architectural rewrites when a focused correction is sufficient.
+* Generated files that are intentionally required by the documented build or release strategy.
+* Existing unrelated issues unless the pull request directly touches, worsens, exposes, or depends on them.
+* Missing tests merely because tests are absent.
+
+Only raise these concerns when they affect correctness, security, compatibility, maintainability, release reliability, or an explicit project rule.
+
+### EasyMDE Review Checklist
+
+For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or release files, verify the relevant items below.
+
+#### WordPress Input, Output, and Authorization
+
+* Request input from `$_POST`, `$_GET`, and REST is unslashed, validated, and sanitized for its actual data type.
+
+* HTML, attributes, URLs, textarea content, and inline styles use context-appropriate escaping.
+
+* State-changing operations verify both nonce and the correct capability.
+
+* Requests with `post_id` verify access to that specific post with:
+
+  ```php
+  current_user_can( 'edit_post', $post_id )
+  ```
+
+* Custom CSS can only access the current user's library and requires `unfiltered_html` for full CSS editing.
+
+* REST errors use meaningful `WP_Error` responses and appropriate HTTP status codes.
+
+* New admin actions do not affect unrelated posts, users, settings, or admin pages.
+
+#### Markdown, HTML, DOM, and Editor Safety
+
+* Raw Markdown HTML remains disabled unless the pull request explicitly changes the security model.
+* Rendered HTML remains sanitized before output.
+* New `innerHTML`, `outerHTML`, SVG, Mermaid, clipboard, or DOM insertion paths do not receive untrusted content without an appropriate allowlist or sanitizer.
+* Regex is not used as a complete CSS parser or security boundary.
+* CSS selectors, nested at-rules, URL values, and custom properties do not escape the EasyMDE content scope.
+* Preview, Mermaid, KaTeX, Highlight.js, and DOM-processing changes have reasonable size, recursion, and complexity limits.
+* New browser-side rendering behavior does not introduce avoidable UI freezes, excessive memory use, or repeated rendering loops.
+
+#### Data Integrity and Compatibility
+
+* `_easymde_markdown` remains the source of truth.
+
+* `post_content` remains compatible rendered output.
+
+* EasyMDE revisions preserve Markdown and appearance metadata.
+
+* Restoring a revision regenerates consistent rendered HTML without recursion or stale state.
+
+* Legacy posts with existing `_easymde_markdown` remain detectable with `metadata_exists()`.
+
+* Existing public compatibility APIs remain functional:
+
+  ```php
+  EasyMDE_Plugin::register_toolbar_button()
+  EasyMDE_Plugin::register_shortcode_helper()
+  ```
+
+* No automatic bulk migration, destructive rewrite, or silent metadata rename is introduced.
+
+* Existing theme choices, code themes, custom CSS snapshots, font settings, shortcuts, and user defaults remain readable unless an explicit migration path is included.
+
+#### Assets, Dependencies, and Releases
+
+* No remote CDN dependency is introduced.
+* EasyMDE-owned assets remain separate from third-party vendor assets.
+* The current page loads only the article theme, code theme, Mermaid, KaTeX, Highlight.js, and frontend scripts actually required by the current post.
+* New dependencies have a clear purpose, compatible license, and are included in the release process when required at runtime.
+* Build output, Composer dependencies, translations, and vendor assets remain consistent with the documented release workflow.
+* Release changes keep the installable plugin package self-contained.
+* Release packages do not include secrets, caches, test artifacts, `node_modules`, local configuration, logs, or unrelated generated files.
+
+### Finding Quality Requirements
+
+Every finding must be specific and actionable.
+
+A useful finding should include:
+
+1. The affected file and relevant changed line or execution path.
+2. What can go wrong.
+3. A realistic scenario that triggers the problem.
+4. Why it matters for EasyMDE users, administrators, authors, visitors, or release consumers.
+5. A focused correction direction.
+
+Do not merely say that something is “unsafe,” “fragile,” “incorrect,” or “could be improved” without explaining the actual impact.
+
+Do not report a finding based only on personal preference, hypothetical future changes, or a missing optimization with no material impact.
+
+Do not combine unrelated problems into one finding.
+
+### Review Output Rules
+
+* Use concise, direct, evidence-based comments.
+* Report findings only when they are actionable.
+* Clearly distinguish confirmed issues from assumptions or questions.
+* Ask a question when repository context is genuinely insufficient to determine whether something is wrong.
+* Explain merge-blocking impact in plain language when applicable.
+* Do not require a fixed severity prefix, label, or taxonomy.
+* Prefer one focused finding per independently fixable issue.
+* Do not praise the pull request or summarize non-blocking observations.
+* Do not invent suggestions merely to produce review comments.
+* Do not claim tests, runtime behavior, or security properties that were not actually verified.
 
 ## Git Scope, Staging, and Commit Rules
 

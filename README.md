@@ -1,12 +1,11 @@
+<h1 align="center">EasyMDE</h1>
+
+<p align="center">A full-featured Markdown editor plugin for WordPress.</p>
 <p align="center">
   <a href="./docs/assets/easymde-logo.png">
     <img src="./docs/assets/easymde-logo.png" alt="EasyMDE" width="460" />
   </a>
 </p>
-
-<h1 align="center">EasyMDE</h1>
-
-<p align="center">A full-featured Markdown editor plugin for WordPress.</p>
 
 EasyMDE is a full-featured WordPress Markdown editor plugin focused on a clean split-pane writing experience: Markdown source on the left, live preview on the right, and enough extension points to grow into a serious publishing tool.
 

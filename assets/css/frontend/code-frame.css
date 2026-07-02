@@ -1,0 +1,247 @@
+.easymde-rendered-content.easymde-markdown-theme-red-crimson.easymde-code-mac pre {
+  box-sizing: border-box;
+  position: static;
+  padding-top: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.8);
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace !important;
+  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
+  overflow: auto;
+  overflow-wrap: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson.easymde-code-mac pre::before {
+  position: static;
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin-bottom: -7px;
+  border-radius: 5px;
+  background:
+    radial-gradient(circle at 15px 15px, rgb(237, 108, 96) 0 5px, transparent 5.5px),
+    radial-gradient(circle at 29px 15px, rgb(247, 193, 81) 0 5px, transparent 5.5px),
+    radial-gradient(circle at 43px 15px, rgb(100, 200, 86) 0 5px, transparent 5.5px),
+    #282c34;
+  box-shadow: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson.easymde-code-mac pre code.hljs {
+  border-radius: 0;
+  padding-top: 15px;
+}
+
+.easymde-rendered-content.easymde-code-mac pre {
+  position: relative;
+  padding-top: 34px;
+  border-radius: 7px;
+  box-shadow: 0 8px 22px rgba(30, 32, 35, 0.18);
+}
+
+.easymde-rendered-content.easymde-code-theme-github pre {
+  background: #f8f8f8;
+}
+
+.easymde-rendered-content.easymde-code-theme-github-dark pre {
+  background: #0d1117;
+}
+
+.easymde-rendered-content.easymde-code-theme-atom-one-dark pre,
+.easymde-rendered-content.easymde-code-theme-atom-one-dark pre > code {
+  background: #282c34;
+  color: #abb2bf;
+}
+
+.easymde-rendered-content.easymde-code-theme-atom-one-light pre {
+  background: #fafafa;
+}
+
+.easymde-rendered-content.easymde-code-theme-monokai pre {
+  background: #272822;
+}
+
+.easymde-rendered-content.easymde-code-theme-vs2015 pre {
+  background: #1e1e1e;
+}
+
+.easymde-rendered-content.easymde-code-theme-xcode pre {
+  background: #ffffff;
+}
+
+.easymde-rendered-content.easymde-code-theme-wechat-inspired pre {
+  background: #f7f7f7;
+}
+
+.easymde-rendered-content.easymde-code-mac pre::before {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: 14px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ff5f56;
+  box-shadow: 20px 0 0 #ffbd2e, 40px 0 0 #27c93f;
+  z-index: 1;
+}
+
+.easymde-rendered-content.easymde-code-mac pre code.hljs {
+  border-radius: 0 0 7px 7px;
+}
+
+.easymde-rendered-content.easymde-code-mac[class*="easymde-markdown-theme-"] pre {
+  box-shadow: rgba(0, 0, 0, 0.35) 0 2px 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson.easymde-code-mac pre {
+  box-sizing: border-box;
+  position: static;
+  padding-top: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.8);
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace !important;
+  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
+  overflow: auto;
+  overflow-wrap: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson.easymde-code-mac pre::before {
+  position: static;
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin-bottom: -7px;
+  border-radius: 5px;
+  background:
+    radial-gradient(circle at 15px 15px, rgb(237, 108, 96) 0 5px, transparent 5.5px),
+    radial-gradient(circle at 29px 15px, rgb(247, 193, 81) 0 5px, transparent 5.5px),
+    radial-gradient(circle at 43px 15px, rgb(100, 200, 86) 0 5px, transparent 5.5px),
+    #282c34;
+  box-shadow: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson.easymde-code-mac pre code.hljs {
+  border-radius: 0;
+  padding-top: 15px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart.easymde-code-mac pre {
+  padding-top: 30px;
+  border-radius: 5px;
+  background: #282c34;
+  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart.easymde-code-mac pre::before {
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  border-radius: 5px;
+  background-color: #282c34;
+  background-image:
+    radial-gradient(ellipse 5px 5px at 16px 16px, #ed6c60 0 70%, #dc3c36 72% 100%, transparent 102%),
+    radial-gradient(ellipse 5px 5px at 30px 16px, #f7c151 0 70%, #da9721 72% 100%, transparent 102%),
+    radial-gradient(ellipse 5px 5px at 44px 16px, #64c856 0 70%, #1ba125 72% 100%, transparent 102%);
+  background-repeat: no-repeat;
+  box-shadow: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-heart.easymde-code-mac pre code.hljs {
+  display: -webkit-box;
+  padding: 15px 16px 16px;
+  border-radius: 0;
+  background: #282c34;
+  color: #abb2bf;
+  font-family: var(--easymde-code-font-family) !important;
+  font-size: 12px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-tech-blue.easymde-code-mac pre {
+  padding-top: 30px;
+  border-radius: 5px;
+  background: #282c34;
+  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-tech-blue.easymde-code-mac pre::before {
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  border-radius: 5px;
+  background: #282c34 url("../../images/tech-blue-code-window.svg") 10px 10px / 40px auto no-repeat;
+  box-shadow: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-tech-blue.easymde-code-mac pre code.hljs {
+  display: -webkit-box;
+  padding: 15px 16px 16px;
+  border-radius: 0;
+  background: #282c34;
+  color: #abb2bf;
+  font-family: var(--easymde-code-font-family) !important;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue.easymde-code-mac pre {
+  padding-top: 30px;
+  border-radius: 5px;
+  background: #282c34;
+  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue.easymde-code-mac pre::before {
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  border-radius: 5px;
+  background: #282c34 url("../../images/fullstack-blue-code-window.svg") 10px 10px / 40px auto no-repeat;
+  box-shadow: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue.easymde-code-mac pre code.hljs {
+  display: block;
+  padding: 15px 16px 16px;
+  border-radius: 0 0 5px 5px;
+  background: #282c34;
+  color: #abb2bf;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki.easymde-code-mac pre {
+  padding-top: 30px;
+  border-radius: 5px;
+  background: #282c34;
+  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki.easymde-code-mac pre::before {
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  border-radius: 5px;
+  background-color: #282c34;
+  background-image:
+    radial-gradient(ellipse 5px 5px at 16px 16px, #ed6c60 0 70%, #dc3c36 72% 100%, transparent 102%),
+    radial-gradient(ellipse 5px 5px at 30px 16px, #f7c151 0 70%, #da9721 72% 100%, transparent 102%),
+    radial-gradient(ellipse 5px 5px at 44px 16px, #64c856 0 70%, #1ba125 72% 100%, transparent 102%);
+  background-repeat: no-repeat;
+  box-shadow: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki.easymde-code-mac pre code.hljs {
+  display: -webkit-box;
+  padding: 15px 16px 16px;
+  border-radius: 0;
+  background: #282c34;
+  color: #abb2bf;
+  font-family: var(--easymde-code-font-family) !important;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18.858px;
+}

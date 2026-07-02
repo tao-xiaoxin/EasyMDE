@@ -1,0 +1,544 @@
+.easymde-rendered-content.easymde-markdown-theme-green-vitality {
+  --easymde-theme-font-family: Optima-Regular, Optima, PingFangSC-light, PingFangTC-light, 'PingFang SC', Cambria, Cochin, Georgia, Times, 'Times New Roman', serif;
+  font-size: 16px;
+  color: black;
+  padding: 0 10px;
+  line-height: 1.6;
+  word-spacing: 0px;
+  letter-spacing: 0px;
+  word-break: break-word;
+  word-wrap: break-word;
+  text-align: left;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality p {
+  font-size: 16px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  margin: 0;
+  line-height: 26px;
+  color: black;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h1,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h2,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h3,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h4,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h5,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h6 {
+  margin-top: 30px;
+  margin-bottom: 15px;
+  padding: 0px;
+  font-weight: bold;
+  color: black;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h1 {
+  font-size: 24px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h2 {
+  font-size: 22px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h3 {
+  font-size: 20px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h4 {
+  font-size: 18px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h5 {
+  font-size: 16px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h6 {
+  font-size: 16px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h1 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h2 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h3 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h4 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h5 .prefix,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h6 .prefix {
+  display: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h1 .suffix,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h2 .suffix,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h3 .suffix,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h4 .suffix,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h5 .suffix,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h6 .suffix {
+  display: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality ul,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality ol {
+  margin-top: 8px;
+  margin-bottom: 8px;
+  padding-left: 25px;
+  color: black;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality ul {
+  list-style-type: disc;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality ul ul {
+  list-style-type: square;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality ol {
+  list-style-type: decimal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality li section,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality li {
+  margin-top: 5px;
+  margin-bottom: 5px;
+  line-height: 26px;
+  text-align: left;
+  color: rgb(1, 1,1);
+  font-weight: 500;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality blockquote {
+  display: block;
+  font-size: 0.9em;
+  overflow: auto;
+  overflow-scrolling: touch;
+  border-left: 3px solid rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.05);
+  color: #6a737d;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  padding-left: 20px;
+  padding-right: 10px;
+  margin-bottom: 20px;
+  margin-top: 20px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality blockquote p {
+  margin: 0px;
+  color: black;
+  line-height: 26px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .easymde-toc a {
+  border: none;
+  color: black;
+  font-weight: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality a {
+  text-decoration: none;
+  color: #1e6bb8;
+  word-wrap: break-word;
+  font-weight: bold;
+  border-bottom: 1px solid #1e6bb8;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality strong {
+  font-weight: bold;
+  color: black;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality em {
+  font-style: italic;
+  color: black;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality em strong {
+  font-weight: bold;
+  color: black;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality del {
+  font-style: italic;
+  color: black;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality hr {
+  height: 1px;
+  margin: 0;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  border: none;
+  border-top: 1px solid black;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality pre {
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality pre code {
+  display: -webkit-box;
+  font-family: var(--easymde-code-font-family);
+  border-radius: 0px;
+  font-size: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality pre code span {
+  line-height: 26px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality p code,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality li code {
+  font-size: 14px;
+  word-wrap: break-word;
+  padding: 2px 4px;
+  border-radius: 4px;
+  margin: 0 2px;
+  color: #1e6bb8;
+  background-color: rgba(27,31,35,.05);
+  font-family: var(--easymde-code-font-family);
+  word-break: break-all;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality img {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality figure {
+  margin: 0;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality figcaption {
+  margin-top: 5px;
+  text-align: center;
+  color: #888;
+  font-size: 14px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .table-container {
+  overflow-x: auto;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table {
+  display: table;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality tbody {
+  border: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table tr {
+  border: 0;
+  border-top: 1px solid #ccc;
+  background-color: white;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table tr:nth-child(2n) {
+  background-color: #F8F8F8;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table tr th,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table tr td {
+  font-size: 16px;
+  border: 1px solid #ccc;
+  padding: 5px 10px;
+  text-align: left;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table tr th {
+  font-weight: bold;
+  background-color: #f0f0f0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table tr th:nth-of-type(n),
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table tr td:nth-of-type(n) {
+  min-width:85px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .code-snippet__fix {
+  word-wrap: break-word !important;
+  font-size: 14px;
+  margin: 10px 0;
+  display: block;
+  color: #333;
+  position: relative;
+  background-color: rgba(0,0,0,0.03);
+  border: 1px solid #f0f0f0;
+  border-radius: 2px;
+  display: flex;
+  line-height: 20px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .code-snippet__fix pre {
+  margin-bottom: 10px;
+  margin-top: 0px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .code-snippet__fix .code-snippet__line-index {
+  counter-reset: line;
+  flex-shrink: 0;
+  height: 100%;
+  padding: 1em;
+  list-style-type: none;
+  padding: 16px;
+  margin: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .code-snippet__fix .code-snippet__line-index li {
+  list-style-type: none;
+  text-align: right;
+  line-height: 26px;
+  color: black;
+  margin: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .code-snippet__fix .code-snippet__line-index li::before {
+  min-width: 1.5em;
+  text-align: right;
+  left: -2.5em;
+  counter-increment: line;
+  content: counter(line);
+  display: inline;
+  color: rgba(0,0,0,0.3);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .code-snippet__fix pre {
+  overflow-x: auto;
+  padding: 16px;
+  padding-left: 0;
+  white-space: normal;
+  flex: 1;
+  -webkit-overflow-scrolling: touch;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .code-snippet__fix code {
+  text-align: left;
+  font-size: 14px;
+  display: block;
+  white-space: pre;
+  display: flex;
+  position: relative;
+  font-family: var(--easymde-code-font-family);
+  padding: 0px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .footnote-word {
+  color: #1e6bb8;
+  font-weight: bold;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .footnote-ref {
+  color: #1e6bb8;
+  font-weight: bold;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .footnote-item {
+  display: flex;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .footnote-num {
+  display: inline;
+  width: 10%;
+  background: none;
+  font-size: 80%;
+  opacity: 0.6;
+  line-height: 26px;
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family));
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .footnote-item p {
+  display: inline;
+  font-size: 14px;
+  width: 90%;
+  padding: 0px;
+  margin: 0;
+  line-height: 26px;
+  color: black;
+  word-break:break-all;
+  width: calc(100%-50)
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality sub,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality sup {
+  line-height: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .footnotes-sep:before {
+  content: "参考资料";
+  display: block;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .easymde-math-block {
+  display:block;
+  text-align: center;
+  overflow: auto;
+  display: block;
+  -webkit-overflow-scrolling: touch;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .easymde-math-block svg {
+  max-width: 300% !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .imageflow-layer1 {
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  white-space: normal;
+  border: 0px none;
+  padding: 0px;
+  overflow: hidden;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .imageflow-layer2 {
+  white-space: nowrap;
+  width: 100%;
+  overflow-x: scroll;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .imageflow-layer3 {
+  display: inline-block;
+  word-wrap: break-word;
+  white-space: normal;
+  vertical-align: middle;
+  width: 100%;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .imageflow-img {
+  display: inline-block;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .imageflow-caption {
+  text-align: center;
+  margin-top: 0px;
+  padding-top: 0px;
+  color: #888;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .nice-suffix-juejin-container {
+  margin-top: 20px !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality figure a {
+  border: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality figure a img {
+  margin: 0px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality figure {
+  display:flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality figure a {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality figure a + figcaption {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  margin-top: -35px;
+  background: rgba(0,0,0,0.7);
+  color: white;
+  line-height: 35px;
+  z-index: 20;
+}
+
+/* Markdown2Html-style theme: green-vitality. */
+.easymde-rendered-content.easymde-markdown-theme-green-vitality {
+  font-size: 15px;
+  letter-spacing: 0.05em;
+  color:#595959
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality p {
+  margin: 1em 4px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h1 {
+  margin: 1.2em 0 1em;
+  padding: 0;
+  font-weight: bold;
+  color:#35b378;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h2 {
+  bmin-height: 32px;
+  line-height: 32px;
+  border-bottom: solid 1px #000000;
+  color: #35b378;
+  display: inline-block;
+  border-bottom-width: 0px;
+  border-bottom-style: solid;
+  border-color: #35b378;
+  padding-top: 5px;
+  padding-right: 0.5em;
+  padding-left: 0.5em;
+  font-size: 23px;
+  margin: 1em 0 0rem 0;
+  padding: 0.5em 0;
+  text-align: leftt;
+  font-weight: bold;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality h3 {
+  margin: 1.2em 0 1em;
+  padding: 0;
+  font-weight: bold;
+  color: #35b378;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality li section,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality li {
+  margin: 10px 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality blockquote {
+  margin: 10px 5px;
+  border-left: 3px solid #35b378;
+  border-right: 0px solid #35b378;
+  color: #616161;
+  quotes: none;
+  background: #FBF9FD
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality a span {
+  color: #35b378;
+  border-bottom: 1px solid #35b378;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality strong {
+  color:#35b378;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality hr {
+  border: 1px solid #35b378;
+  margin: 1.5em auto;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality p code,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality li code {
+  color: #35b378;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .footnote-word {
+  color: #35b378;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality .footnote-ref {
+  color: #35b378;
+}

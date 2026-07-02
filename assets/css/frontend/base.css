@@ -1,0 +1,136 @@
+.easymde-rendered-content .easymde-toc,
+.easymde-preview .easymde-toc,
+.entry-content .easymde-toc,
+.wp-block-post-content .easymde-toc {
+    margin: 0 0 1.25em;
+    padding: 12px 14px;
+    border: 1px solid #dcdcde;
+    border-radius: 4px;
+    background: #fbfbfc;
+}
+
+.easymde-toc ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.easymde-toc li {
+    margin: 4px 0;
+}
+
+.easymde-toc-level-3 {
+    margin-left: 14px;
+}
+
+.easymde-toc-level-4 {
+    margin-left: 28px;
+}
+
+.easymde-toc a {
+    text-decoration: none;
+}
+
+.easymde-toc a:hover,
+.easymde-toc a:focus {
+    text-decoration: underline;
+}
+
+.easymde-rendered-content .easymde-mermaid,
+.easymde-preview .easymde-mermaid,
+.entry-content .easymde-mermaid,
+.wp-block-post-content .easymde-mermaid {
+    margin: 1.25em 0;
+    overflow-x: auto;
+    text-align: center;
+}
+
+.easymde-mermaid svg {
+    max-width: 100%;
+    height: auto;
+}
+
+.easymde-rendered-content .easymde-math-block,
+.easymde-preview .easymde-math-block,
+.entry-content .easymde-math-block,
+.wp-block-post-content .easymde-math-block {
+    display: block;
+    margin: 1.25em 0;
+    overflow-x: auto;
+    text-align: center;
+}
+
+.easymde-render-error {
+    position: relative;
+    border-color: #b32d2e !important;
+}
+
+.easymde-render-error::after {
+    content: attr(data-easymde-error);
+    display: block;
+    margin-top: 8px;
+    color: #b32d2e;
+    font-size: 12px;
+}
+
+.easymde-rendered-content pre,
+.easymde-preview pre,
+.entry-content pre,
+.wp-block-post-content pre {
+    overflow: auto;
+}
+
+.easymde-rendered-content pre code.hljs,
+.easymde-preview pre code.hljs,
+.entry-content pre code.hljs,
+.wp-block-post-content pre code.hljs {
+    border-radius: 4px;
+}
+
+
+/* Shared EasyMDE rendered content rules migrated from easymde-themes.css. */
+.easymde-rendered-content {
+  --easymde-theme-font-family: inherit;
+  --easymde-code-font-family: "Operator Mono", Consolas, Monaco, Menlo, monospace;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.easymde-rendered-content.easymde-font-overrides,
+.easymde-rendered-content.easymde-font-overrides p,
+.easymde-rendered-content.easymde-font-overrides blockquote,
+.easymde-rendered-content.easymde-font-overrides li,
+.easymde-rendered-content.easymde-font-overrides table,
+.easymde-rendered-content.easymde-font-overrides th,
+.easymde-rendered-content.easymde-font-overrides td,
+.easymde-rendered-content.easymde-font-overrides h1,
+.easymde-rendered-content.easymde-font-overrides h2,
+.easymde-rendered-content.easymde-font-overrides h3,
+.easymde-rendered-content.easymde-font-overrides h4,
+.easymde-rendered-content.easymde-font-overrides h5,
+.easymde-rendered-content.easymde-font-overrides h6,
+.easymde-rendered-content.easymde-font-overrides a,
+.easymde-rendered-content.easymde-font-overrides strong,
+.easymde-rendered-content.easymde-font-overrides em,
+.easymde-rendered-content.easymde-font-overrides figcaption,
+.easymde-rendered-content.easymde-font-overrides .content {
+  font-family: var(--easymde-content-font-family, var(--easymde-theme-font-family)) !important;
+}
+
+.easymde-rendered-content.easymde-font-overrides pre,
+.easymde-rendered-content.easymde-font-overrides code,
+.easymde-rendered-content.easymde-font-overrides kbd,
+.easymde-rendered-content.easymde-font-overrides samp,
+.easymde-rendered-content.easymde-font-overrides pre * {
+  font-family: var(--easymde-code-font-family) !important;
+}
+
+.easymde-rendered-content table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.easymde-rendered-content th,
+.easymde-rendered-content td {
+  padding: 8px 10px;
+  border: 1px solid #dcdcde;
+}

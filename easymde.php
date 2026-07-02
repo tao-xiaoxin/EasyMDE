@@ -5,9 +5,12 @@
  * Description: A standalone WordPress Markdown editor with split-pane live preview.
  * Version: 0.1.7
  * Author: Tao Xiaoxin
+ * Requires at least: 6.0
+ * Requires PHP: 7.4
  * License: Apache-2.0
  * License URI: https://www.apache.org/licenses/LICENSE-2.0
  * Text Domain: easymde
+ * Domain Path: /languages
  */
 
 if (!defined('ABSPATH')) {
@@ -23,6 +26,21 @@ $easymde_autoload = EASYMDE_PLUGIN_DIR . 'vendor/autoload.php';
 if (file_exists($easymde_autoload)) {
     require_once $easymde_autoload;
 }
+
+spl_autoload_register(
+    function ($class) {
+        $prefix = 'EasyMDE\\';
+        if (0 !== strpos($class, $prefix)) {
+            return;
+        }
+
+        $relative_class = substr($class, strlen($prefix));
+        $file = EASYMDE_PLUGIN_DIR . 'src/' . str_replace('\\', '/', $relative_class) . '.php';
+        if (file_exists($file)) {
+            require_once $file;
+        }
+    }
+);
 
 require_once EASYMDE_PLUGIN_DIR . 'includes/class-easymde-plugin.php';
 

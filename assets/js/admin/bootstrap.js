@@ -711,6 +711,10 @@
         }
     }
 
+    function applyArticleThemeLink() {
+        themeManager.applyArticleThemeLink(themeOptions, renderState, findById, document);
+    }
+
     function applyRenderState($preview) {
         var preview = $preview[0];
         var markdownClass = renderState.markdownTheme === 'custom'
@@ -737,6 +741,7 @@
 
         syncThemeFields();
         syncFontControls();
+        applyArticleThemeLink();
         applyCodeThemeLink();
         setCustomCssStyle(renderState.markdownTheme === 'custom' ? selectedCustomCss() : '');
     }

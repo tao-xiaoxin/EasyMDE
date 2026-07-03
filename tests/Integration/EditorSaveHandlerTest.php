@@ -285,6 +285,62 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_qinghe_zhusha_save_persists_theme_and_font_defaults()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+            )
+        );
+
+        wp_set_current_user($user_id);
+
+        $previous_post = $_POST;
+        $_POST = array(
+            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+            'easymde_enabled' => '1',
+            'easymde_markdown' => '# Qinghe Zhusha',
+            'easymde_markdown_theme' => 'qinghe-zhusha',
+            'easymde_code_theme' => 'atom-one-dark',
+            'easymde_code_mac_style' => '1',
+            'easymde_custom_font' => 'optima',
+            'easymde_windows_font' => 'microsoft-yahei',
+            'easymde_apple_font' => 'pingfang-sc-light',
+            'easymde_serif_font' => 'yes',
+        );
+
+        try {
+            $repository = $this->theme_state_repository();
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $repository,
+                function () {
+                    return true;
+                }
+            );
+            $handler->save_post_meta($post_id, get_post($post_id), true);
+
+            $this->assertSame('qinghe-zhusha', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
+            $this->assertSame('qinghe-zhusha-helvetica', get_post_meta($post_id, PostDocument::META_CUSTOM_FONT, true));
+            $this->assertSame('qinghe-zhusha-no-windows', get_post_meta($post_id, PostDocument::META_WINDOWS_FONT, true));
+            $this->assertSame('qinghe-zhusha-no-apple', get_post_meta($post_id, PostDocument::META_APPLE_FONT, true));
+            $this->assertSame('sans-serif-only', get_post_meta($post_id, PostDocument::META_SERIF_FONT, true));
+
+            $state = $repository->get_theme_state($post_id);
+
+            $this->assertSame('qinghe-zhusha', $state['markdownTheme']);
+            $this->assertSame('qinghe-zhusha-helvetica', $state['customFont']);
+            $this->assertSame('qinghe-zhusha-no-windows', $state['windowsFont']);
+            $this->assertSame('qinghe-zhusha-no-apple', $state['appleFont']);
+            $this->assertSame('sans-serif-only', $state['serifFont']);
+            $this->assertSame('Helvetica, Arial, sans-serif', $state['fontFamily']);
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
     public function throwing_wp_die_handler()
     {
         return array($this, 'throw_wp_die_exception');

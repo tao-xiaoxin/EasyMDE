@@ -47,4 +47,26 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringContainsString('<table>', $html);
         $this->assertStringContainsString('<code', $html);
     }
+
+    public function test_qinghe_zhusha_wraps_tables_and_images_without_mdnice_markup()
+    {
+        $html = MarkdownRenderer::render(
+            "# Title\n\n" .
+            "![Qinghe caption](https://example.test/qinghe.png)\n\n" .
+            "[Example](https://example.test)\n\n" .
+            "| Name | Value |\n| --- | --- |\n| One | Two |",
+            'qinghe-zhusha'
+        );
+
+        $this->assertStringContainsString('<section class="easymde-table-container"><table>', $html);
+        $this->assertStringNotContainsString('<section class="table-container"><table>', $html);
+        $this->assertStringContainsString('<figure><img', $html);
+        $this->assertStringContainsString('src="https://example.test/qinghe.png"', $html);
+        $this->assertStringContainsString('alt="Qinghe caption"', $html);
+        $this->assertStringContainsString('<figcaption>Qinghe caption</figcaption>', $html);
+        $this->assertStringContainsString('<a href="https://example.test">Example</a>', $html);
+        $this->assertStringNotContainsString('class="prefix"', $html);
+        $this->assertStringNotContainsString('class="content"', $html);
+        $this->assertStringNotContainsString('class="footnote-ref"', $html);
+    }
 }

@@ -36,9 +36,47 @@
         return renderState.scopedCustomCss || '';
     }
 
+    function applyStylesheetLink(documentRef, id, href) {
+        var link;
+
+        if (!documentRef || !href) {
+            return null;
+        }
+
+        link = documentRef.getElementById(id);
+
+        if (!link) {
+            link = documentRef.createElement('link');
+            link.id = id;
+            link.rel = 'stylesheet';
+            documentRef.head.appendChild(link);
+        }
+
+        if (link.getAttribute('href') !== href) {
+            link.setAttribute('href', href);
+        }
+
+        return link;
+    }
+
+    function applyArticleThemeLink(themeOptions, renderState, findById, documentRef) {
+        var articleTheme;
+        var href;
+
+        if (!themeOptions || !renderState || renderState.markdownTheme === 'custom') {
+            return null;
+        }
+
+        articleTheme = findById(themeOptions.markdownThemes || [], renderState.markdownTheme);
+        href = articleTheme && articleTheme.cssUrl ? articleTheme.cssUrl : '';
+
+        return applyStylesheetLink(documentRef || window.document, 'easymde-article-theme-css', href);
+    }
+
     window.EasyMDEThemeManager = {
         normalizeRenderState: normalizeRenderState,
         selectedCustomCssItem: selectedCustomCssItem,
-        selectedCustomCss: selectedCustomCss
+        selectedCustomCss: selectedCustomCss,
+        applyArticleThemeLink: applyArticleThemeLink
     };
 })(window);

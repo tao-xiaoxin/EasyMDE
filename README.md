@@ -108,6 +108,20 @@ npm install
 
 `npm install` runs the local runtime-asset preparation step for Highlight.js, Mermaid, and KaTeX assets under `assets/vendor/`. See [Development](docs/DEVELOPMENT.md) and [Testing and Release](docs/TESTING_AND_RELEASE.md) before changing runtime code, release packaging, or tests.
 
+## Support EasyMDE
+
+<p align="center">
+  If EasyMDE improves your WordPress writing flow, a star helps more writers discover the project.
+</p>
+
+## Star History
+
+<p align="center">
+  <a href="https://star-history.com/#tao-xiaoxin/EasyMDE&Date">
+    <img src="https://api.star-history.com/svg?repos=tao-xiaoxin/EasyMDE&type=Date" alt="EasyMDE Star History Chart" width="720" />
+  </a>
+</p>
+
 ## License
 
 EasyMDE is licensed under [Apache-2.0](LICENSE).

@@ -401,11 +401,6 @@ final class ThemeStateRepository {
 					'fontFamily' => 'Inter',
 				),
 				array(
-					'id'         => 'yamabuki-inter',
-					'label'      => __( 'Inter (yamabuki)', 'easymde' ),
-					'fontFamily' => 'Inter',
-				),
-				array(
 					'id'         => 'tech-blue-optima',
 					'label'      => __( 'Optima (tech-blue)', 'easymde' ),
 					'fontFamily' => 'Optima',
@@ -460,11 +455,6 @@ final class ThemeStateRepository {
 				array(
 					'id'         => 'cupid-busy-microsoft-yahei',
 					'label'      => __( 'Microsoft YaHei (cupid-busy)', 'easymde' ),
-					'fontFamily' => '"Microsoft YaHei"',
-				),
-				array(
-					'id'         => 'yamabuki-microsoft-yahei',
-					'label'      => __( 'Microsoft YaHei (yamabuki)', 'easymde' ),
 					'fontFamily' => '"Microsoft YaHei"',
 				),
 				array(
@@ -588,7 +578,7 @@ final class ThemeStateRepository {
 			return true;
 		}
 
-		foreach ( array( 'orange-heart', 'red-crimson', 'rose-purple', 'ningye-purple', 'cupid-busy', 'yamabuki', 'tech-blue' ) as $theme_id ) {
+		foreach ( array( 'orange-heart', 'red-crimson', 'rose-purple', 'ningye-purple', 'cupid-busy', 'tech-blue' ) as $theme_id ) {
 			$defaults = $this->article_themes->font_defaults( $theme_id );
 			if (
 				$defaults

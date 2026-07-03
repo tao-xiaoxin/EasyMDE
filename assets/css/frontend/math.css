@@ -7,14 +7,3 @@
     overflow-x: auto;
     text-align: center;
 }
-
-.easymde-rendered-content .easymde-math-inline,
-.easymde-preview .easymde-math-inline,
-.entry-content .easymde-math-inline,
-.wp-block-post-content .easymde-math-inline {
-    display: inline-block;
-    max-width: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
-    vertical-align: middle;
-}

@@ -26,9 +26,8 @@ final class MarkdownRenderer {
 		$markdown = (string) $markdown;
 		$theme    = sanitize_key( (string) $theme );
 		$math     = array();
-		$context  = array();
 		$markdown = self::extract_math( $markdown, $math );
-		$markdown = ThemeMarkupTransformer::normalize_markdown( $markdown, $theme, $context );
+		$markdown = ThemeMarkupTransformer::normalize_markdown( $markdown, $theme );
 
 		$converter = new GithubFlavoredMarkdownConverter(
 			array(
@@ -41,7 +40,7 @@ final class MarkdownRenderer {
 
 		$html = self::restore_math( wp_kses_post( (string) $converter->convert( $markdown ) ), $math );
 
-		return self::post_process_html( $html, $theme, $context );
+		return self::post_process_html( $html, $theme );
 	}
 
 	private static function extract_math( $markdown, array &$math ) {
@@ -124,9 +123,9 @@ final class MarkdownRenderer {
 		);
 	}
 
-	private static function post_process_html( $html, $theme = '', array $context = array() ) {
+	private static function post_process_html( $html, $theme = '' ) {
 		$html = TocGenerator::add_heading_ids_and_toc( $html );
-		$html = ThemeMarkupTransformer::transform( $html, $theme, $context );
+		$html = ThemeMarkupTransformer::transform( $html, $theme );
 
 		return wp_kses_post( $html );
 	}

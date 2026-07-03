@@ -4,6 +4,7 @@ namespace EasyMDE\Content;
 
 use DOMDocument;
 use DOMElement;
+use DOMNode;
 use DOMText;
 use DOMXPath;
 
@@ -13,11 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class ThemeMarkupTransformer {
 
-	public static function normalize_markdown( $markdown, $theme, &$context = null ) {
-		if ( ! is_array( $context ) ) {
-			$context = array();
-		}
-
+	public static function normalize_markdown( $markdown, $theme ) {
 		if ( 'cupid-busy' !== sanitize_key( (string) $theme ) ) {
 			return $markdown;
 		}
@@ -25,13 +22,10 @@ final class ThemeMarkupTransformer {
 		$markdown = str_replace( array( "\r\n", "\r" ), "\n", (string) $markdown );
 		$markdown = preg_replace_callback(
 			'/!\[([^\]]*)\]\((\S+)\s+=([0-9]{1,3})%x\)/',
-			function ( $matches ) use ( &$context ) {
+			function ( $matches ) {
 				$width = max( 1, min( 100, (int) $matches[3] ) );
-				$token = self::create_context_token( 'easymde-mdnice-width' );
 
-				$context['mdnice_image_widths'][ $token ] = $width;
-
-				return '![' . $matches[1] . '](' . $matches[2] . ' "' . $token . '")';
+				return '![EASYMDE_MDNICE_WIDTH_' . $width . '](' . $matches[2] . ')';
 			},
 			$markdown
 		);
@@ -66,7 +60,7 @@ final class ThemeMarkupTransformer {
 		return implode( "\n", $normalized );
 	}
 
-	public static function transform( $html, $theme, array $context = array() ) {
+	public static function transform( $html, $theme ) {
 		$theme = sanitize_key( (string) $theme );
 		if ( ! self::theme_uses_markdown2html_markup( $theme ) ) {
 			return $html;
@@ -83,7 +77,6 @@ final class ThemeMarkupTransformer {
 			|| ( 'cupid-busy' === $theme && false !== strpos( $html, ':::' ) )
 			|| ( 'red-crimson' === $theme && ( false !== stripos( $html, '<table' ) || false !== stripos( $html, '<blockquote' ) ) )
 			|| ( 'ningye-purple' === $theme && false !== stripos( $html, '<table' ) )
-			|| ( 'yamabuki' === $theme && false !== stripos( $html, '<table' ) )
 			|| ( 'rose-purple' === $theme && false !== stripos( $html, '<blockquote' ) );
 
 		if ( ! $needs_markup ) {
@@ -112,12 +105,7 @@ final class ThemeMarkupTransformer {
 
 		if ( 'cupid-busy' === $theme ) {
 			self::wrap_cupid_busy_containers( $document, $root );
-			self::apply_mdnice_image_dimensions(
-				$root,
-				isset( $context['mdnice_image_widths'] ) && is_array( $context['mdnice_image_widths'] )
-					? $context['mdnice_image_widths']
-					: array()
-			);
+			self::apply_mdnice_image_dimensions( $root );
 			self::restore_unparsed_strong_markers( $document, $root );
 		}
 
@@ -135,7 +123,6 @@ final class ThemeMarkupTransformer {
 			self::wrap_theme_tables( $document, $root );
 			$footnotes = self::convert_theme_links_to_footnotes( $document, $root, 'Reference', true, false, '参考资料' );
 		} elseif ( 'yamabuki' === $theme ) {
-			self::wrap_theme_tables( $document, $root );
 			$footnotes = self::convert_theme_links_to_footnotes( $document, $root, '参考资料', false, true );
 			self::wrap_theme_links( $document, $root );
 		} else {
@@ -239,35 +226,21 @@ final class ThemeMarkupTransformer {
 		}
 	}
 
-	private static function create_context_token( $prefix ) {
-		try {
-			$suffix = bin2hex( random_bytes( 16 ) );
-		} catch ( \Exception $exception ) {
-			$suffix = md5( uniqid( '', true ) . microtime( true ) );
-		}
-
-		return sanitize_key( (string) $prefix ) . '-' . $suffix;
-	}
-
-	private static function apply_mdnice_image_dimensions( DOMElement $root, array $widths ) {
-		if ( empty( $widths ) ) {
-			return;
-		}
-
+	private static function apply_mdnice_image_dimensions( DOMElement $root ) {
 		$images = iterator_to_array( $root->getElementsByTagName( 'img' ) );
 		foreach ( $images as $image ) {
 			if ( ! ( $image instanceof DOMElement ) ) {
 				continue;
 			}
 
-			$token = (string) $image->getAttribute( 'title' );
-			if ( ! isset( $widths[ $token ] ) ) {
+			$alt = (string) $image->getAttribute( 'alt' );
+			if ( ! preg_match( '/^EASYMDE_MDNICE_WIDTH_([0-9]{1,3})$/', $alt, $matches ) ) {
 				continue;
 			}
 
-			$width = max( 1, min( 100, (int) $widths[ $token ] ) );
+			$width = max( 1, min( 100, (int) $matches[1] ) );
 			$image->setAttribute( 'width', $width . '%' );
-			$image->removeAttribute( 'title' );
+			$image->setAttribute( 'alt', '' );
 		}
 	}
 
@@ -480,13 +453,18 @@ final class ThemeMarkupTransformer {
 	}
 
 	private static function convert_theme_links_to_footnotes( DOMDocument $document, DOMElement $root, $reference_label, $insert_heading, $require_title, $separator_label = null ) {
-		$reference_label = (string) $reference_label;
-		$separator_text  = null === $separator_label ? $reference_label : (string) $separator_label;
-		$links           = iterator_to_array( $root->getElementsByTagName( 'a' ) );
-		$footnotes       = array();
+		$reference_label   = (string) $reference_label;
+		$separator_text    = null === $separator_label ? $reference_label : (string) $separator_label;
+		$links             = iterator_to_array( $root->getElementsByTagName( 'a' ) );
+		$footnotes         = array();
+		$reference_heading = self::find_reference_heading( $root, $reference_label );
 
 		foreach ( $links as $link ) {
 			if ( ! ( $link instanceof DOMElement ) || self::element_has_ancestor_class( $link, 'footnotes' ) ) {
+				continue;
+			}
+
+			if ( $reference_heading && self::element_is_after_root_child( $link, $reference_heading, $root ) ) {
 				continue;
 			}
 
@@ -537,10 +515,9 @@ final class ThemeMarkupTransformer {
 			return '';
 		}
 
-		if ( $insert_heading ) {
+		if ( $insert_heading && ! $reference_heading ) {
 			$heading = $document->createElement( 'h2' );
-			$heading->setAttribute( 'class', 'easymde-generated-reference-heading' );
-			$prefix = $document->createElement( 'span' );
+			$prefix  = $document->createElement( 'span' );
 			$prefix->setAttribute( 'class', 'prefix' );
 			$content = $document->createElement( 'span' );
 			$content->setAttribute( 'class', 'content' );
@@ -585,6 +562,16 @@ final class ThemeMarkupTransformer {
 			'$1$2',
 			$html
 		);
+	}
+
+	private static function find_reference_heading( DOMElement $root, $reference_label ) {
+		foreach ( $root->getElementsByTagName( 'h2' ) as $heading ) {
+			if ( $heading instanceof DOMElement && trim( (string) $heading->textContent ) === $reference_label ) {
+				return $heading;
+			}
+		}
+
+		return null;
 	}
 
 	private static function direct_child_with_class( DOMElement $element, $class_name ) {
@@ -653,6 +640,39 @@ final class ThemeMarkupTransformer {
 			}
 
 			$parent = $parent->parentNode;
+		}
+
+		return false;
+	}
+
+	private static function element_is_after_root_child( DOMElement $element, DOMElement $anchor, DOMElement $root ) {
+		$seen_anchor = false;
+		foreach ( $root->childNodes as $child ) {
+			if ( $child === $anchor ) {
+				$seen_anchor = true;
+				continue;
+			}
+
+			if ( ! $seen_anchor ) {
+				continue;
+			}
+
+			if ( $child === $element || self::node_contains( $child, $element ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static function node_contains( DOMNode $container, DOMNode $target ) {
+		$node = $target;
+		while ( $node instanceof DOMNode ) {
+			if ( $node === $container ) {
+				return true;
+			}
+
+			$node = $node->parentNode;
 		}
 
 		return false;

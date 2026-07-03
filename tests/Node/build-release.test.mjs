@@ -303,7 +303,6 @@ test('release build fails when required runtime assets or templates are missing'
     rmSync(join(root, 'assets/js/admin/media-picker.js'), { force: true });
     rmSync(join(root, 'assets/js/frontend/bootstrap.js'), { force: true });
     rmSync(join(root, 'assets/images/tech-blue-code-window.svg'), { force: true });
-    rmSync(join(root, 'assets/images/yamabuki-code-window.svg'), { force: true });
     rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
 
     const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
@@ -316,7 +315,6 @@ test('release build fails when required runtime assets or templates are missing'
     assert.ok(missing.includes('assets/js/admin/media-picker.js'));
     assert.ok(missing.includes('assets/js/frontend/bootstrap.js'));
     assert.ok(missing.includes('assets/images/tech-blue-code-window.svg'));
-    assert.ok(missing.includes('assets/images/yamabuki-code-window.svg'));
     assert.ok(missing.includes('THIRD-PARTY-NOTICES.md'));
 
     const result = spawnSync(process.execPath, [scriptPath, '--root', root], {

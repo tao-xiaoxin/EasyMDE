@@ -234,9 +234,6 @@ msgstr "Inter（橙心）"
 msgid "Inter (red-crimson)"
 msgstr "Inter（红绯）"
 
-msgid "Inter (yamabuki)"
-msgstr "Inter（山吹）"
-
 msgid "Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or Command+Option+C."
 msgstr "%1$s（%2$s）的快捷键格式无效。请使用 Ctrl+B 或 Command+Option+C 这类组合。"
 
@@ -302,9 +299,6 @@ msgstr "微软雅黑（蔷薇紫）"
 
 msgid "Microsoft YaHei (tech-blue)"
 msgstr "微软雅黑（科技蓝）"
-
-msgid "Microsoft YaHei (yamabuki)"
-msgstr "微软雅黑（山吹）"
 
 msgid "Minimal black"
 msgstr "极简黑"

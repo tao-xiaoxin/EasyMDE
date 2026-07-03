@@ -9,19 +9,19 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Domain: easymde\n"
 
-#: src/Rest/CustomCssController.php:107
+#: src/Rest/CustomCssController.php:105
 msgid "A custom CSS style with this name already exists."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:236
+#: src/Admin/AdminAssets.php:232
 msgid "A newer local draft is available."
 msgstr ""
 
-#: src/Admin/PostModeController.php:52 src/Admin/PostModeController.php:53
+#: src/Admin/PostModeController.php:49 src/Admin/PostModeController.php:50
 msgid "Add EasyMDE Page"
 msgstr ""
 
-#: src/Admin/PostModeController.php:43 src/Admin/PostModeController.php:44
+#: src/Admin/PostModeController.php:40 src/Admin/PostModeController.php:41
 msgid "Add EasyMDE Post"
 msgstr ""
 
@@ -29,63 +29,63 @@ msgstr ""
 msgid "Admin behavior"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:217
+#: src/Admin/AdminAssets.php:213
 msgid "Appearance"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:232
+#: src/Admin/AdminAssets.php:228
 msgid "Apple font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:220
+#: src/Admin/AdminAssets.php:216
 msgid "Article theme"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:18
+#: src/Theme/CodeThemeRegistry.php:17
 msgid "Atom One Dark"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:19
+#: src/Theme/CodeThemeRegistry.php:18
 msgid "Atom One Light"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:21
+#: src/Theme/ArticleThemeRegistry.php:20
 msgid "Blue ying"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:105
+#: src/Support/ToolbarRegistry.php:98
 msgid "Bold"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:225
+#: src/Admin/AdminAssets.php:221
 msgid "CSS name"
 msgstr ""
 
-#: src/Rest/CustomCssController.php:93
+#: src/Rest/CustomCssController.php:91
 msgid "CSS name and CSS content are required."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:228
+#: src/Admin/AdminAssets.php:224
 msgid "CSS save failed."
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:17
+#: src/Theme/ArticleThemeRegistry.php:16
 msgid "Chazi purple"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:246
+#: src/Admin/AdminAssets.php:242
 msgid "Clipboard access is not available in this browser."
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:396
+#: src/Theme/ThemeStateRepository.php:420
 msgid "Cochin"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:245
+#: src/Support/ToolbarRegistry.php:238
 msgid "Code fence"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:221
+#: src/Admin/AdminAssets.php:217
 msgid "Code theme"
 msgstr ""
 
@@ -93,23 +93,23 @@ msgstr ""
 msgid "Command"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:244
+#: src/Admin/AdminAssets.php:240
 msgid "Copied preview for WeChat."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:245
+#: src/Admin/AdminAssets.php:241
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:243
+#: src/Admin/AdminAssets.php:239
 msgid "Copy preview for WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:242 src/Support/ToolbarRegistry.php:297
+#: src/Admin/AdminAssets.php:238 src/Support/ToolbarRegistry.php:290
 msgid "Copy to WeChat"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:34
+#: src/Theme/ArticleThemeRegistry.php:33
 msgid "Cupid busy"
 msgstr ""
 
@@ -117,64 +117,65 @@ msgstr ""
 msgid "Current preset"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:223
+#: src/Admin/AdminAssets.php:219
 msgid "Custom CSS"
 msgstr ""
 
 #. translators: %s: blocked CSS feature.
-#: src/Theme/CustomCssPolicy.php:213
+#: src/Theme/CustomCssPolicy.php:204
 #, php-format
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr ""
 
 #. translators: %s: CSS parser error message.
-#: src/Theme/CustomCssPolicy.php:88
+#: src/Theme/CustomCssPolicy.php:84
 #, php-format
 msgid "Custom CSS could not be parsed safely: %s"
 msgstr ""
 
-#: src/Theme/CustomCssPolicy.php:50
+#: src/Theme/CustomCssPolicy.php:46
 msgid "Custom CSS is too large."
 msgstr ""
 
-#: src/Rest/CustomCssController.php:139
+#: src/Rest/CustomCssController.php:136
 msgid "Custom CSS style not found."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:230
+#: src/Admin/AdminAssets.php:226
 msgid "Custom font"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:29
+#: src/Theme/ArticleThemeRegistry.php:28
 msgid "Cute green"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:215
+#: src/Admin/AdminAssets.php:211
 msgid "Dark mode"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:14
+#: src/Theme/ArticleThemeRegistry.php:13
 msgid "Default theme"
 msgstr ""
 
-#: templates/admin/settings-page.php:88 templates/admin/settings-page.php:101
+#. translators: %s: default keyboard shortcut.
+#: templates/admin/settings-page.php:93 templates/admin/settings-page.php:107
 #, php-format
 msgid "Default: %s"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:238
+#: src/Admin/AdminAssets.php:234
 msgid "Discard draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:240
+#: src/Admin/AdminAssets.php:236
 msgid "Draft discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:239
+#: src/Admin/AdminAssets.php:235
 msgid "Draft restored."
 msgstr ""
 
-#: src/Admin/SettingsPage.php:35 src/Admin/SettingsPage.php:36
+#: src/Admin/SettingsPage.php:32 src/Admin/SettingsPage.php:33
 #: templates/admin/settings-page.php:13
 msgid "EasyMDE"
 msgstr ""
@@ -185,102 +186,102 @@ msgid ""
 "screens."
 msgstr ""
 
-#: src/Admin/EditorSaveHandler.php:138
+#: src/Admin/EditorSaveHandler.php:136
 msgid ""
 "EasyMDE cannot save this post because Markdown rendering is unavailable. "
 "Install Composer dependencies and try again."
 msgstr ""
 
-#: src/Admin/EditorSaveHandler.php:139
+#: src/Admin/EditorSaveHandler.php:137
 msgid "EasyMDE renderer unavailable"
 msgstr ""
 
-#: src/Admin/EditorScreen.php:62
+#: src/Admin/EditorScreen.php:59
 msgid ""
 "EasyMDE requires Composer dependencies before Markdown can be rendered or "
 "saved. Run composer install for development or include vendor/ in release "
 "packages."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:213
+#: src/Admin/AdminAssets.php:209
 msgid "Enter immersive writing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:214
+#: src/Admin/AdminAssets.php:210
 msgid "Exit immersive writing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:218
+#: src/Admin/AdminAssets.php:214
 msgid "Font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:234
+#: src/Admin/AdminAssets.php:230
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:33
+#: src/Theme/ArticleThemeRegistry.php:32
 msgid "Frontend peak"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:30
+#: src/Theme/ArticleThemeRegistry.php:29
 msgid "Fullstack blue"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:25
+#: src/Theme/ArticleThemeRegistry.php:24
 msgid "Geek black"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:394
+#: src/Theme/ThemeStateRepository.php:410
 msgid "Georgia"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:16
+#: src/Theme/CodeThemeRegistry.php:15
 msgid "GitHub"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:17
+#: src/Theme/CodeThemeRegistry.php:16
 msgid "GitHub Dark"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:19
+#: src/Theme/ArticleThemeRegistry.php:18
 msgid "Green vitality"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:24
+#: src/Theme/ArticleThemeRegistry.php:23
 msgid "Grid black"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:161
+#: src/Support/ToolbarRegistry.php:154
 msgid "Heading 1"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:162
+#: src/Support/ToolbarRegistry.php:155
 msgid "Heading 2"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:163
+#: src/Support/ToolbarRegistry.php:156
 msgid "Heading 3"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:164
+#: src/Support/ToolbarRegistry.php:157
 msgid "Heading 4"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:165
+#: src/Support/ToolbarRegistry.php:158
 msgid "Heading 5"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:166
+#: src/Support/ToolbarRegistry.php:159
 msgid "Heading 6"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:219
+#: src/Admin/AdminAssets.php:215
 msgid "Headings"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:397
+#: src/Theme/ThemeStateRepository.php:425
 msgid "Helvetica Neue"
 msgstr ""
 
@@ -288,66 +289,67 @@ msgstr ""
 msgid "Hybrid icon toolbar"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:284
+#: src/Support/ToolbarRegistry.php:277
 msgid "Image"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:230
+#: src/Support/ToolbarRegistry.php:223
 msgid "Inline code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:212
+#: src/Admin/AdminAssets.php:208
 msgid "Insert Media"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:392
+#: src/Theme/ThemeStateRepository.php:400
 msgid "Inter (cupid-busy)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:391
+#: src/Theme/ThemeStateRepository.php:395
 msgid "Inter (ningye-purple)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:388
+#: src/Theme/ThemeStateRepository.php:380
 msgid "Inter (orange-heart)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:389
+#: src/Theme/ThemeStateRepository.php:385
 msgid "Inter (red-crimson)"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:120
+#. translators: 1: toolbar command label, 2: platform label.
+#: src/Admin/SettingsPage.php:114
 #, php-format
 msgid ""
 "Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or "
 "Command+Option+C."
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:120
+#: src/Support/ToolbarRegistry.php:113
 msgid "Italic"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:22
+#: src/Theme/ArticleThemeRegistry.php:21
 msgid "Lanqing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:216
+#: src/Admin/AdminAssets.php:212
 msgid "Light mode"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:271
+#: src/Support/ToolbarRegistry.php:264
 msgid "Link"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:209
+#: src/Admin/AdminAssets.php:205
 msgid "Live preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:235
+#: src/Admin/AdminAssets.php:231
 msgid "Local draft saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:222
+#: src/Admin/AdminAssets.php:218
 msgid "Mac code frame"
 msgstr ""
 
@@ -355,16 +357,16 @@ msgstr ""
 msgid "Markdown"
 msgstr ""
 
-#: src/Rest/PreviewController.php:80
+#: src/Rest/PreviewController.php:77
 msgid "Markdown preview content is too large."
 msgstr ""
 
-#: src/Rest/PreviewController.php:88
+#: src/Rest/PreviewController.php:85
 msgid ""
 "Markdown rendering is unavailable because Composer dependencies are missing."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:208
+#: src/Admin/AdminAssets.php:204
 msgid "Markdown source"
 msgstr ""
 
@@ -372,63 +374,63 @@ msgstr ""
 msgid "Markdown toolbar"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:15
+#: src/Theme/ArticleThemeRegistry.php:14
 msgid "Markdown2Html default"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:258
+#: src/Support/ToolbarRegistry.php:251
 msgid "Math block"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:400
+#: src/Theme/ThemeStateRepository.php:432
 msgid "Microsoft YaHei"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:405
+#: src/Theme/ThemeStateRepository.php:457
 msgid "Microsoft YaHei (cupid-busy)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:404
+#: src/Theme/ThemeStateRepository.php:452
 msgid "Microsoft YaHei (ningye-purple)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:401
+#: src/Theme/ThemeStateRepository.php:437
 msgid "Microsoft YaHei (orange-heart)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:402
+#: src/Theme/ThemeStateRepository.php:442
 msgid "Microsoft YaHei (red-crimson)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:403
+#: src/Theme/ThemeStateRepository.php:447
 msgid "Microsoft YaHei (rose-purple)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:406
+#: src/Theme/ThemeStateRepository.php:462
 msgid "Microsoft YaHei (tech-blue)"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:31
+#: src/Theme/ArticleThemeRegistry.php:30
 msgid "Minimal black"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:20
+#: src/Theme/CodeThemeRegistry.php:19
 msgid "Monokai"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:224
+#: src/Admin/AdminAssets.php:220
 msgid "Named custom CSS"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:18
+#: src/Theme/ArticleThemeRegistry.php:17
 msgid "Nenqing green"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:27
+#: src/Theme/ArticleThemeRegistry.php:26
 msgid "Ningye purple"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:419
+#: src/Theme/ThemeStateRepository.php:511
 msgctxt "serif font fallback option"
 msgid "No"
 msgstr ""
@@ -437,15 +439,15 @@ msgstr ""
 msgid "No activation redirect and no unrelated admin-page redirect."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:229
+#: src/Admin/AdminAssets.php:225
 msgid "No custom CSS saved yet."
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:386
+#: src/Theme/ThemeStateRepository.php:370
 msgid "No custom font"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:387
+#: src/Theme/ThemeStateRepository.php:375
 msgid "Optima"
 msgstr ""
 
@@ -453,19 +455,19 @@ msgstr ""
 msgid "Optima (rose-purple)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:393
+#: src/Theme/ThemeStateRepository.php:405
 msgid "Optima (tech-blue)"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:32
+#: src/Theme/ArticleThemeRegistry.php:31
 msgid "Orange blue"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:16
+#: src/Theme/ArticleThemeRegistry.php:15
 msgid "Orange heart"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:216
+#: src/Support/ToolbarRegistry.php:209
 msgid "Ordered list"
 msgstr ""
 
@@ -473,27 +475,27 @@ msgstr ""
 msgid "Output actions"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:150
+#: src/Support/ToolbarRegistry.php:143
 msgid "Paragraph"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:409
+#: src/Theme/ThemeStateRepository.php:469
 msgid "PingFang SC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:411
+#: src/Theme/ThemeStateRepository.php:479
 msgid "PingFang SC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:412
+#: src/Theme/ThemeStateRepository.php:484
 msgid "PingFang TC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:413
+#: src/Theme/ThemeStateRepository.php:489
 msgid "PingFang TC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:410
+#: src/Theme/ThemeStateRepository.php:474
 msgid "PingFangSC-regular"
 msgstr ""
 
@@ -501,43 +503,43 @@ msgstr ""
 msgid "Preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:211
+#: src/Admin/AdminAssets.php:207
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:188
+#: src/Support/ToolbarRegistry.php:181
 msgid "Quote"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:20
+#: src/Theme/ArticleThemeRegistry.php:19
 msgid "Red crimson"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:241 src/Frontend/FrontendAssets.php:66
+#: src/Admin/AdminAssets.php:237 src/Frontend/FrontendAssets.php:63
 msgid "Rendering failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:237
+#: src/Admin/AdminAssets.php:233
 msgid "Restore draft"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:26
+#: src/Theme/ArticleThemeRegistry.php:25
 msgid "Rose purple"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:226
+#: src/Admin/AdminAssets.php:222
 msgid "Save CSS"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:92
+#: src/Support/ToolbarRegistry.php:85
 msgid "Save post"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:227
+#: src/Admin/AdminAssets.php:223
 msgid "Saved CSS."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:233
+#: src/Admin/AdminAssets.php:229
 msgid "Serif font"
 msgstr ""
 
@@ -545,7 +547,8 @@ msgstr ""
 msgid "Server renderer"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:132
+#. translators: 1: first toolbar command label, 2: second toolbar command label, 3: shortcut, 4: platform label.
+#: src/Admin/SettingsPage.php:128
 #, php-format
 msgid "Shortcut conflict: %1$s and %2$s both use %3$s on %4$s."
 msgstr ""
@@ -554,11 +557,11 @@ msgstr ""
 msgid "Shortcut settings"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:210
+#: src/Admin/AdminAssets.php:206
 msgid "Start writing Markdown to preview the article."
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:135
+#: src/Support/ToolbarRegistry.php:128
 msgid "Strikethrough"
 msgstr ""
 
@@ -566,17 +569,17 @@ msgstr ""
 msgid "Supported post types"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:28
+#: src/Theme/ArticleThemeRegistry.php:27
 msgid "Tech blue"
 msgstr ""
 
-#: src/Theme/CustomCssPolicy.php:63
+#: src/Theme/CustomCssPolicy.php:59
 msgid ""
 "The CSS parser dependency is unavailable. Custom CSS cannot be rendered "
 "safely."
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:395
+#: src/Theme/ThemeStateRepository.php:415
 msgid "Times"
 msgstr ""
 
@@ -592,7 +595,7 @@ msgstr ""
 msgid "Typora-inspired shortcuts"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:202
+#: src/Support/ToolbarRegistry.php:195
 msgid "Unordered list"
 msgstr ""
 
@@ -600,48 +603,48 @@ msgstr ""
 msgid "Use the current Typora-inspired default by leaving the field blank."
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:21
+#: src/Theme/CodeThemeRegistry.php:20
 msgid "VS2015"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:23
+#: src/Theme/CodeThemeRegistry.php:22
 msgid "Wechat inspired"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:236 templates/admin/settings-page.php:61
+#: src/Admin/SettingsPage.php:230 templates/admin/settings-page.php:61
 msgid "Windows / Linux"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:231
+#: src/Admin/AdminAssets.php:227
 msgid "Windows font"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:22
+#: src/Theme/CodeThemeRegistry.php:21
 msgid "Xcode"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:23
+#: src/Theme/ArticleThemeRegistry.php:22
 msgid "Yamabuki"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:416
+#: src/Theme/ThemeStateRepository.php:496
 msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr ""
 
-#: src/Admin/PostModeController.php:67
+#: src/Admin/PostModeController.php:64
 msgid "You are not allowed to create this EasyMDE post."
 msgstr ""
 
-#: src/Support/Capabilities.php:53
+#: src/Support/Capabilities.php:48
 msgid "You are not allowed to perform this EasyMDE action."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:247
+#: src/Admin/AdminAssets.php:243
 msgid "alt text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:248
+#: src/Admin/AdminAssets.php:244
 msgid "image"
 msgstr ""
 
@@ -655,18 +658,18 @@ msgid ""
 "before rendering or saving EasyMDE Markdown."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:249
+#: src/Admin/AdminAssets.php:245
 msgid "link text"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:236 templates/admin/settings-page.php:62
+#: src/Admin/SettingsPage.php:230 templates/admin/settings-page.php:62
 msgid "macOS"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:418
+#: src/Theme/ThemeStateRepository.php:506
 msgid "sans-serif"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:417
+#: src/Theme/ThemeStateRepository.php:501
 msgid "serif"
 msgstr ""

@@ -13,207 +13,198 @@ use Sabberworm\CSS\Settings;
 use Sabberworm\CSS\Value\URL;
 use WP_Error;
 
-if (!defined('ABSPATH')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
-final class CustomCssPolicy
-{
-    const MAX_BYTES = 30000;
-    const SCOPE = '.easymde-rendered-content.easymde-custom-css-active';
+final class CustomCssPolicy {
 
-    public function normalize_for_storage($css)
-    {
-        return $this->render_css((string) $css, false);
-    }
+	const MAX_BYTES = 30000;
+	const SCOPE     = '.easymde-rendered-content.easymde-custom-css-active';
 
-    public function scope($css)
-    {
-        $scoped = $this->render_css((string) $css, true);
+	public function normalize_for_storage( $css ) {
+		return $this->render_css( (string) $css, false );
+	}
 
-        return is_wp_error($scoped) ? '' : $scoped;
-    }
+	public function scope( $css ) {
+		$scoped = $this->render_css( (string) $css, true );
 
-    public function validate($css)
-    {
-        $result = $this->normalize_for_storage($css);
+		return is_wp_error( $scoped ) ? '' : $scoped;
+	}
 
-        return is_wp_error($result) ? $result : true;
-    }
+	public function validate( $css ) {
+		$result = $this->normalize_for_storage( $css );
 
-    private function render_css($css, $scope_selectors)
-    {
-        $css = (string) $css;
-        if (strlen($css) > self::MAX_BYTES) {
-            return new WP_Error(
-                'easymde_custom_css_too_large',
-                __('Custom CSS is too large.', 'easymde'),
-                array('status' => 413)
-            );
-        }
+		return is_wp_error( $result ) ? $result : true;
+	}
 
-        $css = $this->prepare_raw_css($css);
-        if ('' === $css) {
-            return '';
-        }
+	private function render_css( $css, $scope_selectors ) {
+		$css = (string) $css;
+		if ( strlen( $css ) > self::MAX_BYTES ) {
+			return new WP_Error(
+				'easymde_custom_css_too_large',
+				__( 'Custom CSS is too large.', 'easymde' ),
+				array( 'status' => 413 )
+			);
+		}
 
-        if (!class_exists(Parser::class)) {
-            return new WP_Error(
-                'easymde_css_parser_missing',
-                __('The CSS parser dependency is unavailable. Custom CSS cannot be rendered safely.', 'easymde'),
-                array('status' => 500)
-            );
-        }
+		$css = $this->prepare_raw_css( $css );
+		if ( '' === $css ) {
+			return '';
+		}
 
-        $blocked = $this->find_blocked_token($css);
-        if ($blocked) {
-            return $this->blocked_error($blocked);
-        }
+		if ( ! class_exists( Parser::class ) ) {
+			return new WP_Error(
+				'easymde_css_parser_missing',
+				__( 'The CSS parser dependency is unavailable. Custom CSS cannot be rendered safely.', 'easymde' ),
+				array( 'status' => 500 )
+			);
+		}
 
-        try {
-            $parser = new Parser($css, Settings::create()->beStrict());
-            $document = $parser->parse();
-            $this->assert_safe_node($document);
+		$blocked = $this->find_blocked_token( $css );
+		if ( $blocked ) {
+			return $this->blocked_error( $blocked );
+		}
 
-            if ($scope_selectors) {
-                $this->scope_node($document, false);
-            }
+		try {
+			$parser   = new Parser( $css, Settings::create()->beStrict() );
+			$document = $parser->parse();
+			$this->assert_safe_node( $document );
 
-            return trim($document->render(OutputFormat::create()));
-        } catch (\Exception $exception) {
-            return new WP_Error(
-                'easymde_invalid_custom_css',
-                sprintf(
-                    /* translators: %s: CSS parser error message. */
-                    __('Custom CSS could not be parsed safely: %s', 'easymde'),
-                    $exception->getMessage()
-                ),
-                array('status' => 400)
-            );
-        }
-    }
+			if ( $scope_selectors ) {
+				$this->scope_node( $document, false );
+			}
 
-    private function prepare_raw_css($css)
-    {
-        $css = wp_strip_all_tags((string) $css);
-        $css = str_replace(array("\0", '</style', '<style'), '', $css);
+			return trim( $document->render( OutputFormat::create() ) );
+		} catch ( \Exception $exception ) {
+			return new WP_Error(
+				'easymde_invalid_custom_css',
+				sprintf(
+					/* translators: %s: CSS parser error message. */
+					__( 'Custom CSS could not be parsed safely: %s', 'easymde' ),
+					$exception->getMessage()
+				),
+				array( 'status' => 400 )
+			);
+		}
+	}
 
-        return trim($css);
-    }
+	private function prepare_raw_css( $css ) {
+		$css = wp_strip_all_tags( (string) $css );
+		$css = str_replace( array( "\0", '</style', '<style' ), '', $css );
 
-    private function find_blocked_token($css)
-    {
-        $patterns = array(
-            '/@import\b/i' => '@import',
-            '/@charset\b/i' => '@charset',
-            '/@font-face\b/i' => '@font-face',
-            '/url\s*\(/i' => 'url()',
-            '/expression\s*\(/i' => 'expression()',
-            '/\bbehavior\s*:/i' => 'behavior',
-            '/-moz-binding\s*:/i' => '-moz-binding',
-            '/javascript\s*:/i' => 'javascript:',
-        );
+		return trim( $css );
+	}
 
-        foreach ($patterns as $pattern => $label) {
-            if (preg_match($pattern, $css)) {
-                return $label;
-            }
-        }
+	private function find_blocked_token( $css ) {
+		$patterns = array(
+			'/@import\b/i'        => '@import',
+			'/@charset\b/i'       => '@charset',
+			'/@font-face\b/i'     => '@font-face',
+			'/url\s*\(/i'         => 'url()',
+			'/expression\s*\(/i'  => 'expression()',
+			'/\bbehavior\s*:/i'   => 'behavior',
+			'/-moz-binding\s*:/i' => '-moz-binding',
+			'/javascript\s*:/i'   => 'javascript:',
+		);
 
-        return '';
-    }
+		foreach ( $patterns as $pattern => $label ) {
+			if ( preg_match( $pattern, $css ) ) {
+				return $label;
+			}
+		}
 
-    private function assert_safe_node($node)
-    {
-        if ($node instanceof AtRule) {
-            $name = strtolower((string) $node->atRuleName());
-            if (!in_array($name, array('media', 'supports', 'keyframes', '-webkit-keyframes'), true)) {
-                throw new \RuntimeException('@' . $name . ' is not allowed.');
-            }
+		return '';
+	}
 
-            if (method_exists($node, 'atRuleArgs')) {
-                $args = strtolower((string) $node->atRuleArgs());
-                if (false !== strpos($args, 'url(') || false !== strpos($args, 'javascript:')) {
-                    throw new \RuntimeException('@' . $name . ' contains a blocked value.');
-                }
-            }
-        }
+	private function assert_safe_node( $node ) {
+		if ( $node instanceof AtRule ) {
+				$name = strtolower( (string) $node->atRuleName() );
+			if ( ! in_array( $name, array( 'media', 'supports', 'keyframes', '-webkit-keyframes' ), true ) ) {
+				throw new \RuntimeException( '@' . esc_html( $name ) . ' is not allowed.' );
+			}
 
-        if ($node instanceof RuleSet) {
-            foreach ($node->getRules() as $rule) {
-                $name = strtolower((string) $rule->getRule());
-                if (in_array($name, array('behavior', '-moz-binding'), true)) {
-                    throw new \RuntimeException($name . ' is not allowed.');
-                }
+			if ( method_exists( $node, 'atRuleArgs' ) ) {
+				$args = strtolower( (string) $node->atRuleArgs() );
+				if ( false !== strpos( $args, 'url(' ) || false !== strpos( $args, 'javascript:' ) ) {
+					throw new \RuntimeException( '@' . esc_html( $name ) . ' contains a blocked value.' );
+				}
+			}
+		}
 
-                $value = $rule->getValue();
-                if ($value instanceof URL) {
-                    throw new \RuntimeException('url() is not allowed.');
-                }
+		if ( $node instanceof RuleSet ) {
+			foreach ( $node->getRules() as $rule ) {
+					$name = strtolower( (string) $rule->getRule() );
+				if ( in_array( $name, array( 'behavior', '-moz-binding' ), true ) ) {
+					throw new \RuntimeException( esc_html( $name ) . ' is not allowed.' );
+				}
 
-                $value_string = strtolower((string) $value);
-                if (
-                    false !== strpos($value_string, 'url(')
-                    || false !== strpos($value_string, 'expression(')
-                    || false !== strpos($value_string, 'javascript:')
-                ) {
-                    throw new \RuntimeException($name . ' contains a blocked value.');
-                }
-            }
-        }
+				$value = $rule->getValue();
+				if ( $value instanceof URL ) {
+					throw new \RuntimeException( 'url() is not allowed.' );
+				}
 
-        if ($node instanceof CSSList) {
-            foreach ($node->getContents() as $child) {
-                $this->assert_safe_node($child);
-            }
-        }
-    }
+				$value_string = strtolower( (string) $value );
+				if (
+					false !== strpos( $value_string, 'url(' )
+					|| false !== strpos( $value_string, 'expression(' )
+					|| false !== strpos( $value_string, 'javascript:' )
+					) {
+						throw new \RuntimeException( esc_html( $name ) . ' contains a blocked value.' );
+				}
+			}
+		}
 
-    private function scope_node($node, $inside_keyframes)
-    {
-        $is_keyframe = $inside_keyframes || $node instanceof KeyFrame;
+		if ( $node instanceof CSSList ) {
+			foreach ( $node->getContents() as $child ) {
+				$this->assert_safe_node( $child );
+			}
+		}
+	}
 
-        if ($node instanceof DeclarationBlock && !$is_keyframe) {
-            $scoped_selectors = array();
-            foreach ($node->getSelectors() as $selector) {
-                $selector = trim((string) $selector);
-                if ('' === $selector) {
-                    continue;
-                }
+	private function scope_node( $node, $inside_keyframes ) {
+		$is_keyframe = $inside_keyframes || $node instanceof KeyFrame;
 
-                if (0 === strpos($selector, self::SCOPE)) {
-                    $scoped_selectors[] = $selector;
-                } elseif (':root' === $selector) {
-                    $scoped_selectors[] = self::SCOPE;
-                } elseif (0 === strpos($selector, ':root ')) {
-                    $scoped_selectors[] = self::SCOPE . substr($selector, 5);
-                } else {
-                    $scoped_selectors[] = self::SCOPE . ' ' . $selector;
-                }
-            }
+		if ( $node instanceof DeclarationBlock && ! $is_keyframe ) {
+			$scoped_selectors = array();
+			foreach ( $node->getSelectors() as $selector ) {
+				$selector = trim( (string) $selector );
+				if ( '' === $selector ) {
+					continue;
+				}
 
-            if (!empty($scoped_selectors)) {
-                $node->setSelectors($scoped_selectors);
-            }
-        }
+				if ( 0 === strpos( $selector, self::SCOPE ) ) {
+					$scoped_selectors[] = $selector;
+				} elseif ( ':root' === $selector ) {
+					$scoped_selectors[] = self::SCOPE;
+				} elseif ( 0 === strpos( $selector, ':root ' ) ) {
+					$scoped_selectors[] = self::SCOPE . substr( $selector, 5 );
+				} else {
+					$scoped_selectors[] = self::SCOPE . ' ' . $selector;
+				}
+			}
 
-        if ($node instanceof CSSList) {
-            foreach ($node->getContents() as $child) {
-                $this->scope_node($child, $is_keyframe);
-            }
-        }
-    }
+			if ( ! empty( $scoped_selectors ) ) {
+				$node->setSelectors( $scoped_selectors );
+			}
+		}
 
-    private function blocked_error($blocked)
-    {
-        return new WP_Error(
-            'easymde_blocked_custom_css',
-            sprintf(
-                /* translators: %s: blocked CSS feature. */
-                __('Custom CSS contains a blocked feature: %s', 'easymde'),
-                $blocked
-            ),
-            array('status' => 400)
-        );
-    }
+		if ( $node instanceof CSSList ) {
+			foreach ( $node->getContents() as $child ) {
+				$this->scope_node( $child, $is_keyframe );
+			}
+		}
+	}
+
+	private function blocked_error( $blocked ) {
+		return new WP_Error(
+			'easymde_blocked_custom_css',
+			sprintf(
+				/* translators: %s: blocked CSS feature. */
+				__( 'Custom CSS contains a blocked feature: %s', 'easymde' ),
+				$blocked
+			),
+			array( 'status' => 400 )
+		);
+	}
 }

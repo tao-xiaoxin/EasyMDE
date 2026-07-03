@@ -5,6 +5,10 @@ node_modules/
 vendor/
 dist/
 build/
+coverage/
+test-results/
+playwright-report/
+.phpunit.result.cache
 *.zip
 *.log
 recon/

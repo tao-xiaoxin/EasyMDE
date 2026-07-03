@@ -9,98 +9,94 @@ use WP_Error;
 use WP_REST_Request;
 use WP_REST_Server;
 
-if (!defined('ABSPATH')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
-final class PreviewController
-{
-    const MAX_MARKDOWN_BYTES = 1048576;
+final class PreviewController {
 
-    private $capabilities;
-    private $theme_state_repository;
+	const MAX_MARKDOWN_BYTES = 1048576;
 
-    public function __construct(Capabilities $capabilities, ThemeStateRepository $theme_state_repository)
-    {
-        $this->capabilities = $capabilities;
-        $this->theme_state_repository = $theme_state_repository;
-    }
+	private $capabilities;
+	private $theme_state_repository;
 
-    public function register_routes()
-    {
-        register_rest_route(
-            'easymde/v1',
-            '/preview',
-            array(
-                'methods' => WP_REST_Server::CREATABLE,
-                'callback' => array($this, 'handle_request'),
-                'permission_callback' => array($this->capabilities, 'can_preview'),
-                'args' => array(
-                    'markdown' => array(
-                        'type' => 'string',
-                        'required' => true,
-                        'sanitize_callback' => array($this, 'sanitize_string'),
-                    ),
-                    'post_id' => array(
-                        'type' => 'integer',
-                        'required' => false,
-                        'sanitize_callback' => 'absint',
-                    ),
-                    'markdown_theme' => array(
-                        'type' => 'string',
-                        'required' => false,
-                        'sanitize_callback' => 'sanitize_key',
-                    ),
-                    'code_theme' => array(
-                        'type' => 'string',
-                        'required' => false,
-                        'sanitize_callback' => 'sanitize_key',
-                    ),
-                    'code_mac_style' => array(
-                        'type' => 'boolean',
-                        'required' => false,
-                        'sanitize_callback' => 'rest_sanitize_boolean',
-                    ),
-                    'custom_css_id' => array(
-                        'type' => 'string',
-                        'required' => false,
-                        'sanitize_callback' => 'sanitize_key',
-                    ),
-                ),
-            )
-        );
-    }
+	public function __construct( Capabilities $capabilities, ThemeStateRepository $theme_state_repository ) {
+		$this->capabilities           = $capabilities;
+		$this->theme_state_repository = $theme_state_repository;
+	}
 
-    public function handle_request(WP_REST_Request $request)
-    {
-        $markdown = (string) $request->get_param('markdown');
-        if (strlen($markdown) > self::MAX_MARKDOWN_BYTES) {
-            return new WP_Error(
-                'easymde_markdown_too_large',
-                __('Markdown preview content is too large.', 'easymde'),
-                array('status' => 413)
-            );
-        }
+	public function register_routes() {
+		register_rest_route(
+			'easymde/v1',
+			'/preview',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'handle_request' ),
+				'permission_callback' => array( $this->capabilities, 'can_preview' ),
+				'args'                => array(
+					'markdown'       => array(
+						'type'              => 'string',
+						'required'          => true,
+						'sanitize_callback' => array( $this, 'sanitize_string' ),
+					),
+					'post_id'        => array(
+						'type'              => 'integer',
+						'required'          => false,
+						'sanitize_callback' => 'absint',
+					),
+					'markdown_theme' => array(
+						'type'              => 'string',
+						'required'          => false,
+						'sanitize_callback' => 'sanitize_key',
+					),
+					'code_theme'     => array(
+						'type'              => 'string',
+						'required'          => false,
+						'sanitize_callback' => 'sanitize_key',
+					),
+					'code_mac_style' => array(
+						'type'              => 'boolean',
+						'required'          => false,
+						'sanitize_callback' => 'rest_sanitize_boolean',
+					),
+					'custom_css_id'  => array(
+						'type'              => 'string',
+						'required'          => false,
+						'sanitize_callback' => 'sanitize_key',
+					),
+				),
+			)
+		);
+	}
 
-        if (!MarkdownRenderer::is_available()) {
-            return new WP_Error(
-                'easymde_commonmark_unavailable',
-                __('Markdown rendering is unavailable because Composer dependencies are missing.', 'easymde'),
-                array('status' => 500)
-            );
-        }
+	public function handle_request( WP_REST_Request $request ) {
+		$markdown = (string) $request->get_param( 'markdown' );
+		if ( strlen( $markdown ) > self::MAX_MARKDOWN_BYTES ) {
+			return new WP_Error(
+				'easymde_markdown_too_large',
+				__( 'Markdown preview content is too large.', 'easymde' ),
+				array( 'status' => 413 )
+			);
+		}
 
-        $markdown_theme = $this->theme_state_repository->sanitize_markdown_theme_id($request->get_param('markdown_theme'));
+		if ( ! MarkdownRenderer::is_available() ) {
+			return new WP_Error(
+				'easymde_commonmark_unavailable',
+				__( 'Markdown rendering is unavailable because Composer dependencies are missing.', 'easymde' ),
+				array( 'status' => 500 )
+			);
+		}
 
-        return rest_ensure_response(
-            array(
-                'html' => MarkdownRenderer::render($markdown, $markdown_theme),
-            )
-        );
-    }
+		$markdown_theme = $this->theme_state_repository->sanitize_markdown_theme_id( $request->get_param( 'markdown_theme' ) );
 
-    public function sanitize_string($value)
-    {
-        return (string) $value;
-    }
+		return rest_ensure_response(
+			array(
+				'html' => MarkdownRenderer::render( $markdown, $markdown_theme ),
+			)
+		);
+	}
+
+	public function sanitize_string( $value ) {
+		return (string) $value;
+	}
 }

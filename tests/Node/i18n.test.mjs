@@ -217,7 +217,7 @@ test('PHP translation domain check matches real gettext calls', () => {
 
 test('PHP-injected string config covers JavaScript user-facing string reads', () => {
   const adminKeys = phpStringKeys(sourceSlice('src/Admin/AdminAssets.php', 'private function get_strings'));
-  const frontendKeys = phpStringKeys(sourceSlice('src/Frontend/FrontendAssets.php', "'strings' => array("));
+  const frontendKeys = phpStringKeys(sourceSlice('src/Frontend/FrontendAssets.php', "'strings'"));
 
   assert.deepEqual(
     [...jsAdminStringKeys()].filter((key) => !adminKeys.has(key)).sort(),
@@ -233,20 +233,20 @@ test('default toolbar labels do not trigger gettext during plugin construction',
   const mainFile = readFileSync(join(repoRoot, 'easymde.php'), 'utf8');
   const toolbarDefaults = sourceSlice('src/Support/ToolbarRegistry.php', 'private function register_default_toolbar_buttons');
 
-  assert.match(mainFile, /add_action\(\s*'init'\s*,\s*array\('EasyMDE_Plugin', 'init'\)\s*\)/);
-  assert.doesNotMatch(mainFile, /add_action\(\s*'plugins_loaded'\s*,\s*array\('EasyMDE_Plugin', 'init'\)\s*\)/);
+  assert.match(mainFile, /add_action\(\s*'init'\s*,\s*array\(\s*'EasyMDE_Plugin'\s*,\s*'init'\s*\)\s*\)/);
+  assert.doesNotMatch(mainFile, /add_action\(\s*'plugins_loaded'\s*,\s*array\(\s*'EasyMDE_Plugin'\s*,\s*'init'\s*\)\s*\)/);
   assert.doesNotMatch(toolbarDefaults, /(?<![A-Za-z0-9_])__\s*\(/);
-  assert.match(toolbarDefaults, /source_label\('Save post'\)/);
+  assert.match(toolbarDefaults, /source_label\(\s*'Save post'\s*\)/);
 });
 
 test('WordPress i18n verifier reloads text domains compatibly', () => {
   const verifier = readFileSync(join(repoRoot, 'scripts/verify-wordpress-i18n.php'), 'utf8');
-  const runtimeChecks = sourceSlice('scripts/verify-wordpress-i18n.php', "if (!defined('ABSPATH'))");
+  const runtimeChecks = sourceSlice('scripts/verify-wordpress-i18n.php', "if ( ! defined( 'ABSPATH' ) )");
 
-  assert.match(verifier, /new ReflectionFunction\('unload_textdomain'\)/);
-  assert.match(verifier, /unload_textdomain\(\$domain,\s*true\)/);
-  assert.doesNotMatch(runtimeChecks, /unload_textdomain\('easymde'\)/);
-  assert.match(runtimeChecks, /easymde_verify_i18n_unload_for_reload\('easymde'\)/);
+  assert.match(verifier, /new ReflectionFunction\(\s*'unload_textdomain'\s*\)/);
+  assert.match(verifier, /unload_textdomain\(\s*\$domain,\s*true\s*\)/);
+  assert.doesNotMatch(runtimeChecks, /unload_textdomain\(\s*'easymde'\s*\)/);
+  assert.match(runtimeChecks, /easymde_verify_i18n_unload_for_reload\(\s*'easymde'\s*\)/);
 });
 
 test('gettext catalog files are current and contain real zh_CN translations', () => {

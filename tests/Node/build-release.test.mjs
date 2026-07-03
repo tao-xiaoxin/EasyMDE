@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -42,6 +42,52 @@ function createRegistryFiles(root) {
   );
 }
 
+function createAssetSourceFiles(root) {
+  writeText(
+    root,
+    'src/Admin/AdminAssets.php',
+    [
+      '<?php',
+      "Asset::url( 'assets/css/admin/toolbar.css' );",
+      "Asset::url( 'assets/css/admin/popover.css' );",
+      "Asset::url( 'assets/css/admin/editor.css' );",
+      "Asset::url( 'assets/js/admin/editor-state.js' );",
+      "Asset::url( 'assets/js/admin/commands.js' );",
+      "Asset::url( 'assets/js/admin/preview-client.js' );",
+      "Asset::url( 'assets/js/admin/theme-manager.js' );",
+      "Asset::url( 'assets/js/admin/toolbar.js' );",
+      "Asset::url( 'assets/js/admin/draft-storage.js' );",
+      "Asset::url( 'assets/js/admin/media-picker.js' );",
+      "Asset::url( 'assets/js/admin/wechat-exporter.js' );",
+      "Asset::url( 'assets/js/admin/bootstrap.js' );"
+    ].join('\n')
+  );
+  writeText(
+    root,
+    'src/Admin/SettingsPage.php',
+    "<?php\nAsset::url( 'assets/css/admin/settings.css' );\n"
+  );
+  writeText(
+    root,
+    'src/Frontend/FrontendAssets.php',
+    [
+      '<?php',
+      "Asset::url( 'assets/js/frontend/bootstrap.js' );",
+      "Asset::url( 'assets/css/frontend/base.css' );",
+      "Asset::url( 'assets/css/frontend/code-frame.css' );",
+      "Asset::url( 'assets/vendor/highlight/highlight.min.js' );",
+      "Asset::url( 'assets/css/frontend/math.css' );",
+      "Asset::url( 'assets/vendor/katex/katex.min.css' );",
+      "Asset::url( 'assets/vendor/katex/katex.min.js' );",
+      "Asset::url( 'assets/js/frontend/math.js' );",
+      "Asset::url( 'assets/css/frontend/toc.css' );",
+      "Asset::url( 'assets/vendor/mermaid/mermaid.min.js' );",
+      "Asset::url( 'assets/js/frontend/mermaid.js' );",
+      "Asset::url( 'assets/js/frontend/code-highlight.js' );"
+    ].join('\n')
+  );
+}
+
 function createComposerLock(root) {
   writeText(
     root,
@@ -68,6 +114,7 @@ function createVersionFiles(root, version = '0.1.7') {
 function createCompleteFixture(root) {
   createVersionFiles(root);
   createRegistryFiles(root);
+  createAssetSourceFiles(root);
   createComposerLock(root);
 
   for (const requirement of collectReleaseRequirements(root)) {
@@ -123,6 +170,9 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/languages/easymde.pot'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.po'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.mo'));
+    assert.ok(entries.includes('easymde/assets/js/admin/media-picker.js'));
+    assert.ok(entries.includes('easymde/assets/js/frontend/bootstrap.js'));
+    assert.ok(entries.includes('easymde/assets/vendor/mermaid/LICENSE'));
     assert.ok(entries.includes('easymde/vendor/league/commonmark/runtime/Parser.php'));
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/tests/bootstrap.php')), false);
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/.github/workflows/ci.yml')), false);
@@ -234,6 +284,131 @@ test('release build fails when Composer runtime package or registered theme asse
     assert.equal(result.status, 1);
     assert.match(result.stderr, /vendor\/sabberworm\/php-css-parser/);
     assert.match(result.stderr, /assets\/themes\/article\/default\.css/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build fails when required runtime assets or templates are missing', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    rmSync(join(root, 'templates'), { recursive: true, force: true });
+    rmSync(join(root, 'assets/vendor/mermaid/mermaid.min.js'), { force: true });
+    rmSync(join(root, 'assets/vendor/katex/katex.min.css'), { force: true });
+    rmSync(join(root, 'assets/vendor/katex/fonts'), { recursive: true, force: true });
+    rmSync(join(root, 'assets/vendor/highlight/styles/github.min.css'), { force: true });
+    rmSync(join(root, 'assets/vendor/mermaid/LICENSE'), { force: true });
+    rmSync(join(root, 'assets/js/admin/media-picker.js'), { force: true });
+    rmSync(join(root, 'assets/js/frontend/bootstrap.js'), { force: true });
+    rmSync(join(root, 'assets/images/tech-blue-code-window.svg'), { force: true });
+    rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
+
+    const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
+    assert.ok(missing.includes('templates'));
+    assert.ok(missing.includes('assets/vendor/mermaid/mermaid.min.js'));
+    assert.ok(missing.includes('assets/vendor/katex/katex.min.css'));
+    assert.ok(missing.includes('assets/vendor/katex/fonts'));
+    assert.ok(missing.includes('assets/vendor/highlight/styles/github.min.css'));
+    assert.ok(missing.includes('assets/vendor/mermaid/LICENSE'));
+    assert.ok(missing.includes('assets/js/admin/media-picker.js'));
+    assert.ok(missing.includes('assets/js/frontend/bootstrap.js'));
+    assert.ok(missing.includes('assets/images/tech-blue-code-window.svg'));
+    assert.ok(missing.includes('THIRD-PARTY-NOTICES.md'));
+
+    const result = spawnSync(process.execPath, [scriptPath, '--root', root], {
+      encoding: 'utf8'
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /templates/);
+    assert.match(result.stderr, /assets\/vendor\/mermaid\/mermaid\.min\.js/);
+    assert.match(result.stderr, /assets\/js\/admin\/media-picker\.js/);
+    assert.match(result.stderr, /assets\/js\/frontend\/bootstrap\.js/);
+    assert.match(result.stderr, /THIRD-PARTY-NOTICES\.md/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release requirements include assets referenced by enqueue source files', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(
+      root,
+      'src/Admin/AdminAssets.php',
+      "<?php\nAsset::url( 'assets/js/admin/generated-runtime.js' );\n"
+    );
+
+    const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
+
+    assert.ok(missing.includes('assets/js/admin/generated-runtime.js'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release requirements include assets referenced by newly added PHP files', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(
+      root,
+      'src/Admin/GeneratedAssets.php',
+      "<?php\nAsset::url( 'assets/js/admin/generated-runtime.js' );\n"
+    );
+
+    const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
+
+    assert.ok(missing.includes('assets/js/admin/generated-runtime.js'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build fails when a KaTeX font referenced by the stylesheet is missing', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(
+      root,
+      'assets/vendor/katex/katex.min.css',
+      '@font-face{font-family:KaTeX_Main;src:url(fonts/KaTeX_Main-Regular.woff2) format("woff2")}'
+    );
+
+    const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
+
+    assert.ok(missing.includes('assets/vendor/katex/fonts/KaTeX_Main-Regular.woff2'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build fails when Composer development packages are installed', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    createComposerLock(root);
+    const lockPath = join(root, 'composer.lock');
+    const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+    lock['packages-dev'] = [
+      { name: 'phpunit/phpunit' },
+      { name: 'squizlabs/php_codesniffer' }
+    ];
+    writeFileSync(lockPath, JSON.stringify(lock));
+    writeText(root, 'vendor/phpunit/phpunit/src/Framework/TestCase.php');
+    writeText(root, 'vendor/squizlabs/php_codesniffer/src/Runner.php');
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /composer install --no-dev/
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

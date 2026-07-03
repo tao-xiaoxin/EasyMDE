@@ -9,7 +9,7 @@
   <a href="https://github.com/tao-xiaoxin/EasyMDE/releases">
     <img src="https://img.shields.io/badge/version-0.1.7-2563eb?style=flat-square&logo=github&logoColor=white" alt="Version 0.1.7" />
   </a>
-  <img src="https://img.shields.io/badge/WordPress-6.9%2B-21759b?style=flat-square&logo=wordpress&logoColor=white" alt="Requires WordPress 6.9+" />
+  <img src="https://img.shields.io/badge/WordPress-6.0%2B-21759b?style=flat-square&logo=wordpress&logoColor=white" alt="Requires WordPress 6.0+" />
   <img src="https://img.shields.io/badge/PHP-7.4%2B-777BB4?style=flat-square&logo=php&logoColor=white" alt="Requires PHP 7.4+" />
   <a href="https://github.com/tao-xiaoxin/EasyMDE/actions/workflows/ci.yml">
     <img src="https://github.com/tao-xiaoxin/EasyMDE/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" />
@@ -222,6 +222,18 @@ without Composer dependencies shows an administrator notice and avoids writing
 new fallback HTML. Production release packages must include Composer
 dependencies in `vendor/`.
 
+Run PHP quality gates with:
+
+```bash
+composer run lint:phpcs
+composer run test:phpunit
+```
+
+PHPUnit uses the real WordPress test suite and a database. Use
+`scripts/install-wp-tests.sh` to install a specific WordPress version before
+running the suite, including WordPress 6.0 for the PHP 7.4 minimum-support
+matrix.
+
 Install local frontend assets for highlighting, Mermaid, and KaTeX:
 
 ```bash
@@ -245,6 +257,7 @@ Update and validate translation files with:
 npm run i18n:make-pot
 npm run i18n:compile
 npm run i18n:check
+npm run notices:check
 ```
 
 These commands require GNU gettext tools such as `xgettext` and `msgfmt`.
@@ -254,15 +267,30 @@ assets, but it does not rewrite translation files.
 Build the installable release package with:
 
 ```bash
+composer install --no-dev --no-interaction --prefer-dist
+npm run notices:check
 npm run build:release
 ```
 
 The release build creates `dist/easymde` and `dist/easymde.zip`. It validates
 that the package is self-contained with Composer `vendor/`, `assets/vendor/`,
 article and code themes, templates, source files, local Mermaid, KaTeX,
-Highlight.js assets, KaTeX CSS/fonts, and bundled language files. It also checks
-that `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json` all
-carry the same version. The plugin does not require remote CDN assets.
+Highlight.js assets, KaTeX CSS/fonts, bundled language files, and generated
+third-party notices. It also checks that `easymde.php`, `EASYMDE_VERSION`,
+`readme.txt`, and `package.json` all carry the same version. The build fails if
+Composer development packages are installed; rebuild runtime dependencies with
+`composer install --no-dev` before packaging. The plugin does not require remote
+CDN assets.
+
+Validate the built ZIP in a clean WordPress install with:
+
+```bash
+scripts/run-plugin-check.sh dist/easymde.zip
+npm run test:e2e
+```
+
+`npm run test:e2e` runs the Chromium-only Playwright suite against the WordPress
+site identified by `EASYMDE_E2E_BASE_URL` and `EASYMDE_E2E_WP_PATH`.
 
 To test in WordPress, copy or symlink this repository into:
 
@@ -286,7 +314,7 @@ http://localhost:8088
 ```
 
 The Docker test site is initialized with WordPress `6.9` and Simplified Chinese
-(`zh_CN`) by default. The plugin header declares WordPress `6.9` as the minimum
+(`zh_CN`) by default. The plugin header declares WordPress `6.0` as the minimum
 supported version.
 Set the local administrator and database passwords in `.env`; do not commit that
 file.

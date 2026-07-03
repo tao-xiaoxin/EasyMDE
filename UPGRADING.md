@@ -1,0 +1,29 @@
+# Upgrading EasyMDE
+
+Back up the WordPress database and `wp-content/` before upgrading EasyMDE, especially on sites with existing Markdown posts, custom CSS snapshots, or custom publishing workflows.
+
+## Data Model
+
+EasyMDE stores Markdown source in `_easymde_markdown`. That meta value is the source of truth for EasyMDE posts.
+
+WordPress `post_content` stores rendered compatibility HTML for themes, feeds, search, plugins, and visitors when EasyMDE is inactive.
+
+EasyMDE does not bulk-migrate every post during upgrades. Existing posts without `_easymde_enabled` but with `_easymde_markdown` are treated as legacy EasyMDE posts by checking metadata existence. They are lazily marked with `_easymde_enabled = 1` only during the next legitimate EasyMDE save.
+
+## After Upgrading
+
+Verify a representative EasyMDE post before broad author use:
+
+- Open an existing EasyMDE post and confirm the Markdown source loads.
+- Save the post and confirm rendered `post_content` matches the Markdown preview.
+- Restore a recent revision and confirm Markdown, article theme, code theme, code frame, custom CSS snapshot, font settings, and rendered HTML return to the same version.
+- Check posts using custom CSS snapshots after editing or deleting saved custom CSS library entries.
+- Confirm extensions using `EasyMDE_Plugin::register_toolbar_button()` or `EasyMDE_Plugin::register_shortcode_helper()` still appear in the editor configuration.
+
+Ordinary posts without EasyMDE metadata should continue to use the normal WordPress editor unless they are opened through the real EasyMDE new-post flow.
+
+## Downgrades And Rollbacks
+
+If you roll back EasyMDE, keep the database backup until you have verified edited posts. Older releases may not understand newer render settings, theme choices, custom CSS snapshots, or font metadata even though `_easymde_markdown` remains stored.
+
+When rolling back after a failed upgrade, prefer restoring both files and database from the same backup point. Restoring only plugin files can leave newer metadata paired with older rendering behavior.

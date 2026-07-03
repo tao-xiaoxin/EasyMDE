@@ -712,37 +712,7 @@
     }
 
     function applyArticleThemeLink() {
-        var articleTheme;
-        var href;
-        var link;
-
-        if (themeManager.applyArticleThemeLink) {
-            themeManager.applyArticleThemeLink(themeOptions, renderState, findById, document);
-            return;
-        }
-
-        if (renderState.markdownTheme === 'custom') {
-            return;
-        }
-
-        articleTheme = findById(themeOptions.markdownThemes || [], renderState.markdownTheme);
-        href = articleTheme && articleTheme.cssUrl ? articleTheme.cssUrl : '';
-        link = document.getElementById('easymde-article-theme-css');
-
-        if (!href) {
-            return;
-        }
-
-        if (!link) {
-            link = document.createElement('link');
-            link.id = 'easymde-article-theme-css';
-            link.rel = 'stylesheet';
-            document.head.appendChild(link);
-        }
-
-        if (link.href !== href) {
-            link.href = href;
-        }
+        themeManager.applyArticleThemeLink(themeOptions, renderState, findById, document);
     }
 
     function applyRenderState($preview) {

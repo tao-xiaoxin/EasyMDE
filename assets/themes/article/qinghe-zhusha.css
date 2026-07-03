@@ -1,10 +1,10 @@
 /* Typora-derived Qinghe Zhusha article theme. */
 .easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha {
-  --easymde-theme-font-family: Helvetica, arial, sans-serif;
+  --easymde-theme-font-family: helvetica, arial, sans-serif;
 
-  --easymde-qinghe-text: #777777;
-  --easymde-qinghe-green: #7bba35;
-  --easymde-qinghe-red: #e54233;
+  --easymde-qinghe-text: #767676;
+  --easymde-qinghe-green: #4f7f22;
+  --easymde-qinghe-red: #c7372b;
   --easymde-qinghe-muted: #666666;
   --easymde-qinghe-border: #cccccc;
   --easymde-qinghe-soft: #f8f8f8;

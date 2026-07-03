@@ -101,6 +101,8 @@ For each material change:
 * Add a dependency, abstraction, service, asset, script, or document only when it has a clear runtime, build, test, release, or documented extension purpose.
 * For material architecture, security, compatibility, migration, or release decisions, explain why the chosen approach is necessary, what constraint it satisfies, and why a simpler alternative is insufficient.
 * Treat green tests, existing code, and common practice as evidence only when they exercise the actual behavior and constraints of this repository.
+* Do not hard-code a design or implementation merely to make a stated requirement, test, URL, title, identifier, fixture, or sample input pass. Derive behavior from an explicit product rule, data model, capability, configuration, or supported extension boundary.
+* An intentionally narrow product boundary is allowed only when the requirement explicitly defines it; express it as a named, documented, and tested domain rule rather than as an incidental one-off check.
 
 Do not confuse an implementation plan with proof of correctness. A change is complete only when its intended behavior and its relevant failure behavior have been verified.
 

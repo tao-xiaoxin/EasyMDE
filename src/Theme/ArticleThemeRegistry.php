@@ -2,6 +2,8 @@
 
 namespace EasyMDE\Theme;
 
+use EasyMDE\Support\Asset;
+
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
@@ -25,6 +27,7 @@ final class ArticleThemeRegistry {
 			'rose-purple'    => $this->theme( 'rose-purple', __( 'Rose purple', 'easymde' ), 'assets/themes/article/rose-purple.css' ),
 			'ningye-purple'  => $this->theme( 'ningye-purple', __( 'Ningye purple', 'easymde' ), 'assets/themes/article/ningye-purple.css' ),
 			'tech-blue'      => $this->theme( 'tech-blue', __( 'Tech blue', 'easymde' ), 'assets/themes/article/tech-blue.css' ),
+			'qingbi-liujin'  => $this->theme( 'qingbi-liujin', __( 'Qingbi Liujin', 'easymde' ), 'assets/themes/article/qingbi-liujin.css' ),
 			'cute-green'     => $this->theme( 'cute-green', __( 'Cute green', 'easymde' ), 'assets/themes/article/cute-green.css' ),
 			'fullstack-blue' => $this->theme( 'fullstack-blue', __( 'Fullstack blue', 'easymde' ), 'assets/themes/article/fullstack-blue.css' ),
 			'minimal-black'  => $this->theme( 'minimal-black', __( 'Minimal black', 'easymde' ), 'assets/themes/article/minimal-black.css' ),
@@ -69,6 +72,8 @@ final class ArticleThemeRegistry {
 				'id'        => $theme['id'],
 				'label'     => $theme['label'],
 				'className' => $theme['class_name'],
+				'cssUrl'    => Asset::url( $theme['asset_path'] ),
+				'assetPath' => $theme['asset_path'],
 				'origin'    => $theme['origin'],
 			);
 
@@ -130,6 +135,14 @@ final class ArticleThemeRegistry {
 					'windowsFont' => 'tech-blue-microsoft-yahei',
 					'appleFont'   => 'pingfang-sc-regular-raw',
 					'serifFont'   => 'serif-only',
+				);
+
+			case 'qingbi-liujin':
+				return array(
+					'customFont'  => 'qingbi-liujin-helvetica',
+					'windowsFont' => 'qingbi-liujin-no-windows',
+					'appleFont'   => 'qingbi-liujin-no-apple',
+					'serifFont'   => 'sans-serif-only',
 				);
 		}
 

@@ -406,6 +406,11 @@ final class ThemeStateRepository {
 					'fontFamily' => 'Optima',
 				),
 				array(
+					'id'         => 'qingbi-liujin-helvetica',
+					'label'      => __( 'Helvetica (qingbi-liujin)', 'easymde' ),
+					'fontFamily' => 'Helvetica, Arial',
+				),
+				array(
 					'id'         => 'georgia',
 					'label'      => __( 'Georgia', 'easymde' ),
 					'fontFamily' => '"Georgia"',
@@ -462,6 +467,11 @@ final class ThemeStateRepository {
 					'label'      => __( 'Microsoft YaHei (tech-blue)', 'easymde' ),
 					'fontFamily' => '"Microsoft YaHei"',
 				),
+				array(
+					'id'         => 'qingbi-liujin-no-windows',
+					'label'      => __( 'No Windows-specific font (qingbi-liujin)', 'easymde' ),
+					'fontFamily' => '',
+				),
 			),
 			'appleFonts'   => array(
 				array(
@@ -488,6 +498,11 @@ final class ThemeStateRepository {
 					'id'         => 'pingfang-tc-regular',
 					'label'      => __( 'PingFang TC Regular', 'easymde' ),
 					'fontFamily' => '"PingFang TC"',
+				),
+				array(
+					'id'         => 'qingbi-liujin-no-apple',
+					'label'      => __( 'No Apple-specific font (qingbi-liujin)', 'easymde' ),
+					'fontFamily' => '',
 				),
 			),
 			'serifOptions' => array(
@@ -578,7 +593,7 @@ final class ThemeStateRepository {
 			return true;
 		}
 
-		foreach ( array( 'orange-heart', 'red-crimson', 'rose-purple', 'ningye-purple', 'cupid-busy', 'tech-blue' ) as $theme_id ) {
+		foreach ( array( 'orange-heart', 'red-crimson', 'rose-purple', 'ningye-purple', 'cupid-busy', 'tech-blue', 'qingbi-liujin' ) as $theme_id ) {
 			$defaults = $this->article_themes->font_defaults( $theme_id );
 			if (
 				$defaults

@@ -207,6 +207,9 @@ msgstr "六级标题"
 msgid "Headings"
 msgstr "标题"
 
+msgid "Helvetica (qingbi-liujin)"
+msgstr "Helvetica（青碧流金）"
+
 msgid "Helvetica Neue"
 msgstr "Helvetica Neue"
 
@@ -319,6 +322,9 @@ msgctxt "serif font fallback option"
 msgid "No"
 msgstr "否"
 
+msgid "No Apple-specific font (qingbi-liujin)"
+msgstr "无 Apple 特定字体（青碧流金）"
+
 msgid "No activation redirect and no unrelated admin-page redirect."
 msgstr "不会在启用插件后跳转，也不会重定向无关后台页面。"
 
@@ -327,6 +333,9 @@ msgstr "尚未保存自定义 CSS。"
 
 msgid "No custom font"
 msgstr "无自定义字体"
+
+msgid "No Windows-specific font (qingbi-liujin)"
+msgstr "无 Windows 特定字体（青碧流金）"
 
 msgid "Optima"
 msgstr "Optima"
@@ -372,6 +381,9 @@ msgstr "预览"
 
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr "预览失败。可以继续编写，保存不受影响。"
+
+msgid "Qingbi Liujin"
+msgstr "青碧流金"
 
 msgid "Quote"
 msgstr "引用"

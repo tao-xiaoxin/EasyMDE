@@ -15,6 +15,7 @@ final class I18nTest extends WP_UnitTestCase
 
         $this->assertTrue(load_textdomain('easymde', EASYMDE_PLUGIN_DIR . 'languages/easymde-zh_CN.mo'));
         $this->assertSame('快捷键设置', translate('Shortcut settings', 'easymde'));
+        $this->assertSame('青碧流金', translate('Qingbi Liujin', 'easymde'));
     }
 
     public function test_en_us_does_not_receive_legacy_runtime_chinese_replacements()

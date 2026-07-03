@@ -711,6 +711,27 @@
         }
     }
 
+    function applyArticleThemeLink() {
+        var markdownTheme = renderState.markdownTheme === 'custom' ? null : getMarkdownTheme(renderState.markdownTheme);
+        var href = markdownTheme && markdownTheme.cssUrl ? markdownTheme.cssUrl : '';
+        var link = document.getElementById('easymde-article-theme-css');
+
+        if (!href) {
+            return;
+        }
+
+        if (!link) {
+            link = document.createElement('link');
+            link.id = 'easymde-article-theme-css';
+            link.rel = 'stylesheet';
+            document.head.appendChild(link);
+        }
+
+        if (link.href !== href) {
+            link.href = href;
+        }
+    }
+
     function applyRenderState($preview) {
         var preview = $preview[0];
         var markdownClass = renderState.markdownTheme === 'custom'
@@ -737,6 +758,7 @@
 
         syncThemeFields();
         syncFontControls();
+        applyArticleThemeLink();
         applyCodeThemeLink();
         setCustomCssStyle(renderState.markdownTheme === 'custom' ? selectedCustomCss() : '');
     }

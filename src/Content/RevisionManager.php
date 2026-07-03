@@ -149,13 +149,18 @@ final class RevisionManager {
 		global $wpdb;
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Revision restore updates post_content directly to avoid recursive save hooks while syncing restored meta.
-		$wpdb->update(
+		$updated = $wpdb->update(
 			$wpdb->posts,
 			array( 'post_content' => $content ),
 			array( 'ID' => $post_id ),
 			array( '%s' ),
 			array( '%d' )
 		);
+
+		if ( false === $updated ) {
+			throw new \RuntimeException( 'Unable to restore EasyMDE revision post content.' );
+		}
+
 		clean_post_cache( $post_id );
 	}
 

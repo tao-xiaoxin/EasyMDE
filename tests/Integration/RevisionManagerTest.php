@@ -132,6 +132,51 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertSame('<p>Revision HTML</p>', get_post($post_id)->post_content);
     }
 
+    public function test_restore_revision_meta_does_not_clean_cache_when_post_content_update_fails()
+    {
+        global $wpdb;
+
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_content' => '<p>Current HTML</p>',
+            )
+        );
+        $revision_id = wp_insert_post(
+            array(
+                'post_parent' => $post_id,
+                'post_type' => 'revision',
+                'post_status' => 'inherit',
+                'post_title' => 'Revision',
+                'post_content' => '<p>Revision HTML</p>',
+            )
+        );
+
+        update_metadata('post', $revision_id, PostDocument::META_ENABLED, '1');
+        update_metadata('post', $revision_id, PostDocument::META_MARKDOWN, '# Restored');
+
+        $cleaned_post_cache = false;
+        $clean_cache_listener = function ($cleaned_post_id) use ($post_id, &$cleaned_post_cache) {
+            if ((int) $post_id === (int) $cleaned_post_id) {
+                $cleaned_post_cache = true;
+            }
+        };
+        $original_posts_table = $wpdb->posts;
+        add_action('clean_post_cache', $clean_cache_listener, 10, 1);
+
+        try {
+            $wpdb->posts = $wpdb->prefix . 'easymde_missing_posts';
+            $manager = new RevisionManager(new PostDocument(), $this->theme_state_repository());
+            $manager->restore_revision_meta($post_id, $revision_id);
+        } finally {
+            $wpdb->posts = $original_posts_table;
+            remove_action('clean_post_cache', $clean_cache_listener, 10);
+        }
+
+        $this->assertFalse($cleaned_post_cache);
+        $this->assertSame('<p>Current HTML</p>', get_post($post_id)->post_content);
+    }
+
     public function test_sync_latest_revision_meta_after_save_uses_current_parent_meta()
     {
         $post_id = self::factory()->post->create(array('post_type' => 'post'));

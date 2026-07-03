@@ -18,8 +18,9 @@ Do not assume the repository name requires use of the EasyMDE JavaScript library
 
 ## Non-Negotiable Product Rules
 
-* Do not globally replace or disable Gutenberg for all posts or pages.
-* EasyMDE may only take over editing for posts explicitly enabled for EasyMDE, or legacy posts that already contain EasyMDE Markdown meta.
+* New built-in posts and pages open in EasyMDE by default when the plugin is active.
+* Existing ordinary posts and pages without EasyMDE metadata must continue to open in Gutenberg.
+* EasyMDE may take over editing for new built-in posts/pages, posts explicitly enabled for EasyMDE, or legacy posts that already contain EasyMDE Markdown meta.
 * Do not redirect unrelated WordPress admin pages.
 * Do not add activation redirects.
 * Do not destructively rewrite existing post content during upgrades.
@@ -456,7 +457,8 @@ npm install
 
 For behavior changes, verify the applicable scenarios:
 
-* Ordinary new posts still use the normal WordPress editor.
+* New built-in posts and pages open in EasyMDE.
+* Existing ordinary posts without EasyMDE metadata still use the normal WordPress editor.
 * Existing EasyMDE posts still open in EasyMDE.
 * Markdown, theme state, and rendered HTML remain consistent after save.
 * Revision restoration keeps Markdown and HTML synchronized.

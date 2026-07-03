@@ -81,8 +81,7 @@ async function login(page, user) {
 }
 
 async function openEasyMdeNewPost(page) {
-  await page.goto('/wp-admin/edit.php?page=easymde-new-post');
-  await expect(page).toHaveURL(/post-new\.php.*easymde=1/);
+  await page.goto('/wp-admin/post-new.php');
   await expect(page.locator('#easymde-editor')).toBeVisible();
 }
 
@@ -152,9 +151,10 @@ test.describe('EasyMDE editor workflows', () => {
     }
   });
 
-  test('creates, saves, reopens, renders, and leaves ordinary Gutenberg posts alone', async ({ page }, testInfo) => {
+  test('creates, saves, reopens, renders, and keeps existing ordinary posts in Gutenberg', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = `EasyMDE E2E ${testSlug(testInfo)}`;
+    const ordinaryTitle = `Ordinary Gutenberg ${testSlug(testInfo)}`;
     const markdown = `# ${title}\n\nA **bold** paragraph.\n\n| Name | Value |\n| --- | --- |\n| One | Two |`;
 
     await login(page, user);
@@ -175,7 +175,17 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('body')).toContainText(title);
     await expect(page.locator('body')).toContainText('A bold paragraph.');
 
-    await page.goto('/wp-admin/post-new.php');
+    const ordinaryPostId = runWp([
+      'post',
+      'create',
+      `--post_author=${user.id}`,
+      `--post_title=${ordinaryTitle}`,
+      '--post_content=Ordinary block editor content.',
+      '--post_status=draft',
+      '--porcelain'
+    ]);
+
+    await page.goto(`/wp-admin/post.php?post=${ordinaryPostId}&action=edit`);
     await expect(page.locator('body.block-editor-page, .edit-post-layout, .block-editor-writing-flow').first()).toBeVisible();
     await expect(page.locator('#easymde-editor')).toHaveCount(0);
   });

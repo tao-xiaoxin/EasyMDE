@@ -12,7 +12,7 @@ A standalone WordPress Markdown editor with split-pane live preview, local rende
 
 == Description ==
 
-EasyMDE replaces the editing surface only for posts and pages explicitly opened in EasyMDE mode, including legacy EasyMDE Markdown posts. Ordinary posts and pages created through the normal WordPress flow continue to use Gutenberg.
+EasyMDE opens new WordPress posts and pages in a Markdown editing surface by default. Existing ordinary posts and pages that have never used EasyMDE continue to use Gutenberg when edited.
 
 Write Markdown on the left and review a live preview on the right. EasyMDE provides commonly used writing tools, media insertion, local rendering support, article themes, code highlighting, and rich-text export for the WeChat Official Accounts editor.
 
@@ -93,10 +93,10 @@ If rich-text clipboard access is unavailable, EasyMDE uses available fallback me
 
 1. Upload the EasyMDE plugin folder to the `/wp-content/plugins/` directory, or install the plugin ZIP from **Plugins > Add New > Upload Plugin**.
 2. Activate EasyMDE from the **Plugins** screen in WordPress.
-3. Create Markdown content from **Posts > Add EasyMDE Post** or **Pages > Add EasyMDE Page**.
+3. Create Markdown content from **Posts > Add New** or **Pages > Add New**.
 4. Edit legacy EasyMDE Markdown posts normally; they reopen in EasyMDE when their stored Markdown metadata exists.
 
-Posts and pages created through the default WordPress new-content flow keep the normal WordPress editor.
+Existing posts and pages without EasyMDE metadata keep the normal WordPress editor when edited.
 
 == Frequently Asked Questions ==
 
@@ -106,7 +106,7 @@ No. EasyMDE is a standalone WordPress plugin and does not require Jetpack, Class
 
 = Does EasyMDE replace Gutenberg for every post? =
 
-No. EasyMDE is opt-in for posts and pages opened through the EasyMDE add-new flow or for existing EasyMDE Markdown posts. Normal posts and pages continue to use Gutenberg.
+No. New posts and pages open in EasyMDE by default, but existing ordinary Gutenberg posts are not converted automatically. Existing posts and pages without EasyMDE metadata continue to use Gutenberg when edited.
 
 = Does EasyMDE use external CDN assets? =
 

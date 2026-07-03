@@ -1,17 +1,17 @@
 # User Guide
 
-EasyMDE is an opt-in Markdown editor for WordPress posts and pages. It does not replace Gutenberg globally.
+EasyMDE is a Markdown editor for WordPress posts and pages. New posts and pages use EasyMDE by default, while existing ordinary Gutenberg content is not converted automatically.
 
-## Enable EasyMDE For A Post Or Page
+## Create EasyMDE Posts And Pages
 
-Use the EasyMDE-specific admin entries:
+Use the normal WordPress new-content entries:
 
-- **Posts > Add EasyMDE Post**
-- **Pages > Add EasyMDE Page**
+- **Posts > Add New**
+- **Pages > Add New**
 
-Those entries open the normal WordPress post editor screen with EasyMDE enabled for that new post or page. Existing posts that are already marked with `_easymde_enabled = 1`, or legacy posts that already have `_easymde_markdown` metadata, reopen in EasyMDE automatically.
+Those entries open the WordPress post editor screen with EasyMDE enabled for the new post or page. Existing posts that are already marked with `_easymde_enabled = 1`, or legacy posts that already have `_easymde_markdown` metadata, reopen in EasyMDE automatically.
 
-Ordinary posts and pages created through the default WordPress **Add New** flow keep the normal Gutenberg editor.
+Existing ordinary posts and pages without EasyMDE metadata keep the normal Gutenberg editor when edited.
 
 ## Split Editor And Preview
 

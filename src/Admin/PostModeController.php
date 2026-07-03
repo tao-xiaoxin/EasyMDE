@@ -18,7 +18,6 @@ final class PostModeController {
 
 	public function register_hooks() {
 		add_filter( 'use_block_editor_for_post', array( $this, 'maybe_disable_block_editor' ), 10, 2 );
-		add_action( 'admin_menu', array( $this, 'register_new_post_entries' ) );
 		add_action( 'admin_init', array( $this, 'maybe_redirect_new_post_entry' ) );
 	}
 
@@ -34,28 +33,8 @@ final class PostModeController {
 		return $use_block_editor;
 	}
 
-	public function register_new_post_entries() {
-		add_submenu_page(
-			'edit.php',
-			__( 'Add EasyMDE Post', 'easymde' ),
-			__( 'Add EasyMDE Post', 'easymde' ),
-			$this->create_post_capability( 'post' ),
-			'easymde-new-post',
-			array( $this, 'redirect_new_post' )
-		);
-
-		add_submenu_page(
-			'edit.php?post_type=page',
-			__( 'Add EasyMDE Page', 'easymde' ),
-			__( 'Add EasyMDE Page', 'easymde' ),
-			$this->create_post_capability( 'page' ),
-			'easymde-new-page',
-			array( $this, 'redirect_new_post' )
-		);
-	}
-
 	public function redirect_new_post() {
-		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only admin page slug determines which nonce-protected post-new URL to issue.
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only legacy redirect.
 		$page       = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
 		$post_type  = 'easymde-new-page' === $page ? 'page' : 'post';
 		$capability = $this->create_post_capability( $post_type );
@@ -64,14 +43,9 @@ final class PostModeController {
 			wp_die( esc_html__( 'You are not allowed to create this EasyMDE post.', 'easymde' ) );
 		}
 
-		$url = add_query_arg(
-			array(
-				'post_type'     => $post_type,
-				'easymde'       => '1',
-				'easymde_nonce' => wp_create_nonce( $this->new_post_nonce_action( $post_type ) ),
-			),
-			admin_url( 'post-new.php' )
-		);
+		$url = 'page' === $post_type
+			? add_query_arg( array( 'post_type' => 'page' ), admin_url( 'post-new.php' ) )
+			: admin_url( 'post-new.php' );
 
 		wp_safe_redirect( $url );
 		exit;
@@ -84,7 +58,7 @@ final class PostModeController {
 			return;
 		}
 
-		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only menu page slug selects the existing EasyMDE new-post redirect target.
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only legacy redirect.
 		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
 		if ( ! in_array( $page, array( 'easymde-new-post', 'easymde-new-page' ), true ) ) {
 			return;
@@ -106,18 +80,13 @@ final class PostModeController {
 	}
 
 	public function is_new_easymde_request( $post_type ) {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only screen gate.
 		if ( ! $this->is_post_new_screen() || ! empty( $_GET['post'] ) ) {
 			return false;
 		}
 
-		$easymde_flag = isset( $_GET['easymde'] ) ? sanitize_text_field( wp_unslash( $_GET['easymde'] ) ) : '';
-		if ( '1' !== $easymde_flag ) {
-			return false;
-		}
-
 		$post_type = sanitize_key( (string) $post_type );
-		$nonce     = isset( $_GET['easymde_nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['easymde_nonce'] ) ) : '';
-		if ( '' === $nonce || ! wp_verify_nonce( $nonce, $this->new_post_nonce_action( $post_type ) ) ) {
+		if ( ! in_array( $post_type, array( 'post', 'page' ), true ) ) {
 			return false;
 		}
 
@@ -143,9 +112,5 @@ final class PostModeController {
 		}
 
 		return 'page' === $post_type ? 'edit_pages' : 'edit_posts';
-	}
-
-	private function new_post_nonce_action( $post_type ) {
-		return 'easymde_new_' . sanitize_key( (string) $post_type );
 	}
 }

@@ -17,14 +17,6 @@ msgstr ""
 msgid "A newer local draft is available."
 msgstr ""
 
-#: src/Admin/PostModeController.php:49 src/Admin/PostModeController.php:50
-msgid "Add EasyMDE Page"
-msgstr ""
-
-#: src/Admin/PostModeController.php:40 src/Admin/PostModeController.php:41
-msgid "Add EasyMDE Post"
-msgstr ""
-
 #: templates/admin/settings-page.php:34
 msgid "Admin behavior"
 msgstr ""
@@ -632,7 +624,7 @@ msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr ""
 
-#: src/Admin/PostModeController.php:64
+#: src/Admin/PostModeController.php:43
 msgid "You are not allowed to create this EasyMDE post."
 msgstr ""
 

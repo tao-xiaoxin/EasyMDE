@@ -10,13 +10,13 @@ WordPress `post_content` stores rendered compatibility HTML for themes, feeds, s
 
 Appearance and rendering state are stored in EasyMDE post meta, including article theme, code theme, Mac-style code frame state, custom CSS selection/snapshot, and font choices.
 
-## Per-Post Enablement
+## Editor Enablement
 
 EasyMDE does not bulk-migrate every post during upgrades. Existing posts without `_easymde_enabled` but with `_easymde_markdown` are treated as legacy EasyMDE posts by checking metadata existence. Empty Markdown still counts because detection uses `metadata_exists()`.
 
 Legacy posts are lazily marked with `_easymde_enabled = 1` only during the next legitimate EasyMDE save.
 
-Ordinary posts without EasyMDE metadata should continue to use the normal WordPress editor unless they are opened through the EasyMDE new-post/page flow.
+New built-in posts and pages open in EasyMDE by default. Ordinary existing posts without EasyMDE metadata should continue to use the normal WordPress editor when edited.
 
 ## Before Upgrading
 
@@ -33,7 +33,8 @@ Verify representative content before broad author use:
 - Restore a recent revision and confirm Markdown, article theme, code theme, code frame, custom CSS snapshot, font settings, and rendered HTML return to the same version.
 - Check posts using custom CSS snapshots after editing or deleting saved custom CSS library entries.
 - Confirm extensions using `EasyMDE_Plugin::register_toolbar_button()` or `EasyMDE_Plugin::register_shortcode_helper()` still appear in the editor configuration.
-- Create a normal post through the default WordPress flow and confirm Gutenberg still opens.
+- Create a new post through the default WordPress flow and confirm EasyMDE opens.
+- Open an existing ordinary post without EasyMDE metadata and confirm Gutenberg still opens.
 
 ## Downgrades And Rollbacks
 

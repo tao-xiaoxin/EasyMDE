@@ -27,7 +27,7 @@
   </a>
 </p>
 
-EasyMDE is a standalone WordPress Markdown editor plugin. It provides an opt-in writing surface for posts and pages that should be authored as Markdown, while ordinary WordPress posts and pages continue to use Gutenberg.
+EasyMDE is a standalone WordPress Markdown editor plugin. When the plugin is active, new WordPress posts and pages open in EasyMDE by default, while existing ordinary Gutenberg content continues to use Gutenberg when edited.
 
 EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_content` for WordPress compatibility, uses WordPress media/revisions/permissions/publishing flows, and ships local runtime assets instead of requiring Jetpack, Classic Editor, another Markdown plugin, or CDN-hosted editor/rendering libraries.
 
@@ -41,10 +41,10 @@ EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_con
 
 1. Download an EasyMDE release ZIP from [GitHub Releases](https://github.com/tao-xiaoxin/EasyMDE/releases), or place the plugin folder at `wp-content/plugins/easymde`.
 2. In WordPress, go to **Plugins > Add New > Upload Plugin** for the ZIP, or activate the copied plugin from **Plugins**.
-3. Create EasyMDE content from **Posts > Add EasyMDE Post** or **Pages > Add EasyMDE Page**.
-4. Existing legacy EasyMDE posts with stored Markdown metadata also reopen in the EasyMDE editor.
+3. Create Markdown content from **Posts > Add New** or **Pages > Add New**.
+4. Existing EasyMDE posts with stored Markdown metadata reopen in the EasyMDE editor.
 
-Creating a normal post or page through the default WordPress flow keeps the normal Gutenberg editor.
+Existing posts and pages without EasyMDE metadata keep the normal Gutenberg editor when edited.
 
 ## Features
 
@@ -73,7 +73,8 @@ Creating a normal post or page through the default WordPress flow keeps the norm
 
 **WordPress integration**
 
-- Per-post/page opt-in editor mode.
+- EasyMDE editor mode for new built-in posts and pages.
+- Metadata-based editor mode for existing posts and pages.
 - Rendered HTML saved to `post_content` for themes, feeds, search, and plugin compatibility.
 - EasyMDE Markdown and appearance metadata included in WordPress revisions.
 - Frontend pages load only the selected theme and the feature assets required by the current post.

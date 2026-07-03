@@ -121,6 +121,9 @@ final class RevisionManager {
 		} catch ( \RuntimeException $exception ) {
 			do_action( 'easymde_revision_restore_failed', $post_id, $revision_id, $exception );
 			unset( $exception );
+			if ( $this->post_content_matches_revision( $post_id, $revision_id ) ) {
+				return;
+			}
 			$this->restore_meta_snapshot( $post_id, $previous_meta );
 		} finally {
 			$this->restoring = false;
@@ -188,6 +191,17 @@ final class RevisionManager {
 		}
 
 		clean_post_cache( $post_id );
+	}
+
+	private function post_content_matches_revision( $post_id, $revision_id ) {
+		$post     = get_post( absint( $post_id ) );
+		$revision = get_post( absint( $revision_id ) );
+
+		if ( ! $post || ! $revision ) {
+			return false;
+		}
+
+		return (string) $post->post_content === (string) $revision->post_content;
 	}
 
 	private function is_renderer_available() {

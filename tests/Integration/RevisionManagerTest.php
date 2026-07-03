@@ -201,6 +201,72 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertSame('<p>Current HTML</p>', get_post($post_id)->post_content);
     }
 
+    public function test_wp_restore_revision_keeps_core_restored_content_and_meta_aligned_when_direct_update_fails()
+    {
+        global $wpdb;
+
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_content' => '<p>Current HTML</p>',
+            )
+        );
+        $revision_id = wp_insert_post(
+            array(
+                'post_parent' => $post_id,
+                'post_type' => 'revision',
+                'post_status' => 'inherit',
+                'post_title' => 'Revision',
+                'post_content' => '<p>Revision HTML</p>',
+            )
+        );
+
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Current Markdown');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
+
+        update_metadata('post', $revision_id, PostDocument::META_ENABLED, '1');
+        update_metadata('post', $revision_id, PostDocument::META_MARKDOWN, '# Revision Markdown');
+        update_metadata('post', $revision_id, PostDocument::META_MARKDOWN_THEME, 'orange-heart');
+
+        $restore_failure = null;
+        $restore_failure_listener = function ($failed_post_id, $failed_revision_id, $exception) use ($post_id, $revision_id, &$restore_failure) {
+            $restore_failure = array($failed_post_id, $failed_revision_id, $exception);
+        };
+        $fail_easymde_post_content_update = function ($query) use ($wpdb) {
+            if (
+                doing_action('wp_restore_post_revision')
+                && false !== strpos($query, 'UPDATE `' . $wpdb->posts . '`')
+                && false !== strpos($query, '`post_content`')
+            ) {
+                return false;
+            }
+
+            return $query;
+        };
+        add_action('easymde_revision_restore_failed', $restore_failure_listener, 10, 3);
+        add_filter('query', $fail_easymde_post_content_update);
+
+        try {
+            $manager = new RevisionManager(new PostDocument(), $this->theme_state_repository());
+            add_action('wp_restore_post_revision', array($manager, 'restore_revision_meta'), 10, 2);
+            wp_restore_post_revision($revision_id);
+        } finally {
+            remove_action('wp_restore_post_revision', array($manager, 'restore_revision_meta'), 10);
+            remove_filter('query', $fail_easymde_post_content_update);
+            remove_action('easymde_revision_restore_failed', $restore_failure_listener, 10);
+        }
+
+        $this->assertIsArray($restore_failure);
+        $this->assertSame($post_id, $restore_failure[0]);
+        $this->assertSame($revision_id, $restore_failure[1]);
+        $this->assertInstanceOf(\RuntimeException::class, $restore_failure[2]);
+        $this->assertSame('1', get_post_meta($post_id, PostDocument::META_ENABLED, true));
+        $this->assertSame('# Revision Markdown', get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+        $this->assertSame('orange-heart', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
+        $this->assertSame('<p>Revision HTML</p>', get_post($post_id)->post_content);
+    }
+
     public function test_sync_latest_revision_meta_after_save_uses_current_parent_meta()
     {
         $post_id = self::factory()->post->create(array('post_type' => 'post'));

@@ -14,7 +14,7 @@ easymde_validate_database_name() {
 		return
 	fi
 
-	if [[ ! "${db_name}" =~ ^easymde_[A-Za-z0-9_]+$ ]]; then
+	if [[ ! "${db_name}" =~ ^easymde_(phpunit|i18n|plugin_check|e2e|release|test|tests)(_[A-Za-z0-9_]+)?$ ]]; then
 		fail "Refusing ${label} '${db_name}'. ${guidance}"
 	fi
 }
@@ -50,9 +50,15 @@ easymde_validate_destructive_path() {
 
 easymde_is_safe_test_path() {
 	local path="$1"
+	local dir
+	local base
 
-	case "${path}" in
-		/tmp/easymde-*|/private/tmp/easymde-*|/var/tmp/easymde-*|/private/var/tmp/easymde-*)
+	dir="$(dirname "${path}")"
+	base="$(basename "${path}")"
+
+	case "${dir}" in
+		/tmp|/private/tmp|/var/tmp|/private/var/tmp)
+			[[ "${base}" == easymde-* ]] || return 1
 			return 0
 			;;
 	esac
@@ -66,6 +72,9 @@ easymde_prepare_destructive_path() {
 	local canonical
 
 	easymde_validate_destructive_path "${path}" "${label}"
+	if [ -L "${path}" ]; then
+		fail "Refusing unsafe ${label} '${path}'. Symlinked destructive paths require EASYMDE_ALLOW_UNSAFE_PATHS=1."
+	fi
 	mkdir -p "${path}"
 	canonical="$(cd "${path}" && pwd -P)"
 	easymde_validate_destructive_path "${canonical}" "${label}"

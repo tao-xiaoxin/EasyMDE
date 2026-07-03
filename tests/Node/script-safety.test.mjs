@@ -197,6 +197,38 @@ test('release setup rejects symlink escapes before cleanup or wp calls', () => {
   }
 });
 
+test('release setup rejects symlinked temp easymde paths before cleanup or wp calls', () => {
+  const root = makeTempRoot('easymde-release-safety-');
+  const releaseZip = join(root, 'easymde.zip');
+  const unsafeTarget = join('/tmp', `easymde-symlink-target-${process.pid}-${Date.now()}`);
+  const unsafeLink = join('/tmp', `easymde-symlink-link-${process.pid}-${Date.now()}`);
+  const sentinel = join(unsafeTarget, 'sentinel.txt');
+  const fakeBin = makeFakeBin(root, ['wp']);
+
+  try {
+    writeFile(releaseZip, 'zip fixture');
+    writeFile(sentinel, 'keep me');
+    symlinkSync(unsafeTarget, unsafeLink, 'dir');
+
+    const result = runScript('scripts/setup-wordpress-release.sh', [releaseZip], {
+      env: {
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        EASYMDE_DB_NAME: 'easymde_release',
+        EASYMDE_WP_PATH: unsafeLink
+      }
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Symlinked destructive paths/);
+    assert.equal(existsSync(sentinel), true);
+    assert.equal(existsSync(join(root, 'command.log')), false);
+  } finally {
+    rmSync(unsafeLink, { force: true });
+    rmSync(unsafeTarget, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('release setup rejects non-EasyMDE database names before wp config or reset', () => {
   const root = makeTempRoot('easymde-release-safety-');
   const releaseZip = join(root, 'easymde.zip');
@@ -210,6 +242,31 @@ test('release setup rejects non-EasyMDE database names before wp config or reset
       env: {
         PATH: `${fakeBin}:${process.env.PATH}`,
         EASYMDE_DB_NAME: 'wordpress',
+        EASYMDE_WP_PATH: wpPath
+      }
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Refusing to reset non-EasyMDE database/);
+    assert.equal(existsSync(join(root, 'command.log')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release setup rejects non-test EasyMDE database names before wp config or reset', () => {
+  const root = makeTempRoot('easymde-release-safety-');
+  const releaseZip = join(root, 'easymde.zip');
+  const wpPath = join(root, 'easymde-safe-wp');
+  const fakeBin = makeFakeBin(root, ['wp']);
+
+  try {
+    writeFile(releaseZip, 'zip fixture');
+
+    const result = runScript('scripts/setup-wordpress-release.sh', [releaseZip], {
+      env: {
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        EASYMDE_DB_NAME: 'easymde_production',
         EASYMDE_WP_PATH: wpPath
       }
     });
@@ -258,7 +315,7 @@ test('WordPress test installer rejects unsafe core and tests paths before downlo
         env: {
           PATH: `${fakeBin}:${process.env.PATH}`,
           WP_CORE_DIR: '.',
-          WP_TESTS_DIR: join(root, 'easymde-tests-lib')
+          WP_TESTS_DIR: root
         }
       }
     );
@@ -288,7 +345,7 @@ test('WordPress test installer rejects arbitrary absolute easymde paths before d
         env: {
           PATH: `${fakeBin}:${process.env.PATH}`,
           WP_CORE_DIR: unsafeCoreDir,
-          WP_TESTS_DIR: join(root, 'easymde-tests-lib')
+          WP_TESTS_DIR: root
         }
       }
     );
@@ -329,11 +386,36 @@ test('WordPress test installer rejects crafted database names before mysql', () 
   }
 });
 
+test('WordPress test installer rejects non-test EasyMDE database names before mysql', () => {
+  const root = makeTempRoot('easymde-test-installer-');
+  const fakeBin = makeFakeBin(root, ['curl', 'svn', 'tar', 'mysql']);
+
+  try {
+    const result = runScript(
+      'scripts/install-wp-tests.sh',
+      ['easymde_production', 'root', 'root', '127.0.0.1', '6.0'],
+      {
+        env: {
+          PATH: `${fakeBin}:${process.env.PATH}`,
+          WP_CORE_DIR: join(root, 'easymde-core'),
+          WP_TESTS_DIR: join(root, 'easymde-tests-lib')
+        }
+      }
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Refusing unsafe test database/);
+    assert.equal(existsSync(join(root, 'command.log')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('WordPress test installer escapes sed replacement values in generated config', () => {
   const root = makeTempRoot('easymde-test-installer-');
   const fakeBin = makeWordPressInstallerFakeBin(root);
-  const wpCoreDir = join(root, 'easymde-core');
-  const wpTestsDir = join(root, 'easymde-tests-lib');
+  const wpCoreDir = makeTempRoot('easymde-core-');
+  const wpTestsDir = makeTempRoot('easymde-tests-lib-');
   const dbUser = 'user/with&slash\\name';
   const dbPass = 'pa/ss&\\word';
   const dbHost = '127.0.0.1:3306';
@@ -359,6 +441,8 @@ test('WordPress test installer escapes sed replacement values in generated confi
     assert.ok(config.includes(dbPass), config);
     assert.ok(config.includes(dbHost), config);
   } finally {
+    rmSync(wpCoreDir, { recursive: true, force: true });
+    rmSync(wpTestsDir, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
 });

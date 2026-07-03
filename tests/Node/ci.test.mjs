@@ -56,15 +56,33 @@ test('Plugin Check and E2E validate the release job ZIP artifact', () => {
   const e2eJob = workflowJobBlock(workflow, 'e2e');
 
   assert.match(releaseJob, /name:\s+Build release package[\s\S]*run:\s+npm run build:release/);
-  assert.match(releaseJob, /uses:\s+actions\/upload-artifact@v4[\s\S]*name:\s+easymde-release-zip[\s\S]*path:\s+dist\/easymde\.zip/);
+  assert.match(releaseJob, /name:\s+Upload plugin ZIP[\s\S]*uses:\s+actions\/upload-artifact@v4[\s\S]*name:\s+easymde-plugin-zip[\s\S]*path:\s+dist\/EasyMDE\.zip[\s\S]*if-no-files-found:\s+error/);
 
   [pluginCheckJob, e2eJob].forEach((job) => {
     assert.match(job, /needs:\s+release/);
-    assert.match(job, /uses:\s+actions\/download-artifact@v4[\s\S]*name:\s+easymde-release-zip[\s\S]*path:\s+dist/);
+    assert.match(job, /uses:\s+actions\/download-artifact@v4[\s\S]*name:\s+easymde-plugin-zip[\s\S]*path:\s+dist/);
+    assert.match(job, /run:\s+scripts\/(?:run-plugin-check|setup-wordpress-release)\.sh dist\/EasyMDE\.zip/);
     assert.doesNotMatch(job, /run:\s+npm run build:release/);
     assert.doesNotMatch(job, /run:\s+npm run i18n:check/);
     assert.doesNotMatch(job, /run:\s+npm run notices:check/);
   });
+});
+
+test('release job uploads explicit source and plugin artifacts without publish privileges', () => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const releaseJob = workflowJobBlock(workflow, 'release');
+
+  assert.match(workflow, /permissions:\s*\n\s+contents:\s+read/);
+  assert.doesNotMatch(workflow, /contents:\s+write/);
+  assert.doesNotMatch(workflow, /gh\s+release|create-release|softprops\/action-gh-release|git\s+tag|push\s+origin\s+.*tags/);
+
+  assert.match(releaseJob, /name:\s+Resolve release metadata[\s\S]*git rev-parse HEAD[\s\S]*readReleaseVersions/);
+  assert.match(releaseJob, /name:\s+Build source archives[\s\S]*run:\s+npm run build:source-archives/);
+  assert.match(releaseJob, /name:\s+Verify release artifacts[\s\S]*unzip -t "\$\{source_zip\}"[\s\S]*tar -tzf "\$\{source_tar_gz\}"[\s\S]*unzip -t "\$\{plugin_zip\}"/);
+  assert.match(releaseJob, /name:\s+Summarize release artifacts[\s\S]*\| Checkout SHA \| Version \| Artifact \| Payload \| Byte size \| SHA-256 \|/);
+  assert.match(releaseJob, /name:\s+Upload source code ZIP[\s\S]*name:\s+source-code-zip[\s\S]*path:\s+dist\/EasyMDE-\$\{\{ steps\.release-metadata\.outputs\.version \}\}-source\.zip[\s\S]*if-no-files-found:\s+error/);
+  assert.match(releaseJob, /name:\s+Upload source code tar\.gz[\s\S]*name:\s+source-code-tar-gz[\s\S]*path:\s+dist\/EasyMDE-\$\{\{ steps\.release-metadata\.outputs\.version \}\}-source\.tar\.gz[\s\S]*if-no-files-found:\s+error/);
+  assert.match(releaseJob, /name:\s+Upload plugin ZIP[\s\S]*name:\s+easymde-plugin-zip[\s\S]*path:\s+dist\/EasyMDE\.zip[\s\S]*if-no-files-found:\s+error/);
 });
 
 test('WP-CLI phar is verified before it is executed', () => {

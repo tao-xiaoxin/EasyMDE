@@ -446,14 +446,18 @@ function assertZipCommand() {
 }
 
 export function releaseZipPath(root = defaultRoot, releaseRoot = fromRoot(root, 'dist')) {
-  return join(releaseRoot, 'easymde.zip');
+  return join(releaseRoot, 'EasyMDE.zip');
 }
 
 function buildReleaseZip(root, releaseRoot, packageRoot) {
   const zipPath = releaseZipPath(root, releaseRoot);
+  const legacyZipPath = join(releaseRoot, 'easymde.zip');
 
   assertZipCommand();
   rmSync(zipPath, { force: true });
+  if (legacyZipPath !== zipPath) {
+    rmSync(legacyZipPath, { force: true });
+  }
 
   const result = spawnSync('zip', ['-qr', zipPath, relative(releaseRoot, packageRoot)], {
     cwd: releaseRoot,

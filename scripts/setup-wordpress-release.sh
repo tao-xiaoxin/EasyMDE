@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RELEASE_ZIP="${1:-dist/easymde.zip}"
+RELEASE_ZIP="${1:-dist/EasyMDE.zip}"
 WP_PATH="${EASYMDE_WP_PATH:-/tmp/easymde-release-wp}"
 WP_URL="${EASYMDE_WP_URL:-http://127.0.0.1:8089}"
 WP_TITLE="${EASYMDE_WP_TITLE:-EasyMDE Release Test}"

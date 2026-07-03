@@ -82,18 +82,33 @@ npm run build:release
 `npm run build:release` creates:
 
 - `dist/easymde/`
-- `dist/easymde.zip`
+- `dist/EasyMDE.zip`
 
 The build verifies version consistency across `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json`. It also fails if required runtime dependencies, local runtime assets, registered theme assets, translation files, or third-party notices are missing.
 
 The release build requires Composer runtime dependencies only. If Composer development packages are installed under `vendor/`, rebuild with Composer `--no-dev` before packaging.
+
+The CI release package job also creates source snapshots from the checked-out tracked Git tree:
+
+- `dist/EasyMDE-<version>-source.zip`
+- `dist/EasyMDE-<version>-source.tar.gz`
+
+Those source archives use `EasyMDE-<version>/` as their root directory. They are separate from the installable runtime plugin ZIP and are not consumed by Plugin Check or E2E.
+
+CI uploads the release outputs as separate Actions artifacts:
+
+| Actions artifact | Payload |
+| --- | --- |
+| `source-code-zip` | `EasyMDE-<version>-source.zip` |
+| `source-code-tar-gz` | `EasyMDE-<version>-source.tar.gz` |
+| `easymde-plugin-zip` | `EasyMDE.zip` |
 
 ## Clean ZIP Installation
 
 Use the release setup script to install the built ZIP into a clean disposable WordPress site:
 
 ```bash
-scripts/setup-wordpress-release.sh dist/easymde.zip
+scripts/setup-wordpress-release.sh dist/EasyMDE.zip
 ```
 
 The script validates destructive database names and WordPress install paths before cleanup or reset operations. Use only isolated EasyMDE test databases and disposable temporary WordPress installs.
@@ -103,7 +118,7 @@ The script validates destructive database names and WordPress install paths befo
 Run Plugin Check against the built ZIP:
 
 ```bash
-scripts/run-plugin-check.sh dist/easymde.zip
+scripts/run-plugin-check.sh dist/EasyMDE.zip
 ```
 
 The runner installs the release ZIP into a clean WordPress site, installs the official Plugin Check plugin, runs the Plugin Check CLI, and lets `scripts/plugin-check-results.mjs` classify the strict JSON output. The default Plugin Check version is pinned by the script and can be overridden through its documented environment variable.

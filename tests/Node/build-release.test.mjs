@@ -159,6 +159,7 @@ test('release build succeeds for a complete runtime fixture', () => {
 
   try {
     createCompleteFixture(root);
+    writeText(root, 'dist/easymde.zip', 'legacy release zip');
 
     const packageRoot = buildRelease({ root });
     const entries = zipEntries(root);
@@ -167,6 +168,12 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(existsSync(join(packageRoot, 'vendor/autoload.php')));
     assert.ok(existsSync(join(packageRoot, 'vendor/league/commonmark/runtime/Parser.php')));
     assert.ok(existsSync(releaseZipPath(root)));
+    {
+      const releaseZip = readFileSync(releaseZipPath(root));
+      assert.notEqual(releaseZip.subarray(0, 'legacy release zip'.length).toString('utf8'), 'legacy release zip');
+      assert.equal(releaseZip[0], 0x50);
+      assert.equal(releaseZip[1], 0x4b);
+    }
     assert.ok(entries.includes('easymde/languages/easymde.pot'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.po'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.mo'));

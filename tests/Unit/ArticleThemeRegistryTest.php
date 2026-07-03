@@ -25,13 +25,11 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
         $themes = array_column($registry->for_script(), null, 'id');
 
         $this->assertArrayHasKey('qinghe-zhusha', $themes);
-        $this->assertSame(
+        $this->assertStringContainsString(
             'assets/themes/article/qinghe-zhusha.css',
-            substr(
-                $themes['qinghe-zhusha']['cssUrl'],
-                -strlen('assets/themes/article/qinghe-zhusha.css')
-            )
+            $themes['qinghe-zhusha']['cssUrl']
         );
+        $this->assertStringContainsString('ver=' . EASYMDE_VERSION, $themes['qinghe-zhusha']['cssUrl']);
         $this->assertSame('assets/themes/article/qinghe-zhusha.css', $themes['qinghe-zhusha']['assetPath']);
         $this->assertSame(
             array(
@@ -42,6 +40,19 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
             ),
             $themes['qinghe-zhusha']['fontDefaults']
         );
+    }
+
+    public function test_code_theme_registry_exposes_versioned_asset_urls_for_admin_script()
+    {
+        $registry = new CodeThemeRegistry();
+        $themes = array_column($registry->for_script(), null, 'id');
+
+        $this->assertArrayHasKey('atom-one-dark', $themes);
+        $this->assertStringContainsString(
+            'assets/vendor/highlight/styles/atom-one-dark.min.css',
+            $themes['atom-one-dark']['cssUrl']
+        );
+        $this->assertStringContainsString('ver=' . EASYMDE_VERSION, $themes['atom-one-dark']['cssUrl']);
     }
 
     public function test_qinghe_zhusha_theme_state_outputs_scoped_render_class()

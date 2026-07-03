@@ -45,7 +45,7 @@ final class CodeThemeRegistry {
 			$themes[] = array(
 				'id'        => $theme['id'],
 				'label'     => $theme['label'],
-				'cssUrl'    => Asset::url( $theme['asset_path'] ),
+				'cssUrl'    => $this->versioned_asset_url( $theme['asset_path'] ),
 				'assetPath' => $theme['asset_path'],
 				'origin'    => $theme['origin'],
 			);
@@ -61,5 +61,9 @@ final class CodeThemeRegistry {
 			'asset_path' => $asset_path,
 			'origin'     => $origin,
 		);
+	}
+
+	private function versioned_asset_url( $asset_path ) {
+		return add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( $asset_path ) );
 	}
 }

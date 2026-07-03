@@ -58,7 +58,8 @@ final class MarkdownRendererTest extends WP_UnitTestCase
             'qinghe-zhusha'
         );
 
-        $this->assertStringContainsString('<section class="table-container"><table>', $html);
+        $this->assertStringContainsString('<section class="easymde-table-container"><table>', $html);
+        $this->assertStringNotContainsString('<section class="table-container"><table>', $html);
         $this->assertStringContainsString('<figure><img', $html);
         $this->assertStringContainsString('src="https://example.test/qinghe.png"', $html);
         $this->assertStringContainsString('alt="Qinghe caption"', $html);

@@ -14,6 +14,22 @@ function cssVariable(source, name) {
   return match[1].trim();
 }
 
+function cssRuleBodies(source, selector) {
+  const bodies = [];
+  const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+  let match;
+
+  while ((match = rulePattern.exec(source)) !== null) {
+    const selectors = match[1].split(',').map((item) => item.trim());
+
+    if (selectors.includes(selector)) {
+      bodies.push(match[2]);
+    }
+  }
+
+  return bodies;
+}
+
 function luminance(hex) {
   const value = hex.replace('#', '');
   const channels = [0, 2, 4].map((index) => Number.parseInt(value.slice(index, index + 2), 16) / 255);
@@ -38,8 +54,10 @@ test('Qinghe Zhusha text and accent colors meet AA contrast on white', () => {
   const text = cssVariable(css, '--easymde-qinghe-text');
   const green = cssVariable(css, '--easymde-qinghe-green');
   const red = cssVariable(css, '--easymde-qinghe-red');
+  const soft = cssVariable(css, '--easymde-qinghe-soft');
 
   assert.ok(contrast(text, white) >= 4.5, 'body text should meet AA contrast on white');
+  assert.ok(contrast(text, soft) >= 4.5, 'body text should meet AA contrast on soft backgrounds');
   assert.ok(contrast(green, white) >= 4.5, 'green accent should meet AA contrast on white');
   assert.ok(contrast(white, green) >= 4.5, 'white heading text should meet AA contrast on green');
   assert.ok(contrast(red, white) >= 4.5, 'red emphasis should meet AA contrast on white');
@@ -64,4 +82,23 @@ test('Qinghe Zhusha mobile list margins can reset', () => {
     /@media \(max-width: 600px\)[\s\S]*\.easymde-rendered-content\.easymde-markdown-theme-qinghe-zhusha p,\s*\.easymde-rendered-content\.easymde-markdown-theme-qinghe-zhusha li\s*\{[\s\S]*margin-right: 0;[\s\S]*margin-left: 0;/,
     'mobile rules should reset paragraph and list item horizontal margins together'
   );
+});
+
+test('Qinghe Zhusha highlighted code keeps the selected code theme background', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/qinghe-zhusha.css'), 'utf8');
+  const highlightedCodeSelectors = [
+    '.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre code',
+    '.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre code.hljs'
+  ];
+  const highlightedCodeBodies = highlightedCodeSelectors.flatMap((selector) => cssRuleBodies(css, selector));
+
+  assert.notEqual(highlightedCodeBodies.length, 0, 'theme should define pre code layout rules');
+
+  highlightedCodeBodies.forEach((body) => {
+    assert.doesNotMatch(
+      body,
+      /background(?:-color)?:\s*transparent\b/,
+      'highlighted code should not force a transparent background over the selected code theme'
+    );
+  });
 });

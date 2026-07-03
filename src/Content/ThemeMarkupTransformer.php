@@ -63,8 +63,8 @@ final class ThemeMarkupTransformer {
 	public static function transform( $html, $theme ) {
 		$theme                     = sanitize_key( (string) $theme );
 		$uses_markdown2html_markup = self::theme_uses_markdown2html_markup( $theme );
-		$uses_image_figures        = 'qinghe-zhusha' === $theme;
-		$uses_table_container      = 'qinghe-zhusha' === $theme;
+		$uses_image_figures        = self::theme_uses_image_figures( $theme );
+		$uses_table_container      = self::theme_uses_table_container( $theme );
 
 		if ( ! $uses_markdown2html_markup && ! $uses_image_figures && ! $uses_table_container ) {
 			return $html;
@@ -147,7 +147,7 @@ final class ThemeMarkupTransformer {
 		}
 
 		if ( $uses_table_container ) {
-			self::wrap_theme_tables( $document, $root );
+			self::wrap_theme_tables( $document, $root, 'easymde-table-container' );
 		}
 
 		$html = self::inner_html( $root, $document );
@@ -185,6 +185,14 @@ final class ThemeMarkupTransformer {
 			),
 			true
 		);
+	}
+
+	private static function theme_uses_image_figures( $theme ) {
+		return in_array( $theme, array( 'qinghe-zhusha' ), true );
+	}
+
+	private static function theme_uses_table_container( $theme ) {
+		return in_array( $theme, array( 'qinghe-zhusha' ), true );
 	}
 
 	private static function wrap_cupid_busy_containers( DOMDocument $document, DOMElement $root ) {
@@ -386,15 +394,24 @@ final class ThemeMarkupTransformer {
 		}
 	}
 
-	private static function wrap_theme_tables( DOMDocument $document, DOMElement $root ) {
+	private static function wrap_theme_tables( DOMDocument $document, DOMElement $root, $container_class = 'table-container' ) {
+		$container_class = sanitize_html_class( (string) $container_class );
+		if ( '' === $container_class ) {
+			$container_class = 'table-container';
+		}
+
 		$tables = iterator_to_array( $root->getElementsByTagName( 'table' ) );
 		foreach ( $tables as $table ) {
-			if ( ! ( $table instanceof DOMElement ) || self::element_has_ancestor_class( $table, 'table-container' ) ) {
+			if (
+				! ( $table instanceof DOMElement )
+				|| self::element_has_ancestor_class( $table, 'table-container' )
+				|| self::element_has_ancestor_class( $table, 'easymde-table-container' )
+			) {
 				continue;
 			}
 
 			$container = $document->createElement( 'section' );
-			$container->setAttribute( 'class', 'table-container' );
+			$container->setAttribute( 'class', $container_class );
 			$table->parentNode->insertBefore( $container, $table );
 			$container->appendChild( $table );
 		}

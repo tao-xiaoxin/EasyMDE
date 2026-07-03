@@ -1,8 +1,8 @@
-/* Typora-derived Qinghe Zhusha article theme. */
+/* EasyMDE-maintained Qinghe Zhusha article theme. */
 .easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha {
   --easymde-theme-font-family: helvetica, arial, sans-serif;
 
-  --easymde-qinghe-text: #767676;
+  --easymde-qinghe-text: #707070;
   --easymde-qinghe-green: #4f7f22;
   --easymde-qinghe-red: #c7372b;
   --easymde-qinghe-muted: #666666;
@@ -178,7 +178,7 @@
   color: var(--easymde-qinghe-border);
 }
 
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha .table-container {
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha .easymde-table-container {
   max-width: 100%;
   margin: 15px 0;
   overflow-x: auto;
@@ -194,7 +194,7 @@
   border-collapse: collapse;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha .table-container table {
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha .easymde-table-container table {
   margin: 0;
 }
 
@@ -284,14 +284,12 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre code,
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre tt,
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre code.hljs {
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre tt {
   display: block;
   margin: 0;
   padding: 0;
   border: none;
   border-radius: 0;
-  background: transparent;
   font-family: var(--easymde-code-font-family);
   font-size: 13px;
   line-height: 19px;
@@ -299,6 +297,11 @@
   white-space: pre;
   word-break: normal;
   overflow-wrap: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre code:not(.hljs),
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre tt {
+  background: transparent;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha img {

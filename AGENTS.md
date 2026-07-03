@@ -117,6 +117,7 @@ Attack the change from these angles:
 * **Facts and contracts:** Does the implementation match WordPress APIs, supported PHP and WordPress versions, dependency behavior, release packaging rules, existing metadata, and public compatibility APIs?
 * **Simplicity and scope:** Is there a smaller change that solves the real problem? Did the work add unnecessary dependencies, files, abstractions, configuration, or operational burden?
 * **Test validity:** Could a test pass because it never reaches the changed path, uses an over-broad mock, relies on polluted global state, skips unavailable tooling, or checks only file presence instead of runtime behavior?
+* **Privacy and artifact provenance:** Could changed code, generated output, binary assets, data URIs, commit messages, or public PR/Issue text expose local environment details, personal data, credentials, or unnecessary embedded metadata?
 
 For every non-trivial task, list the three to five most likely ways the change could fail. For each relevant risk, either:
 
@@ -280,6 +281,27 @@ Review relevant changes for:
 * Whether release behavior remains self-contained and does not accidentally depend on local development files or remote CDN assets.
 * Whether tests and validation are sufficient for the risk and scope of the change.
 
+### Privacy, Secrets, and Artifact Metadata Review
+
+Treat privacy, secret exposure, and unnecessary artifact metadata as merge-blocking concerns when a pull request introduces or materially worsens them.
+
+Review the changed files and every public surface the author controls for the pull request, including the PR title/body, linked Issue text, screenshots or attachments intentionally added to the repository, generated release artifacts, and review replies when they contain implementation evidence.
+
+Flag newly introduced or exposed:
+
+* Machine-specific absolute paths, usernames, home directories, local application-support directories, temporary-file paths, screenshot paths, local logs, caches, or other environment identifiers.
+* Localhost, loopback, private-network, staging, or internal-service endpoints and ports unless they are an intentional, documented, non-sensitive public test contract.
+* Credentials, API keys, tokens, passwords, cookies, authorization headers, private keys, or local configuration values.
+* Personal data such as personal email addresses, phone numbers, account identifiers, or unredacted personal records that are not necessary test fixtures.
+* EXIF, XMP, IPTC, creator-tool, document-ID, instance-ID, Photoshop/Adobe, geolocation, or similar metadata embedded in images, fonts, archives, binaries, SVGs, or data URIs when it is unrelated to runtime behavior.
+* Local-only evidence copied into committed files, test fixtures, documentation, PR text, or comments when a privacy-safe description would suffice.
+
+For binary assets and embedded `data:` payloads, inspect decoded content or metadata where practical; a visual match or successful browser rendering is not evidence that the asset is safe to publish.
+
+When reporting a privacy finding, do not repeat the sensitive value unnecessarily. Identify the file or public surface, describe the exposure category, and use a redacted example or structural description. Explain the smallest safe remediation, including branch-history rewriting when the sensitive value remains reachable from the PR branch.
+
+Do not claim that rewriting a branch or editing a public comment guarantees removal from every cache, notification, fork, mirror, or hosting-provider object store.
+
 ### What Deserves a Finding
 
 Report an issue when the pull request introduces or materially worsens a concrete problem, including:
@@ -292,6 +314,7 @@ Report an issue when the pull request introduces or materially worsens a concret
 * An incompatibility with supported WordPress or PHP versions.
 * A meaningful performance, reliability, or resource-exhaustion risk.
 * A missing runtime dependency, asset, translation file, or release artifact.
+* A public privacy, secret-exposure, personal-data, machine-environment, or embedded-asset-metadata leak.
 * A violation of an explicit project rule in this `AGENTS.md`.
 * A new file, dependency, asset, abstraction, script, or document without a clear runtime, build, test, release, or documented extension purpose.
 
@@ -372,7 +395,7 @@ For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or rel
 
 * Existing theme choices, code themes, custom CSS snapshots, font settings, shortcuts, and user defaults remain readable unless an explicit migration path is included.
 
-#### Assets, Dependencies, and Releases
+#### Assets, Dependencies, Releases, and Privacy
 
 * No remote CDN dependency is introduced.
 * EasyMDE-owned assets remain separate from third-party vendor assets.
@@ -381,6 +404,8 @@ For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or rel
 * Build output, Composer dependencies, translations, and vendor assets remain consistent with the documented release workflow.
 * Release changes keep the installable plugin package self-contained.
 * Release packages do not include secrets, caches, test artifacts, `node_modules`, local configuration, logs, or unrelated generated files.
+* New committed assets, archives, fonts, SVGs, and embedded `data:` payloads do not contain unnecessary creator, device, location, document, or environment metadata.
+* Changed documentation, PR text, linked Issue text, test fixtures, screenshots, and release notes do not reveal private local paths, local endpoints, credentials, personal data, or unnecessary machine-specific details.
 
 ### Finding Quality Requirements
 
@@ -412,6 +437,7 @@ Do not combine unrelated problems into one finding.
 * Do not praise the pull request or summarize non-blocking observations.
 * Do not invent suggestions merely to produce review comments.
 * Do not claim tests, runtime behavior, or security properties that were not actually verified.
+* Redact sensitive values in review findings unless reproducing the exact value is strictly necessary to remediate an immediate security incident.
 
 ## Git Scope, Staging, and Commit Rules
 
@@ -466,6 +492,7 @@ For behavior changes, verify the applicable scenarios:
 * Only the selected article and code themes load.
 * Mermaid, KaTeX, highlighting, media insertion, local drafts, and WeChat export still work when related code changes.
 * Old `_easymde_*` metadata remains readable.
+* For changes that add public artifacts or evidence, the changed diff and public PR/Issue text have been checked for private local information, secrets, personal data, and unnecessary embedded metadata.
 
 Do not claim verification that was not actually performed.
 
@@ -488,3 +515,4 @@ At task completion, report:
 3. Commands actually run and their results.
 4. Remaining risks, assumptions, or unverified behavior.
 5. Files staged or committed, and why each file belongs to the task.
+6. When relevant, privacy/artifact scanning performed, what categories were checked, and any remaining history/cache limitations.

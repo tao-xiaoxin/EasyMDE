@@ -161,15 +161,21 @@ final class RevisionManagerTest extends WP_UnitTestCase
                 $cleaned_post_cache = true;
             }
         };
-        $original_posts_table = $wpdb->posts;
+        $fail_post_content_update = function ($query) use ($wpdb) {
+            if (false !== strpos($query, 'UPDATE `' . $wpdb->posts . '`') && false !== strpos($query, '`post_content`')) {
+                return false;
+            }
+
+            return $query;
+        };
         add_action('clean_post_cache', $clean_cache_listener, 10, 1);
+        add_filter('query', $fail_post_content_update);
 
         try {
-            $wpdb->posts = $wpdb->prefix . 'easymde_missing_posts';
             $manager = new RevisionManager(new PostDocument(), $this->theme_state_repository());
             $manager->restore_revision_meta($post_id, $revision_id);
         } finally {
-            $wpdb->posts = $original_posts_table;
+            remove_filter('query', $fail_post_content_update);
             remove_action('clean_post_cache', $clean_cache_listener, 10);
         }
 

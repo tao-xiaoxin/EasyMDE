@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { findVersionMismatches, readReleaseVersions } from './build-release.mjs';
+import { findVersionMismatchesFromVersions, readReleaseVersionsFromSources } from './build-release.mjs';
 
 const defaultRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const maxCommandBuffer = 1024 * 1024 * 20;
@@ -50,6 +50,10 @@ function runGit(root, args) {
   return runCommand('git', args, { cwd: root });
 }
 
+function readGitText(root, commit, path) {
+  return runGit(root, ['show', `${commit}:${path}`]);
+}
+
 function assertCommandAvailable(command, args, label) {
   try {
     runCommand(command, args);
@@ -58,8 +62,16 @@ function assertCommandAvailable(command, args, label) {
   }
 }
 
-function assertReleaseVersionConsistency(root) {
-  const mismatches = findVersionMismatches(root);
+function readReleaseVersionsAtCommit(root, commit) {
+  return readReleaseVersionsFromSources({
+    mainFile: readGitText(root, commit, 'easymde.php'),
+    readme: readGitText(root, commit, 'readme.txt'),
+    packageJson: readGitText(root, commit, 'package.json')
+  });
+}
+
+function assertReleaseVersionConsistency(versions) {
+  const mismatches = findVersionMismatchesFromVersions(versions);
 
   if (!mismatches.length) {
     return;
@@ -131,11 +143,12 @@ function toRelativePath(root, path) {
 
 export function resolveSourceArchiveMetadata(options = {}) {
   const root = resolve(options.root || defaultRoot);
-
-  assertReleaseVersionConsistency(root);
-
   const commit = runGit(root, ['rev-parse', 'HEAD']).trim();
-  const version = readReleaseVersions(root).pluginHeader;
+  const versions = readReleaseVersionsAtCommit(root, commit);
+
+  assertReleaseVersionConsistency(versions);
+
+  const version = versions.pluginHeader;
   const releaseRoot = resolve(options.releaseRoot || join(root, 'dist'));
   const paths = sourceArchivePaths(releaseRoot, version);
 

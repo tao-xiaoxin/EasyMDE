@@ -86,6 +86,16 @@ function zipEntries(path) {
   return result.stdout.trim().split(/\r?\n/).filter(Boolean);
 }
 
+function zipText(path, entry) {
+  const result = spawnSync('unzip', ['-p', path, entry], {
+    encoding: 'utf8'
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+
+  return result.stdout;
+}
+
 function tarEntries(path) {
   const result = spawnSync('tar', ['-tzf', path], {
     encoding: 'utf8'
@@ -134,6 +144,27 @@ test('source archive builder creates ZIP and tar.gz from the checked-out tracked
     assert.equal(existsSync(metadata.sourceTar), false);
     assertArchiveEntries(zipList, metadata.version);
     assertArchiveEntries(tarList, metadata.version);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('source archive metadata uses version fields from the archived commit', () => {
+  const root = makeTempRoot();
+
+  try {
+    createGitFixture(root);
+    createVersionFiles(root, '9.9.9');
+
+    const expectedCommit = run(root, 'git', ['rev-parse', 'HEAD']);
+    const metadata = buildSourceArchives({ root });
+    const archivedMainFile = zipText(metadata.sourceZip, 'EasyMDE-0.1.7/easymde.php');
+
+    assert.equal(metadata.commit, expectedCommit);
+    assert.equal(metadata.version, '0.1.7');
+    assert.equal(metadata.archiveRoot, 'EasyMDE-0.1.7');
+    assert.match(archivedMainFile, /Version: 0\.1\.7/);
+    assert.doesNotMatch(archivedMainFile, /9\.9\.9/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

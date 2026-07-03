@@ -238,21 +238,26 @@ function readPluginHeaderVersion(source) {
   return matchVersion(pluginHeaders[0], /^\s*\*\s*Version:\s*(.+)$/m, 'easymde.php', 'plugin header');
 }
 
-export function readReleaseVersions(root = defaultRoot) {
-  const mainFile = readText(root, 'easymde.php');
-  const readme = readText(root, 'readme.txt');
-  const packageJson = JSON.parse(readText(root, 'package.json'));
+export function readReleaseVersionsFromSources({ mainFile, readme, packageJson }) {
+  const parsedPackageJson = typeof packageJson === 'string' ? JSON.parse(packageJson) : packageJson;
 
   return {
     pluginHeader: readPluginHeaderVersion(mainFile),
     constant: matchVersion(mainFile, /define\(\s*['"]EASYMDE_VERSION['"]\s*,\s*['"]([^'"]+)['"]\s*\)/, 'easymde.php', 'EASYMDE_VERSION'),
     stableTag: matchVersion(readme, /^Stable tag:\s*(.+)$/m, 'readme.txt', 'Stable tag'),
-    packageJson: String(packageJson.version || '').trim()
+    packageJson: String(parsedPackageJson.version || '').trim()
   };
 }
 
-export function findVersionMismatches(root = defaultRoot) {
-  const versions = readReleaseVersions(root);
+export function readReleaseVersions(root = defaultRoot) {
+  return readReleaseVersionsFromSources({
+    mainFile: readText(root, 'easymde.php'),
+    readme: readText(root, 'readme.txt'),
+    packageJson: readText(root, 'package.json')
+  });
+}
+
+export function findVersionMismatchesFromVersions(versions) {
   const expected = versions.pluginHeader;
 
   return Object.entries(versions)
@@ -264,6 +269,10 @@ export function findVersionMismatches(root = defaultRoot) {
       value,
       expected
     }));
+}
+
+export function findVersionMismatches(root = defaultRoot) {
+  return findVersionMismatchesFromVersions(readReleaseVersions(root));
 }
 
 function assertReleaseVersionConsistency(root) {

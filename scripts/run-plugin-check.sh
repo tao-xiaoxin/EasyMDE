@@ -12,13 +12,26 @@ wp() {
 EASYMDE_WP_PATH="${WP_PATH}" scripts/setup-wordpress-release.sh "${RELEASE_ZIP}"
 
 wp plugin install plugin-check --path="${WP_PATH}" --force --activate --allow-root
-PLUGIN_CHECK_OUTPUT="$(mktemp)"
-wp plugin check easymde --path="${WP_PATH}" --allow-root | tee "${PLUGIN_CHECK_OUTPUT}"
-
-if awk -F '\t' '$3 == "ERROR" { found = 1 } END { exit found ? 0 : 1 }' "${PLUGIN_CHECK_OUTPUT}"; then
-	echo "Plugin Check reported errors for the built release ZIP." >&2
-	rm -f "${PLUGIN_CHECK_OUTPUT}"
+PLUGIN_CHECK_CLI="${WP_PATH}/wp-content/plugins/plugin-check/cli.php"
+if [ ! -f "${PLUGIN_CHECK_CLI}" ]; then
+	echo "Plugin Check runtime CLI bootstrap was not found at ${PLUGIN_CHECK_CLI}." >&2
 	exit 1
 fi
 
-rm -f "${PLUGIN_CHECK_OUTPUT}"
+PLUGIN_CHECK_OUTPUT="$(mktemp)"
+trap 'rm -f "${PLUGIN_CHECK_OUTPUT}"' EXIT
+
+wp --require="${PLUGIN_CHECK_CLI}" plugin check easymde --path="${WP_PATH}" --allow-root --format=strict-json | tee "${PLUGIN_CHECK_OUTPUT}"
+
+PLUGIN_CHECK_STATUS=0
+node scripts/plugin-check-results.mjs "${PLUGIN_CHECK_OUTPUT}" || PLUGIN_CHECK_STATUS="$?"
+
+if [ "${PLUGIN_CHECK_STATUS}" -eq 1 ]; then
+	echo "Plugin Check reported errors for the built release ZIP." >&2
+	exit 1
+fi
+
+if [ "${PLUGIN_CHECK_STATUS}" -ne 0 ]; then
+	echo "Plugin Check output could not be parsed." >&2
+	exit "${PLUGIN_CHECK_STATUS}"
+fi

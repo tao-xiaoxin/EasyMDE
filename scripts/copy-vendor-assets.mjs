@@ -18,7 +18,8 @@ const assets = [
   ['node_modules/katex/dist/katex.min.js', 'assets/vendor/katex/katex.min.js'],
   ['node_modules/katex/dist/katex.min.css', 'assets/vendor/katex/katex.min.css'],
   ['node_modules/katex/LICENSE', 'assets/vendor/katex/LICENSE'],
-  ['node_modules/mermaid/dist/mermaid.min.js', 'assets/vendor/mermaid/mermaid.min.js']
+  ['node_modules/mermaid/dist/mermaid.min.js', 'assets/vendor/mermaid/mermaid.min.js'],
+  ['scripts/vendor-licenses/mermaid-LICENSE', 'assets/vendor/mermaid/LICENSE']
 ];
 
 for (const [source, target] of assets) {

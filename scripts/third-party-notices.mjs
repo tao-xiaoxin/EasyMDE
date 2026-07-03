@@ -37,7 +37,7 @@ const frontendAssets = [
     displayName: 'Mermaid',
     assetPaths: 'assets/vendor/mermaid/mermaid.min.js',
     purpose: 'Local diagram rendering script.',
-    noticeLocation: 'THIRD-PARTY-NOTICES.md'
+    noticeLocation: 'assets/vendor/mermaid/LICENSE'
   }
 ];
 
@@ -118,7 +118,7 @@ function renderNotices() {
     '',
     table(frontendRows()),
     '',
-    'Copied frontend assets are committed under `assets/vendor/` so the editor, preview, and frontend rendering do not require CDN access. Highlight.js and KaTeX license files are copied with `npm run prepare:assets`. The Mermaid npm package declares MIT license metadata but does not ship a separate license file in the installed package used by this lockfile, so this generated notice records its license and source in the release ZIP.'
+    'Copied frontend assets are committed under `assets/vendor/` so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, and Mermaid license files are kept with their copied runtime assets.'
   ].join('\n')}\n`;
 }
 

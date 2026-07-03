@@ -63,9 +63,41 @@ const baseRequirements = [
   { path: 'assets/vendor/katex/LICENSE', type: 'file' },
   { path: 'assets/vendor/katex/fonts', type: 'non-empty-dir' },
   { path: 'assets/vendor/mermaid/mermaid.min.js', type: 'file' },
+  { path: 'assets/vendor/mermaid/LICENSE', type: 'file' },
   { path: 'languages/easymde.pot', type: 'file' },
   { path: 'languages/easymde-zh_CN.po', type: 'file' },
   { path: 'languages/easymde-zh_CN.mo', type: 'file' }
+];
+
+const runtimeAssetPaths = [
+  'assets/css/admin/editor.css',
+  'assets/css/admin/popover.css',
+  'assets/css/admin/settings.css',
+  'assets/css/admin/toolbar.css',
+  'assets/css/frontend/base.css',
+  'assets/css/frontend/code-frame.css',
+  'assets/css/frontend/math.css',
+  'assets/css/frontend/toc.css',
+  'assets/images/cupid-busy-h2-prefix.png',
+  'assets/images/cupid-busy-heart.png',
+  'assets/images/fullstack-blue-code-window.svg',
+  'assets/images/fullstack-blue-h2.png',
+  'assets/images/fullstack-blue-h3.png',
+  'assets/images/fullstack-blue-h4.png',
+  'assets/images/tech-blue-code-window.svg',
+  'assets/js/admin/bootstrap.js',
+  'assets/js/admin/commands.js',
+  'assets/js/admin/draft-storage.js',
+  'assets/js/admin/editor-state.js',
+  'assets/js/admin/media-picker.js',
+  'assets/js/admin/preview-client.js',
+  'assets/js/admin/theme-manager.js',
+  'assets/js/admin/toolbar.js',
+  'assets/js/admin/wechat-exporter.js',
+  'assets/js/frontend/bootstrap.js',
+  'assets/js/frontend/code-highlight.js',
+  'assets/js/frontend/math.js',
+  'assets/js/frontend/mermaid.js'
 ];
 
 export const packagePaths = [
@@ -294,6 +326,13 @@ function registeredAssetRequirements(root) {
   return requirements;
 }
 
+function runtimeAssetRequirements() {
+  return runtimeAssetPaths.map((path) => ({
+    path,
+    type: 'file'
+  }));
+}
+
 export function collectReleaseRequirements(root = defaultRoot) {
   return uniqueRequirements([
     ...packagePaths.map((path) => ({
@@ -302,6 +341,7 @@ export function collectReleaseRequirements(root = defaultRoot) {
     })),
     ...baseRequirements,
     ...composerPackageRequirements(root),
+    ...runtimeAssetRequirements(),
     ...registeredAssetRequirements(root)
   ]);
 }

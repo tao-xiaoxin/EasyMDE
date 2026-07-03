@@ -176,6 +176,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('body')).toContainText('A bold paragraph.');
 
     await page.goto('/wp-admin/post-new.php');
+    await expect(page.locator('body.block-editor-page, .edit-post-layout, .block-editor-writing-flow').first()).toBeVisible();
     await expect(page.locator('#easymde-editor')).toHaveCount(0);
   });
 
@@ -231,6 +232,9 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('default');
     await expect(page.locator('#easymde-preview')).toContainText('First revision body.');
     await expect(page.locator('#easymde-preview')).not.toContainText('Second revision body.');
+    const restoredPostContent = runWp(['post', 'get', String(postId), '--field=content']);
+    expect(restoredPostContent).toContain('First revision body.');
+    expect(restoredPostContent).not.toContain('Second revision body.');
 
     await page.goto(`/?p=${postId}`);
     await expect(page.locator('body')).toContainText('First revision body.');

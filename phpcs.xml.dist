@@ -10,6 +10,7 @@
 	<config name="minimum_supported_wp_version" value="6.0"/>
 
 	<file>easymde.php</file>
+	<file>uninstall.php</file>
 	<file>includes</file>
 	<file>src</file>
 	<file>templates</file>

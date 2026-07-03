@@ -93,7 +93,7 @@ jobs:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_DATABASE: wordpress_test
+          MYSQL_DATABASE: easymde_phpunit
           MYSQL_ROOT_PASSWORD: root
         ports:
           - 3306:3306
@@ -133,7 +133,7 @@ jobs:
         run: composer install --no-interaction --no-progress --prefer-dist
 
       - name: Install WordPress test suite
-        run: scripts/install-wp-tests.sh wordpress_test root root 127.0.0.1:3306 ${{ matrix.wordpress-version }}
+        run: scripts/install-wp-tests.sh easymde_phpunit root root 127.0.0.1:3306 ${{ matrix.wordpress-version }}
 
       - name: Run PHPUnit
         run: composer run test:phpunit
@@ -180,7 +180,7 @@ jobs:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_DATABASE: wordpress_test
+          MYSQL_DATABASE: easymde_i18n
           MYSQL_ROOT_PASSWORD: root
         ports:
           - 3306:3306
@@ -206,7 +206,11 @@ jobs:
 
       - name: Install WP-CLI
         run: |
-          curl -fsSL -o wp-cli.phar https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+          WP_CLI_VERSION=2.12.0
+          WP_CLI_BASE_URL="https://github.com/wp-cli/wp-cli/releases/download/v${WP_CLI_VERSION}"
+          curl -fsSL -o wp-cli.phar "${WP_CLI_BASE_URL}/wp-cli-${WP_CLI_VERSION}.phar"
+          curl -fsSL -o wp-cli.phar.sha256 "${WP_CLI_BASE_URL}/wp-cli-${WP_CLI_VERSION}.phar.sha256"
+          echo "$(cat wp-cli.phar.sha256)  wp-cli.phar" | sha256sum -c -
           php wp-cli.phar --info
           chmod +x wp-cli.phar
           sudo mv wp-cli.phar /usr/local/bin/wp
@@ -218,7 +222,7 @@ jobs:
         run: |
           mkdir -p /tmp/easymde-wp
           wp core download --path=/tmp/easymde-wp --force
-          wp config create --path=/tmp/easymde-wp --dbname=wordpress_test --dbuser=root --dbpass=root --dbhost=127.0.0.1:3306 --skip-check
+          wp config create --path=/tmp/easymde-wp --dbname=easymde_i18n --dbuser=root --dbpass=root --dbhost=127.0.0.1:3306 --skip-check
           wp core install --path=/tmp/easymde-wp --url=http://example.test --title=EasyMDE --admin_user=admin --admin_password=password --admin_email=admin@example.test
 
       - name: Activate EasyMDE and verify bundled translations
@@ -279,7 +283,7 @@ jobs:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_DATABASE: wordpress_plugin_check
+          MYSQL_DATABASE: easymde_plugin_check
           MYSQL_ROOT_PASSWORD: root
         ports:
           - 3306:3306
@@ -314,7 +318,11 @@ jobs:
 
       - name: Install WP-CLI
         run: |
-          curl -fsSL -o wp-cli.phar https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+          WP_CLI_VERSION=2.12.0
+          WP_CLI_BASE_URL="https://github.com/wp-cli/wp-cli/releases/download/v${WP_CLI_VERSION}"
+          curl -fsSL -o wp-cli.phar "${WP_CLI_BASE_URL}/wp-cli-${WP_CLI_VERSION}.phar"
+          curl -fsSL -o wp-cli.phar.sha256 "${WP_CLI_BASE_URL}/wp-cli-${WP_CLI_VERSION}.phar.sha256"
+          echo "$(cat wp-cli.phar.sha256)  wp-cli.phar" | sha256sum -c -
           php wp-cli.phar --info
           chmod +x wp-cli.phar
           sudo mv wp-cli.phar /usr/local/bin/wp
@@ -336,7 +344,7 @@ jobs:
 
       - name: Install release ZIP and run Plugin Check
         env:
-          EASYMDE_DB_NAME: wordpress_plugin_check
+          EASYMDE_DB_NAME: easymde_plugin_check
           EASYMDE_DB_USER: root
           EASYMDE_DB_PASS: root
           EASYMDE_DB_HOST: 127.0.0.1:3306
@@ -352,7 +360,7 @@ jobs:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_DATABASE: wordpress_e2e
+          MYSQL_DATABASE: easymde_e2e
           MYSQL_ROOT_PASSWORD: root
         ports:
           - 3306:3306
@@ -387,7 +395,11 @@ jobs:
 
       - name: Install WP-CLI
         run: |
-          curl -fsSL -o wp-cli.phar https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+          WP_CLI_VERSION=2.12.0
+          WP_CLI_BASE_URL="https://github.com/wp-cli/wp-cli/releases/download/v${WP_CLI_VERSION}"
+          curl -fsSL -o wp-cli.phar "${WP_CLI_BASE_URL}/wp-cli-${WP_CLI_VERSION}.phar"
+          curl -fsSL -o wp-cli.phar.sha256 "${WP_CLI_BASE_URL}/wp-cli-${WP_CLI_VERSION}.phar.sha256"
+          echo "$(cat wp-cli.phar.sha256)  wp-cli.phar" | sha256sum -c -
           php wp-cli.phar --info
           chmod +x wp-cli.phar
           sudo mv wp-cli.phar /usr/local/bin/wp
@@ -412,7 +424,7 @@ jobs:
 
       - name: Install release ZIP into clean WordPress
         env:
-          EASYMDE_DB_NAME: wordpress_e2e
+          EASYMDE_DB_NAME: easymde_e2e
           EASYMDE_DB_USER: root
           EASYMDE_DB_PASS: root
           EASYMDE_DB_HOST: 127.0.0.1:3306

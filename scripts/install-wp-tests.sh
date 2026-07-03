@@ -1,13 +1,73 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DB_NAME="${1:-wordpress_test}"
+DB_NAME="${1:-easymde_phpunit}"
 DB_USER="${2:-root}"
 DB_PASS="${3:-root}"
 DB_HOST="${4:-127.0.0.1}"
 WP_VERSION="${5:-latest}"
-WP_TESTS_DIR="${WP_TESTS_DIR:-/tmp/wordpress-tests-lib}"
-WP_CORE_DIR="${WP_CORE_DIR:-/tmp/wordpress}"
+WP_TESTS_DIR="${WP_TESTS_DIR:-/tmp/easymde-wordpress-tests-lib}"
+WP_CORE_DIR="${WP_CORE_DIR:-/tmp/easymde-wordpress-core}"
+
+fail() {
+	echo "$1" >&2
+	exit 1
+}
+
+validate_database_name() {
+	if [ "${EASYMDE_ALLOW_UNSAFE_DATABASE:-}" = "1" ]; then
+		return
+	fi
+
+	if [[ ! "${DB_NAME}" =~ ^easymde_[A-Za-z0-9_]+$ ]]; then
+		fail "Refusing unsafe test database '${DB_NAME}'. Use an easymde_* database or set EASYMDE_ALLOW_UNSAFE_DATABASE=1."
+	fi
+}
+
+validate_destructive_path() {
+	local path="$1"
+	local label="$2"
+	local base
+
+	if [ "${EASYMDE_ALLOW_UNSAFE_PATHS:-}" = "1" ]; then
+		return
+	fi
+
+	if [[ "${path}" != /* || "${path}" == *"/../"* || "${path}" == *"/.." || "${path}" == *"/./"* ]]; then
+		fail "Refusing unsafe ${label} '${path}'. Use an absolute EasyMDE test path."
+	fi
+
+	case "${path}" in
+		/|/tmp|/private/tmp|/var/tmp)
+			fail "Refusing unsafe ${label} '${path}'."
+			;;
+	esac
+
+	base="$(basename "${path}")"
+	if [[ "${base}" != easymde-* ]]; then
+		fail "Refusing unsafe ${label} '${path}'. The final path segment must start with easymde-."
+	fi
+}
+
+prepare_destructive_path() {
+	local path="$1"
+	local label="$2"
+	local canonical
+
+	validate_destructive_path "${path}" "${label}"
+	mkdir -p "${path}"
+	canonical="$(cd "${path}" && pwd -P)"
+	validate_destructive_path "${canonical}" "${label}"
+	printf '%s\n' "${canonical}"
+}
+
+validate_database_name
+WP_TESTS_DIR="$(prepare_destructive_path "${WP_TESTS_DIR}" "WP_TESTS_DIR")"
+WP_CORE_DIR="$(prepare_destructive_path "${WP_CORE_DIR}" "WP_CORE_DIR")"
+
+if [ "${WP_TESTS_DIR}" = "${WP_CORE_DIR}" ]; then
+	fail "WP_TESTS_DIR and WP_CORE_DIR must be different EasyMDE test directories."
+fi
 
 if [ "${WP_VERSION}" = "latest" ]; then
 	WP_VERSION="$(

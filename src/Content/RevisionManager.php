@@ -104,6 +104,7 @@ final class RevisionManager {
 		}
 
 		$this->restoring = true;
+		$previous_meta   = $this->snapshot_revision_meta( $post_id );
 
 		try {
 			foreach ( $this->post_document->revision_meta_keys() as $key ) {
@@ -119,8 +120,32 @@ final class RevisionManager {
 			}
 		} catch ( \RuntimeException $exception ) {
 			unset( $exception );
+			$this->restore_meta_snapshot( $post_id, $previous_meta );
 		} finally {
 			$this->restoring = false;
+		}
+	}
+
+	private function snapshot_revision_meta( $post_id ) {
+		$snapshot = array();
+
+		foreach ( $this->post_document->revision_meta_keys() as $key ) {
+			$snapshot[ $key ] = array(
+				'exists' => metadata_exists( 'post', $post_id, $key ),
+				'value'  => get_post_meta( $post_id, $key, true ),
+			);
+		}
+
+		return $snapshot;
+	}
+
+	private function restore_meta_snapshot( $post_id, array $snapshot ) {
+		foreach ( $snapshot as $key => $item ) {
+			if ( ! empty( $item['exists'] ) ) {
+				update_post_meta( $post_id, $key, $item['value'] );
+			} else {
+				delete_post_meta( $post_id, $key );
+			}
 		}
 	}
 

@@ -154,6 +154,11 @@ final class RevisionManagerTest extends WP_UnitTestCase
 
         update_metadata('post', $revision_id, PostDocument::META_ENABLED, '1');
         update_metadata('post', $revision_id, PostDocument::META_MARKDOWN, '# Restored');
+        update_metadata('post', $revision_id, PostDocument::META_MARKDOWN_THEME, 'orange-heart');
+
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Current Markdown');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
 
         $cleaned_post_cache = false;
         $clean_cache_listener = function ($cleaned_post_id) use ($post_id, &$cleaned_post_cache) {
@@ -180,6 +185,9 @@ final class RevisionManagerTest extends WP_UnitTestCase
         }
 
         $this->assertFalse($cleaned_post_cache);
+        $this->assertSame('1', get_post_meta($post_id, PostDocument::META_ENABLED, true));
+        $this->assertSame('# Current Markdown', get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+        $this->assertSame('default', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
         $this->assertSame('<p>Current HTML</p>', get_post($post_id)->post_content);
     }
 

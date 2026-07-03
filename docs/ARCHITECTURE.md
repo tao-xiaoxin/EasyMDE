@@ -27,16 +27,15 @@ This document describes the current implementation boundaries. Development setup
 
 Admin HTML is prepared by PHP services and rendered by templates under `templates/admin/`. Templates should receive prepared data and avoid owning business rules.
 
-## Per-Post Editor Mode
+## Editor Mode
 
 EasyMDE mode is scoped to supported post types, `post` and `page` by default. The supported post type list can be filtered with `easymde_supported_post_types`.
 
-The block editor is disabled only when:
+New built-in posts and pages open in EasyMDE by default. This default-new-content behavior is limited to the built-in `post` and `page` types and does not automatically extend to custom post types added through `easymde_supported_post_types`.
 
-- the current new-post request is the nonce-protected EasyMDE new-post/page flow; or
-- the existing post is recognized as an EasyMDE post.
+For existing content, the block editor is disabled only when the post is recognized as an EasyMDE post.
 
-Posts without EasyMDE metadata keep the normal WordPress editor.
+Existing posts without EasyMDE metadata keep the normal WordPress editor.
 
 ## Data Model
 

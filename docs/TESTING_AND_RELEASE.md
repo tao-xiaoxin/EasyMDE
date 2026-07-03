@@ -120,7 +120,7 @@ Local E2E requires a clean WordPress install with the release ZIP active and a r
 EASYMDE_E2E_BASE_URL=<wordpress_test_url> EASYMDE_E2E_WP_PATH=<wordpress_test_path> npm run test:e2e
 ```
 
-The suite covers current author workflows including EasyMDE post creation, save/reopen/frontend rendering, ordinary Gutenberg posts remaining unaffected, revision restore consistency, and Copy to WeChat clipboard behavior.
+The suite covers current author workflows including default EasyMDE new-post creation, save/reopen/frontend rendering, existing ordinary Gutenberg posts remaining unaffected, revision restore consistency, and Copy to WeChat clipboard behavior.
 
 ## Release Script Safety Guards
 

@@ -1,8 +1,8 @@
 # EasyMDE Migration Notes
 
-## Per-Post Enablement
+## Editor Enablement
 
-EasyMDE no longer disables Gutenberg for all `post` and `page` screens.
+EasyMDE opens new built-in `post` and `page` content in EasyMDE by default. Existing ordinary posts and pages without EasyMDE metadata continue to open in Gutenberg when edited.
 
 Existing EasyMDE posts remain compatible:
 

@@ -9,7 +9,7 @@ use EasyMDE\Theme\ThemeStateRepository;
 
 final class EditorSaveHandlerTest extends WP_UnitTestCase
 {
-    public function test_new_post_nonce_does_not_mark_existing_ordinary_post_enabled()
+    public function test_invalid_save_nonce_does_not_mark_existing_ordinary_post_enabled()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -23,7 +23,7 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
 
         $previous_post = $_POST;
         $_POST = array(
-            'easymde_nonce' => wp_create_nonce('easymde_new_post'),
+            'easymde_nonce' => wp_create_nonce('not_easymde_save_markdown'),
             'easymde_enabled' => '1',
             'easymde_markdown' => '# Should not be saved',
         );

@@ -17,6 +17,9 @@
   <a href="https://github.com/tao-xiaoxin/EasyMDE/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-Apache--2.0-8b5cf6?style=flat-square" alt="Apache-2.0 license" />
   </a>
+  <a href="https://github.com/tao-xiaoxin/EasyMDE/stargazers">
+    <img src="https://img.shields.io/github/stars/tao-xiaoxin/EasyMDE?style=flat-square&logo=github&label=stars&color=f59e0b" alt="GitHub stars" />
+  </a>
 </p>
 <p align="center">
   <a href="./docs/assets/easymde-editor-showcase.png">
@@ -305,3 +308,23 @@ To reinstall the local test site from scratch:
 docker compose down -v
 docker compose up -d
 ```
+
+## Support EasyMDE
+
+<p align="center">
+  <a href="https://github.com/tao-xiaoxin/EasyMDE/stargazers">
+    <img src="https://img.shields.io/github/stars/tao-xiaoxin/EasyMDE?style=for-the-badge&logo=github&label=Star%20EasyMDE&color=f59e0b" alt="Star EasyMDE on GitHub" />
+  </a>
+</p>
+
+<p align="center">
+  If EasyMDE improves your WordPress writing flow, a star helps more writers discover the project.
+</p>
+
+## Star History
+
+<p align="center">
+  <a href="https://star-history.com/#tao-xiaoxin/EasyMDE&Date">
+    <img src="https://api.star-history.com/svg?repos=tao-xiaoxin/EasyMDE&type=Date" alt="EasyMDE Star History Chart" width="720" />
+  </a>
+</p>

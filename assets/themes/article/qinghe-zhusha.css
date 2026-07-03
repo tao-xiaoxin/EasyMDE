@@ -119,10 +119,6 @@
   overflow-wrap: break-word !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha li {
-  margin: 20px 10px !important;
-}
-
 .easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha p strong,
 .easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha li strong {
   color: var(--easymde-qinghe-green);

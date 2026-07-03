@@ -50,3 +50,18 @@ test('Qinghe Zhusha theme font keywords remain lint-clean', () => {
 
   assert.equal(cssVariable(css, '--easymde-theme-font-family'), 'helvetica, arial, sans-serif');
 });
+
+test('Qinghe Zhusha mobile list margins can reset', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/qinghe-zhusha.css'), 'utf8');
+
+  assert.doesNotMatch(
+    css,
+    /\.easymde-rendered-content\.easymde-markdown-theme-qinghe-zhusha li\s*\{[^}]*margin:[^;}]+!important/s,
+    'list item margin should not use !important because mobile rules reset it'
+  );
+  assert.match(
+    css,
+    /@media \(max-width: 600px\)[\s\S]*\.easymde-rendered-content\.easymde-markdown-theme-qinghe-zhusha p,\s*\.easymde-rendered-content\.easymde-markdown-theme-qinghe-zhusha li\s*\{[\s\S]*margin-right: 0;[\s\S]*margin-left: 0;/,
+    'mobile rules should reset paragraph and list item horizontal margins together'
+  );
+});

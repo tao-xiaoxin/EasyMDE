@@ -64,6 +64,7 @@ The editor includes article themes such as:
 * Rose Purple
 * Ningye Purple
 * Tech Blue
+* Qinghe Zhusha
 * Cute Green
 * Fullstack Blue
 * Minimal Black
@@ -152,6 +153,7 @@ See `SECURITY.md`, `UPGRADING.md`, and `THIRD-PARTY-NOTICES.md` in the release p
 * Add Typora-inspired shortcut defaults with site-wide Windows/Linux and macOS overrides.
 * Add rich-text Copy to WeChat export from the editor preview.
 * Add the Tech Blue article theme with themed typography, headings, inline code, lists, images, and Mac-style code framing.
+* Add the Qinghe Zhusha article theme with Typora-derived green/cinnabar accents, table scrolling, image captions, and Helvetica-based typography.
 * Add temporary immersive writing mode.
 * Add per-post font stack selection.
 

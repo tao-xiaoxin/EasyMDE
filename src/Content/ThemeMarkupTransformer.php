@@ -61,8 +61,12 @@ final class ThemeMarkupTransformer {
 	}
 
 	public static function transform( $html, $theme ) {
-		$theme = sanitize_key( (string) $theme );
-		if ( ! self::theme_uses_markdown2html_markup( $theme ) ) {
+		$theme                     = sanitize_key( (string) $theme );
+		$uses_markdown2html_markup = self::theme_uses_markdown2html_markup( $theme );
+		$uses_image_figures        = 'qinghe-zhusha' === $theme;
+		$uses_table_container      = 'qinghe-zhusha' === $theme;
+
+		if ( ! $uses_markdown2html_markup && ! $uses_image_figures && ! $uses_table_container ) {
 			return $html;
 		}
 
@@ -70,14 +74,21 @@ final class ThemeMarkupTransformer {
 			return $html;
 		}
 
-		$needs_markup = false !== stripos( $html, '<h' )
-			|| false !== stripos( $html, '<a' )
-			|| false !== stripos( $html, '<li' )
-			|| false !== stripos( $html, '<img' )
-			|| ( 'cupid-busy' === $theme && false !== strpos( $html, ':::' ) )
-			|| ( 'red-crimson' === $theme && ( false !== stripos( $html, '<table' ) || false !== stripos( $html, '<blockquote' ) ) )
-			|| ( 'ningye-purple' === $theme && false !== stripos( $html, '<table' ) )
-			|| ( 'rose-purple' === $theme && false !== stripos( $html, '<blockquote' ) );
+		$needs_markup = (
+			$uses_markdown2html_markup
+			&& (
+				false !== stripos( $html, '<h' )
+				|| false !== stripos( $html, '<a' )
+				|| false !== stripos( $html, '<li' )
+				|| false !== stripos( $html, '<img' )
+				|| ( 'cupid-busy' === $theme && false !== strpos( $html, ':::' ) )
+				|| ( 'red-crimson' === $theme && ( false !== stripos( $html, '<table' ) || false !== stripos( $html, '<blockquote' ) ) )
+				|| ( 'ningye-purple' === $theme && false !== stripos( $html, '<table' ) )
+				|| ( 'rose-purple' === $theme && false !== stripos( $html, '<blockquote' ) )
+			)
+		)
+			|| ( $uses_image_figures && false !== stripos( $html, '<img' ) )
+			|| ( $uses_table_container && false !== stripos( $html, '<table' ) );
 
 		if ( ! $needs_markup ) {
 			return $html;
@@ -103,30 +114,40 @@ final class ThemeMarkupTransformer {
 
 		$footnotes = '';
 
-		if ( 'cupid-busy' === $theme ) {
-			self::wrap_cupid_busy_containers( $document, $root );
-			self::apply_mdnice_image_dimensions( $root );
-			self::restore_unparsed_strong_markers( $document, $root );
+		if ( $uses_markdown2html_markup ) {
+			if ( 'cupid-busy' === $theme ) {
+				self::wrap_cupid_busy_containers( $document, $root );
+				self::apply_mdnice_image_dimensions( $root );
+				self::restore_unparsed_strong_markers( $document, $root );
+			}
+
+			self::wrap_theme_headings( $document, $root );
+			self::wrap_theme_list_items( $document, $root );
+			self::wrap_theme_images( $document, $root );
+			if ( 'rose-purple' === $theme ) {
+				self::add_rose_purple_blockquote_marks( $document, $root );
+				$footnotes = self::convert_theme_links_to_footnotes( $document, $root, 'Reference', true, false );
+			} elseif ( 'red-crimson' === $theme ) {
+				self::add_red_crimson_blockquote_markup( $document, $root );
+				self::wrap_theme_tables( $document, $root );
+				$footnotes = self::convert_theme_links_to_footnotes( $document, $root, '参考资料', false, true );
+			} elseif ( 'ningye-purple' === $theme ) {
+				self::wrap_theme_tables( $document, $root );
+				$footnotes = self::convert_theme_links_to_footnotes( $document, $root, 'Reference', true, false, '参考资料' );
+			} elseif ( 'yamabuki' === $theme ) {
+				$footnotes = self::convert_theme_links_to_footnotes( $document, $root, '参考资料', false, true );
+				self::wrap_theme_links( $document, $root );
+			} else {
+				self::wrap_theme_links( $document, $root );
+			}
 		}
 
-		self::wrap_theme_headings( $document, $root );
-		self::wrap_theme_list_items( $document, $root );
-		self::wrap_theme_images( $document, $root );
-		if ( 'rose-purple' === $theme ) {
-			self::add_rose_purple_blockquote_marks( $document, $root );
-			$footnotes = self::convert_theme_links_to_footnotes( $document, $root, 'Reference', true, false );
-		} elseif ( 'red-crimson' === $theme ) {
-			self::add_red_crimson_blockquote_markup( $document, $root );
+		if ( $uses_image_figures ) {
+			self::wrap_theme_images( $document, $root );
+		}
+
+		if ( $uses_table_container ) {
 			self::wrap_theme_tables( $document, $root );
-			$footnotes = self::convert_theme_links_to_footnotes( $document, $root, '参考资料', false, true );
-		} elseif ( 'ningye-purple' === $theme ) {
-			self::wrap_theme_tables( $document, $root );
-			$footnotes = self::convert_theme_links_to_footnotes( $document, $root, 'Reference', true, false, '参考资料' );
-		} elseif ( 'yamabuki' === $theme ) {
-			$footnotes = self::convert_theme_links_to_footnotes( $document, $root, '参考资料', false, true );
-			self::wrap_theme_links( $document, $root );
-		} else {
-			self::wrap_theme_links( $document, $root );
 		}
 
 		$html = self::inner_html( $root, $document );

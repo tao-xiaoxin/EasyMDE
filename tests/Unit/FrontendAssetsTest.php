@@ -9,6 +9,33 @@ use EasyMDE\Theme\ThemeStateRepository;
 
 final class FrontendAssetsTest extends WP_UnitTestCase
 {
+    public function test_qinghe_zhusha_theme_enqueues_registered_article_stylesheet()
+    {
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'qinghe-zhusha');
+
+        wp_dequeue_style('easymde-article-theme');
+        wp_deregister_style('easymde-article-theme');
+
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+        $assets->enqueue_render_assets($post_id, '', false);
+
+        $registered = wp_styles()->registered;
+
+        $this->assertArrayHasKey('easymde-article-theme', $registered);
+        $this->assertSame(
+            'assets/themes/article/qinghe-zhusha.css',
+            substr(
+                $registered['easymde-article-theme']->src,
+                -strlen('assets/themes/article/qinghe-zhusha.css')
+            )
+        );
+        $this->assertTrue(wp_style_is('easymde-article-theme', 'enqueued'));
+    }
+
     public function test_indented_code_blocks_request_code_assets()
     {
         $assets = new FrontendAssets(

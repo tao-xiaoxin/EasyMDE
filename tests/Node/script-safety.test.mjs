@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -32,6 +32,68 @@ function makeFakeBin(root, commands) {
     );
     chmodSync(target, 0o755);
   }
+
+  return bin;
+}
+
+function makeWordPressInstallerFakeBin(root) {
+  const bin = join(root, 'bin');
+  mkdirSync(bin, { recursive: true });
+
+  writeFile(
+    join(bin, 'curl'),
+    [
+      '#!/usr/bin/env bash',
+      `echo "curl $*" >> "${join(root, 'command.log')}"`,
+      'printf ""'
+    ].join('\n')
+  );
+  writeFile(
+    join(bin, 'tar'),
+    [
+      '#!/usr/bin/env bash',
+      `echo "tar $*" >> "${join(root, 'command.log')}"`,
+      'target=""',
+      'while [ "$#" -gt 0 ]; do',
+      '  if [ "$1" = "-C" ]; then',
+      '    shift',
+      '    target="$1"',
+      '  fi',
+      '  shift || true',
+      'done',
+      '[ -n "$target" ] && mkdir -p "$target"'
+    ].join('\n')
+  );
+  writeFile(
+    join(bin, 'svn'),
+    [
+      '#!/usr/bin/env bash',
+      `echo "svn $*" >> "${join(root, 'command.log')}"`,
+      'destination="${@: -1}"',
+      'if [[ "$destination" == */wp-tests-config.php ]]; then',
+      '  mkdir -p "$(dirname "$destination")"',
+      '  cat > "$destination" <<\'CONFIG\'',
+      '<?php',
+      "define( 'ABSPATH', dirname( __FILE__ ) . '/src/' );",
+      "define( 'DB_NAME', 'youremptytestdbnamehere' );",
+      "define( 'DB_USER', 'yourusernamehere' );",
+      "define( 'DB_PASSWORD', 'yourpasswordhere' );",
+      "define( 'DB_HOST', 'localhost' );",
+      'CONFIG',
+      'else',
+      '  mkdir -p "$destination"',
+      'fi'
+    ].join('\n')
+  );
+  writeFile(
+    join(bin, 'mysql'),
+    [
+      '#!/usr/bin/env bash',
+      `echo "mysql $*" >> "${join(root, 'command.log')}"`
+    ].join('\n')
+  );
+
+  ['curl', 'tar', 'svn', 'mysql'].forEach((command) => chmodSync(join(bin, command), 0o755));
 
   return bin;
 }
@@ -151,6 +213,40 @@ test('WordPress test installer rejects crafted database names before mysql', () 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Refusing unsafe test database/);
     assert.equal(existsSync(join(root, 'command.log')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('WordPress test installer escapes sed replacement values in generated config', () => {
+  const root = makeTempRoot('easymde-test-installer-');
+  const fakeBin = makeWordPressInstallerFakeBin(root);
+  const wpCoreDir = join(root, 'easymde-core');
+  const wpTestsDir = join(root, 'easymde-tests-lib');
+  const dbUser = 'user/with&slash\\name';
+  const dbPass = 'pa/ss&\\word';
+  const dbHost = '127.0.0.1:3306';
+
+  try {
+    const result = runScript(
+      'scripts/install-wp-tests.sh',
+      ['easymde_phpunit', dbUser, dbPass, dbHost, '6.0'],
+      {
+        env: {
+          PATH: `${fakeBin}:${process.env.PATH}`,
+          WP_CORE_DIR: wpCoreDir,
+          WP_TESTS_DIR: wpTestsDir
+        }
+      }
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+
+    const config = readFileSync(join(wpTestsDir, 'wp-tests-config.php'), 'utf8');
+    assert.match(config, new RegExp(wpCoreDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.ok(config.includes(dbUser), config);
+    assert.ok(config.includes(dbPass), config);
+    assert.ok(config.includes(dbHost), config);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

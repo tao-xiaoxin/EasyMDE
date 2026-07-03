@@ -117,14 +117,30 @@ create_database() {
 }
 
 configure_tests() {
+	local db_host_escaped
+	local db_name_escaped
+	local db_pass_escaped
+	local db_user_escaped
+	local wp_core_dir_escaped
+
+	wp_core_dir_escaped="$(sed_replacement "${WP_CORE_DIR}")"
+	db_name_escaped="$(sed_replacement "${DB_NAME}")"
+	db_user_escaped="$(sed_replacement "${DB_USER}")"
+	db_pass_escaped="$(sed_replacement "${DB_PASS}")"
+	db_host_escaped="$(sed_replacement "${DB_HOST}")"
+
 	sed -i.bak \
-		-e "s:dirname( __FILE__ ) . '/src/':'${WP_CORE_DIR}/':" \
-		-e "s/youremptytestdbnamehere/${DB_NAME}/" \
-		-e "s/yourusernamehere/${DB_USER}/" \
-		-e "s/yourpasswordhere/${DB_PASS}/" \
-		-e "s|localhost|${DB_HOST}|" \
+		-e "s|dirname( __FILE__ ) . '/src/'|'${wp_core_dir_escaped}/'|" \
+		-e "s|youremptytestdbnamehere|${db_name_escaped}|" \
+		-e "s|yourusernamehere|${db_user_escaped}|" \
+		-e "s|yourpasswordhere|${db_pass_escaped}|" \
+		-e "s|localhost|${db_host_escaped}|" \
 		"${WP_TESTS_DIR}/wp-tests-config.php"
 	rm -f "${WP_TESTS_DIR}/wp-tests-config.php.bak"
+}
+
+sed_replacement() {
+	printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
 }
 
 download_wordpress

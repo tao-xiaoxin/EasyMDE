@@ -1,9 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const noticePath = join(root, 'THIRD-PARTY-NOTICES.md');
+const defaultRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const composerPurposes = {
   'dflydev/dot-access-data': 'Nested configuration data access used by league/config.',
@@ -41,7 +40,7 @@ const frontendAssets = [
   }
 ];
 
-function readJson(path) {
+function readJson(root, path) {
   return JSON.parse(readFileSync(join(root, path), 'utf8'));
 }
 
@@ -53,25 +52,31 @@ function licenseText(license) {
   return license || 'See upstream package metadata';
 }
 
-function composerRows() {
-  const lock = readJson('composer.lock');
+export function composerRows(root = defaultRoot) {
+  const lock = readJson(root, 'composer.lock');
   const packages = Array.isArray(lock.packages) ? lock.packages : [];
 
   return packages
     .filter((pkg) => pkg && pkg.name)
-    .map((pkg) => ({
-      name: pkg.name,
-      version: pkg.version,
-      source: pkg.source && pkg.source.url ? pkg.source.url : 'See composer.lock',
-      license: licenseText(pkg.license),
-      purpose: composerPurposes[pkg.name] || 'Runtime Composer dependency.',
-      bundled: 'Yes, under vendor/',
-      notice: `vendor/${pkg.name}`
-    }));
+    .map((pkg) => {
+      if (!Object.hasOwn(composerPurposes, pkg.name)) {
+        throw new Error(`Missing purpose entry for Composer package ${pkg.name}. Update composerPurposes.`);
+      }
+
+      return {
+        name: pkg.name,
+        version: pkg.version,
+        source: pkg.source && pkg.source.url ? pkg.source.url : 'See composer.lock',
+        license: licenseText(pkg.license),
+        purpose: composerPurposes[pkg.name],
+        bundled: 'Yes, under vendor/',
+        notice: `vendor/${pkg.name}`
+      };
+    });
 }
 
-function frontendRows() {
-  const lock = readJson('package-lock.json');
+export function frontendRows(root = defaultRoot) {
+  const lock = readJson(root, 'package-lock.json');
   const packages = lock.packages || {};
 
   return frontendAssets.map((asset) => {
@@ -100,7 +105,7 @@ function table(rows) {
   ].join('\n');
 }
 
-function renderNotices() {
+export function renderNotices(root = defaultRoot) {
   return `${[
     '# Third-Party Notices',
     '',
@@ -110,20 +115,21 @@ function renderNotices() {
     '',
     '## Composer Runtime Packages',
     '',
-    table(composerRows()),
+    table(composerRows(root)),
     '',
     'Composer packages are bundled under `vendor/` in the release ZIP after `composer install --no-dev`. Their upstream license files and notices remain inside their package directories unless the upstream package does not ship a separate notice file.',
     '',
     '## Copied Frontend Runtime Assets',
     '',
-    table(frontendRows()),
+    table(frontendRows(root)),
     '',
     'Copied frontend assets are committed under `assets/vendor/` so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, and Mermaid license files are kept with their copied runtime assets.'
   ].join('\n')}\n`;
 }
 
-function checkNotice() {
-  const expected = renderNotices();
+export function checkNotice(root = defaultRoot) {
+  const noticePath = join(root, 'THIRD-PARTY-NOTICES.md');
+  const expected = renderNotices(root);
   const actual = existsSync(noticePath) ? readFileSync(noticePath, 'utf8') : '';
 
   if (actual !== expected) {
@@ -131,17 +137,19 @@ function checkNotice() {
   }
 }
 
-const mode = process.argv[2] || '--check';
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const mode = process.argv[2] || '--check';
 
-try {
-  if ('--write' === mode) {
-    writeFileSync(noticePath, renderNotices());
-  } else if ('--check' === mode) {
-    checkNotice();
-  } else {
-    throw new Error(`Unknown mode: ${mode}`);
+  try {
+    if ('--write' === mode) {
+      writeFileSync(join(defaultRoot, 'THIRD-PARTY-NOTICES.md'), renderNotices());
+    } else if ('--check' === mode) {
+      checkNotice();
+    } else {
+      throw new Error(`Unknown mode: ${mode}`);
+    }
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
   }
-} catch (error) {
-  console.error(error.message);
-  process.exit(1);
 }

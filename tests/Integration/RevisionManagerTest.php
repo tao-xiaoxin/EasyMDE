@@ -161,10 +161,14 @@ final class RevisionManagerTest extends WP_UnitTestCase
         update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
 
         $cleaned_post_cache = false;
+        $restore_failure = null;
         $clean_cache_listener = function ($cleaned_post_id) use ($post_id, &$cleaned_post_cache) {
             if ((int) $post_id === (int) $cleaned_post_id) {
                 $cleaned_post_cache = true;
             }
+        };
+        $restore_failure_listener = function ($failed_post_id, $failed_revision_id, $exception) use ($post_id, $revision_id, &$restore_failure) {
+            $restore_failure = array($failed_post_id, $failed_revision_id, $exception);
         };
         $fail_post_content_update = function ($query) use ($wpdb) {
             if (false !== strpos($query, 'UPDATE `' . $wpdb->posts . '`') && false !== strpos($query, '`post_content`')) {
@@ -174,6 +178,7 @@ final class RevisionManagerTest extends WP_UnitTestCase
             return $query;
         };
         add_action('clean_post_cache', $clean_cache_listener, 10, 1);
+        add_action('easymde_revision_restore_failed', $restore_failure_listener, 10, 3);
         add_filter('query', $fail_post_content_update);
 
         try {
@@ -181,10 +186,15 @@ final class RevisionManagerTest extends WP_UnitTestCase
             $manager->restore_revision_meta($post_id, $revision_id);
         } finally {
             remove_filter('query', $fail_post_content_update);
+            remove_action('easymde_revision_restore_failed', $restore_failure_listener, 10);
             remove_action('clean_post_cache', $clean_cache_listener, 10);
         }
 
         $this->assertFalse($cleaned_post_cache);
+        $this->assertIsArray($restore_failure);
+        $this->assertSame($post_id, $restore_failure[0]);
+        $this->assertSame($revision_id, $restore_failure[1]);
+        $this->assertInstanceOf(\RuntimeException::class, $restore_failure[2]);
         $this->assertSame('1', get_post_meta($post_id, PostDocument::META_ENABLED, true));
         $this->assertSame('# Current Markdown', get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
         $this->assertSame('default', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));

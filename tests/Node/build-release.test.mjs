@@ -42,6 +42,52 @@ function createRegistryFiles(root) {
   );
 }
 
+function createAssetSourceFiles(root) {
+  writeText(
+    root,
+    'src/Admin/AdminAssets.php',
+    [
+      '<?php',
+      "Asset::url( 'assets/css/admin/toolbar.css' );",
+      "Asset::url( 'assets/css/admin/popover.css' );",
+      "Asset::url( 'assets/css/admin/editor.css' );",
+      "Asset::url( 'assets/js/admin/editor-state.js' );",
+      "Asset::url( 'assets/js/admin/commands.js' );",
+      "Asset::url( 'assets/js/admin/preview-client.js' );",
+      "Asset::url( 'assets/js/admin/theme-manager.js' );",
+      "Asset::url( 'assets/js/admin/toolbar.js' );",
+      "Asset::url( 'assets/js/admin/draft-storage.js' );",
+      "Asset::url( 'assets/js/admin/media-picker.js' );",
+      "Asset::url( 'assets/js/admin/wechat-exporter.js' );",
+      "Asset::url( 'assets/js/admin/bootstrap.js' );"
+    ].join('\n')
+  );
+  writeText(
+    root,
+    'src/Admin/SettingsPage.php',
+    "<?php\nAsset::url( 'assets/css/admin/settings.css' );\n"
+  );
+  writeText(
+    root,
+    'src/Frontend/FrontendAssets.php',
+    [
+      '<?php',
+      "Asset::url( 'assets/js/frontend/bootstrap.js' );",
+      "Asset::url( 'assets/css/frontend/base.css' );",
+      "Asset::url( 'assets/css/frontend/code-frame.css' );",
+      "Asset::url( 'assets/vendor/highlight/highlight.min.js' );",
+      "Asset::url( 'assets/css/frontend/math.css' );",
+      "Asset::url( 'assets/vendor/katex/katex.min.css' );",
+      "Asset::url( 'assets/vendor/katex/katex.min.js' );",
+      "Asset::url( 'assets/js/frontend/math.js' );",
+      "Asset::url( 'assets/css/frontend/toc.css' );",
+      "Asset::url( 'assets/vendor/mermaid/mermaid.min.js' );",
+      "Asset::url( 'assets/js/frontend/mermaid.js' );",
+      "Asset::url( 'assets/js/frontend/code-highlight.js' );"
+    ].join('\n')
+  );
+}
+
 function createComposerLock(root) {
   writeText(
     root,
@@ -68,6 +114,7 @@ function createVersionFiles(root, version = '0.1.7') {
 function createCompleteFixture(root) {
   createVersionFiles(root);
   createRegistryFiles(root);
+  createAssetSourceFiles(root);
   createComposerLock(root);
 
   for (const requirement of collectReleaseRequirements(root)) {
@@ -280,6 +327,25 @@ test('release build fails when required runtime assets or templates are missing'
     assert.match(result.stderr, /assets\/js\/admin\/media-picker\.js/);
     assert.match(result.stderr, /assets\/js\/frontend\/bootstrap\.js/);
     assert.match(result.stderr, /THIRD-PARTY-NOTICES\.md/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release requirements include assets referenced by enqueue source files', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(
+      root,
+      'src/Admin/AdminAssets.php',
+      "<?php\nAsset::url( 'assets/js/admin/generated-runtime.js' );\n"
+    );
+
+    const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
+
+    assert.ok(missing.includes('assets/js/admin/generated-runtime.js'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

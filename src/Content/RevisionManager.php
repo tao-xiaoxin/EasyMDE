@@ -119,6 +119,7 @@ final class RevisionManager {
 				$this->restore_post_content( $post_id, $revision_id );
 			}
 		} catch ( \RuntimeException $exception ) {
+			do_action( 'easymde_revision_restore_failed', $post_id, $revision_id, $exception );
 			unset( $exception );
 			$this->restore_meta_snapshot( $post_id, $previous_meta );
 		} finally {

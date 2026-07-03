@@ -8,6 +8,11 @@ const registryFiles = [
   'src/Theme/ArticleThemeRegistry.php',
   'src/Theme/CodeThemeRegistry.php'
 ];
+const assetSourceFiles = [
+  'src/Admin/AdminAssets.php',
+  'src/Admin/SettingsPage.php',
+  'src/Frontend/FrontendAssets.php'
+];
 const directoryPackagePaths = new Set([
   'includes',
   'src',
@@ -69,35 +74,14 @@ const baseRequirements = [
   { path: 'languages/easymde-zh_CN.mo', type: 'file' }
 ];
 
-const runtimeAssetPaths = [
-  'assets/css/admin/editor.css',
-  'assets/css/admin/popover.css',
-  'assets/css/admin/settings.css',
-  'assets/css/admin/toolbar.css',
-  'assets/css/frontend/base.css',
-  'assets/css/frontend/code-frame.css',
-  'assets/css/frontend/math.css',
-  'assets/css/frontend/toc.css',
+const runtimeSupportAssetPaths = [
   'assets/images/cupid-busy-h2-prefix.png',
   'assets/images/cupid-busy-heart.png',
   'assets/images/fullstack-blue-code-window.svg',
   'assets/images/fullstack-blue-h2.png',
   'assets/images/fullstack-blue-h3.png',
   'assets/images/fullstack-blue-h4.png',
-  'assets/images/tech-blue-code-window.svg',
-  'assets/js/admin/bootstrap.js',
-  'assets/js/admin/commands.js',
-  'assets/js/admin/draft-storage.js',
-  'assets/js/admin/editor-state.js',
-  'assets/js/admin/media-picker.js',
-  'assets/js/admin/preview-client.js',
-  'assets/js/admin/theme-manager.js',
-  'assets/js/admin/toolbar.js',
-  'assets/js/admin/wechat-exporter.js',
-  'assets/js/frontend/bootstrap.js',
-  'assets/js/frontend/code-highlight.js',
-  'assets/js/frontend/math.js',
-  'assets/js/frontend/mermaid.js'
+  'assets/images/tech-blue-code-window.svg'
 ];
 
 export const packagePaths = [
@@ -144,19 +128,28 @@ function uniqueRequirements(requirements) {
   });
 }
 
-function composerPackageRequirements(root) {
+function readComposerPackagePaths(root, packageKey, options = {}) {
   const lockPath = fromRoot(root, 'composer.lock');
   if (!existsSync(lockPath)) {
-    throw new Error('composer.lock not found; run composer install before building a release.');
+    if (options.requireLock) {
+      throw new Error('composer.lock not found; run composer install before building a release.');
+    }
+
+    return [];
   }
 
   const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
-  const packages = Array.isArray(lock.packages) ? lock.packages : [];
+  const packages = Array.isArray(lock[packageKey]) ? lock[packageKey] : [];
 
   return packages
     .filter((pkg) => pkg && typeof pkg.name === 'string' && pkg.name.includes('/'))
-    .map((pkg) => ({
-      path: `vendor/${pkg.name}`,
+    .map((pkg) => `vendor/${pkg.name}`);
+}
+
+function composerPackageRequirements(root) {
+  return readComposerPackagePaths(root, 'packages', { requireLock: true })
+    .map((packagePath) => ({
+      path: packagePath,
       type: 'non-empty-dir'
     }));
 }
@@ -166,19 +159,7 @@ function composerDevPackagePaths(root) {
     return composerDevPackagePathCache.get(root);
   }
 
-  const lockPath = fromRoot(root, 'composer.lock');
-  if (!existsSync(lockPath)) {
-    composerDevPackagePathCache.set(root, new Set());
-    return composerDevPackagePathCache.get(root);
-  }
-
-  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
-  const packages = Array.isArray(lock['packages-dev']) ? lock['packages-dev'] : [];
-  const paths = new Set(
-    packages
-      .filter((pkg) => pkg && typeof pkg.name === 'string' && pkg.name.includes('/'))
-      .map((pkg) => `vendor/${pkg.name}`)
-  );
+  const paths = new Set(readComposerPackagePaths(root, 'packages-dev'));
 
   composerDevPackagePathCache.set(root, paths);
   return paths;
@@ -326,11 +307,38 @@ function registeredAssetRequirements(root) {
   return requirements;
 }
 
-function runtimeAssetRequirements() {
-  return runtimeAssetPaths.map((path) => ({
-    path,
-    type: 'file'
-  }));
+function enqueuedAssetRequirements(root) {
+  const requirements = [];
+  const assetPattern = /Asset::url\(\s*['"]([^'"]+)['"]\s*\)/g;
+
+  for (const sourceFile of assetSourceFiles) {
+    const sourcePath = fromRoot(root, sourceFile);
+    if (!existsSync(sourcePath)) {
+      continue;
+    }
+
+    const source = readFileSync(sourcePath, 'utf8');
+    for (const match of source.matchAll(assetPattern)) {
+      if (match[1].startsWith('assets/')) {
+        requirements.push({
+          path: match[1],
+          type: 'file'
+        });
+      }
+    }
+  }
+
+  return requirements;
+}
+
+function runtimeAssetRequirements(root) {
+  return [
+    ...runtimeSupportAssetPaths.map((path) => ({
+      path,
+      type: 'file'
+    })),
+    ...enqueuedAssetRequirements(root)
+  ];
 }
 
 export function collectReleaseRequirements(root = defaultRoot) {
@@ -341,7 +349,7 @@ export function collectReleaseRequirements(root = defaultRoot) {
     })),
     ...baseRequirements,
     ...composerPackageRequirements(root),
-    ...runtimeAssetRequirements(),
+    ...runtimeAssetRequirements(root),
     ...registeredAssetRequirements(root)
   ]);
 }

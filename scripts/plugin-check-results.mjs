@@ -7,7 +7,11 @@ export function parsePluginCheckOutput(output) {
   const trimmed = output.trim();
 
   if (successPattern.test(trimmed)) {
-    return [];
+    return {
+      pass: true,
+      errors: [],
+      warnings: []
+    };
   }
 
   let results;
@@ -17,26 +21,44 @@ export function parsePluginCheckOutput(output) {
     throw new Error(`Plugin Check output was not machine-readable JSON: ${error.message}`);
   }
 
-  if (!Array.isArray(results)) {
-    throw new Error('Plugin Check JSON output must be an array of result rows.');
+  if (Array.isArray(results)) {
+    return {
+      pass: !results.some((result) => 'ERROR' === result?.type),
+      errors: results.filter((result) => 'ERROR' === result?.type),
+      warnings: results.filter((result) => 'WARNING' === result?.type),
+      rows: results
+    };
   }
 
-  return results;
+  if (
+    results
+    && 'object' === typeof results
+    && Array.isArray(results.errors)
+    && Array.isArray(results.warnings)
+  ) {
+    return results;
+  }
+
+  throw new Error('Plugin Check strict-json output must include errors and warnings arrays.');
 }
 
 export function hasPluginCheckErrors(results) {
-  return results.some((result) => 'ERROR' === result?.type);
+  return Array.isArray(results.errors) && results.errors.length > 0;
 }
 
 function runCli(argv) {
   const outputPath = argv[2];
 
   if (!outputPath) {
-    throw new Error('Usage: node scripts/plugin-check-results.mjs <plugin-check-output-file>');
+    throw new Error('Usage: node scripts/plugin-check-results.mjs <plugin-check-output-file> [plugin-check-exit-status]');
   }
 
   const results = parsePluginCheckOutput(readFileSync(outputPath, 'utf8'));
-  process.exit(hasPluginCheckErrors(results) ? 1 : 0);
+  if (hasPluginCheckErrors(results)) {
+    process.exit(1);
+  }
+
+  process.exit(0);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -41,7 +41,7 @@ final class ContentFilter {
 
 		try {
 			$html = MarkdownRenderer::render( $markdown, $theme_state['markdownTheme'] );
-		} catch ( \RuntimeException $exception ) {
+		} catch ( \Throwable $exception ) {
 			unset( $exception );
 
 			return $content;

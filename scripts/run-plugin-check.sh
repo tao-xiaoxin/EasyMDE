@@ -21,10 +21,13 @@ fi
 PLUGIN_CHECK_OUTPUT="$(mktemp)"
 trap 'rm -f "${PLUGIN_CHECK_OUTPUT}"' EXIT
 
+set +e
 wp --require="${PLUGIN_CHECK_CLI}" plugin check easymde --path="${WP_PATH}" --allow-root --format=strict-json | tee "${PLUGIN_CHECK_OUTPUT}"
+PLUGIN_CHECK_COMMAND_STATUS="${PIPESTATUS[0]}"
+set -e
 
 PLUGIN_CHECK_STATUS=0
-node scripts/plugin-check-results.mjs "${PLUGIN_CHECK_OUTPUT}" || PLUGIN_CHECK_STATUS="$?"
+node scripts/plugin-check-results.mjs "${PLUGIN_CHECK_OUTPUT}" "${PLUGIN_CHECK_COMMAND_STATUS}" || PLUGIN_CHECK_STATUS="$?"
 
 if [ "${PLUGIN_CHECK_STATUS}" -eq 1 ]; then
 	echo "Plugin Check reported errors for the built release ZIP." >&2

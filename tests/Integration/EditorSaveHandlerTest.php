@@ -285,59 +285,76 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
         }
     }
 
-    public function test_qingbi_liujin_save_persists_theme_and_font_defaults()
+    public function test_typora_derived_theme_save_persists_theme_and_font_defaults()
     {
-        $user_id = self::factory()->user->create(array('role' => 'editor'));
-        $post_id = self::factory()->post->create(
-            array(
-                'post_type' => 'post',
-                'post_author' => $user_id,
-            )
+        $themes = array(
+            'qingbi-liujin' => array(
+                'markdown' => '# Qingbi Liujin',
+                'customFont' => 'qingbi-liujin-helvetica',
+                'windowsFont' => 'qingbi-liujin-no-windows',
+                'appleFont' => 'qingbi-liujin-no-apple',
+            ),
+            'qinghe-zhusha' => array(
+                'markdown' => '# Qinghe Zhusha',
+                'customFont' => 'qinghe-zhusha-helvetica',
+                'windowsFont' => 'qinghe-zhusha-no-windows',
+                'appleFont' => 'qinghe-zhusha-no-apple',
+            ),
         );
 
-        wp_set_current_user($user_id);
-
-        $previous_post = $_POST;
-        $_POST = array(
-            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
-            'easymde_enabled' => '1',
-            'easymde_markdown' => '# 青碧流金',
-            'easymde_markdown_theme' => 'qingbi-liujin',
-            'easymde_code_theme' => 'atom-one-dark',
-            'easymde_code_mac_style' => '1',
-            'easymde_custom_font' => 'optima',
-            'easymde_windows_font' => 'microsoft-yahei',
-            'easymde_apple_font' => 'pingfang-sc-light',
-            'easymde_serif_font' => 'yes',
-        );
-
-        try {
-            $repository = $this->theme_state_repository();
-            $handler = new EditorSaveHandler(
-                new PostDocument(),
-                $repository,
-                function () {
-                    return true;
-                }
+        foreach ($themes as $theme_id => $expected) {
+            $user_id = self::factory()->user->create(array('role' => 'editor'));
+            $post_id = self::factory()->post->create(
+                array(
+                    'post_type' => 'post',
+                    'post_author' => $user_id,
+                )
             );
-            $handler->save_post_meta($post_id, get_post($post_id), true);
 
-            $this->assertSame('qingbi-liujin', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
-            $this->assertSame('qingbi-liujin-helvetica', get_post_meta($post_id, PostDocument::META_CUSTOM_FONT, true));
-            $this->assertSame('qingbi-liujin-no-windows', get_post_meta($post_id, PostDocument::META_WINDOWS_FONT, true));
-            $this->assertSame('qingbi-liujin-no-apple', get_post_meta($post_id, PostDocument::META_APPLE_FONT, true));
-            $this->assertSame('sans-serif-only', get_post_meta($post_id, PostDocument::META_SERIF_FONT, true));
+            wp_set_current_user($user_id);
 
-            $state = $repository->get_theme_state($post_id);
+            $previous_post = $_POST;
+            $_POST = array(
+                'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+                'easymde_enabled' => '1',
+                'easymde_markdown' => $expected['markdown'],
+                'easymde_markdown_theme' => $theme_id,
+                'easymde_code_theme' => 'atom-one-dark',
+                'easymde_code_mac_style' => '1',
+                'easymde_custom_font' => 'optima',
+                'easymde_windows_font' => 'microsoft-yahei',
+                'easymde_apple_font' => 'pingfang-sc-light',
+                'easymde_serif_font' => 'yes',
+            );
 
-            $this->assertSame('qingbi-liujin', $state['markdownTheme']);
-            $this->assertSame('qingbi-liujin-helvetica', $state['customFont']);
-            $this->assertSame('qingbi-liujin-no-windows', $state['windowsFont']);
-            $this->assertSame('qingbi-liujin-no-apple', $state['appleFont']);
-            $this->assertSame('sans-serif-only', $state['serifFont']);
-            $this->assertSame('Helvetica, Arial, sans-serif', $state['fontFamily']);
-        } finally {
-            $_POST = $previous_post;
+            try {
+                $repository = $this->theme_state_repository();
+                $handler = new EditorSaveHandler(
+                    new PostDocument(),
+                    $repository,
+                    function () {
+                        return true;
+                    }
+                );
+                $handler->save_post_meta($post_id, get_post($post_id), true);
+
+                $this->assertSame($theme_id, get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
+                $this->assertSame($expected['customFont'], get_post_meta($post_id, PostDocument::META_CUSTOM_FONT, true));
+                $this->assertSame($expected['windowsFont'], get_post_meta($post_id, PostDocument::META_WINDOWS_FONT, true));
+                $this->assertSame($expected['appleFont'], get_post_meta($post_id, PostDocument::META_APPLE_FONT, true));
+                $this->assertSame('sans-serif-only', get_post_meta($post_id, PostDocument::META_SERIF_FONT, true));
+
+                $state = $repository->get_theme_state($post_id);
+
+                $this->assertSame($theme_id, $state['markdownTheme']);
+                $this->assertSame($expected['customFont'], $state['customFont']);
+                $this->assertSame($expected['windowsFont'], $state['windowsFont']);
+                $this->assertSame($expected['appleFont'], $state['appleFont']);
+                $this->assertSame('sans-serif-only', $state['serifFont']);
+                $this->assertSame('Helvetica, Arial, sans-serif', $state['fontFamily']);
+            } finally {
+                $_POST = $previous_post;
+            }
         }
     }
 

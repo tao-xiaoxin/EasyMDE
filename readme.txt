@@ -65,6 +65,7 @@ The editor includes article themes such as:
 * Ningye Purple
 * Tech Blue
 * Qingbi Liujin
+* Qinghe Zhusha
 * Cute Green
 * Fullstack Blue
 * Minimal Black
@@ -154,6 +155,7 @@ See `SECURITY.md`, `UPGRADING.md`, and `THIRD-PARTY-NOTICES.md` in the release p
 * Add rich-text Copy to WeChat export from the editor preview.
 * Add the Tech Blue article theme with themed typography, headings, inline code, lists, images, and Mac-style code framing.
 * Add the Qingbi Liujin article theme with themed typography, headings, blockquotes, tables, code blocks, images, and footnotes.
+* Add the EasyMDE-owned Qinghe Zhusha article theme, recreated from local Typora visual evidence with green/cinnabar accents, table scrolling, image captions, and Helvetica-based typography.
 * Add temporary immersive writing mode.
 * Add per-post font stack selection.
 

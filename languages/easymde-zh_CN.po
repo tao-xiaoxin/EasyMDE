@@ -210,6 +210,9 @@ msgstr "标题"
 msgid "Helvetica (qingbi-liujin)"
 msgstr "Helvetica（青碧流金）"
 
+msgid "Helvetica (qinghe-zhusha)"
+msgstr "Helvetica（清河朱砂）"
+
 msgid "Helvetica Neue"
 msgstr "Helvetica Neue"
 
@@ -325,6 +328,9 @@ msgstr "否"
 msgid "No Apple-specific font (qingbi-liujin)"
 msgstr "无 Apple 特定字体（青碧流金）"
 
+msgid "No Apple-specific font (qinghe-zhusha)"
+msgstr "无 Apple 特定字体（清河朱砂）"
+
 msgid "No activation redirect and no unrelated admin-page redirect."
 msgstr "不会在启用插件后跳转，也不会重定向无关后台页面。"
 
@@ -336,6 +342,9 @@ msgstr "无自定义字体"
 
 msgid "No Windows-specific font (qingbi-liujin)"
 msgstr "无 Windows 特定字体（青碧流金）"
+
+msgid "No Windows-specific font (qinghe-zhusha)"
+msgstr "无 Windows 特定字体（清河朱砂）"
 
 msgid "Optima"
 msgstr "Optima"
@@ -384,6 +393,9 @@ msgstr "预览失败。可以继续编写，保存不受影响。"
 
 msgid "Qingbi Liujin"
 msgstr "青碧流金"
+
+msgid "Qinghe Zhusha"
+msgstr "清河朱砂"
 
 msgid "Quote"
 msgstr "引用"

@@ -28,6 +28,7 @@ final class ArticleThemeRegistry {
 			'ningye-purple'  => $this->theme( 'ningye-purple', __( 'Ningye purple', 'easymde' ), 'assets/themes/article/ningye-purple.css' ),
 			'tech-blue'      => $this->theme( 'tech-blue', __( 'Tech blue', 'easymde' ), 'assets/themes/article/tech-blue.css' ),
 			'qingbi-liujin'  => $this->theme( 'qingbi-liujin', __( 'Qingbi Liujin', 'easymde' ), 'assets/themes/article/qingbi-liujin.css' ),
+			'qinghe-zhusha'  => $this->theme( 'qinghe-zhusha', __( 'Qinghe Zhusha', 'easymde' ), 'assets/themes/article/qinghe-zhusha.css' ),
 			'cute-green'     => $this->theme( 'cute-green', __( 'Cute green', 'easymde' ), 'assets/themes/article/cute-green.css' ),
 			'fullstack-blue' => $this->theme( 'fullstack-blue', __( 'Fullstack blue', 'easymde' ), 'assets/themes/article/fullstack-blue.css' ),
 			'minimal-black'  => $this->theme( 'minimal-black', __( 'Minimal black', 'easymde' ), 'assets/themes/article/minimal-black.css' ),
@@ -72,7 +73,7 @@ final class ArticleThemeRegistry {
 				'id'        => $theme['id'],
 				'label'     => $theme['label'],
 				'className' => $theme['class_name'],
-				'cssUrl'    => Asset::url( $theme['asset_path'] ),
+				'cssUrl'    => $this->versioned_asset_url( $theme['asset_path'] ),
 				'assetPath' => $theme['asset_path'],
 				'origin'    => $theme['origin'],
 			);
@@ -144,6 +145,14 @@ final class ArticleThemeRegistry {
 					'appleFont'   => 'qingbi-liujin-no-apple',
 					'serifFont'   => 'sans-serif-only',
 				);
+
+			case 'qinghe-zhusha':
+				return array(
+					'customFont'  => 'qinghe-zhusha-helvetica',
+					'windowsFont' => 'qinghe-zhusha-no-windows',
+					'appleFont'   => 'qinghe-zhusha-no-apple',
+					'serifFont'   => 'sans-serif-only',
+				);
 		}
 
 		return null;
@@ -157,5 +166,9 @@ final class ArticleThemeRegistry {
 			'origin'     => 'owned',
 			'class_name' => 'easymde-markdown-theme-' . $id,
 		);
+	}
+
+	private function versioned_asset_url( $asset_path ) {
+		return add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( $asset_path ) );
 	}
 }

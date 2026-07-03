@@ -351,6 +351,12 @@ test('release requirements include assets referenced by enqueue source files', (
   }
 });
 
+test('release requirements include the Qinghe Zhusha article theme stylesheet', () => {
+  const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
+
+  assert.ok(requirements.includes('assets/themes/article/qinghe-zhusha.css'));
+});
+
 test('release requirements include assets referenced by newly added PHP files', () => {
   const root = makeTempRoot();
 

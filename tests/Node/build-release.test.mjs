@@ -351,6 +351,44 @@ test('release requirements include assets referenced by enqueue source files', (
   }
 });
 
+test('release requirements include assets referenced by newly added PHP files', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(
+      root,
+      'src/Admin/GeneratedAssets.php',
+      "<?php\nAsset::url( 'assets/js/admin/generated-runtime.js' );\n"
+    );
+
+    const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
+
+    assert.ok(missing.includes('assets/js/admin/generated-runtime.js'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build fails when a KaTeX font referenced by the stylesheet is missing', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(
+      root,
+      'assets/vendor/katex/katex.min.css',
+      '@font-face{font-family:KaTeX_Main;src:url(fonts/KaTeX_Main-Regular.woff2) format("woff2")}'
+    );
+
+    const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
+
+    assert.ok(missing.includes('assets/vendor/katex/fonts/KaTeX_Main-Regular.woff2'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('release build fails when Composer development packages are installed', () => {
   const root = makeTempRoot();
 

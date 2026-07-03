@@ -70,22 +70,28 @@ test('Plugin Check and E2E validate the release job ZIP artifact', () => {
 test('WP-CLI phar is verified before it is executed', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
   const installBlocks = workflowStepBlocks(workflow).filter((block) => block.includes('name: Install WP-CLI'));
+  const installer = readFileSync(join(repoRoot, 'scripts/install-wp-cli.sh'), 'utf8');
 
   assert.notEqual(installBlocks.length, 0, 'CI workflow should install WP-CLI in runtime jobs.');
 
   installBlocks.forEach((block) => {
-    const verifyIndex = block.indexOf('sha256sum -c -');
-    const infoIndex = block.indexOf('php wp-cli.phar --info');
-
-    assert.match(block, /WP_CLI_VERSION=2\.12\.0/, block);
-    assert.match(block, /WP_CLI_SHA256=ce34ddd838f7351d6759068d09793f26755463b4a4610a5a5c0a97b68220d85c/, block);
-    assert.match(block, /echo "\$\{WP_CLI_SHA256\}\s+wp-cli\.phar" \| sha256sum -c -/, block);
-    assert.notEqual(verifyIndex, -1, block);
-    assert.notEqual(infoIndex, -1, block);
-    assert.ok(verifyIndex < infoIndex, block);
-    assert.doesNotMatch(block, /raw\.githubusercontent\.com\/wp-cli\/builds\/gh-pages\/phar\/wp-cli\.phar/, block);
-    assert.doesNotMatch(block, /wp-cli-\$\{WP_CLI_VERSION\}\.phar\.sha256/, block);
+    assert.match(block, /run:\s+bash scripts\/install-wp-cli\.sh/, block);
+    assert.doesNotMatch(block, /WP_CLI_VERSION=/, block);
   });
+
+  {
+    const verifyIndex = installer.indexOf('sha256sum -c -');
+    const infoIndex = installer.indexOf('php wp-cli.phar --info');
+
+    assert.match(installer, /WP_CLI_VERSION="\$\{EASYMDE_WP_CLI_VERSION:-2\.12\.0\}"/, installer);
+    assert.match(installer, /WP_CLI_SHA256="\$\{EASYMDE_WP_CLI_SHA256:-ce34ddd838f7351d6759068d09793f26755463b4a4610a5a5c0a97b68220d85c\}"/, installer);
+    assert.match(installer, /echo "\$\{WP_CLI_SHA256\}\s+wp-cli\.phar" \| sha256sum -c -/, installer);
+    assert.notEqual(verifyIndex, -1, installer);
+    assert.notEqual(infoIndex, -1, installer);
+    assert.ok(verifyIndex < infoIndex, installer);
+    assert.doesNotMatch(installer, /raw\.githubusercontent\.com\/wp-cli\/builds\/gh-pages\/phar\/wp-cli\.phar/, installer);
+    assert.doesNotMatch(installer, /wp-cli-\$\{WP_CLI_VERSION\}\.phar\.sha256/, installer);
+  }
 });
 
 test('PHPUnit keeps WordPress globals shared for WP_UnitTestCase', () => {
@@ -106,4 +112,11 @@ test('Plugin Check runner lets JSON post-processing classify non-zero command ex
   assert.ok(script.lastIndexOf('set +e', pipelineIndex) !== -1, script);
   assert.ok(pipelineIndex < statusIndex, script);
   assert.ok(statusIndex < parserIndex, script);
+});
+
+test('Plugin Check runner pins the Plugin Check version by default', () => {
+  const script = readFileSync(join(repoRoot, 'scripts/run-plugin-check.sh'), 'utf8');
+
+  assert.match(script, /PLUGIN_CHECK_VERSION="\$\{EASYMDE_PLUGIN_CHECK_VERSION:-2\.0\.0\}"/);
+  assert.match(script, /wp plugin install plugin-check --version="\$\{PLUGIN_CHECK_VERSION\}"/);
 });

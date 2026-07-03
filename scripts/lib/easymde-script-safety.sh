@@ -33,7 +33,7 @@ easymde_validate_destructive_path() {
 	fi
 
 	case "${path}" in
-		/|/tmp|/private/tmp|/var/tmp)
+		/|/tmp|/private/tmp|/var/tmp|/private/var/tmp)
 			fail "Refusing unsafe ${label} '${path}'."
 			;;
 	esac
@@ -42,6 +42,22 @@ easymde_validate_destructive_path() {
 	if [[ "${base}" != easymde-* ]]; then
 		fail "Refusing unsafe ${label} '${path}'. The final path segment must start with easymde-."
 	fi
+
+	if ! easymde_is_safe_test_path "${path}"; then
+		fail "Refusing unsafe ${label} '${path}'. Use a dedicated /tmp/easymde-* test path or set EASYMDE_ALLOW_UNSAFE_PATHS=1."
+	fi
+}
+
+easymde_is_safe_test_path() {
+	local path="$1"
+
+	case "${path}" in
+		/tmp/easymde-*|/private/tmp/easymde-*|/var/tmp/easymde-*|/private/var/tmp/easymde-*)
+			return 0
+			;;
+	esac
+
+	return 1
 }
 
 easymde_prepare_destructive_path() {

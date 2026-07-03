@@ -8,11 +8,6 @@ const registryFiles = [
   'src/Theme/ArticleThemeRegistry.php',
   'src/Theme/CodeThemeRegistry.php'
 ];
-const assetSourceFiles = [
-  'src/Admin/AdminAssets.php',
-  'src/Admin/SettingsPage.php',
-  'src/Frontend/FrontendAssets.php'
-];
 const directoryPackagePaths = new Set([
   'includes',
   'src',
@@ -112,6 +107,26 @@ const composerDevPackagePathCache = new Map();
 
 function fromRoot(root, path) {
   return join(root, path);
+}
+
+function walkFiles(dir, callback) {
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    return;
+  }
+
+  for (const entry of readdirSync(dir)) {
+    const child = join(dir, entry);
+    const stat = statSync(child);
+
+    if (stat.isDirectory()) {
+      walkFiles(child, callback);
+      continue;
+    }
+
+    if (stat.isFile()) {
+      callback(child);
+    }
+  }
 }
 
 function uniqueRequirements(requirements) {
@@ -310,8 +325,17 @@ function registeredAssetRequirements(root) {
 function enqueuedAssetRequirements(root) {
   const requirements = [];
   const assetPattern = /Asset::url\(\s*['"]([^'"]+)['"]\s*\)/g;
+  const sourceFiles = ['easymde.php', 'uninstall.php'].filter((file) => existsSync(fromRoot(root, file)));
 
-  for (const sourceFile of assetSourceFiles) {
+  for (const dir of ['src', 'templates', 'includes']) {
+    walkFiles(fromRoot(root, dir), (file) => {
+      if (file.endsWith('.php')) {
+        sourceFiles.push(relative(root, file).split(/[\\/]+/).join('/'));
+      }
+    });
+  }
+
+  for (const sourceFile of sourceFiles) {
     const sourcePath = fromRoot(root, sourceFile);
     if (!existsSync(sourcePath)) {
       continue;
@@ -331,13 +355,33 @@ function enqueuedAssetRequirements(root) {
   return requirements;
 }
 
+function katexFontRequirements(root) {
+  const cssPath = fromRoot(root, 'assets/vendor/katex/katex.min.css');
+  if (!existsSync(cssPath)) {
+    return [];
+  }
+
+  const css = readFileSync(cssPath, 'utf8');
+  const fonts = new Set();
+
+  for (const match of css.matchAll(/url\(\s*["']?fonts\/([^"')]+)["']?\s*\)/g)) {
+    fonts.add(`assets/vendor/katex/fonts/${match[1]}`);
+  }
+
+  return [...fonts].map((path) => ({
+    path,
+    type: 'file'
+  }));
+}
+
 function runtimeAssetRequirements(root) {
   return [
     ...runtimeSupportAssetPaths.map((path) => ({
       path,
       type: 'file'
     })),
-    ...enqueuedAssetRequirements(root)
+    ...enqueuedAssetRequirements(root),
+    ...katexFontRequirements(root)
   ];
 }
 

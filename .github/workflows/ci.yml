@@ -205,15 +205,7 @@ jobs:
           coverage: none
 
       - name: Install WP-CLI
-        run: |
-          WP_CLI_VERSION=2.12.0
-          WP_CLI_SHA256=ce34ddd838f7351d6759068d09793f26755463b4a4610a5a5c0a97b68220d85c
-          WP_CLI_BASE_URL="https://github.com/wp-cli/wp-cli/releases/download/v${WP_CLI_VERSION}"
-          curl -fsSL -o wp-cli.phar "${WP_CLI_BASE_URL}/wp-cli-${WP_CLI_VERSION}.phar"
-          echo "${WP_CLI_SHA256}  wp-cli.phar" | sha256sum -c -
-          php wp-cli.phar --info
-          chmod +x wp-cli.phar
-          sudo mv wp-cli.phar /usr/local/bin/wp
+        run: bash scripts/install-wp-cli.sh
 
       - name: Install PHP runtime dependencies
         run: composer install --no-dev --no-interaction --no-progress --prefer-dist
@@ -325,15 +317,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gettext zip unzip default-mysql-client
 
       - name: Install WP-CLI
-        run: |
-          WP_CLI_VERSION=2.12.0
-          WP_CLI_SHA256=ce34ddd838f7351d6759068d09793f26755463b4a4610a5a5c0a97b68220d85c
-          WP_CLI_BASE_URL="https://github.com/wp-cli/wp-cli/releases/download/v${WP_CLI_VERSION}"
-          curl -fsSL -o wp-cli.phar "${WP_CLI_BASE_URL}/wp-cli-${WP_CLI_VERSION}.phar"
-          echo "${WP_CLI_SHA256}  wp-cli.phar" | sha256sum -c -
-          php wp-cli.phar --info
-          chmod +x wp-cli.phar
-          sudo mv wp-cli.phar /usr/local/bin/wp
+        run: bash scripts/install-wp-cli.sh
 
       - name: Download release ZIP
         uses: actions/download-artifact@v4
@@ -394,15 +378,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gettext zip unzip default-mysql-client
 
       - name: Install WP-CLI
-        run: |
-          WP_CLI_VERSION=2.12.0
-          WP_CLI_SHA256=ce34ddd838f7351d6759068d09793f26755463b4a4610a5a5c0a97b68220d85c
-          WP_CLI_BASE_URL="https://github.com/wp-cli/wp-cli/releases/download/v${WP_CLI_VERSION}"
-          curl -fsSL -o wp-cli.phar "${WP_CLI_BASE_URL}/wp-cli-${WP_CLI_VERSION}.phar"
-          echo "${WP_CLI_SHA256}  wp-cli.phar" | sha256sum -c -
-          php wp-cli.phar --info
-          chmod +x wp-cli.phar
-          sudo mv wp-cli.phar /usr/local/bin/wp
+        run: bash scripts/install-wp-cli.sh
 
       - name: Install PHP runtime dependencies
         run: composer install --no-dev --no-interaction --no-progress --prefer-dist

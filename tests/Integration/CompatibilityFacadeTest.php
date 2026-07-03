@@ -18,6 +18,7 @@ final class CompatibilityFacadeTest extends WP_UnitTestCase
         update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Facade');
 
         wp_set_current_user($user_id);
+        $registry_snapshot = $this->snapshot_toolbar_registry();
 
         EasyMDE_Plugin::register_toolbar_button(
             'fixture_button',
@@ -57,7 +58,43 @@ final class CompatibilityFacadeTest extends WP_UnitTestCase
             $this->assertStringContainsString('[fixture]', $data);
         } finally {
             $_GET = $previous_get;
+            $this->restore_toolbar_registry($registry_snapshot);
             set_current_screen('front');
         }
+    }
+
+    private function snapshot_toolbar_registry()
+    {
+        $registry = $this->toolbar_registry();
+
+        return array(
+            'toolbar_buttons' => $this->registry_property($registry, 'toolbar_buttons')->getValue($registry),
+            'shortcode_helpers' => $this->registry_property($registry, 'shortcode_helpers')->getValue($registry),
+        );
+    }
+
+    private function restore_toolbar_registry(array $snapshot)
+    {
+        $registry = $this->toolbar_registry();
+
+        $this->registry_property($registry, 'toolbar_buttons')->setValue($registry, $snapshot['toolbar_buttons']);
+        $this->registry_property($registry, 'shortcode_helpers')->setValue($registry, $snapshot['shortcode_helpers']);
+    }
+
+    private function toolbar_registry()
+    {
+        $plugin = \EasyMDE\Plugin::instance();
+        $property = new \ReflectionProperty($plugin, 'toolbar_registry');
+        $property->setAccessible(true);
+
+        return $property->getValue($plugin);
+    }
+
+    private function registry_property($registry, $name)
+    {
+        $property = new \ReflectionProperty($registry, $name);
+        $property->setAccessible(true);
+
+        return $property;
     }
 }

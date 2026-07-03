@@ -11,8 +11,9 @@ if ( ! $_tests_dir ) {
 }
 
 $_functions = rtrim( $_tests_dir, '/\\' ) . '/includes/functions.php';
+$_bootstrap = rtrim( $_tests_dir, '/\\' ) . '/includes/bootstrap.php';
 
-if ( ! file_exists( $_functions ) ) {
+if ( ! file_exists( $_functions ) || ! file_exists( $_bootstrap ) ) {
 	fwrite(
 		STDERR,
 		"WordPress test suite not found. Run scripts/install-wp-tests.sh first or set WP_TESTS_DIR.\n"
@@ -34,4 +35,4 @@ tests_add_filter(
 	}
 );
 
-require rtrim( $_tests_dir, '/\\' ) . '/includes/bootstrap.php';
+require $_bootstrap;

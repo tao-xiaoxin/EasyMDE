@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
@@ -8,7 +7,7 @@ import test from 'node:test';
 const repoRoot = new URL('../..', import.meta.url).pathname;
 
 function makeTempRoot(prefix) {
-  return mkdtempSync(join(tmpdir(), prefix));
+  return mkdtempSync(join('/tmp', prefix));
 }
 
 function writeFile(path, content = '') {
@@ -137,6 +136,67 @@ test('release setup rejects unsafe WP paths before cleanup or wp calls', () => {
   }
 });
 
+test('release setup rejects arbitrary absolute easymde paths before cleanup or wp calls', () => {
+  const root = makeTempRoot('easymde-release-safety-');
+  const releaseZip = join(root, 'easymde.zip');
+  const unsafePath = join(repoRoot, 'easymde-review-risk');
+  const sentinel = join(unsafePath, 'sentinel.txt');
+  const fakeBin = makeFakeBin(root, ['wp']);
+
+  try {
+    writeFile(releaseZip, 'zip fixture');
+    writeFile(sentinel, 'keep me');
+
+    const result = runScript('scripts/setup-wordpress-release.sh', [releaseZip], {
+      env: {
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        EASYMDE_DB_NAME: 'easymde_release',
+        EASYMDE_WP_PATH: unsafePath
+      }
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Refusing unsafe EASYMDE_WP_PATH/);
+    assert.equal(existsSync(sentinel), true);
+    assert.equal(existsSync(join(root, 'command.log')), false);
+  } finally {
+    rmSync(unsafePath, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release setup rejects symlink escapes before cleanup or wp calls', () => {
+  const root = makeTempRoot('easymde-release-safety-');
+  const releaseZip = join(root, 'easymde.zip');
+  const unsafeTarget = join(repoRoot, 'easymde-symlink-target');
+  const unsafeLink = join('/tmp', `easymde-symlink-link-${process.pid}-${Date.now()}`);
+  const sentinel = join(unsafeTarget, 'sentinel.txt');
+  const fakeBin = makeFakeBin(root, ['wp']);
+
+  try {
+    writeFile(releaseZip, 'zip fixture');
+    writeFile(sentinel, 'keep me');
+    symlinkSync(unsafeTarget, unsafeLink, 'dir');
+
+    const result = runScript('scripts/setup-wordpress-release.sh', [releaseZip], {
+      env: {
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        EASYMDE_DB_NAME: 'easymde_release',
+        EASYMDE_WP_PATH: unsafeLink
+      }
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Refusing unsafe EASYMDE_WP_PATH/);
+    assert.equal(existsSync(sentinel), true);
+    assert.equal(existsSync(join(root, 'command.log')), false);
+  } finally {
+    rmSync(unsafeLink, { force: true });
+    rmSync(unsafeTarget, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('release setup rejects non-EasyMDE database names before wp config or reset', () => {
   const root = makeTempRoot('easymde-release-safety-');
   const releaseZip = join(root, 'easymde.zip');
@@ -208,6 +268,37 @@ test('WordPress test installer rejects unsafe core and tests paths before downlo
     assert.equal(existsSync(sentinel), true);
     assert.equal(existsSync(join(root, 'command.log')), false);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('WordPress test installer rejects arbitrary absolute easymde paths before downloads', () => {
+  const root = makeTempRoot('easymde-test-installer-');
+  const unsafeCoreDir = join(repoRoot, 'easymde-review-core');
+  const sentinel = join(unsafeCoreDir, 'sentinel.txt');
+  const fakeBin = makeFakeBin(root, ['curl', 'svn', 'tar', 'mysql']);
+
+  try {
+    writeFile(sentinel, 'keep me');
+
+    const result = runScript(
+      'scripts/install-wp-tests.sh',
+      ['easymde_phpunit', 'root', 'root', '127.0.0.1', '6.0'],
+      {
+        env: {
+          PATH: `${fakeBin}:${process.env.PATH}`,
+          WP_CORE_DIR: unsafeCoreDir,
+          WP_TESTS_DIR: join(root, 'easymde-tests-lib')
+        }
+      }
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Refusing unsafe WP_CORE_DIR/);
+    assert.equal(existsSync(sentinel), true);
+    assert.equal(existsSync(join(root, 'command.log')), false);
+  } finally {
+    rmSync(unsafeCoreDir, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
 });

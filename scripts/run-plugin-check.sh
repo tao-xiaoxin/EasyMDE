@@ -3,6 +3,7 @@ set -euo pipefail
 
 RELEASE_ZIP="${1:-dist/easymde.zip}"
 WP_PATH="${EASYMDE_WP_PATH:-/tmp/easymde-plugin-check-wp}"
+PLUGIN_CHECK_VERSION="${EASYMDE_PLUGIN_CHECK_VERSION:-2.0.0}"
 WP_BIN="$(command -v wp)"
 
 wp() {
@@ -11,7 +12,7 @@ wp() {
 
 EASYMDE_WP_PATH="${WP_PATH}" scripts/setup-wordpress-release.sh "${RELEASE_ZIP}"
 
-wp plugin install plugin-check --path="${WP_PATH}" --force --activate --allow-root
+wp plugin install plugin-check --version="${PLUGIN_CHECK_VERSION}" --path="${WP_PATH}" --force --activate --allow-root
 PLUGIN_CHECK_CLI="${WP_PATH}/wp-content/plugins/plugin-check/cli.php"
 if [ ! -f "${PLUGIN_CHECK_CLI}" ]; then
 	echo "Plugin Check runtime CLI bootstrap was not found at ${PLUGIN_CHECK_CLI}." >&2

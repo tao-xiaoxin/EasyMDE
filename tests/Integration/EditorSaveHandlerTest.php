@@ -84,6 +84,9 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
 
             $this->assertSame('1', get_post_meta($post_id, PostDocument::META_ENABLED, true));
             $this->assertSame('# Migrated', get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+            $this->assertSame('default', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
+            $this->assertSame('github', get_post_meta($post_id, PostDocument::META_CODE_THEME, true));
+            $this->assertSame('1', get_post_meta($post_id, PostDocument::META_CODE_MAC_STYLE, true));
         } finally {
             $_POST = $previous_post;
         }

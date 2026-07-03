@@ -77,13 +77,6 @@ const runtimeSupportAssetPaths = [
   'assets/images/fullstack-blue-h3.png',
   'assets/images/fullstack-blue-h4.png',
   'assets/images/tech-blue-code-window.svg',
-  'assets/images/yamabuki/blue.jpg',
-  'assets/images/yamabuki/dance.gif',
-  'assets/images/yamabuki/green.jpg',
-  'assets/images/yamabuki/i-am-svg.svg',
-  'assets/images/yamabuki/logo.svg',
-  'assets/images/yamabuki/red.jpg',
-  'assets/images/yamabuki/sample-article.jpg',
   'assets/images/yamabuki-code-window.svg'
 ];
 

@@ -303,13 +303,6 @@ test('release build fails when required runtime assets or templates are missing'
     rmSync(join(root, 'assets/js/admin/media-picker.js'), { force: true });
     rmSync(join(root, 'assets/js/frontend/bootstrap.js'), { force: true });
     rmSync(join(root, 'assets/images/tech-blue-code-window.svg'), { force: true });
-    rmSync(join(root, 'assets/images/yamabuki/blue.jpg'), { force: true });
-    rmSync(join(root, 'assets/images/yamabuki/dance.gif'), { force: true });
-    rmSync(join(root, 'assets/images/yamabuki/green.jpg'), { force: true });
-    rmSync(join(root, 'assets/images/yamabuki/i-am-svg.svg'), { force: true });
-    rmSync(join(root, 'assets/images/yamabuki/logo.svg'), { force: true });
-    rmSync(join(root, 'assets/images/yamabuki/red.jpg'), { force: true });
-    rmSync(join(root, 'assets/images/yamabuki/sample-article.jpg'), { force: true });
     rmSync(join(root, 'assets/images/yamabuki-code-window.svg'), { force: true });
     rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
 
@@ -323,13 +316,6 @@ test('release build fails when required runtime assets or templates are missing'
     assert.ok(missing.includes('assets/js/admin/media-picker.js'));
     assert.ok(missing.includes('assets/js/frontend/bootstrap.js'));
     assert.ok(missing.includes('assets/images/tech-blue-code-window.svg'));
-    assert.ok(missing.includes('assets/images/yamabuki/blue.jpg'));
-    assert.ok(missing.includes('assets/images/yamabuki/dance.gif'));
-    assert.ok(missing.includes('assets/images/yamabuki/green.jpg'));
-    assert.ok(missing.includes('assets/images/yamabuki/i-am-svg.svg'));
-    assert.ok(missing.includes('assets/images/yamabuki/logo.svg'));
-    assert.ok(missing.includes('assets/images/yamabuki/red.jpg'));
-    assert.ok(missing.includes('assets/images/yamabuki/sample-article.jpg'));
     assert.ok(missing.includes('assets/images/yamabuki-code-window.svg'));
     assert.ok(missing.includes('THIRD-PARTY-NOTICES.md'));
 

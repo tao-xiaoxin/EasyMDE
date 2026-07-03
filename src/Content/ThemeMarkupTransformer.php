@@ -7,7 +7,6 @@ use DOMElement;
 use DOMNode;
 use DOMText;
 use DOMXPath;
-use EasyMDE\Support\Asset;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -113,9 +112,6 @@ final class ThemeMarkupTransformer {
 
 		self::wrap_theme_headings( $document, $root );
 		self::wrap_theme_list_items( $document, $root );
-		if ( 'yamabuki' === $theme ) {
-			self::localize_yamabuki_sample_assets( $root );
-		}
 		self::wrap_theme_images( $document, $root );
 		if ( 'rose-purple' === $theme ) {
 			self::add_rose_purple_blockquote_marks( $document, $root );
@@ -368,30 +364,6 @@ final class ThemeMarkupTransformer {
 			}
 
 			$paragraph->parentNode->removeChild( $paragraph );
-		}
-	}
-
-	private static function localize_yamabuki_sample_assets( DOMElement $root ) {
-		$assets = array(
-			'https://files.mdnice.com/logo.svg'                                       => 'assets/images/yamabuki/logo.svg',
-			'https://files.mdnice.com/logo.png'                                       => 'assets/images/yamabuki/sample-article.jpg',
-			'https://files.mdnice.com/pic/cd3ca20c-896f-4cfc-9bdd-c4c58e69ba26.jpg'   => 'assets/images/yamabuki/sample-article.jpg',
-			'https://files.mdnice.com/i-am-svg.svg'                                   => 'assets/images/yamabuki/i-am-svg.svg',
-			'https://files.mdnice.com/dance.gif'                                      => 'assets/images/yamabuki/dance.gif',
-			'https://files.mdnice.com/blue.jpg'                                       => 'assets/images/yamabuki/blue.jpg',
-			'https://files.mdnice.com/green.jpg'                                      => 'assets/images/yamabuki/green.jpg',
-			'https://files.mdnice.com/red.jpg'                                        => 'assets/images/yamabuki/red.jpg',
-		);
-
-		foreach ( iterator_to_array( $root->getElementsByTagName( 'img' ) ) as $image ) {
-			if ( ! ( $image instanceof DOMElement ) ) {
-				continue;
-			}
-
-			$src = trim( (string) $image->getAttribute( 'src' ) );
-			if ( isset( $assets[ $src ] ) ) {
-				$image->setAttribute( 'src', Asset::url( $assets[ $src ] ) );
-			}
 		}
 	}
 

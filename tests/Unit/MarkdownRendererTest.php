@@ -55,25 +55,7 @@ final class MarkdownRendererTest extends WP_UnitTestCase
             'yamabuki'
         );
 
-        $this->assertStringContainsString('<div class="table-container">', $html);
+        $this->assertStringContainsString('<section class="table-container">', $html);
         $this->assertStringContainsString('<table>', $html);
-    }
-
-    public function test_yamabuki_localizes_mdnice_sample_images()
-    {
-        $html = MarkdownRenderer::render(
-            "![logo](https://files.mdnice.com/logo.svg)\n\n" .
-            "![sample](https://files.mdnice.com/pic/cd3ca20c-896f-4cfc-9bdd-c4c58e69ba26.jpg)\n\n" .
-            "![sized](https://files.mdnice.com/logo.png)\n\n" .
-            "![external](https://example.test/image.jpg)",
-            'yamabuki'
-        );
-
-        $this->assertStringContainsString('assets/images/yamabuki/logo.svg', $html);
-        $this->assertStringContainsString('assets/images/yamabuki/sample-article.jpg', $html);
-        $this->assertStringContainsString('https://example.test/image.jpg', $html);
-        $this->assertStringNotContainsString('https://files.mdnice.com/logo.svg', $html);
-        $this->assertStringNotContainsString('https://files.mdnice.com/pic/cd3ca20c-896f-4cfc-9bdd-c4c58e69ba26.jpg', $html);
-        $this->assertStringNotContainsString('https://files.mdnice.com/logo.png', $html);
     }
 }

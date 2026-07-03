@@ -12,7 +12,7 @@ A standalone WordPress Markdown editor with split-pane live preview, local rende
 
 == Description ==
 
-EasyMDE replaces the editing surface only for posts and pages explicitly opened in EasyMDE mode, including legacy EasyMDE Markdown posts.
+EasyMDE replaces the editing surface only for posts and pages explicitly opened in EasyMDE mode, including legacy EasyMDE Markdown posts. Ordinary posts and pages created through the normal WordPress flow continue to use Gutenberg.
 
 Write Markdown on the left and review a live preview on the right. EasyMDE provides commonly used writing tools, media insertion, local rendering support, article themes, code highlighting, and rich-text export for the WeChat Official Accounts editor.
 
@@ -93,14 +93,20 @@ If rich-text clipboard access is unavailable, EasyMDE uses available fallback me
 
 1. Upload the EasyMDE plugin folder to the `/wp-content/plugins/` directory, or install the plugin ZIP from **Plugins > Add New > Upload Plugin**.
 2. Activate EasyMDE from the **Plugins** screen in WordPress.
-3. Create or edit a post or page.
-4. Use the EasyMDE Markdown editor to write and preview your content.
+3. Create Markdown content from **Posts > Add EasyMDE Post** or **Pages > Add EasyMDE Page**.
+4. Edit legacy EasyMDE Markdown posts normally; they reopen in EasyMDE when their stored Markdown metadata exists.
+
+Posts and pages created through the default WordPress new-content flow keep the normal WordPress editor.
 
 == Frequently Asked Questions ==
 
 = Does EasyMDE require Jetpack or Classic Editor? =
 
 No. EasyMDE is a standalone WordPress plugin and does not require Jetpack, Classic Editor, or another Markdown plugin.
+
+= Does EasyMDE replace Gutenberg for every post? =
+
+No. EasyMDE is opt-in for posts and pages opened through the EasyMDE add-new flow or for existing EasyMDE Markdown posts. Normal posts and pages continue to use Gutenberg.
 
 = Does EasyMDE use external CDN assets? =
 

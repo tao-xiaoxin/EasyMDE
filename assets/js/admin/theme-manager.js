@@ -39,11 +39,19 @@
     function applyStylesheetLink(documentRef, id, href) {
         var link;
 
-        if (!documentRef || !href) {
+        if (!documentRef) {
             return null;
         }
 
         link = documentRef.getElementById(id);
+
+        if (!href) {
+            if (link && link.parentNode) {
+                link.parentNode.removeChild(link);
+            }
+
+            return null;
+        }
 
         if (!link) {
             link = documentRef.createElement('link');
@@ -64,7 +72,7 @@
         var href;
 
         if (!themeOptions || !renderState || renderState.markdownTheme === 'custom') {
-            return null;
+            return applyStylesheetLink(documentRef || window.document, 'easymde-article-theme-css', '');
         }
 
         articleTheme = findById(themeOptions.markdownThemes || [], renderState.markdownTheme);

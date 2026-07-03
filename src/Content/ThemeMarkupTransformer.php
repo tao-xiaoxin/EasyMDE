@@ -147,7 +147,8 @@ final class ThemeMarkupTransformer {
 		}
 
 		if ( $uses_table_container ) {
-			self::wrap_theme_tables( $document, $root, 'easymde-table-container' );
+			$container_class = 'qinghe-zhusha' === $theme ? 'easymde-table-container' : 'table-container';
+			self::wrap_theme_tables( $document, $root, $container_class );
 		}
 
 		$html = self::inner_html( $root, $document );
@@ -188,11 +189,11 @@ final class ThemeMarkupTransformer {
 	}
 
 	private static function theme_uses_image_figures( $theme ) {
-		return in_array( $theme, array( 'qinghe-zhusha' ), true );
+		return in_array( $theme, array( 'qingbi-liujin', 'qinghe-zhusha' ), true );
 	}
 
 	private static function theme_uses_table_container( $theme ) {
-		return in_array( $theme, array( 'qinghe-zhusha' ), true );
+		return in_array( $theme, array( 'qingbi-liujin', 'qinghe-zhusha' ), true );
 	}
 
 	private static function wrap_cupid_busy_containers( DOMDocument $document, DOMElement $root ) {

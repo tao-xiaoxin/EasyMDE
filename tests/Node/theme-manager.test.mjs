@@ -15,10 +15,24 @@ function createDocumentStub() {
       children: [],
       appendChild(node) {
         this.children.push(node);
+        node.parentNode = this;
 
         if (node.id) {
           elements.set(node.id, node);
         }
+      },
+      removeChild(node) {
+        const index = this.children.indexOf(node);
+
+        if (-1 !== index) {
+          this.children.splice(index, 1);
+        }
+
+        if (node.id) {
+          elements.delete(node.id);
+        }
+
+        node.parentNode = null;
       }
     },
     createElement(tagName) {
@@ -28,6 +42,7 @@ function createDocumentStub() {
         tagName: String(tagName).toUpperCase(),
         id: '',
         rel: '',
+        parentNode: null,
         getAttribute(name) {
           if (name === 'id') {
             return this.id;
@@ -120,18 +135,30 @@ test('article theme stylesheet link is created and updated for preview theme swi
   assert.equal(link.getAttribute('href'), '/wp-content/plugins/easymde/assets/themes/article/default.css');
 });
 
-test('custom CSS theme does not replace the registered article theme link', () => {
+test('custom CSS theme removes the registered article theme link', () => {
   const { manager, documentRef } = loadThemeManager();
+  const themeOptions = {
+    markdownThemes: [
+      {
+        id: 'qingbi-liujin',
+        cssUrl: '/wp-content/plugins/easymde/assets/themes/article/qingbi-liujin.css'
+      }
+    ]
+  };
+
+  manager.applyArticleThemeLink(
+    themeOptions,
+    {
+      markdownTheme: 'qingbi-liujin'
+    },
+    findById,
+    documentRef
+  );
+
+  assert.equal(documentRef.head.children.length, 1);
 
   const link = manager.applyArticleThemeLink(
-    {
-      markdownThemes: [
-        {
-          id: 'qinghe-zhusha',
-          cssUrl: '/wp-content/plugins/easymde/assets/themes/article/qinghe-zhusha.css'
-        }
-      ]
-    },
+    themeOptions,
     {
       markdownTheme: 'custom',
       customCssId: 'writer-css'

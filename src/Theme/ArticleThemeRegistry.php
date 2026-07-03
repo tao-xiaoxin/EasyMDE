@@ -27,6 +27,7 @@ final class ArticleThemeRegistry {
 			'rose-purple'    => $this->theme( 'rose-purple', __( 'Rose purple', 'easymde' ), 'assets/themes/article/rose-purple.css' ),
 			'ningye-purple'  => $this->theme( 'ningye-purple', __( 'Ningye purple', 'easymde' ), 'assets/themes/article/ningye-purple.css' ),
 			'tech-blue'      => $this->theme( 'tech-blue', __( 'Tech blue', 'easymde' ), 'assets/themes/article/tech-blue.css' ),
+			'qingbi-liujin'  => $this->theme( 'qingbi-liujin', __( 'Qingbi Liujin', 'easymde' ), 'assets/themes/article/qingbi-liujin.css' ),
 			'qinghe-zhusha'  => $this->theme( 'qinghe-zhusha', __( 'Qinghe Zhusha', 'easymde' ), 'assets/themes/article/qinghe-zhusha.css' ),
 			'cute-green'     => $this->theme( 'cute-green', __( 'Cute green', 'easymde' ), 'assets/themes/article/cute-green.css' ),
 			'fullstack-blue' => $this->theme( 'fullstack-blue', __( 'Fullstack blue', 'easymde' ), 'assets/themes/article/fullstack-blue.css' ),
@@ -135,6 +136,14 @@ final class ArticleThemeRegistry {
 					'windowsFont' => 'tech-blue-microsoft-yahei',
 					'appleFont'   => 'pingfang-sc-regular-raw',
 					'serifFont'   => 'serif-only',
+				);
+
+			case 'qingbi-liujin':
+				return array(
+					'customFont'  => 'qingbi-liujin-helvetica',
+					'windowsFont' => 'qingbi-liujin-no-windows',
+					'appleFont'   => 'qingbi-liujin-no-apple',
+					'serifFont'   => 'sans-serif-only',
 				);
 
 			case 'qinghe-zhusha':

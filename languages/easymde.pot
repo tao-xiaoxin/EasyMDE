@@ -69,7 +69,7 @@ msgstr ""
 msgid "Clipboard access is not available in this browser."
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:425
+#: src/Theme/ThemeStateRepository.php:430
 msgid "Cochin"
 msgstr ""
 
@@ -101,7 +101,7 @@ msgstr ""
 msgid "Copy to WeChat"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:36
+#: src/Theme/ArticleThemeRegistry.php:37
 msgid "Cupid busy"
 msgstr ""
 
@@ -137,7 +137,7 @@ msgstr ""
 msgid "Custom font"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:31
+#: src/Theme/ArticleThemeRegistry.php:32
 msgid "Cute green"
 msgstr ""
 
@@ -213,11 +213,11 @@ msgid ""
 "supported by the current system."
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:35
+#: src/Theme/ArticleThemeRegistry.php:36
 msgid "Frontend peak"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:32
+#: src/Theme/ArticleThemeRegistry.php:33
 msgid "Fullstack blue"
 msgstr ""
 
@@ -225,7 +225,7 @@ msgstr ""
 msgid "Geek black"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:415
+#: src/Theme/ThemeStateRepository.php:420
 msgid "Georgia"
 msgstr ""
 
@@ -274,10 +274,14 @@ msgid "Headings"
 msgstr ""
 
 #: src/Theme/ThemeStateRepository.php:410
+msgid "Helvetica (qingbi-liujin)"
+msgstr ""
+
+#: src/Theme/ThemeStateRepository.php:415
 msgid "Helvetica (qinghe-zhusha)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:430
+#: src/Theme/ThemeStateRepository.php:435
 msgid "Helvetica Neue"
 msgstr ""
 
@@ -378,35 +382,35 @@ msgstr ""
 msgid "Math block"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:437
+#: src/Theme/ThemeStateRepository.php:442
 msgid "Microsoft YaHei"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:462
+#: src/Theme/ThemeStateRepository.php:467
 msgid "Microsoft YaHei (cupid-busy)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:457
+#: src/Theme/ThemeStateRepository.php:462
 msgid "Microsoft YaHei (ningye-purple)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:442
+#: src/Theme/ThemeStateRepository.php:447
 msgid "Microsoft YaHei (orange-heart)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:447
+#: src/Theme/ThemeStateRepository.php:452
 msgid "Microsoft YaHei (red-crimson)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:452
+#: src/Theme/ThemeStateRepository.php:457
 msgid "Microsoft YaHei (rose-purple)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:467
+#: src/Theme/ThemeStateRepository.php:472
 msgid "Microsoft YaHei (tech-blue)"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:33
+#: src/Theme/ArticleThemeRegistry.php:34
 msgid "Minimal black"
 msgstr ""
 
@@ -426,16 +430,24 @@ msgstr ""
 msgid "Ningye purple"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:526
+#: src/Theme/ThemeStateRepository.php:541
 msgctxt "serif font fallback option"
 msgid "No"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:504
+#: src/Theme/ThemeStateRepository.php:514
+msgid "No Apple-specific font (qingbi-liujin)"
+msgstr ""
+
+#: src/Theme/ThemeStateRepository.php:519
 msgid "No Apple-specific font (qinghe-zhusha)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:472
+#: src/Theme/ThemeStateRepository.php:477
+msgid "No Windows-specific font (qingbi-liujin)"
+msgstr ""
+
+#: src/Theme/ThemeStateRepository.php:482
 msgid "No Windows-specific font (qinghe-zhusha)"
 msgstr ""
 
@@ -463,7 +475,7 @@ msgstr ""
 msgid "Optima (tech-blue)"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:34
+#: src/Theme/ArticleThemeRegistry.php:35
 msgid "Orange blue"
 msgstr ""
 
@@ -483,23 +495,23 @@ msgstr ""
 msgid "Paragraph"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:479
+#: src/Theme/ThemeStateRepository.php:489
 msgid "PingFang SC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:489
+#: src/Theme/ThemeStateRepository.php:499
 msgid "PingFang SC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:494
+#: src/Theme/ThemeStateRepository.php:504
 msgid "PingFang TC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:499
+#: src/Theme/ThemeStateRepository.php:509
 msgid "PingFang TC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:484
+#: src/Theme/ThemeStateRepository.php:494
 msgid "PingFangSC-regular"
 msgstr ""
 
@@ -512,6 +524,10 @@ msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:30
+msgid "Qingbi Liujin"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:31
 msgid "Qinghe Zhusha"
 msgstr ""
 
@@ -587,7 +603,7 @@ msgid ""
 "safely."
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:420
+#: src/Theme/ThemeStateRepository.php:425
 msgid "Times"
 msgstr ""
 
@@ -635,7 +651,7 @@ msgstr ""
 msgid "Yamabuki"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:511
+#: src/Theme/ThemeStateRepository.php:526
 msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr ""
@@ -674,10 +690,10 @@ msgstr ""
 msgid "macOS"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:521
+#: src/Theme/ThemeStateRepository.php:536
 msgid "sans-serif"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:516
+#: src/Theme/ThemeStateRepository.php:531
 msgid "serif"
 msgstr ""

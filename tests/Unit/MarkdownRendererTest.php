@@ -47,4 +47,15 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringContainsString('<table>', $html);
         $this->assertStringContainsString('<code', $html);
     }
+
+    public function test_yamabuki_wraps_tables_for_mobile_overflow()
+    {
+        $html = MarkdownRenderer::render(
+            "| Name | Email | Phone |\n| --- | --- | --- |\n| 小可爱 | lovely@test.com | 18812345678 |",
+            'yamabuki'
+        );
+
+        $this->assertStringContainsString('<div class="table-container">', $html);
+        $this->assertStringContainsString('<table>', $html);
+    }
 }

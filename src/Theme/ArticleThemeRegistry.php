@@ -124,6 +124,14 @@ final class ArticleThemeRegistry {
 					'serifFont'   => 'sans-serif-only',
 				);
 
+			case 'yamabuki':
+				return array(
+					'customFont'  => 'yamabuki-inter',
+					'windowsFont' => 'yamabuki-microsoft-yahei',
+					'appleFont'   => 'pingfang-sc-regular-raw',
+					'serifFont'   => 'sans-serif-only',
+				);
+
 			case 'tech-blue':
 				return array(
 					'customFont'  => 'tech-blue-optima',

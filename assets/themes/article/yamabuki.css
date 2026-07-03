@@ -750,11 +750,40 @@
   font-size: 80%;
   line-height: 1.8em;
   padding-top: 2px;
+  font-family: ptima-Regular, Optima, PingFangSC-light, PingFangTC-light, "PingFang SC", Cambria, Cochin, Georgia, Times, "Times New Roman", serif;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki .footnote-item,
 .easymde-rendered-content.easymde-markdown-theme-yamabuki .footnote-item p {
   line-height: 1.8em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki .footnote-item {
+  min-width: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki .footnote-item p {
+  display: inline;
+  flex-basis: 0%;
+  flex-grow: 1;
+  min-width: 0;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  color: #000;
+  font-size: 14px;
+  font-weight: normal;
+  letter-spacing: 0;
+  text-align: left;
+  text-indent: 0;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-yamabuki .footnote-item p em,
+.easymde-rendered-content.easymde-markdown-theme-yamabuki .footnote-item p a {
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-yamabuki .imageflow-img {

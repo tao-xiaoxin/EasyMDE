@@ -77,6 +77,7 @@ final class ThemeMarkupTransformer {
 			|| ( 'cupid-busy' === $theme && false !== strpos( $html, ':::' ) )
 			|| ( 'red-crimson' === $theme && ( false !== stripos( $html, '<table' ) || false !== stripos( $html, '<blockquote' ) ) )
 			|| ( 'ningye-purple' === $theme && false !== stripos( $html, '<table' ) )
+			|| ( 'yamabuki' === $theme && false !== stripos( $html, '<table' ) )
 			|| ( 'rose-purple' === $theme && false !== stripos( $html, '<blockquote' ) );
 
 		if ( ! $needs_markup ) {
@@ -123,6 +124,7 @@ final class ThemeMarkupTransformer {
 			self::wrap_theme_tables( $document, $root );
 			$footnotes = self::convert_theme_links_to_footnotes( $document, $root, 'Reference', true, false, '参考资料' );
 		} elseif ( 'yamabuki' === $theme ) {
+			self::wrap_theme_tables( $document, $root );
 			$footnotes = self::convert_theme_links_to_footnotes( $document, $root, '参考资料', false, true );
 			self::wrap_theme_links( $document, $root );
 		} else {

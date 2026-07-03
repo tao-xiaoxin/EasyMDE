@@ -33,7 +33,7 @@ Verify representative content before broad author use:
 - Restore a recent revision and confirm Markdown, article theme, code theme, code frame, custom CSS snapshot, font settings, and rendered HTML return to the same version.
 - Check posts using custom CSS snapshots after editing or deleting saved custom CSS library entries.
 - Confirm extensions using `EasyMDE_Plugin::register_toolbar_button()` or `EasyMDE_Plugin::register_shortcode_helper()` still appear in the editor configuration.
-- Create a new post through the default WordPress flow and confirm EasyMDE opens.
+- Create a new post and a new page through the default WordPress flow, and confirm EasyMDE opens for both.
 - Open an existing ordinary post without EasyMDE metadata and confirm Gutenberg still opens.
 
 ## Downgrades And Rollbacks

@@ -86,7 +86,7 @@ final class PostModeController {
 		}
 
 		$post_type = sanitize_key( (string) $post_type );
-		if ( ! in_array( $post_type, array( 'post', 'page' ), true ) ) {
+		if ( ! $this->post_document->is_default_new_post_type( $post_type ) ) {
 			return false;
 		}
 

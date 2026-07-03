@@ -8,57 +8,24 @@ DB_HOST="${4:-127.0.0.1}"
 WP_VERSION="${5:-latest}"
 WP_TESTS_DIR="${WP_TESTS_DIR:-/tmp/easymde-wordpress-tests-lib}"
 WP_CORE_DIR="${WP_CORE_DIR:-/tmp/easymde-wordpress-core}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-fail() {
-	echo "$1" >&2
-	exit 1
-}
+# shellcheck source=scripts/lib/easymde-script-safety.sh
+source "${SCRIPT_DIR}/lib/easymde-script-safety.sh"
 
 validate_database_name() {
-	if [ "${EASYMDE_ALLOW_UNSAFE_DATABASE:-}" = "1" ]; then
-		return
-	fi
-
-	if [[ ! "${DB_NAME}" =~ ^easymde_[A-Za-z0-9_]+$ ]]; then
-		fail "Refusing unsafe test database '${DB_NAME}'. Use an easymde_* database or set EASYMDE_ALLOW_UNSAFE_DATABASE=1."
-	fi
+	easymde_validate_database_name \
+		"${DB_NAME}" \
+		"unsafe test database" \
+		"Use an easymde_* database or set EASYMDE_ALLOW_UNSAFE_DATABASE=1."
 }
 
 validate_destructive_path() {
-	local path="$1"
-	local label="$2"
-	local base
-
-	if [ "${EASYMDE_ALLOW_UNSAFE_PATHS:-}" = "1" ]; then
-		return
-	fi
-
-	if [[ "${path}" != /* || "${path}" == *"/../"* || "${path}" == *"/.." || "${path}" == *"/./"* ]]; then
-		fail "Refusing unsafe ${label} '${path}'. Use an absolute EasyMDE test path."
-	fi
-
-	case "${path}" in
-		/|/tmp|/private/tmp|/var/tmp)
-			fail "Refusing unsafe ${label} '${path}'."
-			;;
-	esac
-
-	base="$(basename "${path}")"
-	if [[ "${base}" != easymde-* ]]; then
-		fail "Refusing unsafe ${label} '${path}'. The final path segment must start with easymde-."
-	fi
+	easymde_validate_destructive_path "$@"
 }
 
 prepare_destructive_path() {
-	local path="$1"
-	local label="$2"
-	local canonical
-
-	validate_destructive_path "${path}" "${label}"
-	mkdir -p "${path}"
-	canonical="$(cd "${path}" && pwd -P)"
-	validate_destructive_path "${canonical}" "${label}"
-	printf '%s\n' "${canonical}"
+	easymde_prepare_destructive_path "$@"
 }
 
 validate_database_name

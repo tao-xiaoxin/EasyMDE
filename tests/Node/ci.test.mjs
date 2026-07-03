@@ -78,11 +78,13 @@ test('WP-CLI phar is verified before it is executed', () => {
     const infoIndex = block.indexOf('php wp-cli.phar --info');
 
     assert.match(block, /WP_CLI_VERSION=2\.12\.0/, block);
-    assert.match(block, /wp-cli-\$\{WP_CLI_VERSION\}\.phar\.sha256/, block);
+    assert.match(block, /WP_CLI_SHA256=ce34ddd838f7351d6759068d09793f26755463b4a4610a5a5c0a97b68220d85c/, block);
+    assert.match(block, /echo "\$\{WP_CLI_SHA256\}\s+wp-cli\.phar" \| sha256sum -c -/, block);
     assert.notEqual(verifyIndex, -1, block);
     assert.notEqual(infoIndex, -1, block);
     assert.ok(verifyIndex < infoIndex, block);
     assert.doesNotMatch(block, /raw\.githubusercontent\.com\/wp-cli\/builds\/gh-pages\/phar\/wp-cli\.phar/, block);
+    assert.doesNotMatch(block, /wp-cli-\$\{WP_CLI_VERSION\}\.phar\.sha256/, block);
   });
 });
 

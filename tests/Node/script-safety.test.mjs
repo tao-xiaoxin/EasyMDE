@@ -162,6 +162,26 @@ test('release setup rejects non-EasyMDE database names before wp config or reset
   }
 });
 
+test('release setup keeps the WP_CLI_PHP_ARGS shellcheck directive parseable', () => {
+  const source = readFileSync(join(repoRoot, 'scripts/setup-wordpress-release.sh'), 'utf8');
+
+  assert.match(source, /WP_CLI_PHP_ARGS is a local CI override string for PHP flags\.\n\t# shellcheck disable=SC2086\n\tphp \$\{WP_CLI_PHP_ARGS\}/);
+  assert.doesNotMatch(source, /shellcheck disable=SC2086 --/);
+});
+
+test('destructive script safety logic is shared instead of copied into setup scripts', () => {
+  const helper = readFileSync(join(repoRoot, 'scripts/lib/easymde-script-safety.sh'), 'utf8');
+  const releaseSetup = readFileSync(join(repoRoot, 'scripts/setup-wordpress-release.sh'), 'utf8');
+  const testInstaller = readFileSync(join(repoRoot, 'scripts/install-wp-tests.sh'), 'utf8');
+
+  assert.match(helper, /easymde_validate_destructive_path\(\)/);
+  assert.match(helper, /easymde_prepare_destructive_path\(\)/);
+  assert.match(releaseSetup, /source "\$\{SCRIPT_DIR\}\/lib\/easymde-script-safety\.sh"/);
+  assert.match(testInstaller, /source "\$\{SCRIPT_DIR\}\/lib\/easymde-script-safety\.sh"/);
+  assert.doesNotMatch(releaseSetup, /case "\$\{path\}" in/);
+  assert.doesNotMatch(testInstaller, /case "\$\{path\}" in/);
+});
+
 test('WordPress test installer rejects unsafe core and tests paths before downloads', () => {
   const root = makeTempRoot('easymde-test-installer-');
   const sentinel = join(root, 'sentinel.txt');

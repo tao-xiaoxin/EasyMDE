@@ -13,59 +13,26 @@ DB_NAME="${EASYMDE_DB_NAME:-easymde_release}"
 DB_USER="${EASYMDE_DB_USER:-root}"
 DB_PASS="${EASYMDE_DB_PASS:-root}"
 DB_HOST="${EASYMDE_DB_HOST:-127.0.0.1:3306}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 export WP_CLI_PHP_ARGS="${WP_CLI_PHP_ARGS:--d memory_limit=512M}"
 
-fail() {
-	echo "$1" >&2
-	exit 1
-}
+# shellcheck source=scripts/lib/easymde-script-safety.sh
+source "${SCRIPT_DIR}/lib/easymde-script-safety.sh"
 
 validate_database_name() {
-	if [ "${EASYMDE_ALLOW_UNSAFE_DATABASE:-}" = "1" ]; then
-		return
-	fi
-
-	if [[ ! "${DB_NAME}" =~ ^easymde_[A-Za-z0-9_]+$ ]]; then
-		fail "Refusing to reset non-EasyMDE database '${DB_NAME}'. Use an easymde_* test database or set EASYMDE_ALLOW_UNSAFE_DATABASE=1."
-	fi
+	easymde_validate_database_name \
+		"${DB_NAME}" \
+		"to reset non-EasyMDE database" \
+		"Use an easymde_* test database or set EASYMDE_ALLOW_UNSAFE_DATABASE=1."
 }
 
 validate_destructive_path() {
-	local path="$1"
-	local label="$2"
-	local base
-
-	if [ "${EASYMDE_ALLOW_UNSAFE_PATHS:-}" = "1" ]; then
-		return
-	fi
-
-	if [[ "${path}" != /* || "${path}" == *"/../"* || "${path}" == *"/.." || "${path}" == *"/./"* ]]; then
-		fail "Refusing unsafe ${label} '${path}'. Use an absolute EasyMDE test path."
-	fi
-
-	case "${path}" in
-		/|/tmp|/private/tmp|/var/tmp)
-			fail "Refusing unsafe ${label} '${path}'."
-			;;
-	esac
-
-	base="$(basename "${path}")"
-	if [[ "${base}" != easymde-* ]]; then
-		fail "Refusing unsafe ${label} '${path}'. The final path segment must start with easymde-."
-	fi
+	easymde_validate_destructive_path "$@"
 }
 
 prepare_destructive_path() {
-	local path="$1"
-	local label="$2"
-	local canonical
-
-	validate_destructive_path "${path}" "${label}"
-	mkdir -p "${path}"
-	canonical="$(cd "${path}" && pwd -P)"
-	validate_destructive_path "${canonical}" "${label}"
-	printf '%s\n' "${canonical}"
+	easymde_prepare_destructive_path "$@"
 }
 
 if [ ! -f "${RELEASE_ZIP}" ]; then
@@ -77,7 +44,8 @@ WP_PATH="$(prepare_destructive_path "${WP_PATH}" "EASYMDE_WP_PATH")"
 WP_BIN="$(command -v wp)"
 
 wp() {
-	# shellcheck disable=SC2086 -- WP_CLI_PHP_ARGS is a local CI override string for PHP flags.
+	# WP_CLI_PHP_ARGS is a local CI override string for PHP flags.
+	# shellcheck disable=SC2086
 	php ${WP_CLI_PHP_ARGS} "${WP_BIN}" "$@"
 }
 

@@ -76,9 +76,9 @@ test('release job uploads explicit source and plugin artifacts without publish p
   assert.doesNotMatch(workflow, /contents:\s+write/);
   assert.doesNotMatch(workflow, /gh\s+release|create-release|softprops\/action-gh-release|git\s+tag|push\s+origin\s+.*tags/);
 
-  assert.match(releaseJob, /name:\s+Resolve release metadata[\s\S]*git rev-parse HEAD[\s\S]*readReleaseVersions/);
+  assert.match(releaseJob, /name:\s+Resolve release metadata[\s\S]*git rev-parse HEAD[\s\S]*readReleaseVersions[\s\S]*Resolved plugin version is not safe for artifact filenames/);
   assert.match(releaseJob, /name:\s+Build source archives[\s\S]*run:\s+npm run build:source-archives/);
-  assert.match(releaseJob, /name:\s+Verify release artifacts[\s\S]*unzip -t "\$\{source_zip\}"[\s\S]*tar -tzf "\$\{source_tar_gz\}"[\s\S]*unzip -t "\$\{plugin_zip\}"/);
+  assert.match(releaseJob, /name:\s+Verify release artifacts[\s\S]*env:\s*\n\s+PLUGIN_VERSION:\s+\$\{\{ steps\.release-metadata\.outputs\.version \}\}[\s\S]*source_zip="dist\/EasyMDE-\$\{PLUGIN_VERSION\}-source\.zip"[\s\S]*source_tar_gz="dist\/EasyMDE-\$\{PLUGIN_VERSION\}-source\.tar\.gz"[\s\S]*unzip -t "\$\{source_zip\}"[\s\S]*tar -tzf "\$\{source_tar_gz\}"[\s\S]*unzip -t "\$\{plugin_zip\}"/);
   assert.match(releaseJob, /name:\s+Summarize release artifacts[\s\S]*\| Checkout SHA \| Version \| Artifact \| Payload \| Byte size \| SHA-256 \|/);
   assert.match(releaseJob, /name:\s+Upload source code ZIP[\s\S]*name:\s+source-code-zip[\s\S]*path:\s+dist\/EasyMDE-\$\{\{ steps\.release-metadata\.outputs\.version \}\}-source\.zip[\s\S]*if-no-files-found:\s+error/);
   assert.match(releaseJob, /name:\s+Upload source code tar\.gz[\s\S]*name:\s+source-code-tar-gz[\s\S]*path:\s+dist\/EasyMDE-\$\{\{ steps\.release-metadata\.outputs\.version \}\}-source\.tar\.gz[\s\S]*if-no-files-found:\s+error/);

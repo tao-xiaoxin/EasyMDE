@@ -269,6 +269,12 @@ jobs:
         run: |
           checkout_sha="$(git rev-parse HEAD)"
           version="$(node --input-type=module -e "import { readReleaseVersions } from './scripts/build-release.mjs'; console.log(readReleaseVersions().pluginHeader);")"
+          case "${version}" in
+            ""|*[!0-9A-Za-z._-]*)
+              echo "Resolved plugin version is not safe for artifact filenames." >&2
+              exit 1
+              ;;
+          esac
           {
             echo "checkout_sha=${checkout_sha}"
             echo "version=${version}"
@@ -281,9 +287,11 @@ jobs:
         run: npm run build:source-archives
 
       - name: Verify release artifacts
+        env:
+          PLUGIN_VERSION: ${{ steps.release-metadata.outputs.version }}
         run: |
-          source_zip="dist/EasyMDE-${{ steps.release-metadata.outputs.version }}-source.zip"
-          source_tar_gz="dist/EasyMDE-${{ steps.release-metadata.outputs.version }}-source.tar.gz"
+          source_zip="dist/EasyMDE-${PLUGIN_VERSION}-source.zip"
+          source_tar_gz="dist/EasyMDE-${PLUGIN_VERSION}-source.tar.gz"
           plugin_zip="dist/EasyMDE.zip"
           test -f "${source_zip}"
           test -f "${source_tar_gz}"

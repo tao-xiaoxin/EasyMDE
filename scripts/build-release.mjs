@@ -76,7 +76,8 @@ const runtimeSupportAssetPaths = [
   'assets/images/fullstack-blue-h2.png',
   'assets/images/fullstack-blue-h3.png',
   'assets/images/fullstack-blue-h4.png',
-  'assets/images/tech-blue-code-window.svg'
+  'assets/images/tech-blue-code-window.svg',
+  'assets/images/yamabuki-code-window.svg'
 ];
 
 export const packagePaths = [

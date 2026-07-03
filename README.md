@@ -312,12 +312,6 @@ docker compose up -d
 ## Support EasyMDE
 
 <p align="center">
-  <a href="https://github.com/tao-xiaoxin/EasyMDE/stargazers">
-    <img src="https://img.shields.io/github/stars/tao-xiaoxin/EasyMDE?style=for-the-badge&logo=github&label=Star%20EasyMDE&color=f59e0b" alt="Star EasyMDE on GitHub" />
-  </a>
-</p>
-
-<p align="center">
   If EasyMDE improves your WordPress writing flow, a star helps more writers discover the project.
 </p>
 

@@ -49,7 +49,7 @@ final class TocGenerator {
 			}
 
 			$text = trim( $heading->textContent );
-			if ( '' === $text || in_array( strtolower( $text ), array( 'toc', 'table of contents' ), true ) || '目录' === $text ) {
+			if ( '' === $text ) {
 				continue;
 			}
 

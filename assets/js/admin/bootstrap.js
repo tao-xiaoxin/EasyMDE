@@ -717,6 +717,10 @@
         var link = document.getElementById('easymde-article-theme-css');
 
         if (!href) {
+            if (link && link.parentNode) {
+                link.parentNode.removeChild(link);
+            }
+
             return;
         }
 

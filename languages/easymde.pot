@@ -656,7 +656,7 @@ msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr ""
 
-#: src/Admin/PostModeController.php:43
+#: src/Admin/PostModeController.php:39
 msgid "You are not allowed to create this EasyMDE post."
 msgstr ""
 

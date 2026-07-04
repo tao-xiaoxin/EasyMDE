@@ -2,17 +2,20 @@
 
 ## Editor Enablement
 
-EasyMDE opens new built-in `post` and `page` content in EasyMDE by default. Existing ordinary posts and pages without EasyMDE metadata continue to open in Gutenberg when edited.
+EasyMDE opens new and existing content for post types explicitly supported by `easymde_supported_post_types` in EasyMDE through normal WordPress editing when the current user can edit or create that content. The default supported post types are `post` and `page`.
 
-Existing EasyMDE posts remain compatible:
+EasyMDE metadata describes document state and compatibility output; it no longer decides editor admission. Existing EasyMDE posts remain compatible:
 
-- `_easymde_enabled = 1` explicitly enables EasyMDE.
-- If `_easymde_enabled` is missing but `_easymde_markdown` exists, the post is treated as a legacy EasyMDE post.
+- `_easymde_enabled = 1` marks a post as having EasyMDE document state.
+- If `_easymde_enabled` is missing but `_easymde_markdown` exists, the post is treated as a legacy EasyMDE document-state post.
 - The legacy check uses `metadata_exists()` so an empty Markdown value still counts.
 
-Legacy posts are migrated lazily. On the next valid EasyMDE save, the plugin
-writes `_easymde_enabled = 1`. It does not scan or update every post during
-upgrade.
+Opening an ordinary existing supported post without EasyMDE metadata imports
+current `post_content` into Markdown in memory for the editor. It does not write
+metadata, rewrite `post_content`, or create revisions. Legacy posts and ordinary
+supported posts are migrated lazily. On the next valid EasyMDE save, the plugin
+writes `_easymde_enabled = 1`, stores Markdown state, and writes rendered
+compatibility HTML. It does not scan or update every post during upgrade.
 
 ## Markdown And HTML
 

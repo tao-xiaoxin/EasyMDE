@@ -100,6 +100,7 @@ final class RevisionManager {
 		}
 
 		if ( ! $has_easymde_meta ) {
+			$this->restore_pre_easymde_revision( $post_id, $revision_id );
 			return;
 		}
 
@@ -118,6 +119,37 @@ final class RevisionManager {
 			if ( $this->post_document->is_easymde_post( $post_id ) ) {
 				$this->restore_post_content( $post_id, $revision_id );
 			}
+		} catch ( \RuntimeException $exception ) {
+			do_action( 'easymde_revision_restore_failed', $post_id, $revision_id, $exception );
+			unset( $exception );
+			if ( $this->post_content_matches_revision( $post_id, $revision_id ) ) {
+				return;
+			}
+			$this->restore_meta_snapshot( $post_id, $previous_meta );
+		} finally {
+			$this->restoring = false;
+		}
+	}
+
+	private function restore_pre_easymde_revision( $post_id, $revision_id ) {
+		if ( ! $this->post_document->is_easymde_post( $post_id ) ) {
+			return;
+		}
+
+		$revision = get_post( absint( $revision_id ) );
+		if ( ! $revision ) {
+			return;
+		}
+
+		$this->restoring = true;
+		$previous_meta   = $this->snapshot_revision_meta( $post_id );
+
+		try {
+			foreach ( $this->post_document->revision_meta_keys() as $key ) {
+				delete_post_meta( $post_id, $key );
+			}
+
+			$this->update_post_content( $post_id, (string) $revision->post_content );
 		} catch ( \RuntimeException $exception ) {
 			do_action( 'easymde_revision_restore_failed', $post_id, $revision_id, $exception );
 			unset( $exception );
@@ -175,6 +207,10 @@ final class RevisionManager {
 			$content = (string) $revision->post_content;
 		}
 
+		$this->update_post_content( $post_id, $content );
+	}
+
+	private function update_post_content( $post_id, $content ) {
 		global $wpdb;
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Revision restore updates post_content directly to avoid recursive save hooks while syncing restored meta.

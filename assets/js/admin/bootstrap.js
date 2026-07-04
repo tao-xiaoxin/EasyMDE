@@ -1012,13 +1012,18 @@
         return $status;
     }
 
-    function mirrorToPostContent(markdown) {
-        var editor = $('#content');
+    function syncMarkdownFields(markdown) {
         var markdownField = $('#easymde-markdown-field');
 
         markdownField.val(markdown);
-        editor.val(markdown);
         syncThemeFields();
+    }
+
+    function mirrorToPostContent(markdown) {
+        var editor = $('#content');
+
+        syncMarkdownFields(markdown);
+        editor.val(markdown);
     }
 
     function previewFallback(markdown) {
@@ -1619,7 +1624,7 @@
             mirrorToPostContent($source.val());
         });
 
-        mirrorToPostContent($source.val());
+        syncMarkdownFields($source.val());
         updatePreview($preview, $source.val());
     }
 

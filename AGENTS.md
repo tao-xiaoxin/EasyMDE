@@ -18,9 +18,9 @@ Do not assume the repository name requires use of the EasyMDE JavaScript library
 
 ## Non-Negotiable Product Rules
 
-* New built-in posts and pages open in EasyMDE by default when the plugin is active.
-* Existing ordinary posts and pages without EasyMDE metadata must continue to open in Gutenberg.
-* EasyMDE may take over editing for new built-in posts/pages, posts explicitly enabled for EasyMDE, or legacy posts that already contain EasyMDE Markdown meta.
+* New and existing posts for post types explicitly supported by `easymde_supported_post_types` open in EasyMDE through normal WordPress editing when the current user can edit or create that post type.
+* EasyMDE metadata describes document state, reading, rendering, saving, revisions, and compatibility output; it must not decide whether a supported post enters the EasyMDE editor.
+* Opening an ordinary existing supported post in EasyMDE must not write metadata, rewrite `post_content`, create revisions, or otherwise migrate the post until the next legitimate save.
 * Do not redirect unrelated WordPress admin pages.
 * Do not add activation redirects.
 * Do not destructively rewrite existing post content during upgrades.
@@ -51,9 +51,10 @@ Rules:
 
 * `_easymde_markdown` is the authoritative Markdown source.
 * `post_content` is rendered HTML for WordPress compatibility, feeds, plugins, and themes.
-* Existing posts without `_easymde_enabled` but with an existing `_easymde_markdown` meta record are legacy EasyMDE posts.
+* Existing posts without `_easymde_enabled` but with an existing `_easymde_markdown` meta record are legacy EasyMDE document-state posts.
 * Use `metadata_exists()` when detecting legacy Markdown posts. Do not rely on an empty-string value check alone.
 * Saving a legacy EasyMDE post must write `_easymde_enabled = 1`.
+* Saving an ordinary supported post from EasyMDE for the first time must write `_easymde_enabled = 1`, store Markdown state, and keep `post_content` synchronized with rendered HTML.
 * Relevant EasyMDE meta must participate in WordPress revisions.
 * Restoring a revision must restore Markdown, render settings, and regenerated `post_content` consistently.
 * Avoid recursive save hooks, duplicate rendering, and revision restore loops.
@@ -484,7 +485,8 @@ npm install
 For behavior changes, verify the applicable scenarios:
 
 * New built-in posts and pages open in EasyMDE.
-* Existing ordinary posts without EasyMDE metadata still use the normal WordPress editor.
+* Existing ordinary posts for supported post types open in EasyMDE without requiring prior EasyMDE metadata.
+* Opening ordinary supported posts without EasyMDE metadata does not write metadata, content, or revisions.
 * Existing EasyMDE posts still open in EasyMDE.
 * Markdown, theme state, and rendered HTML remain consistent after save.
 * Revision restoration keeps Markdown and HTML synchronized.

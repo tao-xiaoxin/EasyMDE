@@ -36,6 +36,7 @@
 
 	<!-- PHP DOMDocument exposes camelCase public properties such as childNodes and parentNode. -->
 	<rule ref="WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase">
+		<exclude-pattern>*/src/Support/Migration.php</exclude-pattern>
 		<exclude-pattern>*/src/Content/TocGenerator.php</exclude-pattern>
 		<exclude-pattern>*/src/Content/ThemeMarkupTransformer.php</exclude-pattern>
 	</rule>

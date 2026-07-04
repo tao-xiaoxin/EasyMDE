@@ -112,6 +112,7 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $code = $assets->get_feature_config("```php\necho 'hello';\n```");
         $math = $assets->get_feature_config('Inline $a+b$ value');
         $mermaid = $assets->get_feature_config("```mermaid\ngraph TD; A-->B;\n```");
+        $tilde_mermaid = $assets->get_feature_config("~~~ mermaid\ngraph TD; A-->B;\n~~~");
 
         $this->assertFalse($plain['syntaxHighlight']);
         $this->assertFalse($plain['math']);
@@ -122,5 +123,8 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertTrue($mermaid['codeBlocks']);
         $this->assertTrue($mermaid['mermaid']);
         $this->assertFalse($mermaid['syntaxHighlight']);
+        $this->assertTrue($tilde_mermaid['codeBlocks']);
+        $this->assertTrue($tilde_mermaid['mermaid']);
+        $this->assertFalse($tilde_mermaid['syntaxHighlight']);
     }
 }

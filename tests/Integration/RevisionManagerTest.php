@@ -367,6 +367,81 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertSame('# After', get_post_meta($new_revision_id, PostDocument::META_MARKDOWN, true));
     }
 
+    public function test_revision_created_outside_active_save_is_not_reused_for_later_meta_only_save()
+    {
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_content' => '<p>Rendered body</p>',
+            )
+        );
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Before');
+
+        $outside_revision_id = wp_insert_post(
+            array(
+                'post_parent' => $post_id,
+                'post_type' => 'revision',
+                'post_status' => 'inherit',
+                'post_title' => 'Outside active save revision',
+                'post_content' => '<p>Rendered body</p>',
+            )
+        );
+
+        $manager = new RevisionManager(new PostDocument(), $this->theme_state_repository());
+        $manager->save_revision_meta($outside_revision_id, $post_id);
+        $this->assertSame('# Before', get_post_meta($outside_revision_id, PostDocument::META_MARKDOWN, true));
+
+        $manager->capture_revision_meta_before_save($post_id, get_post($post_id), true);
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# After');
+        $manager->sync_latest_revision_meta_after_save($post_id, get_post($post_id), true);
+
+        $revisions = wp_get_post_revisions(
+            $post_id,
+            array(
+                'fields' => 'ids',
+                'orderby' => 'ID',
+                'order' => 'DESC',
+            )
+        );
+        $new_revision_id = reset($revisions);
+
+        $this->assertNotSame($outside_revision_id, $new_revision_id);
+        $this->assertSame('# Before', get_post_meta($outside_revision_id, PostDocument::META_MARKDOWN, true));
+        $this->assertSame('# After', get_post_meta($new_revision_id, PostDocument::META_MARKDOWN, true));
+    }
+
+    public function test_revision_created_during_active_save_is_synced_after_meta_changes()
+    {
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_content' => '<p>Rendered body</p>',
+            )
+        );
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Before');
+
+        $revision_id = wp_insert_post(
+            array(
+                'post_parent' => $post_id,
+                'post_type' => 'revision',
+                'post_status' => 'inherit',
+                'post_title' => 'Current save revision',
+                'post_content' => '<p>Rendered body</p>',
+            )
+        );
+
+        $manager = new RevisionManager(new PostDocument(), $this->theme_state_repository());
+        $manager->begin_revision_recording_before_update($post_id, array('post_type' => 'post'));
+        $manager->save_revision_meta($revision_id, $post_id);
+        $manager->capture_revision_meta_before_save($post_id, get_post($post_id), true);
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# After');
+        $manager->sync_latest_revision_meta_after_save($post_id, get_post($post_id), true);
+
+        $this->assertSame('# After', get_post_meta($revision_id, PostDocument::META_MARKDOWN, true));
+    }
+
     public function test_save_revision_meta_copies_all_easymde_revision_fields()
     {
         $post_id = self::factory()->post->create(array('post_type' => 'post'));

@@ -16,6 +16,7 @@ final class RevisionManager {
 	private $restoring              = false;
 	private $pre_save_revision_meta = array();
 	private $created_revision_ids   = array();
+	private $recording_revision_ids = array();
 
 	public function __construct(
 		PostDocument $post_document,
@@ -29,6 +30,7 @@ final class RevisionManager {
 
 	public function register_hooks() {
 		add_filter( 'wp_post_revision_meta_keys', array( $this, 'register_revision_meta_keys' ) );
+		add_action( 'pre_post_update', array( $this, 'begin_revision_recording_before_update' ), 1, 2 );
 		add_action( 'save_post', array( $this, 'capture_revision_meta_before_save' ), 1, 3 );
 		add_action( '_wp_put_post_revision', array( $this, 'save_revision_meta' ), 10, 2 );
 		add_action( 'wp_after_insert_post', array( $this, 'sync_latest_revision_meta_after_save' ), 20, 3 );
@@ -48,7 +50,7 @@ final class RevisionManager {
 	public function save_revision_meta( $revision_id, $post_id = 0 ) {
 		$revision_id = absint( $revision_id );
 		$parent_id   = $post_id ? absint( $post_id ) : wp_is_post_revision( $revision_id );
-		if ( $parent_id && $revision_id && ! wp_is_post_autosave( $revision_id ) ) {
+		if ( $parent_id && $revision_id && ! wp_is_post_autosave( $revision_id ) && ! empty( $this->recording_revision_ids[ $parent_id ] ) ) {
 			if ( ! isset( $this->created_revision_ids[ $parent_id ] ) ) {
 				$this->created_revision_ids[ $parent_id ] = array();
 			}
@@ -66,6 +68,27 @@ final class RevisionManager {
 				delete_metadata( 'post', $revision_id, $key );
 			}
 		}
+	}
+
+	public function begin_revision_recording_before_update( $post_id, $data = array() ) {
+		$post_id = absint( $post_id );
+		if ( ! $post_id || $this->restoring || wp_is_post_revision( $post_id ) ) {
+			return;
+		}
+
+		unset( $this->created_revision_ids[ $post_id ], $this->recording_revision_ids[ $post_id ] );
+
+		$post_type = is_array( $data ) && isset( $data['post_type'] ) ? (string) $data['post_type'] : '';
+		if ( '' === $post_type ) {
+			$post      = get_post( $post_id );
+			$post_type = $post ? (string) $post->post_type : '';
+		}
+
+		if ( ! $post_type || ! $this->post_document->is_supported_post_type( $post_type ) ) {
+			return;
+		}
+
+		$this->recording_revision_ids[ $post_id ] = true;
 	}
 
 	public function capture_revision_meta_before_save( $post_id, $post, $update ) {
@@ -97,7 +120,7 @@ final class RevisionManager {
 
 			$this->force_revision_for_meta_change( $post_id );
 		} finally {
-			unset( $this->pre_save_revision_meta[ $post_id ], $this->created_revision_ids[ $post_id ] );
+			unset( $this->pre_save_revision_meta[ $post_id ], $this->created_revision_ids[ $post_id ], $this->recording_revision_ids[ $post_id ] );
 		}
 	}
 

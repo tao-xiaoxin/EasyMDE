@@ -61,7 +61,7 @@ final class MediaController {
 		if ( UPLOAD_ERR_OK !== $upload_error ) {
 			return new WP_Error(
 				'easymde_media_upload_error',
-				__( 'The pasted image could not be uploaded.', 'easymde' ),
+				__( 'The image could not be uploaded.', 'easymde' ),
 				array( 'status' => 400 )
 			);
 		}
@@ -71,7 +71,7 @@ final class MediaController {
 		if ( ! $this->is_allowed_image_file( $file ) ) {
 			return new WP_Error(
 				'easymde_unsupported_media_type',
-				__( 'Only JPEG, PNG, GIF, or WebP images can be pasted into EasyMDE.', 'easymde' ),
+				__( 'Only JPEG, PNG, GIF, or WebP images can be uploaded into EasyMDE.', 'easymde' ),
 				array( 'status' => 415 )
 			);
 		}
@@ -79,7 +79,7 @@ final class MediaController {
 		if ( $this->is_too_large( $file ) ) {
 			return new WP_Error(
 				'easymde_media_file_too_large',
-				__( 'The pasted image is larger than the allowed upload size.', 'easymde' ),
+				__( 'The image is larger than the allowed upload size.', 'easymde' ),
 				array( 'status' => 413 )
 			);
 		}
@@ -149,7 +149,7 @@ final class MediaController {
 		if ( is_wp_error( $attachment_id ) ) {
 			return new WP_Error(
 				'easymde_media_upload_failed',
-				__( 'The pasted image could not be saved to the WordPress media library.', 'easymde' ),
+				__( 'The image could not be saved to the WordPress media library.', 'easymde' ),
 				array( 'status' => 500 )
 			);
 		}
@@ -159,7 +159,7 @@ final class MediaController {
 
 			return new WP_Error(
 				'easymde_unsupported_media_type',
-				__( 'Only JPEG, PNG, GIF, or WebP images can be pasted into EasyMDE.', 'easymde' ),
+				__( 'Only JPEG, PNG, GIF, or WebP images can be uploaded into EasyMDE.', 'easymde' ),
 				array( 'status' => 415 )
 			);
 		}

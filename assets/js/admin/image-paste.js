@@ -1,20 +1,57 @@
 (function (window) {
     'use strict';
 
-    function firstImageFile(event) {
-        var clipboard = event && event.clipboardData ? event.clipboardData : null;
-        var items = clipboard && clipboard.items ? clipboard.items : [];
-        var files = clipboard && clipboard.files ? clipboard.files : [];
+    function eventTransfer(event) {
+        return event && (event.clipboardData || event.dataTransfer) ? event.clipboardData || event.dataTransfer : null;
+    }
+
+    function hasImageFileTransfer(transfer) {
+        var items = transfer && transfer.items ? transfer.items : [];
+        var files = transfer && transfer.files ? transfer.files : [];
         var index;
+        var type;
         var file;
 
         for (index = 0; index < items.length; index += 1) {
-            if (!items[index] || items[index].kind !== 'file' || !/^image\//i.test(items[index].type || '')) {
+            if (!items[index] || items[index].kind !== 'file') {
+                continue;
+            }
+
+            type = items[index].type || '';
+            if (/^image\//i.test(type)) {
+                return true;
+            }
+        }
+
+        for (index = 0; index < files.length; index += 1) {
+            file = files[index];
+            if (file && /^image\//i.test(file.type || '')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    function firstImageFileFromTransfer(transfer) {
+        var items = transfer && transfer.items ? transfer.items : [];
+        var files = transfer && transfer.files ? transfer.files : [];
+        var index;
+        var file;
+        var itemType;
+
+        for (index = 0; index < items.length; index += 1) {
+            if (!items[index] || items[index].kind !== 'file') {
+                continue;
+            }
+
+            itemType = items[index].type || '';
+            if (itemType && !/^image\//i.test(itemType)) {
                 continue;
             }
 
             file = typeof items[index].getAsFile === 'function' ? items[index].getAsFile() : null;
-            if (file) {
+            if (file && /^image\//i.test(file.type || itemType)) {
                 return file;
             }
         }
@@ -27,6 +64,10 @@
         }
 
         return null;
+    }
+
+    function firstImageFile(event) {
+        return firstImageFileFromTransfer(eventTransfer(event));
     }
 
     function canUpload(config) {
@@ -141,13 +182,56 @@
         });
     }
 
-    function handlePaste(event, textarea, options) {
-        var file = firstImageFile(event);
+    function preventDefault(event) {
+        if (event && typeof event.preventDefault === 'function') {
+            event.preventDefault();
+        }
+    }
+
+    function uploadString(getString, source, suffix) {
+        if (source === 'drop') {
+            if (suffix === 'TooLarge') {
+                return getString('imageDropTooLarge') || getString('imagePasteTooLarge');
+            }
+
+            if (suffix === 'Uploading') {
+                return getString('imageDropUploading') || getString('imagePasteUploading');
+            }
+
+            if (suffix === 'Uploaded') {
+                return getString('imageDropUploaded') || getString('imagePasteUploaded');
+            }
+
+            if (suffix === 'Failed') {
+                return getString('imageDropFailed') || getString('imagePasteFailed');
+            }
+        }
+
+        if (suffix === 'TooLarge') {
+            return getString('imagePasteTooLarge');
+        }
+
+        if (suffix === 'Uploading') {
+            return getString('imagePasteUploading');
+        }
+
+        if (suffix === 'Uploaded') {
+            return getString('imagePasteUploaded');
+        }
+
+        if (suffix === 'Failed') {
+            return getString('imagePasteFailed');
+        }
+
+        return '';
+    }
+
+    function handleImageFile(file, event, textarea, options, source) {
         var config;
         var showFlash;
         var getString;
         var markdownDefaultAlt;
-        var pasteRange;
+        var insertionRange;
 
         options = options || {};
         config = options.config || {};
@@ -162,14 +246,14 @@
         }
 
         if (config.imageUpload.maxBytes && file.size > config.imageUpload.maxBytes) {
-            event.preventDefault();
-            showFlash(options.flash, 'error', getString('imagePasteTooLarge'));
+            preventDefault(event);
+            showFlash(options.flash, 'error', uploadString(getString, source, 'TooLarge'));
             return Promise.resolve(false);
         }
 
-        event.preventDefault();
-        pasteRange = selectedRange(textarea);
-        showFlash(options.flash, 'info', getString('imagePasteUploading'));
+        preventDefault(event);
+        insertionRange = selectedRange(textarea);
+        showFlash(options.flash, 'info', uploadString(getString, source, 'Uploading'));
 
         return uploadImage(file, {
             config: config,
@@ -182,13 +266,37 @@
                 throw new Error('Missing uploaded image URL.');
             }
 
-            insertAtCursor(textarea, markdown, options.applyTextChange, pasteRange);
-            showFlash(options.flash, 'success', getString('imagePasteUploaded'));
+            insertAtCursor(textarea, markdown, options.applyTextChange, insertionRange);
+            showFlash(options.flash, 'success', uploadString(getString, source, 'Uploaded'));
             return upload;
         }).catch(function () {
-            showFlash(options.flash, 'error', getString('imagePasteFailed'));
+            showFlash(options.flash, 'error', uploadString(getString, source, 'Failed'));
             return false;
         });
+    }
+
+    function handlePaste(event, textarea, options) {
+        return handleImageFile(firstImageFile(event), event, textarea, options, 'paste');
+    }
+
+    function handleDragOver(event, textarea, options) {
+        var config = options && options.config ? options.config : {};
+
+        if (!hasImageFileTransfer(event && event.dataTransfer ? event.dataTransfer : null) || !canUpload(config)) {
+            return false;
+        }
+
+        preventDefault(event);
+
+        if (event.dataTransfer) {
+            event.dataTransfer.dropEffect = 'copy';
+        }
+
+        return true;
+    }
+
+    function handleDrop(event, textarea, options) {
+        return handleImageFile(firstImageFile(event), event, textarea, options, 'drop');
     }
 
     function bind(textarea, options) {
@@ -200,11 +308,19 @@
         textarea.addEventListener('paste', function (event) {
             handlePaste(event, textarea, options);
         });
+        textarea.addEventListener('dragover', function (event) {
+            handleDragOver(event, textarea, options);
+        });
+        textarea.addEventListener('drop', function (event) {
+            handleDrop(event, textarea, options);
+        });
     }
 
     window.EasyMDEImagePaste = {
         bind: bind,
         firstImageFile: firstImageFile,
+        handleDragOver: handleDragOver,
+        handleDrop: handleDrop,
         handlePaste: handlePaste,
         imageMarkdown: imageMarkdown
     };

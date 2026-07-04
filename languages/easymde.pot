@@ -167,6 +167,18 @@ msgstr ""
 msgid "Draft restored."
 msgstr ""
 
+#: src/Admin/AdminAssets.php:279
+msgid "Dropped image is too large for this site."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:278
+msgid "Dropped image upload failed. Please use the media library instead."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:277
+msgid "Dropped image uploaded."
+msgstr ""
+
 #: src/Admin/SettingsPage.php:32 src/Admin/SettingsPage.php:33
 #: templates/admin/settings-page.php:13
 msgid "EasyMDE"
@@ -476,7 +488,7 @@ msgid "No image file was provided for upload."
 msgstr ""
 
 #: src/Rest/MediaController.php:74 src/Rest/MediaController.php:162
-msgid "Only JPEG, PNG, GIF, or WebP images can be pasted into EasyMDE."
+msgid "Only JPEG, PNG, GIF, or WebP images can be uploaded into EasyMDE."
 msgstr ""
 
 #: src/Theme/ThemeStateRepository.php:375
@@ -636,15 +648,15 @@ msgid ""
 msgstr ""
 
 #: src/Rest/MediaController.php:152
-msgid "The pasted image could not be saved to the WordPress media library."
+msgid "The image could not be saved to the WordPress media library."
 msgstr ""
 
 #: src/Rest/MediaController.php:64
-msgid "The pasted image could not be uploaded."
+msgid "The image could not be uploaded."
 msgstr ""
 
 #: src/Rest/MediaController.php:82
-msgid "The pasted image is larger than the allowed upload size."
+msgid "The image is larger than the allowed upload size."
 msgstr ""
 
 #: src/Rest/MediaController.php:105
@@ -669,6 +681,10 @@ msgstr ""
 
 #: src/Support/ToolbarRegistry.php:195
 msgid "Unordered list"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:276
+msgid "Uploading dropped image..."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:272
@@ -726,11 +742,11 @@ msgstr ""
 msgid "You are not allowed to perform this EasyMDE action."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:276
+#: src/Admin/AdminAssets.php:280
 msgid "alt text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:277
+#: src/Admin/AdminAssets.php:281
 msgid "image"
 msgstr ""
 
@@ -744,7 +760,7 @@ msgid ""
 "before rendering or saving EasyMDE Markdown."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:278
+#: src/Admin/AdminAssets.php:282
 msgid "link text"
 msgstr ""
 

@@ -59,7 +59,7 @@ final class PostDocumentTest extends WP_UnitTestCase
         $post_id = self::factory()->post->create(
             array(
                 'post_type' => 'post',
-                'post_content' => 'Literal <tag> text stays visible.',
+                'post_content' => 'Literal &lt;tag&gt; text stays visible.',
             )
         );
 

@@ -34,7 +34,77 @@ test('WeChat copy rejects pending preview placeholders', () => {
   const preview = {
     innerHTML: '<p class="easymde-preview-pending" role="status">Rendering preview...</p>',
     querySelector(selector) {
-      return selector === '.easymde-preview-pending' ? {} : null;
+      return selector.includes('.easymde-preview-pending') ? {} : null;
+    }
+  };
+
+  exporter.copy(
+    {
+      preview
+    },
+    {
+      getString(key) {
+        return key;
+      },
+      showFlash(flash, type, message) {
+        flashes.push({ type, message });
+      }
+    }
+  );
+
+  assert.deepEqual(flashes, [
+    {
+      type: 'error',
+      message: 'copyWechatFailed'
+    }
+  ]);
+});
+
+test('WeChat copy rejects preview error placeholders', () => {
+  const exporter = loadExporter();
+  const flashes = [];
+  const preview = {
+    innerHTML: '<p class="easymde-preview-error">Preview failed.</p>',
+    getAttribute() {
+      return null;
+    },
+    querySelector(selector) {
+      return selector.includes('.easymde-preview-error') ? {} : null;
+    }
+  };
+
+  exporter.copy(
+    {
+      preview
+    },
+    {
+      getString(key) {
+        return key;
+      },
+      showFlash(flash, type, message) {
+        flashes.push({ type, message });
+      }
+    }
+  );
+
+  assert.deepEqual(flashes, [
+    {
+      type: 'error',
+      message: 'copyWechatFailed'
+    }
+  ]);
+});
+
+test('WeChat copy rejects preview empty placeholders', () => {
+  const exporter = loadExporter();
+  const flashes = [];
+  const preview = {
+    innerHTML: '<p class="easymde-preview-empty">Start writing Markdown to preview the article.</p>',
+    getAttribute() {
+      return null;
+    },
+    querySelector(selector) {
+      return selector.includes('.easymde-preview-empty') ? {} : null;
     }
   };
 

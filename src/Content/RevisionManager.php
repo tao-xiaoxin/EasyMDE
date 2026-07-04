@@ -13,7 +13,9 @@ final class RevisionManager {
 	private $post_document;
 	private $theme_state_repository;
 	private $renderer_available_callback;
-	private $restoring = false;
+	private $restoring              = false;
+	private $pre_save_revision_meta = array();
+	private $created_revision_ids   = array();
 
 	public function __construct(
 		PostDocument $post_document,
@@ -27,7 +29,8 @@ final class RevisionManager {
 
 	public function register_hooks() {
 		add_filter( 'wp_post_revision_meta_keys', array( $this, 'register_revision_meta_keys' ) );
-		add_action( '_wp_put_post_revision', array( $this, 'save_revision_meta' ), 10, 1 );
+		add_action( 'save_post', array( $this, 'capture_revision_meta_before_save' ), 1, 3 );
+		add_action( '_wp_put_post_revision', array( $this, 'save_revision_meta' ), 10, 2 );
 		add_action( 'wp_after_insert_post', array( $this, 'sync_latest_revision_meta_after_save' ), 20, 3 );
 		add_action( 'wp_restore_post_revision', array( $this, 'restore_revision_meta' ), 10, 2 );
 	}
@@ -42,8 +45,16 @@ final class RevisionManager {
 		return $keys;
 	}
 
-	public function save_revision_meta( $revision_id ) {
-		$parent_id = wp_is_post_revision( $revision_id );
+	public function save_revision_meta( $revision_id, $post_id = 0 ) {
+		$revision_id = absint( $revision_id );
+		$parent_id   = $post_id ? absint( $post_id ) : wp_is_post_revision( $revision_id );
+		if ( $parent_id && $revision_id && ! wp_is_post_autosave( $revision_id ) ) {
+			if ( ! isset( $this->created_revision_ids[ $parent_id ] ) ) {
+				$this->created_revision_ids[ $parent_id ] = array();
+			}
+			$this->created_revision_ids[ $parent_id ][] = $revision_id;
+		}
+
 		if ( ! $parent_id || ! $this->post_document->is_easymde_post( $parent_id ) ) {
 			return;
 		}
@@ -57,32 +68,36 @@ final class RevisionManager {
 		}
 	}
 
+	public function capture_revision_meta_before_save( $post_id, $post, $update ) {
+		$post_id = absint( $post_id );
+		if ( ! $update || $this->restoring || wp_is_post_revision( $post_id ) || ! $post || ! $this->post_document->is_supported_post_type( $post->post_type ) ) {
+			return;
+		}
+
+		$this->pre_save_revision_meta[ $post_id ] = $this->snapshot_revision_meta( $post_id );
+	}
+
 	public function sync_latest_revision_meta_after_save( $post_id, $post, $update ) {
-		unset( $update );
+		$post_id = absint( $post_id );
 
-		if ( $this->restoring || wp_is_post_revision( $post_id ) || ! $post || ! $this->post_document->is_easymde_post( $post_id ) ) {
-			return;
-		}
-
-		$revisions = wp_get_post_revisions(
-			$post_id,
-			array(
-				'posts_per_page' => 5,
-				'orderby'        => 'ID',
-				'order'          => 'DESC',
-			)
-		);
-
-		if ( empty( $revisions ) ) {
-			return;
-		}
-
-		foreach ( $revisions as $revision ) {
-			$revision_id = is_object( $revision ) && isset( $revision->ID ) ? absint( $revision->ID ) : absint( $revision );
-			if ( $revision_id > 0 && ! wp_is_post_autosave( $revision_id ) ) {
-				$this->save_revision_meta( $revision_id );
-				break;
+		try {
+			if ( ! $update || $this->restoring || wp_is_post_revision( $post_id ) || ! $post || ! $this->post_document->is_easymde_post( $post_id ) ) {
+				return;
 			}
+
+			$revision_id = $this->latest_current_save_revision_id( $post_id );
+			if ( $revision_id ) {
+				$this->save_revision_meta( $revision_id, $post_id );
+				return;
+			}
+
+			if ( empty( $this->pre_save_revision_meta[ $post_id ] ) || ! $this->revision_meta_changed_since( $post_id, $this->pre_save_revision_meta[ $post_id ] ) ) {
+				return;
+			}
+
+			$this->force_revision_for_meta_change( $post_id );
+		} finally {
+			unset( $this->pre_save_revision_meta[ $post_id ], $this->created_revision_ids[ $post_id ] );
 		}
 	}
 
@@ -182,6 +197,53 @@ final class RevisionManager {
 			} else {
 				delete_post_meta( $post_id, $key );
 			}
+		}
+	}
+
+	private function revision_meta_changed_since( $post_id, array $snapshot ) {
+		foreach ( $this->post_document->revision_meta_keys() as $key ) {
+			$exists = metadata_exists( 'post', $post_id, $key );
+			$value  = get_post_meta( $post_id, $key, true );
+
+			if ( empty( $snapshot[ $key ] ) || (bool) $snapshot[ $key ]['exists'] !== $exists || $snapshot[ $key ]['value'] !== $value ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private function latest_current_save_revision_id( $post_id ) {
+		if ( empty( $this->created_revision_ids[ $post_id ] ) ) {
+			return 0;
+		}
+
+		foreach ( array_reverse( $this->created_revision_ids[ $post_id ] ) as $revision_id ) {
+			$revision_id = absint( $revision_id );
+			if ( $revision_id && ! wp_is_post_autosave( $revision_id ) ) {
+				return $revision_id;
+			}
+		}
+
+		return 0;
+	}
+
+	private function force_revision_for_meta_change( $post_id ) {
+		if ( ! function_exists( 'wp_save_post_revision' ) ) {
+			return;
+		}
+
+		$force_revision = function ( $post_has_changed, $latest_revision, $post ) use ( $post_id ) {
+			unset( $latest_revision );
+
+			return $post && (int) $post->ID === (int) $post_id ? true : $post_has_changed;
+		};
+
+		add_filter( 'wp_save_post_revision_post_has_changed', $force_revision, 10, 3 );
+		try {
+			wp_save_post_revision( $post_id );
+		} finally {
+			remove_filter( 'wp_save_post_revision_post_has_changed', $force_revision, 10 );
 		}
 	}
 

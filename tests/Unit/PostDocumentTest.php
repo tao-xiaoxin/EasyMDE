@@ -53,4 +53,46 @@ final class PostDocumentTest extends WP_UnitTestCase
 
         $this->assertSame('Keep 1 < 2 as plain text.', $document->get_markdown(get_post($post_id)));
     }
+
+    public function test_tag_like_plain_text_is_not_imported_as_html()
+    {
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_content' => 'Literal <tag> text stays visible.',
+            )
+        );
+
+        $document = new PostDocument();
+
+        $this->assertSame('Literal \<tag> text stays visible.', $document->get_markdown(get_post($post_id)));
+    }
+
+    public function test_imported_html_text_is_escaped_before_markdown_save()
+    {
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_content' => '<p>Visible **not bold** and &lt;div&gt;.</p>',
+            )
+        );
+
+        $document = new PostDocument();
+
+        $this->assertSame('Visible \*\*not bold\*\* and \<div>.', $document->get_markdown(get_post($post_id)));
+    }
+
+    public function test_imported_inline_code_uses_a_safe_backtick_fence()
+    {
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_content' => '<p>Use <code>tick ` and `` runs</code>.</p>',
+            )
+        );
+
+        $document = new PostDocument();
+
+        $this->assertSame('Use ```tick ` and `` runs```.', $document->get_markdown(get_post($post_id)));
+    }
 }

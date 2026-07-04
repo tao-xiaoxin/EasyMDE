@@ -132,6 +132,40 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertSame('<p>Revision HTML</p>', get_post($post_id)->post_content);
     }
 
+    public function test_restore_pre_easymde_revision_clears_markdown_state_and_restores_revision_content()
+    {
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_content' => '<p>Rendered current Markdown</p>',
+            )
+        );
+        $revision_id = wp_insert_post(
+            array(
+                'post_parent' => $post_id,
+                'post_type' => 'revision',
+                'post_status' => 'inherit',
+                'post_title' => 'Pre EasyMDE revision',
+                'post_content' => '<p>Original HTML revision</p>',
+            )
+        );
+
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Current Markdown');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'custom');
+        update_post_meta($post_id, PostDocument::META_CODE_THEME, 'monokai');
+        update_post_meta($post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, 'h2 { color: red; }');
+
+        $manager = new RevisionManager(new PostDocument(), $this->theme_state_repository());
+        $manager->restore_revision_meta($post_id, $revision_id);
+
+        foreach ((new PostDocument())->revision_meta_keys() as $key) {
+            $this->assertFalse(metadata_exists('post', $post_id, $key), $key);
+        }
+        $this->assertSame('<p>Original HTML revision</p>', get_post($post_id)->post_content);
+        $this->assertFalse((new PostDocument())->is_easymde_post($post_id));
+    }
+
     public function test_restore_revision_meta_does_not_clean_cache_when_post_content_update_fails()
     {
         global $wpdb;

@@ -74,8 +74,8 @@ final class Migration {
 			return $content;
 		}
 
-		if ( ! preg_match( '/<\s*\/?[a-zA-Z][^>]*>/', $content ) ) {
-			return html_entity_decode( $content, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+		if ( ! $this->contains_importable_html( $content ) ) {
+			return $this->escape_markdown_text( html_entity_decode( $content, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) );
 		}
 
 		if ( ! class_exists( 'DOMDocument' ) ) {
@@ -115,7 +115,7 @@ final class Migration {
 
 	private function node_to_markdown( DOMNode $node ) {
 		if ( $node instanceof DOMText ) {
-			return html_entity_decode( $node->wholeText, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+			return $this->escape_markdown_text( $node->wholeText );
 		}
 
 		if ( ! ( $node instanceof DOMElement ) ) {
@@ -151,7 +151,7 @@ final class Migration {
 
 			case 'img':
 				$src = trim( (string) $node->getAttribute( 'src' ) );
-				$alt = $this->inline_text( (string) $node->getAttribute( 'alt' ) );
+				$alt = $this->inline_text( $this->escape_markdown_text( (string) $node->getAttribute( 'alt' ) ) );
 
 				return '' !== $src ? '![' . $alt . '](' . $src . ')' : '';
 
@@ -165,10 +165,13 @@ final class Migration {
 				return "\n\n" . $this->prefix_lines( trim( $children ), '> ' ) . "\n\n";
 
 			case 'pre':
-				return "\n\n```\n" . rtrim( html_entity_decode( $node->textContent, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) . "\n```\n\n";
+				$code  = rtrim( (string) $node->textContent );
+				$fence = $this->backtick_fence( $code, 3 );
+
+				return "\n\n" . $fence . "\n" . $code . "\n" . $fence . "\n\n";
 
 			case 'code':
-				return '`' . str_replace( '`', '\`', html_entity_decode( $node->textContent, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) . '`';
+				return $this->code_span( (string) $node->textContent );
 
 			case 'ul':
 				return "\n" . $this->list_items_to_markdown( $node, false ) . "\n";
@@ -182,6 +185,113 @@ final class Migration {
 			default:
 				return $children;
 		}
+	}
+
+	private function contains_importable_html( $content ) {
+		$paired_tags = implode(
+			'|',
+			array(
+				'a',
+				'article',
+				'blockquote',
+				'code',
+				'del',
+				'div',
+				'em',
+				'figcaption',
+				'figure',
+				'h[1-6]',
+				'i',
+				'li',
+				'ol',
+				'p',
+				'pre',
+				's',
+				'section',
+				'span',
+				'strong',
+				'table',
+				'tbody',
+				'td',
+				'th',
+				'thead',
+				'tr',
+				'ul',
+				'b',
+			)
+		);
+		if ( preg_match( '/<\s*(' . $paired_tags . ')(?:\s[^>]*)?>.*<\s*\/\s*\1\s*>/is', (string) $content ) ) {
+			return true;
+		}
+
+		return (bool) preg_match( '/<\s*(br|hr|img)(?:\s[^>]*)?\/?\s*>/i', (string) $content );
+	}
+
+	private function escape_markdown_text( $text ) {
+		$text = (string) $text;
+		$text = str_replace( '\\', '\\\\', $text );
+		$text = str_replace( '`', '\`', $text );
+		$text = str_replace(
+			array( '*', '_', '[', ']' ),
+			array( '\*', '\_', '\[', '\]' ),
+			$text
+		);
+		$text = preg_replace( '/<(?=\/?[a-zA-Z])/', '\\\\<', $text );
+		$text = preg_replace_callback(
+			'/(^|\n)([ \t]{0,3})(#{1,6})(?=\s)/',
+			function ( $matches ) {
+				return $matches[1] . $matches[2] . '\\' . $matches[3];
+			},
+			$text
+		);
+		$text = preg_replace_callback(
+			'/(^|\n)([ \t]{0,3})([-+])(?=\s)/',
+			function ( $matches ) {
+				return $matches[1] . $matches[2] . '\\' . $matches[3];
+			},
+			$text
+		);
+		$text = preg_replace_callback(
+			'/(^|\n)([ \t]{0,3})(\d+)([.)])(?=\s)/',
+			function ( $matches ) {
+				return $matches[1] . $matches[2] . $matches[3] . '\\' . $matches[4];
+			},
+			$text
+		);
+
+		return preg_replace_callback(
+			'/(^|\n)([ \t]{0,3})(>)(?=\s|$)/',
+			function ( $matches ) {
+				return $matches[1] . $matches[2] . '\\>';
+			},
+			$text
+		);
+	}
+
+	private function code_span( $text ) {
+		$text  = (string) $text;
+		$fence = $this->backtick_fence( $text, 1 );
+
+		if ( '' === $text ) {
+			return $fence . $fence;
+		}
+
+		if ( '`' === $text[0] || '`' === substr( $text, -1 ) || ' ' === $text[0] || ' ' === substr( $text, -1 ) ) {
+			return $fence . ' ' . $text . ' ' . $fence;
+		}
+
+		return $fence . $text . $fence;
+	}
+
+	private function backtick_fence( $text, $minimum_length ) {
+		$length = max( 0, (int) $minimum_length - 1 );
+		if ( preg_match_all( '/`+/', (string) $text, $matches ) ) {
+			foreach ( $matches[0] as $match ) {
+				$length = max( $length, strlen( $match ) );
+			}
+		}
+
+		return str_repeat( '`', $length + 1 );
 	}
 
 	private function list_items_to_markdown( DOMElement $list_node, $ordered ) {

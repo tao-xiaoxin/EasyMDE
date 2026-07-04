@@ -211,6 +211,7 @@ test.describe('EasyMDE editor workflows', () => {
     await page.goto(`/wp-admin/post.php?post=${ordinaryPostId}&action=edit`);
     await expect(page.locator('#easymde-editor')).toBeVisible();
     await expect(page.locator('#easymde-source')).toHaveValue(ordinaryInitialMarkdown);
+    await expect(page.locator('#content')).toHaveValue(ordinaryBeforeContent);
     expect(postContent(ordinaryPostId)).toBe(ordinaryBeforeContent);
     expect(easymdeMetaSnapshot(ordinaryPostId)).toEqual(ordinaryBeforeMeta);
     expect(revisionIdsForPost(ordinaryPostId)).toEqual(ordinaryBeforeRevisions);

@@ -12,7 +12,7 @@ Appearance and rendering state are stored in EasyMDE post meta, including articl
 
 ## Editor Enablement
 
-EasyMDE does not bulk-migrate every post during upgrades. New and existing posts for post types supported by `easymde_supported_post_types` open in EasyMDE through normal WordPress editing when the current user can edit them.
+EasyMDE does not bulk-migrate every post during upgrades. New and existing posts for post types supported by `easymde_supported_post_types` open in EasyMDE through normal WordPress editing when the current user can create new posts or edit existing ones.
 
 EasyMDE metadata now describes document state, not editor admission. Existing posts without `_easymde_enabled` but with `_easymde_markdown` are treated as legacy EasyMDE document-state posts by checking metadata existence. Empty Markdown still counts because detection uses `metadata_exists()`.
 

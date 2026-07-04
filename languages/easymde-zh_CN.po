@@ -406,6 +406,9 @@ msgstr "红绯"
 msgid "Rendering failed."
 msgstr "渲染失败。"
 
+msgid "Rendering preview..."
+msgstr "正在渲染预览..."
+
 msgid "Restore draft"
 msgstr "恢复草稿"
 

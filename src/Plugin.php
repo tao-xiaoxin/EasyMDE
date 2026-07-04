@@ -7,6 +7,7 @@ use EasyMDE\Admin\EditorSaveHandler;
 use EasyMDE\Admin\EditorScreen;
 use EasyMDE\Admin\PostModeController;
 use EasyMDE\Admin\SettingsPage;
+use EasyMDE\Content\MarkdownFeatureDetector;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Content\RevisionManager;
 use EasyMDE\Frontend\ContentFilter;
@@ -84,12 +85,13 @@ final class Plugin {
 		$code_themes            = new CodeThemeRegistry();
 		$custom_css_policy      = new CustomCssPolicy();
 		$theme_state_repository = new ThemeStateRepository( $article_themes, $code_themes, $custom_css_policy );
+		$feature_detector       = new MarkdownFeatureDetector();
 
 		$this->toolbar_registry = new ToolbarRegistry();
 
 		$settings_page        = new SettingsPage( $this->toolbar_registry, $options );
 		$post_mode_controller = new PostModeController( $post_document );
-		$frontend_assets      = new FrontendAssets( $post_document, $theme_state_repository );
+		$frontend_assets      = new FrontendAssets( $post_document, $theme_state_repository, $feature_detector );
 
 		$modules = array(
 			$settings_page,
@@ -109,7 +111,7 @@ final class Plugin {
 		}
 
 		$this->rest_controllers = array(
-			new PreviewController( $capabilities, $theme_state_repository ),
+			new PreviewController( $capabilities, $theme_state_repository, $feature_detector ),
 			new ThemeController( $capabilities, $theme_state_repository ),
 			new CustomCssController( $capabilities, $theme_state_repository, $custom_css_policy ),
 		);

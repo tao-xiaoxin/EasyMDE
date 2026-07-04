@@ -8,6 +8,7 @@
     var themeManager = window.EasyMDEThemeManager || {};
     var commandTools = window.EasyMDECommands || {};
     var previewClient = window.EasyMDEPreviewClient || {};
+    var previewFeatureLoader = window.EasyMDEPreviewFeatureLoader || {};
     var toolbarTools = window.EasyMDEToolbar || {};
     var detectMacPlatform = editorStateTools.detectMacPlatform || detectMacPlatform;
     var normalizeRenderState = themeManager.normalizeRenderState || normalizeRenderState;
@@ -24,6 +25,9 @@
     var renderState = normalizeRenderState(themeOptions.state || {});
     var customCssLibrary = themeOptions.customCss || [];
     var previewTimer = null;
+    var previewRevision = 0;
+    var previewAbortController = null;
+    var activePreviewFeatures = normalizePreviewFeatures(config.features || {});
     var draftTimer = null;
     var syncLock = false;
     var flashTimer = null;
@@ -73,6 +77,25 @@
 
     function getString(key) {
         return config.strings && config.strings[key] ? config.strings[key] : '';
+    }
+
+    function normalizePreviewFeatures(features) {
+        if (previewFeatureLoader.normalizeFeatures) {
+            return previewFeatureLoader.normalizeFeatures(features || {});
+        }
+
+        features = features || {};
+
+        return {
+            darkMode: features.darkMode !== false,
+            localDrafts: features.localDrafts !== false,
+            codeBlocks: !!features.codeBlocks,
+            syntaxHighlight: !!features.syntaxHighlight,
+            mermaid: !!features.mermaid,
+            math: !!features.math,
+            toc: !!features.toc,
+            wechatCopy: features.wechatCopy !== false
+        };
     }
 
     function getCommandServices() {
@@ -690,12 +713,16 @@
         style.textContent = css || '';
     }
 
-    function applyCodeThemeLink() {
+    function applyCodeThemeLink(enabled) {
         var codeTheme = findById(themeOptions.codeThemes || [], renderState.codeTheme);
         var href = codeTheme && codeTheme.cssUrl ? codeTheme.cssUrl : '';
         var link = document.getElementById('easymde-highlight-theme-css');
 
-        if (!href) {
+        if (!enabled || !href) {
+            if (link && link.parentNode) {
+                link.parentNode.removeChild(link);
+            }
+
             return;
         }
 
@@ -715,12 +742,14 @@
         themeManager.applyArticleThemeLink(themeOptions, renderState, findById, document);
     }
 
-    function applyRenderState($preview) {
+    function applyRenderState($preview, features) {
         var preview = $preview[0];
         var markdownClass = renderState.markdownTheme === 'custom'
             ? 'easymde-markdown-theme-custom'
             : 'easymde-markdown-theme-' + renderState.markdownTheme;
         var fontStack = buildFontStack();
+
+        features = normalizePreviewFeatures(features || activePreviewFeatures);
 
         if (!preview) {
             return;
@@ -742,7 +771,7 @@
         syncThemeFields();
         syncFontControls();
         applyArticleThemeLink();
-        applyCodeThemeLink();
+        applyCodeThemeLink(features.syntaxHighlight);
         setCustomCssStyle(renderState.markdownTheme === 'custom' ? selectedCustomCss() : '');
     }
 
@@ -1034,10 +1063,57 @@
         return '<pre class="easymde-preview-fallback">' + escapeHtml(markdown) + '</pre>';
     }
 
-    function enhancePreview($preview) {
-        if (window.EasyMDEEnhancements) {
-            window.EasyMDEEnhancements.enhance($preview[0], config);
+    function previewScopedConfig(features) {
+        var scoped = {};
+        var key;
+
+        for (key in config) {
+            if (Object.prototype.hasOwnProperty.call(config, key)) {
+                scoped[key] = config[key];
+            }
         }
+
+        scoped.features = normalizePreviewFeatures(features || activePreviewFeatures);
+
+        return scoped;
+    }
+
+    function currentPreviewSignature(markdown) {
+        return [
+            markdown,
+            renderState.markdownTheme,
+            renderState.codeTheme,
+            renderState.codeMacStyle ? '1' : '0',
+            renderState.customCssId || '',
+            selectedCustomCss()
+        ].join('\n');
+    }
+
+    function isPreviewCurrent(revision, signature, markdown) {
+        return revision === previewRevision && signature === currentPreviewSignature(markdown);
+    }
+
+    function enhancePreview($preview, features, revision, signature, markdown) {
+        var scopedConfig = previewScopedConfig(features);
+        var loaderContext = {
+            config: config,
+            renderState: renderState,
+            documentRef: document
+        };
+        var loader = window.EasyMDEPreviewFeatureLoader;
+        var loadPromise = loader && loader.ensurePreviewFeatures
+            ? loader.ensurePreviewFeatures(scopedConfig.features, loaderContext)
+            : Promise.resolve();
+
+        loadPromise.then(function () {
+            if (!isPreviewCurrent(revision, signature, markdown)) {
+                return;
+            }
+
+            if (window.EasyMDEEnhancements) {
+                window.EasyMDEEnhancements.enhance($preview[0], scopedConfig);
+            }
+        });
     }
 
     function capturePreviewScroll(preview) {
@@ -1164,35 +1240,73 @@
         });
     }
 
-    function updatePreview($preview, markdown) {
-        var previewNode = $preview[0];
+    function setPreviewBusy($preview, busy) {
+        $preview.attr('aria-busy', busy ? 'true' : 'false');
+    }
 
-        function finishPreviewUpdate(scrollState) {
-            applyRenderState($preview);
+    function setPreviewPending($preview) {
+        setPreviewBusy($preview, true);
+        $preview.html('<p class="easymde-preview-pending" role="status">' + escapeHtml(getString('previewRendering')) + '</p>');
+    }
+
+    function abortPreviewRequest() {
+        if (previewAbortController && typeof previewAbortController.abort === 'function') {
+            previewAbortController.abort();
+        }
+
+        previewAbortController = null;
+    }
+
+    function updatePreview($preview, markdown, options) {
+        var previewNode = $preview[0];
+        var revision = ++previewRevision;
+        var signature = currentPreviewSignature(markdown);
+        var delay;
+
+        options = options || {};
+        delay = options.immediate ? 0 : 180;
+
+        function finishPreviewUpdate(scrollState, features) {
+            applyRenderState($preview, features);
             restorePreviewScroll(previewNode, scrollState);
         }
 
         window.clearTimeout(previewTimer);
-        previewTimer = window.setTimeout(function () {
-            var scrollState;
+        abortPreviewRequest();
 
-            if (!markdown.trim()) {
-                scrollState = capturePreviewScroll(previewNode);
-                $preview.html('<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty')) + '</p>');
-                finishPreviewUpdate(scrollState);
+        if (!markdown.trim()) {
+            activePreviewFeatures = normalizePreviewFeatures(config.features || {});
+            setPreviewBusy($preview, false);
+            $preview.html('<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty')) + '</p>');
+            finishPreviewUpdate(capturePreviewScroll(previewNode), activePreviewFeatures);
+            return;
+        }
+
+        previewTimer = window.setTimeout(function () {
+            var requestScrollState;
+            var fetchOptions;
+
+            if (!isPreviewCurrent(revision, signature, markdown)) {
                 return;
             }
+
+            requestScrollState = capturePreviewScroll(previewNode);
+            setPreviewPending($preview);
 
             if (!window.wp || !window.wp.apiFetch || !config.restUrl) {
-                scrollState = capturePreviewScroll(previewNode);
+                activePreviewFeatures = normalizePreviewFeatures(config.features || {});
+                setPreviewBusy($preview, false);
                 $preview.html(previewFallback(markdown));
-                finishPreviewUpdate(scrollState);
-                enhancePreview($preview);
-                restorePreviewScroll(previewNode, scrollState);
+                finishPreviewUpdate(requestScrollState, activePreviewFeatures);
+                enhancePreview($preview, activePreviewFeatures, revision, signature, markdown);
                 return;
             }
 
-            window.wp.apiFetch({
+            if (window.AbortController) {
+                previewAbortController = new window.AbortController();
+            }
+
+            fetchOptions = {
                 url: config.restUrl,
                 method: 'POST',
                 headers: {
@@ -1206,18 +1320,37 @@
                     code_mac_style: renderState.codeMacStyle,
                     custom_css_id: renderState.customCssId
                 }
-            }).then(function (response) {
-                scrollState = capturePreviewScroll(previewNode);
+            };
+
+            if (previewAbortController) {
+                fetchOptions.signal = previewAbortController.signal;
+            }
+
+            window.wp.apiFetch(fetchOptions).then(function (response) {
+                var responseFeatures;
+
+                if (!isPreviewCurrent(revision, signature, markdown)) {
+                    return;
+                }
+
+                response = response || {};
+                responseFeatures = normalizePreviewFeatures(response.features || {});
+                activePreviewFeatures = responseFeatures;
+                setPreviewBusy($preview, false);
                 $preview.html(response.html || previewFallback(markdown));
-                finishPreviewUpdate(scrollState);
-                enhancePreview($preview);
-                restorePreviewScroll(previewNode, scrollState);
-            }).catch(function () {
-                scrollState = capturePreviewScroll(previewNode);
+                finishPreviewUpdate(requestScrollState, responseFeatures);
+                enhancePreview($preview, responseFeatures, revision, signature, markdown);
+            }).catch(function (error) {
+                if (!isPreviewCurrent(revision, signature, markdown) || (error && error.name === 'AbortError')) {
+                    return;
+                }
+
+                activePreviewFeatures = normalizePreviewFeatures(config.features || {});
+                setPreviewBusy($preview, false);
                 $preview.html('<p class="easymde-preview-error">' + escapeHtml(getString('previewError')) + '</p>');
-                finishPreviewUpdate(scrollState);
+                finishPreviewUpdate(requestScrollState, activePreviewFeatures);
             });
-        }, 180);
+        }, delay);
     }
 
     function bindScrollSync(textarea, preview) {
@@ -1561,6 +1694,17 @@
         });
     }
 
+    function afterShellPaint(callback) {
+        if (window.requestAnimationFrame) {
+            window.requestAnimationFrame(function () {
+                window.setTimeout(callback, 0);
+            });
+            return;
+        }
+
+        window.setTimeout(callback, 0);
+    }
+
     function initEditor() {
         var $root = $('#easymde-editor');
         var $source = $('#easymde-source');
@@ -1585,8 +1729,8 @@
             window.EasyMDEEnhancements.initTheme($root[0], config);
         }
 
-        function refreshPreview() {
-            updatePreview($preview, $source.val());
+        function refreshPreview(options) {
+            updatePreview($preview, $source.val(), options || { immediate: true });
         }
 
         $flash = createFlash($root);
@@ -1625,7 +1769,10 @@
         });
 
         syncMarkdownFields($source.val());
-        updatePreview($preview, $source.val());
+        afterShellPaint(function () {
+            $root.attr('data-easymde-shell-ready', '1');
+            updatePreview($preview, $source.val(), { immediate: true });
+        });
     }
 
     $(initEditor);

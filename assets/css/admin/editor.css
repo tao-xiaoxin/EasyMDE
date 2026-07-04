@@ -453,8 +453,13 @@ body.easymde-immersive-active .media-modal-backdrop {
 }
 
 .easymde-preview-empty,
+.easymde-preview-pending,
 .easymde-preview-error {
     color: #64748b;
+}
+
+.easymde-preview-pending {
+    font-style: italic;
 }
 
 .easymde-preview-error {

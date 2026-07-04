@@ -2,6 +2,7 @@
 
 namespace EasyMDE\Rest;
 
+use EasyMDE\Content\MarkdownFeatureDetector;
 use EasyMDE\Content\MarkdownRenderer;
 use EasyMDE\Support\Capabilities;
 use EasyMDE\Theme\ThemeStateRepository;
@@ -19,10 +20,16 @@ final class PreviewController {
 
 	private $capabilities;
 	private $theme_state_repository;
+	private $feature_detector;
 
-	public function __construct( Capabilities $capabilities, ThemeStateRepository $theme_state_repository ) {
+	public function __construct(
+		Capabilities $capabilities,
+		ThemeStateRepository $theme_state_repository,
+		?MarkdownFeatureDetector $feature_detector = null
+	) {
 		$this->capabilities           = $capabilities;
 		$this->theme_state_repository = $theme_state_repository;
+		$this->feature_detector       = $feature_detector ? $feature_detector : new MarkdownFeatureDetector();
 	}
 
 	public function register_routes() {
@@ -91,7 +98,8 @@ final class PreviewController {
 
 		return rest_ensure_response(
 			array(
-				'html' => MarkdownRenderer::render( $markdown, $markdown_theme ),
+				'html'     => MarkdownRenderer::render( $markdown, $markdown_theme ),
+				'features' => $this->feature_detector->detect( $markdown ),
 			)
 		);
 	}

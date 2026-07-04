@@ -69,7 +69,7 @@ final class AdminAssets {
 			EASYMDE_VERSION
 		);
 
-		$this->frontend_assets->enqueue_render_assets( $post_id, '', true );
+		$this->frontend_assets->enqueue_editor_base_assets( $post_id );
 
 		wp_enqueue_script(
 			'easymde-editor-state',
@@ -91,6 +91,14 @@ final class AdminAssets {
 			'easymde-preview-client',
 			Asset::url( 'assets/js/admin/preview-client.js' ),
 			array( 'easymde-editor-state' ),
+			EASYMDE_VERSION,
+			true
+		);
+
+		wp_enqueue_script(
+			'easymde-preview-feature-loader',
+			Asset::url( 'assets/js/admin/preview-feature-loader.js' ),
+			array(),
 			EASYMDE_VERSION,
 			true
 		);
@@ -145,6 +153,7 @@ final class AdminAssets {
 				'easymde-editor-state',
 				'easymde-commands',
 				'easymde-preview-client',
+				'easymde-preview-feature-loader',
 				'easymde-theme-manager',
 				'easymde-toolbar',
 				'easymde-draft-storage',
@@ -163,7 +172,8 @@ final class AdminAssets {
 			array(
 				'restUrl'          => esc_url_raw( rest_url( 'easymde/v1/preview' ) ),
 				'nonce'            => wp_create_nonce( 'wp_rest' ),
-				'features'         => $this->frontend_assets->get_all_features(),
+				'features'         => $this->frontend_assets->get_feature_config( '' ),
+				'previewAssets'    => $this->frontend_assets->get_editor_preview_assets(),
 				'storage'          => $this->get_storage_config( $post_id ),
 				'themeOptionsUrl'  => esc_url_raw( rest_url( 'easymde/v1/theme-options' ) ),
 				'customCssUrl'     => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
@@ -204,6 +214,7 @@ final class AdminAssets {
 			'editorLabel'           => __( 'Markdown source', 'easymde' ),
 			'previewLabel'          => __( 'Live preview', 'easymde' ),
 			'previewEmpty'          => __( 'Start writing Markdown to preview the article.', 'easymde' ),
+			'previewRendering'      => __( 'Rendering preview...', 'easymde' ),
 			'previewError'          => __( 'Preview failed. Please keep writing; saving is not affected.', 'easymde' ),
 			'insertMedia'           => __( 'Insert Media', 'easymde' ),
 			'enterImmersive'        => __( 'Enter immersive writing', 'easymde' ),

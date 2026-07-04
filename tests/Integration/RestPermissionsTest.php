@@ -63,11 +63,16 @@ final class RestPermissionsTest extends WP_UnitTestCase
 
         $this->assertTrue((new Capabilities())->can_preview($request));
 
-        $request->set_body_params(array('markdown' => '# Allowed'));
+        $request->set_body_params(array('markdown' => "```php\necho 'Allowed';\n```"));
         $response = rest_do_request($request);
+        $data = $response->get_data();
 
         $this->assertSame(200, $response->get_status());
-        $this->assertStringContainsString('Allowed', $response->get_data()['html']);
+        $this->assertStringContainsString('Allowed', $data['html']);
+        $this->assertTrue($data['features']['codeBlocks']);
+        $this->assertTrue($data['features']['syntaxHighlight']);
+        $this->assertFalse($data['features']['math']);
+        $this->assertFalse($data['features']['mermaid']);
     }
 
     public function test_user_without_unfiltered_html_cannot_delete_custom_css()

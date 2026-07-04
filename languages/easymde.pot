@@ -13,7 +13,7 @@ msgstr ""
 msgid "A custom CSS style with this name already exists."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:232
+#: src/Admin/AdminAssets.php:243
 msgid "A newer local draft is available."
 msgstr ""
 
@@ -21,15 +21,15 @@ msgstr ""
 msgid "Admin behavior"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:213
+#: src/Admin/AdminAssets.php:224
 msgid "Appearance"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:228
+#: src/Admin/AdminAssets.php:239
 msgid "Apple font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:216
+#: src/Admin/AdminAssets.php:227
 msgid "Article theme"
 msgstr ""
 
@@ -49,7 +49,7 @@ msgstr ""
 msgid "Bold"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:221
+#: src/Admin/AdminAssets.php:232
 msgid "CSS name"
 msgstr ""
 
@@ -57,7 +57,7 @@ msgstr ""
 msgid "CSS name and CSS content are required."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:224
+#: src/Admin/AdminAssets.php:235
 msgid "CSS save failed."
 msgstr ""
 
@@ -65,7 +65,7 @@ msgstr ""
 msgid "Chazi purple"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:242
+#: src/Admin/AdminAssets.php:253
 msgid "Clipboard access is not available in this browser."
 msgstr ""
 
@@ -77,7 +77,7 @@ msgstr ""
 msgid "Code fence"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:217
+#: src/Admin/AdminAssets.php:228
 msgid "Code theme"
 msgstr ""
 
@@ -85,19 +85,19 @@ msgstr ""
 msgid "Command"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:240
+#: src/Admin/AdminAssets.php:251
 msgid "Copied preview for WeChat."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:241
+#: src/Admin/AdminAssets.php:252
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:239
+#: src/Admin/AdminAssets.php:250
 msgid "Copy preview for WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:238 src/Support/ToolbarRegistry.php:290
+#: src/Admin/AdminAssets.php:249 src/Support/ToolbarRegistry.php:290
 msgid "Copy to WeChat"
 msgstr ""
 
@@ -109,7 +109,7 @@ msgstr ""
 msgid "Current preset"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:219
+#: src/Admin/AdminAssets.php:230
 msgid "Custom CSS"
 msgstr ""
 
@@ -133,7 +133,7 @@ msgstr ""
 msgid "Custom CSS style not found."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:226
+#: src/Admin/AdminAssets.php:237
 msgid "Custom font"
 msgstr ""
 
@@ -141,7 +141,7 @@ msgstr ""
 msgid "Cute green"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:211
+#: src/Admin/AdminAssets.php:222
 msgid "Dark mode"
 msgstr ""
 
@@ -155,15 +155,15 @@ msgstr ""
 msgid "Default: %s"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:234
+#: src/Admin/AdminAssets.php:245
 msgid "Discard draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:236
+#: src/Admin/AdminAssets.php:247
 msgid "Draft discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:235
+#: src/Admin/AdminAssets.php:246
 msgid "Draft restored."
 msgstr ""
 
@@ -195,19 +195,19 @@ msgid ""
 "packages."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:209
+#: src/Admin/AdminAssets.php:220
 msgid "Enter immersive writing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:210
+#: src/Admin/AdminAssets.php:221
 msgid "Exit immersive writing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:214
+#: src/Admin/AdminAssets.php:225
 msgid "Font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:230
+#: src/Admin/AdminAssets.php:241
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
@@ -269,7 +269,7 @@ msgstr ""
 msgid "Heading 6"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:215
+#: src/Admin/AdminAssets.php:226
 msgid "Headings"
 msgstr ""
 
@@ -297,7 +297,7 @@ msgstr ""
 msgid "Inline code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:208
+#: src/Admin/AdminAssets.php:219
 msgid "Insert Media"
 msgstr ""
 
@@ -333,7 +333,7 @@ msgstr ""
 msgid "Lanqing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:212
+#: src/Admin/AdminAssets.php:223
 msgid "Light mode"
 msgstr ""
 
@@ -341,15 +341,15 @@ msgstr ""
 msgid "Link"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:205
+#: src/Admin/AdminAssets.php:215
 msgid "Live preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:231
+#: src/Admin/AdminAssets.php:242
 msgid "Local draft saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:218
+#: src/Admin/AdminAssets.php:229
 msgid "Mac code frame"
 msgstr ""
 
@@ -357,16 +357,16 @@ msgstr ""
 msgid "Markdown"
 msgstr ""
 
-#: src/Rest/PreviewController.php:77
+#: src/Rest/PreviewController.php:84
 msgid "Markdown preview content is too large."
 msgstr ""
 
-#: src/Rest/PreviewController.php:85
+#: src/Rest/PreviewController.php:92
 msgid ""
 "Markdown rendering is unavailable because Composer dependencies are missing."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:204
+#: src/Admin/AdminAssets.php:214
 msgid "Markdown source"
 msgstr ""
 
@@ -418,7 +418,7 @@ msgstr ""
 msgid "Monokai"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:220
+#: src/Admin/AdminAssets.php:231
 msgid "Named custom CSS"
 msgstr ""
 
@@ -455,7 +455,7 @@ msgstr ""
 msgid "No activation redirect and no unrelated admin-page redirect."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:225
+#: src/Admin/AdminAssets.php:236
 msgid "No custom CSS saved yet."
 msgstr ""
 
@@ -519,7 +519,7 @@ msgstr ""
 msgid "Preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:207
+#: src/Admin/AdminAssets.php:218
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr ""
 
@@ -539,11 +539,15 @@ msgstr ""
 msgid "Red crimson"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:237 src/Frontend/FrontendAssets.php:63
+#: src/Admin/AdminAssets.php:248 src/Frontend/FrontendAssets.php:70
 msgid "Rendering failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:233
+#: src/Admin/AdminAssets.php:217
+msgid "Rendering preview..."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:244
 msgid "Restore draft"
 msgstr ""
 
@@ -551,7 +555,7 @@ msgstr ""
 msgid "Rose purple"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:222
+#: src/Admin/AdminAssets.php:233
 msgid "Save CSS"
 msgstr ""
 
@@ -559,11 +563,11 @@ msgstr ""
 msgid "Save post"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:223
+#: src/Admin/AdminAssets.php:234
 msgid "Saved CSS."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:229
+#: src/Admin/AdminAssets.php:240
 msgid "Serif font"
 msgstr ""
 
@@ -581,7 +585,7 @@ msgstr ""
 msgid "Shortcut settings"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:206
+#: src/Admin/AdminAssets.php:216
 msgid "Start writing Markdown to preview the article."
 msgstr ""
 
@@ -639,7 +643,7 @@ msgstr ""
 msgid "Windows / Linux"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:227
+#: src/Admin/AdminAssets.php:238
 msgid "Windows font"
 msgstr ""
 
@@ -664,11 +668,11 @@ msgstr ""
 msgid "You are not allowed to perform this EasyMDE action."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:243
+#: src/Admin/AdminAssets.php:254
 msgid "alt text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:244
+#: src/Admin/AdminAssets.php:255
 msgid "image"
 msgstr ""
 
@@ -682,7 +686,7 @@ msgid ""
 "before rendering or saving EasyMDE Markdown."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:245
+#: src/Admin/AdminAssets.php:256
 msgid "link text"
 msgstr ""
 

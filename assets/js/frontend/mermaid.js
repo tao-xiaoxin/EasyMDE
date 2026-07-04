@@ -44,6 +44,10 @@
             code.dataset.easymdeRendered = '1';
 
             window.mermaid.render(renderId, source).then(function (result) {
+                if (!pre.parentNode) {
+                    return;
+                }
+
                 container.innerHTML = result.svg;
                 pre.parentNode.replaceChild(container, pre);
             }).catch(function () {

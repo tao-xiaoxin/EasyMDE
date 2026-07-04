@@ -714,27 +714,12 @@
     }
 
     function applyCodeThemeLink(enabled) {
-        var codeTheme = findById(themeOptions.codeThemes || [], renderState.codeTheme);
-        var href = codeTheme && codeTheme.cssUrl ? codeTheme.cssUrl : '';
         var link = document.getElementById('easymde-highlight-theme-css');
 
-        if (!enabled || !href) {
+        if (!enabled) {
             if (link && link.parentNode) {
                 link.parentNode.removeChild(link);
             }
-
-            return;
-        }
-
-        if (!link) {
-            link = document.createElement('link');
-            link.id = 'easymde-highlight-theme-css';
-            link.rel = 'stylesheet';
-            document.head.appendChild(link);
-        }
-
-        if (link.href !== href) {
-            link.href = href;
         }
     }
 
@@ -1113,8 +1098,10 @@
             }
 
             if (window.EasyMDEEnhancements) {
-                window.EasyMDEEnhancements.enhance($preview[0], scopedConfig);
+                return Promise.resolve(window.EasyMDEEnhancements.enhance($preview[0], scopedConfig));
             }
+
+            return undefined;
         }).catch(function () {
             // Keep editor controls usable even when an optional preview asset fails to enhance.
         });
@@ -1305,6 +1292,8 @@
             return;
         }
 
+        setPreviewPending($preview, !previewHasRenderedContent($preview));
+
         previewTimer = window.setTimeout(function () {
             var requestScrollState;
             var fetchOptions;
@@ -1314,7 +1303,6 @@
             }
 
             requestScrollState = capturePreviewScroll(previewNode);
-            setPreviewPending($preview, !previewHasRenderedContent($preview));
 
             if (!window.wp || !window.wp.apiFetch || !config.restUrl) {
                 activePreviewFeatures = normalizePreviewFeatures(config.features || {});

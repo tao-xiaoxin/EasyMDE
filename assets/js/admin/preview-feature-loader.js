@@ -96,6 +96,22 @@
         });
     }
 
+    function markStylesheetLoaded(link, href) {
+        if (link && link.dataset) {
+            link.dataset.easymdeLoadedHref = href;
+        }
+    }
+
+    function stylesheetLoaded(link, href) {
+        return !!(
+            link
+            && (
+                (link.dataset && link.dataset.easymdeLoadedHref === href)
+                || link.sheet
+            )
+        );
+    }
+
     function appendToHead(node, documentRef) {
         if (node.parentNode) {
             return;
@@ -117,7 +133,7 @@
             return new Promise(function (resolve, reject) {
                 var link = documentRef.getElementById(id);
 
-                if (link && getAttribute(link, 'href') === href) {
+                if (link && getAttribute(link, 'href') === href && stylesheetLoaded(link, href)) {
                     resolve();
                     return;
                 }
@@ -128,8 +144,18 @@
                     link.rel = 'stylesheet';
                 }
 
-                onResourceSettled(link, resolve, reject);
-                setAttribute(link, 'href', href);
+                if (link.dataset) {
+                    delete link.dataset.easymdeLoadedHref;
+                }
+
+                onResourceSettled(link, resolve, reject, function () {
+                    markStylesheetLoaded(link, href);
+                });
+
+                if (getAttribute(link, 'href') !== href) {
+                    setAttribute(link, 'href', href);
+                }
+
                 appendToHead(link, documentRef);
             });
         });

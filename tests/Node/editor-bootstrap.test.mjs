@@ -467,3 +467,64 @@ test('updatePreview keeps the preview busy until deferred feature enhancement se
   assert.equal(preview.attr('aria-busy'), 'false');
   assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
 });
+
+test('updatePreview marks an existing preview busy before the debounce fires', () => {
+  let apiFetchCalled = false;
+  const preview = createPreviewWrapper('<p>Previous rendered preview.</p>');
+  const { hooks } = loadBootstrap({
+    wp: {
+      apiFetch() {
+        apiFetchCalled = true;
+        return Promise.resolve({
+          html: '<p>Updated preview.</p>',
+          features: {}
+        });
+      }
+    }
+  });
+
+  hooks.updatePreview(preview, 'Updated markdown');
+
+  assert.equal(preview.html(), '<p>Previous rendered preview.</p>');
+  assert.equal(preview.attr('aria-busy'), 'true');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
+  assert.equal(apiFetchCalled, false);
+});
+
+test('updatePreview keeps the preview busy until async enhancement settles', async () => {
+  const enhancement = createDeferred();
+  const preview = createPreviewWrapper();
+  let enhanced = false;
+  const { flushTimers, hooks } = loadBootstrap({
+    EasyMDEEnhancements: {
+      enhance() {
+        enhanced = true;
+        return enhancement.promise;
+      }
+    },
+    wp: {
+      apiFetch() {
+        return Promise.resolve({
+          html: '<pre><code class="language-mermaid">graph TD; A-->B;</code></pre>',
+          features: {
+            mermaid: true
+          }
+        });
+      }
+    }
+  });
+
+  hooks.updatePreview(preview, '```mermaid\ngraph TD; A-->B;\n```', { immediate: true });
+  flushTimers();
+  await flushMicrotasks();
+
+  assert.equal(enhanced, true);
+  assert.equal(preview.attr('aria-busy'), 'true');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
+
+  enhancement.resolve();
+  await flushMicrotasks();
+
+  assert.equal(preview.attr('aria-busy'), 'false');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
+});

@@ -89,9 +89,22 @@
         return name + '.' + extension;
     }
 
-    function insertAtCursor(textarea, markdown, applyTextChange) {
-        var start = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : textarea.value.length;
-        var end = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : start;
+    function selectedRange(textarea) {
+        var fallback = textarea && typeof textarea.value === 'string' ? textarea.value.length : 0;
+        var start = textarea && typeof textarea.selectionStart === 'number' ? textarea.selectionStart : fallback;
+        var end = textarea && typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : start;
+
+        return {
+            start: start,
+            end: end
+        };
+    }
+
+    function insertAtCursor(textarea, markdown, applyTextChange, range) {
+        var value = textarea.value;
+        var selection = range || selectedRange(textarea);
+        var start = Math.max(0, Math.min(selection.start, value.length));
+        var end = Math.max(start, Math.min(selection.end, value.length));
         var nextValue = textarea.value.slice(0, start) + markdown + textarea.value.slice(end);
 
         if (typeof applyTextChange === 'function') {
@@ -134,6 +147,7 @@
         var showFlash;
         var getString;
         var markdownDefaultAlt;
+        var pasteRange;
 
         options = options || {};
         config = options.config || {};
@@ -154,6 +168,7 @@
         }
 
         event.preventDefault();
+        pasteRange = selectedRange(textarea);
         showFlash(options.flash, 'info', getString('imagePasteUploading'));
 
         return uploadImage(file, {
@@ -167,7 +182,7 @@
                 throw new Error('Missing uploaded image URL.');
             }
 
-            insertAtCursor(textarea, markdown, options.applyTextChange);
+            insertAtCursor(textarea, markdown, options.applyTextChange, pasteRange);
             showFlash(options.flash, 'success', getString('imagePasteUploaded'));
             return upload;
         }).catch(function () {

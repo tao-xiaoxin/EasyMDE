@@ -85,6 +85,7 @@ function createNode(tagName) {
 function createDocumentStub(options = {}) {
   const elements = new Map();
   const failedUrls = new Set(options.failedUrls || []);
+  const autoDispatch = options.autoDispatch !== false;
   const documentRef = {
     head: {
       children: [],
@@ -98,8 +99,10 @@ function createDocumentStub(options = {}) {
 
         node.failedUrls = failedUrls;
 
-        const url = node.getAttribute('src') || node.getAttribute('href') || '';
-        node.dispatch(failedUrls.has(url) ? 'error' : 'load');
+        if (autoDispatch) {
+          const url = node.getAttribute('src') || node.getAttribute('href') || '';
+          node.dispatch(failedUrls.has(url) ? 'error' : 'load');
+        }
       },
       removeChild(node) {
         const index = this.children.indexOf(node);
@@ -251,6 +254,43 @@ test('code theme changes update the existing highlight stylesheet link', async (
 
   assert.equal(documentRef.head.children.filter((node) => node.id === 'easymde-highlight-theme-css').length, 1);
   assert.equal(link.getAttribute('href'), '/assets/vendor/highlight/styles/atom-one-dark.min.css');
+  assert.equal(link.listenerCount('load'), 0);
+  assert.equal(link.listenerCount('error'), 0);
+});
+
+test('existing highlight stylesheet links wait for their load event before resolving', async () => {
+  const documentRef = createDocumentStub({ autoDispatch: false });
+  const link = documentRef.createElement('link');
+  const { loader } = loadLoader(documentRef);
+  const loaderContext = context(documentRef);
+  let settled = false;
+
+  link.id = 'easymde-highlight-theme-css';
+  link.rel = 'stylesheet';
+  link.setAttribute('href', '/assets/vendor/highlight/styles/github.min.css');
+  documentRef.head.appendChild(link);
+  loaderContext.config.previewAssets.highlightScriptUrl = '';
+
+  const promise = loader.ensurePreviewFeatures(
+    {
+      syntaxHighlight: true
+    },
+    loaderContext
+  ).then(() => {
+    settled = true;
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(settled, false);
+  assert.equal(link.listenerCount('load'), 1);
+  assert.equal(link.listenerCount('error'), 1);
+
+  link.dispatch('load');
+  await promise;
+
+  assert.equal(settled, true);
   assert.equal(link.listenerCount('load'), 0);
   assert.equal(link.listenerCount('error'), 0);
 });

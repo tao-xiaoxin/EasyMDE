@@ -166,6 +166,43 @@ test('image paste uploads a local clipboard image and inserts Markdown', async (
   ]);
 });
 
+test('image paste preserves the paste insertion point while upload is pending', async () => {
+  let resolveUpload;
+  const { imagePaste } = loadImagePaste({
+    wp: {
+      apiFetch() {
+        return new Promise((resolve) => {
+          resolveUpload = resolve;
+        });
+      }
+    }
+  });
+  const textarea = createTextarea('Hello world');
+  textarea.selectionStart = 5;
+  textarea.selectionEnd = 5;
+  const event = imagePasteEvent({
+    name: 'cursor.png',
+    size: 256,
+    type: 'image/png'
+  });
+  const { options } = createOptions();
+  const pastePromise = imagePaste.handlePaste(event, textarea, options);
+
+  textarea.selectionStart = textarea.value.length;
+  textarea.selectionEnd = textarea.value.length;
+  textarea.value += ' after paste';
+
+  resolveUpload({
+    alt: 'cursor',
+    url: 'https://example.test/uploads/cursor.png'
+  });
+  await pastePromise;
+
+  assert.equal(textarea.value, 'Hello![cursor](https://example.test/uploads/cursor.png) world after paste');
+  assert.equal(textarea.selectionStart, 'Hello![cursor](https://example.test/uploads/cursor.png)'.length);
+  assert.equal(textarea.selectionEnd, textarea.selectionStart);
+});
+
 test('image paste ignores non-image clipboard content', () => {
   let apiFetchCalled = false;
   const { imagePaste } = loadImagePaste({

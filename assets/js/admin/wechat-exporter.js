@@ -178,6 +178,15 @@
         return success;
     }
 
+    function previewIsRefreshing(preview) {
+        if (!preview || typeof preview.getAttribute !== 'function') {
+            return false;
+        }
+
+        return preview.getAttribute('data-easymde-preview-refreshing') === '1'
+            || preview.getAttribute('aria-busy') === 'true';
+    }
+
     function copy(context, callbacks) {
         callbacks = callbacks || {};
 
@@ -195,7 +204,12 @@
             preview = preview[0];
         }
 
-        if (!preview || !preview.innerHTML.trim() || preview.querySelector('.easymde-preview-pending')) {
+        if (
+            !preview
+            || !preview.innerHTML.trim()
+            || preview.querySelector('.easymde-preview-pending')
+            || previewIsRefreshing(preview)
+        ) {
             showFlash(flash, 'error', getString('copyWechatFailed'));
             return;
         }

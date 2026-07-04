@@ -68,12 +68,26 @@ function loadAfterShellPaint(windowOverrides = {}) {
   };
 
   vm.runInNewContext(source, context);
+  assert.equal(typeof context.window.__testAfterShellPaint, 'function', 'bootstrap harness should expose afterShellPaint');
 
   return {
     afterShellPaint: context.window.__testAfterShellPaint,
     flushTimers: timers.flushTimers
   };
 }
+
+test('afterShellPaint runs when requestAnimationFrame is unavailable', () => {
+  let calls = 0;
+  const { afterShellPaint, flushTimers } = loadAfterShellPaint();
+
+  afterShellPaint(() => {
+    calls += 1;
+  });
+
+  flushTimers();
+
+  assert.equal(calls, 1);
+});
 
 test('afterShellPaint starts the initial preview when requestAnimationFrame is suspended', () => {
   let calls = 0;

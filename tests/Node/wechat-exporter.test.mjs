@@ -59,3 +59,38 @@ test('WeChat copy rejects pending preview placeholders', () => {
     }
   ]);
 });
+
+test('WeChat copy rejects stale rendered previews while refresh is pending', () => {
+  const exporter = loadExporter();
+  const flashes = [];
+  const preview = {
+    innerHTML: '<p>Previous rendered preview.</p>',
+    getAttribute(name) {
+      return name === 'data-easymde-preview-refreshing' ? '1' : null;
+    },
+    querySelector() {
+      return null;
+    }
+  };
+
+  exporter.copy(
+    {
+      preview
+    },
+    {
+      getString(key) {
+        return key;
+      },
+      showFlash(flash, type, message) {
+        flashes.push({ type, message });
+      }
+    }
+  );
+
+  assert.deepEqual(flashes, [
+    {
+      type: 'error',
+      message: 'copyWechatFailed'
+    }
+  ]);
+});

@@ -264,14 +264,88 @@ jobs:
       - name: Check third-party notices
         run: npm run notices:check
 
+      - name: Resolve release metadata
+        id: release-metadata
+        run: |
+          checkout_sha="$(git rev-parse HEAD)"
+          version="$(node --input-type=module -e "import { readReleaseVersions } from './scripts/build-release.mjs'; console.log(readReleaseVersions().pluginHeader);")"
+          case "${version}" in
+            ""|*[!0-9A-Za-z._-]*)
+              echo "Resolved plugin version is not safe for artifact filenames." >&2
+              exit 1
+              ;;
+          esac
+          {
+            echo "checkout_sha=${checkout_sha}"
+            echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build release package
         run: npm run build:release
 
-      - name: Upload release ZIP
+      - name: Build source archives
+        run: npm run build:source-archives
+
+      - name: Verify release artifacts
+        env:
+          PLUGIN_VERSION: ${{ steps.release-metadata.outputs.version }}
+        run: |
+          source_zip="dist/EasyMDE-${PLUGIN_VERSION}-source.zip"
+          source_tar_gz="dist/EasyMDE-${PLUGIN_VERSION}-source.tar.gz"
+          plugin_zip="dist/EasyMDE.zip"
+          test -f "${source_zip}"
+          test -f "${source_tar_gz}"
+          test -f "${plugin_zip}"
+          unzip -t "${source_zip}"
+          tar -tzf "${source_tar_gz}" > /dev/null
+          unzip -t "${plugin_zip}"
+
+      - name: Summarize release artifacts
+        env:
+          CHECKOUT_SHA: ${{ steps.release-metadata.outputs.checkout_sha }}
+          PLUGIN_VERSION: ${{ steps.release-metadata.outputs.version }}
+        run: |
+          source_zip="dist/EasyMDE-${PLUGIN_VERSION}-source.zip"
+          source_tar_gz="dist/EasyMDE-${PLUGIN_VERSION}-source.tar.gz"
+          plugin_zip="dist/EasyMDE.zip"
+          {
+            echo "### Release artifacts"
+            echo
+            echo "| Checkout SHA | Version | Artifact | Payload | Byte size | SHA-256 |"
+            echo "| --- | --- | --- | --- | ---: | --- |"
+            for row in \
+              "source-code-zip:${source_zip}" \
+              "source-code-tar-gz:${source_tar_gz}" \
+              "easymde-plugin-zip:${plugin_zip}"
+            do
+              artifact="${row%%:*}"
+              payload="${row#*:}"
+              filename="$(basename "${payload}")"
+              size="$(wc -c < "${payload}" | tr -d ' ')"
+              sha256="$(sha256sum "${payload}" | awk '{print $1}')"
+              echo "| ${CHECKOUT_SHA} | ${PLUGIN_VERSION} | \`${artifact}\` | \`${filename}\` | ${size} | \`${sha256}\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload source code ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: easymde-release-zip
-          path: dist/easymde.zip
+          name: source-code-zip
+          path: dist/EasyMDE-${{ steps.release-metadata.outputs.version }}-source.zip
+          if-no-files-found: error
+
+      - name: Upload source code tar.gz
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-code-tar-gz
+          path: dist/EasyMDE-${{ steps.release-metadata.outputs.version }}-source.tar.gz
+          if-no-files-found: error
+
+      - name: Upload plugin ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: easymde-plugin-zip
+          path: dist/EasyMDE.zip
           if-no-files-found: error
 
   plugin-check:
@@ -322,7 +396,7 @@ jobs:
       - name: Download release ZIP
         uses: actions/download-artifact@v4
         with:
-          name: easymde-release-zip
+          name: easymde-plugin-zip
           path: dist
 
       - name: Install release ZIP and run Plugin Check
@@ -333,7 +407,7 @@ jobs:
           EASYMDE_DB_HOST: 127.0.0.1:3306
           EASYMDE_WP_PATH: /tmp/easymde-plugin-check-wp
           EASYMDE_WP_URL: http://example.test
-        run: scripts/run-plugin-check.sh dist/easymde.zip
+        run: scripts/run-plugin-check.sh dist/EasyMDE.zip
 
   e2e:
     name: Playwright Chromium E2E
@@ -392,7 +466,7 @@ jobs:
       - name: Download release ZIP
         uses: actions/download-artifact@v4
         with:
-          name: easymde-release-zip
+          name: easymde-plugin-zip
           path: dist
 
       - name: Install release ZIP into clean WordPress
@@ -404,7 +478,7 @@ jobs:
           EASYMDE_WP_PATH: /tmp/easymde-e2e-wp
           EASYMDE_WP_URL: http://127.0.0.1:8089
           EASYMDE_WP_ADMIN_PASSWORD: password
-        run: scripts/setup-wordpress-release.sh dist/easymde.zip
+        run: scripts/setup-wordpress-release.sh dist/EasyMDE.zip
 
       - name: Start WordPress server
         run: |

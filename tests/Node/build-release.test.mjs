@@ -29,6 +29,18 @@ function writeText(root, path, content = 'fixture') {
   writeFileSync(target, content);
 }
 
+function isCaseSensitiveFilesystem(root) {
+  const probePath = join(root, 'case-sensitivity-probe');
+
+  writeFileSync(probePath, 'probe');
+
+  try {
+    return !existsSync(join(root, 'CASE-SENSITIVITY-PROBE'));
+  } finally {
+    rmSync(probePath, { force: true });
+  }
+}
+
 function createRegistryFiles(root) {
   writeText(
     root,
@@ -159,6 +171,10 @@ test('release build succeeds for a complete runtime fixture', () => {
 
   try {
     createCompleteFixture(root);
+    const legacyZipPath = join(root, 'dist/easymde.zip');
+    const canDistinguishLegacyZip = isCaseSensitiveFilesystem(root);
+
+    writeText(root, 'dist/easymde.zip', 'legacy release zip');
 
     const packageRoot = buildRelease({ root });
     const entries = zipEntries(root);
@@ -167,6 +183,15 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(existsSync(join(packageRoot, 'vendor/autoload.php')));
     assert.ok(existsSync(join(packageRoot, 'vendor/league/commonmark/runtime/Parser.php')));
     assert.ok(existsSync(releaseZipPath(root)));
+    {
+      const releaseZip = readFileSync(releaseZipPath(root));
+      assert.notEqual(releaseZip.subarray(0, 'legacy release zip'.length).toString('utf8'), 'legacy release zip');
+      assert.equal(releaseZip[0], 0x50);
+      assert.equal(releaseZip[1], 0x4b);
+      if (canDistinguishLegacyZip) {
+        assert.equal(existsSync(legacyZipPath), false, 'legacy easymde.zip should be removed');
+      }
+    }
     assert.ok(entries.includes('easymde/languages/easymde.pot'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.po'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.mo'));

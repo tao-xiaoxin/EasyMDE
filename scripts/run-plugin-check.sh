@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RELEASE_ZIP="${1:-dist/easymde.zip}"
+RELEASE_ZIP="${1:-dist/EasyMDE.zip}"
 WP_PATH="${EASYMDE_WP_PATH:-/tmp/easymde-plugin-check-wp}"
 PLUGIN_CHECK_VERSION="${EASYMDE_PLUGIN_CHECK_VERSION:-2.0.0}"
 WP_BIN="$(command -v wp)"

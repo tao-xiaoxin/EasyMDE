@@ -25,6 +25,7 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 * Compact icon toolbar for common Markdown formatting actions.
 * Heading, appearance, and output controls in compact popovers.
 * Typora-inspired keyboard shortcuts with configurable Windows/Linux and macOS bindings.
+* Optional browser spellcheck for the Markdown source editor.
 * WordPress media library insertion.
 * REST-powered server preview.
 * Browser local draft autosave and recovery.

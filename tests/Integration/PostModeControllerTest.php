@@ -3,6 +3,7 @@
 use EasyMDE\Admin\EditorScreen;
 use EasyMDE\Admin\PostModeController;
 use EasyMDE\Content\PostDocument;
+use EasyMDE\Support\Options;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
 use EasyMDE\Theme\CustomCssPolicy;
@@ -42,6 +43,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
             unregister_post_type('movie');
         }
 
+        delete_option(Options::EDITOR_SETTINGS);
         wp_set_current_user(0);
 
         parent::tear_down();
@@ -321,10 +323,48 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $output = ob_get_clean();
 
         $this->assertStringContainsString('id="easymde-editor"', $output);
+        $this->assertStringContainsString('spellcheck="false"', $output);
         $this->assertStringContainsString('Existing HTML content.', $output);
         $this->assertSame($before_content, get_post($post_id)->post_content);
         $this->assertSame($before_meta, get_post_meta($post_id));
         $this->assertSame($before_revision_count, count(wp_get_post_revisions($post_id)));
+    }
+
+    public function test_spellcheck_editor_setting_controls_source_textarea_attribute()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => 'Draft text for spellcheck.',
+            )
+        );
+
+        update_option(
+            Options::EDITOR_SETTINGS,
+            array(
+                'spellcheck_enabled' => 1,
+            )
+        );
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+
+        $post_document = new PostDocument();
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository(), new Options());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('spellcheck="true"', $output);
     }
 
     public function test_post_list_edit_link_and_direct_edit_entry_use_same_editor_rule()

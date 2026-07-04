@@ -81,7 +81,7 @@ msgstr ""
 msgid "Code theme"
 msgstr ""
 
-#: templates/admin/settings-page.php:60
+#: templates/admin/settings-page.php:82
 msgid "Command"
 msgstr ""
 
@@ -150,7 +150,7 @@ msgid "Default theme"
 msgstr ""
 
 #. translators: %s: default keyboard shortcut.
-#: templates/admin/settings-page.php:93 templates/admin/settings-page.php:107
+#: templates/admin/settings-page.php:115 templates/admin/settings-page.php:129
 #, php-format
 msgid "Default: %s"
 msgstr ""
@@ -188,11 +188,15 @@ msgstr ""
 msgid "EasyMDE renderer unavailable"
 msgstr ""
 
-#: src/Admin/EditorScreen.php:59
+#: src/Admin/EditorScreen.php:64
 msgid ""
 "EasyMDE requires Composer dependencies before Markdown can be rendered or "
 "saved. Run composer install for development or include vendor/ in release "
 "packages."
+msgstr ""
+
+#: templates/admin/settings-page.php:67
+msgid "Enable browser spellcheck in the Markdown editor"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:238
@@ -318,7 +322,7 @@ msgid "Inter (red-crimson)"
 msgstr ""
 
 #. translators: 1: toolbar command label, 2: platform label.
-#: src/Admin/SettingsPage.php:114
+#: src/Admin/SettingsPage.php:115
 #, php-format
 msgid ""
 "Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or "
@@ -353,8 +357,12 @@ msgstr ""
 msgid "Mac code frame"
 msgstr ""
 
-#: templates/admin/editor-shell.php:29
+#: templates/admin/editor-shell.php:30
 msgid "Markdown"
+msgstr ""
+
+#: templates/admin/settings-page.php:57
+msgid "Markdown editor"
 msgstr ""
 
 #: src/Rest/PreviewController.php:84
@@ -370,7 +378,7 @@ msgstr ""
 msgid "Markdown source"
 msgstr ""
 
-#: templates/admin/editor-shell.php:26
+#: templates/admin/editor-shell.php:27
 msgid "Markdown toolbar"
 msgstr ""
 
@@ -495,7 +503,7 @@ msgstr ""
 msgid "Ordered list"
 msgstr ""
 
-#: templates/admin/editor-shell.php:36
+#: templates/admin/editor-shell.php:37
 msgid "Output actions"
 msgstr ""
 
@@ -535,7 +543,7 @@ msgstr ""
 msgid "PingFangSC-regular"
 msgstr ""
 
-#: templates/admin/editor-shell.php:33
+#: templates/admin/editor-shell.php:34
 msgid "Preview"
 msgstr ""
 
@@ -596,12 +604,12 @@ msgid "Server renderer"
 msgstr ""
 
 #. translators: 1: first toolbar command label, 2: second toolbar command label, 3: shortcut, 4: platform label.
-#: src/Admin/SettingsPage.php:128
+#: src/Admin/SettingsPage.php:129
 #, php-format
 msgid "Shortcut conflict: %1$s and %2$s both use %3$s on %4$s."
 msgstr ""
 
-#: templates/admin/settings-page.php:53
+#: templates/admin/settings-page.php:75
 msgid "Shortcut settings"
 msgstr ""
 
@@ -651,7 +659,7 @@ msgstr ""
 msgid "Toolbar layout"
 msgstr ""
 
-#: templates/admin/settings-page.php:54
+#: templates/admin/settings-page.php:76
 msgid "Typora-inspired defaults are active unless overridden below."
 msgstr ""
 
@@ -667,8 +675,14 @@ msgstr ""
 msgid "Uploading pasted image..."
 msgstr ""
 
-#: templates/admin/settings-page.php:55
+#: templates/admin/settings-page.php:77
 msgid "Use the current Typora-inspired default by leaving the field blank."
+msgstr ""
+
+#: templates/admin/settings-page.php:69
+msgid ""
+"Uses the browser spellchecker only; saved Markdown and rendered HTML stay "
+"unchanged."
 msgstr ""
 
 #: src/Theme/CodeThemeRegistry.php:20
@@ -679,12 +693,16 @@ msgstr ""
 msgid "Wechat inspired"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:230 templates/admin/settings-page.php:61
+#: src/Admin/SettingsPage.php:238 templates/admin/settings-page.php:83
 msgid "Windows / Linux"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:256
 msgid "Windows font"
+msgstr ""
+
+#: templates/admin/settings-page.php:53
+msgid "Writing settings"
 msgstr ""
 
 #: src/Theme/CodeThemeRegistry.php:21
@@ -730,7 +748,7 @@ msgstr ""
 msgid "link text"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:230 templates/admin/settings-page.php:62
+#: src/Admin/SettingsPage.php:238 templates/admin/settings-page.php:84
 msgid "macOS"
 msgstr ""
 

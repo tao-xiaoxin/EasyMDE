@@ -150,6 +150,9 @@ msgstr "EasyMDE 渲染器不可用"
 msgid "EasyMDE requires Composer dependencies before Markdown can be rendered or saved. Run composer install for development or include vendor/ in release packages."
 msgstr "EasyMDE 需要 Composer 依赖才能渲染或保存 Markdown。开发环境请运行 composer install，发布包请包含 vendor/。"
 
+msgid "Enable browser spellcheck in the Markdown editor"
+msgstr "在 Markdown 编辑器中启用浏览器拼写检查"
+
 msgid "Enter immersive writing"
 msgstr "进入沉浸写作"
 
@@ -266,6 +269,9 @@ msgstr "Mac 代码框"
 
 msgid "Markdown"
 msgstr "Markdown"
+
+msgid "Markdown editor"
+msgstr "Markdown 编辑器"
 
 msgid "Markdown preview content is too large."
 msgstr "Markdown 预览内容过大。"
@@ -499,6 +505,9 @@ msgstr "正在上传粘贴的图片..."
 msgid "Use the current Typora-inspired default by leaving the field blank."
 msgstr "留空即可继续使用当前 Typora 风格默认值。"
 
+msgid "Uses the browser spellchecker only; saved Markdown and rendered HTML stay unchanged."
+msgstr "仅使用浏览器拼写检查；保存的 Markdown 和渲染后的 HTML 保持不变。"
+
 msgid "VS2015"
 msgstr "VS2015"
 
@@ -510,6 +519,9 @@ msgstr "Windows / Linux"
 
 msgid "Windows font"
 msgstr "Windows 字体"
+
+msgid "Writing settings"
+msgstr "写作设置"
 
 msgid "Xcode"
 msgstr "Xcode"

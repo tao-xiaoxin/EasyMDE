@@ -11,6 +11,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 $easymde_editor_post = $context['post'];
 $easymde_theme_state = $context['theme_state'];
+$easymde_spellcheck  = ! empty( $context['spellcheck_enabled'] ) ? 'true' : 'false';
 ?>
 <div id="easymde-editor" class="easymde-editor" data-post-id="<?php echo esc_attr( $easymde_editor_post->ID ); ?>">
 	<input type="hidden" id="easymde-enabled-field" name="easymde_enabled" value="1">
@@ -27,7 +28,7 @@ $easymde_theme_state = $context['theme_state'];
 	<div class="easymde-workspace">
 		<section class="easymde-pane easymde-pane-source">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>
-			<textarea id="easymde-source" class="easymde-source" spellcheck="false"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
+			<textarea id="easymde-source" class="easymde-source" spellcheck="<?php echo esc_attr( $easymde_spellcheck ); ?>"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
 		</section>
 		<section class="easymde-pane easymde-pane-preview">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Preview', 'easymde' ); ?></header>

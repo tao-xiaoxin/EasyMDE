@@ -70,6 +70,7 @@ function createAssetSourceFiles(root) {
       "Asset::url( 'assets/js/admin/toolbar.js' );",
       "Asset::url( 'assets/js/admin/draft-storage.js' );",
       "Asset::url( 'assets/js/admin/media-picker.js' );",
+      "Asset::url( 'assets/js/admin/image-paste.js' );",
       "Asset::url( 'assets/js/admin/wechat-exporter.js' );",
       "Asset::url( 'assets/js/admin/bootstrap.js' );"
     ].join('\n')
@@ -196,6 +197,7 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.po'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.mo'));
     assert.ok(entries.includes('easymde/assets/js/admin/media-picker.js'));
+    assert.ok(entries.includes('easymde/assets/js/admin/image-paste.js'));
     assert.ok(entries.includes('easymde/assets/js/frontend/bootstrap.js'));
     assert.ok(entries.includes('easymde/assets/vendor/mermaid/LICENSE'));
     assert.ok(entries.includes('easymde/vendor/league/commonmark/runtime/Parser.php'));
@@ -326,6 +328,7 @@ test('release build fails when required runtime assets or templates are missing'
     rmSync(join(root, 'assets/vendor/highlight/styles/github.min.css'), { force: true });
     rmSync(join(root, 'assets/vendor/mermaid/LICENSE'), { force: true });
     rmSync(join(root, 'assets/js/admin/media-picker.js'), { force: true });
+    rmSync(join(root, 'assets/js/admin/image-paste.js'), { force: true });
     rmSync(join(root, 'assets/js/frontend/bootstrap.js'), { force: true });
     rmSync(join(root, 'assets/images/tech-blue-code-window.svg'), { force: true });
     rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
@@ -338,6 +341,7 @@ test('release build fails when required runtime assets or templates are missing'
     assert.ok(missing.includes('assets/vendor/highlight/styles/github.min.css'));
     assert.ok(missing.includes('assets/vendor/mermaid/LICENSE'));
     assert.ok(missing.includes('assets/js/admin/media-picker.js'));
+    assert.ok(missing.includes('assets/js/admin/image-paste.js'));
     assert.ok(missing.includes('assets/js/frontend/bootstrap.js'));
     assert.ok(missing.includes('assets/images/tech-blue-code-window.svg'));
     assert.ok(missing.includes('THIRD-PARTY-NOTICES.md'));
@@ -350,6 +354,7 @@ test('release build fails when required runtime assets or templates are missing'
     assert.match(result.stderr, /templates/);
     assert.match(result.stderr, /assets\/vendor\/mermaid\/mermaid\.min\.js/);
     assert.match(result.stderr, /assets\/js\/admin\/media-picker\.js/);
+    assert.match(result.stderr, /assets\/js\/admin\/image-paste\.js/);
     assert.match(result.stderr, /assets\/js\/frontend\/bootstrap\.js/);
     assert.match(result.stderr, /THIRD-PARTY-NOTICES\.md/);
   } finally {

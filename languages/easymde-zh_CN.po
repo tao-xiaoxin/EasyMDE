@@ -337,6 +337,9 @@ msgstr "不会在启用插件后跳转，也不会重定向无关后台页面。
 msgid "No custom CSS saved yet."
 msgstr "尚未保存自定义 CSS。"
 
+msgid "No image file was provided for upload."
+msgstr "未提供要上传的图片文件。"
+
 msgid "No custom font"
 msgstr "无自定义字体"
 
@@ -345,6 +348,9 @@ msgstr "无 Windows 特定字体（青碧流金）"
 
 msgid "No Windows-specific font (qinghe-zhusha)"
 msgstr "无 Windows 特定字体（清河朱砂）"
+
+msgid "Only JPEG, PNG, GIF, or WebP images can be pasted into EasyMDE."
+msgstr "只能将 JPEG、PNG、GIF 或 WebP 图片粘贴到 EasyMDE。"
 
 msgid "Optima"
 msgstr "Optima"
@@ -369,6 +375,15 @@ msgstr "输出操作"
 
 msgid "Paragraph"
 msgstr "正文"
+
+msgid "Pasted image is too large for this site."
+msgstr "粘贴的图片超过了本站允许的大小。"
+
+msgid "Pasted image upload failed. Please use the media library instead."
+msgstr "粘贴图片上传失败。请改用媒体库。"
+
+msgid "Pasted image uploaded."
+msgstr "粘贴图片已上传。"
 
 msgid "PingFang SC Light"
 msgstr "苹方简体细体"
@@ -451,6 +466,18 @@ msgstr "科技蓝"
 msgid "The CSS parser dependency is unavailable. Custom CSS cannot be rendered safely."
 msgstr "CSS 解析器依赖不可用，无法安全渲染自定义 CSS。"
 
+msgid "The pasted image could not be saved to the WordPress media library."
+msgstr "无法将粘贴的图片保存到 WordPress 媒体库。"
+
+msgid "The pasted image could not be uploaded."
+msgstr "无法上传粘贴的图片。"
+
+msgid "The pasted image is larger than the allowed upload size."
+msgstr "粘贴的图片超过了允许的上传大小。"
+
+msgid "The uploaded image URL is unavailable."
+msgstr "上传后的图片 URL 不可用。"
+
 msgid "Times"
 msgstr "Times"
 
@@ -465,6 +492,9 @@ msgstr "Typora 风格快捷键"
 
 msgid "Unordered list"
 msgstr "无序列表"
+
+msgid "Uploading pasted image..."
+msgstr "正在上传粘贴的图片..."
 
 msgid "Use the current Typora-inspired default by leaving the field blank."
 msgstr "留空即可继续使用当前 Typora 风格默认值。"

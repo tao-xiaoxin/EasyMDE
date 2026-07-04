@@ -1107,7 +1107,7 @@
             ? loader.ensurePreviewFeatures(scopedConfig.features, loaderContext)
             : Promise.resolve();
 
-        loadPromise.then(function () {
+        return Promise.resolve(loadPromise).then(function () {
             if (!isPreviewCurrent(revision, signature, markdown)) {
                 return;
             }
@@ -1115,6 +1115,8 @@
             if (window.EasyMDEEnhancements) {
                 window.EasyMDEEnhancements.enhance($preview[0], scopedConfig);
             }
+        }).catch(function () {
+            // Keep editor controls usable even when an optional preview asset fails to enhance.
         });
     }
 
@@ -1316,10 +1318,13 @@
 
             if (!window.wp || !window.wp.apiFetch || !config.restUrl) {
                 activePreviewFeatures = normalizePreviewFeatures(config.features || {});
-                setPreviewReady($preview);
                 $preview.html(previewFallback(markdown));
                 finishPreviewUpdate(requestScrollState, activePreviewFeatures);
-                enhancePreview($preview, activePreviewFeatures, revision, signature, markdown);
+                enhancePreview($preview, activePreviewFeatures, revision, signature, markdown).then(function () {
+                    if (isPreviewCurrent(revision, signature, markdown)) {
+                        setPreviewReady($preview);
+                    }
+                });
                 return;
             }
 
@@ -1357,10 +1362,13 @@
                 response = response || {};
                 responseFeatures = normalizePreviewFeatures(response.features || {});
                 activePreviewFeatures = responseFeatures;
-                setPreviewReady($preview);
                 $preview.html(response.html || previewFallback(markdown));
                 finishPreviewUpdate(requestScrollState, responseFeatures);
-                enhancePreview($preview, responseFeatures, revision, signature, markdown);
+                enhancePreview($preview, responseFeatures, revision, signature, markdown).then(function () {
+                    if (isPreviewCurrent(revision, signature, markdown)) {
+                        setPreviewReady($preview);
+                    }
+                });
             }).catch(function (error) {
                 if (!isPreviewCurrent(revision, signature, markdown) || (error && error.name === 'AbortError')) {
                     return;
@@ -1781,6 +1789,17 @@
             flash: $flash
         };
 
+        if (window.EasyMDEImagePaste && window.EasyMDEImagePaste.bind) {
+            window.EasyMDEImagePaste.bind($source[0], {
+                applyTextChange: applyTextChange,
+                config: config,
+                flash: $flash,
+                getString: getString,
+                postId: $root.data('post-id') || 0,
+                showFlash: showFlash
+            });
+        }
+
         createToolbar($toolbar, context);
         $draftStatus = createDraftStatus($toolbar);
         createSideActions($sideActions, context);
@@ -1811,6 +1830,11 @@
             $root.attr('data-easymde-shell-ready', '1');
             updatePreview($preview, $source.val(), { immediate: true });
         });
+    }
+
+    if (config.testHooks && window.EasyMDETestHooks) {
+        window.EasyMDETestHooks.afterShellPaint = afterShellPaint;
+        window.EasyMDETestHooks.updatePreview = updatePreview;
     }
 
     $(initEditor);

@@ -119,13 +119,14 @@ All EasyMDE REST routes use namespace `easymde/v1`.
 Current routes:
 
 - `POST /easymde/v1/preview`
+- `POST /easymde/v1/media`
 - `GET /easymde/v1/theme-options`
 - `POST /easymde/v1/custom-css`
 - `DELETE /easymde/v1/custom-css/{id}`
 
-Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
+Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Pasted-image media uploads require `upload_files`; when a `post_id` is present they also require `current_user_can( 'edit_post', $post_id )`, and without a `post_id` they require `edit_posts`. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
 
-Preview Markdown payloads are capped at 1 MiB.
+Preview Markdown payloads are capped at 1 MiB. EasyMDE media uploads accept local JPEG, PNG, GIF, and WebP image files only; remote image-provider uploads are not part of the REST surface.
 
 ## Compatibility Facade
 

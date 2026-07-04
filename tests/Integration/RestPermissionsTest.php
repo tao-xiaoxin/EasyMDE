@@ -75,6 +75,70 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $this->assertFalse($data['features']['mermaid']);
     }
 
+    public function test_media_upload_requires_upload_capability()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'subscriber'));
+        wp_set_current_user($user_id);
+
+        $request = new WP_REST_Request('POST', '/easymde/v1/media');
+        $request->set_param('post_id', 0);
+
+        $result = (new Capabilities())->can_upload_media($request);
+
+        $this->assertWPError($result);
+        $this->assertSame(403, $result->get_error_data()['status']);
+
+        $response = rest_do_request($request);
+        $this->assertSame(403, $response->get_status());
+    }
+
+    public function test_media_upload_requires_edit_access_to_target_post()
+    {
+        $owner_id = self::factory()->user->create(array('role' => 'editor'));
+        $viewer_id = self::factory()->user->create(array('role' => 'author'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_author' => $owner_id,
+                'post_status' => 'publish',
+            )
+        );
+
+        wp_set_current_user($viewer_id);
+
+        $request = new WP_REST_Request('POST', '/easymde/v1/media');
+        $request->set_param('post_id', $post_id);
+
+        $result = (new Capabilities())->can_upload_media($request);
+
+        $this->assertWPError($result);
+        $this->assertSame(403, $result->get_error_data()['status']);
+
+        $response = rest_do_request($request);
+        $this->assertSame(403, $response->get_status());
+    }
+
+    public function test_media_upload_with_permission_reaches_file_validation()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'author'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_author' => $user_id,
+                'post_status' => 'draft',
+            )
+        );
+
+        wp_set_current_user($user_id);
+
+        $request = new WP_REST_Request('POST', '/easymde/v1/media');
+        $request->set_param('post_id', $post_id);
+
+        $this->assertTrue((new Capabilities())->can_upload_media($request));
+
+        $response = rest_do_request($request);
+        $this->assertSame(400, $response->get_status());
+        $this->assertSame('easymde_missing_media_file', $response->as_error()->get_error_code());
+    }
+
     public function test_user_without_unfiltered_html_cannot_delete_custom_css()
     {
         $user_id = self::factory()->user->create(array('role' => 'author'));

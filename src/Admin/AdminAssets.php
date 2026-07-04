@@ -136,6 +136,14 @@ final class AdminAssets {
 		);
 
 		wp_enqueue_script(
+			'easymde-image-paste',
+			Asset::url( 'assets/js/admin/image-paste.js' ),
+			array( 'wp-api-fetch' ),
+			EASYMDE_VERSION,
+			true
+		);
+
+		wp_enqueue_script(
 			'easymde-wechat-exporter',
 			Asset::url( 'assets/js/admin/wechat-exporter.js' ),
 			array(),
@@ -158,6 +166,7 @@ final class AdminAssets {
 				'easymde-toolbar',
 				'easymde-draft-storage',
 				'easymde-media-picker',
+				'easymde-image-paste',
 				'easymde-wechat-exporter',
 			),
 			EASYMDE_VERSION,
@@ -177,6 +186,8 @@ final class AdminAssets {
 				'storage'          => $this->get_storage_config( $post_id ),
 				'themeOptionsUrl'  => esc_url_raw( rest_url( 'easymde/v1/theme-options' ) ),
 				'customCssUrl'     => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
+				'imageUploadUrl'   => esc_url_raw( rest_url( 'easymde/v1/media' ) ),
+				'imageUpload'      => $this->get_image_upload_config(),
 				'themeOptions'     => $this->theme_state_repository->get_theme_options_for_script( $post_id ),
 				'commands'         => $this->toolbar_registry->get_commands_for_script(),
 				'shortcuts'        => $this->settings_page->get_shortcut_config_for_script(),
@@ -206,6 +217,13 @@ final class AdminAssets {
 			'postId'   => $post_id,
 			'draftKey' => 'easymde:draft:' . $site_key . ':' . $user_id . ':' . $post_key,
 			'themeKey' => 'easymde:theme:' . $site_key . ':' . $user_id,
+		);
+	}
+
+	private function get_image_upload_config() {
+		return array(
+			'enabled'  => current_user_can( 'upload_files' ),
+			'maxBytes' => min( 10485760, (int) wp_max_upload_size() ),
 		);
 	}
 
@@ -251,6 +269,10 @@ final class AdminAssets {
 			'copyWechatSuccess'     => __( 'Copied preview for WeChat.', 'easymde' ),
 			'copyWechatFailed'      => __( 'Copy for WeChat failed. Please try again in this browser.', 'easymde' ),
 			'copyWechatUnsupported' => __( 'Clipboard access is not available in this browser.', 'easymde' ),
+			'imagePasteUploading'   => __( 'Uploading pasted image...', 'easymde' ),
+			'imagePasteUploaded'    => __( 'Pasted image uploaded.', 'easymde' ),
+			'imagePasteFailed'      => __( 'Pasted image upload failed. Please use the media library instead.', 'easymde' ),
+			'imagePasteTooLarge'    => __( 'Pasted image is too large for this site.', 'easymde' ),
 			'mediaAltText'          => __( 'alt text', 'easymde' ),
 			'mediaDefaultAlt'       => __( 'image', 'easymde' ),
 			'linkText'              => __( 'link text', 'easymde' ),

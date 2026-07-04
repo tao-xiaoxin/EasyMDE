@@ -70,8 +70,12 @@ final class Migration {
 
 	private function html_to_markdown( $content ) {
 		$content = (string) $content;
-		if ( '' === trim( $content ) || ! preg_match( '/<\s*\/?[a-zA-Z][^>]*>/', $content ) ) {
+		if ( '' === trim( $content ) ) {
 			return $content;
+		}
+
+		if ( ! preg_match( '/<\s*\/?[a-zA-Z][^>]*>/', $content ) ) {
+			return html_entity_decode( $content, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
 		}
 
 		if ( ! class_exists( 'DOMDocument' ) ) {

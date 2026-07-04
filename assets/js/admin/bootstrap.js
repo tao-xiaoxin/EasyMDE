@@ -1716,14 +1716,31 @@
     }
 
     function afterShellPaint(callback) {
+        var fallbackTimer;
+        var called = false;
+
+        function run() {
+            if (called) {
+                return;
+            }
+
+            called = true;
+            callback();
+        }
+
         if (window.requestAnimationFrame) {
+            // Prevent the initial preview from hanging if rAF is throttled or suspended.
+            fallbackTimer = window.setTimeout(run, 120);
             window.requestAnimationFrame(function () {
-                window.setTimeout(callback, 0);
+                window.setTimeout(function () {
+                    window.clearTimeout(fallbackTimer);
+                    run();
+                }, 0);
             });
             return;
         }
 
-        window.setTimeout(callback, 0);
+        window.setTimeout(run, 0);
     }
 
     function initEditor() {

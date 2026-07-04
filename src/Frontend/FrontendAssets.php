@@ -232,6 +232,7 @@ final class FrontendAssets {
 			'codeFrameCssUrl'      => $this->versioned_asset_url( 'assets/css/frontend/code-frame.css' ),
 			'highlightScriptUrl'   => $this->versioned_asset_url( 'assets/vendor/highlight/highlight.min.js' ),
 			'mathCssUrl'           => $this->versioned_asset_url( 'assets/css/frontend/math.css' ),
+			'tocCssUrl'            => $this->versioned_asset_url( 'assets/css/frontend/toc.css' ),
 			'katexCssUrl'          => $this->versioned_asset_url( 'assets/vendor/katex/katex.min.css' ),
 			'katexScriptUrl'       => $this->versioned_asset_url( 'assets/vendor/katex/katex.min.js' ),
 			'mathRendererUrl'      => $this->versioned_asset_url( 'assets/js/frontend/math.js' ),
@@ -240,6 +241,7 @@ final class FrontendAssets {
 			'highlightThemeLinkId' => 'easymde-highlight-theme-css',
 			'codeFrameLinkId'      => 'easymde-code-frame-css',
 			'mathCssLinkId'        => 'easymde-math-css',
+			'tocCssLinkId'         => 'easymde-toc-css',
 			'katexCssLinkId'       => 'easymde-katex-css',
 		);
 	}

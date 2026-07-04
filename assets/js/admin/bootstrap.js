@@ -851,11 +851,13 @@
         codeControl.select.on('change', function () {
             renderState.codeTheme = String($(this).val() || 'atom-one-dark');
             applyRenderState($preview);
+            refreshPreview();
         });
 
         $macToggle.on('change', function () {
             renderState.codeMacStyle = !!this.checked;
             applyRenderState($preview);
+            refreshPreview();
         });
 
         $customToggle.on('click', function () {
@@ -1244,9 +1246,28 @@
         $preview.attr('aria-busy', busy ? 'true' : 'false');
     }
 
-    function setPreviewPending($preview) {
+    function previewHasRenderedContent($preview) {
+        var preview = $preview[0];
+
+        return !!(
+            preview
+            && preview.innerHTML.trim()
+            && !$preview.find('.easymde-preview-empty, .easymde-preview-pending, .easymde-preview-error').length
+        );
+    }
+
+    function setPreviewPending($preview, replaceContent) {
         setPreviewBusy($preview, true);
-        $preview.html('<p class="easymde-preview-pending" role="status">' + escapeHtml(getString('previewRendering')) + '</p>');
+        $preview.attr('data-easymde-preview-refreshing', '1');
+
+        if (replaceContent) {
+            $preview.html('<p class="easymde-preview-pending" role="status">' + escapeHtml(getString('previewRendering')) + '</p>');
+        }
+    }
+
+    function setPreviewReady($preview) {
+        setPreviewBusy($preview, false);
+        $preview.removeAttr('data-easymde-preview-refreshing');
     }
 
     function abortPreviewRequest() {
@@ -1276,7 +1297,7 @@
 
         if (!markdown.trim()) {
             activePreviewFeatures = normalizePreviewFeatures(config.features || {});
-            setPreviewBusy($preview, false);
+            setPreviewReady($preview);
             $preview.html('<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty')) + '</p>');
             finishPreviewUpdate(capturePreviewScroll(previewNode), activePreviewFeatures);
             return;
@@ -1291,11 +1312,11 @@
             }
 
             requestScrollState = capturePreviewScroll(previewNode);
-            setPreviewPending($preview);
+            setPreviewPending($preview, !previewHasRenderedContent($preview));
 
             if (!window.wp || !window.wp.apiFetch || !config.restUrl) {
                 activePreviewFeatures = normalizePreviewFeatures(config.features || {});
-                setPreviewBusy($preview, false);
+                setPreviewReady($preview);
                 $preview.html(previewFallback(markdown));
                 finishPreviewUpdate(requestScrollState, activePreviewFeatures);
                 enhancePreview($preview, activePreviewFeatures, revision, signature, markdown);
@@ -1336,7 +1357,7 @@
                 response = response || {};
                 responseFeatures = normalizePreviewFeatures(response.features || {});
                 activePreviewFeatures = responseFeatures;
-                setPreviewBusy($preview, false);
+                setPreviewReady($preview);
                 $preview.html(response.html || previewFallback(markdown));
                 finishPreviewUpdate(requestScrollState, responseFeatures);
                 enhancePreview($preview, responseFeatures, revision, signature, markdown);
@@ -1346,7 +1367,7 @@
                 }
 
                 activePreviewFeatures = normalizePreviewFeatures(config.features || {});
-                setPreviewBusy($preview, false);
+                setPreviewReady($preview);
                 $preview.html('<p class="easymde-preview-error">' + escapeHtml(getString('previewError')) + '</p>');
                 finishPreviewUpdate(requestScrollState, activePreviewFeatures);
             });

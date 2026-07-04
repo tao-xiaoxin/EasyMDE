@@ -59,10 +59,41 @@
     function on(node, eventName, handler) {
         if (node && typeof node.addEventListener === 'function') {
             node.addEventListener(eventName, handler, false);
-            return;
+            return function () {
+                if (typeof node.removeEventListener === 'function') {
+                    node.removeEventListener(eventName, handler, false);
+                }
+            };
         }
 
         node['on' + eventName] = handler;
+        return function () {
+            if (node['on' + eventName] === handler) {
+                node['on' + eventName] = null;
+            }
+        };
+    }
+
+    function onResourceSettled(node, resolve, reject, onLoad) {
+        var removeLoad = function () {};
+        var removeError = function () {};
+
+        removeLoad = on(node, 'load', function () {
+            removeLoad();
+            removeError();
+
+            if (onLoad) {
+                onLoad();
+            }
+
+            resolve();
+        });
+
+        removeError = on(node, 'error', function (error) {
+            removeLoad();
+            removeError();
+            reject(error);
+        });
     }
 
     function appendToHead(node, documentRef) {
@@ -97,8 +128,7 @@
                     link.rel = 'stylesheet';
                 }
 
-                on(link, 'load', resolve);
-                on(link, 'error', reject);
+                onResourceSettled(link, resolve, reject);
                 setAttribute(link, 'href', href);
                 appendToHead(link, documentRef);
             });
@@ -129,13 +159,11 @@
                     script.async = false;
                 }
 
-                on(script, 'load', function () {
+                onResourceSettled(script, resolve, reject, function () {
                     if (script.dataset) {
                         script.dataset.easymdeLoaded = '1';
                     }
-                    resolve();
                 });
-                on(script, 'error', reject);
                 setAttribute(script, 'src', src);
                 appendToHead(script, documentRef);
             });
@@ -279,6 +307,10 @@
 
         if (normalized.math) {
             tasks.push(loadPreviewFeature('math', context));
+        }
+
+        if (normalized.toc) {
+            tasks.push(loadStylesheet(assets.tocCssLinkId || 'easymde-toc-css', assets.tocCssUrl, documentRef));
         }
 
         if (normalized.mermaid) {

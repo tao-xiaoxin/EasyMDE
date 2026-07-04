@@ -11,6 +11,14 @@ function createNode(tagName) {
   const attributes = new Map();
   const listeners = new Map();
 
+  function listenerSet(name) {
+    if (!listeners.has(name)) {
+      listeners.set(name, new Set());
+    }
+
+    return listeners.get(name);
+  }
+
   return {
     tagName: String(tagName).toUpperCase(),
     id: '',
@@ -31,6 +39,8 @@ function createNode(tagName) {
       return attributes.has(name) ? attributes.get(name) : null;
     },
     setAttribute(name, value) {
+      const previous = this.getAttribute(name);
+
       if (name === 'id') {
         this.id = String(value);
         return;
@@ -44,18 +54,29 @@ function createNode(tagName) {
       value = String(value);
       attributes.set(name, value);
 
-      if ((name === 'src' || name === 'href') && this.parentNode) {
+      if ((name === 'src' || name === 'href') && this.parentNode && previous !== value) {
         this.dispatch(this.failedUrls.has(value) ? 'error' : 'load');
       }
     },
     addEventListener(name, handler) {
-      listeners.set(name, handler);
+      listenerSet(name).add(handler);
+    },
+    removeEventListener(name, handler) {
+      listenerSet(name).delete(handler);
+    },
+    listenerCount(name) {
+      return listenerSet(name).size;
     },
     dispatch(name) {
-      const handler = listeners.get(name) || this[`on${name}`];
+      const handlers = Array.from(listenerSet(name));
+      const propertyHandler = this[`on${name}`];
 
-      if (handler) {
+      handlers.forEach((handler) => {
         handler({ type: name, target: this });
+      });
+
+      if (propertyHandler) {
+        propertyHandler({ type: name, target: this });
       }
     }
   };
@@ -137,11 +158,13 @@ function context(documentRef, overrides = {}) {
         katexCssUrl: '/assets/vendor/katex/katex.min.css',
         katexScriptUrl: '/assets/vendor/katex/katex.min.js',
         mathRendererUrl: '/assets/js/frontend/math.js',
+        tocCssUrl: '/assets/css/frontend/toc.css',
         mermaidScriptUrl: '/assets/vendor/mermaid/mermaid.min.js',
         mermaidRendererUrl: '/assets/js/frontend/mermaid.js',
         highlightThemeLinkId: 'easymde-highlight-theme-css',
         codeFrameLinkId: 'easymde-code-frame-css',
         mathCssLinkId: 'easymde-math-css',
+        tocCssLinkId: 'easymde-toc-css',
         katexCssLinkId: 'easymde-katex-css'
       },
       themeOptions: {
@@ -228,6 +251,24 @@ test('code theme changes update the existing highlight stylesheet link', async (
 
   assert.equal(documentRef.head.children.filter((node) => node.id === 'easymde-highlight-theme-css').length, 1);
   assert.equal(link.getAttribute('href'), '/assets/vendor/highlight/styles/atom-one-dark.min.css');
+  assert.equal(link.listenerCount('load'), 0);
+  assert.equal(link.listenerCount('error'), 0);
+});
+
+test('TOC features load the preview TOC stylesheet without optional runtimes', async () => {
+  const { loader, documentRef } = loadLoader();
+
+  await loader.ensurePreviewFeatures(
+    {
+      toc: true
+    },
+    context(documentRef)
+  );
+
+  assert.deepEqual(ids(documentRef), [
+    'easymde-toc-css'
+  ]);
+  assert.equal(documentRef.getElementById('easymde-toc-css').getAttribute('href'), '/assets/css/frontend/toc.css');
 });
 
 test('math and Mermaid features load only their local dependency chain', async () => {

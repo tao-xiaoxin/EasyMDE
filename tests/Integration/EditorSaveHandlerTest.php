@@ -92,6 +92,79 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_existing_ordinary_post_save_establishes_markdown_state_and_rendered_content()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '<p>Existing HTML before EasyMDE.</p>',
+            )
+        );
+
+        $this->assertFalse(metadata_exists('post', $post_id, PostDocument::META_ENABLED));
+        $this->assertFalse(metadata_exists('post', $post_id, PostDocument::META_MARKDOWN));
+
+        wp_set_current_user($user_id);
+
+        $markdown = "# Existing Ordinary\n\nSaved through **EasyMDE**.";
+        $previous_post = $_POST;
+        $_POST = array(
+            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+            'easymde_enabled' => '1',
+            'easymde_markdown' => $markdown,
+            'easymde_markdown_theme' => 'default',
+            'easymde_code_theme' => 'github',
+            'easymde_code_mac_style' => '0',
+        );
+
+        try {
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $this->theme_state_repository(),
+                function () {
+                    return true;
+                }
+            );
+
+            $rendered = $handler->render_markdown_post_content(
+                array(
+                    'post_type' => 'post',
+                    'post_content' => '<p>Existing HTML before EasyMDE.</p>',
+                ),
+                array(
+                    'ID' => $post_id,
+                    'post_type' => 'post',
+                )
+            );
+
+            $this->assertStringContainsString('Existing Ordinary', $rendered['post_content']);
+            $this->assertStringContainsString('<strong>EasyMDE</strong>', $rendered['post_content']);
+
+            $save_post = $_POST;
+            $_POST = array();
+            wp_update_post(
+                array(
+                    'ID' => $post_id,
+                    'post_content' => $rendered['post_content'],
+                )
+            );
+            $_POST = $save_post;
+
+            $handler->save_post_meta($post_id, get_post($post_id), true);
+
+            $this->assertSame('1', get_post_meta($post_id, PostDocument::META_ENABLED, true));
+            $this->assertSame($markdown, get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+            $this->assertSame('default', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
+            $this->assertSame('github', get_post_meta($post_id, PostDocument::META_CODE_THEME, true));
+            $this->assertSame('0', get_post_meta($post_id, PostDocument::META_CODE_MAC_STYLE, true));
+            $this->assertSame($rendered['post_content'], get_post($post_id)->post_content);
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
     public function test_missing_renderer_aborts_save_before_content_changes()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));

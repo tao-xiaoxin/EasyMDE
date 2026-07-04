@@ -29,13 +29,13 @@ Admin HTML is prepared by PHP services and rendered by templates under `template
 
 ## Editor Mode
 
-EasyMDE mode is scoped to supported post types, `post` and `page` by default. The supported post type list can be filtered with `easymde_supported_post_types`.
+EasyMDE editor mode is scoped to supported post types, `post` and `page` by default. The supported post type list can be filtered with `easymde_supported_post_types`.
 
-New built-in posts and pages open in EasyMDE by default. This default-new-content behavior is limited to the built-in `post` and `page` types and does not automatically extend to custom post types added through `easymde_supported_post_types`.
+`PostModeController` owns the editor-admission rule for admin editing: new and existing posts for supported post types use EasyMDE when the current user can create or edit that post. The `use_block_editor_for_post` filter, editor template rendering, and admin asset loading all call that same rule.
 
-For existing content, the block editor is disabled only when the post is recognized as an EasyMDE post.
+Editor admission does not depend on `_easymde_enabled`, `_easymde_markdown`, or other EasyMDE metadata. Unsupported post types keep the normal WordPress editor unless a site explicitly adds them through `easymde_supported_post_types`.
 
-Existing posts without EasyMDE metadata keep the normal WordPress editor.
+Opening an ordinary existing supported post imports the current `post_content` into Markdown in memory for the editor. It does not write metadata, rewrite content, create revisions, or migrate the post on open.
 
 ## Data Model
 
@@ -57,7 +57,7 @@ _easymde_apple_font
 _easymde_serif_font
 ```
 
-Legacy detection uses `metadata_exists( 'post', $post_id, '_easymde_markdown' )` so empty Markdown drafts are still recognized. Legacy posts are lazily marked with `_easymde_enabled = 1` during the next valid EasyMDE save.
+Legacy detection uses `metadata_exists( 'post', $post_id, '_easymde_markdown' )` so empty Markdown drafts are still recognized as EasyMDE document state. Legacy posts and ordinary supported posts are lazily marked with `_easymde_enabled = 1` during the next valid EasyMDE save.
 
 ## Rendering
 

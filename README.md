@@ -27,7 +27,7 @@
   </a>
 </p>
 
-EasyMDE is a standalone WordPress Markdown editor plugin. When the plugin is active, new WordPress posts and pages open in EasyMDE by default, while existing ordinary Gutenberg content continues to use Gutenberg when edited.
+EasyMDE is a standalone WordPress Markdown editor plugin. When the plugin is active, new and existing WordPress posts and pages open in EasyMDE through the normal WordPress editor entry points. Opening an ordinary existing post does not convert or write anything until the author saves from EasyMDE.
 
 EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_content` for WordPress compatibility, uses WordPress media/revisions/permissions/publishing flows, and ships local runtime assets instead of requiring Jetpack, Classic Editor, another Markdown plugin, or CDN-hosted editor/rendering libraries.
 
@@ -41,10 +41,8 @@ EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_con
 
 1. Download an EasyMDE release ZIP from [GitHub Releases](https://github.com/tao-xiaoxin/EasyMDE/releases), or place the plugin folder at `wp-content/plugins/easymde`.
 2. In WordPress, go to **Plugins > Add New > Upload Plugin** for the ZIP, or activate the copied plugin from **Plugins**.
-3. Create Markdown content from **Posts > Add New** or **Pages > Add New**.
-4. Existing EasyMDE posts with stored Markdown metadata reopen in the EasyMDE editor.
-
-Existing posts and pages without EasyMDE metadata keep the normal Gutenberg editor when edited.
+3. Open or create content from the normal WordPress **Posts** and **Pages** screens.
+4. Supported posts and pages open in EasyMDE. Existing EasyMDE posts keep using stored Markdown metadata, while ordinary posts use an in-memory Markdown import of current `post_content` until first save.
 
 ## Features
 
@@ -73,8 +71,8 @@ Existing posts and pages without EasyMDE metadata keep the normal Gutenberg edit
 
 **WordPress integration**
 
-- EasyMDE editor mode for new built-in posts and pages.
-- Metadata-based editor mode for existing posts and pages.
+- EasyMDE editor mode for new and existing supported post types.
+- Metadata-based document state for Markdown source, rendering settings, and compatibility output.
 - Rendered HTML saved to `post_content` for themes, feeds, search, and plugin compatibility.
 - EasyMDE Markdown and appearance metadata included in WordPress revisions.
 - Frontend pages load only the selected theme and the feature assets required by the current post.

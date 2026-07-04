@@ -12,7 +12,7 @@ A standalone WordPress Markdown editor with split-pane live preview, local rende
 
 == Description ==
 
-EasyMDE opens new WordPress posts and pages in a Markdown editing surface by default. Existing ordinary posts and pages that have never used EasyMDE continue to use Gutenberg when edited.
+EasyMDE opens new and existing supported WordPress posts and pages in a Markdown editing surface through the normal editor entry points. Existing ordinary content is not converted or written on open; EasyMDE state is established on the next legitimate save.
 
 Write Markdown on the left and review a live preview on the right. EasyMDE provides commonly used writing tools, media insertion, local rendering support, article themes, code highlighting, and rich-text export for the WeChat Official Accounts editor.
 
@@ -95,10 +95,8 @@ If rich-text clipboard access is unavailable, EasyMDE uses available fallback me
 
 1. Upload the EasyMDE plugin folder to the `/wp-content/plugins/` directory, or install the plugin ZIP from **Plugins > Add New > Upload Plugin**.
 2. Activate EasyMDE from the **Plugins** screen in WordPress.
-3. Create Markdown content from **Posts > Add New** or **Pages > Add New**.
-4. Edit legacy EasyMDE Markdown posts normally; they reopen in EasyMDE when their stored Markdown metadata exists.
-
-Existing posts and pages without EasyMDE metadata keep the normal WordPress editor when edited.
+3. Open or create content from the normal **Posts** and **Pages** screens.
+4. Supported posts and pages open in EasyMDE. Legacy EasyMDE Markdown posts read stored Markdown metadata, while ordinary existing posts use an in-memory Markdown import of current post content until first save.
 
 == Frequently Asked Questions ==
 
@@ -108,7 +106,7 @@ No. EasyMDE is a standalone WordPress plugin and does not require Jetpack, Class
 
 = Does EasyMDE replace Gutenberg for every post? =
 
-No. New posts and pages open in EasyMDE by default, but existing ordinary Gutenberg posts are not converted automatically. Existing posts and pages without EasyMDE metadata continue to use Gutenberg when edited.
+No. EasyMDE opens post types explicitly supported by the plugin, `post` and `page` by default. Unsupported post types keep their normal WordPress editor. Existing ordinary supported posts are not converted automatically on open; the first valid EasyMDE save stores Markdown state and rendered compatibility HTML.
 
 = Does EasyMDE use external CDN assets? =
 

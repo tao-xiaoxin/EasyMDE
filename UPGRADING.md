@@ -12,11 +12,11 @@ Appearance and rendering state are stored in EasyMDE post meta, including articl
 
 ## Editor Enablement
 
-EasyMDE does not bulk-migrate every post during upgrades. Existing posts without `_easymde_enabled` but with `_easymde_markdown` are treated as legacy EasyMDE posts by checking metadata existence. Empty Markdown still counts because detection uses `metadata_exists()`.
+EasyMDE does not bulk-migrate every post during upgrades. New and existing posts for post types supported by `easymde_supported_post_types` open in EasyMDE through normal WordPress editing when the current user can edit them.
 
-Legacy posts are lazily marked with `_easymde_enabled = 1` only during the next legitimate EasyMDE save.
+EasyMDE metadata now describes document state, not editor admission. Existing posts without `_easymde_enabled` but with `_easymde_markdown` are treated as legacy EasyMDE document-state posts by checking metadata existence. Empty Markdown still counts because detection uses `metadata_exists()`.
 
-New built-in posts and pages open in EasyMDE by default. Ordinary existing posts without EasyMDE metadata should continue to use the normal WordPress editor when edited.
+Opening an ordinary existing supported post imports current `post_content` into Markdown in memory for the editor. It does not write metadata, rewrite `post_content`, or create revisions. Legacy posts and ordinary supported posts are lazily marked with `_easymde_enabled = 1` only during the next legitimate EasyMDE save.
 
 ## Before Upgrading
 
@@ -34,7 +34,8 @@ Verify representative content before broad author use:
 - Check posts using custom CSS snapshots after editing or deleting saved custom CSS library entries.
 - Confirm extensions using `EasyMDE_Plugin::register_toolbar_button()` or `EasyMDE_Plugin::register_shortcode_helper()` still appear in the editor configuration.
 - Create a new post and a new page through the default WordPress flow, and confirm EasyMDE opens for both.
-- Open an existing ordinary post without EasyMDE metadata and confirm Gutenberg still opens.
+- Open an existing ordinary supported post without EasyMDE metadata and confirm EasyMDE imports current content into Markdown without changing post content, metadata, or revisions before save.
+- Save that ordinary post from EasyMDE and confirm `_easymde_enabled`, `_easymde_markdown`, and rendered `post_content` are consistent.
 
 ## Downgrades And Rollbacks
 

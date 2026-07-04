@@ -22,11 +22,7 @@ final class PostModeController {
 	}
 
 	public function maybe_disable_block_editor( $use_block_editor, $post ) {
-		if ( ! $post || ! $this->post_document->is_supported_post_type( $post->post_type ) ) {
-			return $use_block_editor;
-		}
-
-		if ( $this->is_new_easymde_request( $post->post_type ) || $this->post_document->is_easymde_post( $post->ID ) ) {
+		if ( $this->should_use_easymde_editor_for_post( $post ) ) {
 			return false;
 		}
 
@@ -68,15 +64,42 @@ final class PostModeController {
 	}
 
 	public function should_load_editor( $post_id, $post_type ) {
-		if ( ! $this->post_document->is_supported_post_type( $post_type ) ) {
+		return $this->is_easymde_editable_post( $post_id, $post_type );
+	}
+
+	public function should_use_easymde_editor_for_post( $post ) {
+		if ( ! $post ) {
 			return false;
 		}
 
-		if ( $this->is_new_easymde_request( $post_type ) ) {
-			return true;
+		$post_id   = isset( $post->ID ) ? absint( $post->ID ) : 0;
+		$post_type = isset( $post->post_type ) ? $post->post_type : '';
+
+		return $this->is_easymde_editable_post( $post_id, $post_type );
+	}
+
+	public function is_easymde_editable_post( $post_id, $post_type ) {
+		$post_id = absint( $post_id );
+
+		if ( $post_id > 0 ) {
+			$post = get_post( $post_id );
+			if ( ! $post ) {
+				return false;
+			}
+
+			$post_type = $post->post_type;
 		}
 
-		return $post_id > 0 && $this->post_document->is_easymde_post( $post_id );
+		$post_type = sanitize_key( (string) $post_type );
+		if ( '' === $post_type || ! $this->post_document->is_supported_post_type( $post_type ) ) {
+			return false;
+		}
+
+		if ( $post_id > 0 ) {
+			return current_user_can( 'edit_post', $post_id );
+		}
+
+		return $this->is_new_easymde_request( $post_type );
 	}
 
 	public function is_new_easymde_request( $post_type ) {
@@ -86,7 +109,7 @@ final class PostModeController {
 		}
 
 		$post_type = sanitize_key( (string) $post_type );
-		if ( ! $this->post_document->is_default_new_post_type( $post_type ) ) {
+		if ( ! $this->post_document->is_supported_post_type( $post_type ) ) {
 			return false;
 		}
 

@@ -113,6 +113,23 @@ function revisionIdsForPost(postId) {
   return ids ? ids.split(/\s+/).filter(Boolean) : [];
 }
 
+function postContent(postId) {
+  return runWp(['post', 'get', String(postId), '--field=content']);
+}
+
+function easymdeMetaSnapshot(postId) {
+  const output = runWp(['post', 'meta', 'list', String(postId), '--format=json']);
+  const rows = output ? JSON.parse(output) : [];
+
+  return rows
+    .filter((row) => row.meta_key.startsWith('_easymde_'))
+    .map((row) => ({
+      key: row.meta_key,
+      value: row.meta_value
+    }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+}
+
 function normalizeMarkdown(markdown) {
   return markdown.replace(/\r\n/g, '\n');
 }
@@ -151,10 +168,13 @@ test.describe('EasyMDE editor workflows', () => {
     }
   });
 
-  test('creates, saves, reopens, renders, and keeps existing ordinary posts in Gutenberg', async ({ page }, testInfo) => {
+  test('creates, saves, reopens, renders, and opens existing ordinary posts in EasyMDE', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = `EasyMDE E2E ${testSlug(testInfo)}`;
-    const ordinaryTitle = `Ordinary Gutenberg ${testSlug(testInfo)}`;
+    const ordinaryTitle = `Ordinary Existing ${testSlug(testInfo)}`;
+    const ordinaryInitialContent = '<p>Ordinary <strong>existing</strong> HTML content.</p>';
+    const ordinaryInitialMarkdown = 'Ordinary **existing** HTML content.';
+    const ordinaryMarkdown = `# ${ordinaryTitle}\n\nConverted on **save**, not on open.`;
     const markdown = `# ${title}\n\nA **bold** paragraph.\n\n| Name | Value |\n| --- | --- |\n| One | Two |`;
 
     await login(page, user);
@@ -180,14 +200,27 @@ test.describe('EasyMDE editor workflows', () => {
       'create',
       `--post_author=${user.id}`,
       `--post_title=${ordinaryTitle}`,
-      '--post_content=Ordinary block editor content.',
+      `--post_content=${ordinaryInitialContent}`,
       '--post_status=draft',
       '--porcelain'
     ]);
+    const ordinaryBeforeContent = postContent(ordinaryPostId);
+    const ordinaryBeforeMeta = easymdeMetaSnapshot(ordinaryPostId);
+    const ordinaryBeforeRevisions = revisionIdsForPost(ordinaryPostId);
 
     await page.goto(`/wp-admin/post.php?post=${ordinaryPostId}&action=edit`);
-    await expect(page.locator('body.block-editor-page, .edit-post-layout, .block-editor-writing-flow').first()).toBeVisible();
-    await expect(page.locator('#easymde-editor')).toHaveCount(0);
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    await expect(page.locator('#easymde-source')).toHaveValue(ordinaryInitialMarkdown);
+    expect(postContent(ordinaryPostId)).toBe(ordinaryBeforeContent);
+    expect(easymdeMetaSnapshot(ordinaryPostId)).toEqual(ordinaryBeforeMeta);
+    expect(revisionIdsForPost(ordinaryPostId)).toEqual(ordinaryBeforeRevisions);
+
+    await fillMarkdownAndWaitForPreview(page, ordinaryMarkdown, 'Converted on save');
+    await publishOrUpdate(page);
+
+    expect(runWp(['post', 'meta', 'get', ordinaryPostId, '_easymde_enabled'])).toBe('1');
+    expect(normalizeMarkdown(runWp(['post', 'meta', 'get', ordinaryPostId, '_easymde_markdown']))).toBe(ordinaryMarkdown);
+    expect(postContent(ordinaryPostId)).toContain('<strong>save</strong>');
   });
 
   test('restores an older revision with matching Markdown, settings, and HTML', async ({ page }, testInfo) => {

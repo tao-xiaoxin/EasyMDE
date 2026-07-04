@@ -1,17 +1,16 @@
 # User Guide
 
-EasyMDE is a Markdown editor for WordPress posts and pages. New posts and pages use EasyMDE by default, while existing ordinary Gutenberg content is not converted automatically.
+EasyMDE is a Markdown editor for WordPress posts and pages. New and existing supported posts and pages use EasyMDE through the normal WordPress editor entry points, while existing ordinary content is not converted or written until the author saves from EasyMDE.
 
-## Create EasyMDE Posts And Pages
+## Open EasyMDE Posts And Pages
 
-Use the normal WordPress new-content entries:
+Use the normal WordPress content entries:
 
 - **Posts > Add New**
 - **Pages > Add New**
+- The **Edit** link for an existing post or page
 
-Those entries open the WordPress post editor screen with EasyMDE enabled for the new post or page. Existing posts that are already marked with `_easymde_enabled = 1`, or legacy posts that already have `_easymde_markdown` metadata, reopen in EasyMDE automatically.
-
-Existing ordinary posts and pages without EasyMDE metadata keep the normal Gutenberg editor when edited.
+Those entries open the WordPress post editor screen with EasyMDE for supported post types. Existing posts that are already marked with `_easymde_enabled = 1`, or legacy posts that already have `_easymde_markdown` metadata, load stored Markdown. Existing ordinary posts without EasyMDE metadata import current `post_content` into Markdown in memory for the editor.
 
 ## Split Editor And Preview
 
@@ -19,7 +18,7 @@ The EasyMDE editor shows Markdown source on the left and a live preview on the r
 
 The preview normally uses the EasyMDE REST preview endpoint, which renders through the same server-side Markdown renderer used for saves. If the browser cannot use the REST preview path, the editor shows an escaped fallback preview instead of silently inserting unsafe HTML.
 
-Saving and publishing still use WordPress. EasyMDE mirrors the Markdown source into hidden post fields and, during a valid WordPress save, stores Markdown in `_easymde_markdown` and writes rendered compatibility HTML to `post_content`.
+Saving and publishing still use WordPress. EasyMDE mirrors the Markdown source into hidden post fields and, during a valid WordPress save, stores Markdown in `_easymde_markdown`, marks the post with `_easymde_enabled = 1`, and writes rendered compatibility HTML to `post_content`. Opening an ordinary existing post without saving does not create EasyMDE metadata, rewrite content, or create a revision.
 
 ## Toolbar And Shortcuts
 

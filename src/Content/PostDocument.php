@@ -21,7 +21,6 @@ final class PostDocument {
 	const META_WINDOWS_FONT        = '_easymde_windows_font';
 	const META_APPLE_FONT          = '_easymde_apple_font';
 	const META_SERIF_FONT          = '_easymde_serif_font';
-	const DEFAULT_NEW_POST_TYPES   = array( 'post', 'page' );
 
 	private $migration;
 
@@ -33,12 +32,6 @@ final class PostDocument {
 		$supported = apply_filters( 'easymde_supported_post_types', array( 'post', 'page' ) );
 
 		return in_array( $post_type, $supported, true );
-	}
-
-	public function is_default_new_post_type( $post_type ) {
-		// This intentionally ignores easymde_supported_post_types: default new-item
-		// takeover is limited to WordPress' built-in post and page types.
-		return in_array( $post_type, self::DEFAULT_NEW_POST_TYPES, true );
 	}
 
 	public function is_easymde_post( $post_id ) {

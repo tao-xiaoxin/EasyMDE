@@ -301,11 +301,11 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertSame('<p>Revision HTML</p>', get_post($post_id)->post_content);
     }
 
-    public function test_sync_latest_revision_meta_after_save_uses_current_parent_meta()
+    public function test_sync_after_save_without_current_revision_does_not_overwrite_existing_revision()
     {
         $post_id = self::factory()->post->create(array('post_type' => 'post'));
         update_post_meta($post_id, PostDocument::META_ENABLED, '1');
-        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Old');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Current parent');
 
         $revision_id = wp_insert_post(
             array(
@@ -315,51 +315,56 @@ final class RevisionManagerTest extends WP_UnitTestCase
                 'post_title' => 'Revision',
             )
         );
+        update_metadata('post', $revision_id, PostDocument::META_ENABLED, '1');
+        update_metadata('post', $revision_id, PostDocument::META_MARKDOWN, '# Historical revision');
 
         $manager = new RevisionManager(new PostDocument(), $this->theme_state_repository());
-        $manager->save_revision_meta($revision_id);
-
-        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# New');
         $manager->sync_latest_revision_meta_after_save($post_id, get_post($post_id), true);
 
-        $this->assertSame('# New', get_post_meta($revision_id, PostDocument::META_MARKDOWN, true));
+        $this->assertSame('# Historical revision', get_post_meta($revision_id, PostDocument::META_MARKDOWN, true));
     }
 
-    public function test_sync_latest_revision_meta_after_save_uses_newest_revision_id()
+    public function test_meta_only_save_creates_new_revision_without_overwriting_existing_revision()
     {
-        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_content' => '<p>Rendered body</p>',
+            )
+        );
         update_post_meta($post_id, PostDocument::META_ENABLED, '1');
-        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Current parent');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Before');
 
-        $older_revision_id = wp_insert_post(
+        $revision_id = wp_insert_post(
             array(
                 'post_parent' => $post_id,
                 'post_type' => 'revision',
                 'post_status' => 'inherit',
-                'post_title' => 'Older revision',
-                'post_date' => '2026-01-01 00:00:02',
-                'post_date_gmt' => '2026-01-01 00:00:02',
+                'post_title' => 'Historical revision',
+                'post_content' => '<p>Rendered body</p>',
             )
         );
-        update_metadata('post', $older_revision_id, PostDocument::META_MARKDOWN, '# Older revision meta');
-
-        $newer_revision_id = wp_insert_post(
-            array(
-                'post_parent' => $post_id,
-                'post_type' => 'revision',
-                'post_status' => 'inherit',
-                'post_title' => 'Newest revision',
-                'post_date' => '2026-01-01 00:00:01',
-                'post_date_gmt' => '2026-01-01 00:00:01',
-            )
-        );
-        update_metadata('post', $newer_revision_id, PostDocument::META_MARKDOWN, '# Newer revision meta');
+        update_metadata('post', $revision_id, PostDocument::META_ENABLED, '1');
+        update_metadata('post', $revision_id, PostDocument::META_MARKDOWN, '# Before');
 
         $manager = new RevisionManager(new PostDocument(), $this->theme_state_repository());
+        $manager->capture_revision_meta_before_save($post_id, get_post($post_id), true);
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# After');
         $manager->sync_latest_revision_meta_after_save($post_id, get_post($post_id), true);
 
-        $this->assertSame('# Older revision meta', get_post_meta($older_revision_id, PostDocument::META_MARKDOWN, true));
-        $this->assertSame('# Current parent', get_post_meta($newer_revision_id, PostDocument::META_MARKDOWN, true));
+        $revisions = wp_get_post_revisions(
+            $post_id,
+            array(
+                'fields' => 'ids',
+                'orderby' => 'ID',
+                'order' => 'DESC',
+            )
+        );
+        $new_revision_id = reset($revisions);
+
+        $this->assertNotSame($revision_id, $new_revision_id);
+        $this->assertSame('# Before', get_post_meta($revision_id, PostDocument::META_MARKDOWN, true));
+        $this->assertSame('# After', get_post_meta($new_revision_id, PostDocument::META_MARKDOWN, true));
     }
 
     public function test_save_revision_meta_copies_all_easymde_revision_fields()

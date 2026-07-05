@@ -1107,7 +1107,7 @@
         }
     }
 
-    function hasLocalDraft(storage) {
+    function hasLocalDraft(storage, getCurrentMarkdown) {
         var draft;
 
         if (
@@ -1117,8 +1117,11 @@
             return false;
         }
 
-        if (typeof window.EasyMDEDraftStorage.exists === 'function') {
-            return window.EasyMDEDraftStorage.exists(storage);
+        if (
+            typeof window.EasyMDEDraftStorage.exists === 'function'
+            && !window.EasyMDEDraftStorage.exists(storage)
+        ) {
+            return false;
         }
 
         if (typeof window.EasyMDEDraftStorage.read !== 'function') {
@@ -1131,6 +1134,7 @@
             draft
             && Object.prototype.hasOwnProperty.call(draft, 'content')
             && typeof draft.content === 'string'
+            && draft.content !== getCurrentMarkdown()
         );
     }
 
@@ -2398,9 +2402,11 @@
             window.EasyMDEEnhancements.initTheme($root[0], config);
         }
 
-        if ($preview.attr('data-easymde-initial-preview') === '1' && hasLocalDraft(storage)) {
-            setPreviewPending($preview, true);
-        } else {
+	        if ($preview.attr('data-easymde-initial-preview') === '1' && hasLocalDraft(storage, function () {
+	            return $source[0].value;
+	        })) {
+	            setPreviewPending($preview, true);
+	        } else {
             initialPreviewHydrated = hydrateInitialPreview($preview, '', {
                 deferEnhancement: function (callback) {
                     initialPreviewEnhancement = callback;

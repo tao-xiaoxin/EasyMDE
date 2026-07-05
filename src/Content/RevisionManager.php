@@ -271,13 +271,15 @@ final class RevisionManager {
 	}
 
 	private function restore_post_content( $post_id, $revision_id ) {
-		$content = null;
+		$content                = null;
+		$rendered_from_markdown = false;
 
 		if ( $this->is_renderer_available() ) {
 			try {
 				$theme_state = $this->theme_state_repository->get_theme_state( $post_id );
 				$markdown    = (string) get_post_meta( $post_id, PostDocument::META_MARKDOWN, true );
 				$content     = MarkdownRenderer::render( $markdown, $theme_state['markdownTheme'] );
+				$rendered_from_markdown = true;
 			} catch ( \Throwable $exception ) {
 				unset( $exception );
 			}
@@ -293,6 +295,15 @@ final class RevisionManager {
 		}
 
 		$this->update_post_content( $post_id, $content );
+
+		if ( $rendered_from_markdown ) {
+			$this->post_document->store_render_signature(
+				$post_id,
+				$markdown,
+				$theme_state['markdownTheme'],
+				$content
+			);
+		}
 	}
 
 	private function update_post_content( $post_id, $content ) {

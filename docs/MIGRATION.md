@@ -22,6 +22,12 @@ compatibility HTML. It does not scan or update every post during upgrade.
 `_easymde_markdown` remains the authoritative source. `post_content` remains the
 rendered HTML compatibility output.
 
+Valid EasyMDE saves also write `_easymde_render_signature`, an internal
+consistency marker tying the current Markdown, article theme, and stored
+compatibility HTML together. The marker lets the editor reuse stored HTML for a
+fast initial preview only when it still matches the authoritative Markdown
+state.
+
 The fallback Markdown renderer has been removed. `league/commonmark` is required
 for rendering. A development checkout without Composer dependencies shows an
 admin notice and avoids writing newly rendered HTML.
@@ -40,6 +46,11 @@ _easymde_code_theme
 _easymde_code_mac_style
 _easymde_custom_css_id
 _easymde_custom_css_snapshot
+_easymde_custom_font
+_easymde_windows_font
+_easymde_apple_font
+_easymde_serif_font
+_easymde_render_signature
 ```
 
 When a revision containing EasyMDE meta is restored, the restored Markdown and

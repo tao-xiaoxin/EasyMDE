@@ -190,13 +190,13 @@ msgid ""
 "screens."
 msgstr ""
 
-#: src/Admin/EditorSaveHandler.php:136
+#: src/Admin/EditorSaveHandler.php:166
 msgid ""
 "EasyMDE cannot save this post because Markdown rendering is unavailable. "
 "Install Composer dependencies and try again."
 msgstr ""
 
-#: src/Admin/EditorSaveHandler.php:137
+#: src/Admin/EditorSaveHandler.php:167
 msgid "EasyMDE renderer unavailable"
 msgstr ""
 

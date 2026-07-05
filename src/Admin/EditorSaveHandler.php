@@ -15,6 +15,7 @@ final class EditorSaveHandler {
 	private $post_document;
 	private $theme_state_repository;
 	private $renderer_available_callback;
+	private $pending_render_signatures = array();
 
 	public function __construct(
 		PostDocument $post_document,
@@ -72,8 +73,14 @@ final class EditorSaveHandler {
 		update_post_meta( $post_id, PostDocument::META_WINDOWS_FONT, $theme_state['windowsFont'] );
 		update_post_meta( $post_id, PostDocument::META_APPLE_FONT, $theme_state['appleFont'] );
 		update_post_meta( $post_id, PostDocument::META_SERIF_FONT, $theme_state['serifFont'] );
+		update_post_meta(
+			$post_id,
+			PostDocument::META_RENDER_SIGNATURE,
+			$this->current_render_signature( $post_id, $markdown, $theme_state['markdownTheme'] )
+		);
 
 		$this->theme_state_repository->save_user_defaults( $theme_state );
+		unset( $this->pending_render_signatures[ $post_id ] );
 	}
 
 	public function render_markdown_post_content( $data, $postarr ) {
@@ -110,6 +117,14 @@ final class EditorSaveHandler {
 			return $data;
 		}
 
+		if ( ! empty( $postarr['ID'] ) ) {
+			$this->pending_render_signatures[ absint( $postarr['ID'] ) ] = $this->post_document->render_signature(
+				$markdown,
+				$theme_state['markdownTheme'],
+				$data['post_content']
+			);
+		}
+
 		return $data;
 	}
 
@@ -129,6 +144,21 @@ final class EditorSaveHandler {
 
 	private function is_renderer_available() {
 		return (bool) call_user_func( $this->renderer_available_callback );
+	}
+
+	private function current_render_signature( $post_id, $markdown, $markdown_theme ) {
+		$post_id = absint( $post_id );
+		if ( $post_id && isset( $this->pending_render_signatures[ $post_id ] ) ) {
+			return $this->pending_render_signatures[ $post_id ];
+		}
+
+		$post = $post_id ? get_post( $post_id ) : null;
+
+		return $this->post_document->render_signature(
+			$markdown,
+			$markdown_theme,
+			$post ? (string) $post->post_content : ''
+		);
 	}
 
 	private function abort_renderer_unavailable() {

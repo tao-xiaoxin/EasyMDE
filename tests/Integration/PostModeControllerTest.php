@@ -2,6 +2,7 @@
 
 use EasyMDE\Admin\EditorScreen;
 use EasyMDE\Admin\PostModeController;
+use EasyMDE\Content\MarkdownRenderer;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Support\Options;
 use EasyMDE\Theme\ArticleThemeRegistry;
@@ -421,18 +422,62 @@ final class PostModeControllerTest extends WP_UnitTestCase
     public function test_editor_shell_reuses_stored_compatibility_html_for_initial_preview()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $markdown = "Stored compatible HTML.\n\n**Already rendered.**";
+        $stored_preview = MarkdownRenderer::render($markdown, 'default');
         $post_id = self::factory()->post->create(
             array(
                 'post_type' => 'post',
                 'post_author' => $user_id,
-                'post_content' => '<p>Stored compatible HTML.</p>',
+                'post_content' => $stored_preview,
+            )
+        );
+        $post_document = new PostDocument();
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, $markdown);
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta(
+            $post_id,
+            PostDocument::META_RENDER_SIGNATURE,
+            $post_document->render_signature($markdown, 'default', $stored_preview)
+        );
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
+        $this->assertStringContainsString('<p>Stored compatible HTML.</p>', $output);
+        $this->assertStringContainsString('<strong>Already rendered.</strong>', $output);
+    }
+
+    public function test_editor_shell_renders_enabled_markdown_when_stored_preview_signature_is_missing()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '<p>Stale compatibility HTML.</p>',
             )
         );
         update_post_meta(
             $post_id,
             PostDocument::META_MARKDOWN,
-            "# Markdown that would require render\n\n<script>alert('x')</script>"
+            "# Current enabled Markdown\n\n**Authoritative source.**"
         );
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
         update_post_meta($post_id, PostDocument::META_ENABLED, '1');
 
         wp_set_current_user($user_id);
@@ -453,12 +498,12 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $output = ob_get_clean();
 
         $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
-        $this->assertStringContainsString('<p>Stored compatible HTML.</p>', $output);
-        $this->assertStringNotContainsString('<h1 id="markdown-that-would-require-render">', $output);
-        $this->assertStringNotContainsString('<script>', $output);
+        $this->assertStringContainsString('<h1>Current enabled Markdown</h1>', $output);
+        $this->assertStringContainsString('<strong>Authoritative source.</strong>', $output);
+        $this->assertStringNotContainsString('<p>Stale compatibility HTML.</p>', $output);
     }
 
-    public function test_editor_shell_renders_legacy_markdown_instead_of_reusing_stale_html()
+    public function test_editor_shell_renders_enabled_markdown_when_stored_preview_signature_is_stale()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -468,10 +513,15 @@ final class PostModeControllerTest extends WP_UnitTestCase
                 'post_content' => '<p>Stale compatibility HTML.</p>',
             )
         );
+        $markdown = "# Current signed Markdown\n\n**Still authoritative.**";
+        $post_document = new PostDocument();
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, $markdown);
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
         update_post_meta(
             $post_id,
-            PostDocument::META_MARKDOWN,
-            "# Current legacy Markdown\n\n**Authoritative source.**"
+            PostDocument::META_RENDER_SIGNATURE,
+            $post_document->render_signature($markdown, 'default', '<p>Previous compatibility HTML.</p>')
         );
 
         wp_set_current_user($user_id);
@@ -483,7 +533,6 @@ final class PostModeControllerTest extends WP_UnitTestCase
         );
         $_POST = array();
 
-        $post_document = new PostDocument();
         $controller = new PostModeController($post_document);
         $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
 
@@ -492,8 +541,8 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $output = ob_get_clean();
 
         $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
-        $this->assertStringContainsString('<h1>Current legacy Markdown</h1>', $output);
-        $this->assertStringContainsString('<strong>Authoritative source.</strong>', $output);
+        $this->assertStringContainsString('<h1>Current signed Markdown</h1>', $output);
+        $this->assertStringContainsString('<strong>Still authoritative.</strong>', $output);
         $this->assertStringNotContainsString('<p>Stale compatibility HTML.</p>', $output);
     }
 

@@ -73,6 +73,7 @@ final class Migration {
 			PostDocument::META_WINDOWS_FONT,
 			PostDocument::META_APPLE_FONT,
 			PostDocument::META_SERIF_FONT,
+			PostDocument::META_RENDER_SIGNATURE,
 		);
 	}
 

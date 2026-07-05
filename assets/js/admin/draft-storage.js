@@ -3,15 +3,30 @@
 
     var storageAvailableCache = null;
 
+    function getLocalStorage() {
+        try {
+            return window.localStorage || null;
+        } catch (error) {
+            return null;
+        }
+    }
+
     function storageAvailable() {
+        var localStorage;
+
         if (storageAvailableCache !== null) {
             return storageAvailableCache;
         }
 
         try {
             var testKey = '__easymde_test__';
-            window.localStorage.setItem(testKey, '1');
-            window.localStorage.removeItem(testKey);
+            localStorage = getLocalStorage();
+            if (!localStorage) {
+                storageAvailableCache = false;
+                return storageAvailableCache;
+            }
+            localStorage.setItem(testKey, '1');
+            localStorage.removeItem(testKey);
             storageAvailableCache = true;
             return storageAvailableCache;
         } catch (error) {
@@ -35,49 +50,73 @@
     }
 
     function read(storage) {
+        var localStorage;
+
         if (!storage.draftKey || !storageAvailable()) {
             return null;
         }
 
         try {
-            return JSON.parse(window.localStorage.getItem(storage.draftKey) || 'null');
+            localStorage = getLocalStorage();
+            return localStorage ? JSON.parse(localStorage.getItem(storage.draftKey) || 'null') : null;
         } catch (error) {
             return null;
         }
     }
 
     function exists(storage) {
-        if (!storage.draftKey || !window.localStorage || typeof window.localStorage.getItem !== 'function') {
-            return false;
-        }
+        var localStorage = getLocalStorage();
 
         try {
-            return window.localStorage.getItem(storage.draftKey) !== null;
+            return !!(
+                storage.draftKey
+                && localStorage
+                && typeof localStorage.getItem === 'function'
+                && localStorage.getItem(storage.draftKey) !== null
+            );
         } catch (error) {
             return false;
         }
     }
 
     function write(storage, markdown) {
+        var localStorage;
+
         if (!storage.draftKey || !storageAvailable()) {
             return;
         }
 
-        window.localStorage.setItem(
-            storage.draftKey,
-            JSON.stringify({
-                content: markdown,
-                updatedAt: Date.now()
-            })
-        );
+        try {
+            localStorage = getLocalStorage();
+            if (localStorage) {
+                localStorage.setItem(
+                    storage.draftKey,
+                    JSON.stringify({
+                        content: markdown,
+                        updatedAt: Date.now()
+                    })
+                );
+            }
+        } catch (error) {
+            return;
+        }
     }
 
     function discard(storage) {
+        var localStorage;
+
         if (!storage.draftKey || !storageAvailable()) {
             return;
         }
 
-        window.localStorage.removeItem(storage.draftKey);
+        try {
+            localStorage = getLocalStorage();
+            if (localStorage) {
+                localStorage.removeItem(storage.draftKey);
+            }
+        } catch (error) {
+            return;
+        }
     }
 
     function formatTime(timestamp) {

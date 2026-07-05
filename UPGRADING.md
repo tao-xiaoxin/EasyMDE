@@ -10,6 +10,11 @@ WordPress `post_content` stores rendered compatibility HTML for themes, feeds, s
 
 Appearance and rendering state are stored in EasyMDE post meta, including article theme, code theme, Mac-style code frame state, custom CSS selection/snapshot, and font choices.
 
+Newer releases may also store `_easymde_render_signature` as an internal
+consistency marker for fast editor preview hydration. It is derived from the
+Markdown source, article theme, and stored compatibility HTML; it does not
+decide whether a post opens in EasyMDE.
+
 ## Editor Enablement
 
 EasyMDE does not bulk-migrate every post during upgrades. New and existing posts for post types supported by `easymde_supported_post_types` open in EasyMDE through normal WordPress editing when the current user can create new posts or edit existing ones.

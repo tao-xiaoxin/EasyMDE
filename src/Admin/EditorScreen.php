@@ -81,7 +81,7 @@ final class EditorScreen {
 		}
 
 		$stored_content_preview = '';
-		if ( $this->can_reuse_stored_content_preview( $post ) ) {
+		if ( $this->can_reuse_stored_content_preview( $post, $markdown, $markdown_theme ) ) {
 			$stored_content_preview = $this->render_stored_content_preview( $post );
 		}
 
@@ -108,13 +108,19 @@ final class EditorScreen {
 		return '' !== trim( $html ) ? $html : '';
 	}
 
-	private function can_reuse_stored_content_preview( $post ) {
+	private function can_reuse_stored_content_preview( $post, $markdown, $markdown_theme ) {
 		$post_id = $post ? absint( $post->ID ) : 0;
 
 		if ( ! $post_id || ! $this->post_document->has_stored_markdown( $post_id ) ) {
 			return true;
 		}
 
-		return $this->post_document->has_enabled_marker( $post_id );
+		return $this->post_document->has_enabled_marker( $post_id )
+			&& $this->post_document->has_current_render_signature(
+				$post_id,
+				$markdown,
+				$markdown_theme,
+				(string) $post->post_content
+			);
 	}
 }

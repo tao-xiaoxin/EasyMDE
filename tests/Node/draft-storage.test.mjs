@@ -7,11 +7,8 @@ import test from 'node:test';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-function loadDraftStorage(localStorage) {
+function loadDraftStorageForWindow(windowRef) {
   const source = readFileSync(join(repoRoot, 'assets/js/admin/draft-storage.js'), 'utf8');
-  const windowRef = {
-    localStorage
-  };
 
   vm.runInNewContext(source, {
     Date,
@@ -20,6 +17,12 @@ function loadDraftStorage(localStorage) {
   });
 
   return windowRef.EasyMDEDraftStorage;
+}
+
+function loadDraftStorage(localStorage) {
+  return loadDraftStorageForWindow({
+    localStorage
+  });
 }
 
 test('draft storage caches localStorage availability checks', () => {
@@ -78,4 +81,24 @@ test('draft existence check avoids parsing draft JSON or probing storage writes'
   };
 
   assert.equal(draftStorage.exists(normalized), true);
+});
+
+test('draft storage treats blocked localStorage getters as unavailable', () => {
+  const windowRef = {};
+
+  Object.defineProperty(windowRef, 'localStorage', {
+    get() {
+      throw new Error('localStorage is blocked');
+    }
+  });
+
+  const draftStorage = loadDraftStorageForWindow(windowRef);
+  const normalized = {
+    draftKey: 'easymde:draft:test'
+  };
+
+  assert.equal(draftStorage.exists(normalized), false);
+  assert.equal(draftStorage.read(normalized), null);
+  assert.doesNotThrow(() => draftStorage.write(normalized, 'Draft body'));
+  assert.doesNotThrow(() => draftStorage.discard(normalized));
 });

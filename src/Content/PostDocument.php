@@ -21,6 +21,8 @@ final class PostDocument {
 	const META_WINDOWS_FONT        = '_easymde_windows_font';
 	const META_APPLE_FONT          = '_easymde_apple_font';
 	const META_SERIF_FONT          = '_easymde_serif_font';
+	const META_RENDER_SIGNATURE    = '_easymde_render_signature';
+	const RENDER_SIGNATURE_VERSION = '1';
 
 	private $migration;
 
@@ -66,5 +68,47 @@ final class PostDocument {
 
 	public function mark_enabled( $post_id ) {
 		$this->migration->mark_enabled( $post_id );
+	}
+
+	public function render_signature( $markdown, $markdown_theme, $post_content ) {
+		$markdown       = (string) $markdown;
+		$markdown_theme = sanitize_key( (string) $markdown_theme );
+		$post_content   = (string) $post_content;
+
+		return hash(
+			'sha256',
+			implode(
+				"\0",
+				array(
+					self::RENDER_SIGNATURE_VERSION,
+					(string) strlen( $markdown ),
+					$markdown,
+					(string) strlen( $markdown_theme ),
+					$markdown_theme,
+					(string) strlen( $post_content ),
+					$post_content,
+				)
+			)
+		);
+	}
+
+	public function store_render_signature( $post_id, $markdown, $markdown_theme, $post_content ) {
+		update_post_meta(
+			absint( $post_id ),
+			self::META_RENDER_SIGNATURE,
+			$this->render_signature( $markdown, $markdown_theme, $post_content )
+		);
+	}
+
+	public function has_current_render_signature( $post_id, $markdown, $markdown_theme, $post_content ) {
+		$post_id = absint( $post_id );
+		if ( ! $post_id || ! metadata_exists( 'post', $post_id, self::META_RENDER_SIGNATURE ) ) {
+			return false;
+		}
+
+		$stored   = (string) get_post_meta( $post_id, self::META_RENDER_SIGNATURE, true );
+		$expected = $this->render_signature( $markdown, $markdown_theme, $post_content );
+
+		return hash_equals( $expected, $stored );
 	}
 }

@@ -13,7 +13,13 @@ $easymde_editor_post              = $context['post'];
 $easymde_theme_state              = $context['theme_state'];
 $easymde_spellcheck               = ! empty( $context['spellcheck_enabled'] ) ? 'true' : 'false';
 $easymde_initial_preview_ready    = ! empty( $context['initial_preview_ready'] ) ? '1' : '0';
+$easymde_initial_preview_pending  = ! empty( $context['initial_preview_pending'] );
 $easymde_initial_preview_features = wp_json_encode( ! empty( $context['initial_preview_features'] ) ? $context['initial_preview_features'] : array() );
+$easymde_preview_refreshing       = $easymde_initial_preview_pending ? '1' : '0';
+$easymde_preview_busy             = $easymde_initial_preview_pending ? 'true' : 'false';
+$easymde_initial_preview          = $easymde_initial_preview_pending
+	? '<p class="easymde-preview-pending" role="status">' . esc_html__( 'Rendering preview...', 'easymde' ) . '</p>'
+	: $context['initial_preview'];
 ?>
 <div id="easymde-editor" class="easymde-editor" data-post-id="<?php echo esc_attr( $easymde_editor_post->ID ); ?>">
 	<input type="hidden" id="easymde-enabled-field" name="easymde_enabled" value="1">
@@ -35,8 +41,10 @@ $easymde_initial_preview_features = wp_json_encode( ! empty( $context['initial_p
 				style="<?php echo esc_attr( $context['content_style'] ); ?>"
 				data-easymde-initial-preview="<?php echo esc_attr( $easymde_initial_preview_ready ); ?>"
 				data-easymde-preview-features="<?php echo esc_attr( $easymde_initial_preview_features ); ?>"
+				data-easymde-preview-refreshing="<?php echo esc_attr( $easymde_preview_refreshing ); ?>"
+				aria-busy="<?php echo esc_attr( $easymde_preview_busy ); ?>"
 				aria-live="polite"
-			><?php echo $context['initial_preview']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Already sanitized before reaching the template. ?></article>
+			><?php echo $easymde_initial_preview; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Already sanitized before reaching the template. ?></article>
 		</section>
 		<section class="easymde-pane easymde-pane-source">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>

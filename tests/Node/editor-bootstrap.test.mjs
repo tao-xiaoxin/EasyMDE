@@ -1037,7 +1037,7 @@ test('initEditor hydrates saved preview when a local draft matches saved source'
   assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
 });
 
-test('initEditor creates toolbar chrome before waiting for shell paint', () => {
+test('initEditor creates toolbar chrome before resolving server pending preview', async () => {
   const order = [];
   const jQueryRef = createJQueryStub(789, { runReady: true });
   const toolbar = {
@@ -1073,10 +1073,12 @@ test('initEditor creates toolbar chrome before waiting for shell paint', () => {
     }
   };
   const source = createSourceWrapper('Needs preview from REST.');
-  const preview = createPreviewWrapper('');
+  const preview = createPreviewWrapper('<p class="easymde-preview-pending" role="status">Rendering preview...</p>');
   let rafCallback = null;
 
   preview.attr('data-easymde-initial-preview', '0');
+  preview.attr('data-easymde-preview-refreshing', '1');
+  preview.attr('aria-busy', 'true');
   jQueryRef.register('#easymde-editor', root);
   jQueryRef.register('#easymde-source', source);
   jQueryRef.register('#easymde-preview', preview);
@@ -1142,11 +1144,18 @@ test('initEditor creates toolbar chrome before waiting for shell paint', () => {
 
   assert.deepEqual(order, ['toolbar'], 'toolbar chrome should be usable during the bootstrap task');
   assert.equal(root.attr('data-easymde-shell-ready'), '1');
+  assert.equal(preview.html(), '<p class="easymde-preview-pending" role="status">Rendering preview...</p>');
+  assert.equal(preview.attr('aria-busy'), 'true');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
 
   rafCallback();
   flushTimers();
+  await flushMicrotasks();
 
   assert.deepEqual(order.slice(0, 2), ['toolbar', 'preview']);
+  assert.equal(preview.html(), '<p>Rendered REST preview.</p>');
+  assert.equal(preview.attr('aria-busy'), 'false');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
 });
 
 test('initEditor starts immediately when the editor root is already parsed', () => {

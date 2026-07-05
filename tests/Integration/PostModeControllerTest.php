@@ -334,7 +334,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertSame($before_revision_count, count(wp_get_post_revisions($post_id)));
     }
 
-    public function test_editor_shell_includes_safe_initial_preview_markup()
+    public function test_editor_shell_uses_pending_initial_preview_when_stored_markdown_cannot_reuse_html()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -368,15 +368,16 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $output = ob_get_clean();
 
         $this->assertStringContainsString('id="easymde-preview"', $output);
-        $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
-        $this->assertStringContainsString('&quot;codeBlocks&quot;:true', $output);
-        $this->assertStringContainsString('&quot;syntaxHighlight&quot;:true', $output);
-        $this->assertStringContainsString('<h2 id="initial-preview">Initial preview</h2>', $output);
-        $this->assertStringContainsString('<strong>Ready before JavaScript refresh.</strong>', $output);
+        $this->assertStringContainsString('data-easymde-initial-preview="0"', $output);
+        $this->assertStringContainsString('data-easymde-preview-refreshing="1"', $output);
+        $this->assertStringContainsString('aria-busy="true"', $output);
+        $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
+        $this->assertStringNotContainsString('<h2 id="initial-preview">Initial preview</h2>', $output);
+        $this->assertStringNotContainsString('<strong>Ready before JavaScript refresh.</strong>', $output);
         $this->assertStringNotContainsString('<script>', $output);
     }
 
-    public function test_editor_shell_streams_initial_preview_before_large_source_payload()
+    public function test_editor_shell_streams_pending_preview_before_large_source_payload()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -415,6 +416,8 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertNotFalse($preview_position);
         $this->assertNotFalse($source_position);
         $this->assertLessThan($source_position, $preview_position);
+        $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
+        $this->assertStringNotContainsString('<h1>Fast preview</h1>', $output);
         $this->assertStringContainsString('id="easymde-source" name="easymde_markdown"', $output);
         $this->assertStringNotContainsString('id="easymde-markdown-field"', $output);
     }
@@ -462,7 +465,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertStringContainsString('<strong>Already rendered.</strong>', $output);
     }
 
-    public function test_editor_shell_renders_enabled_markdown_when_stored_preview_signature_is_missing()
+    public function test_editor_shell_defers_enabled_markdown_when_stored_preview_signature_is_missing()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -497,13 +500,16 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $screen->render_editor_shell(get_post($post_id));
         $output = ob_get_clean();
 
-        $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
-        $this->assertStringContainsString('<h1>Current enabled Markdown</h1>', $output);
-        $this->assertStringContainsString('<strong>Authoritative source.</strong>', $output);
+        $this->assertStringContainsString('data-easymde-initial-preview="0"', $output);
+        $this->assertStringContainsString('data-easymde-preview-refreshing="1"', $output);
+        $this->assertStringContainsString('aria-busy="true"', $output);
+        $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
+        $this->assertStringNotContainsString('<h1>Current enabled Markdown</h1>', $output);
+        $this->assertStringNotContainsString('<strong>Authoritative source.</strong>', $output);
         $this->assertStringNotContainsString('<p>Stale compatibility HTML.</p>', $output);
     }
 
-    public function test_editor_shell_renders_enabled_markdown_when_stored_preview_signature_is_stale()
+    public function test_editor_shell_defers_enabled_markdown_when_stored_preview_signature_is_stale()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -540,9 +546,12 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $screen->render_editor_shell(get_post($post_id));
         $output = ob_get_clean();
 
-        $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
-        $this->assertStringContainsString('<h1>Current signed Markdown</h1>', $output);
-        $this->assertStringContainsString('<strong>Still authoritative.</strong>', $output);
+        $this->assertStringContainsString('data-easymde-initial-preview="0"', $output);
+        $this->assertStringContainsString('data-easymde-preview-refreshing="1"', $output);
+        $this->assertStringContainsString('aria-busy="true"', $output);
+        $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
+        $this->assertStringNotContainsString('<h1>Current signed Markdown</h1>', $output);
+        $this->assertStringNotContainsString('<strong>Still authoritative.</strong>', $output);
         $this->assertStringNotContainsString('<p>Stale compatibility HTML.</p>', $output);
     }
 

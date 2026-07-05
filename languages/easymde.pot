@@ -200,7 +200,7 @@ msgstr ""
 msgid "EasyMDE renderer unavailable"
 msgstr ""
 
-#: src/Admin/EditorScreen.php:74
+#: src/Admin/EditorScreen.php:76
 msgid ""
 "EasyMDE requires Composer dependencies before Markdown can be rendered or "
 "saved. Run composer install for development or include vendor/ in release "
@@ -369,7 +369,7 @@ msgstr ""
 msgid "Mac code frame"
 msgstr ""
 
-#: templates/admin/editor-shell.php:42
+#: templates/admin/editor-shell.php:50
 msgid "Markdown"
 msgstr ""
 
@@ -390,7 +390,7 @@ msgstr ""
 msgid "Markdown source"
 msgstr ""
 
-#: templates/admin/editor-shell.php:28
+#: templates/admin/editor-shell.php:34
 msgid "Markdown toolbar"
 msgstr ""
 
@@ -515,7 +515,7 @@ msgstr ""
 msgid "Ordered list"
 msgstr ""
 
-#: templates/admin/editor-shell.php:45
+#: templates/admin/editor-shell.php:53
 msgid "Output actions"
 msgstr ""
 
@@ -555,7 +555,7 @@ msgstr ""
 msgid "PingFangSC-regular"
 msgstr ""
 
-#: templates/admin/editor-shell.php:31
+#: templates/admin/editor-shell.php:37
 msgid "Preview"
 msgstr ""
 
@@ -583,7 +583,7 @@ msgstr ""
 msgid "Rendering failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:211
+#: src/Admin/AdminAssets.php:211 templates/admin/editor-shell.php:21
 msgid "Rendering preview..."
 msgstr ""
 

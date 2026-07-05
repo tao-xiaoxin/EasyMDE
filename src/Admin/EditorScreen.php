@@ -53,12 +53,14 @@ final class EditorScreen {
 			'content_style'            => '',
 			'initial_preview'          => '',
 			'initial_preview_ready'    => false,
+			'initial_preview_pending'  => false,
 			'initial_preview_features' => array(),
 		);
 		$context['content_classes']          = $this->theme_state_repository->get_rendered_content_classes( $context['theme_state'], 'easymde-preview' );
 		$context['content_style']            = $this->theme_state_repository->get_rendered_content_style( $context['theme_state'] );
 		$context['initial_preview']          = $this->render_initial_preview( $post, $context['markdown'], $context['theme_state']['markdownTheme'] );
 		$context['initial_preview_ready']    = '' !== trim( $context['initial_preview'] );
+		$context['initial_preview_pending']  = ! $context['initial_preview_ready'] && '' !== trim( (string) $context['markdown'] );
 		$context['initial_preview_features'] = $context['initial_preview_ready'] ? $this->feature_detector->detect( $context['markdown'] ) : array();
 
 		wp_nonce_field( 'easymde_save_markdown', 'easymde_nonce' );
@@ -89,17 +91,7 @@ final class EditorScreen {
 			return $stored_content_preview;
 		}
 
-		if ( ! $this->post_document->has_stored_markdown( $post->ID ) ) {
-			return '';
-		}
-
-		try {
-			return MarkdownRenderer::render( $markdown, $markdown_theme );
-		} catch ( \Throwable $error ) {
-			unset( $error );
-
-			return '';
-		}
+		return '';
 	}
 
 	private function render_stored_content_preview( $post ) {

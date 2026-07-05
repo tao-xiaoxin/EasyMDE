@@ -9,9 +9,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$easymde_editor_post = $context['post'];
-$easymde_theme_state = $context['theme_state'];
-$easymde_spellcheck  = ! empty( $context['spellcheck_enabled'] ) ? 'true' : 'false';
+$easymde_editor_post              = $context['post'];
+$easymde_theme_state              = $context['theme_state'];
+$easymde_spellcheck               = ! empty( $context['spellcheck_enabled'] ) ? 'true' : 'false';
 $easymde_initial_preview_ready    = ! empty( $context['initial_preview_ready'] ) ? '1' : '0';
 $easymde_initial_preview_features = wp_json_encode( ! empty( $context['initial_preview_features'] ) ? $context['initial_preview_features'] : array() );
 ?>

@@ -276,9 +276,9 @@ final class RevisionManager {
 
 		if ( $this->is_renderer_available() ) {
 			try {
-				$theme_state = $this->theme_state_repository->get_theme_state( $post_id );
-				$markdown    = (string) get_post_meta( $post_id, PostDocument::META_MARKDOWN, true );
-				$content     = MarkdownRenderer::render( $markdown, $theme_state['markdownTheme'] );
+				$theme_state            = $this->theme_state_repository->get_theme_state( $post_id );
+				$markdown               = (string) get_post_meta( $post_id, PostDocument::META_MARKDOWN, true );
+				$content                = MarkdownRenderer::render( $markdown, $theme_state['markdownTheme'] );
 				$rendered_from_markdown = true;
 			} catch ( \Throwable $exception ) {
 				unset( $exception );

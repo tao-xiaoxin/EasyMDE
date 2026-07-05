@@ -41,7 +41,7 @@ $easymde_initial_preview_features = wp_json_encode( ! empty( $context['initial_p
 				data-easymde-initial-preview="<?php echo esc_attr( $easymde_initial_preview_ready ); ?>"
 				data-easymde-preview-features="<?php echo esc_attr( $easymde_initial_preview_features ); ?>"
 				aria-live="polite"
-			><?php echo $context['initial_preview']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Already sanitized by MarkdownRenderer::render(). ?></article>
+			><?php echo $context['initial_preview']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Already sanitized before reaching the template. ?></article>
 		</section>
 		<aside class="easymde-side-actions" aria-label="<?php esc_attr_e( 'Output actions', 'easymde' ); ?>"></aside>
 	</div>

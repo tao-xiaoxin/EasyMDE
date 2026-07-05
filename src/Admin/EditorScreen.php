@@ -57,7 +57,7 @@ final class EditorScreen {
 		);
 		$context['content_classes']          = $this->theme_state_repository->get_rendered_content_classes( $context['theme_state'], 'easymde-preview' );
 		$context['content_style']            = $this->theme_state_repository->get_rendered_content_style( $context['theme_state'] );
-		$context['initial_preview']          = $this->render_initial_preview( $context['markdown'], $context['theme_state']['markdownTheme'] );
+		$context['initial_preview']          = $this->render_initial_preview( $post, $context['markdown'], $context['theme_state']['markdownTheme'] );
 		$context['initial_preview_ready']    = '' !== trim( $context['initial_preview'] );
 		$context['initial_preview_features'] = $context['initial_preview_ready'] ? $this->feature_detector->detect( $context['markdown'] ) : array();
 
@@ -75,9 +75,13 @@ final class EditorScreen {
 		echo '</p></div>';
 	}
 
-	private function render_initial_preview( $markdown, $markdown_theme ) {
+	private function render_initial_preview( $post, $markdown, $markdown_theme ) {
 		if ( '' === trim( (string) $markdown ) || ! MarkdownRenderer::is_available() ) {
 			return '';
+		}
+
+		if ( ! $this->post_document->has_stored_markdown( $post->ID ) ) {
+			return $this->render_stored_content_preview( $post );
 		}
 
 		try {
@@ -87,5 +91,11 @@ final class EditorScreen {
 
 			return '';
 		}
+	}
+
+	private function render_stored_content_preview( $post ) {
+		$html = wp_kses_post( (string) $post->post_content );
+
+		return '' !== trim( $html ) ? $html : '';
 	}
 }

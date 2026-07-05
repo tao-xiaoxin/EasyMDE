@@ -297,7 +297,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
             array(
                 'post_type' => 'post',
                 'post_author' => $user_id,
-                'post_content' => '<p>Existing HTML content.</p>',
+                'post_content' => '<div class="legacy-shell"><p>Existing <strong>HTML</strong> content.</p><script>alert("x")</script></div>',
             )
         );
 
@@ -324,7 +324,10 @@ final class PostModeControllerTest extends WP_UnitTestCase
 
         $this->assertStringContainsString('id="easymde-editor"', $output);
         $this->assertStringContainsString('spellcheck="false"', $output);
-        $this->assertStringContainsString('Existing HTML content.', $output);
+        $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
+        $this->assertStringContainsString('<div class="legacy-shell">', $output);
+        $this->assertStringContainsString('Existing <strong>HTML</strong> content.', $output);
+        $this->assertStringNotContainsString('<script>', $output);
         $this->assertSame($before_content, get_post($post_id)->post_content);
         $this->assertSame($before_meta, get_post_meta($post_id));
         $this->assertSame($before_revision_count, count(wp_get_post_revisions($post_id)));

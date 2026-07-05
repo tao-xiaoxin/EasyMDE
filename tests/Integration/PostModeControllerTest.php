@@ -501,14 +501,14 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertStringContainsString('<strong>Already rendered.</strong>', $output);
     }
 
-    public function test_editor_shell_defers_enabled_markdown_when_stored_preview_signature_is_missing()
+    public function test_editor_shell_shows_provisional_preview_when_stored_preview_signature_is_missing()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
             array(
                 'post_type' => 'post',
                 'post_author' => $user_id,
-                'post_content' => '<p>Stale compatibility HTML.</p>',
+                'post_content' => '<p>Stale compatibility HTML.</p><script>alert("x")</script>',
             )
         );
         update_post_meta(
@@ -537,22 +537,24 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $output = ob_get_clean();
 
         $this->assertStringContainsString('data-easymde-initial-preview="0"', $output);
+        $this->assertStringContainsString('data-easymde-initial-preview-provisional="1"', $output);
         $this->assertStringContainsString('data-easymde-preview-refreshing="1"', $output);
         $this->assertStringContainsString('aria-busy="true"', $output);
+        $this->assertStringContainsString('<p>Stale compatibility HTML.</p>', $output);
         $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
         $this->assertStringNotContainsString('<h1>Current enabled Markdown</h1>', $output);
         $this->assertStringNotContainsString('<strong>Authoritative source.</strong>', $output);
-        $this->assertStringNotContainsString('<p>Stale compatibility HTML.</p>', $output);
+        $this->assertStringNotContainsString('<script>', $output);
     }
 
-    public function test_editor_shell_defers_enabled_markdown_when_stored_preview_signature_is_stale()
+    public function test_editor_shell_shows_provisional_preview_when_stored_preview_signature_is_stale()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
             array(
                 'post_type' => 'post',
                 'post_author' => $user_id,
-                'post_content' => '<p>Stale compatibility HTML.</p>',
+                'post_content' => '<p>Stale compatibility HTML.</p><script>alert("x")</script>',
             )
         );
         $markdown = "# Current signed Markdown\n\n**Still authoritative.**";
@@ -583,12 +585,14 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $output = ob_get_clean();
 
         $this->assertStringContainsString('data-easymde-initial-preview="0"', $output);
+        $this->assertStringContainsString('data-easymde-initial-preview-provisional="1"', $output);
         $this->assertStringContainsString('data-easymde-preview-refreshing="1"', $output);
         $this->assertStringContainsString('aria-busy="true"', $output);
+        $this->assertStringContainsString('<p>Stale compatibility HTML.</p>', $output);
         $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
         $this->assertStringNotContainsString('<h1>Current signed Markdown</h1>', $output);
         $this->assertStringNotContainsString('<strong>Still authoritative.</strong>', $output);
-        $this->assertStringNotContainsString('<p>Stale compatibility HTML.</p>', $output);
+        $this->assertStringNotContainsString('<script>', $output);
     }
 
     public function test_spellcheck_editor_setting_controls_source_textarea_attribute()

@@ -45,25 +45,28 @@ final class EditorScreen {
 		}
 
 		$context                             = array(
-			'post'                     => $post,
-			'markdown'                 => $this->post_document->get_markdown( $post ),
-			'theme_state'              => $this->theme_state_repository->get_theme_state( $post->ID ),
-			'spellcheck_enabled'       => $this->options->is_editor_spellcheck_enabled(),
-			'content_classes'          => '',
-			'content_style'            => '',
-			'initial_preview'          => '',
-			'initial_preview_ready'    => false,
-			'initial_preview_pending'  => false,
-			'initial_preview_features' => array(),
-			'markdown_fingerprint'     => '',
+			'post'                        => $post,
+			'markdown'                    => $this->post_document->get_markdown( $post ),
+			'theme_state'                 => $this->theme_state_repository->get_theme_state( $post->ID ),
+			'spellcheck_enabled'          => $this->options->is_editor_spellcheck_enabled(),
+			'content_classes'             => '',
+			'content_style'               => '',
+			'initial_preview'             => '',
+			'initial_preview_ready'       => false,
+			'initial_preview_pending'     => false,
+			'initial_preview_provisional' => false,
+			'initial_preview_features'    => array(),
+			'markdown_fingerprint'        => '',
 		);
-		$context['content_classes']          = $this->theme_state_repository->get_rendered_content_classes( $context['theme_state'], 'easymde-preview' );
-		$context['content_style']            = $this->theme_state_repository->get_rendered_content_style( $context['theme_state'] );
-		$context['markdown_fingerprint']     = $this->markdown_fingerprint( $context['markdown'] );
-		$context['initial_preview']          = $this->render_initial_preview( $post, $context['markdown'], $context['theme_state']['markdownTheme'] );
-		$context['initial_preview_ready']    = '' !== trim( $context['initial_preview'] );
-		$context['initial_preview_pending']  = ! $context['initial_preview_ready'] && '' !== trim( (string) $context['markdown'] );
-		$context['initial_preview_features'] = $context['initial_preview_ready'] ? $this->feature_detector->detect( $context['markdown'] ) : array();
+		$context['content_classes']             = $this->theme_state_repository->get_rendered_content_classes( $context['theme_state'], 'easymde-preview' );
+		$context['content_style']               = $this->theme_state_repository->get_rendered_content_style( $context['theme_state'] );
+		$context['markdown_fingerprint']        = $this->markdown_fingerprint( $context['markdown'] );
+		$context['initial_preview']             = $this->render_initial_preview( $post, $context['markdown'] );
+		$context['initial_preview_ready']       = '' !== trim( $context['initial_preview'] )
+			&& $this->can_reuse_stored_content_preview( $post, $context['markdown'], $context['theme_state']['markdownTheme'] );
+		$context['initial_preview_pending']     = ! $context['initial_preview_ready'] && '' !== trim( (string) $context['markdown'] );
+		$context['initial_preview_provisional'] = ! $context['initial_preview_ready'] && '' !== trim( $context['initial_preview'] );
+		$context['initial_preview_features']    = $context['initial_preview_ready'] ? $this->feature_detector->detect( $context['markdown'] ) : array();
 
 		wp_nonce_field( 'easymde_save_markdown', 'easymde_nonce' );
 		require EASYMDE_PLUGIN_DIR . 'templates/admin/editor-shell.php';
@@ -79,15 +82,12 @@ final class EditorScreen {
 		echo '</p></div>';
 	}
 
-	private function render_initial_preview( $post, $markdown, $markdown_theme ) {
+	private function render_initial_preview( $post, $markdown ) {
 		if ( '' === trim( (string) $markdown ) ) {
 			return '';
 		}
 
-		$stored_content_preview = '';
-		if ( $this->can_reuse_stored_content_preview( $post, $markdown, $markdown_theme ) ) {
-			$stored_content_preview = $this->render_stored_content_preview( $post );
-		}
+		$stored_content_preview = $this->render_stored_content_preview( $post );
 
 		if ( '' !== $stored_content_preview ) {
 			return $stored_content_preview;

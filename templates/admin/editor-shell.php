@@ -9,18 +9,24 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$easymde_editor_post              = $context['post'];
-$easymde_theme_state              = $context['theme_state'];
-$easymde_markdown_fingerprint     = isset( $context['markdown_fingerprint'] ) ? (string) $context['markdown_fingerprint'] : '';
-$easymde_spellcheck               = ! empty( $context['spellcheck_enabled'] ) ? 'true' : 'false';
-$easymde_initial_preview_ready    = ! empty( $context['initial_preview_ready'] ) ? '1' : '0';
-$easymde_initial_preview_pending  = ! empty( $context['initial_preview_pending'] );
-$easymde_initial_preview_features = wp_json_encode( ! empty( $context['initial_preview_features'] ) ? $context['initial_preview_features'] : array() );
-$easymde_preview_refreshing       = $easymde_initial_preview_pending ? '1' : '0';
-$easymde_preview_busy             = $easymde_initial_preview_pending ? 'true' : 'false';
-$easymde_initial_preview          = $easymde_initial_preview_pending
-	? '<p class="easymde-preview-pending" role="status">' . esc_html__( 'Rendering preview...', 'easymde' ) . '</p>'
-	: $context['initial_preview'];
+$easymde_editor_post                 = $context['post'];
+$easymde_theme_state                 = $context['theme_state'];
+$easymde_markdown_fingerprint        = isset( $context['markdown_fingerprint'] ) ? (string) $context['markdown_fingerprint'] : '';
+$easymde_spellcheck                  = ! empty( $context['spellcheck_enabled'] ) ? 'true' : 'false';
+$easymde_initial_preview_ready       = ! empty( $context['initial_preview_ready'] ) ? '1' : '0';
+$easymde_initial_preview_pending     = ! empty( $context['initial_preview_pending'] );
+$easymde_initial_preview_provisional = ! empty( $context['initial_preview_provisional'] ) ? '1' : '0';
+$easymde_initial_preview_features    = wp_json_encode( ! empty( $context['initial_preview_features'] ) ? $context['initial_preview_features'] : array() );
+$easymde_preview_refreshing          = $easymde_initial_preview_pending ? '1' : '0';
+$easymde_preview_busy                = $easymde_initial_preview_pending ? 'true' : 'false';
+$easymde_initial_pending_status      = '<p class="easymde-preview-pending" role="status">' . esc_html__( 'Rendering preview...', 'easymde' ) . '</p>';
+$easymde_initial_preview             = $context['initial_preview'];
+
+if ( $easymde_initial_preview_pending ) {
+	$easymde_initial_preview = '1' === $easymde_initial_preview_provisional && '' !== trim( (string) $context['initial_preview'] )
+		? $context['initial_preview'] . "\n" . $easymde_initial_pending_status
+		: $easymde_initial_pending_status;
+}
 ?>
 <div id="easymde-editor" class="easymde-editor" data-post-id="<?php echo esc_attr( $easymde_editor_post->ID ); ?>" data-easymde-markdown-fingerprint="<?php echo esc_attr( $easymde_markdown_fingerprint ); ?>">
 	<input type="hidden" id="easymde-enabled-field" name="easymde_enabled" value="1">
@@ -41,6 +47,7 @@ $easymde_initial_preview          = $easymde_initial_preview_pending
 				class="<?php echo esc_attr( $context['content_classes'] ); ?>"
 				style="<?php echo esc_attr( $context['content_style'] ); ?>"
 				data-easymde-initial-preview="<?php echo esc_attr( $easymde_initial_preview_ready ); ?>"
+				data-easymde-initial-preview-provisional="<?php echo esc_attr( $easymde_initial_preview_provisional ); ?>"
 				data-easymde-preview-features="<?php echo esc_attr( $easymde_initial_preview_features ); ?>"
 				data-easymde-preview-refreshing="<?php echo esc_attr( $easymde_preview_refreshing ); ?>"
 				aria-busy="<?php echo esc_attr( $easymde_preview_busy ); ?>"

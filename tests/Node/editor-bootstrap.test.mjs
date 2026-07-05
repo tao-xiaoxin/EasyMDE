@@ -975,6 +975,194 @@ test('initEditor does not hydrate saved preview when a local draft exists', asyn
   assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
 });
 
+test('initEditor replaces provisional stored preview when a local draft exists', () => {
+  const jQueryRef = createJQueryStub(789, { runReady: true });
+  const root = createRootWrapper(789);
+  const source = createSourceWrapper('Saved source.');
+  const preview = createPreviewWrapper('<p>Stale compatibility HTML.</p>\n<p class="easymde-preview-pending" role="status">Rendering preview</p>');
+  let apiFetchCalled = false;
+  let readContentHashCalled = false;
+
+  preview.attr('data-easymde-initial-preview', '0');
+  preview.attr('data-easymde-initial-preview-provisional', '1');
+  preview.attr('data-easymde-preview-refreshing', '1');
+  preview.attr('aria-busy', 'true');
+  root.attr('data-easymde-markdown-fingerprint', '13:saved-source');
+  jQueryRef.register('#easymde-editor', root);
+  jQueryRef.register('#easymde-source', source);
+  jQueryRef.register('#easymde-preview', preview);
+  jQueryRef.register('#postdivrich', createContainerWrapper());
+  jQueryRef.register('#post', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-apple-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-serif-font-field', createContainerWrapper());
+
+  loadBootstrap({
+    requestAnimationFrame() {
+      return 1;
+    },
+    EasyMDEDraftStorage: {
+      normalizeStorage() {
+        return {};
+      },
+      readContentHash() {
+        readContentHashCalled = true;
+        return '20:local-draft';
+      },
+      read() {
+        throw new Error('sidecar hash should avoid parsing draft JSON during startup');
+      },
+      exists() {
+        throw new Error('matching logic should not perform an extra draft existence read');
+      },
+      write() {},
+      discard() {},
+      formatTime() {
+        return '';
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      features: {},
+      storage: {},
+      strings: {
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    },
+    wp: {
+      apiFetch() {
+        apiFetchCalled = true;
+        return Promise.resolve({
+          html: '<p>Unexpected REST preview.</p>',
+          features: {}
+        });
+      }
+    }
+  }, { jQuery: jQueryRef });
+
+  assert.equal(apiFetchCalled, false);
+  assert.equal(readContentHashCalled, true);
+  assert.equal(preview.html(), '<p class="easymde-preview-pending" role="status">Rendering preview</p>');
+  assert.equal(preview.attr('aria-busy'), 'true');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
+});
+
+test('initEditor refreshes provisional stored preview after shell paint', async () => {
+  const jQueryRef = createJQueryStub(789, { runReady: true });
+  const root = createRootWrapper(789);
+  const source = createSourceWrapper('Saved source.');
+  const preview = createPreviewWrapper('<p>Stale compatibility HTML.</p>\n<p class="easymde-preview-pending" role="status">Rendering preview</p>');
+  let apiFetchCalled = false;
+  let rafCallback = null;
+
+  preview.attr('data-easymde-initial-preview', '0');
+  preview.attr('data-easymde-initial-preview-provisional', '1');
+  preview.attr('data-easymde-preview-refreshing', '1');
+  preview.attr('aria-busy', 'true');
+  root.attr('data-easymde-markdown-fingerprint', '13:saved-source');
+  jQueryRef.register('#easymde-editor', root);
+  jQueryRef.register('#easymde-source', source);
+  jQueryRef.register('#easymde-preview', preview);
+  jQueryRef.register('#postdivrich', createContainerWrapper());
+  jQueryRef.register('#post', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-apple-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-serif-font-field', createContainerWrapper());
+
+  const { flushTimers } = loadBootstrap({
+    requestAnimationFrame(callback) {
+      rafCallback = callback;
+      return 1;
+    },
+    EasyMDEDraftStorage: {
+      normalizeStorage() {
+        return {};
+      },
+      readContentHash() {
+        return '';
+      },
+      read() {
+        return null;
+      },
+      exists() {
+        throw new Error('hash fallback should not need an existence probe when read() is available');
+      },
+      write() {},
+      discard() {},
+      formatTime() {
+        return '';
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      features: {},
+      storage: {},
+      strings: {
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    },
+    wp: {
+      apiFetch(options) {
+        apiFetchCalled = true;
+        assert.equal(options.data.markdown, 'Saved source.');
+        return Promise.resolve({
+          html: '<p>Current saved render.</p>',
+          features: {}
+        });
+      }
+    }
+  }, { jQuery: jQueryRef });
+
+  assert.equal(apiFetchCalled, false);
+  assert.equal(preview.html(), '<p>Stale compatibility HTML.</p>\n<p class="easymde-preview-pending" role="status">Rendering preview</p>');
+  assert.equal(preview.attr('aria-busy'), 'true');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
+
+  rafCallback();
+  flushTimers();
+
+  assert.equal(apiFetchCalled, true);
+  assert.equal(preview.html(), '<p>Stale compatibility HTML.</p>\n<p class="easymde-preview-pending" role="status">Rendering preview</p>');
+  assert.equal(preview.attr('aria-busy'), 'true');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
+
+  await flushMicrotasks();
+
+  assert.equal(preview.html(), '<p>Current saved render.</p>');
+  assert.equal(preview.attr('aria-busy'), 'false');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
+});
+
 test('initEditor hydrates saved preview when a local draft matches saved source', () => {
   const jQueryRef = createJQueryStub(789, { runReady: true });
   const root = createRootWrapper(789);

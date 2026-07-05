@@ -2421,7 +2421,13 @@
             window.EasyMDEEnhancements.initTheme($root[0], config);
         }
 
-        if ($preview.attr('data-easymde-initial-preview') === '1' && hasLocalDraft(storage, savedMarkdownFingerprint)) {
+        if (
+            (
+                $preview.attr('data-easymde-initial-preview') === '1'
+                || $preview.attr('data-easymde-initial-preview-provisional') === '1'
+            )
+            && hasLocalDraft(storage, savedMarkdownFingerprint)
+        ) {
             setPreviewPending($preview, true);
         } else {
             initialPreviewHydrated = hydrateInitialPreview($preview, '', {

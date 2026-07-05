@@ -1117,15 +1117,10 @@
             return false;
         }
 
-        if (
-            typeof window.EasyMDEDraftStorage.exists === 'function'
-            && !window.EasyMDEDraftStorage.exists(storage)
-        ) {
-            return false;
-        }
-
         if (typeof window.EasyMDEDraftStorage.read !== 'function') {
-            return false;
+            return typeof window.EasyMDEDraftStorage.exists === 'function'
+                ? window.EasyMDEDraftStorage.exists(storage)
+                : false;
         }
 
         draft = window.EasyMDEDraftStorage.read(storage);

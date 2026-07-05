@@ -52,7 +52,7 @@
     function read(storage) {
         var localStorage;
 
-        if (!storage.draftKey || !storageAvailable()) {
+        if (!storage.draftKey) {
             return null;
         }
 

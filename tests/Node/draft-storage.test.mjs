@@ -53,6 +53,8 @@ test('draft storage caches localStorage availability checks', () => {
 
   assert.equal(draftStorage.exists(normalized), false);
   assert.equal(draftStorage.read(normalized), null);
+  assert.equal(setItemCalls, 0);
+  assert.equal(removeItemCalls, 0);
   draftStorage.write(normalized, 'Draft body');
   assert.equal(draftStorage.exists(normalized), true);
   assert.equal(draftStorage.read(normalized).content, 'Draft body');

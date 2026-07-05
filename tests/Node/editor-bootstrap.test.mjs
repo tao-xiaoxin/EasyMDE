@@ -902,6 +902,9 @@ test('initEditor does not hydrate saved preview when a local draft exists', asyn
           content: 'Unsaved local draft.'
         };
       },
+      exists() {
+        throw new Error('matching logic should not perform an extra draft existence read');
+      },
       write() {},
       discard() {},
       formatTime() {
@@ -989,6 +992,9 @@ test('initEditor hydrates saved preview when a local draft matches saved source'
         return {
           content: 'Saved source.'
         };
+      },
+      exists() {
+        throw new Error('matching logic should not perform an extra draft existence read');
       },
       write() {},
       discard() {},

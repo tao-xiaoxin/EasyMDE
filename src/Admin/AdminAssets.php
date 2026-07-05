@@ -128,30 +128,6 @@ final class AdminAssets {
 		);
 
 		wp_enqueue_script(
-			'easymde-media-picker',
-			Asset::url( 'assets/js/admin/media-picker.js' ),
-			array(),
-			EASYMDE_VERSION,
-			true
-		);
-
-		wp_enqueue_script(
-			'easymde-image-paste',
-			Asset::url( 'assets/js/admin/image-paste.js' ),
-			array( 'wp-api-fetch' ),
-			EASYMDE_VERSION,
-			true
-		);
-
-		wp_enqueue_script(
-			'easymde-wechat-exporter',
-			Asset::url( 'assets/js/admin/wechat-exporter.js' ),
-			array(),
-			EASYMDE_VERSION,
-			true
-		);
-
-		wp_enqueue_script(
 			'easymde-admin',
 			Asset::url( 'assets/js/admin/bootstrap.js' ),
 			array(
@@ -165,9 +141,6 @@ final class AdminAssets {
 				'easymde-theme-manager',
 				'easymde-toolbar',
 				'easymde-draft-storage',
-				'easymde-media-picker',
-				'easymde-image-paste',
-				'easymde-wechat-exporter',
 			),
 			EASYMDE_VERSION,
 			true
@@ -184,19 +157,22 @@ final class AdminAssets {
 				'features'         => $this->frontend_assets->get_feature_config( '' ),
 				'previewAssets'    => $this->frontend_assets->get_editor_preview_assets(),
 				'storage'          => $this->get_storage_config( $post_id ),
-				'themeOptionsUrl'  => esc_url_raw( rest_url( 'easymde/v1/theme-options' ) ),
-				'customCssUrl'     => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
-				'imageUploadUrl'   => esc_url_raw( rest_url( 'easymde/v1/media' ) ),
-				'imageUpload'      => $this->get_image_upload_config(),
-				'themeOptions'     => $this->theme_state_repository->get_theme_options_for_script( $post_id ),
-				'commands'         => $this->toolbar_registry->get_commands_for_script(),
-				'shortcuts'        => $this->settings_page->get_shortcut_config_for_script(),
-				'editorSettings'   => $this->settings_page->get_editor_settings(),
-				'copy'             => array(
+				'themeOptionsUrl'         => esc_url_raw( rest_url( 'easymde/v1/theme-options' ) ),
+				'customCssUrl'            => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
+				'imageUploadUrl'          => esc_url_raw( rest_url( 'easymde/v1/media' ) ),
+				'mediaPickerScriptUrl'    => esc_url_raw( add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( 'assets/js/admin/media-picker.js' ) ) ),
+				'imagePasteScriptUrl'     => esc_url_raw( add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( 'assets/js/admin/image-paste.js' ) ) ),
+				'wechatExporterScriptUrl' => esc_url_raw( add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( 'assets/js/admin/wechat-exporter.js' ) ) ),
+				'imageUpload'             => $this->get_image_upload_config(),
+				'themeOptions'            => $this->theme_state_repository->get_theme_options_for_script( $post_id ),
+				'commands'                => $this->toolbar_registry->get_commands_for_script(),
+				'shortcuts'               => $this->settings_page->get_shortcut_config_for_script(),
+				'editorSettings'          => $this->settings_page->get_editor_settings(),
+				'copy'                    => array(
 					'mode' => 'wechat-rich-text',
 				),
-				'shortcodeHelpers' => $this->toolbar_registry->get_shortcode_helpers_for_script(),
-				'strings'          => $this->get_strings(),
+				'shortcodeHelpers'        => $this->toolbar_registry->get_shortcode_helpers_for_script(),
+				'strings'                 => $this->get_strings(),
 			)
 		);
 	}

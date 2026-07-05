@@ -330,6 +330,47 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertSame($before_revision_count, count(wp_get_post_revisions($post_id)));
     }
 
+    public function test_editor_shell_includes_safe_initial_preview_markup()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+            )
+        );
+        update_post_meta(
+            $post_id,
+            PostDocument::META_MARKDOWN,
+            "## Initial preview\n\n<script>alert('x')</script>\n\n**Ready before JavaScript refresh.**\n\n```js\nconsole.log('fast');\n```"
+        );
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $post_document = new PostDocument();
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('id="easymde-preview"', $output);
+        $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
+        $this->assertStringContainsString('&quot;codeBlocks&quot;:true', $output);
+        $this->assertStringContainsString('&quot;syntaxHighlight&quot;:true', $output);
+        $this->assertStringContainsString('<h2 id="initial-preview">Initial preview</h2>', $output);
+        $this->assertStringContainsString('<strong>Ready before JavaScript refresh.</strong>', $output);
+        $this->assertStringNotContainsString('<script>', $output);
+    }
+
     public function test_spellcheck_editor_setting_controls_source_textarea_attribute()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));

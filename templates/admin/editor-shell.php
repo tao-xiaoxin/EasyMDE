@@ -12,6 +12,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 $easymde_editor_post = $context['post'];
 $easymde_theme_state = $context['theme_state'];
 $easymde_spellcheck  = ! empty( $context['spellcheck_enabled'] ) ? 'true' : 'false';
+$easymde_initial_preview_ready    = ! empty( $context['initial_preview_ready'] ) ? '1' : '0';
+$easymde_initial_preview_features = wp_json_encode( ! empty( $context['initial_preview_features'] ) ? $context['initial_preview_features'] : array() );
 ?>
 <div id="easymde-editor" class="easymde-editor" data-post-id="<?php echo esc_attr( $easymde_editor_post->ID ); ?>">
 	<input type="hidden" id="easymde-enabled-field" name="easymde_enabled" value="1">
@@ -32,7 +34,14 @@ $easymde_spellcheck  = ! empty( $context['spellcheck_enabled'] ) ? 'true' : 'fal
 		</section>
 		<section class="easymde-pane easymde-pane-preview">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Preview', 'easymde' ); ?></header>
-			<article id="easymde-preview" class="<?php echo esc_attr( $context['content_classes'] ); ?>" style="<?php echo esc_attr( $context['content_style'] ); ?>" aria-live="polite"></article>
+			<article
+				id="easymde-preview"
+				class="<?php echo esc_attr( $context['content_classes'] ); ?>"
+				style="<?php echo esc_attr( $context['content_style'] ); ?>"
+				data-easymde-initial-preview="<?php echo esc_attr( $easymde_initial_preview_ready ); ?>"
+				data-easymde-preview-features="<?php echo esc_attr( $easymde_initial_preview_features ); ?>"
+				aria-live="polite"
+			><?php echo $context['initial_preview']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Already sanitized by MarkdownRenderer::render(). ?></article>
 		</section>
 		<aside class="easymde-side-actions" aria-label="<?php esc_attr_e( 'Output actions', 'easymde' ); ?>"></aside>
 	</div>

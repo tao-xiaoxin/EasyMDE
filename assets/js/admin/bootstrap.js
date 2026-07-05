@@ -27,24 +27,24 @@
     var previewTimer = null;
     var previewRevision = 0;
     var previewAbortController = null;
+    var imagePasteLoadPromise = null;
+    var mediaPickerLoadPromise = null;
+    var wechatExporterLoadPromise = null;
     var activePreviewFeatures = normalizePreviewFeatures(config.features || {});
     var draftTimer = null;
     var syncLock = false;
     var flashTimer = null;
-    var commandMap = buildCommandMap(config.commands || []);
-    var isMac = detectMacPlatform();
+    var commandMap = null;
+    var commandList = null;
+    var commandSurfaceCache = {};
+    var commandGroupCache = {};
+    var isMac = null;
     var openPopovers = [];
     var getCommand = commandTools.getCommand ? function (id) {
-        return commandTools.getCommand(commandMap, id);
+        return commandTools.getCommand(getCommandMap(), id);
     } : getCommand;
-    var getSurfaceCommands = commandTools.getSurfaceCommands ? function (surface) {
-        return commandTools.getSurfaceCommands(commandMap, surface);
-    } : getSurfaceCommands;
-    var getGroupCommands = commandTools.getGroupCommands ? function (surface, group) {
-        return commandTools.getGroupCommands(commandMap, surface, group);
-    } : getGroupCommands;
     var getShortcutForCommand = commandTools.getShortcutForCommand ? function (commandId) {
-        return commandTools.getShortcutForCommand(config.shortcuts || {}, commandId, isMac);
+        return commandTools.getShortcutForCommand(config.shortcuts || {}, commandId, getIsMac());
     } : getShortcutForCommand;
     var selectedCustomCssItem = themeManager.selectedCustomCssItem ? function () {
         return themeManager.selectedCustomCssItem(renderState, customCssLibrary, findById);
@@ -126,6 +126,35 @@
         return map;
     }
 
+    function getCommandMap() {
+        if (!commandMap) {
+            commandMap = buildCommandMap(config.commands || []);
+        }
+
+        return commandMap;
+    }
+
+    function getCommandList() {
+        var map;
+
+        if (!commandList) {
+            map = getCommandMap();
+            commandList = Object.keys(map).map(function (id) {
+                return map[id];
+            });
+        }
+
+        return commandList;
+    }
+
+    function getIsMac() {
+        if (isMac === null) {
+            isMac = detectMacPlatform();
+        }
+
+        return isMac;
+    }
+
     function normalizeRenderState(state) {
         state = state || {};
 
@@ -177,28 +206,36 @@
     }
 
     function getCommand(id) {
-        return commandMap[id] || null;
+        return getCommandMap()[id] || null;
     }
 
     function getSurfaceCommands(surface) {
-        return Object.keys(commandMap).map(function (id) {
-            return commandMap[id];
-        }).filter(function (command) {
-            return command.surface === surface;
-        });
+        if (!commandSurfaceCache[surface]) {
+            commandSurfaceCache[surface] = getCommandList().filter(function (command) {
+                return command.surface === surface;
+            });
+        }
+
+        return commandSurfaceCache[surface];
     }
 
     function getGroupCommands(surface, group) {
-        return getSurfaceCommands(surface).filter(function (command) {
-            return command.group === group;
-        });
+        var key = surface + ':' + group;
+
+        if (!commandGroupCache[key]) {
+            commandGroupCache[key] = getSurfaceCommands(surface).filter(function (command) {
+                return command.group === group;
+            });
+        }
+
+        return commandGroupCache[key];
     }
 
     function getShortcutForCommand(commandId) {
         var shortcuts = config.shortcuts || {};
         var shortcut = shortcuts[commandId] || {};
 
-        return isMac ? (shortcut.mac || '') : (shortcut.win || '');
+        return getIsMac() ? (shortcut.mac || '') : (shortcut.win || '');
     }
 
     function getCommandLabel(command) {
@@ -469,7 +506,7 @@
         return $button;
     }
 
-    function registerPopover($button, $panel) {
+    function registerPopover($button, $panel, options) {
         openPopovers.push({
             button: $button,
             panel: $panel
@@ -485,6 +522,11 @@
 
             var isOpen = !$panel.prop('hidden');
             closePopovers();
+
+            if (!isOpen && options && typeof options.beforeOpen === 'function') {
+                options.beforeOpen();
+            }
+
             $panel.prop('hidden', isOpen);
             $button.toggleClass('is-active', !isOpen);
         });
@@ -515,6 +557,7 @@
         var $anchor = createMenuAnchor('easymde-toolbar-popover-headings');
         var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-menu easymde-toolbar-button-compact"></button>');
         var $panel = $('<div class="easymde-toolbar-popover" hidden></div>');
+        var panelReady = false;
 
         $button.attr('title', getString('headings'));
         $button.attr('aria-label', getString('headings'));
@@ -523,28 +566,35 @@
             $('<span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>')
         );
 
-        headingCommands.forEach(function (command) {
-            var $item = $('<button type="button" class="easymde-popover-item"></button>');
-            var shortcut = getShortcutForCommand(command.id);
+        function populatePanel() {
+            if (panelReady) {
+                return;
+            }
 
-            $item.append(
-                $('<span class="easymde-popover-item-label"></span>').text(getCommandLabel(command)),
-                $('<span class="easymde-popover-item-shortcut"></span>').text(shortcut)
-            );
+            panelReady = true;
+            headingCommands.forEach(function (command) {
+                var $item = $('<button type="button" class="easymde-popover-item"></button>');
+                var shortcut = getShortcutForCommand(command.id);
 
-            $item.on('mousedown', function (event) {
-                event.preventDefault();
+                $item.append(
+                    $('<span class="easymde-popover-item-label"></span>').text(getCommandLabel(command)),
+                    $('<span class="easymde-popover-item-shortcut"></span>').text(shortcut)
+                );
+
+                $item.on('mousedown', function (event) {
+                    event.preventDefault();
+                });
+
+                $item.on('click', function () {
+                    closePopovers();
+                    executeCommand(command.id, { textarea: textarea });
+                });
+
+                $panel.append($item);
             });
+        }
 
-            $item.on('click', function () {
-                closePopovers();
-                executeCommand(command.id, { textarea: textarea });
-            });
-
-            $panel.append($item);
-        });
-
-        registerPopover($button, $panel);
+        registerPopover($button, $panel, { beforeOpen: populatePanel });
         $anchor.append($button, $panel);
         $container.append($anchor);
     }
@@ -771,16 +821,7 @@
         var $anchor = createMenuAnchor('easymde-toolbar-popover-appearance');
         var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-menu easymde-toolbar-button-compact"></button>');
         var $panel = $('<div class="easymde-toolbar-popover easymde-toolbar-popover-appearance-panel" hidden></div>');
-        var themeControl = createSelectControl(getString('articleTheme'), 'easymde-theme-select');
-        var codeControl = createSelectControl(getString('codeTheme'), 'easymde-code-theme-select');
-        var $macLabel = $('<label class="easymde-toolbar-check"></label>');
-        var $macToggle = $('<input type="checkbox">').prop('checked', !!renderState.codeMacStyle);
-        var $customToggle = $('<button type="button" class="button button-secondary easymde-custom-css-toggle"></button>').text(getString('customCss'));
-        var $customPanel = $('<div class="easymde-custom-css-panel" hidden></div>');
-        var $name = $('<input type="text" class="regular-text easymde-custom-css-name">').attr('placeholder', getString('cssName'));
-        var $code = $('<textarea class="easymde-custom-css-code" spellcheck="false"></textarea>');
-        var $save = $('<button type="button" class="button button-primary"></button>').text(getString('saveCss'));
-        var $status = $('<span class="easymde-custom-css-status" aria-live="polite"></span>');
+        var panelReady = false;
 
         $button.attr('title', getString('appearance'));
         $button.attr('aria-label', getString('appearance'));
@@ -789,104 +830,133 @@
             $('<span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>')
         );
 
-        renderThemeSelect(themeControl.select);
-        renderCodeThemeSelect(codeControl.select);
+        function populatePanel() {
+            var themeControl;
+            var codeControl;
+            var $macLabel;
+            var $macToggle;
+            var $customToggle;
+            var $customPanel;
+            var $name;
+            var $code;
+            var $save;
+            var $status;
 
-        $macLabel.append($macToggle, $('<span></span>').text(getString('macCodeFrame')));
-        $customPanel.append(
-            $('<div class="easymde-custom-css-row"></div>').append($name, $save, $status),
-            $code
-        );
-        fillCustomPanel($customPanel);
-
-        $panel.append(
-            themeControl.root,
-            codeControl.root,
-            $macLabel,
-            $('<div class="easymde-custom-css-toggle-row"></div>').append($customToggle),
-            $customPanel
-        );
-
-        themeControl.select.on('change', function () {
-            var value = String($(this).val() || 'theme:default');
-            var parts = value.split(':');
-            var item = null;
-
-            if (parts[0] === 'custom') {
-                item = findById(customCssLibrary, parts[1]);
-                if (item) {
-                    renderState.markdownTheme = 'custom';
-                    renderState.customCssId = item.id;
-                    renderState.customCss = item.css || '';
-                    renderState.scopedCustomCss = item.scopedCss || '';
-                    fillCustomPanel($customPanel);
-                }
-            } else {
-                renderState.markdownTheme = parts[1] || 'default';
-                renderState.customCssId = '';
-                renderState.customCss = '';
-                renderState.scopedCustomCss = '';
-                applyThemeFontDefaults(renderState.markdownTheme);
-            }
-
-            applyRenderState($preview);
-            refreshPreview();
-        });
-
-        codeControl.select.on('change', function () {
-            renderState.codeTheme = String($(this).val() || 'atom-one-dark');
-            applyRenderState($preview);
-            refreshPreview();
-        });
-
-        $macToggle.on('change', function () {
-            renderState.codeMacStyle = !!this.checked;
-            applyRenderState($preview);
-            refreshPreview();
-        });
-
-        $customToggle.on('click', function () {
-            $customPanel.prop('hidden', !$customPanel.prop('hidden'));
-            fillCustomPanel($customPanel);
-        });
-
-        $save.on('click', function () {
-            if (!window.wp || !window.wp.apiFetch || !config.customCssUrl) {
-                $status.text(getString('cssSaveFailed'));
+            if (panelReady) {
                 return;
             }
 
-            $status.text('');
-            window.wp.apiFetch({
-                url: config.customCssUrl,
-                method: 'POST',
-                headers: {
-                    'X-WP-Nonce': config.nonce
-                },
-                data: {
-                    id: renderState.markdownTheme === 'custom' ? renderState.customCssId : '',
-                    name: $name.val(),
-                    css: $code.val()
-                }
-            }).then(function (response) {
-                customCssLibrary = response.customCss || customCssLibrary;
-                renderState.markdownTheme = 'custom';
-                renderState.customCssId = response.item.id;
-                renderState.customCss = response.item.css || '';
-                renderState.scopedCustomCss = response.item.scopedCss || '';
-                themeOptions.state = renderState;
+            panelReady = true;
+            themeControl = createSelectControl(getString('articleTheme'), 'easymde-theme-select');
+            codeControl = createSelectControl(getString('codeTheme'), 'easymde-code-theme-select');
+            $macLabel = $('<label class="easymde-toolbar-check"></label>');
+            $macToggle = $('<input type="checkbox">').prop('checked', !!renderState.codeMacStyle);
+            $customToggle = $('<button type="button" class="button button-secondary easymde-custom-css-toggle"></button>').text(getString('customCss'));
+            $customPanel = $('<div class="easymde-custom-css-panel" hidden></div>');
+            $name = $('<input type="text" class="regular-text easymde-custom-css-name">').attr('placeholder', getString('cssName'));
+            $code = $('<textarea class="easymde-custom-css-code" spellcheck="false"></textarea>');
+            $save = $('<button type="button" class="button button-primary"></button>').text(getString('saveCss'));
+            $status = $('<span class="easymde-custom-css-status" aria-live="polite"></span>');
 
-                renderThemeSelect(themeControl.select);
-                themeControl.select.val('custom:' + response.item.id);
+            renderThemeSelect(themeControl.select);
+            renderCodeThemeSelect(codeControl.select);
+
+            $macLabel.append($macToggle, $('<span></span>').text(getString('macCodeFrame')));
+            $customPanel.append(
+                $('<div class="easymde-custom-css-row"></div>').append($name, $save, $status),
+                $code
+            );
+            fillCustomPanel($customPanel);
+
+            $panel.append(
+                themeControl.root,
+                codeControl.root,
+                $macLabel,
+                $('<div class="easymde-custom-css-toggle-row"></div>').append($customToggle),
+                $customPanel
+            );
+
+            themeControl.select.on('change', function () {
+                var value = String($(this).val() || 'theme:default');
+                var parts = value.split(':');
+                var item = null;
+
+                if (parts[0] === 'custom') {
+                    item = findById(customCssLibrary, parts[1]);
+                    if (item) {
+                        renderState.markdownTheme = 'custom';
+                        renderState.customCssId = item.id;
+                        renderState.customCss = item.css || '';
+                        renderState.scopedCustomCss = item.scopedCss || '';
+                        fillCustomPanel($customPanel);
+                    }
+                } else {
+                    renderState.markdownTheme = parts[1] || 'default';
+                    renderState.customCssId = '';
+                    renderState.customCss = '';
+                    renderState.scopedCustomCss = '';
+                    applyThemeFontDefaults(renderState.markdownTheme);
+                }
+
                 applyRenderState($preview);
                 refreshPreview();
-                $status.text(getString('cssSaved'));
-            }).catch(function () {
-                $status.text(getString('cssSaveFailed'));
             });
-        });
 
-        registerPopover($button, $panel);
+            codeControl.select.on('change', function () {
+                renderState.codeTheme = String($(this).val() || 'atom-one-dark');
+                applyRenderState($preview);
+                refreshPreview();
+            });
+
+            $macToggle.on('change', function () {
+                renderState.codeMacStyle = !!this.checked;
+                applyRenderState($preview);
+                refreshPreview();
+            });
+
+            $customToggle.on('click', function () {
+                $customPanel.prop('hidden', !$customPanel.prop('hidden'));
+                fillCustomPanel($customPanel);
+            });
+
+            $save.on('click', function () {
+                if (!window.wp || !window.wp.apiFetch || !config.customCssUrl) {
+                    $status.text(getString('cssSaveFailed'));
+                    return;
+                }
+
+                $status.text('');
+                window.wp.apiFetch({
+                    url: config.customCssUrl,
+                    method: 'POST',
+                    headers: {
+                        'X-WP-Nonce': config.nonce
+                    },
+                    data: {
+                        id: renderState.markdownTheme === 'custom' ? renderState.customCssId : '',
+                        name: $name.val(),
+                        css: $code.val()
+                    }
+                }).then(function (response) {
+                    customCssLibrary = response.customCss || customCssLibrary;
+                    renderState.markdownTheme = 'custom';
+                    renderState.customCssId = response.item.id;
+                    renderState.customCss = response.item.css || '';
+                    renderState.scopedCustomCss = response.item.scopedCss || '';
+                    themeOptions.state = renderState;
+
+                    renderThemeSelect(themeControl.select);
+                    themeControl.select.val('custom:' + response.item.id);
+                    applyRenderState($preview);
+                    refreshPreview();
+                    $status.text(getString('cssSaved'));
+                }).catch(function () {
+                    $status.text(getString('cssSaveFailed'));
+                });
+            });
+        }
+
+        registerPopover($button, $panel, { beforeOpen: populatePanel });
         $anchor.append($button, $panel);
         $container.append($anchor);
     }
@@ -895,16 +965,7 @@
         var $anchor = createMenuAnchor('easymde-toolbar-popover-font');
         var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-menu easymde-toolbar-button-compact"></button>');
         var $panel = $('<div class="easymde-toolbar-popover easymde-toolbar-popover-font-panel" hidden></div>');
-        var customControl = createSelectControl(getString('customFont'), 'easymde-custom-font-select');
-        var windowsControl = createSelectControl(getString('windowsFont'), 'easymde-windows-font-select');
-        var appleControl = createSelectControl(getString('appleFont'), 'easymde-apple-font-select');
-        var serifControl = createSelectControl(getString('serifFont'), 'easymde-serif-font-select');
-        var controls = [
-            [customControl, 'customFonts', 'customFont'],
-            [windowsControl, 'windowsFonts', 'windowsFont'],
-            [appleControl, 'appleFonts', 'appleFont'],
-            [serifControl, 'serifOptions', 'serifFont']
-        ];
+        var panelReady = false;
 
         if (!getFontGroup('customFonts').length) {
             return;
@@ -917,26 +978,50 @@
             $('<span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>')
         );
 
-        controls.forEach(function (entry) {
-            var control = entry[0];
-            var group = entry[1];
-            var stateKey = entry[2];
+        function populatePanel() {
+            var customControl;
+            var windowsControl;
+            var appleControl;
+            var serifControl;
+            var controls;
 
-            renderFontSelect(control.select, group, renderState[stateKey]);
+            if (panelReady) {
+                return;
+            }
 
-            control.select.on('change', function () {
-                renderState[stateKey] = String($(this).val() || '');
-                applyRenderState($preview);
+            panelReady = true;
+            customControl = createSelectControl(getString('customFont'), 'easymde-custom-font-select');
+            windowsControl = createSelectControl(getString('windowsFont'), 'easymde-windows-font-select');
+            appleControl = createSelectControl(getString('appleFont'), 'easymde-apple-font-select');
+            serifControl = createSelectControl(getString('serifFont'), 'easymde-serif-font-select');
+            controls = [
+                [customControl, 'customFonts', 'customFont'],
+                [windowsControl, 'windowsFonts', 'windowsFont'],
+                [appleControl, 'appleFonts', 'appleFont'],
+                [serifControl, 'serifOptions', 'serifFont']
+            ];
+
+            controls.forEach(function (entry) {
+                var control = entry[0];
+                var group = entry[1];
+                var stateKey = entry[2];
+
+                renderFontSelect(control.select, group, renderState[stateKey]);
+
+                control.select.on('change', function () {
+                    renderState[stateKey] = String($(this).val() || '');
+                    applyRenderState($preview);
+                });
+
+                $panel.append(control.root);
             });
 
-            $panel.append(control.root);
-        });
+            $panel.append(
+                $('<p class="easymde-toolbar-help"></p>').text(getString('fontStackHelp'))
+            );
+        }
 
-        $panel.append(
-            $('<p class="easymde-toolbar-help"></p>').text(getString('fontStackHelp'))
-        );
-
-        registerPopover($button, $panel);
+        registerPopover($button, $panel, { beforeOpen: populatePanel });
         $anchor.append($button, $panel);
         $container.append($anchor);
     }
@@ -1237,11 +1322,23 @@
 
     function previewHasRenderedContent($preview) {
         var preview = $preview[0];
+        var firstElement;
+        var firstElementClasses;
 
-        return !!(
-            preview
-            && preview.innerHTML.trim()
-            && !$preview.find('.easymde-preview-empty, .easymde-preview-pending, .easymde-preview-error').length
+        if (!preview || !preview.firstChild) {
+            return false;
+        }
+
+        firstElement = preview.firstElementChild;
+        firstElementClasses = firstElement && firstElement.classList ? firstElement.classList : null;
+
+        return !(
+            firstElementClasses
+            && (
+                firstElementClasses.contains('easymde-preview-empty')
+                || firstElementClasses.contains('easymde-preview-pending')
+                || firstElementClasses.contains('easymde-preview-error')
+            )
         );
     }
 
@@ -1257,6 +1354,354 @@
     function setPreviewReady($preview) {
         setPreviewBusy($preview, false);
         $preview.removeAttr('data-easymde-preview-refreshing');
+    }
+
+    function afterPreviewIdle(callback) {
+        var fallbackTimer;
+        var called = false;
+
+        function run() {
+            if (called) {
+                return;
+            }
+
+            called = true;
+            callback();
+        }
+
+        if (window.requestIdleCallback) {
+            fallbackTimer = window.setTimeout(run, 500);
+            window.requestIdleCallback(function () {
+                window.clearTimeout(fallbackTimer);
+                run();
+            }, { timeout: 500 });
+            return;
+        }
+
+        window.setTimeout(run, 60);
+    }
+
+    function canUseImagePasteUpload() {
+        return !!(
+            config.imageUpload
+            && config.imageUpload.enabled
+            && config.imageUploadUrl
+            && config.imagePasteScriptUrl
+            && config.nonce
+        );
+    }
+
+    function eventTransfer(event) {
+        return event && (event.clipboardData || event.dataTransfer) ? event.clipboardData || event.dataTransfer : null;
+    }
+
+    function hasImageFileTransfer(transfer) {
+        var items = transfer && transfer.items ? transfer.items : [];
+        var files = transfer && transfer.files ? transfer.files : [];
+        var index;
+        var file;
+        var type;
+
+        for (index = 0; index < items.length; index += 1) {
+            if (!items[index] || items[index].kind !== 'file') {
+                continue;
+            }
+
+            type = items[index].type || '';
+            if (/^image\//i.test(type)) {
+                return true;
+            }
+        }
+
+        for (index = 0; index < files.length; index += 1) {
+            file = files[index];
+            if (file && /^image\//i.test(file.type || '')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    function eventHasImageFileTransfer(event) {
+        return hasImageFileTransfer(eventTransfer(event));
+    }
+
+    function preventImageTransferDefault(event) {
+        if (event && typeof event.preventDefault === 'function') {
+            event.preventDefault();
+        }
+
+        if (event && event.dataTransfer) {
+            event.dataTransfer.dropEffect = 'copy';
+        }
+    }
+
+    function imagePasteFailureMessage(source) {
+        if (source === 'drop') {
+            return getString('imageDropFailed') || getString('imagePasteFailed');
+        }
+
+        return getString('imagePasteFailed');
+    }
+
+    function imagePasteOptions($root, $flash) {
+        return {
+            applyTextChange: applyTextChange,
+            config: config,
+            flash: $flash,
+            getString: getString,
+            postId: $root.data('post-id') || 0,
+            showFlash: showFlash
+        };
+    }
+
+    function bindImagePaste(textarea, $root, $flash) {
+        if (!textarea || !window.EasyMDEImagePaste || !window.EasyMDEImagePaste.bind) {
+            return false;
+        }
+
+        window.EasyMDEImagePaste.bind(textarea, imagePasteOptions($root, $flash));
+        return !!textarea.easymdeImagePasteBound;
+    }
+
+    function loadDeferredScript(id, src) {
+        if (
+            !src
+            || !previewFeatureLoader
+            || typeof previewFeatureLoader.loadScript !== 'function'
+        ) {
+            return Promise.resolve(false);
+        }
+
+        return previewFeatureLoader.loadScript(id, src, document).then(function (result) {
+            return !(result && result.status === 'failed');
+        });
+    }
+
+    function ensureImagePasteBound(textarea, $root, $flash) {
+        if (bindImagePaste(textarea, $root, $flash)) {
+            return Promise.resolve(true);
+        }
+
+        if (!canUseImagePasteUpload()) {
+            return Promise.resolve(false);
+        }
+
+        if (!imagePasteLoadPromise) {
+            imagePasteLoadPromise = loadDeferredScript(
+                'easymde-image-paste-js',
+                config.imagePasteScriptUrl
+            );
+        }
+
+        return imagePasteLoadPromise.then(function (loaded) {
+            return loaded && bindImagePaste(textarea, $root, $flash);
+        });
+    }
+
+    function bindLazyImagePasteUpload(textarea, $root, $flash) {
+        function replayWhenLoaded(event, handlerName, source) {
+            if (textarea.easymdeImagePasteBound || !eventHasImageFileTransfer(event)) {
+                return;
+            }
+
+            preventImageTransferDefault(event);
+            ensureImagePasteBound(textarea, $root, $flash).then(function (loaded) {
+                if (
+                    loaded
+                    && window.EasyMDEImagePaste
+                    && typeof window.EasyMDEImagePaste[handlerName] === 'function'
+                ) {
+                    window.EasyMDEImagePaste[handlerName](event, textarea, imagePasteOptions($root, $flash));
+                    return;
+                }
+
+                if (source !== 'dragover') {
+                    showFlash($flash, 'error', imagePasteFailureMessage(source));
+                }
+            });
+        }
+
+        if (bindImagePaste(textarea, $root, $flash)) {
+            return true;
+        }
+
+        if (
+            !textarea
+            || textarea.easymdeImagePasteLazyBound
+            || typeof textarea.addEventListener !== 'function'
+            || !canUseImagePasteUpload()
+        ) {
+            return false;
+        }
+
+        textarea.easymdeImagePasteLazyBound = true;
+        textarea.addEventListener('paste', function (event) {
+            replayWhenLoaded(event, 'handlePaste', 'paste');
+        });
+        textarea.addEventListener('dragover', function (event) {
+            replayWhenLoaded(event, 'handleDragOver', 'dragover');
+        });
+        textarea.addEventListener('drop', function (event) {
+            replayWhenLoaded(event, 'handleDrop', 'drop');
+        });
+
+        return true;
+    }
+
+    function copyWechat(context) {
+        var callbacks = {
+            getString: getString,
+            showFlash: showFlash
+        };
+
+        if (window.EasyMDEWechatExporter && window.EasyMDEWechatExporter.copy) {
+            window.EasyMDEWechatExporter.copy(context, callbacks);
+            return;
+        }
+
+        if (!wechatExporterLoadPromise) {
+            wechatExporterLoadPromise = loadDeferredScript(
+                'easymde-wechat-exporter-js',
+                config.wechatExporterScriptUrl
+            );
+        }
+
+        wechatExporterLoadPromise.then(function (loaded) {
+            if (loaded && window.EasyMDEWechatExporter && window.EasyMDEWechatExporter.copy) {
+                window.EasyMDEWechatExporter.copy(context, callbacks);
+                return;
+            }
+
+            showFlash(context && context.flash ? context.flash : null, 'error', getString('copyWechatFailed'));
+        });
+    }
+
+    function mediaPickerOptions() {
+        return {
+            title: getString('insertMedia'),
+            altText: getString('mediaAltText'),
+            defaultAlt: getString('mediaDefaultAlt'),
+            insertAround: insertAround,
+            applyTextChange: applyTextChange
+        };
+    }
+
+    function insertMediaPlaceholder(textarea) {
+        insertAround(textarea, '![' + getString('mediaAltText') + '](', ')', '');
+    }
+
+    function openLoadedMediaPicker(textarea) {
+        if (!textarea || !window.EasyMDEMediaPicker || !window.EasyMDEMediaPicker.open) {
+            return false;
+        }
+
+        window.EasyMDEMediaPicker.open(textarea, mediaPickerOptions());
+        return true;
+    }
+
+    function openMediaPicker(textarea) {
+        if (openLoadedMediaPicker(textarea)) {
+            return Promise.resolve(true);
+        }
+
+        if (!mediaPickerLoadPromise) {
+            mediaPickerLoadPromise = loadDeferredScript(
+                'easymde-media-picker-js',
+                config.mediaPickerScriptUrl
+            );
+        }
+
+        return mediaPickerLoadPromise.then(function (loaded) {
+            if (loaded && openLoadedMediaPicker(textarea)) {
+                return true;
+            }
+
+            insertMediaPlaceholder(textarea);
+            return false;
+        });
+    }
+
+    function previewNeedsDeferredEnhancement(features) {
+        features = normalizePreviewFeatures(features || activePreviewFeatures);
+
+        return !!(
+            features.syntaxHighlight
+            || features.math
+            || features.mermaid
+            || features.toc
+            || (features.codeBlocks && renderState.codeMacStyle)
+        );
+    }
+
+    function initialPreviewFeatures($preview) {
+        var raw = $preview.attr('data-easymde-preview-features');
+
+        if (!raw) {
+            return null;
+        }
+
+        try {
+            return JSON.parse(raw);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function hydrateInitialPreview($preview, markdown) {
+        var previewNode = $preview[0];
+        var features;
+        var revision;
+        var signature;
+        var scrollState;
+
+        if ($preview.attr('data-easymde-initial-preview') !== '1' || !previewHasRenderedContent($preview)) {
+            return false;
+        }
+
+        window.clearTimeout(previewTimer);
+        abortPreviewRequest();
+
+        features = normalizePreviewFeatures(initialPreviewFeatures($preview) || config.features || {});
+        activePreviewFeatures = features;
+        revision = ++previewRevision;
+        signature = currentPreviewSignature(markdown);
+        scrollState = capturePreviewScroll(previewNode);
+
+        setPreviewReady($preview);
+
+        if (renderState.markdownTheme === 'custom') {
+            setCustomCssStyle(selectedCustomCss());
+        }
+
+        afterPreviewIdle(function () {
+            if (!isPreviewCurrent(revision, signature, markdown)) {
+                return;
+            }
+
+            applyRenderState($preview, features);
+            restorePreviewScroll(previewNode, scrollState);
+        });
+
+        if (!previewNeedsDeferredEnhancement(features)) {
+            return true;
+        }
+
+        $preview.attr('data-easymde-preview-refreshing', '1');
+        afterPreviewIdle(function () {
+            if (!isPreviewCurrent(revision, signature, markdown)) {
+                return;
+            }
+
+            enhancePreview($preview, features, revision, signature, markdown).then(function () {
+                if (isPreviewCurrent(revision, signature, markdown)) {
+                    setPreviewReady($preview);
+                }
+            });
+        });
+
+        return true;
     }
 
     function abortPreviewRequest() {
@@ -1294,7 +1739,7 @@
 
         setPreviewPending($preview, !previewHasRenderedContent($preview));
 
-        previewTimer = window.setTimeout(function () {
+        function runPreviewRequest() {
             var requestScrollState;
             var fetchOptions;
 
@@ -1302,6 +1747,7 @@
                 return;
             }
 
+            previewTimer = null;
             requestScrollState = capturePreviewScroll(previewNode);
 
             if (!window.wp || !window.wp.apiFetch || !config.restUrl) {
@@ -1367,7 +1813,14 @@
                 $preview.html('<p class="easymde-preview-error">' + escapeHtml(getString('previewError')) + '</p>');
                 finishPreviewUpdate(requestScrollState, activePreviewFeatures);
             });
-        }, delay);
+        }
+
+        if (delay <= 0) {
+            runPreviewRequest();
+            return;
+        }
+
+        previewTimer = window.setTimeout(runPreviewRequest, delay);
     }
 
     function bindScrollSync(textarea, preview) {
@@ -1454,7 +1907,7 @@
             return '';
         }
 
-        if (isMac) {
+        if (getIsMac()) {
             if (event.metaKey) {
                 parts.push('Cmd');
             }
@@ -1530,7 +1983,7 @@
                 return;
             }
 
-            Object.keys(commandMap).some(function (commandId) {
+            Object.keys(getCommandMap()).some(function (commandId) {
                 if (getShortcutForCommand(commandId) === shortcut) {
                     matchedCommand = commandId;
                     return true;
@@ -1590,22 +2043,13 @@
             insertAround(textarea, '[', '](https://)', getString('linkText'));
             break;
         case 'image':
-            window.EasyMDEMediaPicker.open(textarea, {
-                title: getString('insertMedia'),
-                altText: getString('mediaAltText'),
-                defaultAlt: getString('mediaDefaultAlt'),
-                insertAround: insertAround,
-                applyTextChange: applyTextChange
-            });
+            openMediaPicker(textarea);
             break;
         case 'savePost':
             triggerSavePost();
             break;
         case 'copyWechat':
-            window.EasyMDEWechatExporter.copy(context, {
-                getString: getString,
-                showFlash: showFlash
-            });
+            copyWechat(context);
             break;
         case 'linePrefix':
             applyLinePrefix(textarea, command.linePrefix || '');
@@ -1747,6 +2191,9 @@
         var $toolbar = $root.find('.easymde-toolbar');
         var $sideActions = $root.find('.easymde-side-actions');
         var storage = window.EasyMDEDraftStorage.normalizeStorage(config, $root.data('post-id'));
+        var initialMarkdown = $source.val();
+        var initialPreviewHydrated = false;
+        var editorChromeReady = false;
         var $flash;
         var $draftStatus;
         var context;
@@ -1763,38 +2210,35 @@
             window.EasyMDEEnhancements.initTheme($root[0], config);
         }
 
+        initialPreviewHydrated = hydrateInitialPreview($preview, initialMarkdown);
+
         function refreshPreview(options) {
             updatePreview($preview, $source.val(), options || { immediate: true });
         }
-
-        $flash = createFlash($root);
 
         context = {
             root: $root,
             textarea: $source[0],
             preview: $preview,
             refreshPreview: refreshPreview,
-            flash: $flash
+            flash: null
         };
 
-        if (window.EasyMDEImagePaste && window.EasyMDEImagePaste.bind) {
-            window.EasyMDEImagePaste.bind($source[0], {
-                applyTextChange: applyTextChange,
-                config: config,
-                flash: $flash,
-                getString: getString,
-                postId: $root.data('post-id') || 0,
-                showFlash: showFlash
-            });
-        }
+        function initializeEditorChrome() {
+            if (editorChromeReady) {
+                return;
+            }
 
-        createToolbar($toolbar, context);
-        $draftStatus = createDraftStatus($toolbar);
-        createSideActions($sideActions, context);
-        createDraftNotice($root, $source[0], storage, $flash);
-        bindScrollSync($source[0], $preview[0]);
-        bindShortcuts($root, $source[0], context);
-        bindImmersiveModeShortcuts(context);
+            editorChromeReady = true;
+            $flash = createFlash($root);
+            context.flash = $flash;
+            createToolbar($toolbar, context);
+            $draftStatus = createDraftStatus($toolbar);
+            createSideActions($sideActions, context);
+            bindScrollSync($source[0], $preview[0]);
+            bindShortcuts($root, $source[0], context);
+            bindImmersiveModeShortcuts(context);
+        }
 
         $source.on('input', function () {
             mirrorToPostContent(this.value);
@@ -1804,7 +2248,9 @@
                 window.clearTimeout(draftTimer);
                 draftTimer = window.setTimeout(function () {
                     window.EasyMDEDraftStorage.write(storage, $source.val());
-                    $draftStatus.text(getString('draftSaved') + ' ' + window.EasyMDEDraftStorage.formatTime(Date.now()));
+                    if ($draftStatus && $draftStatus.length) {
+                        $draftStatus.text(getString('draftSaved') + ' ' + window.EasyMDEDraftStorage.formatTime(Date.now()));
+                    }
                 }, 500);
             }
         });
@@ -1813,15 +2259,35 @@
             mirrorToPostContent($source.val());
         });
 
-        syncMarkdownFields($source.val());
         afterShellPaint(function () {
             $root.attr('data-easymde-shell-ready', '1');
-            updatePreview($preview, $source.val(), { immediate: true });
+            syncMarkdownFields($source.val());
+
+            if (!initialPreviewHydrated) {
+                updatePreview($preview, $source.val(), { immediate: true });
+            }
+
+            initializeEditorChrome();
+            bindLazyImagePasteUpload($source[0], $root, $flash);
+
+            if (!config.features || config.features.localDrafts !== false) {
+                afterPreviewIdle(function () {
+                    if ($source.val() === initialMarkdown) {
+                        createDraftNotice($root, $source[0], storage, $flash);
+                    }
+                });
+            }
         });
     }
 
     if (config.testHooks && window.EasyMDETestHooks) {
         window.EasyMDETestHooks.afterShellPaint = afterShellPaint;
+        window.EasyMDETestHooks.copyWechat = copyWechat;
+        window.EasyMDETestHooks.bindLazyImagePasteUpload = bindLazyImagePasteUpload;
+        window.EasyMDETestHooks.hydrateInitialPreview = hydrateInitialPreview;
+        window.EasyMDETestHooks.ensureImagePasteBound = ensureImagePasteBound;
+        window.EasyMDETestHooks.openMediaPicker = openMediaPicker;
+        window.EasyMDETestHooks.showFlash = showFlash;
         window.EasyMDETestHooks.updatePreview = updatePreview;
     }
 

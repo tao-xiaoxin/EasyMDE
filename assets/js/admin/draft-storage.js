@@ -1,14 +1,22 @@
 (function (window) {
     'use strict';
 
+    var storageAvailableCache = null;
+
     function storageAvailable() {
+        if (storageAvailableCache !== null) {
+            return storageAvailableCache;
+        }
+
         try {
             var testKey = '__easymde_test__';
             window.localStorage.setItem(testKey, '1');
             window.localStorage.removeItem(testKey);
-            return true;
+            storageAvailableCache = true;
+            return storageAvailableCache;
         } catch (error) {
-            return false;
+            storageAvailableCache = false;
+            return storageAvailableCache;
         }
     }
 

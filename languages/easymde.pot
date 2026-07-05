@@ -13,7 +13,7 @@ msgstr ""
 msgid "A custom CSS style with this name already exists."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:261
+#: src/Admin/AdminAssets.php:237
 msgid "A newer local draft is available."
 msgstr ""
 
@@ -21,15 +21,15 @@ msgstr ""
 msgid "Admin behavior"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:242
+#: src/Admin/AdminAssets.php:218
 msgid "Appearance"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:257
+#: src/Admin/AdminAssets.php:233
 msgid "Apple font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:245
+#: src/Admin/AdminAssets.php:221
 msgid "Article theme"
 msgstr ""
 
@@ -49,7 +49,7 @@ msgstr ""
 msgid "Bold"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:250
+#: src/Admin/AdminAssets.php:226
 msgid "CSS name"
 msgstr ""
 
@@ -57,7 +57,7 @@ msgstr ""
 msgid "CSS name and CSS content are required."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:253
+#: src/Admin/AdminAssets.php:229
 msgid "CSS save failed."
 msgstr ""
 
@@ -65,7 +65,7 @@ msgstr ""
 msgid "Chazi purple"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:271
+#: src/Admin/AdminAssets.php:247
 msgid "Clipboard access is not available in this browser."
 msgstr ""
 
@@ -77,7 +77,7 @@ msgstr ""
 msgid "Code fence"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:246
+#: src/Admin/AdminAssets.php:222
 msgid "Code theme"
 msgstr ""
 
@@ -85,19 +85,19 @@ msgstr ""
 msgid "Command"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:269
+#: src/Admin/AdminAssets.php:245
 msgid "Copied preview for WeChat."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:270
+#: src/Admin/AdminAssets.php:246
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:268
+#: src/Admin/AdminAssets.php:244
 msgid "Copy preview for WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:267 src/Support/ToolbarRegistry.php:290
+#: src/Admin/AdminAssets.php:243 src/Support/ToolbarRegistry.php:290
 msgid "Copy to WeChat"
 msgstr ""
 
@@ -109,7 +109,7 @@ msgstr ""
 msgid "Current preset"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:248
+#: src/Admin/AdminAssets.php:224
 msgid "Custom CSS"
 msgstr ""
 
@@ -133,7 +133,7 @@ msgstr ""
 msgid "Custom CSS style not found."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:255
+#: src/Admin/AdminAssets.php:231
 msgid "Custom font"
 msgstr ""
 
@@ -141,7 +141,7 @@ msgstr ""
 msgid "Cute green"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:240
+#: src/Admin/AdminAssets.php:216
 msgid "Dark mode"
 msgstr ""
 
@@ -155,27 +155,27 @@ msgstr ""
 msgid "Default: %s"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:263
+#: src/Admin/AdminAssets.php:239
 msgid "Discard draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:265
+#: src/Admin/AdminAssets.php:241
 msgid "Draft discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:264
+#: src/Admin/AdminAssets.php:240
 msgid "Draft restored."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:279
+#: src/Admin/AdminAssets.php:255
 msgid "Dropped image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:278
+#: src/Admin/AdminAssets.php:254
 msgid "Dropped image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:277
+#: src/Admin/AdminAssets.php:253
 msgid "Dropped image uploaded."
 msgstr ""
 
@@ -200,7 +200,7 @@ msgstr ""
 msgid "EasyMDE renderer unavailable"
 msgstr ""
 
-#: src/Admin/EditorScreen.php:64
+#: src/Admin/EditorScreen.php:74
 msgid ""
 "EasyMDE requires Composer dependencies before Markdown can be rendered or "
 "saved. Run composer install for development or include vendor/ in release "
@@ -211,19 +211,19 @@ msgstr ""
 msgid "Enable browser spellcheck in the Markdown editor"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:238
+#: src/Admin/AdminAssets.php:214
 msgid "Enter immersive writing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:239
+#: src/Admin/AdminAssets.php:215
 msgid "Exit immersive writing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:243
+#: src/Admin/AdminAssets.php:219
 msgid "Font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:259
+#: src/Admin/AdminAssets.php:235
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
@@ -285,7 +285,7 @@ msgstr ""
 msgid "Heading 6"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:244
+#: src/Admin/AdminAssets.php:220
 msgid "Headings"
 msgstr ""
 
@@ -313,7 +313,7 @@ msgstr ""
 msgid "Inline code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:237
+#: src/Admin/AdminAssets.php:213
 msgid "Insert Media"
 msgstr ""
 
@@ -349,7 +349,7 @@ msgstr ""
 msgid "Lanqing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:241
+#: src/Admin/AdminAssets.php:217
 msgid "Light mode"
 msgstr ""
 
@@ -357,19 +357,19 @@ msgstr ""
 msgid "Link"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:233
+#: src/Admin/AdminAssets.php:209
 msgid "Live preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:260
+#: src/Admin/AdminAssets.php:236
 msgid "Local draft saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:247
+#: src/Admin/AdminAssets.php:223
 msgid "Mac code frame"
 msgstr ""
 
-#: templates/admin/editor-shell.php:30
+#: templates/admin/editor-shell.php:32
 msgid "Markdown"
 msgstr ""
 
@@ -386,11 +386,11 @@ msgid ""
 "Markdown rendering is unavailable because Composer dependencies are missing."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:232
+#: src/Admin/AdminAssets.php:208
 msgid "Markdown source"
 msgstr ""
 
-#: templates/admin/editor-shell.php:27
+#: templates/admin/editor-shell.php:29
 msgid "Markdown toolbar"
 msgstr ""
 
@@ -438,7 +438,7 @@ msgstr ""
 msgid "Monokai"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:249
+#: src/Admin/AdminAssets.php:225
 msgid "Named custom CSS"
 msgstr ""
 
@@ -475,7 +475,7 @@ msgstr ""
 msgid "No activation redirect and no unrelated admin-page redirect."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:254
+#: src/Admin/AdminAssets.php:230
 msgid "No custom CSS saved yet."
 msgstr ""
 
@@ -515,7 +515,7 @@ msgstr ""
 msgid "Ordered list"
 msgstr ""
 
-#: templates/admin/editor-shell.php:37
+#: templates/admin/editor-shell.php:46
 msgid "Output actions"
 msgstr ""
 
@@ -523,15 +523,15 @@ msgstr ""
 msgid "Paragraph"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:275
+#: src/Admin/AdminAssets.php:251
 msgid "Pasted image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:274
+#: src/Admin/AdminAssets.php:250
 msgid "Pasted image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:273
+#: src/Admin/AdminAssets.php:249
 msgid "Pasted image uploaded."
 msgstr ""
 
@@ -555,11 +555,11 @@ msgstr ""
 msgid "PingFangSC-regular"
 msgstr ""
 
-#: templates/admin/editor-shell.php:34
+#: templates/admin/editor-shell.php:36
 msgid "Preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:236
+#: src/Admin/AdminAssets.php:212
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr ""
 
@@ -579,15 +579,15 @@ msgstr ""
 msgid "Red crimson"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:266 src/Frontend/FrontendAssets.php:70
+#: src/Admin/AdminAssets.php:242 src/Frontend/FrontendAssets.php:70
 msgid "Rendering failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:235
+#: src/Admin/AdminAssets.php:211
 msgid "Rendering preview..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:262
+#: src/Admin/AdminAssets.php:238
 msgid "Restore draft"
 msgstr ""
 
@@ -595,7 +595,7 @@ msgstr ""
 msgid "Rose purple"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:251
+#: src/Admin/AdminAssets.php:227
 msgid "Save CSS"
 msgstr ""
 
@@ -603,11 +603,11 @@ msgstr ""
 msgid "Save post"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:252
+#: src/Admin/AdminAssets.php:228
 msgid "Saved CSS."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:258
+#: src/Admin/AdminAssets.php:234
 msgid "Serif font"
 msgstr ""
 
@@ -625,7 +625,7 @@ msgstr ""
 msgid "Shortcut settings"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:234
+#: src/Admin/AdminAssets.php:210
 msgid "Start writing Markdown to preview the article."
 msgstr ""
 
@@ -683,11 +683,11 @@ msgstr ""
 msgid "Unordered list"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:276
+#: src/Admin/AdminAssets.php:252
 msgid "Uploading dropped image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:272
+#: src/Admin/AdminAssets.php:248
 msgid "Uploading pasted image..."
 msgstr ""
 
@@ -713,7 +713,7 @@ msgstr ""
 msgid "Windows / Linux"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:256
+#: src/Admin/AdminAssets.php:232
 msgid "Windows font"
 msgstr ""
 
@@ -742,11 +742,11 @@ msgstr ""
 msgid "You are not allowed to perform this EasyMDE action."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:280
+#: src/Admin/AdminAssets.php:256
 msgid "alt text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:281
+#: src/Admin/AdminAssets.php:257
 msgid "image"
 msgstr ""
 
@@ -760,7 +760,7 @@ msgid ""
 "before rendering or saving EasyMDE Markdown."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:282
+#: src/Admin/AdminAssets.php:258
 msgid "link text"
 msgstr ""
 

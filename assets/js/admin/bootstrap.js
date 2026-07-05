@@ -1656,6 +1656,7 @@
                 if (
                     loaded
                     && window.EasyMDEImagePaste
+                    && source !== 'dragover'
                     && transfer.file
                     && typeof window.EasyMDEImagePaste.handleFile === 'function'
                 ) {

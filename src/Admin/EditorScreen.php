@@ -78,7 +78,7 @@ final class EditorScreen {
 	}
 
 	private function render_initial_preview( $post, $markdown, $markdown_theme ) {
-		if ( '' === trim( (string) $markdown ) || ! MarkdownRenderer::is_available() ) {
+		if ( '' === trim( (string) $markdown ) ) {
 			return '';
 		}
 

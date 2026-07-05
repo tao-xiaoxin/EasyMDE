@@ -114,6 +114,8 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $mermaid = $assets->get_feature_config("```mermaid\ngraph TD; A-->B;\n```");
         $tilde_mermaid = $assets->get_feature_config("~~~ mermaid\ngraph TD; A-->B;\n~~~");
         $indented_mermaid_example = $assets->get_feature_config("    ```mermaid\n    graph TD; A-->B;\n    ```");
+        $tab_indented_mermaid_example = $assets->get_feature_config("\t```mermaid\n\tgraph TD; A-->B;\n\t```");
+        $blockquote_mermaid = $assets->get_feature_config("> ```mermaid\n> graph TD; A-->B;\n> ```");
 
         $this->assertFalse($plain['syntaxHighlight']);
         $this->assertFalse($plain['math']);
@@ -130,5 +132,11 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertTrue($indented_mermaid_example['codeBlocks']);
         $this->assertTrue($indented_mermaid_example['syntaxHighlight']);
         $this->assertFalse($indented_mermaid_example['mermaid']);
+        $this->assertTrue($tab_indented_mermaid_example['codeBlocks']);
+        $this->assertTrue($tab_indented_mermaid_example['syntaxHighlight']);
+        $this->assertFalse($tab_indented_mermaid_example['mermaid']);
+        $this->assertTrue($blockquote_mermaid['codeBlocks']);
+        $this->assertTrue($blockquote_mermaid['mermaid']);
+        $this->assertFalse($blockquote_mermaid['syntaxHighlight']);
     }
 }

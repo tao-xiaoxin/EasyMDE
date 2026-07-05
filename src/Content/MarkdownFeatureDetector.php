@@ -47,8 +47,10 @@ final class MarkdownFeatureDetector {
 		$lines        = preg_split( '/\r\n|\r|\n/', $markdown );
 
 		foreach ( $lines as $line ) {
+			$fence_line = $this->strip_commonmark_container_prefixes( $line );
+
 			if ( $in_fence ) {
-				if ( preg_match( '/^[ \t]{0,3}(`{3,}|~{3,})[ \t]*$/', $line, $match )
+				if ( preg_match( '/^ {0,3}(`{3,}|~{3,})[ \t]*$/', $fence_line, $match )
 					&& substr( $match[1], 0, 1 ) === $fence_marker
 					&& strlen( $match[1] ) >= $fence_length
 				) {
@@ -58,7 +60,7 @@ final class MarkdownFeatureDetector {
 				continue;
 			}
 
-			if ( ! preg_match( '/^[ \t]{0,3}(`{3,}|~{3,})([^\r\n]*)$/', $line, $match ) ) {
+			if ( ! preg_match( '/^ {0,3}(`{3,}|~{3,})([^\r\n]*)$/', $fence_line, $match ) ) {
 				continue;
 			}
 
@@ -76,6 +78,18 @@ final class MarkdownFeatureDetector {
 		}
 
 		return $result;
+	}
+
+	private function strip_commonmark_container_prefixes( $line ) {
+		$previous = null;
+
+		while ( $previous !== $line ) {
+			$previous = $line;
+			$line     = preg_replace( '/^ {0,3}>[ \t]?/', '', $line, 1 );
+			$line     = preg_replace( '/^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/', '', $line, 1 );
+		}
+
+		return $line;
 	}
 
 	private function might_contain_indented_code_block( $markdown ) {

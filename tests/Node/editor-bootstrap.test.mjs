@@ -2314,6 +2314,79 @@ test('bindLazyImagePasteUpload loads and replays only the first image paste', as
   assert.equal(boundPasteCalls, 1);
 });
 
+test('bindLazyImagePasteUpload never uploads during lazy image dragover', async () => {
+  let loadScriptCalls = 0;
+  let dragOverCalls = 0;
+  let handleFileCalls = 0;
+  const source = createSourceWrapper('Intro');
+  const textarea = source[0];
+  const { hooks, window } = loadBootstrap({
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      imageUploadUrl: '/wp-json/easymde/v1/media',
+      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.7',
+      imageUpload: {
+        enabled: true,
+        maxBytes: 1024
+      },
+      features: {},
+      strings: {
+        imageDropFailed: 'Drop failed',
+        imagePasteFailed: 'Paste failed',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    },
+    EasyMDEPreviewFeatureLoader: {
+      loadScript(id, src) {
+        loadScriptCalls += 1;
+        assert.equal(id, 'easymde-image-paste-js');
+        assert.equal(src, '/assets/js/admin/image-paste.js?ver=0.1.7');
+        window.EasyMDEImagePaste = {
+          bind(target) {
+            target.easymdeImagePasteBound = true;
+          },
+          handleDragOver(event, target) {
+            dragOverCalls += 1;
+            assert.equal(event.defaultPrevented, true);
+            assert.equal(target, textarea);
+          },
+          handleFile() {
+            handleFileCalls += 1;
+          }
+        };
+
+        return Promise.resolve({
+          key: 'script:easymde-image-paste-js:/assets/js/admin/image-paste.js?ver=0.1.7',
+          status: 'loaded',
+          error: null
+        });
+      },
+      normalizeFeatures
+    }
+  });
+
+  assert.equal(hooks.bindLazyImagePasteUpload(textarea, createRootWrapper(456), createFlashWrapper()), true);
+
+  const dragOver = createImageTransferEvent('dragover');
+  textarea.dispatchEvent(dragOver);
+  await flushMicrotasks();
+
+  assert.equal(dragOver.defaultPrevented, true);
+  assert.equal(dragOver.dataTransfer.dropEffect, 'copy');
+  assert.equal(loadScriptCalls, 1);
+  assert.equal(handleFileCalls, 0);
+  assert.equal(dragOverCalls, 1);
+});
+
 test('bindLazyImagePasteUpload ignores ordinary text paste without loading upload code', async () => {
   let loadScriptCalls = 0;
   const source = createSourceWrapper('Intro');

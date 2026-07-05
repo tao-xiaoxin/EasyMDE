@@ -44,7 +44,7 @@ final class EditorScreen {
 			return;
 		}
 
-		$context                             = array(
+		$context                                = array(
 			'post'                        => $post,
 			'markdown'                    => $this->post_document->get_markdown( $post ),
 			'theme_state'                 => $this->theme_state_repository->get_theme_state( $post->ID ),

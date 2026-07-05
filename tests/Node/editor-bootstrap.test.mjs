@@ -436,6 +436,7 @@ function createRootWrapper(postId = 123) {
 
 function createSourceWrapper(value = '') {
   const listeners = new Map();
+  let readCount = 0;
   const node = {
     value,
     scrollHeight: 100,
@@ -477,11 +478,15 @@ function createSourceWrapper(value = '') {
     },
     val(nextValue) {
       if (arguments.length === 0) {
+        readCount += 1;
         return node.value;
       }
 
       node.value = String(nextValue);
       return this;
+    },
+    valueReadCount() {
+      return readCount;
     }
   };
 }
@@ -818,6 +823,7 @@ test('initEditor hydrates server-rendered preview before waiting for shell paint
 
   assert.equal(rafCalled, true);
   assert.equal(apiFetchCalled, false);
+  assert.equal(source.valueReadCount(), 0);
   assert.equal(preview.html(), '<p>Plain initial preview.</p>');
   assert.equal(preview.attr('aria-busy'), 'false');
   assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
@@ -934,7 +940,7 @@ test('initEditor defers toolbar chrome until after the first shell paint', () =>
   assert.deepEqual(order.slice(0, 2), ['preview', 'toolbar']);
 });
 
-test('initEditor defers initial hidden field sync until after the first shell paint', () => {
+test('initEditor defers optional Markdown field sync until after the first shell paint', () => {
   const jQueryRef = createJQueryStub(789, { runReady: true });
   const root = createRootWrapper(789);
   const source = createSourceWrapper('Needs preview from REST.');
@@ -1014,6 +1020,7 @@ test('initEditor defers initial hidden field sync until after the first shell pa
 
   assert.equal(markdownField.state.writes[0], 'Needs preview from REST.');
   assert.equal(themeField.state.writes[0], 'default');
+  assert.equal(source.valueReadCount(), 1);
 });
 
 test('initEditor does not load image paste upload during idle startup', () => {

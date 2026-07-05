@@ -40,9 +40,8 @@ $easymde_initial_preview_features = wp_json_encode( ! empty( $context['initial_p
 		</section>
 		<section class="easymde-pane easymde-pane-source">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>
-			<textarea id="easymde-source" class="easymde-source" spellcheck="<?php echo esc_attr( $easymde_spellcheck ); ?>"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
+			<textarea id="easymde-source" name="easymde_markdown" class="easymde-source" spellcheck="<?php echo esc_attr( $easymde_spellcheck ); ?>"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
 		</section>
 		<aside class="easymde-side-actions" aria-label="<?php esc_attr_e( 'Output actions', 'easymde' ); ?>"></aside>
 	</div>
-	<input type="hidden" id="easymde-markdown-field" name="easymde_markdown" value="<?php echo esc_attr( $context['markdown'] ); ?>">
 </div>

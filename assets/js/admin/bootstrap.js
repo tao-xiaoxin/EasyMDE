@@ -1116,7 +1116,10 @@
     function syncMarkdownFields(markdown) {
         var markdownField = $('#easymde-markdown-field');
 
-        markdownField.val(markdown);
+        if (markdownField.length) {
+            markdownField.val(markdown);
+        }
+
         syncThemeFields();
     }
 
@@ -2191,9 +2194,10 @@
         var $toolbar = $root.find('.easymde-toolbar');
         var $sideActions = $root.find('.easymde-side-actions');
         var storage = window.EasyMDEDraftStorage.normalizeStorage(config, $root.data('post-id'));
-        var initialMarkdown = $source.val();
+        var initialMarkdown = null;
         var initialPreviewHydrated = false;
         var editorChromeReady = false;
+        var sourceChangedBeforeShell = false;
         var $flash;
         var $draftStatus;
         var context;
@@ -2210,7 +2214,7 @@
             window.EasyMDEEnhancements.initTheme($root[0], config);
         }
 
-        initialPreviewHydrated = hydrateInitialPreview($preview, initialMarkdown);
+        initialPreviewHydrated = hydrateInitialPreview($preview, '');
 
         function refreshPreview(options) {
             updatePreview($preview, $source.val(), options || { immediate: true });
@@ -2241,6 +2245,10 @@
         }
 
         $source.on('input', function () {
+            if (initialMarkdown === null) {
+                sourceChangedBeforeShell = true;
+            }
+
             mirrorToPostContent(this.value);
             updatePreview($preview, this.value);
 
@@ -2260,11 +2268,14 @@
         });
 
         afterShellPaint(function () {
+            var shellMarkdown = $source.val();
+
             $root.attr('data-easymde-shell-ready', '1');
-            syncMarkdownFields($source.val());
+            initialMarkdown = shellMarkdown;
+            syncMarkdownFields(shellMarkdown);
 
             if (!initialPreviewHydrated) {
-                updatePreview($preview, $source.val(), { immediate: true });
+                updatePreview($preview, shellMarkdown, { immediate: true });
             }
 
             initializeEditorChrome();
@@ -2272,7 +2283,7 @@
 
             if (!config.features || config.features.localDrafts !== false) {
                 afterPreviewIdle(function () {
-                    if ($source.val() === initialMarkdown) {
+                    if (!sourceChangedBeforeShell && $source.val() === initialMarkdown) {
                         createDraftNotice($root, $source[0], storage, $flash);
                     }
                 });

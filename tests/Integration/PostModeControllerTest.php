@@ -408,13 +408,12 @@ final class PostModeControllerTest extends WP_UnitTestCase
 
         $preview_position = strpos($output, 'id="easymde-preview"');
         $source_position = strpos($output, 'id="easymde-source"');
-        $markdown_field_position = strpos($output, 'id="easymde-markdown-field"');
 
         $this->assertNotFalse($preview_position);
         $this->assertNotFalse($source_position);
-        $this->assertNotFalse($markdown_field_position);
         $this->assertLessThan($source_position, $preview_position);
-        $this->assertLessThan($markdown_field_position, $source_position);
+        $this->assertStringContainsString('id="easymde-source" name="easymde_markdown"', $output);
+        $this->assertStringNotContainsString('id="easymde-markdown-field"', $output);
     }
 
     public function test_spellcheck_editor_setting_controls_source_textarea_attribute()

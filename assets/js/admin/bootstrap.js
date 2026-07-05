@@ -1691,7 +1691,7 @@
             return true;
         }
 
-        $preview.attr('data-easymde-preview-refreshing', '1');
+        setPreviewPending($preview, false);
         afterPreviewIdle(function () {
             if (!isPreviewCurrent(revision, signature, markdown)) {
                 return;

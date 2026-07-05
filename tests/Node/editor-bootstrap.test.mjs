@@ -1221,7 +1221,7 @@ test('hydrateInitialPreview enhances server-rendered preview without REST refres
 
   assert.equal(hooks.hydrateInitialPreview(preview, '```js\nconsole.log(1);\n```'), true);
   assert.equal(preview.html(), '<p>Initial rendered preview.</p>');
-  assert.equal(preview.attr('aria-busy'), 'false');
+  assert.equal(preview.attr('aria-busy'), 'true');
   assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
   await flushMicrotasks();
 

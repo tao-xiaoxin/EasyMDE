@@ -258,6 +258,38 @@ test('code theme changes update the existing highlight stylesheet link', async (
   assert.equal(link.listenerCount('error'), 0);
 });
 
+test('code theme can switch back to a previously loaded stylesheet', async () => {
+  const { loader, documentRef } = loadLoader();
+  const githubContext = context(documentRef, { codeTheme: 'github' });
+  const atomContext = context(documentRef, { codeTheme: 'atom-one-dark' });
+
+  await loader.ensurePreviewFeatures(
+    {
+      syntaxHighlight: true
+    },
+    githubContext
+  );
+  await loader.ensurePreviewFeatures(
+    {
+      syntaxHighlight: true
+    },
+    atomContext
+  );
+  await loader.ensurePreviewFeatures(
+    {
+      syntaxHighlight: true
+    },
+    githubContext
+  );
+
+  const link = documentRef.getElementById('easymde-highlight-theme-css');
+
+  assert.equal(documentRef.head.children.filter((node) => node.id === 'easymde-highlight-theme-css').length, 1);
+  assert.equal(link.getAttribute('href'), '/assets/vendor/highlight/styles/github.min.css');
+  assert.equal(link.listenerCount('load'), 0);
+  assert.equal(link.listenerCount('error'), 0);
+});
+
 test('syntax highlight reloads its stylesheet after the cached link is removed', async () => {
   const { loader, documentRef } = loadLoader();
   const loaderContext = context(documentRef, { codeTheme: 'github' });

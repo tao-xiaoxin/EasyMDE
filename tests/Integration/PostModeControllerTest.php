@@ -492,7 +492,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $output = ob_get_clean();
 
         $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
-        $this->assertStringContainsString('<h1 id="current-legacy-markdown">Current legacy Markdown</h1>', $output);
+        $this->assertStringContainsString('<h1>Current legacy Markdown</h1>', $output);
         $this->assertStringContainsString('<strong>Authoritative source.</strong>', $output);
         $this->assertStringNotContainsString('<p>Stale compatibility HTML.</p>', $output);
     }

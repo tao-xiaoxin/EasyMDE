@@ -17,7 +17,6 @@ $easymde_initial_preview_features = wp_json_encode( ! empty( $context['initial_p
 ?>
 <div id="easymde-editor" class="easymde-editor" data-post-id="<?php echo esc_attr( $easymde_editor_post->ID ); ?>">
 	<input type="hidden" id="easymde-enabled-field" name="easymde_enabled" value="1">
-	<input type="hidden" id="easymde-markdown-field" name="easymde_markdown" value="<?php echo esc_attr( $context['markdown'] ); ?>">
 	<input type="hidden" id="easymde-markdown-theme-field" name="easymde_markdown_theme" value="<?php echo esc_attr( $easymde_theme_state['markdownTheme'] ); ?>">
 	<input type="hidden" id="easymde-code-theme-field" name="easymde_code_theme" value="<?php echo esc_attr( $easymde_theme_state['codeTheme'] ); ?>">
 	<input type="hidden" id="easymde-code-mac-style-field" name="easymde_code_mac_style" value="<?php echo $easymde_theme_state['codeMacStyle'] ? '1' : '0'; ?>">
@@ -28,10 +27,6 @@ $easymde_initial_preview_features = wp_json_encode( ! empty( $context['initial_p
 	<input type="hidden" id="easymde-serif-font-field" name="easymde_serif_font" value="<?php echo esc_attr( $easymde_theme_state['serifFont'] ); ?>">
 	<div class="easymde-toolbar" role="toolbar" aria-label="<?php esc_attr_e( 'Markdown toolbar', 'easymde' ); ?>"></div>
 	<div class="easymde-workspace">
-		<section class="easymde-pane easymde-pane-source">
-			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>
-			<textarea id="easymde-source" class="easymde-source" spellcheck="<?php echo esc_attr( $easymde_spellcheck ); ?>"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
-		</section>
 		<section class="easymde-pane easymde-pane-preview">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Preview', 'easymde' ); ?></header>
 			<article
@@ -43,6 +38,11 @@ $easymde_initial_preview_features = wp_json_encode( ! empty( $context['initial_p
 				aria-live="polite"
 			><?php echo $context['initial_preview']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Already sanitized before reaching the template. ?></article>
 		</section>
+		<section class="easymde-pane easymde-pane-source">
+			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>
+			<textarea id="easymde-source" class="easymde-source" spellcheck="<?php echo esc_attr( $easymde_spellcheck ); ?>"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
+		</section>
 		<aside class="easymde-side-actions" aria-label="<?php esc_attr_e( 'Output actions', 'easymde' ); ?>"></aside>
 	</div>
+	<input type="hidden" id="easymde-markdown-field" name="easymde_markdown" value="<?php echo esc_attr( $context['markdown'] ); ?>">
 </div>

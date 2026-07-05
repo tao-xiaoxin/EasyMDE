@@ -374,6 +374,49 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertStringNotContainsString('<script>', $output);
     }
 
+    public function test_editor_shell_streams_initial_preview_before_large_source_payload()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+            )
+        );
+        update_post_meta(
+            $post_id,
+            PostDocument::META_MARKDOWN,
+            "# Fast preview\n\n" . str_repeat("Long source line for startup parsing.\n\n", 200)
+        );
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $post_document = new PostDocument();
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $preview_position = strpos($output, 'id="easymde-preview"');
+        $source_position = strpos($output, 'id="easymde-source"');
+        $markdown_field_position = strpos($output, 'id="easymde-markdown-field"');
+
+        $this->assertNotFalse($preview_position);
+        $this->assertNotFalse($source_position);
+        $this->assertNotFalse($markdown_field_position);
+        $this->assertLessThan($source_position, $preview_position);
+        $this->assertLessThan($markdown_field_position, $source_position);
+    }
+
     public function test_spellcheck_editor_setting_controls_source_textarea_attribute()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));

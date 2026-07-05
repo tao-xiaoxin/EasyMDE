@@ -369,7 +369,7 @@ msgstr ""
 msgid "Mac code frame"
 msgstr ""
 
-#: templates/admin/editor-shell.php:32
+#: templates/admin/editor-shell.php:42
 msgid "Markdown"
 msgstr ""
 
@@ -390,7 +390,7 @@ msgstr ""
 msgid "Markdown source"
 msgstr ""
 
-#: templates/admin/editor-shell.php:29
+#: templates/admin/editor-shell.php:28
 msgid "Markdown toolbar"
 msgstr ""
 
@@ -515,7 +515,7 @@ msgstr ""
 msgid "Ordered list"
 msgstr ""
 
-#: templates/admin/editor-shell.php:46
+#: templates/admin/editor-shell.php:45
 msgid "Output actions"
 msgstr ""
 
@@ -555,7 +555,7 @@ msgstr ""
 msgid "PingFangSC-regular"
 msgstr ""
 
-#: templates/admin/editor-shell.php:36
+#: templates/admin/editor-shell.php:31
 msgid "Preview"
 msgstr ""
 

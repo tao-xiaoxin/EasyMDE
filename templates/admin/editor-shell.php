@@ -11,6 +11,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 $easymde_editor_post              = $context['post'];
 $easymde_theme_state              = $context['theme_state'];
+$easymde_markdown_fingerprint     = isset( $context['markdown_fingerprint'] ) ? (string) $context['markdown_fingerprint'] : '';
 $easymde_spellcheck               = ! empty( $context['spellcheck_enabled'] ) ? 'true' : 'false';
 $easymde_initial_preview_ready    = ! empty( $context['initial_preview_ready'] ) ? '1' : '0';
 $easymde_initial_preview_pending  = ! empty( $context['initial_preview_pending'] );
@@ -21,7 +22,7 @@ $easymde_initial_preview          = $easymde_initial_preview_pending
 	? '<p class="easymde-preview-pending" role="status">' . esc_html__( 'Rendering preview...', 'easymde' ) . '</p>'
 	: $context['initial_preview'];
 ?>
-<div id="easymde-editor" class="easymde-editor" data-post-id="<?php echo esc_attr( $easymde_editor_post->ID ); ?>">
+<div id="easymde-editor" class="easymde-editor" data-post-id="<?php echo esc_attr( $easymde_editor_post->ID ); ?>" data-easymde-markdown-fingerprint="<?php echo esc_attr( $easymde_markdown_fingerprint ); ?>">
 	<input type="hidden" id="easymde-enabled-field" name="easymde_enabled" value="1">
 	<input type="hidden" id="easymde-markdown-theme-field" name="easymde_markdown_theme" value="<?php echo esc_attr( $easymde_theme_state['markdownTheme'] ); ?>">
 	<input type="hidden" id="easymde-code-theme-field" name="easymde_code_theme" value="<?php echo esc_attr( $easymde_theme_state['codeTheme'] ); ?>">

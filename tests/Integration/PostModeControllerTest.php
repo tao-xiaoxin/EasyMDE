@@ -422,6 +422,42 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertStringNotContainsString('id="easymde-markdown-field"', $output);
     }
 
+    public function test_editor_shell_markdown_fingerprint_matches_textarea_newline_normalization()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $markdown = "Windows line one\r\nWindows line two\rClassic line three";
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '',
+            )
+        );
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, $markdown);
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $post_document = new PostDocument();
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $normalized = str_replace(array("\r\n", "\r"), "\n", $markdown);
+        $expected = strlen($normalized) . ':' . hash('fnv1a32', $normalized);
+
+        $this->assertStringContainsString('data-easymde-markdown-fingerprint="' . esc_attr($expected) . '"', $output);
+    }
+
     public function test_editor_shell_reuses_stored_compatibility_html_for_initial_preview()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));

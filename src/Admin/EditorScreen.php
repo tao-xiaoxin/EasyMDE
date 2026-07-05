@@ -55,9 +55,11 @@ final class EditorScreen {
 			'initial_preview_ready'    => false,
 			'initial_preview_pending'  => false,
 			'initial_preview_features' => array(),
+			'markdown_fingerprint'     => '',
 		);
 		$context['content_classes']          = $this->theme_state_repository->get_rendered_content_classes( $context['theme_state'], 'easymde-preview' );
 		$context['content_style']            = $this->theme_state_repository->get_rendered_content_style( $context['theme_state'] );
+		$context['markdown_fingerprint']     = $this->markdown_fingerprint( $context['markdown'] );
 		$context['initial_preview']          = $this->render_initial_preview( $post, $context['markdown'], $context['theme_state']['markdownTheme'] );
 		$context['initial_preview_ready']    = '' !== trim( $context['initial_preview'] );
 		$context['initial_preview_pending']  = ! $context['initial_preview_ready'] && '' !== trim( (string) $context['markdown'] );
@@ -114,5 +116,11 @@ final class EditorScreen {
 				$markdown_theme,
 				(string) $post->post_content
 			);
+	}
+
+	private function markdown_fingerprint( $markdown ) {
+		$markdown = str_replace( array( "\r\n", "\r" ), "\n", (string) $markdown );
+
+		return strlen( $markdown ) . ':' . hash( 'fnv1a32', $markdown );
 	}
 }

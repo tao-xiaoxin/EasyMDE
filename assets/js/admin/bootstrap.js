@@ -1107,14 +1107,25 @@
         }
     }
 
-    function hasLocalDraft(storage, getCurrentMarkdown) {
+    function hasLocalDraft(storage, savedMarkdownFingerprint) {
         var draft;
+        var draftContentHash;
 
         if (
             (config.features && config.features.localDrafts === false)
             || !window.EasyMDEDraftStorage
         ) {
             return false;
+        }
+
+        if (
+            savedMarkdownFingerprint
+            && typeof window.EasyMDEDraftStorage.readContentHash === 'function'
+        ) {
+            draftContentHash = window.EasyMDEDraftStorage.readContentHash(storage);
+            if (draftContentHash) {
+                return draftContentHash !== savedMarkdownFingerprint;
+            }
         }
 
         if (typeof window.EasyMDEDraftStorage.read !== 'function') {
@@ -1125,12 +1136,23 @@
 
         draft = window.EasyMDEDraftStorage.read(storage);
 
-        return !!(
-            draft
-            && Object.prototype.hasOwnProperty.call(draft, 'content')
-            && typeof draft.content === 'string'
-            && draft.content !== getCurrentMarkdown()
-        );
+        if (!draft || !Object.prototype.hasOwnProperty.call(draft, 'content') || typeof draft.content !== 'string') {
+            return false;
+        }
+
+        if (!savedMarkdownFingerprint) {
+            return true;
+        }
+
+        if (draft.contentHash) {
+            return draft.contentHash !== savedMarkdownFingerprint;
+        }
+
+        if (typeof window.EasyMDEDraftStorage.contentFingerprint === 'function') {
+            return window.EasyMDEDraftStorage.contentFingerprint(draft.content) !== savedMarkdownFingerprint;
+        }
+
+        return true;
     }
 
     function createDraftStatus($toolbar) {
@@ -2382,6 +2404,7 @@
         var editorChromeReady = false;
         var sourceChangedBeforeShell = false;
         var deferWechatPreload = false;
+        var savedMarkdownFingerprint = String($root.attr('data-easymde-markdown-fingerprint') || '');
         var $flash;
         var $draftStatus;
         var context;
@@ -2398,11 +2421,9 @@
             window.EasyMDEEnhancements.initTheme($root[0], config);
         }
 
-	        if ($preview.attr('data-easymde-initial-preview') === '1' && hasLocalDraft(storage, function () {
-	            return $source[0].value;
-	        })) {
-	            setPreviewPending($preview, true);
-	        } else {
+        if ($preview.attr('data-easymde-initial-preview') === '1' && hasLocalDraft(storage, savedMarkdownFingerprint)) {
+            setPreviewPending($preview, true);
+        } else {
             initialPreviewHydrated = hydrateInitialPreview($preview, '', {
                 deferEnhancement: function (callback) {
                     initialPreviewEnhancement = callback;

@@ -448,9 +448,10 @@ function createRootWrapper(postId = 123) {
 
 function createSourceWrapper(value = '') {
   const listeners = new Map();
+  let currentValue = value;
+  let directReadCount = 0;
   let readCount = 0;
   const node = {
-    value,
     scrollHeight: 100,
     clientHeight: 100,
     scrollTop: 0,
@@ -479,6 +480,16 @@ function createSourceWrapper(value = '') {
     }
   };
 
+  Object.defineProperty(node, 'value', {
+    get() {
+      directReadCount += 1;
+      return currentValue;
+    },
+    set(nextValue) {
+      currentValue = String(nextValue);
+    }
+  });
+
   return {
     0: node,
     length: 1,
@@ -491,11 +502,14 @@ function createSourceWrapper(value = '') {
     val(nextValue) {
       if (arguments.length === 0) {
         readCount += 1;
-        return node.value;
+        return currentValue;
       }
 
-      node.value = String(nextValue);
+      currentValue = String(nextValue);
       return this;
+    },
+    directValueReadCount() {
+      return directReadCount;
     },
     valueReadCount() {
       return readCount;
@@ -873,6 +887,7 @@ test('initEditor does not hydrate saved preview when a local draft exists', asyn
 
   preview.attr('data-easymde-initial-preview', '1');
   preview.attr('data-easymde-preview-features', JSON.stringify({}));
+  root.attr('data-easymde-markdown-fingerprint', '13:saved-source');
   jQueryRef.register('#easymde-editor', root);
   jQueryRef.register('#easymde-source', source);
   jQueryRef.register('#easymde-preview', preview);
@@ -896,6 +911,9 @@ test('initEditor does not hydrate saved preview when a local draft exists', asyn
     EasyMDEDraftStorage: {
       normalizeStorage() {
         return {};
+      },
+      readContentHash() {
+        return '20:local-draft';
       },
       read() {
         return {
@@ -942,6 +960,7 @@ test('initEditor does not hydrate saved preview when a local draft exists', asyn
 
   assert.equal(apiFetchCalled, false);
   assert.equal(source.valueReadCount(), 0);
+  assert.equal(source.directValueReadCount(), 0);
   assert.equal(preview.html(), '<p class="easymde-preview-pending" role="status">Rendering preview</p>');
   assert.equal(preview.attr('aria-busy'), 'true');
   assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
@@ -962,9 +981,12 @@ test('initEditor hydrates saved preview when a local draft matches saved source'
   const source = createSourceWrapper('Saved source.');
   const preview = createPreviewWrapper('<p>Saved source.</p>');
   let apiFetchCalled = false;
+  let readContentHashCalled = false;
+  let readCalled = false;
 
   preview.attr('data-easymde-initial-preview', '1');
   preview.attr('data-easymde-preview-features', JSON.stringify({}));
+  root.attr('data-easymde-markdown-fingerprint', '13:saved-source');
   jQueryRef.register('#easymde-editor', root);
   jQueryRef.register('#easymde-source', source);
   jQueryRef.register('#easymde-preview', preview);
@@ -988,10 +1010,13 @@ test('initEditor hydrates saved preview when a local draft matches saved source'
       normalizeStorage() {
         return {};
       },
+      readContentHash() {
+        readContentHashCalled = true;
+        return '13:saved-source';
+      },
       read() {
-        return {
-          content: 'Saved source.'
-        };
+        readCalled = true;
+        throw new Error('matching sidecar hash should avoid parsing draft JSON during startup');
       },
       exists() {
         throw new Error('matching logic should not perform an extra draft existence read');
@@ -1031,7 +1056,103 @@ test('initEditor hydrates saved preview when a local draft matches saved source'
   }, { jQuery: jQueryRef });
 
   assert.equal(apiFetchCalled, false);
+  assert.equal(readContentHashCalled, true);
+  assert.equal(readCalled, false);
   assert.equal(source.valueReadCount(), 0);
+  assert.equal(source.directValueReadCount(), 0);
+  assert.equal(preview.html(), '<p>Saved source.</p>');
+  assert.equal(preview.attr('aria-busy'), 'false');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
+});
+
+test('initEditor compares legacy local draft content without reading source value', () => {
+  const jQueryRef = createJQueryStub(789, { runReady: true });
+  const root = createRootWrapper(789);
+  const source = createSourceWrapper('Saved source.');
+  const preview = createPreviewWrapper('<p>Saved source.</p>');
+  let apiFetchCalled = false;
+  let contentFingerprintCalled = false;
+
+  preview.attr('data-easymde-initial-preview', '1');
+  preview.attr('data-easymde-preview-features', JSON.stringify({}));
+  root.attr('data-easymde-markdown-fingerprint', '13:saved-source');
+  jQueryRef.register('#easymde-editor', root);
+  jQueryRef.register('#easymde-source', source);
+  jQueryRef.register('#easymde-preview', preview);
+  jQueryRef.register('#postdivrich', createContainerWrapper());
+  jQueryRef.register('#post', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-apple-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-serif-font-field', createContainerWrapper());
+
+  loadBootstrap({
+    requestAnimationFrame() {
+      return 1;
+    },
+    EasyMDEDraftStorage: {
+      normalizeStorage() {
+        return {};
+      },
+      readContentHash() {
+        return '';
+      },
+      read() {
+        return {
+          content: 'Saved source.'
+        };
+      },
+      contentFingerprint(markdown) {
+        contentFingerprintCalled = true;
+        assert.equal(markdown, 'Saved source.');
+        return '13:saved-source';
+      },
+      exists() {
+        throw new Error('legacy draft comparison should not perform an extra existence read');
+      },
+      write() {},
+      discard() {},
+      formatTime() {
+        return '';
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      features: {},
+      storage: {},
+      strings: {
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    },
+    wp: {
+      apiFetch() {
+        apiFetchCalled = true;
+        return Promise.resolve({
+          html: '<p>Unexpected REST preview.</p>',
+          features: {}
+        });
+      }
+    }
+  }, { jQuery: jQueryRef });
+
+  assert.equal(apiFetchCalled, false);
+  assert.equal(contentFingerprintCalled, true);
+  assert.equal(source.valueReadCount(), 0);
+  assert.equal(source.directValueReadCount(), 0);
   assert.equal(preview.html(), '<p>Saved source.</p>');
   assert.equal(preview.attr('aria-busy'), 'false');
   assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);

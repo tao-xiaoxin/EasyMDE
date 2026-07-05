@@ -58,11 +58,49 @@ test('draft storage caches localStorage availability checks', () => {
   draftStorage.write(normalized, 'Draft body');
   assert.equal(draftStorage.exists(normalized), true);
   assert.equal(draftStorage.read(normalized).content, 'Draft body');
+  assert.equal(draftStorage.read(normalized).contentHash, draftStorage.contentFingerprint('Draft body'));
+  assert.equal(draftStorage.readContentHash(normalized), draftStorage.contentFingerprint('Draft body'));
   draftStorage.discard(normalized);
   assert.equal(draftStorage.exists(normalized), false);
+  assert.equal(draftStorage.readContentHash(normalized), '');
 
-  assert.equal(setItemCalls, 2);
-  assert.equal(removeItemCalls, 2);
+  assert.equal(setItemCalls, 3);
+  assert.equal(removeItemCalls, 4);
+});
+
+test('draft content fingerprints use stable UTF-8 FNV-1a values', () => {
+  const draftStorage = loadDraftStorage({});
+
+  assert.equal(draftStorage.contentFingerprint(''), '0:811c9dc5');
+  assert.equal(draftStorage.contentFingerprint('hello'), '5:4f9f2cab');
+});
+
+test('draft content fingerprints match TextEncoder and fallback paths', () => {
+  const fallbackDraftStorage = loadDraftStorage({});
+  const acceleratedDraftStorage = loadDraftStorageForWindow({
+    localStorage: {},
+    TextEncoder
+  });
+  const markdown = '# Title\n\nPlain **Markdown**, CJK text, and emoji: 中文 😀';
+
+  assert.equal(
+    acceleratedDraftStorage.contentFingerprint(markdown),
+    fallbackDraftStorage.contentFingerprint(markdown)
+  );
+});
+
+test('draft content fingerprints encode isolated surrogates like TextEncoder', () => {
+  const fallbackDraftStorage = loadDraftStorage({});
+  const acceleratedDraftStorage = loadDraftStorageForWindow({
+    localStorage: {},
+    TextEncoder
+  });
+  const markdown = 'Broken surrogate pair: \uD83D text \uDE00';
+
+  assert.equal(
+    acceleratedDraftStorage.contentFingerprint(markdown),
+    fallbackDraftStorage.contentFingerprint(markdown)
+  );
 });
 
 test('draft existence check avoids parsing draft JSON or probing storage writes', () => {

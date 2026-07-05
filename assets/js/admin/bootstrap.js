@@ -40,12 +40,24 @@
     var commandGroupCache = {};
     var isMac = null;
     var openPopovers = [];
+
+    function defaultGetCommand(id) {
+        return getCommandMap()[id] || null;
+    }
+
+    function defaultGetShortcutForCommand(commandId) {
+        var shortcuts = config.shortcuts || {};
+        var shortcut = shortcuts[commandId] || {};
+
+        return getIsMac() ? (shortcut.mac || '') : (shortcut.win || '');
+    }
+
     var getCommand = commandTools.getCommand ? function (id) {
         return commandTools.getCommand(getCommandMap(), id);
-    } : getCommand;
+    } : defaultGetCommand;
     var getShortcutForCommand = commandTools.getShortcutForCommand ? function (commandId) {
         return commandTools.getShortcutForCommand(config.shortcuts || {}, commandId, getIsMac());
-    } : getShortcutForCommand;
+    } : defaultGetShortcutForCommand;
     var selectedCustomCssItem = themeManager.selectedCustomCssItem ? function () {
         return themeManager.selectedCustomCssItem(renderState, customCssLibrary, findById);
     } : selectedCustomCssItem;
@@ -205,10 +217,6 @@
         return renderState.scopedCustomCss || '';
     }
 
-    function getCommand(id) {
-        return getCommandMap()[id] || null;
-    }
-
     function getSurfaceCommands(surface) {
         if (!commandSurfaceCache[surface]) {
             commandSurfaceCache[surface] = getCommandList().filter(function (command) {
@@ -229,13 +237,6 @@
         }
 
         return commandGroupCache[key];
-    }
-
-    function getShortcutForCommand(commandId) {
-        var shortcuts = config.shortcuts || {};
-        var shortcut = shortcuts[commandId] || {};
-
-        return getIsMac() ? (shortcut.mac || '') : (shortcut.win || '');
     }
 
     function getCommandLabel(command) {
@@ -1106,6 +1107,33 @@
         }
     }
 
+    function hasLocalDraft(storage) {
+        var draft;
+
+        if (
+            (config.features && config.features.localDrafts === false)
+            || !window.EasyMDEDraftStorage
+        ) {
+            return false;
+        }
+
+        if (typeof window.EasyMDEDraftStorage.exists === 'function') {
+            return window.EasyMDEDraftStorage.exists(storage);
+        }
+
+        if (typeof window.EasyMDEDraftStorage.read !== 'function') {
+            return false;
+        }
+
+        draft = window.EasyMDEDraftStorage.read(storage);
+
+        return !!(
+            draft
+            && Object.prototype.hasOwnProperty.call(draft, 'content')
+            && typeof draft.content === 'string'
+        );
+    }
+
     function createDraftStatus($toolbar) {
         var $status = $('<span class="easymde-draft-status" aria-live="polite"></span>');
         $toolbar.find('.easymde-toolbar-section-secondary').append($status);
@@ -1168,6 +1196,36 @@
         return revision === previewRevision && signature === currentPreviewSignature(markdown);
     }
 
+    function previewFeatureLoadFailed(result) {
+        if (!result) {
+            return false;
+        }
+
+        if (Array.isArray(result)) {
+            return result.some(previewFeatureLoadFailed);
+        }
+
+        if (result.status === 'failed') {
+            return true;
+        }
+
+        if (result.results) {
+            return previewFeatureLoadFailed(result.results);
+        }
+
+        return false;
+    }
+
+    function previewHasRenderError($preview) {
+        var preview = $preview[0];
+
+        return !!(
+            preview
+            && typeof preview.querySelector === 'function'
+            && preview.querySelector('.easymde-render-error')
+        );
+    }
+
     function enhancePreview($preview, features, revision, signature, markdown) {
         var scopedConfig = previewScopedConfig(features);
         var loaderContext = {
@@ -1180,18 +1238,32 @@
             ? loader.ensurePreviewFeatures(scopedConfig.features, loaderContext)
             : Promise.resolve();
 
-        return Promise.resolve(loadPromise).then(function () {
+        return Promise.resolve(loadPromise).then(function (result) {
+            if (previewFeatureLoadFailed(result)) {
+                throw result;
+            }
+
             if (!isPreviewCurrent(revision, signature, markdown)) {
-                return;
+                return false;
             }
 
             if (window.EasyMDEEnhancements) {
-                return Promise.resolve(window.EasyMDEEnhancements.enhance($preview[0], scopedConfig));
+                return Promise.resolve(window.EasyMDEEnhancements.enhance($preview[0], scopedConfig)).then(function () {
+                    if (previewHasRenderError($preview)) {
+                        throw new Error('Preview enhancement failed.');
+                    }
+
+                    return true;
+                });
             }
 
-            return undefined;
+            return true;
         }).catch(function () {
-            // Keep editor controls usable even when an optional preview asset fails to enhance.
+            if (isPreviewCurrent(revision, signature, markdown)) {
+                setPreviewEnhancementError($preview);
+            }
+
+            return false;
         });
     }
 
@@ -1209,6 +1281,14 @@
             left: preview.scrollLeft,
             ratio: preview.scrollTop / scrollRange
         };
+    }
+
+    function capturePreviewScrollIfMoved(preview) {
+        if (!preview || (!preview.scrollTop && !preview.scrollLeft)) {
+            return null;
+        }
+
+        return capturePreviewScroll(preview);
     }
 
     function restorePreviewScroll(preview, state) {
@@ -1348,6 +1428,7 @@
     function setPreviewPending($preview, replaceContent) {
         setPreviewBusy($preview, true);
         $preview.attr('data-easymde-preview-refreshing', '1');
+        $preview.removeAttr('data-easymde-preview-error');
 
         if (replaceContent) {
             $preview.html('<p class="easymde-preview-pending" role="status">' + escapeHtml(getString('previewRendering')) + '</p>');
@@ -1356,6 +1437,13 @@
 
     function setPreviewReady($preview) {
         setPreviewBusy($preview, false);
+        $preview.removeAttr('data-easymde-preview-error');
+        $preview.removeAttr('data-easymde-preview-refreshing');
+    }
+
+    function setPreviewEnhancementError($preview) {
+        setPreviewBusy($preview, false);
+        $preview.attr('data-easymde-preview-error', '1');
         $preview.removeAttr('data-easymde-preview-refreshing');
     }
 
@@ -1426,8 +1514,60 @@
         return false;
     }
 
+    function firstImageFileFromTransfer(transfer) {
+        var items = transfer && transfer.items ? transfer.items : [];
+        var files = transfer && transfer.files ? transfer.files : [];
+        var index;
+        var file;
+        var type;
+
+        for (index = 0; index < items.length; index += 1) {
+            if (!items[index] || items[index].kind !== 'file') {
+                continue;
+            }
+
+            type = items[index].type || '';
+            if (type && !/^image\//i.test(type)) {
+                continue;
+            }
+
+            file = typeof items[index].getAsFile === 'function' ? items[index].getAsFile() : null;
+            if (file && /^image\//i.test(file.type || type)) {
+                return file;
+            }
+        }
+
+        for (index = 0; index < files.length; index += 1) {
+            file = files[index];
+            if (file && /^image\//i.test(file.type || '')) {
+                return file;
+            }
+        }
+
+        return null;
+    }
+
     function eventHasImageFileTransfer(event) {
         return hasImageFileTransfer(eventTransfer(event));
+    }
+
+    function selectedTextareaRange(textarea) {
+        var fallback = textarea && typeof textarea.value === 'string' ? textarea.value.length : 0;
+        var start = textarea && typeof textarea.selectionStart === 'number' ? textarea.selectionStart : fallback;
+        var end = textarea && typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : start;
+
+        return {
+            end: end,
+            start: start,
+            value: textarea && typeof textarea.value === 'string' ? textarea.value : ''
+        };
+    }
+
+    function captureImageTransfer(event, textarea) {
+        return {
+            file: firstImageFileFromTransfer(eventTransfer(event)),
+            range: selectedTextareaRange(textarea)
+        };
     }
 
     function preventImageTransferDefault(event) {
@@ -1505,12 +1645,32 @@
 
     function bindLazyImagePasteUpload(textarea, $root, $flash) {
         function replayWhenLoaded(event, handlerName, source) {
+            var transfer;
+
             if (textarea.easymdeImagePasteBound || !eventHasImageFileTransfer(event)) {
                 return;
             }
 
+            transfer = captureImageTransfer(event, textarea);
             preventImageTransferDefault(event);
             ensureImagePasteBound(textarea, $root, $flash).then(function (loaded) {
+                if (
+                    loaded
+                    && window.EasyMDEImagePaste
+                    && transfer.file
+                    && typeof window.EasyMDEImagePaste.handleFile === 'function'
+                ) {
+                    window.EasyMDEImagePaste.handleFile(
+                        transfer.file,
+                        event,
+                        textarea,
+                        imagePasteOptions($root, $flash),
+                        source,
+                        transfer.range
+                    );
+                    return;
+                }
+
                 if (
                     loaded
                     && window.EasyMDEImagePaste
@@ -1564,6 +1724,19 @@
             return;
         }
 
+        preloadWechatExporter();
+        showFlash(context && context.flash ? context.flash : null, 'error', getString('copyWechatFailed'));
+    }
+
+    function preloadWechatExporter() {
+        if (
+            !config.wechatExporterScriptUrl
+            || (config.features && config.features.wechatCopy === false)
+            || (window.EasyMDEWechatExporter && window.EasyMDEWechatExporter.copy)
+        ) {
+            return Promise.resolve(true);
+        }
+
         if (!wechatExporterLoadPromise) {
             wechatExporterLoadPromise = loadDeferredScript(
                 'easymde-wechat-exporter-js',
@@ -1571,14 +1744,7 @@
             );
         }
 
-        wechatExporterLoadPromise.then(function (loaded) {
-            if (loaded && window.EasyMDEWechatExporter && window.EasyMDEWechatExporter.copy) {
-                window.EasyMDEWechatExporter.copy(context, callbacks);
-                return;
-            }
-
-            showFlash(context && context.flash ? context.flash : null, 'error', getString('copyWechatFailed'));
-        });
+        return wechatExporterLoadPromise;
     }
 
     function mediaPickerOptions() {
@@ -1652,12 +1818,15 @@
         }
     }
 
-    function hydrateInitialPreview($preview, markdown) {
+    function hydrateInitialPreview($preview, markdown, options) {
         var previewNode = $preview[0];
         var features;
         var revision;
+        var scheduleEnhancement;
         var signature;
         var scrollState;
+
+        options = options || {};
 
         if ($preview.attr('data-easymde-initial-preview') !== '1' || !previewHasRenderedContent($preview)) {
             return false;
@@ -1670,7 +1839,7 @@
         activePreviewFeatures = features;
         revision = ++previewRevision;
         signature = currentPreviewSignature(markdown);
-        scrollState = capturePreviewScroll(previewNode);
+        scrollState = capturePreviewScrollIfMoved(previewNode);
 
         setPreviewReady($preview);
 
@@ -1692,19 +1861,36 @@
         }
 
         setPreviewPending($preview, false);
-        afterPreviewIdle(function () {
-            if (!isPreviewCurrent(revision, signature, markdown)) {
-                return;
-            }
+        scheduleEnhancement = function (currentMarkdown) {
+            var enhancementMarkdown = typeof currentMarkdown === 'string' ? currentMarkdown : markdown;
+            var enhancementRevision = revision;
+            var enhancementSignature = currentPreviewSignature(enhancementMarkdown);
 
-            enhancePreview($preview, features, revision, signature, markdown).then(function () {
-                if (isPreviewCurrent(revision, signature, markdown)) {
-                    setPreviewReady($preview);
+            afterPreviewIdle(function () {
+                if (!isPreviewCurrent(enhancementRevision, enhancementSignature, enhancementMarkdown)) {
+                    return;
                 }
+
+                enhancePreview($preview, features, enhancementRevision, enhancementSignature, enhancementMarkdown).then(function (ready) {
+                    finishEnhancedPreview($preview, enhancementRevision, enhancementSignature, enhancementMarkdown, ready);
+                });
             });
-        });
+        };
+
+        if (typeof options.deferEnhancement === 'function') {
+            options.deferEnhancement(scheduleEnhancement);
+            return true;
+        }
+
+        scheduleEnhancement();
 
         return true;
+    }
+
+    function finishEnhancedPreview($preview, revision, signature, markdown, ready) {
+        if (ready !== false && isPreviewCurrent(revision, signature, markdown)) {
+            setPreviewReady($preview);
+        }
     }
 
     function abortPreviewRequest() {
@@ -1757,10 +1943,8 @@
                 activePreviewFeatures = normalizePreviewFeatures(config.features || {});
                 $preview.html(previewFallback(markdown));
                 finishPreviewUpdate(requestScrollState, activePreviewFeatures);
-                enhancePreview($preview, activePreviewFeatures, revision, signature, markdown).then(function () {
-                    if (isPreviewCurrent(revision, signature, markdown)) {
-                        setPreviewReady($preview);
-                    }
+                enhancePreview($preview, activePreviewFeatures, revision, signature, markdown).then(function (ready) {
+                    finishEnhancedPreview($preview, revision, signature, markdown, ready);
                 });
                 return;
             }
@@ -1801,10 +1985,8 @@
                 activePreviewFeatures = responseFeatures;
                 $preview.html(response.html || previewFallback(markdown));
                 finishPreviewUpdate(requestScrollState, responseFeatures);
-                enhancePreview($preview, responseFeatures, revision, signature, markdown).then(function () {
-                    if (isPreviewCurrent(revision, signature, markdown)) {
-                        setPreviewReady($preview);
-                    }
+                enhancePreview($preview, responseFeatures, revision, signature, markdown).then(function (ready) {
+                    finishEnhancedPreview($preview, revision, signature, markdown, ready);
                 });
             }).catch(function (error) {
                 if (!isPreviewCurrent(revision, signature, markdown) || (error && error.name === 'AbortError')) {
@@ -2196,8 +2378,10 @@
         var storage = window.EasyMDEDraftStorage.normalizeStorage(config, $root.data('post-id'));
         var initialMarkdown = null;
         var initialPreviewHydrated = false;
+        var initialPreviewEnhancement = null;
         var editorChromeReady = false;
         var sourceChangedBeforeShell = false;
+        var deferWechatPreload = false;
         var $flash;
         var $draftStatus;
         var context;
@@ -2214,7 +2398,15 @@
             window.EasyMDEEnhancements.initTheme($root[0], config);
         }
 
-        initialPreviewHydrated = hydrateInitialPreview($preview, '');
+        if ($preview.attr('data-easymde-initial-preview') === '1' && hasLocalDraft(storage)) {
+            setPreviewPending($preview, true);
+        } else {
+            initialPreviewHydrated = hydrateInitialPreview($preview, '', {
+                deferEnhancement: function (callback) {
+                    initialPreviewEnhancement = callback;
+                }
+            });
+        }
 
         function refreshPreview(options) {
             updatePreview($preview, $source.val(), options || { immediate: true });
@@ -2242,7 +2434,11 @@
             bindScrollSync($source[0], $preview[0]);
             bindShortcuts($root, $source[0], context);
             bindImmersiveModeShortcuts(context);
+            $root.attr('data-easymde-shell-ready', '1');
         }
+
+        initializeEditorChrome();
+        bindLazyImagePasteUpload($source[0], $root, $flash);
 
         $source.on('input', function () {
             if (initialMarkdown === null) {
@@ -2270,7 +2466,6 @@
         afterShellPaint(function () {
             var shellMarkdown = $source.val();
 
-            $root.attr('data-easymde-shell-ready', '1');
             initialMarkdown = shellMarkdown;
             syncMarkdownFields(shellMarkdown);
 
@@ -2278,8 +2473,19 @@
                 updatePreview($preview, shellMarkdown, { immediate: true });
             }
 
-            initializeEditorChrome();
-            bindLazyImagePasteUpload($source[0], $root, $flash);
+            if (initialPreviewEnhancement) {
+                if (!sourceChangedBeforeShell) {
+                    initialPreviewEnhancement(shellMarkdown);
+                    deferWechatPreload = true;
+                }
+                initialPreviewEnhancement = null;
+            }
+
+            if (deferWechatPreload) {
+                afterPreviewIdle(preloadWechatExporter);
+            } else {
+                preloadWechatExporter();
+            }
 
             if (!config.features || config.features.localDrafts !== false) {
                 afterPreviewIdle(function () {
@@ -2302,5 +2508,14 @@
         window.EasyMDETestHooks.updatePreview = updatePreview;
     }
 
-    $(initEditor);
+    function startEditorWhenReady() {
+        if (document.getElementById && document.getElementById('easymde-editor')) {
+            initEditor();
+            return;
+        }
+
+        $(initEditor);
+    }
+
+    startEditorWhenReady();
 })(jQuery, window, document);

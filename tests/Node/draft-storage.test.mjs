@@ -48,11 +48,34 @@ test('draft storage caches localStorage availability checks', () => {
   };
   const normalized = draftStorage.normalizeStorage(config, 123);
 
+  assert.equal(draftStorage.exists(normalized), false);
   assert.equal(draftStorage.read(normalized), null);
   draftStorage.write(normalized, 'Draft body');
+  assert.equal(draftStorage.exists(normalized), true);
   assert.equal(draftStorage.read(normalized).content, 'Draft body');
   draftStorage.discard(normalized);
+  assert.equal(draftStorage.exists(normalized), false);
 
   assert.equal(setItemCalls, 2);
   assert.equal(removeItemCalls, 2);
+});
+
+test('draft existence check avoids parsing draft JSON or probing storage writes', () => {
+  const storage = {
+    getItem() {
+      return '{not valid json';
+    },
+    removeItem() {
+      throw new Error('removeItem should not be called');
+    },
+    setItem() {
+      throw new Error('setItem should not be called');
+    }
+  };
+  const draftStorage = loadDraftStorage(storage);
+  const normalized = {
+    draftKey: 'easymde:draft:test'
+  };
+
+  assert.equal(draftStorage.exists(normalized), true);
 });

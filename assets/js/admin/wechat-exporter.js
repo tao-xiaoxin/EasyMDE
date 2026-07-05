@@ -207,7 +207,8 @@
         if (
             !preview
             || !preview.innerHTML.trim()
-            || preview.querySelector('.easymde-preview-empty, .easymde-preview-pending, .easymde-preview-error')
+            || preview.querySelector('.easymde-preview-empty, .easymde-preview-pending, .easymde-preview-error, .easymde-render-error')
+            || preview.getAttribute('data-easymde-preview-error') === '1'
             || previewIsRefreshing(preview)
         ) {
             showFlash(flash, 'error', getString('copyWechatFailed'));

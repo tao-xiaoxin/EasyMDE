@@ -466,6 +466,83 @@ test('image paste preserves the paste insertion point while upload is pending', 
   assert.equal(textarea.selectionEnd, textarea.selectionStart);
 });
 
+test('image paste rebases the insertion point when text is added before it during upload', async () => {
+  let resolveUpload;
+  const { imagePaste } = loadImagePaste({
+    wp: {
+      apiFetch() {
+        return new Promise((resolve) => {
+          resolveUpload = resolve;
+        });
+      }
+    }
+  });
+  const textarea = createTextarea('Hello world');
+  textarea.selectionStart = 5;
+  textarea.selectionEnd = 5;
+  const event = imagePasteEvent({
+    name: 'cursor.png',
+    size: 256,
+    type: 'image/png'
+  });
+  const { options } = createOptions();
+  const pastePromise = imagePaste.handlePaste(event, textarea, options);
+
+  textarea.value = 'Say ' + textarea.value;
+  textarea.selectionStart = 4;
+  textarea.selectionEnd = 4;
+
+  resolveUpload({
+    alt: 'cursor',
+    url: 'https://example.test/uploads/cursor.png'
+  });
+  await pastePromise;
+
+  assert.equal(textarea.value, 'Say Hello![cursor](https://example.test/uploads/cursor.png) world');
+  assert.equal(textarea.selectionStart, 'Say Hello![cursor](https://example.test/uploads/cursor.png)'.length);
+  assert.equal(textarea.selectionEnd, textarea.selectionStart);
+});
+
+test('image paste can use a file and range captured before lazy loading', async () => {
+  let capturedFetch = null;
+  const { imagePaste } = loadImagePaste({
+    wp: {
+      apiFetch(options) {
+        capturedFetch = options;
+
+        return Promise.resolve({
+          alt: 'lazy cursor',
+          url: 'https://example.test/uploads/lazy-cursor.png'
+        });
+      }
+    }
+  });
+  const textarea = createTextarea('Hello world');
+  const event = imagePasteEvent({
+    name: 'lazy-cursor.png',
+    size: 256,
+    type: 'image/png'
+  });
+  const { options } = createOptions();
+
+  await imagePaste.handleFile(
+    event.clipboardData.items[0].getAsFile(),
+    event,
+    textarea,
+    options,
+    'paste',
+    {
+      start: 5,
+      end: 5,
+      value: 'Hello world'
+    }
+  );
+
+  assert.equal(event.prevented, true);
+  assert.equal(capturedFetch.body.entries.find((entry) => entry.name === 'file').filename, 'lazy-cursor.png');
+  assert.equal(textarea.value, 'Hello![lazy cursor](https://example.test/uploads/lazy-cursor.png) world');
+});
+
 test('image paste ignores non-image clipboard content', () => {
   let apiFetchCalled = false;
   const { imagePaste } = loadImagePaste({

@@ -56,6 +56,10 @@ final class PostDocument {
 		return $this->migration->has_legacy_markdown( $post_id );
 	}
 
+	public function has_enabled_marker( $post_id ) {
+		return $this->migration->has_enabled_marker( $post_id );
+	}
+
 	public function revision_meta_keys() {
 		return $this->migration->revision_meta_keys();
 	}

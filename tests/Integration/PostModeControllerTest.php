@@ -340,6 +340,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
             array(
                 'post_type' => 'post',
                 'post_author' => $user_id,
+                'post_content' => '',
             )
         );
         update_post_meta(
@@ -381,6 +382,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
             array(
                 'post_type' => 'post',
                 'post_author' => $user_id,
+                'post_content' => '',
             )
         );
         update_post_meta(
@@ -414,6 +416,85 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertLessThan($source_position, $preview_position);
         $this->assertStringContainsString('id="easymde-source" name="easymde_markdown"', $output);
         $this->assertStringNotContainsString('id="easymde-markdown-field"', $output);
+    }
+
+    public function test_editor_shell_reuses_stored_compatibility_html_for_initial_preview()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '<p>Stored compatible HTML.</p>',
+            )
+        );
+        update_post_meta(
+            $post_id,
+            PostDocument::META_MARKDOWN,
+            "# Markdown that would require render\n\n<script>alert('x')</script>"
+        );
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $post_document = new PostDocument();
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
+        $this->assertStringContainsString('<p>Stored compatible HTML.</p>', $output);
+        $this->assertStringNotContainsString('<h1 id="markdown-that-would-require-render">', $output);
+        $this->assertStringNotContainsString('<script>', $output);
+    }
+
+    public function test_editor_shell_renders_legacy_markdown_instead_of_reusing_stale_html()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '<p>Stale compatibility HTML.</p>',
+            )
+        );
+        update_post_meta(
+            $post_id,
+            PostDocument::META_MARKDOWN,
+            "# Current legacy Markdown\n\n**Authoritative source.**"
+        );
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $post_document = new PostDocument();
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
+        $this->assertStringContainsString('<h1 id="current-legacy-markdown">Current legacy Markdown</h1>', $output);
+        $this->assertStringContainsString('<strong>Authoritative source.</strong>', $output);
+        $this->assertStringNotContainsString('<p>Stale compatibility HTML.</p>', $output);
     }
 
     public function test_spellcheck_editor_setting_controls_source_textarea_attribute()

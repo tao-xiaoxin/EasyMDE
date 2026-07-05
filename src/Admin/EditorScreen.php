@@ -24,8 +24,8 @@ final class EditorScreen {
 		PostDocument $post_document,
 		PostModeController $post_mode_controller,
 		ThemeStateRepository $theme_state_repository,
-		Options $options = null,
-		MarkdownFeatureDetector $feature_detector = null
+		?Options $options = null,
+		?MarkdownFeatureDetector $feature_detector = null
 	) {
 		$this->post_document          = $post_document;
 		$this->post_mode_controller   = $post_mode_controller;
@@ -80,8 +80,17 @@ final class EditorScreen {
 			return '';
 		}
 
+		$stored_content_preview = '';
+		if ( $this->can_reuse_stored_content_preview( $post ) ) {
+			$stored_content_preview = $this->render_stored_content_preview( $post );
+		}
+
+		if ( '' !== $stored_content_preview ) {
+			return $stored_content_preview;
+		}
+
 		if ( ! $this->post_document->has_stored_markdown( $post->ID ) ) {
-			return $this->render_stored_content_preview( $post );
+			return '';
 		}
 
 		try {
@@ -97,5 +106,15 @@ final class EditorScreen {
 		$html = wp_kses_post( (string) $post->post_content );
 
 		return '' !== trim( $html ) ? $html : '';
+	}
+
+	private function can_reuse_stored_content_preview( $post ) {
+		$post_id = $post ? absint( $post->ID ) : 0;
+
+		if ( ! $post_id || ! $this->post_document->has_stored_markdown( $post_id ) ) {
+			return true;
+		}
+
+		return $this->post_document->has_enabled_marker( $post_id );
 	}
 }

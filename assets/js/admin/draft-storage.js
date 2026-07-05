@@ -46,6 +46,18 @@
         }
     }
 
+    function exists(storage) {
+        if (!storage.draftKey || !window.localStorage || typeof window.localStorage.getItem !== 'function') {
+            return false;
+        }
+
+        try {
+            return window.localStorage.getItem(storage.draftKey) !== null;
+        } catch (error) {
+            return false;
+        }
+    }
+
     function write(storage, markdown) {
         if (!storage.draftKey || !storageAvailable()) {
             return;
@@ -86,6 +98,7 @@
     window.EasyMDEDraftStorage = {
         normalizeStorage: normalizeStorage,
         read: read,
+        exists: exists,
         write: write,
         discard: discard,
         formatTime: formatTime

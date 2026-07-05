@@ -95,6 +95,76 @@ test('WeChat copy rejects preview error placeholders', () => {
   ]);
 });
 
+test('WeChat copy rejects renderer-error previews', () => {
+  const exporter = loadExporter();
+  const flashes = [];
+  const preview = {
+    innerHTML: '<pre class="easymde-render-error"><code class="language-mermaid">broken</code></pre>',
+    getAttribute() {
+      return null;
+    },
+    querySelector(selector) {
+      return selector.includes('.easymde-render-error') ? {} : null;
+    }
+  };
+
+  exporter.copy(
+    {
+      preview
+    },
+    {
+      getString(key) {
+        return key;
+      },
+      showFlash(flash, type, message) {
+        flashes.push({ type, message });
+      }
+    }
+  );
+
+  assert.deepEqual(flashes, [
+    {
+      type: 'error',
+      message: 'copyWechatFailed'
+    }
+  ]);
+});
+
+test('WeChat copy rejects preview enhancement error states', () => {
+  const exporter = loadExporter();
+  const flashes = [];
+  const preview = {
+    innerHTML: '<pre><code class="language-js">console.log(1);</code></pre>',
+    getAttribute(name) {
+      return name === 'data-easymde-preview-error' ? '1' : null;
+    },
+    querySelector() {
+      return null;
+    }
+  };
+
+  exporter.copy(
+    {
+      preview
+    },
+    {
+      getString(key) {
+        return key;
+      },
+      showFlash(flash, type, message) {
+        flashes.push({ type, message });
+      }
+    }
+  );
+
+  assert.deepEqual(flashes, [
+    {
+      type: 'error',
+      message: 'copyWechatFailed'
+    }
+  ]);
+});
+
 test('WeChat copy rejects preview empty placeholders', () => {
   const exporter = loadExporter();
   const flashes = [];

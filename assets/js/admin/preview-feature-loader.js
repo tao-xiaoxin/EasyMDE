@@ -112,6 +112,20 @@
         );
     }
 
+    function invalidateMissingStylesheet(cache, key, id, href, documentRef) {
+        var record = cache[key];
+        var link;
+
+        if (!record || record.status !== 'loaded') {
+            return;
+        }
+
+        link = documentRef.getElementById(id);
+        if (!link || getAttribute(link, 'href') !== href || !stylesheetLoaded(link, href)) {
+            delete cache[key];
+        }
+    }
+
     function appendToHead(node, documentRef) {
         if (node.parentNode) {
             return;
@@ -128,6 +142,8 @@
         if (!id || !href) {
             return skipped(key);
         }
+
+        invalidateMissingStylesheet(resourceCache, key, id, href, documentRef);
 
         return cached(resourceCache, key, function () {
             return new Promise(function (resolve, reject) {
@@ -265,6 +281,16 @@
         var documentRef = context && context.documentRef ? context.documentRef : document;
         var renderState = context && context.renderState ? context.renderState : {};
         var key = featureKey(name, context);
+
+        if ('syntaxHighlight' === name) {
+            invalidateMissingStylesheet(
+                featureCache,
+                key,
+                assets.highlightThemeLinkId || 'easymde-highlight-theme-css',
+                findCodeThemeUrl(config, renderState),
+                documentRef
+            );
+        }
 
         return cached(featureCache, key, function () {
             if ('syntaxHighlight' === name) {

@@ -136,14 +136,57 @@
         var end = textarea && typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : start;
 
         return {
+            value: textarea && typeof textarea.value === 'string' ? textarea.value : '',
             start: start,
             end: end
         };
     }
 
+    function rebaseRange(textarea, range) {
+        var currentValue = textarea && typeof textarea.value === 'string' ? textarea.value : '';
+        var originalValue = range && typeof range.value === 'string' ? range.value : null;
+        var originalEnd = range && typeof range.end === 'number' ? range.end : 0;
+        var originalStart = range && typeof range.start === 'number' ? range.start : originalEnd;
+        var suffix;
+        var suffixIndex;
+        var prefix;
+        var prefixIndex;
+
+        if (originalValue === null || currentValue === originalValue) {
+            return range || selectedRange(textarea);
+        }
+
+        suffix = originalValue.slice(originalEnd);
+        if (suffix) {
+            suffixIndex = currentValue.lastIndexOf(suffix);
+            if (suffixIndex !== -1) {
+                return {
+                    start: suffixIndex,
+                    end: suffixIndex
+                };
+            }
+        }
+
+        prefix = originalValue.slice(0, originalStart);
+        if (prefix) {
+            prefixIndex = currentValue.indexOf(prefix);
+            if (prefixIndex !== -1) {
+                return {
+                    start: prefixIndex + prefix.length,
+                    end: prefixIndex + prefix.length
+                };
+            }
+        }
+
+        return {
+            start: Math.max(0, Math.min(originalStart, currentValue.length)),
+            end: Math.max(0, Math.min(originalStart, currentValue.length))
+        };
+    }
+
     function insertAtCursor(textarea, markdown, applyTextChange, range) {
         var value = textarea.value;
-        var selection = range || selectedRange(textarea);
+        var selection = rebaseRange(textarea, range || selectedRange(textarea));
         var start = Math.max(0, Math.min(selection.start, value.length));
         var end = Math.max(start, Math.min(selection.end, value.length));
         var nextValue = textarea.value.slice(0, start) + markdown + textarea.value.slice(end);
@@ -226,7 +269,7 @@
         return '';
     }
 
-    function handleImageFile(file, event, textarea, options, source) {
+    function handleImageFile(file, event, textarea, options, source, range) {
         var config;
         var showFlash;
         var getString;
@@ -252,7 +295,7 @@
         }
 
         preventDefault(event);
-        insertionRange = selectedRange(textarea);
+        insertionRange = range || selectedRange(textarea);
         showFlash(options.flash, 'info', uploadString(getString, source, 'Uploading'));
 
         return uploadImage(file, {
@@ -299,6 +342,10 @@
         return handleImageFile(firstImageFile(event), event, textarea, options, 'drop');
     }
 
+    function handleFile(file, event, textarea, options, source, range) {
+        return handleImageFile(file, event, textarea, options, source || 'paste', range);
+    }
+
     function bind(textarea, options) {
         if (!textarea || textarea.easymdeImagePasteBound || typeof textarea.addEventListener !== 'function') {
             return;
@@ -319,6 +366,7 @@
     window.EasyMDEImagePaste = {
         bind: bind,
         firstImageFile: firstImageFile,
+        handleFile: handleFile,
         handleDragOver: handleDragOver,
         handleDrop: handleDrop,
         handlePaste: handlePaste,

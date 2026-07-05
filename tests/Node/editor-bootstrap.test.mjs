@@ -93,8 +93,8 @@ function createElement(tagName) {
   };
 }
 
-function createDocumentStub() {
-  const elements = new Map();
+function createDocumentStub(initialElements = {}) {
+  const elements = new Map(Object.entries(initialElements));
 
   return {
     body: {},
@@ -231,6 +231,11 @@ function createPreviewWrapper(html = '') {
     style: {
       removeProperty() {},
       setProperty() {}
+    },
+    querySelector(selector) {
+      const wanted = String(selector).match(/\.([a-z0-9_-]+)/gi) || [];
+
+      return wanted.some((entry) => node.innerHTML.includes(`class="${entry.slice(1)}`)) ? {} : null;
     }
   };
 
@@ -346,7 +351,7 @@ function normalizeFeatures(features = {}) {
 function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
   const timers = createTimerHarness();
-  const documentRef = createDocumentStub();
+  const documentRef = createDocumentStub(contextOverrides.documentElements || {});
   const jQueryRef = contextOverrides.jQuery || createJQueryStub();
   const windowRef = {
     EasyMDEConfig: {
@@ -408,10 +413,17 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
 }
 
 function createRootWrapper(postId = 123) {
+  const attributes = new Map();
+
   return {
     length: 1,
     0: {},
-    attr() {
+    attr(name, value) {
+      if (value === undefined) {
+        return attributes.get(name);
+      }
+
+      attributes.set(name, String(value));
       return this;
     },
     data(name) {
@@ -829,7 +841,119 @@ test('initEditor hydrates server-rendered preview before waiting for shell paint
   assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
 });
 
-test('initEditor defers toolbar chrome until after the first shell paint', () => {
+test('hydrateInitialPreview avoids initial layout scroll measurement when preview is at top', () => {
+  const preview = createPreviewWrapper('<p>Plain initial preview.</p>');
+  const { hooks } = loadBootstrap();
+
+  Object.defineProperty(preview[0], 'scrollHeight', {
+    get() {
+      throw new Error('scrollHeight should not be read for an unmoved initial preview');
+    }
+  });
+  Object.defineProperty(preview[0], 'clientHeight', {
+    get() {
+      throw new Error('clientHeight should not be read for an unmoved initial preview');
+    }
+  });
+
+  preview.attr('data-easymde-initial-preview', '1');
+  preview.attr('data-easymde-preview-features', JSON.stringify({}));
+
+  assert.equal(hooks.hydrateInitialPreview(preview, ''), true);
+  assert.equal(preview.attr('aria-busy'), 'false');
+});
+
+test('initEditor does not hydrate saved preview when a local draft exists', async () => {
+  const jQueryRef = createJQueryStub(789, { runReady: true });
+  const root = createRootWrapper(789);
+  const source = createSourceWrapper('Saved source.');
+  const preview = createPreviewWrapper('<p>Saved source.</p>');
+  let apiFetchCalled = false;
+  let rafCallback = null;
+
+  preview.attr('data-easymde-initial-preview', '1');
+  preview.attr('data-easymde-preview-features', JSON.stringify({}));
+  jQueryRef.register('#easymde-editor', root);
+  jQueryRef.register('#easymde-source', source);
+  jQueryRef.register('#easymde-preview', preview);
+  jQueryRef.register('#postdivrich', createContainerWrapper());
+  jQueryRef.register('#post', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-apple-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-serif-font-field', createContainerWrapper());
+
+  const { flushTimers } = loadBootstrap({
+    requestAnimationFrame(callback) {
+      rafCallback = callback;
+      return 1;
+    },
+    EasyMDEDraftStorage: {
+      normalizeStorage() {
+        return {};
+      },
+      read() {
+        return {
+          content: 'Unsaved local draft.'
+        };
+      },
+      write() {},
+      discard() {},
+      formatTime() {
+        return '';
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      features: {},
+      storage: {},
+      strings: {
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    },
+    wp: {
+      apiFetch(options) {
+        apiFetchCalled = true;
+        assert.equal(options.data.markdown, 'Saved source.');
+        return Promise.resolve({
+          html: '<p>Current saved render.</p>',
+          features: {}
+        });
+      }
+    }
+  }, { jQuery: jQueryRef });
+
+  assert.equal(apiFetchCalled, false);
+  assert.equal(source.valueReadCount(), 0);
+  assert.equal(preview.html(), '<p class="easymde-preview-pending" role="status">Rendering preview</p>');
+  assert.equal(preview.attr('aria-busy'), 'true');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
+
+  rafCallback();
+  flushTimers();
+  await flushMicrotasks();
+
+  assert.equal(apiFetchCalled, true);
+  assert.equal(preview.html(), '<p>Current saved render.</p>');
+  assert.equal(preview.attr('aria-busy'), 'false');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
+});
+
+test('initEditor creates toolbar chrome before waiting for shell paint', () => {
   const order = [];
   const jQueryRef = createJQueryStub(789, { runReady: true });
   const toolbar = {
@@ -932,12 +1056,243 @@ test('initEditor defers toolbar chrome until after the first shell paint', () =>
     }
   }, { jQuery: jQueryRef });
 
-  assert.deepEqual(order, [], 'toolbar chrome should not be built before the first shell paint');
+  assert.deepEqual(order, ['toolbar'], 'toolbar chrome should be usable during the bootstrap task');
+  assert.equal(root.attr('data-easymde-shell-ready'), '1');
 
   rafCallback();
   flushTimers();
 
-  assert.deepEqual(order.slice(0, 2), ['preview', 'toolbar']);
+  assert.deepEqual(order.slice(0, 2), ['toolbar', 'preview']);
+});
+
+test('initEditor starts immediately when the editor root is already parsed', () => {
+  const order = [];
+  const jQueryRef = createJQueryStub(789);
+  const toolbar = {
+    length: 1,
+    0: {},
+    after() {
+      return this;
+    },
+    append() {
+      order.push('toolbar');
+      return this;
+    },
+    empty() {
+      return this;
+    },
+    find() {
+      return createContainerWrapper();
+    }
+  };
+  const root = {
+    ...createRootWrapper(789),
+    find(selector) {
+      if (selector === '.easymde-toolbar') {
+        return toolbar;
+      }
+
+      if (selector === '.easymde-side-actions') {
+        return createContainerWrapper();
+      }
+
+      return createContainerWrapper();
+    }
+  };
+  const source = createSourceWrapper('Plain initial preview.');
+  const preview = createPreviewWrapper('<p>Plain initial preview.</p>');
+
+  preview.attr('data-easymde-initial-preview', '1');
+  preview.attr('data-easymde-preview-features', JSON.stringify({}));
+  jQueryRef.register('#easymde-editor', root);
+  jQueryRef.register('#easymde-source', source);
+  jQueryRef.register('#easymde-preview', preview);
+  jQueryRef.register('#postdivrich', createContainerWrapper());
+  jQueryRef.register('#post', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-apple-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-serif-font-field', createContainerWrapper());
+
+  loadBootstrap({
+    EasyMDEDraftStorage: {
+      normalizeStorage() {
+        return {};
+      },
+      read() {
+        return null;
+      },
+      write() {},
+      discard() {},
+      formatTime() {
+        return '';
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      features: {
+        localDrafts: false
+      },
+      storage: {},
+      strings: {
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    }
+  }, {
+    documentElements: {
+      'easymde-editor': {}
+    },
+    jQuery: jQueryRef
+  });
+
+  assert.deepEqual(order, ['toolbar']);
+  assert.equal(root.attr('data-easymde-shell-ready'), '1');
+  assert.equal(preview.html(), '<p>Plain initial preview.</p>');
+  assert.equal(source.valueReadCount(), 0);
+});
+
+test('initEditor defers initial preview enhancement until after toolbar chrome is ready', async () => {
+  const order = [];
+  const jQueryRef = createJQueryStub(789, { runReady: true });
+  const toolbar = {
+    length: 1,
+    0: {},
+    after() {
+      return this;
+    },
+    append() {
+      order.push('toolbar');
+      return this;
+    },
+    empty() {
+      return this;
+    },
+    find() {
+      return createContainerWrapper();
+    }
+  };
+  const root = {
+    ...createRootWrapper(789),
+    find(selector) {
+      if (selector === '.easymde-toolbar') {
+        return toolbar;
+      }
+
+      if (selector === '.easymde-side-actions') {
+        return createContainerWrapper();
+      }
+
+      return createContainerWrapper();
+    }
+  };
+  const source = createSourceWrapper('```js\nconsole.log(1);\n```');
+  const preview = createPreviewWrapper('<pre><code class="language-js">console.log(1);</code></pre>');
+
+  preview.attr('data-easymde-initial-preview', '1');
+  preview.attr('data-easymde-preview-features', JSON.stringify({
+    codeBlocks: true,
+    syntaxHighlight: true
+  }));
+  jQueryRef.register('#easymde-editor', root);
+  jQueryRef.register('#easymde-source', source);
+  jQueryRef.register('#easymde-preview', preview);
+  jQueryRef.register('#postdivrich', createContainerWrapper());
+  jQueryRef.register('#post', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-apple-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-serif-font-field', createContainerWrapper());
+
+  const { flushTimers } = loadBootstrap({
+    requestAnimationFrame() {
+      return 1;
+    },
+    EasyMDEDraftStorage: {
+      normalizeStorage() {
+        return {};
+      },
+      read() {
+        return null;
+      },
+      write() {},
+      discard() {},
+      formatTime() {
+        return '';
+      }
+    },
+    EasyMDEEnhancements: {
+      initTheme() {},
+      enhance() {
+        order.push('enhance');
+        return Promise.resolve();
+      }
+    },
+    EasyMDEPreviewFeatureLoader: {
+      ensurePreviewFeatures() {
+        order.push('load-features');
+        return Promise.resolve();
+      },
+      loadScript(id) {
+        if (id === 'easymde-wechat-exporter-js') {
+          order.push('wechat');
+        }
+
+        return Promise.resolve({
+          status: 'loaded'
+        });
+      },
+      normalizeFeatures
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      wechatExporterScriptUrl: '/assets/js/admin/wechat-exporter.js?ver=0.1.7',
+      features: {
+        localDrafts: false
+      },
+      storage: {},
+      strings: {
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    }
+  }, { jQuery: jQueryRef });
+
+  assert.deepEqual(order, ['toolbar']);
+  assert.equal(preview.attr('aria-busy'), 'true');
+
+  flushTimers();
+  await flushMicrotasks();
+
+  assert.deepEqual(order, ['toolbar', 'load-features', 'wechat', 'enhance']);
+  assert.equal(preview.attr('aria-busy'), 'false');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
 });
 
 test('initEditor defers optional Markdown field sync until after the first shell paint', () => {
@@ -1023,7 +1378,7 @@ test('initEditor defers optional Markdown field sync until after the first shell
   assert.equal(source.valueReadCount(), 1);
 });
 
-test('initEditor does not load image paste upload during idle startup', () => {
+test('initEditor binds lazy image paste listeners without loading upload code during startup', () => {
   const jQueryRef = createJQueryStub(789, { runReady: true });
   const root = createRootWrapper(789);
   const source = createSourceWrapper('Plain initial preview.');
@@ -1102,7 +1457,9 @@ test('initEditor does not load image paste upload during idle startup', () => {
     }
   }, { jQuery: jQueryRef });
 
-  assert.equal(source.listenerCount('paste'), 0);
+  assert.equal(source.listenerCount('paste'), 1);
+  assert.equal(source.listenerCount('dragover'), 1);
+  assert.equal(source.listenerCount('drop'), 1);
   assert.equal(loadScriptCalls, 0);
 
   rafCallback();
@@ -1112,6 +1469,91 @@ test('initEditor does not load image paste upload during idle startup', () => {
   assert.equal(source.listenerCount('dragover'), 1);
   assert.equal(source.listenerCount('drop'), 1);
   assert.equal(loadScriptCalls, 0);
+});
+
+test('initEditor preloads WeChat exporter only after shell paint', () => {
+  const jQueryRef = createJQueryStub(789, { runReady: true });
+  const root = createRootWrapper(789);
+  const source = createSourceWrapper('Plain initial preview.');
+  const preview = createPreviewWrapper('<p>Plain initial preview.</p>');
+  let loadScriptCalls = 0;
+  let rafCallback = null;
+
+  preview.attr('data-easymde-initial-preview', '1');
+  preview.attr('data-easymde-preview-features', JSON.stringify({}));
+  jQueryRef.register('#easymde-editor', root);
+  jQueryRef.register('#easymde-source', source);
+  jQueryRef.register('#easymde-preview', preview);
+  jQueryRef.register('#postdivrich', createContainerWrapper());
+  jQueryRef.register('#post', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-apple-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-serif-font-field', createContainerWrapper());
+
+  const { flushTimers } = loadBootstrap({
+    requestAnimationFrame(callback) {
+      rafCallback = callback;
+      return 1;
+    },
+    EasyMDEDraftStorage: {
+      normalizeStorage() {
+        return {};
+      },
+      read() {
+        return null;
+      },
+      write() {},
+      discard() {},
+      formatTime() {
+        return '';
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      wechatExporterScriptUrl: '/assets/js/admin/wechat-exporter.js?ver=0.1.7',
+      features: {
+        localDrafts: false
+      },
+      storage: {},
+      strings: {
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    },
+    EasyMDEPreviewFeatureLoader: {
+      loadScript(id, src) {
+        loadScriptCalls += 1;
+        assert.equal(id, 'easymde-wechat-exporter-js');
+        assert.equal(src, '/assets/js/admin/wechat-exporter.js?ver=0.1.7');
+
+        return Promise.resolve({
+          status: 'loaded'
+        });
+      },
+      normalizeFeatures
+    }
+  }, { jQuery: jQueryRef });
+
+  assert.equal(loadScriptCalls, 0);
+
+  rafCallback();
+  flushTimers();
+
+  assert.equal(loadScriptCalls, 1);
 });
 
 test('updatePreview keeps the preview busy until deferred feature enhancement settles', async () => {
@@ -1157,6 +1599,45 @@ test('updatePreview keeps the preview busy until deferred feature enhancement se
   assert.equal(enhanced, true);
   assert.equal(preview.attr('aria-busy'), 'false');
   assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
+});
+
+test('updatePreview marks failed required enhancement as non-exportable instead of ready', async () => {
+  const preview = createPreviewWrapper();
+  const { flushTimers, hooks } = loadBootstrap({
+    EasyMDEPreviewFeatureLoader: {
+      ensurePreviewFeatures() {
+        return Promise.resolve({
+          features: normalizeFeatures({ syntaxHighlight: true }),
+          results: [
+            {
+              status: 'failed'
+            }
+          ]
+        });
+      },
+      normalizeFeatures
+    },
+    wp: {
+      apiFetch() {
+        return Promise.resolve({
+          html: '<pre><code class="language-js">console.log(1);</code></pre>',
+          features: {
+            codeBlocks: true,
+            syntaxHighlight: true
+          }
+        });
+      }
+    }
+  });
+
+  hooks.updatePreview(preview, '```js\nconsole.log(1);\n```', { immediate: true });
+  flushTimers();
+  await flushMicrotasks();
+
+  assert.equal(preview.html(), '<pre><code class="language-js">console.log(1);</code></pre>');
+  assert.equal(preview.attr('aria-busy'), 'false');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
+  assert.equal(preview.attr('data-easymde-preview-error'), '1');
 });
 
 test('updatePreview marks an existing preview busy before the debounce fires', () => {
@@ -1350,7 +1831,7 @@ test('initEditor defers hidden appearance and font menu controls until a menu op
     }
   }, { jQuery: jQueryRef });
 
-  assert.equal(commandMapBuildCalls, 0);
+  assert.equal(commandMapBuildCalls, 1);
   assert.equal(selectControlCalls, 0);
   assert.equal(shortcutLookupCalls, 0);
   assert.equal(preview.attr('aria-busy'), 'false');
@@ -1790,11 +2271,12 @@ test('bindLazyImagePasteUpload ignores ordinary text paste without loading uploa
   assert.equal(textarea.easymdeImagePasteBound, undefined);
 });
 
-test('copyWechat lazy-loads exporter on first use and reuses it', async () => {
+test('copyWechat preloads exporter without deferring copy past user activation', async () => {
   let loadScriptCalls = 0;
   let copyCalls = 0;
+  const flash = createFlashWrapper();
   const contextArg = {
-    flash: {},
+    flash,
     preview: {}
   };
   const { hooks, window } = loadBootstrap({
@@ -1841,16 +2323,17 @@ test('copyWechat lazy-loads exporter on first use and reuses it', async () => {
   assert.equal(window.EasyMDEWechatExporter, undefined);
 
   hooks.copyWechat(contextArg);
+
+  assert.equal(loadScriptCalls, 1);
+  assert.equal(copyCalls, 0);
+  assert.equal(flash.state.hidden, false);
+  assert.equal(flash.state.text, 'Copy failed');
   await flushMicrotasks();
+
+  hooks.copyWechat(contextArg);
 
   assert.equal(loadScriptCalls, 1);
   assert.equal(copyCalls, 1);
-
-  hooks.copyWechat(contextArg);
-  await flushMicrotasks();
-
-  assert.equal(loadScriptCalls, 1);
-  assert.equal(copyCalls, 2);
 });
 
 test('copyWechat reports the existing copy failure when lazy exporter loading fails', async () => {

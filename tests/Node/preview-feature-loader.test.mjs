@@ -258,6 +258,30 @@ test('code theme changes update the existing highlight stylesheet link', async (
   assert.equal(link.listenerCount('error'), 0);
 });
 
+test('syntax highlight reloads its stylesheet after the cached link is removed', async () => {
+  const { loader, documentRef } = loadLoader();
+  const loaderContext = context(documentRef, { codeTheme: 'github' });
+
+  await loader.ensurePreviewFeatures(
+    {
+      syntaxHighlight: true
+    },
+    loaderContext
+  );
+
+  documentRef.head.removeChild(documentRef.getElementById('easymde-highlight-theme-css'));
+
+  await loader.ensurePreviewFeatures(
+    {
+      syntaxHighlight: true
+    },
+    loaderContext
+  );
+
+  assert.ok(documentRef.getElementById('easymde-highlight-theme-css'));
+  assert.equal(documentRef.getElementById('easymde-highlight-theme-css').getAttribute('href'), '/assets/vendor/highlight/styles/github.min.css');
+});
+
 test('existing highlight stylesheet links wait for their load event before resolving', async () => {
   const documentRef = createDocumentStub({ autoDispatch: false });
   const link = documentRef.createElement('link');

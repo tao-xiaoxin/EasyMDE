@@ -1,7 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 
+const e2eBaseUrl = process.env.EASYMDE_E2E_BASE_URL || 'http://localhost:8088';
+const e2eOrigin = new URL(e2eBaseUrl).origin;
 const wpPath = process.env.EASYMDE_E2E_WP_PATH;
 const wpCli = process.env.EASYMDE_E2E_WP_CLI || 'wp';
 const adminPassword = 'EasyMDE-e2e-pass-1!';
@@ -33,6 +36,14 @@ function runWp(args, options = {}) {
 
 function testSlug(testInfo) {
   return `e2e-${testInfo.workerIndex}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+}
+
+function pluginAssetPath(...segments) {
+  if (!wpPath) {
+    throw new Error('EASYMDE_E2E_WP_PATH must point to the WordPress install under test.');
+  }
+
+  return join(wpPath, 'wp-content', 'plugins', 'easymde', ...segments);
 }
 
 function createUser(slug) {
@@ -677,7 +688,7 @@ test.describe('EasyMDE editor workflows', () => {
       return (window.__easymdeOpenedPreviewUrls || [])[0] || null;
     });
     const openedPreviewUrl = await openedPreview.jsonValue();
-    expect(openedPreviewUrl).toContain('http://localhost:8088/');
+    expect(openedPreviewUrl).toContain(`${e2eOrigin}/`);
     expect(openedPreviewUrl).not.toContain('/wp-admin/');
   });
 
@@ -695,7 +706,7 @@ test.describe('EasyMDE editor workflows', () => {
     const attachmentId = runWp([
       'media',
       'import',
-      '/var/www/html/wp-content/plugins/easymde/docs/assets/easymde-logo-rounded.png',
+      pluginAssetPath('docs', 'assets', 'easymde-logo-rounded.png'),
       `--post_id=${postId}`,
       '--porcelain'
     ]);
@@ -736,7 +747,7 @@ test.describe('EasyMDE editor workflows', () => {
     const attachmentId = runWp([
       'media',
       'import',
-      '/var/www/html/wp-content/plugins/easymde/docs/assets/easymde-logo-rounded.png',
+      pluginAssetPath('docs', 'assets', 'easymde-logo-rounded.png'),
       `--post_id=${postId}`,
       '--porcelain'
     ]);

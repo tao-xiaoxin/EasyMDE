@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
 
 const e2eBaseUrl = process.env.EASYMDE_E2E_BASE_URL || 'http://localhost:8088';
@@ -8,6 +9,8 @@ const e2eOrigin = new URL(e2eBaseUrl).origin;
 const wpPath = process.env.EASYMDE_E2E_WP_PATH;
 const wpCli = process.env.EASYMDE_E2E_WP_CLI || 'wp';
 const adminPassword = 'EasyMDE-e2e-pass-1!';
+const repoDocsAssetDir = fileURLToPath(new URL('../../docs/assets/', import.meta.url));
+const usesContainerWpCli = /easymde-wpcli-wrapper\.sh$/.test(wpCli) || wpPath === '/var/www/html';
 
 function runWp(args, options = {}) {
   if (!wpPath) {
@@ -44,6 +47,16 @@ function pluginAssetPath(...segments) {
   }
 
   return join(wpPath, 'wp-content', 'plugins', 'easymde', ...segments);
+}
+
+function mediaFixturePath(filename) {
+  const repoAssetPath = join(repoDocsAssetDir, filename);
+
+  if (!usesContainerWpCli) {
+    return repoAssetPath;
+  }
+
+  return pluginAssetPath('docs', 'assets', filename);
 }
 
 function createUser(slug) {
@@ -88,7 +101,11 @@ async function login(page, user) {
   await page.locator('#user_login').fill(user.username);
   await page.locator('#user_pass').fill(user.password);
   await page.locator('#wp-submit').click();
-  await expect(page.locator('#wpadminbar')).toBeVisible();
+  await page.waitForURL(/\/wp-admin\/?/);
+  await Promise.race([
+    page.locator('#wpadminbar').waitFor({ state: 'visible', timeout: 15_000 }),
+    page.locator('#adminmenu').waitFor({ state: 'visible', timeout: 15_000 })
+  ]);
 }
 
 async function openEasyMdeNewPost(page) {
@@ -717,7 +734,7 @@ test.describe('EasyMDE editor workflows', () => {
     const attachmentId = runWp([
       'media',
       'import',
-      pluginAssetPath('docs', 'assets', 'easymde-logo-rounded.png'),
+      mediaFixturePath('easymde-logo-rounded.png'),
       `--post_id=${postId}`,
       '--porcelain'
     ]);
@@ -758,7 +775,7 @@ test.describe('EasyMDE editor workflows', () => {
     const attachmentId = runWp([
       'media',
       'import',
-      pluginAssetPath('docs', 'assets', 'easymde-logo-rounded.png'),
+      mediaFixturePath('easymde-logo-rounded.png'),
       `--post_id=${postId}`,
       '--porcelain'
     ]);

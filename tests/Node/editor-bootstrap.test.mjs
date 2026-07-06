@@ -205,6 +205,10 @@ function createJQueryStub(postId = 123, options = {}) {
       return collection(selector);
     }
 
+    if (typeof selector === 'string' && typeof options.onSelect === 'function') {
+      options.onSelect(selector);
+    }
+
     return collection(selector);
   }
 
@@ -2220,7 +2224,13 @@ test('hydrateInitialPreview enhances server-rendered preview without REST refres
 });
 
 test('initEditor defers hidden appearance and font menu controls until a menu opens', () => {
-  const jQueryRef = createJQueryStub(789, { runReady: true });
+  const selectorCalls = [];
+  const jQueryRef = createJQueryStub(789, {
+    onSelect(selector) {
+      selectorCalls.push(selector);
+    },
+    runReady: true
+  });
   const root = createRootWrapper(789);
   const source = createSourceWrapper('Plain initial preview.');
   const preview = createPreviewWrapper('<p>Plain initial preview.</p>');
@@ -2334,6 +2344,11 @@ test('initEditor defers hidden appearance and font menu controls until a menu op
   assert.equal(commandMapBuildCalls, 1);
   assert.equal(selectControlCalls, 0);
   assert.equal(shortcutLookupCalls, 0);
+  assert.deepEqual(
+    selectorCalls.filter((selector) => selector.includes('-font-select')),
+    [],
+    'startup should not query font menu controls before the font panel exists'
+  );
   assert.equal(preview.attr('aria-busy'), 'false');
   assert.equal(preview.html(), '<p>Plain initial preview.</p>');
 });

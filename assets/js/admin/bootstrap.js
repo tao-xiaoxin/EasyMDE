@@ -40,6 +40,7 @@
     var commandGroupCache = {};
     var isMac = null;
     var openPopovers = [];
+    var fontControls = null;
 
     function defaultGetCommand(id) {
         return getCommandMap()[id] || null;
@@ -725,10 +726,14 @@
     }
 
     function syncFontControls() {
-        $('#easymde-custom-font-select').val(renderState.customFont || 'optima');
-        $('#easymde-windows-font-select').val(renderState.windowsFont || 'microsoft-yahei');
-        $('#easymde-apple-font-select').val(renderState.appleFont || 'pingfang-sc-light');
-        $('#easymde-serif-font-select').val(renderState.serifFont || 'yes');
+        if (!fontControls) {
+            return;
+        }
+
+        fontControls.custom.val(renderState.customFont || 'optima');
+        fontControls.windows.val(renderState.windowsFont || 'microsoft-yahei');
+        fontControls.apple.val(renderState.appleFont || 'pingfang-sc-light');
+        fontControls.serif.val(renderState.serifFont || 'yes');
     }
 
     function syncThemeFields() {
@@ -995,6 +1000,12 @@
             windowsControl = createSelectControl(getString('windowsFont'), 'easymde-windows-font-select');
             appleControl = createSelectControl(getString('appleFont'), 'easymde-apple-font-select');
             serifControl = createSelectControl(getString('serifFont'), 'easymde-serif-font-select');
+            fontControls = {
+                custom: customControl.select,
+                windows: windowsControl.select,
+                apple: appleControl.select,
+                serif: serifControl.select
+            };
             controls = [
                 [customControl, 'customFonts', 'customFont'],
                 [windowsControl, 'windowsFonts', 'windowsFont'],

@@ -40,11 +40,9 @@ EasyMDE stores editor drafts in the browser's `localStorage`, keyed by site, use
 
 Local draft recovery is browser-local. Clearing browser storage, switching browsers, switching users, or editing from another device can make those local drafts unavailable. WordPress saves, revisions, autosaves, and publishing remain separate WordPress behavior.
 
-## Immersive Mode And Dark Mode
+## Immersive Mode
 
 Immersive mode temporarily expands the EasyMDE editor over the WordPress edit screen. It preserves editor scroll position while toggling and exits with the toolbar control or Escape.
-
-Dark mode changes the EasyMDE editor surface. The editor initializes from the browser's saved EasyMDE theme preference when available, otherwise it can follow the browser color-scheme preference. The setting is stored in browser storage for the current site/user context.
 
 ## Themes, Code Themes, And Fonts
 

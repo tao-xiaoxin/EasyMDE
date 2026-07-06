@@ -3,7 +3,7 @@
  * Plugin Name: EasyMDE
  * Plugin URI: https://github.com/tao-xiaoxin/EasyMDE
  * Description: A standalone WordPress Markdown editor with split-pane live preview.
- * Version: 0.1.7
+ * Version: 0.1.8
  * Author: Tao Xiaoxin
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'EASYMDE_VERSION', '0.1.7' );
+define( 'EASYMDE_VERSION', '0.1.8' );
 define( 'EASYMDE_PLUGIN_FILE', __FILE__ );
 define( 'EASYMDE_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'EASYMDE_PLUGIN_URL', plugin_dir_url( __FILE__ ) );

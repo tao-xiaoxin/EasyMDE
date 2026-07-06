@@ -11,8 +11,63 @@
     var previewFeatureLoader = window.EasyMDEPreviewFeatureLoader || {};
     var toolbarTools = window.EasyMDEToolbar || {};
     var detectMacPlatform = editorStateTools.detectMacPlatform || detectMacPlatform;
+    var applyPublishPanelDraftToNativeState = editorStateTools.applyPublishPanelDraftToNativeState || function (nativeState, draft) {
+        nativeState = nativeState || {};
+        draft = draft || {};
+
+        return {
+            categories: draft.categories || [],
+            excerpt: draft.excerpt || '',
+            featuredImageId: draft.featuredImageMode === 'clear'
+                ? 0
+                : (draft.featuredImageCandidate && draft.featuredImageCandidate.id ? draft.featuredImageCandidate.id : (nativeState.featuredImageId || 0)),
+            postStatus: nativeState.postStatus || '',
+            tags: draft.tags || [],
+            tagString: (draft.tags || []).join(', ')
+        };
+    };
+    var createPublishPanelDraft = editorStateTools.createPublishPanelDraft || function (options) {
+        options = options || {};
+
+        return {
+            categories: options.categories || [],
+            excerpt: options.excerpt || '',
+            featuredImageCandidate: options.featuredImageCandidate || null,
+            featuredImageMode: options.featuredImageMode || (options.featuredImageCandidate ? 'candidate' : 'keep'),
+            mode: options.postStatus === 'publish' ? 'update' : 'publish',
+            publishAfterPreview: !!options.publishAfterPreview,
+            tags: options.tags || []
+        };
+    };
+    var extractOutlineHeadings = editorStateTools.extractOutlineHeadings || function () {
+        return [];
+    };
+    var calculateWordStatistics = editorStateTools.calculateWordStatistics || function (markdown) {
+        var normalized = String(markdown || '').replace(/\r\n?/g, '\n');
+
+        return {
+            normalizedMarkdown: normalized,
+            lineCount: '' === normalized ? 0 : normalized.split('\n').length,
+            westernWords: 0,
+            cjkCharacters: 0,
+            totalCharacters: 0,
+            readingMinutes: 0
+        };
+    };
+    var findFirstLocalImageCandidate = editorStateTools.findFirstLocalImageCandidate || function () {
+        return null;
+    };
     var normalizeRenderState = themeManager.normalizeRenderState || normalizeRenderState;
     var findById = editorStateTools.findById || findById;
+    var normalizeCategoryIds = editorStateTools.normalizeCategoryIds || function (values) {
+        return Array.isArray(values) ? values : [];
+    };
+    var normalizeTagList = editorStateTools.normalizeTagList || function (values) {
+        return Array.isArray(values) ? values : [];
+    };
+    var serializeTagList = editorStateTools.serializeTagList || function (tags) {
+        return Array.isArray(tags) ? tags.join(', ') : '';
+    };
     var escapeHtml = editorStateTools.escapeHtml || escapeHtml;
     var focusWithoutScrolling = editorStateTools.focusWithoutScrolling || focusWithoutScrolling;
     var restoreScrollPosition = editorStateTools.restoreScrollPosition || restoreScrollPosition;
@@ -41,6 +96,10 @@
     var isMac = null;
     var openPopovers = [];
     var fontControls = null;
+    var WORKSPACE_DEFAULT_SOURCE_RATIO = 0.5;
+    var WORKSPACE_DIVIDER_SIZE = 18;
+    var WORKSPACE_PANE_MIN_WIDTH = 320;
+    var WORKSPACE_KEYBOARD_STEP = 48;
 
     function defaultGetCommand(id) {
         return getCommandMap()[id] || null;
@@ -100,7 +159,6 @@
         features = features || {};
 
         return {
-            darkMode: features.darkMode !== false,
             localDrafts: features.localDrafts !== false,
             codeBlocks: !!features.codeBlocks,
             syntaxHighlight: !!features.syntaxHighlight,
@@ -514,6 +572,8 @@
             panel: $panel
         });
 
+        $button.attr('aria-expanded', 'false');
+
         $button.on('mousedown', function (event) {
             event.preventDefault();
         });
@@ -531,6 +591,7 @@
 
             $panel.prop('hidden', isOpen);
             $button.toggleClass('is-active', !isOpen);
+            $button.attr('aria-expanded', isOpen ? 'false' : 'true');
         });
 
         $panel.on('click', function (event) {
@@ -542,11 +603,28 @@
         openPopovers.forEach(function (popover) {
             popover.panel.prop('hidden', true);
             popover.button.removeClass('is-active');
+            popover.button.attr('aria-expanded', 'false');
         });
     }
 
     function createMenuAnchor(extraClass) {
         return $('<div class="easymde-toolbar-popover-anchor"></div>').addClass(extraClass || '');
+    }
+
+    function createUtilityButton(label, iconClass, className) {
+        var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-compact"></button>');
+
+        if (className) {
+            $button.addClass(className);
+        }
+
+        $button.attr('aria-label', label);
+        $button.attr('title', label);
+        $button.append(
+            $('<span class="dashicons" aria-hidden="true"></span>').addClass(iconClass)
+        );
+
+        return $button;
     }
 
     function createHeadingMenu($container, textarea) {
@@ -1041,33 +1119,6 @@
         $container.append($anchor);
     }
 
-    function createThemeToggleButton($container, $root, refreshPreview) {
-        if (!window.EasyMDEEnhancements || !config.features || config.features.darkMode === false) {
-            return;
-        }
-
-        var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-compact"></button>');
-
-        function updateState() {
-            var isDark = $root.hasClass('easymde-theme-dark');
-
-            $button.empty();
-            $button.toggleClass('is-active', isDark);
-            $button.attr('title', isDark ? getString('lightMode') : getString('darkMode'));
-            $button.attr('aria-label', isDark ? getString('lightMode') : getString('darkMode'));
-            $button.append($('<span class="dashicons dashicons-lightbulb" aria-hidden="true"></span>'));
-        }
-
-        $button.on('click', function () {
-            window.EasyMDEEnhancements.toggleTheme($root[0], config);
-            updateState();
-            refreshPreview();
-        });
-
-        updateState();
-        $container.append($button);
-    }
-
     function createFlash($toolbar) {
         var $flash = $('<div class="easymde-editor-flash" hidden aria-live="polite"></div>');
 
@@ -1087,6 +1138,322 @@
         flashTimer = window.setTimeout(function () {
             $flash.prop('hidden', true).text('');
         }, 3200);
+    }
+
+    function workspaceLayoutKey(storage) {
+        storage = storage || {};
+
+        if (storage.layoutKey) {
+            return String(storage.layoutKey);
+        }
+
+        if (storage.siteKey && storage.userId !== undefined) {
+            return 'easymde:layout:' + storage.siteKey + ':' + storage.userId;
+        }
+
+        return '';
+    }
+
+    function readStoredWorkspaceRatio(storage) {
+        var key = workspaceLayoutKey(storage);
+        var rawValue;
+        var parsed;
+
+        if (!key || !window.localStorage || typeof window.localStorage.getItem !== 'function') {
+            return null;
+        }
+
+        try {
+            rawValue = window.localStorage.getItem(key);
+        } catch (error) {
+            return null;
+        }
+
+        if (rawValue === null || rawValue === undefined || rawValue === '') {
+            return null;
+        }
+
+        parsed = parseFloat(rawValue);
+
+        return isFinite(parsed) ? parsed : null;
+    }
+
+    function writeStoredWorkspaceRatio(storage, ratio) {
+        var key = workspaceLayoutKey(storage);
+
+        if (!key || !window.localStorage || typeof window.localStorage.setItem !== 'function') {
+            return;
+        }
+
+        try {
+            window.localStorage.setItem(key, String(ratio));
+        } catch (error) {
+            return;
+        }
+    }
+
+    function workspaceWidth(context) {
+        var workspace = context && context.workspaceNode ? context.workspaceNode : null;
+        var rect = workspace && typeof workspace.getBoundingClientRect === 'function'
+            ? workspace.getBoundingClientRect()
+            : null;
+
+        if (rect && rect.width) {
+            return rect.width;
+        }
+
+        if (workspace && workspace.clientWidth) {
+            return workspace.clientWidth;
+        }
+
+        if (workspace && workspace.offsetWidth) {
+            return workspace.offsetWidth;
+        }
+
+        return (WORKSPACE_PANE_MIN_WIDTH * 2) + WORKSPACE_DIVIDER_SIZE;
+    }
+
+    function workspaceRatioBounds(width) {
+        var availableWidth = Math.max(
+            WORKSPACE_PANE_MIN_WIDTH * 2,
+            Math.max(1, width - WORKSPACE_DIVIDER_SIZE)
+        );
+        var minRatio = WORKSPACE_PANE_MIN_WIDTH / availableWidth;
+        var maxRatio = 1 - minRatio;
+
+        if (minRatio > maxRatio) {
+            minRatio = WORKSPACE_DEFAULT_SOURCE_RATIO;
+            maxRatio = WORKSPACE_DEFAULT_SOURCE_RATIO;
+        }
+
+        return {
+            min: minRatio,
+            max: maxRatio
+        };
+    }
+
+    function clampWorkspaceRatio(ratio, width) {
+        var parsed = parseFloat(ratio);
+        var bounds = workspaceRatioBounds(width);
+
+        if (!isFinite(parsed)) {
+            parsed = WORKSPACE_DEFAULT_SOURCE_RATIO;
+        }
+
+        return Math.min(bounds.max, Math.max(bounds.min, parsed));
+    }
+
+    function updateWorkspaceDivider(context) {
+        var divider = context && context.dividerNode ? context.dividerNode : null;
+        var ratio = context && typeof context.sourceRatio === 'number'
+            ? context.sourceRatio
+            : WORKSPACE_DEFAULT_SOURCE_RATIO;
+        var label = getString('workspaceDivider');
+
+        if (!divider || typeof divider.setAttribute !== 'function') {
+            return;
+        }
+
+        if (label) {
+            divider.setAttribute('aria-label', label);
+        }
+
+        divider.setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
+    }
+
+    function setWorkspaceRatio(context, ratio, options) {
+        var clamped = clampWorkspaceRatio(ratio, workspaceWidth(context));
+        var rootNode = context && context.root && context.root[0] ? context.root[0] : null;
+
+        options = options || {};
+        context.sourceRatio = clamped;
+
+        if (rootNode && rootNode.style && typeof rootNode.style.setProperty === 'function') {
+            rootNode.style.setProperty('--easymde-source-ratio', String(clamped));
+        }
+
+        updateWorkspaceDivider(context);
+
+        if (options.persist !== false) {
+            writeStoredWorkspaceRatio(context.storage, clamped);
+        }
+
+        return clamped;
+    }
+
+    function nudgeWorkspaceRatio(context, deltaPixels, options) {
+        var width = Math.max(1, workspaceWidth(context) - WORKSPACE_DIVIDER_SIZE);
+
+        return setWorkspaceRatio(
+            context,
+            context.sourceRatio + (deltaPixels / width),
+            options
+        );
+    }
+
+    function handleWorkspaceDividerKey(context, event) {
+        var key = normalizeEventKey(event && event.key);
+
+        switch (key) {
+        case 'Left':
+            if (event && typeof event.preventDefault === 'function') {
+                event.preventDefault();
+            }
+            nudgeWorkspaceRatio(context, -WORKSPACE_KEYBOARD_STEP);
+            return true;
+        case 'Right':
+            if (event && typeof event.preventDefault === 'function') {
+                event.preventDefault();
+            }
+            nudgeWorkspaceRatio(context, WORKSPACE_KEYBOARD_STEP);
+            return true;
+        case 'Home':
+            if (event && typeof event.preventDefault === 'function') {
+                event.preventDefault();
+            }
+            setWorkspaceRatio(context, 0);
+            return true;
+        case 'End':
+            if (event && typeof event.preventDefault === 'function') {
+                event.preventDefault();
+            }
+            setWorkspaceRatio(context, 1);
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    function bindWorkspaceDivider(context) {
+        var divider = context && context.dividerNode ? context.dividerNode : null;
+        var dragState = null;
+
+        if (!divider || divider.easymdeWorkspaceDividerBound || typeof divider.addEventListener !== 'function') {
+            return;
+        }
+
+        divider.easymdeWorkspaceDividerBound = true;
+
+        divider.addEventListener('keydown', function (event) {
+            handleWorkspaceDividerKey(context, event);
+        });
+
+        if (!window.PointerEvent) {
+            return;
+        }
+
+        function endDrag(event) {
+            if (!dragState) {
+                return;
+            }
+
+            if (
+                dragState.pointerId !== undefined
+                && event
+                && event.pointerId !== undefined
+                && dragState.pointerId !== event.pointerId
+            ) {
+                return;
+            }
+
+            if (typeof divider.releasePointerCapture === 'function' && dragState.pointerId !== undefined) {
+                try {
+                    divider.releasePointerCapture(dragState.pointerId);
+                } catch (error) {}
+            }
+
+            writeStoredWorkspaceRatio(context.storage, context.sourceRatio);
+            dragState = null;
+        }
+
+        divider.addEventListener('pointerdown', function (event) {
+            var width;
+
+            if (event && event.pointerType === 'mouse' && event.button !== 0) {
+                return;
+            }
+
+            width = workspaceWidth(context);
+            if (!width) {
+                return;
+            }
+
+            dragState = {
+                pointerId: event && event.pointerId !== undefined ? event.pointerId : undefined,
+                startX: event && typeof event.clientX === 'number' ? event.clientX : 0,
+                startRatio: context.sourceRatio,
+                width: width
+            };
+
+            if (typeof divider.setPointerCapture === 'function' && dragState.pointerId !== undefined) {
+                try {
+                    divider.setPointerCapture(dragState.pointerId);
+                } catch (error) {}
+            }
+
+            if (event && typeof event.preventDefault === 'function') {
+                event.preventDefault();
+            }
+        });
+
+        window.addEventListener('pointermove', function (event) {
+            if (!dragState) {
+                return;
+            }
+
+            if (
+                dragState.pointerId !== undefined
+                && event
+                && event.pointerId !== undefined
+                && dragState.pointerId !== event.pointerId
+            ) {
+                return;
+            }
+
+            setWorkspaceRatio(
+                context,
+                dragState.startRatio + (
+                    ((event && typeof event.clientX === 'number' ? event.clientX : dragState.startX) - dragState.startX)
+                    / Math.max(1, dragState.width - WORKSPACE_DIVIDER_SIZE)
+                ),
+                { persist: false }
+            );
+
+            if (event && typeof event.preventDefault === 'function') {
+                event.preventDefault();
+            }
+        }, true);
+
+        window.addEventListener('pointerup', endDrag, true);
+        window.addEventListener('pointercancel', endDrag, true);
+    }
+
+    function initializeWorkspaceLayout(context) {
+        var storedRatio;
+
+        if (!context) {
+            return;
+        }
+
+        context.sourceRatio = WORKSPACE_DEFAULT_SOURCE_RATIO;
+        storedRatio = readStoredWorkspaceRatio(context.storage);
+        setWorkspaceRatio(
+            context,
+            storedRatio !== null ? storedRatio : WORKSPACE_DEFAULT_SOURCE_RATIO,
+            { persist: false }
+        );
+        bindWorkspaceDivider(context);
+
+        if (
+            !context.workspaceResizeBound
+            && window
+            && typeof window.addEventListener === 'function'
+        ) {
+            context.workspaceResizeBound = true;
+            window.addEventListener('resize', function () {
+                setWorkspaceRatio(context, context.sourceRatio, { persist: false });
+            });
+        }
     }
 
     function createDraftNotice($root, textarea, storage, $flash) {
@@ -1379,6 +1746,97 @@
         };
     }
 
+    function ensureImmersiveTitleContext(context) {
+        var titleLabel;
+
+        if (!context) {
+            return;
+        }
+
+        if (!context.immersiveHeaderNode) {
+            context.immersiveHeaderNode = document.getElementById('easymde-immersive-header');
+        }
+
+        if (!context.immersiveTitleHostNode) {
+            context.immersiveTitleHostNode = document.getElementById('easymde-immersive-title-host');
+        }
+
+        if (!context.nativeTitleField) {
+            context.nativeTitleField = document.getElementById('title');
+        }
+
+        if (!context.nativeTitleWrap) {
+            context.nativeTitleWrap = document.getElementById('titlewrap') || context.nativeTitleField;
+        }
+
+        titleLabel = getString('postTitle');
+        if (
+            titleLabel
+            && context.nativeTitleField
+            && typeof context.nativeTitleField.setAttribute === 'function'
+        ) {
+            context.nativeTitleField.setAttribute('aria-label', titleLabel);
+        }
+    }
+
+    function toggleImmersiveTitleHost(context, enabled) {
+        var header;
+        var host;
+        var titleWrap;
+        var marker;
+        var parentNode;
+
+        ensureImmersiveTitleContext(context);
+
+        header = context && context.immersiveHeaderNode ? context.immersiveHeaderNode : null;
+        host = context && context.immersiveTitleHostNode ? context.immersiveTitleHostNode : null;
+        titleWrap = context && context.nativeTitleWrap ? context.nativeTitleWrap : null;
+
+        if (!header) {
+            return;
+        }
+
+        header.hidden = !enabled;
+
+        if (!enabled || !host || !titleWrap) {
+            if (
+                !enabled
+                && host
+                && titleWrap
+                && titleWrap.parentNode === host
+                && context.nativeTitleMarker
+                && context.nativeTitleMarker.parentNode
+            ) {
+                context.nativeTitleMarker.parentNode.insertBefore(titleWrap, context.nativeTitleMarker);
+                context.nativeTitleMarker.parentNode.removeChild(context.nativeTitleMarker);
+            }
+
+            return;
+        }
+
+        if (titleWrap.parentNode === host) {
+            return;
+        }
+
+        parentNode = titleWrap.parentNode;
+        if (!parentNode || typeof host.appendChild !== 'function') {
+            return;
+        }
+
+        marker = context.nativeTitleMarker;
+        if (!marker) {
+            marker = document.createElement('span');
+            marker.hidden = true;
+            context.nativeTitleMarker = marker;
+        }
+
+        if (marker.parentNode !== parentNode && typeof parentNode.insertBefore === 'function') {
+            parentNode.insertBefore(marker, titleWrap);
+        }
+
+        host.appendChild(titleWrap);
+    }
+
     function updateImmersiveToggle(context) {
         var $button = context && context.immersiveButton ? context.immersiveButton : null;
         var isImmersive = context && context.root && context.root.hasClass('easymde-editor-immersive');
@@ -1406,11 +1864,18 @@
         var $root = context && context.root ? context.root : $();
         var isImmersive = $root.hasClass('easymde-editor-immersive');
         var scrollState;
+        var focusTarget;
 
         if (!$root.length || enabled === isImmersive) {
             return;
         }
 
+        ensureImmersiveTitleContext(context);
+        focusTarget = (
+            context
+            && context.nativeTitleField
+            && document.activeElement === context.nativeTitleField
+        ) ? context.nativeTitleField : context.textarea;
         scrollState = captureEditorScrollState(context);
         closePopovers();
 
@@ -1420,7 +1885,9 @@
 
         $root.toggleClass('easymde-editor-immersive', enabled);
         $('html, body').toggleClass('easymde-immersive-active', enabled);
+        toggleImmersiveTitleHost(context, enabled);
         updateImmersiveToggle(context);
+        updateImmersiveUtilityState(context);
 
         window.requestAnimationFrame(function () {
             restoreEditorScrollState(context, scrollState);
@@ -1430,7 +1897,7 @@
                 context.immersiveWindowScroll = null;
             }
 
-            focusWithoutScrolling(context.textarea);
+            focusWithoutScrolling(focusTarget);
         });
     }
 
@@ -2323,13 +2790,16 @@
             $secondary.append($('<span class="easymde-toolbar-divider" aria-hidden="true"></span>'));
         }
 
-        createThemeToggleButton($secondary, context.root, context.refreshPreview);
+        createPublishPanelButton($secondary, context);
         createImmersiveToggleButton($secondary, context);
+        createOutlineToggleButton($secondary, context);
+        createWordStatsControl($secondary, context);
         createFontMenu($secondary, context.preview);
         createAppearanceMenu($secondary, context.root, context.preview, context.refreshPreview);
         context.draftStatus = createDraftStatus($secondary);
 
         $toolbar.append($main, $secondary);
+        updateImmersiveUtilityState(context);
 
         return context.draftStatus;
     }
@@ -2351,6 +2821,876 @@
         $container.append($button);
     }
 
+    function outlineEntryClassName(level, active) {
+        var classes = ['easymde-outline-entry', 'easymde-outline-entry-level-' + String(level)];
+
+        if (active) {
+            classes.push('is-active');
+        }
+
+        return classes.join(' ');
+    }
+
+    function setActiveOutlineIndex(context, index) {
+        context.activeOutlineIndex = typeof index === 'number' ? index : -1;
+        renderOutlineRail(context);
+    }
+
+    function sourceLineHeight(textarea) {
+        var lineHeight = 24;
+        var computed;
+        var parsed;
+
+        if (!textarea || !window.getComputedStyle) {
+            return lineHeight;
+        }
+
+        computed = window.getComputedStyle(textarea);
+        parsed = computed ? parseFloat(computed.lineHeight) : NaN;
+
+        return isFinite(parsed) ? parsed : lineHeight;
+    }
+
+    function scrollSourceToOffset(context, offset) {
+        var textarea = context && context.textarea ? context.textarea : null;
+        var safeOffset;
+        var normalizedBefore;
+        var lineNumber;
+
+        if (!textarea || typeof textarea.value !== 'string') {
+            return;
+        }
+
+        safeOffset = Math.max(0, Math.min(offset, textarea.value.length));
+        normalizedBefore = String(textarea.value.slice(0, safeOffset)).replace(/\r\n?/g, '\n');
+        lineNumber = normalizedBefore ? normalizedBefore.split('\n').length - 1 : 0;
+
+        if (typeof textarea.setSelectionRange === 'function') {
+            textarea.setSelectionRange(safeOffset, safeOffset);
+        }
+
+        textarea.scrollTop = Math.max(0, (lineNumber * sourceLineHeight(textarea)) - (textarea.clientHeight / 3));
+        focusWithoutScrolling(textarea);
+    }
+
+    function scrollPreviewToOutlineIndex(context, index) {
+        var previewNode = context && context.preview && context.preview[0] ? context.preview[0] : null;
+        var headings;
+        var heading;
+
+        if (!previewNode || typeof previewNode.querySelectorAll !== 'function') {
+            return;
+        }
+
+        headings = previewNode.querySelectorAll('h1, h2, h3, h4, h5, h6');
+        heading = headings && headings[index] ? headings[index] : null;
+
+        if (heading && typeof heading.scrollIntoView === 'function') {
+            heading.scrollIntoView({
+                block: 'center',
+                inline: 'nearest'
+            });
+        }
+    }
+
+    function renderOutlineRail(context) {
+        var $rail = context && context.outlineRail ? context.outlineRail : $();
+        var immersive = context && context.root && context.root.hasClass('easymde-editor-immersive');
+        var headings = context && context.outlineHeadings ? context.outlineHeadings : [];
+
+        if (!$rail.length) {
+            return;
+        }
+
+        context.root.toggleClass('easymde-outline-open', !!(immersive && context.outlineOpen));
+        $rail.prop('hidden', !(immersive && context.outlineOpen));
+
+        if (!(immersive && context.outlineOpen)) {
+            return;
+        }
+
+        $rail.empty();
+        $rail.append(
+            $('<p class="easymde-outline-panel-title"></p>').text(getString('documentOutline'))
+        );
+
+        if (!headings.length) {
+            $rail.append(
+                $('<p class="easymde-outline-empty" role="status"></p>').text(getString('outlineEmpty'))
+            );
+            return;
+        }
+
+        var $list = $('<div class="easymde-outline-list"></div>');
+
+        headings.forEach(function (heading, index) {
+            var isActive = index === context.activeOutlineIndex;
+            var $entry = $('<button type="button"></button>');
+
+            $entry
+                .addClass(outlineEntryClassName(heading.level, isActive))
+                .attr('aria-current', isActive ? 'location' : null)
+                .text(heading.text);
+
+            $entry.on('click', function () {
+                setActiveOutlineIndex(context, index);
+                scrollSourceToOffset(context, heading.offset);
+                scrollPreviewToOutlineIndex(context, index);
+            });
+
+            $list.append($entry);
+        });
+
+        $rail.append($list);
+    }
+
+    function toggleOutlineOpen(context, enabled) {
+        context.outlineOpen = !!enabled;
+        renderOutlineRail(context);
+
+        if (context.outlineButton && context.outlineButton.length) {
+            context.outlineButton
+                .toggleClass('is-active', !!enabled)
+                .attr('aria-pressed', enabled ? 'true' : 'false');
+        }
+    }
+
+    function formatReadingTime(context) {
+        var stats = context && context.wordStats ? context.wordStats : null;
+        var minutes = stats ? stats.readingMinutes : 0;
+        var unit = getString('readingTimeUnit') || 'min';
+
+        return String(minutes) + ' ' + unit;
+    }
+
+    function renderWordStatsPanel(context) {
+        var $panel = context && context.wordStatsPanel ? context.wordStatsPanel : $();
+        var stats = context && context.wordStats ? context.wordStats : calculateWordStatistics('');
+        var rows;
+
+        if (!$panel.length) {
+            return;
+        }
+
+        rows = [
+            [getString('readingTime'), formatReadingTime(context)],
+            [getString('lineCount'), String(stats.lineCount)],
+            [getString('westernWordCount'), String(stats.westernWords)],
+            [getString('cjkCharacterCount'), String(stats.cjkCharacters)],
+            [getString('totalCharacterCount'), String(stats.totalCharacters)]
+        ];
+
+        $panel.empty();
+
+        var $grid = $('<div class="easymde-word-stats-grid"></div>');
+        rows.forEach(function (row) {
+            $grid.append(
+                $('<span class="easymde-word-stats-label"></span>').text(row[0]),
+                $('<span class="easymde-word-stats-value"></span>').text(row[1])
+            );
+        });
+
+        $panel.append($grid);
+        $panel.append(
+            $('<p class="easymde-word-stats-help"></p>').text(getString('readingTimeHelp'))
+        );
+    }
+
+    function applyWorkspaceDerivedState(context, markdown) {
+        context.outlineHeadings = extractOutlineHeadings(markdown);
+        context.wordStats = calculateWordStatistics(markdown);
+
+        if (context.activeOutlineIndex >= context.outlineHeadings.length) {
+            context.activeOutlineIndex = -1;
+        }
+
+        renderOutlineRail(context);
+        renderWordStatsPanel(context);
+    }
+
+    function scheduleWorkspaceDerivedStateUpdate(context, markdown) {
+        var schedule = window.requestAnimationFrame || function (callback) {
+            return window.setTimeout(callback, 0);
+        };
+        var cancel = window.cancelAnimationFrame || window.clearTimeout;
+
+        if (context.workspaceDerivedStateFrame) {
+            cancel(context.workspaceDerivedStateFrame);
+        }
+
+        context.workspaceDerivedStateFrame = schedule(function () {
+            context.workspaceDerivedStateFrame = null;
+            applyWorkspaceDerivedState(context, markdown);
+        });
+    }
+
+    function createOutlineToggleButton($container, context) {
+        var label = getString('documentOutline');
+        var $button = createUtilityButton(label, 'dashicons-list-view', 'easymde-toolbar-outline-toggle');
+
+        context.outlineButton = $button;
+        $button.attr('aria-pressed', 'false');
+        $button.prop('hidden', true);
+
+        $button.on('mousedown', function (event) {
+            event.preventDefault();
+        });
+
+        $button.on('click', function () {
+            toggleOutlineOpen(context, !context.outlineOpen);
+        });
+
+        $container.append($button);
+    }
+
+    function createWordStatsControl($container, context) {
+        var label = getString('wordStats');
+        var $anchor = createMenuAnchor('easymde-toolbar-popover-stats');
+        var $button = createUtilityButton(label, 'dashicons-chart-bar', 'easymde-toolbar-word-stats-toggle');
+        var $panel = $('<div class="easymde-toolbar-popover easymde-word-stats-popover" hidden></div>');
+
+        context.wordStatsAnchor = $anchor;
+        context.wordStatsButton = $button;
+        context.wordStatsPanel = $panel;
+
+        $anchor.prop('hidden', true);
+
+        registerPopover($button, $panel, {
+            beforeOpen: function () {
+                renderWordStatsPanel(context);
+            }
+        });
+
+        $anchor.append($button, $panel);
+        $container.append($anchor);
+    }
+
+    function updateImmersiveUtilityState(context) {
+        var immersive = context && context.root && context.root.hasClass('easymde-editor-immersive');
+
+        if (context.outlineButton && context.outlineButton.length) {
+            context.outlineButton.prop('hidden', !immersive);
+        }
+
+        if (context.wordStatsAnchor && context.wordStatsAnchor.length) {
+            context.wordStatsAnchor.prop('hidden', !immersive);
+        }
+
+        if (!immersive) {
+            toggleOutlineOpen(context, false);
+        } else {
+            renderOutlineRail(context);
+        }
+    }
+
+    function readCheckedCategoryIdsFromDom() {
+        var inputs = document.querySelectorAll
+            ? document.querySelectorAll('#categorychecklist input[type="checkbox"]:checked, #categorychecklist-pop input[type="checkbox"]:checked')
+            : [];
+
+        return normalizeCategoryIds(Array.prototype.map.call(inputs || [], function (input) {
+            return input && input.value ? input.value : '';
+        }));
+    }
+
+    function readAvailableCategoryOptionsFromDom() {
+        var inputs = document.querySelectorAll
+            ? document.querySelectorAll('#categorychecklist input[type="checkbox"]')
+            : [];
+
+        return Array.prototype.map.call(inputs || [], function (input) {
+            var label = '';
+
+            if (input && input.parentNode && typeof input.parentNode.textContent === 'string') {
+                label = input.parentNode.textContent.replace(/\s+/g, ' ').trim();
+            }
+
+            return {
+                id: input && input.value ? String(input.value) : '',
+                label: label || (input && input.value ? String(input.value) : ''),
+                checked: !!(input && input.checked)
+            };
+        }).filter(function (option) {
+            return !!option.id;
+        });
+    }
+
+    function readNativePublishState(context) {
+        var reader = context && context.nativePublishStateReader ? context.nativePublishStateReader : null;
+        var siteOrigin = config.siteOrigin || (window.location && window.location.origin ? window.location.origin : '');
+        var featuredImageId = $('#_thumbnail_id').val ? $('#_thumbnail_id').val() : '';
+        var sourceMarkdown = context && context.textarea && typeof context.textarea.value === 'string'
+            ? context.textarea.value
+            : '';
+        var featuredImageCandidate = findFirstLocalImageCandidate(sourceMarkdown, siteOrigin);
+
+        if (typeof reader === 'function') {
+            return reader();
+        }
+
+        return {
+            categories: readCheckedCategoryIdsFromDom(),
+            categoryOptions: readAvailableCategoryOptionsFromDom(),
+            excerpt: $('#excerpt').val ? String($('#excerpt').val() || '') : '',
+            featuredImageId: featuredImageId,
+            featuredImageCandidate: featuredImageCandidate,
+            postStatus: $('#post_status').val ? String($('#post_status').val() || '') : '',
+            tags: normalizeTagList($('#tax-input-post_tag').val ? $('#tax-input-post_tag').val() : '')
+        };
+    }
+
+    function readPublishPanelDraftFromNative(context) {
+        var nativeState = readNativePublishState(context);
+
+        return createPublishPanelDraft({
+            categories: nativeState.categories,
+            excerpt: nativeState.excerpt,
+            featuredImageCandidate: nativeState.featuredImageId ? null : nativeState.featuredImageCandidate,
+            featuredImageMode: nativeState.featuredImageId ? 'keep' : (nativeState.featuredImageCandidate ? 'candidate' : 'keep'),
+            postStatus: nativeState.postStatus,
+            tags: nativeState.tags
+        });
+    }
+
+    function updatePublishPanelToggle(context) {
+        var mode = context && context.publishPanelDraft ? context.publishPanelDraft.mode : 'publish';
+        var label = mode === 'update' ? getString('updatePost') : getString('publishPost');
+        var $button = context && context.publishPanelButton ? context.publishPanelButton : $();
+
+        if (!$button.length) {
+            return;
+        }
+
+        $button.attr('aria-label', label);
+        $button.attr('title', label);
+    }
+
+    function updatePublishPanelDraft(context, updates) {
+        var current = context && context.publishPanelDraft ? context.publishPanelDraft : createPublishPanelDraft({});
+        var next = createPublishPanelDraft({
+            categories: Object.prototype.hasOwnProperty.call(updates, 'categories') ? updates.categories : current.categories,
+            excerpt: Object.prototype.hasOwnProperty.call(updates, 'excerpt') ? updates.excerpt : current.excerpt,
+            featuredImageCandidate: Object.prototype.hasOwnProperty.call(updates, 'featuredImageCandidate') ? updates.featuredImageCandidate : current.featuredImageCandidate,
+            featuredImageMode: Object.prototype.hasOwnProperty.call(updates, 'featuredImageMode') ? updates.featuredImageMode : current.featuredImageMode,
+            postStatus: current.mode === 'update' ? 'publish' : '',
+            publishAfterPreview: Object.prototype.hasOwnProperty.call(updates, 'publishAfterPreview') ? updates.publishAfterPreview : current.publishAfterPreview,
+            tags: Object.prototype.hasOwnProperty.call(updates, 'tags') ? updates.tags : current.tags
+        });
+
+        next.mode = current.mode;
+        context.publishPanelDraft = next;
+
+        return next;
+    }
+
+    function applyPublishPanelDraft(context) {
+        var nativeState = context && context.publishPanelNativeState ? context.publishPanelNativeState : readNativePublishState(context);
+        var nextState = applyPublishPanelDraftToNativeState(nativeState, context.publishPanelDraft || {});
+        var writer = context && context.nativePublishFieldWriter ? context.nativePublishFieldWriter : null;
+        var featuredImageApi = window.wp && window.wp.media && window.wp.media.featuredImage ? window.wp.media.featuredImage : null;
+        var draft = context && context.publishPanelDraft ? context.publishPanelDraft : createPublishPanelDraft({});
+
+        if (typeof writer === 'function') {
+            writer(nextState);
+            return nextState;
+        }
+
+        if ($('#tax-input-post_tag').val) {
+            $('#tax-input-post_tag').val(nextState.tagString);
+        }
+
+        if ($('#excerpt').val) {
+            $('#excerpt').val(nextState.excerpt);
+        }
+
+        if ($('#easymde-featured-image-mode-field').val) {
+            $('#easymde-featured-image-mode-field').val(draft.featuredImageMode || 'keep');
+        }
+
+        if ($('#easymde-featured-image-id-field').val) {
+            $('#easymde-featured-image-id-field').val(
+                draft.featuredImageCandidate && draft.featuredImageCandidate.id
+                    ? String(draft.featuredImageCandidate.id)
+                    : ''
+            );
+        }
+
+        if ($('#easymde-featured-image-url-field').val) {
+            $('#easymde-featured-image-url-field').val(
+                draft.featuredImageCandidate && draft.featuredImageCandidate.url
+                    ? String(draft.featuredImageCandidate.url)
+                    : ''
+            );
+        }
+
+        if (document.querySelectorAll) {
+            Array.prototype.forEach.call(
+                document.querySelectorAll('#categorychecklist input[type="checkbox"], #categorychecklist-pop input[type="checkbox"]'),
+                function (input) {
+                    input.checked = nextState.categories.indexOf(String(input.value || '')) !== -1;
+                }
+            );
+        }
+
+        if (featuredImageApi && typeof featuredImageApi.set === 'function') {
+            featuredImageApi.set(nextState.featuredImageId > 0 ? nextState.featuredImageId : -1);
+        } else if ($('#_thumbnail_id').val) {
+            $('#_thumbnail_id').val(nextState.featuredImageId > 0 ? String(nextState.featuredImageId) : '-1');
+        }
+
+        return nextState;
+    }
+
+    function triggerNativePublish(context) {
+        var submitter = context && context.nativePublishSubmitter ? context.nativePublishSubmitter : null;
+
+        if (typeof submitter === 'function') {
+            submitter();
+            return;
+        }
+
+        if ($('#publish').length && !$('#publish').prop('disabled')) {
+            $('#publish').trigger('click');
+            return;
+        }
+
+        $('#post').trigger('submit');
+    }
+
+    function publishPreviewStorageKey(storage) {
+        storage = storage || {};
+
+        if (storage.siteKey && storage.userId !== undefined) {
+            return 'easymde:publish-preview:' + storage.siteKey + ':' + storage.userId;
+        }
+
+        return '';
+    }
+
+    function rememberPublishPreviewRequest(context) {
+        var key = publishPreviewStorageKey(context && context.storage ? context.storage : {});
+        var postId = $('#post_ID').val ? String($('#post_ID').val() || '') : '';
+
+        if (!key || !window.sessionStorage || typeof window.sessionStorage.setItem !== 'function') {
+            return;
+        }
+
+        try {
+            if (context && context.publishPanelDraft && context.publishPanelDraft.publishAfterPreview) {
+                window.sessionStorage.setItem(key, JSON.stringify({ postId: postId }));
+            } else {
+                window.sessionStorage.removeItem(key);
+            }
+        } catch (error) {
+            return;
+        }
+    }
+
+    function clearPublishPreviewRequest(context) {
+        var key = publishPreviewStorageKey(context && context.storage ? context.storage : {});
+
+        if (!key || !window.sessionStorage || typeof window.sessionStorage.removeItem !== 'function') {
+            return;
+        }
+
+        try {
+            window.sessionStorage.removeItem(key);
+        } catch (error) {
+            return;
+        }
+    }
+
+    function readPublishPreviewRequest(context) {
+        var key = publishPreviewStorageKey(context && context.storage ? context.storage : {});
+        var raw;
+
+        if (!key || !window.sessionStorage || typeof window.sessionStorage.getItem !== 'function') {
+            return null;
+        }
+
+        try {
+            raw = window.sessionStorage.getItem(key);
+        } catch (error) {
+            return null;
+        }
+
+        if (!raw) {
+            return null;
+        }
+
+        try {
+            return JSON.parse(raw);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function currentEditorPostId() {
+        return $('#post_ID').val ? String($('#post_ID').val() || '') : '';
+    }
+
+    function hasNativePublishSuccessState(context) {
+        if (context && typeof context.publishSuccessReader === 'function') {
+            return !!context.publishSuccessReader();
+        }
+
+        return !!(
+            (document.getElementById && document.getElementById('message'))
+            || (document.querySelector && document.querySelector('.notice-success'))
+        );
+    }
+
+    function findPublishPreviewUrl(context) {
+        var finder = context && context.previewLinkFinder ? context.previewLinkFinder : null;
+        var link;
+
+        if (typeof finder === 'function') {
+            return finder();
+        }
+
+        if (document.querySelector) {
+            link = document.querySelector('#view-post-btn a, #preview-action a, #sample-permalink a');
+            if (link && link.href) {
+                return link.href;
+            }
+        }
+
+        return '';
+    }
+
+    function consumePublishPreviewRequest(context) {
+        var request = readPublishPreviewRequest(context);
+        var currentPostId = currentEditorPostId();
+        var url;
+        var opened;
+
+        if (!request || !request.postId) {
+            return false;
+        }
+
+        if (request.postId !== currentPostId) {
+            clearPublishPreviewRequest(context);
+            return false;
+        }
+
+        if (!hasNativePublishSuccessState(context)) {
+            clearPublishPreviewRequest(context);
+            return false;
+        }
+
+        url = findPublishPreviewUrl(context);
+        clearPublishPreviewRequest(context);
+
+        if (!url) {
+            if (context && context.flash) {
+                showFlash(context.flash, 'info', getString('publishPreviewMissing'));
+            }
+            return false;
+        }
+
+        opened = window.open ? window.open(url, '_blank', 'noopener') : null;
+        if (!opened && context && context.flash) {
+            showFlash(context.flash, 'info', getString('publishPreviewBlocked'));
+        }
+
+        return !!opened;
+    }
+
+    function openFeaturedImagePicker(context) {
+        var openPicker = context && context.featuredImagePickerOpen ? context.featuredImagePickerOpen : null;
+        var frame;
+
+        function setPublishPanelSuspended(suspended) {
+            if (context && context.publishPanel && context.publishPanel.length) {
+                context.publishPanel.toggleClass('easymde-publish-panel-suspended', !!suspended);
+            }
+        }
+
+        if (typeof openPicker === 'function') {
+            openPicker(function (selection) {
+                setPublishPanelSuspended(false);
+                if (selection) {
+                    updatePublishPanelDraft(context, {
+                        featuredImageCandidate: selection,
+                        featuredImageMode: 'candidate'
+                    });
+                    renderPublishPanel(context);
+                }
+            });
+            return;
+        }
+
+        if (!window.wp || !window.wp.media) {
+            return;
+        }
+
+        setPublishPanelSuspended(true);
+        frame = window.wp.media({
+            title: getString('publishPanelChooseFeaturedImage'),
+            library: { type: 'image' },
+            multiple: false
+        });
+
+        frame.on('open', function () {
+            if (frame.content && typeof frame.content.mode === 'function') {
+                frame.content.mode('browse');
+            }
+        });
+
+        frame.on('select', function () {
+            var attachment = frame.state().get('selection').first().toJSON();
+            updatePublishPanelDraft(context, {
+                featuredImageCandidate: {
+                    alt: attachment.alt || attachment.title || '',
+                    id: attachment.id,
+                    url: attachment.url
+                },
+                featuredImageMode: 'candidate'
+            });
+            renderPublishPanel(context);
+        });
+
+        frame.on('close', function () {
+            setPublishPanelSuspended(false);
+        });
+
+        frame.open();
+    }
+
+    function ensurePublishPanelShell(context) {
+        var $dialog;
+        var $backdrop;
+        var $shell;
+        var $title;
+        var $body;
+        var $footer;
+        var $cancel;
+        var $confirm;
+
+        if (context.publishPanel && context.publishPanel.length) {
+            return context.publishPanel;
+        }
+
+        $dialog = $('<div class="easymde-publish-panel" hidden></div>');
+        $backdrop = $('<div class="easymde-publish-panel-backdrop"></div>');
+        $shell = $('<div class="easymde-publish-panel-shell" role="dialog" aria-modal="true"></div>');
+        $title = $('<h2 class="easymde-publish-panel-title"></h2>');
+        $body = $('<div class="easymde-publish-panel-body"></div>');
+        $footer = $('<div class="easymde-publish-panel-footer"></div>');
+        $cancel = $('<button type="button" class="button button-secondary"></button>').text(getString('cancel'));
+        $confirm = $('<button type="button" class="button button-primary"></button>');
+
+        context.publishPanel = $dialog;
+        context.publishPanelTitle = $title;
+        context.publishPanelBody = $body;
+        context.publishPanelCancel = $cancel;
+        context.publishPanelConfirm = $confirm;
+
+        $cancel.on('click', function () {
+            closePublishPanel(context);
+        });
+
+        $confirm.on('click', function () {
+            rememberPublishPreviewRequest(context);
+            applyPublishPanelDraft(context);
+            closePublishPanel(context);
+            triggerNativePublish(context);
+        });
+
+        $backdrop.on('click', function () {
+            closePublishPanel(context);
+        });
+
+        $shell.on('click', function (event) {
+            event.stopPropagation();
+        });
+
+        $footer.append($cancel, $confirm);
+        $shell.append($title, $body, $footer);
+        $dialog.append($backdrop, $shell);
+        context.root.append($dialog);
+
+        return $dialog;
+    }
+
+    function renderPublishPanel(context) {
+        var draft = context && context.publishPanelDraft ? context.publishPanelDraft : createPublishPanelDraft({});
+        var nativeState = context && context.publishPanelNativeState ? context.publishPanelNativeState : readNativePublishState(context);
+        var previewState = applyPublishPanelDraftToNativeState(nativeState, draft);
+        var title = draft.mode === 'update' ? getString('updatePostTitle') : getString('publishPostTitle');
+        var confirmLabel = draft.mode === 'update' ? getString('updatePost') : getString('publishPost');
+        var $tagsLabel;
+        var $tagsInput;
+        var $excerptLabel;
+        var $excerptInput;
+        var $categoryLabel;
+        var $categoryList;
+        var $previewToggleLabel;
+        var $previewToggle;
+        var $featuredSummary;
+        var $featuredActions;
+        var $useCandidateButton;
+        var $chooseButton;
+        var $clearButton;
+
+        ensurePublishPanelShell(context);
+        context.publishPanelTitle.text(title);
+        context.publishPanelConfirm.text(confirmLabel);
+        context.publishPanelBody.empty();
+        context.publishPanelBody.append(
+            $('<p class="easymde-publish-panel-summary"></p>').text(getString('publishPanelReadOnlyHelp'))
+        );
+
+        $tagsLabel = $('<label class="easymde-publish-panel-field"></label>');
+        $tagsLabel.append(
+            $('<span class="easymde-publish-panel-field-label"></span>').text(getString('publishPanelTags'))
+        );
+        $tagsInput = $('<input type="text" class="easymde-publish-panel-input">').val(previewState.tagString);
+        $tagsInput.on('input', function () {
+            updatePublishPanelDraft(context, { tags: normalizeTagList($(this).val()) });
+        });
+        $tagsLabel.append($tagsInput);
+
+        $featuredSummary = $('<p class="easymde-publish-panel-summary"></p>').text(
+            getString('publishPanelFeaturedImage') + ': ' + (
+                draft.featuredImageMode === 'clear'
+                    ? getString('publishPanelClearFeaturedImagePending')
+                    : (draft.featuredImageMode === 'candidate' && draft.featuredImageCandidate
+                        ? draft.featuredImageCandidate.url
+                        : (nativeState.featuredImageId ? getString('publishPanelKeepCurrent') : getString('publishPanelEmpty')))
+            )
+        );
+        $featuredActions = $('<div class="easymde-publish-panel-actions"></div>');
+        if (nativeState.featuredImageCandidate) {
+            $useCandidateButton = $('<button type="button" class="button button-secondary"></button>').text(getString('publishPanelUseFirstImage'));
+            $useCandidateButton.on('click', function () {
+                updatePublishPanelDraft(context, {
+                    featuredImageCandidate: nativeState.featuredImageCandidate,
+                    featuredImageMode: 'candidate'
+                });
+                renderPublishPanel(context);
+            });
+            $featuredActions.append($useCandidateButton);
+        }
+        $chooseButton = $('<button type="button" class="button button-secondary"></button>').text(getString('publishPanelChooseFeaturedImage'));
+        $chooseButton.on('click', function () {
+            openFeaturedImagePicker(context);
+        });
+        $clearButton = $('<button type="button" class="button button-secondary"></button>').text(getString('publishPanelClearFeaturedImage'));
+        $clearButton.on('click', function () {
+            updatePublishPanelDraft(context, {
+                featuredImageCandidate: null,
+                featuredImageMode: 'clear'
+            });
+            renderPublishPanel(context);
+        });
+        $featuredActions.append($chooseButton, $clearButton);
+
+        $excerptLabel = $('<label class="easymde-publish-panel-field"></label>');
+        $excerptLabel.append(
+            $('<span class="easymde-publish-panel-field-label"></span>').text(getString('publishPanelExcerpt'))
+        );
+        $excerptInput = $('<textarea class="easymde-publish-panel-textarea"></textarea>').val(previewState.excerpt);
+        $excerptInput.on('input', function () {
+            updatePublishPanelDraft(context, { excerpt: $(this).val() });
+        });
+        $excerptLabel.append($excerptInput);
+
+        $categoryLabel = $('<div class="easymde-publish-panel-field"></div>');
+        $categoryLabel.append(
+            $('<span class="easymde-publish-panel-field-label"></span>').text(getString('publishPanelCategories'))
+        );
+        $categoryList = $('<div class="easymde-publish-panel-category-list"></div>');
+        (nativeState.categoryOptions || []).forEach(function (option) {
+            var checked = previewState.categories.indexOf(String(option.id)) !== -1;
+            var $optionLabel = $('<label class="easymde-publish-panel-checkbox"></label>');
+            var $optionInput = $('<input type="checkbox">')
+                .attr('value', option.id)
+                .prop('checked', checked);
+
+            $optionInput.on('change', function () {
+                var values = [];
+
+                $categoryList.find('input[type="checkbox"]:checked').each(function () {
+                    values.push(String($(this).val() || ''));
+                });
+
+                updatePublishPanelDraft(context, { categories: normalizeCategoryIds(values) });
+            });
+
+            $optionLabel.append($optionInput, $('<span></span>').text(option.label || option.id));
+            $categoryList.append($optionLabel);
+        });
+        if (!(nativeState.categoryOptions || []).length) {
+            $categoryList.append(
+                $('<p class="easymde-publish-panel-summary"></p>').text(getString('publishPanelEmpty'))
+            );
+        }
+        $categoryLabel.append($categoryList);
+
+        $previewToggleLabel = $('<label class="easymde-publish-panel-checkbox"></label>');
+        $previewToggle = $('<input type="checkbox">').prop('checked', !!draft.publishAfterPreview);
+        $previewToggle.on('change', function () {
+            updatePublishPanelDraft(context, { publishAfterPreview: !!$(this).prop('checked') });
+        });
+        $previewToggleLabel.append($previewToggle, $('<span></span>').text(getString('publishPanelPreviewAfter')));
+
+        context.publishPanelBody.append(
+            $tagsLabel,
+            $featuredSummary,
+            $featuredActions,
+            $excerptLabel,
+            $categoryLabel,
+            $previewToggleLabel
+        );
+        updatePublishPanelToggle(context);
+    }
+
+    function openPublishPanel(context) {
+        context.publishPanelNativeState = readNativePublishState(context);
+        context.publishPanelDraft = createPublishPanelDraft({
+            categories: context.publishPanelNativeState.categories,
+            excerpt: context.publishPanelNativeState.excerpt,
+            featuredImageCandidate: context.publishPanelNativeState.featuredImageId ? null : context.publishPanelNativeState.featuredImageCandidate,
+            featuredImageMode: context.publishPanelNativeState.featuredImageId ? 'keep' : (context.publishPanelNativeState.featuredImageCandidate ? 'candidate' : 'keep'),
+            postStatus: context.publishPanelNativeState.postStatus,
+            tags: context.publishPanelNativeState.tags
+        });
+        renderPublishPanel(context);
+        context.publishPanel.prop('hidden', false);
+        closePopovers();
+        updatePublishPanelToggle(context);
+    }
+
+    function closePublishPanel(context) {
+        if (!context || !context.publishPanel || !context.publishPanel.length) {
+            return;
+        }
+
+        context.publishPanel.prop('hidden', true);
+
+        if (context.publishPanelButton && context.publishPanelButton.length) {
+            focusWithoutScrolling(context.publishPanelButton[0]);
+        }
+    }
+
+    function createPublishPanelButton($container, context) {
+        var $button = createUtilityButton(getString('publishPost'), 'dashicons-admin-post', 'easymde-toolbar-publish-toggle');
+
+        context.publishPanelButton = $button;
+
+        $button.on('mousedown', function (event) {
+            event.preventDefault();
+        });
+
+        $button.on('click', function () {
+            openPublishPanel(context);
+        });
+
+        $container.append($button);
+        updatePublishPanelToggle(context);
+    }
+
     function createSideActions($aside, context) {
         var sideCommands = getSurfaceCommands('side');
 
@@ -2368,6 +3708,17 @@
 
     function bindImmersiveModeShortcuts(context) {
         $(document).on('keydown.easymdeImmersive', function (event) {
+            if (
+                event.key === 'Escape'
+                && context.publishPanel
+                && context.publishPanel.length
+                && context.publishPanel.prop('hidden') === false
+            ) {
+                event.preventDefault();
+                closePublishPanel(context);
+                return;
+            }
+
             if (event.key !== 'Escape' || !context.root.hasClass('easymde-editor-immersive')) {
                 return;
             }
@@ -2411,8 +3762,11 @@
 
     function initEditor() {
         var $root = $('#easymde-editor');
+        var $outlineRail = $('#easymde-outline-rail');
         var $source = $('#easymde-source');
         var $preview = $('#easymde-preview');
+        var $divider = $('#easymde-divider');
+        var $workspace = $root.find('.easymde-workspace');
         var $content = $('#postdivrich');
         var $toolbar = $('#easymde-toolbar');
         var $sideActions = $('#easymde-side-actions');
@@ -2444,10 +3798,6 @@
             $content.addClass('easymde-native-editor-hidden');
         }
 
-        if (window.EasyMDEEnhancements) {
-            window.EasyMDEEnhancements.initTheme($root[0], config);
-        }
-
         if (
             (
                 $preview.attr('data-easymde-initial-preview') === '1'
@@ -2469,12 +3819,22 @@
         }
 
         context = {
+            activeOutlineIndex: -1,
+            outlineOpen: false,
+            outlineRail: $outlineRail,
             root: $root,
+            storage: storage,
             textarea: $source[0],
             preview: $preview,
+            workspace: $workspace,
+            workspaceNode: $workspace.length ? $workspace[0] : null,
+            divider: $divider,
+            dividerNode: $divider.length ? $divider[0] : null,
             refreshPreview: refreshPreview,
             flash: null
         };
+
+        initializeWorkspaceLayout(context);
 
         function initializeEditorChrome() {
             if (editorChromeReady) {
@@ -2502,6 +3862,7 @@
 
             mirrorToPostContent(this.value);
             updatePreview($preview, this.value);
+            scheduleWorkspaceDerivedStateUpdate(context, this.value);
 
             if (!config.features || config.features.localDrafts !== false) {
                 window.clearTimeout(draftTimer);
@@ -2523,6 +3884,7 @@
 
             initialMarkdown = shellMarkdown;
             syncMarkdownFields(shellMarkdown);
+            applyWorkspaceDerivedState(context, shellMarkdown);
 
             if (!initialPreviewHydrated) {
                 updatePreview($preview, shellMarkdown, { immediate: true });
@@ -2549,18 +3911,44 @@
                     }
                 });
             }
+
+            afterPreviewIdle(function () {
+                consumePublishPreviewRequest(context);
+            });
         });
     }
 
     if (config.testHooks && window.EasyMDETestHooks) {
         window.EasyMDETestHooks.afterShellPaint = afterShellPaint;
+        window.EasyMDETestHooks.clampWorkspaceRatio = clampWorkspaceRatio;
         window.EasyMDETestHooks.copyWechat = copyWechat;
         window.EasyMDETestHooks.bindLazyImagePasteUpload = bindLazyImagePasteUpload;
+        window.EasyMDETestHooks.handleWorkspaceDividerKey = handleWorkspaceDividerKey;
         window.EasyMDETestHooks.hydrateInitialPreview = hydrateInitialPreview;
+        window.EasyMDETestHooks.initializeWorkspaceLayout = initializeWorkspaceLayout;
         window.EasyMDETestHooks.ensureImagePasteBound = ensureImagePasteBound;
+        window.EasyMDETestHooks.clearPublishPreviewRequest = clearPublishPreviewRequest;
+        window.EasyMDETestHooks.closePublishPanel = closePublishPanel;
+        window.EasyMDETestHooks.applyPublishPanelDraft = applyPublishPanelDraft;
+        window.EasyMDETestHooks.confirmPublishPanel = function (context) {
+            rememberPublishPreviewRequest(context);
+            applyPublishPanelDraft(context);
+            closePublishPanel(context);
+            triggerNativePublish(context);
+        };
+        window.EasyMDETestHooks.consumePublishPreviewRequest = consumePublishPreviewRequest;
+        window.EasyMDETestHooks.openPublishPanel = openPublishPanel;
         window.EasyMDETestHooks.openMediaPicker = openMediaPicker;
+        window.EasyMDETestHooks.readPublishPanelDraftFromNative = readPublishPanelDraftFromNative;
+        window.EasyMDETestHooks.readPublishPreviewRequest = readPublishPreviewRequest;
+        window.EasyMDETestHooks.rememberPublishPreviewRequest = rememberPublishPreviewRequest;
+        window.EasyMDETestHooks.updatePublishPanelDraft = updatePublishPanelDraft;
+        window.EasyMDETestHooks.readStoredWorkspaceRatio = readStoredWorkspaceRatio;
+        window.EasyMDETestHooks.setWorkspaceRatio = setWorkspaceRatio;
         window.EasyMDETestHooks.showFlash = showFlash;
+        window.EasyMDETestHooks.toggleImmersiveTitleHost = toggleImmersiveTitleHost;
         window.EasyMDETestHooks.updatePreview = updatePreview;
+        window.EasyMDETestHooks.writeStoredWorkspaceRatio = writeStoredWorkspaceRatio;
     }
 
     function startEditorWhenReady() {

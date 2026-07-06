@@ -38,8 +38,31 @@ if ( $easymde_initial_preview_pending ) {
 	<input type="hidden" id="easymde-windows-font-field" name="easymde_windows_font" value="<?php echo esc_attr( $easymde_theme_state['windowsFont'] ); ?>">
 	<input type="hidden" id="easymde-apple-font-field" name="easymde_apple_font" value="<?php echo esc_attr( $easymde_theme_state['appleFont'] ); ?>">
 	<input type="hidden" id="easymde-serif-font-field" name="easymde_serif_font" value="<?php echo esc_attr( $easymde_theme_state['serifFont'] ); ?>">
+	<input type="hidden" id="easymde-featured-image-mode-field" name="easymde_featured_image_mode" value="keep">
+	<input type="hidden" id="easymde-featured-image-id-field" name="easymde_featured_image_id" value="">
+	<input type="hidden" id="easymde-featured-image-url-field" name="easymde_featured_image_url" value="">
 	<div id="easymde-toolbar" class="easymde-toolbar" role="toolbar" aria-label="<?php esc_attr_e( 'Markdown toolbar', 'easymde' ); ?>"></div>
+	<div id="easymde-immersive-header" class="easymde-immersive-header" hidden>
+		<label class="easymde-immersive-title-label" for="title"><?php esc_html_e( 'Post title', 'easymde' ); ?></label>
+		<div id="easymde-immersive-title-host" class="easymde-immersive-title-host"></div>
+	</div>
 	<div class="easymde-workspace">
+		<aside id="easymde-outline-rail" class="easymde-outline-rail" aria-label="<?php esc_attr_e( 'Document outline', 'easymde' ); ?>" hidden></aside>
+		<section class="easymde-pane easymde-pane-source">
+			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>
+			<textarea id="easymde-source" name="easymde_markdown" class="easymde-source" spellcheck="<?php echo esc_attr( $easymde_spellcheck ); ?>"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
+		</section>
+		<div
+			id="easymde-divider"
+			class="easymde-divider"
+			role="separator"
+			tabindex="0"
+			aria-orientation="vertical"
+			aria-label="<?php esc_attr_e( 'Resize editor panes', 'easymde' ); ?>"
+			aria-valuemin="0"
+			aria-valuemax="100"
+			aria-valuenow="50"
+		></div>
 		<section class="easymde-pane easymde-pane-preview">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Preview', 'easymde' ); ?></header>
 			<article
@@ -54,10 +77,6 @@ if ( $easymde_initial_preview_pending ) {
 				aria-live="polite"
 			><?php echo $easymde_initial_preview; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Already sanitized before reaching the template. ?></article>
 		</section>
-		<section class="easymde-pane easymde-pane-source">
-			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>
-			<textarea id="easymde-source" name="easymde_markdown" class="easymde-source" spellcheck="<?php echo esc_attr( $easymde_spellcheck ); ?>"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
-		</section>
-		<aside id="easymde-side-actions" class="easymde-side-actions" aria-label="<?php esc_attr_e( 'Output actions', 'easymde' ); ?>"></aside>
 	</div>
+	<aside id="easymde-side-actions" class="easymde-side-actions" aria-label="<?php esc_attr_e( 'Output actions', 'easymde' ); ?>"></aside>
 </div>

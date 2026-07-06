@@ -114,7 +114,7 @@ function createComposerLock(root) {
   );
 }
 
-function createVersionFiles(root, version = '0.1.7') {
+function createVersionFiles(root, version = '0.1.8') {
   writeText(
     root,
     'easymde.php',
@@ -249,7 +249,7 @@ test('release build fails when version fields do not match the plugin header', (
         file: 'package.json',
         label: 'version',
         value: '9.9.9',
-        expected: '0.1.7'
+        expected: '0.1.8'
       }
     ]);
 
@@ -258,7 +258,7 @@ test('release build fails when version fields do not match the plugin header', (
     });
 
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /package\.json version: 9\.9\.9; expected 0\.1\.7/);
+    assert.match(result.stderr, /package\.json version: 9\.9\.9; expected 0\.1\.8/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -279,13 +279,13 @@ test('release version parser ignores unrelated Version comments before the plugi
  */
 /**
  * Plugin Name: EasyMDE
- * Version: 0.1.7
+ * Version: 0.1.8
  */
-define('EASYMDE_VERSION', '0.1.7');
+define('EASYMDE_VERSION', '0.1.8');
 `
     );
 
-    assert.equal(readReleaseVersions(root).pluginHeader, '0.1.7');
+    assert.equal(readReleaseVersions(root).pluginHeader, '0.1.8');
     assert.deepEqual(findVersionMismatches(root), []);
   } finally {
     rmSync(root, { recursive: true, force: true });

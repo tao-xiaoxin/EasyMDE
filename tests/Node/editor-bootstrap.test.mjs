@@ -93,7 +93,7 @@ function createElement(tagName) {
   };
 }
 
-function createDocumentStub(initialElements = {}) {
+function createDocumentStub(initialElements = {}, options = {}) {
   const elements = new Map(Object.entries(initialElements));
 
   return {
@@ -130,6 +130,13 @@ function createDocumentStub(initialElements = {}) {
     },
     getElementsByTagName(name) {
       return name === 'head' ? [this.head] : [];
+    },
+    querySelectorAll(selector) {
+      if (typeof options.querySelectorAll === 'function') {
+        return options.querySelectorAll(selector);
+      }
+
+      return [];
     }
   };
 }
@@ -348,7 +355,6 @@ async function flushMicrotasks(count = 4) {
 
 function normalizeFeatures(features = {}) {
   return {
-    darkMode: features.darkMode !== false,
     localDrafts: features.localDrafts !== false,
     codeBlocks: !!features.codeBlocks,
     syntaxHighlight: !!features.syntaxHighlight,
@@ -359,10 +365,28 @@ function normalizeFeatures(features = {}) {
   };
 }
 
+function loadEditorStateModule() {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/editor-state.js'), 'utf8');
+  const context = {
+    window: {
+      navigator: {
+        platform: ''
+      }
+    }
+  };
+
+  vm.runInNewContext(source, context);
+
+  return context.window.EasyMDEEditorState;
+}
+
 function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
   const timers = createTimerHarness();
-  const documentRef = createDocumentStub(contextOverrides.documentElements || {});
+  const documentRef = createDocumentStub(
+    contextOverrides.documentElements || {},
+    contextOverrides.documentOptions || {}
+  );
   const jQueryRef = contextOverrides.jQuery || createJQueryStub();
   const windowRef = {
     EasyMDEConfig: {
@@ -408,12 +432,30 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
 
   vm.runInNewContext(source, context);
   assert.equal(typeof context.window.EasyMDETestHooks.afterShellPaint, 'function', 'bootstrap harness should expose afterShellPaint');
+  assert.equal(typeof context.window.EasyMDETestHooks.clampWorkspaceRatio, 'function', 'bootstrap harness should expose clampWorkspaceRatio');
   assert.equal(typeof context.window.EasyMDETestHooks.copyWechat, 'function', 'bootstrap harness should expose copyWechat');
   assert.equal(typeof context.window.EasyMDETestHooks.bindLazyImagePasteUpload, 'function', 'bootstrap harness should expose bindLazyImagePasteUpload');
+  assert.equal(typeof context.window.EasyMDETestHooks.handleWorkspaceDividerKey, 'function', 'bootstrap harness should expose handleWorkspaceDividerKey');
   assert.equal(typeof context.window.EasyMDETestHooks.hydrateInitialPreview, 'function', 'bootstrap harness should expose hydrateInitialPreview');
+  assert.equal(typeof context.window.EasyMDETestHooks.initializeWorkspaceLayout, 'function', 'bootstrap harness should expose initializeWorkspaceLayout');
   assert.equal(typeof context.window.EasyMDETestHooks.ensureImagePasteBound, 'function', 'bootstrap harness should expose ensureImagePasteBound');
+  assert.equal(typeof context.window.EasyMDETestHooks.applyPublishPanelDraft, 'function', 'bootstrap harness should expose applyPublishPanelDraft');
+  assert.equal(typeof context.window.EasyMDETestHooks.clearPublishPreviewRequest, 'function', 'bootstrap harness should expose clearPublishPreviewRequest');
+  assert.equal(typeof context.window.EasyMDETestHooks.closePublishPanel, 'function', 'bootstrap harness should expose closePublishPanel');
+  assert.equal(typeof context.window.EasyMDETestHooks.confirmPublishPanel, 'function', 'bootstrap harness should expose confirmPublishPanel');
+  assert.equal(typeof context.window.EasyMDETestHooks.consumePublishPreviewRequest, 'function', 'bootstrap harness should expose consumePublishPreviewRequest');
+  assert.equal(typeof context.window.EasyMDETestHooks.openPublishPanel, 'function', 'bootstrap harness should expose openPublishPanel');
   assert.equal(typeof context.window.EasyMDETestHooks.openMediaPicker, 'function', 'bootstrap harness should expose openMediaPicker');
+  assert.equal(typeof context.window.EasyMDETestHooks.readPublishPanelDraftFromNative, 'function', 'bootstrap harness should expose readPublishPanelDraftFromNative');
+  assert.equal(typeof context.window.EasyMDETestHooks.readPublishPreviewRequest, 'function', 'bootstrap harness should expose readPublishPreviewRequest');
+  assert.equal(typeof context.window.EasyMDETestHooks.rememberPublishPreviewRequest, 'function', 'bootstrap harness should expose rememberPublishPreviewRequest');
+  assert.equal(typeof context.window.EasyMDETestHooks.updatePublishPanelDraft, 'function', 'bootstrap harness should expose updatePublishPanelDraft');
+  assert.equal(typeof context.window.EasyMDETestHooks.readStoredWorkspaceRatio, 'function', 'bootstrap harness should expose readStoredWorkspaceRatio');
+  assert.equal(typeof context.window.EasyMDETestHooks.setWorkspaceRatio, 'function', 'bootstrap harness should expose setWorkspaceRatio');
   assert.equal(typeof context.window.EasyMDETestHooks.showFlash, 'function', 'bootstrap harness should expose showFlash');
+  assert.equal(typeof context.window.EasyMDETestHooks.toggleImmersiveTitleHost, 'function', 'bootstrap harness should expose toggleImmersiveTitleHost');
+  assert.equal(typeof context.window.EasyMDETestHooks.updatePreview, 'function', 'bootstrap harness should expose updatePreview');
+  assert.equal(typeof context.window.EasyMDETestHooks.writeStoredWorkspaceRatio, 'function', 'bootstrap harness should expose writeStoredWorkspaceRatio');
 
   return {
     document: documentRef,
@@ -425,10 +467,17 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
 
 function createRootWrapper(postId = 123) {
   const attributes = new Map();
+  const styleWrites = [];
+  const style = {
+    writes: styleWrites,
+    setProperty(name, value) {
+      styleWrites.push({ name, value: String(value) });
+    }
+  };
 
   return {
     length: 1,
-    0: {},
+    0: { style },
     attr(name, value) {
       if (value === undefined) {
         return attributes.get(name);
@@ -454,6 +503,153 @@ function createRootWrapper(postId = 123) {
     hasClass() {
       return false;
     }
+  };
+}
+
+function createDividerNode() {
+  const attributes = new Map();
+  const listeners = new Map();
+
+  return {
+    attributes,
+    addEventListener(type, handler) {
+      const eventName = String(type);
+      const handlers = listeners.get(eventName) || [];
+
+      handlers.push(handler);
+      listeners.set(eventName, handlers);
+    },
+    dispatchEvent(event) {
+      const handlers = listeners.get(String(event.type || '')) || [];
+
+      for (const handler of [...handlers]) {
+        handler(event);
+      }
+    },
+    getAttribute(name) {
+      return attributes.get(String(name)) || null;
+    },
+    listenerCount(type) {
+      return (listeners.get(String(type)) || []).length;
+    },
+    releasePointerCapture() {},
+    setAttribute(name, value) {
+      attributes.set(String(name), String(value));
+    },
+    setPointerCapture() {}
+  };
+}
+
+function createWorkspaceLayoutContext(options = {}) {
+  const root = createRootWrapper();
+  const dividerNode = createDividerNode();
+  const width = options.width || 960;
+  const workspaceNode = {
+    clientWidth: width,
+    getBoundingClientRect() {
+      return { width };
+    }
+  };
+
+  return {
+    context: {
+      dividerNode,
+      root,
+      sourceRatio: options.sourceRatio === undefined ? 0.5 : options.sourceRatio,
+      storage: options.storage || {},
+      workspaceNode
+    },
+    dividerNode,
+    root,
+    workspaceNode
+  };
+}
+
+function createDomContainer(id = '') {
+  return {
+    children: [],
+    id,
+    parentNode: null,
+    appendChild(node) {
+      if (node.parentNode && typeof node.parentNode.removeChild === 'function') {
+        node.parentNode.removeChild(node);
+      }
+
+      this.children.push(node);
+      node.parentNode = this;
+      return node;
+    },
+    insertBefore(node, referenceNode) {
+      if (node.parentNode && typeof node.parentNode.removeChild === 'function') {
+        node.parentNode.removeChild(node);
+      }
+
+      const index = referenceNode ? this.children.indexOf(referenceNode) : -1;
+
+      if (index === -1) {
+        this.children.push(node);
+      } else {
+        this.children.splice(index, 0, node);
+      }
+
+      node.parentNode = this;
+      return node;
+    },
+    removeChild(node) {
+      const index = this.children.indexOf(node);
+
+      if (index !== -1) {
+        this.children.splice(index, 1);
+      }
+
+      if (node.parentNode === this) {
+        node.parentNode = null;
+      }
+
+      return node;
+    }
+  };
+}
+
+function createAttributeNode(id = '') {
+  const attributes = new Map();
+
+  return {
+    attributes,
+    hidden: false,
+    id,
+    parentNode: null,
+    getAttribute(name) {
+      return attributes.get(String(name)) || null;
+    },
+    setAttribute(name, value) {
+      attributes.set(String(name), String(value));
+    }
+  };
+}
+
+function createImmersiveTitleContext() {
+  const header = createAttributeNode('easymde-immersive-header');
+  const host = createDomContainer('easymde-immersive-title-host');
+  const titleParent = createDomContainer('title-parent');
+  const titleWrap = createDomContainer('titlewrap');
+  const titleField = createAttributeNode('title');
+
+  titleWrap.appendChild(titleField);
+  titleParent.appendChild(titleWrap);
+
+  return {
+    documentElements: {
+      'easymde-immersive-header': header,
+      'easymde-immersive-title-host': host,
+      title: titleField,
+      titlewrap: titleWrap
+    },
+    header,
+    host,
+    titleField,
+    titleParent,
+    titleWrap
   };
 }
 
@@ -727,6 +923,45 @@ function createFlashWrapper() {
   };
 }
 
+function createPropWrapper(initial = {}) {
+  const state = {
+    hidden: initial.hidden === undefined ? true : !!initial.hidden,
+    text: initial.text || '',
+    appends: 0
+  };
+
+  return {
+    0: {},
+    length: 1,
+    state,
+    append() {
+      state.appends += 1;
+      return this;
+    },
+    empty() {
+      state.appends = 0;
+      return this;
+    },
+    length: 1,
+    prop(name, value) {
+      if (arguments.length === 1) {
+        return state[name];
+      }
+
+      state[name] = value;
+      return this;
+    },
+    text(value) {
+      if (arguments.length === 0) {
+        return state.text;
+      }
+
+      state.text = String(value);
+      return this;
+    }
+  };
+}
+
 function loadAfterShellPaint(windowOverrides = {}) {
   const harness = loadBootstrap(windowOverrides);
 
@@ -785,6 +1020,648 @@ test('afterShellPaint keeps the requestAnimationFrame path single-shot', () => {
   flushTimers();
 
   assert.equal(calls, 1);
+});
+
+test('clampWorkspaceRatio preserves the minimum pane widths', () => {
+  const { hooks } = loadBootstrap();
+  const minRatio = 320 / (960 - 18);
+  const maxRatio = 1 - minRatio;
+
+  assert.ok(Math.abs(hooks.clampWorkspaceRatio(0.1, 960) - minRatio) < 1e-9);
+  assert.ok(Math.abs(hooks.clampWorkspaceRatio(0.95, 960) - maxRatio) < 1e-9);
+  assert.equal(hooks.clampWorkspaceRatio('not-a-number', 960), 0.5);
+});
+
+test('workspace layout storage falls back safely when localStorage is blocked', () => {
+  const blockedStorage = {
+    getItem() {
+      throw new Error('blocked');
+    },
+    setItem() {
+      throw new Error('blocked');
+    }
+  };
+  const { hooks } = loadBootstrap({
+    localStorage: blockedStorage
+  });
+
+  assert.equal(hooks.readStoredWorkspaceRatio({ layoutKey: 'easymde:test' }), null);
+  assert.doesNotThrow(() => {
+    hooks.writeStoredWorkspaceRatio({ layoutKey: 'easymde:test' }, 0.61);
+  });
+});
+
+test('setWorkspaceRatio updates the root layout variable and divider aria value', () => {
+  const { hooks } = loadBootstrap();
+  const { context, dividerNode, root } = createWorkspaceLayoutContext({
+    sourceRatio: 0.5,
+    width: 960
+  });
+
+  hooks.setWorkspaceRatio(context, 0.7, { persist: false });
+
+  assert.equal(root[0].style.writes.at(-1).name, '--easymde-source-ratio');
+  assert.equal(root[0].style.writes.at(-1).value, String(context.sourceRatio));
+  assert.equal(dividerNode.getAttribute('aria-valuenow'), String(Math.round(context.sourceRatio * 100)));
+});
+
+test('handleWorkspaceDividerKey supports arrow, Home, and End resizing', () => {
+  const { hooks } = loadBootstrap();
+  const { context } = createWorkspaceLayoutContext({
+    sourceRatio: 0.5,
+    width: 960
+  });
+  let prevented = false;
+
+  hooks.handleWorkspaceDividerKey(context, {
+    key: 'ArrowLeft',
+    preventDefault() {
+      prevented = true;
+    }
+  });
+
+  assert.equal(prevented, true);
+  assert.ok(context.sourceRatio < 0.5);
+
+  hooks.handleWorkspaceDividerKey(context, {
+    key: 'Home',
+    preventDefault() {}
+  });
+  assert.ok(context.sourceRatio >= 0.33);
+
+  hooks.handleWorkspaceDividerKey(context, {
+    key: 'End',
+    preventDefault() {}
+  });
+  assert.ok(context.sourceRatio <= 0.67);
+});
+
+test('initializeWorkspaceLayout restores a stored ratio and binds divider keyboard handling', () => {
+  const resizeEvents = [];
+  const { hooks } = loadBootstrap({
+    addEventListener(type) {
+      resizeEvents.push(type);
+    },
+    localStorage: {
+      getItem() {
+        return '0.9';
+      }
+    }
+  });
+  const { context, dividerNode } = createWorkspaceLayoutContext({
+    width: 700,
+    storage: { layoutKey: 'easymde:layout:test' }
+  });
+
+  hooks.initializeWorkspaceLayout(context);
+
+  assert.equal(dividerNode.listenerCount('keydown'), 1);
+  assert.ok(resizeEvents.includes('resize'));
+  assert.ok(context.sourceRatio < 0.6);
+});
+
+test('toggleImmersiveTitleHost reuses the native title node and restores it on exit', () => {
+  const titleNodes = createImmersiveTitleContext();
+  const harness = loadBootstrap({}, {
+    documentElements: titleNodes.documentElements
+  });
+
+  harness.window.EasyMDEConfig.strings.postTitle = 'Post title';
+
+  const context = {};
+
+  harness.hooks.toggleImmersiveTitleHost(context, true);
+
+  assert.equal(titleNodes.header.hidden, false);
+  assert.equal(titleNodes.titleWrap.parentNode, titleNodes.host);
+  assert.deepEqual(titleNodes.host.children, [titleNodes.titleWrap]);
+  assert.equal(titleNodes.titleField.getAttribute('aria-label'), 'Post title');
+
+  harness.hooks.toggleImmersiveTitleHost(context, false);
+
+  assert.equal(titleNodes.header.hidden, true);
+  assert.equal(titleNodes.titleWrap.parentNode, titleNodes.titleParent);
+  assert.deepEqual(titleNodes.titleParent.children, [titleNodes.titleWrap]);
+});
+
+test('readPublishPanelDraftFromNative reflects native post state without writing fields', () => {
+  const jQueryRef = createJQueryStub();
+  const tagsField = createTrackedValueWrapper(' Alpha, beta,alpha ');
+  const excerptField = createTrackedValueWrapper('Summary text');
+  const statusField = createTrackedValueWrapper('draft');
+  const thumbnailField = createTrackedValueWrapper('');
+
+  jQueryRef.register('#tax-input-post_tag', tagsField);
+  jQueryRef.register('#excerpt', excerptField);
+  jQueryRef.register('#post_status', statusField);
+  jQueryRef.register('#_thumbnail_id', thumbnailField);
+
+  const harness = loadBootstrap({
+    EasyMDEEditorState: loadEditorStateModule(),
+    location: { origin: 'https://example.test' }
+  }, {
+    documentOptions: {
+      querySelectorAll() {
+        return [{ value: '7' }, { value: '12' }, { value: '7' }];
+      }
+    },
+    jQuery: jQueryRef
+  });
+
+  harness.window.EasyMDEConfig.siteOrigin = 'https://example.test';
+
+  const context = {
+    textarea: {
+      value: '![cover](/wp-content/uploads/2026/07/cover.webp)'
+    }
+  };
+  const draft = JSON.parse(JSON.stringify(harness.hooks.readPublishPanelDraftFromNative(context)));
+
+  assert.deepEqual(draft, {
+    categories: ['7', '12'],
+    excerpt: 'Summary text',
+    featuredImageCandidate: {
+      alt: 'cover',
+      offset: 0,
+      url: '/wp-content/uploads/2026/07/cover.webp'
+    },
+    featuredImageMode: 'candidate',
+    mode: 'publish',
+    publishAfterPreview: false,
+    tags: ['Alpha', 'beta']
+  });
+  assert.deepEqual(tagsField.state.writes, []);
+  assert.deepEqual(excerptField.state.writes, []);
+  assert.deepEqual(statusField.state.writes, []);
+  assert.deepEqual(thumbnailField.state.writes, []);
+});
+
+test('openPublishPanel and closePublishPanel keep native publish fields unchanged', () => {
+  const harness = loadBootstrap();
+  harness.window.EasyMDEConfig.strings.publishPostTitle = 'Publish article';
+  harness.window.EasyMDEConfig.strings.publishPost = 'Publish';
+  harness.window.EasyMDEConfig.strings.publishPanelFeaturedImage = 'Featured image';
+  harness.window.EasyMDEConfig.strings.publishPanelKeepCurrent = 'Keep current selection';
+  harness.window.EasyMDEConfig.strings.publishPanelEmpty = 'Not set';
+  harness.window.EasyMDEConfig.strings.publishPanelChooseFeaturedImage = 'Choose featured image';
+  harness.window.EasyMDEConfig.strings.publishPanelClearFeaturedImage = 'Clear featured image';
+  harness.window.EasyMDEConfig.strings.publishPanelUseFirstImage = 'Use first local image';
+  harness.window.EasyMDEConfig.strings.publishPanelTags = 'Tags';
+  harness.window.EasyMDEConfig.strings.publishPanelExcerpt = 'Excerpt';
+  harness.window.EasyMDEConfig.strings.publishPanelCategories = 'Categories';
+  harness.window.EasyMDEConfig.strings.publishPanelReadOnlyHelp = 'Read-only open';
+  harness.window.EasyMDEConfig.strings.publishPanelPreviewAfter = 'Preview after publish';
+  const publishPanel = createPropWrapper({ hidden: true });
+  const publishPanelTitle = createPropWrapper();
+  const publishPanelBody = createPropWrapper();
+  const publishPanelConfirm = createPropWrapper();
+  const publishPanelButton = createContainerWrapper();
+  const context = {
+    nativePublishStateReader() {
+      return {
+        categories: ['7'],
+        excerpt: 'Native excerpt',
+        featuredImageCandidate: { id: 33, url: '/uploads/cover.png' },
+        featuredImageId: '',
+        postStatus: 'draft',
+        tags: ['Alpha']
+      };
+    },
+    publishPanel,
+    publishPanelBody,
+    publishPanelButton,
+    publishPanelConfirm,
+    publishPanelDraft: null,
+    publishPanelTitle,
+    root: createRootWrapper(),
+    textarea: { value: '' }
+  };
+
+  harness.hooks.openPublishPanel(context);
+
+  assert.equal(publishPanel.state.hidden, false);
+  assert.equal(context.publishPanelDraft.excerpt, 'Native excerpt');
+  assert.equal(publishPanelTitle.state.text, 'Publish article');
+
+  harness.hooks.closePublishPanel(context);
+
+  assert.equal(publishPanel.state.hidden, true);
+  assert.equal(context.publishPanelDraft.excerpt, 'Native excerpt');
+});
+
+test('confirmPublishPanel applies the draft through the native writer and submitter only on confirm', () => {
+  const harness = loadBootstrap();
+  const writes = [];
+  let submitCalls = 0;
+  const context = {
+    nativePublishFieldWriter(nextState) {
+      writes.push(nextState);
+    },
+    nativePublishStateReader() {
+      return {
+        categories: ['1'],
+        categoryOptions: [],
+        excerpt: 'Native excerpt',
+        featuredImageCandidate: null,
+        featuredImageId: '9',
+        postStatus: 'draft',
+        tags: ['Native']
+      };
+    },
+    nativePublishSubmitter() {
+      submitCalls += 1;
+    },
+    publishPanel: createPropWrapper({ hidden: false }),
+    publishPanelButton: createContainerWrapper(),
+    publishPanelDraft: {
+      categories: ['7', '8'],
+      excerpt: 'Updated excerpt',
+      featuredImageCandidate: { id: 44, url: '/uploads/cover.png' },
+      mode: 'publish',
+      publishAfterPreview: true,
+      tags: ['Alpha', 'beta']
+    }
+  };
+
+  harness.hooks.confirmPublishPanel(context);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(writes)), [
+    {
+      categories: ['7', '8'],
+      excerpt: 'Updated excerpt',
+      featuredImageId: 44,
+      postStatus: 'draft',
+      tags: ['Alpha', 'beta'],
+      tagString: 'Alpha, beta'
+    }
+  ]);
+  assert.equal(submitCalls, 1);
+  assert.equal(context.publishPanel.state.hidden, true);
+});
+
+test('confirmPublishPanel can clear the featured image on confirm without writing before then', () => {
+  const harness = loadBootstrap();
+  const writes = [];
+  let submitCalls = 0;
+  const context = {
+    nativePublishFieldWriter(nextState) {
+      writes.push(nextState);
+    },
+    nativePublishStateReader() {
+      return {
+        categories: [],
+        categoryOptions: [],
+        excerpt: '',
+        featuredImageCandidate: null,
+        featuredImageId: '12',
+        postStatus: 'draft',
+        tags: []
+      };
+    },
+    nativePublishSubmitter() {
+      submitCalls += 1;
+    },
+    publishPanel: createPropWrapper({ hidden: false }),
+    publishPanelButton: createContainerWrapper(),
+    publishPanelDraft: {
+      categories: [],
+      excerpt: '',
+      featuredImageCandidate: null,
+      featuredImageMode: 'clear',
+      mode: 'publish',
+      publishAfterPreview: false,
+      tags: []
+    }
+  };
+
+  harness.hooks.confirmPublishPanel(context);
+
+  assert.equal(JSON.parse(JSON.stringify(writes))[0].featuredImageId, 0);
+  assert.equal(submitCalls, 1);
+  assert.equal(context.publishPanel.state.hidden, true);
+});
+
+test('applyPublishPanelDraft uses the native WordPress featured image API when available', () => {
+  const featuredImageSetCalls = [];
+  const jQueryRef = createJQueryStub();
+  const harness = loadBootstrap({
+    wp: {
+      media: {
+        featuredImage: {
+          set(value) {
+            featuredImageSetCalls.push(value);
+          }
+        }
+      }
+    }
+  }, {
+    jQuery: jQueryRef
+  });
+  const tagsField = createTrackedValueWrapper('');
+  const excerptField = createTrackedValueWrapper('');
+  const thumbnailField = createTrackedValueWrapper('');
+
+  jQueryRef.register('#tax-input-post_tag', tagsField);
+  jQueryRef.register('#excerpt', excerptField);
+  jQueryRef.register('#_thumbnail_id', thumbnailField);
+
+  const context = {
+    publishPanelDraft: {
+      categories: [],
+      excerpt: '',
+      featuredImageCandidate: { id: 44, url: '/uploads/cover.png' },
+      featuredImageMode: 'candidate',
+      mode: 'publish',
+      publishAfterPreview: false,
+      tags: ['Alpha']
+    },
+    publishPanelNativeState: {
+      categories: [],
+      excerpt: '',
+      featuredImageId: '12',
+      postStatus: 'draft',
+      tags: []
+    }
+  };
+
+  harness.hooks.applyPublishPanelDraft(context);
+  context.publishPanelDraft.featuredImageCandidate = null;
+  context.publishPanelDraft.featuredImageMode = 'clear';
+  harness.hooks.applyPublishPanelDraft(context);
+
+  assert.deepEqual(featuredImageSetCalls, [44, -1]);
+});
+
+test('applyPublishPanelDraft falls back to native fields when no writer or featured image API is injected', () => {
+  const categoryInputs = [
+    { value: '7', checked: false },
+    { value: '8', checked: false },
+    { value: '9', checked: true }
+  ];
+  const tagsField = createTrackedValueWrapper('');
+  const excerptField = createTrackedValueWrapper('');
+  const thumbnailField = createTrackedValueWrapper('');
+  const featuredModeField = createTrackedValueWrapper('');
+  const featuredIdField = createTrackedValueWrapper('');
+  const featuredUrlField = createTrackedValueWrapper('');
+  const jQueryRef = createJQueryStub();
+
+  jQueryRef.register('#tax-input-post_tag', tagsField);
+  jQueryRef.register('#excerpt', excerptField);
+  jQueryRef.register('#_thumbnail_id', thumbnailField);
+  jQueryRef.register('#easymde-featured-image-mode-field', featuredModeField);
+  jQueryRef.register('#easymde-featured-image-id-field', featuredIdField);
+  jQueryRef.register('#easymde-featured-image-url-field', featuredUrlField);
+
+  const harness = loadBootstrap({}, {
+    documentOptions: {
+      querySelectorAll(selector) {
+        if (selector.includes('#categorychecklist')) {
+          return categoryInputs;
+        }
+
+        return [];
+      }
+    },
+    jQuery: jQueryRef
+  });
+
+  const context = {
+    publishPanelDraft: {
+      categories: ['7', '8'],
+      excerpt: 'Fallback excerpt',
+      featuredImageCandidate: null,
+      featuredImageMode: 'clear',
+      mode: 'publish',
+      publishAfterPreview: false,
+      tags: ['Alpha', 'beta']
+    },
+    publishPanelNativeState: {
+      categories: ['9'],
+      excerpt: 'Old excerpt',
+      featuredImageId: '12',
+      postStatus: 'draft',
+      tags: ['Old']
+    }
+  };
+
+  harness.hooks.applyPublishPanelDraft(context);
+
+  assert.equal(tagsField.state.writes.at(-1), 'Alpha, beta');
+  assert.equal(excerptField.state.writes.at(-1), 'Fallback excerpt');
+  assert.equal(thumbnailField.state.writes.at(-1), '-1');
+  assert.equal(featuredModeField.state.writes.at(-1), 'clear');
+  assert.equal(featuredIdField.state.writes.at(-1), '');
+  assert.equal(featuredUrlField.state.writes.at(-1), '');
+  assert.deepEqual(categoryInputs.map((input) => input.checked), [true, true, false]);
+});
+
+test('publish-after-preview request is remembered on confirm and consumed only after a success-state reload', () => {
+  const sessionStorageState = new Map();
+  const openedUrls = [];
+  const jQueryRef = createJQueryStub();
+  const postIdField = createTrackedValueWrapper('42');
+
+  jQueryRef.register('#post_ID', postIdField);
+
+  const harness = loadBootstrap({
+    open(url) {
+      openedUrls.push(url);
+      return {};
+    },
+    sessionStorage: {
+      getItem(key) {
+        return sessionStorageState.has(key) ? sessionStorageState.get(key) : null;
+      },
+      removeItem(key) {
+        sessionStorageState.delete(key);
+      },
+      setItem(key, value) {
+        sessionStorageState.set(key, String(value));
+      }
+    }
+  }, {
+    jQuery: jQueryRef
+  });
+
+  const confirmContext = {
+    nativePublishFieldWriter() {},
+    nativePublishSubmitter() {},
+    publishPanel: createPropWrapper({ hidden: false }),
+    publishPanelButton: createContainerWrapper(),
+    publishPanelDraft: {
+      categories: [],
+      excerpt: '',
+      featuredImageCandidate: null,
+      featuredImageMode: 'keep',
+      mode: 'publish',
+      publishAfterPreview: true,
+      tags: []
+    },
+    storage: {
+      siteKey: 'site123',
+      userId: 7
+    }
+  };
+
+  harness.hooks.confirmPublishPanel(confirmContext);
+
+  assert.deepEqual(
+    JSON.parse(sessionStorageState.get('easymde:publish-preview:site123:7')),
+    { postId: '42' }
+  );
+
+  const consumeContext = {
+    flash: createFlashWrapper(),
+    previewLinkFinder() {
+      return 'https://example.test/?p=42&preview=true';
+    },
+    publishSuccessReader() {
+      return true;
+    },
+    storage: {
+      siteKey: 'site123',
+      userId: 7
+    }
+  };
+
+  assert.equal(harness.hooks.consumePublishPreviewRequest(consumeContext), true);
+  assert.deepEqual(openedUrls, ['https://example.test/?p=42&preview=true']);
+  assert.equal(sessionStorageState.has('easymde:publish-preview:site123:7'), false);
+});
+
+test('consumePublishPreviewRequest reports a blocked popup without reusing the request', () => {
+  const sessionStorageState = new Map();
+  const jQueryRef = createJQueryStub();
+  const postIdField = createTrackedValueWrapper('42');
+
+  jQueryRef.register('#post_ID', postIdField);
+
+  const harness = loadBootstrap({
+    open() {
+      return null;
+    },
+    sessionStorage: {
+      getItem(key) {
+        return sessionStorageState.has(key) ? sessionStorageState.get(key) : null;
+      },
+      removeItem(key) {
+        sessionStorageState.delete(key);
+      },
+      setItem(key, value) {
+        sessionStorageState.set(key, String(value));
+      }
+    }
+  }, {
+    jQuery: jQueryRef
+  });
+
+  harness.window.EasyMDEConfig.strings.publishPreviewBlocked = 'Blocked';
+  sessionStorageState.set('easymde:publish-preview:site123:7', JSON.stringify({ postId: '42' }));
+
+  const flash = createFlashWrapper();
+  const result = harness.hooks.consumePublishPreviewRequest({
+    flash,
+    previewLinkFinder() {
+      return 'https://example.test/?p=42&preview=true';
+    },
+    publishSuccessReader() {
+      return true;
+    },
+    storage: {
+      siteKey: 'site123',
+      userId: 7
+    }
+  });
+
+  assert.equal(result, false);
+  assert.equal(flash.state.text, 'Blocked');
+  assert.equal(sessionStorageState.has('easymde:publish-preview:site123:7'), false);
+});
+
+test('consumePublishPreviewRequest reports when no native preview URL is available', () => {
+  const sessionStorageState = new Map();
+  const jQueryRef = createJQueryStub();
+  const postIdField = createTrackedValueWrapper('42');
+
+  jQueryRef.register('#post_ID', postIdField);
+
+  const harness = loadBootstrap({
+    sessionStorage: {
+      getItem(key) {
+        return sessionStorageState.has(key) ? sessionStorageState.get(key) : null;
+      },
+      removeItem(key) {
+        sessionStorageState.delete(key);
+      },
+      setItem(key, value) {
+        sessionStorageState.set(key, String(value));
+      }
+    }
+  }, {
+    jQuery: jQueryRef
+  });
+
+  harness.window.EasyMDEConfig.strings.publishPreviewMissing = 'Missing';
+  sessionStorageState.set('easymde:publish-preview:site123:7', JSON.stringify({ postId: '42' }));
+
+  const flash = createFlashWrapper();
+  const result = harness.hooks.consumePublishPreviewRequest({
+    flash,
+    previewLinkFinder() {
+      return '';
+    },
+    publishSuccessReader() {
+      return true;
+    },
+    storage: {
+      siteKey: 'site123',
+      userId: 7
+    }
+  });
+
+  assert.equal(result, false);
+  assert.equal(flash.state.text, 'Missing');
+  assert.equal(sessionStorageState.has('easymde:publish-preview:site123:7'), false);
+});
+
+test('consumePublishPreviewRequest clears stale preview requests when the page is not in a success state', () => {
+  const sessionStorageState = new Map();
+  const jQueryRef = createJQueryStub();
+  const postIdField = createTrackedValueWrapper('42');
+
+  jQueryRef.register('#post_ID', postIdField);
+
+  const harness = loadBootstrap({
+    sessionStorage: {
+      getItem(key) {
+        return sessionStorageState.has(key) ? sessionStorageState.get(key) : null;
+      },
+      removeItem(key) {
+        sessionStorageState.delete(key);
+      },
+      setItem(key, value) {
+        sessionStorageState.set(key, String(value));
+      }
+    }
+  }, {
+    jQuery: jQueryRef
+  });
+
+  sessionStorageState.set('easymde:publish-preview:site123:7', JSON.stringify({ postId: '42' }));
+
+  const result = harness.hooks.consumePublishPreviewRequest({
+    publishSuccessReader() {
+      return false;
+    },
+    storage: {
+      siteKey: 'site123',
+      userId: 7
+    }
+  });
+
+  assert.equal(result, false);
+  assert.equal(sessionStorageState.has('easymde:publish-preview:site123:7'), false);
 });
 
 test('initEditor hydrates server-rendered preview before waiting for shell paint', () => {
@@ -1838,7 +2715,7 @@ test('initEditor defers initial preview enhancement until after toolbar chrome i
       testHooks: true,
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
-      wechatExporterScriptUrl: '/assets/js/admin/wechat-exporter.js?ver=0.1.7',
+      wechatExporterScriptUrl: '/assets/js/admin/wechat-exporter.js?ver=0.1.8',
       features: {
         localDrafts: false
       },
@@ -1998,7 +2875,7 @@ test('initEditor binds lazy image paste listeners without loading upload code du
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
       imageUploadUrl: '/wp-json/easymde/v1/media',
-      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.7',
+      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.8',
       imageUpload: {
         enabled: true,
         maxBytes: 1024
@@ -2090,7 +2967,7 @@ test('initEditor preloads WeChat exporter only after shell paint', () => {
       testHooks: true,
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
-      wechatExporterScriptUrl: '/assets/js/admin/wechat-exporter.js?ver=0.1.7',
+      wechatExporterScriptUrl: '/assets/js/admin/wechat-exporter.js?ver=0.1.8',
       features: {
         localDrafts: false
       },
@@ -2110,7 +2987,7 @@ test('initEditor preloads WeChat exporter only after shell paint', () => {
       loadScript(id, src) {
         loadScriptCalls += 1;
         assert.equal(id, 'easymde-wechat-exporter-js');
-        assert.equal(src, '/assets/js/admin/wechat-exporter.js?ver=0.1.7');
+        assert.equal(src, '/assets/js/admin/wechat-exporter.js?ver=0.1.8');
 
         return Promise.resolve({
           status: 'loaded'
@@ -2502,7 +3379,7 @@ test('openMediaPicker lazy-loads the media wrapper on first image insertion', as
       testHooks: true,
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
-      mediaPickerScriptUrl: '/assets/js/admin/media-picker.js?ver=0.1.7',
+      mediaPickerScriptUrl: '/assets/js/admin/media-picker.js?ver=0.1.8',
       features: {},
       strings: {
         insertMedia: 'Insert Media',
@@ -2522,7 +3399,7 @@ test('openMediaPicker lazy-loads the media wrapper on first image insertion', as
       loadScript(id, src) {
         loadScriptCalls += 1;
         assert.equal(id, 'easymde-media-picker-js');
-        assert.equal(src, '/assets/js/admin/media-picker.js?ver=0.1.7');
+        assert.equal(src, '/assets/js/admin/media-picker.js?ver=0.1.8');
         window.EasyMDEMediaPicker = {
           open(target, options) {
             openCalls += 1;
@@ -2531,7 +3408,7 @@ test('openMediaPicker lazy-loads the media wrapper on first image insertion', as
           }
         };
         return Promise.resolve({
-          key: 'script:easymde-media-picker-js:/assets/js/admin/media-picker.js?ver=0.1.7',
+          key: 'script:easymde-media-picker-js:/assets/js/admin/media-picker.js?ver=0.1.8',
           status: 'loaded',
           error: null
         });
@@ -2575,7 +3452,7 @@ test('openMediaPicker falls back to the existing Markdown placeholder when lazy 
       testHooks: true,
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
-      mediaPickerScriptUrl: '/assets/js/admin/media-picker.js?ver=0.1.7',
+      mediaPickerScriptUrl: '/assets/js/admin/media-picker.js?ver=0.1.8',
       features: {},
       strings: {
         mediaAltText: 'alt text',
@@ -2593,7 +3470,7 @@ test('openMediaPicker falls back to the existing Markdown placeholder when lazy 
       loadScript() {
         loadScriptCalls += 1;
         return Promise.resolve({
-          key: 'script:easymde-media-picker-js:/assets/js/admin/media-picker.js?ver=0.1.7',
+          key: 'script:easymde-media-picker-js:/assets/js/admin/media-picker.js?ver=0.1.8',
           status: 'failed',
           error: new Error('missing media picker')
         });
@@ -2622,7 +3499,7 @@ test('ensureImagePasteBound lazy-loads image paste upload after startup', async 
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
       imageUploadUrl: '/wp-json/easymde/v1/media',
-      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.7',
+      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.8',
       imageUpload: {
         enabled: true,
         maxBytes: 1024
@@ -2643,7 +3520,7 @@ test('ensureImagePasteBound lazy-loads image paste upload after startup', async 
       loadScript(id, src) {
         loadScriptCalls += 1;
         assert.equal(id, 'easymde-image-paste-js');
-        assert.equal(src, '/assets/js/admin/image-paste.js?ver=0.1.7');
+        assert.equal(src, '/assets/js/admin/image-paste.js?ver=0.1.8');
         window.EasyMDEImagePaste = {
           bind(target, options) {
             bindOptions = options;
@@ -2651,7 +3528,7 @@ test('ensureImagePasteBound lazy-loads image paste upload after startup', async 
           }
         };
         return Promise.resolve({
-          key: 'script:easymde-image-paste-js:/assets/js/admin/image-paste.js?ver=0.1.7',
+          key: 'script:easymde-image-paste-js:/assets/js/admin/image-paste.js?ver=0.1.8',
           status: 'loaded',
           error: null
         });
@@ -2688,7 +3565,7 @@ test('ensureImagePasteBound skips lazy image upload script when uploads are disa
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
       imageUploadUrl: '/wp-json/easymde/v1/media',
-      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.7',
+      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.8',
       imageUpload: {
         enabled: false,
         maxBytes: 1024
@@ -2735,7 +3612,7 @@ test('bindLazyImagePasteUpload loads and replays only the first image paste', as
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
       imageUploadUrl: '/wp-json/easymde/v1/media',
-      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.7',
+      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.8',
       imageUpload: {
         enabled: true,
         maxBytes: 1024
@@ -2757,7 +3634,7 @@ test('bindLazyImagePasteUpload loads and replays only the first image paste', as
       loadScript(id, src) {
         loadScriptCalls += 1;
         assert.equal(id, 'easymde-image-paste-js');
-        assert.equal(src, '/assets/js/admin/image-paste.js?ver=0.1.7');
+        assert.equal(src, '/assets/js/admin/image-paste.js?ver=0.1.8');
         window.EasyMDEImagePaste = {
           bind(target) {
             target.easymdeImagePasteBound = true;
@@ -2773,7 +3650,7 @@ test('bindLazyImagePasteUpload loads and replays only the first image paste', as
         };
 
         return Promise.resolve({
-          key: 'script:easymde-image-paste-js:/assets/js/admin/image-paste.js?ver=0.1.7',
+          key: 'script:easymde-image-paste-js:/assets/js/admin/image-paste.js?ver=0.1.8',
           status: 'loaded',
           error: null
         });
@@ -2816,7 +3693,7 @@ test('bindLazyImagePasteUpload never uploads during lazy image dragover', async 
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
       imageUploadUrl: '/wp-json/easymde/v1/media',
-      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.7',
+      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.8',
       imageUpload: {
         enabled: true,
         maxBytes: 1024
@@ -2839,7 +3716,7 @@ test('bindLazyImagePasteUpload never uploads during lazy image dragover', async 
       loadScript(id, src) {
         loadScriptCalls += 1;
         assert.equal(id, 'easymde-image-paste-js');
-        assert.equal(src, '/assets/js/admin/image-paste.js?ver=0.1.7');
+        assert.equal(src, '/assets/js/admin/image-paste.js?ver=0.1.8');
         window.EasyMDEImagePaste = {
           bind(target) {
             target.easymdeImagePasteBound = true;
@@ -2855,7 +3732,7 @@ test('bindLazyImagePasteUpload never uploads during lazy image dragover', async 
         };
 
         return Promise.resolve({
-          key: 'script:easymde-image-paste-js:/assets/js/admin/image-paste.js?ver=0.1.7',
+          key: 'script:easymde-image-paste-js:/assets/js/admin/image-paste.js?ver=0.1.8',
           status: 'loaded',
           error: null
         });
@@ -2887,7 +3764,7 @@ test('bindLazyImagePasteUpload ignores ordinary text paste without loading uploa
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
       imageUploadUrl: '/wp-json/easymde/v1/media',
-      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.7',
+      imagePasteScriptUrl: '/assets/js/admin/image-paste.js?ver=0.1.8',
       imageUpload: {
         enabled: true,
         maxBytes: 1024
@@ -2940,7 +3817,7 @@ test('copyWechat preloads exporter without deferring copy past user activation',
       testHooks: true,
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
-      wechatExporterScriptUrl: '/assets/js/admin/wechat-exporter.js?ver=0.1.7',
+      wechatExporterScriptUrl: '/assets/js/admin/wechat-exporter.js?ver=0.1.8',
       features: {},
       strings: {
         copyWechatFailed: 'Copy failed',
@@ -2958,7 +3835,7 @@ test('copyWechat preloads exporter without deferring copy past user activation',
       loadScript(id, src) {
         loadScriptCalls += 1;
         assert.equal(id, 'easymde-wechat-exporter-js');
-        assert.equal(src, '/assets/js/admin/wechat-exporter.js?ver=0.1.7');
+        assert.equal(src, '/assets/js/admin/wechat-exporter.js?ver=0.1.8');
         window.EasyMDEWechatExporter = {
           copy(context, callbacks) {
             copyCalls += 1;
@@ -2967,7 +3844,7 @@ test('copyWechat preloads exporter without deferring copy past user activation',
           }
         };
         return Promise.resolve({
-          key: 'script:easymde-wechat-exporter-js:/assets/js/admin/wechat-exporter.js?ver=0.1.7',
+          key: 'script:easymde-wechat-exporter-js:/assets/js/admin/wechat-exporter.js?ver=0.1.8',
           status: 'loaded',
           error: null
         });
@@ -2999,7 +3876,7 @@ test('copyWechat reports the existing copy failure when lazy exporter loading fa
       testHooks: true,
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
-      wechatExporterScriptUrl: '/assets/js/admin/wechat-exporter.js?ver=0.1.7',
+      wechatExporterScriptUrl: '/assets/js/admin/wechat-exporter.js?ver=0.1.8',
       features: {},
       strings: {
         copyWechatFailed: 'Copy failed',
@@ -3016,7 +3893,7 @@ test('copyWechat reports the existing copy failure when lazy exporter loading fa
     EasyMDEPreviewFeatureLoader: {
       loadScript() {
         return Promise.resolve({
-          key: 'script:easymde-wechat-exporter-js:/assets/js/admin/wechat-exporter.js?ver=0.1.7',
+          key: 'script:easymde-wechat-exporter-js:/assets/js/admin/wechat-exporter.js?ver=0.1.8',
           status: 'failed',
           error: new Error('missing exporter')
         });

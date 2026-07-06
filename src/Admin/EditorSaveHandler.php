@@ -78,6 +78,7 @@ final class EditorSaveHandler {
 			PostDocument::META_RENDER_SIGNATURE,
 			$this->current_render_signature( $post_id, $markdown, $theme_state['markdownTheme'] )
 		);
+		$this->sync_featured_image_from_request( $post_id );
 
 		$this->theme_state_repository->save_user_defaults( $theme_state );
 		unset( $this->pending_render_signatures[ $post_id ] );
@@ -170,5 +171,40 @@ final class EditorSaveHandler {
 				'back_link' => true,
 			)
 		);
+	}
+
+	private function sync_featured_image_from_request( $post_id ) {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- has_valid_save_request() verifies the EasyMDE save nonce before request sanitization.
+		$mode = isset( $_POST['easymde_featured_image_mode'] ) ? sanitize_key( wp_unslash( $_POST['easymde_featured_image_mode'] ) ) : 'keep';
+
+		if ( 'clear' === $mode ) {
+			delete_post_thumbnail( $post_id );
+			return;
+		}
+
+		if ( 'candidate' !== $mode ) {
+			return;
+		}
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- has_valid_save_request() verifies the EasyMDE save nonce before request sanitization.
+		$attachment_id = isset( $_POST['easymde_featured_image_id'] ) ? absint( wp_unslash( $_POST['easymde_featured_image_id'] ) ) : 0;
+
+		if ( ! $attachment_id ) {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- has_valid_save_request() verifies the EasyMDE save nonce before request sanitization.
+			$attachment_url = isset( $_POST['easymde_featured_image_url'] ) ? esc_url_raw( wp_unslash( $_POST['easymde_featured_image_url'] ) ) : '';
+			if ( '' !== $attachment_url ) {
+				$attachment_id = attachment_url_to_postid( $attachment_url );
+			}
+		}
+
+		if ( ! $attachment_id || ! wp_attachment_is_image( $attachment_id ) ) {
+			return;
+		}
+
+		if ( ! current_user_can( 'edit_post', $attachment_id ) ) {
+			return;
+		}
+
+		set_post_thumbnail( $post_id, $attachment_id );
 	}
 }

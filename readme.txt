@@ -4,7 +4,7 @@ Tags: markdown, editor, writing, preview, wechat
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.1.7
+Stable tag: 0.1.8
 License: Apache-2.0
 License URI: https://www.apache.org/licenses/LICENSE-2.0
 
@@ -29,8 +29,7 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 * WordPress media library insertion, plus local image paste and drag-and-drop upload.
 * REST-powered server preview.
 * Browser local draft autosave and recovery.
-* Temporary immersive writing mode for a larger editing workspace.
-* Dark mode for the editor surface.
+* Immersive writing mode with a draggable divider, document outline, and local word statistics.
 * Local Highlight.js code highlighting.
 * Local Mermaid diagram rendering.
 * Local KaTeX math rendering.
@@ -39,6 +38,7 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 * Optional Mac-style code block framing.
 * Per-post article font stack selection.
 * Named reusable custom CSS styles.
+* Native publish panel for tags, featured image, excerpt, categories, and publish-after-preview.
 * Rich-text “Copy to WeChat” export from the rendered preview.
 * Markdown source stored in post meta and rendered HTML stored in post content.
 * No activation redirect and no unrelated admin-page redirect.
@@ -147,6 +147,13 @@ See `SECURITY.md`, `UPGRADING.md`, and `THIRD-PARTY-NOTICES.md` in the release p
 
 == Changelog ==
 
+= 0.1.8 =
+
+* Keep Markdown source on the left and live preview on the right in both normal and immersive workspaces, including a keyboard-accessible draggable divider.
+* Expand immersive writing with the native title field, document outline rail, and local-only word statistics.
+* Add a native publish panel for tags, featured image intent, excerpt, categories, and publish-after-preview without writing on open or cancel.
+* Remove the editor-surface dark mode toggle while preserving article themes, code themes, custom CSS, and frontend rendering.
+
 = 0.1.7 =
 
 * Replace large text toolbar controls with a compact icon toolbar and appearance popover.
@@ -185,7 +192,7 @@ See `SECURITY.md`, `UPGRADING.md`, and `THIRD-PARTY-NOTICES.md` in the release p
 
 = 0.1.1 =
 
-* Add local code highlighting, Mermaid, KaTeX, table of contents support, dark mode, and browser draft recovery.
+* Add local code highlighting, Mermaid, KaTeX, table of contents support, and browser draft recovery.
 
 = 0.1.0 =
 

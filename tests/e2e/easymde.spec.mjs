@@ -60,7 +60,7 @@ function deleteUserContent(userId) {
     'post',
     'list',
     `--author=${userId}`,
-    '--post_type=post,page',
+    '--post_type=post,page,attachment',
     '--post_status=any',
     '--format=ids'
   ]);
@@ -115,6 +115,22 @@ function revisionIdsForPost(postId) {
 
 function postContent(postId) {
   return runWp(['post', 'get', String(postId), '--field=content']);
+}
+
+function postExcerpt(postId) {
+  return runWp(['post', 'get', String(postId), '--field=excerpt']);
+}
+
+function postTagNames(postId) {
+  return runWp(['post', 'term', 'list', String(postId), 'post_tag', '--field=name']);
+}
+
+function featuredImageId(postId) {
+  try {
+    return runWp(['post', 'meta', 'get', String(postId), '_thumbnail_id']);
+  } catch {
+    return '';
+  }
 }
 
 function easymdeMetaSnapshot(postId) {
@@ -363,5 +379,188 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('[data-easymde-command="copywechat"]').click();
 
     await expect(page.locator('.easymde-editor-flash.is-error')).toContainText('Copy for WeChat failed');
+  });
+
+  test('immersive workspace keeps source left and preview right while exposing title, outline, stats, and divider controls', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `EasyMDE Immersive ${testSlug(testInfo)}`;
+    const markdown = `# First heading\n\nIntro words here.\n\n## Second heading\n\nMore text.\n\n### Third heading`;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('#title').fill(title);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Second heading');
+
+    const sourceBox = await page.locator('.easymde-pane-source').boundingBox();
+    const dividerBox = await page.locator('#easymde-divider').boundingBox();
+    const previewBox = await page.locator('.easymde-pane-preview').boundingBox();
+
+    expect(sourceBox && dividerBox && previewBox).toBeTruthy();
+    expect(sourceBox.x).toBeLessThan(dividerBox.x);
+    expect(dividerBox.x).toBeLessThan(previewBox.x);
+    expect(await page.evaluate(() => document.querySelector('.easymde-toolbar-outline-toggle').hidden)).toBe(true);
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.locator('#easymde-editor')).toHaveClass(/easymde-editor-immersive/);
+    expect(await page.evaluate(() => !!document.querySelector('#easymde-immersive-title-host #title'))).toBe(true);
+    expect(await page.evaluate(() => document.querySelector('.easymde-toolbar-outline-toggle').hidden)).toBe(false);
+    expect(await page.evaluate(() => document.querySelector('.easymde-toolbar-word-stats-toggle').hidden)).toBe(false);
+
+    const ratioBefore = Number(await page.evaluate(() => getComputedStyle(document.querySelector('#easymde-editor')).getPropertyValue('--easymde-source-ratio')));
+    await page.locator('#easymde-divider').focus();
+    await page.keyboard.press('ArrowRight');
+    const ratioAfter = Number(await page.evaluate(() => getComputedStyle(document.querySelector('#easymde-editor')).getPropertyValue('--easymde-source-ratio')));
+    expect(ratioAfter).toBeGreaterThan(ratioBefore);
+
+    await page.locator('.easymde-toolbar-outline-toggle').click();
+    await expect(page.locator('#easymde-outline-rail')).toContainText('First heading');
+    await expect(page.locator('#easymde-outline-rail')).toContainText('Second heading');
+    await expect(page.locator('#easymde-outline-rail')).toContainText('Third heading');
+
+    await page.locator('.easymde-toolbar-word-stats-toggle').click();
+    await expect(page.locator('.easymde-word-stats-popover')).toContainText('Reading time');
+    await expect(page.locator('.easymde-word-stats-popover')).toContainText('Total characters');
+  });
+
+  test('publish panel cancel stays zero-write, then confirm publishes tags and excerpt and opens preview after success', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `EasyMDE Publish Panel ${testSlug(testInfo)}`;
+    const postId = runWp([
+      'post',
+      'create',
+      `--post_author=${user.id}`,
+      `--post_title=${title}`,
+      '--post_status=draft',
+      '--porcelain'
+    ]);
+
+    const beforeExcerpt = postExcerpt(postId);
+    const beforeTags = postTagNames(postId);
+
+    await page.addInitScript(() => {
+      window.__easymdeOpenedPreviewUrls = [];
+      window.open = (url) => {
+        window.__easymdeOpenedPreviewUrls.push(String(url));
+        return {};
+      };
+    });
+
+    await login(page, user);
+    await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+
+    await page.locator('.easymde-toolbar-publish-toggle').click();
+    await expect(page.locator('.easymde-publish-panel-title')).toHaveText('Publish article');
+    await page.locator('.easymde-publish-panel-input').fill('alpha, beta');
+    await page.locator('.easymde-publish-panel-textarea').fill('Excerpt from panel');
+    await page.getByLabel('Preview after publish').check();
+    await page.getByRole('button', { name: 'Cancel' }).click();
+
+    expect(postExcerpt(postId)).toBe(beforeExcerpt);
+    expect(postTagNames(postId)).toBe(beforeTags);
+
+    await page.locator('.easymde-toolbar-publish-toggle').click();
+    await page.locator('.easymde-publish-panel-input').fill('alpha, beta');
+    await page.locator('.easymde-publish-panel-textarea').fill('Excerpt from panel');
+    await page.getByLabel('Preview after publish').check();
+    await page.locator('.easymde-publish-panel .button-primary').click();
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+
+    expect(postExcerpt(postId)).toBe('Excerpt from panel');
+    expect(postTagNames(postId)).toBe('alpha\nbeta');
+    expect(runWp(['post', 'get', String(postId), '--field=post_status'])).toBe('publish');
+
+    const openedPreview = await page.waitForFunction(() => {
+      return (window.__easymdeOpenedPreviewUrls || [])[0] || null;
+    });
+    const openedPreviewUrl = await openedPreview.jsonValue();
+    expect(openedPreviewUrl).toContain('http://localhost:8088/');
+    expect(openedPreviewUrl).not.toContain('/wp-admin/');
+  });
+
+  test('publish panel keeps the first local image as an in-memory candidate until confirm', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `EasyMDE Featured ${testSlug(testInfo)}`;
+    const postId = runWp([
+      'post',
+      'create',
+      `--post_author=${user.id}`,
+      `--post_title=${title}`,
+      '--post_status=draft',
+      '--porcelain'
+    ]);
+    const attachmentId = runWp([
+      'media',
+      'import',
+      '/var/www/html/wp-content/plugins/easymde/docs/assets/easymde-logo-rounded.png',
+      `--post_id=${postId}`,
+      '--porcelain'
+    ]);
+    const attachmentUrl = runWp(['post', 'get', attachmentId, '--field=guid']);
+    const markdown = `# ${title}\n\n![Cover](${attachmentUrl})`;
+
+    await login(page, user);
+    await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    await fillMarkdownAndWaitForPreview(page, markdown, title);
+
+    await page.locator('.easymde-toolbar-publish-toggle').click();
+    await expect(page.locator('.easymde-publish-panel-body')).toContainText('Use first local image');
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    expect(featuredImageId(postId)).toBe('');
+
+    await page.locator('.easymde-toolbar-publish-toggle').click();
+    await page.getByRole('button', { name: 'Use first local image' }).click();
+    await expect(page.locator('.easymde-publish-panel-body')).toContainText('easymde-logo-rounded');
+    await page.locator('.easymde-publish-panel .button-primary').click();
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+
+    expect(featuredImageId(postId)).toBe(String(attachmentId));
+  });
+
+  test('publish panel can choose an existing media-library image and later clear it', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `EasyMDE Featured Modal ${testSlug(testInfo)}`;
+    const attachmentTitle = `codex-featured-modal-${testSlug(testInfo)}`;
+    const postId = runWp([
+      'post',
+      'create',
+      `--post_author=${user.id}`,
+      `--post_title=${title}`,
+      '--post_status=draft',
+      '--porcelain'
+    ]);
+    const attachmentId = runWp([
+      'media',
+      'import',
+      '/var/www/html/wp-content/plugins/easymde/docs/assets/easymde-logo-rounded.png',
+      `--post_id=${postId}`,
+      '--porcelain'
+    ]);
+    runWp(['post', 'update', attachmentId, `--post_title=${attachmentTitle}`]);
+
+    await login(page, user);
+    await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    await fillMarkdownAndWaitForPreview(page, `# ${title}\n\nBody text.`, title);
+
+    await page.locator('.easymde-toolbar-publish-toggle').click();
+    await page.getByRole('button', { name: 'Choose featured image' }).click();
+    await page.waitForSelector('.media-modal');
+    await expect(page.locator('.attachments .attachment').first()).toBeVisible();
+    await page.locator(`.attachments .attachment[aria-label*="${attachmentTitle}"]`).first().click();
+    await page.locator('.media-toolbar-primary .button').click();
+    await expect(page.locator('.easymde-publish-panel-body')).toContainText('easymde-logo-rounded');
+    await page.locator('.easymde-publish-panel .button-primary').click();
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+    expect(featuredImageId(postId)).toBe(String(attachmentId));
+
+    await page.locator('.easymde-toolbar-publish-toggle').click();
+    await expect(page.locator('.easymde-publish-panel-title')).toHaveText('Update article');
+    await page.getByRole('button', { name: 'Clear featured image' }).click();
+    await expect(page.locator('.easymde-publish-panel-body')).toContainText('Will clear featured image');
+    await page.locator('.easymde-publish-panel .button-primary').click();
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+    expect(featuredImageId(postId)).toBe('');
   });
 });

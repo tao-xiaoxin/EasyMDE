@@ -387,6 +387,12 @@ test('release requirements include the Qinghe Zhusha article theme stylesheet', 
   assert.ok(requirements.includes('assets/themes/article/qinghe-zhusha.css'));
 });
 
+test('release requirements do not include the removed md2html-normal article theme stylesheet', () => {
+  const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
+
+  assert.equal(requirements.includes('assets/themes/article/md2html-normal.css'), false);
+});
+
 test('release requirements include assets referenced by newly added PHP files', () => {
   const root = makeTempRoot();
 

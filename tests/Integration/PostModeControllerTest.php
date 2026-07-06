@@ -334,6 +334,72 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertSame($before_revision_count, count(wp_get_post_revisions($post_id)));
     }
 
+    public function test_opening_legacy_md2html_normal_post_falls_back_to_default_theme_without_writing_state()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '<p>Legacy compatibility HTML.</p>',
+            )
+        );
+        $post_document = new PostDocument();
+        $markdown = "# Legacy theme fallback\n\nStored Markdown stays authoritative.";
+
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, $markdown);
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'md2html-normal');
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta(
+            $post_id,
+            PostDocument::META_RENDER_SIGNATURE,
+            $post_document->render_signature($markdown, 'md2html-normal', '<p>Legacy compatibility HTML.</p>')
+        );
+        update_user_meta(
+            $user_id,
+            'easymde_default_theme_state',
+            array(
+                'markdownTheme' => 'md2html-normal',
+                'codeTheme' => 'github',
+                'codeMacStyle' => true,
+                'customCssId' => '',
+                'customFont' => 'optima',
+                'windowsFont' => 'microsoft-yahei',
+                'appleFont' => 'pingfang-sc-light',
+                'serifFont' => 'yes',
+                'defaultsVersion' => EASYMDE_VERSION,
+            )
+        );
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $before_content = get_post($post_id)->post_content;
+        $before_meta = get_post_meta($post_id);
+        $before_user_meta = get_user_meta($user_id);
+        $before_revision_count = count(wp_get_post_revisions($post_id));
+
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('easymde-markdown-theme-default', $output);
+        $this->assertStringNotContainsString('easymde-markdown-theme-md2html-normal', $output);
+        $this->assertSame($before_content, get_post($post_id)->post_content);
+        $this->assertSame($before_meta, get_post_meta($post_id));
+        $this->assertSame($before_user_meta, get_user_meta($user_id));
+        $this->assertSame($before_revision_count, count(wp_get_post_revisions($post_id)));
+    }
+
     public function test_editor_shell_uses_pending_initial_preview_when_stored_markdown_cannot_reuse_html()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));

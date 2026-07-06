@@ -458,8 +458,6 @@
   z-index: 20;
 }
 
-/* Markdown2Html-style theme: md2html-normal. */
-
 /* Markdown2Html-style theme: orange-heart. */
 .easymde-rendered-content.easymde-markdown-theme-orange-heart {
   --easymde-theme-font-family: Inter, "Microsoft YaHei", PingFangSC-regular, sans-serif;

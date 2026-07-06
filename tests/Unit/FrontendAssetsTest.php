@@ -67,6 +67,25 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         }
     }
 
+    public function test_removed_builtin_theme_falls_back_to_default_article_stylesheet_on_frontend()
+    {
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'md2html-normal');
+
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+        $assets->enqueue_render_assets($post_id, '# Legacy theme fallback');
+
+        $registered = wp_styles()->registered;
+
+        $this->assertArrayHasKey('easymde-article-theme', $registered);
+        $this->assertStringEndsWith('assets/themes/article/default.css', $registered['easymde-article-theme']->src);
+        $this->assertStringNotContainsString('md2html-normal.css', $registered['easymde-article-theme']->src);
+        $this->assertTrue(wp_style_is('easymde-article-theme', 'enqueued'));
+    }
+
     public function test_indented_code_blocks_request_code_assets()
     {
         $assets = new FrontendAssets(

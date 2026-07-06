@@ -31,6 +31,48 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
         $this->assertSame('qinghe-zhusha', $registry->sanitize_id('qinghe-zhusha'));
     }
 
+    public function test_removed_md2html_normal_theme_is_not_registered_and_falls_back_to_default()
+    {
+        $registry = new ArticleThemeRegistry();
+        $themes = array_column($registry->for_script(), null, 'id');
+
+        $this->assertArrayNotHasKey('md2html-normal', $themes);
+        $this->assertSame('default', $registry->sanitize_id('md2html-normal'));
+        $this->assertSame('default', $registry->get('md2html-normal')['id']);
+    }
+
+    public function test_third_party_can_re_register_removed_md2html_normal_theme()
+    {
+        $callback = static function ($themes) {
+            $themes['md2html-normal'] = array(
+                'id' => 'md2html-normal',
+                'label' => 'Third-party Markdown2Html',
+                'asset_path' => 'assets/themes/article/third-party-md2html-normal.css',
+                'origin' => 'extension',
+                'class_name' => 'easymde-markdown-theme-md2html-normal',
+            );
+
+            return $themes;
+        };
+
+        add_filter('easymde_article_themes', $callback);
+
+        try {
+            $registry = new ArticleThemeRegistry();
+            $themes = array_column($registry->for_script(), null, 'id');
+
+            $this->assertArrayHasKey('md2html-normal', $themes);
+            $this->assertSame('md2html-normal', $registry->sanitize_id('md2html-normal'));
+            $this->assertSame('extension', $registry->get('md2html-normal')['origin']);
+            $this->assertSame(
+                'assets/themes/article/third-party-md2html-normal.css',
+                $registry->get('md2html-normal')['asset_path']
+            );
+        } finally {
+            remove_filter('easymde_article_themes', $callback);
+        }
+    }
+
     public function test_typora_derived_themes_expose_asset_and_font_defaults_for_admin_script()
     {
         $registry = new ArticleThemeRegistry();

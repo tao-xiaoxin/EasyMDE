@@ -45,7 +45,7 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 
 == Themes and Appearance ==
 
-EasyMDE includes multiple built-in article themes inspired by Markdown2Html and mdnice-style layouts. Themes are implemented locally with scoped CSS and do not load remote decorative assets.
+EasyMDE includes multiple built-in article themes inspired by locally bundled writing layouts and mdnice-style designs. Themes are implemented locally with scoped CSS and do not load remote decorative assets.
 
 Article theme, code theme, Mac-style code frame, font stack, and custom CSS choices are saved per post. The current user's latest appearance choices are reused as defaults for future posts.
 
@@ -160,7 +160,7 @@ See `SECURITY.md`, `UPGRADING.md`, and `THIRD-PARTY-NOTICES.md` in the release p
 
 = 0.1.6 =
 
-* Add the full Markdown2Html-style article theme set as local scoped CSS recreations.
+* Add a broader built-in article theme set as local scoped CSS recreations.
 * Extend theme markup processing for built-in theme heading and link styles.
 
 = 0.1.5 =

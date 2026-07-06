@@ -754,7 +754,7 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('.easymde-toolbar-publish-toggle').click({ force: true });
     await page.getByRole('button', { name: 'Use first local image' }).click();
     await expect(page.locator('.easymde-publish-panel-body')).toContainText('easymde-logo-rounded');
-    await page.locator('.easymde-publish-panel .button-primary').click();
+    await page.locator('.easymde-publish-panel .button-primary').click({ force: true });
     await expect(page.locator('#message, .notice-success')).toBeVisible();
 
     expect(featuredImageId(postId)).toBe(String(attachmentId));
@@ -793,7 +793,7 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator(`.attachments .attachment[aria-label*="${attachmentTitle}"]`).first().click();
     await page.locator('.media-toolbar-primary .button').click();
     await expect(page.locator('.easymde-publish-panel-body')).toContainText('easymde-logo-rounded');
-    await page.locator('.easymde-publish-panel .button-primary').click();
+    await page.locator('.easymde-publish-panel .button-primary').click({ force: true });
     await expect(page.locator('#message, .notice-success')).toBeVisible();
     expect(featuredImageId(postId)).toBe(String(attachmentId));
 

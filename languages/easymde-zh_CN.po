@@ -373,6 +373,9 @@ msgstr "有序列表"
 msgid "Output actions"
 msgstr "输出操作"
 
+msgid "Editor actions"
+msgstr "编辑器操作"
+
 msgid "Post title"
 msgstr "文章标题"
 
@@ -436,6 +439,9 @@ msgstr "渲染失败。"
 msgid "Rendering preview..."
 msgstr "正在渲染预览..."
 
+msgid "Editing"
+msgstr "编辑中"
+
 msgid "Restore draft"
 msgstr "恢复草稿"
 
@@ -447,6 +453,9 @@ msgstr "保存 CSS"
 
 msgid "Save post"
 msgstr "保存文章"
+
+msgid "Saved"
+msgstr "已保存"
 
 msgid "Saved CSS."
 msgstr "CSS 已保存。"
@@ -649,6 +658,9 @@ msgstr "更新文章"
 
 msgid "Use first local image"
 msgstr "使用第一张本地图片"
+
+msgid "Version history"
+msgstr "历史版本"
 
 msgid "Western words"
 msgstr "西文词数"

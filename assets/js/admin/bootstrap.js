@@ -88,6 +88,7 @@
     var activePreviewFeatures = normalizePreviewFeatures(config.features || {});
     var draftTimer = null;
     var syncLock = false;
+    var titleSyncLock = false;
     var flashTimer = null;
     var commandMap = null;
     var commandList = null;
@@ -611,8 +612,9 @@
         return $('<div class="easymde-toolbar-popover-anchor"></div>').addClass(extraClass || '');
     }
 
-    function createUtilityButton(label, iconClass, className) {
+    function createUtilityButton(label, iconClass, className, compact) {
         var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-compact"></button>');
+        compact = compact !== false;
 
         if (className) {
             $button.addClass(className);
@@ -620,9 +622,16 @@
 
         $button.attr('aria-label', label);
         $button.attr('title', label);
+        $button.toggleClass('easymde-toolbar-button-compact', compact);
         $button.append(
             $('<span class="dashicons" aria-hidden="true"></span>').addClass(iconClass)
         );
+
+        if (!compact) {
+            $button.append(
+                $('<span class="easymde-toolbar-label"></span>').text(label)
+            );
+        }
 
         return $button;
     }
@@ -1746,27 +1755,30 @@
         };
     }
 
-    function ensureImmersiveTitleContext(context) {
+    function ensureTitleEditorContext(context) {
         var titleLabel;
+        var placeholder;
 
         if (!context) {
             return;
         }
 
-        if (!context.immersiveHeaderNode) {
-            context.immersiveHeaderNode = document.getElementById('easymde-immersive-header');
+        if (!context.titleRegionNode) {
+            context.titleRegionNode = document.getElementById('easymde-title-region');
         }
 
-        if (!context.immersiveTitleHostNode) {
-            context.immersiveTitleHostNode = document.getElementById('easymde-immersive-title-host');
+        if (!context.titleEditorField) {
+            context.titleEditorField = document.getElementById('easymde-title-editor');
         }
 
         if (!context.nativeTitleField) {
             context.nativeTitleField = document.getElementById('title');
         }
 
-        if (!context.nativeTitleWrap) {
-            context.nativeTitleWrap = document.getElementById('titlewrap') || context.nativeTitleField;
+        if (!context.nativeTitleContainer) {
+            context.nativeTitleContainer = document.getElementById('titlediv')
+                || document.getElementById('titlewrap')
+                || context.nativeTitleField;
         }
 
         titleLabel = getString('postTitle');
@@ -1777,64 +1789,234 @@
         ) {
             context.nativeTitleField.setAttribute('aria-label', titleLabel);
         }
+
+        if (
+            titleLabel
+            && context.titleEditorField
+            && typeof context.titleEditorField.setAttribute === 'function'
+        ) {
+            context.titleEditorField.setAttribute('aria-label', titleLabel);
+        }
+
+        placeholder = context.nativeTitleField
+            && typeof context.nativeTitleField.getAttribute === 'function'
+            ? context.nativeTitleField.getAttribute('placeholder')
+            : '';
+        if (
+            placeholder
+            && context.titleEditorField
+            && typeof context.titleEditorField.getAttribute === 'function'
+            && !context.titleEditorField.getAttribute('placeholder')
+            && typeof context.titleEditorField.setAttribute === 'function'
+        ) {
+            context.titleEditorField.setAttribute('placeholder', placeholder);
+        }
+    }
+
+    function readTitleFieldValue(field) {
+        if (!field || typeof field.value !== 'string') {
+            return '';
+        }
+
+        return field.value;
+    }
+
+    function normalizeTitleValue(value) {
+        return String(value || '')
+            .replace(/\r\n?/g, '\n')
+            .replace(/[ \t\f\v]*\n+[ \t\f\v]*/g, ' ');
+    }
+
+    function normalizeTitleSelection(value, offset) {
+        return normalizeTitleValue(String(value || '').slice(0, Math.max(0, Number(offset) || 0))).length;
+    }
+
+    function resizeTitleEditor(context) {
+        var field;
+
+        ensureTitleEditorContext(context);
+        field = context && context.titleEditorField ? context.titleEditorField : null;
+
+        if (!field || !field.style) {
+            return;
+        }
+
+        field.style.height = '0px';
+        field.style.height = String(field.scrollHeight || 0) + 'px';
+    }
+
+    function writeNativeTitleValue(context, value) {
+        var field;
+        var normalized;
+
+        ensureTitleEditorContext(context);
+        field = context && context.nativeTitleField ? context.nativeTitleField : null;
+
+        if (!field || typeof field.value !== 'string') {
+            return;
+        }
+
+        normalized = normalizeTitleValue(value);
+        if (field.value === normalized) {
+            return;
+        }
+
+        titleSyncLock = true;
+        field.value = normalized;
+        titleSyncLock = false;
+    }
+
+    function syncTitleEditorFromNative(context) {
+        var editorField;
+        var nextValue;
+
+        ensureTitleEditorContext(context);
+        editorField = context && context.titleEditorField ? context.titleEditorField : null;
+
+        if (!editorField || titleSyncLock) {
+            return;
+        }
+
+        nextValue = normalizeTitleValue(readTitleFieldValue(context.nativeTitleField));
+        if (readTitleFieldValue(context.nativeTitleField) !== nextValue) {
+            writeNativeTitleValue(context, nextValue);
+        }
+
+        if (editorField.value !== nextValue) {
+            editorField.value = nextValue;
+        }
+
+        resizeTitleEditor(context);
+    }
+
+    function setTitleEditorSelection(field, start, end) {
+        if (!field || typeof field.selectionStart !== 'number' || typeof field.selectionEnd !== 'number') {
+            return;
+        }
+
+        field.selectionStart = start;
+        field.selectionEnd = end;
+    }
+
+    function applyTitleEditorValue(context, value, selectionStart, selectionEnd) {
+        var editorField;
+        var normalizedValue;
+        var normalizedStart;
+        var normalizedEnd;
+
+        ensureTitleEditorContext(context);
+        editorField = context && context.titleEditorField ? context.titleEditorField : null;
+
+        if (!editorField) {
+            return;
+        }
+
+        normalizedValue = normalizeTitleValue(value);
+        normalizedStart = typeof selectionStart === 'number'
+            ? normalizeTitleSelection(value, selectionStart)
+            : normalizedValue.length;
+        normalizedEnd = typeof selectionEnd === 'number'
+            ? normalizeTitleSelection(value, selectionEnd)
+            : normalizedStart;
+
+        if (editorField.value !== normalizedValue) {
+            editorField.value = normalizedValue;
+        }
+
+        setTitleEditorSelection(editorField, normalizedStart, normalizedEnd);
+        writeNativeTitleValue(context, normalizedValue);
+        resizeTitleEditor(context);
+
+        if (context && context.draftStatus && context.draftStatus.length) {
+            context.draftStatus.text(getString('statusEditing') || 'Editing');
+        }
+    }
+
+    function hideNativeTitleContainer(context) {
+        var container;
+
+        ensureTitleEditorContext(context);
+        container = context && context.nativeTitleContainer ? context.nativeTitleContainer : null;
+
+        if (container && 'hidden' in container) {
+            container.hidden = true;
+        }
+    }
+
+    function initializeTitleEditor(context) {
+        var editorField;
+        var nativeField;
+        var syncFromNative;
+
+        ensureTitleEditorContext(context);
+
+        if (!context || context.titleEditorReady) {
+            return;
+        }
+
+        editorField = context.titleEditorField;
+        nativeField = context.nativeTitleField;
+
+        if (!editorField || !nativeField) {
+            return;
+        }
+
+        context.titleEditorReady = true;
+        hideNativeTitleContainer(context);
+        syncTitleEditorFromNative(context);
+
+        editorField.addEventListener('compositionstart', function () {
+            context.titleCompositionActive = true;
+        });
+
+        editorField.addEventListener('compositionend', function () {
+            context.titleCompositionActive = false;
+            applyTitleEditorValue(
+                context,
+                editorField.value,
+                editorField.selectionStart,
+                editorField.selectionEnd
+            );
+        });
+
+        editorField.addEventListener('input', function () {
+            if (context.titleCompositionActive) {
+                resizeTitleEditor(context);
+                return;
+            }
+
+            applyTitleEditorValue(
+                context,
+                editorField.value,
+                editorField.selectionStart,
+                editorField.selectionEnd
+            );
+        });
+
+        syncFromNative = function () {
+            if (context.titleCompositionActive || titleSyncLock) {
+                return;
+            }
+
+            syncTitleEditorFromNative(context);
+        };
+
+        nativeField.addEventListener('input', syncFromNative);
+        nativeField.addEventListener('change', syncFromNative);
+
+        if (window.addEventListener) {
+            window.addEventListener('resize', function () {
+                resizeTitleEditor(context);
+            });
+        }
     }
 
     function toggleImmersiveTitleHost(context, enabled) {
-        var header;
-        var host;
-        var titleWrap;
-        var marker;
-        var parentNode;
+        initializeTitleEditor(context);
 
-        ensureImmersiveTitleContext(context);
-
-        header = context && context.immersiveHeaderNode ? context.immersiveHeaderNode : null;
-        host = context && context.immersiveTitleHostNode ? context.immersiveTitleHostNode : null;
-        titleWrap = context && context.nativeTitleWrap ? context.nativeTitleWrap : null;
-
-        if (!header) {
-            return;
+        if (enabled === false) {
+            syncTitleEditorFromNative(context);
         }
-
-        header.hidden = !enabled;
-
-        if (!enabled || !host || !titleWrap) {
-            if (
-                !enabled
-                && host
-                && titleWrap
-                && titleWrap.parentNode === host
-                && context.nativeTitleMarker
-                && context.nativeTitleMarker.parentNode
-            ) {
-                context.nativeTitleMarker.parentNode.insertBefore(titleWrap, context.nativeTitleMarker);
-                context.nativeTitleMarker.parentNode.removeChild(context.nativeTitleMarker);
-            }
-
-            return;
-        }
-
-        if (titleWrap.parentNode === host) {
-            return;
-        }
-
-        parentNode = titleWrap.parentNode;
-        if (!parentNode || typeof host.appendChild !== 'function') {
-            return;
-        }
-
-        marker = context.nativeTitleMarker;
-        if (!marker) {
-            marker = document.createElement('span');
-            marker.hidden = true;
-            context.nativeTitleMarker = marker;
-        }
-
-        if (marker.parentNode !== parentNode && typeof parentNode.insertBefore === 'function') {
-            parentNode.insertBefore(marker, titleWrap);
-        }
-
-        host.appendChild(titleWrap);
     }
 
     function updateImmersiveToggle(context) {
@@ -1870,12 +2052,12 @@
             return;
         }
 
-        ensureImmersiveTitleContext(context);
+        ensureTitleEditorContext(context);
         focusTarget = (
             context
-            && context.nativeTitleField
-            && document.activeElement === context.nativeTitleField
-        ) ? context.nativeTitleField : context.textarea;
+            && context.titleEditorField
+            && document.activeElement === context.titleEditorField
+        ) ? context.titleEditorField : context.textarea;
         scrollState = captureEditorScrollState(context);
         closePopovers();
 
@@ -1885,11 +2067,11 @@
 
         $root.toggleClass('easymde-editor-immersive', enabled);
         $('html, body').toggleClass('easymde-immersive-active', enabled);
-        toggleImmersiveTitleHost(context, enabled);
         updateImmersiveToggle(context);
         updateImmersiveUtilityState(context);
 
         window.requestAnimationFrame(function () {
+            resizeTitleEditor(context);
             restoreEditorScrollState(context, scrollState);
 
             if (!enabled && context.immersiveWindowScroll) {
@@ -2790,22 +2972,85 @@
             $secondary.append($('<span class="easymde-toolbar-divider" aria-hidden="true"></span>'));
         }
 
-        createPublishPanelButton($secondary, context);
-        createImmersiveToggleButton($secondary, context);
-        createOutlineToggleButton($secondary, context);
-        createWordStatsControl($secondary, context);
         createFontMenu($secondary, context.preview);
         createAppearanceMenu($secondary, context.root, context.preview, context.refreshPreview);
-        context.draftStatus = createDraftStatus($secondary);
 
         $toolbar.append($main, $secondary);
+    }
+
+    function readRevisionHistoryUrl(context) {
+        var reader = context && context.revisionHistoryUrlReader ? context.revisionHistoryUrlReader : null;
+        var link;
+
+        if (typeof reader === 'function') {
+            return reader() || '';
+        }
+
+        if (document.querySelector) {
+            link = document.querySelector('#revisionsdiv .inside a, #misc-publishing-actions .misc-pub-revisions a');
+            if (link && link.href) {
+                return link.href;
+            }
+        }
+
+        return '';
+    }
+
+    function createActionStatus($container) {
+        var $status = $('<span class="easymde-action-row-status easymde-draft-status" aria-live="polite"></span>');
+        $status.text(getString('statusReady') || 'Saved');
+        $container.append($status);
+
+        return $status;
+    }
+
+    function createRevisionHistoryButton($container, context) {
+        var label = getString('versionHistory') || 'Version history';
+        var url = readRevisionHistoryUrl(context);
+        var $button = createUtilityButton(label, 'dashicons-backup', 'easymde-action-row-button easymde-action-row-button-history', false);
+
+        context.revisionHistoryButton = $button;
+
+        if (!url) {
+            $button.prop('disabled', true).attr('aria-disabled', 'true');
+        } else {
+            $button.on('click', function () {
+                window.location.href = url;
+            });
+        }
+
+        $container.append($button);
+    }
+
+    function createActionRow($row, context) {
+        var $start = $('<div class="easymde-action-row-section easymde-action-row-section-start"></div>');
+        var $center = $('<div class="easymde-action-row-section easymde-action-row-section-center"></div>');
+        var $end = $('<div class="easymde-action-row-section easymde-action-row-section-end"></div>');
+
+        $row.empty();
+        context.draftStatus = createActionStatus($start);
+        $start.append($('<span class="easymde-action-row-divider" aria-hidden="true"></span>'));
+        createRevisionHistoryButton($start, context);
+
+        createOutlineToggleButton($center, context);
+        createWordStatsControl($center, context);
+        createImmersiveToggleButton($center, context);
+
+        createPublishPanelButton($end, context, true);
+
+        $row.append($start, $center, $end);
         updateImmersiveUtilityState(context);
 
         return context.draftStatus;
     }
 
     function createImmersiveToggleButton($container, context) {
-        var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-compact easymde-toolbar-immersive-toggle"></button>');
+        var $button = createUtilityButton(
+            getString('enterImmersive') || 'Immersive',
+            'dashicons-fullscreen-alt',
+            'easymde-action-row-button easymde-toolbar-immersive-toggle',
+            false
+        );
 
         context.immersiveButton = $button;
         updateImmersiveToggle(context);
@@ -2895,17 +3140,16 @@
 
     function renderOutlineRail(context) {
         var $rail = context && context.outlineRail ? context.outlineRail : $();
-        var immersive = context && context.root && context.root.hasClass('easymde-editor-immersive');
         var headings = context && context.outlineHeadings ? context.outlineHeadings : [];
 
         if (!$rail.length) {
             return;
         }
 
-        context.root.toggleClass('easymde-outline-open', !!(immersive && context.outlineOpen));
-        $rail.prop('hidden', !(immersive && context.outlineOpen));
+        context.root.toggleClass('easymde-outline-open', !!context.outlineOpen);
+        $rail.prop('hidden', !context.outlineOpen);
 
-        if (!(immersive && context.outlineOpen)) {
+        if (!context.outlineOpen) {
             return;
         }
 
@@ -3026,11 +3270,10 @@
 
     function createOutlineToggleButton($container, context) {
         var label = getString('documentOutline');
-        var $button = createUtilityButton(label, 'dashicons-list-view', 'easymde-toolbar-outline-toggle');
+        var $button = createUtilityButton(label, 'dashicons-list-view', 'easymde-action-row-button easymde-toolbar-outline-toggle', false);
 
         context.outlineButton = $button;
         $button.attr('aria-pressed', 'false');
-        $button.prop('hidden', true);
 
         $button.on('mousedown', function (event) {
             event.preventDefault();
@@ -3046,14 +3289,12 @@
     function createWordStatsControl($container, context) {
         var label = getString('wordStats');
         var $anchor = createMenuAnchor('easymde-toolbar-popover-stats');
-        var $button = createUtilityButton(label, 'dashicons-chart-bar', 'easymde-toolbar-word-stats-toggle');
+        var $button = createUtilityButton(label, 'dashicons-chart-bar', 'easymde-action-row-button easymde-toolbar-word-stats-toggle', false);
         var $panel = $('<div class="easymde-toolbar-popover easymde-word-stats-popover" hidden></div>');
 
         context.wordStatsAnchor = $anchor;
         context.wordStatsButton = $button;
         context.wordStatsPanel = $panel;
-
-        $anchor.prop('hidden', true);
 
         registerPopover($button, $panel, {
             beforeOpen: function () {
@@ -3066,21 +3307,7 @@
     }
 
     function updateImmersiveUtilityState(context) {
-        var immersive = context && context.root && context.root.hasClass('easymde-editor-immersive');
-
-        if (context.outlineButton && context.outlineButton.length) {
-            context.outlineButton.prop('hidden', !immersive);
-        }
-
-        if (context.wordStatsAnchor && context.wordStatsAnchor.length) {
-            context.wordStatsAnchor.prop('hidden', !immersive);
-        }
-
-        if (!immersive) {
-            toggleOutlineOpen(context, false);
-        } else {
-            renderOutlineRail(context);
-        }
+        renderOutlineRail(context);
     }
 
     function readCheckedCategoryIdsFromDom() {
@@ -3674,8 +3901,13 @@
         }
     }
 
-    function createPublishPanelButton($container, context) {
-        var $button = createUtilityButton(getString('publishPost'), 'dashicons-admin-post', 'easymde-toolbar-publish-toggle');
+    function createPublishPanelButton($container, context, primary) {
+        var classes = 'easymde-action-row-button easymde-toolbar-publish-toggle';
+        var $button = createUtilityButton(getString('publishPost'), 'dashicons-admin-post', classes, false);
+
+        if (primary) {
+            $button.addClass('is-primary');
+        }
 
         context.publishPanelButton = $button;
 
@@ -3762,6 +3994,7 @@
 
     function initEditor() {
         var $root = $('#easymde-editor');
+        var $actionRow = $('#easymde-action-row');
         var $outlineRail = $('#easymde-outline-rail');
         var $source = $('#easymde-source');
         var $preview = $('#easymde-preview');
@@ -3820,6 +4053,7 @@
 
         context = {
             activeOutlineIndex: -1,
+            actionRow: $actionRow,
             outlineOpen: false,
             outlineRail: $outlineRail,
             root: $root,
@@ -3834,6 +4068,7 @@
             flash: null
         };
 
+        initializeTitleEditor(context);
         initializeWorkspaceLayout(context);
 
         function initializeEditorChrome() {
@@ -3844,7 +4079,8 @@
             editorChromeReady = true;
             $flash = createFlash($toolbar);
             context.flash = $flash;
-            $draftStatus = createToolbar($toolbar, context);
+            $draftStatus = createActionRow($actionRow, context);
+            createToolbar($toolbar, context);
             createSideActions($sideActions, context);
             bindScrollSync($source[0], $preview[0]);
             bindShortcuts($root, $source[0], context);
@@ -3863,6 +4099,10 @@
             mirrorToPostContent(this.value);
             updatePreview($preview, this.value);
             scheduleWorkspaceDerivedStateUpdate(context, this.value);
+
+            if ($draftStatus && $draftStatus.length) {
+                $draftStatus.text(getString('statusEditing') || 'Editing');
+            }
 
             if (!config.features || config.features.localDrafts !== false) {
                 window.clearTimeout(draftTimer);
@@ -3883,6 +4123,7 @@
             var shellMarkdown = $source.val();
 
             initialMarkdown = shellMarkdown;
+            resizeTitleEditor(context);
             syncMarkdownFields(shellMarkdown);
             applyWorkspaceDerivedState(context, shellMarkdown);
 
@@ -3926,6 +4167,7 @@
         window.EasyMDETestHooks.handleWorkspaceDividerKey = handleWorkspaceDividerKey;
         window.EasyMDETestHooks.hydrateInitialPreview = hydrateInitialPreview;
         window.EasyMDETestHooks.initializeWorkspaceLayout = initializeWorkspaceLayout;
+        window.EasyMDETestHooks.initializeTitleEditor = initializeTitleEditor;
         window.EasyMDETestHooks.ensureImagePasteBound = ensureImagePasteBound;
         window.EasyMDETestHooks.clearPublishPreviewRequest = clearPublishPreviewRequest;
         window.EasyMDETestHooks.closePublishPanel = closePublishPanel;
@@ -3937,6 +4179,7 @@
             triggerNativePublish(context);
         };
         window.EasyMDETestHooks.consumePublishPreviewRequest = consumePublishPreviewRequest;
+        window.EasyMDETestHooks.normalizeTitleValue = normalizeTitleValue;
         window.EasyMDETestHooks.openPublishPanel = openPublishPanel;
         window.EasyMDETestHooks.openMediaPicker = openMediaPicker;
         window.EasyMDETestHooks.readPublishPanelDraftFromNative = readPublishPanelDraftFromNative;
@@ -3946,6 +4189,7 @@
         window.EasyMDETestHooks.readStoredWorkspaceRatio = readStoredWorkspaceRatio;
         window.EasyMDETestHooks.setWorkspaceRatio = setWorkspaceRatio;
         window.EasyMDETestHooks.showFlash = showFlash;
+        window.EasyMDETestHooks.syncTitleEditorFromNative = syncTitleEditorFromNative;
         window.EasyMDETestHooks.toggleImmersiveTitleHost = toggleImmersiveTitleHost;
         window.EasyMDETestHooks.updatePreview = updatePreview;
         window.EasyMDETestHooks.writeStoredWorkspaceRatio = writeStoredWorkspaceRatio;

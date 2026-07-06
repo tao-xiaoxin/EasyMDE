@@ -438,6 +438,7 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.handleWorkspaceDividerKey, 'function', 'bootstrap harness should expose handleWorkspaceDividerKey');
   assert.equal(typeof context.window.EasyMDETestHooks.hydrateInitialPreview, 'function', 'bootstrap harness should expose hydrateInitialPreview');
   assert.equal(typeof context.window.EasyMDETestHooks.initializeWorkspaceLayout, 'function', 'bootstrap harness should expose initializeWorkspaceLayout');
+  assert.equal(typeof context.window.EasyMDETestHooks.initializeTitleEditor, 'function', 'bootstrap harness should expose initializeTitleEditor');
   assert.equal(typeof context.window.EasyMDETestHooks.ensureImagePasteBound, 'function', 'bootstrap harness should expose ensureImagePasteBound');
   assert.equal(typeof context.window.EasyMDETestHooks.applyPublishPanelDraft, 'function', 'bootstrap harness should expose applyPublishPanelDraft');
   assert.equal(typeof context.window.EasyMDETestHooks.clearPublishPreviewRequest, 'function', 'bootstrap harness should expose clearPublishPreviewRequest');
@@ -446,6 +447,7 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.consumePublishPreviewRequest, 'function', 'bootstrap harness should expose consumePublishPreviewRequest');
   assert.equal(typeof context.window.EasyMDETestHooks.openPublishPanel, 'function', 'bootstrap harness should expose openPublishPanel');
   assert.equal(typeof context.window.EasyMDETestHooks.openMediaPicker, 'function', 'bootstrap harness should expose openMediaPicker');
+  assert.equal(typeof context.window.EasyMDETestHooks.normalizeTitleValue, 'function', 'bootstrap harness should expose normalizeTitleValue');
   assert.equal(typeof context.window.EasyMDETestHooks.readPublishPanelDraftFromNative, 'function', 'bootstrap harness should expose readPublishPanelDraftFromNative');
   assert.equal(typeof context.window.EasyMDETestHooks.readPublishPreviewRequest, 'function', 'bootstrap harness should expose readPublishPreviewRequest');
   assert.equal(typeof context.window.EasyMDETestHooks.rememberPublishPreviewRequest, 'function', 'bootstrap harness should expose rememberPublishPreviewRequest');
@@ -453,6 +455,7 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.readStoredWorkspaceRatio, 'function', 'bootstrap harness should expose readStoredWorkspaceRatio');
   assert.equal(typeof context.window.EasyMDETestHooks.setWorkspaceRatio, 'function', 'bootstrap harness should expose setWorkspaceRatio');
   assert.equal(typeof context.window.EasyMDETestHooks.showFlash, 'function', 'bootstrap harness should expose showFlash');
+  assert.equal(typeof context.window.EasyMDETestHooks.syncTitleEditorFromNative, 'function', 'bootstrap harness should expose syncTitleEditorFromNative');
   assert.equal(typeof context.window.EasyMDETestHooks.toggleImmersiveTitleHost, 'function', 'bootstrap harness should expose toggleImmersiveTitleHost');
   assert.equal(typeof context.window.EasyMDETestHooks.updatePreview, 'function', 'bootstrap harness should expose updatePreview');
   assert.equal(typeof context.window.EasyMDETestHooks.writeStoredWorkspaceRatio, 'function', 'bootstrap harness should expose writeStoredWorkspaceRatio');
@@ -628,28 +631,79 @@ function createAttributeNode(id = '') {
   };
 }
 
-function createImmersiveTitleContext() {
-  const header = createAttributeNode('easymde-immersive-header');
-  const host = createDomContainer('easymde-immersive-title-host');
-  const titleParent = createDomContainer('title-parent');
-  const titleWrap = createDomContainer('titlewrap');
-  const titleField = createAttributeNode('title');
+function createTextFieldNode(id = '', initialValue = '', placeholder = 'Add title') {
+  const attributes = new Map();
+  const listeners = new Map();
+  let currentValue = String(initialValue);
+  const node = {
+    attributes,
+    hidden: false,
+    id,
+    parentNode: null,
+    scrollHeight: 72,
+    selectionEnd: currentValue.length,
+    selectionStart: currentValue.length,
+    style: {
+      height: ''
+    },
+    addEventListener(type, handler) {
+      const eventName = String(type);
+      const handlers = listeners.get(eventName) || [];
 
-  titleWrap.appendChild(titleField);
-  titleParent.appendChild(titleWrap);
+      handlers.push(handler);
+      listeners.set(eventName, handlers);
+    },
+    dispatchEvent(event) {
+      const handlers = listeners.get(String(event.type || '')) || [];
+
+      for (const handler of [...handlers]) {
+        handler(event);
+      }
+
+      return !event.defaultPrevented;
+    },
+    getAttribute(name) {
+      return attributes.get(String(name)) || null;
+    },
+    listenerCount(type) {
+      return (listeners.get(String(type)) || []).length;
+    },
+    setAttribute(name, value) {
+      attributes.set(String(name), String(value));
+    }
+  };
+
+  attributes.set('placeholder', placeholder);
+
+  Object.defineProperty(node, 'value', {
+    get() {
+      return currentValue;
+    },
+    set(nextValue) {
+      currentValue = String(nextValue);
+    }
+  });
+
+  return node;
+}
+
+function createTitleEditorContext(nativeValue = '') {
+  const titleRegion = createAttributeNode('easymde-title-region');
+  const titleContainer = createAttributeNode('titlediv');
+  const titleEditor = createTextFieldNode('easymde-title-editor');
+  const titleField = createTextFieldNode('title', nativeValue);
 
   return {
     documentElements: {
-      'easymde-immersive-header': header,
-      'easymde-immersive-title-host': host,
+      'easymde-title-editor': titleEditor,
+      'easymde-title-region': titleRegion,
       title: titleField,
-      titlewrap: titleWrap
+      titlediv: titleContainer
     },
-    header,
-    host,
+    titleContainer,
+    titleEditor,
     titleField,
-    titleParent,
-    titleWrap
+    titleRegion
   };
 }
 
@@ -1120,8 +1174,8 @@ test('initializeWorkspaceLayout restores a stored ratio and binds divider keyboa
   assert.ok(context.sourceRatio < 0.6);
 });
 
-test('toggleImmersiveTitleHost reuses the native title node and restores it on exit', () => {
-  const titleNodes = createImmersiveTitleContext();
+test('initializeTitleEditor mirrors the native title into the visual editor and hides native title chrome', () => {
+  const titleNodes = createTitleEditorContext('Existing native title');
   const harness = loadBootstrap({}, {
     documentElements: titleNodes.documentElements
   });
@@ -1130,18 +1184,69 @@ test('toggleImmersiveTitleHost reuses the native title node and restores it on e
 
   const context = {};
 
-  harness.hooks.toggleImmersiveTitleHost(context, true);
+  harness.hooks.initializeTitleEditor(context);
 
-  assert.equal(titleNodes.header.hidden, false);
-  assert.equal(titleNodes.titleWrap.parentNode, titleNodes.host);
-  assert.deepEqual(titleNodes.host.children, [titleNodes.titleWrap]);
+  assert.equal(titleNodes.titleContainer.hidden, true);
+  assert.equal(titleNodes.titleEditor.value, 'Existing native title');
   assert.equal(titleNodes.titleField.getAttribute('aria-label'), 'Post title');
+  assert.equal(titleNodes.titleEditor.getAttribute('aria-label'), 'Post title');
+  assert.equal(titleNodes.titleEditor.style.height, '72px');
+});
 
-  harness.hooks.toggleImmersiveTitleHost(context, false);
+test('visual title input normalizes newline edits into the native single-line title without losing cursor position', () => {
+  const titleNodes = createTitleEditorContext('Draft');
+  const harness = loadBootstrap({}, {
+    documentElements: titleNodes.documentElements
+  });
+  const context = {};
 
-  assert.equal(titleNodes.header.hidden, true);
-  assert.equal(titleNodes.titleWrap.parentNode, titleNodes.titleParent);
-  assert.deepEqual(titleNodes.titleParent.children, [titleNodes.titleWrap]);
+  harness.window.EasyMDEConfig.strings.postTitle = 'Post title';
+  harness.hooks.initializeTitleEditor(context);
+
+  titleNodes.titleEditor.value = 'Cloudflare R2\nLine 2';
+  titleNodes.titleEditor.selectionStart = titleNodes.titleEditor.value.length;
+  titleNodes.titleEditor.selectionEnd = titleNodes.titleEditor.value.length;
+  titleNodes.titleEditor.dispatchEvent({ type: 'input' });
+
+  assert.equal(titleNodes.titleEditor.value, 'Cloudflare R2 Line 2');
+  assert.equal(titleNodes.titleField.value, 'Cloudflare R2 Line 2');
+  assert.equal(titleNodes.titleEditor.selectionStart, 'Cloudflare R2 Line 2'.length);
+  assert.equal(titleNodes.titleEditor.selectionEnd, 'Cloudflare R2 Line 2'.length);
+});
+
+test('title editor waits for compositionend before syncing IME input back to the native field', () => {
+  const titleNodes = createTitleEditorContext('Existing');
+  const harness = loadBootstrap({}, {
+    documentElements: titleNodes.documentElements
+  });
+  const context = {};
+
+  harness.hooks.initializeTitleEditor(context);
+
+  titleNodes.titleEditor.dispatchEvent({ type: 'compositionstart' });
+  titleNodes.titleEditor.value = '中文输入';
+  titleNodes.titleEditor.selectionStart = 4;
+  titleNodes.titleEditor.selectionEnd = 4;
+  titleNodes.titleEditor.dispatchEvent({ type: 'input' });
+  assert.equal(titleNodes.titleField.value, 'Existing');
+
+  titleNodes.titleEditor.dispatchEvent({ type: 'compositionend' });
+  assert.equal(titleNodes.titleField.value, '中文输入');
+});
+
+test('syncTitleEditorFromNative updates the visual title editor when WordPress changes the native field', () => {
+  const titleNodes = createTitleEditorContext('Native before');
+  const harness = loadBootstrap({}, {
+    documentElements: titleNodes.documentElements
+  });
+  const context = {};
+
+  harness.hooks.initializeTitleEditor(context);
+
+  titleNodes.titleField.value = 'Native after';
+  titleNodes.titleField.dispatchEvent({ type: 'input' });
+
+  assert.equal(titleNodes.titleEditor.value, 'Native after');
 });
 
 test('readPublishPanelDraftFromNative reflects native post state without writing fields', () => {

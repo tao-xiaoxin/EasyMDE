@@ -172,6 +172,22 @@ async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
   await expect(page.locator('#easymde-preview')).toContainText(expectedText);
 }
 
+function normalizeTitle(title) {
+  return title
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t\f\v]*\n+[ \t\f\v]*/g, ' ');
+}
+
+async function fillTitleAndWaitForSync(page, title) {
+  const normalized = normalizeTitle(title);
+
+  await page.locator('#easymde-title-editor').fill(title);
+  await expect(page.locator('#title')).toHaveValue(normalized);
+  await expect(page.locator('#easymde-title-editor')).toHaveValue(normalized);
+
+  return normalized;
+}
+
 test.describe('EasyMDE editor workflows', () => {
   test.beforeEach(async ({}, testInfo) => {
     const slug = testSlug(testInfo);
@@ -195,7 +211,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
-    await page.locator('#title').fill(title);
+    await fillTitleAndWaitForSync(page, title);
     await fillMarkdownAndWaitForPreview(page, markdown, title);
     await expect(page.locator('#easymde-preview')).toContainText('One');
     await publishOrUpdate(page);
@@ -248,7 +264,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
-    await page.locator('#title').fill(title);
+    await fillTitleAndWaitForSync(page, title);
     await fillMarkdownAndWaitForPreview(page, firstMarkdown, 'First revision body.');
     await publishOrUpdate(page);
 
@@ -256,14 +272,14 @@ test.describe('EasyMDE editor workflows', () => {
     let firstRevisionId = findRevisionByMarkdown(postId, firstMarkdown);
 
     if (!firstRevisionId) {
-      await page.locator('#title').fill(`${title} first saved revision`);
+      await fillTitleAndWaitForSync(page, `${title} first saved revision`);
       await publishOrUpdate(page);
       firstRevisionId = findRevisionByMarkdown(postId, firstMarkdown);
     }
 
     expect(firstRevisionId, JSON.stringify(revisionMarkdownSummary(postId))).toBeTruthy();
 
-    await page.locator('#title').fill(`${title} second saved revision`);
+    await fillTitleAndWaitForSync(page, `${title} second saved revision`);
     await fillMarkdownAndWaitForPreview(page, secondMarkdown, 'Second revision body.');
     await page.getByRole('button', { name: 'Appearance' }).click({ force: true });
     await expect(page.getByLabel('Article theme')).toBeVisible();
@@ -327,7 +343,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
-    await page.locator('#title').fill(title);
+    await fillTitleAndWaitForSync(page, title);
     await fillMarkdownAndWaitForPreview(page, markdown, 'Current preview body.');
     await page.locator('[data-easymde-command="copywechat"]').click();
 
@@ -374,21 +390,165 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
-    await page.locator('#title').fill(title);
+    await fillTitleAndWaitForSync(page, title);
     await fillMarkdownAndWaitForPreview(page, `# ${title}\n\nClipboard rejection body.`, 'Clipboard rejection body.');
     await page.locator('[data-easymde-command="copywechat"]').click();
 
     await expect(page.locator('.easymde-editor-flash.is-error')).toContainText('Copy for WeChat failed');
   });
 
-  test('immersive workspace keeps source left and preview right while exposing title, outline, stats, and divider controls', async ({ page }, testInfo) => {
+  test('title region stays above actions and toolbar, wraps long titles, and keeps the native title single-line in normal and immersive modes', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const rawTitle = `Cloudflare R2，手把手教你搭建个人图床！\n这是一条很长的文章标题，也必须完整自然换行显示 with-a-very-long-english-segment-and-url-like-path /docs/easymde/immersive/header/reflow/test 🚀 ${testSlug(testInfo)}`;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    const normalizedTitle = await fillTitleAndWaitForSync(page, rawTitle);
+
+    const normalLayout = await page.evaluate(() => {
+      const titleRegion = document.querySelector('#easymde-title-region');
+      const titleEditor = document.querySelector('#easymde-title-editor');
+      const actionRow = document.querySelector('#easymde-action-row');
+      const toolbar = document.querySelector('#easymde-toolbar');
+      const publishButton = document.querySelector('.easymde-toolbar-publish-toggle');
+      const versionHistory = document.querySelector('.easymde-action-row-button-history');
+      const lineHeight = Number.parseFloat(window.getComputedStyle(titleEditor).lineHeight);
+      const titleRect = titleEditor.getBoundingClientRect();
+      const actionRect = actionRow.getBoundingClientRect();
+      const toolbarRect = toolbar.getBoundingClientRect();
+      const publishRect = publishButton.getBoundingClientRect();
+      const versionRect = versionHistory.getBoundingClientRect();
+
+      return {
+        immersive: document.querySelector('#easymde-editor').classList.contains('easymde-editor-immersive'),
+        nativeTitle: document.querySelector('#title').value,
+        titleWrapHidden: document.querySelector('#titlediv')?.hidden ?? false,
+        selectionStart: titleEditor.selectionStart,
+        selectionEnd: titleEditor.selectionEnd,
+        activeElementId: document.activeElement ? document.activeElement.id : '',
+        titleHeight: titleEditor.clientHeight,
+        titleScrollWidth: titleEditor.scrollWidth,
+        titleClientWidth: titleEditor.clientWidth,
+        lineHeight,
+        titleRegionTop: titleRegion.getBoundingClientRect().top,
+        titleTop: titleRect.top,
+        actionTop: actionRect.top,
+        toolbarTop: toolbarRect.top,
+        titleWidth: titleRect.width,
+        actionWidth: actionRect.width,
+        publishRightGap: actionRect.right - publishRect.right,
+        publishSameRowAsHistory: Math.abs(publishRect.top - versionRect.top) < 2,
+        versionVisible: !!versionHistory && versionRect.width > 0 && versionRect.height > 0,
+        titleWhiteSpace: window.getComputedStyle(titleEditor).whiteSpace,
+        titleOverflow: window.getComputedStyle(titleEditor).overflow
+      };
+    });
+
+    expect(normalLayout.immersive).toBe(false);
+    expect(normalLayout.nativeTitle).toBe(normalizedTitle);
+    expect(normalLayout.titleWrapHidden).toBe(true);
+    expect(normalLayout.titleTop).toBeLessThan(normalLayout.actionTop);
+    expect(normalLayout.actionTop).toBeLessThan(normalLayout.toolbarTop);
+    expect(normalLayout.titleHeight).toBeGreaterThan(normalLayout.lineHeight * 1.5);
+    expect(normalLayout.titleScrollWidth).toBeLessThanOrEqual(normalLayout.titleClientWidth + 1);
+    expect(normalLayout.titleWidth).toBeGreaterThan(normalLayout.actionWidth * 0.85);
+    expect(normalLayout.publishRightGap).toBeLessThan(24);
+    expect(normalLayout.publishSameRowAsHistory).toBe(true);
+    expect(normalLayout.versionVisible).toBe(true);
+    expect(normalLayout.titleWhiteSpace).toBe('pre-wrap');
+    expect(normalLayout.titleOverflow).toBe('hidden');
+
+    await page.evaluate(() => {
+      const titleEditor = document.querySelector('#easymde-title-editor');
+
+      titleEditor.focus();
+      titleEditor.selectionStart = 12;
+      titleEditor.selectionEnd = 12;
+    });
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.locator('#easymde-editor')).toHaveClass(/easymde-editor-immersive/);
+
+    const immersiveLayout = await page.evaluate(() => {
+      const titleEditor = document.querySelector('#easymde-title-editor');
+      const titleRegion = document.querySelector('#easymde-title-region');
+      const actionRow = document.querySelector('#easymde-action-row');
+      const toolbar = document.querySelector('#easymde-toolbar');
+      const publishButton = document.querySelector('.easymde-toolbar-publish-toggle');
+      const actionRect = actionRow.getBoundingClientRect();
+      const publishRect = publishButton.getBoundingClientRect();
+
+      return {
+        immersive: document.querySelector('#easymde-editor').classList.contains('easymde-editor-immersive'),
+        activeElementId: document.activeElement ? document.activeElement.id : '',
+        nativeTitle: document.querySelector('#title').value,
+        selectionStart: titleEditor.selectionStart,
+        selectionEnd: titleEditor.selectionEnd,
+        titleTop: titleEditor.getBoundingClientRect().top,
+        titleRegionTop: titleRegion.getBoundingClientRect().top,
+        actionTop: actionRect.top,
+        toolbarTop: toolbar.getBoundingClientRect().top,
+        titleHeight: titleEditor.clientHeight,
+        titleScrollWidth: titleEditor.scrollWidth,
+        titleClientWidth: titleEditor.clientWidth,
+        publishRightGap: actionRect.right - publishRect.right
+      };
+    });
+
+    expect(immersiveLayout.immersive).toBe(true);
+    expect(immersiveLayout.nativeTitle).toBe(normalizedTitle);
+    expect(immersiveLayout.activeElementId).toBe('easymde-title-editor');
+    expect(immersiveLayout.selectionStart).toBe(12);
+    expect(immersiveLayout.selectionEnd).toBe(12);
+    expect(immersiveLayout.titleTop).toBeLessThan(immersiveLayout.actionTop);
+    expect(immersiveLayout.actionTop).toBeLessThan(immersiveLayout.toolbarTop);
+    expect(immersiveLayout.titleHeight).toBeGreaterThan(normalLayout.lineHeight * 1.5);
+    expect(immersiveLayout.titleScrollWidth).toBeLessThanOrEqual(immersiveLayout.titleClientWidth + 1);
+    expect(immersiveLayout.publishRightGap).toBeLessThan(24);
+
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#easymde-editor')).not.toHaveClass(/easymde-editor-immersive/);
+    await expect(page.locator('#easymde-title-editor')).toHaveValue(normalizedTitle);
+  });
+
+  test('title editor changes stay in memory until the next explicit save', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const originalTitle = `EasyMDE Stored Title ${testSlug(testInfo)}`;
+    const nextTitle = `Updated line one\nupdated line two ${testSlug(testInfo)}`;
+    const postId = runWp([
+      'post',
+      'create',
+      `--post_author=${user.id}`,
+      `--post_title=${originalTitle}`,
+      '--post_content=<p>Stored content.</p>',
+      '--post_status=draft',
+      '--porcelain'
+    ]);
+    const revisionsBefore = revisionIdsForPost(postId);
+
+    await login(page, user);
+    await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    const normalizedTitle = await fillTitleAndWaitForSync(page, nextTitle);
+
+    await page.waitForTimeout(900);
+
+    expect(runWp(['post', 'get', String(postId), '--field=post_title'])).toBe(originalTitle);
+    expect(revisionIdsForPost(postId)).toEqual(revisionsBefore);
+
+    await publishOrUpdate(page);
+
+    expect(runWp(['post', 'get', String(postId), '--field=post_title'])).toBe(normalizedTitle);
+  });
+
+  test('workspace keeps source left and preview right while exposing outline, stats, and divider controls in normal and immersive modes', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = `EasyMDE Immersive ${testSlug(testInfo)}`;
     const markdown = `# First heading\n\nIntro words here.\n\n## Second heading\n\nMore text.\n\n### Third heading`;
 
     await login(page, user);
     await openEasyMdeNewPost(page);
-    await page.locator('#title').fill(title);
+    await fillTitleAndWaitForSync(page, title);
     await fillMarkdownAndWaitForPreview(page, markdown, 'Second heading');
 
     const sourceBox = await page.locator('.easymde-pane-source').boundingBox();
@@ -398,19 +558,49 @@ test.describe('EasyMDE editor workflows', () => {
     expect(sourceBox && dividerBox && previewBox).toBeTruthy();
     expect(sourceBox.x).toBeLessThan(dividerBox.x);
     expect(dividerBox.x).toBeLessThan(previewBox.x);
-    expect(await page.evaluate(() => document.querySelector('.easymde-toolbar-outline-toggle').hidden)).toBe(true);
+    await expect(page.locator('.easymde-toolbar-outline-toggle')).toBeVisible();
+    await expect(page.locator('.easymde-toolbar-word-stats-toggle')).toBeVisible();
 
-    await page.locator('.easymde-toolbar-immersive-toggle').click();
-    await expect(page.locator('#easymde-editor')).toHaveClass(/easymde-editor-immersive/);
-    expect(await page.evaluate(() => !!document.querySelector('#easymde-immersive-title-host #title'))).toBe(true);
-    expect(await page.evaluate(() => document.querySelector('.easymde-toolbar-outline-toggle').hidden)).toBe(false);
-    expect(await page.evaluate(() => document.querySelector('.easymde-toolbar-word-stats-toggle').hidden)).toBe(false);
+    const normalChrome = await page.evaluate(() => {
+      const titleRegion = document.querySelector('#easymde-title-region').getBoundingClientRect();
+      const actionRow = document.querySelector('#easymde-action-row').getBoundingClientRect();
+      const toolbar = document.querySelector('#easymde-toolbar').getBoundingClientRect();
+      const toolbarButtons = Array.from(document.querySelectorAll('#easymde-toolbar [data-easymde-command]')).map((node) => {
+        const rect = node.getBoundingClientRect();
 
-    const ratioBefore = Number(await page.evaluate(() => getComputedStyle(document.querySelector('#easymde-editor')).getPropertyValue('--easymde-source-ratio')));
-    await page.locator('#easymde-divider').focus();
-    await page.keyboard.press('ArrowRight');
-    const ratioAfter = Number(await page.evaluate(() => getComputedStyle(document.querySelector('#easymde-editor')).getPropertyValue('--easymde-source-ratio')));
-    expect(ratioAfter).toBeGreaterThan(ratioBefore);
+        return {
+          height: Math.round(rect.height),
+          id: node.getAttribute('data-easymde-command'),
+          width: Math.round(rect.width)
+        };
+      });
+
+      return {
+        titleTop: titleRegion.top,
+        actionTop: actionRow.top,
+        toolbarButtons,
+        toolbarTop: toolbar.top
+      };
+    });
+    expect(normalChrome.titleTop).toBeLessThan(normalChrome.actionTop);
+    expect(normalChrome.actionTop).toBeLessThan(normalChrome.toolbarTop);
+    expect(normalChrome.toolbarButtons.map((button) => button.id)).toEqual([
+      'bold',
+      'italic',
+      'strike',
+      'quote',
+      'unorderedlist',
+      'orderedlist',
+      'inlinecode',
+      'codefence',
+      'link',
+      'image',
+      'copywechat'
+    ]);
+    for (const button of normalChrome.toolbarButtons) {
+      expect(button.height).toBeGreaterThanOrEqual(36);
+      expect(button.width).toBeGreaterThanOrEqual(38);
+    }
 
     await page.locator('.easymde-toolbar-outline-toggle').click();
     await expect(page.locator('#easymde-outline-rail')).toContainText('First heading');
@@ -420,6 +610,19 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('.easymde-toolbar-word-stats-toggle').click();
     await expect(page.locator('.easymde-word-stats-popover')).toContainText('Reading time');
     await expect(page.locator('.easymde-word-stats-popover')).toContainText('Total characters');
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.locator('#easymde-editor')).toHaveClass(/easymde-editor-immersive/);
+    const immersiveTitleBox = await page.locator('#easymde-title-editor').boundingBox();
+    const toolbarBox = await page.locator('#easymde-toolbar').boundingBox();
+    expect(immersiveTitleBox && toolbarBox).toBeTruthy();
+    expect(immersiveTitleBox.y).toBeLessThan(toolbarBox.y);
+
+    const ratioBefore = Number(await page.evaluate(() => getComputedStyle(document.querySelector('#easymde-editor')).getPropertyValue('--easymde-source-ratio')));
+    await page.locator('#easymde-divider').focus();
+    await page.keyboard.press('ArrowRight');
+    const ratioAfter = Number(await page.evaluate(() => getComputedStyle(document.querySelector('#easymde-editor')).getPropertyValue('--easymde-source-ratio')));
+    expect(ratioAfter).toBeGreaterThan(ratioBefore);
   });
 
   test('publish panel cancel stays zero-write, then confirm publishes tags and excerpt and opens preview after success', async ({ page }, testInfo) => {

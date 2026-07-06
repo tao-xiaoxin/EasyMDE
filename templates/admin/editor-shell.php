@@ -41,11 +41,13 @@ if ( $easymde_initial_preview_pending ) {
 	<input type="hidden" id="easymde-featured-image-mode-field" name="easymde_featured_image_mode" value="keep">
 	<input type="hidden" id="easymde-featured-image-id-field" name="easymde_featured_image_id" value="">
 	<input type="hidden" id="easymde-featured-image-url-field" name="easymde_featured_image_url" value="">
-	<div id="easymde-toolbar" class="easymde-toolbar" role="toolbar" aria-label="<?php esc_attr_e( 'Markdown toolbar', 'easymde' ); ?>"></div>
-	<div id="easymde-immersive-header" class="easymde-immersive-header" hidden>
-		<label class="easymde-immersive-title-label" for="title"><?php esc_html_e( 'Post title', 'easymde' ); ?></label>
-		<div id="easymde-immersive-title-host" class="easymde-immersive-title-host"></div>
+	<div id="easymde-title-region" class="easymde-title-region">
+		<p class="easymde-title-eyebrow"><?php esc_html_e( 'EasyMDE', 'easymde' ); ?></p>
+		<label class="easymde-title-label" for="easymde-title-editor"><?php esc_html_e( 'Post title', 'easymde' ); ?></label>
+		<textarea id="easymde-title-editor" class="easymde-title-editor" rows="1"></textarea>
 	</div>
+	<div id="easymde-action-row" class="easymde-action-row" aria-label="<?php esc_attr_e( 'Editor actions', 'easymde' ); ?>"></div>
+	<div id="easymde-toolbar" class="easymde-toolbar" role="toolbar" aria-label="<?php esc_attr_e( 'Markdown toolbar', 'easymde' ); ?>"></div>
 	<div class="easymde-workspace">
 		<aside id="easymde-outline-rail" class="easymde-outline-rail" aria-label="<?php esc_attr_e( 'Document outline', 'easymde' ); ?>" hidden></aside>
 		<section class="easymde-pane easymde-pane-source">

@@ -477,6 +477,17 @@ test.describe('EasyMDE editor workflows', () => {
       titleEditor.selectionEnd = 12;
     });
 
+    const focusStyle = await page.evaluate(() => {
+      const style = window.getComputedStyle(document.querySelector('#easymde-title-editor'));
+
+      return {
+        outlineStyle: style.outlineStyle,
+        outlineWidth: style.outlineWidth
+      };
+    });
+    expect(focusStyle.outlineStyle).not.toBe('none');
+    expect(Number.parseFloat(focusStyle.outlineWidth)).toBeGreaterThan(0);
+
     await page.locator('.easymde-toolbar-immersive-toggle').click();
     await expect(page.locator('#easymde-editor')).toHaveClass(/easymde-editor-immersive/);
 

@@ -799,7 +799,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     await page.locator('.easymde-toolbar-publish-toggle').click({ force: true });
     await expect(page.locator('.easymde-publish-panel-title')).toHaveText('Update article');
-    await page.getByRole('button', { name: 'Clear featured image' }).click();
+    await page.getByRole('button', { name: 'Clear featured image' }).click({ force: true });
     await expect(page.locator('.easymde-publish-panel-body')).toContainText('Will clear featured image');
     await page.locator('.easymde-publish-panel .button-primary').click();
     await expect(page.locator('#message, .notice-success')).toBeVisible();

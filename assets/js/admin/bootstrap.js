@@ -1155,9 +1155,9 @@
         return true;
     }
 
-    function createDraftStatus($toolbar) {
+    function createDraftStatus($container) {
         var $status = $('<span class="easymde-draft-status" aria-live="polite"></span>');
-        $toolbar.find('.easymde-toolbar-section-secondary').append($status);
+        $container.append($status);
 
         return $status;
     }
@@ -2310,8 +2310,11 @@
         createImmersiveToggleButton($secondary, context);
         createFontMenu($secondary, context.preview);
         createAppearanceMenu($secondary, context.root, context.preview, context.refreshPreview);
+        context.draftStatus = createDraftStatus($secondary);
 
         $toolbar.append($main, $secondary);
+
+        return context.draftStatus;
     }
 
     function createImmersiveToggleButton($container, context) {
@@ -2456,8 +2459,7 @@
             editorChromeReady = true;
             $flash = createFlash($root);
             context.flash = $flash;
-            createToolbar($toolbar, context);
-            $draftStatus = createDraftStatus($toolbar);
+            $draftStatus = createToolbar($toolbar, context);
             createSideActions($sideActions, context);
             bindScrollSync($source[0], $preview[0]);
             bindShortcuts($root, $source[0], context);

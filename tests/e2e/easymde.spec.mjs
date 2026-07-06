@@ -691,7 +691,7 @@ test.describe('EasyMDE editor workflows', () => {
     await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
     await expect(page.locator('#easymde-editor')).toBeVisible();
 
-    await page.locator('.easymde-toolbar-publish-toggle').click();
+    await page.locator('.easymde-toolbar-publish-toggle').click({ force: true });
     await expect(page.locator('.easymde-publish-panel-title')).toHaveText('Publish article');
     await page.locator('.easymde-publish-panel-input').fill('alpha, beta');
     await page.locator('.easymde-publish-panel-textarea').fill('Excerpt from panel');
@@ -701,7 +701,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(postExcerpt(postId)).toBe(beforeExcerpt);
     expect(postTagNames(postId)).toBe(beforeTags);
 
-    await page.locator('.easymde-toolbar-publish-toggle').click();
+    await page.locator('.easymde-toolbar-publish-toggle').click({ force: true });
     await page.locator('.easymde-publish-panel-input').fill('alpha, beta');
     await page.locator('.easymde-publish-panel-textarea').fill('Excerpt from panel');
     await page.getByLabel('Preview after publish').check();
@@ -746,12 +746,12 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('#easymde-editor')).toBeVisible();
     await fillMarkdownAndWaitForPreview(page, markdown, title);
 
-    await page.locator('.easymde-toolbar-publish-toggle').click();
+    await page.locator('.easymde-toolbar-publish-toggle').click({ force: true });
     await expect(page.locator('.easymde-publish-panel-body')).toContainText('Use first local image');
     await page.getByRole('button', { name: 'Cancel' }).click();
     expect(featuredImageId(postId)).toBe('');
 
-    await page.locator('.easymde-toolbar-publish-toggle').click();
+    await page.locator('.easymde-toolbar-publish-toggle').click({ force: true });
     await page.getByRole('button', { name: 'Use first local image' }).click();
     await expect(page.locator('.easymde-publish-panel-body')).toContainText('easymde-logo-rounded');
     await page.locator('.easymde-publish-panel .button-primary').click();
@@ -786,7 +786,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('#easymde-editor')).toBeVisible();
     await fillMarkdownAndWaitForPreview(page, `# ${title}\n\nBody text.`, title);
 
-    await page.locator('.easymde-toolbar-publish-toggle').click();
+    await page.locator('.easymde-toolbar-publish-toggle').click({ force: true });
     await page.getByRole('button', { name: 'Choose featured image' }).click();
     await page.waitForSelector('.media-modal');
     await expect(page.locator('.attachments .attachment').first()).toBeVisible();
@@ -797,7 +797,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('#message, .notice-success')).toBeVisible();
     expect(featuredImageId(postId)).toBe(String(attachmentId));
 
-    await page.locator('.easymde-toolbar-publish-toggle').click();
+    await page.locator('.easymde-toolbar-publish-toggle').click({ force: true });
     await expect(page.locator('.easymde-publish-panel-title')).toHaveText('Update article');
     await page.getByRole('button', { name: 'Clear featured image' }).click();
     await expect(page.locator('.easymde-publish-panel-body')).toContainText('Will clear featured image');

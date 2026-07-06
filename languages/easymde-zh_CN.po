@@ -285,9 +285,6 @@ msgstr "Markdown 源文"
 msgid "Markdown toolbar"
 msgstr "Markdown 工具栏"
 
-msgid "Markdown2Html default"
-msgstr "Markdown2Html 默认"
-
 msgid "Math block"
 msgstr "公式块"
 

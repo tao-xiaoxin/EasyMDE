@@ -169,6 +169,73 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_removed_builtin_theme_request_is_saved_as_default_theme_state()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '<p>Before save.</p>',
+            )
+        );
+
+        wp_set_current_user($user_id);
+
+        $markdown = "# Removed built-in theme\n\nSaved with a legacy theme identifier.";
+        $previous_post = $_POST;
+        $_POST = array(
+            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+            'easymde_enabled' => '1',
+            'easymde_markdown' => $markdown,
+            'easymde_markdown_theme' => 'md2html-normal',
+            'easymde_code_theme' => 'github',
+            'easymde_code_mac_style' => '1',
+        );
+
+        try {
+            $repository = $this->theme_state_repository();
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $repository,
+                function () {
+                    return true;
+                }
+            );
+
+            $rendered = $handler->render_markdown_post_content(
+                array(
+                    'post_type' => 'post',
+                    'post_content' => '<p>Before save.</p>',
+                ),
+                array(
+                    'ID' => $post_id,
+                    'post_type' => 'post',
+                )
+            );
+
+            $save_post = $_POST;
+            $_POST = array();
+            wp_update_post(
+                array(
+                    'ID' => $post_id,
+                    'post_content' => $rendered['post_content'],
+                )
+            );
+            $_POST = $save_post;
+
+            $handler->save_post_meta($post_id, get_post($post_id), true);
+
+            $this->assertSame('default', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
+            $this->assertSame(
+                'default',
+                get_user_meta($user_id, 'easymde_default_theme_state', true)['markdownTheme']
+            );
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
     public function test_missing_renderer_aborts_save_before_content_changes()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));

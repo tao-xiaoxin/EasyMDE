@@ -13,7 +13,6 @@ final class ArticleThemeRegistry {
 	public function all() {
 		$themes = array(
 			'default'        => $this->theme( 'default', __( 'Default theme', 'easymde' ), 'assets/themes/article/default.css' ),
-			'md2html-normal' => $this->theme( 'md2html-normal', __( 'Markdown2Html default', 'easymde' ), 'assets/themes/article/md2html-normal.css' ),
 			'orange-heart'   => $this->theme( 'orange-heart', __( 'Orange heart', 'easymde' ), 'assets/themes/article/orange-heart.css' ),
 			'chazi-purple'   => $this->theme( 'chazi-purple', __( 'Chazi purple', 'easymde' ), 'assets/themes/article/chazi-purple.css' ),
 			'nenqing-green'  => $this->theme( 'nenqing-green', __( 'Nenqing green', 'easymde' ), 'assets/themes/article/nenqing-green.css' ),

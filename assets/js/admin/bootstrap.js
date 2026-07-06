@@ -1865,10 +1865,6 @@
 
         setPreviewReady($preview);
 
-        if (renderState.markdownTheme === 'custom') {
-            setCustomCssStyle(selectedCustomCss());
-        }
-
         applyRenderState($preview, features);
 
         afterPreviewIdle(function () {
@@ -2276,7 +2272,7 @@
         var $secondary = $('<div class="easymde-toolbar-section easymde-toolbar-section-secondary"></div>');
         var exportCommands = getGroupCommands('main', 'export');
 
-        $toolbar.empty().append($main, $secondary);
+        $toolbar.empty();
 
         getGroupCommands('main', 'format').forEach(function (command) {
             $main.append(createCommandButton(command, { compact: true, context: context }));
@@ -2314,6 +2310,8 @@
         createImmersiveToggleButton($secondary, context);
         createFontMenu($secondary, context.preview);
         createAppearanceMenu($secondary, context.root, context.preview, context.refreshPreview);
+
+        $toolbar.append($main, $secondary);
     }
 
     function createImmersiveToggleButton($container, context) {

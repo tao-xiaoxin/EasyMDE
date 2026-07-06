@@ -38,7 +38,7 @@ if ( $easymde_initial_preview_pending ) {
 	<input type="hidden" id="easymde-windows-font-field" name="easymde_windows_font" value="<?php echo esc_attr( $easymde_theme_state['windowsFont'] ); ?>">
 	<input type="hidden" id="easymde-apple-font-field" name="easymde_apple_font" value="<?php echo esc_attr( $easymde_theme_state['appleFont'] ); ?>">
 	<input type="hidden" id="easymde-serif-font-field" name="easymde_serif_font" value="<?php echo esc_attr( $easymde_theme_state['serifFont'] ); ?>">
-	<div class="easymde-toolbar" role="toolbar" aria-label="<?php esc_attr_e( 'Markdown toolbar', 'easymde' ); ?>"></div>
+	<div id="easymde-toolbar" class="easymde-toolbar" role="toolbar" aria-label="<?php esc_attr_e( 'Markdown toolbar', 'easymde' ); ?>"></div>
 	<div class="easymde-workspace">
 		<section class="easymde-pane easymde-pane-preview">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Preview', 'easymde' ); ?></header>
@@ -58,6 +58,6 @@ if ( $easymde_initial_preview_pending ) {
 			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>
 			<textarea id="easymde-source" name="easymde_markdown" class="easymde-source" spellcheck="<?php echo esc_attr( $easymde_spellcheck ); ?>"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
 		</section>
-		<aside class="easymde-side-actions" aria-label="<?php esc_attr_e( 'Output actions', 'easymde' ); ?>"></aside>
+		<aside id="easymde-side-actions" class="easymde-side-actions" aria-label="<?php esc_attr_e( 'Output actions', 'easymde' ); ?>"></aside>
 	</div>
 </div>

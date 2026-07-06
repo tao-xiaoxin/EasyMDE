@@ -1484,6 +1484,68 @@ test('initEditor creates toolbar chrome before resolving server pending preview'
   assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
 });
 
+test('initEditor uses stable toolbar and side action ids before root fallback lookup', () => {
+  const rootLookups = [];
+  const jQueryRef = createJQueryStub(789, { runReady: true });
+  const root = {
+    ...createRootWrapper(789),
+    find(selector) {
+      rootLookups.push(selector);
+      return createContainerWrapper();
+    }
+  };
+  const source = createSourceWrapper('Plain startup.');
+  const preview = createPreviewWrapper('');
+
+  preview.attr('data-easymde-initial-preview', '0');
+  jQueryRef.register('#easymde-editor', root);
+  jQueryRef.register('#easymde-source', source);
+  jQueryRef.register('#easymde-preview', preview);
+  jQueryRef.register('#easymde-toolbar', createContainerWrapper());
+  jQueryRef.register('#easymde-side-actions', createContainerWrapper());
+  jQueryRef.register('#postdivrich', createContainerWrapper());
+  jQueryRef.register('#post', createContainerWrapper());
+
+  loadBootstrap({
+    EasyMDEDraftStorage: {
+      normalizeStorage() {
+        return {};
+      },
+      read() {
+        return null;
+      },
+      write() {},
+      discard() {},
+      formatTime() {
+        return '';
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      features: {
+        localDrafts: false
+      },
+      storage: {},
+      strings: {
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    }
+  }, { jQuery: jQueryRef });
+
+  assert.equal(root.attr('data-easymde-shell-ready'), '1');
+  assert.equal(rootLookups.includes('.easymde-toolbar'), false);
+  assert.equal(rootLookups.includes('.easymde-side-actions'), false);
+});
+
 test('initEditor starts immediately when the editor root is already parsed', () => {
   const order = [];
   const jQueryRef = createJQueryStub(789);

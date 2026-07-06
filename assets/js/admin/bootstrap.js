@@ -1068,10 +1068,10 @@
         $container.append($button);
     }
 
-    function createFlash($root) {
+    function createFlash($toolbar) {
         var $flash = $('<div class="easymde-editor-flash" hidden aria-live="polite"></div>');
 
-        $root.find('.easymde-toolbar').after($flash);
+        $toolbar.after($flash);
 
         return $flash;
     }
@@ -2284,26 +2284,29 @@
     function createToolbar($toolbar, context) {
         var $main = $('<div class="easymde-toolbar-section easymde-toolbar-section-main"></div>');
         var $secondary = $('<div class="easymde-toolbar-section easymde-toolbar-section-secondary"></div>');
+        var formatCommands = getGroupCommands('main', 'format');
+        var blockCommands = getGroupCommands('main', 'block');
+        var insertCommands = getGroupCommands('main', 'insert');
         var exportCommands = getGroupCommands('main', 'export');
 
         $toolbar.empty();
 
-        getGroupCommands('main', 'format').forEach(function (command) {
+        formatCommands.forEach(function (command) {
             $main.append(createCommandButton(command, { compact: true, context: context }));
         });
 
         createHeadingMenu($main, context.textarea);
 
-        if (getGroupCommands('main', 'block').length) {
+        if (blockCommands.length) {
             $main.append($('<span class="easymde-toolbar-divider" aria-hidden="true"></span>'));
-            getGroupCommands('main', 'block').forEach(function (command) {
+            blockCommands.forEach(function (command) {
                 $main.append(createCommandButton(command, { compact: true, context: context }));
             });
         }
 
-        if (getGroupCommands('main', 'insert').length) {
+        if (insertCommands.length) {
             $main.append($('<span class="easymde-toolbar-divider" aria-hidden="true"></span>'));
-            getGroupCommands('main', 'insert').forEach(function (command) {
+            insertCommands.forEach(function (command) {
                 $main.append(createCommandButton(command, { compact: true, context: context }));
             });
         }
@@ -2411,8 +2414,8 @@
         var $source = $('#easymde-source');
         var $preview = $('#easymde-preview');
         var $content = $('#postdivrich');
-        var $toolbar = $root.find('.easymde-toolbar');
-        var $sideActions = $root.find('.easymde-side-actions');
+        var $toolbar = $('#easymde-toolbar');
+        var $sideActions = $('#easymde-side-actions');
         var storage = window.EasyMDEDraftStorage.normalizeStorage(config, $root.data('post-id'));
         var initialMarkdown = null;
         var initialPreviewHydrated = false;
@@ -2427,6 +2430,14 @@
 
         if (!$root.length || !$source.length || !$preview.length) {
             return;
+        }
+
+        if (!$toolbar.length) {
+            $toolbar = $root.find('.easymde-toolbar');
+        }
+
+        if (!$sideActions.length) {
+            $sideActions = $root.find('.easymde-side-actions');
         }
 
         if ($content.length) {
@@ -2471,7 +2482,7 @@
             }
 
             editorChromeReady = true;
-            $flash = createFlash($root);
+            $flash = createFlash($toolbar);
             context.flash = $flash;
             $draftStatus = createToolbar($toolbar, context);
             createSideActions($sideActions, context);

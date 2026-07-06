@@ -71,17 +71,21 @@
     }
 
     function enhance(root, config) {
+        var tasks = [];
+
         if (!root) {
-            return;
+            return Promise.resolve();
         }
 
         highlightCode(root, config || {});
         if (window.EasyMDEMathRenderer) {
-            window.EasyMDEMathRenderer.render(root, config || {});
+            tasks.push(window.EasyMDEMathRenderer.render(root, config || {}));
         }
         if (window.EasyMDEMermaidRenderer) {
-            window.EasyMDEMermaidRenderer.render(root, config || {});
+            tasks.push(window.EasyMDEMermaidRenderer.render(root, config || {}));
         }
+
+        return Promise.all(tasks);
     }
 
     function storedTheme(config) {

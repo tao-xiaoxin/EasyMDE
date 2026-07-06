@@ -55,9 +55,16 @@ _easymde_custom_font
 _easymde_windows_font
 _easymde_apple_font
 _easymde_serif_font
+_easymde_render_signature
 ```
 
 Legacy detection uses `metadata_exists( 'post', $post_id, '_easymde_markdown' )` so empty Markdown drafts are still recognized as EasyMDE document state. Legacy posts and ordinary supported posts are lazily marked with `_easymde_enabled = 1` during the next valid EasyMDE save.
+
+`_easymde_render_signature` is an internal consistency marker written during
+valid EasyMDE saves and revision restores. The editor may reuse stored
+`post_content` for a fast initial preview only when this marker matches the
+current Markdown, article theme, and stored compatibility HTML; otherwise it
+renders from `_easymde_markdown`.
 
 ## Rendering
 
@@ -119,13 +126,14 @@ All EasyMDE REST routes use namespace `easymde/v1`.
 Current routes:
 
 - `POST /easymde/v1/preview`
+- `POST /easymde/v1/media`
 - `GET /easymde/v1/theme-options`
 - `POST /easymde/v1/custom-css`
 - `DELETE /easymde/v1/custom-css/{id}`
 
-Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
+Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Pasted-image media uploads require `upload_files`; when a `post_id` is present they also require `current_user_can( 'edit_post', $post_id )`, and without a `post_id` they require `edit_posts`. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
 
-Preview Markdown payloads are capped at 1 MiB.
+Preview Markdown payloads are capped at 1 MiB. EasyMDE media uploads accept local JPEG, PNG, GIF, and WebP image files only; remote image-provider uploads are not part of the REST surface.
 
 ## Compatibility Facade
 

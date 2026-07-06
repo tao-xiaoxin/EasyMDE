@@ -58,7 +58,8 @@ body.easymde-immersive-active {
 
 .easymde-workspace {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    grid-template-areas: "source preview actions";
     grid-template-rows: minmax(0, 1fr);
     height: max(720px, calc(100vh - 250px));
     min-height: 640px;
@@ -109,7 +110,12 @@ body.easymde-immersive-active .media-modal-backdrop {
 }
 
 .easymde-pane-source {
+    grid-area: source;
     border-right: 1px solid #dcdcde;
+}
+
+.easymde-pane-preview {
+    grid-area: preview;
 }
 
 .easymde-pane-header {
@@ -163,6 +169,7 @@ body.easymde-immersive-active .media-modal-backdrop {
 }
 
 .easymde-side-actions {
+    grid-area: actions;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -453,8 +460,13 @@ body.easymde-immersive-active .media-modal-backdrop {
 }
 
 .easymde-preview-empty,
+.easymde-preview-pending,
 .easymde-preview-error {
     color: #64748b;
+}
+
+.easymde-preview-pending {
+    font-style: italic;
 }
 
 .easymde-preview-error {
@@ -464,6 +476,10 @@ body.easymde-immersive-active .media-modal-backdrop {
 @media (max-width: 1080px) {
     .easymde-workspace {
         grid-template-columns: 1fr;
+        grid-template-areas:
+            "source"
+            "preview"
+            "actions";
         height: auto;
         min-height: 0;
     }

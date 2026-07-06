@@ -69,7 +69,7 @@ final class AdminAssets {
 			EASYMDE_VERSION
 		);
 
-		$this->frontend_assets->enqueue_render_assets( $post_id, '', true );
+		$this->frontend_assets->enqueue_editor_base_assets( $post_id );
 
 		wp_enqueue_script(
 			'easymde-editor-state',
@@ -91,6 +91,14 @@ final class AdminAssets {
 			'easymde-preview-client',
 			Asset::url( 'assets/js/admin/preview-client.js' ),
 			array( 'easymde-editor-state' ),
+			EASYMDE_VERSION,
+			true
+		);
+
+		wp_enqueue_script(
+			'easymde-preview-feature-loader',
+			Asset::url( 'assets/js/admin/preview-feature-loader.js' ),
+			array(),
 			EASYMDE_VERSION,
 			true
 		);
@@ -120,22 +128,6 @@ final class AdminAssets {
 		);
 
 		wp_enqueue_script(
-			'easymde-media-picker',
-			Asset::url( 'assets/js/admin/media-picker.js' ),
-			array(),
-			EASYMDE_VERSION,
-			true
-		);
-
-		wp_enqueue_script(
-			'easymde-wechat-exporter',
-			Asset::url( 'assets/js/admin/wechat-exporter.js' ),
-			array(),
-			EASYMDE_VERSION,
-			true
-		);
-
-		wp_enqueue_script(
 			'easymde-admin',
 			Asset::url( 'assets/js/admin/bootstrap.js' ),
 			array(
@@ -145,11 +137,10 @@ final class AdminAssets {
 				'easymde-editor-state',
 				'easymde-commands',
 				'easymde-preview-client',
+				'easymde-preview-feature-loader',
 				'easymde-theme-manager',
 				'easymde-toolbar',
 				'easymde-draft-storage',
-				'easymde-media-picker',
-				'easymde-wechat-exporter',
 			),
 			EASYMDE_VERSION,
 			true
@@ -161,21 +152,27 @@ final class AdminAssets {
 			'easymde-admin',
 			'EasyMDEConfig',
 			array(
-				'restUrl'          => esc_url_raw( rest_url( 'easymde/v1/preview' ) ),
-				'nonce'            => wp_create_nonce( 'wp_rest' ),
-				'features'         => $this->frontend_assets->get_all_features(),
-				'storage'          => $this->get_storage_config( $post_id ),
-				'themeOptionsUrl'  => esc_url_raw( rest_url( 'easymde/v1/theme-options' ) ),
-				'customCssUrl'     => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
-				'themeOptions'     => $this->theme_state_repository->get_theme_options_for_script( $post_id ),
-				'commands'         => $this->toolbar_registry->get_commands_for_script(),
-				'shortcuts'        => $this->settings_page->get_shortcut_config_for_script(),
-				'editorSettings'   => $this->settings_page->get_editor_settings(),
-				'copy'             => array(
+				'restUrl'                 => esc_url_raw( rest_url( 'easymde/v1/preview' ) ),
+				'nonce'                   => wp_create_nonce( 'wp_rest' ),
+				'features'                => $this->frontend_assets->get_feature_config( '' ),
+				'previewAssets'           => $this->frontend_assets->get_editor_preview_assets(),
+				'storage'                 => $this->get_storage_config( $post_id ),
+				'themeOptionsUrl'         => esc_url_raw( rest_url( 'easymde/v1/theme-options' ) ),
+				'customCssUrl'            => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
+				'imageUploadUrl'          => esc_url_raw( rest_url( 'easymde/v1/media' ) ),
+				'mediaPickerScriptUrl'    => esc_url_raw( add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( 'assets/js/admin/media-picker.js' ) ) ),
+				'imagePasteScriptUrl'     => esc_url_raw( add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( 'assets/js/admin/image-paste.js' ) ) ),
+				'wechatExporterScriptUrl' => esc_url_raw( add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( 'assets/js/admin/wechat-exporter.js' ) ) ),
+				'imageUpload'             => $this->get_image_upload_config(),
+				'themeOptions'            => $this->theme_state_repository->get_theme_options_for_script( $post_id ),
+				'commands'                => $this->toolbar_registry->get_commands_for_script(),
+				'shortcuts'               => $this->settings_page->get_shortcut_config_for_script(),
+				'editorSettings'          => $this->settings_page->get_editor_settings(),
+				'copy'                    => array(
 					'mode' => 'wechat-rich-text',
 				),
-				'shortcodeHelpers' => $this->toolbar_registry->get_shortcode_helpers_for_script(),
-				'strings'          => $this->get_strings(),
+				'shortcodeHelpers'        => $this->toolbar_registry->get_shortcode_helpers_for_script(),
+				'strings'                 => $this->get_strings(),
 			)
 		);
 	}
@@ -199,11 +196,19 @@ final class AdminAssets {
 		);
 	}
 
+	private function get_image_upload_config() {
+		return array(
+			'enabled'  => current_user_can( 'upload_files' ),
+			'maxBytes' => min( 10485760, (int) wp_max_upload_size() ),
+		);
+	}
+
 	private function get_strings() {
 		return array(
 			'editorLabel'           => __( 'Markdown source', 'easymde' ),
 			'previewLabel'          => __( 'Live preview', 'easymde' ),
 			'previewEmpty'          => __( 'Start writing Markdown to preview the article.', 'easymde' ),
+			'previewRendering'      => __( 'Rendering preview...', 'easymde' ),
 			'previewError'          => __( 'Preview failed. Please keep writing; saving is not affected.', 'easymde' ),
 			'insertMedia'           => __( 'Insert Media', 'easymde' ),
 			'enterImmersive'        => __( 'Enter immersive writing', 'easymde' ),
@@ -240,6 +245,14 @@ final class AdminAssets {
 			'copyWechatSuccess'     => __( 'Copied preview for WeChat.', 'easymde' ),
 			'copyWechatFailed'      => __( 'Copy for WeChat failed. Please try again in this browser.', 'easymde' ),
 			'copyWechatUnsupported' => __( 'Clipboard access is not available in this browser.', 'easymde' ),
+			'imagePasteUploading'   => __( 'Uploading pasted image...', 'easymde' ),
+			'imagePasteUploaded'    => __( 'Pasted image uploaded.', 'easymde' ),
+			'imagePasteFailed'      => __( 'Pasted image upload failed. Please use the media library instead.', 'easymde' ),
+			'imagePasteTooLarge'    => __( 'Pasted image is too large for this site.', 'easymde' ),
+			'imageDropUploading'    => __( 'Uploading dropped image...', 'easymde' ),
+			'imageDropUploaded'     => __( 'Dropped image uploaded.', 'easymde' ),
+			'imageDropFailed'       => __( 'Dropped image upload failed. Please use the media library instead.', 'easymde' ),
+			'imageDropTooLarge'     => __( 'Dropped image is too large for this site.', 'easymde' ),
 			'mediaAltText'          => __( 'alt text', 'easymde' ),
 			'mediaDefaultAlt'       => __( 'image', 'easymde' ),
 			'linkText'              => __( 'link text', 'easymde' ),

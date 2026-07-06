@@ -33,6 +33,14 @@ final class Migration {
 		return $post_id > 0 && metadata_exists( 'post', $post_id, PostDocument::META_MARKDOWN );
 	}
 
+	public function has_enabled_marker( $post_id ) {
+		$post_id = absint( $post_id );
+
+		return $post_id > 0
+			&& metadata_exists( 'post', $post_id, PostDocument::META_ENABLED )
+			&& '1' === (string) get_post_meta( $post_id, PostDocument::META_ENABLED, true );
+	}
+
 	public function mark_enabled( $post_id ) {
 		update_post_meta( absint( $post_id ), PostDocument::META_ENABLED, '1' );
 	}
@@ -65,6 +73,7 @@ final class Migration {
 			PostDocument::META_WINDOWS_FONT,
 			PostDocument::META_APPLE_FONT,
 			PostDocument::META_SERIF_FONT,
+			PostDocument::META_RENDER_SIGNATURE,
 		);
 	}
 
@@ -167,8 +176,9 @@ final class Migration {
 			case 'pre':
 				$code  = rtrim( (string) $node->textContent );
 				$fence = $this->backtick_fence( $code, 3 );
+				$info  = $this->code_block_info_string( $node );
 
-				return "\n\n" . $fence . "\n" . $code . "\n" . $fence . "\n\n";
+				return "\n\n" . $fence . $info . "\n" . $code . "\n" . $fence . "\n\n";
 
 			case 'code':
 				return $this->code_span( (string) $node->textContent );
@@ -185,6 +195,21 @@ final class Migration {
 			default:
 				return $children;
 		}
+	}
+
+	private function code_block_info_string( DOMElement $pre ) {
+		foreach ( $pre->childNodes as $child ) {
+			if ( ! ( $child instanceof DOMElement ) || 'code' !== strtolower( $child->tagName ) ) {
+				continue;
+			}
+
+			$class = (string) $child->getAttribute( 'class' );
+			if ( preg_match( '/(?:^|\s)(?:language|lang)-([a-z0-9_+.#-]+)(?:\s|$)/i', $class, $matches ) ) {
+				return 'mermaid' === strtolower( $matches[1] ) ? 'mermaid' : $matches[1];
+			}
+		}
+
+		return '';
 	}
 
 	private function contains_importable_html( $content ) {

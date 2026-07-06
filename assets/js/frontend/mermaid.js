@@ -30,8 +30,10 @@
     }
 
     function render(root, config) {
+        var tasks = [];
+
         if (!featureEnabled(config, 'mermaid') || !init(root)) {
-            return;
+            return Promise.resolve();
         }
 
         root.querySelectorAll('pre > code.language-mermaid:not([data-easymde-rendered])').forEach(function (code) {
@@ -43,14 +45,20 @@
             container.className = 'easymde-mermaid';
             code.dataset.easymdeRendered = '1';
 
-            window.mermaid.render(renderId, source).then(function (result) {
+            tasks.push(window.mermaid.render(renderId, source).then(function (result) {
+                if (!pre.parentNode) {
+                    return;
+                }
+
                 container.innerHTML = result.svg;
                 pre.parentNode.replaceChild(container, pre);
             }).catch(function () {
                 pre.classList.add('easymde-render-error');
                 pre.setAttribute('data-easymde-error', getString(config, 'renderingFailed'));
-            });
+            }));
         });
+
+        return Promise.all(tasks);
     }
 
     window.EasyMDEMermaidRenderer = {

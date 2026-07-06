@@ -9,6 +9,36 @@ use EasyMDE\Theme\ThemeStateRepository;
 
 final class FrontendAssetsTest extends WP_UnitTestCase
 {
+    public function tear_down()
+    {
+        foreach (array(
+            'easymde-content',
+            'easymde-article-theme',
+            'easymde-code-frame',
+            'easymde-highlight-theme',
+            'easymde-math',
+            'easymde-katex',
+            'easymde-toc',
+        ) as $handle) {
+            wp_dequeue_style($handle);
+            wp_deregister_style($handle);
+        }
+
+        foreach (array(
+            'easymde-enhancements',
+            'easymde-highlight',
+            'easymde-katex',
+            'easymde-math-renderer',
+            'easymde-mermaid',
+            'easymde-mermaid-renderer',
+        ) as $handle) {
+            wp_dequeue_script($handle);
+            wp_deregister_script($handle);
+        }
+
+        parent::tear_down();
+    }
+
     public function test_typora_derived_themes_enqueue_registered_article_stylesheet()
     {
         $themes = array(
@@ -27,7 +57,7 @@ final class FrontendAssetsTest extends WP_UnitTestCase
                 new PostDocument(),
                 new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
             );
-            $assets->enqueue_render_assets($post_id, '', false);
+            $assets->enqueue_render_assets($post_id, '');
 
             $registered = wp_styles()->registered;
 
@@ -48,5 +78,65 @@ final class FrontendAssetsTest extends WP_UnitTestCase
 
         $this->assertTrue($features['codeBlocks']);
         $this->assertTrue($features['syntaxHighlight']);
+    }
+
+    public function test_editor_base_assets_do_not_enqueue_optional_preview_runtimes()
+    {
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+
+        $assets->enqueue_editor_base_assets($post_id);
+
+        $this->assertTrue(wp_style_is('easymde-content', 'enqueued'));
+        $this->assertTrue(wp_style_is('easymde-article-theme', 'enqueued'));
+        $this->assertTrue(wp_script_is('easymde-enhancements', 'enqueued'));
+        $this->assertFalse(wp_script_is('easymde-highlight', 'enqueued'));
+        $this->assertFalse(wp_script_is('easymde-katex', 'enqueued'));
+        $this->assertFalse(wp_script_is('easymde-math-renderer', 'enqueued'));
+        $this->assertFalse(wp_script_is('easymde-mermaid', 'enqueued'));
+        $this->assertFalse(wp_script_is('easymde-mermaid-renderer', 'enqueued'));
+        $this->assertSame(array(), wp_scripts()->registered['easymde-enhancements']->deps);
+    }
+
+    public function test_feature_manifest_distinguishes_plain_code_math_and_mermaid()
+    {
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+
+        $plain = $assets->get_feature_config('Plain paragraph');
+        $code = $assets->get_feature_config("```php\necho 'hello';\n```");
+        $math = $assets->get_feature_config('Inline $a+b$ value');
+        $mermaid = $assets->get_feature_config("```mermaid\ngraph TD; A-->B;\n```");
+        $tilde_mermaid = $assets->get_feature_config("~~~ mermaid\ngraph TD; A-->B;\n~~~");
+        $indented_mermaid_example = $assets->get_feature_config("    ```mermaid\n    graph TD; A-->B;\n    ```");
+        $tab_indented_mermaid_example = $assets->get_feature_config("\t```mermaid\n\tgraph TD; A-->B;\n\t```");
+        $blockquote_mermaid = $assets->get_feature_config("> ```mermaid\n> graph TD; A-->B;\n> ```");
+
+        $this->assertFalse($plain['syntaxHighlight']);
+        $this->assertFalse($plain['math']);
+        $this->assertFalse($plain['mermaid']);
+        $this->assertTrue($code['codeBlocks']);
+        $this->assertTrue($code['syntaxHighlight']);
+        $this->assertTrue($math['math']);
+        $this->assertTrue($mermaid['codeBlocks']);
+        $this->assertTrue($mermaid['mermaid']);
+        $this->assertFalse($mermaid['syntaxHighlight']);
+        $this->assertTrue($tilde_mermaid['codeBlocks']);
+        $this->assertTrue($tilde_mermaid['mermaid']);
+        $this->assertFalse($tilde_mermaid['syntaxHighlight']);
+        $this->assertTrue($indented_mermaid_example['codeBlocks']);
+        $this->assertTrue($indented_mermaid_example['syntaxHighlight']);
+        $this->assertFalse($indented_mermaid_example['mermaid']);
+        $this->assertTrue($tab_indented_mermaid_example['codeBlocks']);
+        $this->assertTrue($tab_indented_mermaid_example['syntaxHighlight']);
+        $this->assertFalse($tab_indented_mermaid_example['mermaid']);
+        $this->assertTrue($blockquote_mermaid['codeBlocks']);
+        $this->assertTrue($blockquote_mermaid['mermaid']);
+        $this->assertFalse($blockquote_mermaid['syntaxHighlight']);
     }
 }

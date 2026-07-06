@@ -30,6 +30,24 @@ final class Capabilities {
 			: $this->forbidden( 'easymde_rest_cannot_preview' );
 	}
 
+	public function can_upload_media( WP_REST_Request $request ) {
+		$post_id = absint( $request->get_param( 'post_id' ) );
+
+		if ( ! current_user_can( 'upload_files' ) ) {
+			return $this->forbidden( 'easymde_rest_cannot_upload_media' );
+		}
+
+		if ( $post_id > 0 ) {
+			return $this->can_edit_post( $post_id )
+				? true
+				: $this->forbidden( 'easymde_rest_cannot_edit_post' );
+		}
+
+		return current_user_can( 'edit_posts' )
+			? true
+			: $this->forbidden( 'easymde_rest_cannot_create_posts' );
+	}
+
 	public function can_manage_custom_css( WP_REST_Request $request ) {
 		unset( $request );
 

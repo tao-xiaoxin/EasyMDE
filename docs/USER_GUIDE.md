@@ -24,9 +24,13 @@ Saving and publishing still use WordPress. EasyMDE mirrors the Markdown source i
 
 The compact toolbar includes common Markdown actions for formatting, headings, quotes, lists, code, links, images, and Copy to WeChat. Keyboard shortcuts are Typora-inspired by default. Administrators can change Windows/Linux and macOS shortcut bindings from **Settings > EasyMDE**.
 
+Administrators can also enable browser spellcheck for the Markdown source editor from **Settings > EasyMDE**. This uses the browser's local spellchecker only; it does not change saved Markdown or rendered HTML.
+
 ## Media Insertion
 
 Use the image/media toolbar action to open the WordPress media library. After selecting one image, EasyMDE inserts Markdown image syntax using the attachment URL and available alt/title text.
+
+When the current user can upload media, pasting a local clipboard image or dropping a local image file into the Markdown source uploads that image to the WordPress media library and inserts Markdown image syntax after the upload succeeds. EasyMDE accepts local JPEG, PNG, GIF, and WebP images; remote image-provider uploads are not used.
 
 If the WordPress media frame is unavailable, the command falls back to inserting Markdown image delimiters so the source text remains editable.
 

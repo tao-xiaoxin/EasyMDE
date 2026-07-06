@@ -45,12 +45,20 @@ _easymde_code_theme
 _easymde_code_mac_style
 _easymde_custom_css_id
 _easymde_custom_css_snapshot
+_easymde_custom_font
+_easymde_windows_font
+_easymde_apple_font
+_easymde_serif_font
+_easymde_render_signature
 ```
 
 Rules:
 
 * `_easymde_markdown` is the authoritative Markdown source.
 * `post_content` is rendered HTML for WordPress compatibility, feeds, plugins, and themes.
+* `_easymde_render_signature` is an internal consistency marker for reusing
+  stored compatibility HTML; it must never replace Markdown as the source of
+  truth.
 * Existing posts without `_easymde_enabled` but with an existing `_easymde_markdown` meta record are legacy EasyMDE document-state posts.
 * Use `metadata_exists()` when detecting legacy Markdown posts. Do not rely on an empty-string value check alone.
 * Saving a legacy EasyMDE post must write `_easymde_enabled = 1`.

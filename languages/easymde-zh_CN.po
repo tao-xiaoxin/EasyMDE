@@ -150,6 +150,9 @@ msgstr "EasyMDE 渲染器不可用"
 msgid "EasyMDE requires Composer dependencies before Markdown can be rendered or saved. Run composer install for development or include vendor/ in release packages."
 msgstr "EasyMDE 需要 Composer 依赖才能渲染或保存 Markdown。开发环境请运行 composer install，发布包请包含 vendor/。"
 
+msgid "Enable browser spellcheck in the Markdown editor"
+msgstr "在 Markdown 编辑器中启用浏览器拼写检查"
+
 msgid "Enter immersive writing"
 msgstr "进入沉浸写作"
 
@@ -267,6 +270,9 @@ msgstr "Mac 代码框"
 msgid "Markdown"
 msgstr "Markdown"
 
+msgid "Markdown editor"
+msgstr "Markdown 编辑器"
+
 msgid "Markdown preview content is too large."
 msgstr "Markdown 预览内容过大。"
 
@@ -337,6 +343,9 @@ msgstr "不会在启用插件后跳转，也不会重定向无关后台页面。
 msgid "No custom CSS saved yet."
 msgstr "尚未保存自定义 CSS。"
 
+msgid "No image file was provided for upload."
+msgstr "未提供要上传的图片文件。"
+
 msgid "No custom font"
 msgstr "无自定义字体"
 
@@ -345,6 +354,9 @@ msgstr "无 Windows 特定字体（青碧流金）"
 
 msgid "No Windows-specific font (qinghe-zhusha)"
 msgstr "无 Windows 特定字体（清河朱砂）"
+
+msgid "Only JPEG, PNG, GIF, or WebP images can be uploaded into EasyMDE."
+msgstr "只能将 JPEG、PNG、GIF 或 WebP 图片上传到 EasyMDE。"
 
 msgid "Optima"
 msgstr "Optima"
@@ -369,6 +381,24 @@ msgstr "输出操作"
 
 msgid "Paragraph"
 msgstr "正文"
+
+msgid "Dropped image is too large for this site."
+msgstr "拖放的图片超过了本站允许的大小。"
+
+msgid "Dropped image upload failed. Please use the media library instead."
+msgstr "拖放图片上传失败。请改用媒体库。"
+
+msgid "Dropped image uploaded."
+msgstr "拖放图片已上传。"
+
+msgid "Pasted image is too large for this site."
+msgstr "粘贴的图片超过了本站允许的大小。"
+
+msgid "Pasted image upload failed. Please use the media library instead."
+msgstr "粘贴图片上传失败。请改用媒体库。"
+
+msgid "Pasted image uploaded."
+msgstr "粘贴图片已上传。"
 
 msgid "PingFang SC Light"
 msgstr "苹方简体细体"
@@ -405,6 +435,9 @@ msgstr "红绯"
 
 msgid "Rendering failed."
 msgstr "渲染失败。"
+
+msgid "Rendering preview..."
+msgstr "正在渲染预览..."
 
 msgid "Restore draft"
 msgstr "恢复草稿"
@@ -448,6 +481,18 @@ msgstr "科技蓝"
 msgid "The CSS parser dependency is unavailable. Custom CSS cannot be rendered safely."
 msgstr "CSS 解析器依赖不可用，无法安全渲染自定义 CSS。"
 
+msgid "The image could not be saved to the WordPress media library."
+msgstr "无法将图片保存到 WordPress 媒体库。"
+
+msgid "The image could not be uploaded."
+msgstr "无法上传图片。"
+
+msgid "The image is larger than the allowed upload size."
+msgstr "图片超过了允许的上传大小。"
+
+msgid "The uploaded image URL is unavailable."
+msgstr "上传后的图片 URL 不可用。"
+
 msgid "Times"
 msgstr "Times"
 
@@ -463,8 +508,17 @@ msgstr "Typora 风格快捷键"
 msgid "Unordered list"
 msgstr "无序列表"
 
+msgid "Uploading dropped image..."
+msgstr "正在上传拖放的图片..."
+
+msgid "Uploading pasted image..."
+msgstr "正在上传粘贴的图片..."
+
 msgid "Use the current Typora-inspired default by leaving the field blank."
 msgstr "留空即可继续使用当前 Typora 风格默认值。"
+
+msgid "Uses the browser spellchecker only; saved Markdown and rendered HTML stay unchanged."
+msgstr "仅使用浏览器拼写检查；保存的 Markdown 和渲染后的 HTML 保持不变。"
 
 msgid "VS2015"
 msgstr "VS2015"
@@ -477,6 +531,9 @@ msgstr "Windows / Linux"
 
 msgid "Windows font"
 msgstr "Windows 字体"
+
+msgid "Writing settings"
+msgstr "写作设置"
 
 msgid "Xcode"
 msgstr "Xcode"

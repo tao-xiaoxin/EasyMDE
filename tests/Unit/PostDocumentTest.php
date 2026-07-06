@@ -95,4 +95,18 @@ final class PostDocumentTest extends WP_UnitTestCase
 
         $this->assertSame('Use ```tick ` and `` runs```.', $document->get_markdown(get_post($post_id)));
     }
+
+    public function test_imported_pre_code_preserves_language_class()
+    {
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_content' => '<pre><code class="language-mermaid">graph TD; A-->B;</code></pre>',
+            )
+        );
+
+        $document = new PostDocument();
+
+        $this->assertSame("```mermaid\ngraph TD; A-->B;\n```", $document->get_markdown(get_post($post_id)));
+    }
 }

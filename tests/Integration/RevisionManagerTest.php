@@ -60,6 +60,10 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertSame('serif-only', get_post_meta($post_id, PostDocument::META_SERIF_FONT, true));
         $this->assertStringContainsString('Restored', get_post($post_id)->post_content);
         $this->assertStringNotContainsString('Current', get_post($post_id)->post_content);
+        $this->assertSame(
+            (new PostDocument())->render_signature('# Restored', 'custom', get_post($post_id)->post_content),
+            get_post_meta($post_id, PostDocument::META_RENDER_SIGNATURE, true)
+        );
     }
 
     public function test_restore_revision_meta_restores_font_settings()
@@ -130,6 +134,7 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertSame('0', get_post_meta($post_id, PostDocument::META_CODE_MAC_STYLE, true));
         $this->assertSame('p { color: blue; }', get_post_meta($post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, true));
         $this->assertSame('<p>Revision HTML</p>', get_post($post_id)->post_content);
+        $this->assertFalse(metadata_exists('post', $post_id, PostDocument::META_RENDER_SIGNATURE));
     }
 
     public function test_restore_pre_easymde_revision_clears_markdown_state_and_restores_revision_content()
@@ -456,6 +461,11 @@ final class RevisionManagerTest extends WP_UnitTestCase
         update_post_meta($post_id, PostDocument::META_WINDOWS_FONT, 'microsoft-yahei');
         update_post_meta($post_id, PostDocument::META_APPLE_FONT, 'pingfang-sc-light');
         update_post_meta($post_id, PostDocument::META_SERIF_FONT, 'serif-only');
+        update_post_meta(
+            $post_id,
+            PostDocument::META_RENDER_SIGNATURE,
+            (new PostDocument())->render_signature('# Snapshot', 'orange-heart', '<p>Snapshot</p>')
+        );
 
         $revision_id = wp_insert_post(
             array(

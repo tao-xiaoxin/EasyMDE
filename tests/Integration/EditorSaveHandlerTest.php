@@ -160,6 +160,10 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             $this->assertSame('github', get_post_meta($post_id, PostDocument::META_CODE_THEME, true));
             $this->assertSame('0', get_post_meta($post_id, PostDocument::META_CODE_MAC_STYLE, true));
             $this->assertSame($rendered['post_content'], get_post($post_id)->post_content);
+            $this->assertSame(
+                (new PostDocument())->render_signature($markdown, 'default', $rendered['post_content']),
+                get_post_meta($post_id, PostDocument::META_RENDER_SIGNATURE, true)
+            );
         } finally {
             $_POST = $previous_post;
         }

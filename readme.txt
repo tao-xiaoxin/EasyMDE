@@ -25,7 +25,8 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 * Compact icon toolbar for common Markdown formatting actions.
 * Heading, appearance, and output controls in compact popovers.
 * Typora-inspired keyboard shortcuts with configurable Windows/Linux and macOS bindings.
-* WordPress media library insertion.
+* Optional browser spellcheck for the Markdown source editor.
+* WordPress media library insertion, plus local image paste and drag-and-drop upload.
 * REST-powered server preview.
 * Browser local draft autosave and recovery.
 * Temporary immersive writing mode for a larger editing workspace.
@@ -130,7 +131,7 @@ Yes. Add `[TOC]` or `[toc]` on its own line in the Markdown source.
 
 = Can I insert WordPress media? =
 
-Yes. Use the media button in the EasyMDE toolbar to insert an image from the WordPress media library.
+Yes. Use the media button in the EasyMDE toolbar to insert an image from the WordPress media library. Authors who can upload media can also paste or drop local JPEG, PNG, GIF, or WebP images into the Markdown source; EasyMDE uploads them to the WordPress media library before inserting Markdown image syntax.
 
 = Can I copy an article into the WeChat Official Accounts editor? =
 

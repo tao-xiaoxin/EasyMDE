@@ -2,7 +2,9 @@
 
 use EasyMDE\Admin\EditorScreen;
 use EasyMDE\Admin\PostModeController;
+use EasyMDE\Content\MarkdownRenderer;
 use EasyMDE\Content\PostDocument;
+use EasyMDE\Support\Options;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
 use EasyMDE\Theme\CustomCssPolicy;
@@ -42,6 +44,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
             unregister_post_type('movie');
         }
 
+        delete_option(Options::EDITOR_SETTINGS);
         wp_set_current_user(0);
 
         parent::tear_down();
@@ -295,7 +298,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
             array(
                 'post_type' => 'post',
                 'post_author' => $user_id,
-                'post_content' => '<p>Existing HTML content.</p>',
+                'post_content' => '<div class="legacy-shell"><p>Existing <strong>HTML</strong> content.</p><script>alert("x")</script></div>',
             )
         );
 
@@ -321,10 +324,312 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $output = ob_get_clean();
 
         $this->assertStringContainsString('id="easymde-editor"', $output);
-        $this->assertStringContainsString('Existing HTML content.', $output);
+        $this->assertStringContainsString('spellcheck="false"', $output);
+        $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
+        $this->assertStringContainsString('<div class="legacy-shell">', $output);
+        $this->assertStringContainsString('Existing <strong>HTML</strong> content.', $output);
+        $this->assertStringNotContainsString('<script>', $output);
         $this->assertSame($before_content, get_post($post_id)->post_content);
         $this->assertSame($before_meta, get_post_meta($post_id));
         $this->assertSame($before_revision_count, count(wp_get_post_revisions($post_id)));
+    }
+
+    public function test_editor_shell_uses_pending_initial_preview_when_stored_markdown_cannot_reuse_html()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '',
+            )
+        );
+        update_post_meta(
+            $post_id,
+            PostDocument::META_MARKDOWN,
+            "## Initial preview\n\n<script>alert('x')</script>\n\n**Ready before JavaScript refresh.**\n\n```js\nconsole.log('fast');\n```"
+        );
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $post_document = new PostDocument();
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('id="easymde-preview"', $output);
+        $this->assertStringContainsString('data-easymde-initial-preview="0"', $output);
+        $this->assertStringContainsString('data-easymde-preview-refreshing="1"', $output);
+        $this->assertStringContainsString('aria-busy="true"', $output);
+        $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
+        $this->assertStringNotContainsString('<h2 id="initial-preview">Initial preview</h2>', $output);
+        $this->assertStringNotContainsString('<strong>Ready before JavaScript refresh.</strong>', $output);
+        $this->assertStringNotContainsString('<script>', $output);
+    }
+
+    public function test_editor_shell_streams_pending_preview_before_large_source_payload()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '',
+            )
+        );
+        update_post_meta(
+            $post_id,
+            PostDocument::META_MARKDOWN,
+            "# Fast preview\n\n" . str_repeat("Long source line for startup parsing.\n\n", 200)
+        );
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $post_document = new PostDocument();
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $preview_position = strpos($output, 'id="easymde-preview"');
+        $source_position = strpos($output, 'id="easymde-source"');
+
+        $this->assertNotFalse($preview_position);
+        $this->assertNotFalse($source_position);
+        $this->assertLessThan($source_position, $preview_position);
+        $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
+        $this->assertStringNotContainsString('<h1>Fast preview</h1>', $output);
+        $this->assertStringContainsString('id="easymde-source" name="easymde_markdown"', $output);
+        $this->assertStringNotContainsString('id="easymde-markdown-field"', $output);
+    }
+
+    public function test_editor_shell_markdown_fingerprint_matches_textarea_newline_normalization()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $markdown = "Windows line one\r\nWindows line two\rClassic line three";
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '',
+            )
+        );
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, $markdown);
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $post_document = new PostDocument();
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $normalized = str_replace(array("\r\n", "\r"), "\n", $markdown);
+        $expected = strlen($normalized) . ':' . hash('fnv1a32', $normalized);
+
+        $this->assertStringContainsString('data-easymde-markdown-fingerprint="' . esc_attr($expected) . '"', $output);
+    }
+
+    public function test_editor_shell_reuses_stored_compatibility_html_for_initial_preview()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $markdown = "Stored compatible HTML.\n\n**Already rendered.**";
+        $stored_preview = MarkdownRenderer::render($markdown, 'default');
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => $stored_preview,
+            )
+        );
+        $post_document = new PostDocument();
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, $markdown);
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta(
+            $post_id,
+            PostDocument::META_RENDER_SIGNATURE,
+            $post_document->render_signature($markdown, 'default', $stored_preview)
+        );
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
+        $this->assertStringContainsString('<p>Stored compatible HTML.</p>', $output);
+        $this->assertStringContainsString('<strong>Already rendered.</strong>', $output);
+    }
+
+    public function test_editor_shell_shows_provisional_preview_when_stored_preview_signature_is_missing()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '<p>Stale compatibility HTML.</p><script>alert("x")</script>',
+            )
+        );
+        update_post_meta(
+            $post_id,
+            PostDocument::META_MARKDOWN,
+            "# Current enabled Markdown\n\n**Authoritative source.**"
+        );
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $post_document = new PostDocument();
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('data-easymde-initial-preview="0"', $output);
+        $this->assertStringContainsString('data-easymde-initial-preview-provisional="1"', $output);
+        $this->assertStringContainsString('data-easymde-preview-refreshing="1"', $output);
+        $this->assertStringContainsString('aria-busy="true"', $output);
+        $this->assertStringContainsString('<p>Stale compatibility HTML.</p>', $output);
+        $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
+        $this->assertStringNotContainsString('<h1>Current enabled Markdown</h1>', $output);
+        $this->assertStringNotContainsString('<strong>Authoritative source.</strong>', $output);
+        $this->assertStringNotContainsString('<script>', $output);
+    }
+
+    public function test_editor_shell_shows_provisional_preview_when_stored_preview_signature_is_stale()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '<p>Stale compatibility HTML.</p><script>alert("x")</script>',
+            )
+        );
+        $markdown = "# Current signed Markdown\n\n**Still authoritative.**";
+        $post_document = new PostDocument();
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, $markdown);
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta(
+            $post_id,
+            PostDocument::META_RENDER_SIGNATURE,
+            $post_document->render_signature($markdown, 'default', '<p>Previous compatibility HTML.</p>')
+        );
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+        $_POST = array();
+
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('data-easymde-initial-preview="0"', $output);
+        $this->assertStringContainsString('data-easymde-initial-preview-provisional="1"', $output);
+        $this->assertStringContainsString('data-easymde-preview-refreshing="1"', $output);
+        $this->assertStringContainsString('aria-busy="true"', $output);
+        $this->assertStringContainsString('<p>Stale compatibility HTML.</p>', $output);
+        $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
+        $this->assertStringNotContainsString('<h1>Current signed Markdown</h1>', $output);
+        $this->assertStringNotContainsString('<strong>Still authoritative.</strong>', $output);
+        $this->assertStringNotContainsString('<script>', $output);
+    }
+
+    public function test_spellcheck_editor_setting_controls_source_textarea_attribute()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => 'Draft text for spellcheck.',
+            )
+        );
+
+        update_option(
+            Options::EDITOR_SETTINGS,
+            array(
+                'spellcheck_enabled' => 1,
+            )
+        );
+
+        wp_set_current_user($user_id);
+
+        $GLOBALS['pagenow'] = 'post.php';
+        $_GET = array(
+            'post' => (string) $post_id,
+            'action' => 'edit',
+        );
+
+        $post_document = new PostDocument();
+        $controller = new PostModeController($post_document);
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository(), new Options());
+
+        ob_start();
+        $screen->render_editor_shell(get_post($post_id));
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('spellcheck="true"', $output);
     }
 
     public function test_post_list_edit_link_and_direct_edit_entry_use_same_editor_rule()

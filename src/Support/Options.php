@@ -24,4 +24,26 @@ final class Options {
 
 		return is_array( $stored ) ? $stored : array();
 	}
+
+	public function is_editor_spellcheck_enabled() {
+		$settings = $this->get_editor_settings();
+
+		if ( ! array_key_exists( 'spellcheck_enabled', $settings ) ) {
+			return false;
+		}
+
+		return $this->is_truthy_setting( $settings['spellcheck_enabled'] );
+	}
+
+	private function is_truthy_setting( $value ) {
+		if ( true === $value || 1 === $value ) {
+			return true;
+		}
+
+		if ( is_string( $value ) ) {
+			return in_array( strtolower( trim( $value ) ), array( '1', 'true', 'yes', 'on' ), true );
+		}
+
+		return false;
+	}
 }

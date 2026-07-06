@@ -783,13 +783,14 @@
         themeManager.applyArticleThemeLink(themeOptions, renderState, findById, document);
     }
 
-    function applyRenderState($preview, features) {
+    function applyRenderState($preview, features, options) {
         var preview = $preview[0];
         var markdownClass = renderState.markdownTheme === 'custom'
             ? 'easymde-markdown-theme-custom'
             : 'easymde-markdown-theme-' + renderState.markdownTheme;
         var fontStack = buildFontStack();
 
+        options = options || {};
         features = normalizePreviewFeatures(features || activePreviewFeatures);
 
         if (!preview) {
@@ -809,7 +810,9 @@
             preview.style.removeProperty('--easymde-content-font-family');
         }
 
-        syncThemeFields();
+        if (options.syncFields !== false) {
+            syncThemeFields();
+        }
         syncFontControls();
         applyArticleThemeLink();
         applyCodeThemeLink(features.syntaxHighlight);
@@ -1876,7 +1879,7 @@
 
         setPreviewReady($preview);
 
-        applyRenderState($preview, features);
+        applyRenderState($preview, features, { syncFields: false });
 
         afterPreviewIdle(function () {
             if (!isPreviewCurrent(revision, signature, markdown)) {

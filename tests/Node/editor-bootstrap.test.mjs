@@ -792,6 +792,7 @@ test('initEditor hydrates server-rendered preview before waiting for shell paint
   const root = createRootWrapper(789);
   const source = createSourceWrapper('Plain initial preview.');
   const preview = createPreviewWrapper('<p>Plain initial preview.</p>');
+  const hiddenFields = Array.from({ length: 9 }, () => createTrackedValueWrapper());
   let apiFetchCalled = false;
   let rafCalled = false;
 
@@ -802,15 +803,15 @@ test('initEditor hydrates server-rendered preview before waiting for shell paint
   jQueryRef.register('#easymde-preview', preview);
   jQueryRef.register('#postdivrich', createContainerWrapper());
   jQueryRef.register('#post', createContainerWrapper());
-  jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
-  jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
-  jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
-  jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
-  jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
-  jQueryRef.register('#easymde-apple-font-field', createContainerWrapper());
-  jQueryRef.register('#easymde-serif-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-field', hiddenFields[0]);
+  jQueryRef.register('#easymde-markdown-theme-field', hiddenFields[1]);
+  jQueryRef.register('#easymde-code-theme-field', hiddenFields[2]);
+  jQueryRef.register('#easymde-code-mac-style-field', hiddenFields[3]);
+  jQueryRef.register('#easymde-custom-css-id-field', hiddenFields[4]);
+  jQueryRef.register('#easymde-custom-font-field', hiddenFields[5]);
+  jQueryRef.register('#easymde-windows-font-field', hiddenFields[6]);
+  jQueryRef.register('#easymde-apple-font-field', hiddenFields[7]);
+  jQueryRef.register('#easymde-serif-font-field', hiddenFields[8]);
 
   loadBootstrap({
     requestAnimationFrame() {
@@ -864,6 +865,11 @@ test('initEditor hydrates server-rendered preview before waiting for shell paint
   assert.equal(preview.html(), '<p>Plain initial preview.</p>');
   assert.equal(preview.attr('aria-busy'), 'false');
   assert.equal(preview.attr('data-easymde-preview-refreshing'), undefined);
+  assert.deepEqual(
+    hiddenFields.flatMap((field) => field.state.writes),
+    [],
+    'server-rendered preview hydration should not rewrite hidden fields before shell paint'
+  );
 });
 
 test('hydrateInitialPreview avoids initial layout scroll measurement when preview is at top', () => {
@@ -1659,8 +1665,8 @@ test('initEditor applies server-rendered preview appearance before deferred enha
   assert.match(preview[0].className, /\beasymde-markdown-theme-github\b/);
   assert.match(preview[0].className, /\beasymde-code-theme-github\b/);
   assert.match(preview[0].className, /\beasymde-code-mac\b/);
-  assert.equal(markdownThemeField.state.writes[0], 'github');
-  assert.equal(codeThemeField.state.writes[0], 'github');
+  assert.deepEqual(markdownThemeField.state.writes, []);
+  assert.deepEqual(codeThemeField.state.writes, []);
   assert.equal(featureLoaderCalled, false);
   assert.deepEqual(order, []);
 

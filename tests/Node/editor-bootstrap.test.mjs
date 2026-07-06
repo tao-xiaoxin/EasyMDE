@@ -256,6 +256,11 @@ function createPreviewWrapper(html = '') {
       : null;
   }
 
+  function readClassName() {
+    classes.clear();
+    String(node.className || '').split(/\s+/).filter(Boolean).forEach((entry) => classes.add(entry));
+  }
+
   function syncClassName() {
     node.className = Array.from(classes).join(' ');
   }
@@ -267,6 +272,7 @@ function createPreviewWrapper(html = '') {
     length: 1,
     findCalls: 0,
     addClass(name) {
+      readClassName();
       String(name).split(/\s+/).filter(Boolean).forEach((entry) => classes.add(entry));
       syncClassName();
       return this;
@@ -302,6 +308,7 @@ function createPreviewWrapper(html = '') {
       return this;
     },
     toggleClass(name, enabled) {
+      readClassName();
       if (enabled) {
         classes.add(name);
       } else {
@@ -1565,6 +1572,97 @@ test('initEditor starts immediately when the editor root is already parsed', () 
   assert.equal(root.attr('data-easymde-shell-ready'), '1');
   assert.equal(preview.html(), '<p>Plain initial preview.</p>');
   assert.equal(source.valueReadCount(), 0);
+});
+
+test('initEditor applies server-rendered preview appearance before deferred enhancement work', async () => {
+  const order = [];
+  const jQueryRef = createJQueryStub(789, { runReady: true });
+  const root = createRootWrapper(789);
+  const source = createSourceWrapper('```js\nconsole.log(1);\n```');
+  const preview = createPreviewWrapper('<pre><code class="language-js">console.log(1);</code></pre>');
+  let featureLoaderCalled = false;
+
+  preview.attr('data-easymde-initial-preview', '1');
+  preview.attr('data-easymde-preview-features', JSON.stringify({
+    codeBlocks: true,
+    syntaxHighlight: true
+  }));
+  jQueryRef.register('#easymde-editor', root);
+  jQueryRef.register('#easymde-source', source);
+  jQueryRef.register('#easymde-preview', preview);
+  jQueryRef.register('#postdivrich', createContainerWrapper());
+  jQueryRef.register('#post', createContainerWrapper());
+  jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
+  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
+  jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-apple-font-field', createContainerWrapper());
+  jQueryRef.register('#easymde-serif-font-field', createContainerWrapper());
+
+  const markdownThemeField = createTrackedValueWrapper();
+  const codeThemeField = createTrackedValueWrapper();
+  jQueryRef.register('#easymde-markdown-theme-field', markdownThemeField);
+  jQueryRef.register('#easymde-code-theme-field', codeThemeField);
+
+  loadBootstrap({
+    EasyMDEDraftStorage: {
+      normalizeStorage() {
+        return {};
+      },
+      read() {
+        return null;
+      },
+      write() {},
+      discard() {},
+      formatTime() {
+        return '';
+      }
+    },
+    EasyMDEPreviewFeatureLoader: {
+      ensurePreviewFeatures() {
+        featureLoaderCalled = true;
+        order.push('load-features');
+        return Promise.resolve();
+      },
+      normalizeFeatures
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      features: {
+        localDrafts: false
+      },
+      storage: {},
+      strings: {
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {
+          markdownTheme: 'github',
+          codeTheme: 'github',
+          codeMacStyle: true
+        }
+      }
+    }
+  }, { jQuery: jQueryRef });
+
+  assert.match(preview[0].className, /\beasymde-markdown-theme-github\b/);
+  assert.match(preview[0].className, /\beasymde-code-theme-github\b/);
+  assert.match(preview[0].className, /\beasymde-code-mac\b/);
+  assert.equal(markdownThemeField.state.writes[0], 'github');
+  assert.equal(codeThemeField.state.writes[0], 'github');
+  assert.equal(featureLoaderCalled, false);
+  assert.deepEqual(order, []);
+
+  await flushMicrotasks();
+
+  assert.deepEqual(order, [], 'optional renderers should still wait for the deferred enhancement path');
 });
 
 test('initEditor defers initial preview enhancement until after toolbar chrome is ready', async () => {

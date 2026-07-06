@@ -1869,12 +1869,13 @@
             setCustomCssStyle(selectedCustomCss());
         }
 
+        applyRenderState($preview, features);
+
         afterPreviewIdle(function () {
             if (!isPreviewCurrent(revision, signature, markdown)) {
                 return;
             }
 
-            applyRenderState($preview, features);
             restorePreviewScroll(previewNode, scrollState);
         });
 

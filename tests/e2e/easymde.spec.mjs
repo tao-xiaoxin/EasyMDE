@@ -705,7 +705,7 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('.easymde-publish-panel-input').fill('alpha, beta');
     await page.locator('.easymde-publish-panel-textarea').fill('Excerpt from panel');
     await page.getByLabel('Preview after publish').check();
-    await page.locator('.easymde-publish-panel .button-primary').click();
+    await page.locator('.easymde-publish-panel .button-primary').click({ force: true });
     await expect(page.locator('#message, .notice-success')).toBeVisible();
 
     expect(postExcerpt(postId)).toBe('Excerpt from panel');

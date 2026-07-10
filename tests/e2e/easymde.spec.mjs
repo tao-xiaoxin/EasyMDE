@@ -60,7 +60,7 @@ function deleteUserContent(userId) {
     'post',
     'list',
     `--author=${userId}`,
-    '--post_type=post,page',
+    '--post_type=post,page,attachment',
     '--post_status=any',
     '--format=ids'
   ]);
@@ -70,6 +70,43 @@ function deleteUserContent(userId) {
   }
 
   runWp(['user', 'delete', userId, '--yes', '--reassign=1']);
+}
+
+async function uploadTestImage(page, filename, altText) {
+  const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+  return page.evaluate(async ({ alt, base64, name }) => {
+    const bytes = Uint8Array.from(window.atob(base64), (character) => character.charCodeAt(0));
+    const response = await window.fetch('/wp-json/wp/v2/media?context=edit', {
+      method: 'POST',
+      headers: {
+        'Content-Disposition': `attachment; filename="${name}"`,
+        'Content-Type': 'image/png',
+        'X-WP-Nonce': window.EasyMDEConfig.nonce
+      },
+      body: bytes
+    });
+
+    if (!response.ok) {
+      throw new Error(`Media upload failed with HTTP ${response.status}: ${await response.text()}`);
+    }
+
+    const media = await response.json();
+    const update = await window.fetch(`/wp-json/wp/v2/media/${media.id}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-WP-Nonce': window.EasyMDEConfig.nonce
+      },
+      body: JSON.stringify({ alt_text: alt })
+    });
+
+    if (!update.ok) {
+      throw new Error(`Media alt-text update failed with HTTP ${update.status}: ${await update.text()}`);
+    }
+
+    return update.json();
+  }, { alt: altText, base64: pngBase64, name: filename });
 }
 
 async function login(page, user) {
@@ -115,6 +152,22 @@ function revisionIdsForPost(postId) {
 
 function postContent(postId) {
   return runWp(['post', 'get', String(postId), '--field=content']);
+}
+
+function postExcerpt(postId) {
+  return runWp(['post', 'get', String(postId), '--field=excerpt']);
+}
+
+function postTagNames(postId) {
+  return runWp(['post', 'term', 'list', String(postId), 'post_tag', '--field=name']);
+}
+
+function postMetaValue(postId, key) {
+  const output = runWp(['post', 'meta', 'list', String(postId), '--format=json']);
+  const rows = output ? JSON.parse(output) : [];
+  const row = rows.find((item) => item.meta_key === key);
+
+  return row ? String(row.meta_value || '') : '';
 }
 
 function easymdeMetaSnapshot(postId) {
@@ -166,6 +219,634 @@ test.describe('EasyMDE editor workflows', () => {
     if (testInfo.easymdeUser) {
       deleteUserContent(testInfo.easymdeUser.id);
     }
+  });
+
+  test('opens the isolated article workspace without changing the normal WordPress editor', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `Immersive Workspace ${testSlug(testInfo)}`;
+    const markdown = `# ${title}\n\nWorkspace body with **real preview**.`;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+
+    const legacyThemeKey = await page.evaluate(() => {
+      const storage = window.EasyMDEConfig.storage;
+      return `easymde:theme:${storage.siteKey}:${storage.userId}`;
+    });
+    await page.evaluate((key) => window.localStorage.setItem(key, 'dark'), legacyThemeKey);
+    await page.reload();
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    await expect(page.locator('.easymde-toolbar-button[title="Dark mode"], .easymde-toolbar-button[title="Light mode"]')).toHaveCount(0);
+    await expect(page.locator('#easymde-editor')).not.toHaveClass(/easymde-theme-(?:dark|light)/);
+    await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), legacyThemeKey)).toBe('dark');
+
+    const normalState = await page.evaluate(() => {
+      const editor = document.querySelector('#easymde-editor');
+      const titleField = document.querySelector('#title');
+      const sourcePane = document.querySelector('.easymde-pane-source').getBoundingClientRect();
+      const previewPane = document.querySelector('.easymde-pane-preview').getBoundingClientRect();
+
+      return {
+        darkModeFeaturePresent: Object.prototype.hasOwnProperty.call(window.EasyMDEConfig.features, 'darkMode'),
+        editorPosition: window.getComputedStyle(editor).position,
+        previewLeft: previewPane.left,
+        sourceLeft: sourcePane.left,
+        titleVisible: titleField.getBoundingClientRect().height > 0,
+        workspaceCount: document.querySelectorAll('.easymde-immersive-workspace').length
+      };
+    });
+    expect(normalState.darkModeFeaturePresent).toBe(false);
+    expect(normalState.workspaceCount).toBe(0);
+    expect(normalState.titleVisible).toBe(true);
+    expect(normalState.editorPosition).not.toBe('fixed');
+    expect(normalState.sourceLeft).toBeLessThan(normalState.previewLeft);
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.locator('.easymde-immersive-workspace')).toBeVisible();
+    await expect(page.locator('#easymde-editor')).not.toHaveClass(/easymde-editor-immersive/);
+    await expect(page.locator('.easymde-immersive-workspace__outline-card')).toBeHidden();
+    await expect(page.locator('[data-popover="statistics"]')).toBeHidden();
+
+    const workspaceStyle = await page.locator('.easymde-immersive-workspace').evaluate((node) => {
+      const style = window.getComputedStyle(node);
+      return {
+        background: style.backgroundColor,
+        position: style.position
+      };
+    });
+    expect(workspaceStyle.position).toBe('fixed');
+    expect(workspaceStyle.background).not.toBe('rgb(14, 15, 20)');
+
+    await page.evaluate(() => {
+      const nativeTitle = document.querySelector('#title');
+      nativeTitle.value = 'Native title change';
+      nativeTitle.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+    await expect(page.locator('.easymde-immersive-workspace__title')).toHaveValue('Native title change');
+
+    await page.locator('.easymde-immersive-workspace__title').evaluate((field) => {
+      field.dispatchEvent(new window.CompositionEvent('compositionstart', { bubbles: true }));
+      field.value = '中文组合标题';
+      field.dispatchEvent(new window.InputEvent('input', { bubbles: true, inputType: 'insertCompositionText' }));
+    });
+    await expect(page.locator('#title')).toHaveValue('Native title change');
+    await page.locator('.easymde-immersive-workspace__title').evaluate((field) => {
+      field.dispatchEvent(new window.CompositionEvent('compositionend', { bubbles: true, data: field.value }));
+    });
+    await expect(page.locator('#title')).toHaveValue('中文组合标题');
+
+    await page.locator('.easymde-immersive-workspace__title').fill(`${title}\nSecond line`);
+    await page.locator('.easymde-immersive-workspace__source').fill(markdown);
+    await expect(page.locator('#title')).toHaveValue(`${title} Second line`);
+    await expect(page.locator('#easymde-source')).toHaveValue(markdown);
+    await page.locator('.easymde-immersive-workspace__secondary-actions [data-action="toggle-outline"]').click();
+    await expect(page.locator('.easymde-immersive-workspace__outline-card')).toBeVisible();
+    await expect(page.locator('.easymde-immersive-workspace__outline-entry')).toContainText(title);
+    await expect(page.locator('.easymde-immersive-workspace__preview')).toContainText('Workspace body with real preview.');
+
+    const statisticsToggle = page.locator('[data-action="statistics"]');
+    await statisticsToggle.click();
+    await expect(page.locator('[data-popover="statistics"]')).toBeVisible();
+    await expect(page.locator('[data-stat="read-minutes"]')).toHaveText(/^\d+$/);
+    await expect(page.locator('[data-stat="lines"]')).toHaveText(/^\d+$/);
+    await expect(page.locator('[data-stat="words"]')).toHaveText(/^\d+$/);
+    await expect(page.locator('[data-stat="cjk"]')).toHaveText(/^\d+$/);
+    await expect(page.locator('[data-stat="characters"]')).toHaveText(/^\d+$/);
+    await expect(page.locator('[data-statistics-help]')).toContainText('300 reading units per minute');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-popover="statistics"]')).toBeHidden();
+    await expect(statisticsToggle).toBeFocused();
+    await expect(page.locator('.easymde-immersive-workspace')).toBeVisible();
+    await statisticsToggle.click();
+    await page.locator('.easymde-immersive-workspace__title').click();
+    await expect(page.locator('[data-popover="statistics"]')).toBeHidden();
+
+    const splitLayout = await page.evaluate(() => {
+      const source = document.querySelector('.easymde-immersive-workspace__editor-card').getBoundingClientRect();
+      const preview = document.querySelector('.easymde-immersive-workspace__preview-card').getBoundingClientRect();
+      return { sourceLeft: source.left, previewLeft: preview.left };
+    });
+    expect(splitLayout.sourceLeft).toBeLessThan(splitLayout.previewLeft);
+
+    const nativeBeforeCancel = await page.evaluate(() => ({
+      excerpt: document.querySelector('#excerpt').value,
+      tags: document.querySelector('#tax-input-post_tag').value,
+      thumbnail: document.querySelector('#_thumbnail_id')?.value || ''
+    }));
+    await page.locator('[data-action="publish"]').click();
+    await expect(page.locator('.easymde-immersive-workspace__publish')).toBeVisible();
+    await page.locator('[data-publish-tags]').fill('Changed, draft');
+    await page.locator('[data-publish-excerpt]').fill('Unsaved publish draft');
+    await page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last().click();
+    const nativeAfterCancel = await page.evaluate(() => ({
+      excerpt: document.querySelector('#excerpt').value,
+      tags: document.querySelector('#tax-input-post_tag').value,
+      thumbnail: document.querySelector('#_thumbnail_id')?.value || ''
+    }));
+    expect(nativeAfterCancel).toEqual(nativeBeforeCancel);
+
+    await page.locator('[data-action="ai"]').click();
+    await expect(page.locator('.easymde-immersive-workspace__ai')).toContainText('not connected to article data');
+    await page.locator('[data-action="close-ai"]').click();
+
+    await page.locator('[data-action="exit"]').click();
+    await expect(page.locator('.easymde-immersive-workspace')).toHaveCount(0);
+    await expect(page.locator('#title')).toBeVisible();
+    await expect(page.locator('#title')).toHaveValue(`${title} Second line`);
+    await expect(page.locator('#easymde-source')).toHaveValue(markdown);
+    await expect(page.locator('#easymde-preview')).toContainText('Workspace body with real preview.');
+  });
+
+  test('keeps immersive focus, shortcuts, icons, dialogs, and exit state scoped to the workspace', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    const boldTitle = await page.locator('[data-easymde-command="bold"]').getAttribute('title');
+    const shortcut = boldTitle && boldTitle.includes('Cmd+B') ? 'Meta+B' : 'Control+B';
+    await page.locator('#easymde-source').fill('plain\nsecond line');
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.locator('.easymde-immersive-workspace')).toBeVisible();
+
+    const isolation = await page.evaluate(() => ({
+      ariaHidden: document.querySelector('#wpwrap').getAttribute('aria-hidden'),
+      inert: document.querySelector('#wpwrap').inert,
+      focusClass: document.activeElement?.className || ''
+    }));
+    expect(isolation.ariaHidden).toBeNull();
+    expect(isolation.inert).toBe(true);
+    expect(isolation.focusClass).toContain('easymde-immersive-workspace__source');
+
+    await expect(page.locator('[data-command="bold"] .dashicons-editor-bold')).toHaveCount(1);
+    await expect(page.locator('[data-action="wechat"] .easymde-wechat-glyph')).toHaveCount(1);
+    await expect(page.locator('[data-command="table"]')).toHaveAttribute(
+      'aria-label',
+      await page.evaluate(() => window.EasyMDEConfig.strings.table)
+    );
+    await expect(page.locator('.easymde-immersive-workspace__line-number')).toHaveCount(2);
+    const unnamedWorkspaceFields = await page.locator('.easymde-immersive-workspace').evaluate((workspace) => (
+      Array.from(workspace.querySelectorAll('input, textarea, select'))
+        .filter((field) => !field.id && !field.name)
+        .map((field) => field.outerHTML)
+    ));
+    expect(unnamedWorkspaceFields).toEqual([]);
+
+    await page.locator('.easymde-immersive-workspace__title').fill('Shortcut title');
+    await page.locator('.easymde-immersive-workspace__title').press(shortcut);
+    await expect(page.locator('.easymde-immersive-workspace__source')).toHaveValue('plain\nsecond line');
+
+    const source = page.locator('.easymde-immersive-workspace__source');
+    await source.focus();
+    await source.evaluate((node) => node.setSelectionRange(0, 5));
+    await source.press(shortcut);
+    await expect(source).toHaveValue('**plain**\nsecond line');
+
+    await source.fill('# Root heading\n\n## Child heading');
+    await page.locator('.easymde-immersive-workspace__secondary-actions [data-action="toggle-outline"]').click();
+    await expect(page.locator('.easymde-immersive-workspace__outline-card')).toBeVisible();
+    const rootOutlineEntry = page.locator('.easymde-immersive-workspace__outline-entry').nth(0);
+    const childOutlineEntry = page.locator('.easymde-immersive-workspace__outline-entry').nth(1);
+    await expect(rootOutlineEntry.locator('.dashicons-media-document')).toHaveCount(1);
+    await expect(childOutlineEntry.locator('.easymde-immersive-workspace__outline-connector')).toHaveCount(1);
+    await childOutlineEntry.click();
+    await expect(childOutlineEntry).toHaveAttribute('aria-current', 'location');
+    const outlineStyles = await childOutlineEntry.evaluate((entry) => {
+      const connector = entry.querySelector('.easymde-immersive-workspace__outline-connector');
+      const entryStyle = window.getComputedStyle(entry);
+      const connectorStyle = window.getComputedStyle(connector);
+
+      return {
+        backgroundColor: entryStyle.backgroundColor,
+        display: entryStyle.display,
+        connectorWidth: Number.parseFloat(connectorStyle.width)
+      };
+    });
+    expect(outlineStyles.display).toBe('flex');
+    expect(outlineStyles.connectorWidth).toBeGreaterThan(0);
+    expect(outlineStyles.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+
+    const divider = page.locator('.easymde-immersive-workspace__divider');
+    await divider.focus();
+    await divider.press('End');
+    await expect(divider).toHaveAttribute('aria-valuenow', '75');
+    await divider.press('Home');
+    await expect(divider).toHaveAttribute('aria-valuenow', '25');
+    const mainBox = await page.locator('.easymde-immersive-workspace__main').boundingBox();
+    const dividerBox = await divider.boundingBox();
+    expect(mainBox).toBeTruthy();
+    expect(dividerBox).toBeTruthy();
+    await page.mouse.move(dividerBox.x + dividerBox.width / 2, dividerBox.y + dividerBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(mainBox.x + mainBox.width * 0.66, dividerBox.y + dividerBox.height / 2, { steps: 4 });
+    await page.mouse.up();
+    const persistedDividerValue = Number.parseInt(await divider.getAttribute('aria-valuenow'), 10);
+    expect(persistedDividerValue).toBeGreaterThanOrEqual(60);
+    expect(persistedDividerValue).toBeLessThanOrEqual(70);
+
+    await page.evaluate(() => {
+      window.__easymdeOriginalStorageSetItem = window.Storage.prototype.setItem;
+      window.Storage.prototype.setItem = () => {
+        throw new window.DOMException('Storage blocked for test', 'SecurityError');
+      };
+    });
+    await divider.press('ArrowRight');
+    const blockedStorageDividerValue = Number.parseInt(await divider.getAttribute('aria-valuenow'), 10);
+    expect(blockedStorageDividerValue).toBeGreaterThan(persistedDividerValue);
+    expect(blockedStorageDividerValue).toBeLessThanOrEqual(Math.min(75, persistedDividerValue + 3));
+    await page.evaluate(() => {
+      window.Storage.prototype.setItem = window.__easymdeOriginalStorageSetItem;
+      delete window.__easymdeOriginalStorageSetItem;
+    });
+
+    await page.locator('[data-action="history"]').click();
+    await expect(page.locator('.easymde-immersive-workspace__history')).toBeVisible();
+    expect(await page.evaluate(() => (
+      document.activeElement?.closest('.easymde-immersive-workspace__history') !== null
+    ))).toBe(true);
+    await page.locator('[data-publish-backdrop]').click({ position: { x: 4, y: 4 } });
+    await expect(page.locator('.easymde-immersive-workspace__history')).toBeHidden();
+    await expect(page.locator('[data-action="history"]')).toBeFocused();
+
+    await page.locator('[data-action="publish"]').click();
+    const publishConfirm = page.locator('[data-action="confirm-publish"]');
+    const publishClose = page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').first();
+    await expect(publishConfirm).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(publishClose).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(publishConfirm).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.easymde-immersive-workspace__publish')).toBeHidden();
+
+    await source.fill('# Local AI boundary\n\nPRIVATE_ARTICLE_TOKEN');
+    await page.waitForTimeout(500);
+    const storageKeysBeforeAi = await page.evaluate(() => Object.keys(window.localStorage).sort());
+    const aiRequests = [];
+    page.on('request', (request) => aiRequests.push(request.url()));
+    await page.locator('[data-action="ai"]').click();
+    const aiPanel = page.locator('.easymde-immersive-workspace__ai');
+    const aiInput = page.locator('#easymde-immersive-ai-input');
+    await expect(aiPanel).toBeVisible();
+    await expect(aiInput).toBeFocused();
+    await expect(aiPanel).not.toContainText('PRIVATE_ARTICLE_TOKEN');
+    await aiInput.fill('Local demo question');
+    await aiInput.press('Enter');
+    await expect(aiPanel).toContainText('No article data was read or sent.');
+    expect(aiRequests).toEqual([]);
+    expect(await page.evaluate(() => Object.keys(window.localStorage).sort())).toEqual(storageKeysBeforeAi);
+    await page.locator('[data-action="close-ai"]').click();
+    await expect(page.locator('[data-action="ai"]')).toBeFocused();
+
+    await page.locator('[data-action="ai"]').click();
+    await page.keyboard.press('Escape');
+    await expect(aiPanel).toBeHidden();
+    await expect(page.locator('.easymde-immersive-workspace')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.easymde-immersive-workspace')).toHaveCount(0);
+
+    const restored = await page.evaluate(() => ({
+      ariaHidden: document.querySelector('#wpwrap').getAttribute('aria-hidden'),
+      inert: document.querySelector('#wpwrap').inert,
+      activeId: document.activeElement?.id || ''
+    }));
+    expect(restored.ariaHidden).toBeNull();
+    expect(restored.inert).toBe(false);
+    expect(restored.activeId).toBe('easymde-source');
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.locator('.easymde-immersive-workspace__divider')).toHaveAttribute(
+      'aria-valuenow',
+      String(persistedDividerValue)
+    );
+    await page.locator('[data-action="exit"]').click();
+  });
+
+  test('publishes real WordPress fields from the isolated workspace and switches to update mode', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `Workspace Publish ${testSlug(testInfo)}`;
+    const markdown = `# ${title}\n\nPublished from the isolated workspace.`;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.locator('.easymde-immersive-workspace__title').fill(title);
+    await page.locator('.easymde-immersive-workspace__source').fill(markdown);
+    await page.locator('[data-action="publish"]').click();
+    const unnamedPublishFields = await page.locator('.easymde-immersive-workspace__publish').evaluate((dialog) => (
+      Array.from(dialog.querySelectorAll('input, textarea, select'))
+        .filter((field) => !field.id && !field.name)
+        .map((field) => field.outerHTML)
+    ));
+    expect(unnamedPublishFields).toEqual([]);
+    await page.locator('[data-publish-tags]').fill('Workspace, WordPress, workspace');
+    await page.locator('[data-publish-excerpt]').fill('Workspace publish excerpt.');
+    const firstCategory = page.locator('[data-publish-category]').first();
+    if (await firstCategory.count()) {
+      await firstCategory.check();
+    }
+
+    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await page.locator('[data-action="confirm-publish"]').click();
+    await navigation;
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+
+    const postId = await currentPostId(page);
+    expect(runWp(['post', 'get', String(postId), '--field=post_status'])).toBe('publish');
+    expect(runWp(['post', 'get', String(postId), '--field=post_title'])).toBe(title);
+    expect(postExcerpt(postId)).toBe('Workspace publish excerpt.');
+    expect(normalizeMarkdown(runWp(['post', 'meta', 'get', String(postId), '_easymde_markdown']))).toBe(markdown);
+    expect(postTagNames(postId).split(/\s+/).sort()).toEqual(['WordPress', 'Workspace'].sort());
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.locator('[data-action="publish"]').click();
+    await expect(page.locator('#easymde-immersive-publish-title')).toHaveText('Update article');
+    await page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last().click();
+  });
+
+  test('updates the existing theme and font fields from accessible workspace controls', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.locator('[data-action="theme"]').click();
+
+    const themeSelect = page.locator('[data-appearance-key="markdownTheme"]');
+    const codeThemeSelect = page.locator('[data-appearance-key="codeTheme"]');
+    await expect(themeSelect).toBeVisible();
+    await expect(codeThemeSelect).toBeVisible();
+    const unnamedThemeFields = await page.locator('[data-popover="appearance"]').evaluate((popover) => (
+      Array.from(popover.querySelectorAll('input, textarea, select'))
+        .filter((field) => !field.id && !field.name)
+        .map((field) => field.outerHTML)
+    ));
+    expect(unnamedThemeFields).toEqual([]);
+
+    const themeValue = await themeSelect.locator('option').evaluateAll((options, current) => (
+      options.find((option) => option.value && option.value !== current)?.value || current
+    ), await themeSelect.inputValue());
+    await themeSelect.selectOption(themeValue);
+    await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue(themeValue);
+    await expect(page.locator('.easymde-immersive-workspace__preview')).toHaveClass(
+      new RegExp(`easymde-markdown-theme-${themeValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
+    );
+
+    await page.locator('[data-popover="appearance"] [data-action="close-popovers"]').click();
+    await page.locator('[data-action="font"]').click();
+    const fontSelect = page.locator('[data-appearance-key="customFont"]');
+    await expect(fontSelect).toBeVisible();
+    const fontValue = await fontSelect.locator('option').evaluateAll((options, current) => (
+      options.find((option) => option.value && option.value !== current)?.value || current
+    ), await fontSelect.inputValue());
+    await fontSelect.selectOption(fontValue);
+    await expect(page.locator('#easymde-custom-font-field')).toHaveValue(fontValue);
+    await page.locator('[data-popover="appearance"] [data-action="close-popovers"]').click();
+    await page.locator('[data-action="exit"]').click();
+  });
+
+  test('keeps edit, preview, and exit controls usable on a narrow viewport', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    const baselineOverflow = await page.evaluate(() => ({
+      body: document.body.scrollWidth - document.body.clientWidth,
+      document: document.documentElement.scrollWidth - document.documentElement.clientWidth
+    }));
+    await page.locator('#easymde-source').fill('# Narrow workspace\n\nMobile preview content.');
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+
+    const workspace = page.locator('.easymde-immersive-workspace');
+    const editorCard = page.locator('.easymde-immersive-workspace__editor-card');
+    const previewCard = page.locator('.easymde-immersive-workspace__preview-card');
+    await expect(workspace).toBeVisible();
+    await expect(editorCard).toBeVisible();
+    await expect(previewCard).toBeHidden();
+    await expect(page.locator('.easymde-immersive-workspace__outline-card')).toBeHidden();
+    await expect(page.locator('.easymde-immersive-workspace__toolbar [data-action="exit"]')).toBeVisible();
+
+    await page.locator('.easymde-immersive-workspace__toolbar [data-view="preview"]').click();
+    await expect(editorCard).toBeHidden();
+    await expect(previewCard).toBeVisible();
+    await expect(previewCard).toContainText('Mobile preview content.');
+
+    await page.locator('.easymde-immersive-workspace__toolbar [data-view="edit"]').click();
+    await expect(editorCard).toBeVisible();
+    await expect(previewCard).toBeHidden();
+    const overflow = await page.evaluate(() => ({
+      body: document.body.scrollWidth - document.body.clientWidth,
+      document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      workspaceClient: document.querySelector('.easymde-immersive-workspace').clientWidth,
+      workspaceScroll: document.querySelector('.easymde-immersive-workspace').scrollWidth
+    }));
+    expect(overflow.body).toBeLessThanOrEqual(baselineOverflow.body);
+    expect(overflow.document).toBeLessThanOrEqual(baselineOverflow.document);
+    expect(overflow.workspaceScroll).toBe(overflow.workspaceClient);
+
+    await page.locator('.easymde-immersive-workspace__toolbar [data-action="exit"]').click();
+    await expect(workspace).toHaveCount(0);
+  });
+
+  test('copies Markdown and saves through the existing native draft action', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `Workspace Draft ${testSlug(testInfo)}`;
+    const markdown = `# ${title}\n\nSaved from the real workspace action.`;
+
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.locator('.easymde-immersive-workspace__title').fill(title);
+    await page.locator('.easymde-immersive-workspace__source').fill(markdown);
+    await page.locator('[data-action="copy-markdown"]').click();
+    await expect.poll(() => page.evaluate(() => window.navigator.clipboard.readText())).toBe(markdown);
+
+    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await page.locator('[data-action="save"]').click();
+    await navigation;
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+
+    const postId = await currentPostId(page);
+    expect(runWp(['post', 'get', String(postId), '--field=post_status'])).toBe('draft');
+    expect(normalizeMarkdown(postMetaValue(postId, '_easymde_markdown'))).toBe(markdown);
+  });
+
+  test('keeps the first verified local image in memory until native publish confirmation', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const slug = testSlug(testInfo);
+    const title = `Workspace Featured Candidate ${slug}`;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    const media = await uploadTestImage(page, `${slug}.png`, 'Verified local candidate');
+    const postId = await currentPostId(page);
+    const thumbnailBefore = postMetaValue(postId, '_thumbnail_id');
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.locator('.easymde-immersive-workspace__title').fill(title);
+    const source = page.locator('.easymde-immersive-workspace__source');
+    await source.fill([
+      '# Candidate safety',
+      '',
+      '![Remote](https://example.com/remote.png)',
+      '![Embedded](data:image/png;base64,AAAA)',
+      `![Lookalike](${new URL(media.source_url).origin}/wp-content/uploads-lookalike/not-media.png)`
+    ].join('\n'));
+    await page.locator('[data-action="publish"]').click();
+    const noFeaturedImage = await page.evaluate(() => window.EasyMDEConfig.strings.noFeaturedImage);
+    await expect(page.locator('[data-featured-summary]')).toHaveText(noFeaturedImage);
+    await page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last().click();
+    expect(postMetaValue(postId, '_thumbnail_id')).toBe(thumbnailBefore);
+
+    await source.fill([
+      '# Candidate safety',
+      '',
+      '![Remote](https://example.com/remote.png)',
+      `![Verified local candidate](${media.source_url})`
+    ].join('\n'));
+    await page.locator('[data-action="publish"]').click();
+    await expect(page.locator('[data-featured-summary]')).toHaveText('Verified local candidate');
+    expect(await page.locator('#_thumbnail_id').inputValue()).not.toBe(String(media.id));
+    expect(postMetaValue(postId, '_thumbnail_id')).toBe(thumbnailBefore);
+
+    await page.locator('[data-publish-tags]').fill('candidate, local');
+    await page.locator('[data-publish-excerpt]').fill('Candidate remains in memory until confirmation.');
+    await page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last().click();
+    expect(postMetaValue(postId, '_thumbnail_id')).toBe(thumbnailBefore);
+    expect(postExcerpt(postId)).toBe('');
+    expect(postTagNames(postId)).toBe('');
+
+    await page.locator('[data-action="publish"]').click();
+    await expect(page.locator('[data-featured-summary]')).toHaveText('Verified local candidate');
+    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await page.locator('[data-action="confirm-publish"]').click();
+    await navigation;
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+    expect(postMetaValue(postId, '_thumbnail_id')).toBe(String(media.id));
+
+    const secondMedia = await uploadTestImage(page, `${slug}-second.png`, 'Second local candidate');
+    const candidateLookups = [];
+    page.on('request', (request) => {
+      if ('GET' === request.method() && request.url().includes('/wp-json/wp/v2/media?context=edit')) {
+        candidateLookups.push(request.url());
+      }
+    });
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.locator('.easymde-immersive-workspace__source').fill(
+      `# Existing featured image\n\n![Second local candidate](${secondMedia.source_url})`
+    );
+    await page.locator('[data-action="publish"]').click();
+    await page.waitForTimeout(400);
+    await expect(page.locator('[data-featured-summary]')).not.toHaveText('Second local candidate');
+    expect(candidateLookups).toEqual([]);
+    expect(await page.locator('#_thumbnail_id').inputValue()).toBe(String(media.id));
+    expect(postMetaValue(postId, '_thumbnail_id')).toBe(String(media.id));
+    await page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last().click();
+  });
+
+  test('uses the native media frame above the workspace without early featured-image writes', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const slug = testSlug(testInfo);
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    const media = await uploadTestImage(page, `${slug}-picker.png`, 'Media picker choice');
+    const postId = await currentPostId(page);
+    const thumbnailBefore = postMetaValue(postId, '_thumbnail_id');
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.locator('[data-action="publish"]').click();
+    await page.locator('[data-publish-tags]').fill('media, preserved');
+    await page.locator('[data-publish-excerpt]').fill('Preserve this excerpt through the media picker.');
+    await page.locator('[data-action="select-featured"]').click();
+
+    const mediaModal = page.locator('.media-modal');
+    await expect(mediaModal).toBeVisible();
+    const modalState = await page.evaluate(() => ({
+      focusInside: document.activeElement?.closest('.media-modal') !== null,
+      mediaZIndex: Number.parseInt(window.getComputedStyle(document.querySelector('.media-modal')).zIndex, 10),
+      workspaceZIndex: Number.parseInt(window.getComputedStyle(document.querySelector('.easymde-immersive-workspace')).zIndex, 10)
+    }));
+    expect(modalState.focusInside).toBe(true);
+    expect(modalState.mediaZIndex).toBeGreaterThan(modalState.workspaceZIndex);
+
+    await page.locator('.media-modal .media-menu-item').filter({ hasText: 'Media Library' }).click();
+    const attachment = page.locator(`.media-modal .attachment[data-id="${media.id}"]`);
+    await expect(attachment).toBeVisible();
+    await attachment.click();
+    const useButton = page.locator('.media-modal .media-button-select');
+    await expect(useButton).toBeEnabled();
+    await useButton.click();
+    await expect(mediaModal).toBeHidden();
+    await expect(page.locator('[data-featured-summary]')).toHaveText('Media picker choice');
+    await expect(page.locator('[data-publish-tags]')).toHaveValue('media, preserved');
+    await expect(page.locator('[data-publish-excerpt]')).toHaveValue('Preserve this excerpt through the media picker.');
+    expect(await page.locator('#_thumbnail_id').inputValue()).not.toBe(String(media.id));
+    expect(postMetaValue(postId, '_thumbnail_id')).toBe(thumbnailBefore);
+
+    await page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last().click();
+    expect(postMetaValue(postId, '_thumbnail_id')).toBe(thumbnailBefore);
+  });
+
+  test('shows the localized info notice when publish preview is blocked', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `Blocked Preview ${testSlug(testInfo)}`;
+
+    await page.addInitScript(() => {
+      window.open = () => null;
+    });
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('#visibility .edit-visibility').click();
+    await page.locator('#visibility-radio-private').check();
+    await page.locator('#visibility .save-post-visibility').click();
+    await expect(page.locator('#visibility-radio-private')).toBeChecked();
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.locator('.easymde-immersive-workspace__title').fill(title);
+    await page.locator('.easymde-immersive-workspace__source').fill(`# ${title}\n\nPreview should be blocked safely.`);
+    await page.locator('[data-action="publish"]').click();
+    await page.locator('[data-publish-preview]').check();
+    const blockedMessage = await page.evaluate(() => window.EasyMDEConfig.strings.publishPreviewBlocked);
+    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await page.locator('[data-action="confirm-publish"]').click();
+    await navigation;
+
+    const flash = page.locator('.easymde-editor-flash');
+    await expect(flash).toBeVisible();
+    await expect(flash).toHaveClass(/is-info/);
+    await expect(flash).toHaveText(blockedMessage);
+    const postId = await currentPostId(page);
+    expect(runWp(['post', 'get', String(postId), '--field=post_status'])).toBe('private');
+  });
+
+  test('preserves native scheduled publishing semantics from the workspace', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `Scheduled Workspace ${testSlug(testInfo)}`;
+    const futureYear = String(new Date().getFullYear() + 1);
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('.edit-timestamp').click();
+    await page.locator('#aa').fill(futureYear);
+    await page.locator('#mm').selectOption('01');
+    await page.locator('#jj').fill('01');
+    await page.locator('#hh').fill('00');
+    await page.locator('#mn').fill('00');
+    await page.locator('.save-timestamp').click();
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.locator('.easymde-immersive-workspace__title').fill(title);
+    await page.locator('.easymde-immersive-workspace__source').fill(`# ${title}\n\nScheduled through native WordPress fields.`);
+    await page.locator('[data-action="publish"]').click();
+    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await page.locator('[data-action="confirm-publish"]').click();
+    await navigation;
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+
+    const postId = await currentPostId(page);
+    expect(runWp(['post', 'get', String(postId), '--field=post_status'])).toBe('future');
+    expect(runWp(['post', 'get', String(postId), '--field=post_date'])).toMatch(new RegExp(`^${futureYear}-01-01 00:00:\\d{2}$`));
   });
 
   test('creates, saves, reopens, renders, and opens existing ordinary posts in EasyMDE', async ({ page }, testInfo) => {
@@ -254,6 +935,15 @@ test.describe('EasyMDE editor workflows', () => {
     await page.getByLabel('Article theme').selectOption('theme:orange-heart');
     await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('orange-heart');
     await publishOrUpdate(page);
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.locator('[data-action="history"]').click();
+    const historyEntries = page.locator('.easymde-immersive-workspace__history-entry');
+    await expect(historyEntries.first()).toBeVisible();
+    expect(await historyEntries.count()).toBeGreaterThanOrEqual(2);
+    await expect(page.locator('[data-history-list]')).toContainText(title);
+    await page.locator('[data-action="close-history"]').click();
+    await page.locator('[data-action="exit"]').click();
 
     await page.goto(`/wp-admin/revision.php?revision=${firstRevisionId}`);
     const restoreButton = page.locator('input.restore-revision, input.button-primary[value*="Restore"], button:has-text("Restore")').first();

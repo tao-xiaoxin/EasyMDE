@@ -348,7 +348,6 @@ async function flushMicrotasks(count = 4) {
 
 function normalizeFeatures(features = {}) {
   return {
-    darkMode: features.darkMode !== false,
     localDrafts: features.localDrafts !== false,
     codeBlocks: !!features.codeBlocks,
     syntaxHighlight: !!features.syntaxHighlight,
@@ -414,6 +413,7 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.ensureImagePasteBound, 'function', 'bootstrap harness should expose ensureImagePasteBound');
   assert.equal(typeof context.window.EasyMDETestHooks.openMediaPicker, 'function', 'bootstrap harness should expose openMediaPicker');
   assert.equal(typeof context.window.EasyMDETestHooks.showFlash, 'function', 'bootstrap harness should expose showFlash');
+  assert.equal(typeof context.window.EasyMDETestHooks.isSuccessfulPostNotice, 'function', 'bootstrap harness should expose post notice classification');
 
   return {
     document: documentRef,
@@ -422,6 +422,23 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
     window: context.window
   };
 }
+
+test('post-publish preview accepts only successful WordPress notices', () => {
+  const { hooks } = loadBootstrap();
+  const notice = (...classes) => ({
+    classList: {
+      contains(name) {
+        return classes.includes(name);
+      }
+    }
+  });
+
+  assert.equal(hooks.isSuccessfulPostNotice(notice('updated', 'notice-success')), true);
+  assert.equal(hooks.isSuccessfulPostNotice(notice('notice', 'notice-success')), true);
+  assert.equal(hooks.isSuccessfulPostNotice(notice('error')), false);
+  assert.equal(hooks.isSuccessfulPostNotice(notice('updated', 'notice-error')), false);
+  assert.equal(hooks.isSuccessfulPostNotice(notice()), false);
+});
 
 function createRootWrapper(postId = 123) {
   const attributes = new Map();
@@ -1812,7 +1829,6 @@ test('initEditor defers initial preview enhancement until after toolbar chrome i
       }
     },
     EasyMDEEnhancements: {
-      initTheme() {},
       enhance() {
         order.push('enhance');
         return Promise.resolve();

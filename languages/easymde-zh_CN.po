@@ -2,7 +2,7 @@
 # This file is distributed under the Apache-2.0 license.
 msgid ""
 msgstr ""
-"Project-Id-Version: EasyMDE 0.1.7\n"
+"Project-Id-Version: EasyMDE 0.1.8\n"
 "Report-Msgid-Bugs-To: https://github.com/tao-xiaoxin/EasyMDE/issues\n"
 "PO-Revision-Date: 2026-07-02 00:00+0000\n"
 "Last-Translator: EasyMDE contributors <noreply@example.com>\n"
@@ -15,559 +15,1030 @@ msgstr ""
 "X-Generator: EasyMDE i18n script\n"
 "X-Domain: easymde\n"
 
+#: src/Rest/CustomCssController.php:105
 msgid "A custom CSS style with this name already exists."
 msgstr "已存在同名自定义 CSS 样式。"
 
+#: src/Admin/AdminAssets.php:314
 msgid "A newer local draft is available."
 msgstr "检测到更新的本地草稿。"
 
-msgid "Add EasyMDE Page"
-msgstr "新建 EasyMDE 页面"
+#: src/Admin/AdminAssets.php:247
+msgid "AI Assistant"
+msgstr "AI 助手"
 
-msgid "Add EasyMDE Post"
-msgstr "新建 EasyMDE 文章"
+#: src/Admin/AdminAssets.php:249
+msgid "AI demo input"
+msgstr "AI 演示输入"
 
+#: templates/admin/settings-page.php:34
 msgid "Admin behavior"
 msgstr "后台行为"
 
+#: src/Admin/AdminAssets.php:294
 msgid "Appearance"
 msgstr "外观"
 
+#: src/Admin/AdminAssets.php:310
 msgid "Apple font"
 msgstr "苹果字体"
 
+#: src/Admin/AdminAssets.php:298
 msgid "Article theme"
 msgstr "文章主题"
 
+#: src/Admin/AdminAssets.php:235
+msgid "Article title..."
+msgstr "文章标题..."
+
+#: src/Theme/CodeThemeRegistry.php:17
 msgid "Atom One Dark"
 msgstr "Atom One Dark"
 
+#: src/Theme/CodeThemeRegistry.php:18
 msgid "Atom One Light"
 msgstr "Atom One Light"
 
+#: src/Theme/ArticleThemeRegistry.php:21
 msgid "Blue ying"
 msgstr "蓝莹"
 
+#: src/Support/ToolbarRegistry.php:98
 msgid "Bold"
 msgstr "加粗"
 
+#: src/Admin/AdminAssets.php:291
+msgid "CJK characters"
+msgstr "中日韩字符"
+
+#: src/Admin/AdminAssets.php:303
 msgid "CSS name"
 msgstr "CSS 名称"
 
+#: src/Rest/CustomCssController.php:91
 msgid "CSS name and CSS content are required."
 msgstr "CSS 名称和 CSS 内容为必填项。"
 
+#: src/Admin/AdminAssets.php:306
 msgid "CSS save failed."
 msgstr "CSS 保存失败。"
 
+#: src/Admin/AdminAssets.php:268
+msgid "Cancel"
+msgstr "取消"
+
+#: src/Admin/AdminAssets.php:260
+msgid "Categories"
+msgstr "分类目录"
+
+#: src/Theme/ArticleThemeRegistry.php:17
 msgid "Chazi purple"
 msgstr "姹紫"
 
+#: src/Admin/AdminAssets.php:326
 msgid "Clipboard access is not available in this browser."
 msgstr "当前浏览器不支持剪贴板富文本复制。"
 
+#: src/Admin/AdminAssets.php:269
+msgid "Close"
+msgstr "关闭"
+
+#: src/Admin/AdminAssets.php:275
+msgid "Close outline"
+msgstr "关闭大纲"
+
+#: src/Theme/ThemeStateRepository.php:430
 msgid "Cochin"
 msgstr "Cochin"
 
+#: src/Support/ToolbarRegistry.php:238
 msgid "Code fence"
 msgstr "代码块"
 
+#: src/Admin/AdminAssets.php:299
 msgid "Code theme"
 msgstr "代码主题"
 
+#: src/Admin/AdminAssets.php:285
+msgid "Column"
+msgstr "列"
+
+#: templates/admin/settings-page.php:82
 msgid "Command"
 msgstr "命令"
 
+#: src/Admin/AdminAssets.php:255
+msgid "Confirm these settings to publish to the current WordPress site."
+msgstr "确认这些设置后，将文章发布到当前 WordPress 站点。"
+
+#: src/Admin/AdminAssets.php:256
+msgid "Confirm these settings to update the current WordPress article."
+msgstr "确认这些设置后，将更新当前 WordPress 文章。"
+
+#: src/Admin/AdminAssets.php:324
 msgid "Copied preview for WeChat."
 msgstr "已复制当前预览，可直接粘贴到公众号编辑器。"
 
+#: src/Admin/AdminAssets.php:246
+msgid "Copy Markdown"
+msgstr "复制 Markdown"
+
+#: src/Admin/AdminAssets.php:325
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr "复制到公众号失败，请在当前浏览器中重试。"
 
+#: src/Admin/AdminAssets.php:323
 msgid "Copy preview for WeChat"
 msgstr "复制当前预览到公众号"
 
+#: src/Admin/AdminAssets.php:322 src/Support/ToolbarRegistry.php:290
 msgid "Copy to WeChat"
 msgstr "复制到公众号"
 
+#: src/Theme/ArticleThemeRegistry.php:36
 msgid "Cupid busy"
 msgstr "丘比特忙"
 
+#: templates/admin/settings-page.php:42
 msgid "Current preset"
 msgstr "当前预设"
 
+#: src/Admin/AdminAssets.php:301
 msgid "Custom CSS"
 msgstr "自定义 CSS"
 
+#. translators: %s: blocked CSS feature.
+#: src/Theme/CustomCssPolicy.php:204
+#, php-format
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr "自定义 CSS 包含被阻止的特性：%s"
 
+#. translators: %s: CSS parser error message.
+#: src/Theme/CustomCssPolicy.php:84
+#, php-format
 msgid "Custom CSS could not be parsed safely: %s"
 msgstr "无法安全解析自定义 CSS：%s"
 
+#: src/Theme/CustomCssPolicy.php:46
 msgid "Custom CSS is too large."
 msgstr "自定义 CSS 过大。"
 
+#: src/Rest/CustomCssController.php:136
 msgid "Custom CSS style not found."
 msgstr "未找到自定义 CSS 样式。"
 
+#: src/Admin/AdminAssets.php:308
 msgid "Custom font"
 msgstr "自定义字体"
 
+#: src/Theme/ArticleThemeRegistry.php:31
 msgid "Cute green"
 msgstr "萌绿风"
 
-msgid "Dark mode"
-msgstr "深色模式"
-
+#: src/Theme/ArticleThemeRegistry.php:15
 msgid "Default theme"
 msgstr "默认主题"
 
+#. translators: %s: default keyboard shortcut.
+#: templates/admin/settings-page.php:115 templates/admin/settings-page.php:129
+#, php-format
 msgid "Default: %s"
 msgstr "默认：%s"
 
+#: src/Admin/AdminAssets.php:251
+msgid "Demo response only. No article data was read or sent."
+msgstr "这只是演示回复，未读取或发送任何文章数据。"
+
+#: src/Admin/AdminAssets.php:316
 msgid "Discard draft"
 msgstr "丢弃草稿"
 
+#: src/Admin/AdminAssets.php:318
 msgid "Draft discarded."
 msgstr "草稿已丢弃。"
 
+#: src/Admin/AdminAssets.php:317
 msgid "Draft restored."
 msgstr "草稿已恢复。"
 
+#: src/Admin/AdminAssets.php:334
+msgid "Dropped image is too large for this site."
+msgstr "拖放的图片超过了本站允许的大小。"
+
+#: src/Admin/AdminAssets.php:333
+msgid "Dropped image upload failed. Please use the media library instead."
+msgstr "拖放图片上传失败。请改用媒体库。"
+
+#: src/Admin/AdminAssets.php:332
+msgid "Dropped image uploaded."
+msgstr "拖放图片已上传。"
+
+#: src/Admin/SettingsPage.php:32 src/Admin/SettingsPage.php:33
+#: templates/admin/settings-page.php:13
 msgid "EasyMDE"
 msgstr "EasyMDE"
 
-msgid "EasyMDE adds a scoped split-pane Markdown editor to supported post editing screens."
+#: templates/admin/settings-page.php:14
+msgid ""
+"EasyMDE adds a scoped split-pane Markdown editor to supported post editing "
+"screens."
 msgstr "EasyMDE 会在支持的内容编辑页面中添加作用域限定的分栏 Markdown 编辑器。"
 
-msgid "EasyMDE cannot save this post because Markdown rendering is unavailable. Install Composer dependencies and try again."
-msgstr "EasyMDE 无法保存此文章，因为 Markdown 渲染不可用。请安装 Composer 依赖后重试。"
+#: src/Admin/EditorSaveHandler.php:166
+msgid ""
+"EasyMDE cannot save this post because Markdown rendering is unavailable. "
+"Install Composer dependencies and try again."
+msgstr ""
+"EasyMDE 无法保存此文章，因为 Markdown 渲染不可用。请安装 Composer 依赖后重"
+"试。"
 
+#: src/Admin/AdminAssets.php:233
+msgid "EasyMDE immersive writing workspace"
+msgstr "EasyMDE 沉浸写作工作台"
+
+#: src/Admin/EditorSaveHandler.php:167
 msgid "EasyMDE renderer unavailable"
 msgstr "EasyMDE 渲染器不可用"
 
-msgid "EasyMDE requires Composer dependencies before Markdown can be rendered or saved. Run composer install for development or include vendor/ in release packages."
-msgstr "EasyMDE 需要 Composer 依赖才能渲染或保存 Markdown。开发环境请运行 composer install，发布包请包含 vendor/。"
+#: src/Admin/EditorScreen.php:81
+msgid ""
+"EasyMDE requires Composer dependencies before Markdown can be rendered or "
+"saved. Run composer install for development or include vendor/ in release "
+"packages."
+msgstr ""
+"EasyMDE 需要 Composer 依赖才能渲染或保存 Markdown。开发环境请运行 composer "
+"install，发布包请包含 vendor/。"
 
+#: src/Admin/AdminAssets.php:237
+msgid "Edit"
+msgstr "编辑"
+
+#: src/Admin/AdminAssets.php:236
+msgid "Editor actions"
+msgstr "编辑器操作"
+
+#: templates/admin/settings-page.php:67
 msgid "Enable browser spellcheck in the Markdown editor"
 msgstr "在 Markdown 编辑器中启用浏览器拼写检查"
 
+#: src/Admin/AdminAssets.php:250
+msgid "Enter a demo question..."
+msgstr "输入演示问题..."
+
+#: src/Admin/AdminAssets.php:231
 msgid "Enter immersive writing"
 msgstr "进入沉浸写作"
 
+#: src/Admin/AdminAssets.php:259
+msgid "Excerpt"
+msgstr "文章摘要"
+
+#: src/Admin/AdminAssets.php:232
 msgid "Exit immersive writing"
 msgstr "退出沉浸写作"
 
+#: src/Admin/AdminAssets.php:258
+msgid "Featured image"
+msgstr "特色图片"
+
+#: src/Admin/AdminAssets.php:296
 msgid "Font"
 msgstr "字体"
 
-msgid "Fonts are applied in custom, Windows, Apple, and serif fallback order when supported by the current system."
+#: src/Admin/AdminAssets.php:312
+msgid ""
+"Fonts are applied in custom, Windows, Apple, and serif fallback order when "
+"supported by the current system."
 msgstr "字体会在当前系统支持时按自定义、Windows、苹果和衬线后备的顺序应用。"
 
+#: src/Theme/ArticleThemeRegistry.php:35
 msgid "Frontend peak"
 msgstr "前端之巅同款"
 
+#: src/Theme/ArticleThemeRegistry.php:32
 msgid "Fullstack blue"
 msgstr "全栈蓝"
 
+#: src/Theme/ArticleThemeRegistry.php:25
 msgid "Geek black"
 msgstr "极客黑"
 
+#: src/Theme/ThemeStateRepository.php:420
 msgid "Georgia"
 msgstr "Georgia"
 
+#: src/Theme/CodeThemeRegistry.php:15
 msgid "GitHub"
 msgstr "GitHub"
 
+#: src/Theme/CodeThemeRegistry.php:16
 msgid "GitHub Dark"
 msgstr "GitHub Dark"
 
+#: src/Theme/ArticleThemeRegistry.php:19
 msgid "Green vitality"
 msgstr "绿意"
 
+#: src/Theme/ArticleThemeRegistry.php:24
 msgid "Grid black"
 msgstr "网格黑"
 
+#: src/Support/ToolbarRegistry.php:154
 msgid "Heading 1"
 msgstr "一级标题"
 
+#: src/Support/ToolbarRegistry.php:155
 msgid "Heading 2"
 msgstr "二级标题"
 
+#: src/Support/ToolbarRegistry.php:156
 msgid "Heading 3"
 msgstr "三级标题"
 
+#: src/Support/ToolbarRegistry.php:157
 msgid "Heading 4"
 msgstr "四级标题"
 
+#: src/Support/ToolbarRegistry.php:158
 msgid "Heading 5"
 msgstr "五级标题"
 
+#: src/Support/ToolbarRegistry.php:159
 msgid "Heading 6"
 msgstr "六级标题"
 
+#: src/Admin/AdminAssets.php:297
 msgid "Headings"
 msgstr "标题"
 
+#: src/Theme/ThemeStateRepository.php:410
 msgid "Helvetica (qingbi-liujin)"
 msgstr "Helvetica（青碧流金）"
 
+#: src/Theme/ThemeStateRepository.php:415
 msgid "Helvetica (qinghe-zhusha)"
 msgstr "Helvetica（清河朱砂）"
 
+#: src/Theme/ThemeStateRepository.php:435
 msgid "Helvetica Neue"
 msgstr "Helvetica Neue"
 
+#: src/Admin/AdminAssets.php:240
+msgid "History"
+msgstr "历史记录"
+
+#: templates/admin/settings-page.php:39
 msgid "Hybrid icon toolbar"
 msgstr "混合图标工具栏"
 
+#: src/Support/ToolbarRegistry.php:277
 msgid "Image"
 msgstr "图片"
 
+#: src/Support/ToolbarRegistry.php:223
 msgid "Inline code"
 msgstr "行内代码"
 
+#: src/Admin/AdminAssets.php:230
 msgid "Insert Media"
 msgstr "插入媒体"
 
+#: src/Theme/ThemeStateRepository.php:400
 msgid "Inter (cupid-busy)"
 msgstr "Inter（丘比特忙）"
 
+#: src/Theme/ThemeStateRepository.php:395
 msgid "Inter (ningye-purple)"
 msgstr "Inter（凝夜紫）"
 
+#: src/Theme/ThemeStateRepository.php:380
 msgid "Inter (orange-heart)"
 msgstr "Inter（橙心）"
 
+#: src/Theme/ThemeStateRepository.php:385
 msgid "Inter (red-crimson)"
 msgstr "Inter（红绯）"
 
-msgid "Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or Command+Option+C."
-msgstr "%1$s（%2$s）的快捷键格式无效。请使用 Ctrl+B 或 Command+Option+C 这类组合。"
+#. translators: 1: toolbar command label, 2: platform label.
+#: src/Admin/SettingsPage.php:115
+#, php-format
+msgid ""
+"Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or "
+"Command+Option+C."
+msgstr ""
+"%1$s（%2$s）的快捷键格式无效。请使用 Ctrl+B 或 Command+Option+C 这类组合。"
 
+#: src/Support/ToolbarRegistry.php:113
 msgid "Italic"
 msgstr "斜体"
 
+#: src/Theme/ArticleThemeRegistry.php:22
 msgid "Lanqing"
 msgstr "兰青"
 
-msgid "Light mode"
-msgstr "浅色模式"
+#: src/Admin/AdminAssets.php:284
+msgid "Line"
+msgstr "行"
 
+#: src/Admin/AdminAssets.php:283
+msgid "Line 1, Column 1"
+msgstr "行 1，列 1"
+
+#: src/Admin/AdminAssets.php:289
+msgid "Lines"
+msgstr "行数"
+
+#: src/Support/ToolbarRegistry.php:264
 msgid "Link"
 msgstr "链接"
 
+#: src/Admin/AdminAssets.php:282
+msgid "Link source and preview scrolling"
+msgstr "联动 Markdown 与预览区域的滚动位置"
+
+#: src/Admin/AdminAssets.php:226
 msgid "Live preview"
 msgstr "实时预览"
 
+#: src/Admin/AdminAssets.php:242
+msgid "Loading revisions..."
+msgstr "正在加载修订版本..."
+
+#: src/Admin/AdminAssets.php:313
 msgid "Local draft saved"
 msgstr "本地草稿已保存"
 
+#: src/Admin/AdminAssets.php:286
+msgid "Local drafts enabled"
+msgstr "本地草稿已开启"
+
+#: src/Admin/AdminAssets.php:300
 msgid "Mac code frame"
 msgstr "Mac 代码框"
 
+#: templates/admin/editor-shell.php:58
 msgid "Markdown"
 msgstr "Markdown"
 
+#: templates/admin/settings-page.php:57
 msgid "Markdown editor"
 msgstr "Markdown 编辑器"
 
+#: src/Rest/PreviewController.php:84
 msgid "Markdown preview content is too large."
 msgstr "Markdown 预览内容过大。"
 
-msgid "Markdown rendering is unavailable because Composer dependencies are missing."
+#: src/Rest/PreviewController.php:92
+msgid ""
+"Markdown rendering is unavailable because Composer dependencies are missing."
 msgstr "缺少 Composer 依赖，Markdown 渲染不可用。"
 
+#: src/Admin/AdminAssets.php:225
 msgid "Markdown source"
 msgstr "Markdown 源文"
 
+#: src/Admin/AdminAssets.php:270 templates/admin/editor-shell.php:41
 msgid "Markdown toolbar"
 msgstr "Markdown 工具栏"
 
+#: src/Support/ToolbarRegistry.php:251
 msgid "Math block"
 msgstr "公式块"
 
+#: src/Theme/ThemeStateRepository.php:442
 msgid "Microsoft YaHei"
 msgstr "微软雅黑"
 
+#: src/Theme/ThemeStateRepository.php:467
 msgid "Microsoft YaHei (cupid-busy)"
 msgstr "微软雅黑（丘比特忙）"
 
+#: src/Theme/ThemeStateRepository.php:462
 msgid "Microsoft YaHei (ningye-purple)"
 msgstr "微软雅黑（凝夜紫）"
 
+#: src/Theme/ThemeStateRepository.php:447
 msgid "Microsoft YaHei (orange-heart)"
 msgstr "微软雅黑（橙心）"
 
+#: src/Theme/ThemeStateRepository.php:452
 msgid "Microsoft YaHei (red-crimson)"
 msgstr "微软雅黑（红绯）"
 
+#: src/Theme/ThemeStateRepository.php:457
 msgid "Microsoft YaHei (rose-purple)"
 msgstr "微软雅黑（蔷薇紫）"
 
+#: src/Theme/ThemeStateRepository.php:472
 msgid "Microsoft YaHei (tech-blue)"
 msgstr "微软雅黑（科技蓝）"
 
+#: src/Theme/ArticleThemeRegistry.php:33
 msgid "Minimal black"
 msgstr "极简黑"
 
+#: src/Admin/AdminAssets.php:272
+msgid "Mobile"
+msgstr "手机"
+
+#: src/Theme/CodeThemeRegistry.php:19
 msgid "Monokai"
 msgstr "Monokai"
 
+#: src/Admin/AdminAssets.php:302
 msgid "Named custom CSS"
 msgstr "命名自定义 CSS"
 
+#: src/Theme/ArticleThemeRegistry.php:18
 msgid "Nenqing green"
 msgstr "嫩青"
 
+#: src/Theme/ArticleThemeRegistry.php:27
 msgid "Ningye purple"
 msgstr "凝夜紫"
 
+#: src/Theme/ThemeStateRepository.php:541
 msgctxt "serif font fallback option"
 msgid "No"
 msgstr "否"
 
+#: src/Theme/ThemeStateRepository.php:514
 msgid "No Apple-specific font (qingbi-liujin)"
 msgstr "无 Apple 特定字体（青碧流金）"
 
+#: src/Theme/ThemeStateRepository.php:519
 msgid "No Apple-specific font (qinghe-zhusha)"
 msgstr "无 Apple 特定字体（清河朱砂）"
 
-msgid "No activation redirect and no unrelated admin-page redirect."
-msgstr "不会在启用插件后跳转，也不会重定向无关后台页面。"
-
-msgid "No custom CSS saved yet."
-msgstr "尚未保存自定义 CSS。"
-
-msgid "No image file was provided for upload."
-msgstr "未提供要上传的图片文件。"
-
-msgid "No custom font"
-msgstr "无自定义字体"
-
+#: src/Theme/ThemeStateRepository.php:477
 msgid "No Windows-specific font (qingbi-liujin)"
 msgstr "无 Windows 特定字体（青碧流金）"
 
+#: src/Theme/ThemeStateRepository.php:482
 msgid "No Windows-specific font (qinghe-zhusha)"
 msgstr "无 Windows 特定字体（清河朱砂）"
 
+#: templates/admin/settings-page.php:35
+msgid "No activation redirect and no unrelated admin-page redirect."
+msgstr "不会在启用插件后跳转，也不会重定向无关后台页面。"
+
+#: src/Admin/AdminAssets.php:267
+msgid "No categories are available for this post type."
+msgstr "此文章类型没有可用分类。"
+
+#: src/Admin/AdminAssets.php:307
+msgid "No custom CSS saved yet."
+msgstr "尚未保存自定义 CSS。"
+
+#: src/Theme/ThemeStateRepository.php:370
+msgid "No custom font"
+msgstr "无自定义字体"
+
+#: src/Admin/AdminAssets.php:266
+msgid "No featured image selected"
+msgstr "尚未选择特色图片"
+
+#: src/Admin/AdminAssets.php:278
+msgid "No headings yet"
+msgstr "暂无标题"
+
+#: src/Rest/MediaController.php:55
+msgid "No image file was provided for upload."
+msgstr "未提供要上传的图片文件。"
+
+#: src/Admin/AdminAssets.php:243
+msgid "No revisions are available yet."
+msgstr "暂无可用修订版本。"
+
+#: src/Rest/MediaController.php:74 src/Rest/MediaController.php:162
 msgid "Only JPEG, PNG, GIF, or WebP images can be uploaded into EasyMDE."
 msgstr "只能将 JPEG、PNG、GIF 或 WebP 图片上传到 EasyMDE。"
 
+#: src/Admin/AdminAssets.php:261
+msgid "Open preview after publishing"
+msgstr "发布后打开预览"
+
+#: src/Theme/ThemeStateRepository.php:375
 msgid "Optima"
 msgstr "Optima"
 
+#: src/Theme/ThemeStateRepository.php:390
 msgid "Optima (rose-purple)"
 msgstr "Optima（蔷薇紫）"
 
+#: src/Theme/ThemeStateRepository.php:405
 msgid "Optima (tech-blue)"
 msgstr "Optima（科技蓝）"
 
+#: src/Theme/ArticleThemeRegistry.php:34
 msgid "Orange blue"
 msgstr "橙蓝风"
 
+#: src/Theme/ArticleThemeRegistry.php:16
 msgid "Orange heart"
 msgstr "橙心"
 
+#: src/Support/ToolbarRegistry.php:209
 msgid "Ordered list"
 msgstr "有序列表"
 
+#: src/Admin/AdminAssets.php:274
+msgid "Outline"
+msgstr "大纲"
+
+#: src/Admin/AdminAssets.php:276
+msgid "Outline settings"
+msgstr "大纲设置"
+
+#: templates/admin/editor-shell.php:61
 msgid "Output actions"
 msgstr "输出操作"
 
+#: src/Support/ToolbarRegistry.php:143
 msgid "Paragraph"
 msgstr "正文"
 
-msgid "Dropped image is too large for this site."
-msgstr "拖放的图片超过了本站允许的大小。"
-
-msgid "Dropped image upload failed. Please use the media library instead."
-msgstr "拖放图片上传失败。请改用媒体库。"
-
-msgid "Dropped image uploaded."
-msgstr "拖放图片已上传。"
-
+#: src/Admin/AdminAssets.php:330
 msgid "Pasted image is too large for this site."
 msgstr "粘贴的图片超过了本站允许的大小。"
 
+#: src/Admin/AdminAssets.php:329
 msgid "Pasted image upload failed. Please use the media library instead."
 msgstr "粘贴图片上传失败。请改用媒体库。"
 
+#: src/Admin/AdminAssets.php:328
 msgid "Pasted image uploaded."
 msgstr "粘贴图片已上传。"
 
+#: src/Theme/ThemeStateRepository.php:489
 msgid "PingFang SC Light"
 msgstr "苹方简体细体"
 
+#: src/Theme/ThemeStateRepository.php:499
 msgid "PingFang SC Regular"
 msgstr "苹方简体常规体"
 
+#: src/Theme/ThemeStateRepository.php:504
 msgid "PingFang TC Light"
 msgstr "苹方繁体细体"
 
+#: src/Theme/ThemeStateRepository.php:509
 msgid "PingFang TC Regular"
 msgstr "苹方繁体常规体"
 
+#: src/Theme/ThemeStateRepository.php:494
 msgid "PingFangSC-regular"
 msgstr "苹方简体常规体"
 
+#: src/Admin/AdminAssets.php:234
+msgid "Post title"
+msgstr "文章标题"
+
+#: src/Admin/AdminAssets.php:239 templates/admin/editor-shell.php:44
 msgid "Preview"
 msgstr "预览"
 
+#: src/Admin/AdminAssets.php:229
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr "预览失败。可以继续编写，保存不受影响。"
 
+#: src/Admin/AdminAssets.php:253
+msgid "Publish article"
+msgstr "发布文章"
+
+#: src/Theme/ArticleThemeRegistry.php:29
 msgid "Qingbi Liujin"
 msgstr "青碧流金"
 
+#: src/Theme/ArticleThemeRegistry.php:30
 msgid "Qinghe Zhusha"
 msgstr "清河朱砂"
 
+#: src/Support/ToolbarRegistry.php:181
 msgid "Quote"
 msgstr "引用"
 
+#: src/Admin/AdminAssets.php:288
+msgid "Reading time (minutes)"
+msgstr "阅读时长（分钟）"
+
+#: src/Admin/AdminAssets.php:293
+msgid ""
+"Reading time is estimated locally at 300 reading units per minute; each "
+"Western word and CJK character counts as one unit."
+msgstr ""
+"阅读时长按每分钟 300 个阅读单位在本地估算；每个西文单词和中日韩字符分别计为一"
+"个单位。"
+
+#: src/Theme/ArticleThemeRegistry.php:20
 msgid "Red crimson"
 msgstr "红绯"
 
+#: src/Admin/AdminAssets.php:265
+msgid "Remove"
+msgstr "移除"
+
+#: src/Admin/AdminAssets.php:320 src/Frontend/FrontendAssets.php:70
 msgid "Rendering failed."
 msgstr "渲染失败。"
 
+#: src/Admin/AdminAssets.php:228 templates/admin/editor-shell.php:22
 msgid "Rendering preview..."
 msgstr "正在渲染预览..."
 
+#: src/Admin/AdminAssets.php:315
 msgid "Restore draft"
 msgstr "恢复草稿"
 
+#: src/Admin/AdminAssets.php:245
+msgid "Revision history could not be loaded."
+msgstr "无法加载修订历史。"
+
+#: src/Theme/ArticleThemeRegistry.php:26
 msgid "Rose purple"
 msgstr "蔷薇紫"
 
+#: src/Admin/AdminAssets.php:319
+msgid "Save"
+msgstr "保存"
+
+#: src/Admin/AdminAssets.php:304
 msgid "Save CSS"
 msgstr "保存 CSS"
 
+#: src/Support/ToolbarRegistry.php:85
 msgid "Save post"
 msgstr "保存文章"
 
+#: src/Admin/AdminAssets.php:305
 msgid "Saved CSS."
 msgstr "CSS 已保存。"
 
+#: src/Admin/AdminAssets.php:263
+msgid "Select featured image"
+msgstr "选择特色图片"
+
+#: src/Admin/AdminAssets.php:252
+msgid "Send"
+msgstr "发送"
+
+#: src/Admin/AdminAssets.php:311
 msgid "Serif font"
 msgstr "衬线字体"
 
+#: templates/admin/settings-page.php:24
 msgid "Server renderer"
 msgstr "服务器端渲染器"
 
+#: src/Admin/AdminAssets.php:273
+msgid "Settings"
+msgstr "设置"
+
+#. translators: 1: first toolbar command label, 2: second toolbar command label, 3: shortcut, 4: platform label.
+#: src/Admin/SettingsPage.php:129
+#, php-format
 msgid "Shortcut conflict: %1$s and %2$s both use %3$s on %4$s."
 msgstr "快捷键冲突：%1$s 与 %2$s 在 %4$s 上都使用了 %3$s。"
 
+#: templates/admin/settings-page.php:75
 msgid "Shortcut settings"
 msgstr "快捷键设置"
 
+#: src/Admin/AdminAssets.php:277
+msgid "Show heading navigation"
+msgstr "显示文章标题层级导航"
+
+#: src/Admin/AdminAssets.php:280
+msgid "Show source and preview"
+msgstr "同时显示 Markdown 和实时预览"
+
+#: src/Admin/AdminAssets.php:238
+msgid "Split"
+msgstr "分屏"
+
+#: src/Admin/AdminAssets.php:279
+msgid "Split preview"
+msgstr "分屏预览"
+
+#: src/Admin/AdminAssets.php:227
 msgid "Start writing Markdown to preview the article."
 msgstr "开始编写 Markdown 后将在此处预览文章。"
 
+#: src/Support/ToolbarRegistry.php:128
 msgid "Strikethrough"
 msgstr "删除线"
 
+#: templates/admin/settings-page.php:20
 msgid "Supported post types"
 msgstr "支持的内容类型"
 
+#: src/Admin/AdminAssets.php:281
+msgid "Sync scrolling"
+msgstr "同步滚动"
+
+#: src/Admin/AdminAssets.php:271
+msgid "Table"
+msgstr "表格"
+
+#: src/Admin/AdminAssets.php:257
+msgid "Tags"
+msgstr "标签"
+
+#: src/Theme/ArticleThemeRegistry.php:28
 msgid "Tech blue"
 msgstr "科技蓝"
 
-msgid "The CSS parser dependency is unavailable. Custom CSS cannot be rendered safely."
+#: src/Theme/CustomCssPolicy.php:59
+msgid ""
+"The CSS parser dependency is unavailable. Custom CSS cannot be rendered "
+"safely."
 msgstr "CSS 解析器依赖不可用，无法安全渲染自定义 CSS。"
 
+#: src/Admin/AdminAssets.php:262
+msgid "The article was saved, but the preview window was blocked."
+msgstr "文章已保存，但浏览器阻止了预览窗口。"
+
+#: src/Admin/AdminAssets.php:321
+msgid "The first local image could not be verified."
+msgstr "无法验证正文中的第一张本地图片。"
+
+#: src/Rest/MediaController.php:152
 msgid "The image could not be saved to the WordPress media library."
 msgstr "无法将图片保存到 WordPress 媒体库。"
 
+#: src/Rest/MediaController.php:64
 msgid "The image could not be uploaded."
 msgstr "无法上传图片。"
 
+#: src/Rest/MediaController.php:82
 msgid "The image is larger than the allowed upload size."
 msgstr "图片超过了允许的上传大小。"
 
+#: src/Rest/MediaController.php:105
 msgid "The uploaded image URL is unavailable."
 msgstr "上传后的图片 URL 不可用。"
 
+#: src/Admin/AdminAssets.php:295
+msgid "Theme"
+msgstr "主题"
+
+#: src/Admin/AdminAssets.php:248
+msgid ""
+"This is a local interface preview. It is not connected to article data or a "
+"network service."
+msgstr "这是本地界面演示，不连接文章数据或任何网络服务。"
+
+#: src/Theme/ThemeStateRepository.php:425
 msgid "Times"
 msgstr "Times"
 
+#: templates/admin/settings-page.php:38
 msgid "Toolbar layout"
 msgstr "工具栏布局"
 
+#: src/Admin/AdminAssets.php:292
+msgid "Total characters"
+msgstr "总字符数"
+
+#: templates/admin/settings-page.php:76
 msgid "Typora-inspired defaults are active unless overridden below."
 msgstr "默认启用 Typora 风格快捷键，除非在下方覆盖。"
 
+#: templates/admin/settings-page.php:43
 msgid "Typora-inspired shortcuts"
 msgstr "Typora 风格快捷键"
 
+#: src/Support/ToolbarRegistry.php:195
 msgid "Unordered list"
 msgstr "无序列表"
 
+#: src/Admin/AdminAssets.php:244
+msgid "Untitled revision"
+msgstr "无标题修订版本"
+
+#: src/Admin/AdminAssets.php:254
+msgid "Update article"
+msgstr "更新文章"
+
+#: src/Admin/AdminAssets.php:331
 msgid "Uploading dropped image..."
 msgstr "正在上传拖放的图片..."
 
+#: src/Admin/AdminAssets.php:327
 msgid "Uploading pasted image..."
 msgstr "正在上传粘贴的图片..."
 
+#: src/Admin/AdminAssets.php:264
+msgid "Use featured image"
+msgstr "使用此特色图片"
+
+#: templates/admin/settings-page.php:77
 msgid "Use the current Typora-inspired default by leaving the field blank."
 msgstr "留空即可继续使用当前 Typora 风格默认值。"
 
-msgid "Uses the browser spellchecker only; saved Markdown and rendered HTML stay unchanged."
+#: templates/admin/settings-page.php:69
+msgid ""
+"Uses the browser spellchecker only; saved Markdown and rendered HTML stay "
+"unchanged."
 msgstr "仅使用浏览器拼写检查；保存的 Markdown 和渲染后的 HTML 保持不变。"
 
+#: src/Theme/CodeThemeRegistry.php:20
 msgid "VS2015"
 msgstr "VS2015"
 
+#: src/Theme/CodeThemeRegistry.php:22
 msgid "Wechat inspired"
 msgstr "公众号风格"
 
+#: src/Admin/AdminAssets.php:290
+msgid "Western words"
+msgstr "西文词数"
+
+#: src/Admin/SettingsPage.php:238 templates/admin/settings-page.php:83
 msgid "Windows / Linux"
 msgstr "Windows / Linux"
 
+#: src/Admin/AdminAssets.php:309
 msgid "Windows font"
 msgstr "Windows 字体"
 
+#: src/Admin/AdminAssets.php:241
+msgid "WordPress revisions for this article"
+msgstr "当前文章的 WordPress 修订版本"
+
+#: templates/admin/settings-page.php:53
 msgid "Writing settings"
 msgstr "写作设置"
 
+#: src/Admin/AdminAssets.php:287
+msgid "Writing statistics"
+msgstr "写作统计"
+
+#: src/Theme/CodeThemeRegistry.php:21
 msgid "Xcode"
 msgstr "Xcode"
 
+#: src/Theme/ArticleThemeRegistry.php:23
 msgid "Yamabuki"
 msgstr "山吹"
 
+#: src/Theme/ThemeStateRepository.php:526
 msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr "是"
 
+#: src/Admin/PostModeController.php:39
 msgid "You are not allowed to create this EasyMDE post."
 msgstr "你无权创建此 EasyMDE 文章。"
 
+#: src/Support/Capabilities.php:66
 msgid "You are not allowed to perform this EasyMDE action."
 msgstr "你无权执行此 EasyMDE 操作。"
 
+#: src/Admin/AdminAssets.php:335
 msgid "alt text"
 msgstr "替代文本"
 
+#: src/Admin/AdminAssets.php:336
 msgid "image"
 msgstr "图片"
 
+#: templates/admin/settings-page.php:28
 msgid "league/commonmark is active."
 msgstr "league/commonmark 已启用。"
 
-msgid "league/commonmark is required but unavailable. Install Composer dependencies before rendering or saving EasyMDE Markdown."
-msgstr "league/commonmark 是必需依赖但当前不可用。请先安装 Composer 依赖，再渲染或保存 EasyMDE Markdown。"
+#: templates/admin/settings-page.php:29
+msgid ""
+"league/commonmark is required but unavailable. Install Composer dependencies "
+"before rendering or saving EasyMDE Markdown."
+msgstr ""
+"league/commonmark 是必需依赖但当前不可用。请先安装 Composer 依赖，再渲染或保"
+"存 EasyMDE Markdown。"
 
+#: src/Admin/AdminAssets.php:337
 msgid "link text"
 msgstr "链接文本"
 
+#: src/Admin/SettingsPage.php:238 templates/admin/settings-page.php:84
 msgid "macOS"
 msgstr "macOS"
 
+#: src/Theme/ThemeStateRepository.php:536
 msgid "sans-serif"
 msgstr "无衬线"
 
+#: src/Theme/ThemeStateRepository.php:531
 msgid "serif"
 msgstr "衬线"
+
+#~ msgid "about"
+#~ msgstr "约"
+
+#~ msgid "characters"
+#~ msgstr "字符"
+
+#~ msgid "minutes"
+#~ msgstr "分钟"
+
+#~ msgid "words"
+#~ msgstr "词"

@@ -28,6 +28,7 @@ Do not assume the repository name requires use of the EasyMDE JavaScript library
 * Use lazy migration: preserve legacy data on read and write new fields only during the next legitimate save.
 * Do not require remote CDN assets for the editor, preview, Mermaid, KaTeX, or syntax highlighting.
 * Do not introduce React, Gutenberg block editor rewrites, Vite, Webpack, or another build system unless the task explicitly requires it.
+* The normal WordPress editor layout and styles must remain unchanged by immersive-workspace work. The immersive workspace is created only after the explicit entry action and must use its own DOM and independently scoped assets.
 
 ---
 

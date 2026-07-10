@@ -100,7 +100,6 @@
         features = features || {};
 
         return {
-            darkMode: features.darkMode !== false,
             localDrafts: features.localDrafts !== false,
             codeBlocks: !!features.codeBlocks,
             syntaxHighlight: !!features.syntaxHighlight,
@@ -1041,33 +1040,6 @@
         $container.append($anchor);
     }
 
-    function createThemeToggleButton($container, $root, refreshPreview) {
-        if (!window.EasyMDEEnhancements || !config.features || config.features.darkMode === false) {
-            return;
-        }
-
-        var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-compact"></button>');
-
-        function updateState() {
-            var isDark = $root.hasClass('easymde-theme-dark');
-
-            $button.empty();
-            $button.toggleClass('is-active', isDark);
-            $button.attr('title', isDark ? getString('lightMode') : getString('darkMode'));
-            $button.attr('aria-label', isDark ? getString('lightMode') : getString('darkMode'));
-            $button.append($('<span class="dashicons dashicons-lightbulb" aria-hidden="true"></span>'));
-        }
-
-        $button.on('click', function () {
-            window.EasyMDEEnhancements.toggleTheme($root[0], config);
-            updateState();
-            refreshPreview();
-        });
-
-        updateState();
-        $container.append($button);
-    }
-
     function createFlash($toolbar) {
         var $flash = $('<div class="easymde-editor-flash" hidden aria-live="polite"></div>');
 
@@ -1381,7 +1353,12 @@
 
     function updateImmersiveToggle(context) {
         var $button = context && context.immersiveButton ? context.immersiveButton : null;
-        var isImmersive = context && context.root && context.root.hasClass('easymde-editor-immersive');
+        var isImmersive = !!(
+            context
+            && context.immersiveWorkspace
+            && typeof context.immersiveWorkspace.isActive === 'function'
+            && context.immersiveWorkspace.isActive()
+        );
         var label = isImmersive
             ? getString('exitImmersive')
             : getString('enterImmersive');
@@ -1403,34 +1380,474 @@
     }
 
     function setImmersiveMode(context, enabled) {
-        var $root = context && context.root ? context.root : $();
-        var isImmersive = $root.hasClass('easymde-editor-immersive');
-        var scrollState;
+        var workspace = context && context.immersiveWorkspace ? context.immersiveWorkspace : null;
+        var isImmersive = !!(workspace && workspace.isActive && workspace.isActive());
 
-        if (!$root.length || enabled === isImmersive) {
+        if (!workspace || enabled === isImmersive) {
             return;
         }
 
-        scrollState = captureEditorScrollState(context);
         closePopovers();
-
         if (enabled) {
-            context.immersiveWindowScroll = captureWindowScroll();
+            workspace.activate();
+        } else {
+            workspace.deactivate();
+        }
+        updateImmersiveToggle(context);
+    }
+
+    function isSuccessfulPostNotice(notice) {
+        var classes = notice && notice.classList ? notice.classList : null;
+
+        if (!classes || classes.contains('error') || classes.contains('notice-error')) {
+            return false;
         }
 
-        $root.toggleClass('easymde-editor-immersive', enabled);
-        $('html, body').toggleClass('easymde-immersive-active', enabled);
-        updateImmersiveToggle(context);
+        return classes.contains('updated') || classes.contains('notice-success');
+    }
 
-        window.requestAnimationFrame(function () {
-            restoreEditorScrollState(context, scrollState);
+    function hasSuccessfulPostNotice() {
+        if (!document.querySelectorAll) {
+            return false;
+        }
 
-            if (!enabled && context.immersiveWindowScroll) {
-                window.scrollTo(context.immersiveWindowScroll.x, context.immersiveWindowScroll.y);
-                context.immersiveWindowScroll = null;
+        return Array.prototype.some.call(
+            document.querySelectorAll('#message, .notice-success'),
+            isSuccessfulPostNotice
+        );
+    }
+
+    function consumeImmersivePublishPreview(context) {
+        var requestedAt;
+        var previewUrl;
+        var previewWindow;
+
+        if (!window.sessionStorage || !hasSuccessfulPostNotice()) {
+            return;
+        }
+
+        try {
+            requestedAt = parseInt(window.sessionStorage.getItem('easymde:publish-preview-pending') || '', 10);
+            window.sessionStorage.removeItem('easymde:publish-preview-pending');
+        } catch (error) {
+            return;
+        }
+
+        if (!isFinite(requestedAt) || Date.now() - requestedAt > 120000) {
+            return;
+        }
+
+        previewUrl = $('#post-preview').attr('href') || $('#sample-permalink a').attr('href') || '';
+        if (!previewUrl) {
+            return;
+        }
+
+        previewWindow = window.open(previewUrl, 'easymde-publish-preview');
+        if (!previewWindow) {
+            showFlash(context.flash, 'info', getString('publishPreviewBlocked') || 'The article was saved, but the preview window was blocked.');
+        }
+    }
+
+    function createImmersiveWorkspace(context) {
+        var workspaceApi = window.EasyMDEImmersiveWorkspace;
+        var commandAliases = {
+            heading: 'heading2',
+            table: 'table'
+        };
+
+        if (!workspaceApi || typeof workspaceApi.createController !== 'function') {
+            return null;
+        }
+
+        return workspaceApi.createController({
+            window: window,
+            document: document,
+            strings: config.strings || {},
+            layoutKey: config.storage && config.storage.layoutKey
+                ? config.storage.layoutKey
+                : 'easymde:immersive-layout',
+            adapter: {
+                getMarkdown: function () {
+                    return context.textarea.value || '';
+                },
+                setMarkdown: function (markdown) {
+                    if (context.textarea.value === markdown) {
+                        return;
+                    }
+                    $(context.textarea).val(markdown).trigger('input');
+                },
+                getTitle: function () {
+                    return String($('#title').val() || '');
+                },
+                setTitle: function (nextTitle) {
+                    var $title = $('#title');
+                    if ($title.length && $title.val() !== nextTitle) {
+                        $title.val(nextTitle).trigger('input');
+                    }
+                },
+                subscribeTitle: function (callback) {
+                    var $title = $('#title');
+                    var namespace = '.easymdeImmersiveWorkspaceTitle';
+                    var handler = function () {
+                        callback(String($title.val() || ''));
+                    };
+
+                    $title.on('input' + namespace + ' change' + namespace, handler);
+                    return function () {
+                        $title.off(namespace);
+                    };
+                },
+                decorateWorkspace: function (workspaceRoot) {
+                    workspaceRoot.querySelectorAll('button[data-command]').forEach(function (button) {
+                        var commandId = button.getAttribute('data-command');
+                        var sourceButton = commandId === 'heading'
+                            ? context.root.find('.easymde-toolbar-section-main .easymde-toolbar-button-menu').first()[0]
+                            : context.root.find('[data-easymde-command="' + commandId + '"]').first()[0];
+
+                        if (!sourceButton || !sourceButton.childNodes.length) {
+                            return;
+                        }
+                        button.textContent = '';
+                        Array.prototype.forEach.call(sourceButton.childNodes, function (node) {
+                            button.appendChild(node.cloneNode(true));
+                        });
+                        button.setAttribute(
+                            'aria-label',
+                            sourceButton.getAttribute('aria-label') || sourceButton.getAttribute('title') || commandId
+                        );
+                        if (sourceButton.getAttribute('title')) {
+                            button.setAttribute('title', sourceButton.getAttribute('title'));
+                        }
+                    });
+
+                    var wechatSource = context.root.find('[data-easymde-command="copywechat"] .easymde-wechat-glyph').first()[0];
+                    var wechatTarget = workspaceRoot.querySelector('[data-wechat-icon]');
+                    if (wechatSource && wechatTarget) {
+                        wechatTarget.replaceWith(wechatSource.cloneNode(true));
+                    }
+                },
+                renderPreview: function (node, markdown, options) {
+                    var sourceClasses = String(context.preview.attr('class') || '').split(/\s+/).filter(function (className) {
+                        return className && className !== 'easymde-preview';
+                    });
+                    node.className = ['easymde-immersive-workspace__preview'].concat(sourceClasses).join(' ');
+                    node.setAttribute('style', context.preview.attr('style') || '');
+                    updatePreview($(node), markdown, options || {});
+                },
+                scrollSourceToOffset: function (textarea, offset) {
+                    var line = textarea.value.slice(0, offset).split('\n').length - 1;
+                    var style = window.getComputedStyle(textarea);
+                    var lineHeight = parseFloat(style.lineHeight) || 24;
+                    var paddingTop = parseFloat(style.paddingTop) || 0;
+                    textarea.scrollTop = Math.max(0, paddingTop + (line * lineHeight) - (textarea.clientHeight * 0.2));
+                },
+                scrollPreviewToHeading: function (previewNode, index) {
+                    var headings = previewNode
+                        ? previewNode.querySelectorAll('h1, h2, h3, h4, h5, h6')
+                        : [];
+                    if (headings[index] && typeof headings[index].scrollIntoView === 'function') {
+                        headings[index].scrollIntoView({ block: 'start' });
+                    }
+                },
+                getAppearanceOptions: function () {
+                    var themes = (themeOptions.markdownThemes || []).slice();
+
+                    customCssLibrary.forEach(function (item) {
+                        themes.push({ id: 'custom:' + item.id, label: item.name });
+                    });
+                    return {
+                        codeThemes: themeOptions.codeThemes || [],
+                        fonts: fontOptions || {},
+                        state: $.extend({}, renderState, {
+                            markdownTheme: renderState.markdownTheme === 'custom' && renderState.customCssId
+                                ? 'custom:' + renderState.customCssId
+                                : renderState.markdownTheme
+                        }),
+                        themes: themes
+                    };
+                },
+                updateAppearance: function (changes, workspaceContext) {
+                    if (Object.prototype.hasOwnProperty.call(changes, 'markdownTheme')) {
+                        var selectedTheme = String(changes.markdownTheme || 'default');
+                        if (selectedTheme.indexOf('custom:') === 0) {
+                            var customItem = findById(customCssLibrary, selectedTheme.slice(7));
+                            if (customItem) {
+                                renderState.markdownTheme = 'custom';
+                                renderState.customCssId = customItem.id;
+                                renderState.customCss = customItem.css || '';
+                                renderState.scopedCustomCss = customItem.scopedCss || '';
+                            }
+                        } else {
+                            renderState.markdownTheme = selectedTheme;
+                            renderState.customCssId = '';
+                            renderState.customCss = '';
+                            renderState.scopedCustomCss = '';
+                            applyThemeFontDefaults(renderState.markdownTheme);
+                        }
+                    }
+                    ['codeTheme', 'customFont', 'windowsFont', 'appleFont', 'serifFont'].forEach(function (key) {
+                        if (Object.prototype.hasOwnProperty.call(changes, key)) {
+                            renderState[key] = String(changes[key] || '');
+                        }
+                    });
+                    themeOptions.state = renderState;
+                    applyRenderState(context.preview);
+                    applyRenderState($(workspaceContext.preview));
+                    syncFontControls();
+                    context.refreshPreview({ immediate: true });
+                    updatePreview($(workspaceContext.preview), workspaceContext.markdown, { immediate: true });
+                },
+                executeCommand: function (commandId, textarea) {
+                    var resolved = commandAliases[commandId] || commandId;
+                    if (resolved === 'table') {
+                        insertBlock(textarea, '\n| Column 1 | Column 2 |\n| --- | --- |\n| Content | Content |\n', '\n', '');
+                        return;
+                    }
+                    executeCommand(resolved, { textarea: textarea, preview: $(context.preview), flash: context.flash });
+                },
+                handleShortcut: function (event, textarea) {
+                    var shortcut = normalizeEventShortcut(event);
+                    var matchedCommand = null;
+                    var command;
+
+                    if (!shortcut || event.isComposing) {
+                        return false;
+                    }
+                    Object.keys(getCommandMap()).some(function (commandId) {
+                        if (getShortcutForCommand(commandId) === shortcut) {
+                            matchedCommand = commandId;
+                            return true;
+                        }
+                        return false;
+                    });
+                    if (!matchedCommand) {
+                        return false;
+                    }
+                    command = getCommand(matchedCommand);
+                    if (
+                        event.target !== textarea
+                        && (!command || ['savePost', 'copyWechat'].indexOf(command.action) === -1)
+                    ) {
+                        return false;
+                    }
+                    executeCommand(matchedCommand, { textarea: textarea, preview: $(context.preview), flash: context.flash });
+                    return true;
+                },
+                performAction: function (action, workspaceContext) {
+                    if (action === 'save') {
+                        triggerSavePost();
+                    } else if (action === 'publish') {
+                        $('#publish').trigger('click');
+                    } else if (action === 'copy-markdown') {
+                        if (window.navigator.clipboard && typeof window.navigator.clipboard.writeText === 'function') {
+                            window.navigator.clipboard.writeText(workspaceContext.source.value);
+                        }
+                    } else if (action === 'wechat') {
+                        copyWechat({ preview: $(workspaceContext.preview), flash: context.flash });
+                    } else if (action === 'history') {
+                        var link = document.querySelector('#revisionsdiv .inside a, #misc-publishing-actions .misc-pub-revisions a');
+                        if (link && link.href) {
+                            window.location.href = link.href;
+                        }
+                    } else if (action === 'theme') {
+                        $('.easymde-toolbar-popover-appearance > button').trigger('click');
+                    } else if (action === 'font') {
+                        $('.easymde-toolbar-popover-font > button').trigger('click');
+                    }
+                },
+                getFeaturedImageCandidate: function (markdown) {
+                    var candidate = workspaceApi.findFirstLocalImageCandidate(markdown, {
+                        siteUrl: window.location.href,
+                        uploadsUrl: config.uploadsBaseUrl || ''
+                    });
+                    var candidateUrl;
+                    var searchTerm;
+
+                    if (!candidate || !window.wp || typeof window.wp.apiFetch !== 'function') {
+                        return Promise.resolve(null);
+                    }
+
+                    try {
+                        candidateUrl = new window.URL(candidate.url);
+                        searchTerm = decodeURIComponent(candidateUrl.pathname.split('/').pop() || '')
+                            .replace(/-\d+x\d+(?=\.[^.]+$)/, '')
+                            .replace(/\.[^.]+$/, '');
+                    } catch (error) {
+                        return Promise.resolve(null);
+                    }
+
+                    return window.wp.apiFetch({
+                        path: '/wp/v2/media?context=edit&media_type=image&per_page=20&_fields=id,source_url,alt_text,media_details&search=' + encodeURIComponent(searchTerm)
+                    }).then(function (attachments) {
+                        var normalizedCandidate = candidateUrl.origin + candidateUrl.pathname;
+                        var attachment = (attachments || []).find(function (item) {
+                            var urls = [item && item.source_url ? item.source_url : ''];
+                            var sizes = item && item.media_details && item.media_details.sizes
+                                ? item.media_details.sizes
+                                : {};
+
+                            Object.keys(sizes).forEach(function (size) {
+                                if (sizes[size] && sizes[size].source_url) {
+                                    urls.push(sizes[size].source_url);
+                                }
+                            });
+
+                            return urls.some(function (url) {
+                                try {
+                                    var mediaUrl = new window.URL(url, window.location.href);
+                                    return mediaUrl.origin + mediaUrl.pathname === normalizedCandidate;
+                                } catch (error) {
+                                    return false;
+                                }
+                            });
+                        });
+
+                        if (!attachment || !attachment.id) {
+                            return null;
+                        }
+
+                        return {
+                            id: attachment.id,
+                            url: candidate.url,
+                            alt: candidate.alt || attachment.alt_text || ''
+                        };
+                    }).catch(function (error) {
+                        if (error && (error.status === 401 || error.status === 403)) {
+                            return null;
+                        }
+                        throw error;
+                    });
+                },
+                getPublishState: function () {
+                    var categoryInputs = document.querySelectorAll('#categorychecklist input[type="checkbox"]');
+                    var featuredId = parseInt(String($('#_thumbnail_id').val() || ''), 10);
+                    var featuredImage = null;
+                    var featuredPreview = document.querySelector('#postimagediv .inside img');
+
+                    if (isFinite(featuredId) && featuredId > 0) {
+                        featuredImage = {
+                            id: featuredId,
+                            url: featuredPreview && featuredPreview.src ? featuredPreview.src : '',
+                            alt: featuredPreview && featuredPreview.alt ? featuredPreview.alt : ''
+                        };
+                    }
+
+                    return {
+                        categories: Array.prototype.map.call(categoryInputs, function (input) {
+                            return input.checked ? String(input.value || '') : '';
+                        }).filter(Boolean),
+                        categoryOptions: Array.prototype.map.call(categoryInputs, function (input) {
+                            return {
+                                id: String(input.value || ''),
+                                label: input.parentNode && input.parentNode.textContent
+                                    ? input.parentNode.textContent.replace(/\s+/g, ' ').trim()
+                                    : String(input.value || '')
+                            };
+                        }),
+                        excerpt: String($('#excerpt').val() || ''),
+                        featuredImage: featuredImage,
+                        openPreview: false,
+                        postStatus: String($('#post_status').val() || ''),
+                        tags: String($('#tax-input-post_tag').val() || '')
+                    };
+                },
+                getRevisions: function () {
+                    var postId = parseInt(String($('#post_ID').val() || ''), 10);
+                    var postType = String($('#post_type').val() || 'post');
+
+                    if (!isFinite(postId) || postId <= 0 || !window.wp || typeof window.wp.apiFetch !== 'function') {
+                        return Promise.resolve([]);
+                    }
+
+                    return window.wp.apiFetch({ path: '/wp/v2/types/' + encodeURIComponent(postType) }).then(function (type) {
+                        var restBase = type && type.rest_base ? type.rest_base : postType;
+                        return window.wp.apiFetch({
+                            path: '/wp/v2/' + encodeURIComponent(restBase) + '/' + postId + '/revisions?context=edit&per_page=50'
+                        });
+                    }).then(function (revisions) {
+                        return (revisions || []).map(function (revision) {
+                            var title = revision && revision.title
+                                ? (revision.title.raw || revision.title.rendered || '')
+                                : '';
+                            var date = revision && revision.date ? new Date(revision.date) : null;
+                            return {
+                                id: revision.id,
+                                title: title,
+                                date: date && !isNaN(date.getTime()) ? date.toLocaleString() : ''
+                            };
+                        });
+                    });
+                },
+                openRevision: function (revisionId) {
+                    var id = parseInt(String(revisionId || ''), 10);
+                    if (isFinite(id) && id > 0) {
+                        window.location.href = window.ajaxurl.replace(/admin-ajax\.php(?:\?.*)?$/, 'revision.php?revision=' + id);
+                    }
+                },
+                selectFeaturedImage: function (callback) {
+                    var frame;
+
+                    if (!window.wp || !window.wp.media) {
+                        showFlash(context.flash, 'error', getString('imagePasteFailed'));
+                        return;
+                    }
+
+                    frame = window.wp.media({
+                        title: getString('selectFeaturedImage') || 'Select featured image',
+                        button: { text: getString('useFeaturedImage') || 'Use featured image' },
+                        library: { type: 'image' },
+                        multiple: false
+                    });
+                    frame.on('select', function () {
+                        var attachment = frame.state().get('selection').first();
+                        var data = attachment ? attachment.toJSON() : null;
+                        if (data && data.id) {
+                            callback({
+                                id: data.id,
+                                url: data.url || '',
+                                alt: data.alt || data.title || ''
+                            });
+                        }
+                    });
+                    frame.open();
+                },
+                publish: function (draft) {
+                    var selectedCategories = Object.create(null);
+                    var featuredId = draft.featuredImage && draft.featuredImage.id
+                        ? String(draft.featuredImage.id)
+                        : '-1';
+
+                    (draft.categories || []).forEach(function (id) {
+                        selectedCategories[String(id)] = true;
+                    });
+                    document.querySelectorAll('#categorychecklist input[type="checkbox"], #categorychecklist-pop input[type="checkbox"]').forEach(function (input) {
+                        input.checked = !!selectedCategories[String(input.value || '')];
+                    });
+                    $('#tax-input-post_tag').val((draft.tags || []).join(', ')).trigger('change');
+                    $('#excerpt').val(draft.excerpt || '').trigger('change');
+                    $('#_thumbnail_id').val(featuredId).trigger('change');
+
+                    if (draft.openPreview && window.sessionStorage) {
+                        try {
+                            window.sessionStorage.setItem(
+                                'easymde:publish-preview-pending',
+                                String(Date.now())
+                            );
+                        } catch (error) {
+                            // Preview-after-publish is optional; saving must continue if storage is blocked.
+                        }
+                    }
+                    $('#publish').trigger('click');
+                },
+                onActivate: function (workspaceContext) {
+                    bindLazyImagePasteUpload(workspaceContext.source, $(workspaceContext.root), context.flash);
+                    updateImmersiveToggle(context);
+                },
+                onDeactivate: function () {
+                    context.refreshPreview({ immediate: true });
+                    updateImmersiveToggle(context);
+                }
             }
-
-            focusWithoutScrolling(context.textarea);
         });
     }
 
@@ -2323,7 +2740,6 @@
             $secondary.append($('<span class="easymde-toolbar-divider" aria-hidden="true"></span>'));
         }
 
-        createThemeToggleButton($secondary, context.root, context.refreshPreview);
         createImmersiveToggleButton($secondary, context);
         createFontMenu($secondary, context.preview);
         createAppearanceMenu($secondary, context.root, context.preview, context.refreshPreview);
@@ -2345,7 +2761,7 @@
         });
 
         $button.on('click', function () {
-            setImmersiveMode(context, !context.root.hasClass('easymde-editor-immersive'));
+            setImmersiveMode(context, !(context.immersiveWorkspace && context.immersiveWorkspace.isActive()));
         });
 
         $container.append($button);
@@ -2368,7 +2784,11 @@
 
     function bindImmersiveModeShortcuts(context) {
         $(document).on('keydown.easymdeImmersive', function (event) {
-            if (event.key !== 'Escape' || !context.root.hasClass('easymde-editor-immersive')) {
+            if (
+                event.key !== 'Escape'
+                || !context.immersiveWorkspace
+                || !context.immersiveWorkspace.isActive()
+            ) {
                 return;
             }
 
@@ -2444,10 +2864,6 @@
             $content.addClass('easymde-native-editor-hidden');
         }
 
-        if (window.EasyMDEEnhancements) {
-            window.EasyMDEEnhancements.initTheme($root[0], config);
-        }
-
         if (
             (
                 $preview.attr('data-easymde-initial-preview') === '1'
@@ -2475,6 +2891,7 @@
             refreshPreview: refreshPreview,
             flash: null
         };
+        context.immersiveWorkspace = createImmersiveWorkspace(context);
 
         function initializeEditorChrome() {
             if (editorChromeReady) {
@@ -2542,6 +2959,8 @@
                 preloadWechatExporter();
             }
 
+            consumeImmersivePublishPreview(context);
+
             if (!config.features || config.features.localDrafts !== false) {
                 afterPreviewIdle(function () {
                     if (!sourceChangedBeforeShell && $source.val() === initialMarkdown) {
@@ -2559,6 +2978,7 @@
         window.EasyMDETestHooks.hydrateInitialPreview = hydrateInitialPreview;
         window.EasyMDETestHooks.ensureImagePasteBound = ensureImagePasteBound;
         window.EasyMDETestHooks.openMediaPicker = openMediaPicker;
+        window.EasyMDETestHooks.isSuccessfulPostNotice = isSuccessfulPostNotice;
         window.EasyMDETestHooks.showFlash = showFlash;
         window.EasyMDETestHooks.updatePreview = updatePreview;
     }

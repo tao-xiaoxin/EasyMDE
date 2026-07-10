@@ -40,11 +40,11 @@ EasyMDE stores editor drafts in the browser's `localStorage`, keyed by site, use
 
 Local draft recovery is browser-local. Clearing browser storage, switching browsers, switching users, or editing from another device can make those local drafts unavailable. WordPress saves, revisions, autosaves, and publishing remain separate WordPress behavior.
 
-## Immersive Mode And Dark Mode
+## Immersive Writing
 
-Immersive mode temporarily expands the EasyMDE editor over the WordPress edit screen. It preserves editor scroll position while toggling and exits with the toolbar control or Escape.
+The normal WordPress edit screen remains unchanged until the author selects **Enter immersive writing**. That action opens an isolated full-screen article workspace with title editing, edit/split/preview modes, outline navigation, local statistics, responsive panes, themes, fonts, media, revision history, and native WordPress save and publish controls. Outline navigation and the compact statistics panel are off by default; the statistics panel computes line, Western-word, CJK-character, total-character, and deterministic reading-time values locally without sending or storing article content.
 
-Dark mode changes the EasyMDE editor surface. The editor initializes from the browser's saved EasyMDE theme preference when available, otherwise it can follow the browser color-scheme preference. The setting is stored in browser storage for the current site/user context.
+The workspace keeps the existing WordPress title and EasyMDE Markdown fields as the source of truth. Closing it with the visible exit action or Escape returns to the original edit screen with the current title and Markdown intact. Opening and cancelling the publish dialog does not write post fields; confirmed publishing continues through the native WordPress form, nonce, capability, taxonomy, media, and revision paths.
 
 ## Themes, Code Themes, And Fonts
 

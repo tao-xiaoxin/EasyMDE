@@ -17,7 +17,6 @@ final class MarkdownFeatureDetector {
 		$has_regular_code_block  = $fenced_code_blocks['regular'] || $has_indented_code_block;
 
 		return array(
-			'darkMode'        => true,
 			'localDrafts'     => true,
 			'codeBlocks'      => $has_code_block,
 			'syntaxHighlight' => $has_regular_code_block,

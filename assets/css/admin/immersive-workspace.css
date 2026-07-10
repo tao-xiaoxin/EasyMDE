@@ -1,0 +1,1072 @@
+html.easymde-immersive-workspace-active,
+body.easymde-immersive-workspace-active {
+    overflow: hidden !important;
+}
+
+.easymde-immersive-workspace,
+.easymde-immersive-workspace * {
+    box-sizing: border-box;
+}
+
+.easymde-immersive-workspace {
+    --easymde-immersive-bg: #f3f3f0;
+    --easymde-immersive-border: #e2e8f0;
+    --easymde-immersive-text: #172033;
+    --easymde-immersive-muted: #64748b;
+    --easymde-immersive-accent: #4f46e5;
+    --easymde-immersive-source-ratio: 0.62;
+    position: fixed;
+    inset: 0;
+    z-index: 150000;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background: var(--easymde-immersive-bg);
+    color: var(--easymde-immersive-text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.easymde-immersive-workspace button,
+.easymde-immersive-workspace input,
+.easymde-immersive-workspace textarea {
+    margin: 0;
+    font: inherit;
+}
+
+.easymde-immersive-workspace button {
+    cursor: pointer;
+}
+
+.easymde-immersive-workspace button:focus-visible,
+.easymde-immersive-workspace input:focus-visible,
+.easymde-immersive-workspace textarea:focus-visible,
+.easymde-immersive-workspace [tabindex]:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+}
+
+.easymde-immersive-workspace__shell {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+}
+
+.easymde-immersive-workspace__header {
+    display: flex;
+    align-items: center;
+    min-height: 58px;
+    gap: 14px;
+    padding: 9px 20px;
+    border-bottom: 1px solid var(--easymde-immersive-border);
+    background: #fff;
+}
+
+.easymde-immersive-workspace__brand,
+.easymde-immersive-workspace__primary-actions,
+.easymde-immersive-workspace__toolbar,
+.easymde-immersive-workspace__format-actions,
+.easymde-immersive-workspace__secondary-actions {
+    display: flex;
+    align-items: center;
+}
+
+.easymde-immersive-workspace__brand {
+    flex: 0 0 auto;
+    gap: 7px;
+    color: #334155;
+    font-size: 13px;
+}
+
+.easymde-immersive-workspace__traffic {
+    display: flex;
+    gap: 5px;
+}
+
+.easymde-immersive-workspace__traffic i {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #ff605c;
+}
+
+.easymde-immersive-workspace__traffic i:nth-child(2) { background: #ffbd44; }
+.easymde-immersive-workspace__traffic i:nth-child(3) { background: #00ca4e; }
+
+.easymde-immersive-workspace__brand-mark {
+    width: 22px;
+    height: 22px;
+    color: #3b82f6;
+    font-size: 22px;
+    line-height: 22px;
+}
+
+.easymde-immersive-workspace__title {
+    flex: 1 1 260px;
+    min-width: 160px;
+    max-height: 76px;
+    padding: 5px 8px;
+    overflow: hidden;
+    resize: none;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    box-shadow: none;
+    color: #1e293b;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.35;
+}
+
+.easymde-immersive-workspace__title:focus {
+    background: #f8fafc;
+    box-shadow: none;
+}
+
+.easymde-immersive-workspace__primary-actions {
+    flex: 0 0 auto;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.easymde-immersive-workspace__primary-actions::-webkit-scrollbar { display: none; }
+
+.easymde-immersive-workspace__primary-actions button,
+.easymde-immersive-workspace__secondary-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.easymde-immersive-workspace__primary-actions .dashicons,
+.easymde-immersive-workspace__secondary-actions .dashicons {
+    width: 16px;
+    height: 16px;
+    font-size: 16px;
+    line-height: 16px;
+}
+
+.easymde-immersive-workspace__text-icon {
+    font-family: Georgia, serif;
+    font-size: 17px;
+    line-height: 1;
+}
+
+.easymde-immersive-workspace__primary-actions button:hover,
+.easymde-immersive-workspace__secondary-actions button:hover,
+.easymde-immersive-workspace__primary-actions button.is-active {
+    border-color: #dbe3ef;
+    background: #f8fafc;
+    color: #172033;
+}
+
+.easymde-immersive-workspace__primary-actions button.is-active {
+    box-shadow: 0 0 0 2px #c7d2fe inset;
+    color: #3730a3;
+}
+
+.easymde-immersive-workspace__primary-actions .easymde-immersive-workspace__ai-button {
+    background: #f1eafe;
+    color: #7c3aed;
+}
+
+.easymde-immersive-workspace__primary-actions .easymde-immersive-workspace__publish-button {
+    padding-inline: 15px;
+    background: #101827;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.16);
+}
+
+.easymde-immersive-workspace__action-separator {
+    width: 1px;
+    height: 22px;
+    margin: 0 3px;
+    background: #e2e8f0;
+}
+
+.easymde-immersive-workspace__toolbar {
+    justify-content: space-between;
+    min-height: 52px;
+    gap: 12px;
+    padding: 7px 18px;
+    border-bottom: 1px solid var(--easymde-immersive-border);
+    background: #fff;
+}
+
+.easymde-immersive-workspace__format-actions,
+.easymde-immersive-workspace__secondary-actions {
+    gap: 4px;
+    min-width: 0;
+}
+
+.easymde-immersive-workspace__format-actions button {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid #dfe6ef;
+    border-radius: 7px;
+    background: #fff;
+    color: #405068;
+    font-size: 14px;
+}
+
+.easymde-immersive-workspace__format-actions button .dashicons {
+    width: 18px;
+    height: 18px;
+    font-size: 18px;
+    line-height: 18px;
+}
+
+.easymde-immersive-workspace__format-actions .easymde-toolbar-text-icon {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.easymde-immersive-workspace__format-actions button:hover {
+    border-color: #bfccda;
+    background: #f8fafc;
+    color: #0f172a;
+}
+
+.easymde-immersive-workspace__format-actions button.is-active {
+    border-color: #111827;
+    background: #111827;
+    color: #fff;
+}
+
+.easymde-immersive-workspace__format-actions > i {
+    width: 1px;
+    height: 18px;
+    margin: 0 4px;
+    background: #e2e8f0;
+}
+
+.easymde-immersive-workspace__secondary-actions .easymde-immersive-workspace__wechat-button {
+    border-color: rgba(7, 192, 96, 0.35);
+    background: #f1fcf5;
+    color: #0f7d3b;
+}
+
+.easymde-immersive-workspace__wechat-button .easymde-wechat-glyph {
+    display: inline-flex;
+    width: 22px;
+    height: 22px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #fff;
+    color: #07c060;
+    box-shadow: inset 0 0 0 1px rgba(7, 192, 96, 0.18);
+}
+
+.easymde-immersive-workspace__wechat-button .easymde-wechat-glyph svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
+.easymde-immersive-workspace__main {
+    display: grid;
+    flex: 1 1 auto;
+    min-height: 0;
+    grid-template-columns: 240px minmax(360px, calc((100% - 262px) * var(--easymde-immersive-source-ratio))) 6px minmax(320px, 1fr);
+    gap: 12px;
+    padding: 14px;
+    overflow: hidden;
+    background: var(--easymde-immersive-bg);
+}
+
+.easymde-immersive-workspace__outline-card,
+.easymde-immersive-workspace__editor-card,
+.easymde-immersive-workspace__preview-card {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid rgba(203, 213, 225, 0.72);
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.easymde-immersive-workspace__outline-card > header,
+.easymde-immersive-workspace__editor-card > header,
+.easymde-immersive-workspace__preview-card > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 42px;
+    padding: 0 15px;
+    border-bottom: 1px solid #eef2f7;
+    background: #fafbfc;
+    color: #4b5563;
+    font-size: 12px;
+    letter-spacing: 0.03em;
+}
+
+.easymde-immersive-workspace__outline-card header button,
+.easymde-immersive-workspace__popover header button,
+.easymde-immersive-workspace__ai header button {
+    display: grid;
+    width: 27px;
+    height: 27px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #94a3b8;
+}
+
+.easymde-immersive-workspace__outline {
+    flex: 1 1 auto;
+    padding: 10px 9px;
+    overflow: auto;
+}
+
+.easymde-immersive-workspace__outline-entry {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    min-height: 32px;
+    padding: 7px 8px 7px calc(8px + (var(--easymde-outline-level) - 1) * 14px);
+    overflow: hidden;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #475569;
+    font-size: 12.5px;
+    line-height: 1.3;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.easymde-immersive-workspace__outline-icon {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    color: #9fb3ce;
+    font-size: 16px;
+    line-height: 16px;
+}
+
+.easymde-immersive-workspace__outline-connector {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 1px;
+    border-radius: 999px;
+    background: #cbd5e1;
+}
+
+.easymde-immersive-workspace__outline-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.easymde-immersive-workspace__outline-entry:hover {
+    background: #f1f5f9;
+    color: #1d4ed8;
+}
+
+.easymde-immersive-workspace__outline-entry.is-active {
+    background: #eff6ff;
+    box-shadow: inset 2px 0 #2563eb;
+    color: #1d4ed8;
+    font-weight: 600;
+}
+
+.easymde-immersive-workspace__outline-entry.is-active .easymde-immersive-workspace__outline-icon {
+    color: #2563eb;
+}
+
+.easymde-immersive-workspace__outline-entry.is-active .easymde-immersive-workspace__outline-connector {
+    background: #60a5fa;
+}
+
+.easymde-immersive-workspace__outline-empty {
+    padding: 20px 10px;
+    color: #94a3b8;
+    font-size: 12px;
+    text-align: center;
+}
+
+.easymde-immersive-workspace__outline-card > footer,
+.easymde-immersive-workspace__editor-card > footer {
+    display: flex;
+    align-items: center;
+    min-height: 36px;
+    padding: 0 14px;
+    border-top: 1px solid #eef2f7;
+    color: #64748b;
+    font-size: 11px;
+}
+
+.easymde-immersive-workspace__outline-card > footer button {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #64748b;
+    font-size: 12px;
+}
+
+.easymde-immersive-workspace__editor-body,
+.easymde-immersive-workspace__preview-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+}
+
+.easymde-immersive-workspace__editor-body {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr);
+}
+
+.easymde-immersive-workspace__line-numbers {
+    min-height: 100%;
+    padding: 22px 12px 22px 0;
+    overflow: hidden;
+    border-right: 1px solid #f3f4f6;
+    background: #fff;
+    color: #b7bcc5;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.9;
+    text-align: right;
+    user-select: none;
+}
+
+.easymde-immersive-workspace__line-number {
+    display: block;
+    height: 1.9em;
+}
+
+.easymde-immersive-workspace__source {
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-height: 100%;
+    padding: 22px 24px 22px 18px;
+    resize: none;
+    border: 0;
+    border-radius: 0;
+    background: #fff;
+    box-shadow: none;
+    color: #2f3b4d;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.9;
+    white-space: pre;
+    tab-size: 4;
+}
+
+.easymde-immersive-workspace__source:focus {
+    box-shadow: none;
+}
+
+.easymde-immersive-workspace__editor-card > footer {
+    justify-content: space-between;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.easymde-immersive-workspace__editor-card > footer i {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin: 0 4px;
+    border-radius: 50%;
+    background: #10b981;
+}
+
+.easymde-immersive-workspace__divider {
+    align-self: stretch;
+    width: 6px;
+    border-radius: 999px;
+    cursor: col-resize;
+    touch-action: none;
+}
+
+.easymde-immersive-workspace__divider:hover,
+.easymde-immersive-workspace__divider:focus-visible {
+    background: rgba(59, 130, 246, 0.45);
+}
+
+.easymde-immersive-workspace__preview-scroll {
+    padding: 28px 34px;
+}
+
+.easymde-immersive-workspace__preview {
+    max-width: 680px;
+    min-height: 100%;
+    margin: 0 auto;
+}
+
+.easymde-immersive-workspace.is-mobile-preview .easymde-immersive-workspace__preview-scroll {
+    padding: 24px;
+    background: #eef1f5;
+}
+
+.easymde-immersive-workspace.is-mobile-preview .easymde-immersive-workspace__preview {
+    width: min(390px, 100%);
+    min-height: 720px;
+    padding: 74px 24px 36px;
+    border: 10px solid #111827;
+    border-radius: 42px;
+    background: #fff;
+    box-shadow: 0 22px 50px rgba(15, 23, 42, 0.2);
+}
+
+.easymde-immersive-workspace__main[data-view="edit"] {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.easymde-immersive-workspace__main[data-view="preview"] {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 1181px) {
+    .easymde-immersive-workspace.is-outline-hidden .easymde-immersive-workspace__main[data-view="split"] {
+        grid-template-columns: minmax(360px, calc((100% - 18px) * var(--easymde-immersive-source-ratio))) 6px minmax(320px, 1fr);
+    }
+}
+
+.easymde-immersive-workspace__main[data-view="edit"] .easymde-immersive-workspace__preview-card,
+.easymde-immersive-workspace__main[data-view="edit"] .easymde-immersive-workspace__divider,
+.easymde-immersive-workspace__main[data-view="preview"] .easymde-immersive-workspace__editor-card,
+.easymde-immersive-workspace__main[data-view="preview"] .easymde-immersive-workspace__divider,
+.easymde-immersive-workspace__main[data-view="edit"] .easymde-immersive-workspace__outline-card,
+.easymde-immersive-workspace__main[data-view="preview"] .easymde-immersive-workspace__outline-card,
+.easymde-immersive-workspace.is-outline-hidden .easymde-immersive-workspace__outline-card {
+    display: none;
+}
+
+.easymde-immersive-workspace__popover,
+.easymde-immersive-workspace__ai {
+    position: fixed;
+    z-index: 150020;
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
+}
+
+.easymde-immersive-workspace__popover[hidden],
+.easymde-immersive-workspace__ai[hidden] {
+    display: none;
+}
+
+.easymde-immersive-workspace__popover {
+    top: 104px;
+    right: 16px;
+    width: min(360px, calc(100vw - 32px));
+}
+
+.easymde-immersive-workspace__popover header,
+.easymde-immersive-workspace__ai header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 50px;
+    padding: 0 16px;
+    border-bottom: 1px solid #edf2f7;
+}
+
+.easymde-immersive-workspace__popover label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 13px 17px;
+}
+
+.easymde-immersive-workspace__popover label + label {
+    border-top: 1px solid #f1f5f9;
+}
+
+.easymde-immersive-workspace__popover label span {
+    display: grid;
+    gap: 3px;
+}
+
+.easymde-immersive-workspace__popover label strong { font-size: 13px; }
+.easymde-immersive-workspace__popover label small { color: #94a3b8; font-size: 11px; }
+
+.easymde-immersive-workspace__appearance {
+    top: 60px;
+}
+
+.easymde-immersive-workspace__appearance > div {
+    display: grid;
+    gap: 12px;
+    padding: 16px;
+}
+
+.easymde-immersive-workspace__appearance label {
+    display: grid;
+    gap: 6px;
+    padding: 0;
+}
+
+.easymde-immersive-workspace__appearance label + label {
+    border: 0;
+}
+
+.easymde-immersive-workspace__appearance label strong {
+    color: #475569;
+    font-size: 12px;
+}
+
+.easymde-immersive-workspace__appearance select {
+    width: 100%;
+    min-height: 36px;
+    padding: 0 10px;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    background: #fff;
+    color: #1e293b;
+    font-size: 13px;
+}
+
+.easymde-immersive-workspace__statistics {
+    top: 104px;
+    right: 16px;
+    width: min(390px, calc(100vw - 32px));
+}
+
+.easymde-immersive-workspace__statistics-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 16px;
+}
+
+.easymde-immersive-workspace__statistics-grid > div {
+    display: grid;
+    min-height: 74px;
+    align-content: center;
+    gap: 4px;
+    padding: 12px;
+    border: 1px solid #e8edf4;
+    border-radius: 10px;
+    background: #f8fafc;
+}
+
+.easymde-immersive-workspace__statistics-grid strong {
+    color: #1e293b;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 20px;
+    line-height: 1;
+}
+
+.easymde-immersive-workspace__statistics-grid span {
+    color: #64748b;
+    font-size: 11px;
+}
+
+.easymde-immersive-workspace__statistics > p {
+    margin: 0;
+    padding: 0 16px 16px;
+    color: #7c8799;
+    font-size: 11px;
+    line-height: 1.55;
+}
+
+.easymde-immersive-workspace__ai {
+    top: 64px;
+    right: 14px;
+    bottom: 14px;
+    display: flex;
+    width: min(380px, calc(100vw - 28px));
+    flex-direction: column;
+}
+
+.easymde-immersive-workspace__ai > div {
+    flex: 1 1 auto;
+    padding: 18px;
+    overflow: auto;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.easymde-immersive-workspace__ai form {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid #edf2f7;
+}
+
+.easymde-immersive-workspace__ai input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 36px;
+    padding: 0 10px;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+}
+
+.easymde-immersive-workspace__ai form button {
+    padding: 0 14px;
+    border: 0;
+    border-radius: 8px;
+    background: #7c3aed;
+    color: #fff;
+}
+
+.easymde-immersive-workspace__modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 150030;
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(3px);
+}
+
+.easymde-immersive-workspace__modal-backdrop[hidden],
+.easymde-immersive-workspace__publish[hidden] {
+    display: none;
+}
+
+.easymde-immersive-workspace__publish {
+    position: fixed;
+    z-index: 150040;
+    top: 50%;
+    left: 50%;
+    display: flex;
+    width: min(820px, calc(100vw - 32px));
+    max-height: min(780px, calc(100vh - 32px));
+    flex-direction: column;
+    overflow: hidden;
+    transform: translate(-50%, -50%);
+    border: 1px solid #e2e8f0;
+    border-radius: 20px;
+    background: #fff;
+    box-shadow: 0 28px 90px rgba(15, 23, 42, 0.28);
+}
+
+.easymde-immersive-workspace__history {
+    position: fixed;
+    z-index: 150040;
+    top: 50%;
+    left: 50%;
+    display: flex;
+    width: min(620px, calc(100vw - 32px));
+    max-height: min(680px, calc(100vh - 32px));
+    flex-direction: column;
+    overflow: hidden;
+    transform: translate(-50%, -50%);
+    border: 1px solid #e2e8f0;
+    border-radius: 18px;
+    background: #fff;
+    box-shadow: 0 28px 90px rgba(15, 23, 42, 0.28);
+}
+
+.easymde-immersive-workspace__history[hidden] { display: none; }
+
+.easymde-immersive-workspace__history > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 76px;
+    padding: 16px 20px;
+    border-bottom: 1px solid #edf2f7;
+}
+
+.easymde-immersive-workspace__history > header > div {
+    display: grid;
+    gap: 4px;
+}
+
+.easymde-immersive-workspace__history > header small {
+    color: #64748b;
+    font-size: 12px;
+}
+
+.easymde-immersive-workspace__history > header button {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #fff;
+}
+
+.easymde-immersive-workspace__history > div {
+    display: grid;
+    gap: 8px;
+    padding: 16px;
+    overflow: auto;
+    color: #64748b;
+    font-size: 13px;
+}
+
+.easymde-immersive-workspace__history-entry {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    width: 100%;
+    min-height: 52px;
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #fff;
+    color: #334155;
+    text-align: left;
+}
+
+.easymde-immersive-workspace__history-entry:hover {
+    border-color: #bfdbfe;
+    background: #f8fbff;
+}
+
+.easymde-immersive-workspace__history-entry span {
+    flex: 0 0 auto;
+    color: #94a3b8;
+    font-size: 11px;
+}
+
+.easymde-immersive-workspace__publish > header,
+.easymde-immersive-workspace__publish > footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 auto;
+    padding: 18px 24px;
+}
+
+.easymde-immersive-workspace__publish > header {
+    min-height: 82px;
+    border-bottom: 1px solid #edf2f7;
+    background: linear-gradient(135deg, #f8fbff 0%, #fff 70%);
+}
+
+.easymde-immersive-workspace__publish > header > div {
+    display: grid;
+    gap: 5px;
+}
+
+.easymde-immersive-workspace__publish > header strong {
+    color: #0f172a;
+    font-size: 20px;
+}
+
+.easymde-immersive-workspace__publish > header small {
+    color: #64748b;
+    font-size: 12px;
+}
+
+.easymde-immersive-workspace__publish > header button {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 9px;
+    background: #fff;
+    color: #64748b;
+}
+
+.easymde-immersive-workspace__publish-body {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 0.72fr);
+    gap: 20px 26px;
+    padding: 24px;
+    overflow: auto;
+}
+
+.easymde-immersive-workspace__publish-field {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    min-width: 0;
+}
+
+.easymde-immersive-workspace__publish-field > strong {
+    color: #334155;
+    font-size: 13px;
+}
+
+.easymde-immersive-workspace__publish-field input[type="text"],
+.easymde-immersive-workspace__publish-field textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #dbe3ef;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: none;
+    color: #1e293b;
+    font-size: 13px;
+}
+
+.easymde-immersive-workspace__publish-field textarea {
+    min-height: 112px;
+    resize: vertical;
+}
+
+.easymde-immersive-workspace__featured {
+    display: flex;
+    min-height: 82px;
+    flex-wrap: wrap;
+    align-content: center;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 12px;
+    background: #f8fafc;
+}
+
+.easymde-immersive-workspace__featured span {
+    width: 100%;
+    overflow: hidden;
+    color: #64748b;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.easymde-immersive-workspace__featured button,
+.easymde-immersive-workspace__publish > footer button {
+    min-height: 34px;
+    padding: 0 13px;
+    border: 1px solid #dbe3ef;
+    border-radius: 9px;
+    background: #fff;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.easymde-immersive-workspace__categories {
+    display: grid;
+    max-height: 190px;
+    gap: 4px;
+    padding: 10px;
+    overflow: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    color: #64748b;
+    font-size: 12px;
+}
+
+.easymde-immersive-workspace__categories label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 4px;
+}
+
+.easymde-immersive-workspace__publish-preview {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #475569;
+    font-size: 12px;
+}
+
+.easymde-immersive-workspace__publish > footer {
+    justify-content: flex-end;
+    gap: 10px;
+    border-top: 1px solid #edf2f7;
+    background: #fafbfc;
+}
+
+.easymde-immersive-workspace__publish > footer button.is-primary {
+    min-width: 120px;
+    border-color: #0f172a;
+    background: #0f172a;
+    color: #fff;
+}
+
+body.easymde-immersive-workspace-active .media-modal { z-index: 160100; }
+body.easymde-immersive-workspace-active .media-modal-backdrop { z-index: 160090; }
+
+@media (max-width: 1180px) {
+    .easymde-immersive-workspace__primary-actions button { padding-inline: 7px; }
+    .easymde-immersive-workspace__main {
+        grid-template-columns: minmax(320px, calc((100% - 16px) * var(--easymde-immersive-source-ratio))) 6px minmax(320px, 1fr);
+    }
+    .easymde-immersive-workspace__outline-card { display: none; }
+    .easymde-immersive-workspace [data-action="toggle-outline"],
+    .easymde-immersive-workspace__outline-setting { display: none; }
+}
+
+@media (max-width: 900px) {
+    .easymde-immersive-workspace__header { flex-wrap: wrap; }
+    .easymde-immersive-workspace__title { order: 1; flex-basis: calc(100% - 155px); }
+    .easymde-immersive-workspace__primary-actions {
+        order: 2;
+        width: 100%;
+        overflow-x: auto;
+        padding-top: 3px;
+    }
+    .easymde-immersive-workspace__toolbar { overflow-x: auto; }
+    .easymde-immersive-workspace__format-actions,
+    .easymde-immersive-workspace__secondary-actions { flex: 0 0 auto; }
+}
+
+@media (max-width: 680px) {
+    .easymde-immersive-workspace__brand strong,
+    .easymde-immersive-workspace__primary-actions .easymde-immersive-workspace__action-separator,
+    .easymde-immersive-workspace__primary-actions button:not([data-view]):not([data-action="save"]):not([data-action="publish"]) {
+        display: none;
+    }
+    .easymde-immersive-workspace__header { gap: 7px; padding: 7px 10px; }
+    .easymde-immersive-workspace__title { min-width: 0; }
+    .easymde-immersive-workspace__toolbar {
+        align-items: stretch;
+        flex-wrap: wrap;
+        overflow: hidden;
+        padding: 5px 8px 7px;
+    }
+    .easymde-immersive-workspace__format-actions {
+        width: 100%;
+        overflow-x: auto;
+        padding-bottom: 2px;
+    }
+    .easymde-immersive-workspace__secondary-actions {
+        width: 100%;
+        justify-content: space-between;
+        border-top: 1px solid #f1f5f9;
+        padding-top: 5px;
+    }
+    .easymde-immersive-workspace__secondary-actions button {
+        min-height: 28px;
+        padding-inline: 7px;
+        font-size: 11px;
+    }
+    .easymde-immersive-workspace__main,
+    .easymde-immersive-workspace__main[data-view="split"] {
+        grid-template-columns: minmax(0, 1fr);
+        padding: 8px;
+    }
+    .easymde-immersive-workspace__main[data-view="split"] .easymde-immersive-workspace__preview-card,
+    .easymde-immersive-workspace__main[data-view="split"] .easymde-immersive-workspace__divider {
+        display: none;
+    }
+    .easymde-immersive-workspace__preview-scroll { padding: 20px 16px; }
+    .easymde-immersive-workspace__publish-body { grid-template-columns: minmax(0, 1fr); }
+}

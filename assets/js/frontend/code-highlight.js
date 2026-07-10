@@ -88,66 +88,7 @@
         return Promise.all(tasks);
     }
 
-    function storedTheme(config) {
-        var key = config && config.storage && config.storage.themeKey;
-
-        if (!key) {
-            return '';
-        }
-
-        try {
-            return window.localStorage.getItem(key) || '';
-        } catch (error) {
-            return '';
-        }
-    }
-
-    function saveTheme(config, theme) {
-        var key = config && config.storage && config.storage.themeKey;
-
-        if (!key) {
-            return;
-        }
-
-        try {
-            window.localStorage.setItem(key, theme);
-        } catch (error) {}
-    }
-
-    function applyTheme(root, theme) {
-        if (!root) {
-            return 'light';
-        }
-
-        root.classList.toggle('easymde-theme-dark', theme === 'dark');
-        root.classList.toggle('easymde-theme-light', theme !== 'dark');
-
-        return theme === 'dark' ? 'dark' : 'light';
-    }
-
-    function initTheme(root, config) {
-        var theme = storedTheme(config);
-
-        if (!theme && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-            theme = 'dark';
-        }
-
-        return applyTheme(root, theme === 'dark' ? 'dark' : 'light');
-    }
-
-    function toggleTheme(root, config) {
-        var next = root && root.classList.contains('easymde-theme-dark') ? 'light' : 'dark';
-
-        applyTheme(root, next);
-        saveTheme(config, next);
-
-        return next;
-    }
-
     window.EasyMDEEnhancements = {
-        enhance: enhance,
-        initTheme: initTheme,
-        toggleTheme: toggleTheme,
-        applyTheme: applyTheme
+        enhance: enhance
     };
 })(window, document);

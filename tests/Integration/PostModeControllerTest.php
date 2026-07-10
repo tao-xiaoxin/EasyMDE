@@ -443,7 +443,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertStringNotContainsString('<script>', $output);
     }
 
-    public function test_editor_shell_keeps_source_before_divider_before_preview_for_large_payloads()
+    public function test_editor_shell_streams_pending_preview_before_large_source_payload()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -476,19 +476,15 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $screen->render_editor_shell(get_post($post_id));
         $output = ob_get_clean();
 
-        $source_position = strpos($output, 'id="easymde-source"');
-        $divider_position = strpos($output, 'id="easymde-divider"');
         $preview_position = strpos($output, 'id="easymde-preview"');
+        $source_position = strpos($output, 'id="easymde-source"');
 
-        $this->assertNotFalse($source_position);
-        $this->assertNotFalse($divider_position);
         $this->assertNotFalse($preview_position);
-        $this->assertLessThan($divider_position, $source_position);
-        $this->assertLessThan($preview_position, $divider_position);
+        $this->assertNotFalse($source_position);
+        $this->assertLessThan($source_position, $preview_position);
         $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
         $this->assertStringNotContainsString('<h1>Fast preview</h1>', $output);
         $this->assertStringContainsString('id="easymde-source" name="easymde_markdown"', $output);
-        $this->assertStringContainsString('class="easymde-divider"', $output);
         $this->assertStringNotContainsString('id="easymde-markdown-field"', $output);
     }
 

@@ -2,7 +2,7 @@
 # This file is distributed under the Apache-2.0 license.
 msgid ""
 msgstr ""
-"Project-Id-Version: EasyMDE 0.1.8\n"
+"Project-Id-Version: EasyMDE 0.1.7\n"
 "Report-Msgid-Bugs-To: https://github.com/tao-xiaoxin/EasyMDE/issues\n"
 "PO-Revision-Date: 2026-07-02 00:00+0000\n"
 "Last-Translator: EasyMDE contributors <noreply@example.com>\n"
@@ -116,6 +116,9 @@ msgstr "自定义字体"
 
 msgid "Cute green"
 msgstr "萌绿风"
+
+msgid "Dark mode"
+msgstr "深色模式"
 
 msgid "Default theme"
 msgstr "默认主题"
@@ -249,14 +252,14 @@ msgstr "斜体"
 msgid "Lanqing"
 msgstr "兰青"
 
+msgid "Light mode"
+msgstr "浅色模式"
+
 msgid "Link"
 msgstr "链接"
 
 msgid "Live preview"
 msgstr "实时预览"
-
-msgid "Resize editor panes"
-msgstr "调整编辑器分栏宽度"
 
 msgid "Local draft saved"
 msgstr "本地草稿已保存"
@@ -373,12 +376,6 @@ msgstr "有序列表"
 msgid "Output actions"
 msgstr "输出操作"
 
-msgid "Editor actions"
-msgstr "编辑器操作"
-
-msgid "Post title"
-msgstr "文章标题"
-
 msgid "Paragraph"
 msgstr "正文"
 
@@ -439,9 +436,6 @@ msgstr "渲染失败。"
 msgid "Rendering preview..."
 msgstr "正在渲染预览..."
 
-msgid "Editing"
-msgstr "编辑中"
-
 msgid "Restore draft"
 msgstr "恢复草稿"
 
@@ -453,9 +447,6 @@ msgstr "保存 CSS"
 
 msgid "Save post"
 msgstr "保存文章"
-
-msgid "Saved"
-msgstr "已保存"
 
 msgid "Saved CSS."
 msgstr "CSS 已保存。"
@@ -498,12 +489,6 @@ msgstr "图片超过了允许的上传大小。"
 
 msgid "The uploaded image URL is unavailable."
 msgstr "上传后的图片 URL 不可用。"
-
-msgid "The browser blocked the preview window. The post was saved successfully."
-msgstr "浏览器阻止了预览窗口，但文章已经成功保存。"
-
-msgid "The post was saved, but no native preview link was available to open automatically."
-msgstr "文章已经保存，但当前没有可自动打开的原生预览链接。"
 
 msgid "Times"
 msgstr "Times"
@@ -566,38 +551,8 @@ msgstr "你无权执行此 EasyMDE 操作。"
 msgid "alt text"
 msgstr "替代文本"
 
-msgid "Add headings to build an outline."
-msgstr "添加标题后即可生成大纲。"
-
-msgid "Cancel"
-msgstr "取消"
-
-msgid "CJK characters"
-msgstr "CJK 字符"
-
-msgid "Categories"
-msgstr "分类目录"
-
-msgid "Choose featured image"
-msgstr "选择特色图片"
-
-msgid "Clear featured image"
-msgstr "清除特色图片"
-
-msgid "Document outline"
-msgstr "文档大纲"
-
-msgid "Excerpt"
-msgstr "摘要"
-
-msgid "Featured image"
-msgstr "特色图片"
-
 msgid "image"
 msgstr "图片"
-
-msgid "Keep current selection"
-msgstr "保留当前选择"
 
 msgid "league/commonmark is active."
 msgstr "league/commonmark 已启用。"
@@ -608,65 +563,11 @@ msgstr "league/commonmark 是必需依赖但当前不可用。请先安装 Compo
 msgid "link text"
 msgstr "链接文本"
 
-msgid "Lines"
-msgstr "行数"
-
 msgid "macOS"
 msgstr "macOS"
-
-msgid "min"
-msgstr "分钟"
-
-msgid "Not set"
-msgstr "未设置"
-
-msgid "Opening this panel only reads the current WordPress post state. Nothing is written until you confirm the native submit action."
-msgstr "打开此面板只会读取当前 WordPress 文章状态。在你确认原生提交动作前，不会写入任何内容。"
-
-msgid "Publish"
-msgstr "发布"
-
-msgid "Publish article"
-msgstr "发布文章"
-
-msgid "Preview after publish"
-msgstr "发布后预览"
-
-msgid "Reading time"
-msgstr "阅读时长"
-
-msgid "Reading time uses 200 western words per minute plus 300 CJK characters per minute, rounded up."
-msgstr "阅读时长按每分钟 200 个西文词和 300 个 CJK 字符估算，并向上取整。"
 
 msgid "sans-serif"
 msgstr "无衬线"
 
 msgid "serif"
 msgstr "衬线"
-
-msgid "Total characters"
-msgstr "总字符数"
-
-msgid "Tags"
-msgstr "标签"
-
-msgid "Update"
-msgstr "更新"
-
-msgid "Update article"
-msgstr "更新文章"
-
-msgid "Use first local image"
-msgstr "使用第一张本地图片"
-
-msgid "Version history"
-msgstr "历史版本"
-
-msgid "Western words"
-msgstr "西文词数"
-
-msgid "Will clear featured image"
-msgstr "将清除特色图片"
-
-msgid "Word statistics"
-msgstr "字数统计"

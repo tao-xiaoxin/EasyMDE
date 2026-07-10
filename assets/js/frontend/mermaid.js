@@ -11,7 +11,11 @@
         return !config || !config.features || config.features[key] !== false;
     }
 
-    function init() {
+    function isDark(root) {
+        return !!(root && root.closest && root.closest('.easymde-theme-dark'));
+    }
+
+    function init(root) {
         if (!window.mermaid) {
             return false;
         }
@@ -19,7 +23,7 @@
         window.mermaid.initialize({
             startOnLoad: false,
             securityLevel: 'strict',
-            theme: 'default'
+            theme: isDark(root) ? 'dark' : 'default'
         });
 
         return true;
@@ -28,7 +32,7 @@
     function render(root, config) {
         var tasks = [];
 
-        if (!featureEnabled(config, 'mermaid') || !init()) {
+        if (!featureEnabled(config, 'mermaid') || !init(root)) {
             return Promise.resolve();
         }
 

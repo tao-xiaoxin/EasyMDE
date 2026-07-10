@@ -7,7 +7,7 @@
 <p align="center">From Markdown to WordPress, without breaking your flow.</p>
 <p align="center">
   <a href="https://github.com/tao-xiaoxin/EasyMDE/releases">
-    <img src="https://img.shields.io/badge/version-0.1.8-2563eb?style=flat-square&logo=github&logoColor=white" alt="Version 0.1.8" />
+    <img src="https://img.shields.io/badge/version-0.1.7-2563eb?style=flat-square&logo=github&logoColor=white" alt="Version 0.1.7" />
   </a>
   <img src="https://img.shields.io/badge/WordPress-6.0%2B-21759b?style=flat-square&logo=wordpress&logoColor=white" alt="Requires WordPress 6.0+" />
   <img src="https://img.shields.io/badge/PHP-7.4%2B-777BB4?style=flat-square&logo=php&logoColor=white" alt="Requires PHP 7.4+" />
@@ -54,7 +54,7 @@ EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_con
 - Typora-inspired keyboard shortcuts with site-wide Windows/Linux and macOS overrides.
 - Optional browser spellcheck for the Markdown source editor.
 - WordPress media library image insertion, plus local clipboard paste and drag-and-drop image upload.
-- Browser local draft recovery, immersive writing mode, and a native publish panel for post details.
+- Browser local draft recovery, immersive writing mode, and editor dark mode.
 
 **Rendering**
 

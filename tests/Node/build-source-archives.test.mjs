@@ -31,7 +31,7 @@ function run(root, command, args) {
   return result.stdout.trim();
 }
 
-function createVersionFiles(root, version = '0.1.8') {
+function createVersionFiles(root, version = '0.1.7') {
   writeText(
     root,
     'easymde.php',
@@ -137,8 +137,8 @@ test('source archive builder creates ZIP and tar.gz from the checked-out tracked
     const tarList = tarEntries(metadata.sourceTarGz);
 
     assert.equal(metadata.commit, expectedCommit);
-    assert.equal(metadata.version, '0.1.8');
-    assert.equal(metadata.archiveRoot, 'EasyMDE-0.1.8');
+    assert.equal(metadata.version, '0.1.7');
+    assert.equal(metadata.archiveRoot, 'EasyMDE-0.1.7');
     assert.ok(existsSync(metadata.sourceZip));
     assert.ok(existsSync(metadata.sourceTarGz));
     assert.equal(existsSync(metadata.sourceTar), false);
@@ -158,12 +158,12 @@ test('source archive metadata uses version fields from the archived commit', () 
 
     const expectedCommit = run(root, 'git', ['rev-parse', 'HEAD']);
     const metadata = buildSourceArchives({ root });
-    const archivedMainFile = zipText(metadata.sourceZip, 'EasyMDE-0.1.8/easymde.php');
+    const archivedMainFile = zipText(metadata.sourceZip, 'EasyMDE-0.1.7/easymde.php');
 
     assert.equal(metadata.commit, expectedCommit);
-    assert.equal(metadata.version, '0.1.8');
-    assert.equal(metadata.archiveRoot, 'EasyMDE-0.1.8');
-    assert.match(archivedMainFile, /Version: 0\.1\.8/);
+    assert.equal(metadata.version, '0.1.7');
+    assert.equal(metadata.archiveRoot, 'EasyMDE-0.1.7');
+    assert.match(archivedMainFile, /Version: 0\.1\.7/);
     assert.doesNotMatch(archivedMainFile, /9\.9\.9/);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -180,10 +180,10 @@ test('source archive metadata resolves the same checkout commit and release vers
     const metadata = resolveSourceArchiveMetadata({ root });
 
     assert.equal(metadata.commit, expectedCommit);
-    assert.equal(metadata.version, '0.1.8');
-    assert.equal(metadata.archiveRoot, 'EasyMDE-0.1.8');
-    assert.equal(metadata.sourceZip.endsWith('dist/EasyMDE-0.1.8-source.zip'), true);
-    assert.equal(metadata.sourceTarGz.endsWith('dist/EasyMDE-0.1.8-source.tar.gz'), true);
+    assert.equal(metadata.version, '0.1.7');
+    assert.equal(metadata.archiveRoot, 'EasyMDE-0.1.7');
+    assert.equal(metadata.sourceZip.endsWith('dist/EasyMDE-0.1.7-source.zip'), true);
+    assert.equal(metadata.sourceTarGz.endsWith('dist/EasyMDE-0.1.7-source.tar.gz'), true);
     assert.equal(existsSync(metadata.sourceZip), false);
     assert.equal(existsSync(metadata.sourceTarGz), false);
   } finally {

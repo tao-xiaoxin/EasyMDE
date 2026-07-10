@@ -276,7 +276,7 @@ test('i18n check rejects fuzzy PO entries that msgfmt omits from the MO', () => 
       `<?php
 /**
  * Plugin Name: EasyMDE
- * Version: 0.1.8
+ * Version: 0.1.7
  */
 __('Shortcut settings', 'easymde');
 `
@@ -288,7 +288,7 @@ __('Shortcut settings', 'easymde');
       'languages/easymde-zh_CN.po',
       `msgid ""
 msgstr ""
-"Project-Id-Version: EasyMDE 0.1.8\\n"
+"Project-Id-Version: EasyMDE 0.1.7\\n"
 "Language: zh_CN\\n"
 "MIME-Version: 1.0\\n"
 "Content-Type: text/plain; charset=UTF-8\\n"

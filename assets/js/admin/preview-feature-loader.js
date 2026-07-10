@@ -330,6 +330,7 @@
         features = features || {};
 
         return {
+            darkMode: features.darkMode !== false,
             localDrafts: features.localDrafts !== false,
             codeBlocks: !!features.codeBlocks,
             syntaxHighlight: !!features.syntaxHighlight,

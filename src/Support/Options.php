@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class Options {
 
 	const EDITOR_SETTINGS         = 'easymde_editor_settings';
-	const EDITOR_SETTINGS_VERSION = '0.1.8';
+	const EDITOR_SETTINGS_VERSION = '0.1.7';
 
 	public function editor_settings_key() {
 		return self::EDITOR_SETTINGS;

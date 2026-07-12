@@ -568,21 +568,28 @@ Follow this sequence for every pull request update:
 4. If any required check fails, is cancelled unexpectedly, or times out, inspect the failing job, step, and available logs before doing anything else.
 5. Fix the underlying cause, rerun the affected local checks where possible, push a focused correction, and restart CI observation from the new head SHA.
 6. Request CodeRabbit review only after every required check for the current head SHA is successful or intentionally skipped by repository policy.
-7. Verify each bot finding against the current code. Fix valid findings and reply to invalid or stale findings with concise evidence.
-8. Any push made after review starts creates a new head SHA and restarts the CI-before-review sequence.
+7. After posting the review request, wait patiently and observe the pull request conversation, reactions, checks, walkthrough updates, and review status at reasonable intervals. A slow response is not a failed request.
+8. Verify each bot finding against the current code. Fix valid findings and reply to invalid or stale findings with concise evidence.
+9. Any push made after review starts creates a new head SHA and restarts the CI-before-review sequence.
 
 Additional rules:
 
 * Do not request `@coderabbitai review` or `@coderabbitai full review` while required CI is queued, in progress, failing, cancelled unexpectedly, or stale for an older SHA.
 * A green run for an earlier commit is not evidence for the current pull request head.
 * Do not classify a failure as flaky without evidence. Inspect the failed path first; rerun only when there is a plausible transient cause and record that reasoning.
-* Do not push empty commits, meaningless formatting changes, or unrelated edits merely to retrigger CI or bypass a CodeRabbit rate limit.
+* After requesting review, do not immediately send another `@coderabbitai` mention, duplicate `review` or `full review` command, follow-up ping, or status-demanding comment while the previous request may still be queued or running.
+* Treat a CodeRabbit reaction, acknowledgement, status comment, updated walkthrough, queued check, or in-progress review as evidence that the request was accepted. Continue waiting instead of requesting another review.
+* Large pull requests and busy service periods may take longer. Do not use a fixed short timeout as proof that CodeRabbit ignored the request.
+* Retry a review request only when there is concrete evidence that the previous request failed, was not accepted, was cancelled, or its stated rate-limit window has expired, or after a reasonable waiting period with no acknowledgement or review activity.
+* Before retrying, confirm that the pull request head SHA is unchanged, required CI for that exact SHA remains green, and no CodeRabbit review is queued or in progress. Record the reason and send only one retry.
+* Do not repeatedly retry against the same unchanged head. Report continued bot unavailability to the human maintainer instead of creating comment spam.
+* Do not push empty commits, meaningless formatting changes, or unrelated edits merely to retrigger CI, wake the bot, or bypass a CodeRabbit rate limit.
 * When CodeRabbit is rate limited, keep the already-green head unchanged, wait for review capacity to return, and request one review for that same SHA.
 * Do not merge while required CI is incomplete or failing, while confirmed review findings remain unresolved, or unless the maintainer explicitly requests the merge.
 
 ### CodeRabbit Review Request Template
 
-Use the full-review form for a completed change. Use the shorter `@coderabbitai review` command only for a deliberately narrow incremental review after CI is green.
+Use the full-review form for a completed change. Use the shorter `@coderabbitai review` command only for a deliberately narrow incremental review after CI is green. Before posting either command, confirm that no review request for the same head SHA is already queued or in progress.
 
 ```markdown
 @coderabbitai full review
@@ -592,6 +599,7 @@ Please review the current pull request head `<HEAD_SHA>` against `<BASE_BRANCH>`
 ## Preconditions
 
 - Required CI/checks for this exact head SHA are green.
+- No CodeRabbit review request for this exact head SHA is currently queued or in progress.
 - Linked Issue: #123
 - Pull request scope: describe the focused change.
 - Validation completed: list only checks actually run.
@@ -613,6 +621,8 @@ Please review the current pull request head `<HEAD_SHA>` against `<BASE_BRANCH>`
 - Use redacted values, synthetic examples, and privacy-safe behavioral evidence.
 - Do not republish user-provided screenshots or attachments unless publication is necessary, authorized, and their content and embedded metadata have been inspected.
 ```
+
+After posting the template, wait for acknowledgement or review activity and check the PR at reasonable intervals. Do not post another Bot mention merely because the response is slower than expected.
 
 ### Issue Body Template
 
@@ -708,6 +718,7 @@ State unavailable or unverified checks honestly.
 - [ ] PHP, Node, lint, i18n, build, or package checks as applicable
 - [ ] Negative, cancellation, permission, and failure-path checks as applicable
 - [ ] CI status reviewed for the current head SHA
+- [ ] Existing CodeRabbit request status checked before posting a new review command
 
 ## Privacy and public artifact review
 
@@ -720,7 +731,7 @@ State unavailable or unverified checks honestly.
 
 ## Remaining risks and follow-up
 
-List known limitations, assumptions, deferred work, unresolved review findings, or checks that could not be run.
+List known limitations, assumptions, deferred work, unresolved review findings, bot availability or waiting state, or checks that could not be run.
 ```
 
 ### Public Evidence and Privacy Rules

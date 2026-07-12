@@ -185,7 +185,7 @@ Always use WordPress APIs for hooks, assets, metadata, capabilities, nonces, RES
 ### Saving
 
 * Verify nonce.
-* Normalize the post ID with `absint()` and require it to be greater than zero before checking `current_user_can( 'edit_post', $post_id )`.
+* Verify `current_user_can( 'edit_post', $post_id )`.
 * Skip autosaves, revisions, unsupported post types, and invalid requests.
 * Prevent recursive save and render hooks.
 
@@ -193,14 +193,10 @@ Always use WordPress APIs for hooks, assets, metadata, capabilities, nonces, RES
 
 * Use namespace `easymde/v1`.
 
-* Requests with `post_id` must normalize and verify it:
+* Requests with `post_id` must verify:
 
   ```php
-  $post_id = absint( $post_id );
-
-  if ( $post_id <= 0 || ! current_user_can( 'edit_post', $post_id ) ) {
-      return new WP_Error( 'rest_forbidden', __( 'You cannot edit this post.', 'easymde' ), array( 'status' => 403 ) );
-  }
+  current_user_can( 'edit_post', $post_id )
   ```
 
 * A preview request without `post_id` may allow users with `edit_posts`.
@@ -363,14 +359,10 @@ For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or rel
 
 * State-changing operations verify both nonce and the correct capability.
 
-* Requests with `post_id` normalize and verify access to that specific post with:
+* Requests with `post_id` verify access to that specific post with:
 
   ```php
-  $post_id = absint( $post_id );
-
-  if ( $post_id <= 0 || ! current_user_can( 'edit_post', $post_id ) ) {
-      return new WP_Error( 'rest_forbidden', __( 'You cannot edit this post.', 'easymde' ), array( 'status' => 403 ) );
-  }
+  current_user_can( 'edit_post', $post_id )
   ```
 
 * Custom CSS can only access the current user's library and requires `unfiltered_html` for full CSS editing.

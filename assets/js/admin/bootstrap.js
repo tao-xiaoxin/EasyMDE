@@ -122,7 +122,7 @@
         var doc = documentRef || document;
         var capabilities = getNativePublishCapabilities(doc);
         var expected = draft && draft.capabilities ? draft.capabilities : {};
-        var capabilityNames = ['categories', 'excerpt', 'featuredImage', 'tags', 'visibility'];
+        var capabilityNames = ['categories', 'excerpt', 'featuredImage', 'sticky', 'tags', 'visibility'];
         var expectedControlsPresent = capabilityNames.every(function (name) {
             return expected[name] !== true || capabilities[name] === true;
         });
@@ -2039,7 +2039,8 @@
                     }
 
                     if (!applyNativePublishVisibility(draft, document)) {
-                        throw new Error('Native WordPress visibility controls changed after publish preflight.');
+                        showFlash(context.flash, 'error', getString('publishVisibilityUnavailable'));
+                        return false;
                     }
                     $('#visibility-radio-' + draft.visibility).trigger('change');
                     $('#visibility .save-post-visibility').trigger('click');

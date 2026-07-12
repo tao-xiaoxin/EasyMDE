@@ -646,6 +646,39 @@ test('native publish preflight reports capabilities before any form mutation', (
   });
 });
 
+test('native publish preflight blocks sticky drafts when the native sticky control is unavailable', () => {
+  const controls = {
+    '#excerpt': {},
+    '#tax-input-post_tag': {},
+    '#_thumbnail_id': {},
+    '#visibility-radio-public': { value: 'public' },
+    '#visibility-radio-password': { value: 'password' },
+    '#visibility-radio-private': { value: 'private' },
+    '#post_password': {},
+    '#publish': {}
+  };
+  const documentRef = {
+    querySelector(selector) {
+      return controls[selector] || null;
+    },
+    querySelectorAll(selector) {
+      return selector.includes('categorychecklist') ? [{ value: '1' }] : [];
+    }
+  };
+  const { hooks } = loadBootstrap();
+
+  assert.equal(hooks.preflightNativePublish({
+    capabilities: {
+      categories: true,
+      excerpt: true,
+      featuredImage: true,
+      sticky: true,
+      tags: true,
+      visibility: true
+    }
+  }, documentRef).ok, false);
+});
+
 test('preview readiness requires the current Markdown signature and an idle preview', () => {
   const { hooks } = loadBootstrap();
   const preview = {

@@ -1169,7 +1169,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(removeFeatured).toBeFocused();
     await expect.poll(() => removeFeatured.evaluate((button) => getComputedStyle(button).boxShadow)).not.toBe('none');
     const candidateNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-    await page.locator('[data-action="confirm-publish"]').click();
+    await activateWithKeyboard(page.locator('[data-action="confirm-publish"]'));
     await candidateNavigation;
     await parkPointerAfterNavigation(page);
     expect(postMetaValue(postId, '_thumbnail_id')).toBe(String(media.id));

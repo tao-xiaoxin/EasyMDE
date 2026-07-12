@@ -527,6 +527,61 @@ At task completion, report:
 
 For security-sensitive work, do not publish exploitable details merely to satisfy Issue linkage. Use GitHub private vulnerability reporting, a private security advisory, or another maintainer-approved private tracker. Where a public reference is required, use a sanitized tracking Issue that contains no secrets, exploit details, affected private endpoints, or victim data.
 
+### Push, CI, and Bot Review Order
+
+Follow this sequence for every pull request update:
+
+1. Complete the focused implementation and relevant local validation.
+2. Push the commit or commits to the pull request branch.
+3. Record the new pull request head SHA and observe all required CI/check runs for that exact SHA.
+4. If any required check fails, is cancelled unexpectedly, or times out, inspect the failing job, step, and available logs before doing anything else.
+5. Fix the underlying cause, rerun the affected local checks where possible, push a focused correction, and restart CI observation from the new head SHA.
+6. Request CodeRabbit review only after every required check for the current head SHA is successful or intentionally skipped by repository policy.
+7. Verify each bot finding against the current code. Fix valid findings and reply to invalid or stale findings with concise evidence.
+8. Any push made after review starts creates a new head SHA and restarts the CI-before-review sequence.
+
+Additional rules:
+
+* Do not request `@coderabbitai review` or `@coderabbitai full review` while required CI is queued, in progress, failing, cancelled unexpectedly, or stale for an older SHA.
+* A green run for an earlier commit is not evidence for the current pull request head.
+* Do not classify a failure as flaky without evidence. Inspect the failed path first; rerun only when there is a plausible transient cause and record that reasoning.
+* Do not push empty commits, meaningless formatting changes, or unrelated edits merely to retrigger CI or bypass a CodeRabbit rate limit.
+* When CodeRabbit is rate limited, keep the already-green head unchanged, wait for review capacity to return, and request one review for that same SHA.
+* Do not merge while required CI is incomplete or failing, while confirmed review findings remain unresolved, or unless the maintainer explicitly requests the merge.
+
+### CodeRabbit Review Request Template
+
+Use the full-review form for a completed change. Use the shorter `@coderabbitai review` command only for a deliberately narrow incremental review after CI is green.
+
+```markdown
+@coderabbitai full review
+
+Please review the current pull request head `<HEAD_SHA>` against `<BASE_BRANCH>`.
+
+## Preconditions
+
+- Required CI/checks for this exact head SHA are green.
+- Linked Issue: #123
+- Pull request scope: describe the focused change.
+- Validation completed: list only checks actually run.
+
+## Review instructions
+
+1. Read the linked Issue, pull request body, current `AGENTS.md`, and the complete current diff.
+2. Trace changed production paths, state transitions, failure paths, permissions, compatibility behavior, tests, build scripts, and release packaging relevant to the change.
+3. Re-check unresolved and outdated review threads against the current head instead of assuming earlier findings still apply.
+4. Report only confirmed, actionable problems introduced or materially worsened by this pull request.
+5. For each finding, identify the affected path, realistic trigger, user or system impact, and the smallest focused correction direction.
+6. Treat data loss, authorization failures, secret or privacy exposure, unsafe rendering, WordPress compatibility regressions, broken release packaging, and unsupported-version failures as merge-blocking when confirmed.
+7. Do not invent findings to fill a quota. When no actionable findings remain, report no findings or use the bot's normal approval reaction.
+
+## Privacy requirements
+
+- Do not request, quote, or repeat credentials, tokens, cookies, private keys, private article content, personal data, absolute local paths, private endpoints, raw browser storage, HAR files, or unnecessary logs.
+- Use redacted values, synthetic examples, and privacy-safe behavioral evidence.
+- Do not republish user-provided screenshots or attachments unless publication is necessary, authorized, and their content and embedded metadata have been inspected.
+```
+
 ### Issue Body Template
 
 Use this structure for a new public Issue. Remove sections that genuinely do not apply, but do not omit scope, acceptance criteria, or privacy review for material work.

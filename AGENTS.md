@@ -192,15 +192,21 @@ Always use WordPress APIs for hooks, assets, metadata, capabilities, nonces, RES
 ### REST API
 
 * Use namespace `easymde/v1`.
+
 * Requests with `post_id` must verify:
 
   ```php
   current_user_can( 'edit_post', $post_id )
   ```
+
 * A preview request without `post_id` may allow users with `edit_posts`.
+
 * Custom CSS endpoints may only access the current user's user meta.
+
 * Validate and sanitize all request arguments.
+
 * Limit Markdown preview payload size.
+
 * Return meaningful `WP_Error` objects and appropriate HTTP status codes.
 
 ### Custom CSS
@@ -348,15 +354,21 @@ For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or rel
 #### WordPress Input, Output, and Authorization
 
 * Request input from `$_POST`, `$_GET`, and REST is unslashed, validated, and sanitized for its actual data type.
+
 * HTML, attributes, URLs, textarea content, and inline styles use context-appropriate escaping.
+
 * State-changing operations verify both nonce and the correct capability.
+
 * Requests with `post_id` verify access to that specific post with:
 
   ```php
   current_user_can( 'edit_post', $post_id )
   ```
+
 * Custom CSS can only access the current user's library and requires `unfiltered_html` for full CSS editing.
+
 * REST errors use meaningful `WP_Error` responses and appropriate HTTP status codes.
+
 * New admin actions do not affect unrelated posts, users, settings, or admin pages.
 
 #### Markdown, HTML, DOM, and Editor Safety
@@ -372,17 +384,24 @@ For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or rel
 #### Data Integrity and Compatibility
 
 * `_easymde_markdown` remains the source of truth.
+
 * `post_content` remains compatible rendered output.
+
 * EasyMDE revisions preserve Markdown and appearance metadata.
+
 * Restoring a revision regenerates consistent rendered HTML without recursion or stale state.
+
 * Legacy posts with existing `_easymde_markdown` remain detectable with `metadata_exists()`.
+
 * Existing public compatibility APIs remain functional:
 
   ```php
   EasyMDE_Plugin::register_toolbar_button()
   EasyMDE_Plugin::register_shortcode_helper()
   ```
+
 * No automatic bulk migration, destructive rewrite, or silent metadata rename is introduced.
+
 * Existing theme choices, code themes, custom CSS snapshots, font settings, shortcuts, and user defaults remain readable unless an explicit migration path is included.
 
 #### Assets, Dependencies, Releases, and Privacy

@@ -75,4 +75,17 @@ final class CustomCssPolicyTest extends WP_UnitTestCase
         $this->assertIsArray($preview);
         $this->assertStringContainsString(CustomCssPolicy::PREVIEW_SCOPE . ' h2', $preview['scopedCss']);
     }
+
+    public function test_scope_prefix_collision_is_prefixed_inside_the_preview_container()
+    {
+        $policy = new CustomCssPolicy();
+        $lookalike = CustomCssPolicy::PREVIEW_SCOPE . '--outside';
+        $preview = $policy->prepare_preview($lookalike . ' { color: red; }');
+
+        $this->assertIsArray($preview);
+        $this->assertStringContainsString(
+            CustomCssPolicy::PREVIEW_SCOPE . ' ' . $lookalike,
+            $preview['scopedCss']
+        );
+    }
 }

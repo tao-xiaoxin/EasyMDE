@@ -52,6 +52,7 @@ body.easymde-immersive-workspace-active {
     --easymde-immersive-accent: #4c6ef5;
     --easymde-immersive-source-ratio: 0.5;
     --easymde-immersive-outline-width: 240px;
+
     position: fixed;
     inset: 0;
     z-index: 150000;
@@ -189,8 +190,9 @@ body.easymde-immersive-workspace-active {
     font-size: 13.125px;
     font-weight: 500;
     line-height: 18.75px;
+    overflow-wrap: anywhere;
     white-space: pre-wrap;
-    word-break: break-word;
+    word-break: normal;
 }
 
 .easymde-immersive-workspace__title-mirror {
@@ -610,7 +612,6 @@ body.easymde-immersive-workspace-active {
     width: 1px;
     height: 1px;
     overflow: hidden;
-    clip: rect(0 0 0 0);
     clip-path: inset(50%);
     white-space: nowrap;
 }
@@ -630,7 +631,7 @@ body.easymde-immersive-workspace-active {
 .easymde-immersive-workspace__wechat-button .easymde-wechat-glyph svg {
     width: 18px;
     height: 18px;
-    fill: currentColor;
+    fill: currentcolor;
 }
 
 .easymde-immersive-workspace__main {
@@ -4431,8 +4432,7 @@ body.easymde-immersive-workspace-active {
     border: 0;
     background: transparent;
     box-shadow: none;
-    clip: rect(0 0 0 0);
-    clip-path: none;
+    clip-path: inset(50%);
     white-space: nowrap;
     appearance: auto;
 }
@@ -4467,7 +4467,6 @@ body.easymde-immersive-workspace-active {
     width: 1px;
     height: 1px;
     overflow: hidden;
-    clip: rect(0 0 0 0);
     clip-path: inset(50%);
     white-space: nowrap;
 }
@@ -4589,8 +4588,7 @@ body.easymde-immersive-workspace-active {
     border: 0;
     background: transparent;
     box-shadow: none;
-    clip: rect(0 0 0 0);
-    clip-path: none;
+    clip-path: inset(50%);
     white-space: nowrap;
     appearance: auto;
 }
@@ -4869,8 +4867,7 @@ body.easymde-immersive-workspace-active {
     border: 0;
     background: transparent;
     box-shadow: none;
-    clip: rect(0 0 0 0);
-    clip-path: none;
+    clip-path: inset(50%);
     white-space: nowrap;
     appearance: auto;
 }

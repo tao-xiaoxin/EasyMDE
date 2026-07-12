@@ -232,7 +232,12 @@
         html = clone.outerHTML;
         text = preview.innerText || preview.textContent || '';
 
-        if (window.navigator.clipboard && window.ClipboardItem && window.Blob) {
+        if (
+            window.navigator.clipboard
+            && typeof window.navigator.clipboard.write === 'function'
+            && window.ClipboardItem
+            && window.Blob
+        ) {
             return window.navigator.clipboard.write([
                 new window.ClipboardItem({
                     'text/html': new window.Blob([html], { type: 'text/html' }),

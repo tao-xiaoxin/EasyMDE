@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -58,6 +58,7 @@ test('copied immersive fonts retain explicit provenance and local notices', () =
   const rows = frontendRows(repoRoot);
   const inter = rows.find((row) => row.name === 'Inter Latin variable font');
   const jetbrains = rows.find((row) => row.name === 'JetBrains Mono Latin variable font');
+  const lora = rows.find((row) => row.name === 'Lora Latin variable font');
 
   assert.equal(inter?.license, 'OFL-1.1');
   assert.equal(inter?.notice, 'assets/vendor/inter/LICENSE');
@@ -65,4 +66,10 @@ test('copied immersive fonts retain explicit provenance and local notices', () =
   assert.equal(jetbrains?.license, 'OFL-1.1');
   assert.equal(jetbrains?.notice, 'assets/vendor/jetbrains-mono/LICENSE');
   assert.match(jetbrains?.bundled || '', /jetbrains-mono-latin-variable\.woff2/);
+  assert.equal(lora?.license, 'OFL-1.1');
+  assert.equal(lora?.notice, 'assets/vendor/lora/LICENSE');
+  assert.match(lora?.version || '', /Google Fonts v37/);
+  assert.match(lora?.bundled || '', /lora-latin-variable\.woff2/);
+  assert.match(lora?.bundled || '', /lora-latin-italic-variable\.woff2/);
+  assert.match(readFileSync(join(repoRoot, lora.notice), 'utf8'), /Reserved Font Name "Lora"/);
 });

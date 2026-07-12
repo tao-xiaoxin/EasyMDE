@@ -1992,7 +1992,7 @@
                     return true;
                 },
                 onActivate: function (workspaceContext) {
-                    bindLazyImagePasteUpload(workspaceContext.source, $(workspaceContext.root), context.flash);
+                    bindLazyImagePasteUpload(workspaceContext.source, context.root, context.flash);
                     updateImmersiveToggle(context);
                 },
                 onDeactivate: function () {

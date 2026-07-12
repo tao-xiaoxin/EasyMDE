@@ -503,7 +503,8 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('.easymde-immersive-workspace__history')).toBeHidden();
     await expect(page.locator('[data-action="history"]')).toBeFocused();
 
-    await page.locator('[data-action="publish"]').click();
+    await source.focus();
+    await source.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
     const publishConfirm = page.locator('[data-action="confirm-publish"]');
     const publishClose = page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').first();
     await expect(publishConfirm).toBeFocused();
@@ -526,6 +527,16 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(aiInput).toBeFocused();
     await expect(aiPanel).not.toContainText('PRIVATE_ARTICLE_TOKEN');
     await aiInput.fill('Local demo question');
+    await aiInput.evaluate((node) => {
+      node.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        isComposing: true,
+        key: 'Enter'
+      }));
+    });
+    await expect(aiPanel.locator('.easymde-immersive-workspace__ai-message')).toHaveCount(0);
+    await expect(aiInput).toHaveValue('Local demo question');
     await aiInput.press('Enter');
     await expect(aiPanel).toContainText(await page.evaluate(() => window.EasyMDEConfig.strings.aiDemoReply));
     expect(aiRequests).toEqual([]);
@@ -706,10 +717,23 @@ test.describe('EasyMDE editor workflows', () => {
     expect(unnamedPublishFields).toEqual([]);
     await addPublishTags(page, 'Workspace, WordPress, workspace');
     await page.locator('[data-publish-excerpt]').fill('Workspace publish excerpt.');
-    const firstCategory = page.locator('[data-publish-category]').first();
-    if (await firstCategory.count() && !(await firstCategory.isChecked())) {
-      await firstCategory.locator('xpath=..').click();
+    const nestedCategory = await page.locator('[data-publish-categories]').evaluate((container) => {
+      const child = container.querySelector('.easymde-immersive-workspace__category-children [data-publish-category]');
+      const parentNode = child?.closest('.easymde-immersive-workspace__category-children')
+        ?.parentElement;
+      const toggle = parentNode?.querySelector(':scope > .easymde-immersive-workspace__category-row [data-publish-category-toggle]');
+
+      return child && toggle
+        ? { childId: child.value, parentId: toggle.getAttribute('data-publish-category-toggle') }
+        : null;
+    });
+    expect(nestedCategory).toBeTruthy();
+    const nestedCategoryInput = page.locator(`[data-publish-category][value="${nestedCategory.childId}"]`);
+    if (!(await nestedCategoryInput.isChecked())) {
+      await nestedCategoryInput.locator('xpath=..').click();
     }
+    await page.locator(`[data-publish-category-toggle="${nestedCategory.parentId}"]`).click();
+    await expect(nestedCategoryInput).toHaveCount(0);
 
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
     await page.locator('[data-action="confirm-publish"]').click();
@@ -722,6 +746,9 @@ test.describe('EasyMDE editor workflows', () => {
     expect(postExcerpt(postId)).toBe('Workspace publish excerpt.');
     expect(normalizeMarkdown(runWp(['post', 'meta', 'get', String(postId), '_easymde_markdown']))).toBe(markdown);
     expect(postTagNames(postId).split(/\s+/).sort()).toEqual(['WordPress', 'Workspace'].sort());
+    expect(runWp(['post', 'term', 'list', String(postId), 'category', '--field=term_id']).split(/\s+/)).toContain(
+      nestedCategory.childId
+    );
 
     await page.locator('.easymde-toolbar-immersive-toggle').click();
     await page.locator('[data-action="publish"]').click();
@@ -936,7 +963,12 @@ test.describe('EasyMDE editor workflows', () => {
     const secondMedia = await uploadTestImage(page, `${slug}-second.png`, 'Second local candidate');
     const candidateLookups = [];
     page.on('request', (request) => {
-      if ('GET' === request.method() && request.url().includes('/wp-json/wp/v2/media?context=edit')) {
+      const requestUrl = new URL(request.url());
+      if (
+        'GET' === request.method()
+        && requestUrl.pathname.endsWith('/wp-json/wp/v2/media')
+        && requestUrl.searchParams.get('context') === 'edit'
+      ) {
         candidateLookups.push(request.url());
       }
     });

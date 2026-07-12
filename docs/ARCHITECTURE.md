@@ -43,7 +43,7 @@ The normal WordPress edit screen and the immersive workspace are separate visual
 
 The workspace owns presentation and transient UI state only. It synchronizes with the existing WordPress title field, EasyMDE Markdown source, preview renderer, theme/font fields, local draft service, media frame, revision REST API, and native save/publish form. Opening or cancelling its publish dialog writes nothing. Confirming maps the dialog draft back to the existing WordPress fields and triggers the native publish action so nonce, capability, taxonomy, visibility, scheduling, autosave, revision, and media behavior remain WordPress-owned.
 
-The workspace may persist only its split ratio in browser storage. Its AI panel is a local interface demonstration and must not read article content, make network requests, or persist AI input or output.
+The workspace may persist only layout preferences in browser storage: the source/preview split ratio and outline width. Its AI panel is a local interface demonstration and must not read article content, make network requests, or persist AI input or output.
 
 ## Data Model
 

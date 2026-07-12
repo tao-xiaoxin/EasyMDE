@@ -191,7 +191,7 @@ final class CustomCssPolicy {
 					continue;
 				}
 
-				if ( 0 === strpos( $selector, $scope ) ) {
+				if ( $this->selector_starts_with_scope( $selector, $scope ) ) {
 					$scoped_selectors[] = $selector;
 				} elseif ( ':root' === $selector ) {
 					$scoped_selectors[] = $scope;
@@ -212,6 +212,20 @@ final class CustomCssPolicy {
 				$this->scope_node( $child, $is_keyframe, $scope );
 			}
 		}
+	}
+
+	private function selector_starts_with_scope( $selector, $scope ) {
+		if ( $selector === $scope ) {
+			return true;
+		}
+
+		if ( 0 !== strpos( $selector, $scope ) ) {
+			return false;
+		}
+
+		$next = substr( $selector, strlen( $scope ), 1 );
+
+		return false !== strpos( " \t\n\r\f>+~.#:[", $next );
 	}
 
 	private function blocked_error( $blocked ) {

@@ -226,10 +226,12 @@
     }
 
     function createPublishDraft(options) {
+        var mode;
         var postStatus;
         var visibility;
 
         options = options || {};
+        mode = String(options.mode || '').toLowerCase();
         postStatus = String(options.postStatus || '').toLowerCase();
         visibility = String(options.visibility || '').toLowerCase();
         if (['public', 'password', 'private'].indexOf(visibility) === -1) {
@@ -246,15 +248,31 @@
                     alt: String(options.featuredImage.alt || '')
                 }
                 : null,
-            mode: ['publish', 'future', 'private'].indexOf(postStatus) !== -1
-                ? 'update'
-                : 'publish',
+            mode: ['publish', 'update'].indexOf(mode) !== -1
+                ? mode
+                : (['publish', 'future', 'private'].indexOf(postStatus) !== -1 ? 'update' : 'publish'),
             openPreview: !!options.openPreview,
             password: visibility === 'password' ? String(options.password || '') : '',
             sticky: visibility === 'public' && !!options.sticky,
             tags: uniqueStrings(options.tags || [], true),
             visibility: visibility
         };
+    }
+
+    function updatePublishCategorySelection(categories, categoryId, selected) {
+        var normalized = uniqueStrings(categories || [], false);
+        var id = String(categoryId || '').trim();
+
+        if (!id) {
+            return normalized;
+        }
+        if (selected) {
+            return uniqueStrings(normalized.concat([id]), false);
+        }
+
+        return normalized.filter(function (currentId) {
+            return currentId !== id;
+        });
     }
 
     function validatePublishDraft(draft) {
@@ -2472,7 +2490,7 @@
             var excerpt = query('[data-publish-excerpt]');
             var excerptCount = query('[data-publish-excerpt-count]');
             var categoryCount = query('[data-publish-category-count]');
-            var selectedCategories = root.querySelectorAll('[data-publish-category]:checked').length;
+            var selectedCategories = publishDraft ? publishDraft.categories.length : 0;
 
             if (excerpt && excerptCount) {
                 excerptCount.textContent = Array.from(excerpt.value).length + ' / 160';
@@ -3292,10 +3310,6 @@
                 : '';
             publishDraft.sticky = publishDraft.visibility === 'public'
                 && query('[data-publish-sticky]').checked;
-            publishDraft.categories = Array.prototype.map.call(
-                root.querySelectorAll('[data-publish-category]:checked'),
-                function (input) { return input.value; }
-            );
         }
 
         function renderAiMessages() {
@@ -3767,6 +3781,19 @@
                 var aiActiveMenu = root.querySelector('[data-ai-menu]:not([hidden])');
 
                 if (
+                    event.target === source
+                    && event.key === 'Enter'
+                    && (event.metaKey || event.ctrlKey)
+                    && !event.altKey
+                    && !event.shiftKey
+                ) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openPublishDialog();
+                    return;
+                }
+
+                if (
                     event.key !== 'Escape'
                     && event.key !== 'Tab'
                     && typeof adapter.handleShortcut === 'function'
@@ -3860,7 +3887,12 @@
             });
             listen(query('#easymde-immersive-ai-input'), 'input', updateAiInputState);
             listen(query('#easymde-immersive-ai-input'), 'keydown', function (event) {
-                if (event.key === 'Enter' && !event.shiftKey) {
+                if (
+                    event.key === 'Enter'
+                    && !event.shiftKey
+                    && !event.isComposing
+                    && event.keyCode !== 229
+                ) {
                     event.preventDefault();
                     sendAiMessage();
                 }
@@ -3962,9 +3994,10 @@
                         return;
                     }
                     categoryId = input.value;
-                    publishDraft.categories = Array.prototype.map.call(
-                        root.querySelectorAll('[data-publish-category]:checked'),
-                        function (categoryInput) { return categoryInput.value; }
+                    publishDraft.categories = updatePublishCategorySelection(
+                        publishDraft.categories,
+                        categoryId,
+                        input.checked
                     );
                     renderPublishCategories();
                     query('[data-publish-category][value="' + categoryId + '"]').focus();
@@ -4220,6 +4253,7 @@
         createTableMarkdown: createTableMarkdown,
         createPublishCategoryTree: createPublishCategoryTree,
         createPublishDraft: createPublishDraft,
+        updatePublishCategorySelection: updatePublishCategorySelection,
         createController: createController,
         findFirstLocalImageCandidate: findFirstLocalImageCandidate,
         getOutlineIconName: getOutlineIconName,

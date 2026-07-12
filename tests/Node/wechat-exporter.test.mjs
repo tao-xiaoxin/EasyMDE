@@ -288,3 +288,69 @@ test('WeChat copy resolves after writing both HTML and plain text clipboard payl
   assert.equal(writes.length, 1);
   assert.deepEqual(Object.keys(writes[0][0].payload).sort(), ['text/html', 'text/plain']);
 });
+
+test('WeChat copy uses the legacy path when clipboard exists without write support', async () => {
+  class BlobStub {}
+  class ClipboardItemStub {}
+  const container = {
+    setAttribute() {}
+  };
+  const document = {
+    body: {
+      appendChild() {},
+      removeChild() {}
+    },
+    createElement() {
+      return container;
+    },
+    createRange() {
+      return {
+        selectNodeContents() {}
+      };
+    },
+    execCommand(command) {
+      assert.equal(command, 'copy');
+      return true;
+    }
+  };
+  const exporter = loadExporter({
+    document,
+    window: {
+      Blob: BlobStub,
+      ClipboardItem: ClipboardItemStub,
+      getSelection() {
+        return null;
+      },
+      navigator: {
+        clipboard: {
+          writeText() {
+            throw new Error('HTML copy must not use writeText');
+          }
+        }
+      },
+      scrollTo() {}
+    }
+  });
+  const clone = {
+    nodeType: 1,
+    childNodes: [],
+    querySelectorAll() { return []; },
+    removeAttribute() {},
+    setAttribute(name, value) { this[name] = value; },
+    getAttribute(name) { return this[name] || ''; },
+    outerHTML: '<article><p>Rendered</p></article>'
+  };
+  const preview = {
+    nodeType: 1,
+    childNodes: [],
+    innerHTML: '<p>Rendered</p>',
+    innerText: 'Rendered',
+    cloneNode() { return clone; },
+    getAttribute() { return null; },
+    querySelector() { return null; }
+  };
+
+  const result = await exporter.copy({ preview });
+
+  assert.equal(result.method, 'legacy');
+});

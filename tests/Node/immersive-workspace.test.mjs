@@ -32,12 +32,29 @@ test('immersive workspace exposes isolated controller and pure document helpers'
   assert.equal(typeof workspace.normalizeTitle, 'function');
   assert.equal(typeof workspace.createPublishDraft, 'function');
   assert.equal(typeof workspace.createPublishCategoryTree, 'function');
+  assert.equal(typeof workspace.updatePublishCategorySelection, 'function');
   assert.equal(typeof workspace.findFirstLocalImageCandidate, 'function');
   assert.equal(typeof workspace.getOutlineIconName, 'function');
   assert.equal(typeof workspace.calculateSourceRatioFromPointer, 'function');
   assert.equal(typeof workspace.clampOutlineWidth, 'function');
   assert.equal(typeof workspace.createTableMarkdown, 'function');
   assert.equal(typeof workspace.normalizeTableDimensions, 'function');
+});
+
+test('publish category selection preserves hidden descendants while updating one checkbox', () => {
+  const workspace = loadWorkspaceModule();
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/immersive-workspace.js'), 'utf8');
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(workspace.updatePublishCategorySelection(['12', '20'], '11', true))),
+    ['12', '20', '11']
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(workspace.updatePublishCategorySelection(['12', '20'], '20', false))),
+    ['12']
+  );
+  assert.match(source, /selectedCategories = publishDraft \? publishDraft\.categories\.length : 0/);
+  assert.doesNotMatch(source, /querySelectorAll\('\[data-publish-category\]:checked'\)\.length/);
 });
 
 test('immersive workspace reports deactivation only after its active state is cleared', () => {
@@ -1195,6 +1212,29 @@ test('publish draft keeps visibility state internally consistent and validates p
   assert.equal(workspace.validatePublishDraft(publicDraft), '');
   assert.equal(workspace.validatePublishDraft(missingPasswordDraft), 'password-required');
   assert.equal(workspace.validatePublishDraft({ visibility: 'password', password: '  valid  ' }), '');
+});
+
+test('publish draft preserves a normalized mode when it is copied for the adapter', () => {
+  const workspace = loadWorkspaceModule();
+  const draft = workspace.createPublishDraft({
+    mode: 'update',
+    visibility: 'public'
+  });
+
+  assert.equal(draft.mode, 'update');
+});
+
+test('immersive shortcuts open publishing without submitting and AI input respects composition', () => {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/immersive-workspace.js'), 'utf8');
+
+  assert.match(
+    source,
+    /event\.target === source[\s\S]*event\.key === 'Enter'[\s\S]*\(event\.metaKey \|\| event\.ctrlKey\)[\s\S]*openPublishDialog\(\)/
+  );
+  assert.match(
+    source,
+    /event\.key === 'Enter'[\s\S]*!event\.shiftKey[\s\S]*!event\.isComposing[\s\S]*event\.keyCode !== 229[\s\S]*sendAiMessage\(\)/
+  );
 });
 
 test('outline parsing ignores code blocks and preserves duplicate heading offsets', () => {

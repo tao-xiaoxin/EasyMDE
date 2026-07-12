@@ -192,21 +192,15 @@ Always use WordPress APIs for hooks, assets, metadata, capabilities, nonces, RES
 ### REST API
 
 * Use namespace `easymde/v1`.
-
 * Requests with `post_id` must verify:
 
   ```php
   current_user_can( 'edit_post', $post_id )
   ```
-
 * A preview request without `post_id` may allow users with `edit_posts`.
-
 * Custom CSS endpoints may only access the current user's user meta.
-
 * Validate and sanitize all request arguments.
-
 * Limit Markdown preview payload size.
-
 * Return meaningful `WP_Error` objects and appropriate HTTP status codes.
 
 ### Custom CSS
@@ -546,6 +540,18 @@ At task completion, report:
 
 For security-sensitive work, do not publish exploitable details merely to satisfy Issue linkage. Use GitHub private vulnerability reporting, a private security advisory, or another maintainer-approved private tracker. Where a public reference is required, use a sanitized tracking Issue that contains no secrets, exploit details, affected private endpoints, or victim data.
 
+### Human Confirmation for Closing and Merging
+
+Closing or merging repository work is a human maintainer decision, not an automatic completion step.
+
+* Agents, bots, and automations may recommend that a pull request or Issue be closed, but they must not change its state without an explicit instruction from a human maintainer.
+* Do not close a pull request, merge it, squash-merge it, rebase-merge it, enable auto-merge, or otherwise arrange for it to close automatically unless a human maintainer explicitly authorizes that action.
+* Do not close an Issue as completed, not planned, duplicate, or through any other state reason unless a human maintainer explicitly authorizes that closure.
+* Green CI, CodeRabbit approval, resolved review threads, completed acceptance criteria, inactivity, a superseding change, or a linked closing keyword are not human confirmation.
+* A `Closes`, `Fixes`, or `Resolves` reference may remain in a pull request body, but the linked Issue may close automatically only as the consequence of a merge that a human maintainer explicitly approved.
+* When work appears complete, superseded, duplicated, abandoned, or no longer necessary, summarize the evidence and ask for a human closure decision. Keep the pull request and Issue open until that decision is explicit.
+* Do not interpret a request to review, update, push, test, or prepare a pull request as permission to merge or close it.
+
 ### Push, CI, and Bot Review Order
 
 Follow this sequence for every pull request update:
@@ -593,6 +599,7 @@ Please review the current pull request head `<HEAD_SHA>` against `<BASE_BRANCH>`
 5. For each finding, identify the affected path, realistic trigger, user or system impact, and the smallest focused correction direction.
 6. Treat data loss, authorization failures, secret or privacy exposure, unsafe rendering, WordPress compatibility regressions, broken release packaging, and unsupported-version failures as merge-blocking when confirmed.
 7. Do not invent findings to fill a quota. When no actionable findings remain, report no findings or use the bot's normal approval reaction.
+8. Do not merge or close the pull request or linked Issue. A human maintainer must explicitly authorize either action.
 
 ## Privacy requirements
 
@@ -632,6 +639,7 @@ Describe the observable outcome that should be true after the Issue is resolved.
 - [ ] Existing supported behavior remains compatible.
 - [ ] Appropriate tests or validation are added or updated.
 - [ ] Public text and artifacts pass the privacy checks below.
+- [ ] Closing this Issue still requires explicit human maintainer confirmation after the criteria are met.
 
 ## Validation or reproduction
 
@@ -666,6 +674,10 @@ Closes #123
 - Linked Issue: #123
 - Confirm that this PR stays within the Issue scope.
 - List intentionally deferred or excluded work.
+
+## Human closure control
+
+This pull request and its linked Issues must remain open until a human maintainer explicitly authorizes merge or closure. Green CI, bot approval, resolved threads, completed checklists, or inactivity are not closure authorization.
 
 ## Implementation notes
 

@@ -39,6 +39,7 @@ test('immersive workspace exposes isolated controller and pure document helpers'
   assert.equal(typeof workspace.clampOutlineWidth, 'function');
   assert.equal(typeof workspace.createTableMarkdown, 'function');
   assert.equal(typeof workspace.normalizeTableDimensions, 'function');
+  assert.equal(typeof workspace.hasUnsavedWorkspaceChanges, 'function');
 });
 
 test('publish category selection preserves hidden descendants while updating one checkbox', () => {
@@ -179,6 +180,7 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(css, /__source,[\s\S]*__source-highlight\s*\{[^}]*padding:\s*14px 14px 14px 0;/s);
   assert.match(css, /__source,[\s\S]*__source-highlight\s*\{[^}]*font-family:\s*SFMono-Regular, Menlo, Consolas, monospace;[^}]*font-size:\s*14\.5px;[^}]*line-height:\s*28px;/s);
   assert.match(css, /__source-highlight\s*\{[^}]*background:\s*#f2f2f2;/s);
+  assert.match(css, /__source:focus-visible\s*\{[^}]*outline:\s*2px solid #2563eb;[^}]*outline-offset:\s*-2px;/s);
   assert.match(css, /__editor-card > footer\s*\{[^}]*height:\s*34px;[^}]*min-height:\s*34px;[^}]*padding:\s*7\.5px 15px;[^}]*color:\s*#b0b4bc;/s);
   assert.match(css, /__preview-card > header\s*\{[^}]*background:\s*transparent;/s);
   assert.match(css, /__preview-card > header strong\s*\{[^}]*font-weight:\s*500;/s);
@@ -225,6 +227,9 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(css, /__brand[^}]*font-size:\s*15px;/s);
   assert.match(css, /__title-wrap[^}]*max-width:\s*320px;/s);
   assert.match(css, /__title-grid[^}]*min-width:\s*72px;/s);
+  assert.doesNotMatch(css, /__title-grid[^}]*overflow:\s*hidden;/s);
+  assert.match(css, /__title:focus-visible\s*\{[^}]*outline:\s*2px solid #2563eb;[^}]*outline-offset:\s*2px;/s);
+  assert.doesNotMatch(css, /__title,[\s\S]*__title-mirror[^}]*max-height:\s*60px;/s);
   assert.doesNotMatch(css, /@media \(max-width:\s*(?:900|680)px\)[\s\S]*?__title-wrap\s*\{/s);
   assert.match(css, /@media \(max-width:\s*767px\)[\s\S]*?__header-stats\s*\{[^}]*display:\s*none;/s);
   assert.match(css, /@media \(max-width:\s*1023px\)[\s\S]*?__action-separator\s*\{[^}]*display:\s*none;/s);
@@ -281,6 +286,33 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(source, /measuredHeight <= Math\.ceil\(lineHeight\) \? lineHeight : measuredHeight/);
   assert.match(source, /listen\(win, 'resize', function \(\) \{\s*setSourceRatio\(sourceRatio\);\s*updateTitleHeight\(\);\s*\}\);/s);
   assert.match(source, /toolbar\.hidden = mode === 'preview';/);
+  assert.match(source, /data-featured-candidate/);
+  assert.match(source, /data-action="use-featured-candidate"/);
+  assert.match(source, /featuredImageCandidate = image;/);
+  assert.doesNotMatch(source, /publishDraft\.featuredImage = image;\s*renderPublishDialog\(false\);/);
+});
+
+test('revision navigation detects unsaved title or Markdown without treating normalization as a save', () => {
+  const workspace = loadWorkspaceModule();
+
+  assert.equal(workspace.hasUnsavedWorkspaceChanges({
+    initialMarkdown: '# Saved',
+    initialTitle: 'Saved title',
+    markdown: '# Saved',
+    title: 'Saved title'
+  }), false);
+  assert.equal(workspace.hasUnsavedWorkspaceChanges({
+    initialMarkdown: '# Saved',
+    initialTitle: 'Saved title',
+    markdown: '# Edited',
+    title: 'Saved title'
+  }), true);
+  assert.equal(workspace.hasUnsavedWorkspaceChanges({
+    initialMarkdown: '# Saved',
+    initialTitle: 'Saved title',
+    markdown: '# Saved',
+    title: 'Edited title'
+  }), true);
 });
 
 test('default immersive preview uses the reference prose geometry without overriding real article themes', () => {
@@ -781,6 +813,7 @@ test('custom CSS modal matches the reference geometry and keeps preview separate
   assert.match(css, /__custom-css-modal > header button[^}]*cursor:\s*default;/s);
   assert.match(css, /__custom-css-name-wrap[^}]*padding:\s*15px 18\.75px 11\.25px;/s);
   assert.match(css, /__custom-css-code[^}]*font-size:\s*12\.5px;/s);
+  assert.match(css, /__custom-css-code:focus-visible\s*\{[^}]*outline:\s*2px solid #60a5fa;[^}]*outline-offset:\s*-2px;/s);
   assert.match(css, /__custom-css-preview-scroll[^}]*padding:\s*22\.5px;/s);
   assert.match(css, /__custom-css-modal > footer[^}]*padding:\s*15px 22\.5px;/s);
   assert.match(css, /__custom-css-modal > footer button[^}]*cursor:\s*default;/s);
@@ -1094,6 +1127,9 @@ test('publish dialog uses the reference shell hierarchy while preserving native 
   assert.match(css, /__featured-selected \[data-action="remove-featured"\]\s*\{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*gap:\s*3\.75px;[^}]*color:\s*#e11d48;/s);
   assert.match(css, /__featured-selected \[data-action="select-featured"\]:hover\s*\{[^}]*background:\s*#f8fafc;[^}]*color:\s*#0f172a;/s);
   assert.match(css, /__featured-selected \[data-action="remove-featured"\]:hover\s*\{[^}]*background:\s*#fff1f2;/s);
+  assert.match(css, /__featured-selected button:focus-visible\s*\{[^}]*box-shadow:\s*0 0 0 3px rgba\(37, 99, 235, 0\.18\);[^}]*outline:\s*0;/s);
+  assert.match(css, /__category-toggle:focus-visible\s*\{[^}]*border-color:\s*#2563eb;[^}]*box-shadow:\s*0 0 0 2px #dbeafe;/s);
+  assert.match(css, /__categories input:focus-visible \+ \.easymde-immersive-workspace__category-checkbox\s*\{[^}]*box-shadow:\s*0 0 0 3px rgba\(37, 99, 235, 0\.18\);/s);
   assert.match(css, /__publish-visibility\s*\{[^}]*margin-top:\s*14px;[^}]*padding:\s*13\.125px 15px;[^}]*border:\s*1px solid #e2e8f0;[^}]*border-radius:\s*14px;/s);
   assert.match(css, /__publish-visibility-title\s*\{[^}]*gap:\s*7\.5px;[^}]*margin-bottom:\s*11\.25px;[^}]*font-size:\s*13\.5px;[^}]*font-weight:\s*700;/s);
   assert.match(css, /__publish-visibility-options\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);[^}]*gap:\s*7\.5px;/s);
@@ -1101,7 +1137,7 @@ test('publish dialog uses the reference shell hierarchy while preserving native 
   assert.match(css, /__publish-radio\s*\{[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*border:\s*1px solid #cbd5e1;/s);
   assert.match(css, /__publish-visibility-option > input,[\s\S]*?__publish-sticky > input\s*\{[^}]*width:\s*1px;[^}]*height:\s*1px;[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s);
   assert.match(css, /__publish-visibility-option > input:focus,[\s\S]*?__publish-sticky > input:focus-visible\s*\{[^}]*box-shadow:\s*none;[^}]*outline:\s*0;/s);
-  assert.doesNotMatch(css, /__publish-visibility-option > input:focus-visible \+ \.easymde-immersive-workspace__publish-radio/s);
+  assert.match(css, /__publish-visibility-option > input:focus-visible \+ \.easymde-immersive-workspace__publish-radio,[\s\S]*?__publish-sticky > input:focus-visible \+ \.easymde-immersive-workspace__publish-sticky-box\s*\{[^}]*box-shadow:\s*0 0 0 3px rgba\(37, 99, 235, 0\.18\);/s);
   assert.match(css, /__publish-sticky\s*\{[^}]*gap:\s*9\.375px;[^}]*margin-top:\s*11\.25px;[^}]*font-size:\s*12\.5px;/s);
   assert.match(css, /__publish-sticky-box\s*\{[^}]*width:\s*17px;[^}]*height:\s*17px;[^}]*border:\s*1\.5px solid #c7cedb;[^}]*border-radius:\s*4px;/s);
   assert.match(css, /__publish-password input:focus\s*\{[^}]*border-color:\s*#e2e8f0;[^}]*box-shadow:\s*0 0 0 2px #dbeafe;[^}]*outline:\s*0;/s);
@@ -1119,7 +1155,7 @@ test('publish dialog uses the reference shell hierarchy while preserving native 
   assert.doesNotMatch(css, /__publish-preview-switch input:checked \+ i > span\s*\{[^}]*transform:/s);
   assert.match(css, /__publish-preview-switch input\s*\{[^}]*width:\s*1px;[^}]*height:\s*1px;[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s);
   assert.match(css, /__publish-preview-switch input:focus,[\s\S]*?__publish-preview-switch input:focus-visible\s*\{[^}]*box-shadow:\s*none;[^}]*outline:\s*0;/s);
-  assert.doesNotMatch(css, /__publish-preview-switch input:focus-visible \+ i\s*\{/s);
+  assert.match(css, /__publish-preview-switch input:focus-visible \+ i\s*\{[^}]*box-shadow:\s*0 0 0 3px rgba\(37, 99, 235, 0\.18\);/s);
   assert.match(css, /__publish > footer\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\);[^}]*gap:\s*9\.375px;[^}]*padding:\s*13\.125px 26\.25px 18\.75px;/s);
   assert.match(css, /__publish-safety\s*\{[^}]*gap:\s*7\.5px;/s);
   assert.match(css, /__publish-progress\s*\{[^}]*min-width:\s*150px;[^}]*min-height:\s*36px;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;/s);

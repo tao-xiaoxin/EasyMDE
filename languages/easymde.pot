@@ -958,107 +958,121 @@ msgstr ""
 msgid "The first local image could not be verified."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:516 src/Support/ToolbarRegistry.php:290
-msgid "Copy to WeChat"
+#: src/Admin/AdminAssets.php:516
+msgid "Suggested from the first verified local image. It is not selected yet."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:517
-msgid "Copy preview for WeChat"
+msgid "Use first local image"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:518
-msgid "Copy current preview content to WeChat"
+msgid ""
+"You have unsaved title or Markdown changes. Continue to revision history and "
+"leave these changes behind?"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:519
-msgid "Copied preview for WeChat."
+#: src/Admin/AdminAssets.php:519 src/Support/ToolbarRegistry.php:290
+msgid "Copy to WeChat"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:520
-msgid "Copy for WeChat failed. Please try again in this browser."
+msgid "Copy preview for WeChat"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:521
-msgid "Clipboard access is not available in this browser."
+msgid "Copy current preview content to WeChat"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:522
-msgid "Column "
+msgid "Copied preview for WeChat."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:523
-msgid "Content"
+msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:524
-msgid "Insert table"
+msgid "Clipboard access is not available in this browser."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:525
-msgid "Rows"
+msgid "Column "
 msgstr ""
 
 #: src/Admin/AdminAssets.php:526
-msgid "Columns"
+msgid "Content"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:527
-msgid "Quick table size selection"
+msgid "Insert table"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:528
-msgid "Resize outline"
+msgid "Rows"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:529
-msgid "Copying..."
+msgid "Columns"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:530
-msgid "Copied"
+msgid "Quick table size selection"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:531
-msgid "Uploading pasted image..."
+msgid "Resize outline"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:532
-msgid "Pasted image uploaded."
+msgid "Copying..."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:533
-msgid "Pasted image upload failed. Please use the media library instead."
+msgid "Copied"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:534
-msgid "Pasted image is too large for this site."
+msgid "Uploading pasted image..."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:535
-msgid "Uploading dropped image..."
+msgid "Pasted image uploaded."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:536
-msgid "Dropped image uploaded."
+msgid "Pasted image upload failed. Please use the media library instead."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:537
-msgid "Dropped image upload failed. Please use the media library instead."
+msgid "Pasted image is too large for this site."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:538
-msgid "Dropped image is too large for this site."
+msgid "Uploading dropped image..."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:539
-msgid "alt text"
+msgid "Dropped image uploaded."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:540
-msgid "image"
+msgid "Dropped image upload failed. Please use the media library instead."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:541
+msgid "Dropped image is too large for this site."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:542
+msgid "alt text"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:543
+msgid "image"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:544
 msgid "link text"
 msgstr ""
 

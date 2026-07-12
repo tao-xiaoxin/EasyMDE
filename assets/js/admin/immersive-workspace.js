@@ -16,6 +16,12 @@
         return normalizeLineEndings(value).replace(/[ \t\f\v]*\n+[ \t\f\v]*/g, ' ');
     }
 
+    function hasUnsavedWorkspaceChanges(state) {
+        state = state || {};
+        return normalizeLineEndings(state.markdown) !== normalizeLineEndings(state.initialMarkdown)
+            || normalizeTitle(state.title) !== normalizeTitle(state.initialTitle);
+    }
+
     function clampSourceRatio(value) {
         return Math.max(0.25, Math.min(0.75, Number(value) || 0.5));
     }
@@ -239,6 +245,14 @@
         }
 
         return {
+            capabilities: Object.assign({
+                categories: true,
+                excerpt: true,
+                featuredImage: true,
+                sticky: true,
+                tags: true,
+                visibility: true
+            }, options.capabilities || {}),
             categories: uniqueStrings(options.categories || [], false),
             excerpt: String(options.excerpt || ''),
             featuredImage: options.featuredImage && Number(options.featuredImage.id) > 0
@@ -962,13 +976,13 @@
                     '<div class="easymde-immersive-workspace__publish-divider" aria-hidden="true"></div>' +
                     '<div class="easymde-immersive-workspace__publish-body">' +
                         '<div class="easymde-immersive-workspace__publish-left">' +
-                            '<section class="easymde-immersive-workspace__publish-section is-tags"><div class="easymde-immersive-workspace__publish-section-title-row"><label class="easymde-immersive-workspace__publish-section-title" for="easymde-immersive-publish-tag-input">' + iconMarkup('hash', 15, 2.2) + '<span>' + label('publishTags', 'Tags') + '</span></label></div><p>' + label('publishTagsHelp', 'Press Enter or comma to add tags.') + '</p><input id="easymde-immersive-publish-tags" name="easymde_immersive_publish_tags" type="hidden" data-publish-tags><div class="easymde-immersive-workspace__publish-tagbox"><div data-publish-tag-list></div><input id="easymde-immersive-publish-tag-input" name="easymde_immersive_publish_tag_input" type="text" data-publish-tag-input autocomplete="off" placeholder="' + label('publishTagPlaceholder', 'Add tags') + '"></div></section>' +
-                            '<section class="easymde-immersive-workspace__publish-section is-excerpt"><div class="easymde-immersive-workspace__publish-section-heading"><label class="easymde-immersive-workspace__publish-section-title" for="easymde-immersive-publish-excerpt">' + iconMarkup('file-text', 15, 2.2) + '<span>' + label('publishExcerpt', 'Summary') + '</span></label><div class="easymde-immersive-workspace__publish-excerpt-meta"><button type="button" class="easymde-immersive-workspace__publish-ai-summary" data-action="ai-generate-summary">' + iconMarkup('sparkles', 11, 2.4) + '<span>' + label('publishAiSummary', 'Generate summary with AI') + '</span></button><span data-publish-excerpt-count>0 / 160</span></div></div><textarea id="easymde-immersive-publish-excerpt" name="easymde_immersive_publish_excerpt" rows="4" maxlength="160" data-publish-excerpt placeholder="' + label('publishExcerptPlaceholder', 'Write a short summary for search results, article lists, and sharing previews...') + '"></textarea></section>' +
-                            '<section class="easymde-immersive-workspace__publish-section is-categories"><div class="easymde-immersive-workspace__publish-section-heading"><strong class="easymde-immersive-workspace__publish-section-title">' + iconMarkup('list-checks', 15, 2.2) + '<span>' + label('publishCategories', 'Categories') + '</span></strong><span data-publish-category-count></span></div><p>' + label('publishCategoriesHelp', 'Choose the sections this article belongs to.') + '</p><div class="easymde-immersive-workspace__categories"><div class="easymde-immersive-workspace__categories-scroll" data-publish-categories></div></div></section>' +
+                            '<section class="easymde-immersive-workspace__publish-section easymde-immersive-workspace__publish-capability is-tags" data-publish-capability="tags"><div class="easymde-immersive-workspace__publish-section-title-row"><label class="easymde-immersive-workspace__publish-section-title" for="easymde-immersive-publish-tag-input">' + iconMarkup('hash', 15, 2.2) + '<span>' + label('publishTags', 'Tags') + '</span></label></div><p>' + label('publishTagsHelp', 'Press Enter or comma to add tags.') + '</p><input id="easymde-immersive-publish-tags" name="easymde_immersive_publish_tags" type="hidden" data-publish-tags><div class="easymde-immersive-workspace__publish-tagbox"><div data-publish-tag-list></div><input id="easymde-immersive-publish-tag-input" name="easymde_immersive_publish_tag_input" type="text" data-publish-tag-input autocomplete="off" placeholder="' + label('publishTagPlaceholder', 'Add tags') + '"></div></section>' +
+                            '<section class="easymde-immersive-workspace__publish-section easymde-immersive-workspace__publish-capability is-excerpt" data-publish-capability="excerpt"><div class="easymde-immersive-workspace__publish-section-heading"><label class="easymde-immersive-workspace__publish-section-title" for="easymde-immersive-publish-excerpt">' + iconMarkup('file-text', 15, 2.2) + '<span>' + label('publishExcerpt', 'Summary') + '</span></label><div class="easymde-immersive-workspace__publish-excerpt-meta"><button type="button" class="easymde-immersive-workspace__publish-ai-summary" data-action="ai-generate-summary">' + iconMarkup('sparkles', 11, 2.4) + '<span>' + label('publishAiSummary', 'Generate summary with AI') + '</span></button><span data-publish-excerpt-count>0 / 160</span></div></div><textarea id="easymde-immersive-publish-excerpt" name="easymde_immersive_publish_excerpt" rows="4" maxlength="160" data-publish-excerpt placeholder="' + label('publishExcerptPlaceholder', 'Write a short summary for search results, article lists, and sharing previews...') + '"></textarea></section>' +
+                            '<section class="easymde-immersive-workspace__publish-section easymde-immersive-workspace__publish-capability is-categories" data-publish-capability="categories"><div class="easymde-immersive-workspace__publish-section-heading"><strong class="easymde-immersive-workspace__publish-section-title">' + iconMarkup('list-checks', 15, 2.2) + '<span>' + label('publishCategories', 'Categories') + '</span></strong><span data-publish-category-count></span></div><p>' + label('publishCategoriesHelp', 'Choose the sections this article belongs to.') + '</p><div class="easymde-immersive-workspace__categories"><div class="easymde-immersive-workspace__categories-scroll" data-publish-categories></div></div></section>' +
                         '</div>' +
                         '<aside class="easymde-immersive-workspace__publish-right">' +
-                            '<section class="easymde-immersive-workspace__publish-section is-featured"><div class="easymde-immersive-workspace__publish-section-title-row"><strong class="easymde-immersive-workspace__publish-section-title"><span>' + label('publishFeaturedImage', 'Featured image') + '</span></strong></div><span class="easymde-immersive-workspace__featured-summary" data-featured-summary></span><button type="button" class="easymde-immersive-workspace__featured-empty" data-action="select-featured" data-featured-empty>' + publishFeaturedPlaceholderMarkup() + '<b>' + label('selectFeaturedImage', 'Select featured image') + '</b><span>' + label('featuredLandscapeHelp', 'Landscape images work best') + '</span><small>' + label('featuredFormatsHelp', 'Supports JPG, PNG, and WebP up to 5MB') + '</small></button><div class="easymde-immersive-workspace__featured-selected" data-featured-selected hidden><div><img data-featured-image alt=""></div><footer><button type="button" data-action="select-featured">' + label('replaceFeaturedImage', 'Replace') + '</button><button type="button" data-action="remove-featured">' + iconMarkup('trash-2', 12, 2) + label('removeFeaturedImage', 'Remove') + '</button></footer></div></section>' +
-                            '<section class="easymde-immersive-workspace__publish-visibility"><div class="easymde-immersive-workspace__publish-visibility-title">' + iconMarkup('eye', 16, 2) + '<strong>' + label('publishVisibility', 'Visibility') + '</strong></div><div class="easymde-immersive-workspace__publish-visibility-options" role="radiogroup" aria-label="' + label('publishVisibility', 'Visibility') + '"><label class="easymde-immersive-workspace__publish-visibility-option"><input type="radio" name="easymde_immersive_publish_visibility" value="public" data-publish-visibility="public"><span class="easymde-immersive-workspace__publish-radio" aria-hidden="true"><i></i></span>' + label('publishVisibilityPublic', 'Public') + '</label><label class="easymde-immersive-workspace__publish-visibility-option"><input type="radio" name="easymde_immersive_publish_visibility" value="password" data-publish-visibility="password"><span class="easymde-immersive-workspace__publish-radio" aria-hidden="true"><i></i></span>' + label('publishVisibilityPassword', 'Password') + '</label><label class="easymde-immersive-workspace__publish-visibility-option"><input type="radio" name="easymde_immersive_publish_visibility" value="private" data-publish-visibility="private"><span class="easymde-immersive-workspace__publish-radio" aria-hidden="true"><i></i></span>' + label('publishVisibilityPrivate', 'Private') + '</label></div><label class="easymde-immersive-workspace__publish-sticky" data-publish-sticky-row><input id="easymde-immersive-publish-sticky" name="easymde_immersive_publish_sticky" type="checkbox" data-publish-sticky aria-label="' + label('publishSticky', 'Stick to the top of the front page') + '"><span class="easymde-immersive-workspace__publish-sticky-box" aria-hidden="true">' + iconMarkup('check', 10, 3.2) + '</span>' + label('publishSticky', 'Stick to the top of the front page') + '</label><div class="easymde-immersive-workspace__publish-password" data-publish-password-row hidden><label for="easymde-immersive-publish-password">' + label('publishPassword', 'Access password') + '</label><input id="easymde-immersive-publish-password" name="easymde_immersive_publish_password" type="password" maxlength="255" data-publish-password placeholder="' + label('publishPasswordPlaceholder', 'Enter an access password') + '"><p id="easymde-immersive-publish-password-error" data-publish-password-error role="alert" hidden></p></div><p class="easymde-immersive-workspace__publish-private-help" data-publish-private-help hidden>' + label('publishPrivateHelp', 'Only site administrators and editors can view this article.') + '</p></section>' +
+                            '<section class="easymde-immersive-workspace__publish-section easymde-immersive-workspace__publish-capability is-featured" data-publish-capability="featuredImage"><div class="easymde-immersive-workspace__publish-section-title-row"><strong class="easymde-immersive-workspace__publish-section-title"><span>' + label('publishFeaturedImage', 'Featured image') + '</span></strong></div><span class="easymde-immersive-workspace__featured-summary" data-featured-summary></span><button type="button" class="easymde-immersive-workspace__featured-empty" data-action="select-featured" data-featured-empty>' + publishFeaturedPlaceholderMarkup() + '<b>' + label('selectFeaturedImage', 'Select featured image') + '</b><span>' + label('featuredLandscapeHelp', 'Landscape images work best') + '</span><small>' + label('featuredFormatsHelp', 'Supports JPG, PNG, and WebP up to 5MB') + '</small></button><div class="easymde-immersive-workspace__featured-candidate" data-featured-candidate hidden><div><img data-featured-candidate-image alt=""><span><b data-featured-candidate-label></b><span>' + label('featuredCandidateHelp', 'Suggested from the first verified local image. It is not selected yet.') + '</span></span></div><button type="button" data-action="use-featured-candidate">' + label('useFeaturedCandidate', 'Use first local image') + '</button></div><div class="easymde-immersive-workspace__featured-selected" data-featured-selected hidden><div><img data-featured-image alt=""></div><footer><button type="button" data-action="select-featured">' + label('replaceFeaturedImage', 'Replace') + '</button><button type="button" data-action="remove-featured">' + iconMarkup('trash-2', 12, 2) + label('removeFeaturedImage', 'Remove') + '</button></footer></div></section>' +
+                            '<section class="easymde-immersive-workspace__publish-visibility easymde-immersive-workspace__publish-capability" data-publish-capability="visibility"><div class="easymde-immersive-workspace__publish-visibility-title">' + iconMarkup('eye', 16, 2) + '<strong>' + label('publishVisibility', 'Visibility') + '</strong></div><div class="easymde-immersive-workspace__publish-visibility-options" role="radiogroup" aria-label="' + label('publishVisibility', 'Visibility') + '"><label class="easymde-immersive-workspace__publish-visibility-option"><input type="radio" name="easymde_immersive_publish_visibility" value="public" data-publish-visibility="public"><span class="easymde-immersive-workspace__publish-radio" aria-hidden="true"><i></i></span>' + label('publishVisibilityPublic', 'Public') + '</label><label class="easymde-immersive-workspace__publish-visibility-option"><input type="radio" name="easymde_immersive_publish_visibility" value="password" data-publish-visibility="password"><span class="easymde-immersive-workspace__publish-radio" aria-hidden="true"><i></i></span>' + label('publishVisibilityPassword', 'Password') + '</label><label class="easymde-immersive-workspace__publish-visibility-option"><input type="radio" name="easymde_immersive_publish_visibility" value="private" data-publish-visibility="private"><span class="easymde-immersive-workspace__publish-radio" aria-hidden="true"><i></i></span>' + label('publishVisibilityPrivate', 'Private') + '</label></div><label class="easymde-immersive-workspace__publish-sticky" data-publish-sticky-row><input id="easymde-immersive-publish-sticky" name="easymde_immersive_publish_sticky" type="checkbox" data-publish-sticky aria-label="' + label('publishSticky', 'Stick to the top of the front page') + '"><span class="easymde-immersive-workspace__publish-sticky-box" aria-hidden="true">' + iconMarkup('check', 10, 3.2) + '</span>' + label('publishSticky', 'Stick to the top of the front page') + '</label><div class="easymde-immersive-workspace__publish-password" data-publish-password-row hidden><label for="easymde-immersive-publish-password">' + label('publishPassword', 'Access password') + '</label><input id="easymde-immersive-publish-password" name="easymde_immersive_publish_password" type="password" maxlength="255" data-publish-password placeholder="' + label('publishPasswordPlaceholder', 'Enter an access password') + '"><p id="easymde-immersive-publish-password-error" data-publish-password-error role="alert" hidden></p></div><p class="easymde-immersive-workspace__publish-private-help" data-publish-private-help hidden>' + label('publishPrivateHelp', 'Only site administrators and editors can view this article.') + '</p></section>' +
                             '<section class="easymde-immersive-workspace__publish-options"><div class="easymde-immersive-workspace__publish-options-title">' + iconMarkup('calendar-check', 16, 2) + '<strong>' + label('publishOptions', 'Publish options') + '</strong></div><label class="easymde-immersive-workspace__publish-preview"><div class="easymde-immersive-workspace__publish-preview-copy"><b data-publish-preview-label>' + label('publishPreviewAfter', 'Open preview after publishing') + '</b><small>' + label('publishPreviewHelp', 'Open the article preview in a new page after submission.') + '</small></div><span class="easymde-immersive-workspace__publish-preview-switch"><input id="easymde-immersive-publish-preview" name="easymde_immersive_publish_preview" type="checkbox" role="switch" data-publish-preview aria-label="' + label('publishPreviewAfter', 'Open preview after publishing') + '"><i aria-hidden="true"><span data-publish-preview-thumb></span></i></span></label></section>' +
                         '</aside>' +
                     '</div>' +
@@ -1028,7 +1042,10 @@
         var publishSequence = 0;
         var publishSubmitting = false;
         var publishCategoryCollapsed = Object.create(null);
+        var featuredImageCandidate = null;
         var featuredImageTouched = false;
+        var initialMarkdown = '';
+        var initialTitle = '';
         var syncScroll = true;
         var scrollLock = false;
         var derivedFrame = null;
@@ -2685,6 +2702,9 @@
             var featuredEmpty = query('[data-featured-empty]');
             var featuredSelected = query('[data-featured-selected]');
             var featuredImage = query('[data-featured-image]');
+            var candidate = query('[data-featured-candidate]');
+            var candidateImage = query('[data-featured-candidate-image]');
+            var candidateLabel = query('[data-featured-candidate-label]');
             var previewLabel = query('[data-publish-preview-label]');
             var previewInput = query('[data-publish-preview]');
             var confirm = query('[data-publish-confirm]');
@@ -2714,6 +2734,16 @@
                 : (strings.noFeaturedImage || 'No featured image selected');
             featuredEmpty.hidden = !!publishDraft.featuredImage;
             featuredSelected.hidden = !publishDraft.featuredImage;
+            candidate.hidden = !!publishDraft.featuredImage || !featuredImageCandidate;
+            if (featuredImageCandidate) {
+                candidateImage.src = featuredImageCandidate.url;
+                candidateImage.alt = featuredImageCandidate.alt || '';
+                candidateLabel.textContent = featuredImageCandidate.alt || featuredImageCandidate.url;
+            } else {
+                candidateImage.removeAttribute('src');
+                candidateImage.alt = '';
+                candidateLabel.textContent = '';
+            }
             if (publishDraft.featuredImage) {
                 featuredImage.src = publishDraft.featuredImage.url;
                 featuredImage.alt = publishDraft.featuredImage.alt || '';
@@ -2723,6 +2753,11 @@
             }
             setPublishPasswordError('');
             renderPublishVisibility();
+            root.querySelectorAll('[data-publish-capability]').forEach(function (section) {
+                var capability = section.getAttribute('data-publish-capability');
+                var capabilities = publishState.capabilities || {};
+                section.hidden = capabilities[capability] === false;
+            });
             renderPublishTags();
             renderPublishCategories();
             updatePublishCounts();
@@ -2741,6 +2776,7 @@
             publishDraft = createPublishDraft(publishState);
             publishSequence = sequence;
             publishSubmitting = false;
+            featuredImageCandidate = null;
             featuredImageTouched = false;
             renderPublishDialog(true);
 
@@ -2756,7 +2792,7 @@
                     ) {
                         return;
                     }
-                    publishDraft.featuredImage = image;
+                    featuredImageCandidate = image;
                     renderPublishDialog(false);
                 }).catch(function () {
                     var summary = query('[data-featured-summary]');
@@ -2797,6 +2833,7 @@
             publishDraft = null;
             publishState = null;
             publishSequence += 1;
+            featuredImageCandidate = null;
             featuredImageTouched = false;
             query('[data-action="publish"]').focus();
             return true;
@@ -3544,6 +3581,21 @@
                 closeHistory();
             } else if (action === 'restore-history') {
                 if (historySelectedId > 0 && typeof adapter.openRevision === 'function') {
+                    var navigationState = {
+                        initialMarkdown: initialMarkdown,
+                        initialTitle: initialTitle,
+                        markdown: source.value,
+                        title: title.value
+                    };
+                    if (
+                        hasUnsavedWorkspaceChanges(navigationState)
+                        && (
+                            typeof adapter.confirmRevisionNavigation !== 'function'
+                            || adapter.confirmRevisionNavigation(navigationState) !== true
+                        )
+                    ) {
+                        return;
+                    }
                     adapter.openRevision(historySelectedId);
                 }
             } else if (action === 'cancel-publish') {
@@ -3598,6 +3650,14 @@
                     updatePublishDraftFromFields();
                     featuredImageTouched = true;
                     publishDraft.featuredImage = null;
+                    renderPublishDialog(false);
+                }
+            } else if (action === 'use-featured-candidate') {
+                if (publishDraft && featuredImageCandidate) {
+                    updatePublishDraftFromFields();
+                    featuredImageTouched = true;
+                    publishDraft.featuredImage = featuredImageCandidate;
+                    featuredImageCandidate = null;
                     renderPublishDialog(false);
                 }
             } else if (action === 'settings') {
@@ -3703,7 +3763,11 @@
                 if (typeof adapter.scrollSourceToOffset === 'function') {
                     adapter.scrollSourceToOffset(source, offset);
                 }
-                if (typeof adapter.scrollPreviewToHeading === 'function') {
+                if (
+                    typeof adapter.scrollPreviewToHeading === 'function'
+                    && typeof adapter.isPreviewReady === 'function'
+                    && adapter.isPreviewReady(preview, source.value)
+                ) {
                     adapter.scrollPreviewToHeading(preview, index);
                 }
                 updateCursor();
@@ -4133,6 +4197,8 @@
             sourceHighlight = query('.easymde-immersive-workspace__source-highlight');
             source.value = typeof adapter.getMarkdown === 'function' ? adapter.getMarkdown() : '';
             title.value = typeof adapter.getTitle === 'function' ? adapter.getTitle() : '';
+            initialMarkdown = source.value;
+            initialTitle = title.value;
             if (typeof adapter.getPublishState === 'function') {
                 publishState = adapter.getPublishState();
                 updatePublishButton(createPublishDraft(publishState).mode);
@@ -4253,6 +4319,7 @@
         createTableMarkdown: createTableMarkdown,
         createPublishCategoryTree: createPublishCategoryTree,
         createPublishDraft: createPublishDraft,
+        hasUnsavedWorkspaceChanges: hasUnsavedWorkspaceChanges,
         updatePublishCategorySelection: updatePublishCategorySelection,
         createController: createController,
         findFirstLocalImageCandidate: findFirstLocalImageCandidate,

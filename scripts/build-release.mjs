@@ -65,6 +65,7 @@ const baseRequirements = [
   { path: 'assets/vendor/lora/lora-latin-variable.woff2', type: 'file' },
   { path: 'assets/vendor/lora/lora-latin-italic-variable.woff2', type: 'file' },
   { path: 'assets/vendor/lora/LICENSE', type: 'file' },
+  { path: 'assets/vendor/lucide/LICENSE', type: 'file' },
   { path: 'assets/vendor/katex/katex.min.css', type: 'file' },
   { path: 'assets/vendor/katex/katex.min.js', type: 'file' },
   { path: 'assets/vendor/katex/LICENSE', type: 'file' },

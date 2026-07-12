@@ -64,6 +64,15 @@ const frontendAssets = [
     assetPaths: 'assets/vendor/lora/lora-latin-variable.woff2, assets/vendor/lora/lora-latin-italic-variable.woff2',
     purpose: 'Local serif typography for the immersive revision preview.',
     noticeLocation: 'assets/vendor/lora/LICENSE'
+  },
+  {
+    displayName: 'Lucide icon paths',
+    version: '0.487.0',
+    source: 'https://github.com/lucide-icons/lucide/tree/0.487.0',
+    license: 'ISC',
+    assetPaths: 'assets/js/admin/immersive-workspace.js',
+    purpose: 'Locally embedded SVG path data for the isolated immersive workspace controls.',
+    noticeLocation: 'assets/vendor/lucide/LICENSE'
   }
 ];
 
@@ -154,7 +163,7 @@ export function renderNotices(root = defaultRoot) {
     '',
     table(frontendRows(root)),
     '',
-    'Copied frontend assets are committed under `assets/vendor/` so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, Mermaid, Inter, JetBrains Mono, and Lora license files are kept with their copied runtime assets.'
+    'Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, Mermaid, Inter, JetBrains Mono, Lora, and the embedded Lucide icon paths retain license files under `assets/vendor/`.'
   ].join('\n')}\n`;
 }
 

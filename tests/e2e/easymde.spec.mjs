@@ -343,6 +343,10 @@ test.describe('EasyMDE editor workflows', () => {
     expect(workspaceStyle.position).toBe('fixed');
     expect(workspaceStyle.background).not.toBe('rgb(14, 15, 20)');
 
+    const titleField = page.locator('.easymde-immersive-workspace__title');
+    await titleField.focus();
+    await expect.poll(() => titleField.evaluate((field) => getComputedStyle(field).outlineStyle)).not.toBe('none');
+
     await page.evaluate(() => {
       const nativeTitle = document.querySelector('#title');
       nativeTitle.value = 'Native title change';
@@ -362,7 +366,9 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('#title')).toHaveValue('中文组合标题');
 
     await page.locator('.easymde-immersive-workspace__title').fill(`${title}\nSecond line`);
-    await page.locator('.easymde-immersive-workspace__source').fill(markdown);
+    const sourceField = page.locator('.easymde-immersive-workspace__source');
+    await sourceField.fill(markdown);
+    await expect.poll(() => sourceField.evaluate((field) => getComputedStyle(field).outlineStyle)).not.toBe('none');
     await expect(page.locator('#title')).toHaveValue(`${title} Second line`);
     await expect(page.locator('#easymde-source')).toHaveValue(markdown);
     await page.locator('.easymde-immersive-workspace__outline-handle').click();
@@ -422,6 +428,77 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('#title')).toHaveValue(`${title} Second line`);
     await expect(page.locator('#easymde-source')).toHaveValue(markdown);
     await expect(page.locator('#easymde-preview')).toContainText('Workspace body with real preview.');
+  });
+
+  test('grows compact immersive chrome for long wrapped titles without clipping', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const longTitle = Array.from({ length: 28 }, (_, index) => `Long title segment ${index + 1}`).join(' ');
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await enterImmersiveWithKeyboard(page);
+    await page.locator('.easymde-immersive-workspace__title').fill(longTitle);
+
+    const geometry = await page.locator('.easymde-immersive-workspace__title').evaluate((field) => ({
+      clientHeight: field.clientHeight,
+      scrollHeight: field.scrollHeight,
+      gridHeight: field.closest('.easymde-immersive-workspace__title-grid').getBoundingClientRect().height,
+      headerHeight: field.closest('.easymde-immersive-workspace__header').getBoundingClientRect().height,
+      maxHeight: getComputedStyle(field).maxHeight,
+      overflowX: getComputedStyle(field).overflowX
+    }));
+
+    expect(geometry.maxHeight).toBe('none');
+    expect(geometry.clientHeight).toBeGreaterThanOrEqual(geometry.scrollHeight);
+    expect(geometry.gridHeight).toBeGreaterThanOrEqual(geometry.scrollHeight);
+    expect(geometry.headerHeight).toBeGreaterThan(60);
+    expect(geometry.overflowX).not.toBe('scroll');
+    await expect(page.locator('#title')).toHaveValue(longTitle);
+  });
+
+  test('hides publish fields that the native page editor cannot submit', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await login(page, user);
+    await page.goto('/wp-admin/post-new.php?post_type=page');
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    await enterImmersiveWithKeyboard(page);
+    await page.locator('[data-action="publish"]').click();
+
+    await expect(page.locator('[data-publish-capability="categories"]')).toBeHidden();
+    await expect(page.locator('[data-publish-capability="tags"]')).toBeHidden();
+    await expect(page.locator('.easymde-immersive-workspace__publish')).toBeVisible();
+  });
+
+  test('does not scroll a stale preview heading while the current Markdown is rendering', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await enterImmersiveWithKeyboard(page);
+    await page.locator('.easymde-immersive-workspace__outline-handle').click();
+    await page.evaluate(() => {
+      window.__easymdePreviewHeadingScrolls = 0;
+      document.querySelector('.easymde-immersive-workspace__preview').scrollIntoView = () => {};
+      Element.prototype.__easymdeOriginalScrollIntoView = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = function () {
+        if (this.closest?.('.easymde-immersive-workspace__preview')) {
+          window.__easymdePreviewHeadingScrolls += 1;
+        }
+      };
+    });
+    await page.locator('.easymde-immersive-workspace__source').fill('# Newly changed heading\n\nPending body');
+    await expect(page.locator('.easymde-immersive-workspace__preview')).toHaveAttribute('aria-busy', 'true');
+    await expect(page.locator('.easymde-immersive-workspace__outline-entry')).toContainText('Newly changed heading');
+    await page.locator('.easymde-immersive-workspace__outline-entry').click();
+
+    expect(await page.evaluate(() => window.__easymdePreviewHeadingScrolls)).toBe(0);
+    expect(await page.locator('.easymde-immersive-workspace__source').evaluate((field) => field.selectionStart)).toBe(0);
+    await page.evaluate(() => {
+      Element.prototype.scrollIntoView = Element.prototype.__easymdeOriginalScrollIntoView;
+      delete Element.prototype.__easymdeOriginalScrollIntoView;
+      delete window.__easymdePreviewHeadingScrolls;
+    });
   });
 
   test('keeps immersive focus, shortcuts, icons, dialogs, and exit state scoped to the workspace', async ({ page }, testInfo) => {
@@ -567,6 +644,30 @@ test.describe('EasyMDE editor workflows', () => {
     const publishConfirm = page.locator('[data-action="confirm-publish"]');
     const publishClose = page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').first();
     await expect(publishConfirm).toBeFocused();
+    const publishFocusTargets = [
+      ['[data-publish-category]', '.easymde-immersive-workspace__category-checkbox'],
+      ['[data-publish-visibility="public"]', '.easymde-immersive-workspace__publish-radio'],
+      ['[data-publish-sticky]', '.easymde-immersive-workspace__publish-sticky-box'],
+      ['[data-publish-preview]', '.easymde-immersive-workspace__publish-preview-switch > i']
+    ];
+    for (const [inputSelector, visualSelector] of publishFocusTargets) {
+      const input = page.locator(inputSelector).first();
+      await input.focus();
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Shift+Tab');
+      await expect(input).toBeFocused();
+      expect(
+        await page.locator(visualSelector).first().evaluate((node) => getComputedStyle(node).boxShadow),
+        `${inputSelector} must expose a visible keyboard focus indicator`
+      ).not.toBe('none');
+    }
+    const categoryToggle = page.locator('[data-publish-category-toggle]').first();
+    await categoryToggle.focus();
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Shift+Tab');
+    await expect(categoryToggle).toBeFocused();
+    expect(await categoryToggle.evaluate((node) => getComputedStyle(node).boxShadow)).not.toBe('none');
+    await publishConfirm.focus();
     await page.keyboard.press('Tab');
     await expect(publishClose).toBeFocused();
     await page.keyboard.press('Shift+Tab');
@@ -811,6 +912,34 @@ test.describe('EasyMDE editor workflows', () => {
     );
   });
 
+  test('continues native publish when session storage access throws', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `Blocked Session Storage ${testSlug(testInfo)}`;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    const postId = await currentPostId(page);
+    await enterImmersiveWithKeyboard(page);
+    await page.locator('.easymde-immersive-workspace__title').fill(title);
+    await page.locator('.easymde-immersive-workspace__source').fill(`# ${title}\n\nNative publish must continue.`);
+    await page.locator('[data-action="publish"]').click();
+    await page.evaluate(() => {
+      Object.defineProperty(window, 'sessionStorage', {
+        configurable: true,
+        get() {
+          throw new Error('session storage blocked');
+        }
+      });
+    });
+    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await page.locator('[data-action="confirm-publish"]').click();
+    await navigation;
+    await parkPointerAfterNavigation(page);
+
+    expect(runWp(['post', 'get', String(postId), '--field=post_status'])).toBe('publish');
+    expect(runWp(['post', 'get', String(postId), '--field=post_title'])).toBe(title);
+  });
+
   test('publishes password protection through the immersive dialog without touching native fields early', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = `Workspace Password ${testSlug(testInfo)}`;
@@ -998,7 +1127,9 @@ test.describe('EasyMDE editor workflows', () => {
       `![Verified local candidate](${media.source_url})`
     ].join('\n'));
     await page.locator('[data-action="publish"]').click();
-    await expect(page.locator('[data-featured-summary]')).toHaveText('Verified local candidate');
+    await expect(page.locator('[data-featured-summary]')).toHaveText(noFeaturedImage);
+    await expect(page.locator('[data-featured-candidate]')).toBeVisible();
+    await expect(page.locator('[data-featured-candidate]')).toContainText('Verified local candidate');
     expect(await page.locator('#_thumbnail_id').inputValue()).not.toBe(String(media.id));
     expect(postMetaValue(postId, '_thumbnail_id')).toBe(thumbnailBefore);
 
@@ -1010,12 +1141,35 @@ test.describe('EasyMDE editor workflows', () => {
     expect(postTagNames(postId)).toBe('');
 
     await page.locator('[data-action="publish"]').click();
-    await expect(page.locator('[data-featured-summary]')).toHaveText('Verified local candidate');
+    await expect(page.locator('[data-featured-candidate]')).toContainText('Verified local candidate');
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
     await page.locator('[data-action="confirm-publish"]').click();
     await navigation;
     await parkPointerAfterNavigation(page);
     await expect(page.locator('#message, .notice-success')).toBeVisible();
+    expect(postMetaValue(postId, '_thumbnail_id')).toBe(thumbnailBefore);
+
+    await enterImmersiveWithKeyboard(page);
+    await page.locator('[data-action="publish"]').click();
+    await expect(page.locator('[data-featured-candidate]')).toContainText('Verified local candidate');
+    await page.locator('[data-action="use-featured-candidate"]').click();
+    await expect(page.locator('[data-featured-summary]')).toHaveText('Verified local candidate');
+    const replaceFeatured = page.locator('.easymde-immersive-workspace__featured-selected [data-action="select-featured"]');
+    await replaceFeatured.focus();
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Shift+Tab');
+    await expect(replaceFeatured).toBeFocused();
+    await expect.poll(() => replaceFeatured.evaluate((button) => getComputedStyle(button).boxShadow)).not.toBe('none');
+    const removeFeatured = page.locator('.easymde-immersive-workspace__featured-selected [data-action="remove-featured"]');
+    await removeFeatured.focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await expect(removeFeatured).toBeFocused();
+    await expect.poll(() => removeFeatured.evaluate((button) => getComputedStyle(button).boxShadow)).not.toBe('none');
+    const candidateNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await page.locator('[data-action="confirm-publish"]').click();
+    await candidateNavigation;
+    await parkPointerAfterNavigation(page);
     expect(postMetaValue(postId, '_thumbnail_id')).toBe(String(media.id));
 
     const secondMedia = await uploadTestImage(page, `${slug}-second.png`, 'Second local candidate');
@@ -1244,8 +1398,17 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(historyEntries.first()).toHaveAttribute('data-revision-id', /^\d+$/);
     await expect(page.locator('[data-history-preview]')).toContainText('Second revision body.');
     await expect(page.locator('[data-action="restore-history"]')).toBeEnabled();
-    await activateWithKeyboard(page.locator('[data-action="close-history"]'));
-    await activateWithKeyboard(page.locator('[data-action="exit"]'));
+    const selectedRevisionId = await historyEntries.first().getAttribute('data-revision-id');
+    await page.locator('.easymde-immersive-workspace__source').fill('# Unsaved before revision navigation');
+    page.once('dialog', (dialog) => dialog.dismiss());
+    await activateWithKeyboard(page.locator('[data-action="restore-history"]'));
+    await expect(page.locator('.easymde-immersive-workspace__history')).toBeVisible();
+    await expect(page).toHaveURL(/post\.php/);
+    page.once('dialog', (dialog) => dialog.accept());
+    await Promise.all([
+      page.waitForURL(new RegExp(`/wp-admin/revision\\.php\\?revision=${selectedRevisionId}`)),
+      activateWithKeyboard(page.locator('[data-action="restore-history"]'))
+    ]);
 
     await page.goto(`/wp-admin/revision.php?revision=${firstRevisionId}`);
     const restoreButton = page.locator('input.restore-revision, input.button-primary[value*="Restore"], button:has-text("Restore")').first();

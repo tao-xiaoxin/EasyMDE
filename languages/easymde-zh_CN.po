@@ -1580,5 +1580,14 @@ msgstr "正在复制..."
 msgid "Copied"
 msgstr "已复制"
 
+msgid "Suggested from the first verified local image. It is not selected yet."
+msgstr "建议使用正文中第一张已验证的本地图片，但尚未选为特色图片。"
+
+msgid "Use first local image"
+msgstr "使用第一张本地图片"
+
+msgid "You have unsaved title or Markdown changes. Continue to revision history and leave these changes behind?"
+msgstr "标题或 Markdown 正文仍有未保存的更改。是否继续进入修订历史并放弃这些更改？"
+
 #~ msgid "Demo response only. No article data was read or sent."
 #~ msgstr "这只是演示回复，未读取或发送任何文章数据。"

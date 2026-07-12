@@ -100,6 +100,47 @@
         };
     }
 
+    function getNativePublishCapabilities(documentRef) {
+        var doc = documentRef || document;
+
+        return {
+            categories: doc.querySelectorAll('#categorychecklist input[type="checkbox"]').length > 0,
+            excerpt: !!doc.querySelector('#excerpt'),
+            featuredImage: !!doc.querySelector('#_thumbnail_id'),
+            sticky: !!doc.querySelector('#sticky'),
+            tags: !!doc.querySelector('#tax-input-post_tag'),
+            visibility: !!(
+                doc.querySelector('#visibility-radio-public')
+                && doc.querySelector('#visibility-radio-password')
+                && doc.querySelector('#visibility-radio-private')
+                && doc.querySelector('#post_password')
+            )
+        };
+    }
+
+    function preflightNativePublish(draft, documentRef) {
+        var doc = documentRef || document;
+        var capabilities = getNativePublishCapabilities(doc);
+        var expected = draft && draft.capabilities ? draft.capabilities : {};
+        var capabilityNames = ['categories', 'excerpt', 'featuredImage', 'tags', 'visibility'];
+        var expectedControlsPresent = capabilityNames.every(function (name) {
+            return expected[name] !== true || capabilities[name] === true;
+        });
+
+        return {
+            capabilities: capabilities,
+            ok: capabilities.visibility && expectedControlsPresent && !!doc.querySelector('#publish')
+        };
+    }
+
+    function getSessionStorage() {
+        try {
+            return window.sessionStorage || null;
+        } catch (error) {
+            return null;
+        }
+    }
+
     function applyNativePublishVisibility(draft, documentRef) {
         var doc = documentRef || document;
         var visibility = ['public', 'password', 'private'].indexOf(String(draft && draft.visibility || '')) !== -1
@@ -1515,14 +1556,15 @@
         var requestedAt;
         var previewUrl;
         var previewWindow;
+        var sessionStorage = getSessionStorage();
 
-        if (!window.sessionStorage || !hasSuccessfulPostNotice()) {
+        if (!sessionStorage || !hasSuccessfulPostNotice()) {
             return;
         }
 
         try {
-            requestedAt = parseInt(window.sessionStorage.getItem('easymde:publish-preview-pending') || '', 10);
-            window.sessionStorage.removeItem('easymde:publish-preview-pending');
+            requestedAt = parseInt(sessionStorage.getItem('easymde:publish-preview-pending') || '', 10);
+            sessionStorage.removeItem('easymde:publish-preview-pending');
         } catch (error) {
             return;
         }
@@ -1624,6 +1666,9 @@
                     if (headings[index] && typeof headings[index].scrollIntoView === 'function') {
                         headings[index].scrollIntoView({ block: 'start' });
                     }
+                },
+                isPreviewReady: function (previewNode, markdown) {
+                    return isPreviewReady(previewNode, markdown);
                 },
                 getAppearanceOptions: function () {
                     var themes = (themeOptions.markdownThemes || []).slice();
@@ -1868,6 +1913,7 @@
                     }
 
                     return {
+                        capabilities: getNativePublishCapabilities(document),
                         categories: Array.prototype.map.call(categoryInputs, function (input) {
                             return input.checked ? String(input.value || '') : '';
                         }).filter(Boolean),
@@ -1928,6 +1974,12 @@
                         window.location.href = window.ajaxurl.replace(/admin-ajax\.php(?:\?.*)?$/, 'revision.php?revision=' + id);
                     }
                 },
+                confirmRevisionNavigation: function () {
+                    return window.confirm(
+                        getString('historyUnsavedConfirm')
+                        || 'You have unsaved title or Markdown changes. Continue to revision history and leave these changes behind?'
+                    );
+                },
                 selectFeaturedImage: function (callback) {
                     var frame;
 
@@ -1956,31 +2008,46 @@
                     frame.open();
                 },
                 publish: function (draft) {
+                    var preflight = preflightNativePublish(draft, document);
                     var selectedCategories = Object.create(null);
                     var featuredId = draft.featuredImage && draft.featuredImage.id
                         ? String(draft.featuredImage.id)
                         : '-1';
+                    var sessionStorage;
 
-                    (draft.categories || []).forEach(function (id) {
-                        selectedCategories[String(id)] = true;
-                    });
-                    document.querySelectorAll('#categorychecklist input[type="checkbox"], #categorychecklist-pop input[type="checkbox"]').forEach(function (input) {
-                        input.checked = !!selectedCategories[String(input.value || '')];
-                    });
-                    $('#tax-input-post_tag').val((draft.tags || []).join(', ')).trigger('change');
-                    $('#excerpt').val(draft.excerpt || '').trigger('change');
-                    $('#_thumbnail_id').val(featuredId).trigger('change');
-
-                    if (!applyNativePublishVisibility(draft, document)) {
+                    if (!preflight.ok) {
                         showFlash(context.flash, 'error', getString('publishVisibilityUnavailable'));
                         return false;
+                    }
+
+                    if (preflight.capabilities.categories) {
+                        (draft.categories || []).forEach(function (id) {
+                            selectedCategories[String(id)] = true;
+                        });
+                        document.querySelectorAll('#categorychecklist input[type="checkbox"], #categorychecklist-pop input[type="checkbox"]').forEach(function (input) {
+                            input.checked = !!selectedCategories[String(input.value || '')];
+                        });
+                    }
+                    if (preflight.capabilities.tags) {
+                        $('#tax-input-post_tag').val((draft.tags || []).join(', ')).trigger('change');
+                    }
+                    if (preflight.capabilities.excerpt) {
+                        $('#excerpt').val(draft.excerpt || '').trigger('change');
+                    }
+                    if (preflight.capabilities.featuredImage) {
+                        $('#_thumbnail_id').val(featuredId).trigger('change');
+                    }
+
+                    if (!applyNativePublishVisibility(draft, document)) {
+                        throw new Error('Native WordPress visibility controls changed after publish preflight.');
                     }
                     $('#visibility-radio-' + draft.visibility).trigger('change');
                     $('#visibility .save-post-visibility').trigger('click');
 
-                    if (draft.openPreview && window.sessionStorage) {
+                    sessionStorage = getSessionStorage();
+                    if (draft.openPreview && sessionStorage) {
                         try {
-                            window.sessionStorage.setItem(
+                            sessionStorage.setItem(
                                 'easymde:publish-preview-pending',
                                 String(Date.now())
                             );
@@ -2066,6 +2133,9 @@
     }
 
     function setPreviewPending($preview, replaceContent) {
+        if ($preview[0]) {
+            $preview[0].easymdePreviewSignature = null;
+        }
         setPreviewBusy($preview, true);
         $preview.attr('data-easymde-preview-refreshing', '1');
         $preview.removeAttr('data-easymde-preview-error');
@@ -2075,10 +2145,23 @@
         }
     }
 
-    function setPreviewReady($preview) {
+    function setPreviewReady($preview, signature) {
         setPreviewBusy($preview, false);
         $preview.removeAttr('data-easymde-preview-error');
         $preview.removeAttr('data-easymde-preview-refreshing');
+        if ($preview[0]) {
+            $preview[0].easymdePreviewSignature = typeof signature === 'string' ? signature : null;
+        }
+    }
+
+    function isPreviewReady(previewNode, markdown) {
+        return !!(
+            previewNode
+            && previewNode.easymdePreviewSignature === currentPreviewSignature(markdown)
+            && previewNode.getAttribute('aria-busy') !== 'true'
+            && !previewNode.hasAttribute('data-easymde-preview-refreshing')
+            && !previewNode.hasAttribute('data-easymde-preview-error')
+        );
     }
 
     function setPreviewEnhancementError($preview) {
@@ -2529,7 +2612,7 @@
 
     function finishEnhancedPreview($preview, revision, signature, markdown, ready) {
         if (ready !== false && isPreviewCurrent(revision, signature, markdown)) {
-            setPreviewReady($preview);
+            setPreviewReady($preview, signature);
         }
     }
 
@@ -2560,7 +2643,7 @@
 
         if (!markdown.trim()) {
             activePreviewFeatures = normalizePreviewFeatures(config.features || {});
-            setPreviewReady($preview);
+            setPreviewReady($preview, signature);
             $preview.html('<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty')) + '</p>');
             finishPreviewUpdate(capturePreviewScroll(previewNode), activePreviewFeatures);
             return;
@@ -3176,6 +3259,11 @@
         window.EasyMDETestHooks.readNativeCategoryOptions = readNativeCategoryOptions;
         window.EasyMDETestHooks.readNativePublishVisibility = readNativePublishVisibility;
         window.EasyMDETestHooks.applyNativePublishVisibility = applyNativePublishVisibility;
+        window.EasyMDETestHooks.getNativePublishCapabilities = getNativePublishCapabilities;
+        window.EasyMDETestHooks.preflightNativePublish = preflightNativePublish;
+        window.EasyMDETestHooks.getSessionStorage = getSessionStorage;
+        window.EasyMDETestHooks.currentPreviewSignature = currentPreviewSignature;
+        window.EasyMDETestHooks.isPreviewReady = isPreviewReady;
         window.EasyMDETestHooks.executeCommand = executeCommand;
         window.EasyMDETestHooks.getLocalDraftsEnabled = getLocalDraftsEnabled;
         window.EasyMDETestHooks.setLocalDraftsEnabled = setLocalDraftsEnabled;

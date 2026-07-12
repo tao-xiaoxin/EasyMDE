@@ -609,6 +609,73 @@ test('native publish visibility adapter reads and applies WordPress form control
   assert.equal(controls['#sticky'].checked, false);
 });
 
+test('native publish preflight reports capabilities before any form mutation', () => {
+  const controls = {
+    '#excerpt': {},
+    '#tax-input-post_tag': {},
+    '#_thumbnail_id': {}
+  };
+  const documentRef = {
+    querySelector(selector) {
+      return controls[selector] || null;
+    },
+    querySelectorAll(selector) {
+      return selector.includes('categorychecklist') ? [{ value: '1' }] : [];
+    }
+  };
+  const { hooks } = loadBootstrap();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(hooks.getNativePublishCapabilities(documentRef))), {
+    categories: true,
+    excerpt: true,
+    featuredImage: true,
+    sticky: false,
+    tags: true,
+    visibility: false
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(hooks.preflightNativePublish({}, documentRef))), {
+    capabilities: {
+      categories: true,
+      excerpt: true,
+      featuredImage: true,
+      sticky: false,
+      tags: true,
+      visibility: false
+    },
+    ok: false
+  });
+});
+
+test('preview readiness requires the current Markdown signature and an idle preview', () => {
+  const { hooks } = loadBootstrap();
+  const preview = {
+    easymdePreviewSignature: hooks.currentPreviewSignature('# Current'),
+    getAttribute(name) {
+      return name === 'aria-busy' ? 'false' : null;
+    },
+    hasAttribute() {
+      return false;
+    }
+  };
+
+  assert.equal(hooks.isPreviewReady(preview, '# Current'), true);
+  assert.equal(hooks.isPreviewReady(preview, '# Changed'), false);
+  preview.getAttribute = () => 'true';
+  assert.equal(hooks.isPreviewReady(preview, '# Current'), false);
+});
+
+test('session storage access is guarded when the browser getter throws', () => {
+  const throwingWindow = {};
+  Object.defineProperty(throwingWindow, 'sessionStorage', {
+    get() {
+      throw new Error('blocked storage');
+    }
+  });
+  const { hooks } = loadBootstrap(throwingWindow);
+
+  assert.equal(hooks.getSessionStorage(), null);
+});
+
 test('runtime local draft setting cancels pending writes without deleting stored drafts', () => {
   const writes = [];
   let discards = 0;

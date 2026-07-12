@@ -73,3 +73,14 @@ test('copied immersive fonts retain explicit provenance and local notices', () =
   assert.match(lora?.bundled || '', /lora-latin-italic-variable\.woff2/);
   assert.match(readFileSync(join(repoRoot, lora.notice), 'utf8'), /Reserved Font Name "Lora"/);
 });
+
+test('embedded Lucide icon paths retain versioned ISC provenance', () => {
+  const rows = frontendRows(repoRoot);
+  const lucide = rows.find((row) => row.name === 'Lucide icon paths');
+
+  assert.equal(lucide?.version, '0.487.0');
+  assert.equal(lucide?.license, 'ISC');
+  assert.equal(lucide?.notice, 'assets/vendor/lucide/LICENSE');
+  assert.match(lucide?.bundled || '', /immersive-workspace\.js/);
+  assert.match(readFileSync(join(repoRoot, lucide.notice), 'utf8'), /Lucide Contributors 2022/);
+});

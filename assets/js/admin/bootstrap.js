@@ -1593,6 +1593,15 @@
                         $title.off(namespace);
                     };
                 },
+                decorateWechatIcon: function (workspaceRoot) {
+                    var wechatSource = context.root.find('[data-easymde-command="copywechat"] .easymde-wechat-glyph').first()[0];
+                    var wechatTarget = workspaceRoot.querySelector('[data-wechat-icon]');
+
+                    if (!wechatSource || !wechatTarget) {
+                        throw new Error('The original WeChat toolbar icon is unavailable.');
+                    }
+                    wechatTarget.replaceWith(wechatSource.cloneNode(true));
+                },
                 renderPreview: function (node, markdown, options) {
                     var sourceClasses = String(context.preview.attr('class') || '').split(/\s+/).filter(function (className) {
                         return className && className !== 'easymde-preview';

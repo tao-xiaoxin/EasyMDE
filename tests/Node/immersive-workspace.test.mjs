@@ -502,26 +502,14 @@ test('immersive WeChat action owns its asynchronous feedback state', () => {
   assert.match(css, /__wechat-button\.is-error\s*\{[^}]*border-color:\s*#dc2626;/s);
 });
 
-test('immersive WeChat action preserves the original toolbar glyph exactly', () => {
-  const bootstrapSource = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
-  const toolbarSource = readFileSync(join(repoRoot, 'assets/js/admin/toolbar.js'), 'utf8');
+test('immersive WeChat action reuses the original toolbar glyph without redefining it', () => {
   const immersiveSource = readFileSync(join(repoRoot, 'assets/js/admin/immersive-workspace.js'), 'utf8');
-  const bootstrapPathsBlock = bootstrapSource.match(/var wechatIconPaths = \[([\s\S]*?)\n    \];/);
-  const toolbarPathsBlock = toolbarSource.match(/var wechatIconPaths = \[([\s\S]*?)\n    \];/);
-  const immersiveGlyphBlock = immersiveSource.match(/function wechatGlyphMarkup\(\) \{([\s\S]*?)\n    \}/);
 
-  assert.ok(toolbarPathsBlock, 'the original toolbar WeChat paths must remain available');
-  assert.ok(bootstrapPathsBlock, 'the bootstrap compatibility paths must remain available');
-  assert.ok(immersiveGlyphBlock, 'the immersive workspace must define its independent WeChat glyph');
-
-  const originalPaths = Array.from(toolbarPathsBlock[1].matchAll(/'([^']+)'/g), (match) => match[1]);
-  const bootstrapPaths = Array.from(bootstrapPathsBlock[1].matchAll(/'([^']+)'/g), (match) => match[1]);
-  const immersivePaths = Array.from(immersiveGlyphBlock[1].matchAll(/<path d="([^"]+)"><\/path>/g), (match) => match[1]);
-
-  assert.equal(originalPaths.length, 3);
-  assert.deepEqual(bootstrapPaths, originalPaths);
-  assert.deepEqual(immersivePaths, originalPaths);
-  assert.match(immersiveGlyphBlock[1], /<svg viewBox="0 0 40 40" focusable="false" aria-hidden="true">/);
+  assert.match(immersiveSource, /data-wechat-icon aria-hidden="true"/);
+  assert.match(immersiveSource, /typeof adapter\.decorateWechatIcon === 'function'/);
+  assert.match(immersiveSource, /adapter\.decorateWechatIcon\(root\)/);
+  assert.doesNotMatch(immersiveSource, /function wechatGlyphMarkup\(/);
+  assert.doesNotMatch(immersiveSource, /<svg viewBox="0 0 40 40"/);
 });
 
 test('header and toolbar actions follow the current reference layout order', () => {
@@ -548,8 +536,8 @@ test('header and toolbar actions follow the current reference layout order', () 
     toolbarMarkup,
     /data-action="wechat"[\s\S]*?data-action="history"[\s\S]*?data-action="theme"[\s\S]*?data-action="font"[\s\S]*?data-action="settings"/
   );
-  assert.match(toolbarMarkup, /data-action="wechat"[\s\S]*?wechatGlyphMarkup\(\)[\s\S]*?data-wechat-label/);
-  assert.doesNotMatch(source, /data-wechat-icon/);
+  assert.match(toolbarMarkup, /data-action="wechat"[\s\S]*?data-wechat-icon[\s\S]*?data-wechat-label/);
+  assert.match(source, /adapter\.decorateWechatIcon\(root\)/);
   assert.doesNotMatch(source, /decorateWorkspace/);
   [
     ['bold', 'boldShortcutTitle', 'Bold (Ctrl+B)', 'bold', 'Bold'],
@@ -575,7 +563,7 @@ test('header and toolbar actions follow the current reference layout order', () 
   assert.match(toolbarMarkup, /data-action="theme"[^>]*title="' \+ label\('themeTitle', 'Switch theme'\) \+ '"/);
   assert.match(toolbarMarkup, /data-action="font"[^>]*title="' \+ label\('fontTitle', 'Font settings'\) \+ '"/);
   assert.match(toolbarMarkup, /data-action="settings"[^>]*title="' \+ label\('editorSettings', 'Editor settings'\) \+ '"/);
-  assert.match(toolbarMarkup, /data-action="wechat"[^>]*>[\s\S]*?wechatGlyphMarkup\(\)[\s\S]*?<span data-wechat-label>' \+ label\('copyWechat', 'Copy to WeChat'\) \+ '<\/span>/);
+  assert.match(toolbarMarkup, /data-action="wechat"[^>]*>[\s\S]*?<span data-wechat-icon aria-hidden="true"><\/span>[\s\S]*?<span data-wechat-label>' \+ label\('copyWechat', 'Copy to WeChat'\) \+ '<\/span>/);
   assert.doesNotMatch(toolbarMarkup, /data-action="(?:copy-markdown|ai)"/);
   assert.doesNotMatch(toolbarMarkup, /data-action="mobile-preview"/);
   assert.match(toolbarMarkup, /data-action="settings"[^>]*>[\s\S]*?iconMarkup\('settings', 14, 2\)[\s\S]*?iconMarkup\('chevron-down', 10, 2\.5\)/);

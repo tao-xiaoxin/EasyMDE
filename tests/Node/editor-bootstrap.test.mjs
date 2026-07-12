@@ -669,8 +669,9 @@ test('immersive adapter inserts sized tables and returns the real WeChat copy pr
   assert.match(source, /setSelectionRange\(firstCellStart, firstCellEnd\)/);
   assert.match(source, /dispatchEvent\(new window\.Event\('input', \{ bubbles: true \}\)\)/);
   assert.match(source, /action === 'wechat'[\s\S]*return copyWechat\(\{ preview: \$\(workspaceContext\.preview\), flash: context\.flash \}\);/s);
-  assert.doesNotMatch(source, /decorateWorkspace:\s*function/);
-  assert.doesNotMatch(source, /wechatSource\.cloneNode/);
+  assert.match(source, /decorateWechatIcon:\s*function \(workspaceRoot\)/);
+  assert.match(source, /context\.root\.find\('\[data-easymde-command="copywechat"\] \.easymde-wechat-glyph'\)/);
+  assert.match(source, /wechatTarget\.replaceWith\(wechatSource\.cloneNode\(true\)\)/);
 });
 
 test('post-publish preview accepts only successful WordPress notices', () => {

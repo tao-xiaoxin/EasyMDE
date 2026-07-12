@@ -685,13 +685,6 @@
             ICON_NODES[name] + '</svg>';
     }
 
-    function wechatGlyphMarkup() {
-        return '<span class="easymde-wechat-glyph" aria-hidden="true"><svg viewBox="0 0 40 40" focusable="false" aria-hidden="true">' +
-            '<path d="M38.7,15.3c-3.7-4.9-10.2-6.2-16.1-4.1c0.2,0.1,0.4,0.1,0.6,0.2c8.7,2.9,13.3,12.3,10.4,21 c-0.8,2.3-2,4.3-3.5,6c1.9-0.5,3.8-1.3,5.4-2.5C42.1,30.8,43.4,21.4,38.7,15.3z"></path>' +
-            '<path d="M17,10.4L17,10.4C17,10.4,17,10.4,17,10.4c0.4-0.3,0.7-0.5,1.1-0.8c0,0,0,0,0.1,0c0.4-0.2,0.8-0.4,1.1-0.7 c0,0,0.1,0,0.1-0.1c0.8-0.4,1.6-0.7,2.4-1c0.1,0,0.1,0,0.2-0.1c0.4-0.1,0.8-0.3,1.2-0.4c0,0,0.1,0,0.1,0c0.4-0.1,0.8-0.2,1.2-0.2 c0.1,0,0.1,0,0.2,0C25.3,7,25.7,7,26.1,7c0.1,0,0.2,0,0.3,0c0.4,0,0.9-0.1,1.3-0.1c0.5,0,1,0,1.5,0.1c0.1,0,0.1,0,0.2,0 c0.5,0,0.9,0.1,1.4,0.2c0.1,0,0.2,0,0.2,0c0.5,0.1,0.9,0.2,1.3,0.3c0.1,0,0.1,0,0.2,0.1C33,7.7,33.5,7.8,33.9,8 c-0.2-0.4-0.4-0.7-0.4-0.7C30.6,2.7,25.8,0,20.6,0c-3.1,0-7.9,1.1-11.5,5.4c-2.4,2.9-3.2,6.3-2.7,9.7c0.3,2.3,1.6,5.4,3.5,7.3 C10.6,17.5,13.2,13.2,17,10.4z"></path>' +
-            '<path d="M20.6,30.9c-1.3,0-2.6-0.2-3.8-0.4c-0.1,0-0.3,0-0.5,0c-0.4,0-0.7,0.1-1,0.3l-4,2.6 c-0.1,0.1-0.2,0.1-0.4,0.1c-0.3,0-0.6-0.3-0.7-0.6c0-0.2,0-0.3,0.1-0.5c0-0.1,0.4-2,0.7-3.2c0-0.1,0.1-0.3,0-0.4 c0-0.4-0.2-0.8-0.6-1c-4.3-2.9-7.2-7.5-7.8-12.2c-1.1,1.7-1.6,3-2.2,5c-2.1,7.3,2.5,16,9.9,18.4c8.6,2.8,16.7-0.3,19.5-7.6 c0.3-0.9,0.7-2.4,0.8-3.6C27.7,29.9,24.6,30.9,20.6,30.9z"></path></svg></span>';
-    }
-
     function aiLogoMarkup(size) {
         var gradientId;
 
@@ -824,7 +817,7 @@
                         '<button type="button" data-action="exit" title="' + label('immersiveModeTitle', 'Immersive writing') + '" aria-label="' + label('exitImmersive', 'Exit immersive writing') + '">' + iconMarkup('maximize', 14, 2) + '</button>' +
                     '</div>' +
                     '<div class="easymde-immersive-workspace__secondary-actions">' +
-                        '<button type="button" data-action="wechat" class="easymde-immersive-workspace__wechat-button" title="' + label('copyWechatImmersiveTitle', 'Copy current preview content to WeChat') + '" aria-label="' + label('copyWechatTitle', 'Copy preview for WeChat') + '">' + wechatGlyphMarkup() + '<span data-wechat-label>' + label('copyWechat', 'Copy to WeChat') + '</span></button>' +
+                        '<button type="button" data-action="wechat" class="easymde-immersive-workspace__wechat-button" title="' + label('copyWechatImmersiveTitle', 'Copy current preview content to WeChat') + '" aria-label="' + label('copyWechatTitle', 'Copy preview for WeChat') + '"><span data-wechat-icon aria-hidden="true"></span><span data-wechat-label>' + label('copyWechat', 'Copy to WeChat') + '</span></button>' +
                         '<span class="easymde-immersive-workspace__wechat-status" data-wechat-status role="status" aria-live="polite"></span>' +
                         '<button type="button" data-action="history" title="' + label('history', 'History') + '" aria-label="' + label('history', 'History') + '">' + iconMarkup('history', 13, 2) + '<span>' + label('historyShort', 'History') + '</span></button>' +
                         '<button type="button" data-action="theme" title="' + label('themeTitle', 'Switch theme') + '" aria-label="' + label('theme', 'Theme') + '">' + iconMarkup('palette', 13, 2) + '<span>' + label('theme', 'Theme') + '</span><i class="easymde-immersive-workspace__theme-dot" aria-hidden="true"></i></button>' +
@@ -4082,6 +4075,14 @@
             root.setAttribute('aria-modal', 'true');
             root.setAttribute('aria-label', strings.workspaceLabel || 'EasyMDE immersive writing workspace');
             root.innerHTML = workspaceMarkup(strings);
+            if (typeof adapter.decorateWechatIcon === 'function') {
+                try {
+                    adapter.decorateWechatIcon(root);
+                } catch (error) {
+                    root = null;
+                    throw error;
+                }
+            }
             doc.body.appendChild(root);
             doc.documentElement.classList.add(ACTIVE_CLASS);
             doc.body.classList.add(ACTIVE_CLASS);

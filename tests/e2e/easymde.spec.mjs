@@ -371,6 +371,9 @@ test.describe('EasyMDE editor workflows', () => {
     await login(page, user);
     await openEasyMdeNewPost(page);
     const boldTitle = await page.locator('[data-easymde-command="bold"]').getAttribute('title');
+    const originalWechatPaths = await page.locator('[data-easymde-command="copywechat"] .easymde-wechat-glyph path').evaluateAll(
+      (paths) => paths.map((path) => path.getAttribute('d'))
+    );
     const shortcut = boldTitle && boldTitle.includes('Cmd+B') ? 'Meta+B' : 'Control+B';
     await page.locator('#easymde-source').fill('plain\nsecond line');
     await page.locator('.easymde-toolbar-immersive-toggle').click();
@@ -387,6 +390,10 @@ test.describe('EasyMDE editor workflows', () => {
 
     await expect(page.locator('[data-command="bold"] .easymde-immersive-icon')).toHaveCount(1);
     await expect(page.locator('[data-action="wechat"] .easymde-wechat-glyph')).toHaveCount(1);
+    const immersiveWechatPaths = await page.locator('[data-action="wechat"] .easymde-wechat-glyph path').evaluateAll(
+      (paths) => paths.map((path) => path.getAttribute('d'))
+    );
+    expect(immersiveWechatPaths).toEqual(originalWechatPaths);
     await expect(page.locator('[data-command="table"]')).toHaveAttribute(
       'aria-label',
       await page.evaluate(() => window.EasyMDEConfig.strings.table)

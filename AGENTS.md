@@ -192,21 +192,15 @@ Always use WordPress APIs for hooks, assets, metadata, capabilities, nonces, RES
 ### REST API
 
 * Use namespace `easymde/v1`.
-
 * Requests with `post_id` must verify:
 
   ```php
   current_user_can( 'edit_post', $post_id )
   ```
-
 * A preview request without `post_id` may allow users with `edit_posts`.
-
 * Custom CSS endpoints may only access the current user's user meta.
-
 * Validate and sanitize all request arguments.
-
 * Limit Markdown preview payload size.
-
 * Return meaningful `WP_Error` objects and appropriate HTTP status codes.
 
 ### Custom CSS
@@ -354,21 +348,15 @@ For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or rel
 #### WordPress Input, Output, and Authorization
 
 * Request input from `$_POST`, `$_GET`, and REST is unslashed, validated, and sanitized for its actual data type.
-
 * HTML, attributes, URLs, textarea content, and inline styles use context-appropriate escaping.
-
 * State-changing operations verify both nonce and the correct capability.
-
 * Requests with `post_id` verify access to that specific post with:
 
   ```php
   current_user_can( 'edit_post', $post_id )
   ```
-
 * Custom CSS can only access the current user's library and requires `unfiltered_html` for full CSS editing.
-
 * REST errors use meaningful `WP_Error` responses and appropriate HTTP status codes.
-
 * New admin actions do not affect unrelated posts, users, settings, or admin pages.
 
 #### Markdown, HTML, DOM, and Editor Safety
@@ -384,24 +372,17 @@ For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or rel
 #### Data Integrity and Compatibility
 
 * `_easymde_markdown` remains the source of truth.
-
 * `post_content` remains compatible rendered output.
-
 * EasyMDE revisions preserve Markdown and appearance metadata.
-
 * Restoring a revision regenerates consistent rendered HTML without recursion or stale state.
-
 * Legacy posts with existing `_easymde_markdown` remain detectable with `metadata_exists()`.
-
 * Existing public compatibility APIs remain functional:
 
   ```php
   EasyMDE_Plugin::register_toolbar_button()
   EasyMDE_Plugin::register_shortcode_helper()
   ```
-
 * No automatic bulk migration, destructive rewrite, or silent metadata rename is introduced.
-
 * Existing theme choices, code themes, custom CSS snapshots, font settings, shortcuts, and user defaults remain readable unless an explicit migration path is included.
 
 #### Assets, Dependencies, Releases, and Privacy
@@ -526,3 +507,135 @@ At task completion, report:
 4. Remaining risks, assumptions, or unverified behavior.
 5. Files staged or committed, and why each file belongs to the task.
 6. When relevant, privacy/artifact scanning performed, what categories were checked, and any remaining history/cache limitations.
+
+---
+
+## Issue and Pull Request Workflow
+
+### Mandatory Issue Linkage
+
+* Before implementing a change, search both open and closed Issues for an existing report, requirement, maintenance task, or design decision that accurately covers the work.
+* Reuse a relevant existing Issue when its scope and acceptance criteria match the intended change.
+* When no suitable Issue exists, create a focused Issue before opening the pull request. Do not create a placeholder Issue merely to satisfy this rule; it must describe a real problem, requirement, or maintenance task.
+* Every pull request must reference at least one relevant Issue in its body.
+* Use `Closes #123`, `Fixes #123`, or `Resolves #123` only when the pull request fully satisfies the linked Issue's acceptance criteria.
+* Use `Related to #123` when the pull request is partial, exploratory, blocked, or only one step in a larger Issue.
+* A pull request must not claim to close an Issue when known required work remains outside the pull request.
+* Keep each pull request focused on the linked Issue scope. Unrelated work requires a separate Issue and pull request unless the maintainer explicitly expands the existing scope.
+* Linking an Issue does not make a pull request mergeable by itself. Review findings, required validation, CI, compatibility, privacy, and release checks still apply.
+* Do not merge a pull request unless the maintainer explicitly requests the merge.
+
+For security-sensitive work, do not publish exploitable details merely to satisfy Issue linkage. Use GitHub private vulnerability reporting, a private security advisory, or another maintainer-approved private tracker. Where a public reference is required, use a sanitized tracking Issue that contains no secrets, exploit details, affected private endpoints, or victim data.
+
+### Issue Body Template
+
+Use this structure for a new public Issue. Remove sections that genuinely do not apply, but do not omit scope, acceptance criteria, or privacy review for material work.
+
+```markdown
+## Summary
+
+Describe the user-visible problem, repository maintenance need, or requested behavior in concrete terms.
+
+## Current behavior
+
+Explain what happens now and why it is incorrect, incomplete, unsafe, or difficult to maintain.
+Do not paste private logs, credentials, local paths, private article content, or unnecessary machine details.
+
+## Expected behavior
+
+Describe the observable outcome that should be true after the Issue is resolved.
+
+## Scope
+
+- Included:
+- Excluded:
+- Compatibility constraints:
+
+## Acceptance criteria
+
+- [ ] The intended behavior is implemented or documented.
+- [ ] Relevant failure and cancellation paths are covered.
+- [ ] Existing supported behavior remains compatible.
+- [ ] Appropriate tests or validation are added or updated.
+- [ ] Public text and artifacts pass the privacy checks below.
+
+## Validation or reproduction
+
+Provide the smallest privacy-safe reproduction, test expectation, or verification plan.
+Use redacted examples and behavior descriptions instead of raw sensitive evidence.
+
+## Privacy and public artifact check
+
+- [ ] No credentials, tokens, cookies, authorization headers, private keys, or local configuration values are included.
+- [ ] No absolute local paths, usernames, home directories, temporary paths, screenshot paths, private endpoints, or internal service details are included unless they are an intentional non-sensitive public contract.
+- [ ] No personal data, private article content, raw browser storage, HAR data, or unnecessary logs are included.
+- [ ] Any attached image, archive, font, SVG, binary, or data URI has been checked for unnecessary EXIF, XMP, IPTC, geolocation, creator-tool, document-ID, instance-ID, or machine metadata.
+- [ ] User-provided reference screenshots or files are not committed or republished unless publication is necessary, authorized, and privacy-reviewed.
+```
+
+### Pull Request Body Template
+
+Use this structure for every pull request. Replace the first line with the correct closing or non-closing reference.
+
+```markdown
+Closes #123
+
+<!-- Use `Related to #123` instead when this PR does not fully resolve the Issue. -->
+
+## Summary
+
+- Describe the concrete changes.
+- Explain the user, compatibility, security, maintenance, or release problem they solve.
+
+## Scope and linked Issue
+
+- Linked Issue: #123
+- Confirm that this PR stays within the Issue scope.
+- List intentionally deferred or excluded work.
+
+## Implementation notes
+
+Describe important state transitions, WordPress integration points, compatibility boundaries, and failure behavior.
+Do not include private implementation evidence or local environment details.
+
+## Safety and compatibility
+
+- Markdown source-of-truth impact:
+- `post_content` compatibility impact:
+- WordPress permissions, nonce, REST, save, revision, or publishing impact:
+- Existing settings, themes, extension APIs, and migration impact:
+- Runtime dependencies, assets, licenses, and release-package impact:
+
+## Validation
+
+List only checks actually performed, including commands and results where useful.
+State unavailable or unverified checks honestly.
+
+- [ ] Focused automated tests
+- [ ] Relevant integration or browser checks
+- [ ] PHP, Node, lint, i18n, build, or package checks as applicable
+- [ ] Negative, cancellation, permission, and failure-path checks as applicable
+- [ ] CI status reviewed for the current head SHA
+
+## Privacy and public artifact review
+
+- [ ] Reviewed the diff, commit messages, PR body, linked Issue, review replies, fixtures, and generated artifacts for private information.
+- [ ] No secrets, credentials, cookies, private keys, personal data, private article content, local configuration, or unredacted sensitive values are included.
+- [ ] No unnecessary absolute paths, usernames, home directories, localhost/private/staging endpoints, ports, logs, HAR files, browser storage, screenshot paths, or machine identifiers are included.
+- [ ] No user-provided reference screenshot or file was committed or publicly reposted without necessity, authorization, and content/metadata inspection.
+- [ ] New images, archives, fonts, SVGs, binaries, and embedded data were checked for unnecessary EXIF, XMP, IPTC, geolocation, creator-tool, document-ID, instance-ID, and similar metadata.
+- [ ] Sensitive values in public descriptions are redacted rather than repeated.
+
+## Remaining risks and follow-up
+
+List known limitations, assumptions, deferred work, unresolved review findings, or checks that could not be run.
+```
+
+### Public Evidence and Privacy Rules
+
+* Public Issues, pull requests, commits, review replies, release notes, and documentation must describe behavior and evidence at the minimum level needed for review.
+* Prefer a sanitized description, reduced test case, synthetic fixture, or redacted excerpt over raw logs, screenshots, HAR exports, database dumps, browser storage, private article content, or local configuration.
+* User-provided screenshots, mockups, reference images, and files are reference-only by default. Do not commit, attach, mirror, or republish them unless the user explicitly authorizes publication and the content and embedded metadata have been inspected.
+* Never publish secrets or personal data. Redaction in a later commit or edited comment does not guarantee removal from caches, notifications, forks, mirrors, or hosting-provider storage.
+* When sensitive data has already been committed, stop normal work, revoke or rotate exposed credentials where applicable, remove the value from the branch and reachable history, and report the remaining exposure limitations honestly.
+* When evidence is too sensitive for a public Issue or PR, provide a privacy-safe summary publicly and keep the detailed evidence in an approved private security or maintainer channel.

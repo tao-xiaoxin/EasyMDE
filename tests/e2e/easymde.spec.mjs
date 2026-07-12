@@ -134,7 +134,14 @@ async function publishOrUpdate(page) {
   const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 }).catch(() => null);
   await page.locator('#publish').click({ force: true });
   await navigation;
+  await parkPointerAfterNavigation(page);
   await expect(page.locator('#message, .notice-success')).toBeVisible();
+}
+
+async function parkPointerAfterNavigation(page) {
+  // Chromium preserves the pre-navigation pointer position. If it lands on the
+  // one-pixel hover lift at a toolbar button edge, hover can oscillate forever.
+  await page.mouse.move(0, 0);
 }
 
 async function currentPostId(page) {
@@ -738,6 +745,7 @@ test.describe('EasyMDE editor workflows', () => {
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
     await page.locator('[data-action="confirm-publish"]').click();
     await navigation;
+    await parkPointerAfterNavigation(page);
     await expect(page.locator('#message, .notice-success')).toBeVisible();
 
     const postId = await currentPostId(page);
@@ -778,6 +786,7 @@ test.describe('EasyMDE editor workflows', () => {
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
     await page.locator('[data-action="confirm-publish"]').click();
     await navigation;
+    await parkPointerAfterNavigation(page);
     await expect(page.locator('#message, .notice-success')).toBeVisible();
 
     const postId = await currentPostId(page);
@@ -900,6 +909,7 @@ test.describe('EasyMDE editor workflows', () => {
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
     await page.locator('[data-action="save"]').click();
     await navigation;
+    await parkPointerAfterNavigation(page);
     await expect(page.locator('#message, .notice-success')).toBeVisible();
 
     const postId = await currentPostId(page);
@@ -957,6 +967,7 @@ test.describe('EasyMDE editor workflows', () => {
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
     await page.locator('[data-action="confirm-publish"]').click();
     await navigation;
+    await parkPointerAfterNavigation(page);
     await expect(page.locator('#message, .notice-success')).toBeVisible();
     expect(postMetaValue(postId, '_thumbnail_id')).toBe(String(media.id));
 
@@ -1050,6 +1061,7 @@ test.describe('EasyMDE editor workflows', () => {
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
     await page.locator('[data-action="confirm-publish"]').click();
     await navigation;
+    await parkPointerAfterNavigation(page);
 
     const flash = page.locator('.easymde-editor-flash');
     await expect(flash).toBeVisible();
@@ -1081,6 +1093,7 @@ test.describe('EasyMDE editor workflows', () => {
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
     await page.locator('[data-action="confirm-publish"]').click();
     await navigation;
+    await parkPointerAfterNavigation(page);
     await expect(page.locator('#message, .notice-success')).toBeVisible();
 
     const postId = await currentPostId(page);
@@ -1193,6 +1206,7 @@ test.describe('EasyMDE editor workflows', () => {
       page.waitForURL(new RegExp(`/wp-admin/post\\.php\\?post=${postId}&action=edit`)),
       restoreButton.click({ force: true })
     ]);
+    await parkPointerAfterNavigation(page);
 
     const restoredMarkdown = normalizeMarkdown(runWp(['post', 'meta', 'get', postId, '_easymde_markdown']));
     expect(

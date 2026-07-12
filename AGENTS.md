@@ -526,3 +526,219 @@ At task completion, report:
 4. Remaining risks, assumptions, or unverified behavior.
 5. Files staged or committed, and why each file belongs to the task.
 6. When relevant, privacy/artifact scanning performed, what categories were checked, and any remaining history/cache limitations.
+
+---
+
+## Issue and Pull Request Workflow
+
+### Mandatory Issue Linkage
+
+* Before implementing a change, search both open and closed Issues for an existing report, requirement, maintenance task, or design decision that accurately covers the work.
+* Reuse a relevant existing Issue when its scope and acceptance criteria match the intended change.
+* When no suitable Issue exists, create a focused Issue before opening the pull request. Do not create a placeholder Issue merely to satisfy this rule; it must describe a real problem, requirement, or maintenance task.
+* Every pull request must reference at least one relevant Issue in its body.
+* Use `Closes #123`, `Fixes #123`, or `Resolves #123` only when the pull request fully satisfies the linked Issue's acceptance criteria.
+* Use `Related to #123` when the pull request is partial, exploratory, blocked, or only one step in a larger Issue.
+* A pull request must not claim to close an Issue when known required work remains outside the pull request.
+* Keep each pull request focused on the linked Issue scope. Unrelated work requires a separate Issue and pull request unless the maintainer explicitly expands the existing scope.
+* Linking an Issue does not make a pull request mergeable by itself. Review findings, required validation, CI, compatibility, privacy, and release checks still apply.
+* Do not merge a pull request unless the maintainer explicitly requests the merge.
+
+For security-sensitive work, do not publish exploitable details merely to satisfy Issue linkage. Use GitHub private vulnerability reporting, a private security advisory, or another maintainer-approved private tracker. Where a public reference is required, use a sanitized tracking Issue that contains no secrets, exploit details, affected private endpoints, or victim data.
+
+### Human Confirmation for Closing and Merging
+
+Closing or merging repository work is a human maintainer decision, not an automatic completion step.
+
+* Agents, bots, and automations may recommend that a pull request or Issue be closed, but they must not change its state without an explicit instruction from a human maintainer.
+* Do not close a pull request, merge it, squash-merge it, rebase-merge it, enable auto-merge, or otherwise arrange for it to close automatically unless a human maintainer explicitly authorizes that action.
+* Do not close an Issue as completed, not planned, duplicate, or through any other state reason unless a human maintainer explicitly authorizes that closure.
+* Green CI, CodeRabbit approval, resolved review threads, completed acceptance criteria, inactivity, a superseding change, or a linked closing keyword are not human confirmation.
+* A `Closes`, `Fixes`, or `Resolves` reference may remain in a pull request body, but the linked Issue may close automatically only as the consequence of a merge that a human maintainer explicitly approved.
+* When work appears complete, superseded, duplicated, abandoned, or no longer necessary, summarize the evidence and ask for a human closure decision. Keep the pull request and Issue open until that decision is explicit.
+* Do not interpret a request to review, update, push, test, or prepare a pull request as permission to merge or close it.
+
+### Push, CI, and Bot Review Order
+
+Follow this sequence for every pull request update:
+
+1. Complete the focused implementation and relevant local validation.
+2. Push the commit or commits to the pull request branch.
+3. Record the new pull request head SHA and observe all required CI/check runs for that exact SHA.
+4. If any required check fails, is cancelled unexpectedly, or times out, inspect the failing job, step, and available logs before doing anything else.
+5. Fix the underlying cause, rerun the affected local checks where possible, push a focused correction, and restart CI observation from the new head SHA.
+6. Request CodeRabbit review only after every required check for the current head SHA is successful or intentionally skipped by repository policy.
+7. After posting the review request, wait patiently and observe the pull request conversation, reactions, checks, walkthrough updates, and review status at reasonable intervals. A slow response is not a failed request.
+8. Verify each bot finding against the current code. Fix valid findings and reply to invalid or stale findings with concise evidence.
+9. Any push made after review starts creates a new head SHA and restarts the CI-before-review sequence.
+
+Additional rules:
+
+* Do not request `@coderabbitai review` or `@coderabbitai full review` while required CI is queued, in progress, failing, cancelled unexpectedly, or stale for an older SHA.
+* A green run for an earlier commit is not evidence for the current pull request head.
+* Do not classify a failure as flaky without evidence. Inspect the failed path first; rerun only when there is a plausible transient cause and record that reasoning.
+* After requesting review, do not immediately send another `@coderabbitai` mention, duplicate `review` or `full review` command, follow-up ping, or status-demanding comment while the previous request may still be queued or running.
+* Treat a CodeRabbit reaction, acknowledgement, status comment, updated walkthrough, queued check, or in-progress review as evidence that the request was accepted. Continue waiting instead of requesting another review.
+* Large pull requests and busy service periods may take longer. Do not use a fixed short timeout as proof that CodeRabbit ignored the request.
+* Retry a review request only when there is concrete evidence that the previous request failed, was not accepted, was cancelled, or its stated rate-limit window has expired, or after a reasonable waiting period with no acknowledgement or review activity.
+* Before retrying, confirm that the pull request head SHA is unchanged, required CI for that exact SHA remains green, and no CodeRabbit review is queued or in progress. Record the reason and send only one retry.
+* Do not repeatedly retry against the same unchanged head. Report continued bot unavailability to the human maintainer instead of creating comment spam.
+* Do not push empty commits, meaningless formatting changes, or unrelated edits merely to retrigger CI, wake the bot, or bypass a CodeRabbit rate limit.
+* When CodeRabbit is rate limited, keep the already-green head unchanged, wait for review capacity to return, and request one review for that same SHA.
+* Do not merge while required CI is incomplete or failing, while confirmed review findings remain unresolved, or unless the maintainer explicitly requests the merge.
+
+### CodeRabbit Review Request Template
+
+Use the full-review form for a completed change. Use the shorter `@coderabbitai review` command only for a deliberately narrow incremental review after CI is green. Before posting either command, confirm that no review request for the same head SHA is already queued or in progress.
+
+```markdown
+@coderabbitai full review
+
+Please review the current pull request head `<HEAD_SHA>` against `<BASE_BRANCH>`.
+
+## Preconditions
+
+- Required CI/checks for this exact head SHA are green.
+- No CodeRabbit review request for this exact head SHA is currently queued or in progress.
+- Linked Issue: #123
+- Pull request scope: describe the focused change.
+- Validation completed: list only checks actually run.
+
+## Review instructions
+
+1. Read the linked Issue, pull request body, current `AGENTS.md`, and the complete current diff.
+2. Trace changed production paths, state transitions, failure paths, permissions, compatibility behavior, tests, build scripts, and release packaging relevant to the change.
+3. Re-check unresolved and outdated review threads against the current head instead of assuming earlier findings still apply.
+4. Report only confirmed, actionable problems introduced or materially worsened by this pull request.
+5. For each finding, identify the affected path, realistic trigger, user or system impact, and the smallest focused correction direction.
+6. Treat data loss, authorization failures, secret or privacy exposure, unsafe rendering, WordPress compatibility regressions, broken release packaging, and unsupported-version failures as merge-blocking when confirmed.
+7. Do not invent findings to fill a quota. When no actionable findings remain, report no findings or use the bot's normal approval reaction.
+8. Do not merge or close the pull request or linked Issue. A human maintainer must explicitly authorize either action.
+
+## Privacy requirements
+
+- Do not request, quote, or repeat credentials, tokens, cookies, private keys, private article content, personal data, absolute local paths, private endpoints, raw browser storage, HAR files, or unnecessary logs.
+- Use redacted values, synthetic examples, and privacy-safe behavioral evidence.
+- Do not republish user-provided screenshots or attachments unless publication is necessary, authorized, and their content and embedded metadata have been inspected.
+```
+
+After posting the template, wait for acknowledgement or review activity and check the PR at reasonable intervals. Do not post another Bot mention merely because the response is slower than expected.
+
+### Issue Body Template
+
+Use this structure for a new public Issue. Remove sections that genuinely do not apply, but do not omit scope, acceptance criteria, or privacy review for material work.
+
+```markdown
+## Summary
+
+Describe the user-visible problem, repository maintenance need, or requested behavior in concrete terms.
+
+## Current behavior
+
+Explain what happens now and why it is incorrect, incomplete, unsafe, or difficult to maintain.
+Do not paste private logs, credentials, local paths, private article content, or unnecessary machine details.
+
+## Expected behavior
+
+Describe the observable outcome that should be true after the Issue is resolved.
+
+## Scope
+
+- Included:
+- Excluded:
+- Compatibility constraints:
+
+## Acceptance criteria
+
+- [ ] The intended behavior is implemented or documented.
+- [ ] Relevant failure and cancellation paths are covered.
+- [ ] Existing supported behavior remains compatible.
+- [ ] Appropriate tests or validation are added or updated.
+- [ ] Public text and artifacts pass the privacy checks below.
+- [ ] Closing this Issue still requires explicit human maintainer confirmation after the criteria are met.
+
+## Validation or reproduction
+
+Provide the smallest privacy-safe reproduction, test expectation, or verification plan.
+Use redacted examples and behavior descriptions instead of raw sensitive evidence.
+
+## Privacy and public artifact check
+
+- [ ] No credentials, tokens, cookies, authorization headers, private keys, or local configuration values are included.
+- [ ] No absolute local paths, usernames, home directories, temporary paths, screenshot paths, private endpoints, or internal service details are included unless they are an intentional non-sensitive public contract.
+- [ ] No personal data, private article content, raw browser storage, HAR data, or unnecessary logs are included.
+- [ ] Any attached image, archive, font, SVG, binary, or data URI has been checked for unnecessary EXIF, XMP, IPTC, geolocation, creator-tool, document-ID, instance-ID, or machine metadata.
+- [ ] User-provided reference screenshots or files are not committed or republished unless publication is necessary, authorized, and privacy-reviewed.
+```
+
+### Pull Request Body Template
+
+Use this structure for every pull request. Replace the first line with the correct closing or non-closing reference.
+
+```markdown
+Closes #123
+
+<!-- Use `Related to #123` instead when this PR does not fully resolve the Issue. -->
+
+## Summary
+
+- Describe the concrete changes.
+- Explain the user, compatibility, security, maintenance, or release problem they solve.
+
+## Scope and linked Issue
+
+- Linked Issue: #123
+- Confirm that this PR stays within the Issue scope.
+- List intentionally deferred or excluded work.
+
+## Human closure control
+
+This pull request and its linked Issues must remain open until a human maintainer explicitly authorizes merge or closure. Green CI, bot approval, resolved threads, completed checklists, or inactivity are not closure authorization.
+
+## Implementation notes
+
+Describe important state transitions, WordPress integration points, compatibility boundaries, and failure behavior.
+Do not include private implementation evidence or local environment details.
+
+## Safety and compatibility
+
+- Markdown source-of-truth impact:
+- `post_content` compatibility impact:
+- WordPress permissions, nonce, REST, save, revision, or publishing impact:
+- Existing settings, themes, extension APIs, and migration impact:
+- Runtime dependencies, assets, licenses, and release-package impact:
+
+## Validation
+
+List only checks actually performed, including commands and results where useful.
+State unavailable or unverified checks honestly.
+
+- [ ] Focused automated tests
+- [ ] Relevant integration or browser checks
+- [ ] PHP, Node, lint, i18n, build, or package checks as applicable
+- [ ] Negative, cancellation, permission, and failure-path checks as applicable
+- [ ] CI status reviewed for the current head SHA
+- [ ] Existing CodeRabbit request status checked before posting a new review command
+
+## Privacy and public artifact review
+
+- [ ] Reviewed the diff, commit messages, PR body, linked Issue, review replies, fixtures, and generated artifacts for private information.
+- [ ] No secrets, credentials, cookies, private keys, personal data, private article content, local configuration, or unredacted sensitive values are included.
+- [ ] No unnecessary absolute paths, usernames, home directories, localhost/private/staging endpoints, ports, logs, HAR files, browser storage, screenshot paths, or machine identifiers are included.
+- [ ] No user-provided reference screenshot or file was committed or publicly reposted without necessity, authorization, and content/metadata inspection.
+- [ ] New images, archives, fonts, SVGs, binaries, and embedded data were checked for unnecessary EXIF, XMP, IPTC, geolocation, creator-tool, document-ID, instance-ID, and similar metadata.
+- [ ] Sensitive values in public descriptions are redacted rather than repeated.
+
+## Remaining risks and follow-up
+
+List known limitations, assumptions, deferred work, unresolved review findings, bot availability or waiting state, or checks that could not be run.
+```
+
+### Public Evidence and Privacy Rules
+
+* Public Issues, pull requests, commits, review replies, release notes, and documentation must describe behavior and evidence at the minimum level needed for review.
+* Prefer a sanitized description, reduced test case, synthetic fixture, or redacted excerpt over raw logs, screenshots, HAR exports, database dumps, browser storage, private article content, or local configuration.
+* User-provided screenshots, mockups, reference images, and files are reference-only by default. Do not commit, attach, mirror, or republish them unless the user explicitly authorizes publication and the content and embedded metadata have been inspected.
+* Never publish secrets or personal data. Redaction in a later commit or edited comment does not guarantee removal from caches, notifications, forks, mirrors, or hosting-provider storage.
+* When sensitive data has already been committed, stop normal work, revoke or rotate exposed credentials where applicable, remove the value from the branch and reachable history, and report the remaining exposure limitations honestly.
+* When evidence is too sensitive for a public Issue or PR, provide a privacy-safe summary publicly and keep the detailed evidence in an approved private security or maintainer channel.

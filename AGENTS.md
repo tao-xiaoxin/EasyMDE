@@ -192,15 +192,21 @@ Always use WordPress APIs for hooks, assets, metadata, capabilities, nonces, RES
 ### REST API
 
 * Use namespace `easymde/v1`.
+
 * Requests with `post_id` must verify:
 
   ```php
   current_user_can( 'edit_post', $post_id )
   ```
+
 * A preview request without `post_id` may allow users with `edit_posts`.
+
 * Custom CSS endpoints may only access the current user's user meta.
+
 * Validate and sanitize all request arguments.
+
 * Limit Markdown preview payload size.
+
 * Return meaningful `WP_Error` objects and appropriate HTTP status codes.
 
 ### Custom CSS

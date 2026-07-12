@@ -1154,7 +1154,7 @@ test.describe('EasyMDE editor workflows', () => {
     await enterImmersiveWithKeyboard(page);
     await activateWithKeyboard(page.locator('[data-action="publish"]'));
     await expect(page.locator('[data-featured-candidate]')).toContainText('Verified local candidate');
-    await page.locator('[data-action="use-featured-candidate"]').click();
+    await activateWithKeyboard(page.locator('[data-action="use-featured-candidate"]'));
     await expect(page.locator('[data-featured-summary]')).toHaveText('Verified local candidate');
     const replaceFeatured = page.locator('.easymde-immersive-workspace__featured-selected [data-action="select-featured"]');
     await replaceFeatured.focus();

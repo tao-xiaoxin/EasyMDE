@@ -122,6 +122,13 @@ async function openEasyMdeNewPost(page) {
   await expect(page.locator('#easymde-editor')).toBeVisible();
 }
 
+async function addPublishTags(page, tags) {
+  const input = page.locator('[data-publish-tag-input]');
+
+  await input.fill(tags);
+  await input.press('Enter');
+}
+
 async function publishOrUpdate(page) {
   await expect(page.locator('#publish')).toBeEnabled();
   const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 }).catch(() => null);
@@ -299,7 +306,7 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('.easymde-immersive-workspace__source').fill(markdown);
     await expect(page.locator('#title')).toHaveValue(`${title} Second line`);
     await expect(page.locator('#easymde-source')).toHaveValue(markdown);
-    await page.locator('.easymde-immersive-workspace__secondary-actions [data-action="toggle-outline"]').click();
+    await page.locator('.easymde-immersive-workspace__outline-handle').click();
     await expect(page.locator('.easymde-immersive-workspace__outline-card')).toBeVisible();
     await expect(page.locator('.easymde-immersive-workspace__outline-entry')).toContainText(title);
     await expect(page.locator('.easymde-immersive-workspace__preview')).toContainText('Workspace body with real preview.');
@@ -335,7 +342,7 @@ test.describe('EasyMDE editor workflows', () => {
     }));
     await page.locator('[data-action="publish"]').click();
     await expect(page.locator('.easymde-immersive-workspace__publish')).toBeVisible();
-    await page.locator('[data-publish-tags]').fill('Changed, draft');
+    await addPublishTags(page, 'Changed, draft');
     await page.locator('[data-publish-excerpt]').fill('Unsaved publish draft');
     await page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last().click();
     const nativeAfterCancel = await page.evaluate(() => ({
@@ -346,8 +353,9 @@ test.describe('EasyMDE editor workflows', () => {
     expect(nativeAfterCancel).toEqual(nativeBeforeCancel);
 
     await page.locator('[data-action="ai"]').click();
-    await expect(page.locator('.easymde-immersive-workspace__ai')).toContainText('not connected to article data');
+    await expect(page.locator('.easymde-immersive-workspace__ai')).toBeVisible();
     await page.locator('[data-action="close-ai"]').click();
+    await expect(page.locator('.easymde-immersive-workspace__source')).toHaveValue(markdown);
 
     await page.locator('[data-action="exit"]').click();
     await expect(page.locator('.easymde-immersive-workspace')).toHaveCount(0);
@@ -377,7 +385,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(isolation.inert).toBe(true);
     expect(isolation.focusClass).toContain('easymde-immersive-workspace__source');
 
-    await expect(page.locator('[data-command="bold"] .dashicons-editor-bold')).toHaveCount(1);
+    await expect(page.locator('[data-command="bold"] .easymde-immersive-icon')).toHaveCount(1);
     await expect(page.locator('[data-action="wechat"] .easymde-wechat-glyph')).toHaveCount(1);
     await expect(page.locator('[data-command="table"]')).toHaveAttribute(
       'aria-label',
@@ -402,11 +410,11 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(source).toHaveValue('**plain**\nsecond line');
 
     await source.fill('# Root heading\n\n## Child heading');
-    await page.locator('.easymde-immersive-workspace__secondary-actions [data-action="toggle-outline"]').click();
+    await page.locator('.easymde-immersive-workspace__outline-handle').click();
     await expect(page.locator('.easymde-immersive-workspace__outline-card')).toBeVisible();
     const rootOutlineEntry = page.locator('.easymde-immersive-workspace__outline-entry').nth(0);
     const childOutlineEntry = page.locator('.easymde-immersive-workspace__outline-entry').nth(1);
-    await expect(rootOutlineEntry.locator('.dashicons-media-document')).toHaveCount(1);
+    await expect(rootOutlineEntry.locator('.easymde-immersive-workspace__outline-icon .easymde-immersive-icon')).toHaveCount(1);
     await expect(childOutlineEntry.locator('.easymde-immersive-workspace__outline-connector')).toHaveCount(1);
     await childOutlineEntry.click();
     await expect(childOutlineEntry).toHaveAttribute('aria-current', 'location');
@@ -431,17 +439,38 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(divider).toHaveAttribute('aria-valuenow', '75');
     await divider.press('Home');
     await expect(divider).toHaveAttribute('aria-valuenow', '25');
+    for (let step = 0; step < 10; step += 1) {
+      await divider.press('ArrowRight');
+    }
+    await expect(divider).toHaveAttribute('aria-valuenow', '50');
     const mainBox = await page.locator('.easymde-immersive-workspace__main').boundingBox();
     const dividerBox = await divider.boundingBox();
+    const sourceBox = await page.locator('.easymde-immersive-workspace__editor-card').boundingBox();
+    const previewBox = await page.locator('.easymde-immersive-workspace__preview-card').boundingBox();
     expect(mainBox).toBeTruthy();
     expect(dividerBox).toBeTruthy();
-    await page.mouse.move(dividerBox.x + dividerBox.width / 2, dividerBox.y + dividerBox.height / 2);
+    expect(sourceBox).toBeTruthy();
+    expect(previewBox).toBeTruthy();
+    expect(dividerBox.width).toBeCloseTo(14, 1);
+    expect(sourceBox.x + sourceBox.width).toBeCloseTo(dividerBox.x, 1);
+    expect(dividerBox.x + dividerBox.width).toBeCloseTo(previewBox.x, 1);
+    expect(sourceBox.width).toBeCloseTo(previewBox.width, 1);
+
+    await page.mouse.move(dividerBox.x + 0.5, dividerBox.y + dividerBox.height / 2);
     await page.mouse.down();
-    await page.mouse.move(mainBox.x + mainBox.width * 0.66, dividerBox.y + dividerBox.height / 2, { steps: 4 });
+    const sourceWidthAfterPointerDown = await page.locator('.easymde-immersive-workspace__editor-card').evaluate(
+      (node) => node.getBoundingClientRect().width
+    );
+    expect(sourceWidthAfterPointerDown).toBeCloseTo(sourceBox.width, 2);
+    await page.mouse.move(dividerBox.x + 100.5, dividerBox.y + dividerBox.height / 2, { steps: 4 });
+    const sourceWidthAfterPointerMove = await page.locator('.easymde-immersive-workspace__editor-card').evaluate(
+      (node) => node.getBoundingClientRect().width
+    );
+    expect(sourceWidthAfterPointerMove).toBeCloseTo(sourceBox.width + 100, 1);
     await page.mouse.up();
     const persistedDividerValue = Number.parseInt(await divider.getAttribute('aria-valuenow'), 10);
-    expect(persistedDividerValue).toBeGreaterThanOrEqual(60);
-    expect(persistedDividerValue).toBeLessThanOrEqual(70);
+    expect(persistedDividerValue).toBeGreaterThanOrEqual(58);
+    expect(persistedDividerValue).toBeLessThanOrEqual(62);
 
     await page.evaluate(() => {
       window.__easymdeOriginalStorageSetItem = window.Storage.prototype.setItem;
@@ -463,7 +492,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(await page.evaluate(() => (
       document.activeElement?.closest('.easymde-immersive-workspace__history') !== null
     ))).toBe(true);
-    await page.locator('[data-publish-backdrop]').click({ position: { x: 4, y: 4 } });
+    await page.locator('[data-history-backdrop]').click({ position: { x: 4, y: 4 } });
     await expect(page.locator('.easymde-immersive-workspace__history')).toBeHidden();
     await expect(page.locator('[data-action="history"]')).toBeFocused();
 
@@ -491,7 +520,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(aiPanel).not.toContainText('PRIVATE_ARTICLE_TOKEN');
     await aiInput.fill('Local demo question');
     await aiInput.press('Enter');
-    await expect(aiPanel).toContainText('No article data was read or sent.');
+    await expect(aiPanel).toContainText(await page.evaluate(() => window.EasyMDEConfig.strings.aiDemoReply));
     expect(aiRequests).toEqual([]);
     expect(await page.evaluate(() => Object.keys(window.localStorage).sort())).toEqual(storageKeysBeforeAi);
     await page.locator('[data-action="close-ai"]').click();
@@ -521,6 +550,136 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('[data-action="exit"]').click();
   });
 
+  test('repairs immersive AI focus, outline resizing, table insertion, and WeChat feedback', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('#easymde-source').fill('# Verification\n\nBefore table');
+    const legacyStyleBefore = await page.locator('#easymde-editor').evaluate((node) => {
+      const style = window.getComputedStyle(node);
+      return { display: style.display, background: style.backgroundColor };
+    });
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+
+    await page.locator('[data-action="ai"]').click();
+    const aiInput = page.locator('#easymde-immersive-ai-input');
+    await aiInput.focus();
+    await page.waitForTimeout(200);
+    const aiFocus = await aiInput.evaluate((node) => {
+      const inputStyle = window.getComputedStyle(node);
+      const wrapperStyle = window.getComputedStyle(node.closest('.easymde-immersive-workspace__ai-input-wrap'));
+      return {
+        inputBorder: inputStyle.borderTopWidth,
+        inputBoxShadow: inputStyle.boxShadow,
+        inputOutline: inputStyle.outlineStyle,
+        wrapperBorder: wrapperStyle.borderTopColor,
+        wrapperRadius: Number.parseFloat(wrapperStyle.borderTopLeftRadius)
+      };
+    });
+    expect(aiFocus.inputBorder).toBe('0px');
+    expect(aiFocus.inputBoxShadow).toBe('none');
+    expect(aiFocus.inputOutline).toBe('none');
+    expect(aiFocus.wrapperBorder).toBe('rgb(139, 114, 250)');
+    expect(aiFocus.wrapperRadius).toBeGreaterThanOrEqual(14);
+    await page.locator('[data-action="close-ai"]').click();
+
+    await page.locator('.easymde-immersive-workspace__outline-handle').click();
+    const outline = page.locator('.easymde-immersive-workspace__outline-card');
+    const outlineResizer = page.locator('.easymde-immersive-workspace__outline-resizer');
+    await expect(outline).toBeVisible();
+    const outlineBackground = await outline.evaluate((node) => window.getComputedStyle(node).backgroundImage);
+    expect(outlineBackground).toContain('linear-gradient');
+    expect(outlineBackground).toContain('rgb(253, 253, 255)');
+    expect(outlineBackground).toContain('rgb(250, 251, 254)');
+
+    await outlineResizer.focus();
+    await outlineResizer.press('Home');
+    await expect(outlineResizer).toHaveAttribute('aria-valuenow', '190');
+    expect((await outline.boundingBox()).width).toBeCloseTo(190, 1);
+    await outlineResizer.press('End');
+    await expect(outlineResizer).toHaveAttribute('aria-valuenow', '360');
+    expect((await outline.boundingBox()).width).toBeCloseTo(360, 1);
+    await outlineResizer.dblclick();
+    await expect(outlineResizer).toHaveAttribute('aria-valuenow', '240');
+
+    const outlineResizerBox = await outlineResizer.boundingBox();
+    await page.mouse.move(outlineResizerBox.x + 7, outlineResizerBox.y + outlineResizerBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(outlineResizerBox.x + 507, outlineResizerBox.y + outlineResizerBox.height / 2, { steps: 4 });
+    await page.mouse.up();
+    await expect(outlineResizer).toHaveAttribute('aria-valuenow', '360');
+    const bodyDragState = await page.evaluate(() => ({
+      cursor: document.body.style.cursor,
+      userSelect: document.body.style.userSelect
+    }));
+    expect(bodyDragState).toEqual({ cursor: '', userSelect: '' });
+    const sourceRatioBeforeOutlineToggle = await page.locator('.easymde-immersive-workspace__divider').getAttribute('aria-valuenow');
+    await page.locator('.easymde-immersive-workspace__outline-card [data-action="toggle-outline"]').first().click();
+    await expect(outlineResizer).toBeHidden();
+    await page.locator('.easymde-immersive-workspace__outline-handle').click();
+    await expect(outlineResizer).toHaveAttribute('aria-valuenow', '360');
+    await expect(page.locator('.easymde-immersive-workspace__divider')).toHaveAttribute('aria-valuenow', sourceRatioBeforeOutlineToggle);
+
+    const source = page.locator('.easymde-immersive-workspace__source');
+    const beforeCancel = await source.inputValue();
+    await page.locator('[data-command="table"]').click();
+    await expect(page.locator('.easymde-immersive-workspace__table-modal')).toBeVisible();
+    await expect(page.locator('[data-table-grid] button')).toHaveCount(100);
+    await page.keyboard.press('Escape');
+    await expect(source).toHaveValue(beforeCancel);
+    await page.locator('[data-command="table"]').click();
+    await page.locator('[data-table-rows]').fill('3');
+    await page.locator('[data-table-columns]').fill('4');
+    await page.locator('[data-action="insert-table"]').click();
+    const tableLabels = await page.evaluate(() => ({
+      column: window.EasyMDEConfig.strings.tableColumn,
+      content: window.EasyMDEConfig.strings.tableContent
+    }));
+    await expect(source).toHaveValue(new RegExp(`\\| ${tableLabels.column}1 \\| ${tableLabels.column}2 \\| ${tableLabels.column}3 \\| ${tableLabels.column}4 \\|`));
+    await expect(source).toHaveValue(new RegExp(`\\| ${tableLabels.content} \\| ${tableLabels.content} \\| ${tableLabels.content} \\| ${tableLabels.content} \\|`));
+    const selectedTableCell = await source.evaluate((node) => node.value.slice(node.selectionStart, node.selectionEnd));
+    expect(selectedTableCell).toBe(tableLabels.content);
+    await expect(page.locator('.easymde-immersive-workspace__preview table')).toBeVisible();
+
+    await page.evaluate(() => {
+      window.__easymdeClipboardWrites = 0;
+      window.ClipboardItem = class ClipboardItem {
+        constructor(payload) { this.payload = payload; }
+      };
+      Object.defineProperty(window.navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          write() {
+            window.__easymdeClipboardWrites += 1;
+            return Promise.resolve();
+          }
+        }
+      });
+    });
+    const wechat = page.locator('[data-action="wechat"]');
+    await wechat.evaluate((button) => { button.click(); button.click(); });
+    await expect(wechat).toHaveClass(/is-success/);
+    await expect(wechat.locator('[data-wechat-label]')).toHaveText(await page.evaluate(() => window.EasyMDEConfig.strings.copied));
+    expect(await page.evaluate(() => window.__easymdeClipboardWrites)).toBe(1);
+    await page.waitForTimeout(1900);
+    await page.evaluate(() => {
+      window.navigator.clipboard.write = () => Promise.reject(new Error('Clipboard denied for E2E'));
+      document.execCommand = () => false;
+    });
+    const copyFailureMessage = await page.evaluate(() => window.EasyMDEConfig.strings.copyWechatFailed);
+    await wechat.click();
+    await expect(wechat).toHaveClass(/is-error/);
+    await expect(page.locator('[data-wechat-status]')).toHaveText(copyFailureMessage);
+
+    await page.locator('[data-action="exit"]').click();
+    const legacyStyleAfter = await page.locator('#easymde-editor').evaluate((node) => {
+      const style = window.getComputedStyle(node);
+      return { display: style.display, background: style.backgroundColor };
+    });
+    expect(legacyStyleAfter).toEqual(legacyStyleBefore);
+  });
+
   test('publishes real WordPress fields from the isolated workspace and switches to update mode', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = `Workspace Publish ${testSlug(testInfo)}`;
@@ -538,11 +697,11 @@ test.describe('EasyMDE editor workflows', () => {
         .map((field) => field.outerHTML)
     ));
     expect(unnamedPublishFields).toEqual([]);
-    await page.locator('[data-publish-tags]').fill('Workspace, WordPress, workspace');
+    await addPublishTags(page, 'Workspace, WordPress, workspace');
     await page.locator('[data-publish-excerpt]').fill('Workspace publish excerpt.');
     const firstCategory = page.locator('[data-publish-category]').first();
-    if (await firstCategory.count()) {
-      await firstCategory.check();
+    if (await firstCategory.count() && !(await firstCategory.isChecked())) {
+      await firstCategory.locator('xpath=..').click();
     }
 
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
@@ -563,6 +722,35 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last().click();
   });
 
+  test('publishes password protection through the immersive dialog without touching native fields early', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `Workspace Password ${testSlug(testInfo)}`;
+    const password = 'immersive-secret';
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.locator('.easymde-immersive-workspace__title').fill(title);
+    await page.locator('.easymde-immersive-workspace__source').fill(`# ${title}\n\nPassword protected through native WordPress fields.`);
+    await page.locator('[data-action="publish"]').click();
+    await page.locator('.easymde-immersive-workspace__publish-visibility-option').nth(1).click();
+    await page.locator('[data-action="confirm-publish"]').click();
+    await expect(page.locator('[data-publish-password-error]')).toHaveText('Enter an access password before submitting.');
+    await expect(page.locator('[data-publish-password]')).toBeFocused();
+    await expect(page.locator('#visibility-radio-public')).toBeChecked();
+    await expect(page.locator('#post_password')).toHaveValue('');
+
+    await page.locator('[data-publish-password]').fill(password);
+    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await page.locator('[data-action="confirm-publish"]').click();
+    await navigation;
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+
+    const postId = await currentPostId(page);
+    expect(runWp(['post', 'get', String(postId), '--field=post_status'])).toBe('publish');
+    expect(runWp(['post', 'get', String(postId), '--field=post_password'])).toBe(password);
+  });
+
   test('updates the existing theme and font fields from accessible workspace controls', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
 
@@ -571,10 +759,10 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('.easymde-toolbar-immersive-toggle').click();
     await page.locator('[data-action="theme"]').click();
 
-    const themeSelect = page.locator('[data-appearance-key="markdownTheme"]');
-    const codeThemeSelect = page.locator('[data-appearance-key="codeTheme"]');
-    await expect(themeSelect).toBeVisible();
-    await expect(codeThemeSelect).toBeVisible();
+    const themeTrigger = page.locator('[data-appearance-key="markdownTheme"]');
+    const codeThemeTrigger = page.locator('[data-appearance-key="codeTheme"]');
+    await expect(themeTrigger).toBeVisible();
+    await expect(codeThemeTrigger).toBeVisible();
     const unnamedThemeFields = await page.locator('[data-popover="appearance"]').evaluate((popover) => (
       Array.from(popover.querySelectorAll('input, textarea, select'))
         .filter((field) => !field.id && !field.name)
@@ -582,25 +770,27 @@ test.describe('EasyMDE editor workflows', () => {
     ));
     expect(unnamedThemeFields).toEqual([]);
 
-    const themeValue = await themeSelect.locator('option').evaluateAll((options, current) => (
-      options.find((option) => option.value && option.value !== current)?.value || current
-    ), await themeSelect.inputValue());
-    await themeSelect.selectOption(themeValue);
+    await themeTrigger.click();
+    const themeOption = page.locator('.easymde-immersive-workspace__theme-option[aria-selected="false"]').first();
+    const themeValue = await themeOption.getAttribute('data-appearance-value');
+    expect(themeValue).toBeTruthy();
+    await themeOption.click();
     await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue(themeValue);
     await expect(page.locator('.easymde-immersive-workspace__preview')).toHaveClass(
       new RegExp(`easymde-markdown-theme-${themeValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
     );
 
-    await page.locator('[data-popover="appearance"] [data-action="close-popovers"]').click();
+    await page.locator('[data-action="theme"]').click();
     await page.locator('[data-action="font"]').click();
-    const fontSelect = page.locator('[data-appearance-key="customFont"]');
-    await expect(fontSelect).toBeVisible();
-    const fontValue = await fontSelect.locator('option').evaluateAll((options, current) => (
-      options.find((option) => option.value && option.value !== current)?.value || current
-    ), await fontSelect.inputValue());
-    await fontSelect.selectOption(fontValue);
+    const fontTrigger = page.locator('[data-appearance-key="customFont"]');
+    await expect(fontTrigger).toBeVisible();
+    await fontTrigger.click();
+    const fontOption = page.locator('.easymde-immersive-workspace__font-option[aria-selected="false"]').first();
+    const fontValue = await fontOption.getAttribute('data-appearance-value');
+    expect(fontValue).toBeTruthy();
+    await fontOption.click();
     await expect(page.locator('#easymde-custom-font-field')).toHaveValue(fontValue);
-    await page.locator('[data-popover="appearance"] [data-action="close-popovers"]').click();
+    await page.locator('[data-action="font"]').click();
     await page.locator('[data-action="exit"]').click();
   });
 
@@ -622,46 +812,57 @@ test.describe('EasyMDE editor workflows', () => {
     const previewCard = page.locator('.easymde-immersive-workspace__preview-card');
     await expect(workspace).toBeVisible();
     await expect(editorCard).toBeVisible();
-    await expect(previewCard).toBeHidden();
+    await expect(previewCard).toBeVisible();
+    await expect(page.locator('.easymde-immersive-workspace__main')).toHaveAttribute('data-view', 'split');
+    const initialSourceBox = await editorCard.boundingBox();
+    const initialPreviewBox = await previewCard.boundingBox();
+    expect(initialSourceBox).toBeTruthy();
+    expect(initialPreviewBox).toBeTruthy();
+    expect(initialSourceBox.x).toBeLessThan(initialPreviewBox.x);
     await expect(page.locator('.easymde-immersive-workspace__outline-card')).toBeHidden();
     await expect(page.locator('.easymde-immersive-workspace__toolbar [data-action="exit"]')).toBeVisible();
 
-    await page.locator('.easymde-immersive-workspace__toolbar [data-view="preview"]').click();
+    await page.locator('.easymde-immersive-workspace__header [data-view="preview"]').click();
     await expect(editorCard).toBeHidden();
     await expect(previewCard).toBeVisible();
     await expect(previewCard).toContainText('Mobile preview content.');
+    await expect(page.locator('.easymde-immersive-workspace__toolbar')).toBeHidden();
 
-    await page.locator('.easymde-immersive-workspace__toolbar [data-view="edit"]').click();
+    await page.locator('.easymde-immersive-workspace__header [data-view="edit"]').click();
     await expect(editorCard).toBeVisible();
     await expect(previewCard).toBeHidden();
+    await expect(page.locator('.easymde-immersive-workspace__toolbar')).toBeVisible();
     const overflow = await page.evaluate(() => ({
       body: document.body.scrollWidth - document.body.clientWidth,
       document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       workspaceClient: document.querySelector('.easymde-immersive-workspace').clientWidth,
-      workspaceScroll: document.querySelector('.easymde-immersive-workspace').scrollWidth
+      workspaceScroll: document.querySelector('.easymde-immersive-workspace').scrollWidth,
+      workspaceOverflow: getComputedStyle(document.querySelector('.easymde-immersive-workspace')).overflow,
+      headerClient: document.querySelector('.easymde-immersive-workspace__header').clientWidth,
+      headerScroll: document.querySelector('.easymde-immersive-workspace__header').scrollWidth
     }));
     expect(overflow.body).toBeLessThanOrEqual(baselineOverflow.body);
     expect(overflow.document).toBeLessThanOrEqual(baselineOverflow.document);
-    expect(overflow.workspaceScroll).toBe(overflow.workspaceClient);
+    expect(overflow.workspaceClient).toBe(390);
+    expect(overflow.headerClient).toBe(390);
+    expect(overflow.headerScroll).toBeGreaterThanOrEqual(overflow.headerClient);
+    expect(overflow.workspaceScroll).toBeGreaterThanOrEqual(overflow.workspaceClient);
+    expect(overflow.workspaceOverflow).toBe('hidden');
 
     await page.locator('.easymde-immersive-workspace__toolbar [data-action="exit"]').click();
     await expect(workspace).toHaveCount(0);
   });
 
-  test('copies Markdown and saves through the existing native draft action', async ({ page }, testInfo) => {
+  test('saves through the existing native draft action', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = `Workspace Draft ${testSlug(testInfo)}`;
     const markdown = `# ${title}\n\nSaved from the real workspace action.`;
 
-    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
     await login(page, user);
     await openEasyMdeNewPost(page);
     await page.locator('.easymde-toolbar-immersive-toggle').click();
     await page.locator('.easymde-immersive-workspace__title').fill(title);
     await page.locator('.easymde-immersive-workspace__source').fill(markdown);
-    await page.locator('[data-action="copy-markdown"]').click();
-    await expect.poll(() => page.evaluate(() => window.navigator.clipboard.readText())).toBe(markdown);
-
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
     await page.locator('[data-action="save"]').click();
     await navigation;
@@ -710,7 +911,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(await page.locator('#_thumbnail_id').inputValue()).not.toBe(String(media.id));
     expect(postMetaValue(postId, '_thumbnail_id')).toBe(thumbnailBefore);
 
-    await page.locator('[data-publish-tags]').fill('candidate, local');
+    await addPublishTags(page, 'candidate, local');
     await page.locator('[data-publish-excerpt]').fill('Candidate remains in memory until confirmation.');
     await page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last().click();
     expect(postMetaValue(postId, '_thumbnail_id')).toBe(thumbnailBefore);
@@ -757,9 +958,9 @@ test.describe('EasyMDE editor workflows', () => {
 
     await page.locator('.easymde-toolbar-immersive-toggle').click();
     await page.locator('[data-action="publish"]').click();
-    await page.locator('[data-publish-tags]').fill('media, preserved');
+    await addPublishTags(page, 'media, preserved');
     await page.locator('[data-publish-excerpt]').fill('Preserve this excerpt through the media picker.');
-    await page.locator('[data-action="select-featured"]').click();
+    await page.locator('[data-featured-empty]').click();
 
     const mediaModal = page.locator('.media-modal');
     await expect(mediaModal).toBeVisible();
@@ -798,15 +999,14 @@ test.describe('EasyMDE editor workflows', () => {
     });
     await login(page, user);
     await openEasyMdeNewPost(page);
-    await page.locator('#visibility .edit-visibility').click();
-    await page.locator('#visibility-radio-private').check();
-    await page.locator('#visibility .save-post-visibility').click();
-    await expect(page.locator('#visibility-radio-private')).toBeChecked();
     await page.locator('.easymde-toolbar-immersive-toggle').click();
     await page.locator('.easymde-immersive-workspace__title').fill(title);
     await page.locator('.easymde-immersive-workspace__source').fill(`# ${title}\n\nPreview should be blocked safely.`);
     await page.locator('[data-action="publish"]').click();
-    await page.locator('[data-publish-preview]').check();
+    await page.locator('.easymde-immersive-workspace__publish-visibility-option').nth(2).click();
+    await expect(page.locator('#visibility-radio-public')).toBeChecked();
+    await page.locator('.easymde-immersive-workspace__publish-preview').click();
+    await expect(page.locator('[data-publish-preview]')).toBeChecked();
     const blockedMessage = await page.evaluate(() => window.EasyMDEConfig.strings.publishPreviewBlocked);
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
     await page.locator('[data-action="confirm-publish"]').click();
@@ -941,7 +1141,9 @@ test.describe('EasyMDE editor workflows', () => {
     const historyEntries = page.locator('.easymde-immersive-workspace__history-entry');
     await expect(historyEntries.first()).toBeVisible();
     expect(await historyEntries.count()).toBeGreaterThanOrEqual(2);
-    await expect(page.locator('[data-history-list]')).toContainText(title);
+    await expect(historyEntries.first()).toHaveAttribute('data-revision-id', /^\d+$/);
+    await expect(page.locator('[data-history-preview]')).toContainText('Second revision body.');
+    await expect(page.locator('[data-action="restore-history"]')).toBeEnabled();
     await page.locator('[data-action="close-history"]').click();
     await page.locator('[data-action="exit"]').click();
 

@@ -127,6 +127,17 @@ function potHeader(version) {
   ].join('\n');
 }
 
+function stripGeneratedPotHeader(content) {
+  const headerStart = content.indexOf('msgid ""\nmsgstr ""\n');
+  const bodyStart = -1 === headerStart ? -1 : content.indexOf('\n\n', headerStart);
+
+  if (-1 === bodyStart) {
+    throw new Error('Could not separate the generated gettext header from POT messages.');
+  }
+
+  return content.slice(bodyStart + 2).trim();
+}
+
 export function makePot(options = {}) {
   const root = options.root || defaultRoot;
   const output = options.output || fromRoot(root, potPath);
@@ -141,13 +152,11 @@ export function makePot(options = {}) {
       throw new Error('No PHP source files found for POT generation.');
     }
 
-    run(
+    const result = run(
       'xgettext',
       [
         '--language=PHP',
         '--from-code=UTF-8',
-        '--omit-header',
-        '--sort-output',
         '--add-comments=translators:',
         ...gettextKeywords.map((keyword) => `--keyword=${keyword}`),
         '-o',
@@ -157,7 +166,11 @@ export function makePot(options = {}) {
       { cwd: root }
     );
 
-    const body = readFileSync(bodyPath, 'utf8').trim();
+    if (result.stderr.trim()) {
+      throw new Error(`xgettext reported warnings:\n${result.stderr.trim()}`);
+    }
+
+    const body = stripGeneratedPotHeader(readFileSync(bodyPath, 'utf8'));
     if (!body) {
       throw new Error('POT generation produced no messages.');
     }

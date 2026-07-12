@@ -5,7 +5,8 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import {
-  composerRows
+  composerRows,
+  frontendRows
 } from '../../scripts/third-party-notices.mjs';
 
 const repoRoot = new URL('../..', import.meta.url).pathname;
@@ -51,4 +52,17 @@ test('Composer runtime notices fail when a package lacks a purpose mapping', () 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('copied immersive fonts retain explicit provenance and local notices', () => {
+  const rows = frontendRows(repoRoot);
+  const inter = rows.find((row) => row.name === 'Inter Latin variable font');
+  const jetbrains = rows.find((row) => row.name === 'JetBrains Mono Latin variable font');
+
+  assert.equal(inter?.license, 'OFL-1.1');
+  assert.equal(inter?.notice, 'assets/vendor/inter/LICENSE');
+  assert.match(inter?.bundled || '', /inter-latin-variable\.woff2/);
+  assert.equal(jetbrains?.license, 'OFL-1.1');
+  assert.equal(jetbrains?.notice, 'assets/vendor/jetbrains-mono/LICENSE');
+  assert.match(jetbrains?.bundled || '', /jetbrains-mono-latin-variable\.woff2/);
 });

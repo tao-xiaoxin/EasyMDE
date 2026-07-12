@@ -7,7 +7,7 @@ import test from 'node:test';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-function loadExporter() {
+function loadExporter(overrides = {}) {
   const source = readFileSync(join(repoRoot, 'assets/js/admin/wechat-exporter.js'), 'utf8');
   const context = {
     window: {
@@ -18,9 +18,10 @@ function loadExporter() {
           }
         };
       },
-      navigator: {}
+      navigator: {},
+      ...overrides.window
     },
-    document: {}
+    document: overrides.document || {}
   };
 
   vm.runInNewContext(source, context);
@@ -28,7 +29,7 @@ function loadExporter() {
   return context.window.EasyMDEWechatExporter;
 }
 
-test('WeChat copy rejects pending preview placeholders', () => {
+test('WeChat copy rejects pending preview placeholders', async () => {
   const exporter = loadExporter();
   const flashes = [];
   const preview = {
@@ -38,7 +39,7 @@ test('WeChat copy rejects pending preview placeholders', () => {
     }
   };
 
-  exporter.copy(
+  await assert.rejects(exporter.copy(
     {
       preview
     },
@@ -50,7 +51,7 @@ test('WeChat copy rejects pending preview placeholders', () => {
         flashes.push({ type, message });
       }
     }
-  );
+  ), /copyWechatFailed/);
 
   assert.deepEqual(flashes, [
     {
@@ -60,7 +61,7 @@ test('WeChat copy rejects pending preview placeholders', () => {
   ]);
 });
 
-test('WeChat copy rejects preview error placeholders', () => {
+test('WeChat copy rejects preview error placeholders', async () => {
   const exporter = loadExporter();
   const flashes = [];
   const preview = {
@@ -73,7 +74,7 @@ test('WeChat copy rejects preview error placeholders', () => {
     }
   };
 
-  exporter.copy(
+  await assert.rejects(exporter.copy(
     {
       preview
     },
@@ -85,7 +86,7 @@ test('WeChat copy rejects preview error placeholders', () => {
         flashes.push({ type, message });
       }
     }
-  );
+  ), /copyWechatFailed/);
 
   assert.deepEqual(flashes, [
     {
@@ -95,7 +96,7 @@ test('WeChat copy rejects preview error placeholders', () => {
   ]);
 });
 
-test('WeChat copy rejects renderer-error previews', () => {
+test('WeChat copy rejects renderer-error previews', async () => {
   const exporter = loadExporter();
   const flashes = [];
   const preview = {
@@ -108,7 +109,7 @@ test('WeChat copy rejects renderer-error previews', () => {
     }
   };
 
-  exporter.copy(
+  await assert.rejects(exporter.copy(
     {
       preview
     },
@@ -120,7 +121,7 @@ test('WeChat copy rejects renderer-error previews', () => {
         flashes.push({ type, message });
       }
     }
-  );
+  ), /copyWechatFailed/);
 
   assert.deepEqual(flashes, [
     {
@@ -130,7 +131,7 @@ test('WeChat copy rejects renderer-error previews', () => {
   ]);
 });
 
-test('WeChat copy rejects preview enhancement error states', () => {
+test('WeChat copy rejects preview enhancement error states', async () => {
   const exporter = loadExporter();
   const flashes = [];
   const preview = {
@@ -143,7 +144,7 @@ test('WeChat copy rejects preview enhancement error states', () => {
     }
   };
 
-  exporter.copy(
+  await assert.rejects(exporter.copy(
     {
       preview
     },
@@ -155,7 +156,7 @@ test('WeChat copy rejects preview enhancement error states', () => {
         flashes.push({ type, message });
       }
     }
-  );
+  ), /copyWechatFailed/);
 
   assert.deepEqual(flashes, [
     {
@@ -165,7 +166,7 @@ test('WeChat copy rejects preview enhancement error states', () => {
   ]);
 });
 
-test('WeChat copy rejects preview empty placeholders', () => {
+test('WeChat copy rejects preview empty placeholders', async () => {
   const exporter = loadExporter();
   const flashes = [];
   const preview = {
@@ -178,7 +179,7 @@ test('WeChat copy rejects preview empty placeholders', () => {
     }
   };
 
-  exporter.copy(
+  await assert.rejects(exporter.copy(
     {
       preview
     },
@@ -190,7 +191,7 @@ test('WeChat copy rejects preview empty placeholders', () => {
         flashes.push({ type, message });
       }
     }
-  );
+  ), /copyWechatFailed/);
 
   assert.deepEqual(flashes, [
     {
@@ -200,7 +201,7 @@ test('WeChat copy rejects preview empty placeholders', () => {
   ]);
 });
 
-test('WeChat copy rejects stale rendered previews while refresh is pending', () => {
+test('WeChat copy rejects stale rendered previews while refresh is pending', async () => {
   const exporter = loadExporter();
   const flashes = [];
   const preview = {
@@ -213,7 +214,7 @@ test('WeChat copy rejects stale rendered previews while refresh is pending', () 
     }
   };
 
-  exporter.copy(
+  await assert.rejects(exporter.copy(
     {
       preview
     },
@@ -225,7 +226,7 @@ test('WeChat copy rejects stale rendered previews while refresh is pending', () 
         flashes.push({ type, message });
       }
     }
-  );
+  ), /copyWechatFailed/);
 
   assert.deepEqual(flashes, [
     {
@@ -233,4 +234,57 @@ test('WeChat copy rejects stale rendered previews while refresh is pending', () 
       message: 'copyWechatFailed'
     }
   ]);
+});
+
+test('WeChat copy resolves after writing both HTML and plain text clipboard payloads', async () => {
+  const writes = [];
+  class BlobStub {
+    constructor(parts, options) {
+      this.parts = parts;
+      this.type = options.type;
+    }
+  }
+  class ClipboardItemStub {
+    constructor(payload) {
+      this.payload = payload;
+    }
+  }
+  const exporter = loadExporter({
+    window: {
+      Blob: BlobStub,
+      ClipboardItem: ClipboardItemStub,
+      navigator: {
+        clipboard: {
+          write(items) {
+            writes.push(items);
+            return Promise.resolve();
+          }
+        }
+      }
+    }
+  });
+  const clone = {
+    nodeType: 1,
+    childNodes: [],
+    querySelectorAll() { return []; },
+    removeAttribute() {},
+    setAttribute(name, value) { this[name] = value; },
+    getAttribute(name) { return this[name] || ''; },
+    outerHTML: '<article><p>Rendered</p></article>'
+  };
+  const preview = {
+    nodeType: 1,
+    childNodes: [],
+    innerHTML: '<p>Rendered</p>',
+    innerText: 'Rendered',
+    cloneNode() { return clone; },
+    getAttribute() { return null; },
+    querySelector() { return null; }
+  };
+
+  const result = await exporter.copy({ preview });
+
+  assert.equal(result.method, 'clipboard');
+  assert.equal(writes.length, 1);
+  assert.deepEqual(Object.keys(writes[0][0].payload).sort(), ['text/html', 'text/plain']);
 });

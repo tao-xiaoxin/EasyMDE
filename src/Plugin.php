@@ -15,6 +15,7 @@ use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Rest\CustomCssController;
 use EasyMDE\Rest\MediaController;
 use EasyMDE\Rest\PreviewController;
+use EasyMDE\Rest\RevisionController;
 use EasyMDE\Rest\ThemeController;
 use EasyMDE\Support\Capabilities;
 use EasyMDE\Support\Migration;
@@ -113,6 +114,7 @@ final class Plugin {
 
 		$this->rest_controllers = array(
 			new PreviewController( $capabilities, $theme_state_repository, $feature_detector ),
+			new RevisionController( $capabilities, $post_document ),
 			new MediaController( $capabilities ),
 			new ThemeController( $capabilities, $theme_state_repository ),
 			new CustomCssController( $capabilities, $theme_state_repository, $custom_css_policy ),

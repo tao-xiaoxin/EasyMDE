@@ -32,6 +32,7 @@
     var wechatExporterLoadPromise = null;
     var activePreviewFeatures = normalizePreviewFeatures(config.features || {});
     var draftTimer = null;
+    var localDraftsEnabled = !(config.features && config.features.localDrafts === false);
     var syncLock = false;
     var flashTimer = null;
     var commandMap = null;
@@ -41,6 +42,89 @@
     var isMac = null;
     var openPopovers = [];
     var fontControls = null;
+
+    function readNativeCategoryOptions(documentRef, configuredOptions) {
+        var doc = documentRef || document;
+        var inputs = doc.querySelectorAll('#categorychecklist input[type="checkbox"]');
+        var configuredById = (Array.isArray(configuredOptions) ? configuredOptions : []).reduce(function (result, option) {
+            var id = String(option && option.id || '');
+
+            if (id) {
+                result[id] = option;
+            }
+            return result;
+        }, Object.create(null));
+
+        return Array.prototype.map.call(inputs, function (input) {
+            var id = String(input.value || '');
+            var configured = configuredById[id] || null;
+            var item = input.closest ? input.closest('li') : null;
+            var parentList = item ? item.parentElement : null;
+            var parentItem = parentList
+                && parentList.classList
+                && parentList.classList.contains('children')
+                && parentList.closest
+                ? parentList.closest('li')
+                : null;
+            var parentInput = parentItem && parentItem.querySelector
+                ? parentItem.querySelector(':scope > label > input[type="checkbox"]')
+                : null;
+            var hasChildren = !!(item && Array.prototype.some.call(item.children || [], function (child) {
+                return child.classList && child.classList.contains('children');
+            }));
+
+            return {
+                id: id,
+                label: input.parentNode && input.parentNode.textContent
+                    ? input.parentNode.textContent.replace(/\s+/g, ' ').trim()
+                    : id,
+                parentId: configured ? String(configured.parentId || '') : (parentInput ? String(parentInput.value || '') : ''),
+                hasChildren: configured ? !!configured.hasChildren : hasChildren
+            };
+        });
+    }
+
+    function readNativePublishVisibility(documentRef) {
+        var doc = documentRef || document;
+        var selected = doc.querySelector('#post-visibility-select input[name="visibility"]:checked');
+        var visibility = selected && ['public', 'password', 'private'].indexOf(selected.value) !== -1
+            ? selected.value
+            : 'public';
+        var password = doc.querySelector('#post_password');
+        var sticky = doc.querySelector('#sticky');
+
+        return {
+            visibility: visibility,
+            password: visibility === 'password' && password ? String(password.value || '') : '',
+            sticky: visibility === 'public' && !!(sticky && sticky.checked)
+        };
+    }
+
+    function applyNativePublishVisibility(draft, documentRef) {
+        var doc = documentRef || document;
+        var visibility = ['public', 'password', 'private'].indexOf(String(draft && draft.visibility || '')) !== -1
+            ? String(draft.visibility)
+            : 'public';
+        var publicInput = doc.querySelector('#visibility-radio-public');
+        var passwordInput = doc.querySelector('#visibility-radio-password');
+        var privateInput = doc.querySelector('#visibility-radio-private');
+        var password = doc.querySelector('#post_password');
+        var sticky = doc.querySelector('#sticky');
+
+        if (!publicInput || !passwordInput || !privateInput || !password) {
+            return false;
+        }
+
+        publicInput.checked = visibility === 'public';
+        passwordInput.checked = visibility === 'password';
+        privateInput.checked = visibility === 'private';
+        password.value = visibility === 'password' ? String(draft.password || '') : '';
+        if (sticky) {
+            sticky.checked = visibility === 'public' && !!draft.sticky;
+        }
+
+        return true;
+    }
 
     function defaultGetCommand(id) {
         return getCommandMap()[id] || null;
@@ -215,6 +299,35 @@
         }
 
         return renderState.scopedCustomCss || '';
+    }
+
+    function persistCustomCss(input) {
+        if (!window.wp || !window.wp.apiFetch || !config.customCssUrl) {
+            return Promise.reject(new Error(getString('cssSaveFailed') || 'CSS save failed.'));
+        }
+
+        input = input || {};
+        return window.wp.apiFetch({
+            url: config.customCssUrl,
+            method: 'POST',
+            headers: {
+                'X-WP-Nonce': config.nonce
+            },
+            data: {
+                id: String(input.id || ''),
+                name: String(input.name || ''),
+                css: String(input.css || '')
+            }
+        }).then(function (response) {
+            customCssLibrary = response.customCss || customCssLibrary;
+            renderState.markdownTheme = 'custom';
+            renderState.customCssId = response.item.id;
+            renderState.customCss = response.item.css || '';
+            renderState.scopedCustomCss = response.item.scopedCss || '';
+            themeOptions.state = renderState;
+
+            return response;
+        });
     }
 
     function getSurfaceCommands(surface) {
@@ -928,31 +1041,12 @@
             });
 
             $save.on('click', function () {
-                if (!window.wp || !window.wp.apiFetch || !config.customCssUrl) {
-                    $status.text(getString('cssSaveFailed'));
-                    return;
-                }
-
                 $status.text('');
-                window.wp.apiFetch({
-                    url: config.customCssUrl,
-                    method: 'POST',
-                    headers: {
-                        'X-WP-Nonce': config.nonce
-                    },
-                    data: {
-                        id: renderState.markdownTheme === 'custom' ? renderState.customCssId : '',
-                        name: $name.val(),
-                        css: $code.val()
-                    }
+                persistCustomCss({
+                    id: renderState.markdownTheme === 'custom' ? renderState.customCssId : '',
+                    name: $name.val(),
+                    css: $code.val()
                 }).then(function (response) {
-                    customCssLibrary = response.customCss || customCssLibrary;
-                    renderState.markdownTheme = 'custom';
-                    renderState.customCssId = response.item.id;
-                    renderState.customCss = response.item.css || '';
-                    renderState.scopedCustomCss = response.item.scopedCss || '';
-                    themeOptions.state = renderState;
-
                     renderThemeSelect(themeControl.select);
                     themeControl.select.val('custom:' + response.item.id);
                     applyRenderState($preview);
@@ -1467,6 +1561,8 @@
                 ? config.storage.layoutKey
                 : 'easymde:immersive-layout',
             adapter: {
+                getLocalDraftsEnabled: getLocalDraftsEnabled,
+                setLocalDraftsEnabled: setLocalDraftsEnabled,
                 getMarkdown: function () {
                     return context.textarea.value || '';
                 },
@@ -1496,35 +1592,6 @@
                     return function () {
                         $title.off(namespace);
                     };
-                },
-                decorateWorkspace: function (workspaceRoot) {
-                    workspaceRoot.querySelectorAll('button[data-command]').forEach(function (button) {
-                        var commandId = button.getAttribute('data-command');
-                        var sourceButton = commandId === 'heading'
-                            ? context.root.find('.easymde-toolbar-section-main .easymde-toolbar-button-menu').first()[0]
-                            : context.root.find('[data-easymde-command="' + commandId + '"]').first()[0];
-
-                        if (!sourceButton || !sourceButton.childNodes.length) {
-                            return;
-                        }
-                        button.textContent = '';
-                        Array.prototype.forEach.call(sourceButton.childNodes, function (node) {
-                            button.appendChild(node.cloneNode(true));
-                        });
-                        button.setAttribute(
-                            'aria-label',
-                            sourceButton.getAttribute('aria-label') || sourceButton.getAttribute('title') || commandId
-                        );
-                        if (sourceButton.getAttribute('title')) {
-                            button.setAttribute('title', sourceButton.getAttribute('title'));
-                        }
-                    });
-
-                    var wechatSource = context.root.find('[data-easymde-command="copywechat"] .easymde-wechat-glyph').first()[0];
-                    var wechatTarget = workspaceRoot.querySelector('[data-wechat-icon]');
-                    if (wechatSource && wechatTarget) {
-                        wechatTarget.replaceWith(wechatSource.cloneNode(true));
-                    }
                 },
                 renderPreview: function (node, markdown, options) {
                     var sourceClasses = String(context.preview.attr('class') || '').split(/\s+/).filter(function (className) {
@@ -1566,6 +1633,37 @@
                         themes: themes
                     };
                 },
+                getCustomCssState: function () {
+                    var item = selectedCustomCssItem();
+
+                    return item ? $.extend({}, item) : null;
+                },
+                previewCustomCss: function (css) {
+                    if (!window.wp || !window.wp.apiFetch || !config.customCssPreviewUrl) {
+                        return Promise.reject(new Error(getString('cssSaveFailed') || 'CSS preview failed.'));
+                    }
+
+                    return window.wp.apiFetch({
+                        url: config.customCssPreviewUrl,
+                        method: 'POST',
+                        headers: {
+                            'X-WP-Nonce': config.nonce
+                        },
+                        data: {
+                            css: String(css || '')
+                        }
+                    });
+                },
+                saveCustomCss: function (input, workspaceContext) {
+                    return persistCustomCss(input).then(function (response) {
+                        applyRenderState(context.preview);
+                        applyRenderState($(workspaceContext.preview));
+                        context.refreshPreview({ immediate: true });
+                        updatePreview($(workspaceContext.preview), workspaceContext.markdown, { immediate: true });
+
+                        return response.item;
+                    });
+                },
                 updateAppearance: function (changes, workspaceContext) {
                     if (Object.prototype.hasOwnProperty.call(changes, 'markdownTheme')) {
                         var selectedTheme = String(changes.markdownTheme || 'default');
@@ -1590,6 +1688,9 @@
                             renderState[key] = String(changes[key] || '');
                         }
                     });
+                    if (Object.prototype.hasOwnProperty.call(changes, 'codeMacStyle')) {
+                        renderState.codeMacStyle = !!changes.codeMacStyle;
+                    }
                     themeOptions.state = renderState;
                     applyRenderState(context.preview);
                     applyRenderState($(workspaceContext.preview));
@@ -1599,11 +1700,34 @@
                 },
                 executeCommand: function (commandId, textarea) {
                     var resolved = commandAliases[commandId] || commandId;
-                    if (resolved === 'table') {
-                        insertBlock(textarea, '\n| Column 1 | Column 2 |\n| --- | --- |\n| Content | Content |\n', '\n', '');
-                        return;
-                    }
                     executeCommand(resolved, { textarea: textarea, preview: $(context.preview), flash: context.flash });
+                },
+                insertTable: function (rows, columns, textarea) {
+                    var markdown = workspaceApi.createTableMarkdown(rows, columns, {
+                        column: getString('tableColumn') || 'Column ',
+                        content: getString('tableContent') || 'Content'
+                    });
+                    var start = textarea.selectionStart;
+                    var end = textarea.selectionEnd;
+                    var value = textarea.value;
+                    var leading = start > 0 && value.charAt(start - 1) !== '\n' ? '\n' : '';
+                    var trailing = end < value.length && value.charAt(end) !== '\n' ? '\n' : '';
+                    var replacement = leading + markdown + trailing;
+                    var firstCellLabel = getString('tableContent') || 'Content';
+                    var firstCellOffset = markdown.indexOf(firstCellLabel);
+                    var firstCellStart;
+                    var firstCellEnd;
+
+                    if (firstCellOffset < 0) {
+                        firstCellLabel = (getString('tableColumn') || 'Column ') + '1';
+                        firstCellOffset = markdown.indexOf(firstCellLabel);
+                    }
+                    firstCellStart = start + leading.length + Math.max(0, firstCellOffset);
+                    firstCellEnd = firstCellStart + firstCellLabel.length;
+                    applyTextChange(textarea, value.slice(0, start) + replacement + value.slice(end), firstCellStart, firstCellEnd);
+                    textarea.dispatchEvent(new window.Event('input', { bubbles: true }));
+                    textarea.setSelectionRange(firstCellStart, firstCellEnd);
+                    textarea.focus();
                 },
                 handleShortcut: function (event, textarea) {
                     var shortcut = normalizeEventShortcut(event);
@@ -1643,7 +1767,7 @@
                             window.navigator.clipboard.writeText(workspaceContext.source.value);
                         }
                     } else if (action === 'wechat') {
-                        copyWechat({ preview: $(workspaceContext.preview), flash: context.flash });
+                        return copyWechat({ preview: $(workspaceContext.preview), flash: context.flash });
                     } else if (action === 'history') {
                         var link = document.querySelector('#revisionsdiv .inside a, #misc-publishing-actions .misc-pub-revisions a');
                         if (link && link.href) {
@@ -1720,9 +1844,11 @@
                 },
                 getPublishState: function () {
                     var categoryInputs = document.querySelectorAll('#categorychecklist input[type="checkbox"]');
+                    var categoryOptions = readNativeCategoryOptions(document, config.categoryOptions);
                     var featuredId = parseInt(String($('#_thumbnail_id').val() || ''), 10);
                     var featuredImage = null;
                     var featuredPreview = document.querySelector('#postimagediv .inside img');
+                    var visibility = readNativePublishVisibility(document);
 
                     if (isFinite(featuredId) && featuredId > 0) {
                         featuredImage = {
@@ -1736,47 +1862,56 @@
                         categories: Array.prototype.map.call(categoryInputs, function (input) {
                             return input.checked ? String(input.value || '') : '';
                         }).filter(Boolean),
-                        categoryOptions: Array.prototype.map.call(categoryInputs, function (input) {
-                            return {
-                                id: String(input.value || ''),
-                                label: input.parentNode && input.parentNode.textContent
-                                    ? input.parentNode.textContent.replace(/\s+/g, ' ').trim()
-                                    : String(input.value || '')
-                            };
-                        }),
+                        categoryOptions: categoryOptions,
                         excerpt: String($('#excerpt').val() || ''),
                         featuredImage: featuredImage,
                         openPreview: false,
+                        password: visibility.password,
                         postStatus: String($('#post_status').val() || ''),
-                        tags: String($('#tax-input-post_tag').val() || '')
+                        sticky: visibility.sticky,
+                        tags: String($('#tax-input-post_tag').val() || ''),
+                        visibility: visibility.visibility
                     };
                 },
                 getRevisions: function () {
                     var postId = parseInt(String($('#post_ID').val() || ''), 10);
-                    var postType = String($('#post_type').val() || 'post');
 
                     if (!isFinite(postId) || postId <= 0 || !window.wp || typeof window.wp.apiFetch !== 'function') {
                         return Promise.resolve([]);
                     }
 
-                    return window.wp.apiFetch({ path: '/wp/v2/types/' + encodeURIComponent(postType) }).then(function (type) {
-                        var restBase = type && type.rest_base ? type.rest_base : postType;
-                        return window.wp.apiFetch({
-                            path: '/wp/v2/' + encodeURIComponent(restBase) + '/' + postId + '/revisions?context=edit&per_page=50'
-                        });
-                    }).then(function (revisions) {
-                        return (revisions || []).map(function (revision) {
-                            var title = revision && revision.title
-                                ? (revision.title.raw || revision.title.rendered || '')
-                                : '';
-                            var date = revision && revision.date ? new Date(revision.date) : null;
-                            return {
-                                id: revision.id,
-                                title: title,
-                                date: date && !isNaN(date.getTime()) ? date.toLocaleString() : ''
-                            };
-                        });
+                    return window.wp.apiFetch({
+                        path: '/easymde/v1/posts/' + postId + '/revisions'
+                    }).then(function (response) {
+                        return response && Array.isArray(response.revisions) ? response.revisions : [];
                     });
+                },
+                getRevision: function (revisionId) {
+                    var postId = parseInt(String($('#post_ID').val() || ''), 10);
+                    var id = parseInt(String(revisionId || ''), 10);
+
+                    if (
+                        !isFinite(postId)
+                        || postId <= 0
+                        || !isFinite(id)
+                        || id <= 0
+                        || !window.wp
+                        || typeof window.wp.apiFetch !== 'function'
+                    ) {
+                        return Promise.reject(new Error('Revision preview is unavailable.'));
+                    }
+
+                    return window.wp.apiFetch({
+                        path: '/easymde/v1/posts/' + postId + '/revisions/' + id
+                    });
+                },
+                renderRevisionPreview: function (node, revision) {
+                    if (!node || !revision || typeof revision.html !== 'string') {
+                        return Promise.reject(new Error('Revision preview is unavailable.'));
+                    }
+                    node.className = 'easymde-immersive-workspace__history-preview';
+                    $(node).html(revision.html);
+                    return Promise.resolve();
                 },
                 openRevision: function (revisionId) {
                     var id = parseInt(String(revisionId || ''), 10);
@@ -1827,6 +1962,13 @@
                     $('#excerpt').val(draft.excerpt || '').trigger('change');
                     $('#_thumbnail_id').val(featuredId).trigger('change');
 
+                    if (!applyNativePublishVisibility(draft, document)) {
+                        showFlash(context.flash, 'error', getString('publishVisibilityUnavailable'));
+                        return false;
+                    }
+                    $('#visibility-radio-' + draft.visibility).trigger('change');
+                    $('#visibility .save-post-visibility').trigger('click');
+
                     if (draft.openPreview && window.sessionStorage) {
                         try {
                             window.sessionStorage.setItem(
@@ -1838,6 +1980,7 @@
                         }
                     }
                     $('#publish').trigger('click');
+                    return true;
                 },
                 onActivate: function (workspaceContext) {
                     bindLazyImagePasteUpload(workspaceContext.source, $(workspaceContext.root), context.flash);
@@ -1849,6 +1992,42 @@
                 }
             }
         });
+    }
+
+    function getLocalDraftsEnabled() {
+        return localDraftsEnabled;
+    }
+
+    function setLocalDraftsEnabled(enabled) {
+        localDraftsEnabled = !!enabled;
+
+        if (!localDraftsEnabled && draftTimer !== null) {
+            window.clearTimeout(draftTimer);
+            draftTimer = null;
+        }
+
+        return localDraftsEnabled;
+    }
+
+    function scheduleLocalDraft(storage, getMarkdown, onSaved) {
+        if (!localDraftsEnabled) {
+            return false;
+        }
+
+        window.clearTimeout(draftTimer);
+        draftTimer = window.setTimeout(function () {
+            draftTimer = null;
+            if (!localDraftsEnabled) {
+                return;
+            }
+
+            window.EasyMDEDraftStorage.write(storage, getMarkdown());
+            if (typeof onSaved === 'function') {
+                onSaved();
+            }
+        }, 500);
+
+        return true;
     }
 
     function setPreviewBusy($preview, busy) {
@@ -2173,12 +2352,14 @@
         };
 
         if (window.EasyMDEWechatExporter && window.EasyMDEWechatExporter.copy) {
-            window.EasyMDEWechatExporter.copy(context, callbacks);
-            return;
+            return window.EasyMDEWechatExporter.copy(context, callbacks);
         }
 
-        preloadWechatExporter();
+        preloadWechatExporter().catch(function () {
+            showFlash(context && context.flash ? context.flash : null, 'error', getString('copyWechatFailed'));
+        });
         showFlash(context && context.flash ? context.flash : null, 'error', getString('copyWechatFailed'));
+        return Promise.reject(new Error(getString('copyWechatFailed') || 'Copy for WeChat failed.'));
     }
 
     function preloadWechatExporter() {
@@ -2684,8 +2865,10 @@
             triggerSavePost();
             break;
         case 'copyWechat':
-            copyWechat(context);
-            break;
+            return copyWechat(context).catch(function () {
+                // The exporter has already reported the failure through the editor flash.
+                return false;
+            });
         case 'linePrefix':
             applyLinePrefix(textarea, command.linePrefix || '');
             break;
@@ -2920,15 +3103,17 @@
             mirrorToPostContent(this.value);
             updatePreview($preview, this.value);
 
-            if (!config.features || config.features.localDrafts !== false) {
-                window.clearTimeout(draftTimer);
-                draftTimer = window.setTimeout(function () {
-                    window.EasyMDEDraftStorage.write(storage, $source.val());
+            scheduleLocalDraft(
+                storage,
+                function () {
+                    return $source.val();
+                },
+                function () {
                     if ($draftStatus && $draftStatus.length) {
                         $draftStatus.text(getString('draftSaved') + ' ' + window.EasyMDEDraftStorage.formatTime(Date.now()));
                     }
-                }, 500);
-            }
+                }
+            );
         });
 
         $('#post').on('submit', function () {
@@ -2961,7 +3146,7 @@
 
             consumeImmersivePublishPreview(context);
 
-            if (!config.features || config.features.localDrafts !== false) {
+            if (getLocalDraftsEnabled()) {
                 afterPreviewIdle(function () {
                     if (!sourceChangedBeforeShell && $source.val() === initialMarkdown) {
                         createDraftNotice($root, $source[0], storage, $flash);
@@ -2979,6 +3164,13 @@
         window.EasyMDETestHooks.ensureImagePasteBound = ensureImagePasteBound;
         window.EasyMDETestHooks.openMediaPicker = openMediaPicker;
         window.EasyMDETestHooks.isSuccessfulPostNotice = isSuccessfulPostNotice;
+        window.EasyMDETestHooks.readNativeCategoryOptions = readNativeCategoryOptions;
+        window.EasyMDETestHooks.readNativePublishVisibility = readNativePublishVisibility;
+        window.EasyMDETestHooks.applyNativePublishVisibility = applyNativePublishVisibility;
+        window.EasyMDETestHooks.executeCommand = executeCommand;
+        window.EasyMDETestHooks.getLocalDraftsEnabled = getLocalDraftsEnabled;
+        window.EasyMDETestHooks.setLocalDraftsEnabled = setLocalDraftsEnabled;
+        window.EasyMDETestHooks.scheduleLocalDraft = scheduleLocalDraft;
         window.EasyMDETestHooks.showFlash = showFlash;
         window.EasyMDETestHooks.updatePreview = updatePreview;
     }

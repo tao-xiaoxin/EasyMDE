@@ -64,7 +64,7 @@ Start the local site:
 docker compose up -d
 ```
 
-By default, the example environment points the site URL to `http://localhost:8088`, installs WordPress using the configured version/locale, activates EasyMDE, and mounts the working tree into the plugin directory.
+By default, the example environment points the site URL to `http://localhost:8088`, installs WordPress using the configured version/locale, activates EasyMDE, and mounts the working tree into the plugin directory. The WP-CLI initializer also runs `scripts/seed-wordpress-demo.php` to create an idempotent multi-level category fixture and attach two nested categories to the Markdown showcase post (or to a dedicated draft when that post does not exist).
 
 Optional Composer install through the Docker service:
 

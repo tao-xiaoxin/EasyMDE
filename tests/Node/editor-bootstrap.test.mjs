@@ -414,6 +414,10 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.openMediaPicker, 'function', 'bootstrap harness should expose openMediaPicker');
   assert.equal(typeof context.window.EasyMDETestHooks.showFlash, 'function', 'bootstrap harness should expose showFlash');
   assert.equal(typeof context.window.EasyMDETestHooks.isSuccessfulPostNotice, 'function', 'bootstrap harness should expose post notice classification');
+  assert.equal(typeof context.window.EasyMDETestHooks.readNativeCategoryOptions, 'function', 'bootstrap harness should expose native category hierarchy reads');
+  assert.equal(typeof context.window.EasyMDETestHooks.readNativePublishVisibility, 'function', 'bootstrap harness should expose native visibility reads');
+  assert.equal(typeof context.window.EasyMDETestHooks.applyNativePublishVisibility, 'function', 'bootstrap harness should expose native visibility writes');
+  assert.equal(typeof context.window.EasyMDETestHooks.executeCommand, 'function', 'bootstrap harness should expose toolbar command execution');
 
   return {
     document: documentRef,
@@ -422,6 +426,252 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
     window: context.window
   };
 }
+
+test('native category adapter preserves WordPress hierarchy without inferring from labels', () => {
+  const parentList = { classList: { contains: () => false } };
+  const childList = { classList: { contains: (name) => name === 'children' } };
+  const parentLi = {
+    children: [{}, childList],
+    parentElement: parentList,
+    closest(selector) {
+      return selector === 'li' ? this : null;
+    }
+  };
+  const childLi = {
+    children: [{}],
+    parentElement: childList,
+    closest(selector) {
+      return selector === 'li' ? this : null;
+    }
+  };
+  const parentInput = {
+    value: '11',
+    parentNode: { textContent: ' Parent category ' },
+    closest(selector) {
+      return selector === 'li' ? parentLi : null;
+    }
+  };
+  const childInput = {
+    value: '12',
+    parentNode: { textContent: ' Child category ' },
+    closest(selector) {
+      return selector === 'li' ? childLi : null;
+    }
+  };
+  parentLi.querySelector = () => parentInput;
+  childLi.querySelector = () => childInput;
+  childList.closest = (selector) => selector === 'li' ? parentLi : null;
+  parentList.closest = () => null;
+  const documentRef = {
+    querySelectorAll(selector) {
+      assert.equal(selector, '#categorychecklist input[type="checkbox"]');
+      return [parentInput, childInput];
+    }
+  };
+  const { hooks } = loadBootstrap();
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(hooks.readNativeCategoryOptions(documentRef))),
+    [
+      { id: '11', label: 'Parent category', parentId: '', hasChildren: true },
+      { id: '12', label: 'Child category', parentId: '11', hasChildren: false }
+    ]
+  );
+});
+
+test('native category adapter restores checked_ontop hierarchy from WordPress term data', () => {
+  const rootList = { classList: { contains: () => false }, closest: () => null };
+  const runtimeChildList = {
+    classList: { contains: (name) => name === 'children' },
+    closest: (selector) => selector === 'li' ? runtimeParentLi : null
+  };
+  const checkedChildLi = {
+    children: [{}],
+    parentElement: rootList,
+    closest(selector) {
+      return selector === 'li' ? this : null;
+    }
+  };
+  const configuredParentLi = {
+    children: [{}],
+    parentElement: rootList,
+    closest(selector) {
+      return selector === 'li' ? this : null;
+    }
+  };
+  const runtimeParentLi = {
+    children: [{}, runtimeChildList],
+    parentElement: rootList,
+    closest(selector) {
+      return selector === 'li' ? this : null;
+    }
+  };
+  const runtimeChildLi = {
+    children: [{}],
+    parentElement: runtimeChildList,
+    closest(selector) {
+      return selector === 'li' ? this : null;
+    }
+  };
+  const checkedChildInput = {
+    value: '14',
+    checked: true,
+    parentNode: { textContent: ' EasyMDE ' },
+    closest: (selector) => selector === 'li' ? checkedChildLi : null
+  };
+  const configuredParentInput = {
+    value: '13',
+    checked: false,
+    parentNode: { textContent: ' 编辑器与工具 ' },
+    closest: (selector) => selector === 'li' ? configuredParentLi : null
+  };
+  const runtimeParentInput = {
+    value: '21',
+    checked: false,
+    parentNode: { textContent: ' Runtime parent ' },
+    closest: (selector) => selector === 'li' ? runtimeParentLi : null
+  };
+  const runtimeChildInput = {
+    value: '22',
+    checked: false,
+    parentNode: { textContent: ' Runtime child ' },
+    closest: (selector) => selector === 'li' ? runtimeChildLi : null
+  };
+  checkedChildLi.querySelector = () => checkedChildInput;
+  configuredParentLi.querySelector = () => configuredParentInput;
+  runtimeParentLi.querySelector = () => runtimeParentInput;
+  runtimeChildLi.querySelector = () => runtimeChildInput;
+  const documentRef = {
+    querySelectorAll(selector) {
+      assert.equal(selector, '#categorychecklist input[type="checkbox"]');
+      return [checkedChildInput, configuredParentInput, runtimeParentInput, runtimeChildInput];
+    }
+  };
+  const configuredOptions = [
+    { id: '13', label: '编辑器与工具', parentId: '12', hasChildren: true },
+    { id: '14', label: 'EasyMDE', parentId: '13', hasChildren: false }
+  ];
+  const { hooks } = loadBootstrap();
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(hooks.readNativeCategoryOptions(documentRef, configuredOptions))),
+    [
+      { id: '14', label: 'EasyMDE', parentId: '13', hasChildren: false },
+      { id: '13', label: '编辑器与工具', parentId: '12', hasChildren: true },
+      { id: '21', label: 'Runtime parent', parentId: '', hasChildren: true },
+      { id: '22', label: 'Runtime child', parentId: '21', hasChildren: false }
+    ]
+  );
+});
+
+test('native publish visibility adapter reads and applies WordPress form controls without submitting', () => {
+  const controls = {
+    '#visibility-radio-public': { value: 'public', checked: true },
+    '#visibility-radio-password': { value: 'password', checked: false },
+    '#visibility-radio-private': { value: 'private', checked: false },
+    '#post_password': { value: '' },
+    '#sticky': { checked: true }
+  };
+  const documentRef = {
+    querySelector(selector) {
+      if (selector === '#post-visibility-select input[name="visibility"]:checked') {
+        return Object.values(controls).find((control) => control.checked && control.value) || null;
+      }
+
+      return controls[selector] || null;
+    }
+  };
+  const { hooks } = loadBootstrap();
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(hooks.readNativePublishVisibility(documentRef))),
+    { visibility: 'public', password: '', sticky: true }
+  );
+
+  assert.equal(hooks.applyNativePublishVisibility({
+    visibility: 'password',
+    password: 'native secret',
+    sticky: true
+  }, documentRef), true);
+  assert.equal(controls['#visibility-radio-password'].checked, true);
+  assert.equal(controls['#visibility-radio-public'].checked, false);
+  assert.equal(controls['#visibility-radio-private'].checked, false);
+  assert.equal(controls['#post_password'].value, 'native secret');
+  assert.equal(controls['#sticky'].checked, false);
+
+  assert.equal(hooks.applyNativePublishVisibility({
+    visibility: 'private',
+    password: 'must be cleared',
+    sticky: true
+  }, documentRef), true);
+  assert.equal(controls['#visibility-radio-private'].checked, true);
+  assert.equal(controls['#post_password'].value, '');
+  assert.equal(controls['#sticky'].checked, false);
+});
+
+test('runtime local draft setting cancels pending writes without deleting stored drafts', () => {
+  const writes = [];
+  let discards = 0;
+  const storage = { draftKey: 'easymde:test-draft' };
+  const { flushTimers, hooks } = loadBootstrap({
+    EasyMDEDraftStorage: {
+      write(target, markdown) {
+        writes.push({ target, markdown });
+      },
+      discard() {
+        discards += 1;
+      }
+    }
+  });
+
+  assert.equal(hooks.getLocalDraftsEnabled(), true);
+  hooks.scheduleLocalDraft(storage, () => 'pending draft');
+  assert.equal(hooks.setLocalDraftsEnabled(false), false);
+  flushTimers();
+
+  assert.deepEqual(writes, []);
+  assert.equal(discards, 0, 'disabling autosave must retain any existing local draft');
+
+  hooks.scheduleLocalDraft(storage, () => 'disabled draft');
+  flushTimers();
+  assert.deepEqual(writes, []);
+
+  assert.equal(hooks.setLocalDraftsEnabled(true), true);
+  hooks.scheduleLocalDraft(storage, () => 'enabled draft');
+  flushTimers();
+  assert.deepEqual(writes, [{ target: storage, markdown: 'enabled draft' }]);
+});
+
+test('immersive appearance adapter keeps the real Mac code frame state writable', () => {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
+
+  assert.match(source, /Object\.prototype\.hasOwnProperty\.call\(changes, 'codeMacStyle'\)/);
+  assert.match(source, /renderState\.codeMacStyle = !!changes\.codeMacStyle/);
+});
+
+test('immersive custom CSS adapter separates zero-write preview from explicit persistence', () => {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
+  const adminAssets = readFileSync(join(repoRoot, 'src/Admin/AdminAssets.php'), 'utf8');
+
+  assert.match(adminAssets, /'customCssPreviewUrl'\s*=>\s*esc_url_raw\( rest_url\( 'easymde\/v1\/custom-css\/preview' \) \)/);
+  assert.match(source, /getCustomCssState:\s*function \(\)/);
+  assert.match(source, /previewCustomCss:\s*function \(css\)/);
+  assert.match(source, /url:\s*config\.customCssPreviewUrl/);
+  assert.match(source, /saveCustomCss:\s*function \(input, workspaceContext\)/);
+  assert.match(source, /persistCustomCss\(input\)/);
+});
+
+test('immersive adapter inserts sized tables and returns the real WeChat copy promise', () => {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
+
+  assert.match(source, /insertTable:\s*function \(rows, columns, textarea\)/);
+  assert.match(source, /workspaceApi\.createTableMarkdown\(rows, columns, \{/);
+  assert.match(source, /setSelectionRange\(firstCellStart, firstCellEnd\)/);
+  assert.match(source, /dispatchEvent\(new window\.Event\('input', \{ bubbles: true \}\)\)/);
+  assert.match(source, /action === 'wechat'[\s\S]*return copyWechat\(\{ preview: \$\(workspaceContext\.preview\), flash: context\.flash \}\);/s);
+  assert.doesNotMatch(source, /decorateWorkspace:\s*function/);
+  assert.doesNotMatch(source, /wechatSource\.cloneNode/);
+});
 
 test('post-publish preview accepts only successful WordPress notices', () => {
   const { hooks } = loadBootstrap();
@@ -2980,6 +3230,7 @@ test('copyWechat preloads exporter without deferring copy past user activation',
             copyCalls += 1;
             assert.equal(context, contextArg);
             assert.equal(callbacks.getString('copyWechatFailed'), 'Copy failed');
+            return Promise.resolve({ method: 'clipboard' });
           }
         };
         return Promise.resolve({
@@ -2994,7 +3245,7 @@ test('copyWechat preloads exporter without deferring copy past user activation',
 
   assert.equal(window.EasyMDEWechatExporter, undefined);
 
-  hooks.copyWechat(contextArg);
+  await assert.rejects(hooks.copyWechat(contextArg), /Copy failed/);
 
   assert.equal(loadScriptCalls, 1);
   assert.equal(copyCalls, 0);
@@ -3002,10 +3253,11 @@ test('copyWechat preloads exporter without deferring copy past user activation',
   assert.equal(flash.state.text, 'Copy failed');
   await flushMicrotasks();
 
-  hooks.copyWechat(contextArg);
+  const result = await hooks.copyWechat(contextArg);
 
   assert.equal(loadScriptCalls, 1);
   assert.equal(copyCalls, 1);
+  assert.equal(result.method, 'clipboard');
 });
 
 test('copyWechat reports the existing copy failure when lazy exporter loading fails', async () => {
@@ -3041,14 +3293,43 @@ test('copyWechat reports the existing copy failure when lazy exporter loading fa
     }
   });
 
-  hooks.copyWechat({
+  await assert.rejects(hooks.copyWechat({
     flash,
     preview: {}
-  });
+  }), /Copy failed/);
   await flushMicrotasks();
 
   assert.equal(flash.state.hidden, false);
   assert.equal(flash.state.text, 'Copy failed');
+  assert.equal(flash.state.classes.has('is-error'), true);
+});
+
+test('legacy toolbar consumes visible WeChat copy failures at the UI event boundary', async () => {
+  const flash = createFlashWrapper();
+  const { hooks } = loadBootstrap({
+    EasyMDEConfig: {
+      testHooks: true,
+      commands: [{ id: 'copywechat', action: 'copyWechat' }],
+      features: {},
+      strings: { copyWechatFailed: 'Copy failed' },
+      themeOptions: { codeThemes: [], fontOptions: {}, state: {} }
+    },
+    EasyMDEWechatExporter: {
+      copy(context, callbacks) {
+        callbacks.showFlash(context.flash, 'error', callbacks.getString('copyWechatFailed'));
+        return Promise.reject(new Error('Copy failed'));
+      }
+    }
+  });
+
+  const result = await hooks.executeCommand('copywechat', {
+    flash,
+    preview: {},
+    textarea: {}
+  });
+
+  assert.equal(result, false);
+  assert.equal(flash.state.hidden, false);
   assert.equal(flash.state.classes.has('is-error'), true);
 });
 

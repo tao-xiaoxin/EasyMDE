@@ -66,4 +66,13 @@ final class CustomCssPolicyTest extends WP_UnitTestCase
         $this->assertStringContainsString('var(--brand)', $css);
         $this->assertStringNotContainsString(CustomCssPolicy::SCOPE . ' :root', $css);
     }
+
+    public function test_preview_css_is_scoped_to_the_immersive_modal_only()
+    {
+        $policy = new CustomCssPolicy();
+        $preview = $policy->prepare_preview('h2 { color: red; }');
+
+        $this->assertIsArray($preview);
+        $this->assertStringContainsString(CustomCssPolicy::PREVIEW_SCOPE . ' h2', $preview['scopedCss']);
+    }
 }

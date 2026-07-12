@@ -74,6 +74,7 @@ services:
         wp option update WPLANG "$${WORDPRESS_LOCALE}" --allow-root;
         wp user meta update "$${WORDPRESS_ADMIN_USER}" locale "$${WORDPRESS_LOCALE}" --allow-root;
         wp plugin activate easymde --allow-root;
+        wp eval-file wp-content/plugins/easymde/scripts/seed-wordpress-demo.php --allow-root;
         wp rewrite structure "/%postname%/" --allow-root;
       '
 

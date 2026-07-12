@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class CustomCssPolicy {
 
-	const MAX_BYTES = 30000;
+	const MAX_BYTES     = 30000;
 	const SCOPE         = '.easymde-rendered-content.easymde-custom-css-active';
 	const PREVIEW_SCOPE = '.easymde-immersive-workspace__custom-css-preview-content';
 

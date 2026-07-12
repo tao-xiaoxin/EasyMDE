@@ -503,6 +503,8 @@ test.describe('EasyMDE editor workflows', () => {
 
   test('keeps immersive focus, shortcuts, icons, dialogs, and exit state scoped to the workspace', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
+    const categories = createCategoryHierarchy(testSlug(testInfo));
+    testInfo.easymdeTermIds.push(categories.parentId, categories.childId);
 
     await login(page, user);
     await openEasyMdeNewPost(page);
@@ -1150,7 +1152,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(postMetaValue(postId, '_thumbnail_id')).toBe(thumbnailBefore);
 
     await enterImmersiveWithKeyboard(page);
-    await page.locator('[data-action="publish"]').click();
+    await activateWithKeyboard(page.locator('[data-action="publish"]'));
     await expect(page.locator('[data-featured-candidate]')).toContainText('Verified local candidate');
     await page.locator('[data-action="use-featured-candidate"]').click();
     await expect(page.locator('[data-featured-summary]')).toHaveText('Verified local candidate');

@@ -72,6 +72,41 @@ function deleteUserContent(userId) {
   runWp(['user', 'delete', userId, '--yes', '--reassign=1']);
 }
 
+function createCategoryHierarchy(slug) {
+  const parentId = runWp([
+    'term',
+    'create',
+    'category',
+    `${slug} parent`,
+    `--slug=${slug}-parent`,
+    '--porcelain'
+  ]);
+  let childId;
+
+  try {
+    childId = runWp([
+      'term',
+      'create',
+      'category',
+      `${slug} child`,
+      `--slug=${slug}-child`,
+      `--parent=${parentId}`,
+      '--porcelain'
+    ]);
+  } catch (error) {
+    runWp(['term', 'delete', 'category', parentId]);
+    throw error;
+  }
+
+  return { parentId, childId };
+}
+
+function deleteTerms(termIds) {
+  if (termIds.length) {
+    runWp(['term', 'delete', 'category', ...termIds.slice().reverse()]);
+  }
+}
+
 async function uploadTestImage(page, filename, altText) {
   const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
@@ -139,9 +174,23 @@ async function publishOrUpdate(page) {
 }
 
 async function parkPointerAfterNavigation(page) {
-  // Chromium preserves the pre-navigation pointer position. If it lands on the
-  // one-pixel hover lift at a toolbar button edge, hover can oscillate forever.
-  await page.mouse.move(0, 0);
+  const viewport = page.viewportSize();
+
+  if (viewport) {
+    await page.mouse.move(viewport.width - 1, viewport.height - 1);
+  }
+}
+
+async function activateWithKeyboard(locator) {
+  await expect(locator).toBeVisible();
+  await locator.focus();
+  await expect(locator).toBeFocused();
+  await locator.press('Enter');
+}
+
+async function enterImmersiveWithKeyboard(page) {
+  await activateWithKeyboard(page.locator('.easymde-toolbar-immersive-toggle'));
+  await expect(page.locator('.easymde-immersive-workspace')).toBeVisible();
 }
 
 async function currentPostId(page) {
@@ -227,9 +276,12 @@ test.describe('EasyMDE editor workflows', () => {
   test.beforeEach(async ({}, testInfo) => {
     const slug = testSlug(testInfo);
     testInfo.easymdeUser = createUser(slug);
+    testInfo.easymdeTermIds = [];
   });
 
   test.afterEach(async ({}, testInfo) => {
+    deleteTerms(testInfo.easymdeTermIds || []);
+
     if (testInfo.easymdeUser) {
       deleteUserContent(testInfo.easymdeUser.id);
     }
@@ -707,8 +759,11 @@ test.describe('EasyMDE editor workflows', () => {
 
   test('publishes real WordPress fields from the isolated workspace and switches to update mode', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
-    const title = `Workspace Publish ${testSlug(testInfo)}`;
+    const slug = testSlug(testInfo);
+    const title = `Workspace Publish ${slug}`;
     const markdown = `# ${title}\n\nPublished from the isolated workspace.`;
+    const categories = createCategoryHierarchy(slug);
+    testInfo.easymdeTermIds.push(categories.parentId, categories.childId);
 
     await login(page, user);
     await openEasyMdeNewPost(page);
@@ -724,22 +779,12 @@ test.describe('EasyMDE editor workflows', () => {
     expect(unnamedPublishFields).toEqual([]);
     await addPublishTags(page, 'Workspace, WordPress, workspace');
     await page.locator('[data-publish-excerpt]').fill('Workspace publish excerpt.');
-    const nestedCategory = await page.locator('[data-publish-categories]').evaluate((container) => {
-      const child = container.querySelector('.easymde-immersive-workspace__category-children [data-publish-category]');
-      const parentNode = child?.closest('.easymde-immersive-workspace__category-children')
-        ?.parentElement;
-      const toggle = parentNode?.querySelector(':scope > .easymde-immersive-workspace__category-row [data-publish-category-toggle]');
-
-      return child && toggle
-        ? { childId: child.value, parentId: toggle.getAttribute('data-publish-category-toggle') }
-        : null;
-    });
-    expect(nestedCategory).toBeTruthy();
-    const nestedCategoryInput = page.locator(`[data-publish-category][value="${nestedCategory.childId}"]`);
+    const nestedCategoryInput = page.locator(`[data-publish-category][value="${categories.childId}"]`);
+    await expect(nestedCategoryInput).toBeVisible();
     if (!(await nestedCategoryInput.isChecked())) {
       await nestedCategoryInput.locator('xpath=..').click();
     }
-    await page.locator(`[data-publish-category-toggle="${nestedCategory.parentId}"]`).click();
+    await page.locator(`[data-publish-category-toggle="${categories.parentId}"]`).click();
     await expect(nestedCategoryInput).toHaveCount(0);
 
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
@@ -755,13 +800,15 @@ test.describe('EasyMDE editor workflows', () => {
     expect(normalizeMarkdown(runWp(['post', 'meta', 'get', String(postId), '_easymde_markdown']))).toBe(markdown);
     expect(postTagNames(postId).split(/\s+/).sort()).toEqual(['WordPress', 'Workspace'].sort());
     expect(runWp(['post', 'term', 'list', String(postId), 'category', '--field=term_id']).split(/\s+/)).toContain(
-      nestedCategory.childId
+      categories.childId
     );
 
-    await page.locator('.easymde-toolbar-immersive-toggle').click();
-    await page.locator('[data-action="publish"]').click();
+    await enterImmersiveWithKeyboard(page);
+    await activateWithKeyboard(page.locator('[data-action="publish"]'));
     await expect(page.locator('#easymde-immersive-publish-title')).toHaveText('Update article');
-    await page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last().click();
+    await activateWithKeyboard(
+      page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last()
+    );
   });
 
   test('publishes password protection through the immersive dialog without touching native fields early', async ({ page }, testInfo) => {
@@ -983,17 +1030,19 @@ test.describe('EasyMDE editor workflows', () => {
         candidateLookups.push(request.url());
       }
     });
-    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await enterImmersiveWithKeyboard(page);
     await page.locator('.easymde-immersive-workspace__source').fill(
       `# Existing featured image\n\n![Second local candidate](${secondMedia.source_url})`
     );
-    await page.locator('[data-action="publish"]').click();
+    await activateWithKeyboard(page.locator('[data-action="publish"]'));
     await page.waitForTimeout(400);
     await expect(page.locator('[data-featured-summary]')).not.toHaveText('Second local candidate');
     expect(candidateLookups).toEqual([]);
     expect(await page.locator('#_thumbnail_id').inputValue()).toBe(String(media.id));
     expect(postMetaValue(postId, '_thumbnail_id')).toBe(String(media.id));
-    await page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last().click();
+    await activateWithKeyboard(
+      page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').last()
+    );
   });
 
   test('uses the native media frame above the workspace without early featured-image writes', async ({ page }, testInfo) => {
@@ -1061,7 +1110,6 @@ test.describe('EasyMDE editor workflows', () => {
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
     await page.locator('[data-action="confirm-publish"]').click();
     await navigation;
-    await parkPointerAfterNavigation(page);
 
     const flash = page.locator('.easymde-editor-flash');
     await expect(flash).toBeVisible();
@@ -1188,16 +1236,16 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('orange-heart');
     await publishOrUpdate(page);
 
-    await page.locator('.easymde-toolbar-immersive-toggle').click();
-    await page.locator('[data-action="history"]').click();
+    await enterImmersiveWithKeyboard(page);
+    await activateWithKeyboard(page.locator('[data-action="history"]'));
     const historyEntries = page.locator('.easymde-immersive-workspace__history-entry');
     await expect(historyEntries.first()).toBeVisible();
     expect(await historyEntries.count()).toBeGreaterThanOrEqual(2);
     await expect(historyEntries.first()).toHaveAttribute('data-revision-id', /^\d+$/);
     await expect(page.locator('[data-history-preview]')).toContainText('Second revision body.');
     await expect(page.locator('[data-action="restore-history"]')).toBeEnabled();
-    await page.locator('[data-action="close-history"]').click();
-    await page.locator('[data-action="exit"]').click();
+    await activateWithKeyboard(page.locator('[data-action="close-history"]'));
+    await activateWithKeyboard(page.locator('[data-action="exit"]'));
 
     await page.goto(`/wp-admin/revision.php?revision=${firstRevisionId}`);
     const restoreButton = page.locator('input.restore-revision, input.button-primary[value*="Restore"], button:has-text("Restore")').first();

@@ -1,0 +1,95 @@
+language: "zh-CN"
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  review_status: true
+  review_details: true
+  commit_status: true
+  fail_commit_status: false
+  collapse_walkthrough: true
+  changed_files_summary: true
+  sequence_diagrams: false
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_labels: false
+  suggested_reviewers: false
+  poem: false
+  enable_prompt_for_ai_agents: true
+
+  path_filters:
+    - "!package-lock.json"
+    - "!languages/*.mo"
+    - "!**/*.woff2"
+    - "!assets/vendor/**/*.min.js"
+    - "!assets/vendor/**/*.min.css"
+    - "!**/*.map"
+
+  path_instructions:
+    - path: "src/**/*.php"
+      instructions: >
+        Review against AGENTS.md, WordPress Coding Standards, PHP 7.4 compatibility,
+        capability and nonce boundaries, REST authorization, metadata/revision
+        consistency, and the rule that opening UI must not cause hidden writes.
+    - path: "assets/js/admin/**/*.js"
+      instructions: >
+        Prioritize state synchronization, Markdown source-of-truth, selection and
+        focus preservation, keyboard and IME behavior, async race conditions,
+        storage-disabled failure paths, accessibility, and zero-write open/cancel
+        interactions.
+    - path: "assets/css/admin/**/*.css"
+      instructions: >
+        Check strict scoping between normal and immersive editor surfaces,
+        source-left/preview-right layout, overflow and long-title behavior,
+        visible keyboard focus, responsive behavior, and stacking contexts.
+    - path: "tests/**"
+      instructions: >
+        Verify tests exercise real behavior and failure paths. Flag brittle
+        source-text or regex-only assertions when browser, DOM, integration, or
+        release-package behavior should be tested instead.
+    - path: "scripts/**"
+      instructions: >
+        Check deterministic release output, third-party license provenance,
+        runtime asset inclusion, development-file exclusion, and privacy-safe
+        packaging without machine-specific paths or local artifacts.
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 1
+    drafts: false
+    ignore_title_keywords:
+      - "[WIP]"
+      - "WIP"
+      - "Draft"
+    labels:
+      - "!skip-coderabbit"
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+    title:
+      mode: "warning"
+      requirements: >
+        Use a concise Conventional Commit-style title that describes the
+        user-visible or technical change.
+    description:
+      mode: "warning"
+    issue_assessment:
+      mode: "warning"
+
+  tools:
+    shellcheck:
+      enabled: true
+    markdownlint:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 900000
+
+chat:
+  auto_reply: true

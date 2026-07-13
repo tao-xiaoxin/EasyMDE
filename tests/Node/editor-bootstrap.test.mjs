@@ -691,6 +691,42 @@ test('native publish preflight blocks sticky drafts when the native sticky contr
   }, documentRef).ok, false);
 });
 
+test('native publish preflight allows submit-for-review when optional visibility controls are unavailable', () => {
+  const controls = {
+    '#publish': {}
+  };
+  const documentRef = {
+    querySelector(selector) {
+      return controls[selector] || null;
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+  const { hooks } = loadBootstrap();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(hooks.preflightNativePublish({
+    capabilities: {
+      categories: false,
+      excerpt: false,
+      featuredImage: false,
+      sticky: false,
+      tags: false,
+      visibility: false
+    }
+  }, documentRef))), {
+    capabilities: {
+      categories: false,
+      excerpt: false,
+      featuredImage: false,
+      sticky: false,
+      tags: false,
+      visibility: false
+    },
+    ok: true
+  });
+});
+
 test('native publish applies all fallible visibility state before mutating article fields', () => {
   const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
   const publishStart = source.indexOf('                publish: function (draft) {');
@@ -700,10 +736,14 @@ test('native publish applies all fallible visibility state before mutating artic
   const transitionAt = publishSource.indexOf('skipNextCrossDocumentViewTransition()');
   const submitAt = publishSource.indexOf("$('#publish').trigger('click')");
 
-  assert.ok(visibilityAt > publishSource.indexOf('if (!preflight.ok)'));
+  assert.ok(visibilityAt > publishSource.indexOf('preflight.capabilities.visibility'));
   assert.ok(visibilityAt < publishSource.indexOf("$('#tax-input-post_tag').val"));
   assert.ok(visibilityAt < publishSource.indexOf("$('#excerpt').val"));
   assert.ok(visibilityAt < publishSource.indexOf("$('#_thumbnail_id').val"));
+  assert.match(
+    publishSource,
+    /if \(preflight\.capabilities\.visibility\) \{\s*\$\('#visibility-radio-' \+ draft\.visibility\)\.trigger\('change'\);\s*\$\('#visibility \.save-post-visibility'\)\.trigger\('click'\);\s*\}/s
+  );
   assert.ok(transitionAt > publishSource.indexOf('sessionStorage = getSessionStorage()'));
   assert.ok(transitionAt < submitAt, 'transition guard must be registered immediately before native submit');
 });

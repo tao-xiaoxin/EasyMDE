@@ -35,7 +35,7 @@ function testSlug(testInfo) {
   return `e2e-${testInfo.workerIndex}-${Date.now()}-${randomUUID().slice(0, 8)}`;
 }
 
-function createUser(slug) {
+function createUser(slug, role = 'administrator') {
   const username = `${slug}-user`;
   const email = `${slug}@example.test`;
   const userId = runWp([
@@ -43,7 +43,7 @@ function createUser(slug) {
     'create',
     username,
     email,
-    '--role=administrator',
+    `--role=${role}`,
     `--user_pass=${adminPassword}`,
     '--porcelain'
   ]);
@@ -475,6 +475,30 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('[data-publish-capability="categories"]')).toBeHidden();
     await expect(page.locator('[data-publish-capability="tags"]')).toBeHidden();
     await expect(page.locator('.easymde-immersive-workspace__publish')).toBeVisible();
+  });
+
+  test('submits for review through the native publish button when visibility controls are unavailable', async ({ page }, testInfo) => {
+    deleteUserContent(testInfo.easymdeUser.id);
+    testInfo.easymdeUser = createUser(testSlug(testInfo), 'contributor');
+    const user = testInfo.easymdeUser;
+    const title = `Contributor Review ${testSlug(testInfo)}`;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await expect(page.locator('#publish')).toBeVisible();
+    await expect(page.locator('#visibility-radio-password')).toHaveCount(0);
+    await enterImmersiveWithKeyboard(page);
+    await page.locator('.easymde-immersive-workspace__title').fill(title);
+    await page.locator('.easymde-immersive-workspace__source').fill(`# ${title}\n\nReady for editorial review.`);
+    await page.locator('[data-action="publish"]').click();
+    await expect(page.locator('[data-publish-capability="visibility"]')).toBeHidden();
+
+    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await page.locator('[data-action="confirm-publish"]').click();
+    await navigation;
+
+    const postId = await currentPostId(page);
+    expect(runWp(['post', 'get', String(postId), '--field=post_status'])).toBe('pending');
   });
 
   test('does not scroll a stale preview heading while the current Markdown is rendering', async ({ page }, testInfo) => {

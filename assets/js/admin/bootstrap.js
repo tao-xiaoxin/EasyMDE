@@ -130,7 +130,7 @@
 
         return {
             capabilities: capabilities,
-            ok: capabilities.visibility && expectedControlsPresent && !!doc.querySelector('#publish')
+            ok: expectedControlsPresent && !!doc.querySelector('#publish')
         };
     }
 
@@ -2125,7 +2125,10 @@
                         showFlash(context.flash, 'error', getString('publishVisibilityUnavailable'));
                         return false;
                     }
-                    if (!applyNativePublishVisibility(draft, document)) {
+                    if (
+                        preflight.capabilities.visibility
+                        && !applyNativePublishVisibility(draft, document)
+                    ) {
                         showFlash(context.flash, 'error', getString('publishVisibilityUnavailable'));
                         return false;
                     }
@@ -2148,8 +2151,10 @@
                         $('#_thumbnail_id').val(featuredId).trigger('change');
                     }
 
-                    $('#visibility-radio-' + draft.visibility).trigger('change');
-                    $('#visibility .save-post-visibility').trigger('click');
+                    if (preflight.capabilities.visibility) {
+                        $('#visibility-radio-' + draft.visibility).trigger('change');
+                        $('#visibility .save-post-visibility').trigger('click');
+                    }
 
                     sessionStorage = getSessionStorage();
                     if (draft.openPreview && sessionStorage) {

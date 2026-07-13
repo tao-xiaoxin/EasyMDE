@@ -433,10 +433,6 @@ msgstr "编辑器操作"
 msgid "Editor settings"
 msgstr "编辑器设置"
 
-#: templates/admin/settings-page.php:67
-msgid "Enable browser spellcheck in the Markdown editor"
-msgstr "在 Markdown 编辑器中启用浏览器拼写检查"
-
 #: src/Admin/AdminAssets.php:368
 msgid "Enter a demo question..."
 msgstr "输入演示问题..."
@@ -1465,12 +1461,6 @@ msgstr "使用第一张本地图片"
 #: templates/admin/settings-page.php:77
 msgid "Use the current Typora-inspired default by leaving the field blank."
 msgstr "留空即可继续使用当前 Typora 风格默认值。"
-
-#: templates/admin/settings-page.php:69
-msgid ""
-"Uses the browser spellchecker only; saved Markdown and rendered HTML stay "
-"unchanged."
-msgstr "仅使用浏览器拼写检查；保存的 Markdown 和渲染后的 HTML 保持不变。"
 
 #: src/Theme/CodeThemeRegistry.php:20
 msgid "VS2015"

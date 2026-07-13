@@ -266,6 +266,29 @@ test('gettext catalog files are current and contain real zh_CN translations', ()
   assert.match(result.stdout, /msgid "Shortcut settings"\nmsgstr "快捷键设置"/);
 });
 
+test('removed browser spellcheck setting is absent from runtime docs and catalogs', () => {
+  const files = [
+    'src/Admin/SettingsPage.php',
+    'src/Admin/EditorScreen.php',
+    'src/Support/Options.php',
+    'templates/admin/settings-page.php',
+    'templates/admin/editor-shell.php',
+    'README.md',
+    'README.zh-CN.md',
+    'readme.txt',
+    'docs/USER_GUIDE.md',
+    'languages/easymde.pot',
+    'languages/easymde-zh_CN.po'
+  ];
+  const text = files.map((file) => readFileSync(join(repoRoot, file), 'utf8')).join('\n');
+
+  assert.doesNotMatch(text, /spellcheck_enabled/);
+  assert.doesNotMatch(text, /Enable browser spellcheck in the Markdown editor/);
+  assert.doesNotMatch(text, /Optional browser spellcheck/i);
+  assert.doesNotMatch(text, /Uses the browser spellchecker only/i);
+  assert.doesNotMatch(text, /浏览器拼写检查/);
+});
+
 test('POT generation preserves UTF-8 message identifiers', () => {
   const root = makeTempRoot();
 

@@ -84,10 +84,9 @@ final class SettingsPage {
 		$current   = $this->get_editor_settings();
 		$registry  = $this->toolbar_registry->get_command_registry();
 		$sanitized = array(
-			'version'            => $this->options->editor_settings_version(),
-			'toolbar_layout'     => 'hybrid-icons',
-			'spellcheck_enabled' => $this->sanitize_checkbox_value( isset( $input['spellcheck_enabled'] ) ? $input['spellcheck_enabled'] : null ),
-			'shortcuts'          => $this->get_default_shortcuts(),
+			'version'        => $this->options->editor_settings_version(),
+			'toolbar_layout' => 'hybrid-icons',
+			'shortcuts'      => $this->get_default_shortcuts(),
 		);
 		$errors    = array();
 		$seen      = array(
@@ -160,10 +159,9 @@ final class SettingsPage {
 
 	public function get_editor_settings() {
 		$defaults = array(
-			'version'            => $this->options->editor_settings_version(),
-			'toolbar_layout'     => 'hybrid-icons',
-			'spellcheck_enabled' => 0,
-			'shortcuts'          => $this->get_default_shortcuts(),
+			'version'        => $this->options->editor_settings_version(),
+			'toolbar_layout' => 'hybrid-icons',
+			'shortcuts'      => $this->get_default_shortcuts(),
 		);
 		$stored   = $this->options->get_editor_settings();
 		if ( ! is_array( $stored ) ) {
@@ -179,8 +177,6 @@ final class SettingsPage {
 		if ( ! empty( $stored['toolbar_layout'] ) && 'hybrid-icons' === $stored['toolbar_layout'] ) {
 			$settings['toolbar_layout'] = 'hybrid-icons';
 		}
-
-		$settings['spellcheck_enabled'] = $this->options->is_editor_spellcheck_enabled() ? 1 : 0;
 
 		if ( ! empty( $stored['shortcuts'] ) && is_array( $stored['shortcuts'] ) ) {
 			foreach ( $this->toolbar_registry->get_command_registry() as $command_id => $command ) {
@@ -228,10 +224,6 @@ final class SettingsPage {
 		}
 
 		return $shortcuts;
-	}
-
-	private function sanitize_checkbox_value( $value ) {
-		return true === $value || 1 === $value || '1' === (string) $value ? 1 : 0;
 	}
 
 	private function get_platform_label( $platform ) {

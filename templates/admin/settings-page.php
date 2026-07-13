@@ -50,28 +50,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 		<input type="hidden" name="<?php echo esc_attr( $context['option_key'] ); ?>[toolbar_layout]" value="hybrid-icons">
 		<input type="hidden" name="<?php echo esc_attr( $context['option_key'] ); ?>[version]" value="<?php echo esc_attr( $context['settings_version'] ); ?>">
 
-		<h2><?php esc_html_e( 'Writing settings', 'easymde' ); ?></h2>
-		<table class="form-table" role="presentation">
-			<tbody>
-				<tr>
-					<th scope="row"><?php esc_html_e( 'Markdown editor', 'easymde' ); ?></th>
-					<td>
-						<label for="easymde-spellcheck-enabled">
-							<input
-								id="easymde-spellcheck-enabled"
-								type="checkbox"
-								name="<?php echo esc_attr( $context['option_key'] ); ?>[spellcheck_enabled]"
-								value="1"
-								<?php checked( ! empty( $context['settings']['spellcheck_enabled'] ) ); ?>
-							>
-							<?php esc_html_e( 'Enable browser spellcheck in the Markdown editor', 'easymde' ); ?>
-						</label>
-						<p class="description"><?php esc_html_e( 'Uses the browser spellchecker only; saved Markdown and rendered HTML stay unchanged.', 'easymde' ); ?></p>
-					</td>
-				</tr>
-			</tbody>
-		</table>
-
 		<h2><?php esc_html_e( 'Shortcut settings', 'easymde' ); ?></h2>
 		<p><?php esc_html_e( 'Typora-inspired defaults are active unless overridden below.', 'easymde' ); ?></p>
 		<p class="description"><?php esc_html_e( 'Use the current Typora-inspired default by leaving the field blank.', 'easymde' ); ?></p>

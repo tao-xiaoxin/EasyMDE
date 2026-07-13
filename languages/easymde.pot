@@ -27,7 +27,7 @@ msgstr ""
 msgid "Start writing Markdown to preview the article."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:341 templates/admin/editor-shell.php:22
+#: src/Admin/AdminAssets.php:341 templates/admin/editor-shell.php:21
 msgid "Rendering preview..."
 msgstr ""
 
@@ -87,7 +87,7 @@ msgstr ""
 msgid "Split mode"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:356 templates/admin/editor-shell.php:48
+#: src/Admin/AdminAssets.php:356 templates/admin/editor-shell.php:47
 msgid "Preview"
 msgstr ""
 
@@ -588,7 +588,7 @@ msgstr ""
 msgid "Close"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:481 templates/admin/editor-shell.php:41
+#: src/Admin/AdminAssets.php:481 templates/admin/editor-shell.php:40
 msgid "Markdown toolbar"
 msgstr ""
 
@@ -1092,7 +1092,7 @@ msgstr ""
 msgid "EasyMDE renderer unavailable"
 msgstr ""
 
-#: src/Admin/EditorScreen.php:81
+#: src/Admin/EditorScreen.php:76
 msgid ""
 "EasyMDE requires Composer dependencies before Markdown can be rendered or "
 "saved. Run composer install for development or include vendor/ in release "
@@ -1109,7 +1109,7 @@ msgid "EasyMDE"
 msgstr ""
 
 #. translators: 1: toolbar command label, 2: platform label.
-#: src/Admin/SettingsPage.php:115
+#: src/Admin/SettingsPage.php:114
 #, php-format
 msgid ""
 "Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or "
@@ -1117,16 +1117,16 @@ msgid ""
 msgstr ""
 
 #. translators: 1: first toolbar command label, 2: second toolbar command label, 3: shortcut, 4: platform label.
-#: src/Admin/SettingsPage.php:129
+#: src/Admin/SettingsPage.php:128
 #, php-format
 msgid "Shortcut conflict: %1$s and %2$s both use %3$s on %4$s."
 msgstr ""
 
-#: src/Admin/SettingsPage.php:238 templates/admin/settings-page.php:84
+#: src/Admin/SettingsPage.php:230 templates/admin/settings-page.php:62
 msgid "macOS"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:238 templates/admin/settings-page.php:83
+#: src/Admin/SettingsPage.php:230 templates/admin/settings-page.php:61
 msgid "Windows / Linux"
 msgstr ""
 
@@ -1503,11 +1503,11 @@ msgctxt "serif font fallback option"
 msgid "No"
 msgstr ""
 
-#: templates/admin/editor-shell.php:44
+#: templates/admin/editor-shell.php:43
 msgid "Markdown"
 msgstr ""
 
-#: templates/admin/editor-shell.php:61
+#: templates/admin/editor-shell.php:60
 msgid "Output actions"
 msgstr ""
 
@@ -1560,41 +1560,23 @@ msgid "Typora-inspired shortcuts"
 msgstr ""
 
 #: templates/admin/settings-page.php:53
-msgid "Writing settings"
-msgstr ""
-
-#: templates/admin/settings-page.php:57
-msgid "Markdown editor"
-msgstr ""
-
-#: templates/admin/settings-page.php:67
-msgid "Enable browser spellcheck in the Markdown editor"
-msgstr ""
-
-#: templates/admin/settings-page.php:69
-msgid ""
-"Uses the browser spellchecker only; saved Markdown and rendered HTML stay "
-"unchanged."
-msgstr ""
-
-#: templates/admin/settings-page.php:75
 msgid "Shortcut settings"
 msgstr ""
 
-#: templates/admin/settings-page.php:76
+#: templates/admin/settings-page.php:54
 msgid "Typora-inspired defaults are active unless overridden below."
 msgstr ""
 
-#: templates/admin/settings-page.php:77
+#: templates/admin/settings-page.php:55
 msgid "Use the current Typora-inspired default by leaving the field blank."
 msgstr ""
 
-#: templates/admin/settings-page.php:82
+#: templates/admin/settings-page.php:60
 msgid "Command"
 msgstr ""
 
 #. translators: %s: default keyboard shortcut.
-#: templates/admin/settings-page.php:115 templates/admin/settings-page.php:129
+#: templates/admin/settings-page.php:93 templates/admin/settings-page.php:107
 #, php-format
 msgid "Default: %s"
 msgstr ""

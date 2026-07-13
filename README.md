@@ -52,7 +52,6 @@ EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_con
 - Scroll synchronization between source and preview panes.
 - Compact icon toolbar for common Markdown actions.
 - Typora-inspired keyboard shortcuts with site-wide Windows/Linux and macOS overrides.
-- Optional browser spellcheck for the Markdown source editor.
 - WordPress media library image insertion, plus local clipboard paste and drag-and-drop image upload.
 - Browser local draft recovery and an isolated full-screen article workspace.
 - The normal WordPress edit screen remains unchanged until the author explicitly enters immersive writing.

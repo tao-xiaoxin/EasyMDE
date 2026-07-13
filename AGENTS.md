@@ -27,7 +27,7 @@ Do not assume the repository name requires use of the EasyMDE JavaScript library
 * Do not bulk-migrate every post automatically.
 * Use lazy migration: preserve legacy data on read and write new fields only during the next legitimate save.
 * Do not require remote CDN assets for the editor, preview, Mermaid, KaTeX, or syntax highlighting.
-* The existing npm workflow is limited to local vendor asset preparation, Node and Playwright tests, i18n, third-party notices, and release or source packaging. Extending those scripts for those purposes is allowed when required.
+* The existing npm workflow is limited to local vendor asset preparation, Node and Playwright tests, i18n, third-party notices, and release or source packaging. Existing scripts may be extended for these purposes when required.
 * Do not introduce React, Gutenberg block editor rewrites, Vite, Webpack, or another application framework, bundler, or build architecture unless the task explicitly requires it.
 
 ---
@@ -156,7 +156,6 @@ Rules:
 * Register article and code themes through explicit registries.
 * Theme entries must identify `id`, translated label, asset path, and origin.
 * Keep extension points through:
-
   * `easymde_article_themes`
   * `easymde_code_themes`
 * Frontend pages should load only resources needed by the current post.
@@ -174,7 +173,6 @@ Always use WordPress APIs for hooks, assets, metadata, capabilities, nonces, RES
 
 * For `$_POST` and `$_GET`, use `wp_unslash()` before sanitizing.
 * Use context-appropriate escaping:
-
   * `esc_html()`
   * `esc_attr()`
   * `esc_url()`
@@ -194,11 +192,9 @@ Always use WordPress APIs for hooks, assets, metadata, capabilities, nonces, RES
 
 * Use the fixed REST namespace `easymde/v1`. REST namespaces follow WordPress's `vendor/version` form; do not rewrite it as `easymde_v1` or `easymde-v1`.
 * Requests with `post_id` must verify:
-
   ```php
   current_user_can( 'edit_post', $post_id )
   ```
-
 * A preview request without `post_id` may allow users with `edit_posts`.
 * Custom CSS endpoints may only access the current user's custom CSS library. That library is stored in the current user's WordPress user meta; it is not a separate shared store.
 * Validate and sanitize all request arguments.
@@ -357,11 +353,9 @@ For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or rel
 * HTML, attributes, URLs, textarea content, and inline styles use context-appropriate escaping.
 * State-changing operations verify both nonce and the correct capability.
 * Requests with `post_id` verify access to that specific post with:
-
   ```php
   current_user_can( 'edit_post', $post_id )
   ```
-
 * Custom CSS endpoints can only access the current user's custom CSS library stored in that user's WordPress user meta and require `unfiltered_html` for full CSS editing.
 * REST errors use meaningful `WP_Error` responses and appropriate HTTP status codes.
 * New admin actions do not affect unrelated posts, users, settings, or admin pages.
@@ -384,12 +378,10 @@ For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or rel
 * Restoring a revision regenerates consistent rendered HTML without recursion or stale state.
 * Legacy posts with existing `_easymde_markdown` remain detectable with `metadata_exists()`.
 * Existing public compatibility APIs remain functional:
-
   ```php
   EasyMDE_Plugin::register_toolbar_button()
   EasyMDE_Plugin::register_shortcode_helper()
   ```
-
 * No automatic bulk migration, destructive rewrite, or silent metadata rename is introduced.
 * Existing theme choices, code themes, custom CSS snapshots, font settings, shortcuts, and user defaults remain readable unless an explicit migration path is included.
 
@@ -443,7 +435,6 @@ Do not combine unrelated problems into one finding.
 * Do not run `git add .`, `git add -A`, or `git commit -a`.
 * Stage files explicitly by path only after reviewing them.
 * Before each commit, inspect:
-
   ```bash
   git status --short
   git diff
@@ -451,7 +442,6 @@ Do not combine unrelated problems into one finding.
   ```
 * Do not stage pre-existing changes made by another person or another task.
 * Do not stage local-only, generated, temporary, or machine-specific files unless the task explicitly requires release packaging:
-
   * `.env`
   * credentials, tokens, cookies, or local configuration
   * `node_modules/`

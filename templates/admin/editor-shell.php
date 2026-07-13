@@ -12,7 +12,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 $easymde_editor_post                 = $context['post'];
 $easymde_theme_state                 = $context['theme_state'];
 $easymde_markdown_fingerprint        = isset( $context['markdown_fingerprint'] ) ? (string) $context['markdown_fingerprint'] : '';
-$easymde_spellcheck                  = ! empty( $context['spellcheck_enabled'] ) ? 'true' : 'false';
 $easymde_initial_preview_ready       = ! empty( $context['initial_preview_ready'] ) ? '1' : '0';
 $easymde_initial_preview_pending     = ! empty( $context['initial_preview_pending'] );
 $easymde_initial_preview_provisional = ! empty( $context['initial_preview_provisional'] ) ? '1' : '0';
@@ -42,7 +41,7 @@ if ( $easymde_initial_preview_pending ) {
 	<div class="easymde-workspace">
 		<section class="easymde-pane easymde-pane-source">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>
-			<textarea id="easymde-source" name="easymde_markdown" class="easymde-source" spellcheck="<?php echo esc_attr( $easymde_spellcheck ); ?>"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
+			<textarea id="easymde-source" name="easymde_markdown" class="easymde-source" spellcheck="false"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
 		</section>
 		<section class="easymde-pane easymde-pane-preview">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Preview', 'easymde' ); ?></header>

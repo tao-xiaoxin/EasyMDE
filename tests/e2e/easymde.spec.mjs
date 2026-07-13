@@ -279,6 +279,20 @@ async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
   await expect(page.locator('#easymde-preview')).toContainText(expectedText);
 }
 
+function readSerializedOption(optionName) {
+  return runWp([
+    'eval',
+    `echo base64_encode(serialize(get_option('${optionName}', null)));`
+  ]);
+}
+
+function restoreSerializedOption(optionName, serializedValue) {
+  runWp([
+    'eval',
+    `$value = unserialize(base64_decode('${serializedValue}')); null === $value ? delete_option('${optionName}') : update_option('${optionName}', $value);`
+  ]);
+}
+
 test.describe('EasyMDE editor workflows', () => {
   test.beforeEach(async ({}, testInfo) => {
     const slug = testSlug(testInfo);
@@ -435,6 +449,33 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('#title')).toHaveValue(`${title} Second line`);
     await expect(page.locator('#easymde-source')).toHaveValue(markdown);
     await expect(page.locator('#easymde-preview')).toContainText('Workspace body with real preview.');
+  });
+
+  test('ignores legacy browser spellcheck settings without rewriting them', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const optionName = 'easymde_editor_settings';
+    const originalOption = readSerializedOption(optionName);
+
+    try {
+      runWp([
+        'eval',
+        `update_option('${optionName}', array('version' => '0.1.8', 'toolbar_layout' => 'hybrid-icons', 'spellcheck_enabled' => 1));`
+      ]);
+      const legacyOption = readSerializedOption(optionName);
+
+      await login(page, user);
+      await page.goto('/wp-admin/options-general.php?page=easymde');
+      await expect(page.getByRole('heading', { name: 'EasyMDE', exact: true })).toBeVisible();
+      await expect(page.locator('#easymde-spellcheck-enabled')).toHaveCount(0);
+      await expect(page.locator('.easymde-settings-shortcuts')).toBeVisible();
+      expect(readSerializedOption(optionName)).toBe(legacyOption);
+
+      await openEasyMdeNewPost(page);
+      await expect(page.locator('#easymde-source')).toHaveAttribute('spellcheck', 'false');
+      expect(readSerializedOption(optionName)).toBe(legacyOption);
+    } finally {
+      restoreSerializedOption(optionName, originalOption);
+    }
   });
 
   test('grows compact immersive chrome for long wrapped titles without clipping', async ({ page }, testInfo) => {

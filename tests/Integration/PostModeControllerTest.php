@@ -661,7 +661,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertStringNotContainsString('<script>', $output);
     }
 
-    public function test_spellcheck_editor_setting_controls_source_textarea_attribute()
+    public function test_legacy_spellcheck_setting_is_ignored_and_source_remains_disabled()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -672,12 +672,10 @@ final class PostModeControllerTest extends WP_UnitTestCase
             )
         );
 
-        update_option(
-            Options::EDITOR_SETTINGS,
-            array(
-                'spellcheck_enabled' => 1,
-            )
+        $stored = array(
+            'spellcheck_enabled' => 1,
         );
+        update_option(Options::EDITOR_SETTINGS, $stored);
 
         wp_set_current_user($user_id);
 
@@ -689,13 +687,15 @@ final class PostModeControllerTest extends WP_UnitTestCase
 
         $post_document = new PostDocument();
         $controller = new PostModeController($post_document);
-        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository(), new Options());
+        $screen = new EditorScreen($post_document, $controller, $this->theme_state_repository());
 
         ob_start();
         $screen->render_editor_shell(get_post($post_id));
         $output = ob_get_clean();
 
-        $this->assertStringContainsString('spellcheck="true"', $output);
+        $this->assertStringContainsString('spellcheck="false"', $output);
+        $this->assertStringNotContainsString('spellcheck="true"', $output);
+        $this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
     }
 
     public function test_post_list_edit_link_and_direct_edit_entry_use_same_editor_rule()

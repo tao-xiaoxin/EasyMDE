@@ -5,7 +5,6 @@ namespace EasyMDE\Admin;
 use EasyMDE\Content\MarkdownFeatureDetector;
 use EasyMDE\Content\MarkdownRenderer;
 use EasyMDE\Content\PostDocument;
-use EasyMDE\Support\Options;
 use EasyMDE\Theme\ThemeStateRepository;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -16,7 +15,6 @@ final class EditorScreen {
 
 	private $post_document;
 	private $post_mode_controller;
-	private $options;
 	private $theme_state_repository;
 	private $feature_detector;
 
@@ -24,12 +22,10 @@ final class EditorScreen {
 		PostDocument $post_document,
 		PostModeController $post_mode_controller,
 		ThemeStateRepository $theme_state_repository,
-		?Options $options = null,
 		?MarkdownFeatureDetector $feature_detector = null
 	) {
 		$this->post_document          = $post_document;
 		$this->post_mode_controller   = $post_mode_controller;
-		$this->options                = $options ? $options : new Options();
 		$this->theme_state_repository = $theme_state_repository;
 		$this->feature_detector       = $feature_detector ? $feature_detector : new MarkdownFeatureDetector();
 	}
@@ -48,7 +44,6 @@ final class EditorScreen {
 			'post'                        => $post,
 			'markdown'                    => $this->post_document->get_markdown( $post ),
 			'theme_state'                 => $this->theme_state_repository->get_theme_state( $post->ID ),
-			'spellcheck_enabled'          => $this->options->is_editor_spellcheck_enabled(),
 			'content_classes'             => '',
 			'content_style'               => '',
 			'initial_preview'             => '',

@@ -181,6 +181,13 @@ async function parkPointerAfterNavigation(page) {
   }
 }
 
+async function animationFrameAdvances(page) {
+  return page.evaluate(() => Promise.race([
+    new Promise((resolve) => requestAnimationFrame(() => resolve(true))),
+    new Promise((resolve) => setTimeout(() => resolve(false), 1000))
+  ]));
+}
+
 async function activateWithKeyboard(locator) {
   await expect(locator).toBeVisible();
   await locator.focus();
@@ -1150,6 +1157,7 @@ test.describe('EasyMDE editor workflows', () => {
     await parkPointerAfterNavigation(page);
     await expect(page.locator('#message, .notice-success')).toBeVisible();
     expect(postMetaValue(postId, '_thumbnail_id')).toBe(thumbnailBefore);
+    expect(await animationFrameAdvances(page)).toBe(true);
 
     await enterImmersiveWithKeyboard(page);
     await page.locator('[data-action="publish"]').click();

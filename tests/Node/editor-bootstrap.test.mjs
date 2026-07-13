@@ -427,6 +427,7 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.readNativeCategoryOptions, 'function', 'bootstrap harness should expose native category hierarchy reads');
   assert.equal(typeof context.window.EasyMDETestHooks.readNativePublishVisibility, 'function', 'bootstrap harness should expose native visibility reads');
   assert.equal(typeof context.window.EasyMDETestHooks.applyNativePublishVisibility, 'function', 'bootstrap harness should expose native visibility writes');
+  assert.equal(typeof context.window.EasyMDETestHooks.skipNextCrossDocumentViewTransition, 'function', 'bootstrap harness should expose immersive navigation transition guards');
   assert.equal(typeof context.window.EasyMDETestHooks.executeCommand, 'function', 'bootstrap harness should expose toolbar command execution');
 
   return {
@@ -695,11 +696,53 @@ test('native publish applies all fallible visibility state before mutating artic
   const publishEnd = source.indexOf('\n                }', publishStart);
   const publishSource = source.slice(publishStart, publishEnd);
   const visibilityAt = publishSource.indexOf('applyNativePublishVisibility(draft, document)');
+  const transitionAt = publishSource.indexOf('skipNextCrossDocumentViewTransition()');
+  const submitAt = publishSource.indexOf("$('#publish').trigger('click')");
 
   assert.ok(visibilityAt > publishSource.indexOf('if (!preflight.ok)'));
   assert.ok(visibilityAt < publishSource.indexOf("$('#tax-input-post_tag').val"));
   assert.ok(visibilityAt < publishSource.indexOf("$('#excerpt').val"));
   assert.ok(visibilityAt < publishSource.indexOf("$('#_thumbnail_id').val"));
+  assert.ok(transitionAt > publishSource.indexOf('sessionStorage = getSessionStorage()'));
+  assert.ok(transitionAt < submitAt, 'transition guard must be registered immediately before native submit');
+});
+
+test('immersive native navigation skips one cross-document transition and cleans up', () => {
+  const listeners = new Map();
+  let removed = 0;
+  let skipped = 0;
+  const { flushTimers, hooks } = loadBootstrap({
+    addEventListener(type, listener) {
+      listeners.set(type, listener);
+    },
+    removeEventListener(type, listener) {
+      if (listeners.get(type) === listener) {
+        listeners.delete(type);
+        removed += 1;
+      }
+    }
+  });
+
+  hooks.skipNextCrossDocumentViewTransition();
+  assert.equal(typeof listeners.get('pageswap'), 'function');
+  hooks.skipNextCrossDocumentViewTransition();
+  assert.equal(removed, 1, 'a repeated submit attempt should replace the prior navigation guard');
+  listeners.get('pageswap')({
+    viewTransition: {
+      skipTransition() {
+        skipped += 1;
+      }
+    }
+  });
+  assert.equal(skipped, 1);
+  assert.equal(listeners.has('pageswap'), false);
+  assert.equal(removed, 2);
+
+  hooks.skipNextCrossDocumentViewTransition();
+  assert.equal(typeof listeners.get('pageswap'), 'function');
+  flushTimers();
+  assert.equal(listeners.has('pageswap'), false, 'guard should not leak into a later unrelated navigation');
+  assert.equal(removed, 3);
 });
 
 test('preview readiness requires the current Markdown signature and an idle preview', () => {

@@ -568,7 +568,7 @@
         );
     }
 
-    function triggerSavePost() {
+    function triggerSavePost(beforeNavigation) {
         var $button = $('#save-post');
 
         if ($button.length && !$button.prop('disabled')) {
@@ -578,11 +578,67 @@
 
         $button = $('#publish');
         if ($button.length && !$button.prop('disabled')) {
+            if (typeof beforeNavigation === 'function') {
+                beforeNavigation();
+            }
             $button.trigger('click');
             return;
         }
 
+        if (typeof beforeNavigation === 'function') {
+            beforeNavigation();
+        }
         $('#post').trigger('submit');
+    }
+
+    var pendingCrossDocumentTransitionCleanup = null;
+
+    function skipNextCrossDocumentViewTransition() {
+        var cleanupTimer = null;
+        var active = true;
+
+        function cleanup() {
+            if (!active) {
+                return;
+            }
+
+            active = false;
+            window.removeEventListener('pageswap', handlePageSwap);
+            if (cleanupTimer !== null) {
+                window.clearTimeout(cleanupTimer);
+                cleanupTimer = null;
+            }
+            if (pendingCrossDocumentTransitionCleanup === cleanup) {
+                pendingCrossDocumentTransitionCleanup = null;
+            }
+        }
+
+        function handlePageSwap(event) {
+            cleanup();
+            if (
+                event
+                && event.viewTransition
+                && typeof event.viewTransition.skipTransition === 'function'
+            ) {
+                event.viewTransition.skipTransition();
+            }
+        }
+
+        if (
+            typeof window.addEventListener !== 'function'
+            || typeof window.removeEventListener !== 'function'
+        ) {
+            return function () {};
+        }
+
+        if (pendingCrossDocumentTransitionCleanup) {
+            pendingCrossDocumentTransitionCleanup();
+        }
+
+        window.addEventListener('pageswap', handlePageSwap);
+        cleanupTimer = window.setTimeout(cleanup, 15000);
+        pendingCrossDocumentTransitionCleanup = cleanup;
+        return cleanup;
     }
 
     var wechatIconPaths = [
@@ -1837,8 +1893,9 @@
                 },
                 performAction: function (action, workspaceContext) {
                     if (action === 'save') {
-                        triggerSavePost();
+                        triggerSavePost(skipNextCrossDocumentViewTransition);
                     } else if (action === 'publish') {
+                        skipNextCrossDocumentViewTransition();
                         $('#publish').trigger('click');
                     } else if (action === 'copy-markdown') {
                         if (window.navigator.clipboard && typeof window.navigator.clipboard.writeText === 'function') {
@@ -2083,6 +2140,7 @@
                             // Preview-after-publish is optional; saving must continue if storage is blocked.
                         }
                     }
+                    skipNextCrossDocumentViewTransition();
                     $('#publish').trigger('click');
                     return true;
                 },
@@ -3290,6 +3348,7 @@
         window.EasyMDETestHooks.readNativeCategoryOptions = readNativeCategoryOptions;
         window.EasyMDETestHooks.readNativePublishVisibility = readNativePublishVisibility;
         window.EasyMDETestHooks.applyNativePublishVisibility = applyNativePublishVisibility;
+        window.EasyMDETestHooks.skipNextCrossDocumentViewTransition = skipNextCrossDocumentViewTransition;
         window.EasyMDETestHooks.getNativePublishCapabilities = getNativePublishCapabilities;
         window.EasyMDETestHooks.preflightNativePublish = preflightNativePublish;
         window.EasyMDETestHooks.getSessionStorage = getSessionStorage;

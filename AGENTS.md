@@ -27,7 +27,8 @@ Do not assume the repository name requires use of the EasyMDE JavaScript library
 * Do not bulk-migrate every post automatically.
 * Use lazy migration: preserve legacy data on read and write new fields only during the next legitimate save.
 * Do not require remote CDN assets for the editor, preview, Mermaid, KaTeX, or syntax highlighting.
-* Do not introduce React, Gutenberg block editor rewrites, Vite, Webpack, or another build system unless the task explicitly requires it.
+* The existing npm workflow is limited to local vendor asset preparation, Node and Playwright tests, i18n, third-party notices, and release or source packaging. Extending those scripts for those purposes is allowed when required.
+* Do not introduce React, Gutenberg block editor rewrites, Vite, Webpack, or another application framework, bundler, or build architecture unless the task explicitly requires it.
 
 ---
 
@@ -160,7 +161,7 @@ Rules:
   * `easymde_code_themes`
 * Frontend pages should load only resources needed by the current post.
 * Do not load Mermaid, KaTeX, Highlight.js, or every theme stylesheet when the post does not require them.
-* Do not load assets from a CDN.
+* Keep all runtime asset registrations local, as required by the product-level no-remote-CDN rule.
 * Do not add a new asset, template, stylesheet, script, or class unless it has a clear runtime, build, test, or documented extension reference.
 
 ---
@@ -191,8 +192,7 @@ Always use WordPress APIs for hooks, assets, metadata, capabilities, nonces, RES
 
 ### REST API
 
-* Use namespace `easymde/v1`.
-
+* Use the fixed REST namespace `easymde/v1`. REST namespaces follow WordPress's `vendor/version` form; do not rewrite it as `easymde_v1` or `easymde-v1`.
 * Requests with `post_id` must verify:
 
   ```php
@@ -200,13 +200,9 @@ Always use WordPress APIs for hooks, assets, metadata, capabilities, nonces, RES
   ```
 
 * A preview request without `post_id` may allow users with `edit_posts`.
-
-* Custom CSS endpoints may only access the current user's user meta.
-
+* Custom CSS endpoints may only access the current user's custom CSS library. That library is stored in the current user's WordPress user meta; it is not a separate shared store.
 * Validate and sanitize all request arguments.
-
 * Limit Markdown preview payload size.
-
 * Return meaningful `WP_Error` objects and appropriate HTTP status codes.
 
 ### Custom CSS
@@ -235,11 +231,13 @@ Always use WordPress APIs for hooks, assets, metadata, capabilities, nonces, RES
 ## Naming and Coding Style
 
 * PHP namespace: `EasyMDE\`.
-* PHP class names: `PascalCase`.
+* New namespaced PHP class names: `PascalCase`.
+* The legacy global `EasyMDE_Plugin` compatibility facade is an intentional naming exception and must not be renamed merely to satisfy the namespaced class rule.
 * PHP source file names match the primary class name.
 * PHP variables and internal array keys: `snake_case`.
 * JavaScript properties may use `camelCase` only at the serialization boundary.
-* WordPress hooks, options, meta keys, nonces, REST namespaces, script handles, and CSS classes must use the `easymde_` or `easymde-` prefix.
+* WordPress hooks, options, meta keys, nonces, script handles, and CSS classes must use the `easymde_` or `easymde-` prefix appropriate to the identifier type.
+* REST routes use the fixed namespace `easymde/v1`; REST namespaces are not underscore- or hyphen-prefixed identifiers.
 * Keep PHP compatible with PHP 7.4.
 * Follow WordPress Coding Standards.
 * Do not add a dependency without checking license compatibility and documenting its purpose.
@@ -255,7 +253,9 @@ EasyMDE_Plugin::register_toolbar_button()
 EasyMDE_Plugin::register_shortcode_helper()
 ```
 
-They may delegate to new registries internally, but existing extension code must not break unexpectedly.
+`EasyMDE_Plugin` is an intentionally retained legacy global compatibility facade that predates the `EasyMDE\` namespace. The modern namespaced `PascalCase` class rule does not apply to this public compatibility name.
+
+These methods may delegate to new registries internally, but do not rename, move, or remove the facade solely for style consistency; existing extension code must not break unexpectedly.
 
 ---
 
@@ -354,21 +354,16 @@ For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or rel
 #### WordPress Input, Output, and Authorization
 
 * Request input from `$_POST`, `$_GET`, and REST is unslashed, validated, and sanitized for its actual data type.
-
 * HTML, attributes, URLs, textarea content, and inline styles use context-appropriate escaping.
-
 * State-changing operations verify both nonce and the correct capability.
-
 * Requests with `post_id` verify access to that specific post with:
 
   ```php
   current_user_can( 'edit_post', $post_id )
   ```
 
-* Custom CSS can only access the current user's library and requires `unfiltered_html` for full CSS editing.
-
+* Custom CSS endpoints can only access the current user's custom CSS library stored in that user's WordPress user meta and require `unfiltered_html` for full CSS editing.
 * REST errors use meaningful `WP_Error` responses and appropriate HTTP status codes.
-
 * New admin actions do not affect unrelated posts, users, settings, or admin pages.
 
 #### Markdown, HTML, DOM, and Editor Safety
@@ -384,15 +379,10 @@ For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or rel
 #### Data Integrity and Compatibility
 
 * `_easymde_markdown` remains the source of truth.
-
 * `post_content` remains compatible rendered output.
-
 * EasyMDE revisions preserve Markdown and appearance metadata.
-
 * Restoring a revision regenerates consistent rendered HTML without recursion or stale state.
-
 * Legacy posts with existing `_easymde_markdown` remain detectable with `metadata_exists()`.
-
 * Existing public compatibility APIs remain functional:
 
   ```php
@@ -401,12 +391,11 @@ For changed PHP, templates, JavaScript, CSS, build scripts, dependencies, or rel
   ```
 
 * No automatic bulk migration, destructive rewrite, or silent metadata rename is introduced.
-
 * Existing theme choices, code themes, custom CSS snapshots, font settings, shortcuts, and user defaults remain readable unless an explicit migration path is included.
 
 #### Assets, Dependencies, Releases, and Privacy
 
-* No remote CDN dependency is introduced.
+* The product-level no-remote-CDN rule remains satisfied.
 * EasyMDE-owned assets remain separate from third-party vendor assets.
 * The current page loads only the article theme, code theme, Mermaid, KaTeX, Highlight.js, and frontend scripts actually required by the current post.
 * New dependencies have a clear purpose, compatible license, and are included in the release process when required at runtime.
@@ -480,7 +469,7 @@ Do not combine unrelated problems into one finding.
 
 ## Testing and Validation
 
-Before finishing a task, run the relevant checks when dependencies and environment are available:
+Before finishing a task, run the relevant checks when dependencies and environment are available. The existing npm scripts support local vendor asset preparation, Node and Playwright tests, i18n, third-party notices, and release or source packaging; using them does not authorize adding a new frontend framework, bundler, or build architecture.
 
 ```bash
 composer validate

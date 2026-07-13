@@ -200,6 +200,7 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/assets/js/admin/image-paste.js'));
     assert.ok(entries.includes('easymde/assets/js/frontend/bootstrap.js'));
     assert.ok(entries.includes('easymde/assets/vendor/mermaid/LICENSE'));
+    assert.ok(entries.includes('easymde/assets/vendor/lucide/LICENSE'));
     assert.ok(entries.includes('easymde/vendor/league/commonmark/runtime/Parser.php'));
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/tests/bootstrap.php')), false);
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/.github/workflows/ci.yml')), false);
@@ -385,6 +386,12 @@ test('release requirements include the Qinghe Zhusha article theme stylesheet', 
   const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
 
   assert.ok(requirements.includes('assets/themes/article/qinghe-zhusha.css'));
+});
+
+test('release requirements include the embedded Lucide icon license', () => {
+  const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
+
+  assert.ok(requirements.includes('assets/vendor/lucide/LICENSE'));
 });
 
 test('release requirements do not include the removed md2html-normal article theme stylesheet', () => {

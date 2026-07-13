@@ -40,6 +40,10 @@ if ( $easymde_initial_preview_pending ) {
 	<input type="hidden" id="easymde-serif-font-field" name="easymde_serif_font" value="<?php echo esc_attr( $easymde_theme_state['serifFont'] ); ?>">
 	<div id="easymde-toolbar" class="easymde-toolbar" role="toolbar" aria-label="<?php esc_attr_e( 'Markdown toolbar', 'easymde' ); ?>"></div>
 	<div class="easymde-workspace">
+		<section class="easymde-pane easymde-pane-source">
+			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>
+			<textarea id="easymde-source" name="easymde_markdown" class="easymde-source" spellcheck="<?php echo esc_attr( $easymde_spellcheck ); ?>"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
+		</section>
 		<section class="easymde-pane easymde-pane-preview">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Preview', 'easymde' ); ?></header>
 			<article
@@ -52,11 +56,7 @@ if ( $easymde_initial_preview_pending ) {
 				data-easymde-preview-refreshing="<?php echo esc_attr( $easymde_preview_refreshing ); ?>"
 				aria-busy="<?php echo esc_attr( $easymde_preview_busy ); ?>"
 				aria-live="polite"
-			><?php echo $easymde_initial_preview; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Already sanitized before reaching the template. ?></article>
-		</section>
-		<section class="easymde-pane easymde-pane-source">
-			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>
-			<textarea id="easymde-source" name="easymde_markdown" class="easymde-source" spellcheck="<?php echo esc_attr( $easymde_spellcheck ); ?>"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
+				><?php echo $easymde_initial_preview; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Already sanitized before reaching the template. ?></article>
 		</section>
 		<aside id="easymde-side-actions" class="easymde-side-actions" aria-label="<?php esc_attr_e( 'Output actions', 'easymde' ); ?>"></aside>
 	</div>

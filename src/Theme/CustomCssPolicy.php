@@ -19,17 +19,35 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class CustomCssPolicy {
 
-	const MAX_BYTES = 30000;
-	const SCOPE     = '.easymde-rendered-content.easymde-custom-css-active';
+	const MAX_BYTES     = 30000;
+	const SCOPE         = '.easymde-rendered-content.easymde-custom-css-active';
+	const PREVIEW_SCOPE = '.easymde-immersive-workspace__custom-css-preview-content';
 
 	public function normalize_for_storage( $css ) {
-		return $this->render_css( (string) $css, false );
+		return $this->render_css( (string) $css, '' );
 	}
 
 	public function scope( $css ) {
-		$scoped = $this->render_css( (string) $css, true );
+		$scoped = $this->render_css( (string) $css, self::SCOPE );
 
 		return is_wp_error( $scoped ) ? '' : $scoped;
+	}
+
+	public function prepare_preview( $css ) {
+		$normalized = $this->normalize_for_storage( $css );
+		if ( is_wp_error( $normalized ) ) {
+			return $normalized;
+		}
+
+		$scoped = $this->render_css( $normalized, self::PREVIEW_SCOPE );
+		if ( is_wp_error( $scoped ) ) {
+			return $scoped;
+		}
+
+		return array(
+			'css'       => $normalized,
+			'scopedCss' => $scoped,
+		);
 	}
 
 	public function validate( $css ) {
@@ -38,7 +56,7 @@ final class CustomCssPolicy {
 		return is_wp_error( $result ) ? $result : true;
 	}
 
-	private function render_css( $css, $scope_selectors ) {
+	private function render_css( $css, $scope ) {
 		$css = (string) $css;
 		if ( strlen( $css ) > self::MAX_BYTES ) {
 			return new WP_Error(
@@ -71,8 +89,8 @@ final class CustomCssPolicy {
 			$document = $parser->parse();
 			$this->assert_safe_node( $document );
 
-			if ( $scope_selectors ) {
-				$this->scope_node( $document, false );
+			if ( '' !== $scope ) {
+				$this->scope_node( $document, false, $scope );
 			}
 
 			return trim( $document->render( OutputFormat::create() ) );
@@ -162,7 +180,7 @@ final class CustomCssPolicy {
 		}
 	}
 
-	private function scope_node( $node, $inside_keyframes ) {
+	private function scope_node( $node, $inside_keyframes, $scope ) {
 		$is_keyframe = $inside_keyframes || $node instanceof KeyFrame;
 
 		if ( $node instanceof DeclarationBlock && ! $is_keyframe ) {
@@ -173,14 +191,14 @@ final class CustomCssPolicy {
 					continue;
 				}
 
-				if ( 0 === strpos( $selector, self::SCOPE ) ) {
+				if ( $this->selector_starts_with_scope( $selector, $scope ) ) {
 					$scoped_selectors[] = $selector;
 				} elseif ( ':root' === $selector ) {
-					$scoped_selectors[] = self::SCOPE;
+					$scoped_selectors[] = $scope;
 				} elseif ( 0 === strpos( $selector, ':root ' ) ) {
-					$scoped_selectors[] = self::SCOPE . substr( $selector, 5 );
+					$scoped_selectors[] = $scope . substr( $selector, 5 );
 				} else {
-					$scoped_selectors[] = self::SCOPE . ' ' . $selector;
+					$scoped_selectors[] = $scope . ' ' . $selector;
 				}
 			}
 
@@ -191,9 +209,23 @@ final class CustomCssPolicy {
 
 		if ( $node instanceof CSSList ) {
 			foreach ( $node->getContents() as $child ) {
-				$this->scope_node( $child, $is_keyframe );
+				$this->scope_node( $child, $is_keyframe, $scope );
 			}
 		}
+	}
+
+	private function selector_starts_with_scope( $selector, $scope ) {
+		if ( $selector === $scope ) {
+			return true;
+		}
+
+		if ( 0 !== strpos( $selector, $scope ) ) {
+			return false;
+		}
+
+		$next = substr( $selector, strlen( $scope ), 1 );
+
+		return false !== strpos( " \t\n\r\f>+~.#:[", $next );
 	}
 
 	private function blocked_error( $blocked ) {

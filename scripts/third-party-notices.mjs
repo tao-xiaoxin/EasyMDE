@@ -37,6 +37,42 @@ const frontendAssets = [
     assetPaths: 'assets/vendor/mermaid/mermaid.min.js',
     purpose: 'Local diagram rendering script.',
     noticeLocation: 'assets/vendor/mermaid/LICENSE'
+  },
+  {
+    displayName: 'Inter Latin variable font',
+    version: '4.1',
+    source: 'https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7W0Q5nw.woff2',
+    license: 'OFL-1.1',
+    assetPaths: 'assets/vendor/inter/inter-latin-variable.woff2',
+    purpose: 'Theme-isolated typography for the immersive writing workspace.',
+    noticeLocation: 'assets/vendor/inter/LICENSE'
+  },
+  {
+    displayName: 'JetBrains Mono Latin variable font',
+    version: '2.304',
+    source: 'https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPxDcwgknk-4.woff2',
+    license: 'OFL-1.1',
+    assetPaths: 'assets/vendor/jetbrains-mono/jetbrains-mono-latin-variable.woff2',
+    purpose: 'Theme-isolated source and statistics typography for the immersive writing workspace.',
+    noticeLocation: 'assets/vendor/jetbrains-mono/LICENSE'
+  },
+  {
+    displayName: 'Lora Latin variable font',
+    version: 'Google Fonts v37',
+    source: 'https://fonts.gstatic.com/s/lora/v37/',
+    license: 'OFL-1.1',
+    assetPaths: 'assets/vendor/lora/lora-latin-variable.woff2, assets/vendor/lora/lora-latin-italic-variable.woff2',
+    purpose: 'Local serif typography for the immersive revision preview.',
+    noticeLocation: 'assets/vendor/lora/LICENSE'
+  },
+  {
+    displayName: 'Lucide icon paths',
+    version: '0.487.0',
+    source: 'https://github.com/lucide-icons/lucide/tree/0.487.0',
+    license: 'ISC',
+    assetPaths: 'assets/js/admin/immersive-workspace.js',
+    purpose: 'Locally embedded SVG path data for the isolated immersive workspace controls.',
+    noticeLocation: 'assets/vendor/lucide/LICENSE'
   }
 ];
 
@@ -80,15 +116,19 @@ export function frontendRows(root = defaultRoot) {
   const packages = lock.packages || {};
 
   return frontendAssets.map((asset) => {
-    const metadata = packages[`node_modules/${asset.packageName}`];
-    if (!metadata) {
-      throw new Error(`Missing ${asset.packageName} in package-lock.json.`);
+    let metadata = asset;
+
+    if (asset.packageName) {
+      metadata = packages[`node_modules/${asset.packageName}`];
+      if (!metadata) {
+        throw new Error(`Missing ${asset.packageName} in package-lock.json.`);
+      }
     }
 
     return {
       name: asset.displayName,
       version: metadata.version,
-      source: metadata.resolved || 'See package-lock.json',
+      source: metadata.resolved || metadata.source || 'See package-lock.json',
       license: licenseText(metadata.license),
       purpose: asset.purpose,
       bundled: `Yes, copied to ${asset.assetPaths}`,
@@ -123,7 +163,7 @@ export function renderNotices(root = defaultRoot) {
     '',
     table(frontendRows(root)),
     '',
-    'Copied frontend assets are committed under `assets/vendor/` so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, and Mermaid license files are kept with their copied runtime assets.'
+    'Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, Mermaid, Inter, JetBrains Mono, Lora, and the embedded Lucide icon paths retain license files under `assets/vendor/`.'
   ].join('\n')}\n`;
 }
 

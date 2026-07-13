@@ -1,6 +1,8 @@
 <?php
 
 use EasyMDE\Support\Capabilities;
+use EasyMDE\Content\PostDocument;
+use EasyMDE\Theme\CustomCssPolicy;
 
 final class RestPermissionsTest extends WP_UnitTestCase
 {
@@ -151,6 +153,36 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $this->assertSame(403, $result->get_error_data()['status']);
     }
 
+    public function test_custom_css_preview_requires_unfiltered_html()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'author'));
+        wp_set_current_user($user_id);
+
+        $request = new WP_REST_Request('POST', '/easymde/v1/custom-css/preview');
+        $request->set_body_params(array('css' => 'h2 { color: red; }'));
+
+        $this->assertSame(403, rest_do_request($request)->get_status());
+    }
+
+    public function test_custom_css_preview_scopes_css_without_writing_the_user_library()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($user_id);
+
+        $options = new WP_REST_Request('GET', '/easymde/v1/theme-options');
+        $before = rest_do_request($options)->get_data()['customCss'];
+
+        $request = new WP_REST_Request('POST', '/easymde/v1/custom-css/preview');
+        $request->set_body_params(array('css' => 'h2 { color: red; }'));
+        $response = rest_do_request($request);
+        $data = $response->get_data();
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame('h2 {color: red;}', $data['css']);
+        $this->assertStringContainsString(CustomCssPolicy::PREVIEW_SCOPE . ' h2', $data['scopedCss']);
+        $this->assertSame($before, rest_do_request($options)->get_data()['customCss']);
+    }
+
     public function test_custom_css_create_update_and_delete_require_unfiltered_html()
     {
         $user_id = self::factory()->user->create(array('role' => 'author'));
@@ -219,5 +251,124 @@ final class RestPermissionsTest extends WP_UnitTestCase
 
         $this->assertCount(1, $owner_options_response->get_data()['customCss']);
         $this->assertSame('Owner Style', $owner_options_response->get_data()['customCss'][0]['name']);
+    }
+
+    public function test_revision_history_requires_access_to_the_specific_post()
+    {
+        $owner_id = self::factory()->user->create(array('role' => 'editor'));
+        $viewer_id = self::factory()->user->create(array('role' => 'author'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_author' => $owner_id,
+                'post_status' => 'draft',
+            )
+        );
+
+        wp_set_current_user($viewer_id);
+
+        $request = new WP_REST_Request('GET', '/easymde/v1/posts/' . $post_id . '/revisions');
+        $response = rest_do_request($request);
+
+        $this->assertSame(403, $response->get_status());
+        $this->assertSame('easymde_rest_cannot_edit_post', $response->as_error()->get_error_code());
+    }
+
+    public function test_revision_history_reads_authoritative_markdown_without_writing()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'administrator'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_author' => $user_id,
+                'post_status' => 'draft',
+                'post_title' => 'Current title',
+                'post_content' => '<p>Current content</p>',
+            )
+        );
+        $revision_id = wp_insert_post(
+            array(
+                'post_type' => 'revision',
+                'post_parent' => $post_id,
+                'post_status' => 'inherit',
+                'post_title' => 'Revision title',
+                'post_content' => '<p>Compatibility output</p>',
+            )
+        );
+        update_metadata(
+            'post',
+            $revision_id,
+            PostDocument::META_MARKDOWN,
+            "# Revision source\n\n```js\nconst ready = true;\n```\n\n\$\$E = mc^2\$\$\n\n```mermaid\ngraph TD; A-->B;\n```"
+        );
+
+        wp_set_current_user($user_id);
+
+        $before_post = get_post($post_id);
+        $before_meta = get_post_meta($post_id);
+        $before_revisions = count(wp_get_post_revisions($post_id));
+
+        $list = rest_do_request(new WP_REST_Request('GET', '/easymde/v1/posts/' . $post_id . '/revisions'));
+        $detail = rest_do_request(new WP_REST_Request('GET', '/easymde/v1/posts/' . $post_id . '/revisions/' . $revision_id));
+
+        $this->assertSame(200, $list->get_status());
+        $this->assertSame($revision_id, $list->get_data()['revisions'][0]['id']);
+        $this->assertSame('manual', $list->get_data()['revisions'][0]['type']);
+        $this->assertSame(200, $detail->get_status());
+        $this->assertStringContainsString('<h1', $detail->get_data()['html']);
+        $this->assertStringContainsString('Revision source', $detail->get_data()['html']);
+        $this->assertTrue($detail->get_data()['features']['syntaxHighlight']);
+        $this->assertTrue($detail->get_data()['features']['math']);
+        $this->assertTrue($detail->get_data()['features']['mermaid']);
+        $this->assertSame($before_post->post_modified_gmt, get_post($post_id)->post_modified_gmt);
+        $this->assertSame($before_meta, get_post_meta($post_id));
+        $this->assertSame($before_revisions, count(wp_get_post_revisions($post_id)));
+    }
+
+    public function test_revision_detail_rejects_a_revision_from_another_post()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'administrator'));
+        $post_id = self::factory()->post->create(array('post_author' => $user_id));
+        $other_post_id = self::factory()->post->create(array('post_author' => $user_id));
+        $revision_id = wp_insert_post(
+            array(
+                'post_type' => 'revision',
+                'post_parent' => $other_post_id,
+                'post_status' => 'inherit',
+            )
+        );
+
+        wp_set_current_user($user_id);
+
+        $request = new WP_REST_Request('GET', '/easymde/v1/posts/' . $post_id . '/revisions/' . $revision_id);
+        $response = rest_do_request($request);
+
+        $this->assertSame(404, $response->get_status());
+        $this->assertSame('easymde_revision_not_found', $response->as_error()->get_error_code());
+    }
+
+    public function test_revision_detail_rejects_unsupported_post_types()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'administrator'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_author' => $user_id,
+                'post_type' => 'attachment',
+                'post_status' => 'inherit',
+            )
+        );
+        $revision_id = wp_insert_post(
+            array(
+                'post_type' => 'revision',
+                'post_parent' => $post_id,
+                'post_status' => 'inherit',
+            )
+        );
+
+        wp_set_current_user($user_id);
+
+        $request = new WP_REST_Request('GET', '/easymde/v1/posts/' . $post_id . '/revisions/' . $revision_id);
+        $response = rest_do_request($request);
+
+        $this->assertSame(404, $response->get_status());
+        $this->assertSame('easymde_revision_not_found', $response->as_error()->get_error_code());
     }
 }

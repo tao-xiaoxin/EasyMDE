@@ -199,10 +199,20 @@
         var clone;
         var html;
         var text;
+        var failedMessage;
+        var unsupportedMessage;
+
+        function rejectCopy(message) {
+            showFlash(flash, 'error', message);
+            return Promise.reject(new Error(message));
+        }
 
         if (preview && preview.jquery) {
             preview = preview[0];
         }
+
+        failedMessage = getString('copyWechatFailed') || 'copyWechatFailed';
+        unsupportedMessage = getString('copyWechatUnsupported') || 'copyWechatUnsupported';
 
         if (
             !preview
@@ -211,45 +221,47 @@
             || preview.getAttribute('data-easymde-preview-error') === '1'
             || previewIsRefreshing(preview)
         ) {
-            showFlash(flash, 'error', getString('copyWechatFailed'));
-            return;
+            return rejectCopy(failedMessage);
         }
 
         clone = createClipboardMarkup(preview);
         if (!clone) {
-            showFlash(flash, 'error', getString('copyWechatFailed'));
-            return;
+            return rejectCopy(failedMessage);
         }
 
         html = clone.outerHTML;
         text = preview.innerText || preview.textContent || '';
 
-        if (window.navigator.clipboard && window.ClipboardItem && window.Blob) {
-            window.navigator.clipboard.write([
+        if (
+            window.navigator.clipboard
+            && typeof window.navigator.clipboard.write === 'function'
+            && window.ClipboardItem
+            && window.Blob
+        ) {
+            return window.navigator.clipboard.write([
                 new window.ClipboardItem({
                     'text/html': new window.Blob([html], { type: 'text/html' }),
                     'text/plain': new window.Blob([text], { type: 'text/plain' })
                 })
             ]).then(function () {
                 showFlash(flash, 'success', getString('copyWechatSuccess'));
+                return { method: 'clipboard' };
             }).catch(function () {
                 if (legacyCopyHtml(html)) {
                     showFlash(flash, 'success', getString('copyWechatSuccess'));
-                    return;
+                    return { method: 'legacy' };
                 }
 
-                showFlash(flash, 'error', getString('copyWechatFailed'));
+                return rejectCopy(failedMessage);
             });
-
-            return;
         }
 
         if (legacyCopyHtml(html)) {
             showFlash(flash, 'success', getString('copyWechatSuccess'));
-            return;
+            return Promise.resolve({ method: 'legacy' });
         }
 
-        showFlash(flash, 'error', getString('copyWechatUnsupported'));
+        return rejectCopy(unsupportedMessage);
     }
 
     window.EasyMDEWechatExporter = {

@@ -443,7 +443,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertStringNotContainsString('<script>', $output);
     }
 
-    public function test_editor_shell_streams_pending_preview_before_large_source_payload()
+    public function test_editor_shell_keeps_source_before_pending_preview_for_large_payload()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -481,7 +481,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
 
         $this->assertNotFalse($preview_position);
         $this->assertNotFalse($source_position);
-        $this->assertLessThan($source_position, $preview_position);
+        $this->assertLessThan($preview_position, $source_position);
         $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
         $this->assertStringNotContainsString('<h1>Fast preview</h1>', $output);
         $this->assertStringContainsString('id="easymde-source" name="easymde_markdown"', $output);

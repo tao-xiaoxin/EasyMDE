@@ -2,7 +2,7 @@
 # This file is distributed under the Apache-2.0 license.
 msgid ""
 msgstr ""
-"Project-Id-Version: EasyMDE 0.1.7\n"
+"Project-Id-Version: EasyMDE 0.1.8\n"
 "Report-Msgid-Bugs-To: https://github.com/tao-xiaoxin/EasyMDE/issues\n"
 "PO-Revision-Date: 2026-07-02 00:00+0000\n"
 "Last-Translator: EasyMDE contributors <noreply@example.com>\n"
@@ -15,559 +15,1612 @@ msgstr ""
 "X-Generator: EasyMDE i18n script\n"
 "X-Domain: easymde\n"
 
+#. translators: %d is the number of available WordPress revisions.
+#: src/Admin/AdminAssets.php:304
+#, php-format
+msgid "%d revisions"
+msgstr "%d 条历史版本"
+
+#: src/Admin/AdminAssets.php:493
+msgid "/* CSS styles */"
+msgstr "/* CSS 样式 */"
+
+#: src/Rest/CustomCssController.php:128
 msgid "A custom CSS style with this name already exists."
 msgstr "已存在同名自定义 CSS 样式。"
 
+#: src/Admin/AdminAssets.php:512
 msgid "A newer local draft is available."
 msgstr "检测到更新的本地草稿。"
 
-msgid "Add EasyMDE Page"
-msgstr "新建 EasyMDE 页面"
+#: src/Admin/AdminAssets.php:321
+msgid "AI Assistant"
+msgstr "AI 助手"
 
-msgid "Add EasyMDE Post"
-msgstr "新建 EasyMDE 文章"
+#: src/Admin/AdminAssets.php:461
+msgid "AI autocomplete"
+msgstr "AI 自动补全"
 
+#: src/Admin/AdminAssets.php:367
+msgid "AI demo input"
+msgstr "AI 演示输入"
+
+#: src/Admin/AdminAssets.php:326
+msgid "AI settings are not available yet"
+msgstr "AI 设置（尚未接入）"
+
+#: src/Admin/AdminAssets.php:348
+msgid "AI-generated content is for reference only"
+msgstr "内容由 AI 生成，仅供参考"
+
+#: src/Admin/AdminAssets.php:359
+msgid "Academic search"
+msgstr "学术搜索"
+
+#: src/Admin/AdminAssets.php:397
+msgid "Access password"
+msgstr "访问密码"
+
+#: src/Admin/AdminAssets.php:340
+msgid "Add"
+msgstr "添加"
+
+#: src/Admin/AdminAssets.php:339
+msgid "Add context"
+msgstr "添加上下文"
+
+#: src/Admin/AdminAssets.php:385
+msgid "Add tags"
+msgstr "添加标签"
+
+#: templates/admin/settings-page.php:34
 msgid "Admin behavior"
 msgstr "后台行为"
 
+#: src/Admin/AdminAssets.php:305
+msgid "All"
+msgstr "全部"
+
+#: src/Admin/AdminAssets.php:478
 msgid "Appearance"
 msgstr "外观"
 
+#: src/Admin/AdminAssets.php:508
 msgid "Apple font"
 msgstr "苹果字体"
 
+#: src/Admin/AdminAssets.php:451
+msgid "Article outline"
+msgstr "文章大纲"
+
+#: src/Admin/AdminAssets.php:484
 msgid "Article theme"
 msgstr "文章主题"
 
+#: src/Admin/AdminAssets.php:291
+msgid "Article title..."
+msgstr "文章标题..."
+
+#: src/Admin/AdminAssets.php:343
+msgid "Assistant mode"
+msgstr "助手模式"
+
+#: src/Theme/CodeThemeRegistry.php:17
 msgid "Atom One Dark"
 msgstr "Atom One Dark"
 
+#: src/Theme/CodeThemeRegistry.php:18
 msgid "Atom One Light"
 msgstr "Atom One Light"
 
+#: src/Admin/AdminAssets.php:306 src/Admin/AdminAssets.php:457
+msgid "Auto save"
+msgstr "自动保存"
+
+#: src/Admin/AdminAssets.php:458
+msgid "Automatically save local drafts"
+msgstr "自动保存本地草稿"
+
+#: src/Admin/AdminAssets.php:430
+msgid "Blockquote"
+msgstr "引用块"
+
+#: src/Theme/ArticleThemeRegistry.php:21
 msgid "Blue ying"
 msgstr "蓝莹"
 
+#: src/Admin/AdminAssets.php:424 src/Support/ToolbarRegistry.php:98
 msgid "Bold"
 msgstr "加粗"
 
+#: src/Admin/AdminAssets.php:425
+msgid "Bold (Ctrl+B)"
+msgstr "粗体 (Ctrl+B)"
+
+#: src/Admin/AdminAssets.php:364
+msgid "Build a personal knowledge base with the Claude API"
+msgstr "用 Claude API 构建个人知识库"
+
+#: src/Admin/AdminAssets.php:475
+msgid "CJK characters"
+msgstr "中日韩字符"
+
+#: src/Admin/AdminAssets.php:490
+msgid "CSS code"
+msgstr "CSS 代码"
+
+#: src/Admin/AdminAssets.php:501
 msgid "CSS name"
 msgstr "CSS 名称"
 
+#: src/Rest/CustomCssController.php:114
 msgid "CSS name and CSS content are required."
 msgstr "CSS 名称和 CSS 内容为必填项。"
 
+#: src/Admin/AdminAssets.php:498
+msgid "CSS preview failed."
+msgstr "CSS 预览失败。"
+
+#: src/Admin/AdminAssets.php:504
 msgid "CSS save failed."
 msgstr "CSS 保存失败。"
 
+#: src/Admin/AdminAssets.php:421
+msgid "Cancel"
+msgstr "取消"
+
+#: src/Admin/AdminAssets.php:405
+msgid "Categories"
+msgstr "分类目录"
+
+#: src/Theme/ArticleThemeRegistry.php:17
 msgid "Chazi purple"
 msgstr "姹紫"
 
+#: src/Admin/AdminAssets.php:497
+msgid "Checking CSS..."
+msgstr "正在检查 CSS..."
+
+#: src/Admin/AdminAssets.php:406
+msgid "Choose the sections this article belongs to."
+msgstr "选择文章归属的栏目。"
+
+#: src/Admin/AdminAssets.php:528
 msgid "Clipboard access is not available in this browser."
 msgstr "当前浏览器不支持剪贴板富文本复制。"
 
+#: src/Admin/AdminAssets.php:422
+msgid "Close"
+msgstr "关闭"
+
+#: src/Admin/AdminAssets.php:327
+msgid "Close AI Assistant"
+msgstr "关闭 AI 助手"
+
+#: src/Admin/AdminAssets.php:442
+msgid "Close outline"
+msgstr "收起大纲"
+
+#: src/Admin/AdminAssets.php:378
+msgid "Close publish dialog"
+msgstr "关闭发布弹窗"
+
+#: src/Theme/ThemeStateRepository.php:430
 msgid "Cochin"
 msgstr "Cochin"
 
+#: src/Admin/AdminAssets.php:434 src/Support/ToolbarRegistry.php:238
 msgid "Code fence"
 msgstr "代码块"
 
+#: src/Admin/AdminAssets.php:485
 msgid "Code theme"
 msgstr "代码主题"
 
+#: src/Admin/AdminAssets.php:465
+msgid "Column"
+msgstr "列"
+
+#: src/Admin/AdminAssets.php:529
+msgid "Column "
+msgstr "列"
+
+#: src/Admin/AdminAssets.php:533
+msgid "Columns"
+msgstr "列数"
+
+#: templates/admin/settings-page.php:82
 msgid "Command"
 msgstr "命令"
 
+#: src/Admin/AdminAssets.php:363
+msgid "Complete guide to local DeepSeek deployment"
+msgstr "DeepSeek 本地部署完整指南"
+
+#: src/Admin/AdminAssets.php:379
+msgid "Confirm these settings to publish to the current WordPress site."
+msgstr "确认这些设置后，将文章发布到当前 WordPress 站点。"
+
+#: src/Admin/AdminAssets.php:380
+msgid "Confirm these settings to update the current WordPress article."
+msgstr "确认这些设置后，将更新当前 WordPress 文章。"
+
+#: src/Admin/AdminAssets.php:530
+msgid "Content"
+msgstr "内容"
+
+#: src/Admin/AdminAssets.php:386
+msgid "Continue adding..."
+msgstr "继续添加..."
+
+#: src/Admin/AdminAssets.php:537
+msgid "Copied"
+msgstr "已复制"
+
+#: src/Admin/AdminAssets.php:526
 msgid "Copied preview for WeChat."
 msgstr "已复制当前预览，可直接粘贴到公众号编辑器。"
 
+#: src/Admin/AdminAssets.php:317
+msgid "Copy Markdown"
+msgstr "复制 Markdown"
+
+#: src/Admin/AdminAssets.php:525
+msgid "Copy current preview content to WeChat"
+msgstr "复制当前预览内容到公众号"
+
+#: src/Admin/AdminAssets.php:527
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr "复制到公众号失败，请在当前浏览器中重试。"
 
+#: src/Admin/AdminAssets.php:524
 msgid "Copy preview for WeChat"
 msgstr "复制当前预览到公众号"
 
+#: src/Admin/AdminAssets.php:523 src/Support/ToolbarRegistry.php:290
 msgid "Copy to WeChat"
 msgstr "复制到公众号"
 
+#: src/Admin/AdminAssets.php:536
+msgid "Copying..."
+msgstr "正在复制..."
+
+#: src/Theme/ArticleThemeRegistry.php:36
 msgid "Cupid busy"
 msgstr "丘比特忙"
 
+#: templates/admin/settings-page.php:42
 msgid "Current preset"
 msgstr "当前预设"
 
+#: src/Admin/AdminAssets.php:361
+msgid "Cursor + GitOps: a new approach to automated operations"
+msgstr "Cursor + GitOps：自动化运维新姿势"
+
+#: src/Admin/AdminAssets.php:487
 msgid "Custom CSS"
 msgstr "自定义 CSS"
 
+#. translators: %s: blocked CSS feature.
+#: src/Theme/CustomCssPolicy.php:236
+#, php-format
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr "自定义 CSS 包含被阻止的特性：%s"
 
+#. translators: %s: CSS parser error message.
+#: src/Theme/CustomCssPolicy.php:102
+#, php-format
 msgid "Custom CSS could not be parsed safely: %s"
 msgstr "无法安全解析自定义 CSS：%s"
 
+#: src/Theme/CustomCssPolicy.php:64
 msgid "Custom CSS is too large."
 msgstr "自定义 CSS 过大。"
 
+#: src/Rest/CustomCssController.php:159
 msgid "Custom CSS style not found."
 msgstr "未找到自定义 CSS 样式。"
 
+#: src/Admin/AdminAssets.php:488
+msgid "Custom CSS theme"
+msgstr "自定义 CSS 主题"
+
+#: src/Admin/AdminAssets.php:506
 msgid "Custom font"
 msgstr "自定义字体"
 
+#: src/Theme/ArticleThemeRegistry.php:31
 msgid "Cute green"
 msgstr "萌绿风"
 
-msgid "Dark mode"
-msgstr "深色模式"
+#: src/Admin/AdminAssets.php:353
+msgid "Deep reasoning (R1)"
+msgstr "深度思考 (R1)"
 
+#: src/Theme/ArticleThemeRegistry.php:15
 msgid "Default theme"
 msgstr "默认主题"
 
+#. translators: %s: default keyboard shortcut.
+#: templates/admin/settings-page.php:115 templates/admin/settings-page.php:129
+#, php-format
 msgid "Default: %s"
 msgstr "默认：%s"
 
+#: src/Admin/AdminAssets.php:352
+msgid "Describe what you want to create..."
+msgstr "输入创作意图，AI 帮你写..."
+
+#: src/Admin/AdminAssets.php:514
 msgid "Discard draft"
 msgstr "丢弃草稿"
 
+#: src/Admin/AdminAssets.php:516
 msgid "Draft discarded."
 msgstr "草稿已丢弃。"
 
+#: src/Admin/AdminAssets.php:515
 msgid "Draft restored."
 msgstr "草稿已恢复。"
 
+#: src/Admin/AdminAssets.php:545
+msgid "Dropped image is too large for this site."
+msgstr "拖放的图片超过了本站允许的大小。"
+
+#: src/Admin/AdminAssets.php:544
+msgid "Dropped image upload failed. Please use the media library instead."
+msgstr "拖放图片上传失败。请改用媒体库。"
+
+#: src/Admin/AdminAssets.php:543
+msgid "Dropped image uploaded."
+msgstr "拖放图片已上传。"
+
+#: src/Admin/SettingsPage.php:32 src/Admin/SettingsPage.php:33
+#: templates/admin/settings-page.php:13
 msgid "EasyMDE"
 msgstr "EasyMDE"
 
-msgid "EasyMDE adds a scoped split-pane Markdown editor to supported post editing screens."
+#: templates/admin/settings-page.php:14
+msgid ""
+"EasyMDE adds a scoped split-pane Markdown editor to supported post editing "
+"screens."
 msgstr "EasyMDE 会在支持的内容编辑页面中添加作用域限定的分栏 Markdown 编辑器。"
 
-msgid "EasyMDE cannot save this post because Markdown rendering is unavailable. Install Composer dependencies and try again."
-msgstr "EasyMDE 无法保存此文章，因为 Markdown 渲染不可用。请安装 Composer 依赖后重试。"
+#: src/Admin/EditorSaveHandler.php:166
+msgid ""
+"EasyMDE cannot save this post because Markdown rendering is unavailable. "
+"Install Composer dependencies and try again."
+msgstr ""
+"EasyMDE 无法保存此文章，因为 Markdown 渲染不可用。请安装 Composer 依赖后重"
+"试。"
 
+#. translators: %s is the WordPress taxonomy error message.
+#: src/Admin/AdminAssets.php:250
+#, php-format
+msgid "EasyMDE could not load WordPress categories: %s"
+msgstr "EasyMDE 无法加载 WordPress 分类：%s"
+
+#: src/Admin/AdminAssets.php:289
+msgid "EasyMDE immersive writing workspace"
+msgstr "EasyMDE 沉浸写作工作台"
+
+#: src/Admin/EditorSaveHandler.php:167
 msgid "EasyMDE renderer unavailable"
 msgstr "EasyMDE 渲染器不可用"
 
-msgid "EasyMDE requires Composer dependencies before Markdown can be rendered or saved. Run composer install for development or include vendor/ in release packages."
-msgstr "EasyMDE 需要 Composer 依赖才能渲染或保存 Markdown。开发环境请运行 composer install，发布包请包含 vendor/。"
+#: src/Admin/EditorScreen.php:81
+msgid ""
+"EasyMDE requires Composer dependencies before Markdown can be rendered or "
+"saved. Run composer install for development or include vendor/ in release "
+"packages."
+msgstr ""
+"EasyMDE 需要 Composer 依赖才能渲染或保存 Markdown。开发环境请运行 composer "
+"install，发布包请包含 vendor/。"
 
+#: src/Admin/AdminAssets.php:294
+msgid "Edit"
+msgstr "编辑"
+
+#: src/Admin/AdminAssets.php:295
+msgid "Edit mode"
+msgstr "编辑模式"
+
+#: src/Admin/AdminAssets.php:292
+msgid "Editor actions"
+msgstr "编辑器操作"
+
+#: src/Admin/AdminAssets.php:440
+msgid "Editor settings"
+msgstr "编辑器设置"
+
+#: templates/admin/settings-page.php:67
 msgid "Enable browser spellcheck in the Markdown editor"
 msgstr "在 Markdown 编辑器中启用浏览器拼写检查"
 
+#: src/Admin/AdminAssets.php:368
+msgid "Enter a demo question..."
+msgstr "输入演示问题..."
+
+#: src/Admin/AdminAssets.php:398
+msgid "Enter an access password"
+msgstr "输入访问密码"
+
+#: src/Admin/AdminAssets.php:399
+msgid "Enter an access password before submitting."
+msgstr "请输入访问密码后再提交。"
+
+#: src/Admin/AdminAssets.php:286
 msgid "Enter immersive writing"
 msgstr "进入沉浸写作"
 
+#: src/Admin/AdminAssets.php:492
+msgid "Enter theme name…"
+msgstr "输入主题名称…"
+
+#: src/Admin/AdminAssets.php:287
 msgid "Exit immersive writing"
 msgstr "退出沉浸写作"
 
+#: src/Admin/AdminAssets.php:337
+msgid "Explain and expand key concepts concisely"
+msgstr "对关键概念进行简明解释与扩展"
+
+#: src/Admin/AdminAssets.php:334
+msgid "Explain the core concepts"
+msgstr "补充核心概念解释"
+
+#: src/Admin/AdminAssets.php:356
+msgid "Extract summary"
+msgstr "提炼摘要"
+
+#: src/Admin/AdminAssets.php:388
+msgid "Featured image"
+msgstr "特色图片"
+
+#: src/Admin/AdminAssets.php:481
 msgid "Font"
 msgstr "字体"
 
-msgid "Fonts are applied in custom, Windows, Apple, and serif fallback order when supported by the current system."
+#: src/Admin/AdminAssets.php:482
+msgid "Font settings"
+msgstr "字体设置"
+
+#: src/Admin/AdminAssets.php:510
+msgid ""
+"Fonts are applied in custom, Windows, Apple, and serif fallback order when "
+"supported by the current system."
 msgstr "字体会在当前系统支持时按自定义、Windows、苹果和衬线后备的顺序应用。"
 
+#: src/Theme/ArticleThemeRegistry.php:35
 msgid "Frontend peak"
 msgstr "前端之巅同款"
 
+#: src/Theme/ArticleThemeRegistry.php:32
 msgid "Fullstack blue"
 msgstr "全栈蓝"
 
+#: src/Theme/ArticleThemeRegistry.php:25
 msgid "Geek black"
 msgstr "极客黑"
 
+#: src/Admin/AdminAssets.php:332
+msgid "Generate an article outline and title"
+msgstr "生成文章大纲与标题"
+
+#: src/Admin/AdminAssets.php:358
+msgid "Generate code"
+msgstr "代码生成"
+
+#: src/Admin/AdminAssets.php:357
+msgid "Generate outline"
+msgstr "大纲生成"
+
+#: src/Admin/AdminAssets.php:403
+msgid "Generate summary with AI"
+msgstr "AI 生成摘要"
+
+#: src/Admin/AdminAssets.php:344
+msgid "Generation settings"
+msgstr "生成设置"
+
+#: src/Theme/ThemeStateRepository.php:420
 msgid "Georgia"
 msgstr "Georgia"
 
+#: src/Theme/CodeThemeRegistry.php:15
 msgid "GitHub"
 msgstr "GitHub"
 
+#: src/Theme/CodeThemeRegistry.php:16
 msgid "GitHub Dark"
 msgstr "GitHub Dark"
 
+#: src/Theme/ArticleThemeRegistry.php:19
 msgid "Green vitality"
 msgstr "绿意"
 
+#: src/Theme/ArticleThemeRegistry.php:24
 msgid "Grid black"
 msgstr "网格黑"
 
+#: src/Support/ToolbarRegistry.php:154
 msgid "Heading 1"
 msgstr "一级标题"
 
+#: src/Support/ToolbarRegistry.php:155
 msgid "Heading 2"
 msgstr "二级标题"
 
+#: src/Support/ToolbarRegistry.php:156
 msgid "Heading 3"
 msgstr "三级标题"
 
+#: src/Support/ToolbarRegistry.php:157
 msgid "Heading 4"
 msgstr "四级标题"
 
+#: src/Support/ToolbarRegistry.php:158
 msgid "Heading 5"
 msgstr "五级标题"
 
+#: src/Support/ToolbarRegistry.php:159
 msgid "Heading 6"
 msgstr "六级标题"
 
+#: src/Admin/AdminAssets.php:483
 msgid "Headings"
 msgstr "标题"
 
+#: src/Theme/ThemeStateRepository.php:410
 msgid "Helvetica (qingbi-liujin)"
 msgstr "Helvetica（青碧流金）"
 
+#: src/Theme/ThemeStateRepository.php:415
 msgid "Helvetica (qinghe-zhusha)"
 msgstr "Helvetica（清河朱砂）"
 
+#: src/Theme/ThemeStateRepository.php:435
 msgid "Helvetica Neue"
 msgstr "Helvetica Neue"
 
+#: src/Admin/AdminAssets.php:330
+msgid ""
+"Hi! I am your all-purpose writing assistant. Tell me your idea in one "
+"sentence and I will help you start a new article."
+msgstr ""
+"Hi！我是您的全能写作助手，只需一句话交代你的想法，我来帮你一键新文章，开启丝"
+"滑的创作体验。"
+
+#: src/Admin/AdminAssets.php:349
+msgid ""
+"Hi! I am your creative partner. Ask me for research, outlines, or "
+"inspiration. This local demo never changes your article."
+msgstr ""
+"Hi！我是你的创作伙伴，不论是找资料、理大纲还是卡文找灵感，尽管来问我。我们的"
+"对话只在当前窗口，不会改动你的正文。"
+
+#: src/Admin/AdminAssets.php:300 src/Admin/AdminAssets.php:301
+msgid "History"
+msgstr "历史记录"
+
+#: templates/admin/settings-page.php:39
 msgid "Hybrid icon toolbar"
 msgstr "混合图标工具栏"
 
+#: src/Admin/AdminAssets.php:436 src/Support/ToolbarRegistry.php:277
 msgid "Image"
 msgstr "图片"
 
+#: src/Admin/AdminAssets.php:288
+msgid "Immersive writing"
+msgstr "沉浸写作"
+
+#: src/Admin/AdminAssets.php:433 src/Support/ToolbarRegistry.php:223
 msgid "Inline code"
 msgstr "行内代码"
 
+#: src/Admin/AdminAssets.php:285
 msgid "Insert Media"
 msgstr "插入媒体"
 
+#: src/Admin/AdminAssets.php:531
+msgid "Insert table"
+msgstr "插入表格"
+
+#: src/Theme/ThemeStateRepository.php:400
 msgid "Inter (cupid-busy)"
 msgstr "Inter（丘比特忙）"
 
+#: src/Theme/ThemeStateRepository.php:395
 msgid "Inter (ningye-purple)"
 msgstr "Inter（凝夜紫）"
 
+#: src/Theme/ThemeStateRepository.php:380
 msgid "Inter (orange-heart)"
 msgstr "Inter（橙心）"
 
+#: src/Theme/ThemeStateRepository.php:385
 msgid "Inter (red-crimson)"
 msgstr "Inter（红绯）"
 
-msgid "Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or Command+Option+C."
-msgstr "%1$s（%2$s）的快捷键格式无效。请使用 Ctrl+B 或 Command+Option+C 这类组合。"
+#. translators: 1: toolbar command label, 2: platform label.
+#: src/Admin/SettingsPage.php:115
+#, php-format
+msgid ""
+"Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or "
+"Command+Option+C."
+msgstr ""
+"%1$s（%2$s）的快捷键格式无效。请使用 Ctrl+B 或 Command+Option+C 这类组合。"
 
+#: src/Admin/AdminAssets.php:426 src/Support/ToolbarRegistry.php:113
 msgid "Italic"
 msgstr "斜体"
 
+#: src/Admin/AdminAssets.php:427
+msgid "Italic (Ctrl+I)"
+msgstr "斜体 (Ctrl+I)"
+
+#: src/Admin/AdminAssets.php:309
+msgid "Just now"
+msgstr "刚刚"
+
+#: src/Admin/AdminAssets.php:389
+msgid "Landscape images work best"
+msgstr "建议使用横向图片"
+
+#: src/Theme/ArticleThemeRegistry.php:22
 msgid "Lanqing"
 msgstr "兰青"
 
-msgid "Light mode"
-msgstr "浅色模式"
+#: src/Admin/AdminAssets.php:464
+msgid "Line"
+msgstr "行"
 
+#: src/Admin/AdminAssets.php:463
+msgid "Line 1, Column 1"
+msgstr "行 1，列 1"
+
+#: src/Admin/AdminAssets.php:473
+msgid "Lines"
+msgstr "行数"
+
+#: src/Admin/AdminAssets.php:435 src/Support/ToolbarRegistry.php:264
 msgid "Link"
 msgstr "链接"
 
+#: src/Admin/AdminAssets.php:450
+msgid "Link source and preview scrolling"
+msgstr "联动 Markdown 与预览区域的滚动位置"
+
+#: src/Admin/AdminAssets.php:460
+msgid "Link the editor and preview areas"
+msgstr "编辑区和预览区联动"
+
+#: src/Admin/AdminAssets.php:281
 msgid "Live preview"
 msgstr "实时预览"
 
+#: src/Admin/AdminAssets.php:414
+msgid "Loading preview..."
+msgstr "加载预览中..."
+
+#: src/Admin/AdminAssets.php:310
+msgid "Loading revision preview..."
+msgstr "正在加载修订版本..."
+
+#: src/Admin/AdminAssets.php:313
+msgid "Loading revisions..."
+msgstr "正在加载修订版本..."
+
+#: src/Admin/AdminAssets.php:511
 msgid "Local draft saved"
 msgstr "本地草稿已保存"
 
+#: src/Admin/AdminAssets.php:466
+msgid "Local drafts enabled"
+msgstr "本地草稿已开启"
+
+#: src/Admin/AdminAssets.php:486
 msgid "Mac code frame"
 msgstr "Mac 代码框"
 
+#: src/Admin/AdminAssets.php:307
+msgid "Manual save"
+msgstr "手动保存"
+
+#: templates/admin/editor-shell.php:44
 msgid "Markdown"
 msgstr "Markdown"
 
+#: templates/admin/settings-page.php:57
 msgid "Markdown editor"
 msgstr "Markdown 编辑器"
 
+#: src/Rest/PreviewController.php:84
 msgid "Markdown preview content is too large."
 msgstr "Markdown 预览内容过大。"
 
-msgid "Markdown rendering is unavailable because Composer dependencies are missing."
+#: src/Rest/PreviewController.php:92 src/Rest/RevisionController.php:135
+msgid ""
+"Markdown rendering is unavailable because Composer dependencies are missing."
 msgstr "缺少 Composer 依赖，Markdown 渲染不可用。"
 
+#: src/Admin/AdminAssets.php:280
 msgid "Markdown source"
 msgstr "Markdown 源文"
 
+#: src/Admin/AdminAssets.php:423 templates/admin/editor-shell.php:41
 msgid "Markdown toolbar"
 msgstr "Markdown 工具栏"
 
+#: src/Support/ToolbarRegistry.php:251
 msgid "Math block"
 msgstr "公式块"
 
+#: src/Theme/ThemeStateRepository.php:442
 msgid "Microsoft YaHei"
 msgstr "微软雅黑"
 
+#: src/Theme/ThemeStateRepository.php:467
 msgid "Microsoft YaHei (cupid-busy)"
 msgstr "微软雅黑（丘比特忙）"
 
+#: src/Theme/ThemeStateRepository.php:462
 msgid "Microsoft YaHei (ningye-purple)"
 msgstr "微软雅黑（凝夜紫）"
 
+#: src/Theme/ThemeStateRepository.php:447
 msgid "Microsoft YaHei (orange-heart)"
 msgstr "微软雅黑（橙心）"
 
+#: src/Theme/ThemeStateRepository.php:452
 msgid "Microsoft YaHei (red-crimson)"
 msgstr "微软雅黑（红绯）"
 
+#: src/Theme/ThemeStateRepository.php:457
 msgid "Microsoft YaHei (rose-purple)"
 msgstr "微软雅黑（蔷薇紫）"
 
+#: src/Theme/ThemeStateRepository.php:472
 msgid "Microsoft YaHei (tech-blue)"
 msgstr "微软雅黑（科技蓝）"
 
+#: src/Theme/ArticleThemeRegistry.php:33
 msgid "Minimal black"
 msgstr "极简黑"
 
+#: src/Admin/AdminAssets.php:438
+msgid "Mobile"
+msgstr "手机"
+
+#: src/Admin/AdminAssets.php:345
+msgid "Model"
+msgstr "模型"
+
+#: src/Theme/CodeThemeRegistry.php:19
 msgid "Monokai"
 msgstr "Monokai"
 
+#: src/Admin/AdminAssets.php:318
+msgid "More actions"
+msgstr "更多操作"
+
+#: src/Admin/AdminAssets.php:362
+msgid "My 2026 AI-assisted development toolchain"
+msgstr "我的 AI 辅助开发工具链 2026 版"
+
+#: src/Admin/AdminAssets.php:499
+msgid "My theme"
+msgstr "我的主题"
+
+#: src/Admin/AdminAssets.php:500
 msgid "Named custom CSS"
 msgstr "命名自定义 CSS"
 
+#: src/Theme/ArticleThemeRegistry.php:18
 msgid "Nenqing green"
 msgstr "嫩青"
 
+#: src/Admin/AdminAssets.php:331
+msgid "Next you can:"
+msgstr "接下来你可以："
+
+#: src/Theme/ArticleThemeRegistry.php:27
 msgid "Ningye purple"
 msgstr "凝夜紫"
 
+#: src/Theme/ThemeStateRepository.php:541
 msgctxt "serif font fallback option"
 msgid "No"
 msgstr "否"
 
+#: src/Theme/ThemeStateRepository.php:514
 msgid "No Apple-specific font (qingbi-liujin)"
 msgstr "无 Apple 特定字体（青碧流金）"
 
+#: src/Theme/ThemeStateRepository.php:519
 msgid "No Apple-specific font (qinghe-zhusha)"
 msgstr "无 Apple 特定字体（清河朱砂）"
 
-msgid "No activation redirect and no unrelated admin-page redirect."
-msgstr "不会在启用插件后跳转，也不会重定向无关后台页面。"
-
-msgid "No custom CSS saved yet."
-msgstr "尚未保存自定义 CSS。"
-
-msgid "No image file was provided for upload."
-msgstr "未提供要上传的图片文件。"
-
-msgid "No custom font"
-msgstr "无自定义字体"
-
+#: src/Theme/ThemeStateRepository.php:477
 msgid "No Windows-specific font (qingbi-liujin)"
 msgstr "无 Windows 特定字体（青碧流金）"
 
+#: src/Theme/ThemeStateRepository.php:482
 msgid "No Windows-specific font (qinghe-zhusha)"
 msgstr "无 Windows 特定字体（清河朱砂）"
 
+#: templates/admin/settings-page.php:35
+msgid "No activation redirect and no unrelated admin-page redirect."
+msgstr "不会在启用插件后跳转，也不会重定向无关后台页面。"
+
+#: src/Admin/AdminAssets.php:420
+msgid "No categories are available for this post type."
+msgstr "此文章类型没有可用分类。"
+
+#: src/Admin/AdminAssets.php:505
+msgid "No custom CSS saved yet."
+msgstr "尚未保存自定义 CSS。"
+
+#: src/Theme/ThemeStateRepository.php:370
+msgid "No custom font"
+msgstr "无自定义字体"
+
+#: src/Admin/AdminAssets.php:419
+msgid "No featured image selected"
+msgstr "尚未选择特色图片"
+
+#: src/Admin/AdminAssets.php:446
+msgid "No headings yet"
+msgstr "暂无标题"
+
+#: src/Rest/MediaController.php:55
+msgid "No image file was provided for upload."
+msgstr "未提供要上传的图片文件。"
+
+#: src/Admin/AdminAssets.php:314
+msgid "No revisions are available yet."
+msgstr "暂无可用修订版本。"
+
+#: src/Admin/AdminAssets.php:413
+msgid "Nothing is written to WordPress before submission."
+msgstr "提交前不会写入 WordPress。"
+
+#: src/Rest/MediaController.php:74 src/Rest/MediaController.php:162
 msgid "Only JPEG, PNG, GIF, or WebP images can be uploaded into EasyMDE."
 msgstr "只能将 JPEG、PNG、GIF 或 WebP 图片上传到 EasyMDE。"
 
+#: src/Admin/AdminAssets.php:400
+msgid "Only site administrators and editors can view this article."
+msgstr "仅站点管理员和编辑可查看此文章。"
+
+#: src/Admin/AdminAssets.php:443
+msgid "Open outline"
+msgstr "展开大纲"
+
+#: src/Admin/AdminAssets.php:410
+msgid "Open preview after publishing"
+msgstr "发布后打开预览"
+
+#: src/Admin/AdminAssets.php:411
+msgid "Open preview after updating"
+msgstr "更新后打开预览"
+
+#: src/Admin/AdminAssets.php:412
+msgid "Open the article preview in a new page after submission."
+msgstr "提交完成后在新页面打开文章预览。"
+
+#: src/Theme/ThemeStateRepository.php:375
 msgid "Optima"
 msgstr "Optima"
 
+#: src/Theme/ThemeStateRepository.php:390
 msgid "Optima (rose-purple)"
 msgstr "Optima（蔷薇紫）"
 
+#: src/Theme/ThemeStateRepository.php:405
 msgid "Optima (tech-blue)"
 msgstr "Optima（科技蓝）"
 
+#: src/Admin/AdminAssets.php:355
+msgid "Optimize article"
+msgstr "优化全文"
+
+#: src/Theme/ArticleThemeRegistry.php:34
 msgid "Orange blue"
 msgstr "橙蓝风"
 
+#: src/Theme/ArticleThemeRegistry.php:16
 msgid "Orange heart"
 msgstr "橙心"
 
+#: src/Admin/AdminAssets.php:432 src/Support/ToolbarRegistry.php:209
 msgid "Ordered list"
 msgstr "有序列表"
 
+#: src/Admin/AdminAssets.php:441
+msgid "Outline"
+msgstr "大纲"
+
+#: src/Admin/AdminAssets.php:444
+msgid "Outline settings"
+msgstr "大纲设置"
+
+#: templates/admin/editor-shell.php:61
 msgid "Output actions"
 msgstr "输出操作"
 
+#: src/Support/ToolbarRegistry.php:143
 msgid "Paragraph"
 msgstr "正文"
 
-msgid "Dropped image is too large for this site."
-msgstr "拖放的图片超过了本站允许的大小。"
+#: src/Admin/AdminAssets.php:394
+msgid "Password"
+msgstr "密码"
 
-msgid "Dropped image upload failed. Please use the media library instead."
-msgstr "拖放图片上传失败。请改用媒体库。"
-
-msgid "Dropped image uploaded."
-msgstr "拖放图片已上传。"
-
+#: src/Admin/AdminAssets.php:541
 msgid "Pasted image is too large for this site."
 msgstr "粘贴的图片超过了本站允许的大小。"
 
+#: src/Admin/AdminAssets.php:540
 msgid "Pasted image upload failed. Please use the media library instead."
 msgstr "粘贴图片上传失败。请改用媒体库。"
 
+#: src/Admin/AdminAssets.php:539
 msgid "Pasted image uploaded."
 msgstr "粘贴图片已上传。"
 
+#: src/Admin/AdminAssets.php:323
+msgid "Pin AI Assistant"
+msgstr "固定 AI 助手"
+
+#: src/Theme/ThemeStateRepository.php:489
 msgid "PingFang SC Light"
 msgstr "苹方简体细体"
 
+#: src/Theme/ThemeStateRepository.php:499
 msgid "PingFang SC Regular"
 msgstr "苹方简体常规体"
 
+#: src/Theme/ThemeStateRepository.php:504
 msgid "PingFang TC Light"
 msgstr "苹方繁体细体"
 
+#: src/Theme/ThemeStateRepository.php:509
 msgid "PingFang TC Regular"
 msgstr "苹方繁体常规体"
 
+#: src/Theme/ThemeStateRepository.php:494
 msgid "PingFangSC-regular"
 msgstr "苹方简体常规体"
 
+#: src/Admin/AdminAssets.php:290
+msgid "Post title"
+msgstr "文章标题"
+
+#: src/Admin/AdminAssets.php:384
+msgid "Press Enter or comma to add tags."
+msgstr "输入后按 Enter 或逗号添加。"
+
+#: src/Admin/AdminAssets.php:298 templates/admin/editor-shell.php:48
 msgid "Preview"
 msgstr "预览"
 
+#: src/Admin/AdminAssets.php:284
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr "预览失败。可以继续编写，保存不受影响。"
 
+#: src/Admin/AdminAssets.php:299
+msgid "Preview mode"
+msgstr "预览模式"
+
+#: src/Admin/AdminAssets.php:395
+msgid "Private"
+msgstr "私密"
+
+#: src/Admin/AdminAssets.php:462
+msgid "Provide intelligent continuation suggestions while writing"
+msgstr "写作时提供智能续写建议"
+
+#: src/Admin/AdminAssets.php:393
+msgid "Public"
+msgstr "公开"
+
+#: src/Admin/AdminAssets.php:372
+msgid "Publish article"
+msgstr "发布文章"
+
+#. translators: %s is the keyboard shortcut used to publish an article.
+#: src/Admin/AdminAssets.php:374
+#, php-format
+msgid "Publish article (%s)"
+msgstr "发布文章（%s）"
+
+#: src/Admin/AdminAssets.php:409
+msgid "Publish options"
+msgstr "发布选项"
+
+#: src/Theme/ArticleThemeRegistry.php:29
 msgid "Qingbi Liujin"
 msgstr "青碧流金"
 
+#: src/Theme/ArticleThemeRegistry.php:30
 msgid "Qinghe Zhusha"
 msgstr "清河朱砂"
 
+#: src/Admin/AdminAssets.php:338
+msgid "Quick actions"
+msgstr "快速处理"
+
+#: src/Admin/AdminAssets.php:534
+msgid "Quick table size selection"
+msgstr "快速选择表格尺寸"
+
+#: src/Admin/AdminAssets.php:335
+msgid "Quickly generate a clear outline and engaging titles"
+msgstr "快速生成结构清晰的大纲与吸引人的标题"
+
+#: src/Admin/AdminAssets.php:429 src/Support/ToolbarRegistry.php:181
 msgid "Quote"
 msgstr "引用"
 
+#: src/Admin/AdminAssets.php:472
+msgid "Reading time (minutes)"
+msgstr "阅读时长（分钟）"
+
+#: src/Admin/AdminAssets.php:477
+msgid ""
+"Reading time is estimated locally at 300 reading units per minute; each "
+"Western word and CJK character counts as one unit."
+msgstr ""
+"阅读时长按每分钟 300 个阅读单位在本地估算；每个西文单词和中日韩字符分别计为一"
+"个单位。"
+
+#: src/Admin/AdminAssets.php:381
+msgid "Ready to publish"
+msgstr "准备发布"
+
+#: src/Admin/AdminAssets.php:322
+msgid "Ready to support your writing anytime"
+msgstr "随时为你提供创作支持"
+
+#: src/Theme/ArticleThemeRegistry.php:20
 msgid "Red crimson"
 msgstr "红绯"
 
+#: src/Admin/AdminAssets.php:351
+msgid "Refresh"
+msgstr "换一换"
+
+#: src/Admin/AdminAssets.php:418
+msgid "Remove"
+msgstr "移除"
+
+#: src/Admin/AdminAssets.php:370
+msgid "Remove attachment"
+msgstr "移除附件"
+
+#: src/Admin/AdminAssets.php:387
+msgid "Remove tag"
+msgstr "移除标签"
+
+#: src/Admin/AdminAssets.php:518 src/Frontend/FrontendAssets.php:70
 msgid "Rendering failed."
 msgstr "渲染失败。"
 
+#: src/Admin/AdminAssets.php:283 templates/admin/editor-shell.php:22
 msgid "Rendering preview..."
 msgstr "正在渲染预览..."
 
+#: src/Admin/AdminAssets.php:391
+msgid "Replace"
+msgstr "替换"
+
+#: src/Admin/AdminAssets.php:535
+msgid "Resize outline"
+msgstr "调整大纲宽度"
+
+#: src/Admin/AdminAssets.php:513
 msgid "Restore draft"
 msgstr "恢复草稿"
 
+#: src/Admin/AdminAssets.php:308
+msgid "Restore this version"
+msgstr "恢复到这个版本"
+
+#: src/Admin/AdminAssets.php:316
+msgid "Revision history could not be loaded."
+msgstr "无法加载修订历史。"
+
+#: src/Admin/AdminAssets.php:311
+msgid "Revision preview could not be loaded."
+msgstr "无法加载修订版本预览。"
+
+#: src/Theme/ArticleThemeRegistry.php:26
 msgid "Rose purple"
 msgstr "蔷薇紫"
 
+#: src/Admin/AdminAssets.php:532
+msgid "Rows"
+msgstr "行数"
+
+#: src/Admin/AdminAssets.php:517
+msgid "Save"
+msgstr "保存"
+
+#: src/Admin/AdminAssets.php:502
 msgid "Save CSS"
 msgstr "保存 CSS"
 
+#: src/Support/ToolbarRegistry.php:85
 msgid "Save post"
 msgstr "保存文章"
 
+#: src/Admin/AdminAssets.php:494
+msgid "Save theme"
+msgstr "保存主题"
+
+#: src/Admin/AdminAssets.php:495 src/Admin/AdminAssets.php:496
+msgid "Saved"
+msgstr "已保存"
+
+#: src/Admin/AdminAssets.php:503
 msgid "Saved CSS."
 msgstr "CSS 已保存。"
 
+#: src/Admin/AdminAssets.php:416
+msgid "Select featured image"
+msgstr "选择特色图片"
+
+#: src/Admin/AdminAssets.php:347
+msgid "Select model"
+msgstr "选择模型"
+
+#. translators: %d is the number of selected categories.
+#: src/Admin/AdminAssets.php:408
+#, php-format
+msgid "Selected %d"
+msgstr "已选 %d 项"
+
+#: src/Admin/AdminAssets.php:371
+msgid "Send"
+msgstr "发送"
+
+#: src/Admin/AdminAssets.php:509
 msgid "Serif font"
 msgstr "衬线字体"
 
+#: templates/admin/settings-page.php:24
 msgid "Server renderer"
 msgstr "服务器端渲染器"
 
+#: src/Admin/AdminAssets.php:439
+msgid "Settings"
+msgstr "设置"
+
+#: src/Admin/AdminAssets.php:325
+msgid "Settings are not available yet"
+msgstr "设置功能尚未接入"
+
+#. translators: 1: first toolbar command label, 2: second toolbar command label, 3: shortcut, 4: platform label.
+#: src/Admin/SettingsPage.php:129
+#, php-format
 msgid "Shortcut conflict: %1$s and %2$s both use %3$s on %4$s."
 msgstr "快捷键冲突：%1$s 与 %2$s 在 %4$s 上都使用了 %3$s。"
 
+#: templates/admin/settings-page.php:75
 msgid "Shortcut settings"
 msgstr "快捷键设置"
 
+#: src/Admin/AdminAssets.php:452
+msgid "Show heading hierarchy navigation on the left"
+msgstr "左侧显示标题层级导航"
+
+#: src/Admin/AdminAssets.php:445
+msgid "Show heading navigation"
+msgstr "显示文章标题层级导航"
+
+#: src/Admin/AdminAssets.php:448
+msgid "Show source and preview"
+msgstr "同时显示 Markdown 和实时预览"
+
+#: src/Admin/AdminAssets.php:456
+msgid "Show the live preview area by default"
+msgstr "默认显示实时预览区域"
+
+#: src/Admin/AdminAssets.php:454
+msgid "Show words, characters, and reading time beside the article title"
+msgstr "在文章标题旁显示词数、字符数与阅读时长"
+
+#: src/Admin/AdminAssets.php:342
+msgid "Skills"
+msgstr "技能"
+
+#: src/Admin/AdminAssets.php:354
+msgid "Smart layout"
+msgstr "智能排版"
+
+#: src/Admin/AdminAssets.php:296
+msgid "Split"
+msgstr "分屏"
+
+#: src/Admin/AdminAssets.php:297
+msgid "Split mode"
+msgstr "分屏模式"
+
+#: src/Admin/AdminAssets.php:447 src/Admin/AdminAssets.php:455
+msgid "Split preview"
+msgstr "分屏预览"
+
+#: src/Admin/AdminAssets.php:329
+msgid "Start creating"
+msgstr "开始创作"
+
+#: src/Admin/AdminAssets.php:328
+msgid ""
+"Start with a clear goal. You can add the remaining details during the "
+"conversation."
+msgstr "从一个明确目标开始，其他细节可以在对话中继续补充。"
+
+#: src/Admin/AdminAssets.php:282
 msgid "Start writing Markdown to preview the article."
 msgstr "开始编写 Markdown 后将在此处预览文章。"
 
+#: src/Admin/AdminAssets.php:319
+msgid "Start writing..."
+msgstr "开始写作..."
+
+#: src/Admin/AdminAssets.php:396
+msgid "Stick to the top of the front page"
+msgstr "置于首页顶端"
+
+#: src/Admin/AdminAssets.php:428 src/Support/ToolbarRegistry.php:128
 msgid "Strikethrough"
 msgstr "删除线"
 
+#: src/Admin/AdminAssets.php:491
+msgid "Style preview"
+msgstr "样式预览"
+
+#: src/Admin/AdminAssets.php:520
+msgid "Suggested from the first verified local image. It is not selected yet."
+msgstr "建议使用正文中第一张已验证的本地图片，但尚未选为特色图片。"
+
+#: src/Admin/AdminAssets.php:402
+msgid "Summary"
+msgstr "摘要"
+
+#: templates/admin/settings-page.php:20
 msgid "Supported post types"
 msgstr "支持的内容类型"
 
+#: src/Admin/AdminAssets.php:390
+msgid "Supports JPG, PNG, and WebP up to 5MB"
+msgstr "支持 JPG、PNG、WebP 格式，最大 5MB"
+
+#: src/Admin/AdminAssets.php:480
+msgid "Switch theme"
+msgstr "切换主题"
+
+#: src/Admin/AdminAssets.php:449 src/Admin/AdminAssets.php:459
+msgid "Sync scrolling"
+msgstr "同步滚动"
+
+#: src/Admin/AdminAssets.php:437
+msgid "Table"
+msgstr "表格"
+
+#: src/Admin/AdminAssets.php:383
+msgid "Tags"
+msgstr "标签"
+
+#: src/Theme/ArticleThemeRegistry.php:28
 msgid "Tech blue"
 msgstr "科技蓝"
 
-msgid "The CSS parser dependency is unavailable. Custom CSS cannot be rendered safely."
+#: src/Admin/AdminAssets.php:369
+msgid ""
+"Thank you for your input! This is a demo interface. Once connected to an AI "
+"service, real writing suggestions will appear here."
+msgstr "感谢你的输入！这是演示界面，接入 AI 服务后会在这里返回真实的创作建议。"
+
+#: src/Theme/CustomCssPolicy.php:77
+msgid ""
+"The CSS parser dependency is unavailable. Custom CSS cannot be rendered "
+"safely."
 msgstr "CSS 解析器依赖不可用，无法安全渲染自定义 CSS。"
 
+#: src/Admin/AdminAssets.php:415
+msgid "The article was saved, but the preview window was blocked."
+msgstr "文章已保存，但浏览器阻止了预览窗口。"
+
+#: src/Admin/AdminAssets.php:519
+msgid "The first local image could not be verified."
+msgstr "无法验证正文中的第一张本地图片。"
+
+#: src/Rest/MediaController.php:152
 msgid "The image could not be saved to the WordPress media library."
 msgstr "无法将图片保存到 WordPress 媒体库。"
 
+#: src/Rest/MediaController.php:64
 msgid "The image could not be uploaded."
 msgstr "无法上传图片。"
 
+#: src/Rest/MediaController.php:82
 msgid "The image is larger than the allowed upload size."
 msgstr "图片超过了允许的上传大小。"
 
+#: src/Rest/RevisionController.php:164
+msgid "The requested revision could not be found."
+msgstr "找不到请求的修订版本。"
+
+#: src/Rest/RevisionController.php:127
+msgid "The selected revision is too large to preview."
+msgstr "所选修订版本过大，无法预览。"
+
+#: src/Rest/MediaController.php:105
 msgid "The uploaded image URL is unavailable."
 msgstr "上传后的图片 URL 不可用。"
 
+#: src/Admin/AdminAssets.php:479
+msgid "Theme"
+msgstr "主题"
+
+#: src/Admin/AdminAssets.php:489
+msgid "Theme name"
+msgstr "主题名称"
+
+#: src/Admin/AdminAssets.php:346
+msgid "Thinking length"
+msgstr "思考长度"
+
+#: src/Admin/AdminAssets.php:366
+msgid ""
+"This is a local interface preview. It is not connected to article data or a "
+"network service."
+msgstr "这是本地界面演示，不连接文章数据或任何网络服务。"
+
+#: src/Theme/ThemeStateRepository.php:425
 msgid "Times"
 msgstr "Times"
 
+#: templates/admin/settings-page.php:38
 msgid "Toolbar layout"
 msgstr "工具栏布局"
 
+#: src/Admin/AdminAssets.php:365
+msgid "Tools that improve Markdown writing efficiency tenfold"
+msgstr "Markdown 写作效率提升 10 倍的工具集"
+
+#: src/Admin/AdminAssets.php:476
+msgid "Total characters"
+msgstr "总字符数"
+
+#: src/Admin/AdminAssets.php:350
+msgid "Trending creative topics"
+msgstr "创作热点推荐"
+
+#: src/Admin/AdminAssets.php:360
+msgid "Typora plugin development guide: build an IDE-like writing environment"
+msgstr "Typora 插件开发指南：打造专属 IDE 式写作环境"
+
+#: templates/admin/settings-page.php:76
 msgid "Typora-inspired defaults are active unless overridden below."
 msgstr "默认启用 Typora 风格快捷键，除非在下方覆盖。"
 
+#: templates/admin/settings-page.php:43
 msgid "Typora-inspired shortcuts"
 msgstr "Typora 风格快捷键"
 
+#: src/Admin/AdminAssets.php:431 src/Support/ToolbarRegistry.php:195
 msgid "Unordered list"
 msgstr "无序列表"
 
+#: src/Admin/AdminAssets.php:324
+msgid "Unpin AI Assistant"
+msgstr "取消固定 AI 助手"
+
+#: src/Admin/AdminAssets.php:320
+msgid "Untitled"
+msgstr "无标题"
+
+#: src/Admin/AdminAssets.php:315
+msgid "Untitled revision"
+msgstr "无标题修订版本"
+
+#: src/Admin/AdminAssets.php:375
+msgid "Update article"
+msgstr "更新文章"
+
+#. translators: %s is the keyboard shortcut used to update an article.
+#: src/Admin/AdminAssets.php:377
+#, php-format
+msgid "Update article (%s)"
+msgstr "更新文章（%s）"
+
+#: src/Admin/AdminAssets.php:382
+msgid "Update existing article"
+msgstr "更新已有文章"
+
+#: src/Admin/AdminAssets.php:341
+msgid "Upload a file or attachment"
+msgstr "上传文件或附件"
+
+#: src/Admin/AdminAssets.php:542
 msgid "Uploading dropped image..."
 msgstr "正在上传拖放的图片..."
 
+#: src/Admin/AdminAssets.php:538
 msgid "Uploading pasted image..."
 msgstr "正在上传粘贴的图片..."
 
+#: src/Admin/AdminAssets.php:417
+msgid "Use featured image"
+msgstr "使用此特色图片"
+
+#: src/Admin/AdminAssets.php:521
+msgid "Use first local image"
+msgstr "使用第一张本地图片"
+
+#: templates/admin/settings-page.php:77
 msgid "Use the current Typora-inspired default by leaving the field blank."
 msgstr "留空即可继续使用当前 Typora 风格默认值。"
 
-msgid "Uses the browser spellchecker only; saved Markdown and rendered HTML stay unchanged."
+#: templates/admin/settings-page.php:69
+msgid ""
+"Uses the browser spellchecker only; saved Markdown and rendered HTML stay "
+"unchanged."
 msgstr "仅使用浏览器拼写检查；保存的 Markdown 和渲染后的 HTML 保持不变。"
 
+#: src/Theme/CodeThemeRegistry.php:20
 msgid "VS2015"
 msgstr "VS2015"
 
+#: src/Admin/AdminAssets.php:302
+msgid "Version history"
+msgstr "历史版本"
+
+#: src/Admin/AdminAssets.php:293
+msgid "View mode"
+msgstr "视图模式"
+
+#: src/Admin/AdminAssets.php:392
+msgid "Visibility"
+msgstr "可见性"
+
+#: src/Theme/CodeThemeRegistry.php:22
 msgid "Wechat inspired"
 msgstr "公众号风格"
 
+#: src/Admin/AdminAssets.php:474
+msgid "Western words"
+msgstr "西文词数"
+
+#: src/Admin/SettingsPage.php:238 templates/admin/settings-page.php:83
 msgid "Windows / Linux"
 msgstr "Windows / Linux"
 
+#: src/Admin/AdminAssets.php:507
 msgid "Windows font"
 msgstr "Windows 字体"
 
+#: src/Admin/AdminAssets.php:453
+msgid "Word count"
+msgstr "字数统计"
+
+#: src/Admin/AdminAssets.php:312
+msgid "WordPress revisions for this article"
+msgstr "当前文章的 WordPress 修订版本"
+
+#: src/Admin/AdminAssets.php:401
+msgid ""
+"WordPress visibility controls are unavailable. The article was not submitted."
+msgstr "WordPress 可见性控件不可用，文章未提交。"
+
+#: src/Admin/AdminAssets.php:404
+msgid ""
+"Write a short summary for search results, article lists, and sharing "
+"previews..."
+msgstr "为搜索结果、文章列表和分享预览写一段简短摘要..."
+
+#: src/Admin/AdminAssets.php:333
+msgid "Write an introduction and background"
+msgstr "撰写引言与背景"
+
+#: src/Admin/AdminAssets.php:336
+msgid "Write an introduction or add background information"
+msgstr "为文章撰写引言或补充背景信息"
+
+#: templates/admin/settings-page.php:53
 msgid "Writing settings"
 msgstr "写作设置"
 
+#: src/Admin/AdminAssets.php:467
+msgid "Writing statistics"
+msgstr "写作统计"
+
+#: src/Theme/CodeThemeRegistry.php:21
 msgid "Xcode"
 msgstr "Xcode"
 
+#: src/Theme/ArticleThemeRegistry.php:23
 msgid "Yamabuki"
 msgstr "山吹"
 
+#: src/Theme/ThemeStateRepository.php:526
 msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr "是"
 
+#: src/Admin/PostModeController.php:39
 msgid "You are not allowed to create this EasyMDE post."
 msgstr "你无权创建此 EasyMDE 文章。"
 
+#: src/Rest/RevisionController.php:77 src/Support/Capabilities.php:66
 msgid "You are not allowed to perform this EasyMDE action."
 msgstr "你无权执行此 EasyMDE 操作。"
 
+#: src/Admin/AdminAssets.php:522
+msgid ""
+"You have unsaved title or Markdown changes. Continue to revision history and "
+"leave these changes behind?"
+msgstr ""
+"标题或 Markdown 正文仍有未保存的更改。是否继续进入修订历史并放弃这些更改？"
+
+#: src/Admin/AdminAssets.php:470
+msgid "about"
+msgstr "约"
+
+#: src/Admin/AdminAssets.php:546
 msgid "alt text"
 msgstr "替代文本"
 
+#: src/Admin/AdminAssets.php:469
+msgid "characters"
+msgstr "字符"
+
+#: src/Admin/AdminAssets.php:547
 msgid "image"
 msgstr "图片"
 
+#: templates/admin/settings-page.php:28
 msgid "league/commonmark is active."
 msgstr "league/commonmark 已启用。"
 
-msgid "league/commonmark is required but unavailable. Install Composer dependencies before rendering or saving EasyMDE Markdown."
-msgstr "league/commonmark 是必需依赖但当前不可用。请先安装 Composer 依赖，再渲染或保存 EasyMDE Markdown。"
+#: templates/admin/settings-page.php:29
+msgid ""
+"league/commonmark is required but unavailable. Install Composer dependencies "
+"before rendering or saving EasyMDE Markdown."
+msgstr ""
+"league/commonmark 是必需依赖但当前不可用。请先安装 Composer 依赖，再渲染或保"
+"存 EasyMDE Markdown。"
 
+#: src/Admin/AdminAssets.php:548
 msgid "link text"
 msgstr "链接文本"
 
+#: src/Admin/SettingsPage.php:238 templates/admin/settings-page.php:84
 msgid "macOS"
 msgstr "macOS"
 
+#: src/Admin/AdminAssets.php:471
+msgid "min"
+msgstr "分钟"
+
+#: src/Theme/ThemeStateRepository.php:536
 msgid "sans-serif"
 msgstr "无衬线"
 
+#: src/Theme/ThemeStateRepository.php:531
 msgid "serif"
 msgstr "衬线"
+
+#: src/Admin/AdminAssets.php:468
+msgid "words"
+msgstr "词"
+
+#~ msgid "Demo response only. No article data was read or sent."
+#~ msgstr "这只是演示回复，未读取或发送任何文章数据。"
+
+#~ msgid "Excerpt"
+#~ msgstr "文章摘要"

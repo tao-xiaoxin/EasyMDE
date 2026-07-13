@@ -37,6 +37,14 @@ Editor admission does not depend on `_easymde_enabled`, `_easymde_markdown`, or 
 
 Opening an ordinary existing supported post imports the current `post_content` into Markdown in memory for the editor. It does not write metadata, rewrite content, create revisions, or migrate the post on open.
 
+## Immersive Workspace Boundary
+
+The normal WordPress edit screen and the immersive workspace are separate visual surfaces. The normal editor keeps its existing template and styles. Selecting **Enter immersive writing** creates the fixed white workspace from `assets/js/admin/immersive-workspace.js` and `assets/css/admin/immersive-workspace.css`; closing it removes that DOM and restores focus, scroll, and WordPress interactivity.
+
+The workspace owns presentation and transient UI state only. It synchronizes with the existing WordPress title field, EasyMDE Markdown source, preview renderer, theme/font fields, local draft service, media frame, revision REST API, and native save/publish form. Opening or cancelling its publish dialog writes nothing. Confirming maps the dialog draft back to the existing WordPress fields and triggers the native publish action so nonce, capability, taxonomy, visibility, scheduling, autosave, revision, and media behavior remain WordPress-owned.
+
+The workspace may persist only layout preferences in browser storage: the source/preview split ratio and outline width. Its AI panel is a local interface demonstration and must not read article content, make network requests, or persist AI input or output.
+
 ## Data Model
 
 Markdown is the source of truth in `_easymde_markdown`. WordPress `post_content` stores rendered HTML for themes, feeds, search, plugins, visitors, and compatibility when EasyMDE is inactive.

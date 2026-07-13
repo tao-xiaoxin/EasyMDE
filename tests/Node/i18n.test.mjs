@@ -266,6 +266,32 @@ test('gettext catalog files are current and contain real zh_CN translations', ()
   assert.match(result.stdout, /msgid "Shortcut settings"\nmsgstr "快捷键设置"/);
 });
 
+test('POT generation preserves UTF-8 message identifiers', () => {
+  const root = makeTempRoot();
+
+  try {
+    writeText(
+      root,
+      'easymde.php',
+      `<?php
+/**
+ * Plugin Name: EasyMDE
+ * Version: 0.1.8
+ */
+__('Enter theme name…', 'easymde');
+`
+    );
+    mkdirSync(join(root, 'languages'), { recursive: true });
+    makePot({ root });
+
+    const entries = parsePoEntries(join(root, 'languages/easymde.pot'));
+    assert.ok(entries.some((entry) => 'Enter theme name…' === entry.msgid));
+    assert.equal(entries.some((entry) => 'Enter theme name' === entry.msgid), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('i18n check rejects fuzzy PO entries that msgfmt omits from the MO', () => {
   const root = makeTempRoot();
 

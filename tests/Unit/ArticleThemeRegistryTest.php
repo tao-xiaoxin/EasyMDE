@@ -113,12 +113,18 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
         $registry = new CodeThemeRegistry();
         $themes = array_column($registry->for_script(), null, 'id');
 
-        $this->assertArrayHasKey('atom-one-dark', $themes);
-        $this->assertStringContainsString(
-            'assets/vendor/highlight/styles/atom-one-dark.min.css',
-            $themes['atom-one-dark']['cssUrl']
+        $expected = array(
+            'github-dark' => 'assets/vendor/highlight/styles/github-dark.min.css',
+            'atom-one-dark' => 'assets/vendor/highlight/styles/atom-one-dark.min.css',
+            'monokai' => 'assets/vendor/highlight/styles/monokai.min.css',
+            'vs2015' => 'assets/vendor/highlight/styles/vs2015.min.css',
         );
-        $this->assertStringContainsString('ver=' . EASYMDE_VERSION, $themes['atom-one-dark']['cssUrl']);
+
+        foreach ($expected as $theme_id => $asset_path) {
+            $this->assertArrayHasKey($theme_id, $themes);
+            $this->assertStringContainsString($asset_path, $themes[$theme_id]['cssUrl']);
+            $this->assertStringContainsString('ver=' . EASYMDE_VERSION, $themes[$theme_id]['cssUrl']);
+        }
     }
 
     public function test_typora_derived_theme_state_outputs_scoped_render_class()

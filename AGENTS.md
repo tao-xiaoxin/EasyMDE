@@ -523,9 +523,10 @@ At task completion, report:
 1. What changed.
 2. Compatibility or migration impact.
 3. Commands actually run and their results.
-4. Remaining risks, assumptions, or unverified behavior.
-5. Files staged or committed, and why each file belongs to the task.
-6. When relevant, privacy/artifact scanning performed, what categories were checked, and any remaining history/cache limitations.
+4. Local `codex-review` scope, verdict, confirmed findings resolved, and any rejected findings with concise evidence.
+5. Remaining risks, assumptions, or unverified behavior.
+6. Files staged or committed, and why each file belongs to the task.
+7. When relevant, privacy/artifact scanning performed, what categories were checked, and any remaining history/cache limitations.
 
 ---
 
@@ -558,22 +559,105 @@ Closing or merging repository work is a human maintainer decision, not an automa
 * When work appears complete, superseded, duplicated, abandoned, or no longer necessary, summarize the evidence and ask for a human closure decision. Keep the pull request and Issue open until that decision is explicit.
 * Do not interpret a request to review, update, push, test, or prepare a pull request as permission to merge or close it.
 
+### Local Codex Review Before Commit and Push
+
+A passing local `codex-review` is mandatory before committing code and before pushing code. The implementing agent is responsible for verifying and resolving the review findings; do not ask the review tool to modify the implementation or blindly apply its suggestions.
+
+Follow this sequence:
+
+1. Complete the focused implementation and run the relevant local validation available for the changed paths.
+2. Inspect `git status --short`, `git diff`, `git diff --cached`, the commits and diff against the intended base branch, and any untracked task files that are intended for inclusion.
+3. Invoke the local `codex-review` workflow in read-only mode with the template below.
+4. Independently verify every finding against the current local files and actual execution paths.
+5. Fix every confirmed actionable or merge-blocking finding yourself, rerun the affected tests and checks, and record concise evidence when a finding is invalid, stale, or outside the Issue scope.
+6. Rerun local `codex-review` whenever a fix materially changes production code, tests, build scripts, dependencies, release packaging, permissions, data handling, or another reviewed execution path.
+7. Create the commit only after no confirmed merge-blocking local findings remain.
+8. Before pushing, confirm that the passing review covers the exact commits, staged state, and working-tree state that will be pushed. If the commit set or relevant files changed after the last passing review, rerun local `codex-review`.
+9. Push only after the exact outgoing change has a passing local review and the relevant validation remains green.
+
+Additional rules:
+
+* Local `codex-review` is a read-only reviewer. It must not edit files, stage changes, create commits, push, create or close Issues or pull requests, merge, enable auto-merge, or delete branches.
+* Review the current local branch, index, working tree, and intended untracked task files. Do not rely on stale pull-request diffs, outdated review threads, or old remote line numbers.
+* Every finding must cite the current local repository-relative file path and current local line number or current execution path. Do not cite line numbers from an older commit or GitHub PR rendering.
+* A reviewer finding is evidence to investigate, not an instruction that overrides repository facts. Reject false positives instead of introducing defensive or unrelated changes merely to satisfy the reviewer.
+* Do not suppress, omit, or relabel a confirmed problem to obtain a passing verdict.
+* Do not include credentials, tokens, cookies, private keys, private article content, personal data, absolute local paths, private endpoints, raw logs, HAR files, browser storage, or unnecessary machine details in the prompt or review output.
+* When no actionable merge blocker remains, the final review must state exactly: `No merge-blocking findings found in the current local branch.`
+
+### Local Codex Review Prompt Template
+
+Use this prompt with the local `codex-review` workflow before commit and again before push when the reviewed state has changed:
+
+```markdown
+Use the local `codex-review` skill in read-only review mode.
+
+Review the current local branch and working tree against `<BASE_BRANCH>` for Issue `#<ISSUE_NUMBER>`.
+
+## Goal and scope
+
+- Intended change: `<FOCUSED_CHANGE_SUMMARY>`
+- Linked Issue and acceptance criteria: `#<ISSUE_NUMBER>`
+- Base branch: `<BASE_BRANCH>`
+- Review the exact current local state, including committed changes since the base, staged changes, unstaged changes, and untracked task files intended for inclusion.
+- Read the current `AGENTS.md` and apply only repository rules relevant to this change.
+
+## Required inspection
+
+1. Inspect `git status --short`, `git diff`, `git diff --cached`, and the diff and commits against `<BASE_BRANCH>`.
+2. Read the complete current contents and surrounding execution paths of every changed file; do not review only isolated diff hunks.
+3. Use current repository-relative file paths and current local file line numbers. Do not use stale GitHub PR line numbers, outdated remote diffs, or earlier review-thread positions.
+4. Trace relevant inputs, state transitions, outputs, error paths, cancellation paths, permissions, compatibility behavior, tests, build scripts, and release packaging.
+5. Check for functional regressions, data loss, authorization failures, unsafe rendering or input handling, WordPress/PHP compatibility problems, performance or reliability risks, missing runtime/release assets, invalid tests, unnecessary complexity, privacy leaks, secrets, local-path exposure, and unrelated scope changes.
+6. Verify that tests actually exercise the changed behavior and cannot pass only because of broad mocks, skipped tooling, polluted state, or file-presence assertions.
+7. Report only confirmed, actionable issues introduced or materially worsened by the current local change. Do not invent findings, request speculative refactors, or report personal style preferences.
+
+## Finding format
+
+For each independently fixable finding, provide:
+
+- Current local file path and current local line number or execution path.
+- What is wrong.
+- A realistic trigger.
+- Concrete user, security, compatibility, data, performance, test, build, or release impact.
+- The smallest focused correction direction.
+- Whether it blocks commit or push, with a factual reason.
+
+## Safety and authority
+
+- Do not modify files, stage changes, commit, push, create or close Issues or pull requests, merge, enable auto-merge, or delete branches.
+- Do not request or reproduce secrets, credentials, cookies, private keys, personal data, private article content, absolute local paths, private endpoints, raw logs, HAR data, browser storage, or unnecessary screenshots.
+- Treat existing code and passing tests as evidence, not proof. Clearly distinguish confirmed findings from questions or unverified assumptions.
+- The implementing agent will independently verify and resolve confirmed findings.
+
+## Verdict
+
+Return exactly one final verdict:
+
+- `BLOCK` when one or more confirmed merge-blocking findings remain, followed by the findings.
+- `APPROVE` when no confirmed merge-blocking findings remain, followed by exactly: `No merge-blocking findings found in the current local branch.`
+```
+
 ### Push, CI, and Bot Review Order
 
 Follow this sequence for every pull request update:
 
 1. Complete the focused implementation and relevant local validation.
-2. Push the commit or commits to the pull request branch.
-3. Record the new pull request head SHA and observe all required CI/check runs for that exact SHA.
-4. If any required check fails, is cancelled unexpectedly, or times out, inspect the failing job, step, and available logs before doing anything else.
-5. Fix the underlying cause, rerun the affected local checks where possible, push a focused correction, and restart CI observation from the new head SHA.
-6. Request CodeRabbit review only after every required check for the current head SHA is successful or intentionally skipped by repository policy.
-7. After posting the review request, wait patiently and observe the pull request conversation, reactions, checks, walkthrough updates, and review status at reasonable intervals. A slow response is not a failed request.
-8. Verify each bot finding against the current code. Fix valid findings and reply to invalid or stale findings with concise evidence.
-9. Any push made after review starts creates a new head SHA and restarts the CI-before-review sequence.
+2. Run local `codex-review`, independently verify its findings, fix every confirmed actionable problem, rerun affected validation, and repeat the local review until no confirmed merge-blocking finding remains.
+3. Create the focused commit only after the passing local review covers the exact staged and working-tree state.
+4. Before pushing, confirm that the passing local review still covers the exact outgoing commit set and relevant working-tree state; rerun it when the reviewed state changed.
+5. Push the commit or commits to the pull request branch.
+6. Record the new pull request head SHA and observe all required CI/check runs for that exact SHA.
+7. If any required check fails, is cancelled unexpectedly, or times out, inspect the failing job, step, and available logs before doing anything else.
+8. Fix the underlying cause, rerun the affected local checks and local `codex-review`, push a focused correction, and restart CI observation from the new head SHA.
+9. Request CodeRabbit review only after every required check for the current head SHA is successful or intentionally skipped by repository policy.
+10. After posting the review request, wait patiently and observe the pull request conversation, reactions, checks, walkthrough updates, and review status at reasonable intervals. A slow response is not a failed request.
+11. Verify each bot finding against the current code. Fix valid findings and reply to invalid or stale findings with concise evidence.
+12. Any push made after review starts creates a new head SHA and restarts the local-review, commit/push, CI, and CodeRabbit sequence.
 
 Additional rules:
 
+* Do not commit or push when the required local `codex-review` has not completed, returned `BLOCK`, reviewed a stale local state, or has confirmed findings that remain unresolved.
 * Do not request `@coderabbitai review` or `@coderabbitai full review` while required CI is queued, in progress, failing, cancelled unexpectedly, or stale for an older SHA.
 * A green run for an earlier commit is not evidence for the current pull request head.
 * Do not classify a failure as flaky without evidence. Inspect the failed path first; rerun only when there is a plausible transient cause and record that reasoning.
@@ -585,7 +669,7 @@ Additional rules:
 * Do not repeatedly retry against the same unchanged head. Report continued bot unavailability to the human maintainer instead of creating comment spam.
 * Do not push empty commits, meaningless formatting changes, or unrelated edits merely to retrigger CI, wake the bot, or bypass a CodeRabbit rate limit.
 * When CodeRabbit is rate limited, keep the already-green head unchanged, wait for review capacity to return, and request one review for that same SHA.
-* Do not merge while required CI is incomplete or failing, while confirmed review findings remain unresolved, or unless the maintainer explicitly requests the merge.
+* Do not merge while required CI is incomplete or failing, while confirmed local or remote review findings remain unresolved, or unless the maintainer explicitly requests the merge.
 
 ### CodeRabbit Review Request Template
 
@@ -598,6 +682,8 @@ Please review the current pull request head `<HEAD_SHA>` against `<BASE_BRANCH>`
 
 ## Preconditions
 
+- Local `codex-review` passed for the exact committed and pushed diff.
+- All confirmed local review findings were resolved and affected validation was rerun.
 - Required CI/checks for this exact head SHA are green.
 - No CodeRabbit review request for this exact head SHA is currently queued or in progress.
 - Linked Issue: #123
@@ -717,6 +803,9 @@ State unavailable or unverified checks honestly.
 - [ ] Relevant integration or browser checks
 - [ ] PHP, Node, lint, i18n, build, or package checks as applicable
 - [ ] Negative, cancellation, permission, and failure-path checks as applicable
+- [ ] Local `codex-review` completed for the exact committed and pushed diff
+- [ ] Every confirmed local review finding was resolved and affected validation was rerun
+- [ ] Final local review verdict recorded without private local details
 - [ ] CI status reviewed for the current head SHA
 - [ ] Existing CodeRabbit request status checked before posting a new review command
 
@@ -731,7 +820,7 @@ State unavailable or unverified checks honestly.
 
 ## Remaining risks and follow-up
 
-List known limitations, assumptions, deferred work, unresolved review findings, bot availability or waiting state, or checks that could not be run.
+List known limitations, assumptions, deferred work, unresolved local or remote review findings, bot availability or waiting state, or checks that could not be run.
 ```
 
 ### Public Evidence and Privacy Rules

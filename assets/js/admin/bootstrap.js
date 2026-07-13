@@ -42,6 +42,7 @@
     var isMac = null;
     var openPopovers = [];
     var fontControls = null;
+    var revisionPreviewRevision = 0;
 
     function readNativeCategoryOptions(documentRef, configuredOptions) {
         var doc = documentRef || document;
@@ -1448,7 +1449,7 @@
         );
     }
 
-    function enhancePreview($preview, features, revision, signature, markdown) {
+    function enhancePreviewSurface($preview, features, isCurrent) {
         var scopedConfig = previewScopedConfig(features);
         var loaderContext = {
             config: config,
@@ -1465,7 +1466,7 @@
                 throw result;
             }
 
-            if (!isPreviewCurrent(revision, signature, markdown)) {
+            if (typeof isCurrent === 'function' && !isCurrent()) {
                 return false;
             }
 
@@ -1480,6 +1481,12 @@
             }
 
             return true;
+        });
+    }
+
+    function enhancePreview($preview, features, revision, signature, markdown) {
+        return enhancePreviewSurface($preview, features, function () {
+            return isPreviewCurrent(revision, signature, markdown);
         }).catch(function () {
             if (isPreviewCurrent(revision, signature, markdown)) {
                 setPreviewEnhancementError($preview);
@@ -1716,13 +1723,14 @@
                     };
                 },
                 decorateWechatIcon: function (workspaceRoot) {
-                    var wechatSource = context.root.find('[data-easymde-command="copywechat"] .easymde-wechat-glyph').first()[0];
                     var wechatTarget = workspaceRoot.querySelector('[data-wechat-icon]');
+                    var wechatIcon = createWechatIcon();
+                    var wechatNode = wechatIcon && wechatIcon[0];
 
-                    if (!wechatSource || !wechatTarget) {
+                    if (!wechatNode || !wechatTarget) {
                         throw new Error('The original WeChat toolbar icon is unavailable.');
                     }
-                    wechatTarget.replaceWith(wechatSource.cloneNode(true));
+                    wechatTarget.replaceWith(wechatNode);
                 },
                 renderPreview: function (node, markdown, options) {
                     var sourceClasses = String(context.preview.attr('class') || '').split(/\s+/).filter(function (className) {
@@ -2042,12 +2050,26 @@
                     });
                 },
                 renderRevisionPreview: function (node, revision) {
+                    var renderRevision = ++revisionPreviewRevision;
+                    var stagingNode;
+                    var $staging;
+
                     if (!node || !revision || typeof revision.html !== 'string') {
                         return Promise.reject(new Error('Revision preview is unavailable.'));
                     }
-                    node.className = 'easymde-immersive-workspace__history-preview';
-                    $(node).html(revision.html);
-                    return Promise.resolve();
+                    stagingNode = document.createElement('div');
+                    stagingNode.className = 'easymde-immersive-workspace__history-preview';
+                    $staging = $(stagingNode);
+                    $staging.html(revision.html);
+
+                    return enhancePreviewSurface($staging, revision.features || {}).then(function (ready) {
+                        if (!ready || renderRevision !== revisionPreviewRevision) {
+                            return false;
+                        }
+                        node.className = stagingNode.className;
+                        $(node).html(stagingNode.innerHTML);
+                        return true;
+                    });
                 },
                 openRevision: function (revisionId) {
                     var id = parseInt(String(revisionId || ''), 10);
@@ -3358,6 +3380,7 @@
         window.EasyMDETestHooks.getLocalDraftsEnabled = getLocalDraftsEnabled;
         window.EasyMDETestHooks.setLocalDraftsEnabled = setLocalDraftsEnabled;
         window.EasyMDETestHooks.scheduleLocalDraft = scheduleLocalDraft;
+        window.EasyMDETestHooks.enhancePreviewSurface = enhancePreviewSurface;
         window.EasyMDETestHooks.showFlash = showFlash;
         window.EasyMDETestHooks.reportStartupConfigErrors = reportStartupConfigErrors;
         window.EasyMDETestHooks.hasUnsavedDocumentChanges = hasUnsavedDocumentChanges;

@@ -1373,7 +1373,7 @@ test.describe('EasyMDE editor workflows', () => {
     const user = testInfo.easymdeUser;
     const title = `EasyMDE Revision ${testSlug(testInfo)}`;
     const firstMarkdown = `# ${title}\n\nFirst revision body.`;
-    const secondMarkdown = `# ${title}\n\nSecond revision body.`;
+    const secondMarkdown = `# ${title}\n\nSecond revision body.\n\n\`\`\`js\nconst revisionReady = true;\n\`\`\`\n\n$$E = mc^2$$\n\n\`\`\`mermaid\ngraph TD; A-->B;\n\`\`\``;
 
     await login(page, user);
     await openEasyMdeNewPost(page);
@@ -1407,6 +1407,9 @@ test.describe('EasyMDE editor workflows', () => {
     expect(await historyEntries.count()).toBeGreaterThanOrEqual(2);
     await expect(historyEntries.first()).toHaveAttribute('data-revision-id', /^\d+$/);
     await expect(page.locator('[data-history-preview]')).toContainText('Second revision body.');
+    await expect(page.locator('[data-history-preview] code.hljs')).toBeVisible();
+    await expect(page.locator('[data-history-preview] .katex')).toBeVisible();
+    await expect(page.locator('[data-history-preview] .easymde-mermaid svg')).toBeVisible();
     await expect(page.locator('[data-action="restore-history"]')).toBeEnabled();
     const selectedRevisionId = await historyEntries.first().getAttribute('data-revision-id');
     await page.locator('.easymde-immersive-workspace__source').fill('# Unsaved before revision navigation');

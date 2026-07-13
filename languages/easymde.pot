@@ -1170,20 +1170,20 @@ msgstr ""
 msgid "Markdown preview content is too large."
 msgstr ""
 
-#: src/Rest/PreviewController.php:92 src/Rest/RevisionController.php:135
+#: src/Rest/PreviewController.php:92 src/Rest/RevisionController.php:142
 msgid ""
 "Markdown rendering is unavailable because Composer dependencies are missing."
 msgstr ""
 
-#: src/Rest/RevisionController.php:77 src/Support/Capabilities.php:66
+#: src/Rest/RevisionController.php:84 src/Support/Capabilities.php:66
 msgid "You are not allowed to perform this EasyMDE action."
 msgstr ""
 
-#: src/Rest/RevisionController.php:127
+#: src/Rest/RevisionController.php:134
 msgid "The selected revision is too large to preview."
 msgstr ""
 
-#: src/Rest/RevisionController.php:164
+#: src/Rest/RevisionController.php:172
 msgid "The requested revision could not be found."
 msgstr ""
 

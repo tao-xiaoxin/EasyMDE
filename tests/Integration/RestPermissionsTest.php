@@ -293,7 +293,12 @@ final class RestPermissionsTest extends WP_UnitTestCase
                 'post_content' => '<p>Compatibility output</p>',
             )
         );
-        update_metadata('post', $revision_id, PostDocument::META_MARKDOWN, '# Revision source');
+        update_metadata(
+            'post',
+            $revision_id,
+            PostDocument::META_MARKDOWN,
+            "# Revision source\n\n```js\nconst ready = true;\n```\n\n\$\$E = mc^2\$\$\n\n```mermaid\ngraph TD; A-->B;\n```"
+        );
 
         wp_set_current_user($user_id);
 
@@ -310,6 +315,9 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $this->assertSame(200, $detail->get_status());
         $this->assertStringContainsString('<h1', $detail->get_data()['html']);
         $this->assertStringContainsString('Revision source', $detail->get_data()['html']);
+        $this->assertTrue($detail->get_data()['features']['syntaxHighlight']);
+        $this->assertTrue($detail->get_data()['features']['math']);
+        $this->assertTrue($detail->get_data()['features']['mermaid']);
         $this->assertSame($before_post->post_modified_gmt, get_post($post_id)->post_modified_gmt);
         $this->assertSame($before_meta, get_post_meta($post_id));
         $this->assertSame($before_revisions, count(wp_get_post_revisions($post_id)));

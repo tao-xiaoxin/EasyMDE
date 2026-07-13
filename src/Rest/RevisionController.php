@@ -3,6 +3,7 @@
 namespace EasyMDE\Rest;
 
 use EasyMDE\Content\MarkdownRenderer;
+use EasyMDE\Content\MarkdownFeatureDetector;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Support\Capabilities;
 use WP_Error;
@@ -20,10 +21,16 @@ final class RevisionController {
 
 	private $capabilities;
 	private $post_document;
+	private $feature_detector;
 
-	public function __construct( Capabilities $capabilities, PostDocument $post_document ) {
-		$this->capabilities  = $capabilities;
-		$this->post_document = $post_document;
+	public function __construct(
+		Capabilities $capabilities,
+		PostDocument $post_document,
+		?MarkdownFeatureDetector $feature_detector = null
+	) {
+		$this->capabilities     = $capabilities;
+		$this->post_document    = $post_document;
+		$this->feature_detector = $feature_detector ? $feature_detector : new MarkdownFeatureDetector();
 	}
 
 	public function register_routes() {
@@ -143,8 +150,9 @@ final class RevisionController {
 
 		return rest_ensure_response(
 			array(
-				'id'   => $revision_id,
-				'html' => MarkdownRenderer::render( $markdown, $theme ),
+				'id'       => $revision_id,
+				'html'     => MarkdownRenderer::render( $markdown, $theme ),
+				'features' => $this->feature_detector->detect( $markdown ),
 			)
 		);
 	}

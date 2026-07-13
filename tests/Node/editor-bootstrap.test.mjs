@@ -429,6 +429,7 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.applyNativePublishVisibility, 'function', 'bootstrap harness should expose native visibility writes');
   assert.equal(typeof context.window.EasyMDETestHooks.skipNextCrossDocumentViewTransition, 'function', 'bootstrap harness should expose immersive navigation transition guards');
   assert.equal(typeof context.window.EasyMDETestHooks.executeCommand, 'function', 'bootstrap harness should expose toolbar command execution');
+  assert.equal(typeof context.window.EasyMDETestHooks.enhancePreviewSurface, 'function', 'bootstrap harness should expose detached preview enhancement');
 
   return {
     document: documentRef,
@@ -836,12 +837,50 @@ test('immersive adapter inserts sized tables and returns the real WeChat copy pr
   assert.match(source, /dispatchEvent\(new window\.Event\('input', \{ bubbles: true \}\)\)/);
   assert.match(source, /action === 'wechat'[\s\S]*return copyWechat\(\{ preview: \$\(workspaceContext\.preview\), flash: context\.flash \}\);/s);
   assert.match(source, /decorateWechatIcon:\s*function \(workspaceRoot\)/);
-  assert.match(source, /context\.root\.find\('\[data-easymde-command="copywechat"\] \.easymde-wechat-glyph'\)/);
-  assert.match(source, /wechatTarget\.replaceWith\(wechatSource\.cloneNode\(true\)\)/);
+  assert.match(source, /var wechatIcon = createWechatIcon\(\)/);
+  assert.match(source, /wechatTarget\.replaceWith\(wechatNode\)/);
+  assert.doesNotMatch(source, /context\.root\.find\('\[data-easymde-command="copywechat"\]/);
   assert.match(
     source,
     /onActivate:\s*function \(workspaceContext\) \{\s*bindLazyImagePasteUpload\(workspaceContext\.source, context\.root, context\.flash\);/
   );
+});
+
+test('detached revision previews load and apply their own feature metadata', async () => {
+  let loadedFeatures = null;
+  let enhancedFeatures = null;
+  const preview = createPreviewWrapper('<pre><code class="language-mermaid">graph TD; A-->B;</code></pre>');
+  const { hooks } = loadBootstrap({
+    EasyMDEPreviewFeatureLoader: {
+      ensurePreviewFeatures(features) {
+        loadedFeatures = { ...features };
+        return Promise.resolve();
+      },
+      normalizeFeatures
+    },
+    EasyMDEEnhancements: {
+      enhance(node, config) {
+        enhancedFeatures = { ...config.features };
+        node.innerHTML = '<div class="easymde-mermaid"><svg></svg></div>';
+        return Promise.resolve();
+      }
+    }
+  });
+
+  const ready = await hooks.enhancePreviewSurface(preview, {
+    math: true,
+    mermaid: true,
+    syntaxHighlight: true
+  });
+
+  assert.equal(ready, true);
+  assert.equal(loadedFeatures.math, true);
+  assert.equal(loadedFeatures.mermaid, true);
+  assert.equal(loadedFeatures.syntaxHighlight, true);
+  assert.equal(enhancedFeatures.math, true);
+  assert.equal(enhancedFeatures.mermaid, true);
+  assert.equal(enhancedFeatures.syntaxHighlight, true);
+  assert.match(preview[0].innerHTML, /easymde-mermaid/);
 });
 
 test('post-publish preview accepts only successful WordPress notices', () => {

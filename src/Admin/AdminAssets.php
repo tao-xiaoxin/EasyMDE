@@ -12,6 +12,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class AdminAssets {
+	const CATEGORY_OPTIONS_CACHE_TTL = 300;
 
 	private $post_mode_controller;
 	private $frontend_assets;
@@ -164,6 +165,7 @@ final class AdminAssets {
 		);
 
 		wp_enqueue_media();
+		$category_options = $this->get_category_options( $screen->post_type, $post_id );
 
 		wp_localize_script(
 			'easymde-admin',
@@ -187,7 +189,7 @@ final class AdminAssets {
 				'commands'                => $this->toolbar_registry->get_commands_for_script(),
 				'shortcuts'               => $this->settings_page->get_shortcut_config_for_script(),
 				'editorSettings'          => $this->settings_page->get_editor_settings(),
-				'categoryOptions'         => $this->get_category_options( $screen->post_type ),
+				'categoryOptions'         => $category_options,
 				'categoryLoadError'       => $this->category_load_error,
 				'copy'                    => array(
 					'mode' => 'wechat-rich-text',
@@ -228,11 +230,22 @@ final class AdminAssets {
 	 * Return the native category hierarchy used by the immersive publish panel.
 	 *
 	 * @param string $post_type Current editor post type.
+	 * @param int    $post_id   Current editor post ID.
 	 * @return array<int, array<string, bool|string>>
 	 */
-	private function get_category_options( $post_type ) {
+	private function get_category_options( $post_type, $post_id ) {
+		$this->category_load_error = '';
+
 		if ( ! is_object_in_taxonomy( $post_type, 'category' ) ) {
 			return array();
+		}
+
+		$cache_key = $this->get_category_options_cache_key( $post_type, $post_id );
+		$found     = false;
+		$options   = $cache_key ? wp_cache_get( $cache_key, 'easymde', false, $found ) : false;
+
+		if ( $found && is_array( $options ) ) {
+			return $options;
 		}
 
 		$terms = get_terms(
@@ -262,7 +275,7 @@ final class AdminAssets {
 			}
 		}
 
-		return array_map(
+		$options = array_map(
 			static function ( $term ) use ( $parent_ids ) {
 				return array(
 					'id'          => (string) $term->term_id,
@@ -272,6 +285,51 @@ final class AdminAssets {
 				);
 			},
 			$terms
+		);
+
+		if ( $cache_key ) {
+			wp_cache_set( $cache_key, $options, 'easymde', self::CATEGORY_OPTIONS_CACHE_TTL );
+		}
+
+		return $options;
+	}
+
+	private function get_category_options_cache_key( $post_type, $post_id ) {
+		$user         = wp_get_current_user();
+		$capabilities = $user->allcaps;
+
+		ksort( $capabilities );
+		$context = array(
+			'blogId'           => (string) get_current_blog_id(),
+			'capabilitiesHash' => md5( wp_json_encode( $capabilities ) ),
+			'locale'           => determine_locale(),
+			'postId'           => (string) absint( $post_id ),
+			'postType'         => sanitize_key( $post_type ),
+			'userId'           => (string) $user->ID,
+		);
+
+		/**
+		 * Filters the context used to cache immersive category options.
+		 *
+		 * Return false when category query filters depend on request state that
+		 * cannot be represented by a stable cache context.
+		 *
+		 * @param array<string,string>|false $context   Default cache context.
+		 * @param string                     $post_type Current editor post type.
+		 * @param int                        $post_id   Current editor post ID.
+		 */
+		$context = apply_filters( 'easymde_category_options_cache_context', $context, $post_type, absint( $post_id ) );
+		if ( false === $context ) {
+			return '';
+		}
+
+		return 'category_options:' . md5(
+			wp_json_encode(
+				array(
+					'context'     => $context,
+					'lastChanged' => wp_cache_get_last_changed( 'terms' ),
+				)
+			)
 		);
 	}
 

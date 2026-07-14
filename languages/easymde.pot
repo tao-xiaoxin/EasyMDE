@@ -956,7 +956,7 @@ msgstr ""
 msgid "Save"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:576 src/Frontend/FrontendAssets.php:70
+#: src/Admin/AdminAssets.php:576 src/Frontend/FrontendAssets.php:74
 msgid "Rendering failed."
 msgstr ""
 
@@ -1034,7 +1034,7 @@ msgstr ""
 msgid "Copying..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:595
+#: src/Admin/AdminAssets.php:595 src/Frontend/FrontendAssets.php:76
 msgid "Copied"
 msgstr ""
 
@@ -1128,6 +1128,14 @@ msgstr ""
 
 #: src/Admin/SettingsPage.php:230 templates/admin/settings-page.php:61
 msgid "Windows / Linux"
+msgstr ""
+
+#: src/Frontend/FrontendAssets.php:75
+msgid "Copy code"
+msgstr ""
+
+#: src/Frontend/FrontendAssets.php:77
+msgid "Copy failed"
 msgstr ""
 
 #: src/Rest/CustomCssController.php:114

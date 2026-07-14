@@ -36,6 +36,7 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 * `[TOC]` and `[toc]` table of contents generation.
 * Per-post article themes and code themes.
 * Optional Mac-style code block framing.
+* Accessible copy controls for code blocks on published frontend articles.
 * Per-post article font stack selection.
 * Named reusable custom CSS styles.
 * Rich-text “Copy to WeChat” export from the rendered preview.

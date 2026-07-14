@@ -44,6 +44,7 @@ final class FrontendAssets {
 		$post        = get_post( $post_id );
 		$markdown    = $this->post_document->get_markdown( $post );
 		$theme_state = $this->theme_state_repository->get_theme_state( $post_id );
+		$features    = $this->get_feature_config( $markdown );
 
 		$this->enqueue_render_assets( $post_id, $markdown );
 
@@ -52,6 +53,9 @@ final class FrontendAssets {
 		}
 
 		$dependencies = array( 'easymde-enhancements' );
+		if ( ! empty( $features['syntaxHighlight'] ) ) {
+			$dependencies[] = 'easymde-code-copy';
+		}
 		wp_enqueue_script(
 			'easymde-frontend',
 			Asset::url( 'assets/js/frontend/bootstrap.js' ),
@@ -64,10 +68,13 @@ final class FrontendAssets {
 			'easymde-frontend',
 			'EasyMDEFrontendConfig',
 			array(
-				'features'   => $this->get_feature_config( $markdown ),
+				'features'   => $features,
 				'themeState' => $theme_state,
 				'strings'    => array(
 					'renderingFailed' => __( 'Rendering failed.', 'easymde' ),
+					'copyCode'       => __( 'Copy code', 'easymde' ),
+					'copied'         => __( 'Copied', 'easymde' ),
+					'copyFailed'     => __( 'Copy failed', 'easymde' ),
 				),
 			)
 		);
@@ -99,6 +106,23 @@ final class FrontendAssets {
 				Asset::url( 'assets/css/frontend/code-frame.css' ),
 				array( 'easymde-content' ),
 				EASYMDE_VERSION
+			);
+		}
+
+		if ( ! empty( $features['syntaxHighlight'] ) ) {
+			wp_enqueue_style(
+				'easymde-code-copy',
+				Asset::url( 'assets/css/frontend/code-copy.css' ),
+				array( 'easymde-content' ),
+				EASYMDE_VERSION
+			);
+
+			wp_enqueue_script(
+				'easymde-code-copy',
+				Asset::url( 'assets/js/frontend/code-copy.js' ),
+				array(),
+				EASYMDE_VERSION,
+				true
 			);
 		}
 

@@ -7,5 +7,9 @@
         }
 
         window.EasyMDEEnhancements.enhance(document, window.EasyMDEFrontendConfig || {});
+
+        if (window.EasyMDECodeCopy) {
+            window.EasyMDECodeCopy.enhance(document, window.EasyMDEFrontendConfig || {});
+        }
     });
 })(window, document);

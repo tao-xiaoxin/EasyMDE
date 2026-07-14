@@ -257,6 +257,14 @@ msgstr "继续添加..."
 msgid "Copied"
 msgstr "已复制"
 
+#: src/Frontend/FrontendAssets.php:71
+msgid "Copy code"
+msgstr "复制代码"
+
+#: src/Frontend/FrontendAssets.php:73
+msgid "Copy failed"
+msgstr "复制失败"
+
 #: src/Admin/AdminAssets.php:526
 msgid "Copied preview for WeChat."
 msgstr "已复制当前预览，可直接粘贴到公众号编辑器。"

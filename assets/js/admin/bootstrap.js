@@ -2651,9 +2651,13 @@
             }
             if (!window.wp || !window.wp.media) {
                 if (context.selection) {
-                    textarea.setSelectionRange(context.selection.start, context.selection.end);
-                    textarea.scrollTop = context.selection.scrollTop;
-                    textarea.scrollLeft = context.selection.scrollLeft;
+                    textarea.setSelectionRange(
+                        context.selection.start,
+                        context.selection.end,
+                        context.selection.direction || 'none'
+                    );
+                    textarea.scrollTop = context.selection.scroll_top;
+                    textarea.scrollLeft = context.selection.scroll_left;
                 }
                 insertMediaPlaceholder(textarea);
                 if (typeof context.commitSourceChange === 'function') {

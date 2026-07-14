@@ -3087,9 +3087,10 @@ test('openMediaPicker falls back to the existing Markdown placeholder when lazy 
     selectionEnd: 5,
     scrollTop: 0,
     scrollLeft: 0,
-    setSelectionRange(start, end) {
+    setSelectionRange(start, end, direction) {
       this.selectionStart = start;
       this.selectionEnd = end;
+      this.selectionDirection = direction;
     }
   };
   const { hooks } = loadBootstrap({
@@ -3128,7 +3129,7 @@ test('openMediaPicker falls back to the existing Markdown placeholder when lazy 
   });
 
   const loaded = await hooks.openMediaPicker(textarea, {
-    selection: { start: 5, end: 5, scrollTop: 42, scrollLeft: 17 },
+    selection: { start: 5, end: 5, direction: 'backward', scroll_top: 42, scroll_left: 17 },
     notifyInput() {
       inputNotifications += 1;
     },
@@ -3145,6 +3146,7 @@ test('openMediaPicker falls back to the existing Markdown placeholder when lazy 
   assert.equal(textarea.value, 'Intro![alt text]()');
   assert.equal(textarea.scrollTop, 42);
   assert.equal(textarea.scrollLeft, 17);
+  assert.equal(textarea.selectionDirection, 'backward');
   assert.equal(inputNotifications, 1);
   assert.equal(focusRestorations, 1);
   assert.equal(committedChanges, 1);

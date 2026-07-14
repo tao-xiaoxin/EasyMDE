@@ -1102,8 +1102,8 @@
                 start: source.selectionStart,
                 end: source.selectionEnd,
                 direction: source.selectionDirection || 'none',
-                scrollTop: source.scrollTop,
-                scrollLeft: source.scrollLeft
+                scroll_top: source.scrollTop,
+                scroll_left: source.scrollLeft
             };
             return sourceSelection;
         }
@@ -1119,9 +1119,9 @@
                     source.focus();
                 }
             }
-            source.setSelectionRange(selection.start, selection.end);
-            source.scrollTop = selection.scrollTop;
-            source.scrollLeft = selection.scrollLeft;
+            source.setSelectionRange(selection.start, selection.end, selection.direction || 'none');
+            source.scrollTop = selection.scroll_top;
+            source.scrollLeft = selection.scroll_left;
         }
 
         function setToolbarStatus(message) {
@@ -1149,8 +1149,8 @@
                 start: 0,
                 end: before.length,
                 direction: 'none',
-                scrollTop: scrollTop,
-                scrollLeft: scrollLeft
+                scroll_top: scrollTop,
+                scroll_left: scrollLeft
             }, true);
             if (!doc.execCommand || !doc.execCommand('insertText', false, after)) {
                 source.value = before;

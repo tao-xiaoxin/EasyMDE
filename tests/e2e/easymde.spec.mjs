@@ -1254,7 +1254,11 @@ test.describe('EasyMDE editor workflows', () => {
 
     const source = page.locator('.easymde-immersive-workspace__source');
     await source.fill('before IMAGE after');
-    await selectImmersiveRange(page, 7, 12);
+    await source.evaluate((field) => {
+      field.focus();
+      field.setSelectionRange(7, 12, 'backward');
+      field.dispatchEvent(new Event('select', { bubbles: true }));
+    });
     await page.locator('[data-command="image"]').click();
     const mediaModal = page.locator('.media-modal:visible');
     await expect(mediaModal).toBeVisible();
@@ -1262,6 +1266,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(mediaModal).toBeHidden();
     await expect(source).toHaveValue('before IMAGE after');
     await expect(source).toBeFocused();
+    await expect.poll(() => source.evaluate((field) => field.selectionDirection)).toBe('backward');
 
     await page.locator('[data-command="image"]').click();
     await expect(mediaModal).toBeVisible();
@@ -1284,7 +1289,7 @@ test.describe('EasyMDE editor workflows', () => {
     const tableDialog = page.locator('.easymde-immersive-workspace__table-modal');
     await expect(tableDialog).toBeVisible();
     await expect(page.locator('.easymde-immersive-workspace__table-modal')).toHaveCount(1);
-    await page.locator('[data-action="cancel-table"]').last().click();
+    await tableDialog.locator('footer [data-action="cancel-table"]').click();
     await expect(source).toHaveValue('# Table target\n\nreplace tail');
     await expect(page.locator('[data-command="table"]')).toBeFocused();
 

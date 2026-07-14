@@ -10,9 +10,9 @@
             if (!selection) {
                 return;
             }
-            textarea.setSelectionRange(selection.start, selection.end);
-            textarea.scrollTop = selection.scrollTop;
-            textarea.scrollLeft = selection.scrollLeft;
+            textarea.setSelectionRange(selection.start, selection.end, selection.direction || 'none');
+            textarea.scrollTop = selection.scroll_top;
+            textarea.scrollLeft = selection.scroll_left;
         }
 
         if (!window.wp || !window.wp.media) {

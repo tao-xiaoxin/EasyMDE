@@ -1308,6 +1308,29 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('[data-table-rows]').fill('3');
     await page.locator('[data-table-columns]').fill('2');
     await source.evaluate((field) => field.setSelectionRange(field.value.length, field.value.length));
+    await page.evaluate(() => {
+      window.__easymdeOriginalExecCommand = document.execCommand;
+      document.execCommand = () => false;
+    });
+    const tableUndoFailure = page.waitForEvent('pageerror');
+    await page.locator('[data-action="insert-table"]').click();
+    await expect(tableUndoFailure).resolves.toHaveProperty('message', await page.evaluate(() => window.EasyMDEConfig.strings.toolbarUndoUnavailable));
+    await expect(tableDialog).toBeHidden();
+    await expect(page.locator('[data-table-backdrop]')).toBeHidden();
+    await expect(source).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('#easymde-source')).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('[data-toolbar-status]')).toContainText(/undoable Markdown edit/i);
+    await expect(source).toBeFocused();
+    expect(await source.evaluate((field) => [field.selectionStart, field.selectionEnd])).toEqual([16, 23]);
+    await page.evaluate(() => {
+      document.execCommand = window.__easymdeOriginalExecCommand;
+      delete window.__easymdeOriginalExecCommand;
+    });
+
+    await page.locator('[data-command="table"]').click();
+    await page.locator('[data-table-rows]').fill('3');
+    await page.locator('[data-table-columns]').fill('2');
+    await source.evaluate((field) => field.setSelectionRange(field.value.length, field.value.length));
     await page.locator('[data-action="insert-table"]').click();
     await expect(tableDialog).toBeHidden();
     const tableLabels = await page.evaluate(() => ({

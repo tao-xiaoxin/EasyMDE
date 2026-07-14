@@ -3414,11 +3414,13 @@
             }
             restoreSourceSelection(tableSelection, false);
             before = source.value;
-            adapter.insertTable(dimensions.rows, dimensions.columns, source);
-            commitExecutedSourceChange(before, tableSelection);
-            closeTableDialog(false);
-            source.focus();
-            tableReturnFocus = null;
+            try {
+                adapter.insertTable(dimensions.rows, dimensions.columns, source);
+                commitExecutedSourceChange(before, tableSelection);
+            } finally {
+                closeTableDialog(false);
+                source.focus();
+            }
             return true;
         }
 

@@ -1165,6 +1165,19 @@
             return true;
         }
 
+        function commitExecutedSourceChange(before, rollbackSelection) {
+            var resultSelection;
+
+            if (source.value === before) {
+                return false;
+            }
+            resultSelection = captureSourceSelection();
+            commitUndoableSourceChange(before, resultSelection, rollbackSelection);
+            captureSourceSelection();
+            setToolbarStatus('');
+            return true;
+        }
+
         function sourceCommandUnavailable() {
             if (composingSource) {
                 setToolbarStatus(strings.toolbarCompositionUnavailable || 'Formatting is unavailable during text composition.');
@@ -1251,7 +1264,6 @@
             var before;
             var commandSelection;
             var result;
-            var resultSelection;
             if (sourceCommandUnavailable()) {
                 return false;
             }
@@ -1274,12 +1286,7 @@
                     setToolbarStatus(error && error.message ? error.message : strings.mediaPickerFailed || 'The WordPress media library could not be opened.');
                 });
             }
-            if (source.value !== before) {
-                resultSelection = captureSourceSelection();
-                commitUndoableSourceChange(before, resultSelection, commandSelection);
-                captureSourceSelection();
-                setToolbarStatus('');
-            }
+            commitExecutedSourceChange(before, commandSelection);
             return result;
         }
 
@@ -3301,9 +3308,13 @@
         }
 
         function insertSelectedTable(rows, columns) {
+            var before;
             var dimensions;
             var errorNode = query('[data-table-error]');
 
+            if (sourceCommandUnavailable()) {
+                return false;
+            }
             try {
                 dimensions = normalizeTableDimensions(rows, columns);
             } catch (error) {
@@ -3315,8 +3326,9 @@
                 throw new Error('The immersive table insertion adapter is unavailable.');
             }
             restoreSourceSelection(tableSelection, false);
+            before = source.value;
             adapter.insertTable(dimensions.rows, dimensions.columns, source);
-            captureSourceSelection();
+            commitExecutedSourceChange(before, tableSelection);
             closeTableDialog(false);
             source.focus();
             tableReturnFocus = null;
@@ -3329,6 +3341,9 @@
             var row;
             var column;
 
+            if (sourceCommandUnavailable()) {
+                return false;
+            }
             closePopovers(false);
             closeHeadingMenu(false);
             tableSelection = captureSourceSelection();
@@ -3362,6 +3377,7 @@
             dialog.hidden = false;
             query('[data-table-backdrop]').hidden = false;
             query('[data-table-rows]').focus();
+            return true;
         }
 
         function clearWechatFeedbackTimer() {

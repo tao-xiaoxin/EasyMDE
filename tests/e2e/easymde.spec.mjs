@@ -1064,6 +1064,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(headingButton).toHaveAttribute('aria-expanded', 'true');
     const headingMenu = page.locator('[data-heading-menu]');
     await expect(headingMenu).toBeVisible();
+    await expect(headingMenu).toHaveAttribute('id', 'easymde-immersive-heading-menu');
     await expect(headingMenu).toHaveAttribute('role', 'menu');
     await expect(headingMenu.getByRole('menuitem')).toHaveCount(7);
     await page.keyboard.press('Escape');
@@ -1245,6 +1246,23 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('[data-stat-summary="characters"]')).not.toHaveText('0');
     await expect(page.locator('#easymde-source')).toHaveValue(await source.inputValue());
     await expect(source).toBeFocused();
+
+    await source.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+    await expect(source).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('#easymde-source')).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('.easymde-immersive-workspace__preview table')).toHaveCount(0);
+
+    await source.evaluate((field) => { field.readOnly = true; });
+    await page.locator('[data-command="table"]').click();
+    await expect(tableDialog).toBeHidden();
+    await expect(page.locator('[data-toolbar-status]')).toContainText(/read.only|unavailable/i);
+    await source.evaluate((field) => { field.readOnly = false; });
+
+    await source.evaluate((field) => field.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })));
+    await page.locator('[data-command="table"]').click();
+    await expect(tableDialog).toBeHidden();
+    await expect(page.locator('[data-toolbar-status]')).toContainText(/composition/i);
+    await source.evaluate((field) => field.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })));
   });
 
   test('keeps immersive view, inert-control, and exit behavior aligned with visible controls', async ({ page }, testInfo) => {

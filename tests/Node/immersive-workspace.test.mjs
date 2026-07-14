@@ -199,7 +199,7 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(css, /__preview-card > header\s*\{[^}]*background:\s*transparent;/s);
   assert.match(css, /__preview-card > header strong\s*\{[^}]*font-weight:\s*500;/s);
   assert.match(source, /data-command="heading"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"[^>]*aria-controls="easymde-immersive-heading-menu"/);
-  assert.match(source, /data-heading-menu role="menu"/);
+  assert.match(source, /id="easymde-immersive-heading-menu"[^>]*data-heading-menu role="menu"/);
   assert.match(css, /__heading-menu\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*150040;/s);
   assert.match(css, /__format-actions button[^}]*border-radius:\s*5\.625px;/s);
   assert.match(css, /__format-actions button\s*\{[^}]*color:\s*#45556c;/s);

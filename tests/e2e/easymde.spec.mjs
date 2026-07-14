@@ -1067,10 +1067,62 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(headingMenu).toHaveAttribute('id', 'easymde-immersive-heading-menu');
     await expect(headingMenu).toHaveAttribute('role', 'menu');
     await expect(headingMenu.getByRole('menuitem')).toHaveCount(7);
+    await expect(headingMenu.locator('[data-heading-menu-label]')).not.toBeEmpty();
+    await expect(headingButton.locator('strong')).toHaveText('H2');
+    await expect(headingButton).toHaveClass(/is-menu-open/);
+    const paragraphItem = headingMenu.locator('[data-heading-command="paragraph"]');
+    const heading1Item = headingMenu.locator('[data-heading-command="heading1"]');
+    const heading2Item = headingMenu.locator('[data-heading-command="heading2"]');
+    const heading6Item = headingMenu.locator('[data-heading-command="heading6"]');
+    await expect(paragraphItem.locator('[data-heading-menu-key]')).toHaveText('P');
+    await expect(heading1Item.locator('[data-heading-menu-key]')).toHaveText('H1');
+    await expect(heading2Item).toHaveClass(/is-current/);
+    await expect(heading2Item).toHaveAttribute('aria-current', 'true');
+    await expect(heading2Item.locator('[data-heading-menu-check]')).toBeVisible();
+    await expect.poll(() => headingButton.evaluate((button) => getComputedStyle(button).color))
+      .toBe('rgb(49, 106, 244)');
+    const headingMenuVisuals = await headingMenu.evaluate((menu) => {
+      const menuStyle = getComputedStyle(menu);
+      const headingButtonStyle = getComputedStyle(document.querySelector('[data-command="heading"]'));
+      const h1Key = menu.querySelector('[data-heading-command="heading1"] [data-heading-menu-key]');
+      const h1Label = menu.querySelector('[data-heading-command="heading1"] [data-heading-menu-text]');
+      const h6Key = menu.querySelector('[data-heading-command="heading6"] [data-heading-menu-key]');
+      const h6Label = menu.querySelector('[data-heading-command="heading6"] [data-heading-menu-text]');
+
+      return {
+        menuWidth: menu.getBoundingClientRect().width,
+        menuBorder: menuStyle.borderColor,
+        menuShadow: menuStyle.boxShadow,
+        buttonColor: headingButtonStyle.color,
+        h1Key: [h1Key.getBoundingClientRect().width, h1Key.getBoundingClientRect().height],
+        h1FontSize: getComputedStyle(h1Label).fontSize,
+        h6Key: [h6Key.getBoundingClientRect().width, h6Key.getBoundingClientRect().height],
+        h6FontSize: getComputedStyle(h6Label).fontSize
+      };
+    });
+    expect(headingMenuVisuals).toMatchObject({
+      menuWidth: 176,
+      menuBorder: 'rgb(231, 235, 243)',
+      buttonColor: 'rgb(49, 106, 244)',
+      h1Key: [32, 28],
+      h1FontSize: '16px',
+      h6Key: [27, 23],
+      h6FontSize: '11px'
+    });
+    expect(headingMenuVisuals.menuShadow).toContain('rgba(38, 52, 85, 0.1)');
     await page.keyboard.press('Escape');
     await expect(headingMenu).toBeHidden();
     await expect(headingButton).toBeFocused();
+    await expect(headingButton).not.toHaveClass(/is-menu-open/);
     await expect(source).toHaveValue('## Section');
+
+    await source.fill('\n## Section');
+    await selectImmersiveRange(page, 0, 0);
+    await headingButton.click();
+    await expect(headingButton.locator('strong')).toHaveText('H');
+    await expect(paragraphItem).toHaveAttribute('aria-current', 'true');
+    await expect(heading2Item).not.toHaveAttribute('aria-current', 'true');
+    await page.keyboard.press('Escape');
 
     const headingCases = [
       ['paragraph', 'Section'],
@@ -1169,6 +1221,26 @@ test.describe('EasyMDE editor workflows', () => {
       document.execCommand = window.__easymdeOriginalExecCommand;
       delete window.__easymdeOriginalExecCommand;
     });
+
+    await page.setViewportSize({ width: 640, height: 375 });
+    await source.fill('## Short viewport');
+    await selectImmersiveRange(page, 0, 17);
+    await headingButton.click();
+    await expect.poll(() => headingMenu.evaluate((menu) => {
+      const rect = menu.getBoundingClientRect();
+      return {
+        bottom: Math.round(rect.bottom),
+        clipped: menu.clientHeight < menu.scrollHeight
+      };
+    })).toEqual({ bottom: 367, clipped: true });
+    await page.keyboard.press('End');
+    await expect(heading6Item).toBeFocused();
+    expect(await heading6Item.evaluate((item) => {
+      const itemRect = item.getBoundingClientRect();
+      const menuRect = item.closest('[data-heading-menu]').getBoundingClientRect();
+      return itemRect.bottom <= menuRect.bottom && itemRect.bottom <= window.innerHeight - 8;
+    })).toBe(true);
+    await page.keyboard.press('Escape');
   });
 
   test('uses preserved source selections for immersive image and table flows', async ({ page }, testInfo) => {

@@ -542,6 +542,7 @@ final class AdminAssets {
 			'font'                          => __( 'Font', 'easymde' ),
 			'fontTitle'                     => __( 'Font settings', 'easymde' ),
 			'headings'                      => __( 'Headings', 'easymde' ),
+			'headingLevel'                  => __( 'Heading level', 'easymde' ),
 			'articleTheme'                  => __( 'Article theme', 'easymde' ),
 			'codeTheme'                     => __( 'Code theme', 'easymde' ),
 			'macCodeFrame'                  => __( 'Mac code frame', 'easymde' ),

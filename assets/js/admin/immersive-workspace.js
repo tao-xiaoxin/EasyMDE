@@ -1193,11 +1193,15 @@
         function closeHeadingMenu(restoreFocus) {
             var button = query('[data-command="heading"]');
             var menu = query('[data-heading-menu]');
-            if (!button || !menu || menu.hidden) {
+            if (!button || !menu) {
+                return false;
+            }
+            button.classList.remove('is-menu-open');
+            button.setAttribute('aria-expanded', 'false');
+            if (menu.hidden) {
                 return false;
             }
             menu.hidden = true;
-            button.setAttribute('aria-expanded', 'false');
             if (restoreFocus && button.isConnected && button.focus) {
                 button.focus();
             }
@@ -1209,37 +1213,112 @@
             return menu ? Array.prototype.slice.call(menu.querySelectorAll('[role="menuitem"]')) : [];
         }
 
+        function currentHeadingCommandId() {
+            var lineStart;
+            var lineEnd;
+            var line;
+            var match;
+            if (!source) {
+                return 'paragraph';
+            }
+            lineStart = source.value.lastIndexOf('\n', Math.max(0, source.selectionStart) - 1) + 1;
+            lineEnd = source.value.indexOf('\n', source.selectionStart);
+            line = source.value.slice(lineStart, lineEnd === -1 ? source.value.length : lineEnd);
+            match = line.match(/^ {0,3}(#{1,6})(?:[ \t]+|$)/);
+            return match ? 'heading' + String(match[1].length) : 'paragraph';
+        }
+
+        function updateHeadingMenuState() {
+            var commandId = currentHeadingCommandId();
+            var button = query('[data-command="heading"]');
+            var buttonLabel = button ? button.querySelector('strong') : null;
+            if (buttonLabel) {
+                buttonLabel.textContent = commandId === 'paragraph' ? 'H' : 'H' + commandId.slice(7);
+            }
+            headingMenuItems().forEach(function (item) {
+                var current = item.getAttribute('data-heading-command') === commandId;
+                item.classList.toggle('is-current', current);
+                if (current) {
+                    item.setAttribute('aria-current', 'true');
+                } else {
+                    item.removeAttribute('aria-current');
+                }
+            });
+        }
+
         function populateHeadingMenu() {
             var menu = query('[data-heading-menu]');
             var commands = typeof adapter.getSurfaceCommands === 'function'
                 ? adapter.getSurfaceCommands('heading-menu')
                 : [];
+            var menuLabel;
             if (!menu || menu.childNodes.length) {
                 return;
             }
             if (!commands.length) {
                 throw new Error('The immersive heading command registry is unavailable.');
             }
+            menuLabel = doc.createElement('div');
+            menuLabel.className = 'easymde-immersive-workspace__heading-menu-label';
+            menuLabel.setAttribute('data-heading-menu-label', '');
+            menuLabel.setAttribute('aria-hidden', 'true');
+            menuLabel.textContent = strings.headingLevel || strings.headings || 'Heading level';
+            menu.appendChild(menuLabel);
             commands.forEach(function (command) {
                 var item = doc.createElement('button');
+                var key = doc.createElement('span');
+                var text = doc.createElement('span');
+                var check = doc.createElement('span');
+                var level = /^heading([1-6])$/.exec(command.id);
                 item.type = 'button';
+                item.className = 'easymde-immersive-workspace__heading-menu-item';
                 item.setAttribute('role', 'menuitem');
                 item.setAttribute('data-heading-command', command.id);
-                item.textContent = command.label || command.id;
+                key.className = 'easymde-immersive-workspace__heading-menu-key';
+                key.setAttribute('data-heading-menu-key', '');
+                key.setAttribute('aria-hidden', 'true');
+                key.textContent = level ? 'H' + level[1] : 'P';
+                text.className = 'easymde-immersive-workspace__heading-menu-text';
+                text.setAttribute('data-heading-menu-text', '');
+                text.textContent = command.label || command.id;
+                check.className = 'easymde-immersive-workspace__heading-menu-check';
+                check.setAttribute('data-heading-menu-check', '');
+                check.setAttribute('aria-hidden', 'true');
+                check.innerHTML = iconMarkup('check', 14, 2.2);
+                item.appendChild(key);
+                item.appendChild(text);
+                item.appendChild(check);
                 menu.appendChild(item);
             });
+            updateHeadingMenuState();
         }
 
         function positionHeadingMenu() {
             var button = query('[data-command="heading"]');
             var menu = query('[data-heading-menu]');
             var rect;
+            var gap = 6;
+            var viewportMargin = 8;
+            var availableAbove;
+            var availableBelow;
+            var naturalHeight;
+            var maxHeight;
             if (!button || !menu || menu.hidden) {
                 return;
             }
             rect = button.getBoundingClientRect();
-            menu.style.top = String(rect.bottom + 6) + 'px';
-            menu.style.left = String(Math.max(8, Math.min(rect.left, win.innerWidth - menu.offsetWidth - 8))) + 'px';
+            naturalHeight = menu.scrollHeight;
+            availableAbove = Math.max(0, rect.top - gap - viewportMargin);
+            availableBelow = Math.max(0, win.innerHeight - rect.bottom - gap - viewportMargin);
+            if (availableBelow >= naturalHeight || availableBelow >= availableAbove) {
+                maxHeight = availableBelow;
+                menu.style.top = String(rect.bottom + gap) + 'px';
+            } else {
+                maxHeight = availableAbove;
+                menu.style.top = String(Math.max(viewportMargin, rect.top - gap - Math.min(naturalHeight, maxHeight))) + 'px';
+            }
+            menu.style.maxHeight = String(maxHeight) + 'px';
+            menu.style.left = String(Math.max(viewportMargin, Math.min(rect.left, win.innerWidth - menu.offsetWidth - viewportMargin))) + 'px';
         }
 
         function openHeadingMenu(focusLast) {
@@ -1253,8 +1332,10 @@
             closePopovers(false);
             closeAiMenus(false);
             populateHeadingMenu();
+            updateHeadingMenuState();
             menu.hidden = false;
             button.setAttribute('aria-expanded', 'true');
+            button.classList.add('is-menu-open');
             positionHeadingMenu();
             items = headingMenuItems();
             items[focusLast ? items.length - 1 : 0].focus();
@@ -1353,6 +1434,7 @@
             line = lines.length;
             column = lines[lines.length - 1].length + 1;
             cursorNode.textContent = (strings.line || 'Line') + ' ' + line + ', ' + (strings.column || 'Column') + ' ' + column;
+            updateHeadingMenuState();
         }
 
         function updateLineNumbers() {

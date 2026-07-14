@@ -201,6 +201,13 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(source, /data-command="heading"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"[^>]*aria-controls="easymde-immersive-heading-menu"/);
   assert.match(source, /id="easymde-immersive-heading-menu"[^>]*data-heading-menu role="menu"/);
   assert.match(css, /__heading-menu\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*150040;/s);
+  assert.match(css, /__heading-menu\s*\{[^}]*width:\s*176px;[^}]*border:\s*1px solid #e7ebf3;[^}]*box-shadow:\s*0 8px 22px rgba\(38, 52, 85, 0\.1\);/s);
+  assert.match(css, /__heading-menu\s*\{[^}]*overflow-y:\s*auto;/s);
+  assert.match(css, /__heading-menu-item\s*\{[^}]*grid-template-columns:\s*42px minmax\(0, 1fr\) 16px;[^}]*height:\s*40px;/s);
+  assert.match(css, /__heading-menu-key\s*\{[^}]*border:\s*1px solid #d5dcef;[^}]*background:\s*#fbfcff;[^}]*color:\s*#6576a2;/s);
+  assert.match(css, /__heading-menu-item\.is-current[^}]*background:\s*#f2f4fd;[^}]*color:\s*#2f3850;/s);
+  assert.match(css, /data-heading-command="heading1"[^}]*--easymde-heading-key-width:\s*32px;[^}]*--easymde-heading-label-size:\s*16px;/s);
+  assert.match(css, /data-heading-command="heading6"[^}]*--easymde-heading-key-width:\s*27px;[^}]*--easymde-heading-label-size:\s*11px;/s);
   assert.match(css, /__format-actions button[^}]*border-radius:\s*5\.625px;/s);
   assert.match(css, /__format-actions button\s*\{[^}]*color:\s*#45556c;/s);
   assert.match(css, /__format-actions button[^}]*font-weight:\s*500;/s);
@@ -218,7 +225,7 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(css, /__secondary-actions button\s*\{[^}]*font-size:\s*12\.5px;[^}]*font-weight:\s*500;/s);
   assert.match(css, /__secondary-actions button\s*\{[^}]*transition:\s*all 100ms cubic-bezier\(0\.4, 0, 0\.2, 1\);/s);
   assert.doesNotMatch(css, /\[data-action="copy-markdown"\]/);
-  assert.match(css, /__heading-button strong[^}]*letter-spacing:\s*-0\.3px;/s);
+  assert.match(css, /__heading-button strong[^}]*letter-spacing:\s*0;/s);
   assert.match(css, /\[data-action="exit"\][^}]*margin-left:\s*1\.875px;/s);
   assert.match(css, /__secondary-actions \[data-action="settings"\][^}]*padding-inline:\s*7\.5px;/s);
   assert.match(css, /__secondary-actions \[data-action="settings"\][^}]*color:\s*#62748e;/s);

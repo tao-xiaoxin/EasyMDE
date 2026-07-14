@@ -835,270 +835,274 @@ msgid "Headings"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:545
-msgid "Article theme"
+msgid "Heading level"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:546
-msgid "Code theme"
+msgid "Article theme"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:547
-msgid "Mac code frame"
+msgid "Code theme"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:548
-msgid "Custom CSS"
+msgid "Mac code frame"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:549
-msgid "Custom CSS theme"
+msgid "Custom CSS"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:550
-msgid "Theme name"
+msgid "Custom CSS theme"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:551
-msgid "CSS code"
+msgid "Theme name"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:552
-msgid "Style preview"
+msgid "CSS code"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:553
-msgid "Enter theme name…"
+msgid "Style preview"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:554
-msgid "/* CSS styles */"
+msgid "Enter theme name…"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:555
+msgid "/* CSS styles */"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:556
 msgid "Save theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:556 src/Admin/AdminAssets.php:557
+#: src/Admin/AdminAssets.php:557 src/Admin/AdminAssets.php:558
 msgid "Saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:558
+#: src/Admin/AdminAssets.php:559
 msgid "Checking CSS..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:559
+#: src/Admin/AdminAssets.php:560
 msgid "CSS preview failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:560
+#: src/Admin/AdminAssets.php:561
 msgid "My theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:561
+#: src/Admin/AdminAssets.php:562
 msgid "Named custom CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:562
+#: src/Admin/AdminAssets.php:563
 msgid "CSS name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:563
+#: src/Admin/AdminAssets.php:564
 msgid "Save CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:564
+#: src/Admin/AdminAssets.php:565
 msgid "Saved CSS."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:565
+#: src/Admin/AdminAssets.php:566
 msgid "CSS save failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:566
+#: src/Admin/AdminAssets.php:567
 msgid "No custom CSS saved yet."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:567
+#: src/Admin/AdminAssets.php:568
 msgid "Custom font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:568
+#: src/Admin/AdminAssets.php:569
 msgid "Windows font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:569
+#: src/Admin/AdminAssets.php:570
 msgid "Apple font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:570
+#: src/Admin/AdminAssets.php:571
 msgid "Serif font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:571
+#: src/Admin/AdminAssets.php:572
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:572
+#: src/Admin/AdminAssets.php:573
 msgid "Local draft saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:573
+#: src/Admin/AdminAssets.php:574
 msgid "A newer local draft is available."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:574
+#: src/Admin/AdminAssets.php:575
 msgid "Restore draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:575
+#: src/Admin/AdminAssets.php:576
 msgid "Discard draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:576
+#: src/Admin/AdminAssets.php:577
 msgid "Draft restored."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:577
+#: src/Admin/AdminAssets.php:578
 msgid "Draft discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:578
+#: src/Admin/AdminAssets.php:579
 msgid "Save"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:579 src/Frontend/FrontendAssets.php:70
+#: src/Admin/AdminAssets.php:580 src/Frontend/FrontendAssets.php:70
 msgid "Rendering failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:580
+#: src/Admin/AdminAssets.php:581
 msgid "The first local image could not be verified."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:581
+#: src/Admin/AdminAssets.php:582
 msgid "Suggested from the first verified local image. It is not selected yet."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:582
+#: src/Admin/AdminAssets.php:583
 msgid "Use first local image"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:583
+#: src/Admin/AdminAssets.php:584
 msgid ""
 "You have unsaved title or Markdown changes. Continue to revision history and "
 "leave these changes behind?"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:584 src/Support/ToolbarRegistry.php:290
+#: src/Admin/AdminAssets.php:585 src/Support/ToolbarRegistry.php:290
 msgid "Copy to WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:585
+#: src/Admin/AdminAssets.php:586
 msgid "Copy preview for WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:586
+#: src/Admin/AdminAssets.php:587
 msgid "Copy current preview content to WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:587
+#: src/Admin/AdminAssets.php:588
 msgid "Copied preview for WeChat."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:588
+#: src/Admin/AdminAssets.php:589
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:589
+#: src/Admin/AdminAssets.php:590
 msgid "Clipboard access is not available in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:590
+#: src/Admin/AdminAssets.php:591
 msgid "Column "
 msgstr ""
 
-#: src/Admin/AdminAssets.php:591
+#: src/Admin/AdminAssets.php:592
 msgid "Content"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:592
+#: src/Admin/AdminAssets.php:593
 msgid "AI summary generation is not available yet"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:593
+#: src/Admin/AdminAssets.php:594
 msgid "Insert table"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:594
+#: src/Admin/AdminAssets.php:595
 msgid "Rows"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:595
+#: src/Admin/AdminAssets.php:596
 msgid "Columns"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:596
+#: src/Admin/AdminAssets.php:597
 msgid "Quick table size selection"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:597
+#: src/Admin/AdminAssets.php:598
 msgid "Resize outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:598
+#: src/Admin/AdminAssets.php:599
 msgid "Copying..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:599
+#: src/Admin/AdminAssets.php:600
 msgid "Copied"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:600
+#: src/Admin/AdminAssets.php:601
 msgid "Uploading pasted image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:601
+#: src/Admin/AdminAssets.php:602
 msgid "Pasted image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:602
+#: src/Admin/AdminAssets.php:603
 msgid "Pasted image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:603
+#: src/Admin/AdminAssets.php:604
 msgid "Pasted image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:604
+#: src/Admin/AdminAssets.php:605
 msgid "Uploading dropped image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:605
+#: src/Admin/AdminAssets.php:606
 msgid "Dropped image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:606
+#: src/Admin/AdminAssets.php:607
 msgid "Dropped image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:607
+#: src/Admin/AdminAssets.php:608
 msgid "Dropped image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:608
+#: src/Admin/AdminAssets.php:609
 msgid "alt text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:609
+#: src/Admin/AdminAssets.php:610
 msgid "image"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:610
+#: src/Admin/AdminAssets.php:611
 msgid "The WordPress media library could not be opened."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:611
+#: src/Admin/AdminAssets.php:612
 msgid "link text"
 msgstr ""
 

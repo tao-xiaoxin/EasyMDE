@@ -349,7 +349,10 @@ test.describe('EasyMDE editor workflows', () => {
     expect(normalState.sourceLeft).toBeLessThan(normalState.previewLeft);
 
     await page.locator('.easymde-toolbar-immersive-toggle').click();
-    await expect(page.locator('.easymde-immersive-workspace')).toBeVisible();
+    const immersiveWorkspace = page.locator('.easymde-immersive-workspace');
+    await expect(immersiveWorkspace).toBeVisible();
+    await expect(immersiveWorkspace.locator('[title="Dark mode"], [title="Light mode"]')).toHaveCount(0);
+    await expect(immersiveWorkspace).not.toHaveClass(/easymde-theme-(?:dark|light)/);
     await expect(page.locator('#easymde-editor')).not.toHaveClass(/easymde-editor-immersive/);
     await expect(page.locator('.easymde-immersive-workspace__outline-card')).toBeHidden();
     await expect(page.locator('[data-popover="statistics"]')).toBeHidden();

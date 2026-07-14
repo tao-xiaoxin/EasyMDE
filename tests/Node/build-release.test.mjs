@@ -50,7 +50,17 @@ function createRegistryFiles(root) {
   writeText(
     root,
     'src/Theme/CodeThemeRegistry.php',
-    "<?php\nreturn array('assets/themes/code/wechat-inspired.css', 'assets/vendor/highlight/styles/github.min.css');\n"
+    [
+      '<?php',
+      'return array(',
+      "'assets/themes/code/wechat-inspired.css',",
+      "'assets/vendor/highlight/styles/github.min.css',",
+      "'assets/vendor/highlight/styles/github-dark.min.css',",
+      "'assets/vendor/highlight/styles/atom-one-dark.min.css',",
+      "'assets/vendor/highlight/styles/monokai.min.css',",
+      "'assets/vendor/highlight/styles/vs2015.min.css'",
+      ');'
+    ].join('\n')
   );
 }
 
@@ -213,6 +223,38 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.equal(entries.some((entry) => entry.includes('/.github/')), false);
     assert.equal(entries.some((entry) => entry.includes('/tests/')), false);
     assert.deepEqual(findMissingReleaseRequirements(root), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release package excludes obsolete editor dark-mode CSS and keeps dark code themes', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(
+      root,
+      'assets/css/admin/editor.css',
+      readFileSync(join(repoRoot, 'assets/css/admin/editor.css'), 'utf8')
+    );
+
+    const packageRoot = buildRelease({ root });
+    const entries = zipEntries(root);
+    const editorCss = readFileSync(join(packageRoot, 'assets/css/admin/editor.css'), 'utf8');
+    const darkCodeThemePaths = [
+      'github-dark.min.css',
+      'atom-one-dark.min.css',
+      'monokai.min.css',
+      'vs2015.min.css'
+    ];
+
+    assert.doesNotMatch(editorCss, /\.easymde-theme-(?:dark|light)\b/);
+    for (const asset of darkCodeThemePaths) {
+      assert.ok(entries.includes(`easymde/assets/vendor/highlight/styles/${asset}`));
+    }
+    assert.equal(entries.some((entry) => /\/(?:tests?|\.cache|coverage)\//.test(entry)), false);
+    assert.equal(entries.some((entry) => /(?:\.log|\.codex-)/.test(entry)), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

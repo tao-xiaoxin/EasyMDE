@@ -617,7 +617,7 @@ Return exactly one final verdict:
 - `APPROVE` when no confirmed merge-blocking findings remain, followed by exactly: `No merge-blocking findings found in the current local branch.`
 ```
 
-### Push, CI, and Bot Review Order
+### Push, CI, and CodeRabbit Review Order
 
 Follow this sequence for every pull request update:
 
@@ -630,64 +630,146 @@ Follow this sequence for every pull request update:
 7. If any required check fails, is cancelled unexpectedly, or times out, inspect the failing job, step, and available logs before doing anything else.
 8. Fix the underlying cause, rerun the affected local checks and local `codex-review`, push a focused correction, and restart CI observation from the new head SHA.
 9. Request CodeRabbit review only after every required check for the current head SHA is successful or intentionally skipped by repository policy.
-10. After posting the review request, wait patiently and observe the pull request conversation, reactions, checks, walkthrough updates, and review status at reasonable intervals. A slow response is not a failed request.
-11. Verify each bot finding against the current code. Fix valid findings and reply to invalid or stale findings with concise evidence.
-12. Any push made after review starts creates a new head SHA and restarts the local-review, commit/push, CI, and CodeRabbit sequence.
+10. Use the complete first-review or re-review template below. A bare Bot command is not a valid review request.
+11. Do not request remote `@codex` review as part of this repository workflow. Preserve that quota for separately authorized use; this restriction does not remove the mandatory local `codex-review` step.
+12. After posting the review request, wait for acknowledgement or review activity. Unless CodeRabbit finishes earlier, observe the pull request for at least 15 minutes and check comments, reactions, reviews, threads, walkthrough updates, and CI at reasonable 60–90 second intervals.
+13. Verify each CodeRabbit finding against the current code. Fix valid findings and reply to invalid or stale findings with concise evidence.
+14. Any push made after review starts creates a new head SHA, invalidates review conclusions tied to the old SHA, and restarts local review, commit/push, CI, and detailed CodeRabbit re-review for the new SHA.
 
 Additional rules:
 
 * Do not commit or push when the required local `codex-review` has not completed, returned `BLOCK`, reviewed a stale local state, or has confirmed findings that remain unresolved.
 * Do not request `@coderabbitai review` or `@coderabbitai full review` while required CI is queued, in progress, failing, cancelled unexpectedly, or stale for an older SHA.
+* Never post only `@coderabbitai full review`, `@coderabbitai review`, or another bare CodeRabbit mention. The trigger command and all required context in the applicable template must be posted together in one comment.
+* Replace every placeholder in the template with current, verified information. Do not post literal placeholders, copied validation claims, stale SHAs, or checks that were not actually run.
+* The initial completed-change review uses `@coderabbitai full review`. A new commit after findings also uses the detailed re-review template below; do not treat an old approval or walkthrough as approval for the new SHA.
 * A green run for an earlier commit is not evidence for the current pull request head.
 * Do not classify a failure as flaky without evidence. Inspect the failed path first; rerun only when there is a plausible transient cause and record that reasoning.
-* After requesting review, do not immediately send another `@coderabbitai` mention, duplicate `review` or `full review` command, follow-up ping, or status-demanding comment while the previous request may still be queued or running.
+* After requesting review, do not immediately send another CodeRabbit mention, duplicate command, follow-up ping, or status-demanding comment while the previous request may still be queued or running.
 * Treat a CodeRabbit reaction, acknowledgement, status comment, updated walkthrough, queued check, or in-progress review as evidence that the request was accepted. Continue waiting instead of requesting another review.
-* Large pull requests and busy service periods may take longer. Do not use a fixed short timeout as proof that CodeRabbit ignored the request.
-* Retry a review request only when there is concrete evidence that the previous request failed, was not accepted, was cancelled, or its stated rate-limit window has expired, or after a reasonable waiting period with no acknowledgement or review activity.
-* Before retrying, confirm that the pull request head SHA is unchanged, required CI for that exact SHA remains green, and no CodeRabbit review is queued or in progress. Record the reason and send only one retry.
-* Do not repeatedly retry against the same unchanged head. Report continued bot unavailability to the human maintainer instead of creating comment spam.
-* Do not push empty commits, meaningless formatting changes, or unrelated edits merely to retrigger CI, wake the bot, or bypass a CodeRabbit rate limit.
-* When CodeRabbit is rate limited, keep the already-green head unchanged, wait for review capacity to return, and request one review for that same SHA.
+* A slow response is not a failed request. Large pull requests and busy service periods may take longer than 15 minutes.
+* Retry only when there is concrete evidence that the request failed, was not accepted, was cancelled, its stated rate-limit window expired, or no acknowledgement or review activity appeared after a reasonable wait.
+* Before one permitted retry, confirm that the pull request head SHA is unchanged, required CI for that exact SHA remains green, and no CodeRabbit review is queued or in progress. Record the reason and resend the complete applicable template, not a bare command.
+* Do not repeatedly retry against the same unchanged head. Report continued CodeRabbit unavailability to the human maintainer instead of creating comment spam.
+* Do not push empty commits, meaningless formatting changes, or unrelated edits merely to retrigger CI, wake CodeRabbit, or bypass a rate limit.
+* When CodeRabbit is rate limited, keep the already-green head unchanged, wait for review capacity to return, and send one complete review request for that same SHA.
+* CodeRabbit is a read-only reviewer. Never ask it to edit files, push commits, merge, close the pull request or linked Issue, alter labels or metadata, enable auto-merge, delete branches, or resolve review threads.
 * Do not merge while required CI is incomplete or failing, while confirmed local or remote review findings remain unresolved, or unless the maintainer explicitly requests the merge.
 
-### CodeRabbit Review Request Template
+### Mandatory CodeRabbit First-Review Template
 
-Use the full-review form for a completed change. Use the shorter `@coderabbitai review` command only for a deliberately narrow incremental review after CI is green. Before posting either command, confirm that no review request for the same head SHA is already queued or in progress.
+Use this complete template for the first review of a finished change. Do not shorten it to the trigger command.
 
 ```markdown
 @coderabbitai full review
 
-Please review the current pull request head `<HEAD_SHA>` against `<BASE_BRANCH>`.
+Please perform a complete, read-only review of the current pull request head `<HEAD_SHA>` against `<BASE_BRANCH>`.
 
-## Preconditions
+## Review identity
 
-- Local `codex-review` passed for the exact committed and pushed diff.
-- All confirmed local review findings were resolved and affected validation was rerun.
-- Required CI/checks for this exact head SHA are green.
-- No CodeRabbit review request for this exact head SHA is currently queued or in progress.
-- Linked Issue: #123
-- Pull request scope: describe the focused change.
-- Validation completed: list only checks actually run.
+- Current head SHA: `<HEAD_SHA>`
+- Base branch: `<BASE_BRANCH>`
+- Linked Issue: `#<ISSUE_NUMBER>`
+- Pull request scope: `<FOCUSED_CHANGE_SUMMARY>`
+- Files or subsystems changed: `<CHANGED_PATHS_OR_SUBSYSTEMS>`
 
-## Review instructions
+## Verified preconditions
 
-1. Read the linked Issue, pull request body, current `AGENTS.md`, and the complete current diff.
-2. Trace changed production paths, state transitions, failure paths, permissions, compatibility behavior, tests, build scripts, and release packaging relevant to the change.
-3. Re-check unresolved and outdated review threads against the current head instead of assuming earlier findings still apply.
-4. Report only confirmed, actionable problems introduced or materially worsened by this pull request.
-5. For each finding, identify the affected path, realistic trigger, user or system impact, and the smallest focused correction direction.
-6. Treat data loss, authorization failures, secret or privacy exposure, unsafe rendering, WordPress compatibility regressions, broken release packaging, and unsupported-version failures as merge-blocking when confirmed.
-7. Do not invent findings to fill a quota. When no actionable findings remain, report no findings or use the bot's normal approval reaction.
-8. Do not merge or close the pull request or linked Issue. A human maintainer must explicitly authorize either action.
+- Local `codex-review` verdict for the exact committed and pushed diff: `<APPROVE_OR_BLOCK_WITH_SUMMARY>`
+- Confirmed local findings resolved: `<RESOLVED_FINDINGS_OR_NONE>`
+- Validation actually completed: `<COMMANDS_AND_RESULTS_ACTUALLY_RUN>`
+- Required CI/check status for `<HEAD_SHA>`: `<GREEN_OR_INTENTIONALLY_SKIPPED_WITH_REASON>`
+- Existing CodeRabbit request for this exact SHA: none queued or in progress.
 
-## Privacy requirements
+## Required review
 
-- Do not request, quote, or repeat credentials, tokens, cookies, private keys, private article content, personal data, absolute local paths, private endpoints, raw browser storage, HAR files, or unnecessary logs.
+1. Read the linked Issue, pull request body, current root `AGENTS.md`, complete diff, changed-file context, and relevant surrounding execution paths.
+2. Verify that the implementation satisfies the linked Issue and remains inside its declared scope.
+3. Trace relevant inputs, state transitions, outputs, error and cancellation paths, permissions, compatibility behavior, tests, build scripts, generated files, and release packaging.
+4. Review the areas actually affected by this change, including functional correctness, regressions, authorization, data integrity, privacy, unsafe rendering or input handling, supported WordPress/PHP versions, performance, reliability, test validity, dependencies, assets, and release completeness where applicable.
+5. Re-check every unresolved or outdated review thread against `<HEAD_SHA>`; do not assume a finding still applies merely because it existed on an older SHA.
+6. Report only confirmed, actionable problems introduced or materially worsened by this pull request. Do not invent findings, request speculative refactors, enforce personal style preferences, or fill a finding quota.
+7. Treat confirmed data loss, authorization failures, secret or personal-data exposure, unsafe rendering, incompatible WordPress/PHP behavior, invalid migration or revision behavior, and broken release packages as merge-blocking.
+
+## Finding requirements
+
+For each independently fixable finding, include:
+
+- Repository-relative file path and current line or execution path.
+- What is wrong.
+- A realistic trigger or reproduction path.
+- Concrete user, security, compatibility, data, performance, test, build, or release impact.
+- The smallest focused correction direction.
+- Whether it blocks merge and the factual reason.
+
+## Privacy and authority
+
 - Use redacted values, synthetic examples, and privacy-safe behavioral evidence.
-- Do not republish user-provided screenshots or attachments unless publication is necessary, authorized, and their content and embedded metadata have been inspected.
+- Do not request, quote, or repeat credentials, tokens, cookies, private keys, private article content, personal data, absolute local paths, private endpoints, raw browser storage, HAR files, or unnecessary logs.
+- Do not republish screenshots or attachments unless publication is necessary, authorized, and their content and embedded metadata have been inspected.
+- Do not modify files, push commits, merge, close the pull request or linked Issue, alter PR metadata, enable auto-merge, delete branches, or resolve threads.
+
+## Current-head verdict
+
+End the review with exactly one of these verdicts for `<HEAD_SHA>`:
+
+- `EASYMDE_CODERABBIT_REVIEW_VERDICT: APPROVE — no confirmed merge-blocking issue found for <HEAD_SHA>.`
+- `EASYMDE_CODERABBIT_REVIEW_VERDICT: BLOCK — confirmed merge-blocking findings remain for <HEAD_SHA>.`
+
+When blocking, list the confirmed findings before the final verdict. When no actionable finding remains, do not create suggestions merely to avoid approval.
 ```
 
-After posting the template, wait for acknowledgement or review activity and check the PR at reasonable intervals. Do not post another Bot mention merely because the response is slower than expected.
+### Mandatory CodeRabbit Re-Review Template
+
+Use this complete template after one or more fixes have produced a new head SHA. Earlier CodeRabbit conclusions belong to the old SHA and are not sufficient for the new one.
+
+```markdown
+@coderabbitai full review
+
+Please perform a complete, read-only re-review of the current pull request head `<NEW_HEAD_SHA>` against `<BASE_BRANCH>`.
+
+## Re-review identity
+
+- Previous reviewed head SHA: `<PREVIOUS_HEAD_SHA>`
+- Current head SHA: `<NEW_HEAD_SHA>`
+- Base branch: `<BASE_BRANCH>`
+- Linked Issue: `#<ISSUE_NUMBER>`
+- Pull request scope: `<FOCUSED_CHANGE_SUMMARY>`
+
+## Fix summary
+
+- Confirmed findings addressed: `<FINDING_IDS_OR_CONCISE_SUMMARIES>`
+- Focused corrections made: `<CORRECTIONS_AND_CHANGED_PATHS>`
+- Findings rejected as invalid or stale, with evidence: `<REJECTED_FINDINGS_OR_NONE>`
+- Remaining unresolved threads or questions: `<UNRESOLVED_ITEMS_OR_NONE>`
+
+## Verified preconditions for the new SHA
+
+- Local `codex-review` verdict for the exact new committed and pushed diff: `<APPROVE_OR_BLOCK_WITH_SUMMARY>`
+- Regression and affected validation actually rerun: `<COMMANDS_AND_RESULTS_ACTUALLY_RUN>`
+- Required CI/check status for `<NEW_HEAD_SHA>`: `<GREEN_OR_INTENTIONALLY_SKIPPED_WITH_REASON>`
+- No CodeRabbit review request for `<NEW_HEAD_SHA>` is currently queued or in progress.
+
+## Required re-review
+
+1. Re-read the linked Issue, pull request body, current root `AGENTS.md`, full current diff, and relevant surrounding execution paths rather than reviewing only the last fix commit.
+2. Verify each previously confirmed finding against `<NEW_HEAD_SHA>` and state whether the root cause is resolved.
+3. Check whether the fixes introduced regressions, incomplete state transitions, weak tests, compatibility problems, privacy exposure, build or release omissions, or unrelated scope changes.
+4. Re-check unresolved and outdated threads against the new code and current line positions.
+5. Report only confirmed, actionable problems present in `<NEW_HEAD_SHA>`; do not repeat resolved or stale findings.
+6. Apply the same finding quality, privacy, read-only authority, human-merge, and human-closure requirements as the first review.
+
+## New-head verdict
+
+End the re-review with exactly one of these verdicts for `<NEW_HEAD_SHA>`:
+
+- `EASYMDE_CODERABBIT_REREVIEW_VERDICT: APPROVE — no confirmed merge-blocking issue found for <NEW_HEAD_SHA>.`
+- `EASYMDE_CODERABBIT_REREVIEW_VERDICT: BLOCK — confirmed merge-blocking findings remain for <NEW_HEAD_SHA>.`
+
+When blocking, list the confirmed current findings before the final verdict. An approval or walkthrough for `<PREVIOUS_HEAD_SHA>` must not be reused as the verdict for `<NEW_HEAD_SHA>`.
+```
+
+After posting either template, wait for acknowledgement or review activity and continue observing the PR. Do not post another CodeRabbit mention merely because the response is slower than expected.
 
 ### Issue Body Template
 

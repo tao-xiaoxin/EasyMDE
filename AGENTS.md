@@ -679,7 +679,7 @@ Please perform a complete, read-only review of the current pull request head `<H
 - Confirmed local findings resolved: `<RESOLVED_FINDINGS_OR_NONE>`
 - Validation actually completed: `<COMMANDS_AND_RESULTS_ACTUALLY_RUN>`
 - Required CI/check status for `<HEAD_SHA>`: `<GREEN_OR_INTENTIONALLY_SKIPPED_WITH_REASON>`
-- Existing CodeRabbit request for this exact SHA: none queued or in progress.
+- CodeRabbit queue state for this exact SHA, verified immediately before posting: `<NONE_QUEUED_OR_IN_PROGRESS_CONFIRMED_AT_POST_TIME>`
 
 ## Required review
 
@@ -748,7 +748,7 @@ Please perform a complete, read-only re-review of the current pull request head 
 - Local `codex-review` verdict for the exact new committed and pushed diff: `<APPROVE_OR_BLOCK_WITH_SUMMARY>`
 - Regression and affected validation actually rerun: `<COMMANDS_AND_RESULTS_ACTUALLY_RUN>`
 - Required CI/check status for `<NEW_HEAD_SHA>`: `<GREEN_OR_INTENTIONALLY_SKIPPED_WITH_REASON>`
-- No CodeRabbit review request for `<NEW_HEAD_SHA>` is currently queued or in progress.
+- CodeRabbit queue state for `<NEW_HEAD_SHA>`, verified immediately before posting: `<NONE_QUEUED_OR_IN_PROGRESS_CONFIRMED_AT_POST_TIME>`
 
 ## Required re-review
 

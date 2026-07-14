@@ -40,11 +40,11 @@ H<sub>2</sub>O、x<sup>2</sup>、© 2026、™、✓、⚠️、🚀。
 
 邮箱链接：[example@example.com](mailto:example@example.com)
 
-![占位测试图片](https://placehold.co/1200x500/png?text=Markdown+Image+Test)
+![占位测试图片](https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png)
 
 带标题的图片：
 
-![风景占位图](https://placehold.co/800x400/png?text=Image+Preview "图片标题")
+![风景占位图](https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png)
 
 ---
 

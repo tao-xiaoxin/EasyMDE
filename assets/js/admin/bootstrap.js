@@ -1673,10 +1673,6 @@
 
     function createImmersiveWorkspace(context) {
         var workspaceApi = window.EasyMDEImmersiveWorkspace;
-        var commandAliases = {
-            heading: 'heading2',
-            table: 'table'
-        };
 
         if (!workspaceApi || typeof workspaceApi.createController !== 'function') {
             return null;
@@ -1692,6 +1688,11 @@
             adapter: {
                 getLocalDraftsEnabled: getLocalDraftsEnabled,
                 setLocalDraftsEnabled: setLocalDraftsEnabled,
+                getSurfaceCommands: function (surface) {
+                    return getSurfaceCommands(surface).map(function (command) {
+                        return { id: command.id, label: getCommandLabel(command) };
+                    });
+                },
                 getMarkdown: function () {
                     return context.textarea.value || '';
                 },
@@ -1840,9 +1841,15 @@
                     context.refreshPreview({ immediate: true });
                     updatePreview($(workspaceContext.preview), workspaceContext.markdown, { immediate: true });
                 },
-                executeCommand: function (commandId, textarea) {
-                    var resolved = commandAliases[commandId] || commandId;
-                    executeCommand(resolved, { textarea: textarea, preview: $(context.preview), flash: context.flash });
+                executeCommand: function (commandId, textarea, commandContext) {
+                    if (!getCommand(commandId)) {
+                        throw new Error('Unknown immersive Markdown command: ' + commandId);
+                    }
+                    return executeCommand(commandId, $.extend({
+                        textarea: textarea,
+                        preview: $(context.preview),
+                        flash: context.flash
+                    }, commandContext || {}));
                 },
                 insertTable: function (rows, columns, textarea) {
                     var markdown = workspaceApi.createTableMarkdown(rows, columns, {
@@ -2586,13 +2593,17 @@
         return wechatExporterLoadPromise;
     }
 
-    function mediaPickerOptions() {
+    function mediaPickerOptions(context) {
+        context = context || {};
         return {
             title: getString('insertMedia'),
             altText: getString('mediaAltText'),
             defaultAlt: getString('mediaDefaultAlt'),
             insertAround: insertAround,
-            applyTextChange: applyTextChange
+            applyTextChange: applyTextChange,
+            selection: context.selection || null,
+            notifyInput: context.notifyInput,
+            restoreFocus: context.restoreFocus
         };
     }
 
@@ -2600,17 +2611,18 @@
         insertAround(textarea, '![' + getString('mediaAltText') + '](', ')', '');
     }
 
-    function openLoadedMediaPicker(textarea) {
+    function openLoadedMediaPicker(textarea, context) {
         if (!textarea || !window.EasyMDEMediaPicker || !window.EasyMDEMediaPicker.open) {
             return false;
         }
 
-        window.EasyMDEMediaPicker.open(textarea, mediaPickerOptions());
+        window.EasyMDEMediaPicker.open(textarea, mediaPickerOptions(context));
         return true;
     }
 
-    function openMediaPicker(textarea) {
-        if (openLoadedMediaPicker(textarea)) {
+    function openMediaPicker(textarea, context) {
+        context = context || {};
+        if (openLoadedMediaPicker(textarea, context)) {
             return Promise.resolve(true);
         }
 
@@ -2622,12 +2634,20 @@
         }
 
         return mediaPickerLoadPromise.then(function (loaded) {
-            if (loaded && openLoadedMediaPicker(textarea)) {
+            if (loaded && openLoadedMediaPicker(textarea, context)) {
                 return true;
             }
-
-            insertMediaPlaceholder(textarea);
-            return false;
+            if (!window.wp || !window.wp.media) {
+                if (context.selection) {
+                    textarea.setSelectionRange(context.selection.start, context.selection.end);
+                }
+                insertMediaPlaceholder(textarea);
+                if (typeof context.notifyInput === 'function') {
+                    context.notifyInput();
+                }
+                return false;
+            }
+            throw new Error(getString('mediaPickerFailed') || 'The WordPress media library could not be opened.');
         });
     }
 
@@ -3064,8 +3084,7 @@
             insertAround(textarea, '[', '](https://)', getString('linkText'));
             break;
         case 'image':
-            openMediaPicker(textarea);
-            break;
+            return openMediaPicker(textarea, context);
         case 'savePost':
             triggerSavePost();
             break;

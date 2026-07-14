@@ -812,9 +812,9 @@
                     '</button>' +
                     '<span class="easymde-immersive-workspace__header-spacer" aria-hidden="true"></span>' +
                     '<div class="easymde-immersive-workspace__view-switch" role="group" aria-label="' + label('viewMode', 'View mode') + '">' +
-                        '<button type="button" data-view="edit" title="' + label('editMode', 'Edit') + '" aria-label="' + label('editMode', 'Edit') + '">' + iconMarkup('pen-line', 13, 2) + '<span>' + label('editMode', 'Edit') + '</span></button>' +
-                        '<button type="button" data-view="split" class="is-active" title="' + label('splitMode', 'Split') + '" aria-label="' + label('splitMode', 'Split') + '">' + iconMarkup('columns-2', 13, 2) + '<span>' + label('splitMode', 'Split') + '</span></button>' +
-                        '<button type="button" data-view="preview" title="' + label('previewMode', 'Preview') + '" aria-label="' + label('previewMode', 'Preview') + '">' + iconMarkup('eye', 13, 2) + '<span>' + label('previewMode', 'Preview') + '</span></button>' +
+                        '<button type="button" data-view="edit" aria-pressed="false" title="' + label('editMode', 'Edit') + '" aria-label="' + label('editMode', 'Edit') + '">' + iconMarkup('pen-line', 13, 2) + '<span>' + label('editMode', 'Edit') + '</span></button>' +
+                        '<button type="button" data-view="split" class="is-active" aria-pressed="true" title="' + label('splitMode', 'Split') + '" aria-label="' + label('splitMode', 'Split') + '">' + iconMarkup('columns-2', 13, 2) + '<span>' + label('splitMode', 'Split') + '</span></button>' +
+                        '<button type="button" data-view="preview" aria-pressed="false" title="' + label('previewMode', 'Preview') + '" aria-label="' + label('previewMode', 'Preview') + '">' + iconMarkup('eye', 13, 2) + '<span>' + label('previewMode', 'Preview') + '</span></button>' +
                     '</div>' +
                     '<span class="easymde-immersive-workspace__header-spacer is-wide" aria-hidden="true"></span>' +
                     '<nav class="easymde-immersive-workspace__primary-actions" aria-label="' + label('editorActions', 'Editor actions') + '">' +
@@ -830,7 +830,7 @@
                         '<button type="button" data-command="strike" title="' + label('strikethrough', 'Strikethrough') + '" aria-label="' + label('strikethrough', 'Strikethrough') + '">' + iconMarkup('strikethrough', 14, 2) + '</button>' +
                         '<i aria-hidden="true"></i>' +
                         '<i aria-hidden="true"></i>' +
-                        '<button type="button" data-command="heading" class="easymde-immersive-workspace__heading-button" title="' + label('headings', 'Headings') + '" aria-label="' + label('headings', 'Headings') + '"><strong aria-hidden="true">H</strong>' + iconMarkup('chevron-down', 9, 2.5) + '</button>' +
+                        '<span class="easymde-immersive-workspace__heading-control"><button type="button" data-command="heading" class="easymde-immersive-workspace__heading-button" title="' + label('headings', 'Headings') + '" aria-label="' + label('headings', 'Headings') + '" aria-haspopup="menu" aria-expanded="false" aria-controls="easymde-immersive-heading-menu"><strong aria-hidden="true">H</strong>' + iconMarkup('chevron-down', 9, 2.5) + '</button><div id="easymde-immersive-heading-menu" class="easymde-immersive-workspace__heading-menu" data-heading-menu role="menu" aria-label="' + label('headings', 'Headings') + '" hidden></div></span>' +
                         '<i class="easymde-immersive-workspace__heading-separator" aria-hidden="true"></i>' +
                         '<button type="button" data-command="quote" title="' + label('quoteTitle', 'Blockquote') + '" aria-label="' + label('quote', 'Quote') + '">' + iconMarkup('quote', 14, 2) + '</button>' +
                         '<button type="button" data-command="unorderedlist" title="' + label('unorderedList', 'Unordered list') + '" aria-label="' + label('unorderedList', 'Unordered list') + '">' + iconMarkup('list', 14, 2) + '</button>' +
@@ -843,11 +843,11 @@
                         '<button type="button" data-command="image" title="' + label('image', 'Image') + '" aria-label="' + label('image', 'Image') + '">' + iconMarkup('image', 14, 2) + '</button>' +
                         '<button type="button" data-command="table" title="' + label('table', 'Table') + '" aria-label="' + label('table', 'Table') + '">' + iconMarkup('table', 14, 2) + '</button>' +
                         '<i aria-hidden="true"></i>' +
-                        '<button type="button" data-view="edit" title="' + label('editModeTitle', 'Edit mode') + '" aria-label="' + label('editMode', 'Edit') + '">' + iconMarkup('align-left', 14, 2) + '</button>' +
-                        '<button type="button" data-view="split" class="is-active" title="' + label('splitModeTitle', 'Split mode') + '" aria-label="' + label('splitMode', 'Split') + '">' + iconMarkup('layout-grid', 14, 2) + '</button>' +
-                        '<button type="button" data-view="preview" title="' + label('previewModeTitle', 'Preview mode') + '" aria-label="' + label('previewMode', 'Preview') + '">' + iconMarkup('eye', 14, 2) + '</button>' +
+                        '<button type="button" data-view="edit" aria-pressed="false" title="' + label('editModeTitle', 'Edit mode') + '" aria-label="' + label('editMode', 'Edit') + '">' + iconMarkup('align-left', 14, 2) + '</button>' +
+                        '<button type="button" data-view="split" class="is-active" aria-pressed="true" title="' + label('splitModeTitle', 'Split mode') + '" aria-label="' + label('splitMode', 'Split') + '">' + iconMarkup('layout-grid', 14, 2) + '</button>' +
+                        '<button type="button" data-view="preview" aria-pressed="false" title="' + label('previewModeTitle', 'Preview mode') + '" aria-label="' + label('previewMode', 'Preview') + '">' + iconMarkup('eye', 14, 2) + '</button>' +
                         '<button type="button" data-action="exit" title="' + label('immersiveModeTitle', 'Immersive writing') + '" aria-label="' + label('exitImmersive', 'Exit immersive writing') + '">' + iconMarkup('maximize', 14, 2) + '</button>' +
-                    '</div>' +
+                    '</div><span class="screen-reader-text" data-toolbar-status role="status" aria-live="polite"></span>' +
                     '<div class="easymde-immersive-workspace__secondary-actions">' +
                         '<button type="button" data-action="wechat" class="easymde-immersive-workspace__wechat-button" title="' + label('copyWechatImmersiveTitle', 'Copy current preview content to WeChat') + '" aria-label="' + label('copyWechatTitle', 'Copy preview for WeChat') + '"><span data-wechat-icon aria-hidden="true"></span><span data-wechat-label>' + label('copyWechat', 'Copy to WeChat') + '</span></button>' +
                         '<span class="easymde-immersive-workspace__wechat-status" data-wechat-status role="status" aria-live="polite"></span>' +
@@ -866,13 +866,13 @@
                     '<div class="easymde-immersive-workspace__outline-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-valuemin="190" aria-valuemax="360" aria-valuenow="240" aria-label="' + label('resizeOutline', 'Resize outline') + '"></div>' +
                     '<button type="button" class="easymde-immersive-workspace__outline-handle" data-action="toggle-outline" aria-controls="easymde-immersive-outline-card" title="' + label('openOutline', 'Open outline') + '" aria-label="' + label('openOutline', 'Open outline') + '">' + iconMarkup('chevrons-left', 16, 2) + '</button>' +
                     '<section class="easymde-immersive-workspace__editor-card">' +
-                        '<header><strong>MARKDOWN</strong><button type="button" class="easymde-immersive-workspace__panel-action" aria-label="' + label('moreActions', 'More actions') + '">' + iconMarkup('ellipsis', 16, 2) + '</button></header>' +
+                        '<header><strong>MARKDOWN</strong></header>' +
                         '<div class="easymde-immersive-workspace__editor-body"><div class="easymde-immersive-workspace__line-numbers" aria-hidden="true"></div><div class="easymde-immersive-workspace__source-stack"><pre class="easymde-immersive-workspace__source-highlight" aria-hidden="true"></pre><textarea id="easymde-immersive-source" name="easymde_immersive_markdown" class="easymde-immersive-workspace__source" spellcheck="false" wrap="off" placeholder="' + label('sourcePlaceholder', 'Start writing...') + '"></textarea></div></div>' +
                         '<footer><span class="easymde-immersive-workspace__cursor">' + label('lineColumn', 'Line 1, Column 1') + '</span><span>Markdown <span data-local-drafts-status><i></i> ' + label('localDraftsEnabled', 'Local drafts enabled') + '</span></span></footer>' +
                     '</section>' +
                     '<div class="easymde-immersive-workspace__divider" role="separator" tabindex="0" aria-orientation="vertical" aria-valuemin="25" aria-valuemax="75" aria-valuenow="50"></div>' +
                     '<section class="easymde-immersive-workspace__preview-card">' +
-                        '<header><strong>' + label('previewMode', 'Preview') + '</strong><button type="button" class="easymde-immersive-workspace__panel-action" aria-label="' + label('moreActions', 'More actions') + '">' + iconMarkup('ellipsis', 16, 2) + '</button></header>' +
+                        '<header><strong>' + label('previewMode', 'Preview') + '</strong></header>' +
                         '<div class="easymde-immersive-workspace__preview-scroll"><article class="easymde-immersive-workspace__preview" aria-live="polite"></article></div>' +
                     '</section>' +
                 '</main>' +
@@ -977,7 +977,7 @@
                     '<div class="easymde-immersive-workspace__publish-body">' +
                         '<div class="easymde-immersive-workspace__publish-left">' +
                             '<section class="easymde-immersive-workspace__publish-section easymde-immersive-workspace__publish-capability is-tags" data-publish-capability="tags"><div class="easymde-immersive-workspace__publish-section-title-row"><label class="easymde-immersive-workspace__publish-section-title" for="easymde-immersive-publish-tag-input">' + iconMarkup('hash', 15, 2.2) + '<span>' + label('publishTags', 'Tags') + '</span></label></div><p>' + label('publishTagsHelp', 'Press Enter or comma to add tags.') + '</p><input id="easymde-immersive-publish-tags" name="easymde_immersive_publish_tags" type="hidden" data-publish-tags><div class="easymde-immersive-workspace__publish-tagbox"><div data-publish-tag-list></div><input id="easymde-immersive-publish-tag-input" name="easymde_immersive_publish_tag_input" type="text" data-publish-tag-input autocomplete="off" placeholder="' + label('publishTagPlaceholder', 'Add tags') + '"></div></section>' +
-                            '<section class="easymde-immersive-workspace__publish-section easymde-immersive-workspace__publish-capability is-excerpt" data-publish-capability="excerpt"><div class="easymde-immersive-workspace__publish-section-heading"><label class="easymde-immersive-workspace__publish-section-title" for="easymde-immersive-publish-excerpt">' + iconMarkup('file-text', 15, 2.2) + '<span>' + label('publishExcerpt', 'Summary') + '</span></label><div class="easymde-immersive-workspace__publish-excerpt-meta"><button type="button" class="easymde-immersive-workspace__publish-ai-summary" data-action="ai-generate-summary">' + iconMarkup('sparkles', 11, 2.4) + '<span>' + label('publishAiSummary', 'Generate summary with AI') + '</span></button><span data-publish-excerpt-count>0 / 160</span></div></div><textarea id="easymde-immersive-publish-excerpt" name="easymde_immersive_publish_excerpt" rows="4" maxlength="160" data-publish-excerpt placeholder="' + label('publishExcerptPlaceholder', 'Write a short summary for search results, article lists, and sharing previews...') + '"></textarea></section>' +
+                            '<section class="easymde-immersive-workspace__publish-section easymde-immersive-workspace__publish-capability is-excerpt" data-publish-capability="excerpt"><div class="easymde-immersive-workspace__publish-section-heading"><label class="easymde-immersive-workspace__publish-section-title" for="easymde-immersive-publish-excerpt">' + iconMarkup('file-text', 15, 2.2) + '<span>' + label('publishExcerpt', 'Summary') + '</span></label><div class="easymde-immersive-workspace__publish-excerpt-meta"><button type="button" class="easymde-immersive-workspace__publish-ai-summary" data-action="ai-generate-summary" disabled title="' + label('publishAiSummaryUnavailable', 'AI summary generation is not available yet') + '" aria-label="' + label('publishAiSummaryUnavailable', 'AI summary generation is not available yet') + '">' + iconMarkup('sparkles', 11, 2.4) + '<span>' + label('publishAiSummary', 'Generate summary with AI') + '</span></button><span data-publish-excerpt-count>0 / 160</span></div></div><textarea id="easymde-immersive-publish-excerpt" name="easymde_immersive_publish_excerpt" rows="4" maxlength="160" data-publish-excerpt placeholder="' + label('publishExcerptPlaceholder', 'Write a short summary for search results, article lists, and sharing previews...') + '"></textarea></section>' +
                             '<section class="easymde-immersive-workspace__publish-section easymde-immersive-workspace__publish-capability is-categories" data-publish-capability="categories"><div class="easymde-immersive-workspace__publish-section-heading"><strong class="easymde-immersive-workspace__publish-section-title">' + iconMarkup('list-checks', 15, 2.2) + '<span>' + label('publishCategories', 'Categories') + '</span></strong><span data-publish-category-count></span></div><p>' + label('publishCategoriesHelp', 'Choose the sections this article belongs to.') + '</p><div class="easymde-immersive-workspace__categories"><div class="easymde-immersive-workspace__categories-scroll" data-publish-categories></div></div></section>' +
                         '</div>' +
                         '<aside class="easymde-immersive-workspace__publish-right">' +
@@ -1033,6 +1033,8 @@
         var outlineResizeCleanup = null;
         var listeners = [];
         var composingTitle = false;
+        var composingSource = false;
+        var sourceSelection = null;
         var viewMode = 'split';
         var outlineEnabled = true;
         var outlineVisible = false;
@@ -1074,6 +1076,7 @@
         var aiMenuReturnFocus = null;
         var aiReturnFocus = null;
         var tableReturnFocus = null;
+        var tableSelection = null;
         var wechatCopying = false;
         var wechatFeedbackTimer = null;
 
@@ -1089,6 +1092,195 @@
 
         function query(selector) {
             return root ? root.querySelector(selector) : null;
+        }
+
+        function captureSourceSelection() {
+            if (!source) {
+                return null;
+            }
+            sourceSelection = {
+                start: source.selectionStart,
+                end: source.selectionEnd,
+                direction: source.selectionDirection || 'none',
+                scrollTop: source.scrollTop,
+                scrollLeft: source.scrollLeft
+            };
+            return sourceSelection;
+        }
+
+        function restoreSourceSelection(selection, focusSource) {
+            if (!source || !selection) {
+                return;
+            }
+            if (focusSource && source.focus) {
+                try {
+                    source.focus({ preventScroll: true });
+                } catch (error) {
+                    source.focus();
+                }
+            }
+            source.setSelectionRange(selection.start, selection.end);
+            source.scrollTop = selection.scrollTop;
+            source.scrollLeft = selection.scrollLeft;
+        }
+
+        function setToolbarStatus(message) {
+            var status = query('[data-toolbar-status]');
+            if (status) {
+                status.textContent = String(message || '');
+            }
+        }
+
+        function dispatchSourceInput() {
+            source.dispatchEvent(new win.Event('input', { bubbles: true }));
+        }
+
+        function commitUndoableSourceChange(before, selection, rollbackSelection) {
+            var after = source.value;
+            var scrollTop = source.scrollTop;
+            var scrollLeft = source.scrollLeft;
+
+            if (after === before) {
+                return false;
+            }
+
+            source.value = before;
+            restoreSourceSelection({
+                start: 0,
+                end: before.length,
+                direction: 'none',
+                scrollTop: scrollTop,
+                scrollLeft: scrollLeft
+            }, true);
+            if (!doc.execCommand || !doc.execCommand('insertText', false, after)) {
+                source.value = before;
+                restoreSourceSelection(rollbackSelection, true);
+                dispatchSourceInput();
+                setToolbarStatus(strings.toolbarUndoUnavailable || 'The browser could not create an undoable Markdown edit.');
+                throw new Error(strings.toolbarUndoUnavailable || 'The browser could not create an undoable Markdown edit.');
+            }
+            source.setSelectionRange(selection.start, selection.end, selection.direction || 'none');
+            source.scrollTop = scrollTop;
+            source.scrollLeft = scrollLeft;
+            return true;
+        }
+
+        function sourceCommandUnavailable() {
+            if (composingSource) {
+                setToolbarStatus(strings.toolbarCompositionUnavailable || 'Formatting is unavailable during text composition.');
+                return true;
+            }
+            if (source.disabled || source.readOnly) {
+                setToolbarStatus(strings.toolbarReadOnlyUnavailable || 'Formatting is unavailable while the Markdown source is read-only.');
+                return true;
+            }
+            return false;
+        }
+
+        function closeHeadingMenu(restoreFocus) {
+            var button = query('[data-command="heading"]');
+            var menu = query('[data-heading-menu]');
+            if (!button || !menu || menu.hidden) {
+                return false;
+            }
+            menu.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+            if (restoreFocus && button.isConnected && button.focus) {
+                button.focus();
+            }
+            return true;
+        }
+
+        function headingMenuItems() {
+            var menu = query('[data-heading-menu]');
+            return menu ? Array.prototype.slice.call(menu.querySelectorAll('[role="menuitem"]')) : [];
+        }
+
+        function populateHeadingMenu() {
+            var menu = query('[data-heading-menu]');
+            var commands = typeof adapter.getSurfaceCommands === 'function'
+                ? adapter.getSurfaceCommands('heading-menu')
+                : [];
+            if (!menu || menu.childNodes.length) {
+                return;
+            }
+            if (!commands.length) {
+                throw new Error('The immersive heading command registry is unavailable.');
+            }
+            commands.forEach(function (command) {
+                var item = doc.createElement('button');
+                item.type = 'button';
+                item.setAttribute('role', 'menuitem');
+                item.setAttribute('data-heading-command', command.id);
+                item.textContent = command.label || command.id;
+                menu.appendChild(item);
+            });
+        }
+
+        function positionHeadingMenu() {
+            var button = query('[data-command="heading"]');
+            var menu = query('[data-heading-menu]');
+            var rect;
+            if (!button || !menu || menu.hidden) {
+                return;
+            }
+            rect = button.getBoundingClientRect();
+            menu.style.top = String(rect.bottom + 6) + 'px';
+            menu.style.left = String(Math.max(8, Math.min(rect.left, win.innerWidth - menu.offsetWidth - 8))) + 'px';
+        }
+
+        function openHeadingMenu(focusLast) {
+            var button = query('[data-command="heading"]');
+            var menu = query('[data-heading-menu]');
+            var items;
+            if (sourceCommandUnavailable()) {
+                return;
+            }
+            captureSourceSelection();
+            closePopovers(false);
+            closeAiMenus(false);
+            populateHeadingMenu();
+            menu.hidden = false;
+            button.setAttribute('aria-expanded', 'true');
+            positionHeadingMenu();
+            items = headingMenuItems();
+            items[focusLast ? items.length - 1 : 0].focus();
+        }
+
+        function executeSourceCommand(commandId, selection) {
+            var before;
+            var commandSelection;
+            var result;
+            var resultSelection;
+            if (sourceCommandUnavailable()) {
+                return false;
+            }
+            commandSelection = selection || sourceSelection || captureSourceSelection();
+            restoreSourceSelection(commandSelection, false);
+            before = source.value;
+            if (typeof adapter.executeCommand !== 'function') {
+                throw new Error('The immersive command adapter is unavailable.');
+            }
+            result = adapter.executeCommand(commandId, source, {
+                selection: selection || sourceSelection,
+                notifyInput: dispatchSourceInput,
+                restoreFocus: function () {
+                    restoreSourceSelection(captureSourceSelection(), true);
+                },
+                reportError: setToolbarStatus
+            });
+            if (result && typeof result.catch === 'function') {
+                result.catch(function (error) {
+                    setToolbarStatus(error && error.message ? error.message : strings.mediaPickerFailed || 'The WordPress media library could not be opened.');
+                });
+            }
+            if (source.value !== before) {
+                resultSelection = captureSourceSelection();
+                commitUndoableSourceChange(before, resultSelection, commandSelection);
+                captureSourceSelection();
+                setToolbarStatus('');
+            }
+            return result;
         }
 
         function updateTitleHeight() {
@@ -1412,6 +1604,7 @@
             root.querySelectorAll('[data-view]').forEach(function (button) {
                 if (button.tagName === 'BUTTON') {
                     button.classList.toggle('is-active', button.getAttribute('data-view') === mode);
+                    button.setAttribute('aria-pressed', button.getAttribute('data-view') === mode ? 'true' : 'false');
                 }
             });
             setSettingSwitch('split', mode === 'split');
@@ -1651,6 +1844,7 @@
         }
 
         function openPopover(popover, trigger) {
+            closeHeadingMenu(false);
             closePopovers(false);
             if (!popover) {
                 return;
@@ -2771,6 +2965,7 @@
 
         function openPublishDialog() {
             var sequence = publishSequence + 1;
+            closeHeadingMenu(false);
             closePopovers(false);
             publishState = typeof adapter.getPublishState === 'function' ? adapter.getPublishState() : {};
             publishDraft = createPublishDraft(publishState);
@@ -2812,7 +3007,7 @@
             }
             dialog.setAttribute('aria-busy', publishSubmitting ? 'true' : 'false');
             dialog.querySelectorAll('button, input, textarea').forEach(function (control) {
-                control.disabled = publishSubmitting;
+                control.disabled = publishSubmitting || control.getAttribute('data-action') === 'ai-generate-summary';
             });
             progress.innerHTML = publishSubmitting
                 ? '<span><span class="easymde-immersive-workspace__publish-progress-spinner" aria-hidden="true"></span>'
@@ -3102,6 +3297,7 @@
                 tableReturnFocus.focus();
             }
             tableReturnFocus = null;
+            tableSelection = null;
         }
 
         function insertSelectedTable(rows, columns) {
@@ -3118,7 +3314,9 @@
             if (typeof adapter.insertTable !== 'function') {
                 throw new Error('The immersive table insertion adapter is unavailable.');
             }
+            restoreSourceSelection(tableSelection, false);
             adapter.insertTable(dimensions.rows, dimensions.columns, source);
+            captureSourceSelection();
             closeTableDialog(false);
             source.focus();
             tableReturnFocus = null;
@@ -3132,6 +3330,8 @@
             var column;
 
             closePopovers(false);
+            closeHeadingMenu(false);
+            tableSelection = captureSourceSelection();
             tableReturnFocus = trigger || query('[data-command="table"]');
             if (!grid.childNodes.length) {
                 for (row = 1; row <= 10; row += 1) {
@@ -3280,6 +3480,7 @@
                 : Promise.resolve([]);
             var sequence;
 
+            closeHeadingMenu(false);
             closePopovers(false);
             historySequence += 1;
             sequence = historySequence;
@@ -3519,6 +3720,7 @@
             var ai = query('.easymde-immersive-workspace__ai');
             var input = query('#easymde-immersive-ai-input');
 
+            closeHeadingMenu(false);
             closePopovers(false);
             aiMessages = [];
             aiModel = 'deepseek-v3';
@@ -3712,9 +3914,6 @@
             } else if (action === 'ai-attachment') {
                 closeAiMenus(false);
                 query('[data-ai-file]').click();
-            } else if (action === 'ai-generate-summary') {
-                // The reference UI exposes this as a demo-only AI control.
-                return;
             } else if (typeof adapter.performAction === 'function') {
                 adapter.performAction(action, { root: root, source: source, preview: preview, title: title });
             }
@@ -3732,15 +3931,70 @@
                 });
             });
             root.querySelectorAll('button[data-command]').forEach(function (button) {
+                listen(button, 'pointerdown', function (event) {
+                    if (event.button !== 0) {
+                        return;
+                    }
+                    captureSourceSelection();
+                    event.preventDefault();
+                });
+                if (button.getAttribute('data-command') === 'heading') {
+                    listen(button, 'keydown', function (event) {
+                        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                            event.preventDefault();
+                            openHeadingMenu(event.key === 'ArrowUp');
+                        }
+                    });
+                }
                 listen(button, 'click', function () {
-                    if (button.getAttribute('data-command') === 'table') {
+                    var commandId = button.getAttribute('data-command');
+                    if (commandId === 'heading') {
+                        if (query('[data-heading-menu]').hidden) {
+                            openHeadingMenu(false);
+                        } else {
+                            closeHeadingMenu(true);
+                        }
+                        return;
+                    }
+                    if (commandId === 'table') {
                         openTableDialog(button);
                         return;
                     }
-                    if (typeof adapter.executeCommand === 'function') {
-                        adapter.executeCommand(button.getAttribute('data-command'), source);
-                    }
+                    executeSourceCommand(commandId, sourceSelection);
                 });
+            });
+            listen(query('[data-heading-menu]'), 'keydown', function (event) {
+                var items = headingMenuItems();
+                var index = items.indexOf(doc.activeElement);
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeHeadingMenu(true);
+                } else if (event.key === 'Tab') {
+                    closeHeadingMenu(false);
+                } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
+                    event.preventDefault();
+                    if (event.key === 'Home') {
+                        index = 0;
+                    } else if (event.key === 'End') {
+                        index = items.length - 1;
+                    } else if (event.key === 'ArrowDown') {
+                        index = (index + 1) % items.length;
+                    } else {
+                        index = (index - 1 + items.length) % items.length;
+                    }
+                    items[index].focus();
+                }
+            });
+            listen(query('[data-heading-menu]'), 'click', function (event) {
+                var item = event.target.closest ? event.target.closest('[data-heading-command]') : null;
+                var selection = sourceSelection;
+                if (!item) {
+                    return;
+                }
+                closeHeadingMenu(false);
+                executeSourceCommand(item.getAttribute('data-heading-command'), selection);
+                restoreSourceSelection(captureSourceSelection(), true);
             });
             listen(outlineNode, 'click', function (event) {
                 var button = event.target.closest ? event.target.closest('.easymde-immersive-workspace__outline-entry') : null;
@@ -3779,10 +4033,25 @@
                 if (typeof adapter.setMarkdown === 'function') {
                     adapter.setMarkdown(source.value);
                 }
+                captureSourceSelection();
                 updateDocumentDerivedState(false);
             });
-            listen(source, 'click', updateCursor);
-            listen(source, 'keyup', updateCursor);
+            listen(source, 'compositionstart', function () {
+                composingSource = true;
+            });
+            listen(source, 'compositionend', function () {
+                composingSource = false;
+                captureSourceSelection();
+            });
+            listen(source, 'select', captureSourceSelection);
+            listen(source, 'click', function () {
+                captureSourceSelection();
+                updateCursor();
+            });
+            listen(source, 'keyup', function () {
+                captureSourceSelection();
+                updateCursor();
+            });
             listen(source, 'scroll', function () {
                 var sourceRange;
                 var previewScroller;
@@ -3844,6 +4113,7 @@
                 var activeThemeMenu = root.querySelector('.easymde-immersive-workspace__theme-select-menu:not([hidden])');
                 var activeFontMenu = root.querySelector('.easymde-immersive-workspace__font-select-menu:not([hidden])');
                 var activePopover = root.querySelector('.easymde-immersive-workspace__popover:not([hidden])');
+                var activeHeadingMenu = query('[data-heading-menu]');
                 var historyFilterMenu = query('.easymde-immersive-workspace__history-filter-menu');
                 var aiActiveMenu = root.querySelector('[data-ai-menu]:not([hidden])');
 
@@ -3894,6 +4164,8 @@
                         closeFontSelectMenu(activeFontMenu, true);
                     } else if (activePopover) {
                         closePopovers(true);
+                    } else if (activeHeadingMenu && !activeHeadingMenu.hidden) {
+                        closeHeadingMenu(true);
                     } else {
                         deactivate();
                     }
@@ -3923,6 +4195,8 @@
             });
             listen(root, 'click', function (event) {
                 var activePopover = root.querySelector('.easymde-immersive-workspace__popover:not([hidden])');
+                var activeHeadingMenu = query('[data-heading-menu]');
+                var headingControl = event.target.closest ? event.target.closest('.easymde-immersive-workspace__heading-control') : null;
                 var activeAiMenu = root.querySelector('[data-ai-menu]:not([hidden])');
                 var aiMenuOrigin = event.target.closest
                     ? event.target.closest('[data-ai-menu], [data-action="ai-context"], [data-action="ai-mode"], [data-action="ai-config"]')
@@ -3932,6 +4206,9 @@
 
                 if (activeAiMenu && !aiMenuOrigin) {
                     closeAiMenus(false);
+                }
+                if (activeHeadingMenu && !activeHeadingMenu.hidden && !headingControl) {
+                    closeHeadingMenu(false);
                 }
                 if (
                     !activePopover
@@ -3948,6 +4225,8 @@
             listen(win, 'scroll', positionSettingsPopover, true);
             listen(win, 'resize', positionAppearancePopover);
             listen(win, 'scroll', positionAppearancePopover, true);
+            listen(win, 'resize', positionHeadingMenu);
+            listen(win, 'scroll', positionHeadingMenu, true);
             listen(query('[data-ai-form]'), 'submit', function (event) {
                 event.preventDefault();
                 sendAiMessage();
@@ -4200,6 +4479,7 @@
             sourceHighlight = query('.easymde-immersive-workspace__source-highlight');
             source.value = typeof adapter.getMarkdown === 'function' ? adapter.getMarkdown() : '';
             title.value = typeof adapter.getTitle === 'function' ? adapter.getTitle() : '';
+            captureSourceSelection();
             initialMarkdown = source.value;
             initialTitle = title.value;
             if (typeof adapter.getPublishState === 'function') {
@@ -4255,6 +4535,12 @@
                 return false;
             }
             workspaceContext = { root: root, source: source, preview: preview, title: title };
+            if (typeof adapter.setTitle === 'function') {
+                adapter.setTitle(normalizeTitle(title.value));
+            }
+            if (typeof adapter.setMarkdown === 'function') {
+                adapter.setMarkdown(source.value);
+            }
             cancelDocumentDerivedState();
             if (outlineResizeCleanup) {
                 outlineResizeCleanup();
@@ -4291,6 +4577,9 @@
             customCssReturnFocus = null;
             customCssSubmitting = false;
             customCssPreviewValid = false;
+            composingSource = false;
+            sourceSelection = null;
+            tableSelection = null;
             publishSubmitting = false;
             wechatCopying = false;
             doc.documentElement.classList.remove(ACTIVE_CLASS);

@@ -355,6 +355,9 @@ final class AdminAssets {
 			'splitModeTitle'                => __( 'Split mode', 'easymde' ),
 			'previewMode'                   => __( 'Preview', 'easymde' ),
 			'previewModeTitle'              => __( 'Preview mode', 'easymde' ),
+			'toolbarCompositionUnavailable' => __( 'Formatting is unavailable during text composition.', 'easymde' ),
+			'toolbarReadOnlyUnavailable'    => __( 'Formatting is unavailable while the Markdown source is read-only.', 'easymde' ),
+			'toolbarUndoUnavailable'        => __( 'The browser could not create an undoable Markdown edit.', 'easymde' ),
 			'history'                       => __( 'History', 'easymde' ),
 			'historyShort'                  => __( 'History', 'easymde' ),
 			'historyVersions'               => __( 'Version history', 'easymde' ),
@@ -586,6 +589,7 @@ final class AdminAssets {
 			'copyWechatUnsupported'         => __( 'Clipboard access is not available in this browser.', 'easymde' ),
 			'tableColumn'                   => __( 'Column ', 'easymde' ),
 			'tableContent'                  => __( 'Content', 'easymde' ),
+			'publishAiSummaryUnavailable'   => __( 'AI summary generation is not available yet', 'easymde' ),
 			'insertTable'                   => __( 'Insert table', 'easymde' ),
 			'tableRows'                     => __( 'Rows', 'easymde' ),
 			'tableColumns'                  => __( 'Columns', 'easymde' ),
@@ -603,6 +607,7 @@ final class AdminAssets {
 			'imageDropTooLarge'             => __( 'Dropped image is too large for this site.', 'easymde' ),
 			'mediaAltText'                  => __( 'alt text', 'easymde' ),
 			'mediaDefaultAlt'               => __( 'image', 'easymde' ),
+			'mediaPickerFailed'             => __( 'The WordPress media library could not be opened.', 'easymde' ),
 			'linkText'                      => __( 'link text', 'easymde' ),
 		);
 	}

@@ -3125,6 +3125,53 @@ test('openMediaPicker falls back to the existing Markdown placeholder when lazy 
   assert.equal(textarea.value, 'Intro![alt text]()');
 });
 
+test('openMediaPicker reports wrapper failures when the WordPress media API is available', async () => {
+  const textarea = {
+    value: 'Intro',
+    selectionStart: 5,
+    selectionEnd: 5,
+    scrollTop: 0,
+    scrollLeft: 0
+  };
+  const { hooks } = loadBootstrap({
+    wp: { media() {} },
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      mediaPickerScriptUrl: '/assets/js/admin/media-picker.js?ver=0.1.7',
+      features: {},
+      strings: {
+        mediaPickerFailed: 'The WordPress media library could not be opened.',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    },
+    EasyMDEPreviewFeatureLoader: {
+      loadScript() {
+        return Promise.resolve({
+          key: 'script:easymde-media-picker-js:/assets/js/admin/media-picker.js?ver=0.1.7',
+          status: 'failed',
+          error: new Error('missing media picker')
+        });
+      },
+      normalizeFeatures
+    }
+  });
+
+  await assert.rejects(
+    hooks.openMediaPicker(textarea),
+    /The WordPress media library could not be opened\./
+  );
+  assert.equal(textarea.value, 'Intro');
+});
+
 test('ensureImagePasteBound lazy-loads image paste upload after startup', async () => {
   let loadScriptCalls = 0;
   let bindOptions = null;

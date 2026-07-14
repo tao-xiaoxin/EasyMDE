@@ -677,6 +677,25 @@ test.describe('EasyMDE editor workflows', () => {
     await source.evaluate((node) => node.setSelectionRange(0, 5));
     await source.press(shortcut);
     await expect(source).toHaveValue('**plain**\nsecond line');
+    await source.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+    await expect(source).toHaveValue('plain\nsecond line');
+
+    await source.evaluate((node) => {
+      node.readOnly = true;
+      node.setSelectionRange(0, 5);
+    });
+    await source.press(shortcut);
+    await expect(source).toHaveValue('plain\nsecond line');
+    await expect(page.locator('[data-toolbar-status]')).toContainText(/read.only|unavailable/i);
+    await source.evaluate((node) => { node.readOnly = false; });
+
+    await source.evaluate((node) => {
+      node.setSelectionRange(0, 5);
+      node.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    });
+    await source.press(shortcut);
+    await expect(source).toHaveValue('plain\nsecond line');
+    await source.evaluate((node) => node.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })));
 
     await source.fill('# Root heading\n\n## Child heading');
     await page.locator('.easymde-immersive-workspace__outline-handle').click();
@@ -766,6 +785,17 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('[data-action="history"]')).toBeFocused();
 
     await source.focus();
+    await source.evaluate((field) => {
+      field.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: !navigator.platform.toLowerCase().includes('mac'),
+        isComposing: true,
+        key: 'Enter',
+        metaKey: navigator.platform.toLowerCase().includes('mac')
+      }));
+    });
+    await expect(page.locator('.easymde-immersive-workspace__publish')).toBeHidden();
     await source.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
     const publishConfirm = page.locator('[data-action="confirm-publish"]');
     const publishClose = page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').first();

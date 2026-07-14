@@ -1878,12 +1878,12 @@
                     textarea.setSelectionRange(firstCellStart, firstCellEnd);
                     textarea.focus();
                 },
-                handleShortcut: function (event, textarea) {
+                handleShortcut: function (event, textarea, executeSourceCommand) {
                     var shortcut = normalizeEventShortcut(event);
                     var matchedCommand = null;
                     var command;
 
-                    if (!shortcut || event.isComposing) {
+                    if (!shortcut || event.isComposing || event.keyCode === 229) {
                         return false;
                     }
                     Object.keys(getCommandMap()).some(function (commandId) {
@@ -1902,6 +1902,17 @@
                         && (!command || ['savePost', 'copyWechat'].indexOf(command.action) === -1)
                     ) {
                         return false;
+                    }
+                    if (
+                        event.target === textarea
+                        && command
+                        && ['savePost', 'copyWechat'].indexOf(command.action) === -1
+                    ) {
+                        if (typeof executeSourceCommand !== 'function') {
+                            throw new Error('The immersive source command shortcut adapter is unavailable.');
+                        }
+                        executeSourceCommand(matchedCommand);
+                        return true;
                     }
                     executeCommand(matchedCommand, { textarea: textarea, preview: $(context.preview), flash: context.flash });
                     return true;
@@ -2640,10 +2651,15 @@
             if (!window.wp || !window.wp.media) {
                 if (context.selection) {
                     textarea.setSelectionRange(context.selection.start, context.selection.end);
+                    textarea.scrollTop = context.selection.scrollTop;
+                    textarea.scrollLeft = context.selection.scrollLeft;
                 }
                 insertMediaPlaceholder(textarea);
                 if (typeof context.notifyInput === 'function') {
                     context.notifyInput();
+                }
+                if (typeof context.restoreFocus === 'function') {
+                    context.restoreFocus();
                 }
                 return false;
             }

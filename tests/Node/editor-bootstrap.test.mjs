@@ -3076,12 +3076,18 @@ test('openMediaPicker lazy-loads the media wrapper on first image insertion', as
 
 test('openMediaPicker falls back to the existing Markdown placeholder when lazy loading fails', async () => {
   let loadScriptCalls = 0;
+  let inputNotifications = 0;
+  let focusRestorations = 0;
   const textarea = {
     value: 'Intro',
     selectionStart: 5,
     selectionEnd: 5,
     scrollTop: 0,
-    scrollLeft: 0
+    scrollLeft: 0,
+    setSelectionRange(start, end) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+    }
   };
   const { hooks } = loadBootstrap({
     pageXOffset: 0,
@@ -3118,11 +3124,23 @@ test('openMediaPicker falls back to the existing Markdown placeholder when lazy 
     }
   });
 
-  const loaded = await hooks.openMediaPicker(textarea);
+  const loaded = await hooks.openMediaPicker(textarea, {
+    selection: { start: 5, end: 5, scrollTop: 42, scrollLeft: 17 },
+    notifyInput() {
+      inputNotifications += 1;
+    },
+    restoreFocus() {
+      focusRestorations += 1;
+    }
+  });
 
   assert.equal(loaded, false);
   assert.equal(loadScriptCalls, 1);
   assert.equal(textarea.value, 'Intro![alt text]()');
+  assert.equal(textarea.scrollTop, 42);
+  assert.equal(textarea.scrollLeft, 17);
+  assert.equal(inputNotifications, 1);
+  assert.equal(focusRestorations, 1);
 });
 
 test('openMediaPicker reports wrapper failures when the WordPress media API is available', async () => {

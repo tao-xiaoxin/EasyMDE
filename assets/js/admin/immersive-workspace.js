@@ -4123,6 +4123,9 @@
                     && (event.metaKey || event.ctrlKey)
                     && !event.altKey
                     && !event.shiftKey
+                    && !event.isComposing
+                    && event.keyCode !== 229
+                    && !composingSource
                 ) {
                     event.preventDefault();
                     event.stopPropagation();
@@ -4134,7 +4137,9 @@
                     event.key !== 'Escape'
                     && event.key !== 'Tab'
                     && typeof adapter.handleShortcut === 'function'
-                    && adapter.handleShortcut(event, source)
+                    && adapter.handleShortcut(event, source, function (commandId) {
+                        executeSourceCommand(commandId, captureSourceSelection());
+                    })
                 ) {
                     event.preventDefault();
                     event.stopPropagation();

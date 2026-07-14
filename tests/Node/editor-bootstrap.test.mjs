@@ -3006,6 +3006,7 @@ test('openMediaPicker lazy-loads the media wrapper on first image insertion', as
   let loadScriptCalls = 0;
   let openCalls = 0;
   let capturedOptions = null;
+  const commitSourceChange = () => {};
   const textarea = {
     value: 'Intro',
     selectionStart: 5,
@@ -3058,7 +3059,7 @@ test('openMediaPicker lazy-loads the media wrapper on first image insertion', as
 
   assert.equal(window.EasyMDEMediaPicker, undefined);
 
-  const loaded = await hooks.openMediaPicker(textarea);
+  const loaded = await hooks.openMediaPicker(textarea, { commitSourceChange });
 
   assert.equal(loaded, true);
   assert.equal(loadScriptCalls, 1);
@@ -3066,6 +3067,7 @@ test('openMediaPicker lazy-loads the media wrapper on first image insertion', as
   assert.equal(capturedOptions.title, 'Insert Media');
   assert.equal(capturedOptions.altText, 'alt text');
   assert.equal(typeof capturedOptions.applyTextChange, 'function');
+  assert.equal(capturedOptions.commitSourceChange, commitSourceChange);
 
   const loadedAgain = await hooks.openMediaPicker(textarea);
 
@@ -3078,6 +3080,7 @@ test('openMediaPicker falls back to the existing Markdown placeholder when lazy 
   let loadScriptCalls = 0;
   let inputNotifications = 0;
   let focusRestorations = 0;
+  let committedChanges = 0;
   const textarea = {
     value: 'Intro',
     selectionStart: 5,
@@ -3131,6 +3134,9 @@ test('openMediaPicker falls back to the existing Markdown placeholder when lazy 
     },
     restoreFocus() {
       focusRestorations += 1;
+    },
+    commitSourceChange() {
+      committedChanges += 1;
     }
   });
 
@@ -3141,6 +3147,7 @@ test('openMediaPicker falls back to the existing Markdown placeholder when lazy 
   assert.equal(textarea.scrollLeft, 17);
   assert.equal(inputNotifications, 1);
   assert.equal(focusRestorations, 1);
+  assert.equal(committedChanges, 1);
 });
 
 test('openMediaPicker reports wrapper failures when the WordPress media API is available', async () => {

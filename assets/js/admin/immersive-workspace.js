@@ -1360,6 +1360,9 @@
                 restoreFocus: function () {
                     restoreSourceSelection(captureSourceSelection(), true);
                 },
+                commitSourceChange: function () {
+                    return commitExecutedSourceChange(before, commandSelection);
+                },
                 reportError: setToolbarStatus
             });
             if (result && typeof result.catch === 'function') {
@@ -1367,7 +1370,9 @@
                     setToolbarStatus(error && error.message ? error.message : strings.mediaPickerFailed || 'The WordPress media library could not be opened.');
                 });
             }
-            commitExecutedSourceChange(before, commandSelection);
+            if (!result || typeof result.then !== 'function') {
+                commitExecutedSourceChange(before, commandSelection);
+            }
             return result;
         }
 

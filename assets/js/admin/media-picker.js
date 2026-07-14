@@ -18,6 +18,9 @@
         if (!window.wp || !window.wp.media) {
             restoreSelection();
             options.insertAround(textarea, '![' + (options.altText || '') + '](', ')');
+            if (typeof options.commitSourceChange === 'function') {
+                options.commitSourceChange();
+            }
             if (typeof options.notifyInput === 'function') {
                 options.notifyInput();
             }
@@ -47,6 +50,9 @@
                 start + markdown.length,
                 start + markdown.length
             );
+            if (typeof options.commitSourceChange === 'function') {
+                options.commitSourceChange();
+            }
             inserted = true;
             if (typeof options.notifyInput === 'function') {
                 options.notifyInput();

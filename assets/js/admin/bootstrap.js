@@ -2614,7 +2614,8 @@
             applyTextChange: applyTextChange,
             selection: context.selection || null,
             notifyInput: context.notifyInput,
-            restoreFocus: context.restoreFocus
+            restoreFocus: context.restoreFocus,
+            commitSourceChange: context.commitSourceChange
         };
     }
 
@@ -2655,6 +2656,9 @@
                     textarea.scrollLeft = context.selection.scrollLeft;
                 }
                 insertMediaPlaceholder(textarea);
+                if (typeof context.commitSourceChange === 'function') {
+                    context.commitSourceChange();
+                }
                 if (typeof context.notifyInput === 'function') {
                     context.notifyInput();
                 }

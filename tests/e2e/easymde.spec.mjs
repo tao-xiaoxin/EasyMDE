@@ -1274,6 +1274,9 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(source).toHaveValue(`before ![Toolbar image](${media.source_url}) after`);
     await expect(page.locator('#easymde-source')).toHaveValue(`before ![Toolbar image](${media.source_url}) after`);
     await expect(page.locator('.easymde-immersive-workspace__preview img')).toHaveAttribute('src', media.source_url);
+    await source.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+    await expect(source).toHaveValue('before IMAGE after');
+    await expect(page.locator('#easymde-source')).toHaveValue('before IMAGE after');
 
     await source.fill('# Table target\n\nreplace tail');
     await selectImmersiveRange(page, 16, 23);

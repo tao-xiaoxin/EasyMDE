@@ -40,11 +40,11 @@ H<sub>2</sub>O、x<sup>2</sup>、© 2026、™、✓、⚠️、🚀。
 
 邮箱链接：[example@example.com](mailto:example@example.com)
 
-![EasyMDE Logo](../assets/easymde-logo.png)
+![占位测试图片](https://placehold.co/1200x500/png?text=Markdown+Image+Test)
 
 带标题的图片：
 
-![EasyMDE Logo](../assets/easymde-logo.png "EasyMDE Logo")
+![风景占位图](https://placehold.co/800x400/png?text=Image+Preview "图片标题")
 
 ---
 
@@ -113,36 +113,36 @@ H<sub>2</sub>O、x<sup>2</sup>、© 2026、™、✓、⚠️、🚀。
 
 ---
 
-***
+---
 
-___
+---
 
 ---
 
 ## 7. 表格
 
-| 名称       | 类型       | 状态   | 评分      |
-| :--------- | :--------: | -----: | --------: |
-| GPT-5.5    | 推理模型   | 稳定   | ⭐⭐⭐⭐⭐ |
-| Claude     | 对话模型   | 稳定   | ⭐⭐⭐⭐   |
-| Gemini     | 多模态模型 | 测试中 | ⭐⭐⭐⭐   |
-| DeepSeek   | 推理模型   | 稳定   | ⭐⭐⭐⭐   |
+| 名称       |   类型  |  状态 |    评分 |
+| :------- | :---: | --: | ----: |
+| GPT-5.5  |  推理模型 |  稳定 | ⭐⭐⭐⭐⭐ |
+| Claude   |  对话模型 |  稳定 |  ⭐⭐⭐⭐ |
+| Gemini   | 多模态模型 | 测试中 |  ⭐⭐⭐⭐ |
+| DeepSeek |  推理模型 |  稳定 |  ⭐⭐⭐⭐ |
 
 ### 对齐测试表格
 
-| 左对齐 | 居中 | 右对齐 |
-| :----- | :--: | -----: |
-| Apple  | 100  | $99.99 |
-| Banana | 200  | $12.50 |
-| Orange | 300  |  $8.88 |
+| 左对齐    |  居中 |    右对齐 |
+| :----- | :-: | -----: |
+| Apple  | 100 | $99.99 |
+| Banana | 200 | $12.50 |
+| Orange | 300 |  $8.88 |
 
 ### 单元格内代码与换行
 
-| 模块     | 命令            | 说明                    |
-| -------- | --------------- | ----------------------- |
-| 安装依赖 | `npm install`   | 安装项目依赖            |
+| 模块   | 命令              | 说明              |
+| ---- | --------------- | --------------- |
+| 安装依赖 | `npm install`   | 安装项目依赖          |
 | 启动开发 | `npm run dev`   | 启动本地服务<br>支持热更新 |
-| 构建产物 | `npm run build` | 生成生产环境静态文件    |
+| 构建产物 | `npm run build` | 生成生产环境静态文件      |
 
 ---
 
@@ -272,71 +272,72 @@ ORDER BY total_amount DESC;
 
 爱因斯坦质能方程：$E = mc^2$
 
-圆的面积：$S = \pi r^2$
+圆的面积：$S = pi r^2$
 
-概率归一化：$\sum_{i=1}^{n} p_i = 1$
+概率归一化：$sum_{i=1}^{n} p_i = 1$
 
 ### 独立公式
 
 $$
-\int_a^b f(x)\,dx = F(b) - F(a)
+int_a^b f(x),dx = F(b) - F(a)
 $$
 
 $$
-\frac{\partial}{\partial x} f(x, y)
-=
-\lim_{\Delta x \to 0}
-\frac{f(x+\Delta x, y)-f(x, y)}{\Delta x}
+frac{partial}{partial x} f(x, y)
+===================================
+
+lim_{Delta x to 0}
+frac{f(x+Delta x, y)-f(x, y)}{Delta x}
 $$
 
 ### 矩阵
 
 $$
 A =
-\begin{bmatrix}
-1 & 2 & 3 \\
-4 & 5 & 6 \\
+begin{bmatrix}
+1 & 2 & 3 
+4 & 5 & 6 
 7 & 8 & 9
-\end{bmatrix}
+end{bmatrix}
 $$
 
 ### 方程组
 
 $$
-\begin{cases}
-x + y = 10 \\
+begin{cases}
+x + y = 10 
 2x - y = 5
-\end{cases}
+end{cases}
 $$
 
 ### 分段函数
 
 $$
 f(x) =
-\begin{cases}
-x^2, & x \geq 0 \\
+begin{cases}
+x^2, & x geq 0 
 -x^2, & x < 0
-\end{cases}
+end{cases}
 $$
 
 ### 常见统计公式
 
 $$
-\mu = \frac{1}{n}\sum_{i=1}^{n}x_i
+mu = frac{1}{n}sum_{i=1}^{n}x_i
 $$
 
 $$
-\sigma = \sqrt{\frac{1}{n}\sum_{i=1}^{n}(x_i-\mu)^2}
+sigma = sqrt{frac{1}{n}sum_{i=1}^{n}(x_i-mu)^2}
 $$
 
 ### 神经网络前向传播
 
 $$
-\mathbf{h} = \sigma(\mathbf{W}\mathbf{x} + \mathbf{b})
+mathbf{h} = sigma(mathbf{W}mathbf{x} + mathbf{b})
 $$
 
 $$
-\hat{y} = \text{softmax}(\mathbf{W}_o\mathbf{h}+\mathbf{b}_o)
+hat{y} = text{softmax}(mathbf{W}_omathbf{h}+mathbf{b}_o)
 $$
 
 ---
@@ -598,13 +599,13 @@ Markdown 支持脚注功能。[^1]
 
 ## 23. 转义字符
 
-\*这不是斜体\*
+*这不是斜体*
 
-\*\*这不是粗体\*\*
+**这不是粗体**
 
-\# 这不是标题
+# 这不是标题
 
-\`这不是代码\`
+`这不是代码`
 
 ---
 
@@ -612,12 +613,12 @@ Markdown 支持脚注功能。[^1]
 
 ### 服务状态
 
-| 服务           | 地址                        | 状态    | 响应时间 |
-| -------------- | --------------------------- | :-----: | -------: |
-| API Gateway    | `https://api.example.com`   | ✅ 正常 |     82ms |
-| Redis Cache    | `redis://127.0.0.1:6379`    | ✅ 正常 |      4ms |
-| PostgreSQL     | `postgres://db:5432`        | ✅ 正常 |     12ms |
-| Worker Queue   | `amqp://rabbitmq:5672`      | ⚠️ 延迟 |    420ms |
+| 服务           | 地址                        |   状态  |  响应时间 |
+| ------------ | ------------------------- | :---: | ----: |
+| API Gateway  | `https://api.example.com` |  ✅ 正常 |  82ms |
+| Redis Cache  | `redis://127.0.0.1:6379`  |  ✅ 正常 |   4ms |
+| PostgreSQL   | `postgres://db:5432`      |  ✅ 正常 |  12ms |
+| Worker Queue | `amqp://rabbitmq:5672`    | ⚠️ 延迟 | 420ms |
 
 ### 核心指标
 
@@ -639,16 +640,17 @@ xychart-beta
 ### 错误率计算
 
 $$
-\text{Error Rate}
-=
-\frac{\text{Failed Requests}}{\text{Total Requests}}
-\times 100\%
+text{Error Rate}
+=================
+
+frac{text{Failed Requests}}{text{Total Requests}}
+times 100%
 $$
 
 例如：
 
 $$
-\frac{12}{10000} \times 100\% = 0.12\%
+frac{12}{10000} times 100% = 0.12%
 $$
 
 ---

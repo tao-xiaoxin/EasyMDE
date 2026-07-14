@@ -1233,7 +1233,8 @@ test.describe('EasyMDE editor workflows', () => {
         clipped: menu.clientHeight < menu.scrollHeight
       };
     })).toEqual({ bottom: 367, clipped: true });
-    await page.keyboard.press('End');
+    await expect(paragraphItem).toBeFocused();
+    await paragraphItem.press('End');
     await expect(heading6Item).toBeFocused();
     expect(await heading6Item.evaluate((item) => {
       const itemRect = item.getBoundingClientRect();

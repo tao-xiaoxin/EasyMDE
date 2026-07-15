@@ -192,7 +192,13 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(css, /__source,[\s\S]*__source-highlight\s*\{[^}]*padding:\s*14px 14px 14px 0;/s);
   assert.match(css, /__source,[\s\S]*__source-highlight\s*\{[^}]*font-family:\s*SFMono-Regular, Menlo, Consolas, monospace;[^}]*font-size:\s*14\.5px;[^}]*line-height:\s*28px;/s);
   assert.match(css, /__source-highlight\s*\{[^}]*background:\s*#f2f2f2;/s);
-  assert.match(css, /__source:focus-visible\s*\{[^}]*outline:\s*2px solid #2563eb;[^}]*outline-offset:\s*-2px;/s);
+  assert.match(css, /\.easymde-immersive-workspace :where\(button, input, textarea, \[tabindex\]\):focus-visible\s*\{[^}]*outline:\s*2px solid #2563eb;[^}]*outline-offset:\s*2px;/s);
+  assert.match(css, /__source\s*\{[^}]*overflow:\s*auto;[^}]*scrollbar-width:\s*none;/s);
+  assert.doesNotMatch(css, /__source\s*\{[^}]*overflow:\s*hidden;/s);
+  assert.match(css, /__source::-webkit-scrollbar\s*\{[^}]*display:\s*none;/s);
+  assert.match(css, /__source:focus-visible\s*\{[^}]*outline:\s*none;/s);
+  assert.doesNotMatch(css, /__source:focus-visible\s*\{[^}]*#2563eb/s);
+  assert.equal((css.match(/\.easymde-immersive-workspace__source:focus-visible\s*\{/g) || []).length, 1);
   assert.match(css, /__editor-card > footer\s*\{[^}]*height:\s*34px;[^}]*min-height:\s*34px;[^}]*padding:\s*7\.5px 15px;[^}]*color:\s*#b0b4bc;/s);
   assert.match(css, /__preview-card > header\s*\{[^}]*background:\s*transparent;/s);
   assert.match(css, /__preview-card > header strong\s*\{[^}]*font-weight:\s*500;/s);

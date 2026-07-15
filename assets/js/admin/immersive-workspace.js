@@ -1042,6 +1042,9 @@
         var composingSource = false;
         var sourceSelection = null;
         var viewMode = 'split';
+        var sourceViewState = null;
+        var sourceViewRestoreFrame = null;
+        var sourceViewRestoreFrameIsTimeout = false;
         var outlineEnabled = true;
         var outlineVisible = false;
         var activeOutlineKey = '';
@@ -1177,6 +1180,11 @@
             if (source.value === before) {
                 return false;
             }
+            source.setSelectionRange(
+                source.selectionStart,
+                source.selectionEnd,
+                rollbackSelection.direction || 'none'
+            );
             resultSelection = captureSourceSelection();
             commitUndoableSourceChange(before, resultSelection, rollbackSelection);
             captureSourceSelection();
@@ -1696,10 +1704,50 @@
                 });
         }
 
+        function captureSourceViewState() {
+            sourceViewState = captureSourceSelection();
+        }
+
+        function restoreSourceViewState() {
+            restoreSourceSelection(sourceViewState, false);
+        }
+
+        function cancelSourceViewRestore() {
+            if (sourceViewRestoreFrame === null) {
+                return;
+            }
+            if (sourceViewRestoreFrameIsTimeout) {
+                win.clearTimeout(sourceViewRestoreFrame);
+            } else if (typeof win.cancelAnimationFrame === 'function') {
+                win.cancelAnimationFrame(sourceViewRestoreFrame);
+            }
+            sourceViewRestoreFrame = null;
+            sourceViewRestoreFrameIsTimeout = false;
+        }
+
+        function scheduleSourceViewRestore(mode) {
+            var restore = function () {
+                sourceViewRestoreFrame = null;
+                sourceViewRestoreFrameIsTimeout = false;
+                if (root && source && viewMode === mode) {
+                    restoreSourceViewState();
+                }
+            };
+
+            sourceViewRestoreFrameIsTimeout = typeof win.requestAnimationFrame !== 'function';
+            sourceViewRestoreFrame = sourceViewRestoreFrameIsTimeout
+                ? win.setTimeout(restore, 0)
+                : win.requestAnimationFrame(restore);
+        }
+
         function setView(mode) {
             if (['edit', 'split', 'preview'].indexOf(mode) === -1) {
                 return;
             }
+            if (source && viewMode !== 'preview' && sourceViewRestoreFrame === null) {
+                captureSourceViewState();
+            }
+            cancelSourceViewRestore();
             viewMode = mode;
             main.setAttribute('data-view', mode);
             toolbar.hidden = mode === 'preview';
@@ -1710,6 +1758,9 @@
                 }
             });
             setSettingSwitch('split', mode === 'split');
+            if (source && mode !== 'preview') {
+                scheduleSourceViewRestore(mode);
+            }
         }
 
         function setSourceRatio(ratio) {
@@ -4622,7 +4673,7 @@
             sourceHighlight = query('.easymde-immersive-workspace__source-highlight');
             source.value = typeof adapter.getMarkdown === 'function' ? adapter.getMarkdown() : '';
             title.value = typeof adapter.getTitle === 'function' ? adapter.getTitle() : '';
-            captureSourceSelection();
+            captureSourceViewState();
             initialMarkdown = source.value;
             initialTitle = title.value;
             if (typeof adapter.getPublishState === 'function') {
@@ -4685,6 +4736,7 @@
                 adapter.setMarkdown(source.value);
             }
             cancelDocumentDerivedState();
+            cancelSourceViewRestore();
             if (outlineResizeCleanup) {
                 outlineResizeCleanup();
             }

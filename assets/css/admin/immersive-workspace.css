@@ -1279,7 +1279,12 @@ body.easymde-immersive-workspace-active {
     background: transparent;
     caret-color: #1f2430;
     color: transparent;
+    scrollbar-width: none;
     -webkit-text-fill-color: transparent;
+}
+
+.easymde-immersive-workspace__source::-webkit-scrollbar {
+    display: none;
 }
 
 .easymde-immersive-workspace__source::placeholder {
@@ -1300,8 +1305,7 @@ body.easymde-immersive-workspace-active {
 }
 
 .easymde-immersive-workspace__source:focus-visible {
-    outline: 2px solid #2563eb;
-    outline-offset: -2px;
+    outline: none;
 }
 
 .easymde-immersive-workspace__editor-card > footer {

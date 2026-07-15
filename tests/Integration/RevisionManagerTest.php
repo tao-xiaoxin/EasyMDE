@@ -96,6 +96,46 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertSame('serif-only', get_post_meta($post_id, PostDocument::META_SERIF_FONT, true));
     }
 
+    public function test_restore_revision_meta_does_not_create_legacy_mac_frame_meta()
+    {
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        $revision_id = wp_insert_post(
+            array(
+                'post_parent' => $post_id,
+                'post_type' => 'revision',
+                'post_status' => 'inherit',
+                'post_title' => 'Revision with historical frame state',
+            )
+        );
+
+        update_metadata('post', $revision_id, PostDocument::META_ENABLED, '1');
+        update_metadata('post', $revision_id, PostDocument::META_MARKDOWN, '# Restored without legacy state');
+        update_metadata('post', $revision_id, self::LEGACY_CODE_MAC_STYLE_META, '1');
+
+        $events = array();
+        $record_event = static function ($meta_id, $object_id, $meta_key) use (&$events, $post_id) {
+            unset($meta_id);
+            if ((int) $object_id === $post_id && self::LEGACY_CODE_MAC_STYLE_META === $meta_key) {
+                $events[] = current_filter();
+            }
+        };
+        add_action('added_post_meta', $record_event, 10, 3);
+        add_action('updated_post_meta', $record_event, 10, 3);
+        add_action('deleted_post_meta', $record_event, 10, 3);
+
+        try {
+            $manager = new RevisionManager(new PostDocument(), $this->theme_state_repository());
+            $manager->restore_revision_meta($post_id, $revision_id);
+
+            $this->assertFalse(metadata_exists('post', $post_id, self::LEGACY_CODE_MAC_STYLE_META));
+            $this->assertSame(array(), $events);
+        } finally {
+            remove_action('added_post_meta', $record_event, 10);
+            remove_action('updated_post_meta', $record_event, 10);
+            remove_action('deleted_post_meta', $record_event, 10);
+        }
+    }
+
     public function test_restore_revision_meta_uses_revision_content_when_renderer_unavailable()
     {
         $post_id = self::factory()->post->create(

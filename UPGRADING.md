@@ -35,7 +35,7 @@ Verify representative content before broad author use:
 
 - Open an existing EasyMDE post and confirm the Markdown source loads.
 - Save the post and confirm rendered `post_content` matches the Markdown preview.
-- Restore a recent revision and confirm Markdown, article theme, code theme, fixed code frame, custom CSS snapshot, font settings, and rendered HTML return to the same version.
+- Restore a recent revision and confirm Markdown, article theme, code theme, custom CSS snapshot, font settings, and rendered HTML return to the same version while the fixed code frame remains applied.
 - Check posts using custom CSS snapshots after editing or deleting saved custom CSS library entries.
 - Confirm extensions using `EasyMDE_Plugin::register_toolbar_button()` or `EasyMDE_Plugin::register_shortcode_helper()` still appear in the editor configuration.
 - Create a new post and a new page through the default WordPress flow, and confirm EasyMDE opens for both.

@@ -8,7 +8,7 @@ EasyMDE stores Markdown source in `_easymde_markdown`. That meta value is the so
 
 WordPress `post_content` stores rendered compatibility HTML for themes, feeds, search, plugins, visitors, and fallback behavior when EasyMDE is inactive.
 
-Appearance and rendering state are stored in EasyMDE post meta, including article theme, code theme, Mac-style code frame state, custom CSS selection/snapshot, and font choices.
+Appearance and rendering state are stored in EasyMDE post meta, including article theme, code theme, custom CSS selection/snapshot, and font choices. The Mac-style source-code frame is fixed rendering behavior and is not stored as active state.
 
 Newer releases may also store `_easymde_render_signature` as an internal
 consistency marker for fast editor preview hydration. It is derived from the
@@ -35,7 +35,7 @@ Verify representative content before broad author use:
 
 - Open an existing EasyMDE post and confirm the Markdown source loads.
 - Save the post and confirm rendered `post_content` matches the Markdown preview.
-- Restore a recent revision and confirm Markdown, article theme, code theme, code frame, custom CSS snapshot, font settings, and rendered HTML return to the same version.
+- Restore a recent revision and confirm Markdown, article theme, code theme, fixed code frame, custom CSS snapshot, font settings, and rendered HTML return to the same version.
 - Check posts using custom CSS snapshots after editing or deleting saved custom CSS library entries.
 - Confirm extensions using `EasyMDE_Plugin::register_toolbar_button()` or `EasyMDE_Plugin::register_shortcode_helper()` still appear in the editor configuration.
 - Create a new post and a new page through the default WordPress flow, and confirm EasyMDE opens for both.

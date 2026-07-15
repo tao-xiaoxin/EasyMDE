@@ -69,7 +69,6 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             'easymde_markdown' => '# Migrated',
             'easymde_markdown_theme' => 'default',
             'easymde_code_theme' => 'github',
-            'easymde_code_mac_style' => '1',
         );
 
         try {
@@ -86,7 +85,7 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             $this->assertSame('# Migrated', get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
             $this->assertSame('default', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
             $this->assertSame('github', get_post_meta($post_id, PostDocument::META_CODE_THEME, true));
-            $this->assertSame('1', get_post_meta($post_id, PostDocument::META_CODE_MAC_STYLE, true));
+            $this->assertFalse(metadata_exists('post', $post_id, '_easymde_code_mac_style'));
         } finally {
             $_POST = $previous_post;
         }
@@ -116,7 +115,6 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             'easymde_markdown' => $markdown,
             'easymde_markdown_theme' => 'default',
             'easymde_code_theme' => 'github',
-            'easymde_code_mac_style' => '0',
         );
 
         try {
@@ -158,7 +156,7 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             $this->assertSame($markdown, get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
             $this->assertSame('default', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
             $this->assertSame('github', get_post_meta($post_id, PostDocument::META_CODE_THEME, true));
-            $this->assertSame('0', get_post_meta($post_id, PostDocument::META_CODE_MAC_STYLE, true));
+            $this->assertFalse(metadata_exists('post', $post_id, '_easymde_code_mac_style'));
             $this->assertSame($rendered['post_content'], get_post($post_id)->post_content);
             $this->assertSame(
                 (new PostDocument())->render_signature($markdown, 'default', $rendered['post_content']),
@@ -190,7 +188,6 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             'easymde_markdown' => $markdown,
             'easymde_markdown_theme' => 'md2html-normal',
             'easymde_code_theme' => 'github',
-            'easymde_code_mac_style' => '1',
         );
 
         try {
@@ -464,7 +461,6 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
                 'easymde_markdown' => $expected['markdown'],
                 'easymde_markdown_theme' => $theme_id,
                 'easymde_code_theme' => 'atom-one-dark',
-                'easymde_code_mac_style' => '1',
                 'easymde_custom_font' => 'optima',
                 'easymde_windows_font' => 'microsoft-yahei',
                 'easymde_apple_font' => 'pingfang-sc-light',
@@ -498,6 +494,61 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
                 $this->assertSame('Helvetica, Arial, sans-serif', $state['fontFamily']);
             } finally {
                 $_POST = $previous_post;
+            }
+        }
+    }
+
+    public function test_valid_save_never_writes_existing_legacy_mac_frame_meta()
+    {
+        foreach (array('0', '1') as $legacy_value) {
+            $user_id = self::factory()->user->create(array('role' => 'editor'));
+            $post_id = self::factory()->post->create(
+                array(
+                    'post_type' => 'post',
+                    'post_author' => $user_id,
+                )
+            );
+            update_post_meta($post_id, '_easymde_code_mac_style', $legacy_value);
+            wp_set_current_user($user_id);
+
+            $events = array();
+            $record_event = static function ($meta_id, $object_id, $meta_key) use (&$events, $post_id) {
+                unset($meta_id);
+                if ((int) $object_id === $post_id && '_easymde_code_mac_style' === $meta_key) {
+                    $events[] = current_filter();
+                }
+            };
+            add_action('added_post_meta', $record_event, 10, 3);
+            add_action('updated_post_meta', $record_event, 10, 3);
+            add_action('deleted_post_meta', $record_event, 10, 3);
+
+            $previous_post = $_POST;
+            $_POST = array(
+                'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+                'easymde_enabled' => '1',
+                'easymde_markdown' => '# Legacy value remains ' . $legacy_value,
+                'easymde_markdown_theme' => 'default',
+                'easymde_code_theme' => 'github-dark',
+                'easymde_code_mac_style' => '1' === $legacy_value ? '0' : '1',
+            );
+
+            try {
+                $handler = new EditorSaveHandler(
+                    new PostDocument(),
+                    $this->theme_state_repository(),
+                    static function () {
+                        return true;
+                    }
+                );
+                $handler->save_post_meta($post_id, get_post($post_id), true);
+
+                $this->assertSame($legacy_value, get_post_meta($post_id, '_easymde_code_mac_style', true));
+                $this->assertSame(array(), $events);
+            } finally {
+                $_POST = $previous_post;
+                remove_action('added_post_meta', $record_event, 10);
+                remove_action('updated_post_meta', $record_event, 10);
+                remove_action('deleted_post_meta', $record_event, 10);
             }
         }
     }

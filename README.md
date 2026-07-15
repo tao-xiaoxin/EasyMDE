@@ -66,7 +66,7 @@ EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_con
 **Appearance**
 
 - Per-post article themes and code themes.
-- Optional CSS-only Mac-style code block frame.
+- Fixed CSS-only Mac-style frame for rendered code blocks, loaded only when code content needs it.
 - Per-post article font stack selection.
 - Named per-user custom CSS styles, scoped and parsed before use.
 

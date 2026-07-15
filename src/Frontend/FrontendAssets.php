@@ -93,7 +93,7 @@ final class FrontendAssets {
 			EASYMDE_VERSION
 		);
 
-		if ( ! empty( $features['syntaxHighlight'] ) || ( ! empty( $theme_state['codeMacStyle'] ) && ! empty( $features['codeBlocks'] ) ) ) {
+		if ( ! empty( $features['syntaxHighlight'] ) ) {
 			wp_enqueue_style(
 				'easymde-code-frame',
 				Asset::url( 'assets/css/frontend/code-frame.css' ),

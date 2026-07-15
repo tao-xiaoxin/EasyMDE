@@ -849,11 +849,13 @@ test('runtime local draft setting cancels pending writes without deleting stored
   assert.deepEqual(writes, [{ target: storage, markdown: 'enabled draft' }]);
 });
 
-test('immersive appearance adapter keeps the real Mac code frame state writable', () => {
+test('Mac code frame is fixed without editor state, request, signature, or hidden form fields', () => {
   const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
+  const template = readFileSync(join(repoRoot, 'templates/admin/editor-shell.php'), 'utf8');
 
-  assert.match(source, /Object\.prototype\.hasOwnProperty\.call\(changes, 'codeMacStyle'\)/);
-  assert.match(source, /renderState\.codeMacStyle = !!changes\.codeMacStyle/);
+  assert.doesNotMatch(source, /codeMacStyle|code_mac_style|easymde-code-mac-style/);
+  assert.doesNotMatch(template, /easymde_code_mac_style|easymde-code-mac-style/);
+  assert.match(source, /\$preview\.addClass\('easymde-rendered-content easymde-code-mac'\)/);
 });
 
 test('immersive custom CSS adapter separates zero-write preview from explicit persistence', () => {
@@ -921,6 +923,15 @@ test('detached revision previews load and apply their own feature metadata', asy
   assert.equal(enhancedFeatures.mermaid, true);
   assert.equal(enhancedFeatures.syntaxHighlight, true);
   assert.match(preview[0].innerHTML, /easymde-mermaid/);
+});
+
+test('detached revision preview staging uses the fixed Mac frame root', () => {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
+
+  assert.match(
+    source,
+    /stagingNode\.className = 'easymde-immersive-workspace__history-preview easymde-rendered-content easymde-code-mac'/
+  );
 });
 
 test('post-publish preview accepts only successful WordPress notices', () => {
@@ -1323,7 +1334,6 @@ test('initEditor hydrates server-rendered preview before waiting for shell paint
   jQueryRef.register('#easymde-markdown-field', hiddenFields[0]);
   jQueryRef.register('#easymde-markdown-theme-field', hiddenFields[1]);
   jQueryRef.register('#easymde-code-theme-field', hiddenFields[2]);
-  jQueryRef.register('#easymde-code-mac-style-field', hiddenFields[3]);
   jQueryRef.register('#easymde-custom-css-id-field', hiddenFields[4]);
   jQueryRef.register('#easymde-custom-font-field', hiddenFields[5]);
   jQueryRef.register('#easymde-windows-font-field', hiddenFields[6]);
@@ -1430,7 +1440,6 @@ test('initEditor does not hydrate saved preview when a local draft exists', asyn
   jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
   jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
   jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
   jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
@@ -1530,7 +1539,6 @@ test('initEditor replaces provisional stored preview when a local draft exists',
   jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
   jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
   jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
   jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
@@ -1617,7 +1625,6 @@ test('initEditor refreshes provisional stored preview after shell paint', async 
   jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
   jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
   jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
   jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
@@ -1717,7 +1724,6 @@ test('initEditor hydrates saved preview when a local draft matches saved source'
   jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
   jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
   jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
   jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
@@ -1806,7 +1812,6 @@ test('initEditor compares legacy local draft content without reading source valu
   jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
   jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
   jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
   jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
@@ -1930,7 +1935,6 @@ test('initEditor creates toolbar chrome before resolving server pending preview'
   jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
   jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
   jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
   jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
@@ -2110,7 +2114,6 @@ test('initEditor starts immediately when the editor root is already parsed', () 
   jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
   jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
   jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
   jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
@@ -2182,7 +2185,6 @@ test('initEditor applies server-rendered preview appearance before deferred enha
   jQueryRef.register('#postdivrich', createContainerWrapper());
   jQueryRef.register('#post', createContainerWrapper());
   jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
   jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
@@ -2234,8 +2236,7 @@ test('initEditor applies server-rendered preview appearance before deferred enha
         fontOptions: {},
         state: {
           markdownTheme: 'github',
-          codeTheme: 'github',
-          codeMacStyle: true
+          codeTheme: 'github'
         }
       }
     }
@@ -2304,7 +2305,6 @@ test('initEditor defers initial preview enhancement until after toolbar chrome i
   jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
   jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
   jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
   jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
@@ -2401,7 +2401,6 @@ test('initEditor defers optional Markdown field sync until after the first shell
   jQueryRef.register('#easymde-markdown-field', markdownField);
   jQueryRef.register('#easymde-markdown-theme-field', themeField);
   jQueryRef.register('#easymde-code-theme-field', createTrackedValueWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createTrackedValueWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createTrackedValueWrapper());
   jQueryRef.register('#easymde-custom-font-field', createTrackedValueWrapper());
   jQueryRef.register('#easymde-windows-font-field', createTrackedValueWrapper());
@@ -2484,7 +2483,6 @@ test('initEditor binds lazy image paste listeners without loading upload code du
   jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
   jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
   jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
   jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
@@ -2577,7 +2575,6 @@ test('initEditor preloads WeChat exporter only after shell paint', () => {
   jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
   jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
   jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
   jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());
@@ -2832,7 +2829,6 @@ test('initEditor defers hidden appearance and font menu controls until a menu op
   jQueryRef.register('#easymde-markdown-field', createContainerWrapper());
   jQueryRef.register('#easymde-markdown-theme-field', createContainerWrapper());
   jQueryRef.register('#easymde-code-theme-field', createContainerWrapper());
-  jQueryRef.register('#easymde-code-mac-style-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-css-id-field', createContainerWrapper());
   jQueryRef.register('#easymde-custom-font-field', createContainerWrapper());
   jQueryRef.register('#easymde-windows-font-field', createContainerWrapper());

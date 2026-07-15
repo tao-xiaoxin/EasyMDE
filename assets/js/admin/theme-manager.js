@@ -7,7 +7,6 @@
         return {
             markdownTheme: state.markdownTheme || 'default',
             codeTheme: state.codeTheme || 'atom-one-dark',
-            codeMacStyle: state.codeMacStyle === undefined ? true : !!state.codeMacStyle,
             customCssId: state.customCssId || '',
             customCss: state.customCss || '',
             scopedCustomCss: state.scopedCustomCss || '',

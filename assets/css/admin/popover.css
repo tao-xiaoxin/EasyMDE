@@ -77,8 +77,7 @@
     white-space: nowrap;
 }
 
-.easymde-toolbar-control,
-.easymde-toolbar-check {
+.easymde-toolbar-control {
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -122,16 +121,6 @@
     color: #6b7280;
     font-size: 20px;
     line-height: 1.7;
-}
-
-.easymde-toolbar-check {
-    flex-direction: row;
-    align-items: center;
-    margin-bottom: 12px;
-}
-
-.easymde-toolbar-check input {
-    margin: 0;
 }
 
 .easymde-custom-css-toggle-row {

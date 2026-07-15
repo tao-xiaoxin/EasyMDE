@@ -43,7 +43,6 @@ _easymde_enabled
 _easymde_markdown
 _easymde_markdown_theme
 _easymde_code_theme
-_easymde_code_mac_style
 _easymde_custom_css_id
 _easymde_custom_css_snapshot
 _easymde_custom_font
@@ -61,6 +60,12 @@ hooks or extra revision loops.
 
 Revisions created before this migration may not contain EasyMDE meta. Restoring
 those revisions does not delete current EasyMDE meta automatically.
+
+## Fixed Mac Code Frame
+
+The Mac-style source-code frame is now a fixed rendering default rather than saved appearance state. New post saves, user defaults, preview requests, and revisions no longer create or update Mac-frame state.
+
+Existing `_easymde_code_mac_style` post/revision meta and `codeMacStyle` entries in user defaults are retained byte-for-byte. EasyMDE does not migrate, delete, normalize, copy, restore, or consult those historical values. Saving other supported appearance defaults preserves unknown historical user-default fields while updating only the active fields.
 
 ## Custom CSS
 
@@ -82,5 +87,4 @@ Article themes moved from the previous all-in-one stylesheet into
 `assets/vendor/highlight/styles/`. The owned `wechat-inspired` code theme moved
 to `assets/themes/code/wechat-inspired.css`.
 
-Old theme meta IDs are unchanged, so existing posts continue to resolve their
-selected article theme, code theme, Mac code frame state, and custom CSS snapshot.
+Old active theme meta IDs are unchanged, so existing posts continue to resolve their selected article theme, code theme, and custom CSS snapshot. Historical Mac-frame values remain stored but no longer affect rendering.

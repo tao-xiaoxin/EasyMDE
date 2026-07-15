@@ -732,10 +732,6 @@ msgstr "本地草稿已保存"
 msgid "Local drafts enabled"
 msgstr "本地草稿已开启"
 
-#: src/Admin/AdminAssets.php:486
-msgid "Mac code frame"
-msgstr "Mac 代码框"
-
 #: src/Admin/AdminAssets.php:307
 msgid "Manual save"
 msgstr "手动保存"

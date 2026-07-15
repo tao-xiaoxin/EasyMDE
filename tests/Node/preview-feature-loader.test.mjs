@@ -150,8 +150,7 @@ function context(documentRef, overrides = {}) {
   return {
     documentRef,
     renderState: {
-      codeTheme: overrides.codeTheme || 'github',
-      codeMacStyle: overrides.codeMacStyle !== false
+      codeTheme: overrides.codeTheme || 'github'
     },
     config: {
       previewAssets: {
@@ -229,6 +228,41 @@ test('code features load highlight assets once', async () => {
     'easymde-code-frame-css',
     'easymde-highlight-theme-css',
     'easymde-highlight-js'
+  ]);
+});
+
+test('regular code loads the fixed frame even when obsolete state is supplied', async () => {
+  const { loader, documentRef } = loadLoader();
+  const loaderContext = context(documentRef);
+
+  loaderContext.renderState.codeMacStyle = false;
+
+  await loader.ensurePreviewFeatures(
+    {
+      codeBlocks: true,
+      syntaxHighlight: true
+    },
+    loaderContext
+  );
+
+  assert.ok(ids(documentRef).includes('easymde-code-frame-css'));
+});
+
+test('Mermaid-only previews do not load the ordinary code frame', async () => {
+  const { loader, documentRef } = loadLoader();
+
+  await loader.ensurePreviewFeatures(
+    {
+      codeBlocks: true,
+      syntaxHighlight: false,
+      mermaid: true
+    },
+    context(documentRef)
+  );
+
+  assert.deepEqual(ids(documentRef), [
+    'easymde-mermaid-js',
+    'easymde-mermaid-renderer-js'
   ]);
 });
 
@@ -325,6 +359,7 @@ test('existing highlight stylesheet links wait for their load event before resol
   link.rel = 'stylesheet';
   link.setAttribute('href', '/assets/vendor/highlight/styles/github.min.css');
   documentRef.head.appendChild(link);
+  loaderContext.config.previewAssets.codeFrameCssUrl = '';
   loaderContext.config.previewAssets.highlightScriptUrl = '';
 
   const promise = loader.ensurePreviewFeatures(
@@ -420,6 +455,7 @@ test('failed optional resources are cached without rejecting preview loading', a
   assert.equal(second, first);
   assert.deepEqual(ids(documentRef), [
     'easymde-highlight-theme-css',
-    'easymde-highlight-js'
+    'easymde-highlight-js',
+    'easymde-code-frame-css'
   ]);
 });

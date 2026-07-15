@@ -9,6 +9,8 @@ use EasyMDE\Theme\ThemeStateRepository;
 
 final class RevisionManagerTest extends WP_UnitTestCase
 {
+    private const LEGACY_CODE_MAC_STYLE_META = '_easymde_code_mac_style';
+
     public function test_restore_revision_meta_regenerates_post_content_from_restored_markdown()
     {
         $post_id = self::factory()->post->create(
@@ -31,13 +33,14 @@ final class RevisionManagerTest extends WP_UnitTestCase
         update_metadata('post', $revision_id, PostDocument::META_MARKDOWN, '# Restored');
         update_metadata('post', $revision_id, PostDocument::META_MARKDOWN_THEME, 'custom');
         update_metadata('post', $revision_id, PostDocument::META_CODE_THEME, 'monokai');
-        update_metadata('post', $revision_id, PostDocument::META_CODE_MAC_STYLE, '1');
+        update_metadata('post', $revision_id, self::LEGACY_CODE_MAC_STYLE_META, '1');
         update_metadata('post', $revision_id, PostDocument::META_CUSTOM_CSS_ID, 'revision-style');
         update_metadata('post', $revision_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, 'h2 { color: red; }');
         update_metadata('post', $revision_id, PostDocument::META_CUSTOM_FONT, 'georgia');
         update_metadata('post', $revision_id, PostDocument::META_WINDOWS_FONT, 'microsoft-yahei');
         update_metadata('post', $revision_id, PostDocument::META_APPLE_FONT, 'pingfang-sc-regular');
         update_metadata('post', $revision_id, PostDocument::META_SERIF_FONT, 'serif-only');
+        update_post_meta($post_id, self::LEGACY_CODE_MAC_STYLE_META, '0');
 
         $repository = new ThemeStateRepository(
             new ArticleThemeRegistry(),
@@ -51,7 +54,7 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertSame('# Restored', get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
         $this->assertSame('custom', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
         $this->assertSame('monokai', get_post_meta($post_id, PostDocument::META_CODE_THEME, true));
-        $this->assertSame('1', get_post_meta($post_id, PostDocument::META_CODE_MAC_STYLE, true));
+        $this->assertSame('0', get_post_meta($post_id, self::LEGACY_CODE_MAC_STYLE_META, true));
         $this->assertSame('revision-style', get_post_meta($post_id, PostDocument::META_CUSTOM_CSS_ID, true));
         $this->assertSame('h2 { color: red; }', get_post_meta($post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, true));
         $this->assertSame('georgia', get_post_meta($post_id, PostDocument::META_CUSTOM_FONT, true));
@@ -115,8 +118,9 @@ final class RevisionManagerTest extends WP_UnitTestCase
         update_metadata('post', $revision_id, PostDocument::META_MARKDOWN, '# Restored while unavailable');
         update_metadata('post', $revision_id, PostDocument::META_MARKDOWN_THEME, 'default');
         update_metadata('post', $revision_id, PostDocument::META_CODE_THEME, 'github-dark');
-        update_metadata('post', $revision_id, PostDocument::META_CODE_MAC_STYLE, '0');
+        update_metadata('post', $revision_id, self::LEGACY_CODE_MAC_STYLE_META, '0');
         update_metadata('post', $revision_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, 'p { color: blue; }');
+        update_post_meta($post_id, self::LEGACY_CODE_MAC_STYLE_META, '1');
 
         $manager = new RevisionManager(
             new PostDocument(),
@@ -131,7 +135,7 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertSame('# Restored while unavailable', get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
         $this->assertSame('default', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
         $this->assertSame('github-dark', get_post_meta($post_id, PostDocument::META_CODE_THEME, true));
-        $this->assertSame('0', get_post_meta($post_id, PostDocument::META_CODE_MAC_STYLE, true));
+        $this->assertSame('1', get_post_meta($post_id, self::LEGACY_CODE_MAC_STYLE_META, true));
         $this->assertSame('p { color: blue; }', get_post_meta($post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, true));
         $this->assertSame('<p>Revision HTML</p>', get_post($post_id)->post_content);
         $this->assertFalse(metadata_exists('post', $post_id, PostDocument::META_RENDER_SIGNATURE));
@@ -454,7 +458,7 @@ final class RevisionManagerTest extends WP_UnitTestCase
         update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Snapshot');
         update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'orange-heart');
         update_post_meta($post_id, PostDocument::META_CODE_THEME, 'xcode');
-        update_post_meta($post_id, PostDocument::META_CODE_MAC_STYLE, '1');
+        update_post_meta($post_id, self::LEGACY_CODE_MAC_STYLE_META, '1');
         update_post_meta($post_id, PostDocument::META_CUSTOM_CSS_ID, 'snapshot-css');
         update_post_meta($post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, 'h3 { color: green; }');
         update_post_meta($post_id, PostDocument::META_CUSTOM_FONT, 'georgia');
@@ -482,6 +486,8 @@ final class RevisionManagerTest extends WP_UnitTestCase
         foreach ((new PostDocument())->revision_meta_keys() as $key) {
             $this->assertSame(get_post_meta($post_id, $key, true), get_post_meta($revision_id, $key, true), $key);
         }
+        $this->assertFalse(metadata_exists('post', $revision_id, self::LEGACY_CODE_MAC_STYLE_META));
+        $this->assertSame('1', get_post_meta($post_id, self::LEGACY_CODE_MAC_STYLE_META, true));
     }
 
     private function theme_state_repository()

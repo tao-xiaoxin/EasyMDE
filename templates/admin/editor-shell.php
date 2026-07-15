@@ -31,7 +31,6 @@ if ( $easymde_initial_preview_pending ) {
 	<input type="hidden" id="easymde-enabled-field" name="easymde_enabled" value="1">
 	<input type="hidden" id="easymde-markdown-theme-field" name="easymde_markdown_theme" value="<?php echo esc_attr( $easymde_theme_state['markdownTheme'] ); ?>">
 	<input type="hidden" id="easymde-code-theme-field" name="easymde_code_theme" value="<?php echo esc_attr( $easymde_theme_state['codeTheme'] ); ?>">
-	<input type="hidden" id="easymde-code-mac-style-field" name="easymde_code_mac_style" value="<?php echo $easymde_theme_state['codeMacStyle'] ? '1' : '0'; ?>">
 	<input type="hidden" id="easymde-custom-css-id-field" name="easymde_custom_css_id" value="<?php echo esc_attr( $easymde_theme_state['customCssId'] ); ?>">
 	<input type="hidden" id="easymde-custom-font-field" name="easymde_custom_font" value="<?php echo esc_attr( $easymde_theme_state['customFont'] ); ?>">
 	<input type="hidden" id="easymde-windows-font-field" name="easymde_windows_font" value="<?php echo esc_attr( $easymde_theme_state['windowsFont'] ); ?>">

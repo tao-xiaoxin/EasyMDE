@@ -43,7 +43,6 @@ _easymde_enabled
 _easymde_markdown
 _easymde_markdown_theme
 _easymde_code_theme
-_easymde_code_mac_style
 _easymde_custom_css_id
 _easymde_custom_css_snapshot
 _easymde_custom_font
@@ -67,6 +66,7 @@ Rules:
 * Relevant EasyMDE meta must participate in WordPress revisions.
 * Restoring a revision must restore Markdown, render settings, and regenerated `post_content` consistently.
 * Avoid recursive save hooks, duplicate rendering, and revision restore loops.
+* `_easymde_code_mac_style` is historical data only. Preserve existing values without reading, writing, migrating, normalizing, copying to revisions, or restoring them. The Mac code frame is fixed rendering behavior and is not document or user-default state.
 
 Never remove, rename, or silently invalidate existing `_easymde_*` meta without an explicit migration plan.
 

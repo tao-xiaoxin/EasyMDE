@@ -35,7 +35,7 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 * Local KaTeX math rendering.
 * `[TOC]` and `[toc]` table of contents generation.
 * Per-post article themes and code themes.
-* Optional Mac-style code block framing.
+* Fixed Mac-style framing for rendered source-code blocks, loaded only when needed.
 * Per-post article font stack selection.
 * Named reusable custom CSS styles.
 * Rich-text “Copy to WeChat” export from the rendered preview.
@@ -46,7 +46,7 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 
 EasyMDE includes multiple built-in article themes inspired by locally bundled writing layouts and mdnice-style designs. Themes are implemented locally with scoped CSS and do not load remote decorative assets.
 
-Article theme, code theme, Mac-style code frame, font stack, and custom CSS choices are saved per post. The current user's latest appearance choices are reused as defaults for future posts.
+Article theme, code theme, font stack, and custom CSS choices are saved per post. The current user's latest appearance choices are reused as defaults for future posts. The Mac-style source-code frame is a fixed rendering default rather than saved appearance state.
 
 The editor includes article themes such as:
 
@@ -180,7 +180,7 @@ See `SECURITY.md`, `UPGRADING.md`, and `THIRD-PARTY-NOTICES.md` in the release p
 = 0.1.4 =
 
 * Add per-post article themes and code theme switching.
-* Add optional Mac-style code frames.
+* Add Mac-style code frames.
 * Add named reusable custom CSS styles.
 
 = 0.1.3 =

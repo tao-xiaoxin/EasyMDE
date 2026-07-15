@@ -361,7 +361,6 @@ final class PostModeControllerTest extends WP_UnitTestCase
             array(
                 'markdownTheme' => 'md2html-normal',
                 'codeTheme' => 'github',
-                'codeMacStyle' => true,
                 'customCssId' => '',
                 'customFont' => 'optima',
                 'windowsFont' => 'microsoft-yahei',

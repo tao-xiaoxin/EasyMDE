@@ -791,8 +791,7 @@ test('theme picker uses the reference card and custom dropdown structure', () =>
   assert.match(source, /menu\.setAttribute\('role', 'listbox'\)/);
   assert.match(source, /button\.setAttribute\('role', 'option'\)/);
   assert.match(source, /button\.setAttribute\('aria-selected', active \? 'true' : 'false'\)/);
-  assert.match(source, /macToggle\.name = 'easymde_immersive_code_mac_style'/);
-  assert.match(source, /setAttribute\('data-appearance-key', 'codeMacStyle'\)/);
+  assert.doesNotMatch(source, /codeMacStyle|easymde_immersive_code_mac_style|theme-mac/);
   assert.match(source, /strings\.customCssTheme \|\| 'Custom CSS theme'/);
   assert.match(source, /adapter\.updateAppearance\(changes/);
 
@@ -818,9 +817,7 @@ test('theme picker uses the reference card and custom dropdown structure', () =>
   assert.match(css, /__theme-option:hover,[\s\S]*__theme-option:focus-visible[^}]*background:\s*#f2f5f9;/s);
   assert.match(css, /__theme-check[^}]*color:\s*#56637a;/s);
   assert.match(css, /__theme-select-backdrop[^}]*position:\s*fixed;[^}]*z-index:\s*60;[^}]*inset:\s*0;/s);
-  assert.match(css, /__theme-mac[^}]*font-weight:\s*500;/s);
-  assert.match(css, /__theme-mac input[^}]*appearance:\s*auto;/s);
-  assert.match(css, /__theme-mac input[^}]*font-weight:\s*400;/s);
+  assert.doesNotMatch(css, /__theme-mac/);
   assert.match(
     appendThemeSelect,
     /listen\(button, 'click', function \(event\) \{\s*event\.stopPropagation\(\);/,

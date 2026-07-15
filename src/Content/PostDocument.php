@@ -14,7 +14,6 @@ final class PostDocument {
 	const META_MARKDOWN            = '_easymde_markdown';
 	const META_MARKDOWN_THEME      = '_easymde_markdown_theme';
 	const META_CODE_THEME          = '_easymde_code_theme';
-	const META_CODE_MAC_STYLE      = '_easymde_code_mac_style';
 	const META_CUSTOM_CSS_ID       = '_easymde_custom_css_id';
 	const META_CUSTOM_CSS_SNAPSHOT = '_easymde_custom_css_snapshot';
 	const META_CUSTOM_FONT         = '_easymde_custom_font';

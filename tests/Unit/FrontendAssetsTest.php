@@ -99,6 +99,43 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertTrue($features['syntaxHighlight']);
     }
 
+    public function test_code_frame_assets_follow_regular_code_features_not_legacy_meta()
+    {
+        $repository = new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy());
+        $assets = new FrontendAssets(new PostDocument(), $repository);
+
+        foreach (array('0', '1') as $legacy_value) {
+            $post_id = self::factory()->post->create(array('post_type' => 'post'));
+            update_post_meta($post_id, '_easymde_code_mac_style', $legacy_value);
+
+            $assets->enqueue_render_assets($post_id, "```php\necho 'frame';\n```");
+
+            $this->assertTrue(wp_style_is('easymde-code-frame', 'enqueued'));
+            $this->assertTrue(wp_style_is('easymde-highlight-theme', 'enqueued'));
+            $this->assertSame($legacy_value, get_post_meta($post_id, '_easymde_code_mac_style', true));
+
+            wp_dequeue_style('easymde-code-frame');
+            wp_dequeue_style('easymde-highlight-theme');
+        }
+    }
+
+    public function test_plain_and_mermaid_only_content_do_not_enqueue_code_frame_assets()
+    {
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+
+        $assets->enqueue_render_assets(0, 'Plain paragraph');
+        $this->assertFalse(wp_style_is('easymde-code-frame', 'enqueued'));
+        $this->assertFalse(wp_style_is('easymde-highlight-theme', 'enqueued'));
+
+        $assets->enqueue_render_assets(0, "```mermaid\ngraph TD; A-->B;\n```");
+        $this->assertFalse(wp_style_is('easymde-code-frame', 'enqueued'));
+        $this->assertFalse(wp_style_is('easymde-highlight-theme', 'enqueued'));
+        $this->assertTrue(wp_script_is('easymde-mermaid', 'enqueued'));
+    }
+
     public function test_editor_base_assets_do_not_enqueue_optional_preview_runtimes()
     {
         $post_id = self::factory()->post->create(array('post_type' => 'post'));

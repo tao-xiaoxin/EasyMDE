@@ -66,7 +66,6 @@ final class Migration {
 			PostDocument::META_MARKDOWN,
 			PostDocument::META_MARKDOWN_THEME,
 			PostDocument::META_CODE_THEME,
-			PostDocument::META_CODE_MAC_STYLE,
 			PostDocument::META_CUSTOM_CSS_ID,
 			PostDocument::META_CUSTOM_CSS_SNAPSHOT,
 			PostDocument::META_CUSTOM_FONT,

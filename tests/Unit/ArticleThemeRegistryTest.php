@@ -140,7 +140,6 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
                 array(
                     'markdownTheme' => $theme_id,
                     'codeTheme' => 'atom-one-dark',
-                    'codeMacStyle' => true,
                     'fontFamily' => 'Helvetica, Arial, sans-serif',
                 )
             );

@@ -44,7 +44,6 @@ final class ThemeStateRepository {
 
 		$markdown_theme = $defaults['markdownTheme'];
 		$code_theme     = $defaults['codeTheme'];
-		$code_mac_style = $defaults['codeMacStyle'];
 		$custom_css_id  = $defaults['customCssId'];
 		$custom_font    = $defaults['customFont'];
 		$windows_font   = $defaults['windowsFont'];
@@ -62,11 +61,6 @@ final class ThemeStateRepository {
 
 			if ( '' !== $stored_code_theme ) {
 				$code_theme = $stored_code_theme;
-			}
-
-			$stored_code_mac_style = get_post_meta( $post_id, PostDocument::META_CODE_MAC_STYLE, true );
-			if ( '' !== $stored_code_mac_style ) {
-				$code_mac_style = '1' === $stored_code_mac_style;
 			}
 
 			$custom_css_id = sanitize_key( (string) get_post_meta( $post_id, PostDocument::META_CUSTOM_CSS_ID, true ) );
@@ -128,7 +122,6 @@ final class ThemeStateRepository {
 		return array(
 			'markdownTheme'   => $markdown_theme,
 			'codeTheme'       => $code_theme,
-			'codeMacStyle'    => (bool) $code_mac_style,
 			'customCssId'     => $custom_css_id,
 			'customCss'       => $custom_css,
 			'scopedCustomCss' => $this->custom_css_policy->scope( $custom_css ),
@@ -225,7 +218,6 @@ final class ThemeStateRepository {
 		$post_id        = absint( $post_id );
 		$markdown_theme = $this->sanitize_markdown_theme_id( isset( $source['easymde_markdown_theme'] ) ? wp_unslash( $source['easymde_markdown_theme'] ) : '' );
 		$code_theme     = $this->sanitize_code_theme_id( isset( $source['easymde_code_theme'] ) ? wp_unslash( $source['easymde_code_theme'] ) : '' );
-		$code_mac_style = ! empty( $source['easymde_code_mac_style'] ) && '0' !== (string) wp_unslash( $source['easymde_code_mac_style'] );
 		$custom_css_id  = sanitize_key( isset( $source['easymde_custom_css_id'] ) ? wp_unslash( $source['easymde_custom_css_id'] ) : '' );
 		$custom_font    = $this->sanitize_font_option_id( 'customFonts', isset( $source['easymde_custom_font'] ) ? wp_unslash( $source['easymde_custom_font'] ) : '', 'optima' );
 		$windows_font   = $this->sanitize_font_option_id( 'windowsFonts', isset( $source['easymde_windows_font'] ) ? wp_unslash( $source['easymde_windows_font'] ) : '', 'microsoft-yahei' );
@@ -260,7 +252,6 @@ final class ThemeStateRepository {
 		return array(
 			'markdownTheme' => $markdown_theme,
 			'codeTheme'     => $code_theme,
-			'codeMacStyle'  => (bool) $code_mac_style,
 			'customCssId'   => $custom_css_id,
 			'customCss'     => $custom_css,
 			'customFont'    => $custom_font,
@@ -284,19 +275,26 @@ final class ThemeStateRepository {
 	}
 
 	public function save_user_defaults( array $state ) {
+		$stored = get_user_meta( get_current_user_id(), $this->default_theme_user_meta_key, true );
+		if ( ! is_array( $stored ) ) {
+			$stored = array();
+		}
+
 		update_user_meta(
 			get_current_user_id(),
 			$this->default_theme_user_meta_key,
-			array(
-				'markdownTheme'   => $state['markdownTheme'],
-				'codeTheme'       => $state['codeTheme'],
-				'codeMacStyle'    => (bool) $state['codeMacStyle'],
-				'customCssId'     => $state['customCssId'],
-				'customFont'      => $state['customFont'],
-				'windowsFont'     => $state['windowsFont'],
-				'appleFont'       => $state['appleFont'],
-				'serifFont'       => $state['serifFont'],
-				'defaultsVersion' => EASYMDE_VERSION,
+			array_replace(
+				$stored,
+				array(
+					'markdownTheme'   => $state['markdownTheme'],
+					'codeTheme'       => $state['codeTheme'],
+					'customCssId'     => $state['customCssId'],
+					'customFont'      => $state['customFont'],
+					'windowsFont'     => $state['windowsFont'],
+					'appleFont'       => $state['appleFont'],
+					'serifFont'       => $state['serifFont'],
+					'defaultsVersion' => EASYMDE_VERSION,
+				)
 			)
 		);
 	}
@@ -317,9 +315,7 @@ final class ThemeStateRepository {
 
 		$classes[] = 'easymde-code-theme-' . sanitize_html_class( $theme_state['codeTheme'] );
 
-		if ( ! empty( $theme_state['codeMacStyle'] ) ) {
-			$classes[] = 'easymde-code-mac';
-		}
+		$classes[] = 'easymde-code-mac';
 
 		if ( ! empty( $theme_state['fontFamily'] ) ) {
 			$classes[] = 'easymde-font-overrides';
@@ -342,18 +338,11 @@ final class ThemeStateRepository {
 			$stored = array();
 		}
 
-		$stored_code_theme     = isset( $stored['codeTheme'] ) ? $stored['codeTheme'] : 'atom-one-dark';
-		$stored_code_mac_style = array_key_exists( 'codeMacStyle', $stored ) ? ! empty( $stored['codeMacStyle'] ) : true;
-
-		if ( empty( $stored['defaultsVersion'] ) && 'github' === $stored_code_theme && ! $stored_code_mac_style ) {
-			$stored_code_theme     = 'atom-one-dark';
-			$stored_code_mac_style = true;
-		}
+		$stored_code_theme = isset( $stored['codeTheme'] ) ? $stored['codeTheme'] : 'atom-one-dark';
 
 		return array(
 			'markdownTheme' => $this->sanitize_markdown_theme_id( isset( $stored['markdownTheme'] ) ? $stored['markdownTheme'] : 'default' ),
 			'codeTheme'     => $this->sanitize_code_theme_id( $stored_code_theme ),
-			'codeMacStyle'  => $stored_code_mac_style,
 			'customCssId'   => sanitize_key( isset( $stored['customCssId'] ) ? $stored['customCssId'] : '' ),
 			'customFont'    => $this->sanitize_font_option_id( 'customFonts', isset( $stored['customFont'] ) ? $stored['customFont'] : 'optima', 'optima' ),
 			'windowsFont'   => $this->sanitize_font_option_id( 'windowsFonts', isset( $stored['windowsFont'] ) ? $stored['windowsFont'] : 'microsoft-yahei', 'microsoft-yahei' ),

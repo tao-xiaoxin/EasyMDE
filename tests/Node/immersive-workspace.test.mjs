@@ -661,13 +661,15 @@ test('settings popover matches the reference checkbox list geometry', () => {
   assert.match(source, /data-setting="split"[^>]*role="checkbox"/);
   assert.match(source, /data-setting="auto-save"[^>]*role="checkbox"/);
   assert.match(source, /data-setting="sync"[^>]*role="checkbox"/);
-  assert.match(source, /data-setting="ai-autocomplete"[^>]*role="checkbox"/);
+  assert.match(source, /data-setting="ai-autocomplete"[^>]*role="checkbox"[^>]*aria-checked="false"[^>]*disabled/);
+  assert.match(source, /data-setting="ai-autocomplete"[^>]*title="' \+ label\('settingsAiAutocompleteHelp', 'AI autocomplete is not available yet'\) \+ '"/);
   assert.match(source, /label\('settingsWordCount', 'Word count'\)/);
   assert.match(source, /label\('settingsWordCountHelp', 'Show words, characters, and reading time beside the article title'\)/);
   assert.match(source, /label\('autoSave', 'Auto save'\)/);
   assert.match(source, /label\('autoSaveHelp', 'Automatically save local drafts'\)/);
   assert.match(source, /label\('settingsAiAutocomplete', 'AI autocomplete'\)/);
-  assert.match(source, /label\('settingsAiAutocompleteHelp', 'Provide intelligent continuation suggestions while writing'\)/);
+  assert.match(source, /label\('settingsAiAutocompleteHelp', 'AI autocomplete is not available yet'\)/);
+  assert.doesNotMatch(source, /setting === 'ai-autocomplete'/);
   assert.match(settingsMarkup, /easymde-immersive-workspace__settings-check/);
   assert.match(settingsMarkup, /iconMarkup\('check', 20, 2\.8\)/);
   assert.doesNotMatch(settingsMarkup, /type="checkbox"/);

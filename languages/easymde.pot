@@ -745,7 +745,7 @@ msgid "AI autocomplete"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:523
-msgid "Provide intelligent continuation suggestions while writing"
+msgid "AI autocomplete is not available yet"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:524

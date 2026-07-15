@@ -1804,8 +1804,13 @@ body.easymde-immersive-workspace-active {
     border-bottom: 1px solid #ecedf0;
 }
 
-.easymde-immersive-workspace__settings-row:hover {
+.easymde-immersive-workspace__settings-row:hover:not(:disabled) {
     background: #f8f9fb;
+}
+
+.easymde-immersive-workspace__settings-row:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
 }
 
 .easymde-immersive-workspace__settings-row:focus-visible {

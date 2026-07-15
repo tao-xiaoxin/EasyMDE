@@ -2623,6 +2623,23 @@
         insertAround(textarea, '![' + getString('mediaAltText') + '](', ')', '');
     }
 
+    function restoreMediaPickerContext(textarea, context) {
+        var selection = context && context.selection ? context.selection : null;
+
+        if (selection) {
+            textarea.setSelectionRange(
+                selection.start,
+                selection.end,
+                selection.direction || 'none'
+            );
+            textarea.scrollTop = selection.scroll_top;
+            textarea.scrollLeft = selection.scroll_left;
+        }
+        if (context && typeof context.restoreFocus === 'function') {
+            context.restoreFocus();
+        }
+    }
+
     function openLoadedMediaPicker(textarea, context) {
         if (!textarea || !window.EasyMDEMediaPicker || !window.EasyMDEMediaPicker.open) {
             return false;
@@ -2634,8 +2651,13 @@
 
     function openMediaPicker(textarea, context) {
         context = context || {};
-        if (openLoadedMediaPicker(textarea, context)) {
-            return Promise.resolve(true);
+        try {
+            if (openLoadedMediaPicker(textarea, context)) {
+                return Promise.resolve(true);
+            }
+        } catch (error) {
+            restoreMediaPickerContext(textarea, context);
+            return Promise.reject(error);
         }
 
         if (!mediaPickerLoadPromise) {
@@ -2672,6 +2694,9 @@
                 return false;
             }
             throw new Error(getString('mediaPickerFailed') || 'The WordPress media library could not be opened.');
+        }).catch(function (error) {
+            restoreMediaPickerContext(textarea, context);
+            throw error;
         });
     }
 
@@ -3217,6 +3242,8 @@
         $(document).on('keydown.easymdeImmersive', function (event) {
             if (
                 event.key !== 'Escape'
+                || event.isComposing
+                || event.keyCode === 229
                 || !context.immersiveWorkspace
                 || !context.immersiveWorkspace.isActive()
             ) {

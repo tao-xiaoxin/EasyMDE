@@ -1167,6 +1167,16 @@ test.describe('EasyMDE editor workflows', () => {
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-popover="settings"]')).toBeHidden();
 
+    await page.locator('[data-action="ai"]').click();
+    await expect(page.locator('.easymde-immersive-workspace__ai')).toBeVisible();
+    await headingButton.click();
+    await expect(headingMenu).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(headingMenu).toBeHidden();
+    await expect(page.locator('.easymde-immersive-workspace__ai')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.easymde-immersive-workspace__ai')).toBeHidden();
+
     await headingButton.click();
     await page.locator('[data-action="publish"]').click();
     await expect(headingMenu).toBeHidden();
@@ -1187,6 +1197,9 @@ test.describe('EasyMDE editor workflows', () => {
     await source.fill('alpha');
     await selectImmersiveRange(page, 0, 5);
     await source.evaluate((field) => field.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })));
+    await source.press('Escape');
+    await expect(page.locator('.easymde-immersive-workspace')).toBeVisible();
+    await expect(source).toBeFocused();
     await page.locator('[data-command="bold"]').click();
     await expect(source).toHaveValue('alpha');
     await expect(page.locator('[data-toolbar-status]')).toContainText(/composition/i);
@@ -1269,6 +1282,22 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(source).toBeFocused();
     await expect.poll(() => source.evaluate((field) => field.selectionDirection)).toBe('backward');
 
+    await page.evaluate(() => {
+      window.__easymdeOriginalMediaPickerOpen = window.EasyMDEMediaPicker.open;
+      window.EasyMDEMediaPicker.open = () => {
+        throw new Error('Synthetic media frame failure');
+      };
+    });
+    await page.locator('[data-command="image"]').click();
+    await expect(source).toHaveValue('before IMAGE after');
+    await expect(source).toBeFocused();
+    expect(await source.evaluate((field) => [field.selectionStart, field.selectionEnd, field.selectionDirection])).toEqual([7, 12, 'backward']);
+    await expect(page.locator('[data-toolbar-status]')).toContainText('Synthetic media frame failure');
+    await page.evaluate(() => {
+      window.EasyMDEMediaPicker.open = window.__easymdeOriginalMediaPickerOpen;
+      delete window.__easymdeOriginalMediaPickerOpen;
+    });
+
     await page.locator('[data-command="image"]').click();
     await expect(mediaModal).toBeVisible();
     await mediaModal.locator('.media-menu-item').filter({ hasText: 'Media Library' }).click();
@@ -1305,6 +1334,42 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('[data-action="insert-table"]').click();
     await expect(page.locator('[data-table-error]')).toBeVisible();
     await expect(source).toHaveValue('# Table target\n\nreplace tail');
+    await page.locator('[data-table-rows]').fill('3');
+    await page.locator('[data-table-columns]').fill('2');
+    await source.evaluate((field) => field.setSelectionRange(field.value.length, field.value.length));
+    await source.evaluate((field) => {
+      const valueDescriptor = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+      let shouldFail = true;
+
+      Object.defineProperty(field, 'value', {
+        configurable: true,
+        get() {
+          return valueDescriptor.get.call(this);
+        },
+        set(value) {
+          valueDescriptor.set.call(this, value);
+          if (shouldFail) {
+            shouldFail = false;
+            throw new Error('Synthetic table insertion failure');
+          }
+        }
+      });
+    });
+    const tableInsertionFailure = page.waitForEvent('pageerror');
+    await page.locator('[data-action="insert-table"]').click();
+    await expect(tableInsertionFailure).resolves.toHaveProperty('message', 'Synthetic table insertion failure');
+    await expect(tableDialog).toBeHidden();
+    await expect(page.locator('[data-table-backdrop]')).toBeHidden();
+    await expect(source).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('#easymde-source')).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('[data-toolbar-status]')).toContainText('Synthetic table insertion failure');
+    await expect(source).toBeFocused();
+    expect(await source.evaluate((field) => [field.selectionStart, field.selectionEnd])).toEqual([16, 23]);
+    await source.evaluate((field) => {
+      delete field.value;
+    });
+
+    await page.locator('[data-command="table"]').click();
     await page.locator('[data-table-rows]').fill('3');
     await page.locator('[data-table-columns]').fill('2');
     await source.evaluate((field) => field.setSelectionRange(field.value.length, field.value.length));
@@ -1421,6 +1486,14 @@ test.describe('EasyMDE editor workflows', () => {
     expect(await source.evaluate((field) => [field.selectionStart, field.selectionEnd])).toEqual([19, 25]);
 
     await expect(page.locator('.easymde-immersive-workspace__panel-action')).toHaveCount(0);
+    await page.locator('[data-action="settings"]').click();
+    const aiAutocomplete = page.locator('[data-setting="ai-autocomplete"]');
+    await expect(aiAutocomplete).toBeVisible();
+    await expect(aiAutocomplete).toBeDisabled();
+    await expect(aiAutocomplete).toHaveAttribute('aria-checked', 'false');
+    await expect(aiAutocomplete).toHaveAttribute('title', /not available|unavailable/i);
+    await page.keyboard.press('Escape');
+
     await page.locator('[data-action="publish"]').click();
     const aiSummary = page.locator('[data-action="ai-generate-summary"]');
     await expect(aiSummary).toBeDisabled();

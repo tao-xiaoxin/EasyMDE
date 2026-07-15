@@ -520,7 +520,7 @@ final class AdminAssets {
 			'settingsSyncScroll'            => __( 'Sync scrolling', 'easymde' ),
 			'settingsSyncScrollHelp'        => __( 'Link the editor and preview areas', 'easymde' ),
 			'settingsAiAutocomplete'        => __( 'AI autocomplete', 'easymde' ),
-			'settingsAiAutocompleteHelp'    => __( 'Provide intelligent continuation suggestions while writing', 'easymde' ),
+			'settingsAiAutocompleteHelp'    => __( 'AI autocomplete is not available yet', 'easymde' ),
 			'lineColumn'                    => __( 'Line 1, Column 1', 'easymde' ),
 			'line'                          => __( 'Line', 'easymde' ),
 			'column'                        => __( 'Column', 'easymde' ),

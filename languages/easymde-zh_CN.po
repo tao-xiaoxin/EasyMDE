@@ -1030,9 +1030,9 @@ msgstr "预览模式"
 msgid "Private"
 msgstr "私密"
 
-#: src/Admin/AdminAssets.php:462
-msgid "Provide intelligent continuation suggestions while writing"
-msgstr "写作时提供智能续写建议"
+#: src/Admin/AdminAssets.php:523 src/Admin/AdminAssets.php:524
+msgid "AI autocomplete is not available yet"
+msgstr "AI 自动补全功能尚不可用"
 
 #: src/Admin/AdminAssets.php:393
 msgid "Public"

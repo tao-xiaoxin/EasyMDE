@@ -885,7 +885,7 @@
                         '<button type="button" class="easymde-immersive-workspace__settings-row" data-setting="split" role="checkbox" aria-checked="true" aria-label="' + label('settingsSplitPreview', 'Split preview') + '"><span class="easymde-immersive-workspace__settings-check" aria-hidden="true">' + iconMarkup('check', 20, 2.8) + '</span><span class="easymde-immersive-workspace__settings-copy"><strong>' + label('settingsSplitPreview', 'Split preview') + '</strong><small>' + label('settingsSplitPreviewHelp', 'Show the live preview area by default') + '</small></span></button>' +
                         '<button type="button" class="easymde-immersive-workspace__settings-row" data-setting="auto-save" role="checkbox" aria-checked="true" aria-label="' + label('autoSave', 'Auto save') + '"><span class="easymde-immersive-workspace__settings-check" aria-hidden="true">' + iconMarkup('check', 20, 2.8) + '</span><span class="easymde-immersive-workspace__settings-copy"><strong>' + label('autoSave', 'Auto save') + '</strong><small>' + label('autoSaveHelp', 'Automatically save local drafts') + '</small></span></button>' +
                         '<button type="button" class="easymde-immersive-workspace__settings-row" data-setting="sync" role="checkbox" aria-checked="true" aria-label="' + label('settingsSyncScroll', 'Sync scrolling') + '"><span class="easymde-immersive-workspace__settings-check" aria-hidden="true">' + iconMarkup('check', 20, 2.8) + '</span><span class="easymde-immersive-workspace__settings-copy"><strong>' + label('settingsSyncScroll', 'Sync scrolling') + '</strong><small>' + label('settingsSyncScrollHelp', 'Link the editor and preview areas') + '</small></span></button>' +
-                        '<button type="button" class="easymde-immersive-workspace__settings-row" data-setting="ai-autocomplete" role="checkbox" aria-checked="true" aria-label="' + label('settingsAiAutocomplete', 'AI autocomplete') + '"><span class="easymde-immersive-workspace__settings-check" aria-hidden="true">' + iconMarkup('check', 20, 2.8) + '</span><span class="easymde-immersive-workspace__settings-copy"><strong>' + label('settingsAiAutocomplete', 'AI autocomplete') + '</strong><small>' + label('settingsAiAutocompleteHelp', 'Provide intelligent continuation suggestions while writing') + '</small></span></button>' +
+                        '<button type="button" class="easymde-immersive-workspace__settings-row" data-setting="ai-autocomplete" role="checkbox" aria-checked="false" aria-label="' + label('settingsAiAutocompleteHelp', 'AI autocomplete is not available yet') + '" title="' + label('settingsAiAutocompleteHelp', 'AI autocomplete is not available yet') + '" disabled><span class="easymde-immersive-workspace__settings-check" aria-hidden="true">' + iconMarkup('check', 20, 2.8) + '</span><span class="easymde-immersive-workspace__settings-copy"><strong>' + label('settingsAiAutocomplete', 'AI autocomplete') + '</strong><small>' + label('settingsAiAutocompleteHelp', 'AI autocomplete is not available yet') + '</small></span></button>' +
                     '</div>' +
                 '</div>' +
                 '<div class="easymde-immersive-workspace__popover easymde-immersive-workspace__appearance" data-popover="appearance" role="dialog" hidden>' +
@@ -3398,6 +3398,7 @@
             var before;
             var dimensions;
             var errorNode = query('[data-table-error]');
+            var rollbackSelection;
 
             if (sourceCommandUnavailable()) {
                 return false;
@@ -3412,11 +3413,22 @@
             if (typeof adapter.insertTable !== 'function') {
                 throw new Error('The immersive table insertion adapter is unavailable.');
             }
-            restoreSourceSelection(tableSelection, false);
+            rollbackSelection = tableSelection;
+            restoreSourceSelection(rollbackSelection, false);
             before = source.value;
             try {
                 adapter.insertTable(dimensions.rows, dimensions.columns, source);
-                commitExecutedSourceChange(before, tableSelection);
+                commitExecutedSourceChange(before, rollbackSelection);
+            } catch (error) {
+                if (source.value !== before) {
+                    source.value = before;
+                    restoreSourceSelection(rollbackSelection, true);
+                    dispatchSourceInput();
+                } else {
+                    restoreSourceSelection(rollbackSelection, true);
+                }
+                setToolbarStatus(error && error.message ? error.message : String(error));
+                throw error;
             } finally {
                 closeTableDialog(false);
                 source.focus();
@@ -4223,6 +4235,14 @@
                 var aiActiveMenu = root.querySelector('[data-ai-menu]:not([hidden])');
 
                 if (
+                    event.key === 'Escape'
+                    && (event.isComposing || event.keyCode === 229 || composingSource)
+                ) {
+                    event.stopPropagation();
+                    return;
+                }
+
+                if (
                     event.target === source
                     && event.key === 'Enter'
                     && (event.metaKey || event.ctrlKey)
@@ -4534,8 +4554,6 @@
                         setLocalDraftsStatus(enabled, true);
                     } else if (setting === 'sync') {
                         setSyncScrollEnabled(enabled);
-                    } else if (setting === 'ai-autocomplete') {
-                        setSettingSwitch('ai-autocomplete', enabled);
                     }
                 });
             });

@@ -117,6 +117,179 @@ For each material change:
 
 Do not confuse an implementation plan with proof of correctness. A change is complete only when its intended behavior and its relevant failure behavior have been verified.
 
+### UI Design Fidelity Workflow
+
+Use this workflow when implementing or correcting a user interface from design
+code, a mockup, a screenshot, a prototype, or a live reference. Visual fidelity
+is an engineering contract, not a subjective final polish step.
+
+#### 1. Establish the design contract
+
+Before editing:
+
+* Identify the authoritative reference, the exact product surface it applies to,
+  and any existing surfaces that must remain unchanged. A design for an isolated
+  mode does not authorize restyling the normal editor or reusing its CSS as the
+  new mode's implementation.
+* Record the reference viewport, browser, zoom, device-pixel ratio, font state,
+  content or fixture, UI state, and interaction state. A comparison is invalid
+  when these inputs differ without explanation.
+* Separate requirements into visual, behavioral, responsive, accessibility,
+  data or integration, and compatibility invariants. Name the observable
+  evidence that will prove each invariant.
+* Resolve conflicts between references explicitly. Prefer approved design code
+  and a reproducible rendered reference over visual guesses from a single
+  screenshot. Do not invent hidden responsive or interaction behavior from an
+  image alone.
+* Treat user-provided designs, screenshots, exports, and recordings as
+  reference-only unless publication is explicitly authorized and privacy
+  reviewed.
+
+#### 2. Capture a reproducible baseline
+
+Before changing code, render both the target surface and every protected
+surface that could regress.
+
+* Use the same deterministic test content, viewport, state, and local assets for
+  reference and implementation captures.
+* Inspect the actual reference HTML, CSS, assets, fonts, icons, breakpoints, and
+  interaction code when available. Copying source without understanding its
+  dependencies, state model, or ownership boundaries is not verification.
+* Record the DOM order, relevant ancestor geometry, bounding boxes, computed
+  styles, overflow behavior, stacking contexts, focus state, and scroll state
+  for the major regions. Screenshots alone cannot reveal these contracts.
+* Build a component and state inventory that includes empty, loading, disabled,
+  hover, focus-visible, active, success, error, open, closed, long-content, and
+  narrow-viewport states where applicable.
+* Keep baseline evidence local and temporary. Use synthetic or public test data;
+  do not capture private article content, credentials, browser storage, or
+  unrelated administrator data.
+
+#### 3. Preserve ownership and isolation
+
+Map each visual region to the code that should own it before writing selectors
+or event handlers.
+
+* Scope design-specific DOM and CSS under the narrowest stable root. Do not use
+  global element rules, broad WordPress overrides, or unrelated legacy classes
+  to make an isolated surface resemble the reference.
+* Keep presentation state separate from document and WordPress state. Reuse the
+  established source, preview, save, media, revision, permission, nonce, and
+  publishing adapters instead of creating a second source of truth.
+* Do not modify protected templates or styles merely because sharing them is
+  faster. If a reference requires an independent workspace, its layout and
+  styling must remain independently removable and testable.
+* Avoid broad `!important`, arbitrary offsets, duplicate icon paths, and
+  child-specific patches that compensate for an incorrect parent layout.
+  Correct the owning layer or the first divergent ancestor.
+* Preserve DOM order when visual order carries editing, reading, or keyboard
+  meaning. CSS reordering must not contradict source order or accessibility.
+
+#### 4. Implement in verifiable slices
+
+Work from outer geometry toward inner detail, one independently testable slice
+at a time:
+
+1. page or workspace bounds and stacking;
+2. major grid, flex, pane, and overflow geometry;
+3. component dimensions, spacing, borders, backgrounds, and shadows;
+4. typography, icons, assets, and content wrapping;
+5. interactive and asynchronous states;
+6. responsive and accessibility behavior.
+
+For each slice:
+
+* Compare the same component in the same state before moving on. Measure edges,
+  gaps, baselines, line heights, icon boxes, and hit targets rather than relying
+  on memory.
+* Use the repository's existing icon source and exact approved glyph when the
+  product contract requires compatibility. Do not substitute a similar icon or
+  clone it from unrelated runtime DOM.
+* Give fixed-format controls stable dimensions and responsive constraints so
+  labels, hover states, loading text, or translated content cannot shift the
+  surrounding layout unexpectedly.
+* Test long titles, long labels, validation messages, empty content, and real
+  dynamic data while implementing, not only after the happy-path screenshot
+  matches.
+* Keep each control connected to the real production capability unless the
+  requirement explicitly permits a local simulation. A visually complete but
+  inert control is incomplete.
+
+#### 5. Verify interaction fidelity
+
+Visual state and functional state must agree.
+
+* Exercise pointer, keyboard, and applicable touch paths; focus entry and
+  return; Escape and cancellation; tab order; dialogs and overlays; scrolling;
+  drag boundaries; disabled, pending, success, and error states; and reduced
+  motion or forced-colors behavior where relevant.
+* Verify that opening, closing, focusing, previewing, or cancelling UI performs
+  no hidden save or persistence action unless the product contract requires it.
+* For controls backed by WordPress or editor behavior, verify the real adapter,
+  event, nonce, capability, source synchronization, preview refresh, and native
+  submit path rather than a test-only callback.
+* Confirm that labels, ARIA state, visual state, and actual behavior transition
+  together. A button must not report success before its asynchronous operation
+  succeeds or remain interactive while a duplicate operation is pending.
+* Preserve selection, scroll position, IME composition, undo history, and focus
+  when an editing workflow crosses toolbars, dialogs, view modes, or overlays.
+
+#### 6. Compare under controlled conditions
+
+Use real-browser comparison after every material visual slice and again after
+the complete interaction is wired.
+
+* Capture reference and implementation at identical desktop and narrow
+  viewports, with identical content, UI state, fonts, zoom, and animation state.
+* Compare the full composition first, then major regions, then individual
+  controls. Side-by-side images, overlays, or pixel diffs are diagnostic tools;
+  none replaces DOM, geometry, computed-style, and behavior assertions.
+* When a mismatch appears, find the first ancestor where geometry or computed
+  style diverges. Fix that root cause, rerender, and only then inspect child
+  differences. Do not accumulate offsets that happen to match one viewport.
+* Check clipping, overlap, unexpected wrapping, horizontal overflow, stale
+  overlays, blank canvases or previews, missing assets, incorrect stacking, and
+  focus indicators at every supported viewport.
+* Use tolerance only for understood rendering variance such as font rasterizing
+  or subpixel rounding. Do not widen screenshot thresholds to hide deterministic
+  layout, color, icon, or state differences.
+
+#### 7. Prove completion and clean evidence
+
+A UI task is complete only when the evidence covers both the changed surface
+and the surfaces promised unchanged.
+
+Required completion evidence, when applicable:
+
+* focused functional tests for state and integration behavior;
+* real-browser assertions for computed styles, bounding boxes, DOM or visual
+  order, focus, keyboard behavior, overflow, and responsive constraints;
+* controlled screenshots for the agreed reference states and viewports;
+* negative checks proving protected legacy or normal-mode surfaces did not
+  change;
+* an explicit account of the three to five most likely visual or interaction
+  failure modes and how each was tested, fixed, or left unverified;
+* an honest list of browsers, operating systems, input modes, or states that
+  could not be verified.
+
+Before staging or publishing:
+
+* inspect the final diff for selector leakage, unrelated style churn, copied
+  design artifacts, embedded metadata, private paths, test credentials, and
+  local URLs;
+* remove temporary screenshots, overlays, pixel diffs, traces, videos, network
+  captures, browser reports, and downloaded reference source unless they are an
+  explicitly requested, privacy-reviewed deliverable;
+* do not commit user-provided reference media merely to document that a visual
+  comparison occurred;
+* rerun the protected-surface checks after the final change, not only after an
+  earlier approximation.
+
+Do not declare a UI implementation complete because it "looks close," because
+one screenshot matches, or because static tests pass. Completion requires a
+reproducible match for the agreed visual states, correct real behavior, and
+evidence that compatibility boundaries still hold.
+
 ### Adversarial Pre-Delivery Review
 
 Before committing, opening a pull request, or declaring a task complete, switch from implementer to a deliberately skeptical reviewer.

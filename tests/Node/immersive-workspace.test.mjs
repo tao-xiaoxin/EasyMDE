@@ -109,6 +109,30 @@ test('immersive view transitions restore source selection before scroll offsets'
   assert.match(source, /function deactivate\(\)[\s\S]*cancelDocumentDerivedState\(\);\s*cancelSourceViewRestore\(\);/);
 });
 
+test('immersive commands preserve selection direction across toolbar and shortcut paths', () => {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/immersive-workspace.js'), 'utf8');
+  const restoreStart = source.indexOf('        function restoreSourceSelectionDirection(direction) {');
+  const commandStart = source.indexOf('        function executeSourceCommand(commandId) {');
+  const shortcutStart = source.indexOf('        function handleSourceShortcut(event) {');
+  const cancelStart = source.indexOf('        function cancelSourceViewRestore() {');
+  const commandSource = source.slice(commandStart, shortcutStart);
+  const shortcutSource = source.slice(shortcutStart, cancelStart);
+
+  assert.ok(restoreStart >= 0, 'selection direction restore helper should exist');
+  assert.ok(commandStart > restoreStart, 'toolbar commands should use the direction restore helper');
+  assert.ok(shortcutStart > commandStart, 'shortcuts should share the direction restore helper');
+  assert.match(
+    source.slice(restoreStart, commandStart),
+    /source\.setSelectionRange\(source\.selectionStart, source\.selectionEnd, direction\)/
+  );
+  assert.match(commandSource, /selectionDirection = source\.selectionDirection/);
+  assert.match(commandSource, /adapter\.executeCommand\(commandId, source\);\s*restoreSourceSelectionDirection\(selectionDirection\);/);
+  assert.match(shortcutSource, /selectionDirection = source\.selectionDirection/);
+  assert.match(shortcutSource, /if \(handled\) \{\s*restoreSourceSelectionDirection\(selectionDirection\);/);
+  assert.match(source, /executeSourceCommand\(button\.getAttribute\('data-command'\)\)/);
+  assert.match(source, /typeof adapter\.handleShortcut === 'function'\s*&& handleSourceShortcut\(event\)/);
+});
+
 test('publish categories build a stable tree from real WordPress parent ids', () => {
   const workspace = loadWorkspaceModule();
   const tree = workspace.createPublishCategoryTree([

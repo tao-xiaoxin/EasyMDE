@@ -570,17 +570,17 @@ test.describe('EasyMDE editor workflows', () => {
     expect(preservedDirection).toEqual({ direction: 'backward', end: 8, start: 2 });
 
     await source.evaluate((field) => {
-      field.setSelectionRange(2, 8);
       field.scrollTop = 120;
     });
     await page.locator('.easymde-immersive-workspace__toolbar [data-command="bold"]').click();
     await expect(source).toBeFocused();
     await expect(source).toHaveValue(/^# \*\*Scroll\*\* start/);
     const selectionState = await source.evaluate((field) => ({
+      direction: field.selectionDirection,
       end: field.selectionEnd,
       start: field.selectionStart
     }));
-    expect(selectionState).toEqual({ end: 10, start: 4 });
+    expect(selectionState).toEqual({ direction: 'backward', end: 10, start: 4 });
 
     await source.evaluate((field) => {
       field.focus();

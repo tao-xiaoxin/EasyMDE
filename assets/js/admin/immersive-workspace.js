@@ -1431,6 +1431,30 @@
             source.scrollLeft = sourceViewState.scrollLeft;
         }
 
+        function restoreSourceSelectionDirection(direction) {
+            if (!source || ['forward', 'backward', 'none'].indexOf(direction) === -1) {
+                return;
+            }
+            source.setSelectionRange(source.selectionStart, source.selectionEnd, direction);
+        }
+
+        function executeSourceCommand(commandId) {
+            var selectionDirection = source.selectionDirection;
+
+            adapter.executeCommand(commandId, source);
+            restoreSourceSelectionDirection(selectionDirection);
+        }
+
+        function handleSourceShortcut(event) {
+            var selectionDirection = source.selectionDirection;
+            var handled = adapter.handleShortcut(event, source);
+
+            if (handled) {
+                restoreSourceSelectionDirection(selectionDirection);
+            }
+            return handled;
+        }
+
         function cancelSourceViewRestore() {
             if (sourceViewRestoreFrame === null) {
                 return;
@@ -3802,7 +3826,7 @@
                         return;
                     }
                     if (typeof adapter.executeCommand === 'function') {
-                        adapter.executeCommand(button.getAttribute('data-command'), source);
+                        executeSourceCommand(button.getAttribute('data-command'));
                     }
                 });
             });
@@ -3928,7 +3952,7 @@
                     event.key !== 'Escape'
                     && event.key !== 'Tab'
                     && typeof adapter.handleShortcut === 'function'
-                    && adapter.handleShortcut(event, source)
+                    && handleSourceShortcut(event)
                 ) {
                     event.preventDefault();
                     event.stopPropagation();

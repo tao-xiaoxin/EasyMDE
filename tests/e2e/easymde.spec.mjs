@@ -643,17 +643,19 @@ test.describe('EasyMDE editor workflows', () => {
       start: field.selectionStart
     }))).toEqual({ direction: 'forward', end: 11, start: 5 });
 
-    await source.evaluate((field) => {
+    const normalizedNoneDirection = await source.evaluate((field) => {
       field.setSelectionRange(15, 20, 'none');
       field.dispatchEvent(new Event('select', { bubbles: true }));
+      return field.selectionDirection;
     });
+    expect(['none', 'forward']).toContain(normalizedNoneDirection);
     await page.locator('.easymde-immersive-workspace__toolbar [data-command="strike"]').click();
     await expect(source).toHaveValue(/^# \*\*\*Scroll\*\*\* ~~start~~/);
     expect(await source.evaluate((field) => ({
       direction: field.selectionDirection,
       end: field.selectionEnd,
       start: field.selectionStart
-    }))).toEqual({ direction: 'none', end: 22, start: 17 });
+    }))).toEqual({ direction: normalizedNoneDirection, end: 22, start: 17 });
 
     await source.evaluate((field) => {
       field.focus();
@@ -1731,10 +1733,12 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(source).toHaveValue('before IMAGE after');
     await expect(page.locator('#easymde-source')).toHaveValue('before IMAGE after');
 
-    await source.evaluate((field) => {
+    const normalizedMediaNoneDirection = await source.evaluate((field) => {
       field.setSelectionRange(7, 12, 'none');
       field.dispatchEvent(new Event('select', { bubbles: true }));
+      return field.selectionDirection;
     });
+    expect(['none', 'forward']).toContain(normalizedMediaNoneDirection);
     await page.locator('[data-command="image"]').click();
     await expect(mediaModal).toBeVisible();
     await mediaModal.locator('.media-menu-item').filter({ hasText: 'Media Library' }).click();
@@ -1742,7 +1746,7 @@ test.describe('EasyMDE editor workflows', () => {
     await mediaModal.locator('.media-button-select').click();
     await expect(mediaModal).toBeHidden();
     await expect(source).toHaveValue(`before ![Toolbar image](${media.source_url}) after`);
-    await expect.poll(() => source.evaluate((field) => field.selectionDirection)).toBe('none');
+    await expect.poll(() => source.evaluate((field) => field.selectionDirection)).toBe(normalizedMediaNoneDirection);
     await source.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
     await expect(source).toHaveValue('before IMAGE after');
 

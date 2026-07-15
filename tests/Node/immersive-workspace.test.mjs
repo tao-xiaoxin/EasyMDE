@@ -40,6 +40,36 @@ test('immersive workspace exposes isolated controller and pure document helpers'
   assert.equal(typeof workspace.createTableMarkdown, 'function');
   assert.equal(typeof workspace.normalizeTableDimensions, 'function');
   assert.equal(typeof workspace.hasUnsavedWorkspaceChanges, 'function');
+  assert.equal(typeof workspace.filterImmersiveHeadingCommands, 'function');
+});
+
+test('immersive heading commands whitelist H1-H6 without changing the shared registry', () => {
+  const workspace = loadWorkspaceModule();
+  const commands = [
+    { id: 'paragraph' },
+    { id: 'heading1' },
+    { id: 'heading2' },
+    { id: 'extension-heading' },
+    { id: 'heading3' },
+    { id: 'heading4' },
+    { id: 'heading5' },
+    { id: 'heading6' }
+  ];
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(workspace.filterImmersiveHeadingCommands(commands))).map((command) => command.id),
+    ['heading1', 'heading2', 'heading3', 'heading4', 'heading5', 'heading6']
+  );
+  assert.deepEqual(commands.map((command) => command.id), [
+    'paragraph',
+    'heading1',
+    'heading2',
+    'extension-heading',
+    'heading3',
+    'heading4',
+    'heading5',
+    'heading6'
+  ]);
 });
 
 test('publish category selection preserves hidden descendants while updating one checkbox', () => {
@@ -122,6 +152,7 @@ test('publish categories build a stable tree from real WordPress parent ids', ()
 
 test('immersive workspace keeps the reference shell geometry instead of rounded approximations', () => {
   const css = readFileSync(join(repoRoot, 'assets/css/admin/immersive-workspace.css'), 'utf8');
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/immersive-workspace.js'), 'utf8');
 
   assert.match(css, /gap:\s*11\.25px;/);
   assert.match(css, /__header[^}]*min-height:\s*60px;/s);
@@ -183,7 +214,8 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(css, /__divider::before\s*\{[^}]*width:\s*1px;[^}]*background:\s*#e8ebef;/s);
   assert.match(css, /__editor-card > header\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*0;[^}]*flex:\s*0 0 auto;[^}]*padding:\s*10px 15px;/s);
   assert.match(css, /__editor-card > header strong\s*\{[^}]*font-size:\s*13px;/s);
-  assert.match(css, /__editor-card > header \.easymde-immersive-workspace__panel-action\s*\{[^}]*width:\s*18\.75px;[^}]*height:\s*18\.75px;/s);
+  assert.doesNotMatch(source, /easymde-immersive-workspace__panel-action/);
+  assert.doesNotMatch(css, /easymde-immersive-workspace__panel-action/);
   assert.match(css, /__editor-body\s*\{[^}]*grid-template-columns:\s*36px minmax\(0, 1fr\);[^}]*background:\s*#f2f2f2;/s);
   assert.match(css, /__line-numbers\s*\{[^}]*padding:\s*14px 14px 14px 0;[^}]*background:\s*#f2f2f2;[^}]*color:\s*#c7cbd3;/s);
   assert.match(css, /__line-numbers\s*\{[^}]*font-family:\s*SFMono-Regular, Menlo, Consolas, monospace;[^}]*font-size:\s*13\.5px;[^}]*line-height:\s*28px;/s);
@@ -196,8 +228,16 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(css, /__editor-card > footer\s*\{[^}]*height:\s*34px;[^}]*min-height:\s*34px;[^}]*padding:\s*7\.5px 15px;[^}]*color:\s*#b0b4bc;/s);
   assert.match(css, /__preview-card > header\s*\{[^}]*background:\s*transparent;/s);
   assert.match(css, /__preview-card > header strong\s*\{[^}]*font-weight:\s*500;/s);
-  assert.match(css, /__preview-card > header \.easymde-immersive-workspace__panel-action\s*\{[^}]*width:\s*22\.5px;[^}]*height:\s*22\.5px;[^}]*border-radius:\s*3\.625px;/s);
-  assert.match(css, /__preview-card > header \.easymde-immersive-workspace__panel-action:hover\s*\{[^}]*background:\s*#f1f5f9;[^}]*color:\s*#314158;/s);
+  assert.match(source, /data-command="heading"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"[^>]*aria-controls="easymde-immersive-heading-menu"/);
+  assert.match(source, /id="easymde-immersive-heading-menu"[^>]*data-heading-menu role="menu"/);
+  assert.match(css, /__heading-menu\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*150040;/s);
+  assert.match(css, /__heading-menu\s*\{[^}]*width:\s*176px;[^}]*border:\s*1px solid #e7ebf3;[^}]*box-shadow:\s*0 8px 22px rgba\(38, 52, 85, 0\.1\);/s);
+  assert.match(css, /__heading-menu\s*\{[^}]*overflow-y:\s*auto;/s);
+  assert.match(css, /__heading-menu-item\s*\{[^}]*grid-template-columns:\s*42px minmax\(0, 1fr\) 16px;[^}]*height:\s*40px;/s);
+  assert.match(css, /__heading-menu-key\s*\{[^}]*border:\s*1px solid #d5dcef;[^}]*background:\s*#fbfcff;[^}]*color:\s*#6576a2;/s);
+  assert.match(css, /__heading-menu-item\.is-current[^}]*background:\s*#f2f4fd;[^}]*color:\s*#2f3850;/s);
+  assert.match(css, /data-heading-command="heading1"[^}]*--easymde-heading-key-width:\s*32px;[^}]*--easymde-heading-label-size:\s*16px;/s);
+  assert.match(css, /data-heading-command="heading6"[^}]*--easymde-heading-key-width:\s*27px;[^}]*--easymde-heading-label-size:\s*11px;/s);
   assert.match(css, /__format-actions button[^}]*border-radius:\s*5\.625px;/s);
   assert.match(css, /__format-actions button\s*\{[^}]*color:\s*#45556c;/s);
   assert.match(css, /__format-actions button[^}]*font-weight:\s*500;/s);
@@ -215,7 +255,7 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(css, /__secondary-actions button\s*\{[^}]*font-size:\s*12\.5px;[^}]*font-weight:\s*500;/s);
   assert.match(css, /__secondary-actions button\s*\{[^}]*transition:\s*all 100ms cubic-bezier\(0\.4, 0, 0\.2, 1\);/s);
   assert.doesNotMatch(css, /\[data-action="copy-markdown"\]/);
-  assert.match(css, /__heading-button strong[^}]*letter-spacing:\s*-0\.3px;/s);
+  assert.match(css, /__heading-button strong[^}]*letter-spacing:\s*0;/s);
   assert.match(css, /\[data-action="exit"\][^}]*margin-left:\s*1\.875px;/s);
   assert.match(css, /__secondary-actions \[data-action="settings"\][^}]*padding-inline:\s*7\.5px;/s);
   assert.match(css, /__secondary-actions \[data-action="settings"\][^}]*color:\s*#62748e;/s);
@@ -266,7 +306,6 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(css, /font-family:\s*"EasyMDE UI Lora"/);
   assert.match(css, /vendor\/lora\/lora-latin-variable\.woff2/);
 
-  const source = readFileSync(join(repoRoot, 'assets/js/admin/immersive-workspace.js'), 'utf8');
   assert.match(source, /data-command="strike"[\s\S]*?<i aria-hidden="true"><\/i>' \+\n\s*'<i aria-hidden="true"><\/i>' \+[\s\S]*?data-command="heading"/);
   assert.match(source, /<header><strong>' \+ label\('outline', 'Outline'\) \+ '<\/strong><button type="button" data-action="toggle-outline" title="' \+ label\('closeOutline', 'Close outline'\) \+ '" aria-label="' \+ label\('closeOutline', 'Close outline'\)/);
   assert.match(source, /<footer><button type="button" data-action="toggle-outline" title="' \+ label\('closeOutline', 'Close outline'\) \+ '" aria-label="' \+ label\('closeOutline', 'Close outline'\) \+ '">' \+ iconMarkup\('chevrons-left'/);
@@ -275,9 +314,9 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(source, /data-command="bold" title="' \+ label\('boldShortcutTitle', 'Bold \(Ctrl\+B\)'\) \+ '" aria-label="' \+ label\('bold', 'Bold'\)/);
   assert.match(source, /data-command="italic" title="' \+ label\('italicShortcutTitle', 'Italic \(Ctrl\+I\)'\) \+ '" aria-label="' \+ label\('italic', 'Italic'\)/);
   assert.match(source, /data-command="quote" title="' \+ label\('quoteTitle', 'Blockquote'\) \+ '" aria-label="' \+ label\('quote', 'Quote'\)/);
-  assert.match(source, /data-view="edit" title="' \+ label\('editModeTitle', 'Edit mode'\) \+ '" aria-label="' \+ label\('editMode', 'Edit'\)/);
-  assert.match(source, /data-view="split" class="is-active" title="' \+ label\('splitModeTitle', 'Split mode'\) \+ '" aria-label="' \+ label\('splitMode', 'Split'\)/);
-  assert.match(source, /data-view="preview" title="' \+ label\('previewModeTitle', 'Preview mode'\) \+ '" aria-label="' \+ label\('previewMode', 'Preview'\)/);
+  assert.match(source, /data-view="edit" aria-pressed="false" title="' \+ label\('editModeTitle', 'Edit mode'\) \+ '" aria-label="' \+ label\('editMode', 'Edit'\)/);
+  assert.match(source, /data-view="split" class="is-active" aria-pressed="true" title="' \+ label\('splitModeTitle', 'Split mode'\) \+ '" aria-label="' \+ label\('splitMode', 'Split'\)/);
+  assert.match(source, /data-view="preview" aria-pressed="false" title="' \+ label\('previewModeTitle', 'Preview mode'\) \+ '" aria-label="' \+ label\('previewMode', 'Preview'\)/);
   assert.match(source, /data-action="exit" title="' \+ label\('immersiveModeTitle', 'Immersive writing'\) \+ '" aria-label="' \+ label\('exitImmersive', 'Exit immersive writing'\)/);
   assert.match(source, /data-action="wechat"[^>]*title="' \+ label\('copyWechatImmersiveTitle', 'Copy current preview content to WeChat'\) \+ '" aria-label="' \+ label\('copyWechatTitle', 'Copy preview for WeChat'\)/);
   assert.match(source, /data-action="theme" title="' \+ label\('themeTitle', 'Switch theme'\) \+ '" aria-label="' \+ label\('theme', 'Theme'\)/);
@@ -652,13 +691,15 @@ test('settings popover matches the reference checkbox list geometry', () => {
   assert.match(source, /data-setting="split"[^>]*role="checkbox"/);
   assert.match(source, /data-setting="auto-save"[^>]*role="checkbox"/);
   assert.match(source, /data-setting="sync"[^>]*role="checkbox"/);
-  assert.match(source, /data-setting="ai-autocomplete"[^>]*role="checkbox"/);
+  assert.match(source, /data-setting="ai-autocomplete"[^>]*role="checkbox"[^>]*aria-checked="false"[^>]*disabled/);
+  assert.match(source, /data-setting="ai-autocomplete"[^>]*title="' \+ label\('settingsAiAutocompleteHelp', 'AI autocomplete is not available yet'\) \+ '"/);
   assert.match(source, /label\('settingsWordCount', 'Word count'\)/);
   assert.match(source, /label\('settingsWordCountHelp', 'Show words, characters, and reading time beside the article title'\)/);
   assert.match(source, /label\('autoSave', 'Auto save'\)/);
   assert.match(source, /label\('autoSaveHelp', 'Automatically save local drafts'\)/);
   assert.match(source, /label\('settingsAiAutocomplete', 'AI autocomplete'\)/);
-  assert.match(source, /label\('settingsAiAutocompleteHelp', 'Provide intelligent continuation suggestions while writing'\)/);
+  assert.match(source, /label\('settingsAiAutocompleteHelp', 'AI autocomplete is not available yet'\)/);
+  assert.doesNotMatch(source, /setting === 'ai-autocomplete'/);
   assert.match(settingsMarkup, /easymde-immersive-workspace__settings-check/);
   assert.match(settingsMarkup, /iconMarkup\('check', 20, 2\.8\)/);
   assert.doesNotMatch(settingsMarkup, /type="checkbox"/);
@@ -1035,8 +1076,9 @@ test('publish dialog uses the reference shell hierarchy while preserving native 
   assert.match(publishMarkup, /publish-section-title[^>]*>[\s\S]*?iconMarkup\('hash', 15, 2\.2\)/);
   assert.match(publishMarkup, /publish-section-title[^>]*>[\s\S]*?iconMarkup\('file-text', 15, 2\.2\)/);
   assert.match(publishMarkup, /publish-section-title[^>]*>[\s\S]*?iconMarkup\('list-checks', 15, 2\.2\)/);
-  assert.match(publishMarkup, /data-action="ai-generate-summary"[^>]*>[\s\S]*?iconMarkup\('sparkles', 11, 2\.4\)[\s\S]*?label\('publishAiSummary', 'Generate summary with AI'\)/);
-  assert.match(source, /action === 'ai-generate-summary'\) \{[\s\S]*?return;[\s\S]*?\} else if \(typeof adapter\.performAction === 'function'\)/);
+  assert.match(publishMarkup, /data-action="ai-generate-summary" disabled[^>]*title="' \+ label\('publishAiSummaryUnavailable'/);
+  assert.match(css, /button\.easymde-immersive-workspace__publish-ai-summary:disabled\s*\{[^}]*cursor:\s*not-allowed;[^}]*opacity:\s*0\.55;/s);
+  assert.doesNotMatch(source, /action === 'ai-generate-summary'/);
   assert.doesNotMatch(publishMarkup, /is-featured[^>]*>[\s\S]*?publish-section-title[^>]*>[\s\S]*?iconMarkup\('image-plus'/);
   assert.match(source, /hash:\s*'<line x1="4" x2="20" y1="9" y2="9">/);
   assert.match(source, /'list-checks':\s*'<path d="m3 17 2 2 4-4">/);
@@ -1172,7 +1214,7 @@ test('publish dialog uses the reference shell hierarchy while preserving native 
   assert.match(css, /__publish-safety\s*\{[^}]*gap:\s*7\.5px;/s);
   assert.match(css, /__publish-progress\s*\{[^}]*min-width:\s*150px;[^}]*min-height:\s*36px;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;/s);
   assert.match(source, /var publishSubmitting = false;/);
-  assert.match(source, /function renderPublishSubmittingState\(\)[\s\S]*dialog\.setAttribute\('aria-busy', publishSubmitting \? 'true' : 'false'\)[\s\S]*querySelectorAll\('button, input, textarea'\)[\s\S]*control\.disabled = publishSubmitting;[\s\S]*publishLoadingPreview/);
+  assert.match(source, /function renderPublishSubmittingState\(\)[\s\S]*dialog\.setAttribute\('aria-busy', publishSubmitting \? 'true' : 'false'\)[\s\S]*querySelectorAll\('button, input, textarea'\)[\s\S]*control\.disabled = publishSubmitting \|\| control\.getAttribute\('data-action'\) === 'ai-generate-summary';[\s\S]*publishLoadingPreview/);
   assert.match(source, /function closePublishDialog\(force\)[\s\S]*if \(publishSubmitting && !force\) \{\s*return false;\s*\}/s);
   assert.match(source, /action === 'confirm-publish'[\s\S]*if \(publishSubmitting\) \{\s*return;\s*\}[\s\S]*publishSubmitting = true;\s*renderPublishSubmittingState\(\);[\s\S]*publishResult = adapter\.publish\(createPublishDraft\(publishDraft\)\);[\s\S]*if \(publishResult === false\) \{\s*publishSubmitting = false;\s*renderPublishSubmittingState\(\);\s*return;\s*\}/s);
   assert.match(css, /__publish-progress > span\s*\{[^}]*display:\s*inline-flex;[^}]*gap:\s*7\.5px;[^}]*padding:\s*8px 15px;[^}]*border:\s*1px solid #d0ddf8;[^}]*border-radius:\s*9999px;[^}]*background:\s*linear-gradient\(180deg, #f0f5ff 0%, #e8efff 100%\);[^}]*color:\s*#2563eb;[^}]*font-size:\s*12\.5px;[^}]*font-weight:\s*600;/s);

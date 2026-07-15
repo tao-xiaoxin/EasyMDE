@@ -49,6 +49,10 @@ msgstr "AI 演示输入"
 msgid "AI settings are not available yet"
 msgstr "AI 设置（尚未接入）"
 
+#: src/Admin/AdminAssets.php:592
+msgid "AI summary generation is not available yet"
+msgstr "AI 摘要生成暂不可用"
+
 #: src/Admin/AdminAssets.php:348
 msgid "AI-generated content is for reference only"
 msgstr "内容由 AI 生成，仅供参考"
@@ -481,6 +485,14 @@ msgstr "字体"
 msgid "Font settings"
 msgstr "字体设置"
 
+#: src/Admin/AdminAssets.php:358
+msgid "Formatting is unavailable during text composition."
+msgstr "文字输入法组合期间无法使用格式化。"
+
+#: src/Admin/AdminAssets.php:359
+msgid "Formatting is unavailable while the Markdown source is read-only."
+msgstr "Markdown 源文本为只读时无法使用格式化。"
+
 #: src/Admin/AdminAssets.php:510
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
@@ -566,6 +578,10 @@ msgstr "六级标题"
 #: src/Admin/AdminAssets.php:483
 msgid "Headings"
 msgstr "标题"
+
+#: src/Admin/AdminAssets.php:545
+msgid "Heading level"
+msgstr "标题级别"
 
 #: src/Theme/ThemeStateRepository.php:410
 msgid "Helvetica (qingbi-liujin)"
@@ -1014,9 +1030,9 @@ msgstr "预览模式"
 msgid "Private"
 msgstr "私密"
 
-#: src/Admin/AdminAssets.php:462
-msgid "Provide intelligent continuation suggestions while writing"
-msgstr "写作时提供智能续写建议"
+#: src/Admin/AdminAssets.php:523 src/Admin/AdminAssets.php:524
+msgid "AI autocomplete is not available yet"
+msgstr "AI 自动补全功能尚不可用"
 
 #: src/Admin/AdminAssets.php:393
 msgid "Public"
@@ -1330,6 +1346,10 @@ msgstr "CSS 解析器依赖不可用，无法安全渲染自定义 CSS。"
 msgid "The article was saved, but the preview window was blocked."
 msgstr "文章已保存，但浏览器阻止了预览窗口。"
 
+#: src/Admin/AdminAssets.php:360
+msgid "The browser could not create an undoable Markdown edit."
+msgstr "浏览器无法创建可撤销的 Markdown 编辑。"
+
 #: src/Admin/AdminAssets.php:519
 msgid "The first local image could not be verified."
 msgstr "无法验证正文中的第一张本地图片。"
@@ -1353,6 +1373,10 @@ msgstr "找不到请求的修订版本。"
 #: src/Rest/RevisionController.php:127
 msgid "The selected revision is too large to preview."
 msgstr "所选修订版本过大，无法预览。"
+
+#: src/Admin/AdminAssets.php:610
+msgid "The WordPress media library could not be opened."
+msgstr "无法打开 WordPress 媒体库。"
 
 #: src/Rest/MediaController.php:105
 msgid "The uploaded image URL is unavailable."

@@ -200,6 +200,55 @@ async function enterImmersiveWithKeyboard(page) {
   await expect(page.locator('.easymde-immersive-workspace')).toBeVisible();
 }
 
+async function selectImmersiveRange(page, start, end, scrollTop = null) {
+  const source = page.locator('.easymde-immersive-workspace__source');
+
+  await source.focus();
+  await source.evaluate((field, selection) => {
+    field.setSelectionRange(selection.start, selection.end);
+    if (selection.scrollTop !== null) {
+      field.scrollTop = selection.scrollTop;
+      field.dispatchEvent(new Event('scroll', { bubbles: true }));
+    }
+  }, { start, end, scrollTop });
+
+  return source;
+}
+
+async function expectVisibleViewState(page, mode) {
+  const sourceCard = page.locator('.easymde-immersive-workspace__editor-card');
+  const previewCard = page.locator('.easymde-immersive-workspace__preview-card');
+  const divider = page.locator('.easymde-immersive-workspace__divider');
+  const expected = {
+    edit: { source: true, preview: false, divider: false },
+    split: { source: true, preview: true, divider: true },
+    preview: { source: false, preview: true, divider: false }
+  }[mode];
+
+  await (expected.source ? expect(sourceCard).toBeVisible() : expect(sourceCard).toBeHidden());
+  await (expected.preview ? expect(previewCard).toBeVisible() : expect(previewCard).toBeHidden());
+  await (expected.divider ? expect(divider).toBeVisible() : expect(divider).toBeHidden());
+
+  const computed = await page.evaluate(() => {
+    const visible = (selector) => window.getComputedStyle(document.querySelector(selector)).display !== 'none';
+    return {
+      source: visible('.easymde-immersive-workspace__editor-card'),
+      preview: visible('.easymde-immersive-workspace__preview-card'),
+      divider: visible('.easymde-immersive-workspace__divider')
+    };
+  });
+  expect(computed).toEqual(expected);
+
+  for (const button of await page.locator(`button[data-view="${mode}"]`).all()) {
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
+  }
+  for (const otherMode of ['edit', 'split', 'preview'].filter((candidate) => candidate !== mode)) {
+    for (const button of await page.locator(`button[data-view="${otherMode}"]`).all()) {
+      await expect(button).toHaveAttribute('aria-pressed', 'false');
+    }
+  }
+}
+
 async function currentPostId(page) {
   const value = await page.locator('#post_ID').inputValue();
   return Number.parseInt(value, 10);
@@ -628,6 +677,25 @@ test.describe('EasyMDE editor workflows', () => {
     await source.evaluate((node) => node.setSelectionRange(0, 5));
     await source.press(shortcut);
     await expect(source).toHaveValue('**plain**\nsecond line');
+    await source.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+    await expect(source).toHaveValue('plain\nsecond line');
+
+    await source.evaluate((node) => {
+      node.readOnly = true;
+      node.setSelectionRange(0, 5);
+    });
+    await source.press(shortcut);
+    await expect(source).toHaveValue('plain\nsecond line');
+    await expect(page.locator('[data-toolbar-status]')).toContainText(/read.only|unavailable/i);
+    await source.evaluate((node) => { node.readOnly = false; });
+
+    await source.evaluate((node) => {
+      node.setSelectionRange(0, 5);
+      node.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    });
+    await source.press(shortcut);
+    await expect(source).toHaveValue('plain\nsecond line');
+    await source.evaluate((node) => node.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })));
 
     await source.fill('# Root heading\n\n## Child heading');
     await page.locator('.easymde-immersive-workspace__outline-handle').click();
@@ -717,6 +785,17 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('[data-action="history"]')).toBeFocused();
 
     await source.focus();
+    await source.evaluate((field) => {
+      field.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: !navigator.platform.toLowerCase().includes('mac'),
+        isComposing: true,
+        key: 'Enter',
+        metaKey: navigator.platform.toLowerCase().includes('mac')
+      }));
+    });
+    await expect(page.locator('.easymde-immersive-workspace__publish')).toBeHidden();
     await source.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
     const publishConfirm = page.locator('[data-action="confirm-publish"]');
     const publishClose = page.locator('.easymde-immersive-workspace__publish [data-action="cancel-publish"]').first();
@@ -933,6 +1012,539 @@ test.describe('EasyMDE editor workflows', () => {
       return { display: style.display, background: style.backgroundColor };
     });
     expect(legacyStyleAfter).toEqual(legacyStyleBefore);
+  });
+
+  test('executes every immersive Markdown toolbar command through real pointer and keyboard interaction', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await enterImmersiveWithKeyboard(page);
+
+    const source = page.locator('.easymde-immersive-workspace__source');
+    const nativeSource = page.locator('#easymde-source');
+    const commandCases = [
+      { command: 'bold', input: 'alpha', start: 0, end: 5, output: '**alpha**' },
+      { command: 'italic', input: 'alpha', start: 0, end: 5, output: '*alpha*', keyboard: true },
+      { command: 'strike', input: 'alpha', start: 0, end: 5, output: '~~alpha~~' },
+      { command: 'quote', input: 'one\ntwo', start: 0, end: 7, output: '> one\n> two' },
+      { command: 'unorderedlist', input: 'one\ntwo', start: 0, end: 7, output: '- one\n- two' },
+      { command: 'orderedlist', input: 'one\ntwo', start: 0, end: 7, output: '1. one\n2. two' },
+      { command: 'inlinecode', input: 'alpha', start: 0, end: 5, output: '`alpha`' },
+      { command: 'codefence', input: 'alpha', start: 0, end: 5, output: '```\nalpha\n```' },
+      { command: 'link', input: 'alpha', start: 0, end: 5, output: '[alpha](https://)' }
+    ];
+
+    for (const commandCase of commandCases) {
+      await source.fill(commandCase.input);
+      await selectImmersiveRange(page, commandCase.start, commandCase.end);
+      const button = page.locator(`[data-command="${commandCase.command}"]`);
+      if (commandCase.keyboard) {
+        await activateWithKeyboard(button);
+      } else {
+        await button.click();
+      }
+      await expect(source).toHaveValue(commandCase.output);
+      await expect(nativeSource).toHaveValue(commandCase.output);
+      await expect(source).toBeFocused();
+    }
+
+    await source.fill('alpha');
+    await selectImmersiveRange(page, 5, 5);
+    await page.locator('[data-command="link"]').click();
+    await expect(source).toHaveValue('alpha[link text](https://)');
+    expect(await source.evaluate((field) => field.value.slice(field.selectionStart, field.selectionEnd))).toBe('link text');
+
+    const headingButton = page.locator('[data-command="heading"]');
+    await source.fill('## Section');
+    await selectImmersiveRange(page, 0, 10);
+    await headingButton.click();
+    await expect(source).toHaveValue('## Section');
+    await expect(headingButton).toHaveAttribute('aria-haspopup', 'menu');
+    await expect(headingButton).toHaveAttribute('aria-expanded', 'true');
+    const headingMenu = page.locator('[data-heading-menu]');
+    await expect(headingMenu).toBeVisible();
+    await expect(headingMenu).toHaveAttribute('id', 'easymde-immersive-heading-menu');
+    await expect(headingMenu).toHaveAttribute('role', 'menu');
+    await expect(headingMenu.getByRole('menuitem')).toHaveCount(6);
+    await expect(headingMenu.locator('[data-heading-command="paragraph"]')).toHaveCount(0);
+    await expect(headingMenu.locator('[data-heading-menu-label]')).not.toBeEmpty();
+    await expect(headingButton.locator('strong')).toHaveText('H2');
+    await expect(headingButton).toHaveClass(/is-menu-open/);
+    const heading1Item = headingMenu.locator('[data-heading-command="heading1"]');
+    const heading2Item = headingMenu.locator('[data-heading-command="heading2"]');
+    const heading6Item = headingMenu.locator('[data-heading-command="heading6"]');
+    await expect(heading1Item.locator('[data-heading-menu-key]')).toHaveText('H1');
+    await expect(heading2Item).toHaveClass(/is-current/);
+    await expect(heading2Item).toHaveAttribute('aria-current', 'true');
+    await expect(heading2Item.locator('[data-heading-menu-check]')).toBeVisible();
+    await expect.poll(() => headingButton.evaluate((button) => getComputedStyle(button).color))
+      .toBe('rgb(49, 106, 244)');
+    const headingMenuVisuals = await headingMenu.evaluate((menu) => {
+      const menuStyle = getComputedStyle(menu);
+      const headingButtonStyle = getComputedStyle(document.querySelector('[data-command="heading"]'));
+      const h1Key = menu.querySelector('[data-heading-command="heading1"] [data-heading-menu-key]');
+      const h1Label = menu.querySelector('[data-heading-command="heading1"] [data-heading-menu-text]');
+      const h6Key = menu.querySelector('[data-heading-command="heading6"] [data-heading-menu-key]');
+      const h6Label = menu.querySelector('[data-heading-command="heading6"] [data-heading-menu-text]');
+
+      return {
+        menuWidth: menu.getBoundingClientRect().width,
+        menuBorder: menuStyle.borderColor,
+        menuShadow: menuStyle.boxShadow,
+        buttonColor: headingButtonStyle.color,
+        h1Key: [h1Key.getBoundingClientRect().width, h1Key.getBoundingClientRect().height],
+        h1FontSize: getComputedStyle(h1Label).fontSize,
+        h6Key: [h6Key.getBoundingClientRect().width, h6Key.getBoundingClientRect().height],
+        h6FontSize: getComputedStyle(h6Label).fontSize
+      };
+    });
+    expect(headingMenuVisuals).toMatchObject({
+      menuWidth: 176,
+      menuBorder: 'rgb(231, 235, 243)',
+      buttonColor: 'rgb(49, 106, 244)',
+      h1Key: [32, 28],
+      h1FontSize: '16px',
+      h6Key: [27, 23],
+      h6FontSize: '11px'
+    });
+    expect(headingMenuVisuals.menuShadow).toContain('rgba(38, 52, 85, 0.1)');
+    await page.keyboard.press('Escape');
+    await expect(headingMenu).toBeHidden();
+    await expect(headingButton).toBeFocused();
+    await expect(headingButton).not.toHaveClass(/is-menu-open/);
+    await expect(source).toHaveValue('## Section');
+
+    await source.fill('\n## Section');
+    await selectImmersiveRange(page, 0, 0);
+    await headingButton.click();
+    await expect(headingButton.locator('strong')).toHaveText('H');
+    await expect(headingMenu.locator('[aria-current="true"]')).toHaveCount(0);
+    await expect(heading2Item).not.toHaveAttribute('aria-current', 'true');
+    await page.keyboard.press('Escape');
+
+    const headingCases = [
+      ['heading1', '# Section'],
+      ['heading2', '## Section'],
+      ['heading3', '### Section'],
+      ['heading4', '#### Section'],
+      ['heading5', '##### Section'],
+      ['heading6', '###### Section']
+    ];
+    for (const [command, output] of headingCases) {
+      await source.fill('## Section');
+      await selectImmersiveRange(page, 0, 10);
+      await headingButton.click();
+      const menuItem = headingMenu.locator(`[data-heading-command="${command}"]`);
+      await expect(heading1Item).toBeFocused();
+      await menuItem.click();
+      await expect(source).toHaveValue(output);
+      await expect(nativeSource).toHaveValue(output);
+      await expect(source).toBeFocused();
+    }
+
+    await source.fill('## Section');
+    await selectImmersiveRange(page, 0, 10);
+    await headingButton.focus();
+    await headingButton.press('ArrowUp');
+    await expect(headingMenu.locator('[data-heading-command="heading6"]')).toBeFocused();
+    await page.keyboard.press('Home');
+    await expect(heading1Item).toBeFocused();
+    await page.keyboard.press('End');
+    await expect(headingMenu.locator('[data-heading-command="heading6"]')).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(heading1Item).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(source).toHaveValue('# Section');
+
+    await selectImmersiveRange(page, 0, 7);
+    await headingButton.click();
+    await page.locator('[data-action="settings"]').click();
+    await expect(headingMenu).toBeHidden();
+    await expect(page.locator('[data-popover="settings"]')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-popover="settings"]')).toBeHidden();
+
+    await page.locator('[data-action="ai"]').click();
+    await expect(page.locator('.easymde-immersive-workspace__ai')).toBeVisible();
+    await headingButton.click();
+    await expect(headingMenu).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(headingMenu).toBeHidden();
+    await expect(page.locator('.easymde-immersive-workspace__ai')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.easymde-immersive-workspace__ai')).toBeHidden();
+
+    await headingButton.click();
+    await page.locator('[data-action="publish"]').click();
+    await expect(headingMenu).toBeHidden();
+    await expect(page.locator('.easymde-immersive-workspace__publish')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.easymde-immersive-workspace__publish')).toBeHidden();
+
+    await source.fill('# Pipeline heading\n\nbody');
+    await selectImmersiveRange(page, 20, 24);
+    await page.locator('[data-command="bold"]').click();
+    await expect(page.locator('.easymde-immersive-workspace__preview strong')).toHaveText('body');
+    await page.locator('.easymde-immersive-workspace__outline-handle').click();
+    await expect(page.locator('.easymde-immersive-workspace__outline-entry')).toContainText('Pipeline heading');
+    await expect(page.locator('.easymde-immersive-workspace__line-number')).toHaveCount(3);
+    await expect(page.locator('[data-stat-summary="characters"]')).not.toHaveText('0');
+    await expect(nativeSource).toHaveValue('# Pipeline heading\n\n**body**');
+
+    await source.fill('alpha');
+    await selectImmersiveRange(page, 0, 5);
+    await source.evaluate((field) => field.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })));
+    await source.press('Escape');
+    await expect(page.locator('.easymde-immersive-workspace')).toBeVisible();
+    await expect(source).toBeFocused();
+    await page.locator('[data-command="bold"]').click();
+    await expect(source).toHaveValue('alpha');
+    await expect(page.locator('[data-toolbar-status]')).toContainText(/composition/i);
+    await source.evaluate((field) => field.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })));
+
+    await source.evaluate((field) => { field.readOnly = true; });
+    await page.locator('[data-command="bold"]').click();
+    await expect(source).toHaveValue('alpha');
+    await expect(page.locator('[data-toolbar-status]')).toContainText(/read.only|unavailable/i);
+    await source.evaluate((field) => { field.readOnly = false; });
+
+    await source.fill('alpha');
+    await selectImmersiveRange(page, 0, 5);
+    await page.locator('[data-command="bold"]').click();
+    await source.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+    await expect(source).toHaveValue('alpha');
+
+    await source.fill('alpha');
+    await selectImmersiveRange(page, 0, 5);
+    await page.evaluate(() => {
+      window.__easymdeOriginalExecCommand = document.execCommand;
+      document.execCommand = () => false;
+    });
+    const undoFailure = page.waitForEvent('pageerror');
+    await page.locator('[data-command="bold"]').click();
+    await expect(undoFailure).resolves.toHaveProperty('message', await page.evaluate(() => window.EasyMDEConfig.strings.toolbarUndoUnavailable));
+    await expect(source).toHaveValue('alpha');
+    await expect(nativeSource).toHaveValue('alpha');
+    await expect(page.locator('[data-toolbar-status]')).toContainText(/undoable Markdown edit/i);
+    expect(await source.evaluate((field) => [field.selectionStart, field.selectionEnd])).toEqual([0, 5]);
+    await page.evaluate(() => {
+      document.execCommand = window.__easymdeOriginalExecCommand;
+      delete window.__easymdeOriginalExecCommand;
+    });
+
+    await page.setViewportSize({ width: 640, height: 375 });
+    await source.fill('## Short viewport');
+    await selectImmersiveRange(page, 0, 17);
+    await headingButton.click();
+    await expect.poll(() => headingMenu.evaluate((menu) => {
+      const rect = menu.getBoundingClientRect();
+      return {
+        bottom: Math.round(rect.bottom),
+        clipped: menu.clientHeight < menu.scrollHeight
+      };
+    })).toEqual({ bottom: 367, clipped: true });
+    await expect(heading1Item).toBeFocused();
+    await heading1Item.press('End');
+    await expect(heading6Item).toBeFocused();
+    expect(await heading6Item.evaluate((item) => {
+      const itemRect = item.getBoundingClientRect();
+      const menuRect = item.closest('[data-heading-menu]').getBoundingClientRect();
+      return itemRect.bottom <= menuRect.bottom && itemRect.bottom <= window.innerHeight - 8;
+    })).toBe(true);
+    await page.keyboard.press('Escape');
+  });
+
+  test('uses preserved source selections for immersive image and table flows', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const slug = testSlug(testInfo);
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    const media = await uploadTestImage(page, `${slug}-toolbar.png`, 'Toolbar image');
+    await enterImmersiveWithKeyboard(page);
+
+    const source = page.locator('.easymde-immersive-workspace__source');
+    await source.fill('before IMAGE after');
+    await source.evaluate((field) => {
+      field.focus();
+      field.setSelectionRange(7, 12, 'backward');
+      field.dispatchEvent(new Event('select', { bubbles: true }));
+    });
+    await page.locator('[data-command="image"]').click();
+    const mediaModal = page.locator('.media-modal:visible');
+    await expect(mediaModal).toBeVisible();
+    await page.locator('.media-modal .media-modal-close').click();
+    await expect(mediaModal).toBeHidden();
+    await expect(source).toHaveValue('before IMAGE after');
+    await expect(source).toBeFocused();
+    await expect.poll(() => source.evaluate((field) => field.selectionDirection)).toBe('backward');
+
+    await page.evaluate(() => {
+      window.__easymdeOriginalMediaPickerOpen = window.EasyMDEMediaPicker.open;
+      window.EasyMDEMediaPicker.open = () => {
+        throw new Error('Synthetic media frame failure');
+      };
+    });
+    await page.locator('[data-command="image"]').click();
+    await expect(source).toHaveValue('before IMAGE after');
+    await expect(source).toBeFocused();
+    expect(await source.evaluate((field) => [field.selectionStart, field.selectionEnd, field.selectionDirection])).toEqual([7, 12, 'backward']);
+    await expect(page.locator('[data-toolbar-status]')).toContainText('Synthetic media frame failure');
+    await page.evaluate(() => {
+      window.EasyMDEMediaPicker.open = window.__easymdeOriginalMediaPickerOpen;
+      delete window.__easymdeOriginalMediaPickerOpen;
+    });
+
+    await page.locator('[data-command="image"]').click();
+    await expect(mediaModal).toBeVisible();
+    await mediaModal.locator('.media-menu-item').filter({ hasText: 'Media Library' }).click();
+    const attachment = mediaModal.locator(`.attachment[data-id="${media.id}"]`);
+    await expect(attachment).toBeVisible();
+    await attachment.click();
+    await mediaModal.locator('.media-button-select').click();
+    await expect(mediaModal).toBeHidden();
+    await expect(source).toHaveValue(`before ![Toolbar image](${media.source_url}) after`);
+    await expect(page.locator('#easymde-source')).toHaveValue(`before ![Toolbar image](${media.source_url}) after`);
+    await expect(page.locator('.easymde-immersive-workspace__preview img')).toHaveAttribute('src', media.source_url);
+    await source.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+    await expect(source).toHaveValue('before IMAGE after');
+    await expect(page.locator('#easymde-source')).toHaveValue('before IMAGE after');
+
+    await source.fill('# Table target\n\nreplace tail');
+    await selectImmersiveRange(page, 16, 23);
+    await page.locator('[data-command="table"]').click();
+    const tableDialog = page.locator('.easymde-immersive-workspace__table-modal');
+    await expect(tableDialog).toBeVisible();
+    await expect(page.locator('.easymde-immersive-workspace__table-modal')).toHaveCount(1);
+    await tableDialog.locator('footer [data-action="cancel-table"]').click();
+    await expect(source).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('[data-command="table"]')).toBeFocused();
+
+    await page.locator('[data-command="table"]').click();
+    await page.keyboard.press('Escape');
+    await expect(tableDialog).toBeHidden();
+    await expect(source).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('[data-command="table"]')).toBeFocused();
+
+    await page.locator('[data-command="table"]').click();
+    await page.locator('[data-table-rows]').fill('0');
+    await page.locator('[data-action="insert-table"]').click();
+    await expect(page.locator('[data-table-error]')).toBeVisible();
+    await expect(source).toHaveValue('# Table target\n\nreplace tail');
+    await page.locator('[data-table-rows]').fill('3');
+    await page.locator('[data-table-columns]').fill('2');
+    await source.evaluate((field) => field.setSelectionRange(field.value.length, field.value.length));
+    await source.evaluate((field) => {
+      const valueDescriptor = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+      let shouldFail = true;
+
+      Object.defineProperty(field, 'value', {
+        configurable: true,
+        get() {
+          return valueDescriptor.get.call(this);
+        },
+        set(value) {
+          valueDescriptor.set.call(this, value);
+          if (shouldFail) {
+            shouldFail = false;
+            throw new Error('Synthetic table insertion failure');
+          }
+        }
+      });
+    });
+    const tableInsertionFailure = page.waitForEvent('pageerror');
+    await page.locator('[data-action="insert-table"]').click();
+    await expect(tableInsertionFailure).resolves.toHaveProperty('message', 'Synthetic table insertion failure');
+    await expect(tableDialog).toBeHidden();
+    await expect(page.locator('[data-table-backdrop]')).toBeHidden();
+    await expect(source).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('#easymde-source')).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('[data-toolbar-status]')).toContainText('Synthetic table insertion failure');
+    await expect(source).toBeFocused();
+    expect(await source.evaluate((field) => [field.selectionStart, field.selectionEnd])).toEqual([16, 23]);
+    await source.evaluate((field) => {
+      delete field.value;
+    });
+
+    await page.locator('[data-command="table"]').click();
+    await page.locator('[data-table-rows]').fill('3');
+    await page.locator('[data-table-columns]').fill('2');
+    await source.evaluate((field) => field.setSelectionRange(field.value.length, field.value.length));
+    await page.evaluate(() => {
+      window.__easymdeOriginalExecCommand = document.execCommand;
+      document.execCommand = () => false;
+    });
+    const tableUndoFailure = page.waitForEvent('pageerror');
+    await page.locator('[data-action="insert-table"]').click();
+    await expect(tableUndoFailure).resolves.toHaveProperty('message', await page.evaluate(() => window.EasyMDEConfig.strings.toolbarUndoUnavailable));
+    await expect(tableDialog).toBeHidden();
+    await expect(page.locator('[data-table-backdrop]')).toBeHidden();
+    await expect(source).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('#easymde-source')).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('[data-toolbar-status]')).toContainText(/undoable Markdown edit/i);
+    await expect(source).toBeFocused();
+    expect(await source.evaluate((field) => [field.selectionStart, field.selectionEnd])).toEqual([16, 23]);
+    await page.evaluate(() => {
+      document.execCommand = window.__easymdeOriginalExecCommand;
+      delete window.__easymdeOriginalExecCommand;
+    });
+
+    await page.locator('[data-command="table"]').click();
+    await page.locator('[data-table-rows]').fill('3');
+    await page.locator('[data-table-columns]').fill('2');
+    await source.evaluate((field) => field.setSelectionRange(field.value.length, field.value.length));
+    await page.locator('[data-action="insert-table"]').click();
+    await expect(tableDialog).toBeHidden();
+    const tableLabels = await page.evaluate(() => ({
+      column: window.EasyMDEConfig.strings.tableColumn,
+      content: window.EasyMDEConfig.strings.tableContent
+    }));
+    const insertedTable = [
+      `| ${tableLabels.column}1 | ${tableLabels.column}2 |`,
+      '| --- | --- |',
+      `| ${tableLabels.content} | ${tableLabels.content} |`,
+      `| ${tableLabels.content} | ${tableLabels.content} |`
+    ].join('\n');
+    await expect(source).toHaveValue(`# Table target\n\n${insertedTable}\n tail`);
+    await expect(page.locator('.easymde-immersive-workspace__preview table')).toBeVisible();
+    await expect(page.locator('.easymde-immersive-workspace__outline-entry')).toContainText('Table target');
+    await expect(page.locator('.easymde-immersive-workspace__line-number')).toHaveCount(7);
+    await expect(page.locator('[data-stat-summary="characters"]')).not.toHaveText('0');
+    await expect(page.locator('#easymde-source')).toHaveValue(await source.inputValue());
+    await expect(source).toBeFocused();
+
+    await source.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+    await expect(source).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('#easymde-source')).toHaveValue('# Table target\n\nreplace tail');
+    await expect(page.locator('.easymde-immersive-workspace__preview table')).toHaveCount(0);
+
+    await source.evaluate((field) => { field.readOnly = true; });
+    await page.locator('[data-command="table"]').click();
+    await expect(tableDialog).toBeHidden();
+    await expect(page.locator('[data-toolbar-status]')).toContainText(/read.only|unavailable/i);
+    await source.evaluate((field) => { field.readOnly = false; });
+
+    await source.evaluate((field) => field.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })));
+    await page.locator('[data-command="table"]').click();
+    await expect(tableDialog).toBeHidden();
+    await expect(page.locator('[data-toolbar-status]')).toContainText(/composition/i);
+    await source.evaluate((field) => field.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })));
+  });
+
+  test('keeps immersive view, inert-control, and exit behavior aligned with visible controls', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    const postId = await currentPostId(page);
+    const revisionsBefore = revisionIdsForPost(postId);
+    const writeRequests = [];
+    page.on('request', (request) => {
+      if (
+        request.method() !== 'GET'
+        && (/\/wp-json\/wp\/v2\/posts\//.test(request.url()) || /\/wp-admin\/post\.php/.test(request.url()))
+      ) {
+        writeRequests.push(`${request.method()} ${request.url()}`);
+      }
+    });
+
+    await enterImmersiveWithKeyboard(page);
+    await expectVisibleViewState(page, 'split');
+    const source = page.locator('.easymde-immersive-workspace__source');
+    await source.fill('# Current preview\n\nlatest body');
+    await selectImmersiveRange(page, 19, 25);
+
+    const toolbarEdit = page.locator('.easymde-immersive-workspace__format-actions [data-view="edit"]');
+    await toolbarEdit.click();
+    await expectVisibleViewState(page, 'edit');
+    await toolbarEdit.click();
+    await expectVisibleViewState(page, 'edit');
+
+    const toolbarSplit = page.locator('.easymde-immersive-workspace__format-actions [data-view="split"]');
+    await activateWithKeyboard(toolbarSplit);
+    await expectVisibleViewState(page, 'split');
+    const splitOrder = await page.evaluate(() => {
+      const sourceCard = document.querySelector('.easymde-immersive-workspace__editor-card');
+      const previewCard = document.querySelector('.easymde-immersive-workspace__preview-card');
+      return {
+        dom: sourceCard.compareDocumentPosition(previewCard) & Node.DOCUMENT_POSITION_FOLLOWING,
+        sourceLeft: sourceCard.getBoundingClientRect().left,
+        previewLeft: previewCard.getBoundingClientRect().left
+      };
+    });
+    expect(splitOrder.dom).toBeTruthy();
+    expect(splitOrder.sourceLeft).toBeLessThan(splitOrder.previewLeft);
+
+    await page.locator('.easymde-immersive-workspace__view-switch [data-view="preview"]').click();
+    await expectVisibleViewState(page, 'preview');
+    await expect(page.locator('.easymde-immersive-workspace__preview')).toContainText('latest body');
+    await page.locator('.easymde-immersive-workspace__view-switch [data-view="split"]').click();
+    await expectVisibleViewState(page, 'split');
+    expect(await source.evaluate((field) => [field.selectionStart, field.selectionEnd])).toEqual([19, 25]);
+
+    await expect(page.locator('.easymde-immersive-workspace__panel-action')).toHaveCount(0);
+    await page.locator('[data-action="settings"]').click();
+    const aiAutocomplete = page.locator('[data-setting="ai-autocomplete"]');
+    await expect(aiAutocomplete).toBeVisible();
+    await expect(aiAutocomplete).toBeDisabled();
+    await expect(aiAutocomplete).toHaveAttribute('aria-checked', 'false');
+    await expect(aiAutocomplete).toHaveAttribute('title', /not available|unavailable/i);
+    await page.keyboard.press('Escape');
+
+    await page.locator('[data-action="publish"]').click();
+    const aiSummary = page.locator('[data-action="ai-generate-summary"]');
+    await expect(aiSummary).toBeDisabled();
+    await expect(aiSummary).toHaveAttribute('title', /not available|unavailable/i);
+    await page.keyboard.press('Escape');
+
+    const unclassifiedVisibleButtons = await page.locator('.easymde-immersive-workspace button:visible').evaluateAll((buttons) => (
+      buttons.filter((button) => !(
+        button.disabled
+        || button.dataset.action
+        || button.dataset.command
+        || button.dataset.view
+        || button.dataset.setting
+        || button.dataset.aiPrompt
+        || button.dataset.aiSkill
+        || button.dataset.aiMode
+        || button.dataset.aiModel
+        || button.dataset.aiThinking
+        || button.dataset.headingCommand
+        || button.dataset.tableSize
+        || button.dataset.historyFilter
+        || button.dataset.revisionId
+        || button.dataset.publishCategoryToggle
+        || button.dataset.publishRemoveTag
+        || button.dataset.appearanceKey
+        || button.dataset.appearanceValue
+        || button.type === 'submit'
+      )).map((button) => button.outerHTML)
+    ));
+    expect(unclassifiedVisibleButtons).toEqual([]);
+
+    await page.locator('.easymde-immersive-workspace__title').fill('Exit synchronized title');
+    await source.fill('# Exit synchronized Markdown\n\nbody');
+    await selectImmersiveRange(page, 2, 6);
+    await page.locator('[data-command="heading"]').click();
+    await expect(page.locator('[data-heading-menu]')).toBeVisible();
+    await page.evaluate(() => {
+      window.__easymdeOriginalStorageSetItem = window.Storage.prototype.setItem;
+      window.Storage.prototype.setItem = () => {
+        throw new window.DOMException('Storage blocked for exit test', 'SecurityError');
+      };
+    });
+    await page.locator('[data-action="exit"]').click();
+    await expect(page.locator('.easymde-immersive-workspace')).toHaveCount(0);
+    await expect(page.locator('#title')).toHaveValue('Exit synchronized title');
+    await expect(page.locator('#easymde-source')).toHaveValue('# Exit synchronized Markdown\n\nbody');
+    await expect(page.locator('#easymde-preview')).toContainText('Exit synchronized Markdown');
+    expect(writeRequests).toEqual([]);
+    expect(revisionIdsForPost(postId)).toEqual(revisionsBefore);
+    await page.evaluate(() => {
+      window.Storage.prototype.setItem = window.__easymdeOriginalStorageSetItem;
+      delete window.__easymdeOriginalStorageSetItem;
+    });
   });
 
   test('publishes real WordPress fields from the isolated workspace and switches to update mode', async ({ page }, testInfo) => {

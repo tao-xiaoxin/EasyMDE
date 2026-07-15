@@ -3006,6 +3006,7 @@ test('openMediaPicker lazy-loads the media wrapper on first image insertion', as
   let loadScriptCalls = 0;
   let openCalls = 0;
   let capturedOptions = null;
+  const commitSourceChange = () => {};
   const textarea = {
     value: 'Intro',
     selectionStart: 5,
@@ -3058,7 +3059,7 @@ test('openMediaPicker lazy-loads the media wrapper on first image insertion', as
 
   assert.equal(window.EasyMDEMediaPicker, undefined);
 
-  const loaded = await hooks.openMediaPicker(textarea);
+  const loaded = await hooks.openMediaPicker(textarea, { commitSourceChange });
 
   assert.equal(loaded, true);
   assert.equal(loadScriptCalls, 1);
@@ -3066,6 +3067,7 @@ test('openMediaPicker lazy-loads the media wrapper on first image insertion', as
   assert.equal(capturedOptions.title, 'Insert Media');
   assert.equal(capturedOptions.altText, 'alt text');
   assert.equal(typeof capturedOptions.applyTextChange, 'function');
+  assert.equal(capturedOptions.commitSourceChange, commitSourceChange);
 
   const loadedAgain = await hooks.openMediaPicker(textarea);
 
@@ -3074,14 +3076,86 @@ test('openMediaPicker lazy-loads the media wrapper on first image insertion', as
   assert.equal(openCalls, 2);
 });
 
+test('openMediaPicker restores source context when the loaded media wrapper throws', async () => {
+  let focusRestorations = 0;
+  const textarea = {
+    value: 'Intro',
+    selectionStart: 5,
+    selectionEnd: 5,
+    selectionDirection: 'none',
+    scrollTop: 0,
+    scrollLeft: 0,
+    setSelectionRange(start, end, direction) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+      this.selectionDirection = direction;
+    }
+  };
+  const { hooks } = loadBootstrap({
+    EasyMDEMediaPicker: {
+      open() {
+        throw new Error('Synthetic media frame failure');
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      mediaPickerScriptUrl: '/assets/js/admin/media-picker.js?ver=0.1.7',
+      features: {},
+      strings: {
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    },
+    EasyMDEPreviewFeatureLoader: {
+      loadScript() {
+        throw new Error('The loaded wrapper must not be loaded again.');
+      },
+      normalizeFeatures
+    }
+  });
+
+  await assert.rejects(
+    hooks.openMediaPicker(textarea, {
+      selection: { start: 1, end: 4, direction: 'backward', scroll_top: 42, scroll_left: 17 },
+      restoreFocus() {
+        focusRestorations += 1;
+      }
+    }),
+    /Synthetic media frame failure/
+  );
+  assert.equal(textarea.value, 'Intro');
+  assert.equal(textarea.selectionStart, 1);
+  assert.equal(textarea.selectionEnd, 4);
+  assert.equal(textarea.selectionDirection, 'backward');
+  assert.equal(textarea.scrollTop, 42);
+  assert.equal(textarea.scrollLeft, 17);
+  assert.equal(focusRestorations, 1);
+});
+
 test('openMediaPicker falls back to the existing Markdown placeholder when lazy loading fails', async () => {
   let loadScriptCalls = 0;
+  let inputNotifications = 0;
+  let focusRestorations = 0;
+  let committedChanges = 0;
   const textarea = {
     value: 'Intro',
     selectionStart: 5,
     selectionEnd: 5,
     scrollTop: 0,
-    scrollLeft: 0
+    scrollLeft: 0,
+    setSelectionRange(start, end, direction) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+      this.selectionDirection = direction;
+    }
   };
   const { hooks } = loadBootstrap({
     pageXOffset: 0,
@@ -3118,11 +3192,93 @@ test('openMediaPicker falls back to the existing Markdown placeholder when lazy 
     }
   });
 
-  const loaded = await hooks.openMediaPicker(textarea);
+  const loaded = await hooks.openMediaPicker(textarea, {
+    selection: { start: 5, end: 5, direction: 'backward', scroll_top: 42, scroll_left: 17 },
+    notifyInput() {
+      inputNotifications += 1;
+    },
+    restoreFocus() {
+      focusRestorations += 1;
+    },
+    commitSourceChange() {
+      committedChanges += 1;
+    }
+  });
 
   assert.equal(loaded, false);
   assert.equal(loadScriptCalls, 1);
   assert.equal(textarea.value, 'Intro![alt text]()');
+  assert.equal(textarea.scrollTop, 42);
+  assert.equal(textarea.scrollLeft, 17);
+  assert.equal(textarea.selectionDirection, 'backward');
+  assert.equal(inputNotifications, 1);
+  assert.equal(focusRestorations, 1);
+  assert.equal(committedChanges, 1);
+});
+
+test('openMediaPicker reports wrapper failures when the WordPress media API is available', async () => {
+  let focusRestorations = 0;
+  const textarea = {
+    value: 'Intro',
+    selectionStart: 5,
+    selectionEnd: 5,
+    selectionDirection: 'none',
+    scrollTop: 0,
+    scrollLeft: 0,
+    setSelectionRange(start, end, direction) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+      this.selectionDirection = direction;
+    }
+  };
+  const { hooks } = loadBootstrap({
+    wp: { media() {} },
+    EasyMDEConfig: {
+      testHooks: true,
+      restUrl: '/wp-json/easymde/v1/preview',
+      nonce: 'test-nonce',
+      mediaPickerScriptUrl: '/assets/js/admin/media-picker.js?ver=0.1.7',
+      features: {},
+      strings: {
+        mediaPickerFailed: 'The WordPress media library could not be opened.',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    },
+    EasyMDEPreviewFeatureLoader: {
+      loadScript() {
+        return Promise.resolve({
+          key: 'script:easymde-media-picker-js:/assets/js/admin/media-picker.js?ver=0.1.7',
+          status: 'failed',
+          error: new Error('missing media picker')
+        });
+      },
+      normalizeFeatures
+    }
+  });
+
+  await assert.rejects(
+    hooks.openMediaPicker(textarea, {
+      selection: { start: 1, end: 4, direction: 'backward', scroll_top: 42, scroll_left: 17 },
+      restoreFocus() {
+        focusRestorations += 1;
+      }
+    }),
+    /The WordPress media library could not be opened\./
+  );
+  assert.equal(textarea.value, 'Intro');
+  assert.equal(textarea.selectionStart, 1);
+  assert.equal(textarea.selectionEnd, 4);
+  assert.equal(textarea.selectionDirection, 'backward');
+  assert.equal(textarea.scrollTop, 42);
+  assert.equal(textarea.scrollLeft, 17);
+  assert.equal(focusRestorations, 1);
 });
 
 test('ensureImagePasteBound lazy-loads image paste upload after startup', async () => {

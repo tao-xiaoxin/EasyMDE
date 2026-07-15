@@ -486,9 +486,9 @@ test.describe('EasyMDE editor workflows', () => {
 
     page.on('request', (request) => {
       const path = new URL(request.url()).pathname;
-      const writesPost = request.method() !== 'GET' && (
+      const writesPost = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method()) && (
         path === '/wp-admin/post.php'
-        || /^\/wp-json\/wp\/v2\/(?:posts|pages)\/\d+(?:\/autosaves)?\/?$/.test(path)
+        || /^\/wp-json\/wp\/v2\/(?:posts|pages)(?:\/\d+(?:\/autosaves)?)?\/?$/.test(path)
       );
 
       if (writesPost) {
@@ -499,6 +499,7 @@ test.describe('EasyMDE editor workflows', () => {
     await login(page, user);
     await openEasyMdeNewPost(page);
     await enterImmersiveWithKeyboard(page);
+    persistenceRequests.length = 0;
 
     const source = page.locator('.easymde-immersive-workspace__source');
     const highlight = page.locator('.easymde-immersive-workspace__source-highlight');
@@ -507,7 +508,6 @@ test.describe('EasyMDE editor workflows', () => {
     await source.fill(markdown);
     await expect(page.locator('#easymde-source')).toHaveValue(markdown);
     await expect(preview).toContainText('Scroll end');
-    persistenceRequests.length = 0;
 
     await source.focus();
     const focusedStyles = await source.evaluate((field) => {
@@ -554,19 +554,27 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(source).toHaveValue(/组合输入$/);
     await expect(page.locator('#easymde-source')).toHaveValue(/组合输入$/);
 
-    const preservedDirection = await source.evaluate((field) => {
+    await source.evaluate((field) => {
       field.setSelectionRange(2, 8, 'backward');
       field.focus();
-      field.scrollTop = 120;
-
-      return {
-        direction: field.selectionDirection,
-        end: field.selectionEnd,
-        start: field.selectionStart
-      };
+      field.scrollTop = 0;
     });
+    const sourceBox = await source.boundingBox();
+    expect(sourceBox).toBeTruthy();
+    await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+    await page.mouse.wheel(0, 240);
+    await expect.poll(() => source.evaluate((field) => field.scrollTop)).toBeGreaterThan(0);
+    const preservedDirection = await source.evaluate((field) => ({
+      direction: field.selectionDirection,
+      end: field.selectionEnd,
+      start: field.selectionStart
+    }));
     expect(preservedDirection).toEqual({ direction: 'backward', end: 8, start: 2 });
-    await source.evaluate((field) => field.setSelectionRange(2, 8));
+
+    await source.evaluate((field) => {
+      field.setSelectionRange(2, 8);
+      field.scrollTop = 120;
+    });
     await page.locator('.easymde-immersive-workspace__toolbar [data-command="bold"]').click();
     await expect(source).toBeFocused();
     await expect(source).toHaveValue(/^# \*\*Scroll\*\* start/);
@@ -574,7 +582,7 @@ test.describe('EasyMDE editor workflows', () => {
       end: field.selectionEnd,
       start: field.selectionStart
     }));
-    expect(selectionState.end).toBeGreaterThan(selectionState.start);
+    expect(selectionState).toEqual({ end: 10, start: 4 });
 
     await source.evaluate((field) => {
       field.focus();
@@ -582,15 +590,17 @@ test.describe('EasyMDE editor workflows', () => {
       field.scrollTop = 0;
       field.scrollLeft = 0;
     });
-    const sourceBox = await source.boundingBox();
-    expect(sourceBox).toBeTruthy();
     await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
     await page.mouse.wheel(0, 700);
     await expect.poll(() => source.evaluate((field) => field.scrollTop)).toBeGreaterThan(0);
-    const wheelScrollTop = await source.evaluate((field) => field.scrollTop);
 
+    await source.evaluate((field) => {
+      field.focus();
+      field.setSelectionRange(0, 0);
+      field.scrollTop = 0;
+    });
     await source.press('PageDown');
-    await expect.poll(() => source.evaluate((field) => field.scrollTop)).toBeGreaterThan(wheelScrollTop);
+    await expect.poll(() => source.evaluate((field) => field.scrollTop)).toBeGreaterThan(0);
     const pageDownScrollTop = await source.evaluate((field) => field.scrollTop);
     await source.press('End');
     await expect.poll(() => source.evaluate((field) => field.scrollTop)).toBeGreaterThanOrEqual(pageDownScrollTop);
@@ -601,6 +611,15 @@ test.describe('EasyMDE editor workflows', () => {
     await source.press(process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+Home');
     await expect.poll(() => source.evaluate((field) => field.selectionStart)).toBe(0);
     await expect.poll(() => source.evaluate((field) => field.scrollTop)).toBe(0);
+    await source.press('ArrowDown');
+    await expect.poll(() => source.evaluate((field) => field.selectionStart)).toBeGreaterThan(0);
+    await source.press('ArrowUp');
+    await expect.poll(() => source.evaluate((field) => field.selectionStart)).toBe(0);
+    await expect.poll(() => source.evaluate((field) => {
+      const lineNumberLayer = field.closest('.easymde-immersive-workspace__editor-body')
+        .querySelector('.easymde-immersive-workspace__line-numbers');
+      return lineNumberLayer.childElementCount === field.value.replace(/\r\n?/g, '\n').split('\n').length;
+    })).toBe(true);
 
     const directScroll = await source.evaluate((field) => {
       const lineNumberLayer = field.closest('.easymde-immersive-workspace__editor-body')
@@ -610,7 +629,7 @@ test.describe('EasyMDE editor workflows', () => {
         lineNumberLayer.scrollHeight - lineNumberLayer.clientHeight
       );
 
-      field.scrollTop = Math.floor(sharedVerticalRange / 2);
+      field.scrollTop = Math.min(240, Math.floor(sharedVerticalRange / 2));
       field.scrollLeft = 160;
       field.dispatchEvent(new Event('scroll'));
       return {

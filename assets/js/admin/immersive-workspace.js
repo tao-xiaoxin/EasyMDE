@@ -4063,6 +4063,13 @@
                     captureSourceSelection();
                     event.preventDefault();
                 });
+                listen(button, 'mousedown', function (event) {
+                    if (event.button !== 0) {
+                        return;
+                    }
+                    captureSourceSelection();
+                    event.preventDefault();
+                });
                 if (button.getAttribute('data-command') === 'heading') {
                     listen(button, 'keydown', function (event) {
                         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

@@ -357,7 +357,7 @@
                 text = atxMatch[2].trim();
                 if (text) {
                     outline.push({
-                        key: String(offset) + ':' + String(atxMatch[1].length),
+                        key: 'heading:' + String(outline.length),
                         level: atxMatch[1].length,
                         text: text,
                         offset: offset
@@ -370,7 +370,7 @@
                 setextMatch = lines[index + 1].match(/^\s{0,3}(=+|-+)\s*$/);
                 if (setextMatch) {
                     outline.push({
-                        key: String(offset) + ':setext',
+                        key: 'heading:' + String(outline.length),
                         level: setextMatch[1].charAt(0) === '=' ? 1 : 2,
                         text: line.trim(),
                         offset: offset
@@ -1990,6 +1990,19 @@
                             refreshPreview(true);
                         }
                         return false;
+                    }
+                    if (
+                        !instance
+                        || typeof instance.getMarkdown !== 'function'
+                        || typeof instance.setMarkdown !== 'function'
+                    ) {
+                        if (instance && typeof instance.destroy === 'function') {
+                            instance.destroy();
+                        }
+                        throw new Error(strings.visualEditorUnavailable || 'Visual Markdown editing could not be loaded. The Markdown source was not changed.');
+                    }
+                    if (instance.getMarkdown() !== source.value) {
+                        instance.setMarkdown(source.value);
                     }
                     visualEditor = instance;
                     refreshPreview(true);

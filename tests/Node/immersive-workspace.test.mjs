@@ -1477,6 +1477,18 @@ test('outline source offsets preserve original CRLF positions', () => {
   );
 });
 
+test('outline identities remain stable when earlier source text changes length', () => {
+  const workspace = loadWorkspaceModule();
+  const before = workspace.parseOutline('Short.\n\n# Repeat\n\n## Repeat\n');
+  const after = workspace.parseOutline('A substantially longer opening paragraph.\n\n# Repeat\n\n## Repeat\n');
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(after.map(({ key }) => key))),
+    JSON.parse(JSON.stringify(before.map(({ key }) => key)))
+  );
+  assert.notEqual(after[0].offset, before[0].offset);
+});
+
 test('outline promotes the document heading and numbered sections like the reference design', () => {
   const workspace = loadWorkspaceModule();
   const outline = workspace.parseOutline([

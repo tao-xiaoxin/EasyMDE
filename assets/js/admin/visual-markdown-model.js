@@ -64,6 +64,25 @@
         return SAFE_URL_PROTOCOL.test(normalized);
     }
 
+    function isWordLikeCharacter(character) {
+        return !!character && !/[\t\n\r !"#$%&'()*+,\-./:;<=>?@[\\\]^`{|}~]/.test(character);
+    }
+
+    function isIntrawordUnderscore(value, match, start, end) {
+        var delimiter = match[1] || '';
+
+        if (delimiter.charAt(0) !== '_') {
+            return false;
+        }
+        return (
+            isWordLikeCharacter(value.charAt(start - 1))
+            && isWordLikeCharacter(value.charAt(start + delimiter.length))
+        ) || (
+            isWordLikeCharacter(value.charAt(end - delimiter.length - 1))
+            && isWordLikeCharacter(value.charAt(end))
+        );
+    }
+
     function findInlineCandidate(value, offset) {
         var patterns = [
             { type: 'code', regex: /(`+)([^\n]*?)\1/g },
@@ -78,6 +97,13 @@
             var match;
             pattern.regex.lastIndex = offset;
             match = pattern.regex.exec(value);
+            while (
+                match
+                && (pattern.type === 'strong' || pattern.type === 'emphasis')
+                && isIntrawordUnderscore(value, match, match.index, pattern.regex.lastIndex)
+            ) {
+                match = pattern.regex.exec(value);
+            }
             if (!match || (candidate && match.index >= candidate.index)) {
                 return;
             }
@@ -90,6 +116,21 @@
         });
 
         return candidate;
+    }
+
+    function parseAtxHeading(value) {
+        var match = String(value || '').match(/^ {0,3}(#{1,6})(?:[\t ]+(.*)|[\t ]*)$/);
+        var text;
+
+        if (!match) {
+            return null;
+        }
+        text = typeof match[2] === 'string' ? match[2] : '';
+        text = text.replace(/[\t ]+#+[\t ]*$/, '').replace(/[\t ]+$/, '');
+        return {
+            level: match[1].length,
+            text: text
+        };
     }
 
     function normalizeCodeSpanValue(value) {
@@ -259,7 +300,7 @@
     }
 
     function listMatch(content) {
-        return String(content || '').match(/^(\s*)([-+*]|\d{1,9}[.)])[\t ]+(?:\[([ xX])\][\t ]+)?(.*)$/);
+        return String(content || '').match(/^(\s*)([-+*]|\d{1,9}[.)])([\t ]+)(?:\[([ xX])\]([\t ]+))?(.*)$/);
     }
 
     function isHorizontalRule(content) {
@@ -393,14 +434,18 @@
                 break;
             }
             indent = match[1].replace(/\t/g, '    ').length;
-            unsupported = unsupported || hasUnsupportedInlineSyntax(match[4]);
+            unsupported = unsupported || hasUnsupportedInlineSyntax(match[6]);
             items.push({
                 depth: indent ? Math.max(1, Math.ceil(indent / 4)) : 0,
+                indent: match[1],
                 ordered: /^\d/.test(match[2]),
                 marker: match[2],
-                task: typeof match[3] === 'string',
-                checked: typeof match[3] === 'string' && match[3].toLowerCase() === 'x',
-                inline: parseInline(match[4])
+                markerSpacing: match[3],
+                task: typeof match[4] === 'string',
+                taskMarker: match[4] || '',
+                taskSpacing: match[5] || '',
+                checked: typeof match[4] === 'string' && match[4].toLowerCase() === 'x',
+                inline: parseInline(match[6])
             });
             endIndex += 1;
         }
@@ -616,9 +661,9 @@
                 index = endIndex;
                 continue;
             }
-            heading = content.match(/^ {0,3}(#{1,6})(?:[\t ]+)(.*?)[\t ]*#*[\t ]*$/);
+            heading = parseAtxHeading(content);
             if (heading) {
-                unsupportedInline = hasUnsupportedInlineSyntax(heading[2]);
+                unsupportedInline = hasUnsupportedInlineSyntax(heading.text);
                 documentState.nodes.push(createNode(
                     documentState,
                     unsupportedInline ? 'protected' : 'heading',
@@ -629,8 +674,8 @@
                         protectedType: 'unknown'
                     } : {
                         editable: true,
-                        level: heading[1].length,
-                        inline: parseInline(heading[2])
+                        level: heading.level,
+                        inline: parseInline(heading.text)
                     }
                 ));
                 index += 1;
@@ -739,7 +784,7 @@
         if (!found) {
             throw new Error('Visual Markdown node not found: ' + nodeId);
         }
-        return rebuildHeadings(updated);
+        return synchronizeDocumentSource(updated);
     }
 
     function replaceNodeSource(documentState, nodeId, replacement) {
@@ -760,16 +805,26 @@
 
     function serializeList(node, lineEnding) {
         return node.items.map(function (item) {
+            var indent = typeof item.indent === 'string'
+                ? item.indent
+                : new Array(Math.max(0, Number(item.depth) || 0) + 1).join('  ');
             var marker = String(item.marker || '');
-            var task = item.task ? '[' + (item.checked ? 'x' : ' ') + '] ' : '';
+            var markerSpacing = typeof item.markerSpacing === 'string' ? item.markerSpacing : ' ';
+            var taskSpacing = typeof item.taskSpacing === 'string' ? item.taskSpacing : ' ';
+            var taskMarker = String(item.taskMarker || '');
+            var task = item.task
+                ? '[' + (item.checked && taskMarker === 'X' ? 'X' : (item.checked ? 'x' : ' ')) + ']' + taskSpacing
+                : '';
             if (
                 (item.ordered && !/^\d{1,9}[.)]$/.test(marker))
                 || (!item.ordered && !/^[-+*]$/.test(marker))
             ) {
                 throw new Error('Invalid visual Markdown list marker.');
             }
-            return new Array(Math.max(0, Number(item.depth) || 0) + 1).join('  ')
-                + marker + ' ' + task + serializeInline(item.inline);
+            if (!/^[\t ]*$/.test(indent) || !/^[\t ]+$/.test(markerSpacing) || (item.task && !/^[\t ]+$/.test(taskSpacing))) {
+                throw new Error('Invalid visual Markdown list spacing.');
+            }
+            return indent + marker + markerSpacing + task + serializeInline(item.inline);
         }).join(lineEnding);
     }
 
@@ -817,6 +872,23 @@
             throw new Error('Unsupported dirty visual Markdown node: ' + node.type);
         }
         return body + trailingLineEnding(node.raw);
+    }
+
+    function synchronizeDocumentSource(documentState) {
+        var lineEnding = documentState.lineEnding || '\n';
+        var source = '';
+
+        documentState.nodes.forEach(function (node) {
+            var raw = serializeNode(node, lineEnding);
+            node.start = source.length;
+            source += raw;
+            node.end = source.length;
+            node.raw = raw;
+            node.dirty = false;
+        });
+        documentState.source = source;
+        documentState.dirty = false;
+        return rebuildHeadings(documentState);
     }
 
     function serialize(documentState) {

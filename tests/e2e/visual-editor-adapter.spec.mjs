@@ -434,6 +434,21 @@ test('source-offset navigation targets protected setext and structured ATX headi
   await expect(page.locator('[data-easymde-node-id="heading-0"]')).toHaveClass(/is-outline-target/);
 });
 
+test('source-offset navigation follows headings after an earlier visual edit changes length', async ({ page }) => {
+  await mountAdapter(page, 'Short.\n\n# Later heading\n', { readOnly: false });
+
+  await page.locator('p [data-easymde-inline-content]').fill('A substantially longer opening paragraph.');
+  const markdown = await page.evaluate(() => window.testAdapter.getMarkdown());
+  const headingOffset = markdown.indexOf('# Later heading');
+
+  expect(headingOffset).toBeGreaterThan(0);
+  expect(await page.evaluate(
+    (offset) => window.testAdapter.navigateToSourceOffset(offset),
+    headingOffset
+  )).toBe(true);
+  await expect(page.locator('[data-easymde-node-id="heading-0"]')).toHaveClass(/is-outline-target/);
+});
+
 test('task lists and fenced code edit deterministically without changing adjacent protected CRLF slices', async ({ page }) => {
   const markdown = '- [ ] pending\r\n- item\r\n\r\n~~~~js\r\nconst value = 1;\r\n~~~~\r\n\r\n:::opaque\r\nkeep bytes\r\n:::\r\n';
   await mountAdapter(page, markdown, { readOnly: false });

@@ -23,9 +23,7 @@ async function mountWorkspace(page, markdown, mountDelay = 0, sharedMountDelay =
     window.visualUploads = [];
     window.wechatPreviewSnapshot = null;
 
-    const sharedRuntime = sharedDelay
-      ? new Promise((resolve) => window.setTimeout(resolve, delay))
-      : null;
+    let sharedRuntime = null;
 
     function createVisualEditor(node, value, options) {
       const instance = window.EasyMDEVisualEditorAdapter.createAdapter();
@@ -44,7 +42,10 @@ async function mountWorkspace(page, markdown, mountDelay = 0, sharedMountDelay =
     }
 
     function mountVisualEditor(node, value, options) {
-      if (sharedRuntime) {
+      if (sharedDelay) {
+        if (!sharedRuntime) {
+          sharedRuntime = new Promise((resolve) => window.setTimeout(resolve, delay));
+        }
         return sharedRuntime.then(() => createVisualEditor(node, value, options));
       }
       return new Promise((resolve) => {
@@ -237,6 +238,23 @@ test('Preview outline navigation uses source offsets when setext headings preced
   expect(await page.evaluate(() => window.canonicalMarkdown)).toBe(markdown);
 });
 
+test('Preview keeps the active duplicate outline identity after an earlier visual edit', async ({ page }) => {
+  await mountWorkspace(page, 'Short.\n\n# Repeat\n\n## Repeat\n');
+
+  const workspace = page.locator('.easymde-immersive-workspace');
+  await workspace.locator('.easymde-immersive-workspace__header [data-view="preview"]').click();
+  await workspace.locator('.easymde-immersive-workspace__outline-handle').click();
+
+  const entries = workspace.locator('.easymde-immersive-workspace__outline-entry');
+  await entries.nth(1).click();
+  await expect(workspace.locator('[data-easymde-node-id="heading-1"]')).toHaveClass(/is-outline-target/);
+
+  await workspace.locator('p [data-easymde-inline-content]').fill('A substantially longer opening paragraph.');
+
+  await expect(entries.nth(1)).toHaveClass(/is-active/);
+  await expect(entries.nth(0)).not.toHaveClass(/is-active/);
+});
+
 test('editable visual image transfer exits Preview and delegates to the canonical source upload bridge', async ({ page }) => {
   await mountWorkspace(page, 'Paragraph without trailing newline');
   const workspace = page.locator('.easymde-immersive-workspace');
@@ -283,6 +301,23 @@ test('stale visual mount self-destructs after a rapid Preview to Edit transition
   expect(await page.evaluate(() => window.canonicalMarkdown)).toBe('# Stable\n');
   expect(await page.evaluate(() => window.bridgeWrites)).toBe(0);
   expect(await page.evaluate(() => window.visualDestroyCount)).toBe(1);
+});
+
+test('a delayed Preview mount cannot overwrite newer source edits', async ({ page }) => {
+  await mountWorkspace(page, '# Initial\n', 80);
+  const workspace = page.locator('.easymde-immersive-workspace');
+  const main = workspace.locator('.easymde-immersive-workspace__main');
+  const source = workspace.locator('.easymde-immersive-workspace__source');
+
+  await workspace.locator('.easymde-immersive-workspace__header [data-view="preview"]').click();
+  await source.fill('# Newer source\n');
+  await expect.poll(() => page.evaluate(() => window.canonicalMarkdown)).toBe('# Newer source\n');
+  await expect(main).toHaveAttribute('data-view', 'preview');
+
+  await workspace.locator('.easymde-immersive-workspace__header [data-view="edit"]').click();
+
+  await expect(source).toHaveValue('# Newer source\n');
+  expect(await page.evaluate(() => window.canonicalMarkdown)).toBe('# Newer source\n');
 });
 
 test('stale visual mount cannot hide a newer Preview mount', async ({ page }) => {

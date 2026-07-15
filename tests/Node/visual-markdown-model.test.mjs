@@ -208,6 +208,22 @@ test('single supported-node edits leave every other source slice byte-identical'
   );
 });
 
+test('supported-node edits refresh every following source range', () => {
+  const model = loadModel();
+  const markdown = 'Short.\n\n# Later heading\n';
+  const document = model.parse(markdown);
+  const paragraph = document.nodes.find((node) => node.type === 'paragraph');
+  const updated = model.updateNode(document, paragraph.id, {
+    inline: model.parseInline('A substantially longer opening paragraph.')
+  });
+  const output = model.serialize(updated);
+  const heading = updated.nodes.find((node) => node.type === 'heading');
+
+  assert.equal(updated.source, output);
+  assert.equal(heading.start, output.indexOf('# Later heading'));
+  assert.equal(heading.raw, '# Later heading\n');
+});
+
 test('headings have stable occurrence-aware identities for duplicate text', () => {
   const model = loadModel();
   const markdown = '# Same\n\n## Same\n\n### Other\n\n# Same\n';
@@ -297,6 +313,22 @@ test('editing one list item preserves every original ordered and unordered marke
   assert.throws(
     () => model.serialize(model.updateNode(document, list.id, { items: invalidItems })),
     /list marker/i
+  );
+});
+
+test('editing a nested list preserves indentation and task prefix bytes', () => {
+  const model = loadModel();
+  const markdown = '10. parent\n    - child\n\t- [X] complete\n';
+  const document = model.parse(markdown);
+  const list = document.nodes.find((node) => node.type === 'list');
+  const items = list.items.map((item, index) => ({
+    ...item,
+    inline: index === 0 ? model.parseInline('changed parent') : item.inline
+  }));
+
+  assert.equal(
+    model.serialize(model.updateNode(document, list.id, { items })),
+    '10. changed parent\n    - child\n\t- [X] complete\n'
   );
 });
 
@@ -396,6 +428,39 @@ test('unambiguous underscores and formatting through non-emphasis wrappers remai
   assert.equal(document.nodes[0].type, 'paragraph');
   assert.equal(document.nodes[0].editable, true);
   assert.equal(model.serialize(document), markdown);
+});
+
+test('intraword underscores remain literal when their containing node is edited', () => {
+  const model = loadModel();
+  const markdown = 'Identifier foo_bar_baz, foo__bar__baz, and 中文_变量_名称.\n';
+  const document = model.parse(markdown);
+  const paragraph = document.nodes.find((node) => node.type === 'paragraph');
+  const updated = model.updateNode(document, paragraph.id, {
+    inline: [...paragraph.inline, { type: 'text', value: ' Updated.' }]
+  });
+
+  assert.equal(
+    model.serialize(updated),
+    'Identifier foo_bar_baz, foo__bar__baz, and 中文_变量_名称. Updated.\n'
+  );
+});
+
+test('literal trailing heading hashes survive an edit while valid closing sequences are removed', () => {
+  const model = loadModel();
+  const variants = [
+    ['# C#\n', '# C#!\n'],
+    ['## C# guide ###\n', '## C# guide!\n']
+  ];
+
+  variants.forEach(([markdown, expected]) => {
+    const document = model.parse(markdown);
+    const heading = document.nodes.find((node) => node.type === 'heading');
+    const updated = model.updateNode(document, heading.id, {
+      inline: [...heading.inline, { type: 'text', value: '!' }]
+    });
+
+    assert.equal(model.serialize(updated), expected);
+  });
 });
 
 test('backslash escapes inside supported inline code do not protect the containing paragraph', () => {

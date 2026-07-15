@@ -502,8 +502,6 @@ test.describe('EasyMDE editor workflows', () => {
     persistenceRequests.length = 0;
 
     const source = page.locator('.easymde-immersive-workspace__source');
-    const highlight = page.locator('.easymde-immersive-workspace__source-highlight');
-    const lineNumbers = page.locator('.easymde-immersive-workspace__line-numbers');
     const preview = page.locator('.easymde-immersive-workspace__preview');
     await source.fill(markdown);
     await expect(page.locator('#easymde-source')).toHaveValue(markdown);
@@ -593,6 +591,10 @@ test.describe('EasyMDE editor workflows', () => {
     await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
     await page.mouse.wheel(0, 700);
     await expect.poll(() => source.evaluate((field) => field.scrollTop)).toBeGreaterThan(0);
+    await source.evaluate(() => new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    }));
+    await expect.poll(() => source.evaluate((field) => field.scrollTop)).toBeGreaterThan(0);
 
     await source.evaluate((field) => {
       field.focus();
@@ -607,58 +609,148 @@ test.describe('EasyMDE editor workflows', () => {
     await source.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End');
     await expect.poll(() => source.evaluate((field) => field.selectionEnd)).toBeGreaterThan(markdown.length);
     await expect.poll(() => source.evaluate((field) => field.scrollTop)).toBeGreaterThan(0);
-    await source.press('Home');
     await source.press(process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+Home');
     await expect.poll(() => source.evaluate((field) => field.selectionStart)).toBe(0);
-    await expect.poll(() => source.evaluate((field) => field.scrollTop)).toBe(0);
-    await source.press('ArrowDown');
-    await expect.poll(() => source.evaluate((field) => field.selectionStart)).toBeGreaterThan(0);
-    await source.press('ArrowUp');
-    await expect.poll(() => source.evaluate((field) => field.selectionStart)).toBe(0);
+    await source.press('Home');
+    await source.evaluate(() => new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    }));
     await expect.poll(() => source.evaluate((field) => {
       const lineNumberLayer = field.closest('.easymde-immersive-workspace__editor-body')
         .querySelector('.easymde-immersive-workspace__line-numbers');
       return lineNumberLayer.childElementCount === field.value.replace(/\r\n?/g, '\n').split('\n').length;
     })).toBe(true);
+    await source.evaluate((field) => new Promise((resolve) => {
+      let previousScrollTop = field.scrollTop;
+      let stableFrames = 0;
+
+      field.blur();
+      const sample = () => {
+        if (field.scrollTop === previousScrollTop) {
+          stableFrames += 1;
+        } else {
+          stableFrames = 0;
+          previousScrollTop = field.scrollTop;
+        }
+        if (stableFrames >= 8) {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    }));
 
     const directScroll = await source.evaluate((field) => {
       const lineNumberLayer = field.closest('.easymde-immersive-workspace__editor-body')
         .querySelector('.easymde-immersive-workspace__line-numbers');
+      const scrollAnchor = field.value.indexOf('Plain scrolling line 92');
       const sharedVerticalRange = Math.min(
         field.scrollHeight - field.clientHeight,
         lineNumberLayer.scrollHeight - lineNumberLayer.clientHeight
       );
 
-      field.scrollTop = Math.min(240, Math.floor(sharedVerticalRange / 2));
+      if (scrollAnchor < 0) {
+        throw new Error('Expected scroll anchor is missing from the immersive source fixture.');
+      }
+      field.setSelectionRange(scrollAnchor, scrollAnchor + 5, 'backward');
+      field.scrollTop = Math.floor(sharedVerticalRange / 2);
       field.scrollLeft = 160;
-      field.dispatchEvent(new Event('scroll'));
       return {
         clientHeight: field.clientHeight,
         clientWidth: field.clientWidth,
         scrollHeight: field.scrollHeight,
         scrollLeft: field.scrollLeft,
         scrollTop: field.scrollTop,
-        scrollWidth: field.scrollWidth
+        scrollWidth: field.scrollWidth,
+        selectionDirection: field.selectionDirection,
+        selectionEnd: field.selectionEnd,
+        selectionStart: field.selectionStart
       };
     });
     expect(directScroll.scrollHeight).toBeGreaterThan(directScroll.clientHeight);
     expect(directScroll.scrollWidth).toBeGreaterThan(directScroll.clientWidth);
     expect(directScroll.scrollTop).toBeGreaterThan(0);
     expect(directScroll.scrollLeft).toBeGreaterThan(0);
-    await expect.poll(() => highlight.evaluate((node) => node.scrollTop)).toBe(directScroll.scrollTop);
-    await expect.poll(() => highlight.evaluate((node) => node.scrollLeft)).toBe(directScroll.scrollLeft);
-    await expect.poll(() => lineNumbers.evaluate((node) => node.scrollTop)).toBe(directScroll.scrollTop);
+    expect(directScroll.selectionDirection).toBe('backward');
+    const synchronizedScroll = await source.evaluate((field) => new Promise((resolve) => {
+      const editorBody = field.closest('.easymde-immersive-workspace__editor-body');
+      const highlightLayer = editorBody.querySelector('.easymde-immersive-workspace__source-highlight');
+      const lineNumberLayer = editorBody.querySelector('.easymde-immersive-workspace__line-numbers');
 
-    const preservedScrollTop = directScroll.scrollTop;
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve({
+        highlightLeft: highlightLayer.scrollLeft,
+        highlightTop: highlightLayer.scrollTop,
+        lineNumberTop: lineNumberLayer.scrollTop,
+        sourceLeft: field.scrollLeft,
+        sourceTop: field.scrollTop
+      })));
+    }));
+    expect(synchronizedScroll.sourceTop).toBeGreaterThan(0);
+    expect(synchronizedScroll.sourceLeft).toBe(directScroll.scrollLeft);
+    expect(synchronizedScroll.highlightTop).toBe(synchronizedScroll.sourceTop);
+    expect(synchronizedScroll.highlightLeft).toBe(synchronizedScroll.sourceLeft);
+    expect(synchronizedScroll.lineNumberTop).toBe(synchronizedScroll.sourceTop);
+
+    const preservedScrollLeft = synchronizedScroll.sourceLeft;
+    const preservedScrollTop = synchronizedScroll.sourceTop;
     await page.locator('.easymde-immersive-workspace__header [data-view="preview"]').click();
     await expect(source).toBeHidden();
     await expect(preview).toContainText('Scroll end');
     await page.locator('.easymde-immersive-workspace__header [data-view="edit"]').click();
     await expect(source).toBeVisible();
+    await expect.poll(() => source.evaluate((field) => field.scrollLeft)).toBe(preservedScrollLeft);
     await expect.poll(() => source.evaluate((field) => field.scrollTop)).toBe(preservedScrollTop);
+    await expect.poll(() => source.evaluate((field) => ({
+      direction: field.selectionDirection,
+      end: field.selectionEnd,
+      start: field.selectionStart
+    }))).toEqual({
+      direction: directScroll.selectionDirection,
+      end: directScroll.selectionEnd,
+      start: directScroll.selectionStart
+    });
     await page.locator('.easymde-immersive-workspace__header [data-view="split"]').click();
     await expect(source).toBeVisible();
     await expect(preview).toBeVisible();
+    await expect.poll(() => page.locator('.easymde-immersive-workspace__preview-scroll').evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+    const splitScrollRatios = await source.evaluate((field) => {
+      const previewScroller = field.closest('.easymde-immersive-workspace__main')
+        .querySelector('.easymde-immersive-workspace__preview-scroll');
+      return {
+        preview: previewScroller.scrollTop / Math.max(1, previewScroller.scrollHeight - previewScroller.clientHeight),
+        source: field.scrollTop / Math.max(1, field.scrollHeight - field.clientHeight)
+      };
+    });
+    expect(Math.abs(splitScrollRatios.preview - splitScrollRatios.source)).toBeLessThan(0.05);
+
+    const rapidTransitionState = await source.evaluate((field) => ({
+      direction: field.selectionDirection,
+      end: field.selectionEnd,
+      scrollLeft: field.scrollLeft,
+      scrollTop: field.scrollTop,
+      start: field.selectionStart
+    }));
+    await page.locator('.easymde-immersive-workspace__header [data-view="preview"]').click();
+    await expect(source).toBeHidden();
+    const editMode = page.locator('.easymde-immersive-workspace__header [data-view="edit"]');
+    await editMode.evaluate((button) => {
+      button.addEventListener('click', () => {
+        requestAnimationFrame(() => {
+          button.closest('.easymde-immersive-workspace__header').querySelector('[data-view="split"]').click();
+        });
+      }, { capture: true, once: true });
+    });
+    await editMode.click();
+    await expect(source).toBeVisible();
+    await expect(preview).toBeVisible();
+    await expect.poll(() => source.evaluate((field) => ({
+      direction: field.selectionDirection,
+      end: field.selectionEnd,
+      scrollLeft: field.scrollLeft,
+      scrollTop: field.scrollTop,
+      start: field.selectionStart
+    }))).toEqual(rapidTransitionState);
 
     const title = page.locator('.easymde-immersive-workspace__title');
     await title.focus();
@@ -708,6 +800,11 @@ test.describe('EasyMDE editor workflows', () => {
     expect(narrowState.scrollTop).toBeGreaterThan(0);
     expect(narrowState.scrollbarWidth).toBe('none');
     expect(narrowState.webkitScrollbarDisplay).toBe('none');
+    await source.evaluate((field) => field.setSelectionRange(0, 0));
+    await source.press('ArrowDown');
+    await expect.poll(() => source.evaluate((field) => field.selectionStart)).toBeGreaterThan(0);
+    await source.press('ArrowUp');
+    await expect.poll(() => source.evaluate((field) => field.selectionStart)).toBe(0);
     await expect(page.locator('.easymde-immersive-workspace__toolbar [data-action="exit"]')).toBeVisible();
     expect(persistenceRequests).toEqual([]);
   });

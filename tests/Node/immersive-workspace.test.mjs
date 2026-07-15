@@ -86,6 +86,29 @@ test('immersive workspace reports deactivation only after its active state is cl
   assert.ok(callbackAt > activeClassesClearedAt, 'onDeactivate must observe inactive document classes');
 });
 
+test('immersive view transitions restore source selection before scroll offsets', () => {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/immersive-workspace.js'), 'utf8');
+  const captureStart = source.indexOf('        function captureSourceViewState() {');
+  const restoreStart = source.indexOf('        function restoreSourceViewState() {');
+  const scheduleStart = source.indexOf('        function scheduleSourceViewRestore(mode) {');
+  const setViewStart = source.indexOf('        function setView(mode) {');
+  const setViewEnd = source.indexOf('\n        function setSourceRatio', setViewStart);
+  const restoreSource = source.slice(restoreStart, setViewStart);
+  const setViewSource = source.slice(setViewStart, setViewEnd);
+
+  assert.ok(captureStart >= 0, 'source view capture should exist');
+  assert.ok(restoreStart > captureStart, 'source view restore should follow capture');
+  assert.ok(scheduleStart > restoreStart, 'source view restore should be scheduled after layout');
+  assert.ok(setViewStart > scheduleStart, 'view switching should use the source state helpers');
+  assert.ok(
+    restoreSource.indexOf('source.setSelectionRange(') < restoreSource.indexOf('source.scrollTop ='),
+    'selection must be restored before scroll offsets so caret reveal cannot overwrite the saved scroll position'
+  );
+  assert.match(setViewSource, /viewMode !== 'preview' && sourceViewRestoreFrame === null[\s\S]*captureSourceViewState\(\)/);
+  assert.match(setViewSource, /mode !== 'preview'[\s\S]*scheduleSourceViewRestore\(mode\)/);
+  assert.match(source, /function deactivate\(\)[\s\S]*cancelDocumentDerivedState\(\);\s*cancelSourceViewRestore\(\);/);
+});
+
 test('publish categories build a stable tree from real WordPress parent ids', () => {
   const workspace = loadWorkspaceModule();
   const tree = workspace.createPublishCategoryTree([

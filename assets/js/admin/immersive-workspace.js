@@ -1034,6 +1034,15 @@
         var listeners = [];
         var composingTitle = false;
         var viewMode = 'split';
+        var sourceViewState = {
+            scrollLeft: 0,
+            scrollTop: 0,
+            selectionDirection: 'none',
+            selectionEnd: 0,
+            selectionStart: 0
+        };
+        var sourceViewRestoreFrame = null;
+        var sourceViewRestoreFrameIsTimeout = false;
         var outlineEnabled = true;
         var outlineVisible = false;
         var activeOutlineKey = '';
@@ -1402,10 +1411,62 @@
                 });
         }
 
+        function captureSourceViewState() {
+            sourceViewState = {
+                scrollLeft: source.scrollLeft,
+                scrollTop: source.scrollTop,
+                selectionDirection: source.selectionDirection,
+                selectionEnd: source.selectionEnd,
+                selectionStart: source.selectionStart
+            };
+        }
+
+        function restoreSourceViewState() {
+            source.setSelectionRange(
+                sourceViewState.selectionStart,
+                sourceViewState.selectionEnd,
+                sourceViewState.selectionDirection
+            );
+            source.scrollTop = sourceViewState.scrollTop;
+            source.scrollLeft = sourceViewState.scrollLeft;
+        }
+
+        function cancelSourceViewRestore() {
+            if (sourceViewRestoreFrame === null) {
+                return;
+            }
+            if (sourceViewRestoreFrameIsTimeout) {
+                win.clearTimeout(sourceViewRestoreFrame);
+            } else if (typeof win.cancelAnimationFrame === 'function') {
+                win.cancelAnimationFrame(sourceViewRestoreFrame);
+            }
+            sourceViewRestoreFrame = null;
+            sourceViewRestoreFrameIsTimeout = false;
+        }
+
+        function scheduleSourceViewRestore(mode) {
+            var restore = function () {
+                sourceViewRestoreFrame = null;
+                sourceViewRestoreFrameIsTimeout = false;
+                if (root && source && viewMode === mode) {
+                    restoreSourceViewState();
+                }
+            };
+
+            sourceViewRestoreFrameIsTimeout = typeof win.requestAnimationFrame !== 'function';
+            sourceViewRestoreFrame = sourceViewRestoreFrameIsTimeout
+                ? win.setTimeout(restore, 0)
+                : win.requestAnimationFrame(restore);
+        }
+
         function setView(mode) {
             if (['edit', 'split', 'preview'].indexOf(mode) === -1) {
                 return;
             }
+            if (source && viewMode !== 'preview' && sourceViewRestoreFrame === null) {
+                captureSourceViewState();
+            }
+            cancelSourceViewRestore();
             viewMode = mode;
             main.setAttribute('data-view', mode);
             toolbar.hidden = mode === 'preview';
@@ -1415,6 +1476,9 @@
                 }
             });
             setSettingSwitch('split', mode === 'split');
+            if (source && mode !== 'preview') {
+                scheduleSourceViewRestore(mode);
+            }
         }
 
         function setSourceRatio(ratio) {
@@ -4200,6 +4264,7 @@
             sourceHighlight = query('.easymde-immersive-workspace__source-highlight');
             source.value = typeof adapter.getMarkdown === 'function' ? adapter.getMarkdown() : '';
             title.value = typeof adapter.getTitle === 'function' ? adapter.getTitle() : '';
+            captureSourceViewState();
             initialMarkdown = source.value;
             initialTitle = title.value;
             if (typeof adapter.getPublishState === 'function') {
@@ -4256,6 +4321,7 @@
             }
             workspaceContext = { root: root, source: source, preview: preview, title: title };
             cancelDocumentDerivedState();
+            cancelSourceViewRestore();
             if (outlineResizeCleanup) {
                 outlineResizeCleanup();
             }

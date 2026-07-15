@@ -716,6 +716,15 @@ body.easymde-immersive-workspace-active {
     scale: 0.95;
 }
 
+.easymde-immersive-workspace__format-actions button:disabled {
+    border-color: transparent;
+    background: transparent;
+    color: #a8b1bf;
+    cursor: not-allowed;
+    opacity: 0.62;
+    scale: none;
+}
+
 .easymde-immersive-workspace__format-actions [data-view]:not(.is-active) {
     color: #64748b;
 }
@@ -993,6 +1002,41 @@ body.easymde-immersive-workspace-active {
 .easymde-immersive-workspace__preview-card > header strong {
     color: #62748e;
     font-weight: 500;
+}
+
+.easymde-immersive-workspace__preview-lock {
+    display: none;
+    height: 28px;
+    align-items: center;
+    gap: 6px;
+    padding: 0 9px;
+    border: 1px solid #d8dee8;
+    border-radius: 6px;
+    background: #fff;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.easymde-immersive-workspace__main[data-view="preview"] .easymde-immersive-workspace__preview-lock {
+    display: inline-flex;
+}
+
+.easymde-immersive-workspace__preview-lock:hover {
+    border-color: #b9c4d4;
+    background: #f8fafc;
+    color: #1e293b;
+}
+
+.easymde-immersive-workspace__preview-lock:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+}
+
+.easymde-immersive-workspace__preview-lock[data-lock-state="read-only"] {
+    border-color: #cbd5e1;
+    background: #f1f5f9;
+    color: #334155;
 }
 
 .easymde-immersive-workspace__outline-card header button,
@@ -1358,18 +1402,139 @@ body.easymde-immersive-workspace-active {
 }
 
 .easymde-immersive-workspace__preview-scroll {
+    position: relative;
     display: flex;
     justify-content: center;
     padding: 30px;
     background: #fff;
 }
 
+.easymde-immersive-workspace__rendered-preview-stage,
 .easymde-immersive-workspace__preview {
     width: 100%;
     min-height: 100%;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default {
+.easymde-immersive-workspace__visual-editor-host {
+    width: 100%;
+    min-height: 100%;
+}
+
+.easymde-immersive-workspace__main[data-view="preview"] .easymde-immersive-workspace__rendered-preview-stage {
+    position: absolute;
+    top: 0;
+    left: -100000px;
+    pointer-events: none;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor {
+    min-height: 100%;
+    outline: 0;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor [data-easymde-inline-content],
+.easymde-immersive-workspace .easymde-visual-editor [data-easymde-code-content] {
+    border-radius: 2px;
+    caret-color: currentColor;
+    outline: 0;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor [data-easymde-inline-content]:focus-visible,
+.easymde-immersive-workspace .easymde-visual-editor [data-easymde-code-content]:focus-visible {
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.24);
+}
+
+.easymde-immersive-workspace .easymde-visual-editor [data-easymde-inline-content][data-placeholder]:empty::before {
+	color: var(--easymde-workspace-muted);
+	content: attr(data-placeholder);
+	pointer-events: none;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor .is-outline-target {
+    outline: 2px solid rgba(37, 99, 235, 0.68);
+    outline-offset: 5px;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor.is-read-only [contenteditable="false"] {
+    cursor: text;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor__gap {
+    min-height: 1em;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor__list > :is(ol, ul) {
+    margin-block: 0;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor__list [data-easymde-task-toggle] {
+    margin-inline: 0 7px;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor__code {
+    position: relative;
+    margin-inline: 0;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor__code [data-easymde-code-language] {
+    width: min(180px, 45%);
+    height: 28px;
+    margin: 0 0 6px auto;
+    padding: 0 8px;
+    border: 1px solid #d8dee8;
+    border-radius: 4px;
+    background: #fff;
+    color: #475569;
+    font: 12px/1.4 "EasyMDE UI JetBrains Mono", monospace;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor__protected {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+    margin-block: 18px;
+    padding: 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #f8fafc;
+    color: #475569;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor__protected:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor__protected > strong {
+    color: #334155;
+    font-size: 12px;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor__protected > pre {
+    grid-column: 1 / -1;
+    max-height: 128px;
+    margin: 0;
+    padding: 10px;
+    overflow: auto;
+    border: 0;
+    border-radius: 4px;
+    background: #eef2f6;
+    color: #526071;
+    font-size: 12px;
+    white-space: pre-wrap;
+}
+
+.easymde-immersive-workspace .easymde-visual-editor__protected > button {
+    align-self: start;
+    padding: 3px 7px;
+    border: 1px solid #b9c4d4;
+    border-radius: 4px;
+    background: #fff;
+    color: #334155;
+    font-size: 11px;
+}
+
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default {
     max-width: 680px;
     margin: 0 auto;
     padding: 26.25px 30px;
@@ -1378,7 +1543,7 @@ body.easymde-immersive-workspace-active {
     line-height: 1.85;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default h1 {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default h1 {
     margin: 24px 0 12px;
     color: #0f172a;
     font-family: "EasyMDE UI Lora", Georgia, serif !important;
@@ -1388,7 +1553,7 @@ body.easymde-immersive-workspace-active {
     letter-spacing: -0.02em;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default h2 {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default h2 {
     display: inline-block;
     margin: 30px 0 9px;
     padding-bottom: 7.5px;
@@ -1402,7 +1567,7 @@ body.easymde-immersive-workspace-active {
     text-transform: uppercase;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default h3 {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default h3 {
     margin: 22.5px 0 6px;
     color: #0f172a;
     font-family: "EasyMDE UI Inter", system-ui, sans-serif !important;
@@ -1411,7 +1576,7 @@ body.easymde-immersive-workspace-active {
     line-height: 22.5px;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default h4 {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default h4 {
     margin: 18px 0 4.5px;
     color: #0f172a;
     font-family: "EasyMDE UI Inter", system-ui, sans-serif !important;
@@ -1420,7 +1585,7 @@ body.easymde-immersive-workspace-active {
     line-height: 20.25px;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default :is(h5, h6) {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default :is(h5, h6) {
     margin: 18px 0 4.5px;
     color: #0f172a;
     font-family: "EasyMDE UI Inter", system-ui, sans-serif !important;
@@ -1429,38 +1594,38 @@ body.easymde-immersive-workspace-active {
     line-height: 24.975px;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default p {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default p {
     margin: 11.25px 0;
     font-size: inherit;
     line-height: inherit;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default strong {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default strong {
     color: #0f172a;
     font-weight: 600;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default em {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default em {
     font-style: italic;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default del {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default del {
     color: #94a3b8;
     text-decoration: line-through;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default a {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default a {
     border-bottom: 1px solid #f5a89e;
     color: #e74c3c;
     text-decoration: none;
     transition: border-color 150ms ease;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default a:hover {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default a:hover {
     border-bottom-color: #e74c3c;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default :not(pre) > code {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default :not(pre) > code {
     margin: 0;
     padding: 1.845px 4.92px;
     border-radius: 3px;
@@ -1471,7 +1636,7 @@ body.easymde-immersive-workspace-active {
     line-height: 22.755px;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default blockquote {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default blockquote {
     margin: 18.75px 0;
     padding: 15px 18.75px;
     border-left: 3px solid #e74c3c;
@@ -1482,57 +1647,57 @@ body.easymde-immersive-workspace-active {
     line-height: inherit;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default blockquote p {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default blockquote p {
     margin: 0;
     color: inherit;
     font-size: inherit;
     line-height: inherit;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default ul {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default ul {
     margin: 11.25px 0;
     padding-left: 22.5px;
     list-style: none;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default ul > li::before {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default ul > li::before {
     content: "—";
     margin-right: 9px;
     color: #e74c3c;
     font-weight: 600;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default ol {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default ol {
     margin: 11.25px 0;
     padding-left: 22.5px;
     list-style: decimal;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default li {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default li {
     margin: 3.75px 0;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default li > p {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default li > p {
     display: inline;
     margin: 0;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default .task-list {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default .task-list {
     padding-left: 3.75px;
     list-style: none;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default .task-item {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default .task-item {
     display: flex;
     align-items: baseline;
     gap: 7.5px;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default .task-item::before {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default .task-item::before {
     content: none;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default .task-item input[type="checkbox"] {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default .task-item input[type="checkbox"] {
     width: 13px;
     height: 13px;
     margin-top: 3px;
@@ -1540,13 +1705,13 @@ body.easymde-immersive-workspace-active {
     accent-color: #e74c3c;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default hr {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default hr {
     margin: 30px 0;
     border: 0;
     border-top: 1px solid rgba(15, 23, 42, 0.1);
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default table {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default table {
     width: 100%;
     margin: 18.75px 0;
     border-collapse: collapse;
@@ -1556,7 +1721,7 @@ body.easymde-immersive-workspace-active {
     line-height: 24.28125px;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default th {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default th {
     padding: 9px 13.125px;
     border: 0;
     background: #e74c3c;
@@ -1569,7 +1734,7 @@ body.easymde-immersive-workspace-active {
     text-transform: uppercase;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default td {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default td {
     padding: 8.25px 13.125px;
     border: 0;
     border-bottom: 1px solid rgba(15, 23, 42, 0.07);
@@ -1578,15 +1743,15 @@ body.easymde-immersive-workspace-active {
     line-height: 24.28125px;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default tr:last-child td {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default tr:last-child td {
     border-bottom: 0;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default tr:nth-child(even) td {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default tr:nth-child(even) td {
     background: #f8fafc;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default img {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default img {
     display: block;
     max-width: 100%;
     height: auto;
@@ -1594,13 +1759,13 @@ body.easymde-immersive-workspace-active {
     border-radius: 4px;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default pre {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default pre {
     margin: 18.75px 0;
     border-radius: 6px;
     overflow: hidden;
 }
 
-.easymde-immersive-workspace .easymde-immersive-workspace__preview.easymde-markdown-theme-default pre code {
+.easymde-immersive-workspace :is(.easymde-immersive-workspace__preview, .easymde-immersive-workspace__visual-editor-host).easymde-markdown-theme-default pre code {
     display: block;
     margin: 0;
     padding: 18.75px 22.5px;

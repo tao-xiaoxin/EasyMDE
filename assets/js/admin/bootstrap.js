@@ -30,6 +30,7 @@
     var imagePasteLoadPromise = null;
     var mediaPickerLoadPromise = null;
     var wechatExporterLoadPromise = null;
+    var visualEditorLoadPromise = null;
     var activePreviewFeatures = normalizePreviewFeatures(config.features || {});
     var draftTimer = null;
     var localDraftsEnabled = !(config.features && config.features.localDrafts === false);
@@ -1741,6 +1742,47 @@
                     node.setAttribute('style', context.preview.attr('style') || '');
                     updatePreview($(node), markdown, options || {});
                 },
+                mountVisualEditor: function (node, markdown, options) {
+                    return ensureVisualEditorRuntime().then(function () {
+                        var visualApi = window.EasyMDEVisualEditorAdapter;
+                        var instance;
+
+                        if (!visualApi || typeof visualApi.createAdapter !== 'function') {
+                            throw new Error(getString('visualEditorUnavailable'));
+                        }
+                        instance = visualApi.createAdapter();
+                        if (options && typeof options.onChange === 'function') {
+                            instance.onChange(options.onChange);
+                        }
+                        if (options && typeof options.onError === 'function') {
+                            instance.onError(options.onError);
+                        }
+                        instance.mount(node, markdown, options || {});
+                        return instance;
+                    });
+                },
+                uploadVisualImage: function (file, source, range) {
+                    return ensureImagePasteBound(context.textarea, context.root, context.flash).then(function (loaded) {
+                        if (
+                            !loaded
+                            || !window.EasyMDEImagePaste
+                            || typeof window.EasyMDEImagePaste.handleFile !== 'function'
+                        ) {
+                            showFlash(context.flash, 'error', imagePasteFailureMessage(source));
+                            return false;
+                        }
+                        return window.EasyMDEImagePaste.handleFile(
+                            file,
+                            null,
+                            context.textarea,
+                            Object.assign(imagePasteOptions(context.root, context.flash), {
+                                blockInsertion: true
+                            }),
+                            source,
+                            range
+                        );
+                    });
+                },
                 scrollSourceToOffset: function (textarea, offset) {
                     var line = textarea.value.slice(0, offset).split('\n').length - 1;
                     var style = window.getComputedStyle(textarea);
@@ -1882,6 +1924,9 @@
                     var shortcut = normalizeEventShortcut(event);
                     var matchedCommand = null;
                     var command;
+                    var visualTarget = event.target && event.target.closest
+                        ? event.target.closest('[data-easymde-visual-editor]')
+                        : null;
 
                     if (!shortcut || event.isComposing || event.keyCode === 229) {
                         return false;
@@ -1899,17 +1944,18 @@
                     command = getCommand(matchedCommand);
                     if (
                         event.target !== textarea
+                        && !visualTarget
                         && (!command || ['savePost', 'copyWechat'].indexOf(command.action) === -1)
                     ) {
                         return false;
                     }
                     if (
-                        event.target === textarea
+                        (event.target === textarea || visualTarget)
                         && command
                         && ['savePost', 'copyWechat'].indexOf(command.action) === -1
                     ) {
                         if (typeof executeSourceCommand !== 'function') {
-                            throw new Error('The immersive source command shortcut adapter is unavailable.');
+                            throw new Error('The immersive command shortcut adapter is unavailable.');
                         }
                         executeSourceCommand(matchedCommand);
                         return true;
@@ -2474,6 +2520,38 @@
         return previewFeatureLoader.loadScript(id, src, document).then(function (result) {
             return !(result && result.status === 'failed');
         });
+    }
+
+    function ensureVisualEditorRuntime() {
+        if (
+            window.EasyMDEVisualMarkdownModel
+            && window.EasyMDEVisualEditorAdapter
+        ) {
+            return Promise.resolve(true);
+        }
+        if (!visualEditorLoadPromise) {
+            visualEditorLoadPromise = loadDeferredScript(
+                'easymde-visual-markdown-model-js',
+                config.visualModelScriptUrl
+            ).then(function (modelLoaded) {
+                if (!modelLoaded || !window.EasyMDEVisualMarkdownModel) {
+                    throw new Error(getString('visualEditorUnavailable'));
+                }
+                return loadDeferredScript(
+                    'easymde-visual-editor-adapter-js',
+                    config.visualAdapterScriptUrl
+                );
+            }).then(function (adapterLoaded) {
+                if (!adapterLoaded || !window.EasyMDEVisualEditorAdapter) {
+                    throw new Error(getString('visualEditorUnavailable'));
+                }
+                return true;
+            }).catch(function (error) {
+                visualEditorLoadPromise = null;
+                throw error;
+            });
+        }
+        return visualEditorLoadPromise;
     }
 
     function ensureImagePasteBound(textarea, $root, $flash) {

@@ -45,6 +45,16 @@ The workspace owns presentation and transient UI state only. It synchronizes wit
 
 The workspace may persist only layout preferences in browser storage: the source/preview split ratio and outline width. Its AI panel is a local interface demonstration and must not read article content, make network requests, or persist AI input or output.
 
+### Structured Visual Preview
+
+Immersive writing starts in **Edit**. **Split** keeps the Markdown source editable and the rendered preview read-only. **Preview** lazy-loads `visual-markdown-model.js` and `visual-editor-adapter.js`, keeps the formatting toolbar visible, and exposes a session-only **Editable** / **Read-only** lock. The lock is not post meta, user meta, browser storage, HTML, or revision state, and changing modes or the lock never submits the WordPress form.
+
+`VisualMarkdownModel` parses canonical Markdown into supported structured nodes with original source ranges and source slices. A no-op serialization returns the exact original bytes. A changed supported node is serialized deterministically while unchanged nodes retain their original slices. Images, tables, Mermaid, math, TOC markers, raw HTML, and unknown extension syntax are protected atomic nodes; they cannot be partially edited and route authors back to the corresponding Markdown source range.
+
+`VisualEditorAdapter` owns the semantic editor DOM, allowlisted DOM-to-model conversion, selection bookmarks, IME transactions, visual-session undo/redo, safe plain-text paste, file-transfer routing, read-only enforcement, and lifecycle cleanup. It never serializes `innerHTML` to Markdown. Visual changes re-enter the existing source textarea `input` pipeline, so the native mirror, local drafts, outline, statistics, preview, and eventual WordPress save continue to consume one canonical Markdown document.
+
+Image paste and drop reuse the existing local WordPress media upload path. The visual adapter resolves a block boundary in the latest Markdown, switches to Edit, and invokes the same nonce-, capability-, post-ID-, and size-aware upload helper. Successful uploads insert a protected Markdown image block; failed uploads leave the document unchanged.
+
 ## Data Model
 
 Markdown is the source of truth in `_easymde_markdown`. WordPress `post_content` stores rendered HTML for themes, feeds, search, plugins, visitors, and compatibility when EasyMDE is inactive.

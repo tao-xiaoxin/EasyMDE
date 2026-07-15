@@ -184,11 +184,30 @@
         };
     }
 
-    function insertAtCursor(textarea, markdown, applyTextChange, range) {
+    function independentBlockMarkdown(markdown, value, start, end) {
+        var lineEnding = String(value || '').indexOf('\r\n') !== -1 ? '\r\n' : '\n';
+        var before = String(value || '').slice(0, start);
+        var after = String(value || '').slice(end);
+        var prefix = '';
+        var suffix = '';
+
+        if (before && before.slice(-lineEnding.length * 2) !== lineEnding + lineEnding) {
+            prefix = before.slice(-lineEnding.length) === lineEnding ? lineEnding : lineEnding + lineEnding;
+        }
+        if (after && after.slice(0, lineEnding.length * 2) !== lineEnding + lineEnding) {
+            suffix = after.slice(0, lineEnding.length) === lineEnding ? lineEnding : lineEnding + lineEnding;
+        }
+        return prefix + markdown + suffix;
+    }
+
+    function insertAtCursor(textarea, markdown, applyTextChange, range, blockInsertion) {
         var value = textarea.value;
         var selection = rebaseRange(textarea, range || selectedRange(textarea));
         var start = Math.max(0, Math.min(selection.start, value.length));
         var end = Math.max(start, Math.min(selection.end, value.length));
+        if (blockInsertion) {
+            markdown = independentBlockMarkdown(markdown, value, start, end);
+        }
         var nextValue = textarea.value.slice(0, start) + markdown + textarea.value.slice(end);
 
         if (typeof applyTextChange === 'function') {
@@ -309,7 +328,7 @@
                 throw new Error('Missing uploaded image URL.');
             }
 
-            insertAtCursor(textarea, markdown, options.applyTextChange, insertionRange);
+            insertAtCursor(textarea, markdown, options.applyTextChange, insertionRange, !!options.blockInsertion);
             showFlash(options.flash, 'success', uploadString(getString, source, 'Uploaded'));
             return upload;
         }).catch(function () {

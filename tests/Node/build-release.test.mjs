@@ -82,6 +82,8 @@ function createAssetSourceFiles(root) {
       "Asset::url( 'assets/js/admin/media-picker.js' );",
       "Asset::url( 'assets/js/admin/image-paste.js' );",
       "Asset::url( 'assets/js/admin/wechat-exporter.js' );",
+      "Asset::url( 'assets/js/admin/visual-markdown-model.js' );",
+      "Asset::url( 'assets/js/admin/visual-editor-adapter.js' );",
       "Asset::url( 'assets/js/admin/bootstrap.js' );"
     ].join('\n')
   );
@@ -208,6 +210,8 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.mo'));
     assert.ok(entries.includes('easymde/assets/js/admin/media-picker.js'));
     assert.ok(entries.includes('easymde/assets/js/admin/image-paste.js'));
+    assert.ok(entries.includes('easymde/assets/js/admin/visual-markdown-model.js'));
+    assert.ok(entries.includes('easymde/assets/js/admin/visual-editor-adapter.js'));
     assert.ok(entries.includes('easymde/assets/js/frontend/bootstrap.js'));
     assert.ok(entries.includes('easymde/assets/vendor/mermaid/LICENSE'));
     assert.ok(entries.includes('easymde/assets/vendor/lucide/LICENSE'));

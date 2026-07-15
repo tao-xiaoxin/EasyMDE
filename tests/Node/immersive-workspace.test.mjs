@@ -41,6 +41,29 @@ test('immersive workspace exposes isolated controller and pure document helpers'
   assert.equal(typeof workspace.normalizeTableDimensions, 'function');
   assert.equal(typeof workspace.hasUnsavedWorkspaceChanges, 'function');
   assert.equal(typeof workspace.filterImmersiveHeadingCommands, 'function');
+  assert.equal(typeof workspace.resolveEditingSurface, 'function');
+});
+
+test('immersive editing surface is derived from mode and preview lock state', () => {
+  const workspace = loadWorkspaceModule();
+
+  assert.equal(workspace.resolveEditingSurface('edit', false), 'source');
+  assert.equal(workspace.resolveEditingSurface('split', false), 'source');
+  assert.equal(workspace.resolveEditingSurface('split', true), 'source');
+  assert.equal(workspace.resolveEditingSurface('preview', false), 'visual');
+  assert.equal(workspace.resolveEditingSurface('preview', true), 'none');
+  assert.throws(() => workspace.resolveEditingSurface('invalid', false), /view mode/i);
+});
+
+test('immersive shell defaults to Edit and exposes an accessible Preview lock control', () => {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/immersive-workspace.js'), 'utf8');
+
+  assert.match(source, /var viewMode = 'edit';/);
+  assert.match(source, /data-preview-lock/);
+  assert.match(source, /data-preview-lock-label/);
+  assert.match(source, /aria-pressed="false"/);
+  assert.match(source, /setView\('edit'\)/);
+  assert.doesNotMatch(source, /toolbar\.hidden = mode === 'preview'/);
 });
 
 test('immersive heading commands whitelist H1-H6 without changing the shared registry', () => {
@@ -137,6 +160,10 @@ test('immersive view transitions restore source selection before scroll offsets'
   );
   assert.match(setViewSource, /viewMode !== 'preview' && sourceViewRestoreFrame === null[\s\S]*captureSourceViewState\(\)/);
   assert.match(setViewSource, /mode !== 'preview'[\s\S]*scheduleSourceViewRestore\(mode\)/);
+  assert.ok(
+    setViewSource.indexOf('captureSourceViewState();') < setViewSource.indexOf('adapter.mountVisualEditor('),
+    'source selection must be captured before async visual-editor mounting can move focus'
+  );
   assert.match(source, /function deactivate\(\)[\s\S]*cancelDocumentDerivedState\(\);\s*cancelSourceViewRestore\(\);/);
 });
 
@@ -154,8 +181,8 @@ test('immersive commands preserve selection direction across toolbar and shortcu
   assert.match(commitSource, /source\.setSelectionRange\(\s*source\.selectionStart,\s*source\.selectionEnd,\s*rollbackSelection\.direction \|\| 'none'/);
   assert.match(commandSource, /commandSelection = selection \|\| sourceSelection \|\| captureSourceSelection\(\)/);
   assert.match(commandSource, /commitExecutedSourceChange\(before, commandSelection\)/);
-  assert.match(source, /executeSourceCommand\(commandId, sourceSelection\)/);
-  assert.match(source, /adapter\.handleShortcut\(event, source, function \(commandId\) \{\s*executeSourceCommand\(commandId, captureSourceSelection\(\)\);/);
+  assert.match(source, /executeActiveCommand\(commandId, sourceSelection\)/);
+  assert.match(source, /adapter\.handleShortcut\(event, source, function \(commandId\) \{\s*executeActiveCommand\(/);
 });
 
 test('publish categories build a stable tree from real WordPress parent ids', () => {
@@ -362,8 +389,8 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(source, /data-command="bold" title="' \+ label\('boldShortcutTitle', 'Bold \(Ctrl\+B\)'\) \+ '" aria-label="' \+ label\('bold', 'Bold'\)/);
   assert.match(source, /data-command="italic" title="' \+ label\('italicShortcutTitle', 'Italic \(Ctrl\+I\)'\) \+ '" aria-label="' \+ label\('italic', 'Italic'\)/);
   assert.match(source, /data-command="quote" title="' \+ label\('quoteTitle', 'Blockquote'\) \+ '" aria-label="' \+ label\('quote', 'Quote'\)/);
-  assert.match(source, /data-view="edit" aria-pressed="false" title="' \+ label\('editModeTitle', 'Edit mode'\) \+ '" aria-label="' \+ label\('editMode', 'Edit'\)/);
-  assert.match(source, /data-view="split" class="is-active" aria-pressed="true" title="' \+ label\('splitModeTitle', 'Split mode'\) \+ '" aria-label="' \+ label\('splitMode', 'Split'\)/);
+  assert.match(source, /data-view="edit" class="is-active" aria-pressed="true" title="' \+ label\('editModeTitle', 'Edit mode'\) \+ '" aria-label="' \+ label\('editMode', 'Edit'\)/);
+  assert.match(source, /data-view="split" aria-pressed="false" title="' \+ label\('splitModeTitle', 'Split mode'\) \+ '" aria-label="' \+ label\('splitMode', 'Split'\)/);
   assert.match(source, /data-view="preview" aria-pressed="false" title="' \+ label\('previewModeTitle', 'Preview mode'\) \+ '" aria-label="' \+ label\('previewMode', 'Preview'\)/);
   assert.match(source, /data-action="exit" title="' \+ label\('immersiveModeTitle', 'Immersive writing'\) \+ '" aria-label="' \+ label\('exitImmersive', 'Exit immersive writing'\)/);
   assert.match(source, /data-action="wechat"[^>]*title="' \+ label\('copyWechatImmersiveTitle', 'Copy current preview content to WeChat'\) \+ '" aria-label="' \+ label\('copyWechatTitle', 'Copy preview for WeChat'\)/);
@@ -384,7 +411,7 @@ test('immersive workspace keeps the reference shell geometry instead of rounded 
   assert.match(zh, /msgid "Font settings"\nmsgstr "字体设置"/);
   assert.match(source, /measuredHeight <= Math\.ceil\(lineHeight\) \? lineHeight : measuredHeight/);
   assert.match(source, /listen\(win, 'resize', function \(\) \{\s*setSourceRatio\(sourceRatio\);\s*updateTitleHeight\(\);\s*\}\);/s);
-  assert.match(source, /toolbar\.hidden = mode === 'preview';/);
+  assert.doesNotMatch(source, /toolbar\.hidden = mode === 'preview';/);
   assert.match(source, /data-featured-candidate/);
   assert.match(source, /data-action="use-featured-candidate"/);
   assert.match(source, /featuredImageCandidate = image;/);
@@ -417,7 +444,8 @@ test('revision navigation detects unsaved title or Markdown without treating nor
 test('default immersive preview uses the reference prose geometry without overriding real article themes', () => {
   const css = readFileSync(join(repoRoot, 'assets/css/admin/immersive-workspace.css'), 'utf8');
 
-  const rule = (suffix = '') => new RegExp(`__preview\\.easymde-markdown-theme-default${suffix}\\s*\\{([^}]*)\\}`, 's').exec(css)?.[1] || '';
+  const sharedScope = String.raw`:is\(\.easymde-immersive-workspace__preview, \.easymde-immersive-workspace__visual-editor-host\)\.easymde-markdown-theme-default`;
+  const rule = (suffix = '') => new RegExp(`${sharedScope}${suffix}\\s*\\{([^}]*)\\}`, 's').exec(css)?.[1] || '';
   const rootRule = rule();
   const h1Rule = rule(' h1');
   const h2Rule = rule(' h2');
@@ -456,7 +484,7 @@ test('default immersive preview uses the reference prose geometry without overri
 
 test('default immersive preview completes the reference prose grammar', () => {
   const css = readFileSync(join(repoRoot, 'assets/css/admin/immersive-workspace.css'), 'utf8');
-  const scope = String.raw`\.easymde-immersive-workspace \.easymde-immersive-workspace__preview\.easymde-markdown-theme-default`;
+  const scope = String.raw`\.easymde-immersive-workspace :is\(\.easymde-immersive-workspace__preview, \.easymde-immersive-workspace__visual-editor-host\)\.easymde-markdown-theme-default`;
   const rule = (selector) => new RegExp(`${scope}${selector}\\s*\\{([^}]*)\\}`, 's').exec(css)?.[1] || '';
 
   const h3Rule = rule(' h3');
@@ -1431,6 +1459,20 @@ test('outline depth follows document hierarchy instead of raw heading numbers', 
       { level: 3, depth: 1 },
       { level: 1, depth: 0 },
       { level: 3, depth: 1 }
+    ]
+  );
+});
+
+test('outline source offsets preserve original CRLF positions', () => {
+  const workspace = loadWorkspaceModule();
+  const markdown = '# First\r\n\r\n## Second\r\n';
+  const outline = workspace.parseOutline(markdown);
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(outline.map(({ text, offset }) => ({ text, offset })))),
+    [
+      { text: 'First', offset: 0 },
+      { text: 'Second', offset: markdown.indexOf('## Second') }
     ]
   );
 });

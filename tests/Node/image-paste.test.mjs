@@ -543,6 +543,45 @@ test('image paste can use a file and range captured before lazy loading', async 
   assert.equal(textarea.value, 'Hello![lazy cursor](https://example.test/uploads/lazy-cursor.png) world');
 });
 
+test('visual image insertion creates an independent Markdown block without changing source behavior', async () => {
+  const { imagePaste } = loadImagePaste({
+    wp: {
+      apiFetch() {
+        return Promise.resolve({
+          alt: 'Visual',
+          url: '/wp-content/uploads/visual.png'
+        });
+      }
+    }
+  });
+  const textarea = createTextarea('Paragraph without trailing newline');
+  const event = imagePasteEvent({
+    name: 'visual.png',
+    size: 256,
+    type: 'image/png'
+  });
+  const { options } = createOptions();
+  options.blockInsertion = true;
+
+  await imagePaste.handleFile(
+    event.clipboardData.items[0].getAsFile(),
+    event,
+    textarea,
+    options,
+    'drop',
+    {
+      start: textarea.value.length,
+      end: textarea.value.length,
+      value: textarea.value
+    }
+  );
+
+  assert.equal(
+    textarea.value,
+    'Paragraph without trailing newline\n\n![Visual](/wp-content/uploads/visual.png)'
+  );
+});
+
 test('image paste ignores non-image clipboard content', () => {
   let apiFetchCalled = false;
   const { imagePaste } = loadImagePaste({

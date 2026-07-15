@@ -134,9 +134,16 @@ Before editing:
 * Record the reference viewport, browser, zoom, device-pixel ratio, font state,
   content or fixture, UI state, and interaction state. A comparison is invalid
   when these inputs differ without explanation.
+* Record a stable reference identifier such as the approved design revision,
+  source commit, or dated capture. Evidence from a changed or unidentified
+  reference must not be mixed into the same comparison without re-baselining.
 * Separate requirements into visual, behavioral, responsive, accessibility,
   data or integration, and compatibility invariants. Name the observable
   evidence that will prove each invariant.
+* Define the supported comparison matrix and acceptance tolerances before
+  implementation. Include the required breakpoint boundaries, zoom or text
+  scale, locale or text direction, input modes, and UI states. Do not choose or
+  widen tolerances after seeing a failing result.
 * Resolve conflicts between references explicitly. Prefer approved design code
   and a reproducible rendered reference over visual guesses from a single
   screenshot. Do not invent hidden responsive or interaction behavior from an
@@ -152,12 +159,26 @@ surface that could regress.
 
 * Use the same deterministic test content, viewport, state, and local assets for
   reference and implementation captures.
+* Establish a render-readiness barrier before measuring or capturing. Required
+  fonts must be loaded, images decoded, previews and asynchronous data settled,
+  and intentional animation, transition, caret, and clock state made
+  deterministic. A missing asset or rejected readiness step is a test failure,
+  not a reason to capture the intermediate frame.
 * Inspect the actual reference HTML, CSS, assets, fonts, icons, breakpoints, and
   interaction code when available. Copying source without understanding its
   dependencies, state model, or ownership boundaries is not verification.
 * Record the DOM order, relevant ancestor geometry, bounding boxes, computed
   styles, overflow behavior, stacking contexts, focus state, and scroll state
   for the major regions. Screenshots alone cannot reveal these contracts.
+* Trace material computed values back through the cascade. Inspect inherited
+  declarations, custom properties, resets, selector specificity, box sizing,
+  and `::before` or `::after` paint where they affect the result. A matching
+  child declaration does not prove that a global or legacy rule is isolated.
+* Verify asset provenance and runtime delivery. Confirm that the intended font
+  family and weight actually render instead of a fallback, exact icons and
+  images resolve locally, required licenses are present, release packaging
+  includes runtime files, and the tested page makes no prohibited remote asset
+  request.
 * Build a component and state inventory that includes empty, loading, disabled,
   hover, focus-visible, active, success, error, open, closed, long-content, and
   narrow-viewport states where applicable.
@@ -184,6 +205,12 @@ or event handlers.
   Correct the owning layer or the first divergent ancestor.
 * Preserve DOM order when visual order carries editing, reading, or keyboard
   meaning. CSS reordering must not contradict source order or accessibility.
+* Define the surface lifecycle as part of its ownership boundary. Any body or
+  ancestor class, inline style, CSS variable, scroll lock, cursor, selection
+  lock, overlay, portal, event listener, observer, timer, or pointer capture
+  created on entry must be restored or released on exit, cancellation,
+  destruction, and failed initialization. Re-entering the surface must not
+  multiply handlers or retain stale state.
 
 #### 4. Implement in verifiable slices
 
@@ -202,6 +229,10 @@ For each slice:
 * Compare the same component in the same state before moving on. Measure edges,
   gaps, baselines, line heights, icon boxes, and hit targets rather than relying
   on memory.
+* Verify component order, grouping, alignment, padding, border radius,
+  separators, and stacking together with dimensions. A correct individual
+  button is still a mismatch when its group order, shared boundary, or layer is
+  wrong.
 * Use the repository's existing icon source and exact approved glyph when the
   product contract requires compatibility. Do not substitute a similar icon or
   clone it from unrelated runtime DOM.
@@ -223,6 +254,11 @@ Visual state and functional state must agree.
   return; Escape and cancellation; tab order; dialogs and overlays; scrolling;
   drag boundaries; disabled, pending, success, and error states; and reduced
   motion or forced-colors behavior where relevant.
+* Exercise interrupted and repeated lifecycles: rapid duplicate activation,
+  pointer cancellation or lost capture, resize during drag, rejection after a
+  dialog closes, late asynchronous completion, and repeated enter-exit cycles.
+  Verify that stale work cannot mutate the new surface or leave global browser
+  state behind.
 * Verify that opening, closing, focusing, previewing, or cancelling UI performs
   no hidden save or persistence action unless the product contract requires it.
 * For controls backed by WordPress or editor behavior, verify the real adapter,
@@ -231,8 +267,17 @@ Visual state and functional state must agree.
 * Confirm that labels, ARIA state, visual state, and actual behavior transition
   together. A button must not report success before its asynchronous operation
   succeeds or remain interactive while a duplicate operation is pending.
+* Inspect the accessibility tree for the effective role, accessible name,
+  description, value, state, and relationships of custom controls. Verify dialog
+  focus containment and return, disabled semantics, logical reading order, and
+  text and non-text contrast in every interactive state; the presence of ARIA
+  attributes alone is not accessibility proof.
 * Preserve selection, scroll position, IME composition, undo history, and focus
   when an editing workflow crosses toolbars, dialogs, view modes, or overlays.
+* Verify local preference failure paths with storage disabled, corrupted values,
+  and quota or access exceptions. Layout preferences may degrade to documented
+  defaults, but article content and publishing state must not be copied into
+  layout storage or silently persisted as a fallback.
 
 #### 6. Compare under controlled conditions
 
@@ -241,6 +286,11 @@ the complete interaction is wired.
 
 * Capture reference and implementation at identical desktop and narrow
   viewports, with identical content, UI state, fonts, zoom, and animation state.
+* Test each responsive transition at values immediately below, at, and above
+  the declared breakpoint. Where applicable, also test orientation changes,
+  browser zoom or text scaling, scrollbar appearance, safe-area insets, the
+  mobile visual viewport, and an open software keyboard; viewport screenshots
+  taken with the keyboard closed do not prove editing usability.
 * Compare the full composition first, then major regions, then individual
   controls. Side-by-side images, overlays, or pixel diffs are diagnostic tools;
   none replaces DOM, geometry, computed-style, and behavior assertions.
@@ -253,6 +303,9 @@ the complete interaction is wired.
 * Use tolerance only for understood rendering variance such as font rasterizing
   or subpixel rounding. Do not widen screenshot thresholds to hide deterministic
   layout, color, icon, or state differences.
+* When behavior depends on browser rendering or input APIs, exercise every
+  supported engine available to the project or identify the unverified engines
+  explicitly. A Chromium result must not be presented as cross-browser proof.
 
 #### 7. Prove completion and clean evidence
 
@@ -265,8 +318,14 @@ Required completion evidence, when applicable:
 * real-browser assertions for computed styles, bounding boxes, DOM or visual
   order, focus, keyboard behavior, overflow, and responsive constraints;
 * controlled screenshots for the agreed reference states and viewports;
+* readiness assertions proving fonts, images, preview content, and required
+  assets completed successfully before geometry or screenshot evidence was
+  collected;
 * negative checks proving protected legacy or normal-mode surfaces did not
   change;
+* lifecycle checks proving repeated entry, cancellation, failure, and exit leave
+  no leaked overlays, handlers, timers, pointer state, scroll locks, body styles,
+  or stale asynchronous updates;
 * an explicit account of the three to five most likely visual or interaction
   failure modes and how each was tested, fixed, or left unverified;
 * an honest list of browsers, operating systems, input modes, or states that

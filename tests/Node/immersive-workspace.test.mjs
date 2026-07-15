@@ -40,6 +40,36 @@ test('immersive workspace exposes isolated controller and pure document helpers'
   assert.equal(typeof workspace.createTableMarkdown, 'function');
   assert.equal(typeof workspace.normalizeTableDimensions, 'function');
   assert.equal(typeof workspace.hasUnsavedWorkspaceChanges, 'function');
+  assert.equal(typeof workspace.filterImmersiveHeadingCommands, 'function');
+});
+
+test('immersive heading commands whitelist H1-H6 without changing the shared registry', () => {
+  const workspace = loadWorkspaceModule();
+  const commands = [
+    { id: 'paragraph' },
+    { id: 'heading1' },
+    { id: 'heading2' },
+    { id: 'extension-heading' },
+    { id: 'heading3' },
+    { id: 'heading4' },
+    { id: 'heading5' },
+    { id: 'heading6' }
+  ];
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(workspace.filterImmersiveHeadingCommands(commands))).map((command) => command.id),
+    ['heading1', 'heading2', 'heading3', 'heading4', 'heading5', 'heading6']
+  );
+  assert.deepEqual(commands.map((command) => command.id), [
+    'paragraph',
+    'heading1',
+    'heading2',
+    'extension-heading',
+    'heading3',
+    'heading4',
+    'heading5',
+    'heading6'
+  ]);
 });
 
 test('publish category selection preserves hidden descendants while updating one checkbox', () => {

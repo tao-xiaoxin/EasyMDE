@@ -1066,15 +1066,14 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(headingMenu).toBeVisible();
     await expect(headingMenu).toHaveAttribute('id', 'easymde-immersive-heading-menu');
     await expect(headingMenu).toHaveAttribute('role', 'menu');
-    await expect(headingMenu.getByRole('menuitem')).toHaveCount(7);
+    await expect(headingMenu.getByRole('menuitem')).toHaveCount(6);
+    await expect(headingMenu.locator('[data-heading-command="paragraph"]')).toHaveCount(0);
     await expect(headingMenu.locator('[data-heading-menu-label]')).not.toBeEmpty();
     await expect(headingButton.locator('strong')).toHaveText('H2');
     await expect(headingButton).toHaveClass(/is-menu-open/);
-    const paragraphItem = headingMenu.locator('[data-heading-command="paragraph"]');
     const heading1Item = headingMenu.locator('[data-heading-command="heading1"]');
     const heading2Item = headingMenu.locator('[data-heading-command="heading2"]');
     const heading6Item = headingMenu.locator('[data-heading-command="heading6"]');
-    await expect(paragraphItem.locator('[data-heading-menu-key]')).toHaveText('P');
     await expect(heading1Item.locator('[data-heading-menu-key]')).toHaveText('H1');
     await expect(heading2Item).toHaveClass(/is-current/);
     await expect(heading2Item).toHaveAttribute('aria-current', 'true');
@@ -1120,12 +1119,11 @@ test.describe('EasyMDE editor workflows', () => {
     await selectImmersiveRange(page, 0, 0);
     await headingButton.click();
     await expect(headingButton.locator('strong')).toHaveText('H');
-    await expect(paragraphItem).toHaveAttribute('aria-current', 'true');
+    await expect(headingMenu.locator('[aria-current="true"]')).toHaveCount(0);
     await expect(heading2Item).not.toHaveAttribute('aria-current', 'true');
     await page.keyboard.press('Escape');
 
     const headingCases = [
-      ['paragraph', 'Section'],
       ['heading1', '# Section'],
       ['heading2', '## Section'],
       ['heading3', '### Section'],
@@ -1138,7 +1136,7 @@ test.describe('EasyMDE editor workflows', () => {
       await selectImmersiveRange(page, 0, 10);
       await headingButton.click();
       const menuItem = headingMenu.locator(`[data-heading-command="${command}"]`);
-      await expect(headingMenu.locator('[data-heading-command="paragraph"]')).toBeFocused();
+      await expect(heading1Item).toBeFocused();
       await menuItem.click();
       await expect(source).toHaveValue(output);
       await expect(nativeSource).toHaveValue(output);
@@ -1151,13 +1149,13 @@ test.describe('EasyMDE editor workflows', () => {
     await headingButton.press('ArrowUp');
     await expect(headingMenu.locator('[data-heading-command="heading6"]')).toBeFocused();
     await page.keyboard.press('Home');
-    await expect(headingMenu.locator('[data-heading-command="paragraph"]')).toBeFocused();
+    await expect(heading1Item).toBeFocused();
     await page.keyboard.press('End');
     await expect(headingMenu.locator('[data-heading-command="heading6"]')).toBeFocused();
     await page.keyboard.press('ArrowDown');
-    await expect(headingMenu.locator('[data-heading-command="paragraph"]')).toBeFocused();
+    await expect(heading1Item).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect(source).toHaveValue('Section');
+    await expect(source).toHaveValue('# Section');
 
     await selectImmersiveRange(page, 0, 7);
     await headingButton.click();
@@ -1246,8 +1244,8 @@ test.describe('EasyMDE editor workflows', () => {
         clipped: menu.clientHeight < menu.scrollHeight
       };
     })).toEqual({ bottom: 367, clipped: true });
-    await expect(paragraphItem).toBeFocused();
-    await paragraphItem.press('End');
+    await expect(heading1Item).toBeFocused();
+    await heading1Item.press('End');
     await expect(heading6Item).toBeFocused();
     expect(await heading6Item.evaluate((item) => {
       const itemRect = item.getBoundingClientRect();

@@ -16,6 +16,12 @@
         return normalizeLineEndings(value).replace(/[ \t\f\v]*\n+[ \t\f\v]*/g, ' ');
     }
 
+    function filterImmersiveHeadingCommands(commands) {
+        return (commands || []).filter(function (command) {
+            return command && /^heading[1-6]$/.test(command.id);
+        });
+    }
+
     function hasUnsavedWorkspaceChanges(state) {
         state = state || {};
         return normalizeLineEndings(state.markdown) !== normalizeLineEndings(state.initialMarkdown)
@@ -1252,6 +1258,8 @@
                 ? adapter.getSurfaceCommands('heading-menu')
                 : [];
             var menuLabel;
+
+            commands = filterImmersiveHeadingCommands(commands);
             if (!menu || menu.childNodes.length) {
                 return;
             }
@@ -4743,6 +4751,7 @@
         updatePublishCategorySelection: updatePublishCategorySelection,
         createController: createController,
         findFirstLocalImageCandidate: findFirstLocalImageCandidate,
+        filterImmersiveHeadingCommands: filterImmersiveHeadingCommands,
         getOutlineIconName: getOutlineIconName,
         normalizeTitle: normalizeTitle,
         normalizeTableDimensions: normalizeTableDimensions,

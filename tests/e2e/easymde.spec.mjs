@@ -2341,6 +2341,23 @@ test.describe('EasyMDE editor workflows', () => {
       await expectRenderedFixture(page, '.easymde-immersive-workspace__preview');
       await page.locator('[data-action="theme"]').click();
     }
+
+    for (const theme of catalog.codeThemes) {
+      await page.locator('[data-action="theme"]').click();
+      const codeThemeTrigger = page.locator('[data-appearance-key="codeTheme"]');
+      await codeThemeTrigger.click();
+      await codeThemeTrigger.locator('..').locator(`[data-appearance-value="${theme.id}"]`).click();
+      await expect(page.locator('#easymde-code-theme-field')).toHaveValue(theme.id);
+      await expect(page.locator('.easymde-immersive-workspace__preview')).toHaveClass(new RegExp(`(?:^|\\s)easymde-code-theme-${theme.id}(?:\\s|$)`));
+      await expect(page.locator('#easymde-highlight-theme-css')).toHaveAttribute('href', theme.cssUrl);
+      await expect(
+        page.locator('[data-appearance-key="codeTheme"]')
+          .locator('..')
+          .locator(`[data-appearance-value="${theme.id}"]`)
+      ).toHaveAttribute('aria-selected', 'true');
+      await expect(page.locator('.easymde-immersive-workspace__preview pre code.hljs').first()).toBeVisible();
+      await page.locator('[data-action="theme"]').click();
+    }
     expect(errors).toEqual([]);
   });
 

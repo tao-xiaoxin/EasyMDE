@@ -100,9 +100,7 @@ final class FrontendAssets {
 				array( 'easymde-content' ),
 				EASYMDE_VERSION
 			);
-		}
 
-		if ( ! empty( $features['syntaxHighlight'] ) ) {
 			wp_enqueue_style(
 				'easymde-highlight-theme',
 				Asset::url( $code_theme['asset_path'] ),

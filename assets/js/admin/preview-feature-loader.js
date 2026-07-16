@@ -349,9 +349,6 @@
 
         if (normalized.syntaxHighlight) {
             tasks.push(loadStylesheet(assets.codeFrameLinkId || 'easymde-code-frame-css', assets.codeFrameCssUrl, documentRef));
-        }
-
-        if (normalized.syntaxHighlight) {
             tasks.push(loadPreviewFeature('syntaxHighlight', context));
         }
 

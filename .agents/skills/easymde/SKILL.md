@@ -1,13 +1,13 @@
 ---
 name: easymde
-description: Use this Skill when building, modifying, debugging, reviewing, or validating EasyMDE React and TypeScript admin-editor features or related browser-side interfaces, including WordPress integration, Markdown editing and preview, publishing, revisions, media, themes, custom CSS, settings, local drafts, WeChat export, AI assistance, accessibility, performance, Vite builds, testing, and release packaging. Use the separate easymde-migration Skill when a task transfers ownership from legacy JavaScript to React.
+description: Use this Skill when building, modifying, debugging, reviewing, or validating EasyMDE React and TypeScript admin-editor features or related browser-side interfaces, including WordPress integration, Markdown editing and preview, publishing, revisions, media, themes, custom CSS, settings, local drafts, WeChat export, AI assistance, accessibility, performance, Vite builds, testing, and release packaging. Use the separate easymde-migration Skill when a task transfers ownership from legacy JavaScript or DOM-driven browser code to React.
 ---
 
 # EasyMDE React and TypeScript Development Guide
 
 EasyMDE is a standalone WordPress Markdown editor. React and TypeScript, built with Vite, are the approved browser-application architecture for the admin editor and related interactive WordPress administration surfaces.
 
-This Skill is the executable development contract. The durable rationale lives in `docs/REACT_DESIGN_PHILOSOPHY.md`. When a task replaces an existing JavaScript or DOM-driven owner, also load `.agents/skills/easymde-migration/SKILL.md`.
+This Skill is the executable development contract. The durable rationale lives in `docs/REACT_DESIGN_PHILOSOPHY.md`. For a task that replaces an existing JavaScript or DOM-driven owner, external task orchestration must supply the separate `easymde-migration` guidance; this Skill must not discover installed Skills or open or inspect peer Skill files.
 
 Do not introduce a pattern, dependency, abstraction, directory, service, or framework merely because it is common in another React project.
 

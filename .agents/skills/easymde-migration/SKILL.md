@@ -1,6 +1,6 @@
 ---
 name: easymde-migration
-description: Use this temporary skill when planning, implementing, reviewing, or validating the transfer of an existing EasyMDE browser-side behavior from legacy JavaScript ownership to the React, TypeScript, and Vite architecture. It governs characterization, typed seams, single-owner activation, rollback, deprecation, legacy removal, and migration evidence; do not use it for ordinary React feature work that has no legacy owner.
+description: Use this temporary skill when planning, implementing, reviewing, or validating the transfer of an existing EasyMDE browser-side behavior from legacy JavaScript or DOM-driven ownership to the React, TypeScript, and Vite architecture. It governs characterization, typed seams, single-owner activation, rollback, deprecation, legacy removal, and migration evidence; do not use it for ordinary React feature work that has no legacy owner.
 ---
 
 # EasyMDE Browser Migration Guide
@@ -37,7 +37,7 @@ Stop and ask when a proposed ownership, public contract, dependency, data migrat
 
 ## Companion Skill orchestration
 
-Use the smallest applicable set for the current migration unit. Read a named Skill before following it, and report unavailable Skills honestly.
+External task orchestration may supply the smallest applicable set below for the current migration unit. This Skill declares the expected guidance lenses but does not discover installed Skills or open or inspect peer Skill files. Apply only guidance actually supplied to the task, and report unavailable Skills honestly.
 
 - spec-driven-development: define the unit, invariants, failure behavior, commands, boundaries, and acceptance evidence before implementation.
 - deprecation-and-migration: inventory consumers, plan compatibility, track deprecation, and prove zero remaining use before deletion.

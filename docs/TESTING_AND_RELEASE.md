@@ -25,13 +25,13 @@ composer run lint:phpcs
 
 PHPUnit runs against the real WordPress test suite. The CI matrix covers:
 
-- PHP 7.4 with WordPress 6.0.
+- PHP 7.4 with WordPress 6.7.
 - PHP 8.3 with the latest WordPress version available to the installer.
 
 Local PHPUnit flow:
 
 ```bash
-scripts/install-wp-tests.sh easymde_phpunit <db_user> <db_password> <db_host> 6.0
+scripts/install-wp-tests.sh easymde_phpunit <db_user> <db_password> <db_host> 6.7
 composer run test:phpunit
 ```
 

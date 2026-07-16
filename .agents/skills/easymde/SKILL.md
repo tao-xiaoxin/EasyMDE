@@ -76,19 +76,18 @@ EasyMDE_Plugin::register_shortcode_helper();
 
 ## React Runtime Strategy
 
-Use the WordPress-provided element runtime through `@wordpress/element` and the `wp-element` script dependency by default. Do not accidentally ship a second React runtime into the WordPress admin.
+EasyMDE supports WordPress 6.7 or newer. Use the WordPress-provided element runtime through `@wordpress/element` and the `wp-element` script dependency. Do not ship a second React runtime into the WordPress admin.
 
-The minimum supported WordPress version is authoritative. EasyMDE currently supports WordPress 6.0, while `createRoot` is not available through `@wordpress/element` on every supported version. Keep root mounting behind one compatibility adapter:
+Mount application roots with `createRoot` from `@wordpress/element` and always unmount the returned root during teardown:
 
-```ts
-export interface MountedRoot {
-  render(node: React.ReactNode): void;
-  unmount(): void;
-}
+```tsx
+import { createRoot } from '@wordpress/element';
 
-export function mountWordPressRoot(element: HTMLElement): MountedRoot {
-  // Use createRoot when the current WordPress runtime provides it.
-  // Otherwise use the supported legacy render/unmount pair.
+export function mountEditor(element: HTMLElement): () => void {
+  const root = createRoot(element);
+  root.render(<EditorApp />);
+
+  return () => root.unmount();
 }
 ```
 
@@ -98,7 +97,7 @@ Rules:
 - Declare `wp-element` in generated WordPress asset dependency metadata.
 - Configure Vite so `@wordpress/element` is not silently bundled when the production runtime is WordPress-provided.
 - Do not pass components, elements, hooks, or contexts between two different React runtimes.
-- Do not use a React API that is unavailable on the minimum supported WordPress version without a tested compatibility adapter.
+- Do not add compatibility branches, legacy render fallbacks, or tests for unsupported WordPress versions below 6.7.
 - An intentional decision to bundle a private React runtime must be repository-wide, documented, size-reviewed, and isolated from WordPress React components.
 
 ## Repository Layout
@@ -742,7 +741,7 @@ Rules:
 - A production build must never reference a Vite development server, localhost, a temporary path, or a remote CDN.
 - Development HMR is local-only and cannot be required for normal plugin operation.
 - Preserve WordPress dependencies, translations, versioning, and load order.
-- Keep the JavaScript target compatible with the documented browser and minimum WordPress support policy.
+- Keep the JavaScript target compatible with the documented browser and WordPress 6.7-or-newer support policy.
 - Document each dependency's purpose and license.
 - Keep third-party notices and lockfiles current.
 - Verify a clean checkout can produce the same required entry graph using the lockfile.
@@ -769,7 +768,7 @@ Add automated architecture checks when the frontend toolchain exists:
 
 Cover relevant negative and repeated cases:
 
-- WordPress 6.0 root mounting and a newer `createRoot` path;
+- `createRoot` mounting and teardown on WordPress 6.7 and the latest supported WordPress release;
 - permission denial and invalid nonces;
 - missing native controls and post-lock loss;
 - preview failure, size limits, stale responses, and renderer absence;
@@ -831,6 +830,7 @@ Do not introduce:
 - Silent fallback, swallowed errors, fake success, hidden writes, or automatic retries of mutations.
 - Stale asynchronous work that can update current state.
 - Effects without cleanup, idempotence, or repeated-lifecycle safety.
+- Compatibility branches or legacy root-rendering fallbacks for unsupported WordPress versions below 6.7.
 - Browser-local scheduling that disagrees with the WordPress site timezone.
 - Hardcoded built-in-only command registries that break extension APIs.
 - TypeScript source under `assets/`.
@@ -846,7 +846,7 @@ Before declaring a React feature complete:
 1. Identify the single owner for every changed behavior and state value.
 2. Confirm PHP, WordPress, React, query, and browser-storage authority.
 3. Confirm components use typed contracts and focused ports rather than environment globals.
-4. Confirm minimum WordPress runtime compatibility, root teardown, and repeated activation.
+4. Confirm WordPress 6.7-or-newer runtime compatibility, `createRoot` teardown, and repeated activation.
 5. Confirm permission, validation, cancellation, stale-result, missing-control, and dependency-failure behavior.
 6. Confirm Markdown, save, publish, revision, media, theme, custom CSS, extension, and local-draft contracts that the feature touches.
 7. Confirm strings, accessibility, focus, keyboard, selection, IME, undo, scroll, responsive, and timezone behavior where relevant.

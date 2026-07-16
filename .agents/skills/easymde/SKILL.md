@@ -242,7 +242,8 @@ frontend/
     │   ├── ports/
     │   ├── errors.ts
     │   ├── safe-html.ts
-    │   └── editor-runtime.ts
+    │   ├── editor-runtime.ts
+    │   └── settings-runtime.ts
     ├── domain/
     │   ├── document/
     │   ├── markdown/
@@ -254,12 +255,14 @@ frontend/
     ├── integrations/
     │   ├── wordpress/
     │   │   ├── bootstrap/
-    │   │   ├── editor/
-    │   │   ├── settings/
-    │   │   ├── rest/
+    │   │   ├── document/
+    │   │   ├── save/
+    │   │   ├── session/
     │   │   ├── publishing/
     │   │   ├── revisions/
-    │   │   └── media/
+    │   │   ├── media/
+    │   │   ├── settings/
+    │   │   └── rest/
     │   ├── preview-runtime/
     │   └── browser/
     ├── shared/
@@ -285,7 +288,7 @@ Responsibilities:
 - `contracts/`: runtime-validated bootstrap schemas, ports, request/result types, safe-value brands, error codes, and stable Feature contracts.
 - `domain/`: pure document, Markdown, outline, statistics, appearance, publishing, revision, and settings rules.
 - `features/`: complete capabilities recognizable by a user.
-- `integrations/`: WordPress DOM, native forms, REST, media, preview enhancement, storage, clipboard, diagnostics, and browser adapters.
+- `integrations/`: WordPress DOM, native forms, REST, media, preview enhancement, storage, clipboard, diagnostics, and browser adapters. WordPress subdirectories map to focused ports; do not create a generic `editor/` catch-all.
 - `shared/`: reusable UI and utilities with no EasyMDE Feature or WordPress ownership.
 - `test/`: shared test setup and fixtures only; ordinary tests stay next to their source.
 
@@ -389,6 +392,7 @@ TypeScript rules:
 - Avoid deep relative imports across layers. Use the configured source alias only after the toolchain defines it.
 - Do not mutate arrays or objects owned by state. Use browser syntax supported by the configured Vite target; do not assume `toSorted()` or another newer API is available without target verification or a local polyfill decision.
 - Keep comments focused on ownership, compatibility, security, or non-obvious behavior. Do not narrate obvious JSX.
+- Let the adopted formatter and linter own whitespace, quotes, semicolons, and wrapping. Until those tools exist, match the nearest maintained frontend file and avoid formatting-only project-wide changes.
 - Do not suppress type, lint, accessibility, or dependency-boundary errors without a narrow documented reason and a test.
 
 Entrypoints should stay small and contain no Feature business logic, REST implementation, DOM selector details, theme behavior, or dialog state.
@@ -437,6 +441,7 @@ Component API rules:
 - Atomic booleans remain valid for native state such as `disabled`, `required`, `readOnly`, `selected`, or `aria-expanded`.
 - Use compound components only when parts form one semantic control and need the same scoped state.
 - A compound provider exposes a typed, minimal interface and throws a clear development error when used outside its owner.
+- Keep provider values stable when identity is part of the subscription contract; do not recreate service and action objects on every render without need.
 - Keep high-frequency Markdown and selection state out of broad React Context values. Expose a stable store API and selectors instead.
 - Prefer `children` for static structural composition. Use a render prop only when the caller needs live internal data that cannot be expressed through children or a focused hook.
 - Shared UI primitives must not know post IDs, capabilities, WordPress selectors, REST endpoints, or EasyMDE Feature rules.
@@ -1167,6 +1172,7 @@ State and rendering:
 - Use lazy state initialization for expensive initial values.
 - Use functional updates when the next value depends on previous state.
 - Use refs for transient high-frequency values that do not affect rendering.
+- Use `&&` rendering only when the left operand is a real boolean. Use an explicit ternary when `0`, an empty string, or another renderable value is possible.
 - Do not add `memo`, `useMemo`, or `useCallback` everywhere. Use them for measured expensive work or identity contracts that actually prevent work.
 - `startTransition()` may wrap non-urgent panel, filtering, or derived-view updates. Never transition the controlled editor value, synchronous submission bridge, save/publish state, focus restoration, or accessibility-critical state.
 

@@ -1,184 +1,138 @@
 ---
 name: easymde
-description: Use this skill when building, modifying, debugging, reviewing, or validating EasyMDE React and TypeScript admin-editor features or related browser-side interfaces, including WordPress integration, Markdown editing and preview, publishing, revisions, media, themes, custom CSS, settings, local state, WeChat export, AI assistance, accessibility, performance, testing, Vite builds, and release packaging.
+description: Use this Skill when building, modifying, debugging, reviewing, or validating EasyMDE React and TypeScript admin-editor features or related browser-side interfaces, including WordPress integration, Markdown editing and preview, publishing, revisions, media, themes, custom CSS, settings, local drafts, WeChat export, AI assistance, accessibility, performance, Vite builds, testing, and release packaging. Use the separate easymde-migration Skill when a task transfers ownership from legacy JavaScript to React.
 ---
 
 # EasyMDE React and TypeScript Development Guide
 
-EasyMDE is a standalone WordPress Markdown editor. React and TypeScript, built with Vite, are the browser-application architecture for the admin editor and related interactive WordPress administration surfaces.
+EasyMDE is a standalone WordPress Markdown editor. React and TypeScript, built with Vite, are the approved browser-application architecture for the admin editor and related interactive WordPress administration surfaces.
 
-This Skill is an executable project contract. It defines ownership, directory structure, dependency direction, React 18 behavior, TypeScript conventions, component APIs, WordPress integration, data and security boundaries, testing, observability, performance, and release packaging.
+This Skill is the executable development contract. The durable rationale lives in `docs/REACT_DESIGN_PHILOSOPHY.md`. When a task replaces an existing JavaScript or DOM-driven owner, also load `.agents/skills/easymde-migration/SKILL.md`.
 
-It is not a generic React tutorial. Do not introduce a pattern, dependency, abstraction, directory, or service merely because it is common in another React project.
+Do not introduce a pattern, dependency, abstraction, directory, service, or framework merely because it is common in another React project.
 
-## Source Authority and Evidence Policy
+## Rule Priority and Evidence
 
-Use sources in this order:
+Apply rules in this order:
 
-1. The explicit task, linked GitHub Issue, and human maintainer decisions.
-2. The live EasyMDE repository and root `AGENTS.md`.
-3. `docs/ARCHITECTURE.md`, `docs/REACT_ARCHITECTURE.md`, and other current project documentation.
-4. This EasyMDE Skill.
-5. Official React documentation at `react.dev`.
-6. Official WordPress developer documentation and the WordPress/Gutenberg source matching the supported WordPress version.
-7. Official TypeScript documentation at `typescriptlang.org`.
-8. Generic companion Skills and secondary articles.
+1. The explicit task, linked GitHub Issue, and human maintainer decision.
+2. Root `AGENTS.md`, the live repository, and existing public compatibility contracts.
+3. `docs/ARCHITECTURE.md` and `docs/REACT_DESIGN_PHILOSOPHY.md`.
+4. This Skill; migration work also uses `easymde-migration`.
+5. Official React, WordPress, TypeScript, and WAI-ARIA documentation matching supported versions.
+6. Generic companion Skills that are actually available.
+7. react-admin and other mature projects as design references.
+8. Blogs, search summaries, and copied snippets.
 
-Secondary articles are inspiration, not authority. Before adopting a recommendation:
+Secondary sources are inspiration, not authority. Verify version-sensitive claims against WordPress 6.7 source, the selected TypeScript version, and the live repository. Current React documentation may describe React 19; EasyMDE uses the WordPress-provided React 18 runtime.
 
-- verify that it still applies to React 18 and the TypeScript version selected by the project;
-- verify that it fits WordPress 6.7 or newer and the actual WordPress runtime contract;
-- verify that it does not conflict with EasyMDE data, save, preview, publishing, extension, privacy, or package boundaries;
-- prefer the live API and tagged source over search summaries or copied snippets;
-- record uncertainty instead of converting an unverified claim into a project rule.
+Do not claim a Skill, test, review, browser, accessibility, security, performance, or release result that was not actually available or executed.
 
-Generic Skills may strengthen implementation quality but cannot override EasyMDE architecture or introduce Next.js, React Server Components, Server Actions, React 19-only APIs, Webpack, Gutenberg replacement behavior, a private React runtime, another save or publish path, remote runtime assets, or an unapproved dependency.
+## Route the Task Correctly
 
-## Project Design Philosophy
+Use this Skill for normal React and TypeScript work with one stable owner.
 
-Apply these principles together.
+Also use `easymde-migration` when the task:
 
-### System requirements decide the tool
+- transfers behavior from `assets/js/admin/` or another legacy owner;
+- introduces a temporary seam used by legacy and React code;
+- activates a new React owner;
+- deprecates or removes a legacy module, selector, event, script handle, CSS owner, or compatibility shim.
 
-React is used because the admin UI benefits from declarative components, explicit state ownership, predictable composition, and testable interaction boundaries. React does not become the owner of WordPress data, security, rendering, persistence, or public content.
+Do not turn ordinary feature work into a migration project, and do not use migration wording to justify unrelated redesign.
 
-A library is justified by a concrete project responsibility, not by popularity. The smallest design that satisfies the product contract is preferred.
+## Start With the Live Contract
 
-### Model the data and states before the component tree
-
-Before building a screen:
-
-1. identify the server and browser data model;
-2. list the meaningful visual and interaction states;
-3. identify the owner of every state value;
-4. draw the component hierarchy around user-recognizable responsibilities;
-5. implement a render-only version from typed inputs;
-6. add interaction through explicit events, commands, ports, and state transitions.
-
-Do not start by creating generic components, a store, or a framework wrapper before the actual model and behavior are understood.
-
-### Rendering is pure
-
-Components and Hooks must be pure during render:
-
-- same props, state, and context produce the same JSX;
-- render does not mutate props, state, context, registries, adapters, globals, DOM, storage, or external services;
-- render does not save, publish, upload, copy, log payloads, schedule timers, or register subscriptions;
-- user-triggered work belongs in event handlers or explicit commands;
-- synchronization with external systems belongs in focused Effects or adapters with cleanup.
-
-### One owner per fact
-
-Every unique fact has one authoritative owner.
-
-Examples:
-
-- canonical Markdown: `_easymde_markdown` persisted by PHP;
-- current editor-session Markdown: editor store;
-- compatibility HTML: PHP `MarkdownRenderer` and `post_content`;
-- current native form serialization: synchronized WordPress submission bridge;
-- current REST security token: WordPress security owner exposed through `SessionPort`;
-- dialog draft: the closest Feature component or Feature provider;
-- settings persistence: WordPress Options API.
-
-Do not duplicate a fact across local component state, Context, store, query cache, DOM fields, storage, and PHP merely to make access convenient.
-
-### State is minimal and intentional
-
-- Group values that form one atomic transition.
-- Avoid contradictory state.
-- Derive values instead of storing redundant copies.
-- Avoid duplicated and deeply nested state.
-- Keep state near the closest owner that coordinates all consumers.
-- Lift state only when coordination requires it.
-- Reset state intentionally by owner identity, not by accidental component movement or random keys.
-
-### Boundaries must be observable
-
-Every external operation has:
-
-- an owner;
-- typed input and output;
-- permission and validation rules;
-- cancellation or conflict semantics where applicable;
-- a stable success signal from the real owning system;
-- a user-visible failure state;
-- diagnostics that do not expose content or secrets;
-- tests at the lowest reliable boundary and, where required, a real browser flow.
-
-## Inspect Before Changing
-
-Read the live repository before choosing files or abstractions:
+Before editing, inspect the actual owners relevant to the task:
 
 ```text
 AGENTS.md
-readme.txt
-package.json
 docs/ARCHITECTURE.md
-docs/REACT_ARCHITECTURE.md
-docs/DEVELOPMENT.md
-docs/TESTING_AND_RELEASE.md
-src/Plugin.php
-src/Admin/AdminAssets.php
-src/Admin/EditorScreen.php
-src/Admin/EditorSaveHandler.php
-src/Admin/PostModeController.php
-src/Admin/SettingsPage.php
-src/Content/PostDocument.php
-src/Content/RevisionManager.php
-src/Content/MarkdownRenderer.php
-src/Support/Migration.php
-src/Support/ToolbarRegistry.php
-src/Theme/
+docs/REACT_DESIGN_PHILOSOPHY.md
+package.json
+scripts/build-release.mjs
+src/Admin/
+src/Content/
 src/Rest/
+src/Theme/
 src/Frontend/
-templates/admin/editor-shell.php
-templates/admin/settings-page.php
+src/Support/
+templates/admin/
 assets/js/admin/
 assets/css/admin/
-scripts/build-release.mjs
 tests/
 ```
 
-Do not assume proposed frontend paths already exist. Create only files and directories required by the current Issue.
+Do not assume a proposed `frontend/` path exists. Create only files and directories required by the linked Issue.
 
-Trace the complete path before editing:
+For every material behavior, identify:
 
 ```text
-PHP or WordPress state
+User goal:
+Current owner:
+Intended owner:
+Persisted authority:
+Browser-session authority:
+WordPress/native dependencies:
+Public or extension contracts:
+Success signal:
+Failure signal:
+Cancellation and stale-result behavior:
+Teardown behavior:
+Package impact:
+Unverified areas:
+```
+
+Trace the complete path before choosing an abstraction:
+
+```text
+PHP / WordPress state
 → versioned bootstrap or REST contract
-→ application or Feature owner
+→ root or Feature owner
 → component and user event
-→ focused port
-→ WordPress, REST, or browser adapter
+→ focused Port
+→ WordPress / REST / browser Adapter
 → real operation result
 → state transition and user feedback
 ```
 
-For each changed behavior, identify:
+## Non-Negotiable Authority Rules
 
-- current and intended owner;
-- persisted authority and browser-session authority;
-- protected compatibility contracts;
-- success and failure evidence;
-- cancellation, stale completion, and teardown behavior;
-- package and public-artifact impact.
+- `_easymde_markdown` is the authoritative Markdown source.
+- `post_content` is safely rendered WordPress compatibility output.
+- `EasyMDE\Content\MarkdownRenderer`, backed by `league/commonmark`, is the only formal production Markdown renderer.
+- PHP and WordPress own capability checks, nonces, post meta, revisions, media, taxonomies, save, publish, status, locks, autosave, scheduling, settings persistence, public output, and supported-post admission.
+- React owns admin presentation, interaction, Feature composition, dialogs, panels, layout, and explicitly defined browser-session state.
+- Client capability flags control presentation only; PHP authorizes protected actions.
+- A nonce protects request integrity and does not replace authorization.
+- Opening, closing, focusing, previewing, or cancelling UI performs zero hidden writes.
+- Native field synchronization is a submission bridge, not proof of persistence.
+- A browser Promise is not success unless it represents the real WordPress or browser owner completing the operation.
+- React must not create a second data authority, renderer, permission system, save path, publish path, revision model, media store, settings store, timezone model, or public-content authority.
+- Public visitor pages remain PHP-rendered and do not load admin React applications.
 
-## Critical Authority Rules
+## Use Existing Capabilities Before Creating New Ones
 
-- `_easymde_markdown` is the canonical Markdown source.
-- `post_content` is sanitized rendered HTML for WordPress compatibility.
-- `EasyMDE\Content\MarkdownRenderer`, backed by `league/commonmark`, is the only production Markdown renderer.
-- PHP and WordPress own permissions, capability checks, nonces, post meta, revisions, media, taxonomies, save, publish, post status, post locking, autosave, scheduling, settings persistence, public article output, and supported-post admission.
-- React owns admin presentation, interaction, Feature composition, dialogs, panels, layout, and explicitly defined browser-session behavior.
-- Client capability flags control presentation only; PHP verifies every protected action.
-- A nonce is a request-integrity mechanism, not authorization. Every protected action still requires the correct capability check.
-- Opening, closing, previewing, focusing, or cancelling UI performs zero hidden writes.
-- A synchronized native field is a submission bridge, not proof of persistence.
-- A resolved browser Promise is not proof of save, publish, upload, restore, settings update, or clipboard success unless it represents the real owning operation.
-- React must not create a second data authority, renderer, permission system, save path, publish path, media store, revision model, settings store, timezone model, or public-content authority.
+Adopt the useful react-admin principle of checking stable capabilities before building custom infrastructure.
 
-## React Runtime Strategy
+Search first for an existing:
+
+- Port or Adapter;
+- Feature public API;
+- Domain function;
+- UI primitive;
+- Theme or Toolbar Registry;
+- WordPress API;
+- REST controller;
+- compatibility facade;
+- test fixture;
+- build or release helper.
+
+Reuse only when ownership and semantics match. Do not force an unrelated abstraction to absorb a new responsibility merely to reduce file count.
+
+A new abstraction must state its responsibility, consumers, failure contract, test boundary, and removal or replacement path.
+
+## React Runtime and Application Roots
 
 EasyMDE supports WordPress 6.7 or newer and uses the WordPress-provided React 18 runtime through `@wordpress/element` and the `wp-element` dependency.
 
@@ -195,135 +149,95 @@ export function mountEditor(element: HTMLElement): () => void {
 
 Rules:
 
-- Import React runtime APIs from `@wordpress/element` by default.
-- Use `createRoot`; do not add legacy `render` fallbacks.
-- Keep the root object and call `root.unmount()` during teardown.
-- Do not hydrate admin roots.
-- Do not ship another React or ReactDOM implementation.
-- Do not pass elements, contexts, hooks, portals, or refs between different React runtimes.
-- Externalize or map the JSX runtime consistently and verify the production module graph.
-- Declare exact WordPress dependencies in generated asset metadata.
-- Do not use React 19-only APIs.
-- Use `StrictMode` in development when the selected mount strategy supports it, and treat double render, Effect replay, and ref callback replay as tests of purity and cleanup rather than conditions to suppress.
+- import runtime APIs from `@wordpress/element`;
+- use `createRoot`, not the deprecated legacy `render` path;
+- keep the root object and call `root.unmount()` during teardown;
+- do not hydrate admin roots;
+- do not bundle another React or ReactDOM implementation;
+- do not pass elements, contexts, hooks, portals, or refs between different React runtimes;
+- externalize or map the selected JSX runtime consistently;
+- generate accurate WordPress dependency metadata;
+- do not use React 19-only APIs, RSC, Server Actions, or framework hydration assumptions;
+- treat Strict Mode replay as a test of purity and cleanup, not a condition to suppress.
 
-Do not adopt `@wordpress/components` as a second default design system. A focused task may use a stable WordPress component only after verifying its WordPress 6.7 API, accessibility, visual behavior, dependency graph, and package cost.
-
-## Application Roots and Directory Structure
-
-Use one entrypoint per real WordPress screen or independently loaded application surface:
+Use one Entrypoint per real WordPress screen or independently loaded application surface:
 
 ```text
 frontend/src/entrypoints/admin-editor.tsx
 frontend/src/entrypoints/settings.tsx
 ```
 
-Each root owns its own runtime, store, providers, error boundary, subscriptions, and teardown. Editor and settings roots may share contracts, pure domain code, and UI primitives; they do not share mutable state, query caches, or lifecycle owners.
+Each Root owns its Runtime, Store, Providers, Error Boundary, subscriptions, and teardown. Editor and Settings Roots do not share mutable state or lifecycle owners.
 
-Default structure:
+Do not add a Router for tabs, dialogs, panels, or WordPress page navigation unless a focused Issue proves a real URL-addressable application need.
+
+## Source Placement
+
+Target structure:
 
 ```text
 frontend/
 ├── vite.config.ts
-├── vitest.config.ts          # only when Vitest is introduced
+├── vitest.config.ts             # only when introduced
 ├── tsconfig.json
-├── eslint.config.js          # only when ESLint is introduced
+├── eslint.config.js             # only when introduced
 └── src/
     ├── entrypoints/
-    │   ├── admin-editor.tsx
-    │   └── settings.tsx
     ├── app/
     │   ├── editor/
-    │   │   ├── EditorApp.tsx
-    │   │   ├── EditorProviders.tsx
-    │   │   ├── EditorErrorBoundary.tsx
-    │   │   ├── createEditorStore.ts
-    │   │   ├── store/
-    │   │   └── styles/
     │   └── settings/
-    │       ├── SettingsApp.tsx
-    │       ├── SettingsProviders.tsx
-    │       ├── SettingsErrorBoundary.tsx
-    │       ├── createSettingsStore.ts
-    │       ├── store/
-    │       └── styles/
     ├── contracts/
     │   ├── bootstrap/
     │   ├── ports/
-    │   ├── errors.ts
-    │   ├── safe-html.ts
-    │   ├── editor-runtime.ts
-    │   └── settings-runtime.ts
+    │   ├── schemas/
+    │   └── errors/
     ├── domain/
-    │   ├── document/
-    │   ├── markdown/
-    │   ├── appearance/
-    │   ├── publishing/
-    │   ├── revisions/
-    │   └── settings/
     ├── features/
     ├── integrations/
     │   ├── wordpress/
-    │   │   ├── bootstrap/
-    │   │   ├── document/
-    │   │   ├── save/
-    │   │   ├── session/
-    │   │   ├── publishing/
-    │   │   ├── revisions/
-    │   │   ├── media/
-    │   │   ├── settings/
-    │   │   └── rest/
     │   ├── preview-runtime/
     │   └── browser/
-    │       ├── storage/
-    │       ├── clipboard/
-    │       └── diagnostics/
     ├── shared/
     │   ├── ui/
     │   ├── hooks/
     │   ├── icons/
-    │   ├── lib/
+    │   ├── i18n/
     │   └── types/
     └── test/
-        ├── setup.ts
-        ├── fixtures/
-        ├── factories/
-        └── mock-runtime/
 ```
 
-Do not create empty paths, a second package or lockfile, shared `app/store/`, shared `app/providers/`, or generic root `components/`, `services/`, `helpers/`, or `utils/` directories.
+Layer rules:
 
-### Layer responsibilities
-
-- `entrypoints/`: root discovery, bootstrap parsing, runtime and store construction, mount, readiness activation, and teardown.
-- `app/editor/` and `app/settings/`: root shell, providers, error boundary, store, and top-level composition.
-- `contracts/`: runtime-validated bootstrap schemas, ports, request/result types, stable error codes, safe-value brands, extension contracts, and manifest contracts.
-- `domain/`: pure document, Markdown, outline, statistics, appearance, publishing, revision, and settings rules.
+- `entrypoints/`: discover Roots, parse bootstrap, construct Runtime and Store, mount, signal readiness, and teardown.
+- `app/`: Root shell, Providers, Error Boundary, Store, layout, and top-level composition.
+- `contracts/`: runtime schemas, Ports, Results, Error Codes, safe-value types, extension and Manifest contracts.
+- `domain/`: pure rules with no React, DOM, WordPress, network, Storage, or Clipboard access.
 - `features/`: complete user-recognizable capabilities.
-- `integrations/`: WordPress DOM, native forms, REST, media, preview enhancement, storage, clipboard, diagnostics, and browser adapters.
-- `shared/`: reusable UI and utilities with no EasyMDE Feature or WordPress ownership.
-- `test/`: shared setup and fixtures; normal tests stay beside source.
+- `integrations/`: concrete WordPress, REST, DOM, Media, preview enhancement, Storage, Clipboard, and diagnostics Adapters.
+- `shared/`: code with at least two stable consumers and no Feature or WordPress ownership.
+- `test/`: shared setup and fixtures; ordinary tests stay beside source.
 
-### Dependency direction
+Dependency direction:
 
 ```text
 entrypoints  → app, contracts, integrations
 app          → features, contracts, shared
 features     → domain, contracts, shared
-domain       → shared pure utilities and types only
+domain       → shared pure types/utilities only
 contracts    → domain types and shared types only
 integrations → contracts, domain, shared
-shared       → no app, Feature, integration, or WordPress ownership
+shared       → no app, feature, integration, or WordPress ownership
 ```
 
-Circular imports, upward imports, Feature-private deep imports, and concrete adapter construction inside Features are defects. Enforce dependency direction automatically when the frontend lint toolchain exists.
+Do not create empty paths, a second package or lockfile, shared mutable `app/store/`, or generic root `components/`, `services/`, `helpers/`, `utils/`, or `lib/` directories.
 
-## Feature and Component Design
+Circular imports, upward imports, Feature-private deep imports, and concrete Adapter construction inside Features are defects.
 
-Group code by user capability:
+## Feature Design and Composition
+
+Group code by user capability, not technical type:
 
 ```text
-workspace
-title-editor
 markdown-editor
 live-preview
 outline
@@ -335,21 +249,21 @@ revisions
 media
 local-drafts
 wechat-export
-settings
 ai-assistant
 ```
 
-A substantial Feature may use:
+A complex Feature may use:
 
 ```text
 features/publishing/
 ├── ui/
-│   ├── PublishDialog.tsx
-│   ├── PublishSettings.tsx
-│   └── CategoryTree.tsx
+│   ├── PublishingDialog.tsx
+│   └── PublishingActions.tsx
+├── controller/
+│   └── usePublishingController.ts
 ├── model/
-│   ├── usePublishDraft.ts
-│   ├── usePublishAction.ts
+│   ├── publishing-reducer.ts
+│   ├── publishing-selectors.ts
 │   └── publishing-state.ts
 ├── styles/
 │   └── publishing.css
@@ -357,46 +271,52 @@ features/publishing/
 └── index.ts
 ```
 
-Create a component when it has a clear semantic responsibility, an independent state or accessibility contract, meaningful reuse, or a testable failure boundary. Do not split every wrapper into a component, and do not keep unrelated responsibilities in a large component.
+Do not create every subdirectory for every Feature.
+
+Create a component when it has a clear semantic responsibility, independent state or accessibility contract, meaningful reuse, or a testable failure boundary. Do not split every wrapper into a component, and do not keep unrelated responsibilities in a large component.
 
 Component API rules:
 
-- Prefer data and callbacks that express user intent rather than internal implementation details.
-- Prefer explicit variants or discriminated unions when structure or behavior differs.
-- Atomic booleans are acceptable for native state such as `disabled`, `required`, `readOnly`, `selected`, or `aria-expanded`.
-- Avoid groups of booleans that allow impossible combinations.
-- Use compound components only for a cohesive semantic control with genuinely shared scoped state.
-- Prefer `children` for structural composition; use a render function only when the caller needs live internal data.
-- Controlled components receive value and update callbacks; uncontrolled components own an initial value. Do not switch modes during one lifecycle.
-- Shared UI primitives do not know post IDs, WordPress capabilities, selectors, routes, or EasyMDE Feature rules.
-- Do not inspect child component types, clone arbitrary children, or mutate child props to build hidden protocols. Prefer explicit slots, context, or typed props.
-- Error boundaries isolate independently recoverable UI regions and reset on the identity that owns the region.
-- Do not add a router for tabs, dialogs, or panels. WordPress owns page navigation unless a real URL-addressable application surface is explicitly approved.
+- prefer Props and callbacks that express user intent;
+- use explicit variants or discriminated unions when structure or behavior differs;
+- keep native atomic booleans such as `disabled`, `required`, and `readOnly` when they express one real state;
+- avoid boolean groups that allow impossible combinations;
+- use Compound Components only for one cohesive semantic control with genuinely shared scoped state;
+- prefer `children` or named Slots for structural composition;
+- use a render function only when the caller needs live internal data;
+- keep Controlled and Uncontrolled ownership explicit and never switch modes during one lifecycle;
+- do not inspect child types, clone arbitrary children, or mutate child Props to build hidden protocols;
+- Shared UI does not know Post IDs, capabilities, routes, selectors, or Feature rules;
+- Error Boundaries isolate independently recoverable regions and reset on the owning identity.
 
-Public Feature exports are narrow and named. Never use `export *`. Other Features import only the public API; internal modules import concrete sibling files rather than their own barrel.
+Borrow react-admin's Headless Controller idea only for complex Features that need replaceable Views or independent behavior testing:
+
+```ts
+type PublishingController = Readonly<{
+  state: PublishingState;
+  actions: PublishingActions;
+  meta: PublishingMeta;
+}>;
+```
+
+`state` is renderable state, `actions` are user intents, and `meta` contains derived capability, pending, or conflict information. Do not expose raw REST responses, Store setters, or concrete Adapters to the View.
+
+Context rules:
+
+- serve one semantic subtree;
+- expose narrow named Hooks;
+- do not place the entire Markdown document, high-frequency Selection, or whole Root Store in broad Context;
+- do not create Context merely to avoid two levels of Props;
+- do not hide a Mutation owner behind Context;
+- keep Provider values stable and use narrow selectors.
+
+Feature exports are narrow and named. Do not use broad `export *`. Other Features import only the public API.
 
 ## TypeScript and Naming Standards
 
-Naming defaults:
+Use strict TypeScript from the first frontend toolchain.
 
-```text
-Directories              kebab-case
-React components         PascalCase.tsx
-Error boundaries         PascalCase.tsx
-Hooks                    useFeatureName.ts
-Pure function modules    camelCase.ts
-WordPress adapters       PascalCase.ts
-Port files               feature-port.ts
-Type modules             feature.types.ts
-CSS files                kebab-case.css
-Tests                    source-name.test.ts or SourceName.test.tsx
-```
-
-### Compiler baseline
-
-When the frontend toolchain is introduced, start strict rather than scheduling type safety for later.
-
-Required unless a verified toolchain limitation is documented:
+Required unless a verified limitation is documented:
 
 ```json
 {
@@ -411,158 +331,86 @@ Required unless a verified toolchain limitation is documented:
 }
 ```
 
-Evaluate `exactOptionalPropertyTypes` with the selected React and WordPress type packages. Enable it when compatible; do not disable other strictness globally to work around one dependency without evidence.
+Evaluate `exactOptionalPropertyTypes` with the selected React and WordPress type packages and enable it when compatible.
 
-### Types and inference
-
-- Use `unknown` at untrusted boundaries and narrow or parse once.
-- Do not use `any` as a substitute for validation. A narrow documented integration shim is the only acceptable exception.
-- Let TypeScript infer obvious local variables, JSX event parameters, and private helper return types.
-- Add explicit return types to ports, exported APIs, schema parsers, async boundary functions, and functions whose contract must not drift.
-- Use discriminated unions for operation states, results, variants, and mutually exclusive props.
-- Use exhaustive switches with `assertNever()` for closed unions.
-- Use `Readonly` and `ReadonlyArray` for snapshots and inputs that callers must not mutate.
-- Use branded or opaque types only when runtime provenance matters, such as sanitized preview HTML or validated IDs.
-- Use utility types for local transformations; do not construct long-lived domain contracts from chains of `Pick`, `Omit`, and intersections that hide their semantics.
-- Use `satisfies` for registries, configuration maps, and fixtures when the value should retain useful literal inference while being checked against a contract.
-- Avoid non-null assertions. Validate once, narrow, and pass the narrowed value.
-
-### `type` and `interface`
-
-Both are valid TypeScript object-type tools. Use a project convention based on intent:
-
-- use `type` for closed component props, unions, tuples, aliases, mapped types, and Feature-local models;
-- use `interface` for intentionally extensible object contracts such as Ports or public adapter surfaces;
-- do not rely on declaration merging unless extension is an explicit supported contract;
-- consistency and contract clarity matter more than stylistic preference.
-
-### Function components and Props
-
-Use ordinary function components with explicit Props. Do not use `React.FC` as the default.
-
-```tsx
-type ButtonProps = {
-  variant: 'primary' | 'ghost';
-  children: React.ReactNode;
-  onPress(): void;
-};
-
-export function Button({ variant, children, onPress }: ButtonProps) {
-  return (
-    <button type="button" data-variant={variant} onClick={onPress}>
-      {children}
-    </button>
-  );
-}
-```
-
-The project convention is not based on the outdated claim that modern `React.FC` always injects `children`. It is chosen because ordinary functions keep Props explicit, work naturally with generics, and avoid unnecessary component-type wrapping.
-
-Declare `children` only when the component accepts children. Use `React.ReactNode` for general renderable children. Use a typed function when the child is intentionally a render callback.
-
-### Native element props
-
-A reusable primitive may extend native semantics:
-
-```tsx
-type IconButtonProps = Omit<
-  React.ComponentPropsWithoutRef<'button'>,
-  'children'
-> & {
-  label: string;
-  icon: React.ReactNode;
-};
-```
-
-Rules:
-
-- preserve the native element's semantic attributes and event types;
-- resolve prop-name collisions explicitly with `Omit`;
-- set safe defaults such as `type="button"` inside forms;
-- do not blindly spread DOM props onto a non-native wrapper or multiple elements;
-- keep project variants separate from native attributes.
-
-### Events, state, refs, and Hooks
-
-- Prefer contextual typing by declaring handlers where TypeScript can infer the element event type.
-- Export a named event-handler type only when it is part of a component contract.
-- Never type React events as `any`.
-- Let `useState` infer clear primitive/object initial values.
-- Add an explicit generic for `null`, `undefined`, empty arrays, empty maps, or intentional unions.
-- Use `useRef<HTMLInputElement>(null)` for DOM refs.
-- Use `useRef<T | null>(null)` for mutable non-render values when `current` must be assigned.
-- A ref is not a substitute for render state or a second document authority.
-- Custom Hooks share stateful logic, not state instances. Shared state still needs an explicit owner.
-- Name Hooks for a concrete purpose, not lifecycle timing; avoid generic APIs such as `useMount`.
-- Return objects from Hooks when named fields improve evolution and readability.
-- Return tuples only for a stable positional API; annotate the tuple or use `as const`.
-- Generic components require a real reusable semantic contract. Do not create generic List/Table/Form abstractions before at least two concrete needs prove the shared API.
-
-### Comments and formatting
-
-- Let the adopted formatter and linter own whitespace, quotes, semicolons, and wrapping.
-- Match the nearest maintained code until those tools exist.
-- Comments explain ownership, security, compatibility, invariants, or non-obvious failure behavior; they do not narrate JSX.
-- Do not suppress type, lint, accessibility, Hook-dependency, or boundary errors without a narrow documented reason and a focused test.
-
-## State Ownership and Identity
-
-Use one store per application root. Do not export a mutable module-level singleton.
-
-Suggested editor responsibilities:
+Naming defaults:
 
 ```text
-document    # Markdown, title, saved baseline, dirty state, selection metadata
-appearance  # article theme, code theme, fonts, custom CSS selection
-layout      # view mode, pane ratio, outline, open panels
-session     # operations, errors, active surface, capabilities, post identity, lock state
+Directories             kebab-case
+React components        PascalCase.tsx
+Error boundaries        PascalCase.tsx
+Hooks                    useFeatureName.ts
+Controller hooks         useFeatureNameController.ts
+Other TS modules         kebab-case.ts
+Port files               capability-port.ts
+Adapter files            platform-capability-adapter.ts
+Schema files             contract-schema.ts
+Type modules             feature.types.ts
+CSS files                kebab-case.css
+Tests                    source-name.test.ts / SourceName.test.tsx
 ```
 
 Rules:
 
-- Keep ephemeral input, hover, unconfirmed dialog fields, local validation display, and temporary drag state in the nearest component.
-- Put state shared by multiple Features in the owning root store.
-- Keep REST-backed collections in one server-state owner with explicit invalidation.
-- Derive dirty state and other facts; do not store duplicate flags.
-- Do not mirror React state through Effects.
-- Do not duplicate the same fact in Context, store, query cache, DOM fields, and storage.
-- Update the saved baseline only after the real WordPress save succeeds.
-- Scope post state, caches, operation IDs, and storage keys by site, user, and post identity.
-- When a new post receives a real ID, explicitly re-key or clear post-scoped state.
-- Use stable domain identity as React keys. Never use random keys or array indexes for reorderable domain data.
-- A key may intentionally reset a subtree when the owning entity changes; document that reset contract.
-- Do not define component functions inside render when doing so would reset their state on every parent render.
-- Persist only approved browser preferences or recovery data with a versioned schema and documented conflict behavior.
+- use ordinary function components with explicit Props; do not default to `React.FC`;
+- declare `children` only when accepted, normally as `React.ReactNode`;
+- use concrete React event types or contextual inference, never `any`;
+- initialize DOM refs with `null`;
+- use `type` for closed Props, unions, tuples, aliases, and Feature-local models;
+- use `interface` for intentionally extensible Ports and public object contracts;
+- start untrusted values as `unknown` and parse once at the boundary;
+- infer obvious local variables and private helper returns;
+- add explicit returns to Ports, exported APIs, schema parsers, and async boundaries;
+- use discriminated unions and exhaustive handling for closed states;
+- use immutable snapshots and `ReadonlyArray` when callers must not mutate;
+- use branded types only when runtime provenance matters, such as sanitized preview HTML;
+- use utility types for local transformations, not to hide long-lived Domain meaning;
+- avoid non-null assertions, broad Barrels, random Keys, and speculative Generics;
+- comments explain ownership, security, compatibility, invariants, or failure behavior, not JSX narration.
 
-## Events, Effects, Refs, and Lifecycle
+## State, Events, Effects, and Lifecycle
 
-Use event handlers for actions caused by a specific user interaction. Use Effects only to synchronize with an external system after render.
+Use one Store per application Root. Do not export a mutable module-level singleton.
 
-Do not use Effects to:
+State ownership:
 
-- calculate renderable derived data;
-- copy props into state;
-- mirror one store value into another;
-- trigger a mutation merely because a boolean became true;
-- process a button click indirectly;
-- initialize data that can be created through lazy state initialization;
-- reset state when a stable key or explicit event can express the owner change.
+```text
+Persisted authority     PHP / WordPress
+Server-derived state    one explicit owner
+Editor session state    root store
+Local UI draft          nearest Feature
+Derived state           selector or render
+Submission bridge       native WordPress fields
+Recovery data           versioned local draft storage
+Preferences             approved scoped storage or Options API
+```
 
-Every Effect has:
+Rules:
 
-- a single external synchronization responsibility;
-- explicit reactive dependencies;
-- setup and idempotent cleanup;
-- a failure path;
-- tests for repeated mount and partial initialization where the effect is material.
+- keep ephemeral input, hover, unconfirmed dialog fields, local validation display, and drag state near the component;
+- put state shared across Features in the owning Root Store;
+- keep REST-backed collections in one explicit server-state owner;
+- derive Dirty and other facts rather than storing duplicate flags;
+- do not mirror React state through Effects;
+- update the saved baseline only after real WordPress save succeeds;
+- scope Post state, operation IDs, caches, and Storage Keys by Site, User, and Post identity;
+- when a new Post receives a real ID, explicitly re-key or clear Post-scoped state;
+- use stable Domain identity as React Keys;
+- persist only approved preferences or recovery data with a versioned schema and conflict behavior.
 
-Clean up listeners, subscriptions, observers, timers, animation frames, abort controllers, object URLs, portals, overlays, temporary nodes, classes, inline styles, CSS variables, scroll locks, selection changes, and pointer capture.
+Use Event Handlers for work caused by a user interaction. Use Effects only to synchronize an external system after render.
 
-Strict Mode and repeated activation must not duplicate writes, uploads, clipboard actions, subscriptions, timers, or native handlers.
+Do not use Effects to calculate renderable data, copy Props into State, mirror Stores, indirectly process a button click, trigger a Mutation because a boolean became true, or reset state that an explicit event or stable Key can own.
+
+Every Effect has one external responsibility, complete dependencies, a failure path, and idempotent cleanup.
+
+Clean up Listeners, Subscriptions, Observers, Timers, Animation Frames, Abort Controllers, Object URLs, Portals, Overlays, temporary DOM, Body Classes, inline styles, CSS variables, scroll locks, Selection changes, and Pointer Capture.
+
+Strict Mode and repeated activation must not duplicate writes, uploads, clipboard operations, subscriptions, timers, or native handlers.
 
 ## Runtime Ports and Interface Design
 
-Features depend on focused capabilities rather than WordPress globals or selectors:
+Features depend on focused project capabilities rather than WordPress globals or selectors:
 
 ```ts
 export interface EditorRuntime {
@@ -580,349 +428,218 @@ export interface EditorRuntime {
 }
 ```
 
-Representative contracts:
+Representative result contract:
 
 ```ts
-export interface DocumentPort {
-  readNativeSnapshot(): Readonly<NativeDocumentSnapshot>;
-  synchronizeSubmissionBridge(
-    snapshot: Readonly<DocumentSubmissionSnapshot>,
-  ): void;
-  applyEditorTransaction(
-    transaction: Readonly<DocumentTransaction>,
-  ): DocumentTransactionResult;
-}
-
-export interface SavePort {
-  request(
-    request: Readonly<{ kind: 'draft' | 'update'; operationId: string }>,
-  ): Promise<SaveResult>;
-  subscribe(listener: (event: SaveEvent) => void): () => void;
-}
-
-export interface SessionPort {
-  getSnapshot(): Readonly<SessionSnapshot>;
-  subscribe(listener: (event: SessionEvent) => void): () => void;
-}
-
-export interface PreviewPort {
-  render(
-    input: Readonly<PreviewRequest>,
-    options: Readonly<{ signal: AbortSignal; requestId: number }>,
-  ): Promise<PreviewResult>;
-}
+type SaveResult =
+  | Readonly<{ status: 'saved'; postId: number; revisionId?: number }>
+  | Readonly<{ status: 'cancelled' }>
+  | Readonly<{ status: 'permission-denied'; code: string }>
+  | Readonly<{ status: 'conflict'; code: string }>
+  | Readonly<{ status: 'failed'; code: string; retryable: boolean }>;
 ```
 
 Interface philosophy:
 
-- Name methods by project intent, not transport verbs such as generic `request()` or `execute(type, payload)` when a clearer capability exists.
-- Keep Commands and Queries conceptually distinct.
-- Prefer one options object when a function has multiple related parameters or is expected to evolve.
-- Avoid boolean parameters; use named options or discriminated unions.
-- Return immutable snapshots, not mutable internal references.
-- Represent expected cancellation, validation, conflict, permission, and unavailable states with typed results.
-- Reserve thrown exceptions for programmer defects or unexpected infrastructure failures that cannot be represented normally.
-- Preserve stable server error codes and HTTP status separately from translated user messages.
-- Accept `AbortSignal` for cancellable asynchronous work.
-- Every subscription returns an idempotent unsubscribe function.
-- A port represents one external-system responsibility. Do not grow a universal `EditorAdapter`, `WordPressService`, or generic event bus.
-- Do not expose a concrete store, REST client, DOM node, or WordPress global through a public Port.
-- Test adapters against Port contracts and Features against mock Ports.
+- one Port represents one external-system responsibility;
+- name methods by project intent, not generic transport verbs;
+- keep Commands and Queries conceptually distinct;
+- use one Options Object for related or evolving parameters;
+- avoid ambiguous boolean parameters;
+- return immutable snapshots, not internal mutable references;
+- model expected cancellation, validation, conflict, permission, and unavailable states as typed results;
+- reserve thrown exceptions for defects or unexpected infrastructure failures;
+- keep server Error Code, HTTP Status, and translated message separate;
+- accept `AbortSignal` for cancellable asynchronous work;
+- every subscription returns an idempotent unsubscribe function;
+- do not expose DOM nodes, REST clients, concrete Stores, or WordPress globals;
+- do not grow a universal `EditorAdapter`, `WordPressService`, generic `execute(type, payload)`, or stringly typed event bus;
+- test Adapters against Port contracts and Features against mock Ports.
 
-Only entrypoints and relevant integrations may know `window.EasyMDEConfig`, `window.wp`, `wp.apiFetch`, jQuery, WordPress selectors, native save/publish controls, `wp.media`, browser storage, clipboard APIs, or legacy `execCommand` fallback.
+Only Entrypoints and relevant Integrations may know `window.EasyMDEConfig`, `window.wp`, `wp.apiFetch`, jQuery, WordPress selectors, native save/publish controls, `wp.media`, browser Storage, Clipboard APIs, or legacy `execCommand` fallback.
 
 ## Bootstrap, REST, and Cross-Language Contracts
 
-TypeScript interfaces do not validate PHP, REST, storage, manifests, or extension data. Parse external values at the boundary.
+TypeScript Interfaces do not validate PHP, REST, Storage, Manifest, or extension values. Parse external values at the boundary.
 
 Use versioned runtime schemas for:
 
-- editor and settings bootstrap data;
-- REST requests and responses;
-- extension commands and shortcode helpers;
-- persisted browser-storage payloads;
-- build manifests and WordPress asset metadata.
+- Editor and Settings bootstrap data;
+- REST Requests and Responses;
+- extension commands;
+- browser-storage payloads;
+- build Manifests and WordPress dependency metadata.
 
 Rules:
 
-- Validate required fields before mounting or executing a protected operation.
-- Unknown optional fields may be ignored; an unknown incompatible version fails clearly.
-- Increment a version when old consumers cannot safely interpret the new payload.
-- Never change a field's meaning in place.
-- Keep endpoint URLs, limits, locale, direction, site timezone, storage identity, and Feature availability in the owning contract.
-- Do not serialize credentials, cookies, private configuration, unrelated user data, or article content not required by the screen.
-- Components never read global bootstrap data directly.
-- Add cross-language fixtures that serialize representative PHP payloads and parse them with the TypeScript runtime schema.
-- If the project later adopts OpenAPI, generated schema types may become one source; do not add OpenAPI, GraphQL code generation, tRPC, or a schema library merely to follow a generic recommendation.
-- The current WordPress REST route schema and versioned project fixtures remain authoritative until a deliberate replacement is approved.
+- validate required fields before mounting or executing a protected operation;
+- ignore unknown optional fields only when safe;
+- fail clearly on an unknown incompatible version;
+- increment a version when old consumers cannot safely interpret a new payload;
+- never change a field's meaning in place;
+- keep endpoint URLs, limits, locale, text direction, Site timezone, Storage identity, and Feature availability in the owning contract;
+- do not serialize credentials, Cookies, private configuration, or unrelated article content;
+- add cross-language fixtures that serialize representative PHP payloads and parse them with TypeScript runtime schemas;
+- do not add OpenAPI, GraphQL code generation, tRPC, or a schema library merely because another project uses it.
 
 REST rules:
 
-- Every protected route has a `permission_callback` that checks the capability required for the specific action.
-- Authentication or a valid nonce does not replace authorization.
-- Prefer precise validation; sanitize when precise validation is not possible.
-- Return data, `WP_REST_Response`, or `WP_Error`; do not manually emit JSON from REST callbacks.
-- The client uses validated same-origin endpoints and the current WordPress-owned nonce.
-- Use `@wordpress/api-fetch` only inside the REST integration; its nonce middleware may be updated when WordPress provides a fresh nonce.
-- Pass `AbortSignal` for cancellable reads.
-- Normalize `WP_Error`, HTTP failures, malformed JSON, network errors, timeouts, and aborts into typed results.
-- Retry only bounded, idempotent reads. Never automatically retry save, publish, delete, settings updates, uploads, CSS writes, or revision restores.
-- Do not branch on translated messages or expose raw response HTML to users.
+- every protected Route has an action-specific `permission_callback`;
+- authentication or a valid nonce does not replace authorization;
+- validate precise input where possible and sanitize where exact validation is not possible;
+- escape near output;
+- return data, `WP_REST_Response`, or `WP_Error`;
+- preserve stable Error Codes and Status separately from translated messages;
+- do not expose raw response HTML as a user message;
+- do not retry Mutations automatically;
+- only bounded idempotent Reads may retry with cancellation and stale-result protection.
 
-## Persisted Data and Compatibility
+## Preview and Native WordPress Operations
 
-Protected post meta:
-
-```text
-_easymde_enabled
-_easymde_markdown
-_easymde_markdown_theme
-_easymde_code_theme
-_easymde_custom_css_id
-_easymde_custom_css_snapshot
-_easymde_custom_font
-_easymde_windows_font
-_easymde_apple_font
-_easymde_serif_font
-_easymde_render_signature
-```
-
-Rules:
-
-- Never rename, remove, reinterpret, eagerly initialize, or silently invalidate an existing field without an explicit compatibility plan and tests.
-- `_easymde_enabled` describes stored document state; it does not decide editor admission.
-- `easymde_supported_post_types` and `PostModeController` own admission.
-- Opening an ordinary supported post imports compatibility content in memory through the existing PHP path and performs zero writes.
-- Do not add a browser HTML-to-Markdown authority for initial loading.
-- Empty stored Markdown is valid; preserve `metadata_exists()` semantics.
-- The next legitimate save writes canonical Markdown and appearance and synchronizes `post_content`.
-- `_easymde_render_signature` is an internal consistency marker regenerated by PHP.
-- Revisions restore Markdown and appearance together and let PHP regenerate compatibility HTML.
-- Historical `_easymde_code_mac_style` and `codeMacStyle` values remain inactive historical data.
-
-Preserve existing facade methods, filters, routes, script handles, extension registries, stable IDs, ordering, collision semantics, DOM bridge names, and observable behavior unless the linked Issue explicitly changes them.
-
-## Native Form, Save, Autosave, Lock, and Nonce Bridge
-
-The existing WordPress form remains the article submission contract.
-
-```text
-PHP initial state
-→ validated bootstrap
-→ root store
-→ user transaction
-→ synchronous native submission bridge
-→ WordPress native save or publish
-→ PHP persists Markdown and compatibility HTML
-→ adapter observes the real result
-→ store advances the saved baseline
-```
-
-Rules:
-
-- Synchronize Markdown and appearance fields immediately after an accepted transaction or before native serialization.
-- Do not leave a debounce window where save, autosave, unload checks, or native observers see stale fields.
-- Dispatch only the exact native events required by the owning integration.
-- React does not generate or validate the PHP save nonce.
-- Autosave or revision activity is not automatically a canonical EasyMDE save.
-- Keep React dirty state and WordPress form dirty state aligned to one saved baseline.
-- Avoid duplicate unload prompts and submissions.
-- Observe real navigation, redirect, native status, or server confirmation before reporting success.
-- A disabled, missing, replaced, or extension-modified native control is a preflight failure; never force-click it.
-- Preserve Heartbeat, post locks, current nonce, authentication state, and lock dialogs.
-- Do not store the REST nonce as an immutable application constant.
-- On invalid nonce or authentication expiry, stop the operation and enter an explicit security state; do not repeat the write with the same token.
-- If the lock or capability is lost, stop mutations, cancel pending work, retain unsaved content, and explain the condition.
-- Scheduling uses WordPress site timezone and native fields.
-
-## Preview and Safe HTML
-
-Production flow:
+Formal Preview flow:
 
 ```text
 Markdown
 → PreviewPort
-→ POST /easymde/v1/preview
-→ PreviewController validates request and permission
-→ MarkdownRenderer generates sanitized HTML
-→ MarkdownFeatureDetector detects enhancement features
-→ PreviewController returns { html, features }
-→ React preview surface
+→ POST easymde/v1/preview
+→ PreviewController
+→ MarkdownRenderer produces sanitized HTML
+→ MarkdownFeatureDetector produces Feature Manifest
+→ { html, features }
+→ branded Safe Preview HTML
 → local Mermaid, KaTeX, Highlight.js, and TOC enhancement
 ```
 
-`MarkdownRenderer` does not own the Feature manifest. `PreviewController` combines renderer output with `MarkdownFeatureDetector` results.
+`MarkdownRenderer` does not own the Feature Manifest. `PreviewController` combines renderer output with `MarkdownFeatureDetector` results.
 
-Use a branded safe value for accepted preview HTML and one preview-owned HTML sink. Markdown, AI output, error HTML, arbitrary REST values, custom CSS, extension data, and storage values never enter that sink directly.
+Use one Preview-owned HTML sink. Markdown, AI output, error HTML, arbitrary REST values, Custom CSS, extension data, and Storage values never enter that sink directly.
 
-Preview requests support Abort, request identity, stale-result rejection, payload limits, and explicit failure states. Enhancement failure preserves sanitized HTML. Cleanup removes generated nodes, observers, temporary assets, and listeners.
+Preview requests support Abort, request identity, stale-result rejection, payload limits, explicit failures, and enhancement cleanup. Enhancement failure preserves sanitized HTML. Never add another formal Markdown renderer or silent approximate fallback.
 
-Never introduce another formal Markdown renderer or a silent approximate fallback.
+Native operations:
 
-## Feature-Specific Boundaries
+- synchronize accepted document transactions to native submission fields before native serialization;
+- do not debounce the Submission Bridge;
+- do not treat field synchronization as persisted success;
+- observe the actual WordPress save or publish result;
+- do not force-click a disabled or missing native control;
+- preserve WordPress unload and Dirty behavior without duplicate prompts;
+- preserve Heartbeat, Post Locks, authentication changes, and nonce refresh;
+- stop protected writes when capability, authentication, or lock state is lost;
+- retain unsaved session content when safe;
+- opening an ordinary supported Post remains zero-write until the next legitimate save.
 
-### Markdown editing
+Feature boundaries:
 
-- Preserve selection start, end, and direction; IME composition; undo/redo; focus; scroll; clipboard; and keyboard shortcuts.
-- Do not recreate the editor instance for normal React renders.
-- Apply generated edits as explicit transactions with predictable undo behavior and intended selection.
-- Do not edit the document from render or mount Effects.
-- Resolve shortcuts against built-in and extension command registries.
+- **Publishing:** React owns a temporary Publish Draft; WordPress owns real fields and final operation. Cancel is zero-write.
+- **Revisions:** WordPress owns identity and persistence. Restore Markdown and appearance together and let PHP regenerate compatibility HTML.
+- **Media:** use `MediaPort`; insert Markdown only after successful upload while the originating transaction remains current; restore Selection and Focus.
+- **Themes and Custom CSS:** choices come from PHP Registries; `CustomCssPolicy` remains the security owner.
+- **Settings:** use a separate Root; `manage_options`, Options API, `register_setting()`, and PHP Sanitization remain authoritative.
+- **Local drafts:** Recovery data is not a WordPress save; scope Keys by Site, User, Post, and Schema Version; never store Nonces or credentials.
+- **WeChat export:** copy only the current stable sanitized Preview; Clipboard rejection is a failure; fallback restores Selection, Focus, Scroll, and temporary DOM.
+- **AI assistant:** use `AiPort` and explicit user action; keep credentials server-side; generated changes are visible, rejectable, and undoable; never automatically save, publish, upload, change settings, or execute returned code.
 
-### Publishing
+## Accessibility, UI, and CSS Quality
 
-- React owns a temporary Publish Draft; WordPress owns real publish fields and the final operation.
-- Preflight checks the real native contract and current capabilities.
-- Cancellation performs zero writes.
-- Success is reported only after the real WordPress publish result.
-
-### Revisions
-
-- WordPress owns revision identity and persistence.
-- Restore Markdown and appearance together and let PHP regenerate compatibility HTML.
-- Do not create a second revision store or restore through browser-only state.
-
-### Media
-
-- Use `MediaPort` for WordPress media library and uploads.
-- Cancellation is zero-write.
-- Insert Markdown only after upload success and while the originating transaction remains current.
-- Restore selection and focus, revoke object URLs, and remove failed placeholders.
-
-### Themes and custom CSS
-
-- Theme choices come from PHP registries.
-- PHP `CustomCssPolicy` owns permissions, parsing, selector scope, blocked tokens, remote loading, size limits, and nested at-rule policy.
-- Browser preview is not a second security parser.
-
-### Settings
-
-- Settings use a separate root and store.
-- `manage_options`, Options API, `register_setting()`, and PHP sanitization remain authoritative.
-- Report success only after WordPress persists the sanitized option.
-
-### Local drafts
-
-- A local draft is recovery data, not a WordPress save.
-- Keys include site, user, and post identity; payloads have a version.
-- Do not persist nonces, credentials, provider tokens, or hidden server configuration.
-- Do not silently overwrite a newer server document.
-
-### WeChat export
-
-- Copy only the current successful, stable, sanitized preview.
-- Clipboard rejection is a real failure.
-- Legacy fallback restores selection, range, focus, scroll, and temporary DOM.
-
-### AI assistant
-
-- Keep AI behind `AiPort` and explicit user action.
-- Credentials and private endpoints remain server-side.
-- Context scope is visible and minimal.
-- Streaming is cancellable and stale-safe.
-- Generated changes are visible, rejectable, and undoable document transactions.
-- AI does not automatically save, publish, upload, alter settings, or execute returned HTML, CSS, JavaScript, commands, URLs, or tool arguments.
-
-## Accessibility and UI Contracts
-
-Accessibility is part of the component API:
+Accessibility is part of the Component contract:
 
 - use native semantic controls;
-- every control has an accessible name;
-- icon-only buttons have an explicit label;
-- decorative icons are hidden from assistive technology;
+- give every control an accessible name;
+- label icon-only buttons explicitly;
+- hide decorative icons from assistive technology;
 - preserve visible focus;
-- color is not the only state signal;
-- associate labels, help, and errors with form fields;
+- do not use color as the only state signal;
+- associate labels, help, and errors with fields;
 - preserve entered values after validation or network failure;
-- prevent only duplicate state-changing actions while pending;
-- dialogs provide labeling, focus containment, safe Escape behavior, and focus return;
-- destructive, publishing, unsaved, or in-progress dialogs do not close by accidental backdrop click unless the product contract allows it;
-- toolbar commands preserve selection and restore focus;
-- shortcuts respect IME composition;
-- split panes support pointer and keyboard operation and release capture during cancellation or teardown;
-- test zoom, text scaling, long translations, RTL, reduced motion, forced colors, and high contrast where applicable.
+- prevent duplicate state-changing actions while pending without disabling unrelated work;
+- label Dialogs, contain focus, define safe Escape behavior, and return focus;
+- do not close destructive, publishing, unsaved, or in-progress Dialogs by accidental backdrop click;
+- make Toolbars, Menus, and Split Panes keyboard operable;
+- preserve Selection and restore Focus for editor commands;
+- respect IME composition;
+- release Pointer Capture on cancellation and teardown;
+- test long translations, RTL, zoom, text scaling, reduced motion, forced colors, and high contrast where relevant.
 
-Scope admin CSS under a stable EasyMDE root. Do not apply broad WordPress admin element rules, use unrelated legacy classes as shortcuts, or hide an incorrect parent layout with arbitrary offsets and broad `!important`.
+Scope Admin CSS under a stable EasyMDE Root. Do not apply broad WordPress Admin element rules, borrow unrelated legacy classes, or use arbitrary offsets and broad `!important` to hide an incorrect layout owner.
 
-Use project design tokens, logical properties, a controlled z-index scale, approved local icons, and deterministic UI states. Keep admin tokens separate from public article themes and CSS.
+Use project Tokens, logical properties, a controlled z-index scale, approved local icons, and deterministic UI states. Keep Admin Tokens separate from public article Themes.
 
-## React 18 Performance and Bundle Quality
+## Performance and Bundle Quality
 
-Keep the keystroke path small and predictable:
+Keep the keystroke path small:
 
 - update session Markdown immediately;
-- debounce preview and expensive derived work, not controlled input or the native submission bridge;
-- subscribe to the smallest state slice;
-- derive values during render or in pure selectors;
-- do not parse the entire document separately for each Feature on every keystroke;
-- lazy-initialize expensive local state;
+- debounce Preview and expensive derived work, not controlled input or the Submission Bridge;
+- subscribe to the smallest State slice;
+- derive values in render or pure selectors;
+- do not parse the entire document independently for each Feature on every keystroke;
+- lazy-initialize expensive local State;
 - use functional updates when the next value depends on the previous value;
-- use refs only for transient values that do not affect rendering;
+- use Refs only for transient values that do not affect rendering;
 - do not add `memo`, `useMemo`, or `useCallback` everywhere;
-- optimize only after measurement or when identity is an explicit API contract;
-- do not use `startTransition()` for the editor value, submission bridge, save/publish state, focus restoration, or accessibility-critical state;
+- optimize after measurement or when identity is an explicit API contract;
+- do not use `startTransition()` for editor value, Submission Bridge, Save/Publish state, Focus restoration, or accessibility-critical state;
 - use `React.lazy()` only for optional heavy UI with an accessible fallback;
 - do not use Suspense as an implicit WordPress data layer.
 
-Start independent authorized reads together; preserve order for dependent reads and mutations. Abort obsolete work and reject stale completion.
+Start independent authorized Reads together; preserve order for dependent Reads and Mutations. Abort obsolete work and reject stale completion.
 
-Measure large-document typing latency, preview latency, mount time, dialog and toolbar interaction, repeated open/close memory, listener counts, and production bundle output.
+Measure large-document typing, Preview latency, mount time, Toolbar and Dialog interaction, repeated-lifecycle memory, listener counts, entry size, optional chunks, duplicate dependencies, and private React inclusion.
 
-Do not trade correctness, accessibility, stale-result protection, or failure reporting for a benchmark.
+Do not trade correctness, accessibility, diagnostics, or stale-result protection for a benchmark.
 
-## Build Architecture and Dependencies
+## Build and Dependency Rules
 
 Use Vite from the root npm package. Source belongs under `frontend/`; compiled runtime belongs under `assets/build/`.
 
-The first build implementation must choose and validate one coherent loading strategy:
+The first build implementation chooses and validates one coherent strategy:
 
-- classic WordPress scripts with a compatible single-bundle or explicitly managed local optional-asset strategy; or
-- WordPress Script Modules/ESM when the supported API and dependency graph are verified.
+- classic WordPress Scripts; or
+- WordPress Script Modules / ESM.
 
-Do not claim both IIFE output and Rollup dynamic chunks without a working loading contract.
+Do not claim IIFE output and ordinary dynamic chunks both work without a loader contract.
 
 For every strategy:
 
-- use the WordPress-provided React runtime;
-- externalize or map `react`, `react-dom`, `@wordpress/element`, and the selected JSX runtime correctly;
-- generate manifest and dependency metadata;
+- use the WordPress React runtime;
+- correctly externalize or map `react`, `react-dom`, `@wordpress/element`, and the JSX runtime;
+- generate and verify Manifest and dependency metadata;
 - keep primary WordPress handles stable;
-- allow content-hashed chunks only when the manifest-backed loader supports them;
-- resolve dynamic assets from the plugin asset base, never `/`;
+- allow hashed chunks only with a Manifest-backed loader;
+- resolve assets from the Plugin Asset Base, never `/`;
 - do not hardcode `/wp-content/plugins/easymde/`;
-- verify subdirectory, multisite, and non-default plugin URL behavior where relevant;
-- use local runtime assets only;
-- fail build or release for missing, stale, duplicate, or inconsistent manifest entries;
-- fail if any production entry or chunk contains a private React implementation;
-- exclude dev-server URLs, localhost, source paths, prohibited source maps, remote CDN references, and development code.
+- verify subdirectory, Multisite, and non-default Plugin URL behavior where relevant;
+- keep runtime assets local;
+- fail on missing, stale, duplicate, or inconsistent Manifest entries;
+- fail if a production entry or chunk contains a private React implementation;
+- exclude Dev Server URLs, Localhost, source paths, prohibited Source Maps, remote CDN references, and development code.
 
-A dependency requires a current responsibility, non-duplicative purpose, compatible license, acceptable direct and transitive size, active maintenance, no prohibited telemetry or remote assets, tests, removal strategy, lockfile update, and third-party notice update.
+A dependency needs a current responsibility, non-duplicative purpose, compatible license, acceptable direct and transitive size, active maintenance, no prohibited telemetry or remote runtime, tests, removal strategy, Lockfile update, and third-party notice update.
 
-Do not add a state, query, form, router, schema, animation, icon, or utility library because a blog or generic Skill recommends it.
+Do not add a State, Query, Form, Router, Schema, Animation, Icon, or Utility library merely because a blog, react-admin, or a generic Skill recommends it.
 
-## Testing, Release, and Maintenance
+## Testing, Release, and Completion
 
 Choose tests by responsibility:
 
 - `domain`: pure rules and edge cases;
-- `contracts`: schema versions, PHP/TypeScript fixture parity, error mapping, and safe values;
-- `integrations`: WordPress DOM, native forms, nonce refresh, locks, REST, media, storage, clipboard, mounting, and failure paths;
-- `features`: component and Hook behavior through mock runtimes;
-- `app`: providers, independent stores, error boundaries, activation, and composition;
+- `contracts`: schema versions, PHP/TS fixture parity, Error Mapping, safe values, and Manifest contracts;
+- `integrations`: WordPress DOM, native form, nonce refresh, Locks, REST, Media, Storage, Clipboard, mounting, and failure paths;
+- `features`: Controller, Hook, Component, Focus, keyboard, and form behavior through mock Runtime;
+- `app`: Providers, independent Stores, Error Boundaries, activation, and teardown;
 - E2E: real WordPress behavior using the installable ZIP;
-- release tests: required compiled entries present and development files absent.
+- release: required compiled entries present and development files absent.
 
-Enforce when the toolchain exists:
+Enforce when tooling exists:
 
 - strict TypeScript and `noEmit`;
 - Hook and accessibility lint rules;
 - dependency direction and restricted globals;
-- no component imports from WordPress adapters;
 - approved React runtime imports;
-- valid manifest, dependency metadata, CSS, and chunks;
+- valid Manifest, dependency metadata, CSS, and chunks;
 - PHP-to-TypeScript contract parity;
-- installable ZIP includes compiled runtime and excludes source.
+- installable ZIP inclusion and exclusion.
 
 The installable ZIP excludes:
 
@@ -937,60 +654,58 @@ TypeScript and React source
 source maps unless explicitly approved
 Vite caches
 local logs and configuration
-development-server metadata
+development server metadata
 unrelated development files
 ```
 
+Before reporting a Feature complete, verify the scope-relevant items:
+
+1. Every fact and behavior has one Owner.
+2. Component hierarchy follows the data model and user-recognizable responsibilities.
+3. Render functions and Hooks are pure.
+4. State is minimal, non-duplicated, and intentionally reset.
+5. Directory placement and dependency direction are correct.
+6. Props, events, Refs, Hook APIs, names, and public exports follow project conventions.
+7. External values are runtime-validated.
+8. Components use focused Ports and do not access WordPress or browser globals directly.
+9. PHP and WordPress capability, nonce, validation, sanitization, escaping, data, save, publish, and lock authority remain intact.
+10. Native-field synchronization, real operation observation, stale-result rejection, cancellation, failure, and teardown are tested.
+11. Accessibility, Focus, keyboard, IME, Selection, Undo, Scroll, RTL, zoom, and relevant visual states are covered.
+12. Performance conclusions have measurements.
+13. Build metadata, React externalization, local asset URLs, translations, and package exclusions are verified.
+14. The exact diff, commands, CI, review findings, unverified areas, and remaining risks are reported honestly.
+
 Maintainability rules:
 
-- Prefer a clear duplicated three-line local implementation over a premature abstraction with unclear ownership.
-- Extract shared code after a stable repeated responsibility is proven.
-- Keep public contracts small and versioned; keep concrete implementation private.
-- Deprecate before removing a public extension boundary.
-- Record material architecture decisions and why simpler alternatives were insufficient.
-- Update `docs/REACT_ARCHITECTURE.md` and this Skill together when a durable rule changes.
-- Do not preserve obsolete rules merely because they were once documented.
-- Do not claim tests, review, performance, accessibility, or browser validation that was not actually performed.
+- prefer a clear local implementation over a premature abstraction with unclear ownership;
+- extract shared code after a stable repeated responsibility is proven;
+- keep public contracts small and versioned;
+- keep concrete implementations private;
+- deprecate before removing public extension boundaries;
+- update `docs/REACT_DESIGN_PHILOSOPHY.md` and this Skill together when a durable rule changes;
+- remove obsolete rules rather than preserving contradictions;
+- use the migration Skill only for temporary ownership transfer rules.
 
 ## Prohibited Patterns
 
 Do not introduce:
 
 1. Gutenberg replacement, Next.js, Webpack, another frontend framework, or replacement publishing backend.
-2. React 19-only APIs, private React runtime, hydration, RSC, or Server Actions.
+2. React 19-only APIs, private React runtime, Hydration, RSC, or Server Actions.
 3. A browser formal Markdown renderer or CSS security parser.
 4. A second canonical document, save, publish, revision, media, settings, timezone, or public-content authority.
-5. Components that directly access WordPress DOM, jQuery, `wp.apiFetch`, `wp.media`, storage, clipboard, or global bootstrap.
-6. Universal adapters, generic `execute(type, payload)` APIs, God components, shared mutable root stores, or stringly typed event buses.
-7. Circular dependencies, upward imports, broad barrels, Feature-private deep imports, or speculative abstraction layers.
-8. Render-time side effects, Effect-driven user commands, mirrored state, duplicated authority, or impossible boolean-prop combinations.
-9. Random keys, index keys for reorderable domain data, or accidental state resets through nested component definitions.
-10. Silent fallback, swallowed errors, fake success, hidden writes, force-clicked disabled controls, or automatic mutation retries.
-11. Stale asynchronous work updating the current post, root, dialog, or session.
+5. Components that directly access WordPress DOM, jQuery, `wp.apiFetch`, `wp.media`, Storage, Clipboard, or global Bootstrap.
+6. Universal Adapters, generic `execute(type, payload)`, God Components, shared mutable Root Stores, or stringly typed event buses.
+7. Circular dependencies, upward imports, broad Barrels, Feature-private deep imports, catch-all directories, or speculative abstraction layers.
+8. Render-time side effects, Effect-driven user commands, mirrored State, duplicated authority, or impossible boolean-prop combinations.
+9. Random Keys, index Keys for reorderable Domain data, or accidental State reset through nested component definitions.
+10. Silent fallback, swallowed errors, fake success, hidden writes, force-clicked disabled controls, or automatic Mutation retries.
+11. Stale async work updating the current Post, Root, Dialog, or Session.
 12. Effects without cleanup, idempotence, failure handling, and repeated-lifecycle safety.
-13. Browser-local scheduling overriding WordPress site timezone.
-14. Implementations that ignore extension registries or only support built-in commands.
-15. Root-relative plugin asset URLs, remote runtime CDNs, production dev-server references, or telemetry without approval.
-16. Empty Feature directories, placeholder modules, unused assets, or dependencies without a current owner.
-17. Private article content, custom CSS, prompts, tokens, nonces, credentials, or secret endpoints in diagnostics.
+13. Browser-local scheduling overriding WordPress Site timezone.
+14. Implementations that ignore extension Registries or only support built-in commands.
+15. Root-relative Plugin asset URLs, remote runtime CDNs, production Dev Server references, or unapproved telemetry.
+16. Empty Feature directories, placeholder modules, unused assets, or dependencies without a current Owner.
+17. Private article content, Custom CSS, prompts, Tokens, Nonces, credentials, or secret endpoints in diagnostics.
 18. Source, tests, caches, logs, `.agents/`, or development metadata in the installable ZIP.
-19. A generic recommendation treated as stronger than EasyMDE project evidence.
-
-## Completion Evidence
-
-Before reporting a React or TypeScript Feature complete, verify the parts relevant to its scope:
-
-1. Each state and behavior has one owner.
-2. Component hierarchy follows the data model and user-recognizable responsibilities.
-3. Render functions and Hooks are pure.
-4. State is minimal, non-duplicated, and reset intentionally by identity.
-5. Directory placement and dependency direction are correct.
-6. Component Props, events, refs, Hook APIs, and public exports follow the TypeScript conventions.
-7. External values are runtime-validated.
-8. Components use focused Ports and do not access WordPress or browser globals directly.
-9. PHP and WordPress capability, nonce, validation, sanitization, escaping, save, publish, lock, and data authority remain intact.
-10. Native fields, real save/publish observation, stale-result rejection, cancellation, and teardown are tested.
-11. Accessibility, focus, keyboard, IME, selection, undo, scroll, RTL, zoom, and relevant visual states are covered.
-12. Performance conclusions have measurements.
-13. Build metadata, runtime externalization, asset URLs, local assets, and package exclusions are verified.
-14. Exact diff, tests, CI, review findings, unverified areas, and remaining risks are reported honestly.
+19. A react-admin, generic Skill, blog, or search recommendation treated as stronger than EasyMDE project evidence.

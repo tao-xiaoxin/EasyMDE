@@ -4,12 +4,15 @@ description: Use this skill when building, modifying, debugging, reviewing, or v
 ---
 
 # EasyMDE React Development Guide
+
 EasyMDE is a standalone WordPress Markdown editor. React and TypeScript, built with Vite, are the browser-application architecture for the admin editor and related interactive interfaces.
 
 Before writing custom code, check whether EasyMDE already has a domain rule, WordPress service, REST endpoint, registry, compatibility API, or reusable UI capability for the task. Extend the owning capability instead of creating a parallel path.
 
 The root `AGENTS.md` remains authoritative. Follow it whenever it is stricter or more specific.
+
 ## Inspect Before Changing
+
 Read the live repository before choosing files or abstractions:
 
 ```text
@@ -40,7 +43,9 @@ PHP bootstrap or WordPress state
 → WordPress, REST, or browser adapter
 → real save, publish, render, media, or revision result
 ```
+
 ## Critical Authority Rules
+
 - `_easymde_markdown` is the canonical Markdown source.
 - `post_content` is sanitized rendered HTML for WordPress compatibility.
 - `EasyMDE\Content\MarkdownRenderer`, backed by `league/commonmark`, is the only production Markdown renderer.
@@ -56,22 +61,10 @@ PHP bootstrap or WordPress state
 EasyMDE_Plugin::register_toolbar_button();
 EasyMDE_Plugin::register_shortcode_helper();
 ```
-## Repository Layout
-Keep one root npm package. React and TypeScript source belongs under `frontend/`; browser runtime output belongs under `assets/build/`.
 
-```text
-EasyMDE/
-├── src/                 # PHP production code
-├── includes/            # compatibility and bootstrap files
-├── templates/           # PHP-rendered templates
-├── frontend/            # React and TypeScript source
-├── assets/              # shipped runtime assets and generated browser output
-├── scripts/             # build, packaging, i18n, notices, validation
-├── tests/               # PHP, Node, and browser tests
-├── docs/
-├── package.json         # the single npm package
-└── package-lock.json
-```
+## Repository Layout
+
+Keep one root npm package. React and TypeScript source belongs under `frontend/`; browser runtime output belongs under `assets/build/`.
 
 Use this React source structure:
 
@@ -99,7 +92,9 @@ Responsibilities:
 - `test/`: shared test setup, factories, fixtures, and helpers.
 
 Do not create a generic catch-all `components/` directory at the application root.
+
 ## Feature Ownership
+
 Group code by the capability the user recognizes:
 
 ```text
@@ -124,7 +119,9 @@ Create only the feature directories required by current work. Use only subdirect
 A feature may expose an intentional public API through `index.ts`. It may import `domain`, `contracts`, and `shared`, but must not import another feature's private files.
 
 Promote code to `shared` only after it has a stable, genuinely shared responsibility.
+
 ## Runtime Ports
+
 React features depend on focused capabilities, not WordPress globals or DOM selectors.
 
 ```ts
@@ -173,7 +170,9 @@ wp.media
 React components, domain modules, and feature models must not access those details directly.
 
 Put behaviorally important browser APIs such as storage, clipboard, observers, and media queries behind focused adapters when they require failure handling or tests.
+
 ## Typed Bootstrap
+
 Parse browser bootstrap data once in the entrypoint. Do not spread global configuration reads through the component tree.
 
 Use a versioned contract:
@@ -195,7 +194,9 @@ Validate required fields before mounting. A missing endpoint, nonce, capability,
 Pass typed data through providers, store initialization, and runtime construction. Components must not read `window.EasyMDEConfig`.
 
 Capability hints may control presentation, but PHP and WordPress must verify every protected operation.
+
 ## State Ownership
+
 Use one application store under `app/store/` for state shared by multiple features. Prefer selector-based subscriptions so Markdown typing does not rerender unrelated UI.
 
 Recommended slices:
@@ -230,7 +231,9 @@ PHP initial document
 → WordPress native save
 → PHP persists Markdown and sanitized compatibility HTML
 ```
+
 ## Components and Hooks
+
 Use composition and focused hooks. Components render and handle direct interaction; runtime ports own WordPress and browser integration.
 
 - Use context for stable services such as `EditorRuntime`, strings, and store access.
@@ -242,7 +245,9 @@ Use composition and focused hooks. Components render and handle direct interacti
 - Do not report success until the real asynchronous operation succeeds.
 - Keep accessible names, disabled state, loading state, and visual state synchronized.
 - Avoid components that query WordPress DOM, call REST directly, modify global classes, and manage unrelated features in one file.
+
 ## Markdown Editing
+
 Markdown editing behavior belongs in pure domain modules:
 
 - line-ending and title normalization;
@@ -269,7 +274,9 @@ Editing surfaces must preserve:
 - edit, split, and preview view changes.
 
 Do not replace the editing element during ordinary state updates when that would destroy selection, composition, undo, or scroll state.
+
 ## Preview Pipeline
+
 The production preview path is:
 
 ```text
@@ -310,7 +317,9 @@ if (requestId === requestSequence.current) {
   setPreview(result);
 }
 ```
+
 ## Publishing, Revisions, and Media
+
 React presents these workflows; WordPress remains authoritative.
 
 ```text
@@ -347,7 +356,9 @@ Media:
 - Cancellation changes nothing.
 - Restore editor focus and selection before inserting Markdown.
 - Do not upload remote provider URLs through the local media endpoint.
+
 ## Effects and Lifecycle
+
 Every effect needs a clear owner, trigger, cleanup, and failure path.
 
 Clean up created listeners, observers, timers, animation frames, abort controllers, object URLs, portals, overlays, global classes, inline styles, CSS variables, scroll locks, and pointer capture.
@@ -355,7 +366,9 @@ Clean up created listeners, observers, timers, animation frames, abort controlle
 Repeated activation must not multiply handlers or retain stale state. Work started for an old document, closed dialog, inactive surface, or unmounted component must not update the current UI.
 
 Prefer event handlers and explicit commands for user actions. Use effects for external-system synchronization, not general control flow.
+
 ## Styling and UI Fidelity
+
 - Scope admin application styles under a stable EasyMDE root.
 - Preserve public article-theme, code-theme, rendered-content, and Mac code-frame contracts.
 - Do not apply broad element rules to the WordPress admin.
@@ -369,7 +382,9 @@ Prefer event handlers and explicit commands for user actions. Use effects for ex
 - Treat focus-visible, contrast, keyboard access, dialog containment, focus return, and screen-reader state as component contracts.
 
 When implementing an existing surface in React, preserve its observable behavior and protected selectors unless the linked task explicitly changes them.
+
 ## Internationalization
+
 PHP remains the source of author-facing translated strings unless the repository defines another approved WordPress i18n bridge.
 
 - Receive translated strings through typed bootstrap data.
@@ -378,20 +393,10 @@ PHP remains the source of author-facing translated strings unless the repository
 - Use interpolation instead of concatenating translated fragments.
 - Keep message ownership scoped to the feature.
 - Run repository i18n checks when strings change.
+
 ## Build Architecture
-Use Vite from the root npm package. Expected scripts may include:
 
-```json
-{
-  "dev:editor": "vite --config frontend/vite.config.ts",
-  "build:editor": "vite build --config frontend/vite.config.ts",
-  "typecheck:editor": "tsc --noEmit -p frontend/tsconfig.json",
-  "lint:editor": "eslint frontend/src",
-  "test:editor": "vitest run --config frontend/vitest.config.ts"
-}
-```
-
-Add scripts only when the corresponding tool and source are present.
+Use Vite from the root npm package. Keep focused commands for editor development, production build, type checking, linting, and tests. Add a script only when the corresponding tool and source are present.
 
 Use dedicated runtime output:
 
@@ -413,7 +418,9 @@ Rules:
 - Preserve WordPress dependencies, translations, versioning, and load order.
 - Document each dependency's purpose and license.
 - Keep third-party notices and lockfiles current.
+
 ## Testing
+
 Choose tests by responsibility:
 
 - `domain`: direct unit tests for pure functions and edge cases.
@@ -427,7 +434,9 @@ Choose tests by responsibility:
 Cover relevant negative and repeated cases: permission denial, invalid nonces, missing native controls, preview failure, stale responses, cancelled media, storage failure, repeated mount/unmount, focus return, Escape, selection direction, IME, undo, scroll, large content, and release completeness.
 
 Do not claim browser, WordPress, PHP, accessibility, visual, or release validation that was not actually performed.
+
 ## Release Packaging
+
 The installable plugin ZIP contains PHP production code, templates, Composer runtime dependencies, translations, local vendor assets, and required compiled browser assets.
 
 It must exclude:
@@ -456,7 +465,9 @@ Before changing release behavior:
 - confirm Composer development packages are absent;
 - confirm runtime assets and licenses are complete;
 - inspect the produced ZIP instead of inferring contents.
+
 ## Prohibited Patterns
+
 Do not introduce:
 
 - Next.js, Webpack, another frontend framework, or a replacement publishing backend without explicit approval.
@@ -472,14 +483,3 @@ Do not introduce:
 - Remote CDN runtime dependencies.
 - Placeholder modules, empty feature directories, speculative abstractions, or unused assets.
 - Development source, tests, caches, local metadata, or secrets in the installable plugin package.
-## Completion Checklist
-1. Confirm the owning layer and feature.
-2. Confirm PHP, WordPress, React, and browser state authority.
-3. Confirm components use focused ports instead of environment globals.
-4. Confirm error, cancellation, stale-result, and cleanup paths.
-5. Confirm relevant Markdown, save, publish, revision, media, and compatibility contracts.
-6. Confirm strings, accessibility, focus, keyboard, selection, IME, undo, scroll, and responsive states where relevant.
-7. Run focused type, unit, integration, browser, i18n, and release checks available for changed paths.
-8. Inspect the exact diff and generated output.
-9. Inspect the installable plugin ZIP when build or release paths change.
-10. Report what was and was not verified.

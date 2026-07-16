@@ -37,7 +37,7 @@ Stop and ask when a proposed ownership, public contract, dependency, data migrat
 
 ## Companion Skill orchestration
 
-External task orchestration may supply the smallest applicable set below for the current migration unit. This Skill declares the expected guidance lenses but does not discover installed Skills or open or inspect peer Skill files. Apply only guidance actually supplied to the task, and report unavailable Skills honestly.
+Use the smallest applicable set for the current migration unit. Read a named Skill before following it, and report unavailable Skills honestly.
 
 - spec-driven-development: define the unit, invariants, failure behavior, commands, boundaries, and acceptance evidence before implementation.
 - deprecation-and-migration: inventory consumers, plan compatibility, track deprecation, and prove zero remaining use before deletion.
@@ -48,8 +48,8 @@ External task orchestration may supply the smallest applicable set below for the
 - wp-plugin-development: preserve WordPress hooks, capabilities, nonces, Settings API, native forms, media, packaging, and PHP authority.
 - performance-optimization: measure before and after; optimize only a demonstrated bottleneck and guard the result.
 - code-review-and-quality: perform a skeptical correctness, simplicity, architecture, security, performance, test-validity, and privacy review.
-- react-best-practices: apply React 18 client-rendering, re-render, async, listener, and bundle guidance that fits EasyMDE.
-- composition-patterns: use explicit variants, narrow providers, state ownership, and composition where they reduce real complexity.
+- vercel-react-best-practices: apply React 18 client-rendering, re-render, async, listener, and bundle guidance that fits EasyMDE.
+- vercel-composition-patterns: use explicit variants, narrow providers, state ownership, and composition where they reduce real complexity.
 - web-design-guidelines: review semantics, keyboard, focus, forms, feedback, motion, internationalization, and interaction quality.
 
 Project-specific limits override generic advice:

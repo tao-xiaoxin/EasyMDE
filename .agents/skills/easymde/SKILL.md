@@ -7,7 +7,7 @@ description: Use this Skill when building, modifying, debugging, reviewing, or v
 
 EasyMDE is a standalone WordPress Markdown editor. React and TypeScript, built with Vite, are the approved browser-application architecture for the admin editor and related interactive WordPress administration surfaces.
 
-This Skill is the executable development contract. The durable rationale lives in `docs/REACT_DESIGN_PHILOSOPHY.md`. For a task that replaces an existing JavaScript or DOM-driven owner, external task orchestration must supply the separate `easymde-migration` guidance; this Skill must not discover installed Skills or open or inspect peer Skill files.
+This Skill is the executable development contract. The durable rationale lives in `docs/REACT_DESIGN_PHILOSOPHY.md`. When a task replaces an existing JavaScript or DOM-driven owner, also load `.agents/skills/easymde-migration/SKILL.md`.
 
 Do not introduce a pattern, dependency, abstraction, directory, service, or framework merely because it is common in another React project.
 

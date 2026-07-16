@@ -1,695 +1,453 @@
 ---
 name: easymde-migration
-description: Use this temporary Skill only when a focused Issue transfers ownership of existing EasyMDE browser-side behavior from legacy JavaScript or DOM-driven code to the approved React, TypeScript, and Vite architecture, or when deprecating and removing the superseded owner. Do not use it for ordinary post-migration React feature work, unrelated maintenance, or visual redesign outside the linked Issue.
+description: Use this temporary skill when planning, implementing, reviewing, or validating the transfer of an existing EasyMDE browser-side behavior from legacy JavaScript ownership to the React, TypeScript, and Vite architecture. It governs characterization, typed seams, single-owner activation, rollback, deprecation, legacy removal, and migration evidence; do not use it for ordinary React feature work that has no legacy owner.
 ---
 
-# EasyMDE Migration Guide
+# EasyMDE Browser Migration Guide
 
-This is a temporary execution Skill for the incremental migration tracked by Issue #74.
+This is a temporary execution Skill for the migration tracked by Issue #74. Use it only when an existing browser-side EasyMDE behavior changes owner. Use the long-term .agents/skills/easymde/SKILL.md for normal React development and docs/REACT_DESIGN_PHILOSOPHY.md for stable architecture decisions.
 
-It governs ownership transfer while the editor remains usable. It does not repeat the long-term architecture or coding rules:
+Delete this Skill after the full migration and its removal gate are complete. Do not preserve migration ceremony as permanent project architecture.
 
-- `docs/REACT_DESIGN_PHILOSOPHY.md` explains the durable design philosophy;
-- `.agents/skills/easymde/SKILL.md` governs React, TypeScript, WordPress integration, code quality, accessibility, performance, testing, build, and release;
-- this Skill governs specification, characterization, seams, activation, rollback, deprecation, removal, and final cleanup.
+Do not close Issue #78 or delete this Skill without explicit human maintainer approval.
 
-Delete this Skill after the complete migration and its deletion gate pass.
+Keep the three guidance files distinct:
 
-## Rule Priority
+| File | Lifetime | Responsibility |
+|---|---|---|
+| `docs/REACT_DESIGN_PHILOSOPHY.md` | Long-term | Stable architecture, ownership, directory, dependency, runtime, build, and package decisions |
+| `.agents/skills/easymde/SKILL.md` | Long-term | Normal React and TypeScript implementation, quality, WordPress integration, testing, and maintenance |
+| `.agents/skills/easymde-migration/SKILL.md` | Temporary | Characterization, ownership handoff, rollback, deprecation, legacy removal, and final migration proof |
 
-Apply rules in this order:
+When a migration discovers a durable rule, update its long-term owner instead of growing this temporary Skill.
+
+## Authority and conflict order
+
+Apply guidance in this order:
 
 1. The explicit task, linked Issue, and human maintainer decision.
-2. Root `AGENTS.md`, the live repository, and current public compatibility contracts.
-3. `docs/ARCHITECTURE.md` and `docs/REACT_DESIGN_PHILOSOPHY.md`.
-4. `.agents/skills/easymde/SKILL.md`.
-5. This temporary Skill.
-6. Companion Skills that are actually available.
-7. Secondary references.
+2. The live repository and root AGENTS.md.
+3. docs/REACT_DESIGN_PHILOSOPHY.md and .agents/skills/easymde/SKILL.md.
+4. This migration Skill.
+5. Official React, WordPress, and TypeScript documentation and source matching the supported versions.
+6. Available companion Skills.
+7. Secondary articles and search results.
 
-Project-specific rules always win. Do not claim a companion Skill was loaded or followed unless its contents were available.
+Stop and ask when a proposed ownership, public contract, dependency, data migration, or deletion conflicts with a higher authority. Do not resolve a material conflict by inventing a compatibility path.
 
-## Companion Skill Orchestration
+## Companion Skill orchestration
 
-Use the listed Skills as focused lenses, not competing architectures:
+Use the smallest applicable set for the current migration unit. Read a named Skill before following it, and report unavailable Skills honestly.
 
-| Skill | Migration responsibility |
-| --- | --- |
-| `spec-driven-development` | Define observable behavior, owners, invariants, failure paths, acceptance evidence, rollback, and removal gates before implementation. |
-| `deprecation-and-migration` | Track legacy contracts, consumers, replacement, compatibility period, warnings, and deletion prerequisites. |
-| `frontend-ui-engineering` | Preserve UI behavior, focus, keyboard, pointer, IME, Selection, Undo, Scroll, portals, overlays, responsive layout, and CSS isolation. |
-| `test-driven-development` | Characterize current behavior, write the smallest migration-contract test, implement the seam, and remove duplication only after equivalence is proven. |
-| `browser-testing-with-devtools` | Inspect console, network, DOM ownership, active element, listeners, observers, timers, portals, layout, memory, and release-ZIP behavior. |
-| `security-and-hardening` | Verify capabilities, nonces, REST permissions, validation, sanitization, escaping, safe HTML, upload policy, diagnostics, and AI boundaries. |
-| `wp-plugin-development` | Preserve WordPress lifecycle, native Save/Publish, Locks, Autosave, Revisions, Media, Taxonomies, Options, REST, assets, translations, and packaging. |
-| `performance-optimization` | Establish baselines and measure typing, Preview, mount, interaction, memory, listeners, and Bundle changes. |
-| `code-review-and-quality` | Review the exact diff against specification, ownership ledger, architecture, tests, package, and protected surfaces. |
-| `react-best-practices` | Apply React 18 purity, minimal State, Event-before-Effect, cleanup, stale-result protection, selectors, measured memoization, and Bundle inspection. |
-| `composition-patterns` | Keep Component APIs explicit, State near its Owner, variants valid, Providers narrow, and composition intentional. |
-| `web-design-guidelines` | Validate semantics, accessible names, Forms, Focus, keyboard, contrast, zoom, RTL, reduced motion, and safe Dialog behavior. |
+- spec-driven-development: define the unit, invariants, failure behavior, commands, boundaries, and acceptance evidence before implementation.
+- deprecation-and-migration: inventory consumers, plan compatibility, track deprecation, and prove zero remaining use before deletion.
+- frontend-ui-engineering: preserve the approved visual system, responsive behavior, interaction states, and component ownership.
+- test-driven-development: add characterization or failing behavior tests before changing ownership, then work red, green, and refactor.
+- browser-testing-with-devtools: inspect real DOM, accessibility, console, network, geometry, lifecycle, and performance when the browser tooling is available.
+- security-and-hardening: threat-model trust boundaries, untrusted Markdown and HTML, REST, media, custom CSS, storage, clipboard, and AI output.
+- wp-plugin-development: preserve WordPress hooks, capabilities, nonces, Settings API, native forms, media, packaging, and PHP authority.
+- performance-optimization: measure before and after; optimize only a demonstrated bottleneck and guard the result.
+- code-review-and-quality: perform a skeptical correctness, simplicity, architecture, security, performance, test-validity, and privacy review.
+- vercel-react-best-practices: apply React 18 client-rendering, re-render, async, listener, and bundle guidance that fits EasyMDE.
+- vercel-composition-patterns: use explicit variants, narrow providers, state ownership, and composition where they reduce real complexity.
+- web-design-guidelines: review semantics, keyboard, focus, forms, feedback, motion, internationalization, and interaction quality.
 
-Do not import Next.js, RSC, React 19-only behavior, Webpack, a generic CRUD architecture, React Query, React Hook Form, Material UI, Router, or another dependency merely because a companion Skill or react-admin uses it.
+Project-specific limits override generic advice:
 
-## When This Skill Applies
+- Do not apply Next.js, RSC, Server Actions, hydration, React 19-only APIs, next/dynamic, React.cache, or framework-server rules.
+- Do not introduce SWR, React Query, Zustand, Redux, a router, a form library, a schema library, or a component system merely because a companion Skill uses it.
+- Do not let generic mobile-first breakpoints, URL-synchronized UI state, automatic retries, optimistic writes, backdrop closing, theme detection, or Core Web Vitals replace the approved editor contract.
+- Do not add a router, remote CDN, preconnect, remote font, or fixed virtualization threshold from generic Web guidance; WordPress owns navigation, runtime assets stay local, and performance decisions require project evidence.
+- Preserve repository-owned translated copy and WordPress i18n behavior; do not apply generic capitalization, punctuation, or wording rules mechanically.
+- Do not optimize with memo, useMemo, useCallback, virtualization, workers, content-visibility, or code splitting without a measured need and verified accessibility and packaging behavior.
+- Treat storage access, parsing, quota, and schema failures as explicit documented states. Never swallow them into fake success or use browser storage as fallback persistence for article content.
 
-Use it when a task:
+## Non-negotiable migration invariants
 
-- extracts pure behavior from a legacy module;
-- introduces a temporary compatibility seam;
-- moves one user-facing capability into React;
-- changes which implementation owns a state-changing behavior;
-- deprecates or removes legacy JavaScript, CSS, selectors, events, script handles, Bootstrap fields, or compatibility shims;
-- validates final migration completion;
-- deletes this temporary Skill.
+- _easymde_markdown remains the canonical Markdown source.
+- post_content remains sanitized WordPress compatibility output.
+- PHP MarkdownRenderer remains the only formal Markdown renderer.
+- WordPress and PHP retain permissions, nonces, post meta, revisions, media, taxonomies, save, publish, scheduling, post status, locking, settings, supported-post admission, and public rendering.
+- Opening an ordinary supported post remains a zero-write operation.
+- Cancellation, opening, closing, focusing, previewing, mounting, and unmounting perform no hidden save or migration write.
+- React uses the WordPress-provided React 18 runtime for WordPress 6.7 or newer.
+- Public extension APIs, filters, route namespace, command registries, theme identifiers, metadata, and native submission behavior remain compatible unless the linked Issue explicitly changes them.
+- Runtime assets stay local. The installable ZIP contains required compiled assets and excludes frontend source, tests, source maps unless approved, .agents, docs-only architecture material, caches, logs, and development files.
+- Every state-changing behavior has exactly one active owner.
 
-Do not use it for:
+## Define one migration unit
 
-- normal React work after a capability has one stable owner;
-- unrelated PHP, REST, Theme, release, or documentation maintenance;
-- visual redesign not required by the linked migration Issue;
-- bulk file conversion;
-- speculative foundation work with no current migration unit;
-- creating future empty directories or placeholders.
+A migration unit is one user-observable capability with one ownership handoff, not one legacy file and not an entire screen.
 
-## Migration Unit
+Good units include:
 
-A migration unit is the smallest independently reviewable slice that transfers one coherent behavior or external responsibility.
+- opening and closing one appearance panel;
+- selecting and applying one theme;
+- requesting and displaying live preview;
+- inserting media at the preserved selection;
+- editing a publish draft and invoking native publish;
+- listing and restoring revisions;
+- persisting one layout preference;
+- exporting the stable preview to WeChat.
 
-Good units:
+Do not mix a visual redesign, public API change, data-model change, dependency experiment, or unrelated cleanup into the ownership transfer. Create a separate Issue when the user-visible contract changes.
 
-- one pure outline parser;
-- one Preview scheduler;
-- one Theme selector;
-- one Custom CSS Dialog;
-- one Revision list and restore flow;
-- one Publishing Dialog;
-- one Toolbar command family;
-- one Workspace pane controller;
-- one Media insertion path;
-- one Local Draft owner;
-- one WeChat export path.
+Before implementation, record in the linked Issue or PR:
 
-Bad units:
+- user problem and observable success;
+- current owner and intended owner;
+- input, state transition, side effects, output, and failure path;
+- canonical persisted state and browser-session state;
+- DOM fields, selectors, events, timers, observers, storage keys, REST routes, WordPress globals, and assets touched;
+- extension and protected-surface consumers;
+- activation signal and rollback boundary;
+- removal candidates and proof required before deletion;
+- security, accessibility, performance, browser, release, and privacy evidence;
+- known unverified states.
 
-- “convert the frontend”;
-- “move all files under `assets/js/admin/`”;
-- “create the whole future directory tree”;
-- “replace every Dialog”;
-- “add a universal bridge for later”.
+Do not proceed if the current owner cannot be identified. Add privacy-safe diagnostics or characterization tests first.
 
-A unit has one observable outcome, one ownership handoff, focused tests, and a removal gate.
+Maintain one ownership ledger in the migration program or linked Issue:
 
-## Required Migration Specification
+| Behavior | Current owner | Intended owner | Activation condition | Removal evidence | Status |
+|---|---|---|---|---|---|
 
-Before editing production code, record:
+Use only evidence-backed states: `legacy-active`, `characterized`, `seam-ready`, `react-active`, `legacy-removable`, `legacy-removed`, and `verified`. A status does not advance because files exist; its activation or removal evidence must already pass.
 
-```text
-Migration unit:
-User-visible behavior:
-Current owner:
-Target owner:
-Persisted authority:
-Browser-session authority:
-WordPress/native dependencies:
-Protected public or extension contracts:
-Known consumers:
-Success behavior:
-Failure behavior:
-Cancellation behavior:
-Stale-result behavior:
-Concurrency policy:
-Authoritative-result reconciliation:
-External-store subscription contract:
-Teardown behavior:
-Activation condition:
-Rollback behavior:
-Translation source and catalog impact:
-Performance baseline:
-Accessibility and Status Message contract:
-Visual contract:
-Tests before change:
-Tests after change:
-Legacy-removal gate:
-Out of scope:
-Unverified areas:
-```
+## Inspect and characterize the current owner
 
-The specification describes observable behavior, not only file movement. Do not begin ownership transfer while current behavior, consumers, or removal criteria are unknown.
+Inspect the live path rather than relying on this list:
 
-## Current-Owner Inventory
+    assets/js/admin/bootstrap.js
+    assets/js/admin/immersive-workspace.js
+    assets/js/admin/editor-state.js
+    assets/js/admin/commands.js
+    assets/js/admin/preview-client.js
+    assets/js/admin/preview-feature-loader.js
+    assets/js/admin/theme-manager.js
+    assets/js/admin/toolbar.js
+    assets/js/admin/draft-storage.js
+    assets/js/admin/media-picker.js
+    assets/js/admin/image-paste.js
+    assets/js/admin/wechat-exporter.js
+    assets/css/admin/
+    src/Admin/
+    src/Content/
+    src/Rest/
+    src/Theme/
+    templates/admin/
+    tests/
 
-Inspect the live repository and trace the complete behavior. Read relevant parts of:
+Build an owner inventory for the selected behavior:
 
-```text
-AGENTS.md
-docs/ARCHITECTURE.md
-docs/REACT_DESIGN_PHILOSOPHY.md
-assets/js/admin/
-assets/css/admin/
-templates/admin/
-src/Admin/
-src/Content/
-src/Rest/
-src/Theme/
-src/Frontend/
-src/Support/
-tests/
-scripts/build-release.mjs
-package.json
-```
+- initialization and teardown entrypoints;
+- reads and writes;
+- mutable state and saved baseline;
+- listener, timer, observer, pointer capture, selection, focus, and scroll ownership;
+- request cancellation and stale-result handling;
+- external-store snapshots, subscriptions, polling, and cleanup;
+- async operation concurrency and authoritative-result reconciliation;
+- loading, empty, success, error, permission, conflict, and unavailable states;
+- PHP bootstrap strings, JS literals, text domains, extraction roots, catalogs, and status announcements;
+- PHP capability, nonce, sanitization, escaping, and persistence path;
+- local asset and release-package path;
+- current unit, integration, browser, and negative tests.
 
-Inventory the migration unit's:
+Characterization tests protect intentional behavior, including awkward compatibility behavior. Do not freeze an accidental implementation detail unless a consumer or project contract depends on it.
 
-- script handles and dependencies;
-- PHP Bootstrap fields;
-- DOM Roots and selectors;
-- native form fields;
-- jQuery and custom events;
-- document and window listeners;
-- MutationObservers;
-- Timers and Animation Frames;
-- editor-instance ownership;
-- REST Routes and Error Codes;
-- Storage Keys;
-- external Stores, snapshots, subscriptions, and cleanup;
-- asynchronous operation policies and in-flight ownership;
-- Media callbacks;
-- Clipboard flows;
-- PHP Bootstrap strings, JS literals, text domains, extraction roots, and translation catalogs;
-- extension Registries;
-- CSS Roots and protected selectors;
-- test fixtures;
-- release-package inputs.
+## Write the focused specification
 
-Do not infer ownership from filenames alone.
+The migration specification must state:
 
-## Characterize Before Replacing
+    Unit:
+    Current active owner:
+    Intended active owner:
+    User-visible invariant:
+    Protected surfaces:
+    Persisted authority:
+    Browser-session owner:
+    Typed seam:
+    Activation readiness:
+    Rollback boundary:
+    Failure and cancellation behavior:
+    Async concurrency and authoritative-result policy:
+    External-store subscription contract:
+    Translation and status-message impact:
+    Removal gate:
+    Verification commands:
+    Unverified areas:
 
-Before replacement, add or identify evidence for relevant states:
+The specification is accepted only when the linked Issue authorizes the unit and all material open questions are resolved. Update it before code when evidence changes the intended boundary.
 
-- normal success;
-- empty state;
-- invalid input;
-- missing capability;
-- rejected request;
-- missing native control;
-- stale response;
-- rapid repeated action;
-- cancellation;
-- repeated open and close;
-- Post or Root identity change;
-- WordPress extension modification;
-- installed release-ZIP behavior.
+## Establish controlled baseline evidence
 
-Choose the lowest reliable test layer. Do not preserve an accidental bug without deciding whether it is a compatibility contract and recording that decision.
+Before changing ownership:
 
-## Target Placement
+1. Use deterministic synthetic content, permissions, post state, viewport, locale, direction, zoom, font, and browser state.
+2. Capture the changed surface and every protected surface that could regress.
+3. Wait for fonts, images, preview, local assets, and async work before measuring.
+4. Record DOM order, accessibility tree, focus, selection, scroll, geometry, computed styles, network calls, console output, and writes relevant to the unit.
+5. Exercise success, cancellation, rejection, missing dependency, stale completion, rapid repeat, teardown, and re-entry paths.
+6. Record a performance baseline only for metrics the unit can affect.
 
-Place new code according to the approved architecture:
+Screenshots alone are insufficient. Source-text assertions alone are insufficient. A dev-server result does not prove the release ZIP.
 
-```text
-frontend/src/
-├── entrypoints/
-├── app/
-│   ├── editor/
-│   └── settings/
-├── contracts/
-├── domain/
-├── features/
-├── integrations/
-│   ├── wordpress/
-│   ├── preview-runtime/
-│   └── browser/
-├── shared/
-└── test/
-```
+## Build seams before moving ownership
 
-Use the exact layer and naming rules from the long-term Skill. Do not duplicate them here, create empty directories, or introduce a migration-only parallel architecture.
+Map responsibilities into the approved structure:
 
-Legacy code may temporarily call a new pure Domain function or focused Adapter to prove a seam. A compatibility bridge must be directional, narrow, typed, documented, tested, and removable.
+- pure rules and transformations to domain;
+- bootstrap, result, error, safe-value, and Port contracts to contracts;
+- WordPress DOM, native form, REST, media, storage, clipboard, and preview enhancement to integrations;
+- user-recognizable behavior to features;
+- root composition and ownership activation to entrypoints and app;
+- generic primitives with no EasyMDE or WordPress semantics to shared.
 
-New React Features must not import legacy modules as their long-term Domain or State owner.
+The mapping is responsibility-based. Do not create one new TypeScript file for every old JavaScript file.
 
-## Extract Pure Logic Before UI When It Reduces Risk
+Test extracted pure TypeScript rules through direct imports. Do not recover functions with source-text regular expressions or execute an entire browser bundle in a VM merely to test logic that now has a real module boundary.
 
-Candidates include:
+Create the narrowest Port that represents one external responsibility. Keep queries and commands conceptually separate. Use typed results for expected cancellation, validation, permission, conflict, unavailable, and stale outcomes. Use exceptions for programmer defects and exceptional infrastructure failures.
 
-- title and line-ending normalization;
-- Markdown transformations;
-- outline parsing;
-- statistics;
-- Dirty calculations;
-- table generation;
-- category-tree shaping;
-- Publish Draft normalization;
-- Selection calculations;
-- image candidate selection.
+Validate PHP, REST, bootstrap, extension, storage, and build-manifest values at runtime. TypeScript declarations alone do not validate external data.
+
+When the unit reads changing WordPress, legacy, or browser state, define a focused `useSyncExternalStore` adapter before handoff. Prove stable subscription, immutable cached snapshots, idempotent cleanup, repeated mount safety, and owner-identity reset; do not bridge external state with polling or Effect mirroring.
+
+Declare each async operation as latest-wins, single-flight, parallel-keyed, or ordered. Preserve that policy across handoff, bind results to their owner identity, and do not report a WordPress mutation as cancelled merely because browser observation was aborted.
+
+Do not create:
+
+- a universal EditorAdapter or WordPressService;
+- generic execute(type, payload) commands;
+- a string event bus;
+- a shared mutable root store;
+- Feature imports of concrete WordPress adapters;
+- component access to window.EasyMDEConfig, jQuery, wp.apiFetch, wp.media, WordPress selectors, storage, or clipboard;
+- browser-side formal Markdown or CSS security parsers.
+
+When useful, let the legacy owner consume the new pure rule or focused Port first. This proves the seam without giving two owners permission to mutate the same state.
+
+## Implement the replacement with TDD
+
+For behavior changes:
+
+1. Add a test that fails because the replacement behavior or seam is absent.
+2. Implement the smallest correct slice.
+3. Keep the current owner active until the replacement is ready.
+4. Refactor only with the focused tests green.
+5. Run protected-surface tests after each ownership change.
+
+Test outcomes, not the internal sequence of React calls. Prefer real pure functions and adapters, then fakes, then stubs; mock only expensive or unsafe boundaries.
+
+Required test layers as applicable:
+
+- domain tests for pure rules and edge cases;
+- contract tests for schemas, versions, errors, and PHP/TypeScript fixtures;
+- adapter tests for native DOM, nonce refresh, locks, REST, media, storage, clipboard, external-store snapshots and subscriptions, cancellation, and cleanup;
+- component tests for accessible user behavior, status announcements, and honest Error Boundary scope through a mock runtime;
+- app tests for providers, independent stores, readiness, activation, error boundaries, and teardown;
+- Playwright tests against an installed release ZIP for the real WordPress flow;
+- release tests for compiled inclusion and development-file exclusion.
+
+## Transfer ownership atomically
+
+Use this lifecycle:
+
+    legacy-active
+    → react-initializing while legacy remains active
+    → react-ready after contracts, dependencies, and required DOM validate
+    → atomic handoff: detach legacy state-changing owners, then activate React
+    → react-active
 
 Rules:
 
-- import the real TypeScript function in tests;
-- do not parse source text to recover functions;
-- do not execute browser Bundles in a VM to prove pure logic;
-- preserve input and output semantics;
-- use immutable values;
-- keep React, DOM, WordPress, network, Storage, and Clipboard out of `domain/`.
+- Do not hide or detach the legacy owner before React readiness.
+- Readiness means required contracts, permissions, DOM bridges, adapters, and assets are usable; mount success alone is insufficient.
+- During initialization, React may prepare read-only state but must not register competing mutations.
+- At handoff, remove old listeners, schedulers, timers, observers, pointer captures, and write paths owned by the unit.
+- Switch external-store subscribers at the same handoff; leave no duplicate subscription, polling loop, or stale snapshot source.
+- Do not run two preview schedulers, draft timers, shortcut managers, save observers, publish handlers, media handlers, clipboard exporters, or storage writers for the same behavior.
+- DOM presence is not ownership proof. Track ownership explicitly.
+- After handoff, do not silently reactivate legacy code inside the same session after partial state changes.
+- Error Boundaries do not catch event, Promise, timer, Port, or mutation failures; those paths require typed results, explicit state, diagnostics, and the written rollback contract.
+- Startup failure before handoff keeps the legacy owner usable and surfaces an explicit diagnostic; it is not silent fallback.
+- Rollback selects one implementation before activation, normally through a clean reload or remount. It does not live-switch writers mid-operation.
+- A feature flag or compatibility switch requires a linked Issue, explicit owner semantics, release testing for both paths, and a deletion date or removal condition.
 
-## Establish Ports Before Moving UI Ownership
+Shadow comparison is allowed only for read-only, privacy-safe results. Never shadow save, publish, restore, upload, settings, custom CSS writes, or other mutations.
 
-React Features call focused Ports, not Globals or Selectors.
+## Preserve editing and WordPress behavior
 
-A migration may build a Port and Adapter while the legacy owner remains active, allowing the legacy path to call the same seam before React consumes it. This is useful only when it reduces risk and does not create a second owner.
+For editing surfaces, verify:
 
-Port rules remain those of the main Skill:
+- selection start, end, and direction;
+- IME composition and shortcuts;
+- undo and redo grouping;
+- focus entry and return;
+- source and preview scroll;
+- clipboard and drag/drop;
+- pointer cancellation and lost capture;
+- editor instance identity across normal renders;
+- native submission bridge freshness before save, autosave, publish, or unload checks.
 
-- one responsibility per Port;
-- intent-named methods;
-- Commands and Queries separated semantically;
-- immutable snapshots;
-- typed expected results;
-- `AbortSignal` for cancellable work;
-- idempotent unsubscribe functions;
-- WordPress shapes contained inside Adapters;
-- no generic `execute(type, payload)` or universal `WordPressService`.
+For WordPress operations:
 
-When the target reads changing legacy, WordPress, or browser State outside React, define a focused `useSyncExternalStore` Adapter before ownership transfer. Prove stable `subscribe`, immutable cached snapshots, cleanup, repeated Mount safety, and Owner-identity reset. Do not bridge external State by polling or Effect-based mirroring.
+- PHP rechecks capability and nonce for every protected action;
+- current REST nonce and post-lock state can change after bootstrap;
+- missing, disabled, replaced, or extension-modified native controls fail preflight clearly;
+- cancellation produces zero writes;
+- mutations do not auto-retry;
+- success follows the real WordPress result, not an optimistic browser state;
+- lock, authentication, capability, or nonce loss cancels pending mutation, preserves unsaved content, and reports the reason;
+- scheduling uses the WordPress site timezone;
+- revision restore keeps Markdown, appearance metadata, and regenerated post_content consistent.
 
-Every asynchronous operation records whether it is latest-wins, single-flight, parallel-keyed, or ordered. Activation must not change that policy accidentally, and cancellation must not misreport a WordPress Mutation that may already have committed.
+## Apply React 18 and composition guidance selectively
 
-## Ownership Ledger
+- Keep render and Hooks pure.
+- Put user actions in event handlers and external synchronization in focused Effects with idempotent cleanup.
+- Store minimal state; derive values during render or in pure selectors.
+- Use discriminated unions instead of contradictory status booleans.
+- Keep high-frequency Markdown and selection out of broad Context updates.
+- Subscribe to the smallest store slice.
+- Do not debounce controlled input or the native submission bridge; debounce preview and proven expensive derived work.
+- Use functional state updates when the next value depends on the previous value.
+- Use refs only for values that do not affect rendering.
+- Prefer explicit variants over boolean mode combinations.
+- Use compound components only for one cohesive control with real shared scoped state.
+- Use children for structural composition; use render functions only when callers need live internal state.
+- Do not add memoization by default. Measure re-renders and identity costs first.
+- Do not wrap document input, native-field synchronization, save, publish, focus, or accessibility-critical state in a transition.
+- Lazy-load only optional heavy UI when the selected WordPress script format and release manifest support it.
 
-Maintain an ownership ledger in the linked Issue or PR:
+## Security and privacy gate
 
-| Behavior | Legacy owner | Target owner | Activation condition | Removal gate | Status |
-| --- | --- | --- | --- | --- | --- |
-| Preview scheduling | `preview.js` | `features/live-preview` | React Root ready and `PreviewPort` valid | E2E, stale cancellation, no duplicate scheduler | characterized |
-| Publish Dialog | legacy module | `features/publishing` | capability and native fields validated | publish/update/schedule tests and zero hidden writes | discovered |
+Threat-model each changed boundary:
 
-Allowed status values:
+- untrusted Markdown and rendered HTML;
+- REST and bootstrap data;
+- media files and URLs;
+- custom CSS;
+- extension data;
+- browser storage and clipboard;
+- translated strings;
+- AI prompts and model output;
+- diagnostics and public review artifacts.
 
-```text
-discovered
-characterized
-seam-ready
-shadow-read
-react-ready
-react-active
-legacy-deprecated
-legacy-removable
-legacy-removed
-verified
-```
+Verify server-side validation, capability, nonce, payload limits, sanitization, escaping, same-user custom CSS access, and no remote runtime dependency. React escaping does not make dangerouslySetInnerHTML safe; only the formal sanitized preview contract may enter the preview-owned HTML sink.
 
-Do not mark a unit `react-active` until its activation condition is observable in production behavior.
+Never log article content, custom CSS, prompts, nonces, credentials, private endpoints, browser storage, or raw server errors. Use operation IDs, stable error codes, durations, feature names, owner state, and privacy-safe context.
 
-## One Active Owner and No Dual Writes
+## UI, accessibility, and visual fidelity gate
 
-Every state-changing behavior has exactly one active owner.
+Preserve the approved reference and protected normal surfaces. The project UI design fidelity workflow overrides generic aesthetic defaults.
 
-Prohibited duplicate owners include:
+Verify:
 
-- Save handlers;
-- Publish handlers;
-- Preview schedulers;
-- Local Draft timers;
-- shortcut managers;
-- Media insertion handlers;
-- Clipboard exporters;
-- canonical document sources;
-- native-field writers.
+- semantic controls and accessible names;
+- keyboard order, focus containment and return, Escape, and safe backdrop behavior;
+- labels, descriptions, validation, pending, error, success, and disabled semantics;
+- long text, translation, RTL, zoom, text scaling, reduced motion, forced colors, and high contrast;
+- selection, IME, undo, focus, scroll, pointer, touch where applicable, and repeated lifecycle;
+- exact local fonts, icons, theme assets, stacking, overflow, and responsive breakpoint behavior;
+- zero console errors and warnings introduced by the unit.
 
-Read-only comparison is allowed only when it has no visible side effect, protected duplicate request, persistence, or user-facing result, and when it has a finite removal date.
+Do not restyle a protected surface to simplify the handoff. Do not accept a screenshot threshold increase as a fix for deterministic divergence.
 
-Dual write is prohibited.
+## Performance and package gate
 
-## Migration Sequence
-
-Prefer this sequence, adjusting only with evidence recorded in the focused Issue:
-
-1. discover the real current contract;
-2. characterize success and failure behavior;
-3. extract pure Domain behavior where useful;
-4. create or reuse focused Contracts, Ports, and Adapters;
-5. implement the React owner behind an explicit activation boundary;
-6. validate React readiness without state-changing shadow execution;
-7. atomically transfer ownership;
-8. deprecate and remove the superseded owner after gates pass;
-9. remove temporary seams and update durable documentation.
-
-Do not measure progress by converted file count.
-
-## Atomic Activation
-
-Use an explicit ownership handoff:
-
-```text
-validate Bootstrap and capability
-→ create Runtime and Root Store
-→ mount React
-→ verify ready state and required Ports
-→ activate React owner marker
-→ detach only the superseded legacy owner
-```
-
-Rules:
-
-- do not hide or detach the legacy owner before React readiness;
-- do not detach unrelated behavior;
-- activation is idempotent and testable;
-- DOM presence alone does not prove ownership;
-- failure before activation preserves the legacy owner;
-- failure after activation follows the written rollback contract;
-- React and legacy paths never both execute the same state-changing action;
-- activation does not rely on an Error Boundary to catch Event Handler, Promise, Timer, Port, or Mutation failures; those paths use typed Results, explicit State, diagnostics, and the written rollback contract;
-- external-store subscribers switch owners atomically and leave no duplicate subscription, polling loop, or stale snapshot source.
-
-## Rollback
-
-Define rollback before activation.
-
-Rollback may restore the previous owner only when:
-
-- the old implementation still exists;
-- restoring it cannot create dual ownership;
-- State can be synchronized safely;
-- no protected write partially completed;
-- the user receives an honest failure message.
-
-For destructive or irreversible operations, fail before activation or provide an explicit recovery contract. Do not silently fall back and pretend the React path succeeded.
-
-## Preserve WordPress and Data Authority
-
-Every migration retains:
-
-- `_easymde_markdown` as canonical Markdown;
-- `post_content` as sanitized compatibility output;
-- PHP `MarkdownRenderer` as formal Renderer;
-- WordPress authority for capabilities, nonces, Meta, Revisions, Media, Taxonomies, Save, Publish, Status, Locks, Autosave, Scheduling, Settings, and public output;
-- zero-write opening for ordinary supported Posts;
-- native Save and Publish behavior;
-- extension Registries, public Facade, Route namespace, IDs, handles, ordering, and documented events.
-
-Native-field rules:
-
-- synchronize accepted transactions before native serialization;
-- never Debounce the Submission Bridge;
-- do not treat field synchronization as persisted success;
-- observe the actual WordPress result;
-- never Force-click disabled or missing native controls;
-- preserve Heartbeat, Locks, Authentication, Nonce refresh, Dirty and unload behavior;
-- stop protected writes when capability, authentication, or lock state is lost;
-- retain unsaved session content when safe.
-
-## Migration Testing Matrix
-
-Use the long-term Skill for test-layer rules. Migration work must additionally prove ownership transfer.
-
-### Before activation
-
-- current behavior is characterized;
-- Bootstrap and Port contracts are validated;
-- React can mount and become ready;
-- legacy behavior remains the only state-changing owner;
-- failure before readiness preserves the legacy owner.
-
-### During activation
-
-- React readiness is observable;
-- only the intended legacy owner detaches;
-- no duplicate Listener, Timer, Observer, request, or native-field writer exists;
-- no hidden save or revision occurs;
-- activation is idempotent.
-
-### After activation
-
-- React is the sole owner;
-- success, failure, cancellation, conflict, stale completion, and teardown work;
-- Focus, keyboard, IME, Selection, Undo, Scroll, responsive layout, RTL, and accessibility remain correct;
-- protected normal-mode and unrelated WordPress Admin surfaces remain unchanged;
-- installed release ZIP behavior passes;
-- asynchronous concurrency, authoritative-result reconciliation, and external-store cleanup are proven;
-- meaningful pending, success, and failure Status Messages remain announced without duplicate live regions or unwanted Focus changes;
-- user-facing strings are translated by one documented owner, with extraction and packaged catalogs validated when TS/TSX i18n is introduced;
-- Error Boundary fallback and reset behavior are proven without treating it as an async failure handler;
-- rollback behavior is either proven or explicitly no longer required.
-
-Green unit tests alone do not prove an ownership handoff.
-
-## Browser and DevTools Evidence
-
-For a migrated surface inspect:
-
-- console errors and React warnings;
-- Network request count, order, cancellation, status, and payload boundary;
-- duplicate Event Listeners;
-- MutationObserver and Timer cleanup;
-- active element and Focus return;
-- Portal and Scroll Lock cleanup;
-- Selection, IME, Undo, and Scroll preservation;
-- layout, overflow, and stacking;
-- disabled and pending controls;
-- Memory and listener counts after repeated lifecycle;
-- plugin subdirectory and non-default Plugin URL behavior when assets change.
-
-Use deterministic synthetic content. Do not publish HAR files, screenshots, traces, Storage, or logs containing private article content, Nonces, Cookies, credentials, local paths, or private endpoints.
-
-## Performance During Migration
-
-Record a baseline before changing ownership. Measure only relevant scopes:
+Measure before and after when the unit can affect performance:
 
 - large-document typing latency;
-- Preview scheduling and completion;
-- mount-to-ready time;
-- Toolbar and Dialog interaction;
-- Outline and Revision rendering;
-- Memory after repeated mount and unmount;
-- Listener, Observer, and Timer counts;
-- entry and optional chunk size;
-- duplicate dependencies and private React inclusion.
+- preview request and enhancement latency;
+- render and commit cost;
+- mount and readiness time;
+- repeated open/close memory and listener count;
+- request count and waterfalls;
+- initial and optional bundle size;
+- local asset loading.
 
-A migration is not an optimization merely because code moved to React. Do not introduce broad memoization, Virtualization, Workers, `content-visibility`, or a performance library without measured need and focused tests.
+Define task-specific tolerances before seeing the result. Core Web Vitals do not replace editor interaction metrics. If no representative measurement is available, report performance as unverified rather than claiming improvement.
 
-## Deprecation Lifecycle
+Build and test the production output. Verify WordPress-provided React is not duplicated, dependency metadata matches imports, asset URLs work outside the default plugin path, runtime assets are local, and the installable ZIP includes every required entry and chunk while excluding development files.
 
-Every superseded owner moves through explicit states:
+## Deprecate and remove the old owner
 
-### Active
+Move a superseded owner through explicit states:
 
-The legacy behavior is the production owner.
+```text
+active
+→ deprecated (no new responsibilities)
+→ removable (all deletion evidence passes)
+→ removed (owned code and references are gone)
+```
 
-### Deprecated
+Do not label an owner deprecated merely to postpone unresolved consumers, ownership, or failure behavior. Mark the old owner superseded only after the replacement is active and verified. A compatibility shim must have:
 
-A replacement exists or is planned, but the legacy owner may still be active. New code must not expand its responsibility.
+- a named consumer and owner;
+- the exact public or release contract it preserves;
+- tests proving delegation and failure behavior;
+- observability for remaining use when privacy-safe;
+- a removal condition;
+- no independent state or hidden write path.
 
-### Blocked for new use
+Remove old code only when:
 
-No new Feature may depend on the legacy contract except a documented compatibility bridge.
+- all known consumers use the replacement;
+- ownership inventory shows no legacy state-changing path;
+- characterization, adapter, component, app, browser, protected-surface, and release checks pass;
+- interruption, cancellation, stale completion, remount, lock, nonce, permission, and dependency failures are covered;
+- relevant accessibility, visual, and performance evidence meets the predeclared contract;
+- searches find no obsolete selectors, events, timers, storage keys, bootstrap fields, assets, tests, docs, or package entries;
+- retained templates, normal editor surfaces, public output, extensions, and fallbacks no longer consume legacy CSS or DOM contracts; replacement styles are root-scoped and their computed-style states are verified;
+- extension consumers use documented versioned descriptors and stable command IDs; the migration does not expose arbitrary JavaScript, raw React elements or components, internal stores or adapters, or private DOM as a new public contract;
+- the linked Issue explicitly authorizes deletion.
 
-### Removable
+Delete obsolete tests only when they test an implementation that no longer exists. Preserve or rewrite behavior tests that still express the product contract.
 
-All removal prerequisites pass and no supported consumer requires the owner.
+Do not delete uncertain dead code. List it with evidence and ask the maintainer when consumer ownership cannot be proven.
 
-### Removed
+## Adversarial review and completion report
 
-Code, CSS, events, selectors, Bootstrap data, tests, comments, and documentation are deleted or intentionally retained as public contracts.
+Before commit and again for the exact pushed diff, review:
 
-Do not leave dead modules, CSS, selectors, or compatibility comments after removal.
+1. Can old and new owners both mutate?
+2. Can opening, cancellation, startup failure, teardown, or rollback write?
+3. Can stale async work, an unstable external-store snapshot, or a duplicate subscription affect a new post, root, dialog, or session?
+4. Can React and native fields diverge before save or publish?
+5. Can an extension, missing control, lock, nonce, or capability change break the handoff?
+6. Can untrusted HTML, CSS, media, storage, extension, AI, or untranslated user-facing data cross an unsafe sink or bypass its declared owner?
+7. Can focus, selection, IME, undo, scroll, keyboard, or pointer state be lost?
+8. Can the release ZIP omit runtime assets or include development artifacts?
+9. Did the change reduce legacy complexity, or only copy it into React?
+10. Are tests proving behavior on the release build rather than source shape?
 
-## Compatibility Shims
+Select the three to five most likely failures for the current unit. Reproduce or test each one, fix its root cause and rerun the affected evidence, or record why it remains unverified and what evidence is still needed.
 
-A shim is allowed only when it has:
+Report:
 
-- one named compatibility purpose;
-- a documented consumer;
-- typed input and output;
-- no new business logic;
-- no hidden write;
-- no silent fallback;
-- a focused test;
-- a removal Issue or explicit removal gate;
-- a finite lifetime.
+- migration unit and final active owner;
+- files and responsibilities changed;
+- old paths removed or intentionally retained;
+- commands and actual results;
+- browser, accessibility, status-message, i18n, external-store, async-concurrency, visual, security, performance, and package evidence;
+- review findings and resolutions;
+- unverified browsers, states, and risks;
+- rollback availability;
+- remaining removal work.
 
-A shim may adapt shape or lifecycle. It must not become another authority or a permanent “temporary” bridge.
+Do not call a unit complete because React renders, static tests pass, or the new UI looks close.
 
-## Legacy Removal Gate
+## Delete this Skill
 
-Remove a legacy owner only after all relevant conditions pass:
+Create a dedicated removal Issue and delete .agents/skills/easymde-migration only after:
 
-- current behavior is characterized;
-- React owner is active and observable;
-- a single-active-owner assertion exists;
-- success, failure, cancellation, stale result, conflict, and teardown are covered;
-- native Save/Publish and zero-write behavior remain correct;
-- WordPress 6.7 and latest supported WordPress pass;
-- accessibility and interaction evidence exists;
-- release ZIP behavior passes;
-- protected extension contracts are preserved;
-- no current consumer imports, calls, listens to, queries, or styles the legacy owner;
-- rollback is no longer required or is provided by the new owner;
-- the linked Issue explicitly authorizes removal;
-- the exact diff is reviewed.
-
-Search before deletion for script handles, selectors, events, CSS classes, Bootstrap fields, tests, documentation, build scripts, Registry entries, and extension references.
-
-## CSS Removal Gate
-
-Before deleting legacy CSS:
-
-- prove no retained PHP Template, public page, normal editor mode, extension, fallback, or legacy owner uses the selector;
-- confirm replacement styles are scoped under the correct Root;
-- compare computed styles and layout for changed and protected surfaces;
-- verify Focus, Hover, Active, Disabled, Error, long-content, RTL, Zoom, and responsive states;
-- confirm the release ZIP contains replacement assets;
-- remove stale variables, animations, icons, preload references, and duplicate rules.
-
-Do not delete CSS only because one visible React path looks correct once.
-
-## Extension Compatibility
-
-Before migration or removal inventory:
-
-- public Facade methods;
-- WordPress Actions and Filters;
-- REST namespace and Routes;
-- Toolbar Registry;
-- Shortcode Helpers;
-- Theme, Code Theme, and Custom CSS IDs;
-- Script Handles;
-- documented DOM Selectors;
-- Event names;
-- ordering and collision behavior.
-
-Keep identifiers stable unless the linked Issue explicitly changes the public contract and defines deprecation. Prefer versioned declarative descriptors and stable command IDs. Validate ID normalization, ordering, collisions, capability visibility, unsupported actions, and failure isolation.
-
-Extension data must not execute arbitrary JavaScript strings, pass raw React Elements or Component constructors, expose internal Stores / Adapters / DOM Nodes, or deep-import Feature internals. A public React render slot requires a focused Issue, a versioned contract, the WordPress `wp-element` runtime, an Error Boundary, package tests, and an explicit compatibility policy; it is not implied by the current Toolbar Registry.
-
-## Failure and Observability
-
-Migration failures must be diagnosable without leaking content.
-
-Stable diagnostics may include:
-
-- Feature and migration unit;
-- old and new owner;
-- Operation ID and Request ID;
-- Post ID when appropriate;
-- Contract Version;
-- failure Code;
-- activation State.
-
-Exclude Markdown, Titles, Excerpts, Custom CSS, prompts, model output, Cookies, Nonces, Tokens, credentials, private endpoints, local paths, and raw responses.
-
-Do not swallow a failure to preserve the appearance of a successful migration.
-
-## Commit, CI, and Review Discipline
-
-For each focused migration Issue:
-
-1. start from the current target branch;
-2. keep the diff limited to one migration unit;
-3. stage explicit paths only;
-4. inspect working, staged, and committed diffs;
-5. run tests that exercise the changed owner and protected surfaces;
-6. run local read-only review when available;
-7. push and observe CI for the exact Head SHA;
-8. investigate failures before rerunning;
-9. request Bot review only after current-Head required CI passes and only with the repository template;
-10. do not merge or close the Issue without human maintainer authorization.
-
-Do not use empty commits or unrelated formatting to retrigger CI.
-
-Review the exact diff for:
-
-- specification completeness;
-- current-owner accuracy;
-- one active owner and no dual writes;
-- no hidden saves;
-- correct target placement and dependency direction;
-- typed Ports and runtime schemas;
-- declared async concurrency and authoritative-result reconciliation;
-- stable external-store snapshots, subscriptions, and cleanup;
-- React purity, State ownership, Effect discipline, and honest Error Boundary scope;
-- WordPress capability, nonce, Lock, Autosave, Revision, Media, and Publish behavior;
-- extension compatibility;
-- stale-result, cancellation, and lifecycle cleanup;
-- Focus, keyboard, IME, Selection, Undo, Scroll, Status Messages, and live-region behavior;
-- translated strings, extraction/catalog ownership, responsive, RTL, contrast, and visual fidelity;
-- performance evidence;
-- release ZIP inclusion and exclusion;
-- diagnostics redaction;
-- removal gate;
-- honest unverified areas.
-
-## Migration Unit Completion
-
-A migration unit is complete only when:
-
-1. the specification and ownership ledger are current;
-2. the target owner is active under an explicit condition;
-3. no duplicate state-changing owner remains;
-4. success and relevant failure paths are tested;
-5. protected WordPress and EasyMDE contracts remain intact;
-6. browser, accessibility, Status Message, i18n, external-store, and async-concurrency evidence is complete;
-7. performance claims have measurements;
-8. legacy code is retained with a documented reason or removed through the gate;
-9. build and installable-package checks pass;
-10. review findings are resolved or answered with evidence;
-11. remaining risks and unverified areas are reported.
-
-## Final Migration and Skill Deletion
-
-The overall migration is complete only when:
-
-- every capability tracked by Issue #74 has a final documented owner;
-- no production state-changing behavior has both legacy and React owners;
-- no required React Feature depends on legacy browser modules as Domain or State owner;
-- superseded JavaScript, CSS, selectors, events, Timers, Observers, Adapters, Bootstrap fields, and shims are removed;
-- intentionally retained compatibility contracts are documented in long-term files;
-- all migration Issues are resolved by human decision;
-- WordPress 6.7 and latest supported WordPress validation pass;
-- TypeScript, React, PHP, Node, release, Plugin Check, and Playwright checks pass;
-- accessibility, browser, lifecycle, failure, performance, and visual evidence is complete;
-- the editor remains usable and public PHP rendering remains unchanged;
-- no open task requires this Skill.
-
-Delete `.agents/skills/easymde-migration/SKILL.md` only through a dedicated Issue and PR.
-
-Before deletion:
-
-1. move every durable rule still needed into `docs/REACT_DESIGN_PHILOSOPHY.md` or `.agents/skills/easymde/SKILL.md`;
-2. remove migration-only references from open Issues, PR templates, documentation, and automation;
-3. confirm no workflow requires this Skill;
-4. validate the exact removal diff and installable ZIP;
-5. record final migration evidence;
-6. obtain explicit human maintainer approval.
-
-Do not retain this Skill indefinitely “just in case”.
-
-## Prohibited Migration Patterns
-
-Do not:
-
-1. perform a big-bang conversion;
-2. create the entire target tree before real code needs it;
-3. migrate by file count instead of behavior ownership;
-4. allow dual writes or duplicate state-changing handlers;
-5. hide the legacy owner before React readiness;
-6. use silent fallback or fake success;
-7. force-click disabled native controls;
-8. replace native WordPress Save or Publish;
-9. add a browser formal Markdown Renderer;
-10. bundle a private React runtime;
-11. place WordPress access inside Components;
-12. introduce Next.js, RSC, Server Actions, Webpack, Gutenberg replacement behavior, or a generic CRUD architecture;
-13. use a universal Adapter or stringly typed command bus;
-14. preserve legacy code without consumers or a documented compatibility purpose;
-15. delete legacy code before reference, behavior, package, and extension checks;
-16. change visual design outside the linked migration contract;
-17. claim performance, security, accessibility, browser, or compatibility success without evidence;
-18. publish private browser artifacts or diagnostics;
-19. keep this temporary Skill after its deletion gate passes;
-20. rely on an Error Boundary for Event Handler, Promise, Timer, Port, or Mutation failures;
-21. bridge legacy State with unstable snapshots, duplicate subscriptions, polling, or Effect-based mirroring;
-22. transfer an asynchronous owner without preserving its concurrency and authoritative-result policy;
-23. introduce TS/TSX user-facing strings without one translation owner, extraction, catalogs, dependency metadata, packaging, and locale/RTL tests;
-24. expose public extension points as arbitrary JavaScript, raw React Elements / Components, internal Stores / Adapters, or private DOM.
+- every capability in Issue #74 has a documented final owner;
+- no migration Issue still depends on this Skill;
+- no behavior has both legacy and React state-changing owners;
+- superseded JavaScript, CSS, bootstrap fields, selectors, events, timers, adapters, assets, tests, and shims are removed or documented as intentionally retained public contracts;
+- all still-valid rules live in the long-term EasyMDE Skill or architecture document;
+- WordPress 6.7 and latest, frontend tests, release-package validation, Plugin Check, and Playwright against the release ZIP pass;
+- accessibility, focus, keyboard, IME, selection, undo, scroll, responsive, RTL, status-message, i18n, external-store, async-concurrency, visual, lifecycle, failure, security, and performance evidence is complete;
+- the removal pull request deletes obsolete references to this Skill and any migration-only guidance that no longer has an owner;
+- a human maintainer explicitly authorizes removal.

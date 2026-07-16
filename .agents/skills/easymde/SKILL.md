@@ -409,6 +409,7 @@ Rules:
 - when a new Post receives a real ID, explicitly re-key or clear Post-scoped state;
 - use stable Domain identity as React Keys;
 - persist only approved preferences or recovery data with a versioned schema and conflict behavior.
+- represent Storage access, parsing, quota, and schema failures explicitly; preferences may degrade to documented defaults, but article content and publishing state never use Storage as silent fallback persistence.
 
 Use Event Handlers for work caused by a user interaction. Use Effects only to synchronize an external system after render.
 
@@ -632,6 +633,8 @@ Scope Admin CSS under a stable EasyMDE Root. Do not apply broad WordPress Admin 
 
 Use project Tokens, logical properties, a controlled z-index scale, approved local icons, and deterministic UI states. Keep Admin Tokens separate from public article Themes.
 
+Preserve public Article Theme, Code Theme, and shared Mac code-frame contracts; admin React styling must not become their owner or leak into public rendering.
+
 ## Performance and Bundle Quality
 
 Keep the keystroke path small:
@@ -693,6 +696,7 @@ Do not add a State, Query, Form, Router, Schema, Animation, Icon, or Utility lib
 
 Choose tests by responsibility:
 
+- test pure TypeScript through direct module imports; do not extract functions with source-text regular expressions or execute an entire browser bundle in a VM to test an available module boundary;
 - `domain`: pure rules and edge cases;
 - `contracts`: schema versions, PHP/TS fixture parity, Error Mapping, safe values, and Manifest contracts;
 - `integrations`: WordPress DOM, native form, nonce refresh, Locks, REST, Media, Storage, Clipboard, mounting, and failure paths;

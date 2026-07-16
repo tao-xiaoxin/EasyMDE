@@ -1,5 +1,7 @@
 # EasyMDE React 重构目录结构规范
 
+本文记录 React 重构的目标架构和分阶段迁移约束，不描述当前实现状态。当前实现边界继续以 `docs/ARCHITECTURE.md` 为准；每个迁移阶段只有在对应的聚焦 Issue、实现、验证和审查完成后，才成为当前架构的一部分。
+
 ## 一、重构范围
 
 EasyMDE 的 React 重构只覆盖：
@@ -1016,9 +1018,7 @@ test:e2e
 
 # 十五、React Runtime 选择
 
-EasyMDE React 重构后的最低支持版本为 WordPress 6.7。
-
-该最低版本是 React 重构交付后的兼容性目标，不追溯改变重构完成前现有发布版本的支持承诺。正式交付依赖 WordPress 6.7 的 React Runtime 时，必须在同一个聚焦变更中同步插件头、WordPress.org `readme.txt`、公开 README、测试矩阵和发布检查；在这些发布边界同步完成前，不得提前把仅支持 WordPress 6.7 的运行时代码加载到现有兼容版本中。
+EasyMDE 当前最低支持版本以及 React 重构后的最低支持版本均为 WordPress 6.7。
 
 WordPress 6.7 已通过 `@wordpress/element` 提供 `createRoot`，因此 React 编辑器应复用 WordPress 注册的 React Runtime，不在插件运行时 Bundle 中重复打包 React 和 ReactDOM。
 

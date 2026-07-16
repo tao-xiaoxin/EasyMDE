@@ -1065,6 +1065,7 @@
         var sourceViewState = null;
         var sourceViewRestoreFrame = null;
         var sourceViewRestoreFrameIsTimeout = false;
+        var workspaceFocusRestoreTimer = null;
         var splitScrollSyncFrame = null;
         var splitScrollSyncFrameIsTimeout = false;
         var outlineEnabled = true;
@@ -4042,6 +4043,40 @@
             return root;
         }
 
+        function scheduleWorkspaceFocusRestore(event) {
+            var returnFocus = event.target;
+
+            if (workspaceFocusRestoreTimer !== null) {
+                win.clearTimeout(workspaceFocusRestoreTimer);
+            }
+            workspaceFocusRestoreTimer = win.setTimeout(function () {
+                var activeElement = doc.activeElement;
+                var scope;
+
+                workspaceFocusRestoreTimer = null;
+                if (!root || !doc.hasFocus() || !returnFocus || !returnFocus.isConnected) {
+                    return;
+                }
+                scope = focusScope();
+                if (
+                    !scope.contains(returnFocus)
+                    || root.contains(activeElement)
+                    || (
+                        activeElement
+                        && activeElement.closest
+                        && activeElement.closest('.media-modal, .media-frame')
+                    )
+                ) {
+                    return;
+                }
+                try {
+                    returnFocus.focus({ preventScroll: true });
+                } catch (error) {
+                    returnFocus.focus();
+                }
+            }, 0);
+        }
+
         function openHistory(trigger) {
             var history = query('.easymde-immersive-workspace__history');
             var list = query('[data-history-list]');
@@ -4492,6 +4527,7 @@
         }
 
         function bindUi() {
+            listen(root, 'focusout', scheduleWorkspaceFocusRestore);
             root.querySelectorAll('button[data-view]').forEach(function (button) {
                 listen(button, 'click', function () {
                     setView(button.getAttribute('data-view'));
@@ -5168,6 +5204,10 @@
             cancelDocumentDerivedState();
             cancelSourceViewRestore();
             cancelSplitScrollSync();
+            if (workspaceFocusRestoreTimer !== null) {
+                win.clearTimeout(workspaceFocusRestoreTimer);
+                workspaceFocusRestoreTimer = null;
+            }
             if (outlineResizeCleanup) {
                 outlineResizeCleanup();
             }

@@ -20,6 +20,10 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function inlineText(tokens) {
+  return tokens.map((token) => token.children ? inlineText(token.children) : (token.value || '')).join('');
+}
+
 const completeFixture = [
   '# Duplicate',
   '',
@@ -80,6 +84,7 @@ test('visual Markdown model exposes the structured source-slice contract', () =>
   assert.equal(typeof model.replaceNodeSource, 'function');
   assert.equal(typeof model.parseInline, 'function');
   assert.equal(typeof model.serializeInline, 'function');
+  assert.equal(typeof model.serializeParagraphInline, 'function');
   assert.equal(typeof model.isSafeUrl, 'function');
 });
 
@@ -354,7 +359,6 @@ test('unsupported inline Markdown makes the containing block atomic while adjace
     '[^1]: Footnote definition.',
     'Autolink <https://example.test>.',
     'Inline <span>HTML</span>.',
-    'Escaped \\*asterisk\\*.',
     '# Heading with [reference][target]',
     '> Quote with [reference][target]',
     '- List item with [reference][target]'
@@ -396,6 +400,89 @@ test('unsupported syntax nested in structured containers makes each complete con
   assert.deepEqual(
     plain(protectedNodes.map((node) => node.raw.replace(/\n$/, ''))),
     protectedBlocks
+  );
+  assert.equal(model.serialize(document), markdown);
+});
+
+test('images nested in lists and blockquotes keep each complete container atomic', () => {
+  const model = loadModel();
+  const protectedBlocks = [
+    '- ![WordPress image](/wp-content/uploads/image.png)',
+    ['- Editable-looking item', '- ![Remote image](https://example.test/image.png)'].join('\n'),
+    ['- Editable-looking item', '  ![Continuation image](/wp-content/uploads/image.png)'].join('\n'),
+    [
+      '- First loose item',
+      '',
+      '  ![Loose continuation image](/wp-content/uploads/image.png)',
+      '',
+      '- Second loose item'
+    ].join('\n'),
+    '> ![WordPress image](/wp-content/uploads/image.png)',
+    ['> Editable-looking quote', '> ![Remote image](https://example.test/image.png)'].join('\n'),
+    ['> First quote paragraph', '>', '> ![Loose quote image](/wp-content/uploads/image.png)'].join('\n'),
+    ['> Editable-looking quote', '![Lazy continuation image](/wp-content/uploads/image.png)'].join('\n')
+  ];
+  protectedBlocks.forEach((block) => {
+    const markdown = block + '\n';
+    const document = model.parse(markdown);
+
+    assert.equal(document.nodes.length, 1, block);
+    assert.equal(document.nodes[0].type, 'protected', block);
+    assert.equal(document.nodes[0].raw, markdown, block);
+    assert.equal(model.serialize(document), markdown, block);
+  });
+});
+
+test('unsupported continuation lines protect containers without swallowing adjacent blocks', () => {
+  const model = loadModel();
+  const markdown = [
+    '- List item',
+    '  continuation',
+    '',
+    '# Heading after list',
+    '',
+    '> Quote',
+    'lazy continuation',
+    '',
+    '# Heading after quote',
+    ''
+  ].join('\n');
+  const document = model.parse(markdown);
+
+  assert.deepEqual(
+    plain(document.nodes.map((node) => [node.type, node.raw])),
+    [
+      ['protected', '- List item\n  continuation\n'],
+      ['gap', '\n'],
+      ['heading', '# Heading after list\n'],
+      ['gap', '\n'],
+      ['protected', '> Quote\nlazy continuation\n'],
+      ['gap', '\n'],
+      ['heading', '# Heading after quote\n']
+    ]
+  );
+  assert.equal(model.serialize(document), markdown);
+});
+
+test('ordered markers other than one do not interrupt paragraphs or lazy blockquote continuation', () => {
+  const model = loadModel();
+  const markdown = [
+    'Paragraph',
+    '2. remains paragraph text',
+    '',
+    '> Quote',
+    '2) remains lazy continuation',
+    ''
+  ].join('\n');
+  const document = model.parse(markdown);
+
+  assert.deepEqual(
+    plain(document.nodes.map((node) => [node.type, node.raw])),
+    [
+      ['paragraph', 'Paragraph\n2. remains paragraph text\n'],
+      ['gap', '\n'],
+      ['protected', '> Quote\n2) remains lazy continuation\n']
+    ]
   );
   assert.equal(model.serialize(document), markdown);
 });
@@ -443,6 +530,187 @@ test('intraword underscores remain literal when their containing node is edited'
     model.serialize(updated),
     'Identifier foo_bar_baz, foo__bar__baz, and 中文_变量_名称. Updated.\n'
   );
+});
+
+test('literal block markers remain editable paragraph text after serialization and reparsing', () => {
+  const model = loadModel();
+  const variants = [
+    ['# heading', '\\# heading\n'],
+    ['- item', '\\- item\n'],
+    ['+ item', '\\+ item\n'],
+    ['* item', '\\* item\n'],
+    ['1. item', '1\\. item\n'],
+    ['9) item', '9\\) item\n'],
+    ['> quote', '\\> quote\n'],
+    ['---', '\\---\n'],
+    ['***', '\\*\\*\\*\n'],
+    ['* * *', '\\* \\* \\*\n'],
+    ['___', '\\_\\_\\_\n'],
+    ['_ _ _', '\\_ \\_ \\_\n'],
+    ['Title\n===', 'Title\n\\===\n'],
+    ['$$', '\\$$\n'],
+    [':::note', '\\:::note\n'],
+    ['A | B\n| - | - |', 'A | B\n\\| - | - |\n'],
+    ['A | B\n:--- | ---:', 'A | B\n:\\--- | ---:\n']
+  ];
+
+  variants.forEach(([text, expected]) => {
+    const document = model.parse('Paragraph\n');
+    const paragraph = document.nodes.find((node) => node.type === 'paragraph');
+    const updated = model.updateNode(document, paragraph.id, {
+      inline: [{ type: 'text', value: text, literal: true }]
+    });
+    const output = model.serialize(updated);
+    const reparsed = model.parse(output);
+
+    assert.equal(output, expected);
+    assert.equal(reparsed.nodes.length, 1);
+    assert.equal(reparsed.nodes[0].type, 'paragraph');
+    assert.equal(reparsed.nodes[0].editable, true);
+    assert.equal(inlineText(reparsed.nodes[0].inline), text);
+
+    const edited = model.updateNode(reparsed, reparsed.nodes[0].id, {
+      inline: [...reparsed.nodes[0].inline, { type: 'text', value: ' changed', literal: true }]
+    });
+    const editedOutput = model.serialize(edited);
+    const editedReparsed = model.parse(editedOutput);
+
+    assert.equal(editedReparsed.nodes.length, 1);
+    assert.equal(editedReparsed.nodes[0].type, 'paragraph');
+    assert.equal(editedReparsed.nodes[0].editable, true);
+    assert.equal(inlineText(editedReparsed.nodes[0].inline), `${text} changed`);
+  });
+});
+
+test('nested blockquotes remain protected as a complete source block', () => {
+  const model = loadModel();
+  const markdown = '> Outer\n> > Nested\n> Tail\n';
+  const document = model.parse(markdown);
+
+  assert.equal(document.nodes.length, 1);
+  assert.equal(document.nodes[0].type, 'protected');
+  assert.equal(document.nodes[0].protectedType, 'unknown');
+  assert.equal(model.serialize(document), markdown);
+});
+
+test('escaped paragraph marker prefixes preserve following inline formatting through edits', () => {
+  const model = loadModel();
+  const markdown = '\\* \\* \\* prefix *emphasis*, **strong**, and `code`.\n';
+  const document = model.parse(markdown);
+  const paragraph = document.nodes[0];
+
+  assert.equal(paragraph.type, 'paragraph');
+  assert.deepEqual(
+    plain(paragraph.inline.map((token) => token.type)),
+    ['text', 'text', 'emphasis', 'text', 'strong', 'text', 'code', 'text']
+  );
+
+  const updated = model.updateNode(document, paragraph.id, {
+    inline: [...paragraph.inline, { type: 'text', value: ' changed' }]
+  });
+
+  assert.equal(
+    model.serialize(updated),
+    '\\* \\* \\* prefix *emphasis*, **strong**, and `code`. changed\n'
+  );
+});
+
+test('literal inline punctuation remains editable after serialization and reparsing', () => {
+  const model = loadModel();
+  const document = model.parse('Paragraph.\n');
+  const paragraph = document.nodes[0];
+  const updated = model.updateNode(document, paragraph.id, {
+    inline: [...paragraph.inline, { type: 'text', value: ' *literal* [text] $value$', literal: true }]
+  });
+  const markdown = model.serialize(updated);
+  const reparsed = model.parse(markdown);
+
+  assert.equal(markdown, 'Paragraph. \\*literal\\* \\[text\\] \\$value$\n');
+  assert.equal(reparsed.nodes.length, 1);
+  assert.equal(reparsed.nodes[0].type, 'paragraph');
+  assert.equal(reparsed.nodes[0].editable, true);
+  assert.equal(inlineText(reparsed.nodes[0].inline), 'Paragraph. *literal* [text] $value$');
+  assert.equal(model.serialize(reparsed), markdown);
+});
+
+test('editing a paragraph preserves noninterrupting ordered markers on continuation lines', () => {
+  const model = loadModel();
+  const markdown = 'Paragraph\n2. remains paragraph text\n';
+  const document = model.parse(markdown);
+  const paragraph = document.nodes[0];
+  const updated = model.updateNode(document, paragraph.id, {
+    inline: [{ type: 'text', value: 'Changed\n2. remains paragraph text' }]
+  });
+  const output = model.serialize(updated);
+  const reparsed = model.parse(output);
+
+  assert.equal(output, 'Changed\n2. remains paragraph text\n');
+  assert.equal(reparsed.nodes.length, 1);
+  assert.equal(reparsed.nodes[0].type, 'paragraph');
+  assert.equal(reparsed.nodes[0].editable, true);
+});
+
+test('CommonMark punctuation escapes remain editable and byte-stable', () => {
+  const model = loadModel();
+  const variants = [
+    ['Escaped \\*asterisk\\*.\n', 'Escaped *asterisk*.'],
+    ['Escaped \\. and \\!.\n', 'Escaped . and !.'],
+    ['\\#not-a-heading\n', '#not-a-heading'],
+    ['\\:not-an-extension\n', ':not-an-extension'],
+    ['\\=not-setext\n', '=not-setext']
+  ];
+
+  variants.forEach(([markdown, visibleText]) => {
+    const document = model.parse(markdown);
+    const paragraph = document.nodes[0];
+
+    assert.equal(document.nodes.length, 1);
+    assert.equal(paragraph.type, 'paragraph');
+    assert.equal(paragraph.editable, true);
+    assert.equal(inlineText(paragraph.inline), visibleText);
+    assert.equal(model.serialize(document), markdown);
+
+    const updated = model.updateNode(document, paragraph.id, {
+      inline: [...paragraph.inline, { type: 'text', value: ' changed' }]
+    });
+    const output = model.serialize(updated);
+    const reparsed = model.parse(output);
+
+    assert.equal(output, `${markdown.slice(0, -1)} changed\n`);
+    assert.equal(reparsed.nodes[0].type, 'paragraph');
+    assert.equal(reparsed.nodes[0].editable, true);
+    assert.equal(inlineText(reparsed.nodes[0].inline), `${visibleText} changed`);
+  });
+});
+
+test('punctuation escapes inside supported wrappers preserve their structure', () => {
+  const model = loadModel();
+  const markdown = [
+    'Before *a\\*b\\!* and [\\[label\\]](https://example.test).',
+    ''
+  ].join('\n');
+  const document = model.parse(markdown);
+  const paragraph = document.nodes[0];
+
+  assert.equal(paragraph.type, 'paragraph');
+  assert.deepEqual(
+    plain(paragraph.inline.map((token) => token.type)),
+    ['text', 'emphasis', 'text', 'link', 'text']
+  );
+  assert.equal(inlineText(paragraph.inline), 'Before a*b! and [label].');
+
+  const updated = model.updateNode(document, paragraph.id, {
+    inline: [...paragraph.inline, { type: 'text', value: ' changed' }]
+  });
+  const output = model.serialize(updated);
+  const reparsed = model.parse(output);
+
+  assert.equal(output, `${markdown.slice(0, -1)} changed\n`);
+  assert.deepEqual(
+    plain(reparsed.nodes[0].inline.map((token) => token.type)),
+    ['text', 'emphasis', 'text', 'link', 'text']
+  );
+  assert.equal(inlineText(reparsed.nodes[0].inline), 'Before a*b! and [label]. changed');
 });
 
 test('literal trailing heading hashes survive an edit while valid closing sequences are removed', () => {

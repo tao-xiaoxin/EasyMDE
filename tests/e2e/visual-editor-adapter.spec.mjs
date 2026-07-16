@@ -106,12 +106,16 @@ test('visual adapter keeps unsupported syntax inside structured containers atomi
     '> graph TD',
     '> A-->B',
     '> ```',
+    '',
+    '> Outer',
+    '> > Nested',
+    '> Tail',
     ''
   ].join('\n');
 
   await mountAdapter(page, markdown, { readOnly: false });
 
-  await expect(page.locator('[data-easymde-protected-type="unknown"]')).toHaveCount(4);
+  await expect(page.locator('[data-easymde-protected-type="unknown"]')).toHaveCount(5);
   await expect(page.locator('[data-easymde-protected-type="unknown"] [contenteditable]')).toHaveCount(0);
   expect(await page.evaluate(() => window.testAdapter.getMarkdown())).toBe(markdown);
 });
@@ -209,6 +213,32 @@ test('typing synchronizes Markdown while lock blocks typing, paste, commands, an
   expect(await page.evaluate(() => window.testAdapter.getMarkdown())).toBe(markdown);
   expect(await page.evaluate(() => window.testAdapter.redo())).toBe(true);
   expect(await page.evaluate(() => window.testAdapter.getMarkdown())).toBe(lockedMarkdown);
+});
+
+test('literal paragraph block markers stay paragraphs after visual input and reparsing', async ({ page }) => {
+  const variants = [
+    { text: '# heading', markdown: '\\# heading\n' },
+    { text: '- item', markdown: '\\- item\n' },
+    { text: '1. item', markdown: '1\\. item\n' },
+    { text: '---', markdown: '\\---\n' }
+  ];
+
+  for (const variant of variants) {
+    await mountAdapter(page, 'Paragraph\n', { readOnly: false });
+    const content = page.locator('[data-easymde-inline-content]');
+
+    await content.fill(variant.text);
+    await expect.poll(() => page.evaluate(() => window.testAdapter.getMarkdown())).toBe(variant.markdown);
+    await expect(content).toHaveText(variant.text);
+
+    await page.evaluate(() => {
+      window.testAdapter.setMarkdown(window.testAdapter.getMarkdown());
+    });
+    await expect(page.locator(
+      '[data-easymde-node-id^="paragraph-"] [data-easymde-inline-content]'
+    )).toHaveText(variant.text);
+    await expect(page.locator('[data-easymde-protected-type]')).toHaveCount(0);
+  }
 });
 
 test('rapid input in separate blocks preserves every pending Markdown edit', async ({ page }) => {
@@ -331,6 +361,34 @@ test('structural commands remap selection to the replacement node', async ({ pag
   });
 });
 
+test('paragraph command keeps literal block-marker content editable', async ({ page }) => {
+  const variants = [
+    {
+      source: '# # heading\n', selector: 'h1 [data-easymde-inline-content]', markdown: '\\# heading\n', text: '# heading'
+    },
+    {
+      source: '- First\n- Second\n- Third\n', selector: 'li [data-easymde-inline-content]', index: 1,
+      markdown: '- First\n\nSecond\n\n- Third\n', text: 'Second'
+    },
+    {
+      source: '> First\n> Second\n> Third\n', selector: 'blockquote [data-easymde-inline-content]', index: 1,
+      markdown: '> First\n\nSecond\n\n> Third\n', text: 'Second'
+    }
+  ];
+
+  for (const variant of variants) {
+    await mountAdapter(page, variant.source, { readOnly: false });
+    await page.locator(variant.selector).nth(variant.index || 0).focus();
+
+    expect(await page.evaluate(() => window.testAdapter.executeCommand('paragraph'))).toBe(true);
+    expect(await page.evaluate(() => window.testAdapter.getMarkdown())).toBe(variant.markdown);
+    await expect(page.locator(
+      '[data-easymde-node-id^="paragraph-"] [data-easymde-inline-content]'
+    )).toHaveText(variant.text);
+    expect(await page.evaluate(() => window.adapterErrors)).toEqual([]);
+  }
+});
+
 test('Enter creates the next structured heading, list, and blockquote block', async ({ page }) => {
   await mountAdapter(page, '# Heading\n', { readOnly: false });
 
@@ -396,6 +454,182 @@ test('Enter preserves CRLF and inline formatting when splitting a structured blo
     'Paragraph \n\n**bold tail**.\n'
   );
   await expect(page.locator('p').nth(1).locator('strong')).toHaveText('bold tail');
+});
+
+test('Enter keeps literal block-marker text in the new paragraph', async ({ page }) => {
+  const variants = [
+    { text: '# heading', markdown: 'Before \n\n\\# heading\n' },
+    { text: ':::note', markdown: 'Before \n\n\\:::note\n' }
+  ];
+
+  for (const variant of variants) {
+    await mountAdapter(page, `Before ${variant.text}\n`, { readOnly: false });
+    await page.evaluate(() => {
+      window.testAdapter.restoreSelection({ nodeId: 'paragraph-0', start: 7, end: 7 });
+    });
+    await page.keyboard.press('Enter');
+
+    await expect.poll(() => page.evaluate(() => window.testAdapter.getMarkdown())).toBe(variant.markdown);
+    await expect(page.locator('p [data-easymde-inline-content]')).toHaveText(['Before ', variant.text]);
+    expect(await page.evaluate(() => window.adapterErrors)).toEqual([]);
+  }
+});
+
+test('literal star and underscore block markers remain editable after remounting', async ({ page }) => {
+  const variants = ['* item', '***', '* * *', '___', '_ _ _'];
+
+  for (const text of variants) {
+    await mountAdapter(page, 'Paragraph\n', { readOnly: false });
+    await page.locator('[data-easymde-inline-content]').fill(text);
+    const markdown = await page.evaluate(() => window.testAdapter.getMarkdown());
+
+    await page.evaluate((source) => window.testAdapter.setMarkdown(source), markdown);
+
+    const content = page.locator('p [data-easymde-inline-content]');
+    await expect(content).toHaveText(text);
+    await expect(content).toHaveAttribute('contenteditable', 'plaintext-only');
+
+    await content.fill(`${text} changed`);
+    const editedMarkdown = await page.evaluate(() => window.testAdapter.getMarkdown());
+    await page.evaluate((source) => window.testAdapter.setMarkdown(source), editedMarkdown);
+
+    await expect(content).toHaveText(`${text} changed`);
+    await expect(content).toHaveAttribute('contenteditable', 'plaintext-only');
+    expect(await page.evaluate(() => window.adapterErrors)).toEqual([]);
+  }
+});
+
+test('escaped paragraph marker prefixes preserve following visual formatting during edits', async ({ page }) => {
+  const markdown = '\\* \\* \\* prefix *emphasis*, **strong**, and `code`.\n';
+  await mountAdapter(page, markdown, { readOnly: false });
+
+  const content = page.locator('p [data-easymde-inline-content]');
+  await expect(content.locator('em')).toHaveText('emphasis');
+  await expect(content.locator('strong')).toHaveText('strong');
+  await expect(content.locator('code')).toHaveText('code');
+
+  await content.focus();
+  await page.keyboard.press('End');
+  await page.keyboard.type(' changed');
+
+  await expect.poll(() => page.evaluate(() => window.testAdapter.getMarkdown())).toBe(
+    '\\* \\* \\* prefix *emphasis*, **strong**, and `code`. changed\n'
+  );
+});
+
+test('visual input preserves untouched Markdown punctuation from the structured model', async ({ page }) => {
+  const variants = [
+    {
+      markdown: 'Identifier foo_bar_baz, foo__bar__baz, and 中文_变量_名称.\n',
+      selector: 'p [data-easymde-inline-content]',
+      expected: 'Identifier foo_bar_baz, foo__bar__baz, and 中文_变量_名称. changed\n'
+    },
+    {
+      markdown: '# Identifier foo_bar\n',
+      selector: 'h1 [data-easymde-inline-content]',
+      expected: '# Identifier foo_bar changed\n'
+    },
+    {
+      markdown: '- Identifier foo_bar\n',
+      selector: 'li [data-easymde-inline-content]',
+      expected: '- Identifier foo_bar changed\n'
+    },
+    {
+      markdown: '> Identifier foo_bar\n',
+      selector: 'blockquote [data-easymde-inline-content]',
+      expected: '> Identifier foo_bar changed\n'
+    },
+    {
+      markdown: 'Before **foo_bar** and `code_value`.\n',
+      selector: 'p [data-easymde-inline-content]',
+      expected: 'Before **foo_bar** and `code_value`. changed\n'
+    }
+  ];
+
+  for (const variant of variants) {
+    await mountAdapter(page, variant.markdown, { readOnly: false });
+    const content = page.locator(variant.selector);
+
+    await content.focus();
+    await page.keyboard.press('End');
+    await page.keyboard.type(' changed');
+
+    await expect.poll(() => page.evaluate(() => window.testAdapter.getMarkdown())).toBe(variant.expected);
+    expect(await page.evaluate(() => window.adapterErrors)).toEqual([]);
+  }
+});
+
+test('paste, formatting, and Enter preserve punctuation outside the edited range', async ({ page }) => {
+  await mountAdapter(page, 'Identifier foo_bar tail.\n', { readOnly: false });
+  const content = page.locator('p [data-easymde-inline-content]');
+
+  await content.focus();
+  await page.keyboard.press('End');
+  await dispatchPaste(content, ' *literal* and $value$');
+  await expect.poll(() => page.evaluate(() => window.testAdapter.getMarkdown())).toBe(
+    'Identifier foo_bar tail. \\*literal\\* and \\$value$\n'
+  );
+  await page.evaluate(() => window.testAdapter.setMarkdown(window.testAdapter.getMarkdown()));
+  await expect(page.locator('[data-easymde-protected-type]')).toHaveCount(0);
+  await expect(page.locator('p [data-easymde-inline-content]')).toHaveText(
+    'Identifier foo_bar tail. *literal* and $value$'
+  );
+
+  await page.evaluate(() => window.testAdapter.setMarkdown('Identifier foo_bar tail.\n'));
+  await page.evaluate(() => window.testAdapter.restoreSelection({
+    nodeId: 'paragraph-0',
+    start: 19,
+    end: 23
+  }));
+  expect(await page.evaluate(() => window.testAdapter.executeCommand('bold'))).toBe(true);
+  expect(await page.evaluate(() => window.testAdapter.getMarkdown())).toBe(
+    'Identifier foo_bar **tail**.\n'
+  );
+
+  await page.evaluate(() => {
+    window.testAdapter.setMarkdown('Identifier foo_bar tail.\n');
+    window.testAdapter.restoreSelection({ nodeId: 'paragraph-0', start: 19, end: 19 });
+  });
+  await page.keyboard.press('Enter');
+  expect(await page.evaluate(() => window.testAdapter.getMarkdown())).toBe(
+    'Identifier foo_bar \n\ntail.\n'
+  );
+});
+
+test('editing preserves explicit punctuation escapes through DOM reconciliation', async ({ page }) => {
+  const markdown = 'Price \\$x\\$ and *a\\*b\\!* plus dot\\.\n';
+  await mountAdapter(page, markdown, { readOnly: false });
+  const content = page.locator('p [data-easymde-inline-content]');
+
+  await content.focus();
+  await page.keyboard.press('End');
+  await page.keyboard.type(' changed');
+
+  const expected = 'Price \\$x\\$ and *a\\*b\\!* plus dot\\. changed\n';
+  await expect.poll(() => page.evaluate(() => window.testAdapter.getMarkdown())).toBe(expected);
+  await page.evaluate(() => window.testAdapter.setMarkdown(window.testAdapter.getMarkdown()));
+  await expect(page.locator('[data-easymde-protected-type]')).toHaveCount(0);
+  await expect(content).toHaveText('Price $x$ and a*b! plus dot. changed');
+  await expect(content.locator('em')).toHaveText('a*b!');
+});
+
+test('DOM provenance reconciliation handles a large text node without argument overflow', async ({ page }) => {
+  await mountAdapter(page, 'Ready\n', { readOnly: false });
+
+  const result = await page.evaluate(() => {
+    const prefix = 'x'.repeat(200000);
+    const original = `${prefix} foo_bar`;
+    const root = document.createElement('span');
+    root.textContent = `${original} changed`;
+    const tokens = window.EasyMDEVisualEditorAdapter.inlineTokensFromDom(
+      root,
+      window.EasyMDEVisualMarkdownModel,
+      [{ type: 'text', value: original }]
+    );
+    return window.EasyMDEVisualMarkdownModel.serializeInline(tokens).slice(-24);
+  });
+
+  expect(result).toBe('xxxxxxxx foo_bar changed');
 });
 
 test('structural commands replace only the active item in a multi-item list', async ({ page }) => {

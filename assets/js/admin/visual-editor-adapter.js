@@ -75,7 +75,162 @@
         return key.length === 1;
     }
 
-    function inlineTokensFromDom(root, model) {
+    function inlineTextSnapshot(tokens) {
+        var parts = [];
+        var segments = [];
+        var length = 0;
+
+        function append(value, literal, escaped) {
+            var last;
+            if (!value) {
+                return;
+            }
+            parts.push(value);
+            last = segments[segments.length - 1];
+            if (
+                last
+                && !escaped
+                && !last.escaped
+                && last.literal === literal
+                && last.end === length
+            ) {
+                last.end += value.length;
+            } else {
+                segments.push({
+                    start: length,
+                    end: length + value.length,
+                    literal: literal,
+                    escaped: escaped
+                });
+            }
+            length += value.length;
+        }
+
+        function visit(token) {
+            var value;
+            if (token.type === 'text' || token.type === 'code') {
+                value = String(token.value || '');
+                append(
+                    value,
+                    token.type === 'text' && !!token.literal,
+                    token.type === 'text' && !!token.escaped
+                );
+                return;
+            }
+            (token.children || []).forEach(visit);
+        }
+
+        (tokens || []).forEach(visit);
+        return { text: parts.join(''), segments: segments };
+    }
+
+    function reconcileInlineTokens(currentTokens, originalTokens) {
+        var currentSnapshot;
+        var originalSnapshot;
+        var prefixLength = 0;
+        var suffixLength = 0;
+
+        if (!Array.isArray(originalTokens)) {
+            return currentTokens;
+        }
+        currentSnapshot = inlineTextSnapshot(currentTokens);
+        originalSnapshot = inlineTextSnapshot(originalTokens);
+
+        while (
+            prefixLength < currentSnapshot.text.length
+            && prefixLength < originalSnapshot.text.length
+            && currentSnapshot.text.charAt(prefixLength) === originalSnapshot.text.charAt(prefixLength)
+        ) {
+            prefixLength += 1;
+        }
+        while (
+            suffixLength < currentSnapshot.text.length - prefixLength
+            && suffixLength < originalSnapshot.text.length - prefixLength
+            && currentSnapshot.text.charAt(currentSnapshot.text.length - suffixLength - 1)
+                === originalSnapshot.text.charAt(originalSnapshot.text.length - suffixLength - 1)
+        ) {
+            suffixLength += 1;
+        }
+
+        function originalProvenanceAt(position) {
+            var low = 0;
+            var high = originalSnapshot.segments.length - 1;
+            var middle;
+            var segment;
+            while (low <= high) {
+                middle = Math.floor((low + high) / 2);
+                segment = originalSnapshot.segments[middle];
+                if (position < segment.start) {
+                    high = middle - 1;
+                } else if (position >= segment.end) {
+                    low = middle + 1;
+                } else {
+                    if (segment.escaped) {
+                        return 'escaped:' + middle;
+                    }
+                    return segment.literal ? 'literal' : 'plain';
+                }
+            }
+            return 'plain';
+        }
+
+        function provenanceAt(position) {
+            var originalPosition;
+            if (position < prefixLength) {
+                return originalProvenanceAt(position);
+            }
+            if (position >= currentSnapshot.text.length - suffixLength) {
+                originalPosition = originalSnapshot.text.length - (currentSnapshot.text.length - position);
+                return originalProvenanceAt(originalPosition);
+            }
+            return 'literal';
+        }
+
+        function apply(tokens, state) {
+            return (tokens || []).reduce(function (output, token) {
+                var clone = Object.assign({}, token);
+                var value;
+                var groupStart;
+                var groupProvenance;
+                var index;
+
+                if (token.type === 'code') {
+                    state.offset += String(token.value || '').length;
+                    output.push(clone);
+                    return output;
+                }
+                if (token.type !== 'text') {
+                    clone.children = apply(token.children || [], state);
+                    output.push(clone);
+                    return output;
+                }
+                value = String(token.value || '');
+                groupStart = 0;
+                groupProvenance = value.length ? provenanceAt(state.offset) : 'literal';
+                for (index = 1; index <= value.length; index += 1) {
+                    if (index === value.length || provenanceAt(state.offset + index) !== groupProvenance) {
+                        clone = {
+                            type: 'text',
+                            value: value.slice(groupStart, index),
+                            literal: groupProvenance !== 'plain'
+                        };
+                        if (String(groupProvenance).indexOf('escaped:') === 0) {
+                            clone.escaped = true;
+                        }
+                        output.push(clone);
+                        groupStart = index;
+                        groupProvenance = provenanceAt(state.offset + index);
+                    }
+                }
+                state.offset += value.length;
+                return output;
+            }, []);
+        }
+
+        return apply(currentTokens, { offset: 0 });
+    }
+
+    function inlineTokensFromDom(root, model, originalTokens) {
         if (!root || !model || typeof model.isSafeUrl !== 'function') {
             throw new Error('Visual editor DOM conversion dependencies are unavailable.');
         }
@@ -137,7 +292,44 @@
             throw new Error('Unsupported visual editor DOM element: ' + tag.toLowerCase());
         }
 
-        return children(root);
+        return reconcileInlineTokens(children(root), originalTokens);
+    }
+
+    function inlineTokenLength(token) {
+        if (token.type === 'text' || token.type === 'code') {
+            return String(token.value || '').length;
+        }
+        return (token.children || []).reduce(function (length, child) {
+            return length + inlineTokenLength(child);
+        }, 0);
+    }
+
+    function sliceInlineTokens(tokens, start, end) {
+        var position = 0;
+        var output = [];
+
+        (tokens || []).forEach(function (token) {
+            var length = inlineTokenLength(token);
+            var tokenStart = position;
+            var tokenEnd = position + length;
+            var relativeStart;
+            var relativeEnd;
+            var clone;
+            position = tokenEnd;
+            if (end <= tokenStart || start >= tokenEnd) {
+                return;
+            }
+            relativeStart = Math.max(0, start - tokenStart);
+            relativeEnd = Math.min(length, end - tokenStart);
+            clone = Object.assign({}, token);
+            if (token.type === 'text' || token.type === 'code') {
+                clone.value = String(token.value || '').slice(relativeStart, relativeEnd);
+            } else {
+                clone.children = sliceInlineTokens(token.children || [], relativeStart, relativeEnd);
+            }
+            output.push(clone);
+        });
+        return output;
     }
 
     function protectedLabel(type) {
@@ -375,6 +567,7 @@
                 !model
                 || typeof model.parse !== 'function'
                 || typeof model.serialize !== 'function'
+                || typeof model.serializeParagraphInline !== 'function'
                 || typeof model.updateNode !== 'function'
             ) {
                 throw new Error('The visual Markdown model is unavailable.');
@@ -423,6 +616,17 @@
                 return { type: 'blockquote', index: Number(quoteLine.getAttribute('data-easymde-quote-line')) };
             }
             return { type: 'node', index: 0 };
+        }
+
+        function inlineTokensForContent(node, content) {
+            var part = contentPart(content);
+            if (part.type === 'list' && node.type === 'list' && node.items[part.index]) {
+                return node.items[part.index].inline;
+            }
+            if (part.type === 'blockquote' && node.type === 'blockquote' && node.lines[part.index]) {
+                return node.lines[part.index].inline;
+            }
+            return node.inline || [];
         }
 
         function sourceSegment(node, content) {
@@ -522,7 +726,7 @@
                 }
                 return Object.assign({}, item, {
                     checked: item.task ? !!(checkbox && checkbox.checked) : false,
-                    inline: inlineTokensFromDom(content, model)
+                    inline: inlineTokensFromDom(content, model, item.inline)
                 });
             });
             return model.updateNode(modelDocument, node.id, { items: items });
@@ -530,9 +734,9 @@
 
         function captureBlockquote(nodeElement, node) {
             var lines = [];
-            nodeElement.querySelectorAll('[data-easymde-quote-line]').forEach(function (lineElement) {
+            nodeElement.querySelectorAll('[data-easymde-quote-line]').forEach(function (lineElement, index) {
                 var content = lineElement.querySelector('[data-easymde-inline-content]');
-                var inline = content ? inlineTokensFromDom(content, model) : [];
+                var inline = content ? inlineTokensFromDom(content, model, node.lines[index].inline) : [];
                 lines.push({ inline: inline, blank: inline.length === 0 });
             });
             return model.updateNode(modelDocument, node.id, { lines: lines });
@@ -551,7 +755,7 @@
             if (node.type === 'paragraph' || node.type === 'heading') {
                 content = nodeElement.querySelector('[data-easymde-inline-content]');
                 nextDocument = model.updateNode(modelDocument, node.id, {
-                    inline: inlineTokensFromDom(content, model)
+                    inline: inlineTokensFromDom(content, model, node.inline)
                 });
             } else if (node.type === 'list') {
                 nextDocument = captureList(nodeElement, node);
@@ -746,13 +950,17 @@
             return point;
         }
 
-        function inlineTokensForRange(content, start, end) {
+        function inlineTokensForRange(content, start, end, originalTokens) {
             var range = documentRef.createRange();
             var startPoint = pointAtOffset(content, start);
             var endPoint = pointAtOffset(content, end);
             range.setStart(startPoint.node, startPoint.offset);
             range.setEnd(endPoint.node, endPoint.offset);
-            return inlineTokensFromDom(range.cloneContents(), model);
+            return inlineTokensFromDom(
+                range.cloneContents(),
+                model,
+                sliceInlineTokens(originalTokens, start, end)
+            );
         }
 
         function bookmarkAtSourceOffset(offset, start, end) {
@@ -889,6 +1097,8 @@
             var content = activeContent();
             var node;
             var segment;
+            var beforeTokens;
+            var afterTokens;
             var before;
             var after;
             var ending;
@@ -908,20 +1118,31 @@
                 return false;
             }
             segment = sourceSegment(node, content);
-            before = model.serializeInline(inlineTokensForRange(content, 0, bookmark.start));
-            after = model.serializeInline(inlineTokensForRange(
+            beforeTokens = inlineTokensForRange(
+                content,
+                0,
+                bookmark.start,
+                inlineTokensForContent(node, content)
+            );
+            afterTokens = inlineTokensForRange(
                 content,
                 bookmark.end,
-                String(content.textContent || '').length
-            ));
+                String(content.textContent || '').length,
+                inlineTokensForContent(node, content)
+            );
+            before = model.serializeInline(beforeTokens);
+            after = model.serializeInline(afterTokens);
             ending = (segment.raw.match(/(\r\n|\r|\n)$/) || [''])[0];
             lineEnding = modelDocument.lineEnding || '\n';
 
             if (node.type === 'heading') {
+                after = model.serializeParagraphInline(afterTokens);
                 prefix = new Array(node.level + 1).join('#') + ' ';
                 replacement = prefix + before + lineEnding + lineEnding + after + (after ? ending : '');
                 targetOffset = segment.start + prefix.length + before.length + (lineEnding.length * 2);
             } else if (node.type === 'paragraph') {
+                before = model.serializeParagraphInline(beforeTokens);
+                after = model.serializeParagraphInline(afterTokens);
                 replacement = before + lineEnding + lineEnding + after + (after ? ending : '');
                 targetOffset = segment.start + before.length + (lineEnding.length * 2);
             } else if (node.type === 'list') {
@@ -1191,7 +1412,12 @@
             var tokens;
             var inline;
             var ending;
+            var lineEnding;
+            var leading = '';
+            var trailing = '';
+            var partCount;
             var replacement;
+            var targetOffset;
             var bookmark = captureSelection();
             flush();
             modelDocument = model.parse(markdown);
@@ -1200,13 +1426,21 @@
                 throw new Error('The active visual Markdown node is unavailable.');
             }
             segment = sourceSegment(node, content);
-            tokens = inlineTokensFromDom(content, model);
+            tokens = inlineTokensFromDom(content, model, inlineTokensForContent(node, content));
             inline = model.serializeInline(tokens);
             ending = (segment.raw.match(/(\r\n|\r|\n)$/) || [''])[0];
+            lineEnding = modelDocument.lineEnding || '\n';
+            targetOffset = segment.start;
             if (/^heading[1-6]$/.test(command)) {
                 replacement = new Array(Number(command.slice(-1)) + 1).join('#') + ' ' + inline + ending;
             } else if (command === 'paragraph') {
-                replacement = inline + ending;
+                if (segment.part.type === 'list' || segment.part.type === 'blockquote') {
+                    partCount = segment.part.type === 'list' ? node.items.length : node.lines.length;
+                    leading = segment.part.index > 0 ? lineEnding : '';
+                    trailing = segment.part.index < partCount - 1 ? lineEnding : '';
+                }
+                replacement = leading + model.serializeParagraphInline(tokens) + ending + trailing;
+                targetOffset += leading.length;
             } else if (command === 'quote') {
                 replacement = '> ' + inline + ending;
             } else if (command === 'unorderedlist') {
@@ -1223,7 +1457,7 @@
                 segment,
                 replacement,
                 { command: command, nodeId: node.id },
-                segment.start,
+                targetOffset,
                 bookmark && bookmark.start,
                 bookmark && bookmark.end
             );

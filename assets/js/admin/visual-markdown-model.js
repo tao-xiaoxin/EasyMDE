@@ -83,13 +83,43 @@
         );
     }
 
+    function isEscapedCharacterAt(value, index) {
+        var backslashes = 0;
+        var position = index - 1;
+
+        while (position >= 0 && value.charAt(position) === '\\') {
+            backslashes += 1;
+            position -= 1;
+        }
+        return backslashes % 2 === 1;
+    }
+
+    function findEscapedPunctuation(value, offset) {
+        var index = String(value || '').indexOf('\\', offset);
+
+        while (index !== -1) {
+            if (
+                !isEscapedCharacterAt(value, index)
+                && /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(value.charAt(index + 1))
+            ) {
+                return {
+                    index: index,
+                    end: index + 2,
+                    value: value.charAt(index + 1)
+                };
+            }
+            index = value.indexOf('\\', index + 1);
+        }
+        return null;
+    }
+
     function findInlineCandidate(value, offset) {
         var patterns = [
             { type: 'code', regex: /(`+)([^\n]*?)\1/g },
-            { type: 'link', regex: /\[([^\]\n]+)\]\(([^\s)]+)(?:\s+["']([^"']*)["'])?\)/g },
+            { type: 'link', regex: /\[((?:\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]|[^\\\]\n])+)\]\(([^\s)]+)(?:\s+["']([^"']*)["'])?\)/g },
             { type: 'strong', regex: /(\*\*|__)([^\n]+?)\1/g },
             { type: 'strike', regex: /~~([^\n]+?)~~/g },
-            { type: 'emphasis', regex: /(\*|_)([^*_\n]+?)\1/g }
+            { type: 'emphasis', regex: /(\*|_)((?:\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]|[^*_\n])+?)\1/g }
         ];
         var candidate = null;
 
@@ -99,8 +129,27 @@
             match = pattern.regex.exec(value);
             while (
                 match
-                && (pattern.type === 'strong' || pattern.type === 'emphasis')
-                && isIntrawordUnderscore(value, match, match.index, pattern.regex.lastIndex)
+                && (
+                    (
+                        (pattern.type === 'strong' || pattern.type === 'emphasis')
+                        && isIntrawordUnderscore(value, match, match.index, pattern.regex.lastIndex)
+                    )
+                    || (
+                        pattern.type !== 'code'
+                        && (
+                            isEscapedCharacterAt(value, match.index)
+                            || (
+                                pattern.type !== 'link'
+                                && isEscapedCharacterAt(
+                                    value,
+                                    pattern.regex.lastIndex - (
+                                        pattern.type === 'strike' ? 2 : String(match[1] || '').length
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
             ) {
                 match = pattern.regex.exec(value);
             }
@@ -159,11 +208,26 @@
         var tokens = [];
         var offset = 0;
         var candidate;
+        var escaped;
         var match;
         var href;
 
         while (offset < source.length) {
             candidate = findInlineCandidate(source, offset);
+            escaped = findEscapedPunctuation(source, offset);
+            if (escaped && (!candidate || escaped.index <= candidate.index)) {
+                if (escaped.index > offset) {
+                    tokens.push({ type: 'text', value: source.slice(offset, escaped.index) });
+                }
+                tokens.push({
+                    type: 'text',
+                    value: escaped.value,
+                    literal: true,
+                    escaped: true
+                });
+                offset = escaped.end;
+                continue;
+            }
             if (!candidate) {
                 tokens.push({ type: 'text', value: source.slice(offset) });
                 break;
@@ -199,14 +263,34 @@
         return tokens;
     }
 
+    function escapeLiteralInlineText(value) {
+        var escaped = String(value || '').replace(/([\\*_~`\[\]<>])/g, '\\$1');
+
+        return escaped.replace(
+            /(^|[^\\$])\$(?!\$)(?:\\.|[^$\r\n])+?\$/g,
+            function (match, prefix) {
+                return prefix + '\\$' + match.slice(prefix.length + 1);
+            }
+        );
+    }
+
     function serializeInline(tokens) {
         return (tokens || []).map(function (token) {
             if (!token || typeof token.type !== 'string') {
                 throw new Error('Invalid visual Markdown inline token.');
             }
             if (token.type === 'text') {
+                if (token.escaped) {
+                    if (
+                        String(token.value || '').length !== 1
+                        || !/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(String(token.value || ''))
+                    ) {
+                        throw new Error('Invalid escaped visual Markdown punctuation token.');
+                    }
+                    return '\\' + String(token.value);
+                }
                 return token.literal
-                    ? String(token.value || '').replace(/([\\*_~`\[\]<>])/g, '\\$1')
+                    ? escapeLiteralInlineText(token.value)
                     : String(token.value || '');
             }
             if (token.type === 'code') {
@@ -233,18 +317,146 @@
         }).join('');
     }
 
-    function hasUnsupportedInlineSyntax(value) {
+    function transformParagraphLines(value, transform) {
+        return String(value || '').split(/(\r\n|\r|\n)/).map(function (part, index) {
+            return index % 2 === 0 ? transform(part, index / 2) : part;
+        }).join('');
+    }
+
+    function escapeParagraphBlockMarkers(value) {
+        return transformParagraphLines(value, function (line, lineIndex) {
+            var bulletList;
+            var orderedList;
+
+            if (isHorizontalRule(line)) {
+                return line.replace(/^([\t ]{0,3})([*_-])/, '$1\\$2');
+            }
+            if (isSetextDelimiter(line)) {
+                return line.replace(/^([\t ]{0,3})([-=])/, '$1\\$2');
+            }
+            if (/^[\t ]{0,3}#{1,6}(?:[\t ]+|$)/.test(line)) {
+                return line.replace(/^([\t ]{0,3})(#)/, '$1\\$2');
+            }
+            bulletList = line.match(/^([\t ]*)([-+*])([\t ]+)/);
+            if (bulletList && (lineIndex === 0 || listInterruptsParagraph(line))) {
+                return bulletList[1] + '\\' + bulletList[2] + bulletList[3]
+                    + line.slice(bulletList[0].length);
+            }
+            orderedList = line.match(/^([\t ]*\d{1,9})([.)])([\t ]+)/);
+            if (orderedList && (lineIndex === 0 || listInterruptsParagraph(line))) {
+                return orderedList[1] + '\\' + orderedList[2] + orderedList[3]
+                    + line.slice(orderedList[0].length);
+            }
+            if (/^[\t ]{0,3}>/.test(line)) {
+                return line.replace(/^([\t ]{0,3})(>)/, '$1\\$2');
+            }
+            if (/^[\t ]*\$\$[\t ]*$/.test(line)) {
+                return line.replace(/^([\t ]*)(\$)/, '$1\\$2');
+            }
+            if (/^[\t ]{0,3}:::[\w-]*/.test(line)) {
+                return line.replace(/^([\t ]{0,3})(:)/, '$1\\$2');
+            }
+            if (isTableDelimiter(line)) {
+                if (/^[\t ]*\|/.test(line)) {
+                    return line.replace(/^([\t ]*)(\|)/, '$1\\$2');
+                }
+                return line.replace(/^([\t ]*:?)(-)/, '$1\\$2');
+            }
+            return line;
+        });
+    }
+
+    function decodeParagraphBlockMarkers(value) {
+        return transformParagraphLines(value, function (line) {
+            var decoded;
+            var delimiterRun;
+
+            delimiterRun = line.match(/^([\t ]{0,3})((?:(?:\\\*[\t ]*){3,}|(?:\\_[\t ]*){3,}))/);
+            if (delimiterRun) {
+                return delimiterRun[1] + delimiterRun[2].replace(/\\([*_])/g, '$1')
+                    + line.slice(delimiterRun[0].length);
+            }
+            if (/^[\t ]{0,3}\\#{1,6}(?:[\t ]+|$)/.test(line)) {
+                return line.replace(/^([\t ]{0,3})\\(#)/, '$1$2');
+            }
+            decoded = line.replace(/^([\t ]{0,3})\\([-])/, '$1$2');
+            if (decoded !== line && (isHorizontalRule(decoded) || isSetextDelimiter(decoded))) {
+                return decoded;
+            }
+            decoded = line.replace(/^([\t ]{0,3})\\(=)/, '$1$2');
+            if (decoded !== line && isSetextDelimiter(decoded)) {
+                return decoded;
+            }
+            decoded = line.replace(/\\([*_])/g, '$1');
+            if (decoded !== line && isHorizontalRule(decoded)) {
+                return decoded;
+            }
+            if (/^[\t ]*\\[-+*](?:[\t ]+)/.test(line)) {
+                return line.replace(/^([\t ]*)\\([-+*])/, '$1$2');
+            }
+            if (/^[\t ]*\d{1,9}\\[.)](?:[\t ]+)/.test(line)) {
+                return line.replace(/^([\t ]*\d{1,9})\\([.)])/, '$1$2');
+            }
+            if (/^[\t ]{0,3}\\>/.test(line)) {
+                return line.replace(/^([\t ]{0,3})\\(>)/, '$1$2');
+            }
+            if (/^[\t ]*\\\$\$[\t ]*$/.test(line)) {
+                return line.replace(/^([\t ]*)\\(\$)/, '$1$2');
+            }
+            if (/^[\t ]{0,3}\\:::[\w-]*/.test(line)) {
+                return line.replace(/^([\t ]{0,3})\\(:)/, '$1$2');
+            }
+            decoded = line
+                .replace(/^([\t ]*)\\(\|)/, '$1$2')
+                .replace(/^([\t ]*:?)\\(-)/, '$1$2');
+            return decoded !== line && isTableDelimiter(decoded) ? decoded : line;
+        });
+    }
+
+    function serializeParagraphInline(tokens) {
+        return escapeParagraphBlockMarkers(serializeInline(tokens));
+    }
+
+    function parseParagraphInline(value, allowEscapedBlockMarker) {
+        if (!allowEscapedBlockMarker) {
+            return parseInline(value);
+        }
+        return String(value || '').split(/(\r\n|\r|\n)/).reduce(function (tokens, part, index) {
+            var literalPrefix;
+            if (index % 2 === 1) {
+                tokens.push({ type: 'text', value: part });
+                return tokens;
+            }
+            literalPrefix = paragraphLiteralPrefix(part);
+            if (literalPrefix) {
+                tokens.push({ type: 'text', value: literalPrefix, literal: true });
+                return tokens.concat(parseInline(part.slice(literalPrefix.length)));
+            }
+            return tokens.concat(parseInline(part));
+        }, []);
+    }
+
+    function hasInlineImageSyntax(value) {
+        return /!\[[^\]]*\]\([^)]+\)/.test(String(value || ''));
+    }
+
+    function hasUnsupportedInlineSyntax(value, allowEscapedBlockMarker) {
         var source = String(value || '');
         var sourceWithoutCode = source.replace(/(`+)([^\n]*?)\1/g, function (match) {
             return match.replace(/./g, ' ');
         });
-        var inlineTokens = parseInline(source);
+        var delimiterSource = allowEscapedBlockMarker
+            ? transformParagraphLines(sourceWithoutCode, function (line) {
+                var literalPrefix = paragraphLiteralPrefix(line);
+                return literalPrefix ? line.slice(literalPrefix.length) : line;
+            })
+            : sourceWithoutCode;
+        var inlineTokens = parseParagraphInline(source, allowEscapedBlockMarker);
 
         function tokenIsUnsupported(token) {
             if (token.type === 'text') {
                 return /<[^>\r\n]+>/.test(token.value)
-                    || /\[[^\]\r\n]+\]/.test(token.value)
-                    || /\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(token.value);
+                    || /\[[^\]\r\n]+\]/.test(token.value);
             }
             return (token.children || []).some(tokenIsUnsupported);
         }
@@ -278,11 +490,11 @@
             });
         }
 
-        return hasInlineMath(source)
+        return hasInlineImageSyntax(source)
+            || hasInlineMath(source)
             || isFenceStart(source)
-            || /^\s*\$\$\s*$/.test(source)
-            || /\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(sourceWithoutCode)
-            || /\*{3,}|_{3,}/.test(sourceWithoutCode)
+            || (!allowEscapedBlockMarker && /^\s*\$\$\s*$/.test(source))
+            || /\*{3,}|_{3,}/.test(delimiterSource)
             || inlineTokens.some(tokenIsUnsupported)
             || inlineTokens.some(function (token) {
                 return hasNestedEmphasis(token, '');
@@ -303,8 +515,43 @@
         return String(content || '').match(/^(\s*)([-+*]|\d{1,9}[.)])([\t ]+)(?:\[([ xX])\]([\t ]+))?(.*)$/);
     }
 
+    function listInterruptsParagraph(content) {
+        var match = listMatch(content);
+        var hasContent;
+
+        if (!match) {
+            return false;
+        }
+        hasContent = typeof match[4] === 'string' || match[6].length > 0;
+        if (!hasContent) {
+            return false;
+        }
+        return !/^\d/.test(match[2]) || parseInt(match[2], 10) === 1;
+    }
+
     function isHorizontalRule(content) {
         return /^ {0,3}(?:(?:\*[\t ]*){3,}|(?:-[\t ]*){3,}|(?:_[\t ]*){3,})$/.test(String(content || ''));
+    }
+
+    function paragraphLiteralPrefix(content) {
+        var line = String(content || '');
+        var match;
+
+        if (
+            isHorizontalRule(line)
+            || isSetextDelimiter(line)
+            || /^\s*\$\$\s*$/.test(line)
+            || isTableDelimiter(line)
+        ) {
+            return line;
+        }
+        match = line.match(/^ {0,3}(?:(?:\*[\t ]*){3,}|(?:_[\t ]*){3,})/)
+            || line.match(/^[\t ]{0,3}#{1,6}(?:[\t ]+|$)/)
+            || line.match(/^[\t ]*[-+*](?:[\t ]+)/)
+            || line.match(/^[\t ]*\d{1,9}[.)](?:[\t ]+)/)
+            || line.match(/^[\t ]{0,3}>[\t ]?/)
+            || line.match(/^[\t ]{0,3}:::[\w-]*/);
+        return match ? match[0] : '';
     }
 
     function isSetextDelimiter(content) {
@@ -331,7 +578,7 @@
             || !!isFenceStart(content)
             || /^ {0,3}#{1,6}(?:[\t ]+|$)/.test(content)
             || isHorizontalRule(content)
-            || !!listMatch(content)
+            || listInterruptsParagraph(content)
             || /^ {0,3}>/.test(content)
             || /^\s*\$\$\s*$/.test(content)
             || /^\s*\[TOC\]\s*$/i.test(content)
@@ -342,14 +589,14 @@
             || isTableDelimiter(next);
     }
 
-    function protectedTypeForParagraph(raw) {
-        if (/!\[[^\]]*\]\([^)]+\)/.test(raw)) {
+    function protectedTypeForParagraph(raw, allowEscapedBlockMarker) {
+        if (hasInlineImageSyntax(raw)) {
             return 'image';
         }
         if (hasInlineMath(raw)) {
             return 'inlineMath';
         }
-        if (hasUnsupportedInlineSyntax(raw)) {
+        if (hasUnsupportedInlineSyntax(raw, allowEscapedBlockMarker)) {
             return 'unknown';
         }
         return '';
@@ -427,13 +674,65 @@
         var unsupported = false;
         var match;
         var indent;
+        var continuationIndent = 0;
+        var rootIndent = null;
+        var rootKind = '';
+        var nextIndex;
+        var nextMatch;
+        var nextIndent;
 
-        while (endIndex < lines.length && !isBlank(lines[endIndex])) {
+        function markerKind(marker) {
+            return /^\d/.test(marker) ? 'ordered-' + marker.slice(-1) : 'bullet';
+        }
+
+        while (endIndex < lines.length) {
+            if (isBlank(lines[endIndex])) {
+                nextIndex = endIndex;
+                while (nextIndex < lines.length && isBlank(lines[nextIndex])) {
+                    nextIndex += 1;
+                }
+                if (nextIndex >= lines.length) {
+                    break;
+                }
+                nextMatch = listMatch(lines[nextIndex].content);
+                nextIndent = (lines[nextIndex].content.match(/^[\t ]*/) || [''])[0]
+                    .replace(/\t/g, '    ').length;
+                if (
+                    items.length
+                    && (
+                        nextIndent >= continuationIndent
+                        || (
+                            nextMatch
+                            && nextIndent === rootIndent
+                            && markerKind(nextMatch[2]) === rootKind
+                        )
+                    )
+                ) {
+                    unsupported = true;
+                    endIndex = nextIndex;
+                    continue;
+                }
+                break;
+            }
             match = listMatch(lines[endIndex].content);
             if (!match) {
+                indent = (lines[endIndex].content.match(/^[\t ]*/) || [''])[0].replace(/\t/g, '    ').length;
+                if (
+                    items.length
+                    && (indent >= continuationIndent || !startsKnownBlock(lines, endIndex))
+                ) {
+                    unsupported = true;
+                    endIndex += 1;
+                    continue;
+                }
                 break;
             }
             indent = match[1].replace(/\t/g, '    ').length;
+            if (rootIndent === null) {
+                rootIndent = indent;
+                rootKind = markerKind(match[2]);
+            }
+            continuationIndent = indent + match[2].length + match[3].replace(/\t/g, '    ').length;
             unsupported = unsupported || hasUnsupportedInlineSyntax(match[6]);
             items.push({
                 depth: indent ? Math.max(1, Math.ceil(indent / 4)) : 0,
@@ -468,11 +767,44 @@
         var quoteLines = [];
         var unsupported = false;
         var content;
+        var nextContent;
+        var nestedBlock;
+        var allowsLazyContinuation = false;
 
-        while (endIndex < lines.length && /^ {0,3}>/.test(lines[endIndex].content)) {
+        function startsNestedBlock(current, next) {
+            return !!isFenceStart(current)
+                || /^ {0,3}#{1,6}(?:[\t ]+|$)/.test(current)
+                || isHorizontalRule(current)
+                || !!listMatch(current)
+                || /^ {0,3}>/.test(current)
+                || /^\s*\$\$\s*$/.test(current)
+                || /^\s*\[TOC\]\s*$/i.test(current)
+                || /^ {0,3}:::[\w-]*/.test(current)
+                || /^\s*</.test(current)
+                || isIndentedCode(current)
+                || isSetextDelimiter(next)
+                || isTableDelimiter(next);
+        }
+
+        while (endIndex < lines.length && !isBlank(lines[endIndex])) {
+            if (!/^ {0,3}>/.test(lines[endIndex].content)) {
+                if (allowsLazyContinuation && !startsKnownBlock(lines, endIndex)) {
+                    unsupported = true;
+                    endIndex += 1;
+                    continue;
+                }
+                break;
+            }
             content = lines[endIndex].content.replace(/^ {0,3}>[\t ]?/, '');
-            unsupported = unsupported || hasUnsupportedInlineSyntax(content);
+            nextContent = lines[endIndex + 1] && /^ {0,3}>/.test(lines[endIndex + 1].content)
+                ? lines[endIndex + 1].content.replace(/^ {0,3}>[\t ]?/, '')
+                : '';
+            nestedBlock = startsNestedBlock(content, nextContent);
+            unsupported = unsupported
+                || nestedBlock
+                || hasUnsupportedInlineSyntax(content);
             quoteLines.push({ inline: parseInline(content), blank: !content });
+            allowsLazyContinuation = !!content && !nestedBlock;
             endIndex += 1;
         }
         if (unsupported) {
@@ -509,6 +841,7 @@
         var endIndex = index + 1;
         var raw;
         var body;
+        var decodedBody;
         var protectedType;
 
         while (endIndex < lines.length && !startsKnownBlock(lines, endIndex)) {
@@ -516,13 +849,14 @@
         }
         raw = documentState.source.slice(lines[index].start, lines[endIndex - 1].end);
         body = stripOneLineEnding(raw);
-        protectedType = protectedTypeForParagraph(body);
+        decodedBody = decodeParagraphBlockMarkers(body);
+        protectedType = protectedTypeForParagraph(decodedBody, decodedBody !== body);
         documentState.nodes.push(createNode(documentState, protectedType ? 'protected' : 'paragraph', lines[index].start, lines[endIndex - 1].end, protectedType ? {
             editable: false,
             protectedType: protectedType
         } : {
             editable: true,
-            inline: parseInline(body)
+            inline: parseParagraphInline(decodedBody, decodedBody !== body)
         }));
         return endIndex;
     }
@@ -697,7 +1031,7 @@
                 continue;
             }
             raw = stripOneLineEnding(documentState.source.slice(lines[index].start, lines[index].end));
-            if (/!\[[^\]]*\]\([^)]+\)/.test(raw)) {
+            if (hasInlineImageSyntax(raw)) {
                 documentState.nodes.push(createNode(documentState, 'protected', lines[index].start, lines[index].end, {
                     editable: false,
                     protectedType: 'image'
@@ -838,7 +1172,7 @@
             return node.raw;
         }
         if (node.type === 'paragraph') {
-            body = serializeInline(node.inline);
+            body = serializeParagraphInline(node.inline);
         } else if (node.type === 'heading') {
             if (!Number.isInteger(node.level) || node.level < 1 || node.level > 6) {
                 throw new Error('Visual Markdown heading level must be between 1 and 6.');
@@ -910,6 +1244,7 @@
         replaceNodeSource: replaceNodeSource,
         serialize: serialize,
         serializeInline: serializeInline,
+        serializeParagraphInline: serializeParagraphInline,
         updateNode: updateNode
     };
 }(window));

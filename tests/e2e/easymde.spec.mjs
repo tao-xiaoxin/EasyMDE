@@ -357,6 +357,23 @@ test.describe('EasyMDE editor workflows', () => {
     }
   });
 
+  test('keeps narrow heading menu focus inside the immersive modal after WordPress responds to resize', async ({ page }, testInfo) => {
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    await enterImmersiveWithKeyboard(page);
+    await page.setViewportSize({ width: 640, height: 375 });
+    const source = page.locator('.easymde-immersive-workspace__source');
+    await source.fill('## Short viewport');
+    await selectImmersiveRange(page, 0, 17);
+    await page.locator('[data-command="heading"]').click();
+    const heading1 = page.locator('[data-heading-command="heading1"]');
+    const heading6 = page.locator('[data-heading-command="heading6"]');
+    await expect(heading1).toBeFocused();
+    await heading1.press('End');
+    await page.evaluate(() => window.jQuery(document).trigger('wp-window-resized'));
+    await expect(heading6).toBeFocused();
+  });
+
   test('opens the isolated article workspace without changing the normal WordPress editor', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = `Immersive Workspace ${testSlug(testInfo)}`;

@@ -51,6 +51,7 @@ docs/ARCHITECTURE.md
 docs/REACT_DESIGN_PHILOSOPHY.md
 package.json
 scripts/build-release.mjs
+scripts/build-source-archives.mjs
 src/Admin/
 src/Content/
 src/Rest/
@@ -372,6 +373,8 @@ Rules:
 - declare `children` only when accepted, normally as `React.ReactNode`;
 - use concrete React event types or contextual inference, never `any`;
 - initialize DOM refs with `null`;
+- when a Shared UI primitive must expose a native DOM ref under React 18, use `forwardRef` from `@wordpress/element`; do not apply React 19's ref-as-a-Prop or no-`forwardRef` guidance;
+- let native-control wrappers accept the appropriate native attributes only when that flexibility is part of their API; omit or redeclare invariant Props, merge `className`, events, and ARIA attributes deliberately, and never let a trailing Props spread override the control's required semantics;
 - use `type` for closed Props, unions, tuples, aliases, and Feature-local models;
 - use `interface` for intentionally extensible Ports and public object contracts;
 - start untrusted values as `unknown` and parse once at the boundary;
@@ -539,6 +542,8 @@ Use versioned runtime schemas for:
 
 Rules:
 
+- emit Bootstrap data through WordPress Script APIs that safely serialize structured data, or use `wp_json_encode()` when the selected API expects serialized JSON; never concatenate executable JavaScript or raw JSON, and apply the escaping required by the exact HTML context when a contract is carried in HTML;
+- treat PHP-side validation, serialization, and output escaping and TypeScript-side runtime parsing as two required halves of the same boundary;
 - validate required fields before mounting or executing a protected operation;
 - ignore unknown optional fields only when safe;
 - fail clearly on an unknown incompatible version;
@@ -567,7 +572,9 @@ Preserve the live public contracts unless a focused Issue supplies a compatibili
 
 - `EasyMDE_Plugin::register_toolbar_button()`;
 - `EasyMDE_Plugin::register_shortcode_helper()`;
+- the `easymde_supported_post_types` editor-admission Filter;
 - the `easymde_article_themes` and `easymde_code_themes` Filters;
+- the `easymde_category_options_cache_context` category-cache extension Filter;
 - the fixed `easymde/v1` REST namespace;
 - documented metadata, Theme and Command IDs, Script Handles, ordering, collision, and failure behavior relied on by extensions.
 
@@ -700,12 +707,16 @@ Use Vite from the root npm package. Source belongs under `frontend/`; compiled r
 
 The first build implementation records and validates the selected Vite, TypeScript, Node, and npm versions, browser target, WordPress loading strategy, JSX-runtime mapping, development-server boundary, and release output contract. Browser targets come from the supported WordPress/EasyMDE environment and real test matrix, not an unreviewed Vite default. Do not add global Polyfills without a documented browser requirement, scope, size, and removal rule.
 
+Compile-time packages and declarations must not advertise a newer Runtime than WordPress 6.7 provides. Keep React and ReactDOM development/test packages, `@types/react`, `@types/react-dom`, `@wordpress/element`, and JSX-runtime types aligned with the verified React 18 / WordPress 6.7 surface. A successful TypeScript check against React 19 or a newer Gutenberg package is not proof that the code can run on WordPress 6.7.
+
 The first build implementation chooses and validates one coherent strategy:
 
 - classic WordPress Scripts; or
 - WordPress Script Modules / ESM.
 
 Do not claim IIFE output and ordinary dynamic chunks both work without a loader contract.
+
+WordPress 6.7 registers `@wordpress/element` as the classic `wp-element` Script dependency; it does not register `@wordpress/element` as a default Script Module. A Script Module / ESM strategy must therefore prove an explicit local bridge to the same `wp-element` Runtime, deterministic load order, JSX-runtime identity, dependency metadata, translations, and teardown. If that bridge is not proven, use the classic Script strategy rather than bundling React or assuming an import-map entry exists.
 
 For every strategy:
 
@@ -727,6 +738,13 @@ A dependency needs a current responsibility, non-duplicative purpose, compatible
 
 Do not add a State, Query, Form, Router, Schema, Animation, Icon, or Utility library merely because a blog, react-admin, or a generic Skill recommends it.
 
+Keep the two publication artifacts distinct:
+
+- the installable plugin ZIP follows the runtime allowlist and excludes development source;
+- source ZIP / tar.gz artifacts are built from the exact tracked commit, include the tracked `frontend/` source and build/maintenance documentation, and reject generated or local-only paths according to `scripts/build-source-archives.mjs`.
+
+Do not apply the installable-package allowlist to source archives, and do not use an uncommitted working tree as source-archive input.
+
 ## Testing, Release, and Completion
 
 Choose tests by responsibility:
@@ -738,7 +756,8 @@ Choose tests by responsibility:
 - `features`: Controller, Hook, Component, Focus, keyboard, and form behavior through mock Runtime;
 - `app`: Providers, independent Stores, Error Boundaries, activation, and teardown;
 - E2E: real WordPress behavior using the installable ZIP;
-- release: required compiled entries present and development files absent.
+- release: required compiled entries present and development files absent;
+- source archive: exact committed source present, generated/local-only artifacts absent, and archive version/commit identity correct.
 
 Test-quality rules:
 

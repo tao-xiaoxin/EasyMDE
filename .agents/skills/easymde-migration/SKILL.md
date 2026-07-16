@@ -318,6 +318,7 @@ For WordPress operations:
 - Do not debounce controlled input or the native submission bridge; debounce preview and proven expensive derived work.
 - Use functional state updates when the next value depends on the previous value.
 - Use refs only for values that do not affect rendering.
+- When a React 18 primitive must expose its native DOM node, use `forwardRef` from `@wordpress/element`; do not apply the companion Skill's React 19 no-`forwardRef` or ref-as-a-Prop guidance.
 - Prefer explicit variants over boolean mode combinations.
 - Use compound components only for one cohesive control with real shared scoped state.
 - Use children for structural composition; use render functions only when callers need live internal state.
@@ -375,6 +376,8 @@ Measure before and after when the unit can affect performance:
 Define task-specific tolerances before seeing the result. Core Web Vitals do not replace editor interaction metrics. If no representative measurement is available, report performance as unverified rather than claiming improvement.
 
 Build and test the production output. Verify WordPress-provided React is not duplicated, dependency metadata matches imports, asset URLs work outside the default plugin path, runtime assets are local, and the installable ZIP includes every required entry and chunk while excluding development files.
+
+Also verify the source ZIP / tar.gz is built from the exact tracked commit, contains the tracked `frontend/` source and required build guidance, and rejects generated or local-only artifacts. Do not reuse the installable ZIP allowlist for the source archive.
 
 ## Deprecate and remove the old owner
 

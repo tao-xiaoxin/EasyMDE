@@ -2,26 +2,116 @@
 
 本文定义 EasyMDE WordPress 后台 React、TypeScript 与 Vite 应用的长期架构合同。
 
-它记录稳定的目录边界、所有权、数据流、运行时、构建、测试和发布决策。具体开发步骤、检查清单和 Feature 实施细节由 `.agents/skills/easymde/SKILL.md` 与对应 GitHub Issue 补充。
+它记录稳定的设计哲学、目录边界、所有权、依赖方向、接口原则、数据流、运行时、构建、测试和发布决策。开发时的细化检查、代码示例和 Feature 失败路径由 `.agents/skills/easymde/SKILL.md` 与对应 GitHub Issue 补充。
 
-本文不是当前实现清单，也不规定功能开发顺序。当前代码事实始终以实时仓库和 `docs/ARCHITECTURE.md` 为准。任何目录、配置、接口或依赖都只能在实际功能需要时创建，不得根据本文一次性生成空目录或占位文件。
+本文不是当前实现清单，也不规定固定开发顺序。当前代码事实始终以实时仓库、根目录 `AGENTS.md` 和 `docs/ARCHITECTURE.md` 为准。任何目录、配置、接口或依赖都只能在真实功能需要时创建。
 
-## 一、规则优先级
+## 一、资料权威与维护原则
 
-React 相关任务按以下优先级执行：
+架构和代码规则按以下优先级解释：
 
 1. 当前明确任务、关联 GitHub Issue 和人工维护者决定。
-2. 根目录 `AGENTS.md` 以及实时仓库中的数据、安全、兼容、扩展、隐私、测试和发布合同。
-3. 本文与 `.agents/skills/easymde/SKILL.md` 共同组成 EasyMDE 项目级 React 规则：本文负责稳定架构，Skill 负责实施细节。
-4. 通用 React、组件组合和 Web 设计 Skill。
+2. 根目录 `AGENTS.md` 与实时仓库中的数据、安全、兼容、扩展、隐私、测试和发布合同。
+3. 本文与 `.agents/skills/easymde/SKILL.md`：本文负责长期架构，Skill 负责实施细节。
+4. React、WordPress 和 TypeScript 官方文档，以及与最低支持版本匹配的官方源码。
+5. 通用 React、组件组合和 Web 设计 Skill。
+6. 博客、公众号、搜索摘要和其他二手资料。
 
-通用 Skill 可以补充质量实践，但不得覆盖 EasyMDE 项目规则，不得引入 Next.js、React Server Components、Server Actions、Webpack、Gutenberg 替代方案、私有 React Runtime、替代保存发布后端或未经验证的新依赖。
+二手资料只能提供线索，不能直接成为项目规范。采纳建议前必须确认：
 
-若本文、EasyMDE Skill 与实时仓库出现冲突，不要静默选择其中一个。应先确认真实项目合同，并在同一任务中同步修正文档。
+- 规则仍适用于 React 18；
+- 规则适用于当前 TypeScript 和类型包；
+- 规则符合 WordPress 6.7 或更高版本的实际 API；
+- 规则不破坏 EasyMDE 数据、保存、预览、发布、扩展和安装包合同；
+- 搜索结果与官方文档或匹配版本的源码一致。
 
-## 二、产品与所有权边界
+版本敏感结论必须标明适用版本。无法验证时，记录为待确认项，不把猜测写成架构事实。
 
-React 应用覆盖 WordPress 后台中明确属于 EasyMDE 的交互界面，例如：
+当本文、Skill 与实时仓库发生冲突时，不得静默选择其中一个。应确认真实项目合同，并在同一任务中同步修正已经过时的文档。
+
+## 二、总体设计哲学
+
+### 1. 系统需求决定工具
+
+React 服务 EasyMDE 的交互需求，而不是取代 WordPress。
+
+React 适合负责声明式界面、组件组合、会话状态和可测试交互；PHP 和 WordPress 继续负责持久化、安全、正式渲染和平台行为。
+
+不得因为某个模式在其他 React 项目流行，就引入新的框架、状态库、表单库、路由、Schema 工具或组件系统。每个工具必须解决当前项目中可以说明、测试和维护的责任。
+
+### 2. 先建模数据和状态，再设计组件树
+
+设计一个页面或 Feature 时，顺序是：
+
+1. 明确用户目标和平台约束；
+2. 明确服务端数据、浏览器会话数据和派生数据；
+3. 列出加载、空、成功、错误、权限不足、冲突和取消等状态；
+4. 为每个状态值指定唯一所有者；
+5. 根据用户可理解的职责划分组件树；
+6. 先实现由类型化输入驱动的纯渲染；
+7. 再通过事件、Command、Port 和显式状态转换加入交互。
+
+禁止先创建通用组件目录、全局 Store 或万能 Service，再寻找使用场景。
+
+### 3. 渲染必须保持纯粹
+
+相同 Props、State 和 Context 应生成相同 JSX。
+
+Render 阶段不得：
+
+- 修改 Props、State、Context 或 Registry；
+- 修改 WordPress DOM 或浏览器全局；
+- 保存、发布、上传、复制或写 Storage；
+- 注册订阅、Timer 或 Observer；
+- 发起依赖副作用的网络 Mutation；
+- 输出包含文章内容、Nonce 或凭据的诊断。
+
+用户操作在 Event Handler 或明确 Command 中执行。Effect 只用于把 React 状态同步到外部系统，并且必须有单一职责、正确依赖和可重复清理。
+
+### 4. 每个事实只有一个权威所有者
+
+典型所有权：
+
+```text
+Canonical Markdown         → PHP 持久化的 _easymde_markdown
+当前编辑会话 Markdown      → Editor Store
+兼容 HTML                  → PHP MarkdownRenderer + post_content
+原生表单序列化             → WordPress Submission Bridge
+REST 安全状态              → WordPress + SessionPort
+Dialog 尚未提交的草稿      → 最近的 Feature Owner
+设置持久化                 → WordPress Options API
+公开文章输出               → PHP / WordPress
+```
+
+不得为了方便访问，把同一事实复制到 Component State、Context、Store、Query Cache、DOM Field、Storage 和 PHP 中。
+
+### 5. 状态保持最小、无矛盾、可推导
+
+- 同一次原子转换中的值可以组合管理；
+- 不能同时成立的状态用 Discriminated Union 表达；
+- Dirty、是否可发布、统计结果等可计算事实不重复保存；
+- 临时状态放在最近所有者；
+- 只有真正需要协调多个消费者时才提升状态；
+- 状态重置由实体身份和明确产品规则决定；
+- 不通过随机 Key、组件嵌套定义或无意的树位置变化重置状态。
+
+### 6. 边界必须可观察、可失败、可测试
+
+每个外部操作必须有：
+
+- 明确所有者；
+- 类型化输入和输出；
+- 权限和数据验证；
+- 取消、冲突或过期语义；
+- 来自真实平台所有者的成功信号；
+- 用户可理解的失败状态；
+- 不泄露内容和秘密的诊断；
+- 最低可靠层级的测试；
+- 需要浏览器行为时，对安装版 ZIP 的真实 E2E 验证。
+
+## 三、产品与平台所有权
+
+React 应用覆盖 WordPress 后台中属于 EasyMDE 的交互界面，例如：
 
 - 编辑器工作区；
 - 标题和 Markdown 编辑界面；
@@ -30,19 +120,19 @@ React 应用覆盖 WordPress 后台中明确属于 EasyMDE 的交互界面，例
 - 布局、主题、字体和自定义 CSS；
 - 发布界面；
 - 历史版本；
-- 媒体选择、图片上传和粘贴；
+- 媒体选择、上传和图片插入；
 - 本地草稿恢复；
 - 微信富文本复制；
 - 设置页；
-- 后续明确批准的 AI 助手界面。
+- 经独立任务批准的 AI 助手界面。
 
 React 负责：
 
-- 界面渲染；
+- 后台 UI 渲染；
 - 用户交互；
 - 组件组合；
 - 对话框、面板和布局；
-- 当前浏览器会话中的临时状态；
+- 浏览器编辑会话中的临时状态；
 - 对外部能力的调用编排；
 - 加载、空、错误、权限不足和冲突状态的呈现。
 
@@ -50,7 +140,7 @@ PHP 和 WordPress 继续负责：
 
 - 插件加载、Hook 和服务装配；
 - 支持的 Post Type 准入；
-- 权限与 Nonce；
+- Capability 和 Nonce；
 - Post Meta 和 Options API；
 - Markdown 正式渲染和 HTML 安全过滤；
 - Custom CSS 安全策略；
@@ -59,7 +149,7 @@ PHP 和 WordPress 继续负责：
 - 分类、标签和特色图片；
 - 原生保存、发布、状态和计划发布时间；
 - Autosave、Heartbeat 和文章锁；
-- 前台文章、Feed、搜索、邮件和 REST 消费者需要的兼容 HTML；
+- 前台文章、Feed、搜索、邮件和 REST Consumer 需要的兼容 HTML；
 - 文章主题和代码主题注册表。
 
 总体数据流：
@@ -68,15 +158,32 @@ PHP 和 WordPress 继续负责：
 PHP / WordPress
 拥有持久化数据、安全、渲染、保存和发布
                  ↓
-Versioned Bootstrap Contracts + Focused Ports
+Versioned Runtime Contracts + Focused Ports
                  ↓
 React Applications
 拥有后台界面、交互和浏览器会话状态
 ```
 
-React 不得创建第二套正式 Markdown Renderer、数据权限系统、文章保存路径、发布后端、修订模型、媒体存储、设置存储、站点时区模型或前台内容权威。
+React 不得创建第二套正式 Markdown Renderer、权限系统、文章保存路径、发布后端、修订模型、媒体存储、设置存储、站点时区模型或前台内容权威。
 
-## 三、运行时基线
+## 四、安全设计原则
+
+安全边界属于 PHP 和 WordPress，不能只依赖客户端界面。
+
+- Capability Check 决定用户是否有权执行操作；
+- Nonce 用于请求完整性和 CSRF 防护，不是授权；
+- 每个受保护 REST Route 必须有针对该动作的 `permission_callback`；
+- 客户端 Capability 只用于展示和提前反馈；
+- 服务端仍验证每个写操作；
+- 能精确判断有效性的输入优先 Validation；
+- 无法精确 Validation 时再使用适当 Sanitization；
+- 输出在最接近输出位置 Escape；
+- REST Callback 返回数据、`WP_REST_Response` 或 `WP_Error`，不手动打印 JSON；
+- 不把 Raw Server HTML、Stack Trace、Nonce、Cookie、Token 或文章内容作为用户错误消息。
+
+PHP 安全规则不能因 React 提供了类型、Schema 或隐藏按钮而省略。
+
+## 五、React 运行时基线
 
 EasyMDE 支持 WordPress 6.7 或更高版本。
 
@@ -103,21 +210,18 @@ export function mountEditor(element: HTMLElement): () => void {
 必须遵守：
 
 - 从 `@wordpress/element` 使用 React Runtime API；
-- 使用 `createRoot`，不添加旧版 `render` 兼容分支；
-- 每个 Root 都保存并执行 `root.unmount()`；
-- 构建产物声明正确的 WordPress Runtime 依赖；
-- 安装包不重复打包 React 或 ReactDOM；
-- 不混用 WordPress React 与插件私有 React；
-- 不在两个 React Runtime 之间传递 Element、Context、Hook、Portal 或 Ref；
+- 使用 `createRoot`，不添加旧版 `render` 分支；
+- 每个 Root 保存并执行 `root.unmount()`；
+- 后台 Root 是客户端挂载应用，不使用 Hydration；
+- 不在安装包中重复打包 React 或 ReactDOM；
+- 不在不同 React Runtime 之间传递 Element、Context、Hook、Portal 或 Ref；
 - 不使用 React 19 专属 API；
-- 不使用 Hydration，后台 Root 是客户端挂载应用；
-- 不为 WordPress 6.7 以下版本增加兼容代码或测试路径。
+- 不为 WordPress 6.7 以下版本维护兼容路径；
+- 开发环境可以使用 `StrictMode` 暴露不纯渲染和错误清理，不能通过关闭检查掩盖问题。
 
-`forwardRef()` 和 `useContext()` 在 React 18 中仍然有效，但只能在真实组件合同需要时使用。
+`@wordpress/components` 不作为 EasyMDE 的第二套默认设计系统。确有需要时，必须验证目标 WordPress 版本的稳定 API、无障碍、视觉合同、依赖和 Bundle 成本。
 
-`@wordpress/components` 不作为 EasyMDE 的第二套默认设计系统。某个功能确实需要 WordPress 原生组件时，必须验证 WordPress 6.7 API、稳定性、视觉合同、无障碍、依赖和 Bundle 行为，并隔离在明确的 UI 或 Integration 边界中。
-
-## 四、仓库根目录
+## 六、仓库与应用目录
 
 只保留一个根 npm 项目和一个 Lockfile：
 
@@ -145,16 +249,9 @@ frontend/package.json
 frontend/package-lock.json
 ```
 
-原因：
+两个 npm 项目会制造依赖、版本、License、CI 和发布图漂移。
 
-- 版本、依赖和发布流程属于同一个插件；
-- 两个 Lockfile 会制造依赖和 CI 漂移；
-- Vendor 资源准备、前端构建和安装包生成必须处于同一可复现依赖图；
-- 根 `package.json` 继续参与版本、i18n、第三方声明和发布校验。
-
-## 五、React 源码目录
-
-默认目录结构：
+默认 React 目录：
 
 ```text
 frontend/
@@ -225,24 +322,11 @@ frontend/
         └── mock-runtime/
 ```
 
-这是一份目录边界，不是要求一次性创建全部路径。
+这是所有权地图，不是批量建目录清单。不得创建空目录、空 `index.ts`、占位组件、未来 AI 文件或没有当前职责的抽象层。
 
-不得创建空目录、空 `index.ts`、占位组件、未来 AI 文件或没有当前责任的抽象层。
+## 七、应用 Root 和 Entrypoint
 
-不要在应用根目录创建通用的：
-
-```text
-components/
-services/
-helpers/
-utils/
-```
-
-这些目录会隐藏真实所有权。
-
-## 六、应用 Root 与 Entrypoint
-
-每个真实 WordPress 页面或独立加载的应用面拥有自己的 Entrypoint、Runtime、Store、Provider、Error Boundary 和生命周期。
+每个真实 WordPress 页面或独立应用面拥有自己的 Entrypoint、Runtime、Store、Provider、Error Boundary 和生命周期。
 
 ```text
 entrypoints/admin-editor.tsx
@@ -252,75 +336,58 @@ entrypoints/settings.tsx
 → app/settings/*
 ```
 
-禁止把两者放入共享的：
+禁止把 Editor 与 Settings 放入共享的：
 
 ```text
 app/store/
 app/providers/
 ```
 
+Editor 和 Settings 可以共享纯 Domain、Contracts 和 UI Primitive，但不共享可变 Store、Query Cache、Error Boundary 状态或 Lifecycle Owner。
+
 Entrypoint 只负责：
 
-- 定位并验证 Root；
-- 读取并验证对应 Bootstrap Contract；
-- 创建 Runtime；
-- 创建当前 Root 的 Store；
-- 挂载 React；
-- 等待应用进入 Ready 状态；
-- 激活该 Root 的所有权；
-- 记录启动失败；
-- 完整卸载和清理。
+- Root 定位和验证；
+- Bootstrap Contract 解析；
+- Runtime 和 Store 创建；
+- React Mount；
+- Ready 后激活所有权；
+- 启动失败报告；
+- 完整 Teardown。
 
-Entrypoint 不包含 Feature 业务逻辑、REST 实现、WordPress DOM Selector、主题和发布规则、对话框状态或大段组件 JSX。
+Entrypoint 不包含 Feature 业务、REST 实现、WordPress Selector、主题规则、发布规则、Dialog State 或大段 JSX。
 
-启动失败时必须保留此前可用的界面所有者，或显示明确的致命错误。禁止在 Bootstrap 验证和 React Ready 之前隐藏现有界面。
+启动失败时必须保留之前可用的 Owner，或显示明确的 Fatal State。React Ready 之前不得隐藏旧 Owner。
 
-多个 Root 出现在同一页面时，每个 Root 必须拥有独立 Store、Provider 和 Teardown，并证明 Context 与可变状态没有交叉。
-
-## 七、分层职责
+## 八、分层职责与依赖方向
 
 ### `app/`
 
-负责某个 Root 的 App Shell、Provider、Error Boundary、Store 创建、顶层布局、Runtime 注入和生命周期。
-
-`app/editor/` 与 `app/settings/` 不共享可变 Store、Query Cache、Error Boundary 状态或生命周期所有者。
+负责某个 Root 的 Shell、Provider、Error Boundary、Store 创建、顶层布局和生命周期。
 
 ### `contracts/`
 
-定义 PHP、WordPress、浏览器和 React 之间稳定、可验证的接口：
+定义 PHP、WordPress、浏览器和 React 之间稳定、可验证的边界：
 
 - Bootstrap Schema；
 - Runtime Ports；
 - REST Request / Response；
 - Operation Result；
-- Error Code；
-- Safe HTML 品牌类型；
-- 扩展命令和 Shortcode Helper；
+- Stable Error Code；
+- Safe HTML Brand；
+- Extension Contract；
 - Browser Storage Payload；
 - Build Manifest 和 Asset Metadata。
 
-TypeScript Interface 不能代替运行时验证。所有外部数据必须在边界解析。
+TypeScript Interface 不能验证运行时数据。所有外部数据必须在边界 Parse。
 
 ### `domain/`
 
-只包含纯业务规则，不允许依赖 React、JSX、DOM、WordPress Package、Browser Global、Network、Feature UI 或 Concrete Adapter。
-
-适合放在 Domain 的能力包括：
-
-- 标题和换行标准化；
-- Dirty State；
-- Markdown Selection 和命令；
-- Outline；
-- Statistics；
-- Table Markdown；
-- Publishing Draft 和 Category Tree；
-- Appearance State；
-- Revision 对比规则；
-- 纯设置校验模型。
+只包含纯业务规则，不依赖 React、JSX、DOM、WordPress Package、Browser Global、Network、Feature UI 或 Concrete Adapter。
 
 ### `features/`
 
-按用户能够理解的能力组织：
+按用户可理解的能力组织，而不是按技术类型组织：
 
 ```text
 workspace
@@ -340,15 +407,50 @@ settings
 ai-assistant
 ```
 
-仅在实际功能包含代码时创建目录。
+### `integrations/`
 
-大型 Feature 可以采用：
+集中 WordPress、REST、DOM、Native Form、Media、Storage、Clipboard、Preview Enhancement 和 Diagnostics 访问。
+
+WordPress 子目录必须对应明确 Port。禁止通用 `editor/`、`api/`、`WordPressService` 或超大 `EditorAdapter`。
+
+### `shared/`
+
+只包含没有 EasyMDE Feature 所有权、没有 WordPress 业务决策的通用 UI、Hook、Icon、Pure Utility 和 Type。
+
+依赖方向：
+
+```text
+entrypoints  → app, contracts, integrations
+app          → features, contracts, shared
+features     → domain, contracts, shared
+domain       → shared pure utilities and types only
+contracts    → domain types and shared types only
+integrations → contracts, domain, shared
+shared       → no app, Feature, integration, or WordPress ownership
+```
+
+Circular Import、Upward Import、Feature 私有深层导入和 Feature 内构造 Concrete Adapter 都是架构缺陷。前端 Lint 工具链建立后必须自动检查依赖方向。
+
+## 九、Feature 与组件边界
+
+一个组件应有明确的语义责任、状态或无障碍合同、可复用边界或可独立恢复的失败边界。
+
+不要把每个 Wrapper 都拆成组件，也不要让一个组件同时承担布局、数据权限、REST、WordPress DOM、状态机和多组不相关交互。
+
+大型 Feature 可以使用：
 
 ```text
 features/publishing/
 ├── ui/
+│   ├── PublishDialog.tsx
+│   ├── PublishSettings.tsx
+│   └── CategoryTree.tsx
 ├── model/
+│   ├── usePublishDraft.ts
+│   ├── usePublishAction.ts
+│   └── publishing-state.ts
 ├── styles/
+│   └── publishing.css
 ├── publishing.types.ts
 └── index.ts
 ```
@@ -356,122 +458,168 @@ features/publishing/
 规则：
 
 - `ui/` 负责渲染和直接交互；
-- `model/` 负责 Feature 状态和 Port 调用编排；
-- 可脱离 React 复用的规则放入 `domain/`；
-- WordPress、REST、Storage、Clipboard、Media 和 DOM 实现放入 `integrations/`；
-- `index.ts` 只使用明确命名导出；
+- `model/` 负责 Feature State 和 Port 调用编排；
+- 可脱离 React 的规则放入 `domain/`；
+- 外部系统实现放入 `integrations/`；
+- `index.ts` 只暴露明确 Named Export；
 - 禁止 `export *`；
-- 其他 Feature 不得深层导入私有文件；
-- Feature 内部不得通过自己的 `index.ts` 反向导入；
-- 只有真实跨 Feature 且无业务所有权的代码才能进入 `shared/`。
+- 其他 Feature 只能导入公共 API；
+- Feature 内部不得从自己的 `index.ts` 反向导入；
+- 只有稳定、真实跨 Feature、无业务所有权的代码才能进入 `shared/`。
 
-### `integrations/`
+组件 API 设计：
 
-集中 WordPress、REST、Browser、Storage、Clipboard、Media、Preview Enhancement 和 Diagnostics 访问。
+- Props 表达用户意图和组件合同，不暴露内部实现步骤；
+- 结构或行为显著不同使用显式 Variant 或 Discriminated Union；
+- `disabled`、`required`、`readOnly` 等原子状态可以使用 Boolean；
+- 禁止多个 Boolean 组合出不可能状态；
+- Compound Component 只用于真正共享语义和局部状态的一组控件；
+- 静态结构优先使用 `children`；只有调用方需要内部实时数据时才使用 Render Function；
+- Controlled 与 Uncontrolled 模式必须明确，生命周期中不能切换；
+- Shared UI 不知道 Post ID、Capability、WordPress Selector、Endpoint 或 EasyMDE 业务规则；
+- 不通过检查 Child Type、任意 `cloneElement` 或修改 Child Props 建立隐藏协议；
+- WordPress 页面导航仍由 WordPress 管理，Tabs、Panel 和 Dialog 不构成引入 Router 的理由。
 
-WordPress 子目录必须对应明确 Port，不得建立通用 `editor/`、`api/`、`WordPressService` 或超大 `EditorAdapter`。
+## 十、TypeScript 设计和命名
 
-### `shared/`
+### Compiler 基线
 
-只包含无 EasyMDE Feature 所有权、无 WordPress 业务决策的通用 UI、Hook、Icon、Pure Utility 和 Type。
+前端工具链建立时从严格模式开始：
 
-## 八、依赖方向
-
-```text
-entrypoints  → app, contracts, integrations
-app          → features, contracts, shared
-features     → domain, contracts, shared
-domain       → shared 中的纯函数和类型
-contracts    → domain 类型和 shared 类型
-integrations → contracts, domain, shared
-shared       → 不依赖 app、Feature、Integration 或 WordPress
-```
-
-规则：
-
-- `domain/` 不导入 React、WordPress 或浏览器 API；
-- `contracts/` 不依赖 Concrete Adapter；
-- `integrations/` 不导入 Feature UI 或 App Shell；
-- `shared/` 不得伪装成第二个应用层；
-- 不得向上导入 `app/` 或 `entrypoints/`；
-- Circular Import 是缺陷；
-- Feature 只能通过公开 API 协作；
-- Entrypoint 负责依赖注入，Feature 不创建 WordPress Adapter；
-- 前端工具链存在后，使用 ESLint Restricted Imports 或等效规则自动检查。
-
-## 九、代码风格与命名
-
-```text
-目录                    kebab-case
-React Component         PascalCase.tsx
-Error Boundary           PascalCase.tsx
-Hook                     useFeatureName.ts
-纯函数模块               camelCase.ts
-WordPress Adapter        PascalCase.ts
-Port 文件                feature-port.ts
-类型模块                 feature.types.ts
-CSS                      kebab-case.css
-测试                     source-name.test.ts 或 SourceName.test.tsx
-```
-
-TypeScript 规则：
-
-- 启用 Strict Mode；
-- 外部边界使用 `unknown` 和运行时 Schema；
-- 禁止用 `any` 代替验证；
-- Async State、Operation Result 和互斥 Variant 使用 Discriminated Union；
-- 类型导入使用 `import type`；
-- Closed Union 使用 Exhaustive Switch 和 `assertNever()`；
-- 避免 Non-null Assertion；
-- 不使用翻译文本、DOM Selector、Label 或 CSS Class 作为业务 ID；
-- 不跨层使用深层相对路径；
-- Source Alias 只有在工具链定义后才能使用；
-- 不假设浏览器支持未经 Vite Target 验证的新 API；
-- 不通过禁用 Type、Lint、A11y 或 Dependency Rule 掩盖问题。
-
-格式化规则由项目实际引入的 Formatter 配置统一决定。本文不预设 Prettier 或其他工具。
-
-## 十、Bootstrap 与 Schema
-
-每个 Root 拥有独立、带版本的 Bootstrap Contract。
-
-代表性编辑器 Bootstrap：
-
-```ts
-export interface EditorBootstrap {
-  version: 1;
-  post: PostBootstrap;
-  site: SiteBootstrap;
-  document: DocumentSnapshot;
-  appearance: AppearanceSnapshot;
-  capabilities: EditorCapabilities;
-  endpoints: EditorEndpoints;
-  limits: EditorLimits;
-  assets: EditorAssets;
-  storage: EditorStorageKeys;
-  publishing: PublishingBootstrap;
-  settings: EditorSettingsSnapshot;
-  strings: EditorStrings;
-  commands: CommandDefinition[];
-  shortcodeHelpers: ShortcodeHelperDefinition[];
+```json
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "useUnknownInCatchVariables": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
+  }
 }
 ```
 
+`exactOptionalPropertyTypes` 需要结合实际 React 和 WordPress 类型包验证后决定。不能因为单个依赖问题关闭全局严格模式。
+
+### 类型规则
+
+- 不可信边界使用 `unknown`，Parse 或 Narrow 一次；
+- `any` 不能代替验证；
+- 局部明显变量、JSX Event 和私有 Helper 可使用推断；
+- Port、导出 API、Schema Parser 和跨边界 Async Function 使用明确返回类型；
+- Operation State、Result 和互斥 Props 使用 Discriminated Union；
+- Closed Union 使用 Exhaustive Switch；
+- 不允许调用方修改的 Snapshot 和输入使用 `Readonly` / `ReadonlyArray`；
+- Brand/Opaque Type 只用于确实有运行时来源意义的值；
+- Utility Type 用于局部转换，不用复杂 `Pick` / `Omit` 链隐藏长期 Domain 语义；
+- Registry、Config 和 Fixture 可用 `satisfies` 保留 Literal Inference；
+- 避免 Non-null Assertion，先验证再传递 Narrowed Value。
+
+### `type` 与 `interface`
+
+项目约定按意图选择：
+
+- `type`：封闭的 Component Props、Union、Tuple、Alias、Mapped Type 和 Feature-local Model；
+- `interface`：有意扩展的 Port 或公共 Adapter Object Contract；
+- 不依赖 Declaration Merging，除非扩展性本身是公开合同。
+
+### Function Component
+
+普通函数组件是默认写法，Props 显式声明。默认不使用 `React.FC`。
+
+该约定不是建立在“现代 React.FC 必然隐式添加 children”这种不可靠说法上，而是因为普通函数：
+
+- Props 更直接；
+- `children` 是否存在更明确；
+- Generic Component 更自然；
+- 减少无意义的 Component Type 包装。
+
+一般可渲染 `children` 使用 `React.ReactNode`。只有明确的 Render Callback 才使用函数类型。
+
+### 原生元素 Props
+
+可复用 UI Primitive 可以扩展对应原生元素类型，例如 `React.ComponentPropsWithoutRef<'button'>`。必须：
+
+- 保留原生语义和事件类型；
+- 用 `Omit` 明确解决冲突；
+- 表单中的普通按钮默认 `type="button"`；
+- 不把任意 DOM Props 盲目 Spread 到非原生 Wrapper 或多个元素。
+
+### Event、State、Ref 和 Hook
+
+- JSX 附近的 Handler 优先使用 Contextual Typing；
+- Event 不使用 `any`；
+- `useState` 对明确初始值使用推断；
+- `null`、空数组、空 Map 或 Union 初始值显式声明类型；
+- DOM Ref 使用 `useRef<HTMLElementType>(null)`；
+- 非渲染可变值使用明确的 `T | null` 或实际初始值；
+- Ref 不是 Render State 或第二套 Document Authority；
+- Custom Hook 共享有状态逻辑，不共享 State Instance；
+- Hook 名称表达具体目的，不使用模糊生命周期名称；
+- 对象返回适合可演进的 Named Field；Tuple 只用于稳定位置语义；
+- Generic Component 需要至少两个具体需求证明共同语义，不能提前建设万能 List、Table 或 Form。
+
+### 命名
+
+```text
+Directories              kebab-case
+React components         PascalCase.tsx
+Error boundaries         PascalCase.tsx
+Hooks                    useFeatureName.ts
+Pure function modules    camelCase.ts
+WordPress adapters       PascalCase.ts
+Port files               feature-port.ts
+Type modules             feature.types.ts
+CSS files                kebab-case.css
+Tests                    source-name.test.ts or SourceName.test.tsx
+```
+
+名称表达领域意图，不使用 `Manager`、`Service`、`Helper`、`Util`、`Data`、`Thing` 等无法说明责任的宽泛名称。
+
+Comment 解释所有权、安全、兼容、不变量和非显然失败行为，不复述 JSX。
+
+## 十一、状态、身份与生命周期
+
+每个应用 Root 使用独立 Store，不导出全局可变 Singleton。
+
+Editor Store 可按责任组织：
+
+```text
+document    # Markdown、标题、Saved Baseline、Dirty、Selection Metadata
+appearance  # 文章主题、代码主题、字体、自定义 CSS 选择
+layout      # View、Pane Ratio、Outline、Panel
+session     # Operation、Error、Capability、Post Identity、Lock
+```
+
 规则：
 
-- 挂载前验证所有 Required Field；
-- 缺少 Endpoint、Capability、Translation、Limit、Asset、Document 或 Security Source 时启动失败；
-- 禁止用 `{}` 或虚构默认值静默兜底；
-- Unknown Optional Field 可以忽略；
-- Unknown Contract Version 必须明确失败；
-- 语义不兼容时递增 Version；
-- PHP 内部使用 `snake_case`，Browser Contract 在序列化边界转成 `camelCase`；
-- 组件不直接读取 Global Bootstrap；
-- 新文章获得真实 Post ID 时，必须重新绑定 Storage Key、Query Key、Lock 和 Request Ownership；
-- 使用 PHP Fixture 与 TypeScript Schema 做跨语言合同测试；
-- Bootstrap 不得包含 Credential、Cookie、私密配置或当前页面不需要的数据。
+- 临时输入、Hover、未确认 Dialog Field、局部 Validation 和 Drag State 留在最近 Owner；
+- 跨 Feature 的编辑会话状态进入 Editor Store；
+- REST Collection 由单一 Server-state Owner 管理；
+- Dirty 和其他派生事实不重复保存；
+- 不通过 Effect 镜像 State；
+- Saved Baseline 只在真实 WordPress Save 成功后前进；
+- Post-scoped State、Cache、Operation ID 和 Storage Key 包含 Site、User 和 Post Identity；
+- 新文章获得真实 ID 时显式 Re-key 或清理状态；
+- Domain Item 使用稳定 Key；Reorderable 数据禁止 Index Key；
+- Key 重置 Subtree 必须是明确的 Owner Identity 规则；
+- 不在 Render 内定义会导致子组件身份不断变化的 Component Function；
+- Storage 只保存获准的 Preference 或 Recovery Data，并有 Version 和 Conflict Policy。
 
-## 十一、Runtime Ports
+Effect 只同步外部系统，不能用于：
+
+- 计算 Renderable Derived Data；
+- Copy Props to State；
+- Mirror Store Value；
+- 间接处理 Button Click；
+- 因 Boolean 变真而自动触发 Mutation；
+- 执行可以通过 Lazy Initializer 完成的初始化。
+
+每个 Effect 必须有单一外部责任、正确 Reactive Dependency、Setup、Idempotent Cleanup 和 Failure Path。
+
+## 十二、Port 与接口设计哲学
+
+Feature 依赖能力，不依赖 WordPress Global、DOM Selector 或 Transport 细节。
 
 ```ts
 export interface EditorRuntime {
@@ -489,74 +637,89 @@ export interface EditorRuntime {
 }
 ```
 
-代表性接口：
+代表性合同：
 
 ```ts
 export interface DocumentPort {
-  readNativeSnapshot(): NativeDocumentSnapshot;
+  readNativeSnapshot(): Readonly<NativeDocumentSnapshot>;
   synchronizeSubmissionBridge(
-    snapshot: DocumentSubmissionSnapshot,
+    snapshot: Readonly<DocumentSubmissionSnapshot>,
   ): void;
   applyEditorTransaction(
-    transaction: DocumentTransaction,
+    transaction: Readonly<DocumentTransaction>,
   ): DocumentTransactionResult;
 }
 
 export interface SavePort {
-  request(kind: 'draft' | 'update'): Promise<SaveResult>;
+  request(
+    request: Readonly<{ kind: 'draft' | 'update'; operationId: string }>,
+  ): Promise<SaveResult>;
   subscribe(listener: (event: SaveEvent) => void): () => void;
 }
 
 export interface SessionPort {
-  getPostIdentity(): PostIdentity;
-  getCurrentRestNonce(): string;
-  getLockState(): PostLockState;
+  getSnapshot(): Readonly<SessionSnapshot>;
   subscribe(listener: (event: SessionEvent) => void): () => void;
 }
-
-export interface PreviewPort {
-  render(
-    request: PreviewRequest,
-    options: {
-      signal: AbortSignal;
-      requestId: number;
-    },
-  ): Promise<PreviewResult>;
-}
 ```
+
+接口原则：
+
+- Method 名称表达项目意图，不用通用 `execute(type, payload)` 或无语义 `request()` 包揽所有能力；
+- Command 与 Query 在概念上分开；
+- 多个相关参数或未来可能扩展的参数使用 Options Object；
+- 避免 Boolean Parameter，使用 Named Option 或 Discriminated Union；
+- 返回 Immutable Snapshot，不暴露内部可变引用；
+- 预期中的 Cancel、Validation、Conflict、Permission 和 Unavailable 使用 Typed Result；
+- Throw 保留给 Programmer Defect 或无法正常表达的异常基础设施失败；
+- Server Code、HTTP Status 和 Translated Message 分离；
+- 可取消 Async API 接受 `AbortSignal`；
+- Subscription 返回 Idempotent Unsubscribe；
+- 一个 Port 代表一个外部系统责任；
+- Port 不暴露 Concrete Store、REST Client、DOM Node 或 WordPress Global；
+- Adapter 对 Port Contract 测试，Feature 对 Mock Port 测试。
+
+禁止 Universal Adapter、Generic Event Bus、Stringly Typed Command 和万能 WordPress Service。
+
+## 十三、Bootstrap、REST 和跨语言合同
+
+TypeScript Interface 不会验证 PHP、REST、Storage、Manifest 或 Extension Data。
+
+下列边界使用 Versioned Runtime Schema：
+
+- Editor / Settings Bootstrap；
+- REST Request / Response；
+- Extension Command 和 Shortcode Helper；
+- Browser Storage Payload；
+- Build Manifest 和 WordPress Asset Metadata。
 
 规则：
 
-- `DocumentPort` 负责编辑事务和原生提交桥，不直接持久化 Post Meta；
-- `SavePort` 触发并观察 WordPress 现有保存流程，不调用替代保存 Endpoint；
-- `SessionPort` 负责 Post Identity、Capability、Lock 和当前 Security Token；
-- `PublishingPort` 负责发布字段和原生发布确认；
-- 每个 Subscription 返回可重复调用的 Unsubscribe；
-- Cancellation、Conflict、Validation 和 Success 使用明确 Result；
-- 新外部职责需要独立 Port，禁止扩张万能 Adapter；
-- AI 使用 `AiPort`，不得塞入 `DocumentPort`。
+- Mount 和受保护操作前验证必需字段；
+- 未知 Optional Field 可以忽略；不兼容 Version 必须明确失败；
+- 旧 Consumer 无法安全解释时才升级 Version；
+- 不在原字段上静默改变语义；
+- Endpoint、Limit、Locale、Direction、Timezone、Storage Identity 和 Feature Availability 属于明确合同；
+- 不序列化 Credential、Cookie、Private Config、无关 User Data 或页面不需要的 Article Content；
+- Component 不直接读取 Global Bootstrap；
+- PHP Fixture 与 TypeScript Runtime Schema 进行跨语言一致性测试；
+- 当前 WordPress REST Schema 和项目 Fixture 是权威；不因为通用文章推荐就引入 OpenAPI、GraphQL Codegen、tRPC 或 Schema Library。
 
-只有 Entrypoint 和对应 Integration 可以知道：
+REST Client 位于 Integration 层：
 
-```text
-window.EasyMDEConfig
-window.wp
-wp.apiFetch
-jQuery
-WordPress 字段 Selector
-原生保存和发布按钮 Selector
-wp.media
-localStorage
-sessionStorage
-navigator.clipboard
-document.execCommand
-```
+- 使用验证过的 Same-origin Endpoint；
+- 获取 WordPress 当前 Nonce；
+- 可使用 `@wordpress/api-fetch`，但不能把它暴露给 Component；
+- Nonce Middleware 需要在 WordPress 提供新 Nonce 时更新；
+- Cancellable Read 传递 `AbortSignal`；
+- `WP_Error`、HTTP、Malformed JSON、Network、Timeout 和 Abort 被标准化成 Typed Result；
+- 只允许有界、可取消的 Idempotent Read Retry；
+- Save、Publish、Delete、Settings、Upload、CSS Write 和 Revision Restore 不自动 Retry；
+- 逻辑不依赖 Translated Message。
 
-React Component、Domain、Feature Model 和 Shared UI 禁止直接访问这些对象。
+## 十四、持久化和兼容合同
 
-## 十二、持久化数据与文章准入
-
-受保护的 Post Meta：
+受保护 Post Meta：
 
 ```text
 _easymde_enabled
@@ -574,317 +737,228 @@ _easymde_render_signature
 
 规则：
 
-- `_easymde_markdown` 是唯一权威 Markdown；
-- `post_content` 是 PHP 生成并清洗的 WordPress 兼容 HTML；
-- `_easymde_enabled` 描述已保存的 EasyMDE 文档状态，不决定支持文章是否进入编辑器；
+- 未经明确兼容方案和测试，不重命名、删除、重新解释、提前初始化或静默失效；
+- `_easymde_markdown` 是 Canonical Markdown；
+- `post_content` 是 PHP 生成并清洗的兼容 HTML；
+- `_easymde_enabled` 描述已保存状态，不决定 Editor Admission；
 - `easymde_supported_post_types` 和 `PostModeController` 决定准入；
-- 普通支持文章首次打开时，通过现有 PHP 兼容路径在内存中获得 Markdown；
-- 首次打开不得写 Meta、重写 `post_content`、创建 Revision 或标记 Enabled；
-- 空字符串 Markdown 是合法状态，检测必须保留 `metadata_exists()` 语义；
-- 下一次合法保存才写入 EasyMDE Meta；
-- `_easymde_render_signature` 只是兼容 HTML 一致性标记；
-- Revision Restore 必须恢复 Markdown 和 Appearance，并由 PHP 重新生成兼容 HTML；
-- `_easymde_code_mac_style` 和历史 `codeMacStyle` 仅作为历史数据保留；
-- 未经明确数据兼容方案和测试，不得重命名、删除、重新解释或提前初始化任何 `_easymde_*` 字段。
+- 普通支持文章首次打开时只在内存中获得兼容 Markdown，执行零写入；
+- 不增加浏览器 HTML-to-Markdown 权威；
+- Empty Markdown 是合法状态，保持 `metadata_exists()` 语义；
+- 下一次合法 Save 才写入 EasyMDE Meta 并同步 `post_content`；
+- `_easymde_render_signature` 只是内部一致性标记；
+- Revision Restore 同时恢复 Markdown 和 Appearance，再由 PHP 生成兼容 HTML；
+- `_easymde_code_mac_style` 和历史 `codeMacStyle` 只作为非活跃历史数据保留。
 
-## 十三、原生表单、保存、锁和 Nonce
+现有 Facade、Filter、Route、Script Handle、Extension Registry、Stable ID、Ordering、Collision Semantics、DOM Bridge Name 和 Observable Behavior 只有在明确 Issue 中才能改变。
 
-WordPress 原生表单仍是文章提交合同。
+## 十五、原生保存、Autosave、Lock 和 Nonce
+
+WordPress 原生表单仍是文章提交合同：
 
 ```text
-PHP 初始状态
-→ 验证 Bootstrap
-→ 当前 Root Store
-→ 用户事务
-→ 同步更新原生提交桥
-→ WordPress 原生保存或发布
-→ PHP 保存 Markdown 和兼容 HTML
-→ Adapter 观察真实成功
-→ Store 更新 Saved Baseline
+PHP Initial State
+→ Validated Bootstrap
+→ Root Store
+→ User Transaction
+→ Synchronous Native Submission Bridge
+→ WordPress Native Save / Publish
+→ PHP Persists Markdown and Compatibility HTML
+→ Adapter Observes Real Result
+→ Store Advances Saved Baseline
 ```
 
 规则：
 
-- 接受 React 编辑事务后，同步更新原生字段；
-- 不给提交桥留下 Debounce 空窗；
+- 接受 Document Transaction 后立即同步 Native Field，或确保在 Native Serialization 前同步；
+- 不留下 Debounce 窗口让 Save、Autosave 或 Unload Check 读取旧值；
 - React 不生成或验证 PHP Save Nonce；
-- Autosave 不自动等于 Canonical EasyMDE Save；
-- React Dirty State 与 WordPress Unload / Form Dirty State 使用同一 Saved Baseline；
-- 保存和发布必须观察真实 WordPress 结果；
-- Disabled、Missing、Replaced 或扩展修改过的原生控件属于 Preflight Failure；
-- 禁止强制点击 Disabled 控件；
-- REST Nonce 不能在启动时读取一次后永久缓存；
-- Heartbeat 刷新安全状态后，Session Adapter 必须读取新 Token；
-- Invalid Nonce 进入明确 Reauthentication 状态，不自动重试写操作；
-- 丢失文章锁或权限时，停止写操作、取消 Pending Mutation、保留未保存内容并解释原因；
-- 计划发布时间使用 WordPress 站点时区和原生字段。
+- Autosave 和 Revision Activity 不自动等于 Canonical EasyMDE Save；
+- React Dirty State 与 WordPress Form Dirty State 使用同一 Saved Baseline；
+- 避免双重 Unload Prompt 和重复 Submission；
+- Success 以真实 Navigation、Redirect、Native Status 或 Server Confirmation 为准；
+- Disabled、Missing、Replaced 或 Extension-modified Native Control 是 Preflight Failure；
+- 禁止 Force Click Disabled Control；
+- 保持 Heartbeat、Post Lock、当前 Nonce 和 Authentication State；
+- REST Nonce 不能作为永不变化的启动常量；
+- Invalid Nonce 或 Authentication Expiry 停止操作，不使用相同 Token 重试写入；
+- Lock 或 Capability 丢失时停止 Mutation、取消 Pending Work、保留未保存内容并说明原因；
+- Scheduling 使用 WordPress Site Timezone 和 Native Field。
 
-## 十四、状态与 React 18 行为
+## 十六、预览与安全 HTML
 
-每个应用 Root 拥有自己的 Store。设置页不共享 Editor Store。
-
-不强制指定 Zustand、Redux、React Query、SWR 或其他库。只有在具体任务证明需要、职责明确且发布成本可接受时才可以引入。
-
-规则：
-
-- 临时输入、Hover、未确认 Dialog Field、局部 Validation 和 Drag State 留在最近组件；
-- 多个 Feature 共享的编辑会话状态进入 Editor Store；
-- REST Collection 由单一 Server-State Owner 管理并显式 Invalidate；
-- Derived Value 通过 Selector 或纯函数计算；
-- 不通过 `useEffect` 镜像两份 React State；
-- 真实保存成功后才更新 Saved Baseline；
-- Browser Storage 只保存明确批准、带版本和恢复规则的数据；
-- Post Identity 变化时清理或重新绑定状态；
-- Stale Query 或 Stream 不得更新另一个 Post、Root、Dialog 或 User Session。
-
-React 18 性能规则：
-
-- Markdown 输入立即更新浏览器会话状态；
-- Debounce Preview 和昂贵派生工作，不 Debounce 用户文本和原生提交桥；
-- 使用最小 Selector 订阅；
-- 不为 Outline、Statistics、Dirty、Syntax 和 AI Context 分别重复解析整篇文档；
-- 不默认添加 `memo`、`useMemo` 和 `useCallback`；
-- 优化前先测量；
-- `startTransition()` 不包裹编辑器值、提交桥、保存发布、焦点和无障碍关键状态；
-- Suspense 不作为隐式 WordPress 数据层；
-- `React.lazy()` 只用于可选重型 UI，并提供可访问 Fallback；
-- 独立 Read 可以并发，Dependent Read 和 Mutation 保持正确顺序。
-
-## 十五、生命周期与 DOM 所有权
-
-React 只拥有自己声明的 Root 和自己创建的 Portal。
-
-规则：
-
-- Component 不查询 WordPress DOM；
-- Adapter 可以读取或同步文档化的原生字段；
-- 不为了布局方便移动、复制或删除 WordPress 控件；
-- Portal 必须有单一所有者、清理、Focus Return 和 Stacking Context 分析；
-- Body Class、Inline Style、CSS Variable、Scroll Lock、Global Cursor 和 Pointer Capture 必须有单一生命周期所有者；
-- 不使用 DOM Mutation 作为 Event Bus；
-- MutationObserver 必须范围明确且可卸载；
-- 每个 Effect 都必须有 Owner、Trigger、Cleanup 和 Failure Path；
-- Cleanup 可以重复调用，也可以在部分初始化失败后调用；
-- Strict Mode 和重复挂载不得重复写入、Mutation、Upload、Clipboard、Timer 或 Subscription；
-- 用户操作优先放在 Event Handler 或 Command，不通过 Effect 观察 State 后触发 Mutation。
-
-## 十六、预览和安全 HTML
-
-PHP `EasyMDE\Content\MarkdownRenderer` 是唯一正式 Markdown Renderer。
-
-准确的预览响应所有权：
+正式路径：
 
 ```text
 Markdown
 → PreviewPort
-→ POST easymde/v1/preview
-→ PreviewController 验证请求和权限
-→ MarkdownRenderer 只生成并清洗 HTML
-→ MarkdownFeatureDetector 检测 Mermaid / KaTeX / Highlight 等特征
+→ POST /easymde/v1/preview
+→ PreviewController 验证 Request 和 Permission
+→ MarkdownRenderer 生成并清洗 HTML
+→ MarkdownFeatureDetector 检测 Enhancement Feature
 → PreviewController 返回 { html, features }
 → React Preview Surface
-→ Preview Runtime 执行对应 Progressive Enhancement
+→ Local Progressive Enhancement
 ```
 
-`features` 由 `PreviewController` 结合 `MarkdownFeatureDetector` 组装，不是 `MarkdownRenderer` 的返回职责。
+`MarkdownRenderer` 不负责 Feature Manifest。`PreviewController` 组合 Renderer Output 和 Detector Result。
 
-禁止在浏览器中引入另一套正式 Markdown Renderer 或在服务器失败时显示近似 HTML。
+只有通过正式 Preview Contract 的 Server HTML 可以构造成 Branded Safe Value，并进入唯一的 Preview-owned HTML Sink。
 
-Preview Request 必须支持 Abort、Request ID 或 Document Revision，并拒绝 Stale Response。Enhancement Failure 不得破坏 Sanitized HTML。
+Markdown、AI Output、Error HTML、Custom CSS、Extension Data 和 Storage Value 不直接进入 `dangerouslySetInnerHTML`。
 
-只有经过正式 Preview Contract 验证的 Server HTML 可以进入受控 `dangerouslySetInnerHTML` Sink。Markdown、AI Output、Error Response、Custom CSS、LocalStorage 和普通字符串不能直接进入该 Sink。
+Preview Request 支持 Abort、Request Identity、Stale Result Rejection、Payload Limit 和明确 Failure State。Enhancement Failure 保留 Sanitized HTML。Cleanup 移除 Generated Node、Observer、Listener 和 Temporary Asset。
 
-## 十七、关键功能边界
+禁止第二套正式 Markdown Renderer 和 Silent Approximate Fallback。
 
-### 发布
+## 十七、关键 Feature 边界
 
-React 维护 Publish Draft，但 WordPress 保持最终权威：
+### Markdown Editing
 
-```text
-React Publish Draft
-→ PublishingPort.preflight()
-→ 同步原生发布字段
-→ WordPress 原生发布
-→ Adapter 观察真实结果
-```
+保留 Selection Start / End / Direction、IME、Undo / Redo、Focus、Scroll、Clipboard 和 Shortcut。正常 Render 不重建 Editor Instance。Programmatic Edit 使用明确 Transaction 和可预测 Undo。
 
-取消必须零写入。成功只以真实 WordPress 结果为准。
+### Publishing
 
-### 修订版本
+React 只拥有临时 Publish Draft。WordPress 拥有真实 Field 和最终 Publish。Cancellation 零写入；Success 以真实 WordPress Result 为准。
 
-Revision Restore 恢复 Markdown 和 Appearance，随后由 PHP 生成兼容 HTML。React 不创建第二套 Revision Store。
+### Revisions
 
-### 媒体
+WordPress 拥有 Revision Identity 和 Persistence。Restore 同时恢复 Markdown 和 Appearance，再由 PHP 生成 Compatibility HTML。
 
-媒体库和上传通过 `MediaPort`。Cancellation 零写入；上传成功且 Document Transaction 仍有效后才插入 Markdown；恢复 Selection 和 Focus；清理 Object URL；失败不留下 Placeholder 或 Fake Attachment。
+### Media
 
-### 主题与自定义 CSS
+通过 `MediaPort` 使用 WordPress Media Library 和 Upload。Cancellation 零写入。Upload 成功且原 Transaction 仍有效后才插入 Markdown。恢复 Selection / Focus，释放 Object URL，失败不留下 Fake Attachment。
 
-主题选项来自 PHP Registry：
+### Themes and Custom CSS
 
-```text
-easymde_article_themes
-easymde_code_themes
-```
+Theme Choice 来自 PHP Registry。`CustomCssPolicy` 负责 Permission、Parsing、Selector Scope、Blocked Token、Remote Loading、Size Limit 和 Nested At-rule。Browser Preview 不是第二安全 Parser。
 
-Custom CSS 的权限、解析、Selector Scope、Blocked Token、Remote Loading、Size Limit 和 Nested At-rule 继续由 `CustomCssPolicy` 和现有 REST Endpoint 管理。浏览器不得实现另一个 CSS Parser 作为安全边界。
+### Settings
 
-### 设置页
+Settings 使用独立 Root 和 Store。`manage_options`、Options API、`register_setting()` 和 PHP Sanitization 保持权威。
 
-设置页是独立 Root。`manage_options`、Options API、`register_setting()` 和 PHP Sanitizer 保持权威。保存成功只以 WordPress 接受并持久化 Sanitized Option 为准。
+### Local Drafts
 
-### 本地草稿
+Local Draft 是 Recovery Data，不是 WordPress Save。Key 包含 Site、User、Post Identity，Payload 有 Version，不保存 Nonce、Credential 或 Provider Token，也不静默覆盖更新的 Server Document。
 
-Local Draft 是内容恢复，不是 WordPress Save。Key 包含 Site、User 和 Post Identity；Payload 带 Version；不保存 Nonce、Credential、Password 或 Provider Token；不静默覆盖 Server Document。
+### WeChat Export
 
-### 微信复制
+只复制当前成功、稳定、已清洗的 Preview。Clipboard Rejection 是真实失败。Legacy Fallback 恢复 Selection、Range、Focus、Scroll 和临时 DOM。
 
-只允许从当前成功、稳定、已清洗的 Preview 复制。Clipboard 拒绝是真实失败；Legacy Path 必须恢复 Selection、Range、Focus、Scroll 和临时 DOM。
+### AI Assistant
 
-### AI 助手
+AI 只在明确任务中建立。Credential 和 Private Endpoint 留在 Server；Context Scope 可见且最小；Stream 可取消；生成修改是可预览、可拒绝、可撤销的 Document Transaction。AI 不自动保存、发布、上传、修改设置或执行返回的代码与 URL。
 
-AI 只在明确任务中创建。Credential 和 Private Endpoint 留在 Server；Context Scope 可见且最小；Stream 可取消；AI 修改是可预览、可拒绝、可撤销的 Document Transaction；AI 不自动保存、发布、上传、修改设置或主题。
+## 十八、无障碍与 UI 合同
 
-## 十八、无障碍与样式边界
-
-无障碍是组件合同的一部分：
+无障碍属于组件合同：
 
 - Action 使用 `<button>`，Navigation 使用 `<a>`；
 - 优先使用 Native Form Control；
 - 每个 Interactive Control 有 Accessible Name；
-- Icon-only Button 使用显式 Label；
+- Icon-only Button 有显式 Label；
+- Decorative Icon 对辅助技术隐藏；
 - 保留 Visible Focus；
 - Color 不是唯一状态信号；
 - Label、Help、Error 和 Invalid State 正确关联；
-- Pending 时只阻止重复写操作；
-- Dialog 有 Label、Focus Containment、Escape 和 Focus Return；
-- Destructive、Publishing、Unsaved 或 In-progress Dialog 默认不允许误触 Backdrop Close；
+- Validation 或 Network Failure 后保留用户输入；
+- Pending 只阻止重复 State-changing Action，不无理由禁用整个页面；
+- Dialog 有 Label、Focus Containment、安全 Escape 和 Focus Return；
+- Publishing、Unsaved、Destructive 或 In-progress Dialog 默认不允许误触 Backdrop Close；
 - Toolbar Command 保留 Selection 并恢复 Focus；
-- IME Composition 期间不触发冲突 Shortcut；
-- Split Pane 支持 Pointer 和 Keyboard，并在取消时释放 Pointer Capture。
+- Shortcut 尊重 IME；
+- Split Pane 支持 Pointer 和 Keyboard，并在取消时释放 Pointer Capture；
+- 相关界面测试 Zoom、Text Scaling、Long Translation、RTL、Reduced Motion、Forced Colors 和 High Contrast。
 
-样式限定在稳定 EasyMDE Root 下：
+Admin CSS 限定在稳定 EasyMDE Root 下。不覆盖 WordPress Admin Global Element，不用无关 Legacy Class 捷径，不用 Arbitrary Offset 和 Broad `!important` 隐藏错误 Parent Layout。
 
-- 不覆盖 WordPress Admin 全局元素；
-- 避免 Broad `!important` 和 Arbitrary Offset；
-- Design Token 与 Article Theme 和前台 CSS 分离；
-- 使用 Logical Property 支持 RTL；
-- 使用受控 Z-index Scale；
-- 使用项目批准的本地图标来源；
-- CSS Modules 仅在实际受益时使用；
-- Protected Selector 和 Observable Behavior 只有在明确任务中才能改变。
+Design Token、Z-index、Icon 和 Asset 必须有项目所有权。Admin Token 与 Public Article Theme 分离。
 
-## 十九、构建架构
+## 十九、React 18 性能原则
 
-源码放在 `frontend/`，编译运行时放在 `assets/build/`。
+性能优化必须服务实际瓶颈：
 
-Primary WordPress Handle 保持稳定；Chunk 可以使用 Content Hash，并由 Manifest 解析。PHP 禁止猜测 Hashed Filename。
+- Session Markdown 立即更新；
+- Debounce Preview 和昂贵 Derived Work，不 Debounce Controlled Input 或 Submission Bridge；
+- 订阅最小 State Slice；
+- Render 或 Pure Selector 计算 Derived Value；
+- 不为每个 Feature 独立重复 Parse 全文；
+- Expensive Initial Value 使用 Lazy Initialization；
+- 依赖 Previous State 时使用 Functional Update；
+- Ref 只保存不影响 Render 的临时值；
+- 不默认到处使用 `memo`、`useMemo`、`useCallback`；
+- 优化来自 Measurement 或明确 Identity Contract；
+- `startTransition()` 不包裹 Editor Value、Submission Bridge、Save / Publish、Focus 或 A11y-critical State；
+- `React.lazy()` 只用于可选重型 UI，并提供 Accessible Fallback；
+- Suspense 不作为隐式 WordPress Data Layer。
 
-### 构建输出模式决策门槛
+独立且已授权的 Read 可以并发；Dependent Read 和 Mutation 保持顺序。Obsolete Work 必须 Abort，Stale Completion 不得更新当前 State。
 
-本文不提前决定经典脚本单包或 WordPress Script Modules。
+测量：Large-document Typing、Preview Latency、Mount Time、Dialog / Toolbar Interaction、Repeated Open / Close Memory、Listener Count 和 Production Bundle。
 
-首个实际构建任务必须明确选择并验证其中一种方案。
+## 二十、构建与依赖
 
-#### 方案 A：经典脚本
+使用根 npm 项目中的 Vite。源码在 `frontend/`，编译 Runtime 在 `assets/build/`。
+
+首个实际 Build Task 必须选择并验证一个一致的加载方案：
+
+### 方案 A：Classic WordPress Script
 
 - 使用 `wp_enqueue_script()`；
-- Entry 使用与经典脚本兼容的单包格式；
-- Vite / Rollup 必须将 `react`、`react-dom` 和 `@wordpress/element` 外部化；
-- 对应全局映射分别验证为 `React`、`ReactDOM` 和 `wp.element`；
-- Asset Metadata 声明 `wp-element` 以及实际使用的其他 WordPress Script Handle；
-- 若使用 Automatic JSX Runtime，必须外部化 `react/jsx-runtime` 并声明实际 WordPress Handle，或配置为不产生该导入；
-- 若所选输出格式不支持 Rollup Code Splitting，不得同时宣称拥有 Dynamic Chunk；
-- Optional Runtime 可以通过明确的本地 Asset Loader 按需加载。
+- Entry 使用与经典脚本兼容的输出；
+- `react`、`react-dom`、`@wordpress/element` 和选择的 JSX Runtime 正确 Externalize / Map；
+- Asset Metadata 声明实际 WordPress Dependency；
+- 若输出格式不支持 Code Splitting，不宣称拥有 Rollup Dynamic Chunk；
+- Optional Runtime 通过明确 Local Asset Loader 按需加载。
 
-#### 方案 B：Script Modules / ESM
+### 方案 B：WordPress Script Modules / ESM
 
-- 使用 WordPress 6.7 支持的 Script Modules API；
-- 明确注册 Module Dependency 和 Import Map；
-- `react`、`react-dom`、`@wordpress/element` 和 JSX Runtime 不得被 Bundle 重复实现；
-- 验证每个 Import Specifier 实际映射到 WordPress 提供的 Runtime；
-- 验证 Dynamic Import、CSS 和 Chunk URL；
-- 验证插件子目录、Multisite 和非默认 Plugin URL。
+- 只有在最低支持版本的稳定 API 和实际依赖图验证后使用；
+- 明确 Module Registration、Import Specifier 和 Dependency；
+- 不重复 Bundle React Runtime；
+- 验证 Dynamic Import、CSS、Chunk URL、Subdirectory、Multisite 和非默认 Plugin URL。
 
-禁止同时写出“IIFE Entry”和“Rollup Dynamic Chunk”却不提供可运行的加载合同。
+无论方案：
 
-无论选择哪种方案，都必须：
-
-- 使用 WordPress 提供的 React Runtime；
-- 生成可验证的 Manifest 和 Dependency Metadata；
-- 保持运行时资源本地化；
-- 不引用 Vite Dev Server、Localhost、临时路径或远程 CDN；
-- Dynamic Asset URL 从插件 Asset Base 解析；
+- WordPress 提供 React Runtime；
+- Manifest 和 Dependency Metadata 是构建事实；
+- Primary Script Handle 保持稳定；
+- Content-hashed Chunk 只有在 Manifest Loader 支持时使用；
+- Dynamic Asset URL 从 Plugin Asset Base 解析；
 - 不硬编码 `/wp-content/plugins/easymde/`；
-- 验证 WordPress 子目录安装；
-- 保持 Script Handle、Translation、Version 和 Load Order；
-- 检查 Clean Checkout 是否可根据 Lockfile 构建；
-- 检查所有 Entry 和 Chunk，若包含 React、ReactDOM、`@wordpress/element` 或 JSX Runtime 的实现代码，发布构建必须失败；
-- 同时确认外部引用与 WordPress Script / Module Dependency 一致，避免 Runtime 未入队。
+- Runtime Asset 全部本地；
+- Production 不引用 Vite Dev Server、Localhost、Temporary Path 或 Remote CDN；
+- Release 检查每个 Entry 和 Chunk，包含 Private React Implementation 时失败；
+- External Reference 与 WordPress Dependency 必须一致。
 
-根 `package.json` 只在相应工具真实存在后添加脚本。不得添加 Placeholder Command。
+Dependency 只有在当前任务有明确责任时才增加。增加前确认 Existing Capability、Direct / Transitive Size、Maintenance、License、Remote Asset、Telemetry、Testing、Removal、Lockfile 和 Third-party Notices。
 
-## 二十、依赖策略
+不得因为文章或通用 Skill 推荐就默认引入 Zustand、Redux、React Query、SWR、React Hook Form、Zod、Router、Animation、Icon 或 Utility Library。
 
-依赖只有在当前任务有明确责任时才可以增加。
+## 二十一、测试、发布与维护
 
-不得因为通用 Skill 推荐就默认引入 Zustand、Redux、React Query、SWR、React Hook Form、Zod、Router、Animation Library、Icon Library 或 Utility Library。
+按责任测试：
 
-增加前必须确认 Feature、Boundary、现有能力、Package Size、Transitive Dependency、Maintenance、License、Remote Asset、Telemetry、测试、移除方式、Lockfile 和 Third-party Notices。
-
-不得为同一责任使用两套库。
-
-## 二十一、测试和架构校验
-
-按责任选择测试：
-
-- `domain`：纯函数和边界值；
+- `domain`：Pure Rule 和 Edge Case；
 - `contracts`：Schema Version、PHP / TypeScript Fixture、Error Mapping 和 Safe Value；
-- `integrations`：WordPress DOM、Native Form、Nonce、Lock、REST、Mount、Storage、Clipboard、Media 和 Failure；
-- `features`：组件和 Hook 使用 Mock Runtime；
-- `app`：Provider、独立 Store、Error Boundary、Activation 和 Composition；
-- `tests/e2e`：安装 Release ZIP 后的真实 WordPress 流程；
-- Release Test：编译 Entry 存在，开发文件不存在。
+- `integrations`：WordPress DOM、Native Form、Nonce、Lock、REST、Media、Storage、Clipboard、Mount 和 Failure；
+- `features`：Component 和 Hook 使用 Mock Runtime；
+- `app`：Provider、Independent Store、Error Boundary、Activation 和 Composition；
+- E2E：安装 Release ZIP 后的真实 WordPress Flow；
+- Release Test：编译 Entry 存在，Development File 不存在。
 
-前端工具链存在后自动检查 TypeScript Strict、Dependency Direction、Restricted Global、React Runtime Import、Manifest、PHP / TypeScript Contract、REST Fixture 和安装包边界。
+前端工具链存在后自动检查：
 
-至少覆盖相关场景：
+- TypeScript Strict 和 `noEmit`；
+- Hook、A11y 和 Dependency Boundary；
+- Restricted Global；
+- Component 不导入 WordPress Adapter；
+- React Runtime Import；
+- Manifest、Dependency Metadata、CSS 和 Chunk；
+- PHP / TypeScript Contract Parity；
+- Installable ZIP Boundary。
 
-- WordPress 6.7 和 Latest；
-- `createRoot` Mount 和 Teardown；
-- Strict Mode 和重复挂载；
-- Editor 与 Settings 独立 Root；
-- Permission、Authentication Expiry、Nonce Refresh 和 Lock Loss；
-- Save / Autosave 的 Native Field 同步；
-- 普通支持文章零写入打开；
-- Empty Markdown 和首次合法保存；
-- Preview Limit、Renderer Missing、Stale Response 和 Enhancement Failure；
-- Media、Storage、Custom CSS、Settings 和 Clipboard Failure；
-- Focus、Selection、IME、Undo、Scroll、Drag Cancellation、RTL 和 Long Translation；
-- Large Document、Subdirectory Install 和 Asset Loading；
-- Release Completeness 和 Privacy-safe Artifact。
-
-组件测试使用 Semantic Role 和 Accessible Name，测试用户行为，不测试 Hook 数量和私有 State。
-
-不得声称执行了未实际完成的校验。
-
-## 二十二、公开前台边界
-
-后台采用 React 不改变公开文章架构。
-
-公开文章继续使用 PHP 生成并清洗的 `post_content`：
-
-- 不在公开内容中挂载或 Hydrate 后台 React 应用；
-- Visitor Page 不加载 Editor、Settings、Media、Publishing、Revision 或 AI Bundle；
-- Feed、Search、Email、REST Consumer 和禁用 JavaScript 的浏览器仍获得可用 HTML；
-- Mermaid、KaTeX 和 Highlight.js 仍然是按需 Progressive Enhancement；
-- SEO 和文章主体不能依赖 React 加载成功。
-
-## 二十三、发布包
-
-安装版插件 ZIP 可以包含 PHP 生产代码、Template、Composer Runtime Dependency、Translation、Local Vendor Asset、必需的编译 JavaScript / CSS、License 和 Third-party Notices。
-
-必须排除：
+安装版 ZIP 排除：
 
 ```text
 .agents/
@@ -895,83 +969,90 @@ tests/
 coverage/
 Playwright output
 TypeScript 和 React 源码
-Source Map，除非发布策略明确要求
+Source Map，除非明确批准
 Vite Cache
 Local Log 和配置
 Development Server Metadata
 无关开发文件
 ```
 
-发布前必须实际检查 ZIP，并验证 Runtime Asset、Manifest、WordPress Dependency Metadata、License、Notices、无重复 React、无 Localhost / Dev Client / Source Path / Remote CDN，以及 Public Page 不 Enqueue Admin React Entry。
+维护规则：
 
-## 二十四、功能接管与旧实现交接
+- 优先清晰的局部实现，不为未来猜测提前抽象；
+- 重复职责稳定后再抽取 Shared Code；
+- Public Contract 小而 Versioned，Concrete Implementation 保持 Private；
+- Public Extension 删除前先 Deprecate，并提供兼容和测试方案；
+- 重大架构决定记录约束、选择理由、替代方案和回退条件；
+- 长期决策变化时同步更新本文与 EasyMDE Skill；
+- 删除已经过时的规则，不因历史存在而永久保留；
+- 不声称未实际执行的 Test、Review、Performance、A11y 或 Browser Validation。
 
-本文不规定功能开发顺序。每个功能由自己的聚焦 Issue 决定范围、依赖、验收和交接时间。
+## 二十二、功能逐项接管
 
-在原生 JavaScript 与 React 同时存在期间，每个行为只能有一个 Active Owner。
+本文不规定 Feature 顺序。每个功能由自己的聚焦 Issue 决定 Scope、Dependency、Acceptance 和 Ownership Handoff。
+
+原生 JavaScript 与 React 共存期间，每个行为只有一个 Active Owner：
 
 ```text
-确认现有原生合同
+确认现有 Native Contract
 → 验证 Bootstrap 和 Capability
 → 创建 Runtime 和 Store
 → Mount React Root
 → 确认 React Ready
 → 激活 React Ownership
-→ 再关闭或 Detach 该功能的旧 Owner
+→ Detach 旧 Owner
 ```
 
 规则：
 
-- React Ready 前不得隐藏旧 Owner；
-- 启动失败时保留可用 Owner；
-- 同一行为不能同时注册两套 State-changing Listener；
-- 不能同时运行两个 Preview Scheduler、Draft Timer、Shortcut Manager、Save Observer、Publish Handler、Media Handler 或 Clipboard Exporter；
-- 不以 DOM 是否存在作为唯一所有权事实；
-- 只有行为、Failure、Accessibility、Browser 和 Release 验证完成后，才能删除旧 Owner；
-- 不机械地让“一份旧 JS 对应一份新 TS”；
-- 删除旧实现必须在对应 Issue 范围内明确授权。
+- React Ready 前不隐藏旧 Owner；
+- Startup Failure 保留可用 Owner；
+- 同一行为不注册两套 State-changing Listener；
+- 不同时运行两个 Preview Scheduler、Draft Timer、Shortcut Manager、Save Observer、Publish Handler、Media Handler 或 Clipboard Exporter；
+- DOM Presence 不是唯一 Ownership Truth；
+- 行为、Failure、A11y、Browser 和 Release 验证完成后才能删除旧 Owner；
+- 不机械地让一份旧 JS 对应一份新 TS；
+- 删除旧实现必须由对应 Issue 明确授权。
 
-## 二十五、禁止事项
+## 二十三、禁止事项
 
-禁止引入：
+禁止：
 
-1. Gutenberg 编辑器替代、Next.js、Webpack、其他前端框架或替代发布后端。
-2. React 19 专属 API、私有 React Runtime、Hydration、RSC 或 Server Action。
-3. 浏览器正式 Markdown Renderer 或 CSS Security Parser。
-4. 第二套 Canonical Document、Save、Publish、Revision、Media 或 Settings Authority。
+1. Gutenberg Editor 替代、Next.js、Webpack、其他 Frontend Framework 或替代 Publishing Backend。
+2. React 19-only API、Private React Runtime、Hydration、RSC 或 Server Action。
+3. Browser Formal Markdown Renderer 或 CSS Security Parser。
+4. 第二套 Canonical Document、Save、Publish、Revision、Media、Settings、Timezone 或 Public-content Authority。
 5. Component 直接访问 WordPress DOM、jQuery、`wp.apiFetch`、`wp.media`、Storage、Clipboard 或 Global Bootstrap。
-6. 万能 Adapter、God Component、共享 Root Store 或无结构 Component Directory。
-7. Feature 私有路径导入、Upward Import、Broad Barrel 或 Circular Dependency。
-8. 允许不可能状态的 Boolean Prop 组合或承载整篇高频 Document State 的 Broad Context。
-9. 用 `useEffect` 镜像两份 React State。
-10. Silent Fallback、Swallowed Error、Fake Success、Hidden Write、Force Click Disabled Control 或 Mutation 自动重试。
-11. Stale Async Work 更新当前状态。
-12. 无 Cleanup、Idempotence 和重复生命周期安全的 Effect。
+6. Universal Adapter、Generic `execute(type, payload)`、God Component、Shared Mutable Root Store 或 Stringly Typed Event Bus。
+7. Circular Dependency、Upward Import、Broad Barrel、Feature-private Deep Import 或 Speculative Abstraction。
+8. Render-time Side Effect、Effect-driven User Command、Mirrored State、Duplicated Authority 或 Impossible Boolean State。
+9. Random Key、Reorderable Domain Data 的 Index Key、Nested Component Definition 导致的 Accidental Reset。
+10. Silent Fallback、Swallowed Error、Fake Success、Hidden Write、Force Click Disabled Control 或 Mutation Auto Retry。
+11. Stale Async Work 更新当前 Post、Root、Dialog 或 Session。
+12. 无 Cleanup、Idempotence 和 Failure Handling 的 Effect。
 13. Browser-local Scheduling 覆盖 WordPress Site Timezone。
-14. 只支持 Built-in Command、破坏扩展 Registry 的实现。
-15. TypeScript 源码放入 `assets/`。
-16. Root-relative Plugin Asset URL、硬编码 Plugin Directory、Remote Runtime CDN、Production Dev Server 或 Telemetry。
-17. Empty Feature Directory、Placeholder Module、Speculative Abstraction 和 Unused Asset。
-18. Private Article、Custom CSS、AI Context、Nonce、Credential 和 Secret 写入 Diagnostics。
-19. Source、Test、Cache、Log 或开发元数据进入安装包。
-20. IIFE 输出与 Rollup Dynamic Chunk 同时被宣称为已定方案，却没有真实加载合同。
-21. 将通用 Skill 规则置于 EasyMDE 项目合同之上。
+14. 忽略 Extension Registry、只支持 Built-in Command 的实现。
+15. Root-relative Plugin Asset URL、Remote Runtime CDN、Production Dev Server 或未批准 Telemetry。
+16. Empty Feature Directory、Placeholder Module、Unused Asset 或无 Owner Dependency。
+17. Private Article、Custom CSS、Prompt、Token、Nonce、Credential 或 Secret Endpoint 写入 Diagnostics。
+18. Source、Test、Cache、Log、`.agents/` 或 Development Metadata 进入安装 ZIP。
+19. 二手文章或通用 Skill 被当成高于 EasyMDE 项目证据的规则。
 
-## 二十六、完成门槛
+## 二十四、完成证据
 
-一个 React 功能只有在以下条件与其范围相关的部分全部满足后，才可以报告完成：
+一个 React / TypeScript Feature 只有在相关项目全部满足后才能报告完成：
 
-1. 明确每个行为和状态值的单一 Owner。
-2. 确认目录、Dependency Direction、Feature Public API 和命名。
-3. 确认 Editor / Settings Root、Store、Provider、Error Boundary 和 Lifecycle 所有权。
-4. 确认 Meta、Options、REST、Extension 和 Public Compatibility Contract。
-5. 确认普通支持文章零写入打开。
-6. 确认 Component 只使用 Typed Contract 和 Focused Port。
-7. 确认 React 18、WordPress 6.7、`createRoot` Teardown 和无重复 React。
-8. 确认 Native Field、Real Save / Publish Observation、Nonce Refresh、Lock Loss 和 Dirty Baseline。
-9. 确认 Permission、Validation、Cancellation、Stale Result、Missing Control、Schema 和 Dependency Failure。
-10. 确认 Semantic HTML、Form、Dialog、Focus、Keyboard、Selection、IME、Undo、Scroll、RTL、Reduced Motion、Contrast 和 Zoom。
-11. 性能结论有真实测量。
-12. 执行当前路径可用的 Type、Lint、Unit、Contract、Integration、Browser、i18n 和 Release 检查。
-13. 检查准确 Diff、Manifest、WordPress Asset Metadata、Bundle 和安装 ZIP。
-14. 报告实际验证、未验证内容和剩余风险，不编造证据。
+1. 每个 State 和 Behavior 有单一 Owner。
+2. Component Hierarchy 来自 Data Model 和用户可识别职责。
+3. Render 和 Hook 保持 Pure。
+4. State 最小、无重复，并按 Identity 有意 Reset。
+5. Directory Placement 和 Dependency Direction 正确。
+6. Props、Event、Ref、Hook API、Naming 和 Public Export 符合 TypeScript 规范。
+7. External Value 有 Runtime Validation。
+8. Component 只使用 Focused Port，不直接访问 WordPress / Browser Global。
+9. PHP / WordPress Capability、Nonce、Validation、Sanitization、Escaping、Save、Publish、Lock 和 Data Authority 保持完整。
+10. Native Field、Real Save / Publish Observation、Cancellation、Stale Rejection 和 Teardown 有测试。
+11. A11y、Focus、Keyboard、IME、Selection、Undo、Scroll、RTL、Zoom 和相关视觉状态有证据。
+12. Performance 结论有 Measurement。
+13. Build Metadata、Runtime Externalization、Asset URL、Local Asset 和 Package Exclusion 已验证。
+14. Exact Diff、Test、CI、Review Finding、Unverified Area 和 Remaining Risk 被诚实记录。

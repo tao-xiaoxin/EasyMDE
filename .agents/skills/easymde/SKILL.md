@@ -289,6 +289,15 @@ Component API rules:
 - Shared UI does not know Post IDs, capabilities, routes, selectors, or Feature rules;
 - Error Boundaries isolate independently recoverable regions and reset on the owning identity.
 
+Error Boundary contract:
+
+- an Error Boundary catches descendant render and lifecycle failures; it does not catch Event Handler failures, ordinary Promise rejections, Timers, Animation Frames, Port results, or errors thrown inside the Boundary itself;
+- Event Handlers and asynchronous Commands must map expected failures into typed Results and visible Feature State, with unexpected failures reported through `DiagnosticsPort`;
+- a Fallback must not claim that Save, Publish, Upload, Restore, Clipboard, or Settings work succeeded;
+- preserve unsaved document State outside a recoverable UI subtree whenever possible;
+- reset a Boundary by the owning Root, Post, or Feature identity and prevent automatic remount loops;
+- test the failure, Fallback, retry, reset, and unaffected-sibling behavior for every material Boundary.
+
 Borrow react-admin's Headless Controller idea only for complex Features that need replaceable Views or independent behavior testing:
 
 ```ts
@@ -322,6 +331,7 @@ Required unless a verified limitation is documented:
 {
   "compilerOptions": {
     "strict": true,
+    "isolatedModules": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "useUnknownInCatchVariables": true,
@@ -331,7 +341,9 @@ Required unless a verified limitation is documented:
 }
 ```
 
-Evaluate `exactOptionalPropertyTypes` with the selected React and WordPress type packages and enable it when compatible.
+Vite transpiles TypeScript and does not prove type correctness. Run `tsc --noEmit` as a separate required check in development and CI. Keep `isolatedModules` enabled for per-file transforms, and use `import type` / `export type` when an import exists only in the type system.
+
+Evaluate `exactOptionalPropertyTypes` and `verbatimModuleSyntax` with the selected React, WordPress, and TypeScript versions. Enable them when compatible; do not weaken unrelated strictness to work around one dependency without evidence.
 
 Naming defaults:
 
@@ -408,6 +420,23 @@ Clean up Listeners, Subscriptions, Observers, Timers, Animation Frames, Abort Co
 
 Strict Mode and repeated activation must not duplicate writes, uploads, clipboard operations, subscriptions, timers, or native handlers.
 
+### External Stores and WordPress-Owned Changing State
+
+Use React State or the Root Store for React-owned State. When React must read a changing value owned outside React—such as a legacy editor instance, WordPress lock/session state, a browser API, or an external Store—adapt it through a focused project Hook built on `useSyncExternalStore` from `@wordpress/element`.
+
+Rules:
+
+- keep `subscribe` stable and make it return an idempotent cleanup function;
+- `getSnapshot` returns an immutable snapshot and the same object identity while the underlying value is unchanged;
+- do not create a fresh object on every `getSnapshot()` call or resubscribe on every render;
+- expose only the smallest snapshot required by the consumer;
+- hide the external Store behind a named Hook or Port Adapter rather than calling `useSyncExternalStore` throughout Components;
+- do not mirror the same fact into Context or React State through an Effect;
+- test initial snapshot, update notification, unchanged snapshot identity, unsubscribe, repeated Mount, and Owner identity change;
+- admin Roots are client-mounted, so do not invent `getServerSnapshot`, SSR, or Hydration behavior.
+
+Do not suspend a subtree merely because an external-store snapshot changes. Use explicit pending State for WordPress and browser operations.
+
 ## Runtime Ports and Interface Design
 
 Features depend on focused project capabilities rather than WordPress globals or selectors:
@@ -456,6 +485,24 @@ Interface philosophy:
 - do not grow a universal `EditorAdapter`, `WordPressService`, generic `execute(type, payload)`, or stringly typed event bus;
 - test Adapters against Port contracts and Features against mock Ports.
 
+### Asynchronous Operation Policy
+
+Every asynchronous capability declares one concurrency policy and tests it:
+
+- **latest-wins:** Preview, search, filtering, and detail reads may Abort or reject stale completion when a newer Request owns the result;
+- **single-flight:** Save, Publish, Settings writes, Revision restore, and other protected Mutations prevent duplicate execution until the authoritative result is known;
+- **parallel-keyed:** independent uploads or Reads may run concurrently only when each has a stable key, Operation ID, Owner identity, cancellation, and result destination;
+- **ordered:** document transactions and operations whose order changes meaning execute through one explicit sequence.
+
+Rules:
+
+- bind every operation to the current Site, User, Post, Root, Feature, or transaction identity that owns its result;
+- reject late completion after the Owner changes, a Dialog closes, or a newer Request supersedes it;
+- disabling a button is presentation, not the concurrency control itself; enforce the policy in the owning Controller, Store, or Port Adapter;
+- do not report `cancelled` when an Abort only stopped the browser from observing a Mutation that may already have committed; reconcile with the authoritative WordPress result;
+- WordPress-owned writes are pessimistic by default; Optimistic or Undoable behavior requires an explicitly approved reversible contract, rollback, reconciliation, and accessibility behavior;
+- do not retry Mutations automatically.
+
 Only Entrypoints and relevant Integrations may know `window.EasyMDEConfig`, `window.wp`, `wp.apiFetch`, jQuery, WordPress selectors, native save/publish controls, `wp.media`, browser Storage, Clipboard APIs, or legacy `execCommand` fallback.
 
 ## Bootstrap, REST, and Cross-Language Contracts
@@ -493,6 +540,22 @@ REST rules:
 - do not expose raw response HTML as a user message;
 - do not retry Mutations automatically;
 - only bounded idempotent Reads may retry with cancellation and stale-result protection.
+
+### Internationalization
+
+The current project contract keeps PHP gettext as the source of browser-facing strings and passes translated values through versioned Bootstrap data. Preserve that model until a focused i18n/build Issue explicitly changes it.
+
+When React source begins using `@wordpress/i18n`, the same focused change must provide the complete pipeline:
+
+- use the `easymde` text domain and WordPress i18n functions such as `__`, `_x`, `_n`, and `sprintf`;
+- extend extraction beyond the current PHP-only `scripts/i18n.mjs` workflow to TypeScript and TSX;
+- generate and validate the required JavaScript JSON translation catalogs;
+- declare `wp-i18n` or the verified Script Module dependency;
+- register the classic Script Handle before calling `wp_set_script_translations()` and package the catalogs in the installable ZIP;
+- verify the exact translation-loading mechanism separately for WordPress Script Modules instead of assuming the classic Script API applies;
+- test non-default locale loading, context, interpolation, plurals, long translations, and RTL.
+
+Each user-visible string has one translation owner. Do not ship the same string as both a PHP-translated Bootstrap value and an independently translated JS literal. Do not concatenate translated fragments; use placeholders, context, and plural APIs. Stable Error Codes, IDs, Routes, Storage Keys, and extension identifiers are never translated. Dynamic extension labels remain validated and translated by their documented owner.
 
 ## Preview and Native WordPress Operations
 
@@ -559,7 +622,11 @@ Accessibility is part of the Component contract:
 - preserve Selection and restore Focus for editor commands;
 - respect IME composition;
 - release Pointer Capture on cancellation and teardown;
-- test long translations, RTL, zoom, text scaling, reduced motion, forced colors, and high contrast where relevant.
+- test long translations, RTL, zoom, text scaling, reduced motion, forced colors, and high contrast where relevant;
+- announce meaningful pending, progress, success, and failure Status Messages without moving Focus when the operation does not require Focus transfer;
+- use an appropriate status, alert, or live-region pattern and avoid announcing high-frequency Preview or typing updates;
+- use `useId` from `@wordpress/element` for local Label, Description, Help, and Error relationships when stable authored IDs are unavailable;
+- never use `useId` for list Keys, persisted IDs, public extension IDs, CSS selectors, Script Handles, or Storage Keys.
 
 Scope Admin CSS under a stable EasyMDE Root. Do not apply broad WordPress Admin element rules, borrow unrelated legacy classes, or use arbitrary offsets and broad `!important` to hide an incorrect layout owner.
 
@@ -591,7 +658,9 @@ Do not trade correctness, accessibility, diagnostics, or stale-result protection
 
 ## Build and Dependency Rules
 
-Use Vite from the root npm package. Source belongs under `frontend/`; compiled runtime belongs under `assets/build/`.
+Use Vite from the root npm package. Source belongs under `frontend/`; compiled runtime belongs under `assets/build/`. Vite Build success is not TypeScript validation; `tsc --noEmit` remains a separate required gate.
+
+The first build implementation records and validates the selected Vite, TypeScript, Node, and npm versions, browser target, WordPress loading strategy, JSX-runtime mapping, development-server boundary, and release output contract. Browser targets come from the supported WordPress/EasyMDE environment and real test matrix, not an unreviewed Vite default. Do not add global Polyfills without a documented browser requirement, scope, size, and removal rule.
 
 The first build implementation chooses and validates one coherent strategy:
 
@@ -613,7 +682,8 @@ For every strategy:
 - keep runtime assets local;
 - fail on missing, stale, duplicate, or inconsistent Manifest entries;
 - fail if a production entry or chunk contains a private React implementation;
-- exclude Dev Server URLs, Localhost, source paths, prohibited Source Maps, remote CDN references, and development code.
+- exclude Dev Server URLs, Localhost, source paths, prohibited Source Maps, remote CDN references, and development code;
+- treat HMR and Fast Refresh as development conveniences only; correctness must also hold after a full reload, repeated Mount / Unmount, and production build.
 
 A dependency needs a current responsibility, non-duplicative purpose, compatible license, acceptable direct and transitive size, active maintenance, no prohibited telemetry or remote runtime, tests, removal strategy, Lockfile update, and third-party notice update.
 
@@ -630,6 +700,15 @@ Choose tests by responsibility:
 - `app`: Providers, independent Stores, Error Boundaries, activation, and teardown;
 - E2E: real WordPress behavior using the installable ZIP;
 - release: required compiled entries present and development files absent.
+
+Test-quality rules:
+
+- exercise Components through accessible Roles, Names, Labels, and user actions where practical rather than CSS classes or private DOM structure;
+- use snapshots as supplemental evidence only, never as the sole proof of interaction, focus, error, or accessibility behavior;
+- use semantic readiness conditions in E2E tests instead of fixed sleeps;
+- import and execute the production Domain function, Parser, Schema, or Adapter under test rather than reimplementing its logic in a test helper;
+- test Error Boundary limits, asynchronous Result handling, concurrency policy, external-store subscriptions, translation loading, and Status Message announcements at the lowest reliable layer;
+- keep deterministic fixtures free of credentials and private article content.
 
 Enforce when tooling exists:
 
@@ -709,3 +788,9 @@ Do not introduce:
 17. Private article content, Custom CSS, prompts, Tokens, Nonces, credentials, or secret endpoints in diagnostics.
 18. Source, tests, caches, logs, `.agents/`, or development metadata in the installable ZIP.
 19. A react-admin, generic Skill, blog, or search recommendation treated as stronger than EasyMDE project evidence.
+20. Treating an Error Boundary as the handler for Event, Promise, Timer, Port, or Mutation failures.
+21. An unstable external-store `subscribe`, an uncached mutable `getSnapshot`, duplicate subscriptions, or Effect-based State mirroring.
+22. An asynchronous operation with no declared concurrency, Owner identity, stale-result, cancellation, or authoritative-result policy.
+23. Duplicate translation ownership, untranslated user-facing React literals, concatenated translated fragments, or JS catalogs omitted from extraction and release packaging.
+24. Treating a Vite Build as the TypeScript check, relying on unreviewed Browser Targets, or requiring HMR for correctness.
+25. Public extension data that executes arbitrary JavaScript, passes raw React Components or Elements, exposes internal Stores or Adapters, or depends on private DOM implementation.

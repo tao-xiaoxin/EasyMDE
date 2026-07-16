@@ -117,11 +117,15 @@ Success behavior:
 Failure behavior:
 Cancellation behavior:
 Stale-result behavior:
+Concurrency policy:
+Authoritative-result reconciliation:
+External-store subscription contract:
 Teardown behavior:
 Activation condition:
 Rollback behavior:
+Translation source and catalog impact:
 Performance baseline:
-Accessibility contract:
+Accessibility and Status Message contract:
 Visual contract:
 Tests before change:
 Tests after change:
@@ -167,8 +171,11 @@ Inventory the migration unit's:
 - editor-instance ownership;
 - REST Routes and Error Codes;
 - Storage Keys;
+- external Stores, snapshots, subscriptions, and cleanup;
+- asynchronous operation policies and in-flight ownership;
 - Media callbacks;
 - Clipboard flows;
+- PHP Bootstrap strings, JS literals, text domains, extraction roots, and translation catalogs;
 - extension Registries;
 - CSS Roots and protected selectors;
 - test fixtures;
@@ -265,6 +272,10 @@ Port rules remain those of the main Skill:
 - WordPress shapes contained inside Adapters;
 - no generic `execute(type, payload)` or universal `WordPressService`.
 
+When the target reads changing legacy, WordPress, or browser State outside React, define a focused `useSyncExternalStore` Adapter before ownership transfer. Prove stable `subscribe`, immutable cached snapshots, cleanup, repeated Mount safety, and Owner-identity reset. Do not bridge external State by polling or Effect-based mirroring.
+
+Every asynchronous operation records whether it is latest-wins, single-flight, parallel-keyed, or ordered. Activation must not change that policy accidentally, and cancellation must not misreport a WordPress Mutation that may already have committed.
+
 ## Ownership Ledger
 
 Maintain an ownership ledger in the linked Issue or PR:
@@ -348,7 +359,9 @@ Rules:
 - DOM presence alone does not prove ownership;
 - failure before activation preserves the legacy owner;
 - failure after activation follows the written rollback contract;
-- React and legacy paths never both execute the same state-changing action.
+- React and legacy paths never both execute the same state-changing action;
+- activation does not rely on an Error Boundary to catch Event Handler, Promise, Timer, Port, or Mutation failures; those paths use typed Results, explicit State, diagnostics, and the written rollback contract;
+- external-store subscribers switch owners atomically and leave no duplicate subscription, polling loop, or stale snapshot source.
 
 ## Rollback
 
@@ -414,6 +427,10 @@ Use the long-term Skill for test-layer rules. Migration work must additionally p
 - Focus, keyboard, IME, Selection, Undo, Scroll, responsive layout, RTL, and accessibility remain correct;
 - protected normal-mode and unrelated WordPress Admin surfaces remain unchanged;
 - installed release ZIP behavior passes;
+- asynchronous concurrency, authoritative-result reconciliation, and external-store cleanup are proven;
+- meaningful pending, success, and failure Status Messages remain announced without duplicate live regions or unwanted Focus changes;
+- user-facing strings are translated by one documented owner, with extraction and packaged catalogs validated when TS/TSX i18n is introduced;
+- Error Boundary fallback and reset behavior are proven without treating it as an async failure handler;
 - rollback behavior is either proven or explicitly no longer required.
 
 Green unit tests alone do not prove an ownership handoff.
@@ -542,7 +559,9 @@ Before migration or removal inventory:
 - Event names;
 - ordering and collision behavior.
 
-Keep identifiers stable unless the linked Issue explicitly changes the public contract and defines deprecation. Never execute arbitrary JavaScript strings from extension data.
+Keep identifiers stable unless the linked Issue explicitly changes the public contract and defines deprecation. Prefer versioned declarative descriptors and stable command IDs. Validate ID normalization, ordering, collisions, capability visibility, unsupported actions, and failure isolation.
+
+Extension data must not execute arbitrary JavaScript strings, pass raw React Elements or Component constructors, expose internal Stores / Adapters / DOM Nodes, or deep-import Feature internals. A public React render slot requires a focused Issue, a versioned contract, the WordPress `wp-element` runtime, an Error Boundary, package tests, and an explicit compatibility policy; it is not implied by the current Toolbar Registry.
 
 ## Failure and Observability
 
@@ -587,12 +606,14 @@ Review the exact diff for:
 - no hidden saves;
 - correct target placement and dependency direction;
 - typed Ports and runtime schemas;
-- React purity, State ownership, and Effect discipline;
+- declared async concurrency and authoritative-result reconciliation;
+- stable external-store snapshots, subscriptions, and cleanup;
+- React purity, State ownership, Effect discipline, and honest Error Boundary scope;
 - WordPress capability, nonce, Lock, Autosave, Revision, Media, and Publish behavior;
 - extension compatibility;
 - stale-result, cancellation, and lifecycle cleanup;
-- Focus, keyboard, IME, Selection, Undo, and Scroll;
-- responsive, RTL, contrast, and visual fidelity;
+- Focus, keyboard, IME, Selection, Undo, Scroll, Status Messages, and live-region behavior;
+- translated strings, extraction/catalog ownership, responsive, RTL, contrast, and visual fidelity;
 - performance evidence;
 - release ZIP inclusion and exclusion;
 - diagnostics redaction;
@@ -608,7 +629,7 @@ A migration unit is complete only when:
 3. no duplicate state-changing owner remains;
 4. success and relevant failure paths are tested;
 5. protected WordPress and EasyMDE contracts remain intact;
-6. browser and accessibility evidence is complete;
+6. browser, accessibility, Status Message, i18n, external-store, and async-concurrency evidence is complete;
 7. performance claims have measurements;
 8. legacy code is retained with a documented reason or removed through the gate;
 9. build and installable-package checks pass;
@@ -666,4 +687,9 @@ Do not:
 16. change visual design outside the linked migration contract;
 17. claim performance, security, accessibility, browser, or compatibility success without evidence;
 18. publish private browser artifacts or diagnostics;
-19. keep this temporary Skill after its deletion gate passes.
+19. keep this temporary Skill after its deletion gate passes;
+20. rely on an Error Boundary for Event Handler, Promise, Timer, Port, or Mutation failures;
+21. bridge legacy State with unstable snapshots, duplicate subscriptions, polling, or Effect-based mirroring;
+22. transfer an asynchronous owner without preserving its concurrency and authoritative-result policy;
+23. introduce TS/TSX user-facing strings without one translation owner, extraction, catalogs, dependency metadata, packaging, and locale/RTL tests;
+24. expose public extension points as arbitrary JavaScript, raw React Elements / Components, internal Stores / Adapters, or private DOM.

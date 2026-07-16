@@ -309,7 +309,7 @@ test('WordPress test installer rejects unsafe core and tests paths before downlo
 
     const result = runScript(
       'scripts/install-wp-tests.sh',
-      ['easymde_phpunit', 'root', 'root', '127.0.0.1', '6.0'],
+      ['easymde_phpunit', 'root', 'root', '127.0.0.1', '6.7'],
       {
         cwd: root,
         env: {
@@ -340,7 +340,7 @@ test('WordPress test installer rejects arbitrary absolute easymde paths before d
 
     const result = runScript(
       'scripts/install-wp-tests.sh',
-      ['easymde_phpunit', 'root', 'root', '127.0.0.1', '6.0'],
+      ['easymde_phpunit', 'root', 'root', '127.0.0.1', '6.7'],
       {
         env: {
           PATH: `${fakeBin}:${process.env.PATH}`,
@@ -368,7 +368,7 @@ test('WordPress test installer rejects crafted database names before mysql', () 
   try {
     const result = runScript(
       'scripts/install-wp-tests.sh',
-      [unsafeName, 'root', 'root', '127.0.0.1', '6.0'],
+      [unsafeName, 'root', 'root', '127.0.0.1', '6.7'],
       {
         env: {
           PATH: `${fakeBin}:${process.env.PATH}`,
@@ -393,7 +393,7 @@ test('WordPress test installer rejects non-test EasyMDE database names before my
   try {
     const result = runScript(
       'scripts/install-wp-tests.sh',
-      ['easymde_production', 'root', 'root', '127.0.0.1', '6.0'],
+      ['easymde_production', 'root', 'root', '127.0.0.1', '6.7'],
       {
         env: {
           PATH: `${fakeBin}:${process.env.PATH}`,
@@ -423,7 +423,7 @@ test('WordPress test installer escapes sed replacement values in generated confi
   try {
     const result = runScript(
       'scripts/install-wp-tests.sh',
-      ['easymde_phpunit', dbUser, dbPass, dbHost, '6.0'],
+      ['easymde_phpunit', dbUser, dbPass, dbHost, '6.7'],
       {
         env: {
           PATH: `${fakeBin}:${process.env.PATH}`,

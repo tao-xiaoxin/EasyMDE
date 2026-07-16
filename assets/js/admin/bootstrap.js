@@ -299,7 +299,6 @@
         return {
             markdownTheme: state.markdownTheme || 'default',
             codeTheme: state.codeTheme || 'atom-one-dark',
-            codeMacStyle: state.codeMacStyle === undefined ? true : !!state.codeMacStyle,
             customCssId: state.customCssId || '',
             customCss: state.customCss || '',
             scopedCustomCss: state.scopedCustomCss || '',
@@ -949,7 +948,6 @@
     function syncThemeFields() {
         $('#easymde-markdown-theme-field').val(renderState.markdownTheme || 'default');
         $('#easymde-code-theme-field').val(renderState.codeTheme || 'atom-one-dark');
-        $('#easymde-code-mac-style-field').val(renderState.codeMacStyle ? '1' : '0');
         $('#easymde-custom-css-id-field').val(renderState.markdownTheme === 'custom' ? renderState.customCssId : '');
         $('#easymde-custom-font-field').val(renderState.customFont || 'optima');
         $('#easymde-windows-font-field').val(renderState.windowsFont || 'microsoft-yahei');
@@ -1009,8 +1007,7 @@
 
         replaceClassPrefix(preview, 'easymde-markdown-theme-', markdownClass);
         replaceClassPrefix(preview, 'easymde-code-theme-', 'easymde-code-theme-' + renderState.codeTheme);
-        $preview.addClass('easymde-rendered-content');
-        $preview.toggleClass('easymde-code-mac', !!renderState.codeMacStyle);
+        $preview.addClass('easymde-rendered-content easymde-code-mac');
         $preview.toggleClass('easymde-custom-css-active', renderState.markdownTheme === 'custom');
         $preview.toggleClass('easymde-font-overrides', !!fontStack);
 
@@ -1052,8 +1049,6 @@
         function populatePanel() {
             var themeControl;
             var codeControl;
-            var $macLabel;
-            var $macToggle;
             var $customToggle;
             var $customPanel;
             var $name;
@@ -1068,8 +1063,6 @@
             panelReady = true;
             themeControl = createSelectControl(getString('articleTheme'), 'easymde-theme-select');
             codeControl = createSelectControl(getString('codeTheme'), 'easymde-code-theme-select');
-            $macLabel = $('<label class="easymde-toolbar-check"></label>');
-            $macToggle = $('<input type="checkbox">').prop('checked', !!renderState.codeMacStyle);
             $customToggle = $('<button type="button" class="button button-secondary easymde-custom-css-toggle"></button>').text(getString('customCss'));
             $customPanel = $('<div class="easymde-custom-css-panel" hidden></div>');
             $name = $('<input type="text" class="regular-text easymde-custom-css-name">').attr('placeholder', getString('cssName'));
@@ -1080,7 +1073,6 @@
             renderThemeSelect(themeControl.select);
             renderCodeThemeSelect(codeControl.select);
 
-            $macLabel.append($macToggle, $('<span></span>').text(getString('macCodeFrame')));
             $customPanel.append(
                 $('<div class="easymde-custom-css-row"></div>').append($name, $save, $status),
                 $code
@@ -1090,7 +1082,6 @@
             $panel.append(
                 themeControl.root,
                 codeControl.root,
-                $macLabel,
                 $('<div class="easymde-custom-css-toggle-row"></div>').append($customToggle),
                 $customPanel
             );
@@ -1123,12 +1114,6 @@
 
             codeControl.select.on('change', function () {
                 renderState.codeTheme = String($(this).val() || 'atom-one-dark');
-                applyRenderState($preview);
-                refreshPreview();
-            });
-
-            $macToggle.on('change', function () {
-                renderState.codeMacStyle = !!this.checked;
                 applyRenderState($preview);
                 refreshPreview();
             });
@@ -1409,7 +1394,6 @@
             markdown,
             renderState.markdownTheme,
             renderState.codeTheme,
-            renderState.codeMacStyle ? '1' : '0',
             renderState.customCssId || '',
             selectedCustomCss()
         ].join('\n');
@@ -1831,9 +1815,6 @@
                             renderState[key] = String(changes[key] || '');
                         }
                     });
-                    if (Object.prototype.hasOwnProperty.call(changes, 'codeMacStyle')) {
-                        renderState.codeMacStyle = !!changes.codeMacStyle;
-                    }
                     themeOptions.state = renderState;
                     applyRenderState(context.preview);
                     applyRenderState($(workspaceContext.preview));
@@ -2076,7 +2057,7 @@
                         return Promise.reject(new Error('Revision preview is unavailable.'));
                     }
                     stagingNode = document.createElement('div');
-                    stagingNode.className = 'easymde-immersive-workspace__history-preview';
+                    stagingNode.className = 'easymde-immersive-workspace__history-preview easymde-rendered-content easymde-code-mac';
                     $staging = $(stagingNode);
                     $staging.html(revision.html);
 
@@ -2708,7 +2689,7 @@
             || features.math
             || features.mermaid
             || features.toc
-            || (features.codeBlocks && renderState.codeMacStyle)
+            || features.codeBlocks
         );
     }
 
@@ -2869,7 +2850,6 @@
                     post_id: $('#easymde-editor').data('post-id') || 0,
                     markdown_theme: renderState.markdownTheme,
                     code_theme: renderState.codeTheme,
-                    code_mac_style: renderState.codeMacStyle,
                     custom_css_id: renderState.customCssId
                 }
             };

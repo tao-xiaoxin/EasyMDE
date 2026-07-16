@@ -345,14 +345,10 @@
         var config = context && context.config ? context.config : {};
         var assets = config.previewAssets || {};
         var documentRef = context && context.documentRef ? context.documentRef : document;
-        var renderState = context && context.renderState ? context.renderState : {};
         var tasks = [];
 
-        if (normalized.codeBlocks && renderState.codeMacStyle) {
-            tasks.push(loadStylesheet(assets.codeFrameLinkId || 'easymde-code-frame-css', assets.codeFrameCssUrl, documentRef));
-        }
-
         if (normalized.syntaxHighlight) {
+            tasks.push(loadStylesheet(assets.codeFrameLinkId || 'easymde-code-frame-css', assets.codeFrameCssUrl, documentRef));
             tasks.push(loadPreviewFeature('syntaxHighlight', context));
         }
 

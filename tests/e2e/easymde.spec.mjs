@@ -1,10 +1,15 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 
 const wpPath = process.env.EASYMDE_E2E_WP_PATH;
 const wpCli = process.env.EASYMDE_E2E_WP_CLI || 'wp';
 const adminPassword = 'EasyMDE-e2e-pass-1!';
+const fullCapabilityMarkdown = readFileSync(
+  new URL('../../docs/examples/markdown-full-capability-test.md', import.meta.url),
+  'utf8'
+);
 
 function runWp(args, options = {}) {
   if (!wpPath) {
@@ -277,6 +282,10 @@ function postExcerpt(postId) {
   return runWp(['post', 'get', String(postId), '--field=excerpt']);
 }
 
+function postPermalink(postId) {
+  return runWp(['eval', `echo get_permalink(${Number.parseInt(postId, 10)});`]);
+}
+
 function postTagNames(postId) {
   return runWp(['post', 'term', 'list', String(postId), 'post_tag', '--field=name']);
 }
@@ -287,6 +296,107 @@ function postMetaValue(postId, key) {
   const row = rows.find((item) => item.meta_key === key);
 
   return row ? String(row.meta_value || '') : '';
+}
+
+function postMetaRows(postId, key) {
+  const output = runWp(['post', 'meta', 'list', String(postId), '--format=json']);
+  const rows = output ? JSON.parse(output) : [];
+
+  return rows.filter((row) => row.meta_key === key);
+}
+
+function userDefaultState(userId) {
+  const encoded = runWp([
+    'eval',
+    `echo base64_encode(serialize(get_user_meta(${Number.parseInt(userId, 10)}, 'easymde_default_theme_state', true)));`
+  ]);
+
+  return encoded;
+}
+
+function setLegacyUserDefaults(userId) {
+  runWp([
+    'eval',
+    `$value = array('markdownTheme' => 'default', 'codeTheme' => 'atom-one-dark', 'codeMacStyle' => false, 'legacyBytes' => "keep\\0exact"); update_user_meta(${Number.parseInt(userId, 10)}, 'easymde_default_theme_state', $value);`
+  ]);
+}
+
+function canonicalMarkdownForSite(pluginAssetUrl) {
+  return fullCapabilityMarkdown.replace(
+    /https:\/\/raw\.githubusercontent\.com\/tao-xiaoxin\/EasyMDE\/main\/docs\/assets\/easymde-logo-rounded\.png/g,
+    pluginAssetUrl
+  );
+}
+
+function collectUnexpectedPageErrors(page) {
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  return errors;
+}
+
+async function editorThemeCatalog(page) {
+  return page.evaluate(() => ({
+    articleThemes: window.EasyMDEConfig.themeOptions.markdownThemes
+      .filter((theme) => theme.origin === 'owned')
+      .map(({ id, cssUrl }) => ({ id, cssUrl })),
+    codeThemes: window.EasyMDEConfig.themeOptions.codeThemes
+      .map(({ id, cssUrl }) => ({ id, cssUrl })),
+    localFixtureImage: new URL(
+      '../../../docs/assets/easymde-logo-rounded.png',
+      window.EasyMDEConfig.previewAssets.codeFrameCssUrl
+    ).href
+  }));
+}
+
+async function expectRenderedFixture(page, selector) {
+  const result = await page.locator(selector).evaluate((root) => {
+    const colorProbe = document.createElement('canvas');
+    colorProbe.width = 1;
+    colorProbe.height = 1;
+    const colorContext = colorProbe.getContext('2d', { willReadFrequently: true });
+    const hasVisibleColor = (color) => {
+      colorContext.clearRect(0, 0, 1, 1);
+      colorContext.fillStyle = color;
+      colorContext.fillRect(0, 0, 1, 1);
+      return colorContext.getImageData(0, 0, 1, 1).data[3] > 0;
+    };
+    const visible = (element) => {
+      if (!element) return false;
+      const style = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      return box.width > 0
+        && box.height > 0
+        && style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && hasVisibleColor(style.color);
+    };
+    const table = root.querySelector('table');
+    const image = root.querySelector('img');
+    const regularCode = root.querySelector('pre code.hljs');
+    const mermaid = root.querySelector('.easymde-mermaid');
+    const rootBox = root.getBoundingClientRect();
+
+    return {
+      semanticsVisible: [
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'strong', 'em', 'del', 'a',
+        'ul', 'ol', 'blockquote', 'table', 'img', 'code', 'pre'
+      ].every((item) => visible(root.querySelector(item))),
+      imageFits: image.getBoundingClientRect().width <= rootBox.width + 1,
+      regularCodeVisible: visible(regularCode),
+      mermaidSeparate: !!mermaid && !mermaid.closest('pre'),
+      macFrame: root.classList.contains('easymde-code-mac'),
+      horizontalOverflowBounded: root.scrollWidth <= Math.max(root.clientWidth * 2, root.clientWidth + 32),
+      pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth
+    };
+  });
+
+  expect(result.semanticsVisible).toBe(true);
+  expect(result.imageFits).toBe(true);
+  expect(result.regularCodeVisible).toBe(true);
+  expect(result.mermaidSeparate).toBe(true);
+  expect(result.macFrame).toBe(true);
+  expect(result.horizontalOverflowBounded).toBe(true);
+  expect(result.pageOverflow).toBeLessThanOrEqual(1);
 }
 
 function easymdeMetaSnapshot(postId) {
@@ -2141,6 +2251,192 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('[data-action="exit"]').click();
   });
 
+  test('removes the Mac-frame controls and request state from normal and immersive editors', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const errors = collectUnexpectedPageErrors(page);
+    const previewPayloads = [];
+
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')) {
+        previewPayloads.push(request.postDataJSON());
+      }
+    });
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await expect(page.locator('[name="easymde_code_mac_style"], #easymde-code-mac-style-field')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Appearance' }).click();
+    const normalAppearance = page.locator('.easymde-toolbar-popover-appearance-panel');
+    await expect(normalAppearance).toBeVisible();
+    await expect(normalAppearance.locator('input[type="checkbox"]')).toHaveCount(0);
+    await expect(normalAppearance.locator('.easymde-theme-select')).toBeVisible();
+    await expect(normalAppearance.locator('.easymde-code-theme-select')).toBeVisible();
+
+    await fillMarkdownAndWaitForPreview(page, '```js\nconst fixedFrame = true;\n```', 'fixedFrame');
+    await expect(page.locator('#easymde-preview')).toHaveClass(/easymde-code-mac/);
+    await expect(page.locator('#easymde-preview pre code.hljs')).toBeVisible();
+
+    await enterImmersiveWithKeyboard(page);
+    await page.locator('[data-action="theme"]').click();
+    const immersiveAppearance = page.locator('[data-popover="appearance"]');
+    await expect(immersiveAppearance).toBeVisible();
+    await expect(immersiveAppearance.locator('input[type="checkbox"]')).toHaveCount(0);
+    await expect(immersiveAppearance.locator('[data-appearance-key="markdownTheme"]')).toBeVisible();
+    await expect(immersiveAppearance.locator('[data-appearance-key="codeTheme"]')).toBeVisible();
+    await expect(page.locator('.easymde-immersive-workspace__preview')).toHaveClass(/easymde-code-mac/);
+    await expect(page.locator('.easymde-immersive-workspace__preview pre code.hljs')).toBeVisible();
+
+    expect(previewPayloads.length).toBeGreaterThan(0);
+    for (const payload of previewPayloads) {
+      expect(payload).not.toHaveProperty('code_mac_style');
+    }
+    expect(errors).toEqual([]);
+  });
+
+  test('switches every registered article and code theme with the canonical rendered fixture', async ({ page }, testInfo) => {
+    test.setTimeout(240_000);
+    const user = testInfo.easymdeUser;
+    const errors = collectUnexpectedPageErrors(page);
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    const catalog = await editorThemeCatalog(page);
+    expect(catalog.articleThemes.length).toBeGreaterThan(0);
+    expect(catalog.codeThemes.length).toBeGreaterThan(0);
+    const markdown = canonicalMarkdownForSite(catalog.localFixtureImage);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
+    await expect(page.locator('#easymde-preview .easymde-mermaid svg').first()).toBeVisible();
+    await expect(page.locator('#easymde-preview .katex').first()).toBeVisible();
+
+    await page.getByRole('button', { name: 'Appearance' }).click();
+    for (const theme of catalog.articleThemes) {
+      await page.locator('.easymde-theme-select').selectOption(`theme:${theme.id}`);
+      await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue(theme.id);
+      await expect(page.locator('#easymde-preview')).toHaveClass(new RegExp(`(?:^|\\s)easymde-markdown-theme-${theme.id}(?:\\s|$)`));
+      await expect(page.locator('#easymde-article-theme-css')).toHaveAttribute('href', theme.cssUrl);
+      expect(await page.locator('#easymde-preview').evaluate((root) => (
+        Array.from(root.classList).filter((name) => name.startsWith('easymde-markdown-theme-'))
+      ))).toEqual([`easymde-markdown-theme-${theme.id}`]);
+      await expectRenderedFixture(page, '#easymde-preview');
+    }
+
+    const codeBackgrounds = new Set();
+    for (const theme of catalog.codeThemes) {
+      await page.locator('.easymde-code-theme-select').selectOption(theme.id);
+      await expect(page.locator('#easymde-code-theme-field')).toHaveValue(theme.id);
+      await expect(page.locator('#easymde-preview')).toHaveClass(new RegExp(`(?:^|\\s)easymde-code-theme-${theme.id}(?:\\s|$)`));
+      await expect(page.locator('#easymde-highlight-theme-css')).toHaveAttribute('href', theme.cssUrl);
+      await expect(page.locator('#easymde-preview pre code.hljs').first()).toBeVisible();
+      codeBackgrounds.add(await page.locator('#easymde-preview pre code.hljs').first().evaluate((node) => getComputedStyle(node).backgroundColor));
+    }
+    expect(codeBackgrounds.size).toBeGreaterThan(1);
+
+    await enterImmersiveWithKeyboard(page);
+    for (const theme of catalog.articleThemes) {
+      await page.locator('[data-action="theme"]').click();
+      const articleThemeTrigger = page.locator('[data-appearance-key="markdownTheme"]');
+      await articleThemeTrigger.click();
+      await articleThemeTrigger.locator('..').locator(`[data-appearance-value="${theme.id}"]`).click();
+      await expect(page.locator('.easymde-immersive-workspace__preview')).toHaveClass(new RegExp(`(?:^|\\s)easymde-markdown-theme-${theme.id}(?:\\s|$)`));
+      await expectRenderedFixture(page, '.easymde-immersive-workspace__preview');
+      await page.locator('[data-action="theme"]').click();
+    }
+
+    for (const theme of catalog.codeThemes) {
+      await page.locator('[data-action="theme"]').click();
+      const codeThemeTrigger = page.locator('[data-appearance-key="codeTheme"]');
+      await codeThemeTrigger.click();
+      await codeThemeTrigger.locator('..').locator(`[data-appearance-value="${theme.id}"]`).click();
+      await expect(page.locator('#easymde-code-theme-field')).toHaveValue(theme.id);
+      await expect(page.locator('.easymde-immersive-workspace__preview')).toHaveClass(new RegExp(`(?:^|\\s)easymde-code-theme-${theme.id}(?:\\s|$)`));
+      await expect(page.locator('#easymde-highlight-theme-css')).toHaveAttribute('href', theme.cssUrl);
+      await expect(
+        page.locator('[data-appearance-key="codeTheme"]')
+          .locator('..')
+          .locator(`[data-appearance-value="${theme.id}"]`)
+      ).toHaveAttribute('aria-selected', 'true');
+      await expect(page.locator('.easymde-immersive-workspace__preview pre code.hljs').first()).toBeVisible();
+      await page.locator('[data-action="theme"]').click();
+    }
+    expect(errors).toEqual([]);
+  });
+
+  test('loads code assets only for regular code while keeping Mermaid separate', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const errors = collectUnexpectedPageErrors(page);
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, '# Plain\n\nNo source code here.', 'No source code here.');
+    await expect(page.locator('#easymde-code-frame-css')).toHaveCount(0);
+    await expect(page.locator('#easymde-highlight-theme-css')).toHaveCount(0);
+
+    await page.reload();
+    await fillMarkdownAndWaitForPreview(page, '```mermaid\ngraph TD; A-->B;\n```', '');
+    await expect(page.locator('#easymde-preview .easymde-mermaid svg')).toBeVisible();
+    await expect(page.locator('#easymde-preview pre code.hljs')).toHaveCount(0);
+    await expect(page.locator('#easymde-code-frame-css')).toHaveCount(0);
+    await expect(page.locator('#easymde-highlight-theme-css')).toHaveCount(0);
+
+    await page.reload();
+    await fillMarkdownAndWaitForPreview(page, '```\nplain fenced source\n```', 'plain fenced source');
+    await expect(page.locator('#easymde-preview')).toHaveClass(/easymde-code-mac/);
+    await expect(page.locator('#easymde-preview pre code')).toBeVisible();
+    await expect(page.locator('#easymde-code-frame-css')).toHaveCount(1);
+    await expect(page.locator('#easymde-highlight-theme-css')).toHaveCount(1);
+    expect(errors).toEqual([]);
+  });
+
+  test('preserves legacy post and user values while new saves create no obsolete metadata', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const legacyKey = '_easymde_code_mac_style';
+    setLegacyUserDefaults(user.id);
+    const defaultsBefore = userDefaultState(user.id);
+
+    await login(page, user);
+    for (const legacyValue of ['0', '1']) {
+      await openEasyMdeNewPost(page);
+      const postId = await currentPostId(page);
+      runWp(['post', 'meta', 'add', String(postId), legacyKey, legacyValue]);
+      await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
+      await expect(page.locator('#easymde-editor')).toBeVisible();
+      await page.locator('#title').fill(`Legacy frame ${legacyValue} ${postId}`);
+      await fillMarkdownAndWaitForPreview(page, `# Legacy ${legacyValue}\n\n\`\`\`js\nconst legacy = ${legacyValue};\n\`\`\``, 'legacy');
+      await expect(page.locator('#easymde-preview')).toHaveClass(/easymde-code-mac/);
+      await enterImmersiveWithKeyboard(page);
+      const immersivePreview = page.locator('.easymde-immersive-workspace__preview');
+      await expect(immersivePreview).toHaveClass(/easymde-code-mac/);
+      await expect(immersivePreview).toContainText('legacy');
+      await activateWithKeyboard(page.locator('.easymde-immersive-workspace__toolbar [data-action="exit"]'));
+      await expect(page.locator('.easymde-immersive-workspace')).toHaveCount(0);
+      await publishOrUpdate(page);
+      expect(runWp(['post', 'get', String(postId), '--field=post_status'])).toBe('publish');
+      expect(postMetaRows(postId, legacyKey)).toHaveLength(1);
+      expect(postMetaValue(postId, legacyKey)).toBe(legacyValue);
+      const permalink = postPermalink(postId);
+      const frontendResponse = await page.goto(permalink);
+      expect(frontendResponse.status(), permalink).toBe(200);
+      await expect(page.locator('.easymde-rendered-content')).toHaveClass(/easymde-code-mac/);
+      await expect(page.locator('.easymde-rendered-content pre code.hljs')).toBeVisible();
+      expect(postMetaValue(postId, legacyKey)).toBe(legacyValue);
+    }
+
+    await openEasyMdeNewPost(page);
+    const newPostId = await currentPostId(page);
+    await page.locator('#title').fill(`New fixed frame ${newPostId}`);
+    await fillMarkdownAndWaitForPreview(page, '# New document\n\n```js\nconst newState = true;\n```', 'newState');
+    await publishOrUpdate(page);
+    expect(postMetaRows(newPostId, legacyKey)).toHaveLength(0);
+    const defaultsAfter = userDefaultState(user.id);
+    expect(defaultsAfter).not.toBe('');
+    expect(defaultsAfter).not.toBe(defaultsBefore);
+    const legacyDefaults = runWp([
+      'eval',
+      `echo json_encode(array_intersect_key(get_user_meta(${Number.parseInt(user.id, 10)}, 'easymde_default_theme_state', true), array('codeMacStyle' => true, 'legacyBytes' => true)));`
+    ]);
+    expect(JSON.parse(legacyDefaults)).toEqual({ codeMacStyle: false, legacyBytes: 'keep\u0000exact' });
+  });
+
   test('keeps edit, preview, and exit controls usable on a narrow viewport', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
 
@@ -2526,6 +2822,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(await historyEntries.count()).toBeGreaterThanOrEqual(2);
     await expect(historyEntries.first()).toHaveAttribute('data-revision-id', /^\d+$/);
     await expect(page.locator('[data-history-preview]')).toContainText('Second revision body.');
+    await expect(page.locator('[data-history-preview]')).toHaveClass(/easymde-code-mac/);
     await expect(page.locator('[data-history-preview] code.hljs')).toBeVisible();
     await expect(page.locator('[data-history-preview] .katex')).toBeVisible();
     await expect(page.locator('[data-history-preview] .easymde-mermaid svg')).toBeVisible();
@@ -2563,6 +2860,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('#easymde-source')).toHaveValue(firstMarkdown);
     await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('default');
     await expect(page.locator('#easymde-preview')).toContainText('First revision body.');
+    await expect(page.locator('#easymde-preview')).toHaveClass(/easymde-code-mac/);
     await expect(page.locator('#easymde-preview')).not.toContainText('Second revision body.');
     const restoredPostContent = runWp(['post', 'get', String(postId), '--field=content']);
     expect(restoredPostContent).toContain('First revision body.');
@@ -2576,7 +2874,7 @@ test.describe('EasyMDE editor workflows', () => {
   test('copies current preview HTML to WeChat clipboard without unsafe content', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = `EasyMDE Copy ${testSlug(testInfo)}`;
-    const markdown = `# ${title}\n\n<script>alert('x')</script>\n\n<img src=x onerror=alert(1)>\n\nCurrent preview body.`;
+    const markdown = `# ${title}\n\n<script>alert('x')</script>\n\n<img src=x onerror=alert(1)>\n\nCurrent preview body.\n\n\`\`\`js\nconst copiedFrame = true;\n\`\`\``;
 
     await page.addInitScript(() => {
       window.__easymdeClipboardWrites = [];
@@ -2616,6 +2914,13 @@ test.describe('EasyMDE editor workflows', () => {
     const html = await copied.jsonValue();
 
     expect(html).toContain('Current preview body.');
+    expect(html).toContain('copiedFrame');
+    expect(html).toContain('position:relative');
+    expect(html).toContain('padding-top:34px');
+    expect(html).toContain('border-radius:7px');
+    expect(html).toContain('box-shadow:rgba(0, 0, 0, 0.35)');
+    expect(html).toContain('background-color:rgb(40, 44, 52)');
+    expect(html).toContain('color:rgb(198, 120, 221)');
     expect(html).not.toContain('<script');
     expect(html).not.toContain('onerror');
     expect(html).not.toContain('easymde-preview-error');

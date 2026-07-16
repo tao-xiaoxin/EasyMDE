@@ -66,7 +66,6 @@ final class EditorSaveHandler {
 		update_post_meta( $post_id, PostDocument::META_MARKDOWN, $markdown );
 		update_post_meta( $post_id, PostDocument::META_MARKDOWN_THEME, $theme_state['markdownTheme'] );
 		update_post_meta( $post_id, PostDocument::META_CODE_THEME, $theme_state['codeTheme'] );
-		update_post_meta( $post_id, PostDocument::META_CODE_MAC_STYLE, $theme_state['codeMacStyle'] ? '1' : '0' );
 		update_post_meta( $post_id, PostDocument::META_CUSTOM_CSS_ID, $theme_state['customCssId'] );
 		update_post_meta( $post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, $theme_state['customCss'] );
 		update_post_meta( $post_id, PostDocument::META_CUSTOM_FONT, $theme_state['customFont'] );

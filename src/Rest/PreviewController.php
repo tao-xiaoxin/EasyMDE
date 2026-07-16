@@ -61,11 +61,6 @@ final class PreviewController {
 						'required'          => false,
 						'sanitize_callback' => 'sanitize_key',
 					),
-					'code_mac_style' => array(
-						'type'              => 'boolean',
-						'required'          => false,
-						'sanitize_callback' => 'rest_sanitize_boolean',
-					),
 					'custom_css_id'  => array(
 						'type'              => 'string',
 						'required'          => false,

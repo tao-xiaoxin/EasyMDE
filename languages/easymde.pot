@@ -87,7 +87,7 @@ msgstr ""
 msgid "Split mode"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:356 templates/admin/editor-shell.php:47
+#: src/Admin/AdminAssets.php:356 templates/admin/editor-shell.php:46
 msgid "Preview"
 msgstr ""
 
@@ -600,7 +600,7 @@ msgstr ""
 msgid "Close"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:484 templates/admin/editor-shell.php:40
+#: src/Admin/AdminAssets.php:484 templates/admin/editor-shell.php:39
 msgid "Markdown toolbar"
 msgstr ""
 
@@ -847,272 +847,268 @@ msgid "Code theme"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:548
-msgid "Mac code frame"
-msgstr ""
-
-#: src/Admin/AdminAssets.php:549
 msgid "Custom CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:550
+#: src/Admin/AdminAssets.php:549
 msgid "Custom CSS theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:551
+#: src/Admin/AdminAssets.php:550
 msgid "Theme name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:552
+#: src/Admin/AdminAssets.php:551
 msgid "CSS code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:553
+#: src/Admin/AdminAssets.php:552
 msgid "Style preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:554
+#: src/Admin/AdminAssets.php:553
 msgid "Enter theme name…"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:555
+#: src/Admin/AdminAssets.php:554
 msgid "/* CSS styles */"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:556
+#: src/Admin/AdminAssets.php:555
 msgid "Save theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:557 src/Admin/AdminAssets.php:558
+#: src/Admin/AdminAssets.php:556 src/Admin/AdminAssets.php:557
 msgid "Saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:559
+#: src/Admin/AdminAssets.php:558
 msgid "Checking CSS..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:560
+#: src/Admin/AdminAssets.php:559
 msgid "CSS preview failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:561
+#: src/Admin/AdminAssets.php:560
 msgid "My theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:562
+#: src/Admin/AdminAssets.php:561
 msgid "Named custom CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:563
+#: src/Admin/AdminAssets.php:562
 msgid "CSS name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:564
+#: src/Admin/AdminAssets.php:563
 msgid "Save CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:565
+#: src/Admin/AdminAssets.php:564
 msgid "Saved CSS."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:566
+#: src/Admin/AdminAssets.php:565
 msgid "CSS save failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:567
+#: src/Admin/AdminAssets.php:566
 msgid "No custom CSS saved yet."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:568
+#: src/Admin/AdminAssets.php:567
 msgid "Custom font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:569
+#: src/Admin/AdminAssets.php:568
 msgid "Windows font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:570
+#: src/Admin/AdminAssets.php:569
 msgid "Apple font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:571
+#: src/Admin/AdminAssets.php:570
 msgid "Serif font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:572
+#: src/Admin/AdminAssets.php:571
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:573
+#: src/Admin/AdminAssets.php:572
 msgid "Local draft saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:574
+#: src/Admin/AdminAssets.php:573
 msgid "A newer local draft is available."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:575
+#: src/Admin/AdminAssets.php:574
 msgid "Restore draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:576
+#: src/Admin/AdminAssets.php:575
 msgid "Discard draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:577
+#: src/Admin/AdminAssets.php:576
 msgid "Draft restored."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:578
+#: src/Admin/AdminAssets.php:577
 msgid "Draft discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:579
+#: src/Admin/AdminAssets.php:578
 msgid "Save"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:580 src/Frontend/FrontendAssets.php:70
+#: src/Admin/AdminAssets.php:579 src/Frontend/FrontendAssets.php:70
 msgid "Rendering failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:581
+#: src/Admin/AdminAssets.php:580
 msgid "The first local image could not be verified."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:582
+#: src/Admin/AdminAssets.php:581
 msgid "Suggested from the first verified local image. It is not selected yet."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:583
+#: src/Admin/AdminAssets.php:582
 msgid "Use first local image"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:584
+#: src/Admin/AdminAssets.php:583
 msgid ""
 "You have unsaved title or Markdown changes. Continue to revision history and "
 "leave these changes behind?"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:585 src/Support/ToolbarRegistry.php:290
+#: src/Admin/AdminAssets.php:584 src/Support/ToolbarRegistry.php:290
 msgid "Copy to WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:586
+#: src/Admin/AdminAssets.php:585
 msgid "Copy preview for WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:587
+#: src/Admin/AdminAssets.php:586
 msgid "Copy current preview content to WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:588
+#: src/Admin/AdminAssets.php:587
 msgid "Copied preview for WeChat."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:589
+#: src/Admin/AdminAssets.php:588
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:590
+#: src/Admin/AdminAssets.php:589
 msgid "Clipboard access is not available in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:591
+#: src/Admin/AdminAssets.php:590
 msgid "Column "
 msgstr ""
 
-#: src/Admin/AdminAssets.php:592
+#: src/Admin/AdminAssets.php:591
 msgid "Content"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:593
+#: src/Admin/AdminAssets.php:592
 msgid "AI summary generation is not available yet"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:594
+#: src/Admin/AdminAssets.php:593
 msgid "Insert table"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:595
+#: src/Admin/AdminAssets.php:594
 msgid "Rows"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:596
+#: src/Admin/AdminAssets.php:595
 msgid "Columns"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:597
+#: src/Admin/AdminAssets.php:596
 msgid "Quick table size selection"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:598
+#: src/Admin/AdminAssets.php:597
 msgid "Resize outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:599
+#: src/Admin/AdminAssets.php:598
 msgid "Copying..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:600
+#: src/Admin/AdminAssets.php:599
 msgid "Copied"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:601
+#: src/Admin/AdminAssets.php:600
 msgid "Uploading pasted image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:602
+#: src/Admin/AdminAssets.php:601
 msgid "Pasted image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:603
+#: src/Admin/AdminAssets.php:602
 msgid "Pasted image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:604
+#: src/Admin/AdminAssets.php:603
 msgid "Pasted image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:605
+#: src/Admin/AdminAssets.php:604
 msgid "Uploading dropped image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:606
+#: src/Admin/AdminAssets.php:605
 msgid "Dropped image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:607
+#: src/Admin/AdminAssets.php:606
 msgid "Dropped image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:608
+#: src/Admin/AdminAssets.php:607
 msgid "Dropped image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:609
+#: src/Admin/AdminAssets.php:608
 msgid "alt text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:610
+#: src/Admin/AdminAssets.php:609
 msgid "image"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:611
+#: src/Admin/AdminAssets.php:610
 msgid "The WordPress media library could not be opened."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:612
+#: src/Admin/AdminAssets.php:611
 msgid "link text"
 msgstr ""
 
-#: src/Admin/EditorSaveHandler.php:166
+#: src/Admin/EditorSaveHandler.php:165
 msgid ""
 "EasyMDE cannot save this post because Markdown rendering is unavailable. "
 "Install Composer dependencies and try again."
 msgstr ""
 
-#: src/Admin/EditorSaveHandler.php:167
+#: src/Admin/EditorSaveHandler.php:166
 msgid "EasyMDE renderer unavailable"
 msgstr ""
 
@@ -1190,11 +1186,11 @@ msgstr ""
 msgid "The image could not be saved to the WordPress media library."
 msgstr ""
 
-#: src/Rest/PreviewController.php:84
+#: src/Rest/PreviewController.php:79
 msgid "Markdown preview content is too large."
 msgstr ""
 
-#: src/Rest/PreviewController.php:92 src/Rest/RevisionController.php:142
+#: src/Rest/PreviewController.php:87 src/Rest/RevisionController.php:142
 msgid ""
 "Markdown rendering is unavailable because Composer dependencies are missing."
 msgstr ""
@@ -1389,149 +1385,149 @@ msgstr ""
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:370
+#: src/Theme/ThemeStateRepository.php:359
 msgid "No custom font"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:375
+#: src/Theme/ThemeStateRepository.php:364
 msgid "Optima"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:380
+#: src/Theme/ThemeStateRepository.php:369
 msgid "Inter (orange-heart)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:385
+#: src/Theme/ThemeStateRepository.php:374
 msgid "Inter (red-crimson)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:390
+#: src/Theme/ThemeStateRepository.php:379
 msgid "Optima (rose-purple)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:395
+#: src/Theme/ThemeStateRepository.php:384
 msgid "Inter (ningye-purple)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:400
+#: src/Theme/ThemeStateRepository.php:389
 msgid "Inter (cupid-busy)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:405
+#: src/Theme/ThemeStateRepository.php:394
 msgid "Optima (tech-blue)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:410
+#: src/Theme/ThemeStateRepository.php:399
 msgid "Helvetica (qingbi-liujin)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:415
+#: src/Theme/ThemeStateRepository.php:404
 msgid "Helvetica (qinghe-zhusha)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:420
+#: src/Theme/ThemeStateRepository.php:409
 msgid "Georgia"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:425
+#: src/Theme/ThemeStateRepository.php:414
 msgid "Times"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:430
+#: src/Theme/ThemeStateRepository.php:419
 msgid "Cochin"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:435
+#: src/Theme/ThemeStateRepository.php:424
 msgid "Helvetica Neue"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:442
+#: src/Theme/ThemeStateRepository.php:431
 msgid "Microsoft YaHei"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:447
+#: src/Theme/ThemeStateRepository.php:436
 msgid "Microsoft YaHei (orange-heart)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:452
+#: src/Theme/ThemeStateRepository.php:441
 msgid "Microsoft YaHei (red-crimson)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:457
+#: src/Theme/ThemeStateRepository.php:446
 msgid "Microsoft YaHei (rose-purple)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:462
+#: src/Theme/ThemeStateRepository.php:451
 msgid "Microsoft YaHei (ningye-purple)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:467
+#: src/Theme/ThemeStateRepository.php:456
 msgid "Microsoft YaHei (cupid-busy)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:472
+#: src/Theme/ThemeStateRepository.php:461
 msgid "Microsoft YaHei (tech-blue)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:477
+#: src/Theme/ThemeStateRepository.php:466
 msgid "No Windows-specific font (qingbi-liujin)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:482
+#: src/Theme/ThemeStateRepository.php:471
 msgid "No Windows-specific font (qinghe-zhusha)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:489
+#: src/Theme/ThemeStateRepository.php:478
 msgid "PingFang SC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:494
+#: src/Theme/ThemeStateRepository.php:483
 msgid "PingFangSC-regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:499
+#: src/Theme/ThemeStateRepository.php:488
 msgid "PingFang SC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:504
+#: src/Theme/ThemeStateRepository.php:493
 msgid "PingFang TC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:509
+#: src/Theme/ThemeStateRepository.php:498
 msgid "PingFang TC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:514
+#: src/Theme/ThemeStateRepository.php:503
 msgid "No Apple-specific font (qingbi-liujin)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:519
+#: src/Theme/ThemeStateRepository.php:508
 msgid "No Apple-specific font (qinghe-zhusha)"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:526
+#: src/Theme/ThemeStateRepository.php:515
 msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:531
+#: src/Theme/ThemeStateRepository.php:520
 msgid "serif"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:536
+#: src/Theme/ThemeStateRepository.php:525
 msgid "sans-serif"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:541
+#: src/Theme/ThemeStateRepository.php:530
 msgctxt "serif font fallback option"
 msgid "No"
 msgstr ""
 
-#: templates/admin/editor-shell.php:43
+#: templates/admin/editor-shell.php:42
 msgid "Markdown"
 msgstr ""
 
-#: templates/admin/editor-shell.php:60
+#: templates/admin/editor-shell.php:59
 msgid "Output actions"
 msgstr ""
 

@@ -2478,28 +2478,11 @@
                 state[key] = value;
                 renderThemeFields(container, data, state);
             };
-            var macLabel;
-            var macToggle;
             var customButton;
 
             container.textContent = '';
             appendThemeSelect(container, strings.articleTheme || 'Article theme', 'markdownTheme', 'article', data.themes, state.markdownTheme, rerender);
             appendThemeSelect(container, strings.codeTheme || 'Code theme', 'codeTheme', 'code', data.codeThemes, state.codeTheme, rerender);
-
-            macLabel = doc.createElement('label');
-            macLabel.className = 'easymde-immersive-workspace__theme-mac';
-            macToggle = doc.createElement('input');
-            macToggle.type = 'checkbox';
-            macToggle.name = 'easymde_immersive_code_mac_style';
-            macToggle.checked = state.codeMacStyle !== false;
-            macToggle.setAttribute('data-appearance-key', 'codeMacStyle');
-            macLabel.appendChild(macToggle);
-            macLabel.appendChild(doc.createTextNode(strings.macCodeFrame || 'Mac code frame'));
-            container.appendChild(macLabel);
-            listen(macToggle, 'change', function () {
-                state.codeMacStyle = !!macToggle.checked;
-                applyAppearanceChange('codeMacStyle', state.codeMacStyle);
-            });
 
             customButton = doc.createElement('button');
             customButton.type = 'button';

@@ -50,11 +50,12 @@ Each EasyMDE post can store:
 
 - article theme;
 - code theme;
-- Mac-style code frame on/off;
 - article font stack choices;
 - custom CSS selection and snapshot.
 
 The latest appearance choices are also saved as the current user's defaults for future EasyMDE posts.
+
+Rendered source-code blocks use the built-in Mac-style frame as a fixed default. It is not a per-post or per-user setting, and its local stylesheet is loaded only when the rendered content contains a regular code block. Mermaid-only content does not load the ordinary code-frame or syntax-highlighting assets.
 
 Article themes are explicitly registered local CSS files under `assets/themes/article/`. Code themes are either local Highlight.js vendor styles under `assets/vendor/highlight/styles/` or the EasyMDE-owned `assets/themes/code/wechat-inspired.css` style.
 

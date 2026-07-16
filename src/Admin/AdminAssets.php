@@ -545,7 +545,6 @@ final class AdminAssets {
 			'headingLevel'                  => __( 'Heading level', 'easymde' ),
 			'articleTheme'                  => __( 'Article theme', 'easymde' ),
 			'codeTheme'                     => __( 'Code theme', 'easymde' ),
-			'macCodeFrame'                  => __( 'Mac code frame', 'easymde' ),
 			'customCss'                     => __( 'Custom CSS', 'easymde' ),
 			'customCssTheme'                => __( 'Custom CSS theme', 'easymde' ),
 			'customCssThemeName'            => __( 'Theme name', 'easymde' ),

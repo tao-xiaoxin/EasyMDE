@@ -56,6 +56,28 @@ final class PreviewControllerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_preview_route_has_no_mac_frame_argument_and_unknown_input_cannot_change_output()
+    {
+        $controller = $this->controller();
+        add_action('rest_api_init', array($controller, 'register_routes'));
+        do_action('rest_api_init');
+        remove_action('rest_api_init', array($controller, 'register_routes'));
+        $routes = rest_get_server()->get_routes();
+        $args = $routes['/easymde/v1/preview'][0]['args'];
+
+        $this->assertArrayNotHasKey('code_mac_style', $args);
+
+        $without_legacy_input = new WP_REST_Request('POST', '/easymde/v1/preview');
+        $without_legacy_input->set_param('markdown', "```php\necho 'fixed';\n```");
+        $with_legacy_input = clone $without_legacy_input;
+        $with_legacy_input->set_param('code_mac_style', false);
+
+        $this->assertSame(
+            $controller->handle_request($without_legacy_input)->get_data(),
+            $controller->handle_request($with_legacy_input)->get_data()
+        );
+    }
+
     private function controller()
     {
         return new PreviewController(

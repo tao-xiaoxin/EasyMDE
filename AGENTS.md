@@ -43,7 +43,6 @@ _easymde_enabled
 _easymde_markdown
 _easymde_markdown_theme
 _easymde_code_theme
-_easymde_code_mac_style
 _easymde_custom_css_id
 _easymde_custom_css_snapshot
 _easymde_custom_font
@@ -67,6 +66,7 @@ Rules:
 * Relevant EasyMDE meta must participate in WordPress revisions.
 * Restoring a revision must restore Markdown, render settings, and regenerated `post_content` consistently.
 * Avoid recursive save hooks, duplicate rendering, and revision restore loops.
+* `_easymde_code_mac_style` is historical data only. Preserve existing values without reading, writing, migrating, normalizing, copying to revisions, or restoring them. The Mac code frame is fixed rendering behavior and is not document or user-default state.
 
 Never remove, rename, or silently invalidate existing `_easymde_*` meta without an explicit migration plan.
 
@@ -390,6 +390,19 @@ Rules:
 * Keep extension points through:
   * `easymde_article_themes`
   * `easymde_code_themes`
+* The fixed Mac code frame is a cross-theme compatibility contract. Every new
+  or modified article theme and code theme must preserve the observable default
+  frame: the three traffic-light dots, frame geometry, spacing, radius, shadow,
+  readable code area, and responsive overflow behavior.
+* Article themes may own article typography and content styling, and code themes
+  may own syntax-token colors. They must not add or change theme-specific rules
+  that hide, replace, reposition, or restyle the Mac frame. Existing
+  theme-specific frame overrides are legacy cleanup scope for Issue #58 and are
+  not a precedent for new theme work.
+* An intentional change to the shared Mac frame requires an explicit product
+  task, must be implemented in the shared frame owner rather than an individual
+  theme, and must include real-browser regression coverage across every
+  registered article and code theme.
 * Frontend pages should load only resources needed by the current post.
 * Do not load Mermaid, KaTeX, Highlight.js, or every theme stylesheet when the post does not require them.
 * Keep all runtime asset registrations local, as required by the product-level no-remote-CDN rule.

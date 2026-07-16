@@ -56,7 +56,6 @@ _easymde_enabled
 _easymde_markdown
 _easymde_markdown_theme
 _easymde_code_theme
-_easymde_code_mac_style
 _easymde_custom_css_id
 _easymde_custom_css_snapshot
 _easymde_custom_font
@@ -73,6 +72,8 @@ valid EasyMDE saves and revision restores. The editor may reuse stored
 `post_content` for a fast initial preview only when this marker matches the
 current Markdown, article theme, and stored compatibility HTML; otherwise it
 renders from `_easymde_markdown`.
+
+The Mac-style source-code frame is fixed rendering behavior, not document state. Rendered EasyMDE roots always receive `easymde-code-mac`; `code-frame.css` is loaded only when feature detection finds a regular code block. Historical `_easymde_code_mac_style` post meta and `codeMacStyle` user-default entries are left untouched, but no active reader, writer, request, preview, or revision path consults them.
 
 ## Rendering
 
@@ -112,7 +113,7 @@ Frontend EasyMDE posts enqueue:
 
 - the EasyMDE base content stylesheet;
 - the selected article theme stylesheet;
-- code frame CSS only when code blocks or Mac framing need it;
+- code frame CSS only when regular code blocks need it;
 - the selected code theme stylesheet and Highlight.js only when syntax highlighting is needed;
 - KaTeX, Mermaid, and TOC assets only when the current Markdown needs them;
 - scoped custom CSS only for the current EasyMDE post when available.

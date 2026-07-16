@@ -853,9 +853,13 @@ PreviewPort.render()
    ↓
 easymde/v1/preview
    ↓
-PHP MarkdownRenderer
+PreviewController 调用 PHP MarkdownRenderer
    ↓
-已清洗 HTML + Feature 信息
+已清洗 HTML
+   ↓
+PreviewController 调用 MarkdownFeatureDetector
+   ↓
+PreviewController 返回 { html, features }
    ↓
 React Preview Surface
    ↓
@@ -1028,6 +1032,37 @@ WordPress 6.7 已通过 `@wordpress/element` 提供 `createRoot`，因此 React 
 React Runtime 使用 WordPress 提供的 @wordpress/element
 ```
 
+Vite 必须把编辑器入口构建为由 WordPress 通过普通 `<script>` 加载的 IIFE，
+并通过 `build.rollupOptions` 明确声明外部依赖和运行时全局映射：
+
+```ts
+build: {
+  rollupOptions: {
+    external: [ 'react', 'react-dom', '@wordpress/element' ],
+    output: {
+      format: 'iife',
+      globals: {
+        react: 'React',
+        'react-dom': 'ReactDOM',
+        '@wordpress/element': 'wp.element',
+      },
+    },
+  },
+}
+```
+
+这些映射必须与 WordPress 6.7 的依赖提取契约一致：`react` 对应
+`React` / `react`，`react-dom` 对应 `ReactDOM` / `react-dom`，
+`@wordpress/element` 对应 `wp.element` / `wp-element`。应用运行时代码优先从
+`@wordpress/element` 导入，包括 `createRoot`；不得直接从
+`react-dom/client` 导入，因为 WordPress 6.7 的经典脚本全局映射没有为该模块
+定义独立契约。
+
+JSX 转换也必须显式选择运行时。如果使用自动 JSX Runtime，必须另外将
+`react/jsx-runtime` 外部化到 `ReactJSXRuntime`，并声明
+`react-jsx-runtime` 脚本依赖；否则应配置为不产生该导入。禁止让 JSX 转换在
+构建时把 React 实现悄悄打入编辑器 Bundle。
+
 条件：
 
 * 后台编辑器构建产物声明 `wp-element` 为 WordPress 脚本依赖。
@@ -1038,7 +1073,19 @@ React Runtime 使用 WordPress 提供的 @wordpress/element
 * 不将 React Bundle 加载到无关后台页面。
 * 只在 EasyMDE 编辑页面加载。
 * 不使用当前项目不需要的 React major 专属 API。
+* 构建验证必须检查 Rollup 的 Chunk Module Graph，而不是只搜索压缩后的字符串；
+  如果任一编辑器 Chunk 包含来自 `react`、`react-dom`、
+  `@wordpress/element` 或所选 JSX Runtime 的实现模块，发布构建必须失败。
+* 构建验证必须同时确认外部引用与 WordPress 脚本依赖一致，避免 Bundle 已外部化
+  但对应 Runtime 尚未入队。
 * WordPress 6.7 和最新支持版本都必须覆盖挂载、卸载、重复进入退出和错误边界测试。
+
+参考：
+
+* [WordPress 6.7 Dependency Extraction Webpack Plugin](https://github.com/WordPress/gutenberg/tree/wp/6.7/packages/dependency-extraction-webpack-plugin)
+* [WordPress Element: `createRoot`](https://developer.wordpress.org/block-editor/reference-guides/packages/packages-element/#createroot)
+* [Vite 6: `build.rollupOptions`](https://v6.vite.dev/config/build-options.html#build-rollupoptions)
+* [Rollup: `external` 与 `output.globals`](https://rollupjs.org/configuration-options/#external)
 
 ---
 

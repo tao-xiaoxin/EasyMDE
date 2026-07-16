@@ -27,8 +27,14 @@ Do not assume the repository name requires use of the EasyMDE JavaScript library
 * Do not bulk-migrate every post automatically.
 * Use lazy migration: preserve legacy data on read and write new fields only during the next legitimate save.
 * Do not require remote CDN assets for the editor, preview, Mermaid, KaTeX, or syntax highlighting.
-* The existing npm workflow is limited to local vendor asset preparation, Node and Playwright tests, i18n, third-party notices, and release or source packaging. Existing scripts may be extended for these purposes when required.
-* Do not introduce React, Gutenberg block editor rewrites, Vite, Webpack, or another application framework, bundler, or build architecture unless the task explicitly requires it.
+* The npm workflow supports local vendor asset preparation, React and TypeScript application development, Vite builds, Node and Playwright tests, i18n, third-party notices, and release or source packaging. New scripts and build outputs must preserve the repository's local-asset, testing, privacy, and release-package boundaries.
+* React and TypeScript, built with Vite, are the default frontend architecture for the EasyMDE WordPress admin editor and related browser-side interfaces. New editor UI features and existing browser-side modules may be implemented or migrated using this stack without separate architecture approval. Feature work must still follow the repository's focused Issue, testing, review, and pull request workflow; it does not require an additional architecture-only Issue.
+* React ecosystem dependencies needed by a focused task do not require separate architecture approval. Each dependency must have a clear non-duplicative purpose, use no prohibited remote runtime resources, preserve WordPress authority, avoid unjustified installable-package weight, use an acceptable license, and include only required runtime files in the installable plugin package.
+* Keep React adoption incremental and the editor usable throughout migration. React must use explicit integration layers or adapters instead of scattering direct WordPress DOM, jQuery, or global API access through components. Opening, closing, or cancelling React interfaces must not cause hidden saves, and asynchronous work must handle cancellation, stale results, and component teardown.
+* React must not introduce a second formal Markdown renderer or bypass native WordPress save and publishing flows. PHP and WordPress remain authoritative for permissions, nonces, post meta, revisions, media, taxonomies, saving, publishing, post status, and supported-post-type boundaries. PHP `MarkdownRenderer` remains the formal Markdown renderer, `_easymde_markdown` remains the authoritative Markdown source, and `post_content` remains safely rendered WordPress compatibility output.
+* An EasyMDE project Skill guides implementation within these boundaries; it does not block normal React development, expand a linked feature's scope, or authorize unrelated refactors.
+* Installable plugin ZIP files may contain required compiled JavaScript, CSS, static runtime assets, licenses, and third-party notices. They must exclude TypeScript and React source, frontend tests, source maps unless explicitly required by release policy, `.agents/`, `node_modules/`, development dependencies, Vite caches, temporary build files, local logs, browser-test artifacts, and unrelated development files.
+* Do not introduce Gutenberg editor rewrites, Next.js, Webpack, another frontend framework, a replacement publishing backend, or unrelated build architecture without explicit maintainer approval.
 
 ---
 
@@ -93,7 +99,7 @@ Rules:
 * Put admin HTML in `templates/admin/`, not in service classes.
 * Templates should render prepared data only; business rules belong in PHP classes.
 * Do not create empty abstraction layers or one-method classes without a real boundary.
-* New architecture decisions belong in `docs/ARCHITECTURE.md`, not in this file.
+* Detailed architecture decisions belong in `docs/ARCHITECTURE.md`; this file defines approved architecture direction and non-negotiable repository boundaries.
 
 ---
 
@@ -704,7 +710,7 @@ Do not combine unrelated problems into one finding.
 
 ## Testing and Validation
 
-Before finishing a task, run the relevant checks when dependencies and environment are available. The existing npm scripts support local vendor asset preparation, Node and Playwright tests, i18n, third-party notices, and release or source packaging; using them does not authorize adding a new frontend framework, bundler, or build architecture.
+Before finishing a task, run the relevant checks when dependencies and environment are available. The npm workflow supports local vendor asset preparation, React and TypeScript application development, Vite builds, Node and Playwright tests, i18n, third-party notices, and release or source packaging. Using these scripts does not expand a linked feature's scope or authorize another frontend framework, another bundler, or an unrelated build architecture.
 
 ```bash
 composer validate

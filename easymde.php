@@ -5,7 +5,7 @@
  * Description: A standalone WordPress Markdown editor with split-pane live preview.
  * Version: 0.1.8
  * Author: Tao Xiaoxin
- * Requires at least: 6.0
+ * Requires at least: 6.7
  * Requires PHP: 7.4
  * License: Apache-2.0
  * License URI: https://www.apache.org/licenses/LICENSE-2.0

@@ -84,7 +84,7 @@ docker compose up -d
 PHPUnit uses the WordPress test suite and a database. Install a test suite for a specific WordPress version with:
 
 ```bash
-scripts/install-wp-tests.sh easymde_phpunit <db_user> <db_password> <db_host> 6.0
+scripts/install-wp-tests.sh easymde_phpunit <db_user> <db_password> <db_host> 6.7
 ```
 
 Then run:

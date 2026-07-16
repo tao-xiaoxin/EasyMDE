@@ -9,7 +9,7 @@
   <a href="https://github.com/tao-xiaoxin/EasyMDE/releases">
     <img src="https://img.shields.io/badge/version-0.1.8-2563eb?style=flat-square&logo=github&logoColor=white" alt="Version 0.1.8" />
   </a>
-  <img src="https://img.shields.io/badge/WordPress-6.0%2B-21759b?style=flat-square&logo=wordpress&logoColor=white" alt="Requires WordPress 6.0+" />
+  <img src="https://img.shields.io/badge/WordPress-6.7%2B-21759b?style=flat-square&logo=wordpress&logoColor=white" alt="Requires WordPress 6.7+" />
   <img src="https://img.shields.io/badge/PHP-7.4%2B-777BB4?style=flat-square&logo=php&logoColor=white" alt="Requires PHP 7.4+" />
   <a href="https://github.com/tao-xiaoxin/EasyMDE/actions/workflows/ci.yml">
     <img src="https://github.com/tao-xiaoxin/EasyMDE/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" />
@@ -33,7 +33,7 @@ EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_con
 
 ## Requirements
 
-- WordPress 6.0 or newer.
+- WordPress 6.7 or newer.
 - PHP 7.4 or newer.
 - Composer runtime dependencies included in production release ZIPs.
 

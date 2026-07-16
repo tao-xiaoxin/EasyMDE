@@ -108,7 +108,7 @@ jobs:
       matrix:
         include:
           - php-version: '7.4'
-            wordpress-version: '6.0'
+            wordpress-version: '6.7'
           - php-version: '8.3'
             wordpress-version: 'latest'
 

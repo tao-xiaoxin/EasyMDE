@@ -48,8 +48,8 @@ Use the smallest applicable set for the current migration unit. Read a named Ski
 - wp-plugin-development: preserve WordPress hooks, capabilities, nonces, Settings API, native forms, media, packaging, and PHP authority.
 - performance-optimization: measure before and after; optimize only a demonstrated bottleneck and guard the result.
 - code-review-and-quality: perform a skeptical correctness, simplicity, architecture, security, performance, test-validity, and privacy review.
-- vercel-react-best-practices: apply React 18 client-rendering, re-render, async, listener, and bundle guidance that fits EasyMDE.
-- vercel-composition-patterns: use explicit variants, narrow providers, state ownership, and composition where they reduce real complexity.
+- react-best-practices: apply React 18 client-rendering, re-render, async, listener, and bundle guidance that fits EasyMDE.
+- composition-patterns: use explicit variants, narrow providers, state ownership, and composition where they reduce real complexity.
 - web-design-guidelines: review semantics, keyboard, focus, forms, feedback, motion, internationalization, and interaction quality.
 
 Project-specific limits override generic advice:

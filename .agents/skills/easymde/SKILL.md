@@ -99,6 +99,7 @@ PHP / WordPress state
 ## Non-Negotiable Authority Rules
 
 - `_easymde_markdown` is the authoritative Markdown source.
+- WordPress `post_title` is the authoritative persisted title; a React session title is temporary editor state and the native title field is its submission bridge.
 - `post_content` is safely rendered WordPress compatibility output.
 - `EasyMDE\Content\MarkdownRenderer`, backed by `league/commonmark`, is the only formal production Markdown renderer.
 - PHP and WordPress own capability checks, nonces, post meta, revisions, media, taxonomies, save, publish, status, locks, autosave, scheduling, settings persistence, public output, and supported-post admission.
@@ -196,7 +197,8 @@ frontend/
     ├── integrations/
     │   ├── wordpress/
     │   ├── preview-runtime/
-    │   └── browser/
+    │   ├── browser/
+    │   └── ai/                 # only when an approved AI integration exists
     ├── shared/
     │   ├── ui/
     │   ├── hooks/
@@ -291,6 +293,7 @@ Component API rules:
 
 Error Boundary contract:
 
+- React 18 has no function-component equivalent of `getDerivedStateFromError` and `componentDidCatch`; a minimal project Error Boundary may be a class component. Do not invent an Error Boundary Hook or add a wrapper dependency without a focused need and dependency review;
 - an Error Boundary catches descendant render and lifecycle failures; it does not catch Event Handler failures, ordinary Promise rejections, Timers, Animation Frames, Port results, or errors thrown inside the Boundary itself;
 - Event Handlers and asynchronous Commands must map expected failures into typed Results and visible Feature State, with unexpected failures reported through `DiagnosticsPort`;
 - a Fallback must not claim that Save, Publish, Upload, Restore, Clipboard, or Settings work succeeded;
@@ -364,7 +367,8 @@ Tests                    source-name.test.ts / SourceName.test.tsx
 
 Rules:
 
-- use ordinary function components with explicit Props; do not default to `React.FC`;
+- call Hooks only at the top level of function components or custom Hooks; never call them conditionally, in loops, Event Handlers, class methods, or ordinary functions; custom Hook names start with `use`;
+- use ordinary function components with explicit Props; do not default to `React.FC`; the minimal React 18 Error Boundary is the documented class-component exception;
 - declare `children` only when accepted, normally as `React.ReactNode`;
 - use concrete React event types or contextual inference, never `any`;
 - initialize DOM refs with `null`;
@@ -399,12 +403,14 @@ Preferences             approved scoped storage or Options API
 
 Rules:
 
+- treat Props, React State, Store snapshots, and Port results as immutable values; update through the owning action or setter with a new value rather than mutating an existing object or array;
 - keep ephemeral input, hover, unconfirmed dialog fields, local validation display, and drag state near the component;
 - put state shared across Features in the owning Root Store;
 - keep REST-backed collections in one explicit server-state owner;
 - derive Dirty and other facts rather than storing duplicate flags;
 - do not mirror React state through Effects;
 - update the saved baseline only after real WordPress save succeeds;
+- include every edited authoritative field, including title and Markdown, in Dirty derivation and saved-baseline reconciliation;
 - scope Post state, operation IDs, caches, and Storage Keys by Site, User, and Post identity;
 - when a new Post receives a real ID, explicitly re-key or clear Post-scoped state;
 - use stable Domain identity as React Keys;
@@ -457,6 +463,19 @@ export interface EditorRuntime {
   diagnostics: DiagnosticsPort;
 }
 ```
+
+The Settings Root uses its own minimal Runtime rather than receiving `EditorRuntime`:
+
+```ts
+export interface SettingsRuntime {
+  settings: SettingsPort;
+  diagnostics: DiagnosticsPort;
+}
+```
+
+Add a Feature-specific capability such as `CustomCssPort` or `AiPort` to the owning Runtime only when that Feature and a real Adapter are implemented. Do not predeclare optional placeholder Ports. `AppearancePort` implementations belong to the focused WordPress appearance integration rather than a generic REST service.
+
+Keep concrete ownership discoverable. `DocumentPort`, `SavePort`, `SessionPort`, `PreviewPort`, `AppearancePort`, `CustomCssPort`, `PublishingPort`, `RevisionPort`, `MediaPort`, and `SettingsPort` implementations belong to their focused `integrations/wordpress/<capability>/` directories when the capability exists. `PreviewPort` owns the server request and response contract; `integrations/preview-runtime/` owns only post-response Mermaid, KaTeX, Highlight.js, and TOC enhancement. Browser `StoragePort`, `ClipboardPort`, and browser diagnostics implementations belong to their corresponding `integrations/browser/` directories. Shared REST transport may live under `integrations/wordpress/rest/`, but it must not become the owner of Feature semantics or a generic service facade.
 
 Representative result contract:
 
@@ -542,6 +561,18 @@ REST rules:
 - do not retry Mutations automatically;
 - only bounded idempotent Reads may retry with cancellation and stale-result protection.
 
+### Public Compatibility and Extension Contracts
+
+Preserve the live public contracts unless a focused Issue supplies a compatibility and deprecation plan. This includes:
+
+- `EasyMDE_Plugin::register_toolbar_button()`;
+- `EasyMDE_Plugin::register_shortcode_helper()`;
+- the `easymde_article_themes` and `easymde_code_themes` Filters;
+- the fixed `easymde/v1` REST namespace;
+- documented metadata, Theme and Command IDs, Script Handles, ordering, collision, and failure behavior relied on by extensions.
+
+The legacy global `EasyMDE_Plugin` facade is an intentional compatibility surface, not a class-name cleanup target. A new React UI may consume versioned, runtime-validated descriptors produced by these owners, but it must not narrow the existing PHP extension surface to built-in entries, expose private React or DOM implementation, or rename a public identifier for frontend naming consistency. Additive evolution is preferred; removal requires consumer inventory, compatibility coverage, deprecation, and explicit maintainer approval.
+
 ### Internationalization
 
 The current project contract keeps PHP gettext as the source of browser-facing strings and passes translated values through versioned Bootstrap data. Preserve that model until a focused i18n/build Issue explicitly changes it.
@@ -557,6 +588,8 @@ When React source begins using `@wordpress/i18n`, the same focused change must p
 - test non-default locale loading, context, interpolation, plurals, long translations, and RTL.
 
 Each user-visible string has one translation owner. Do not ship the same string as both a PHP-translated Bootstrap value and an independently translated JS literal. Do not concatenate translated fragments; use placeholders, context, and plural APIs. Stable Error Codes, IDs, Routes, Storage Keys, and extension identifiers are never translated. Dynamic extension labels remain validated and translated by their documented owner.
+
+Existing untranslated fallback literals in legacy JavaScript are compatibility behavior, not an additional translation authority and not a pattern for React. A required missing Bootstrap string must fail contract validation or use a deliberately non-text degraded state; do not silently display a new English fallback.
 
 ## Preview and Native WordPress Operations
 
@@ -596,19 +629,21 @@ Native operations:
 Feature boundaries:
 
 - **Publishing:** React owns a temporary Publish Draft; WordPress owns real fields and final operation. Cancel is zero-write.
-- **Revisions:** WordPress owns identity and persistence. Restore Markdown and appearance together and let PHP regenerate compatibility HTML.
+- **Revisions:** WordPress owns identity and persistence. Never discard unsaved session title or Markdown silently; use an explicit confirmation/recovery contract, then reconcile restored title, Markdown, appearance, saved baseline, and PHP-regenerated compatibility HTML.
 - **Media:** use `MediaPort`; insert Markdown only after successful upload while the originating transaction remains current; restore Selection and Focus.
-- **Themes and Custom CSS:** choices come from PHP Registries; `CustomCssPolicy` remains the security owner.
+- **Themes and Custom CSS:** choices come from PHP Registries. Full Custom CSS editing requires `unfiltered_html`; the library remains scoped to the current user's WordPress user meta and an endpoint must not read or mutate another user's library. PHP `CustomCssPolicy` and its maintained CSS parser remain authoritative for validation, blocked features, normalization, selector scoping, payload limits, and safe Preview / public output. React may edit and display typed results, but it must not parse CSS as a security boundary, construct trusted scoped CSS, or render rejected or unparseable legacy CSS. Preserve a legacy stored value when required for compatibility without emitting unsafe output.
 - **Settings:** use a separate Root; `manage_options`, Options API, `register_setting()`, and PHP Sanitization remain authoritative.
-- **Local drafts:** Recovery data is not a WordPress save; scope Keys by Site, User, Post, and Schema Version; never store Nonces or credentials.
+- **Local drafts:** Recovery data is not a WordPress save; scope Keys by Site, User, Post, and Schema Version; never store Nonces or credentials. Define payload limits, retention/expiry, authoritative-save cleanup, re-keying, explicit discard, and cross-tab conflict behavior without silently losing newer unsaved content.
 - **WeChat export:** copy only the current stable sanitized Preview; Clipboard rejection is a failure; fallback restores Selection, Focus, Scroll, and temporary DOM.
-- **AI assistant:** use `AiPort` and explicit user action; keep credentials server-side; generated changes are visible, rejectable, and undoable; never automatically save, publish, upload, change settings, or execute returned code.
+- **AI assistant:** use `AiPort` and explicit user action; keep credentials server-side; disclose the selected provider and content boundary, send only the context required for the requested action, and make retention/logging policy explicit. Treat model output as untrusted; generated changes remain visible, rejectable, undoable, cancellation/stale-safe, and never automatically save, publish, upload, change settings, or execute returned code.
 
 ## Accessibility, UI, and CSS Quality
 
 Accessibility is part of the Component contract:
 
 - use native semantic controls;
+- native buttons and links already receive standard keyboard activation from the user agent; do not add synthetic key handlers that duplicate their click behavior;
+- custom widgets must implement and test the complete applicable WAI-ARIA keyboard pattern rather than adding only Enter or Space handling;
 - give every control an accessible name;
 - label icon-only buttons explicitly;
 - hide decorative icons from assistive technology;

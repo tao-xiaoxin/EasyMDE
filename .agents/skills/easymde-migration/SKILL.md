@@ -9,7 +9,7 @@ This is a temporary execution Skill for the migration tracked by Issue #74. Use 
 
 Delete this Skill after the full migration and its removal gate are complete. Do not preserve migration ceremony as permanent project architecture.
 
-Do not close Issue #78 or delete this Skill without explicit human maintainer approval.
+Issue #74 owns the editor migration program; Issue #78 owns this temporary migration Skill and its eventual cleanup. Do not close Issue #78 or delete this Skill without explicit human maintainer approval.
 
 Keep the three guidance files distinct:
 
@@ -56,8 +56,11 @@ Project-specific limits override generic advice:
 
 - Do not apply Next.js, RSC, Server Actions, hydration, React 19-only APIs, next/dynamic, React.cache, or framework-server rules.
 - Do not introduce SWR, React Query, Zustand, Redux, a router, a form library, a schema library, or a component system merely because a companion Skill uses it.
+- Do not inherit a companion WordPress Skill's newer version floor. EasyMDE's supported baseline remains WordPress 6.7 and PHP 7.4; verify every proposed API against that project matrix and WordPress 6.7 source.
 - Do not let generic mobile-first breakpoints, URL-synchronized UI state, automatic retries, optimistic writes, backdrop closing, theme detection, or Core Web Vitals replace the approved editor contract.
 - Do not add a router, remote CDN, preconnect, remote font, or fixed virtualization threshold from generic Web guidance; WordPress owns navigation, runtime assets stay local, and performance decisions require project evidence.
+- Do not add duplicate keyboard activation handlers to native buttons or links merely because a generic checklist asks for handlers on every interactive element; custom widgets must implement the complete applicable WAI-ARIA keyboard pattern.
+- Do not treat a generic security checklist as authority to add or change site-wide CSP, HSTS, frame, or other response headers during a browser ownership transfer; such host-wide policy requires its own focused Issue and WordPress compatibility review.
 - Preserve repository-owned translated copy and WordPress i18n behavior; do not apply generic capitalization, punctuation, or wording rules mechanically.
 - Do not optimize with memo, useMemo, useCallback, virtualization, workers, content-visibility, or code splitting without a measured need and verified accessibility and packaging behavior.
 - Treat storage access, parsing, quota, and schema failures as explicit documented states. Never swallow them into fake success or use browser storage as fallback persistence for article content.
@@ -264,6 +267,7 @@ Rules:
 - Do not hide or detach the legacy owner before React readiness.
 - Readiness means required contracts, permissions, DOM bridges, adapters, and assets are usable; mount success alone is insufficient.
 - During initialization, React may prepare read-only state but must not register competing mutations.
+- Define one explicit handoff commit point. Preflight every operation that can fail before it; the detach/activate critical section must not perform new asynchronous work or leave a state in which neither owner is usable.
 - At handoff, remove old listeners, schedulers, timers, observers, pointer captures, and write paths owned by the unit.
 - Switch external-store subscribers at the same handoff; leave no duplicate subscription, polling loop, or stale snapshot source.
 - Do not run two preview schedulers, draft timers, shortcut managers, save observers, publish handlers, media handlers, clipboard exporters, or storage writers for the same behavior.
@@ -271,6 +275,7 @@ Rules:
 - After handoff, do not silently reactivate legacy code inside the same session after partial state changes.
 - Error Boundaries do not catch event, Promise, timer, Port, or mutation failures; those paths require typed results, explicit state, diagnostics, and the written rollback contract.
 - Startup failure before handoff keeps the legacy owner usable and surfaces an explicit diagnostic; it is not silent fallback.
+- If activation fails after legacy detachment but before any React mutation, restore the legacy owner synchronously and report the failure. After a React mutation can have occurred, do not live-switch writers; preserve recoverable session data and use the documented reload/remount rollback.
 - Rollback selects one implementation before activation, normally through a clean reload or remount. It does not live-switch writers mid-operation.
 - A feature flag or compatibility switch requires a linked Issue, explicit owner semantics, release testing for both paths, and a deletion date or removal condition.
 

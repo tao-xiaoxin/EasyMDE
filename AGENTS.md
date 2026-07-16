@@ -390,6 +390,19 @@ Rules:
 * Keep extension points through:
   * `easymde_article_themes`
   * `easymde_code_themes`
+* The fixed Mac code frame is a cross-theme compatibility contract. Every new
+  or modified article theme and code theme must preserve the observable default
+  frame: the three traffic-light dots, frame geometry, spacing, radius, shadow,
+  readable code area, and responsive overflow behavior.
+* Article themes may own article typography and content styling, and code themes
+  may own syntax-token colors. They must not add or change theme-specific rules
+  that hide, replace, reposition, or restyle the Mac frame. Existing
+  theme-specific frame overrides are legacy cleanup scope for Issue #58 and are
+  not a precedent for new theme work.
+* An intentional change to the shared Mac frame requires an explicit product
+  task, must be implemented in the shared frame owner rather than an individual
+  theme, and must include real-browser regression coverage across every
+  registered article and code theme.
 * Frontend pages should load only resources needed by the current post.
 * Do not load Mermaid, KaTeX, Highlight.js, or every theme stylesheet when the post does not require them.
 * Keep all runtime asset registrations local, as required by the product-level no-remote-CDN rule.

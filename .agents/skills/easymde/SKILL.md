@@ -75,12 +75,12 @@ For each changed behavior, record:
 - `_easymde_markdown` is the canonical Markdown source.
 - `post_content` is sanitized rendered HTML for WordPress compatibility.
 - `EasyMDE\Content\MarkdownRenderer`, backed by `league/commonmark`, is the only production Markdown renderer.
-- PHP and WordPress own permissions, nonces, post meta, revisions, media, taxonomies, save, publish, post status, post locking, autosave, scheduling, settings persistence, and supported-post admission.
-- React owns presentation, interaction state, feature composition, dialogs, panels, layout, and explicitly defined browser-session behavior.
+- PHP and WordPress own permissions, nonces, post meta, revisions, media, taxonomies, save, publish, post status, post locking, autosave, scheduling, settings persistence, public article output, and supported-post admission.
+- React owns presentation, interaction state, feature composition, dialogs, panels, layout, and explicitly defined browser-session behavior in approved admin surfaces.
 - Opening, closing, previewing, focusing, or cancelling UI must not create hidden writes.
 - Cancellation is a zero-write result unless the product contract explicitly says otherwise.
 - Missing required capabilities, controls, assets, bootstrap data, or runtime dependencies must fail clearly.
-- React must not create another data authority, renderer, permission system, save path, publish path, media store, revision model, settings store, or timezone model.
+- React must not create another data authority, renderer, permission system, save path, publish path, media store, revision model, settings store, public-content authority, or timezone model.
 - Client capability flags control presentation only; PHP and WordPress verify every protected action.
 - A synchronized hidden field is a submission bridge, not proof that WordPress persisted the value.
 - A successful browser promise is not proof of save, publish, upload, revision restore, settings update, or clipboard success unless it represents the real owning operation.
@@ -698,6 +698,22 @@ Rules:
 - Do not use a browser sanitizer as a substitute for `MarkdownRenderer` and `wp_kses_post()`.
 - Error and empty states render normal React text and elements, not HTML strings.
 
+## Public Frontend Boundary
+
+React is the approved admin-interface architecture. It is not the default renderer for public posts.
+
+Rules:
+
+- Public EasyMDE content remains PHP-rendered, sanitized WordPress output based on `post_content`, selected themes, scoped custom CSS, and conditional local enhancement assets.
+- Do not mount or hydrate the admin React application inside public `.easymde-rendered-content` roots.
+- Do not enqueue admin-editor, settings, store, bootstrap, media, publishing, revision, or AI bundles on visitor-facing pages.
+- Feeds, search, excerpts, REST consumers, email integrations, themes, plugins, no-JavaScript visitors, and operation with EasyMDE inactive must continue to receive usable compatibility HTML.
+- Public Mermaid, KaTeX, Highlight.js, TOC, and related enhancements remain conditional local enhancements; they do not become a client-side Markdown-rendering authority.
+- Frontend enhancements must be idempotent, scoped to EasyMDE-rendered roots, safe under repeated initialization, and independently cleanable where they create observers or generated nodes.
+- Do not expose admin bootstrap data, nonces, capabilities, post locks, user settings, private endpoints, drafts, or AI configuration to visitors.
+- Admin React changes must not make public article readability, SEO-visible content, feeds, or compatibility HTML depend on loading React.
+- A visitor-facing React application requires a separate explicit product decision and must not be inferred from the admin architecture.
+
 ## Markdown Editing
 
 Markdown editing behavior belongs in pure domain modules:
@@ -1140,10 +1156,10 @@ Choose tests by responsibility:
 
 - `domain`: direct unit tests for pure functions and edge cases.
 - `contracts`: schema version, PHP/TypeScript fixture parity, error mapping, safe-value construction, and compile-time validation.
-- `integrations`: WordPress DOM, native form, nonce updates, locks, REST, root mounting, settings, storage, clipboard, diagnostics, and failure paths.
+- `integrations`: WordPress DOM, native form, nonce updates, locks, REST, root mounting, settings, storage, clipboard, diagnostics, public frontend isolation, and failure paths.
 - `features`: component and hook tests with mock runtimes.
 - `app`: provider, per-root store, error-boundary, activation, query ownership, and composition tests.
-- `tests/e2e`: real WordPress author flows using the installable release ZIP.
+- `tests/e2e`: real WordPress author and public-content flows using the installable release ZIP.
 - release tests: compiled entries present and development-only files absent.
 
 Add automated architecture checks when the frontend toolchain exists:
@@ -1175,12 +1191,13 @@ Cover relevant negative and repeated cases:
 - registered extension commands, unsupported actions, and shortcut conflicts;
 - settings validation and preservation of last valid values;
 - WeChat export from current preview and rejection of pending/error previews;
+- public articles rendering without admin React bundles, admin bootstrap data, or client-side Markdown authority;
 - repeated mount/unmount, Strict Mode, focus return, Escape, selection direction, IME, undo, scroll, and cleanup;
 - RTL, long translations, site-timezone scheduling, and WordPress date formats;
 - large content, dynamic chunks, subdirectory installation, and bundle loading;
 - release completeness and privacy-safe artifacts.
 
-Do not claim browser, WordPress, PHP, accessibility, visual, performance, AI, settings, clipboard, or release validation that was not actually performed.
+Do not claim browser, WordPress, PHP, accessibility, visual, performance, AI, settings, clipboard, public frontend, or release validation that was not actually performed.
 
 ## Release Packaging
 
@@ -1215,19 +1232,21 @@ Before changing release behavior:
 - confirm runtime assets, licenses, and third-party notices are complete;
 - inspect the produced ZIP instead of inferring contents;
 - search built JavaScript and CSS for localhost, Vite client code, source paths, remote CDNs, private endpoints, and duplicated React runtime code;
-- install the ZIP into a clean supported WordPress environment and exercise changed editor or settings paths;
-- verify dynamic chunks load from the installed plugin URL.
+- install the ZIP into a clean supported WordPress environment and exercise changed editor, settings, and public-content paths;
+- verify dynamic chunks load from the installed plugin URL;
+- confirm public pages do not enqueue admin-only React entries.
 
 ## Prohibited Patterns
 
 Do not introduce:
 
-- Next.js, Webpack, another frontend framework, or a replacement publishing backend without explicit approval.
+- A Gutenberg-based editor replacement, Next.js, Webpack, another frontend framework, or a replacement publishing backend without explicit approval.
 - A bundled React runtime by accident, mixed WordPress/private React runtimes, or unreviewed JSX runtime imports.
 - Direct WordPress DOM, jQuery, `wp.apiFetch`, `wp.media`, storage, clipboard, or global bootstrap access from React components.
 - A browser HTML-to-Markdown importer that replaces the current PHP compatibility path.
 - A second production Markdown renderer or browser CSS parser used as a security boundary.
 - Raw string access to `dangerouslySetInnerHTML` outside the safe preview boundary.
+- Mounting or hydrating admin React applications on public rendered posts without a separate explicit product decision.
 - A universal adapter, god component, giant unstructured component directory, or one mutable store shared by unrelated roots.
 - Imports of another feature's private internals, upward imports, or circular dependencies.
 - Duplicated authority across React state, query state, DOM fields, browser storage, WordPress options, and post meta.
@@ -1249,7 +1268,7 @@ Do not introduce:
 Before declaring a React feature complete:
 
 1. Identify the single owner for every changed behavior and state value.
-2. Confirm PHP, WordPress, React, query, native-field, option, and browser-storage authority.
+2. Confirm PHP, WordPress, React, query, native-field, option, public-content, and browser-storage authority.
 3. Confirm persisted meta and settings contracts touched by the feature remain compatible.
 4. Confirm ordinary supported-post opening remains zero-write where relevant.
 5. Confirm components use typed contracts and focused ports rather than environment globals.
@@ -1257,9 +1276,9 @@ Before declaring a React feature complete:
 7. Confirm atomic activation, startup failure, repeated activation, and previous-owner behavior.
 8. Confirm native field synchronization, real save/publish observation, nonce/security refresh, lock loss, and dirty baseline behavior.
 9. Confirm permission, validation, cancellation, stale-result, missing-control, schema, and dependency-failure behavior.
-10. Confirm Markdown, preview, save, publish, revision, media, theme, custom CSS, extension, settings, clipboard, and local-draft contracts the feature touches.
+10. Confirm Markdown, preview, save, publish, revision, media, theme, custom CSS, extension, settings, clipboard, local-draft, and public-frontend contracts the feature touches.
 11. Confirm strings, RTL, dates, accessibility, focus, keyboard, selection, IME, undo, scroll, responsive, reduced-motion, and timezone behavior where relevant.
 12. Run focused type, unit, contract, integration, browser, i18n, performance, and release checks available for changed paths.
 13. Inspect the exact diff, generated manifest, WordPress dependency metadata, production bundles, and installable ZIP.
-14. Verify dynamic assets on the installed plugin URL and confirm no private React runtime or development reference is shipped.
+14. Verify dynamic assets on the installed plugin URL, confirm public pages exclude admin React entries, and confirm no private React runtime or development reference is shipped.
 15. Report what was verified, what was not verified, and every remaining risk without inventing evidence.

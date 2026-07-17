@@ -213,11 +213,343 @@ Before delivery, identify the three to five most likely failure modes. Test or r
 - Preserve unrelated user changes and keep the diff within the authorized scope.
 - Stage explicit paths and inspect the staged diff before committing.
 - Do not push, create or update a remote Pull Request, or otherwise mutate remote repository state unless the current human request explicitly authorizes that action. A request to inspect, edit, test, review, or prepare work locally is not Push authorization.
-- Use normal commits and normal pushes. Do not rewrite existing history or force-push unless a focused reason receives explicit prior maintainer approval.
+- Use normal commits and normal pushes. Do not rewrite existing history or force-push.
 - Do not merge a Pull Request, enable auto-merge, or close its Issue without explicit human maintainer confirmation.
 - Run the scope-relevant checks from the live repository and `docs/TESTING_AND_RELEASE.md`; report exact commands, results, skipped checks, and remaining risks.
 - Review the exact final diff and exact pushed Head. A previous SHA's tests or review do not prove the current SHA.
 - Keep Issue, Pull Request, review, screenshot, trace, log, and artifact evidence synthetic or redacted. Remove temporary local evidence before staging unless it is an explicitly authorized, privacy-reviewed deliverable.
 - Do not claim a check, CI job, review, browser, accessibility audit, performance measurement, or release validation passed unless it actually completed for the reported revision.
+
+### Mandatory Issue Linkage
+
+- Before implementing substantive work, search open and closed Issues for a report, requirement, maintenance task, or design decision that accurately covers it.
+- Reuse a relevant Issue when its scope and acceptance criteria match. When none exists, create a focused Issue before opening a Pull Request; do not create a placeholder solely to satisfy this rule.
+- Every Pull Request references at least one relevant Issue.
+- Use `Closes`, `Fixes`, or `Resolves` only when the Pull Request fully satisfies the linked Issue. Use `Related to` for partial, exploratory, blocked, or staged work.
+- Keep the Pull Request within the linked Issue scope. Unrelated work requires a separate Issue and Pull Request unless the human maintainer explicitly expands the existing scope.
+- Linking an Issue does not make a Pull Request mergeable. Required review, validation, CI, compatibility, privacy, release checks, and explicit human merge authorization still apply.
+- Security-sensitive work uses a maintainer-approved private reporting channel or a sanitized public Issue; Issue linkage never authorizes publishing exploitable or private evidence.
+
+### Local Codex Review Before Commit and Push
+
+A passing local `codex-review` is mandatory before committing and before pushing. It is a read-only reviewer, and the implementing agent independently verifies every finding. Never modify code or guidance merely to satisfy its verdict.
+
+Sequence:
+
+1. Complete the focused work and relevant local validation.
+2. Inspect the branch, index, working tree, untracked task files, and full diff against the intended base.
+3. Run local `codex-review` in read-only mode using the complete template below.
+4. Verify every finding against current files and execution paths. Fix only confirmed actionable problems, rerun affected validation, and record concise evidence for invalid, stale, or out-of-scope findings.
+5. Commit only after no confirmed merge-blocking finding remains.
+6. Before pushing, confirm that the passing review covers the exact outgoing commit set and relevant working-tree state. Rerun the review when that state changed.
+7. Push only when the exact outgoing change remains reviewed and validated.
+
+The review must not edit files, stage, commit, push, create or update remote Issues or Pull Requests, merge, close, enable auto-merge, alter remote metadata, or delete branches. It must cite current repository-relative paths and current local lines or execution paths, not stale remote positions. Do not place secrets, private content, absolute local paths, private endpoints, raw logs, browser storage, HAR files, or unnecessary machine details in its prompt or output.
+
+#### Mandatory Local Codex Review Prompt
+
+Replace every placeholder with current, verified information. Do not shorten this to a generic review request.
+
+```markdown
+Use the local `codex-review` skill in read-only review mode.
+
+Review the current local branch and working tree against `<BASE_BRANCH>` for Issue `#<ISSUE_NUMBER>`.
+
+## Goal and scope
+
+- Intended change: `<FOCUSED_CHANGE_SUMMARY>`
+- Linked Issue and acceptance criteria: `#<ISSUE_NUMBER>`
+- Base branch: `<BASE_BRANCH>`
+- Review the exact current local state, including committed changes since the base, staged changes, unstaged changes, and untracked task files intended for inclusion.
+- Read the current `AGENTS.md` and apply only repository rules relevant to this change.
+
+## Required inspection
+
+1. Inspect `git status --short`, `git diff`, `git diff --cached`, and the diff and commits against `<BASE_BRANCH>`.
+2. Read the complete current contents and surrounding execution paths of every changed file; do not review only isolated diff hunks.
+3. Use current repository-relative file paths and current local file line numbers. Do not use stale GitHub Pull Request line numbers, outdated remote diffs, or earlier review-thread positions.
+4. Trace relevant inputs, state transitions, outputs, error and cancellation paths, permissions, compatibility behavior, tests, build scripts, and release packaging.
+5. Check for functional regressions, data loss, authorization failures, unsafe rendering or input handling, WordPress/PHP compatibility problems, performance or reliability risks, missing runtime or release assets, invalid tests, unnecessary complexity, privacy leaks, secrets, local-path exposure, and unrelated scope changes.
+6. Verify that tests actually exercise the changed behavior and cannot pass only because of broad mocks, skipped tooling, polluted state, or file-presence assertions.
+7. Report only confirmed, actionable issues introduced or materially worsened by the current local change. Do not invent findings, request speculative refactors, enforce personal style, or fill a finding quota.
+
+## Finding format
+
+For each independently fixable finding, provide:
+
+- Current repository-relative file path and current local line number or execution path.
+- What is wrong.
+- A realistic trigger.
+- Concrete user, security, compatibility, data, performance, test, build, or release impact.
+- The smallest focused correction direction.
+- Whether it blocks commit or push, with a factual reason.
+
+## Safety and authority
+
+- Do not modify files, stage changes, commit, push, create or update Issues or Pull Requests, merge, close, enable auto-merge, alter remote metadata, or delete branches.
+- Do not request or reproduce secrets, credentials, cookies, private keys, personal data, private article content, absolute local paths, private endpoints, raw logs, HAR data, browser storage, or unnecessary screenshots.
+- Treat existing code and passing tests as evidence, not proof. Clearly distinguish confirmed findings from questions or unverified assumptions.
+- The implementing agent will independently verify every finding and will not change the project merely to satisfy the reviewer.
+
+## Verdict
+
+Return exactly one final verdict:
+
+- `BLOCK` when one or more confirmed merge-blocking findings remain, followed by the findings.
+- `APPROVE` when no confirmed merge-blocking findings remain, followed by exactly: `No merge-blocking findings found in the current local branch.`
+```
+
+### Push, Exact-Head CI, and Bot Review Order
+
+Follow this sequence for every Pull Request update:
+
+1. Complete focused work, local validation, and a passing local `codex-review`.
+2. Create the focused commit only after the review covers the exact staged and working-tree state.
+3. Reconfirm or rerun local review for the exact outgoing commit set, then push normally.
+4. Record the new Pull Request Head SHA and observe all required CI/checks for that exact SHA.
+5. If a required check fails, is unexpectedly cancelled, or times out, inspect its job, step, and logs; fix the confirmed root cause, rerun affected validation and local review, push a focused correction, and restart from the new SHA.
+6. Request CodeRabbit review only after required checks for the exact SHA are successful or intentionally skipped by repository policy.
+7. Use the complete first-review or re-review template below in one comment. A bare Bot command is invalid.
+8. Wait for acknowledgement or review activity. Unless review finishes earlier, observe comments, reactions, reviews, threads, walkthrough updates, and CI for at least 15 minutes at reasonable 60–90 second intervals.
+9. Independently verify every Bot finding against the exact Head and project contracts. Fix confirmed problems; reject invalid, stale, speculative, quota-filling, or style-only requests with concise evidence.
+10. Any later push creates a new Head SHA and invalidates review conclusions tied to the old SHA; repeat local review, exact-Head CI, and detailed re-review.
+
+Additional rules:
+
+- Do not commit or push when mandatory local review is stale, blocked, incomplete, or has unresolved confirmed findings.
+- Do not manually request CodeRabbit while required CI is queued, in progress, failing, unexpectedly cancelled, or stale for an older SHA.
+- Never post only `@coderabbitai full review`, `@coderabbitai review`, or another bare Bot mention. Post the trigger and every required current fact together.
+- Replace every placeholder. Do not post copied claims, literal placeholders, stale SHAs, or checks that did not actually run.
+- Do not request remote `@codex` review as part of this workflow unless the human maintainer separately authorizes it.
+- An automatic Bot check, acknowledgement, reaction, walkthrough, or approval is evidence only for its exact SHA. It is never permission to modify code, merge, close, or skip independent verification.
+- Do not classify a failure as flaky without evidence, spam duplicate requests, push empty commits, change formatting merely to retrigger review, or work around rate limits.
+- Retry one complete template only when concrete evidence shows the prior request failed or was not accepted, the Head is unchanged, exact-Head CI remains green, and no review is queued or running. Otherwise report Bot unavailability.
+- CodeRabbit is read-only. Never ask it to edit, push, merge, close, alter labels or metadata, enable auto-merge, delete branches, or resolve threads.
+
+#### Mandatory CodeRabbit First-Review Template
+
+Use this complete template for the first manual review request of a finished Head.
+
+```markdown
+@coderabbitai full review
+
+Please perform a complete, read-only review of the current Pull Request Head `<HEAD_SHA>` against `<BASE_BRANCH>`.
+
+## Review identity
+
+- Current Head SHA: `<HEAD_SHA>`
+- Base branch: `<BASE_BRANCH>`
+- Linked Issue: `#<ISSUE_NUMBER>`
+- Pull Request scope: `<FOCUSED_CHANGE_SUMMARY>`
+- Files or subsystems changed: `<CHANGED_PATHS_OR_SUBSYSTEMS>`
+
+## Verified preconditions
+
+- Local `codex-review` verdict for the exact committed and pushed diff: `<APPROVE_OR_BLOCK_WITH_SUMMARY>`
+- Confirmed local findings resolved: `<RESOLVED_FINDINGS_OR_NONE>`
+- Validation actually completed: `<COMMANDS_AND_RESULTS_ACTUALLY_RUN>`
+- Required CI/check status for `<HEAD_SHA>`: `<GREEN_OR_INTENTIONALLY_SKIPPED_WITH_REASON>`
+- CodeRabbit queue state for this exact SHA immediately before posting: `<NONE_QUEUED_OR_IN_PROGRESS_CONFIRMED_AT_POST_TIME>`
+
+## Required review
+
+1. Read the linked Issue, Pull Request body, current root `AGENTS.md`, complete diff, changed-file context, and relevant surrounding execution paths.
+2. Verify that the implementation satisfies the linked Issue and remains inside its declared scope.
+3. Trace relevant inputs, state transitions, outputs, error and cancellation paths, permissions, compatibility behavior, tests, build scripts, generated files, and release packaging.
+4. Review the areas actually affected, including correctness, regressions, authorization, data integrity, privacy, unsafe rendering or input handling, supported WordPress/PHP versions, performance, reliability, test validity, dependencies, assets, and release completeness where applicable.
+5. Re-check unresolved or outdated review threads against `<HEAD_SHA>`; do not assume an older finding still applies.
+6. Report only confirmed actionable problems introduced or materially worsened by this Pull Request. Do not invent findings, request speculative refactors, enforce personal style, or fill a finding quota.
+7. Treat confirmed data loss, authorization failure, secret or personal-data exposure, unsafe rendering, incompatible WordPress/PHP behavior, invalid migration or revision behavior, and broken release packages as merge-blocking.
+
+## Finding requirements
+
+For each independently fixable finding, include:
+
+- Repository-relative file path and current line or execution path.
+- What is wrong.
+- A realistic trigger or reproduction path.
+- Concrete user, security, compatibility, data, performance, test, build, or release impact.
+- The smallest focused correction direction.
+- Whether it blocks merge and the factual reason.
+
+## Privacy and authority
+
+- Use redacted values, synthetic examples, and privacy-safe behavioral evidence.
+- Do not request, quote, or repeat credentials, tokens, cookies, private keys, private article content, personal data, absolute local paths, private endpoints, raw browser storage, HAR files, or unnecessary logs.
+- Do not republish attachments unless necessary, authorized, and inspected for content and embedded metadata.
+- Do not modify files, push commits, merge, close the Pull Request or linked Issue, alter metadata, enable auto-merge, delete branches, or resolve threads.
+- Findings are leads for independent verification. Do not request changes merely to satisfy Bot preference, score, or approval state.
+
+## Current-Head verdict
+
+End the review with exactly one verdict for `<HEAD_SHA>`:
+
+- `EASYMDE_CODERABBIT_REVIEW_VERDICT: APPROVE — no confirmed merge-blocking issue found for <HEAD_SHA>.`
+- `EASYMDE_CODERABBIT_REVIEW_VERDICT: BLOCK — confirmed merge-blocking findings remain for <HEAD_SHA>.`
+
+When blocking, list confirmed findings before the verdict. When no actionable finding remains, do not create suggestions merely to avoid approval.
+```
+
+#### Mandatory CodeRabbit Re-Review Template
+
+Use this complete template after a correction produces a new Head SHA.
+
+```markdown
+@coderabbitai full review
+
+Please perform a complete, read-only re-review of the current Pull Request Head `<NEW_HEAD_SHA>` against `<BASE_BRANCH>`.
+
+## Re-review identity
+
+- Previous reviewed Head SHA: `<PREVIOUS_HEAD_SHA>`
+- Current Head SHA: `<NEW_HEAD_SHA>`
+- Base branch: `<BASE_BRANCH>`
+- Linked Issue: `#<ISSUE_NUMBER>`
+- Pull Request scope: `<FOCUSED_CHANGE_SUMMARY>`
+
+## Fix summary
+
+- Confirmed findings addressed: `<FINDING_IDS_OR_CONCISE_SUMMARIES>`
+- Focused corrections made: `<CORRECTIONS_AND_CHANGED_PATHS>`
+- Findings rejected as invalid or stale, with evidence: `<REJECTED_FINDINGS_OR_NONE>`
+- Remaining unresolved threads or questions: `<UNRESOLVED_ITEMS_OR_NONE>`
+
+## Verified preconditions for the new SHA
+
+- Local `codex-review` verdict for the exact new committed and pushed diff: `<APPROVE_OR_BLOCK_WITH_SUMMARY>`
+- Regression and affected validation actually rerun: `<COMMANDS_AND_RESULTS_ACTUALLY_RUN>`
+- Required CI/check status for `<NEW_HEAD_SHA>`: `<GREEN_OR_INTENTIONALLY_SKIPPED_WITH_REASON>`
+- CodeRabbit queue state for `<NEW_HEAD_SHA>` immediately before posting: `<NONE_QUEUED_OR_IN_PROGRESS_CONFIRMED_AT_POST_TIME>`
+
+## Required re-review
+
+1. Re-read the linked Issue, Pull Request body, current root `AGENTS.md`, full current diff, and relevant surrounding execution paths rather than reviewing only the last commit.
+2. Verify every previously confirmed finding against `<NEW_HEAD_SHA>` and state whether the root cause is resolved.
+3. Check whether the fixes introduced regressions, incomplete state transitions, weak tests, compatibility problems, privacy exposure, build or release omissions, or unrelated scope changes.
+4. Re-check unresolved and outdated threads against the new code and current line positions.
+5. Report only confirmed actionable problems present in `<NEW_HEAD_SHA>`; do not repeat resolved or stale findings.
+6. Apply the same finding-quality, privacy, read-only authority, independent-verification, human-merge, and human-closure requirements as the first review.
+
+## New-Head verdict
+
+End the re-review with exactly one verdict for `<NEW_HEAD_SHA>`:
+
+- `EASYMDE_CODERABBIT_REREVIEW_VERDICT: APPROVE — no confirmed merge-blocking issue found for <NEW_HEAD_SHA>.`
+- `EASYMDE_CODERABBIT_REREVIEW_VERDICT: BLOCK — confirmed merge-blocking findings remain for <NEW_HEAD_SHA>.`
+
+When blocking, list confirmed current findings before the verdict. Approval or a walkthrough for `<PREVIOUS_HEAD_SHA>` is not a verdict for `<NEW_HEAD_SHA>`.
+```
+
+### Mandatory Issue Body Template
+
+Use this structure for every new public Issue. Remove sections that genuinely do not apply, but do not omit scope, acceptance criteria, validation or reproduction, and privacy review for material work.
+
+```markdown
+## Summary
+
+Describe the user-visible problem, repository maintenance need, or requested behavior in concrete terms.
+
+## Current behavior
+
+Explain what happens now and why it is incorrect, incomplete, unsafe, or difficult to maintain.
+Do not paste private logs, credentials, local paths, private article content, or unnecessary machine details.
+
+## Expected behavior
+
+Describe the observable outcome that must be true after the Issue is resolved.
+
+## Scope
+
+- Included:
+- Excluded:
+- Compatibility constraints:
+
+## Acceptance criteria
+
+- [ ] The intended behavior is implemented or documented.
+- [ ] Relevant failure and cancellation paths are covered.
+- [ ] Existing supported behavior remains compatible.
+- [ ] Appropriate tests or validation are added or updated.
+- [ ] Public text and artifacts pass the privacy checks below.
+- [ ] Closing this Issue still requires explicit human maintainer confirmation after the criteria are met.
+
+## Validation or reproduction
+
+Provide the smallest privacy-safe reproduction, test expectation, or verification plan.
+Use redacted examples and behavior descriptions instead of raw sensitive evidence.
+
+## Privacy and public artifact check
+
+- [ ] No credentials, tokens, cookies, authorization headers, private keys, or local configuration values are included.
+- [ ] No absolute local paths, usernames, home directories, temporary paths, screenshot paths, private endpoints, or internal service details are included unless they are an intentional non-sensitive public contract.
+- [ ] No personal data, private article content, raw browser storage, HAR data, or unnecessary logs are included.
+- [ ] Any attached image, archive, font, SVG, binary, or data URI has been checked for unnecessary EXIF, XMP, IPTC, geolocation, creator-tool, document-ID, instance-ID, or machine metadata.
+- [ ] User-provided reference screenshots or files are not committed or republished unless publication is necessary, authorized, and privacy-reviewed.
+```
+
+### Mandatory Pull Request Body Template
+
+Use this structure for every Pull Request. Replace the first line with the correct closing or non-closing reference and replace every placeholder.
+
+```markdown
+Closes #123
+
+<!-- Use `Related to #123` when this Pull Request does not fully resolve the Issue. -->
+
+## Summary
+
+- Describe the concrete changes.
+- Explain the user, compatibility, security, maintenance, or release problem they solve.
+
+## Scope and linked Issue
+
+- Linked Issue: #123
+- Confirm that this Pull Request stays within the Issue scope.
+- List intentionally deferred or excluded work.
+
+## Human closure control
+
+This Pull Request and its linked Issues remain open until a human maintainer explicitly authorizes merge or closure. Green CI, Bot approval, resolved threads, completed checklists, or inactivity are not closure authorization.
+
+## Implementation notes
+
+Describe important state transitions, WordPress integration points, compatibility boundaries, and failure behavior.
+Do not include private implementation evidence or local environment details.
+
+## Safety and compatibility
+
+- Markdown source-of-truth impact:
+- `post_content` compatibility impact:
+- WordPress permissions, nonce, REST, save, revision, or publishing impact:
+- Existing settings, themes, extension APIs, and migration impact:
+- Runtime dependencies, assets, licenses, and release-package impact:
+
+## Validation
+
+List only checks actually performed. State unavailable or unverified checks honestly.
+
+- [ ] Focused automated tests
+- [ ] Relevant integration or browser checks
+- [ ] PHP, Node, lint, i18n, build, or package checks as applicable
+- [ ] Negative, cancellation, permission, and failure-path checks as applicable
+- [ ] Local `codex-review` completed for the exact committed and pushed diff
+- [ ] Every confirmed local review finding was resolved and affected validation was rerun
+- [ ] Final local review verdict recorded without private local details
+- [ ] CI status reviewed for the current Head SHA
+- [ ] Existing CodeRabbit queue and review state checked before posting a manual request
+
+## Privacy and public artifact review
+
+- [ ] Reviewed the diff, commit messages, Pull Request body, linked Issue, review replies, fixtures, and generated artifacts for private information.
+- [ ] No secrets, credentials, cookies, private keys, personal data, private article content, local configuration, or unredacted sensitive values are included.
+- [ ] No unnecessary absolute paths, usernames, home directories, localhost, private or staging endpoints, ports, logs, HAR files, browser storage, screenshot paths, or machine identifiers are included.
+- [ ] No user-provided reference file was committed or publicly reposted without necessity, authorization, and content or metadata inspection.
+- [ ] New images, archives, fonts, SVGs, binaries, and embedded data were checked for unnecessary metadata.
+- [ ] Sensitive values in public descriptions are redacted rather than repeated.
+
+## Remaining risks and follow-up
+
+List known limitations, assumptions, deferred work, unresolved local or remote findings, Bot availability or waiting state, and checks that could not be run.
+```
 
 When a focused change alters a durable contract, follow the evidence-triggered guidance-maintenance workflow in `.agents/skills/easymde/SKILL.md`. Update only the affected owners, remove stale duplicates, and record intentionally unchanged guidance and unverified areas.

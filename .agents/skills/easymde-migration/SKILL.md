@@ -5,11 +5,11 @@ description: Use this temporary skill when planning, implementing, reviewing, or
 
 # EasyMDE Browser Migration Guide
 
-This is a temporary execution Skill for the migration tracked by Issue #74. Use it only when an existing browser-side EasyMDE behavior changes owner. Use the long-term .agents/skills/easymde/SKILL.md for normal React development and docs/REACT_DESIGN_PHILOSOPHY.md for stable architecture decisions.
+This is a temporary execution Skill for transferring existing browser-side EasyMDE behavior. Closed Issue #74 is the historical umbrella plan and acceptance inventory; it is not an active ownership ledger or proof that any migration unit is complete. Every future unit uses its current focused Issue and pull request. Use the long-term .agents/skills/easymde/SKILL.md for normal React development and docs/REACT_DESIGN_PHILOSOPHY.md for stable architecture decisions.
 
 Delete this Skill after the full migration and its removal gate are complete. Do not preserve migration ceremony as permanent project architecture.
 
-Issue #74 owns the editor migration program. Closed Issue #78 records the introduction of this temporary Skill and its deletion gate; it is not the future removal tracker. When the gate eventually passes, create a new focused removal Issue and pull request, and delete the Skill only after explicit human maintainer approval. Closure of #78 is not evidence that #74 or any migration unit is complete.
+Closed Issue #78 records the introduction of this temporary Skill and its deletion gate; it is not the future removal tracker. When the gate eventually passes, create a new focused removal Issue and pull request, and delete the Skill only after explicit human maintainer approval. Closure of #74 or #78 is historical workflow state, not migration readiness, ownership, or removal evidence. A historical umbrella Issue cannot override newer merged project contracts unless a current focused task records an explicit human maintainer decision.
 
 Keep the three guidance files distinct:
 
@@ -25,13 +25,14 @@ When a migration discovers a durable rule, update its long-term owner instead of
 
 Apply guidance in this order:
 
-1. The explicit task, linked Issue, and human maintainer decision.
+1. Explicit current-task instructions and human maintainer decisions.
 2. The live repository and root AGENTS.md.
-3. docs/REACT_DESIGN_PHILOSOPHY.md and .agents/skills/easymde/SKILL.md.
-4. This migration Skill.
-5. Official React, WordPress, and TypeScript documentation and source matching the supported versions.
-6. Available companion Skills.
-7. Secondary articles and search results.
+3. The current focused Issue and pull request, interpreted within the first two authorities.
+4. docs/REACT_DESIGN_PHILOSOPHY.md and .agents/skills/easymde/SKILL.md.
+5. This migration Skill.
+6. Official React, WordPress, and TypeScript documentation and source matching the supported versions.
+7. Available companion Skills.
+8. Secondary articles and search results.
 
 Stop and ask when a proposed ownership, public contract, dependency, data migration, or deletion conflicts with a higher authority. Do not resolve a material conflict by inventing a compatibility path.
 
@@ -75,7 +76,7 @@ Project-specific limits override generic advice:
 - Opening an ordinary supported post remains a zero-write operation.
 - Cancellation, opening, closing, focusing, previewing, mounting, and unmounting perform no hidden save or migration write.
 - React uses the WordPress-provided React 18 runtime for WordPress 6.7 or newer.
-- Public extension APIs, filters, route namespace, command registries, theme identifiers, metadata, and native submission behavior remain compatible unless the linked Issue explicitly changes them.
+- Public extension APIs, filters, route namespace, command registries, theme identifiers, metadata, and native submission behavior remain compatible unless an explicit maintainer decision in the current focused task approves a compatibility plan.
 - Runtime assets stay local. The installable ZIP contains required compiled assets and excludes frontend source, tests, source maps unless approved, .agents, docs-only architecture material, caches, logs, and development files.
 - Every state-changing behavior has exactly one active owner.
 - The WordPress edit form remains an open compatibility surface. Native and extension-owned fields, controls, meta boxes, submit hooks, and unknown form data remain owned by WordPress or their registering extension unless the focused migration unit explicitly delegates one field to React.
@@ -112,12 +113,14 @@ Before implementation, record in the linked Issue or PR:
 
 Do not proceed if the current owner cannot be identified. Add privacy-safe diagnostics or characterization tests first.
 
-Maintain one ownership ledger in the migration program or linked Issue:
+Maintain one ownership ledger in the current focused Issue or pull request:
 
 | Behavior | Current owner | Intended owner | Activation condition | Removal evidence | Status |
 |---|---|---|---|---|---|
 
 Use only evidence-backed states: `legacy-active`, `characterized`, `seam-ready`, `react-active`, `legacy-removable`, `legacy-removed`, and `verified`. A status does not advance because files exist; its activation or removal evidence must already pass.
+
+These are durable work-progress states. The `react-initializing` and `react-ready` names used below describe transient runtime handoff states, not extra ledger statuses. Record their proof in the ledger's activation condition and linked test evidence; do not add process states merely to mirror every runtime instant.
 
 ## Inspect and characterize the current owner
 
@@ -182,7 +185,7 @@ The migration specification must state:
     Verification commands:
     Unverified areas:
 
-The specification is accepted only when the linked Issue authorizes the unit and all material open questions are resolved. Update it before code when evidence changes the intended boundary.
+The specification is accepted only when the current focused Issue defines the unit within higher-priority repository contracts and all material open questions are resolved. Update it before code when evidence changes the intended boundary.
 
 ## Establish controlled baseline evidence
 
@@ -267,6 +270,8 @@ Use this lifecycle:
 Rules:
 
 - Do not hide or detach the legacy owner before React readiness.
+- Mount React into a dedicated, initially empty container delegated exclusively to that Root. Keep legacy, WordPress, and extension DOM that must remain usable outside it; never call `createRoot` on a container whose existing children must survive the first render.
+- Preflight and read-only initialization occur before ownership handoff. Legacy code must not remove, replace, or write inside the active React container, and React must not mutate legacy-owned DOM before the handoff contract delegates it.
 - Readiness means required contracts, permissions, DOM bridges, adapters, and assets are usable; mount success alone is insufficient.
 - During initialization, React may prepare read-only state but must not register competing mutations.
 - Define one explicit handoff commit point. Preflight every operation that can fail before it; the detach/activate critical section must not perform new asynchronous work or leave a state in which neither owner is usable.
@@ -308,7 +313,8 @@ For WordPress operations:
 - success follows the real WordPress result, not an optimistic browser state;
 - lock, authentication, capability, or nonce loss prevents new protected Mutations, preserves unsaved content, and reports the reason; an already-started Mutation still follows its declared cancellation and authoritative-result reconciliation policy;
 - scheduling uses the WordPress site timezone;
-- revision restore keeps Markdown, appearance metadata, and regenerated post_content consistent.
+- revision restore follows the server-owned revision kind: EasyMDE revisions restore Markdown and appearance and use newly rendered compatibility HTML only when PHP rendering succeeds; the unavailable/failure path uses stored revision HTML without generating a new signature, while any signature stored on the revision is restored and remains subject to normal validation against the restored Markdown, article theme, and compatibility HTML;
+- restoring a pre-EasyMDE revision removes current EasyMDE document-state metadata and restores historical HTML; the browser does not fabricate Markdown or assume the post remains an EasyMDE document-state post.
 
 ## Apply React 18 and composition guidance selectively
 
@@ -455,7 +461,7 @@ Do not call a unit complete because React renders, static tests pass, or the new
 
 Issue #78 records why this temporary Skill was introduced and the original deletion contract. It is already complete and does not authorize future removal. After the gate below passes, create a new focused removal Issue and pull request to delete `.agents/skills/easymde-migration`; do not perform that cleanup incidentally inside the final Feature migration. Delete the Skill only after:
 
-- every capability in Issue #74 has a documented final owner;
+- every existing browser-side capability in the final migration inventory has a documented final owner; Issue #74 remains historical scope and acceptance evidence, while its separate future AI product Feature is outside this deletion gate;
 - no migration Issue still depends on this Skill;
 - no behavior has both legacy and React state-changing owners;
 - superseded JavaScript, CSS, bootstrap fields, selectors, events, timers, adapters, assets, tests, and shims are removed or documented as intentionally retained public contracts;

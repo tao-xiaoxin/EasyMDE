@@ -989,7 +989,7 @@ WordPress 6.7 默认把 `@wordpress/element` 注册为 Classic `wp-element` Scri
 
 远程交付不是全局开关。只有一个聚焦 Feature 的单个资源，在人工明确批准且逐项证明官方来源、长期可靠性、不可变 HTTPS 身份、License、隐私、完整性、失败与 Fallback、更新 Owner、移除策略及目标发行渠道兼容后，才可以被考虑。未知 Host、非官方 Mirror、可变 URL、浮动版本、个人域名、Proxy、Tracking、Telemetry、静默换源和远程可变 Executable Code 不属于可接受方向。
 
-技术可信与发行许可是两个独立问题。GitHub Releases、Private Deployment、Self-hosted Package 或其他经过审查的渠道，可以按自身合同评估同一个技术 Gate；一个渠道的结论不能自动扩展到另一个渠道。WordPress.org Plugin Directory 对普通非服务型 JavaScript、CSS、Font 和其他运行时资源有自己的当前官方规则；官方来源、固定版本、SRI 或维护者批准不能覆盖这些规则。真正的 External Service 必须提供实际服务能力，并单独满足 Readme、Privacy、Consent 和数据披露要求。Font 或其他声称的例外也必须依据当前规则逐项核对，分类不明确时交由 Plugin Review Team 判断。
+技术可信与发行许可是两个独立问题。GitHub Releases、Private Deployment、Self-hosted Package 或其他经过审查的渠道，可以按自身合同评估同一个技术 Gate；一个渠道的结论不能自动扩展到另一个渠道。WordPress.org Plugin Directory 对普通非服务型 JavaScript、CSS 和其他运行时代码有自己的当前官方规则；官方来源、固定版本、SRI 或维护者批准不能覆盖这些规则。真正的 External Service 必须提供实际服务能力，并单独满足 Readme、Privacy、Consent 和数据披露要求。Remote Font 或 Font CDN 是独立分类，必须依据当前官方规则和例外逐项核对 Official Source、Exact Version / URL、License、Data / Privacy、SRI / `crossorigin`、Failure / Fallback、发行渠道接受状态和人工批准；证据不足时保持本地。其他声称的例外同样单独核对，分类不明确时交由 Plugin Review Team 判断。
 
 逐资产 Decision Record、SRI / CORS / CSP / MIME / Redirect / Cache / Referrer、数据发送、Fallback、批准、复审触发器和实施验证属于 `.agents/skills/easymde/SKILL.md`，不在本文复制执行清单。当前架构事实仍由 `docs/ARCHITECTURE.md` 记录，测试和发布命令仍由 `docs/TESTING_AND_RELEASE.md` 负责。
 

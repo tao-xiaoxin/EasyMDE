@@ -1215,17 +1215,22 @@ Distribution-channel rules:
   reviewed channel may evaluate the project gate for their specific channel;
   passing that gate is not universal approval.
 - For WordPress.org Plugin Directory distribution, ordinary non-service
-  JavaScript, CSS, fonts, and other runtime executable or presentation assets
-  must follow the current official directory rules requiring non-service code
-  to be included locally. Offloading unrelated static assets is not a genuine
+  JavaScript, CSS, and other runtime executable or presentation code must
+  follow the current official directory rules requiring non-service code to be
+  included locally. Offloading unrelated static assets is not a genuine
   service.
 - A genuine external service must provide substantive service functionality,
   not merely host code or assets. Its use, terms, data disclosure, and any
   required explicit consent must be documented in the readme and privacy
   behavior according to current official rules.
 - Official origin, immutable URLs, SRI, and maintainer approval cannot waive
-  the intended channel's rules. Fonts and any claimed official exception need
-  their own current-rule verification.
+  the intended channel's rules.
+- Treat a remote Font or Font-CDN proposal as a separate classification. Verify
+  the current official rule and any official exception, then record the
+  official source, exact version and immutable URL, license, data and privacy
+  behavior, SRI and `crossorigin` where applicable, failure/fallback behavior,
+  distribution-channel acceptance, and explicit maintainer approval. Without
+  that evidence, keep the Font local and mark the proposal unapproved.
 - When classification or an exception is unclear, contact the WordPress.org
   Plugin Review Team rather than guessing.
 

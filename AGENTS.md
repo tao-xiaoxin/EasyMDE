@@ -427,11 +427,12 @@ mutable executable code remain prohibited.
 
 Technical trust does not imply acceptance by every distribution channel.
 WordPress.org Plugin Directory rules for ordinary non-service JavaScript, CSS,
-fonts, and runtime resources remain independently binding; official provenance,
-pinning, SRI, and maintainer approval cannot waive them. A genuine external
-service or claimed exception requires current rule verification, privacy and
-consent disclosure, and channel-specific approval. Ask the WordPress.org Plugin
-Review Team when classification is unclear.
+and other runtime code remain independently binding; official provenance,
+pinning, SRI, and maintainer approval cannot waive them. A Font-CDN proposal,
+genuine external service, or claimed exception requires separate current-rule
+verification, privacy and consent analysis, exact asset identity, and
+channel-specific approval. Ask the WordPress.org Plugin Review Team when
+classification is unclear.
 
 The current runtime remains local. This policy does not approve a URL, add SRI,
 change CSP, alter Enqueue behavior, remove local assets, or change a package or

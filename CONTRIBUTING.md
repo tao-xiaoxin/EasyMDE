@@ -354,7 +354,7 @@ Please perform a complete, read-only review of the current pull request head `<H
 
 ## Verified preconditions
 
-- Local `codex-review` verdict for the exact committed and pushed diff: `<APPROVE_OR_BLOCK_WITH_SUMMARY>`
+- Local `codex-review` verdict for the exact outgoing diff reviewed before commit and push: `<APPROVE_OR_BLOCK_WITH_SUMMARY>`
 - Confirmed local findings resolved: `<RESOLVED_FINDINGS_OR_NONE>`
 - Validation actually completed: `<COMMANDS_AND_RESULTS_ACTUALLY_RUN>`
 - Required CI/check status for `<HEAD_SHA>`: `<GREEN_OR_INTENTIONALLY_SKIPPED_WITH_REASON>`

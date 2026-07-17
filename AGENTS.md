@@ -27,7 +27,7 @@ Do not assume the repository name requires use of the EasyMDE JavaScript library
 * Do not bulk-migrate every post automatically.
 * Use lazy migration: preserve legacy data on read and write new fields only during the next legitimate save.
 * Do not require remote CDN assets for the editor, preview, Mermaid, KaTeX, or syntax highlighting.
-* The npm workflow supports local vendor asset preparation, React and TypeScript application development, Vite builds, Node and Playwright tests, i18n, third-party notices, and release or source packaging. New scripts and build outputs must preserve the repository's local-asset, testing, privacy, and release-package boundaries.
+* The root npm project is the approved home for local vendor asset preparation, Node and Playwright tests, i18n, third-party notices, release or source packaging, and the future React, TypeScript, and Vite application workflow. The live `package.json` must be inspected before claiming or invoking React, type-check, or Vite scripts; those capabilities do not exist until a focused implementation adds and verifies them. New scripts and build outputs must preserve the repository's local-asset, testing, privacy, and release-package boundaries.
 * React and TypeScript, built with Vite, are the default frontend architecture for the EasyMDE WordPress admin editor and related browser-side interfaces. New editor UI features and existing browser-side modules may be implemented or migrated using this stack without separate architecture approval. Feature work must still follow the repository's focused Issue, testing, review, and pull request workflow; it does not require an additional architecture-only Issue.
 * React ecosystem dependencies needed by a focused task do not require separate architecture approval. Each dependency must have a clear non-duplicative purpose, use no prohibited remote runtime resources, preserve WordPress authority, avoid unjustified installable-package weight, use an acceptable license, and include only required runtime files in the installable plugin package.
 * Keep React adoption incremental and the editor usable throughout migration. React must use explicit integration layers or adapters instead of scattering direct WordPress DOM, jQuery, or global API access through components. Opening, closing, or cancelling React interfaces must not cause hidden saves, and asynchronous work must handle cancellation, stale results, and component teardown.
@@ -99,7 +99,7 @@ Rules:
 * Put admin HTML in `templates/admin/`, not in service classes.
 * Templates should render prepared data only; business rules belong in PHP classes.
 * Do not create empty abstraction layers or one-method classes without a real boundary.
-* Detailed architecture decisions belong in `docs/ARCHITECTURE.md`; this file defines approved architecture direction and non-negotiable repository boundaries.
+* `docs/ARCHITECTURE.md` describes the current implementation architecture. `docs/REACT_DESIGN_PHILOSOPHY.md` owns the approved React target philosophy, directory and dependency direction, and interface-design principles. This file defines approved direction and non-negotiable repository boundaries without duplicating either architecture owner.
 
 ---
 
@@ -710,7 +710,7 @@ Do not combine unrelated problems into one finding.
 
 ## Testing and Validation
 
-Before finishing a task, run the relevant checks when dependencies and environment are available. The npm workflow supports local vendor asset preparation, React and TypeScript application development, Vite builds, Node and Playwright tests, i18n, third-party notices, and release or source packaging. Using these scripts does not expand a linked feature's scope or authorize another frontend framework, another bundler, or an unrelated build architecture.
+Before finishing a task, run the relevant checks when dependencies and environment are available. The live npm workflow currently supports local vendor asset preparation, Node and Playwright tests, i18n, third-party notices, and release or source packaging. The same root npm project is the approved location for React, TypeScript, and Vite scripts when a focused implementation introduces and verifies them; do not report or invoke scripts that are not present in the live `package.json`. Using these scripts does not expand a linked feature's scope or authorize another frontend framework, another bundler, or an unrelated build architecture.
 
 ```bash
 composer validate
@@ -745,7 +745,7 @@ Do not claim verification that was not actually performed.
 * Do not overwrite unrelated uncommitted work.
 * Prefer small, logical Conventional Commits for completed work.
 * Update `README.md` for user-facing behavior changes.
-* Update `docs/ARCHITECTURE.md` for architecture changes.
+* Update the appropriate architecture owner when architecture changes: `docs/ARCHITECTURE.md` for current implementation boundaries and `docs/REACT_DESIGN_PHILOSOPHY.md` for approved React target decisions.
 * Update `docs/MIGRATION.md` for data model, compatibility, or upgrade behavior changes.
 
 At task completion, report:

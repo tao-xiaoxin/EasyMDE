@@ -2,7 +2,7 @@
 
 EasyMDE is a standalone WordPress plugin wired from `easymde.php` into `EasyMDE\Plugin`. The global `EasyMDE_Plugin` class remains as a compatibility facade for existing extension code.
 
-This document describes the current implementation boundaries. Development setup lives in [Development](DEVELOPMENT.md), and release validation lives in [Testing and Release](TESTING_AND_RELEASE.md).
+This document describes the current implementation boundaries. Approved target decisions for the React, TypeScript, and Vite admin applications live in [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md); that document does not claim that target paths already exist. Development setup lives in [Development](DEVELOPMENT.md), and release validation lives in [Testing and Release](TESTING_AND_RELEASE.md).
 
 ## Directory Boundaries
 
@@ -68,10 +68,10 @@ _easymde_render_signature
 Legacy detection uses `metadata_exists( 'post', $post_id, '_easymde_markdown' )` so empty Markdown drafts are still recognized as EasyMDE document state. Legacy posts and ordinary supported posts are lazily marked with `_easymde_enabled = 1` during the next valid EasyMDE save.
 
 `_easymde_render_signature` is an internal consistency marker written during
-valid EasyMDE saves and revision restores. The editor may reuse stored
-`post_content` for a fast initial preview only when this marker matches the
-current Markdown, article theme, and stored compatibility HTML; otherwise it
-renders from `_easymde_markdown`.
+valid EasyMDE saves and successful Markdown-based revision restores. The editor
+may reuse stored `post_content` for a fast initial preview only when this marker
+matches the current Markdown, article theme, and stored compatibility HTML;
+otherwise it renders from `_easymde_markdown`.
 
 The Mac-style source-code frame is fixed rendering behavior, not document state. Rendered EasyMDE roots always receive `easymde-code-mac`; `code-frame.css` is loaded only when feature detection finds a regular code block. Historical `_easymde_code_mac_style` post meta and `codeMacStyle` user-default entries are left untouched, but no active reader, writer, request, preview, or revision path consults them.
 
@@ -94,7 +94,9 @@ If Composer dependencies are missing, EasyMDE shows an admin notice, preview req
 
 `RevisionManager` registers EasyMDE meta keys for WordPress revisions, copies current EasyMDE meta to revisions, and restores EasyMDE meta from revisions when present.
 
-When restoring an EasyMDE revision, the manager restores Markdown and appearance metadata and regenerates `post_content` from the restored Markdown when the renderer is available. It updates `post_content` directly during restore to avoid recursive save hooks and revision loops.
+When restoring an EasyMDE revision, the manager restores Markdown and appearance metadata. It regenerates `post_content` and stores a new render signature only when Markdown rendering succeeds. If the renderer is unavailable or cannot produce the restored content, it uses the revision's stored `post_content` without generating a new signature. Any render signature stored on that revision is restored with the other revisioned metadata and remains subject to the normal validation against the restored Markdown, article theme, and compatibility HTML. It updates `post_content` directly during restore to avoid recursive save hooks and revision loops.
+
+When restoring a revision that predates EasyMDE document state, the manager removes the current revisioned EasyMDE metadata and restores that revision's original `post_content`. The post then no longer has EasyMDE document state; browser revision interfaces must preserve this server-owned transition rather than inventing Markdown for the historical HTML revision.
 
 ## Theme And Asset Boundaries
 

@@ -1,6 +1,6 @@
 # EasyMDE Documentation
 
-This index points to the current English technical docs. The root [README](../README.md) and [Simplified Chinese README](../README.zh-CN.md) are GitHub entry points; this directory is the canonical technical documentation for now.
+This index points to the current technical docs. The root [README](../README.md) and [Simplified Chinese README](../README.zh-CN.md) are GitHub entry points; this directory is the canonical technical documentation for now.
 
 ## Reading Paths
 
@@ -15,8 +15,10 @@ This index points to the current English technical docs. The root [README](../RE
 
 1. [Contributing](../CONTRIBUTING.md) for project rules and PR expectations.
 2. [Core Philosophy](CORE-PHILOSOPHY.md) for the repository's verification standard.
-3. [Development](DEVELOPMENT.md) for Composer, npm assets, Docker, `.env`, and WordPress test-suite setup.
-4. [Testing and Release](TESTING_AND_RELEASE.md) for quality gates that apply when code, assets, release scripts, or packaging behavior change.
+3. [Architecture](ARCHITECTURE.md) for the current implementation boundaries.
+4. [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md) for approved React target architecture and interface-design decisions.
+5. [Development](DEVELOPMENT.md) for Composer, npm assets, Docker, `.env`, and WordPress test-suite setup.
+6. [Testing and Release](TESTING_AND_RELEASE.md) for quality gates that apply when code, assets, release scripts, or packaging behavior change.
 
 **Maintainers Preparing Releases**
 
@@ -35,6 +37,7 @@ This index points to the current English technical docs. The root [README](../RE
 
 - [WordPress package readme](../readme.txt)
 - [Architecture](ARCHITECTURE.md)
+- [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md)
 - [Plugin Check Notes](PLUGIN_CHECK.md)
 - [Security Policy](../SECURITY.md)
 - [Upgrade Notes](../UPGRADING.md)

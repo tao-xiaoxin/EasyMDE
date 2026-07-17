@@ -1,477 +1,299 @@
 ---
 name: easymde-i18n
-description: Use this skill when adding, changing, migrating, reviewing, or validating EasyMDE user-facing strings, PHP Gettext calls, legacy browser bootstrap strings, React or TypeScript translations, locale-aware formatting, RTL behavior, translation catalogs, i18n build scripts, or release-package language assets.
+description: Use this skill when adding, changing, migrating, reviewing, or validating EasyMDE user-facing strings, PHP Gettext calls, legacy browser bootstrap strings, React/TypeScript translations, locale-aware formatting, RTL behavior, translation catalog/build pipeline, and release-package language assets.
 ---
 
-# EasyMDE Internationalization Guide
+# EasyMDE React-Focused i18n Skill
 
-EasyMDE uses WordPress internationalization. WordPress owns the active admin locale, locale data, text-domain loading, plural rules, date and number conventions, and translation delivery.
+这个 skill 的目标是：指导 EasyMDE 在保持 WordPress 权威模型不变前提下，把现有浏览器字符串逐步迁移到 React/TypeScript，并保证翻译链路可迁移、可验证、可回滚。
 
-This Skill is a development contract. Its existence does not authorize runtime changes, new dependencies, language switching, catalog restructuring, or frontend implementation without a focused linked Issue.
+**它不是 WordPress i18n 通用入门手册，也不替代 `AGENTS.md`、`.agents/skills/easymde/SKILL.md`、`.agents/skills/easymde-migration/SKILL.md` 或 `docs/REACT_DESIGN_PHILOSOPHY.md`。**
 
-## Authority and Evidence
+## 规则优先级（执行顺序）
 
-Apply guidance in this order:
+1. 当前任务、关联 Issue、维护者决策；
+2. 根目录 `AGENTS.md` 与实时仓库；
+3. `docs/ARCHITECTURE.md`、`docs/REACT_DESIGN_PHILOSOPHY.md`；
+4. `.agents/skills/easymde/SKILL.md`；
+5. `.agents/skills/easymde-migration/SKILL.md`（当涉及所有权转移）；
+6. 官方文档（按当前支持版本）；
+7. 参考型技能：`spec-driven-development`、`deprecation-and-migration`、`frontend-ui-engineering`、`test-driven-development`、`browser-testing-with-devtools`、`security-and-hardening`、`wp-plugin-development`、`performance-optimization`、`code-review-and-quality`、`react-best-practices`、`composition-patterns`、`web-design-guidelines`；
+8. react-admin 作为设计思想借鉴，不作为项目权威；
+9. 其他博客、搜索摘要、经验贴仅作为辅助输入。
 
-1. the current task, linked Issue, and explicit maintainer decisions;
-2. root `AGENTS.md` and the live repository;
-3. existing EasyMDE public and release contracts;
-4. this Skill;
-5. official documentation for the minimum supported WordPress version;
-6. relevant React and TypeScript official documentation;
-7. external project guidance such as react-admin;
-8. blogs, search summaries, generated answers, and examples.
+下层资料不得覆盖上层规则；一旦冲突，以上层为准。
 
-Use external projects for design ideas, not as project authority. When an external rule conflicts with WordPress or EasyMDE, keep the EasyMDE rule.
+## 先验前置：读取真实文件，不猜结论
 
-## Inspect Before Changing
+每次介入 i18n 工作前必须读取至少这些文件：
 
-Read the live files that own the affected path:
+- `AGENTS.md`
+- `package.json`
+- `.agents/skills/easymde/SKILL.md`
+- `.agents/skills/easymde-migration/SKILL.md`
+- `docs/REACT_DESIGN_PHILOSOPHY.md`
+- `scripts/i18n.mjs`
+- `src/Admin/AdminAssets.php`
+- `src/Frontend/FrontendAssets.php`
+- 相关模板与测试文件（包含待改字符串所在目录）
 
-```text
-AGENTS.md
-easymde.php
-src/Plugin.php
-src/Admin/AdminAssets.php
-src/Frontend/FrontendAssets.php
-scripts/i18n.mjs
-package.json
-languages/easymde.pot
-languages/easymde-zh_CN.po
-scripts/build-release.mjs
-.github/workflows/ci.yml
-relevant PHP, template, JavaScript, React, and test files
-```
+禁止基于“理想架构”宣称功能已实现；所有结论必须来源于当前文件中的事实。
 
-Before editing, answer:
+## 当前事实（Current Contract）
 
-- Which layer renders the message: PHP, legacy browser JavaScript, or React?
-- Which layer owns translation of that message?
-- Which WordPress script handle or PHP output loads it?
-- Is the value translatable copy, user content, a stable identifier, or diagnostic data?
-- Does it need context, placeholders, plural forms, date/number formatting, or RTL behavior?
-- How will extraction, compilation, delivery, testing, and release packaging prove it works?
+以下是当前仓库的真实状态，不能在未改代码前改成“未来能力”：
 
-Do not infer the current pipeline from a future architecture document. Inspect the actual repository.
+- 文本域是 `easymde`。
+- 插件头定义 `Domain Path: /languages`（以当前源码为准）。
+- i18n 生成是 `scripts/i18n.mjs` 管理的 PHP-only 流程。
+- `scripts/i18n.mjs` 当前扫描 `easymde.php`、`includes`、`src`、`templates`（PHP 文件）。
+- npm 命令是：
+  - `i18n:make-pot`
+  - `i18n:compile`
+  - `i18n:check`
+- 活跃语言产物是：
+  - `languages/easymde.pot`
+  - `languages/easymde-zh_CN.po`
+  - `languages/easymde-zh_CN.mo`
+- 当前浏览器文本所有权是“PHP bootstrap 注入”：
+  - 管理后台：`src/Admin/AdminAssets.php::get_strings()`
+    - 通过 `wp_localize_script('easymde-admin', 'EasyMDEConfig', [... 'strings' => $this->get_strings()])`
+  - 文章增强前台：`src/Frontend/FrontendAssets.php`
+    - 通过 `wp_localize_script('easymde-frontend', 'EasyMDEFrontendConfig', [... 'strings' => [ 'renderingFailed' => ... ]])`
+- 目前仓库不包含 TypeScript/React 消息 JSON catalog 或 Script Module 翻译产物（例如 `languages/*.json`）；
+- 当前最低支持为 WordPress 6.7，因此请以经典脚本 i18n（`wp_set_script_translations()`）路径为实际可行基线，不得将 `wp_set_script_module_translations()` 当作可用完成条件。
 
-## Current EasyMDE Contract
+## 所有权模型（必须单一）
 
-Preserve these facts until a focused Issue changes them:
+同一个可见字符串必须只有一个“渲染所有者”。
 
-- the literal text domain is `easymde`;
-- the plugin header declares `Domain Path: /languages`;
-- PHP text-domain loading is deferred through the existing `init` path;
-- `scripts/i18n.mjs` is the current authoritative generation, compilation, and validation pipeline;
-- the root npm scripts are `i18n:make-pot`, `i18n:compile`, and `i18n:check`;
-- the current extractor scans PHP under `easymde.php`, `includes`, `src`, and `templates`;
-- the extractor also has project-specific keyword configuration that must remain covered by tests;
-- the maintained `zh_CN` PO must cover every POT message without fuzzy or untranslated required entries;
-- GNU gettext commands such as `xgettext` and `msgfmt` are explicit build prerequisites and missing tools must fail clearly;
-- the current admin editor receives PHP-translated strings from `AdminAssets` through `EasyMDEConfig.strings`;
-- the current published-article enhancement receives PHP-translated strings from `FrontendAssets` through `EasyMDEFrontendConfig.strings`;
-- `languages/easymde.pot`, `languages/easymde-zh_CN.po`, and `languages/easymde-zh_CN.mo` are required release files;
-- the minimum supported WordPress version is 6.7;
-- WordPress, not the browser, owns the admin locale;
-- release ZIPs include runtime translations and exclude `.agents/`, tests, frontend source, caches, and development-only files.
+- PHP 页面直接渲染：PHP Gettext（domain `easymde`）；
+- 管理后台 legacy UI：`AdminAssets` → `EasyMDEConfig.strings`；
+- 文章增强 legacy UI：`FrontendAssets` → `EasyMDEFrontendConfig.strings`；
+- 未来 React UI：`@wordpress/i18n` 在已迁移的 React 消息源内；
+- 一条消息若迁移成功到 React owner，则必须：
+  - 在原 bootstrap owner 中删除该条；
+  - 在迁移文档中标记“legacy removable”并通过验证；
+  - 保持 release ZIP 与行为回归检测通过。
 
-A Skill must not describe a future extraction or JSON delivery path as already implemented.
+规则：
 
-## Translation Ownership
+- 不允许“同一英文含义在 PHP 与 React 同时翻译”；
+- 不允许两套 runtime 同时提供同一文案。
 
-Every rendered message has one translation owner.
+## 翻译对象边界
 
-```text
-PHP-rendered UI or PHP response copy
-→ PHP Gettext with domain easymde
+### 应通过可翻译管道的
 
-Existing legacy admin editor UI
-→ PHP Gettext in AdminAssets or its owning PHP service
-→ EasyMDEConfig.strings
-→ JavaScript renders the supplied value without translating it again
+- 对话框标题、按钮标签、错误/成功状态、提示文案、ARIA/无障碍文本；
+- 表单帮助、空状态文案、短提示、工具提示；
+- 需要复数处理的数字模板；
+- 与人类交流的通知和流程引导文案；
+- 日期/数字格式化结果（WordPress 规范下）。
 
-Existing published-article enhancement UI
-→ PHP Gettext in FrontendAssets or its owning PHP service
-→ EasyMDEFrontendConfig.strings
-→ JavaScript renders the supplied value without translating it again
+### 禁止翻译（稳定标识/用户数据）
 
-Future React or TypeScript UI
-→ @wordpress/i18n in the owning source module
-→ WordPress script translation delivery
-→ React renders the translated value
-```
+- 用户文章内容（标题、正文、摘要、标签名、分类名）；
+- REST 路由、参数名、HTTP 状态码、错误码、数据库 meta key、option 名称、command id；
+- script handle、class/id、HTML 属性名、选择器、存储键；
+- 纯技术数据（模型 ID、provider ID、令牌/敏感日志字段）；
+- Markdown 源码、CSS、正则、Shell 命令。
 
-Rules:
+## 从 PHP Gettext 到 React i18n 的迁移策略
 
-- Never translate the same value in PHP and JavaScript.
-- A translated Bootstrap value is final presentation copy, not a message key.
-- When React takes ownership, establish extraction and translation delivery before removing the Bootstrap owner.
-- Remove an obsolete Bootstrap field when its last consumer is removed, unless a documented compatibility contract requires it.
-- Do not keep two active translation paths as a fallback.
-- Transport property names such as `previewError` are stable contract fields, not translation catalog keys.
+这类迁移必须是“单一功能单元”而非一次性全局替换。
 
-## What To Learn From react-admin
+每个迁移单元必须先写清：
 
-Adopt these ideas where they fit EasyMDE:
+- 行为边界（按钮、面板、弹窗、状态文案之一）；
+- 当前 owner、目标 owner；
+- 预期输出、失败路径、取消路径；
+- 迁移完成条件（移除旧 Bootstrap 字段、无双重翻译）。
 
-- inventory every user-facing string systematically;
-- use interpolation instead of concatenation;
-- use real plural rules instead of singular/plural conditionals;
-- scope copy to the feature that owns it;
-- include notifications, errors, placeholders, tooltips, empty states, and screen-reader text;
-- use locale-aware date and number formatting;
-- validate catalogs and remove obsolete messages;
-- make i18n checks part of PR completion.
+### 迁移可接受前置条件
 
-Do not copy these react-admin conventions:
+- 已在该 Unit 使用 `spec-driven-development` 明确验收标准；
+- 已在 Issue 中记录 owner 转移计划（迁移矩阵）；
+- 该 Unit 所有新增/变更字符串由同一个 runtime owner 提供；
+- 新 owner 在测试环境下已完成以下能力：
+  - 字符串抽取（front-end/TS 源扫描）；
+  - 与 PHP catalog 无损并行；
+  - 发布 JSON（如采用）与脚本句柄注册；
+  - `wp_set_script_translations()` 加载验证；
+  - 安装 ZIP 中可见对应语言资源；
+  - Lazy/代码分片场景下消息可用。
 
-- Polyglot or an `i18nProvider`;
-- `ra.*`, `resources.*`, or application key namespaces;
-- `||||` plural syntax;
-- react-admin language packs;
-- browser-locale detection;
-- a plugin language switcher;
-- runtime locale switching;
-- disabling automatic translation on the whole WordPress admin document;
-- React Query, Router, Material UI, or other unrelated dependencies.
+### 迁移执行顺序（每个单元）
 
-WordPress Gettext source strings are the catalog identity. EasyMDE does not need a parallel key-based message framework.
+1. 在 PHP owner 与消费者之间建立字符串契约清单（`key / source text / translator context / 是否复数`）；
+2. 在新 owner 的源代码里引入 `@wordpress/i18n` 翻译；
+3. 先补齐 extraction/validation 能力，再迁移逻辑；
+4. 在 PR 内确认旧 owner 已不再消费该文案；
+5. 通过 runtime 验证（非浏览器文案 mock）；
+6. 移除旧 Bootstrap 字段；
+7. 重新跑相关 i18n 与 release 校验；
+8. 仅当单元验证通过后再进入下一个单元。
 
-## WordPress Version Boundary
+禁止把“新增翻译 helper”当成迁移完成条件；迁移完成以 `单元 owner + release + 运行时` 同步通过为准。
 
-### Classic scripts on WordPress 6.7
+## WordPress 6.7 下的技术边界
 
-For translatable JavaScript or React delivered as a classic WordPress script:
+### 经典脚本翻译（当前最小兼容路径）
 
-- declare the real `wp-i18n` dependency, or generate equivalent dependency metadata;
-- externalize `@wordpress/i18n` to the WordPress runtime instead of bundling a private copy;
-- register the script before calling `wp_set_script_translations()`;
-- attach domain `easymde` and the approved languages path;
-- verify generated Jed JSON files are available in the installable ZIP or through the supported WordPress.org language-pack path;
-- verify every entry and lazy chunk containing messages is extracted and delivered.
+- i18n 包依赖必须有 `wp-i18n`；
+- 不得把 React 运行时打包进前端脚本；
+- 注册脚本后调用 `wp_set_script_translations( $handle, 'easymde', EASYMDE_ROOT . '/languages' )`；
+- 本地化字符串仍遵循 WordPress 权威机制，不是浏览器语言推断；
+- 本地化 JSON（若引入）必须参与 ZIP 校验且与当前域、版本一致。
 
-Do not hard-code generated JSON filenames or hashes.
+### Script Module 翻译
 
-### Script Modules
+- 当前 WordPress 6.7 项目不把 Script Module 翻译 API 作为完成条件；
+- 不得因为浏览器可运行 demo 就宣称模块翻译就绪；
+- 若未来升级最小版本，需开新 Issue 复核 API 与兼容性后再改。
 
-WordPress 6.7 does not provide the public Script Module translation API introduced in WordPress 7.0.
+## PHP/Gettext 规则（现状强制）
 
-While 6.7 remains the minimum:
+仅以下场景使用 PHP Gettext（直到对应 UI ownership 真正迁移）：
 
-- do not rely on `wp_set_script_module_translations()`;
-- do not claim module translation loading is supported because current WordPress documentation describes a newer release;
-- do not choose a Script Module-only translation path for a user-facing EasyMDE entry without a separately approved and tested 6.7-compatible solution;
-- prefer the verified classic script translation path for translatable React entries.
+- 字符串在 PHP 渲染或 legacy bootstrap 时；
+- `__()/_e()`：普通字符串；
+- `_x()`：语义歧义词；
+- `_n()/_nx()`：计数变化；
+- `esc_html__()/esc_attr__()`：上下文输出前转义；
+- 不允许变量/动态拼接作为 msgid；
+- 有歧义、占位符、历史术语的必须加 `translators:` 注释；
+- 计数文本先 `_n` 再 `number_format_i18n()`；
+- 不得提前在文件作用域初始化翻译字符串（避免加载顺序问题）。
 
-If the minimum WordPress version is later raised, re-evaluate the official API in a separate Issue instead of prebuilding compatibility code now.
-
-## PHP Gettext Rules
-
-Use the narrowest correct WordPress function:
-
-```text
-__(), _e()                  simple copy
-_x(), _ex()                 ambiguous copy requiring context
-_n(), _nx()                 count-dependent copy
-esc_html__(), esc_html_e()  plain HTML text output
-esc_attr__(), esc_attr_e()  attribute output
-sprintf(), printf()         placeholder substitution
-```
-
-Requirements:
-
-- pass the literal domain `'easymde'` to every EasyMDE Gettext call;
-- keep source messages as literal strings so extraction tools can find them;
-- never use a variable, constant, dynamic expression, or concatenated value as a message ID;
-- use a `translators:` comment immediately before a call with placeholders, unusual terminology, or non-obvious context;
-- use numbered placeholders when translators may reorder values;
-- use `_x()` or `_nx()` when an English word has more than one grammatical meaning;
-- use `_n()` or `_nx()` for count-dependent copy, even when English appears to need only one plural form;
-- format the displayed count separately with `number_format_i18n()` when appropriate;
-- translate first and escape for the actual output context as late as possible;
-- do not put unnecessary HTML inside a translatable message;
-- do not translate an empty string;
-- do not call translation functions before WordPress reaches the approved loading hook;
-- do not place translated values in file-scope initialization, static property initialization, or constructors that can run before `init`;
-- preserve WordPress 6.7 just-in-time loading behavior and treat early-translation warnings as defects.
-
-Example:
+示例（单复数）：
 
 ```php
-$message = sprintf(
-    /* translators: %1$s: formatted revision count. */
+$count_label = sprintf(
+    /* translators: %1$s: revision count in current locale. */
     _n( '%1$s revision', '%1$s revisions', $count, 'easymde' ),
     number_format_i18n( $count )
 );
 ```
 
-## React and TypeScript Rules
+## React / TypeScript 规则（迁移后的目标 owner）
 
-When a focused frontend task has implemented extraction and delivery, use the WordPress runtime:
+当一个字符串已转到 React owner 并且提取链路完备时：
 
 ```ts
 import { __, _n, _x, sprintf } from '@wordpress/i18n';
 
-const label = __( 'Live preview', 'easymde' );
-const title = _x( 'Preview', 'editor view mode', 'easymde' );
-const countLabel = sprintf(
-  _n( '%d revision', '%d revisions', count, 'easymde' ),
-  count,
+const title = __( 'Live preview', 'easymde' );
+const count = sprintf(
+  _n( '%1$s revision', '%1$s revisions', revisionCount, 'easymde' ),
+  revisionCount
 );
 ```
 
-Rules:
+- 不引入自建 i18n Provider；
+- 消息 ID 与 context 使用字面量；
+- 不允许模板字符串拼接可翻译句子；
+- 不允许将 translated text 作为 key/id/selector/storage 键；
+- 不允许为默认 WordPress locale 再做一套 runtime provider；
+- 新 owner 就绪前不得扩充 `EasyMDEConfig.strings`；
+- 若未通过提取与发布校验，不得以英文默认值掩盖缺失翻译状态（fail fast）。
 
-- message IDs and contexts must be literals;
-- do not use template literals or string concatenation to create translatable sentences;
-- do not create a custom React i18n Provider for the default WordPress locale;
-- direct `@wordpress/i18n` imports are sufficient unless a focused task proves a custom i18n instance is necessary;
-- do not add an English message object or typed key catalog alongside Gettext;
-- do not grow new bulk `EasyMDEConfig.strings` or `EasyMDEFrontendConfig.strings` maps after the relevant React translation pipeline is available; use them only for documented legacy ownership;
-- do not use inline English fallback options that hide missing extraction or JSON delivery;
-- React escapes text by default, but translations must not be injected through `dangerouslySetInnerHTML`;
-- if markup is required, compose translated text with React elements instead of translating arbitrary HTML;
-- do not use translated text as a React key, DOM ID, CSS selector, storage key, command ID, or control-flow discriminator.
+## 与 react-admin 的借鉴边界
 
-A frontend source file with user-facing copy is incomplete until the extraction pipeline scans it and the release path delivers its translations.
+可吸收：
 
-## String Design
+- 对 string inventory 的系统性清点；
+- 通常优先使用插值而不是拼接；
+- 合理使用复数规则；
+- 关注通知、错误、提示、空状态和访问性文案；
+- 依赖官方验证路径（而非自定义字符串包）。
 
-Write source English for translators, not only for current UI screenshots.
+不可照搬：
 
-- Use complete phrases or sentences.
-- Keep punctuation inside the translatable message when it belongs to the sentence.
-- Avoid slang, unexplained abbreviations, and culture-specific jokes.
-- Avoid leading or trailing whitespace.
-- Do not split a sentence into independently translated fragments.
-- Use placeholders for dynamic values and allow reordering.
-- Keep the same source wording for the same product concept unless context genuinely differs.
-- Add context instead of inventing slightly different English strings to disambiguate meaning.
-- Assume translations can be substantially longer than English.
-- Do not encode layout constraints into message wording.
-- Do not use capitalization transforms to manufacture labels; translate the intended form.
-- Keep brand and technical names such as EasyMDE, WordPress, Markdown, Mermaid, KaTeX, and Highlight.js unchanged unless an official localized form exists.
+- 任何 `i18nProvider`、语言切换器、全局 locale 检测流程；
+- 业务与扩展名空间机制（`ra.*`、`resource.*` 等）；
+- 浏览器 locale 自动驱动 WordPress 插件；
+- 反向兼容性以“框架约定”取代 WordPress 版本边界。
 
-## Systematic String Inventory
+## 设计与质量规范（与 issue80 i18n 目标关联）
 
-When internationalizing a PHP template, legacy script, or React feature, inspect:
+- 命名和参数要稳定：`label`, `title`, `helpText`, `errorText`, `emptyStateText`；
+- 同一 feature 内按语义聚合字符串；不要将不同上下文复用同一个字段；
+- 模拟值（demo）与真实数据值需分离；
+- 同一 feature 的翻译字段建议有生命周期说明（开发中/生产中/迁移后禁用）。
+- 代码结构上尽量沿 `docs/REACT_DESIGN_PHILOSOPHY.md` 与 `.agents/skills/easymde/SKILL.md` 的 owner、Port、Feature 组织；
+- 一律避免为了规避翻译问题新增无关依赖（除非 issue 明确要求）。
 
-- visible text nodes;
-- headings and button labels;
-- labels, legends, descriptions, and help text;
-- placeholders;
-- tooltips and titles;
-- empty, loading, success, warning, conflict, and error states;
-- confirmation and destructive-action copy;
-- notifications and status messages;
-- screen-reader-only text and ARIA labels;
-- keyboard shortcut descriptions;
-- conditional strings and ternaries;
-- template literals and concatenated sentences;
-- REST or PHP user-facing error wrappers;
-- AI, upload, media, revision, publish, settings, and recovery states.
+## 格式、RTL、日期与数字
 
-Do not translate a string merely because it is written in English. Classify it first.
+- 使用 WordPress locale；不得从浏览器 `navigator` 决定 locale；
+- `is_rtl()` / `isRTL()` 决定方向；
+- `number_format_i18n()`、`wp_date()`（或对应 JS 等价）；
+- 不要在翻译前后混入布局相关断言（如“按钮固定长度”）；
+- 日期/数字翻译优先与 WordPress 站点配置一致。
 
-## Values That Must Not Be Translated
+## 无障碍文本
 
-Do not send these through EasyMDE Gettext:
+无障碍文本按同一 ownership 规则翻译：图标按钮 label、dialog label、状态播报、提示、快捷键说明、表单关系文本。
 
-- post titles, Markdown, excerpts, taxonomy term names, tags, filenames, URLs, email addresses, or other user content;
-- REST routes, request fields, response keys, schema versions, nonces, capability names, post meta keys, option names, cache keys, and storage keys;
-- script handles, module IDs, command IDs, feature IDs, CSS classes, selectors, HTML IDs, and data attributes;
-- log codes, telemetry-free diagnostic identifiers, exception class names, and machine-readable errors;
-- Markdown syntax, source code, shell commands, JSON, CSS, and regular expressions;
-- provider/model identifiers or configuration values;
-- extension-supplied labels that the extension has already localized.
+- 可访问名必须是最终翻译文案，不是内部字段名；
+- 不将动态 id/control 参数翻译；
+- 若 React owner 使用 ARIA，需要通过可访问性验证而非文案检查“通过”。
 
-Translate a human-facing explanation around technical data, not the data itself.
+## 目录级构建与发布规则（不变）
 
-## Extension and Dynamic Copy
+- 开发文件不进入可安装 ZIP；
+- `Node` 依赖、源文件、`source maps`、测试产物、日志、缓存、`.agents/` 不应进入安装产物；
+- 安装包必须包含运行所需的翻译文件（当前是 `.po/.mo`，未来如有 JSON 按新职责纳入）；
+- 发布/源码归档与现有 release 流程一致，不得以单一 i18n 目的临时改动打断打包边界。
 
-EasyMDE public registries may receive labels and descriptions from other plugins.
+## 验收与风险清单（Issue 对齐）
 
-- Built-in EasyMDE copy uses domain `easymde`.
-- An extension owns localization of its own messages and should use its own text domain before registration.
-- EasyMDE must not pass an extension-provided translated label back through its own Gettext domain.
-- User-configured labels and stored content remain user data.
-- Dynamic server error messages may already be localized by WordPress; translate the stable EasyMDE wrapper, not the message again.
-- Extension identifiers remain stable and untranslated.
+### 必检点（静态）
 
-## Locale, Direction, Dates, and Numbers
+- 变更字符串全部在单一 owner；
+- `i18n` 关键词、context、复数逻辑正确；
+- 没有用变量构造 msgid；
+- 已经存在旧 owner → 新 owner 的迁移单元清单；
+- `scripts/i18n.mjs` 覆盖了真实变更源（按当前范围）；
+- `npm run i18n:check` 在变更前后通过（若变更涉及 catalogs）。
 
-- Use the WordPress current admin/user locale; do not choose locale from `navigator.language`.
-- Do not add a plugin language switcher without a separate product requirement.
-- Do not persist a duplicate EasyMDE locale preference.
-- Use WordPress locale data for plural rules and direction.
-- Use `is_rtl()` in PHP or `isRTL()` from `@wordpress/i18n`; do not infer RTL from a hand-maintained language list.
-- Use logical CSS properties and test RTL; do not reverse business data or editor content.
-- Use WordPress site timezone for scheduling and post-time semantics.
-- Prefer `wp_date()`, `human_time_diff()`, `number_format_i18n()`, or corresponding WordPress JavaScript date utilities.
-- Do not rely on browser-default `toLocaleString()` for authoritative WordPress dates or numbers.
-- If JavaScript needs locale or timezone configuration, receive validated WordPress settings through the owning Bootstrap contract rather than recomputing them.
+### 必检点（运行时）
 
-## Accessibility Copy
+- 非默认 locale 入口可见真实加载（非模拟）；
+- 错误/状态文案在 user-facing 面展示正确；
+- 无重复 owner 迹象（同 key 同时在 `EasyMDEConfig.strings` 与 React owner）；
+- RTL 与方向检测由 WordPress 提供；
+- 不泄漏用户内容作翻译上下文。
 
-Accessibility text is product copy and must follow the same translation pipeline.
+### 必检点（发布）
 
-Include:
+- 安装 ZIP 包含目标 locale 文件；
+- release artifact 不泄漏源码；
+- 变更未触发未授权的远端资源加载；
+- 新增/迁移文案不会影响未迁移的 legacy 页面。
 
-- accessible names for icon-only controls;
-- form labels and error associations;
-- dialog titles, descriptions, and close labels;
-- status and alert messages;
-- loading and progress descriptions;
-- shortcut descriptions;
-- screen-reader-only instructions;
-- alternative text when an image conveys meaning.
+### 典型失败风险（需逐条记录）
 
-Do not use machine identifiers or untranslated English as an ARIA label. Do not announce every keystroke or high-frequency preview update. Translate the message before passing it to the existing accessibility announcement path.
+1. 双重翻译 owner（PHP + React 同文案）导致文本乱跳；
+2. 新 owner 渲染了 msgid（英文 fallback 被误当成成功）；
+3. TS 抽取未覆盖新源导致语言包缺失；
+4. `wp_set_script_translations` 调用时机错误导致页面空文案；
+5. 新增文案在 release ZIP 中缺失导致 production fallback。
 
-## Errors and Diagnostics
+## 禁止模式（Prohibited）
 
-Separate user copy from machine diagnostics.
+- 平台 locale 切换器；
+- 浏览器 locale 决定 WordPress 权限/翻译；
+- 动态拼接作为 msgid；
+- 同时保留 PHP/React 双 owner 并且不写清移除计划；
+- `wp_set_script_module_translations()` 在当前最小版本下作为已实现状态；
+- 不完整的“预览通过”而不跑 i18n/release 检查；
+- 用 inline English 兜底掩盖缺失提取或 catalog 缺失。
 
-```text
-stable error code       not translated
-HTTP status             not translated
-field or operation ID   not translated
-user-facing summary     translated at presentation owner
-developer context       not translated and must omit private content
-```
+## 官方参考（版本对齐）
 
-Do not branch on translated text. Do not log translated article content, prompts, custom CSS, nonces, tokens, or credentials.
-
-## Catalog and Build Workflow
-
-The existing pipeline is authoritative. Extend it rather than creating a parallel translation system.
-
-### Current PHP workflow
-
-```bash
-npm run i18n:make-pot
-npm run i18n:compile
-npm run i18n:check
-```
-
-Rules:
-
-- do not hand-edit generated POT or MO output as the only change;
-- update PO translations intentionally and remove fuzzy or missing entries;
-- keep translator comments, contexts, and existing custom extraction keywords stable;
-- add a custom extraction keyword only with a real owning helper and focused tests;
-- preserve deterministic generation;
-- keep catalog headers, text domain, version, encoding, and plural metadata valid;
-- do not claim catalogs are current until `i18n:check` passes.
-
-### Future TypeScript workflow
-
-Before adding translatable TypeScript or TSX:
-
-1. extend the authoritative pipeline to scan the declared frontend source roots;
-2. prove PHP and TypeScript messages merge into one domain without loss or duplicate ownership;
-3. generate WordPress-compatible JavaScript translation JSON using an approved deterministic tool;
-4. load translations for every production entry that contains messages;
-5. include required JSON in release validation;
-6. test source-English fallback and a non-English locale from an installable ZIP;
-7. ensure lazy-loaded code does not lose translations.
-
-Do not add a second uncoordinated POT generator or a hand-maintained JavaScript catalog.
-
-## Migrating Bootstrap Strings to React
-
-Use one focused migration unit at a time:
-
-1. identify the exact runtime surface, Bootstrap object, PHP field, and every JavaScript consumer;
-2. record the source English, context, placeholders, and accessibility use;
-3. implement TypeScript extraction and script translation delivery;
-4. add or update tests under a non-English WordPress locale;
-5. switch the React owner to `@wordpress/i18n`;
-6. remove the old Bootstrap field and legacy consumer in the same unit when safe;
-7. regenerate and validate catalogs;
-8. inspect the release ZIP;
-9. verify no second translation owner remains.
-
-Do not translate a Bootstrap string again in React during an intermediate phase.
-
-## Testing
-
-Choose checks based on the changed path.
-
-### Static and catalog checks
-
-- every EasyMDE Gettext call uses literal domain `easymde`;
-- message IDs and contexts are literals;
-- placeholder comments are present and correct;
-- no sentence concatenation or manual plural branching was introduced;
-- extraction includes every changed PHP, JavaScript, TypeScript, or TSX file;
-- POT, PO, MO, and required JSON assets are current;
-- no fuzzy, missing, malformed, or obsolete required translation remains;
-- source and generated files have deterministic output.
-
-### Runtime checks
-
-- English source fallback remains usable;
-- `zh_CN` or another maintained non-English locale loads in the WordPress admin;
-- ambiguous messages use the expected context;
-- singular and plural forms render correctly;
-- numbered placeholders can reorder safely;
-- RTL direction, focus order, icons, split panes, dialogs, and toolbar layout remain usable;
-- long translations do not hide critical actions;
-- status messages and ARIA labels are translated;
-- dates use WordPress locale and site timezone;
-- translated legacy Bootstrap copy is not translated twice;
-- React script translations load before the entry renders;
-- lazy code paths receive locale data;
-- extension-provided and user-generated values remain unchanged.
-
-### Release checks
-
-- install and test the generated plugin ZIP;
-- required POT, PO, MO, and implemented JSON files are present;
-- source catalogs and development tooling are included only when release policy requires them;
-- no frontend source, tests, cache, temporary extraction output, or local path enters the ZIP;
-- the installed plugin works without a remote translation runtime.
-
-Never claim a locale, browser, RTL, extraction, or release check that was not actually run.
-
-## Prohibited Patterns
-
-Do not introduce:
-
-- a parallel i18n framework or provider;
-- browser-locale detection as EasyMDE authority;
-- a plugin language switcher without a product Issue;
-- dynamic message IDs;
-- translated control-flow keys;
-- sentence concatenation;
-- manual two-form plural logic;
-- double translation across PHP and React;
-- translatable user content or identifiers;
-- arbitrary HTML in translations;
-- automatic machine translation in build or runtime;
-- a Script Module translation API unavailable on WordPress 6.7;
-- a second POT or catalog pipeline without replacing the existing owner explicitly;
-- silent fallback that hides missing extraction or missing release assets;
-- speculative locale directories, language packs, abstractions, or dependencies.
-
-## Completion Gate
-
-Before completing an i18n change:
-
-1. identify the single translation owner for every changed message;
-2. confirm the locale, timezone, direction, and formatting authority;
-3. confirm no user data or stable identifier was translated;
-4. confirm context, placeholders, plural forms, escaping, and accessibility copy;
-5. confirm extraction scans the changed source type;
-6. confirm the correct WordPress script dependency and translation loader;
-7. confirm current catalogs and generated runtime files;
-8. run the relevant i18n, Node, PHP, browser, accessibility, and release checks;
-9. inspect the exact diff and installable ZIP;
-10. report what was verified, what was not verified, and any remaining risk.
-
-## Official References
-
-Use the version-appropriate official source before external examples:
+以下官方入口优先于博客/示例（按 WP/React 实际版本核对）：
 
 ```text
 https://developer.wordpress.org/plugins/internationalization/
@@ -483,4 +305,4 @@ https://developer.wordpress.org/reference/functions/wp_set_script_translations/
 https://make.wordpress.org/core/2024/10/21/i18n-improvements-6-7/
 ```
 
-React-admin reference material is useful for inventory and message-design discipline, but its provider, namespaces, plural syntax, language packs, browser-locale selection, and runtime switching are not EasyMDE architecture.
+React-admin 参考仅限其项目组织思想，不作为翻译实现权威。

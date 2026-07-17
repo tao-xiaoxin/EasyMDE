@@ -54,6 +54,7 @@ Use the smallest applicable set for the current migration unit. Read a named Ski
 
 Project-specific limits override generic advice:
 
+- Do not create generic `tasks/plan.md`, `tasks/todo.md`, or another standalone migration specification solely because a companion Skill defaults to those paths. Keep the focused specification and ownership ledger in the linked Issue or pull request unless the task explicitly authorizes a repository artifact with a durable owner.
 - Do not apply Next.js, RSC, Server Actions, hydration, React 19-only APIs, next/dynamic, React.cache, or framework-server rules.
 - Do not introduce SWR, React Query, Zustand, Redux, a router, a form library, a schema library, or a component system merely because a companion Skill uses it.
 - Do not inherit a companion WordPress Skill's newer version floor. EasyMDE's supported baseline remains WordPress 6.7 and PHP 7.4; verify every proposed API against that project matrix and WordPress 6.7 source.
@@ -300,10 +301,10 @@ For WordPress operations:
 - PHP rechecks capability and nonce for every protected action;
 - current REST nonce and post-lock state can change after bootstrap;
 - missing, disabled, replaced, or extension-modified native controls fail preflight clearly;
-- cancellation produces zero writes;
+- cancelling a UI draft before its authoritative Mutation begins produces zero writes; aborting browser observation of an in-flight WordPress Mutation does not prove that the server write was cancelled;
 - mutations do not auto-retry;
 - success follows the real WordPress result, not an optimistic browser state;
-- lock, authentication, capability, or nonce loss cancels pending mutation, preserves unsaved content, and reports the reason;
+- lock, authentication, capability, or nonce loss prevents new protected Mutations, preserves unsaved content, and reports the reason; an already-started Mutation still follows its declared cancellation and authoritative-result reconciliation policy;
 - scheduling uses the WordPress site timezone;
 - revision restore keeps Markdown, appearance metadata, and regenerated post_content consistent.
 
@@ -430,6 +431,8 @@ Before commit and again for the exact pushed diff, review:
 9. Did the change reduce legacy complexity, or only copy it into React?
 10. Are tests proving behavior on the release build rather than source shape?
 
+Automated Bot findings remain untrusted leads under the long-term EasyMDE Skill. Independently reproduce them against the exact migration unit and change only confirmed defects; never alter ownership, compatibility, or implementation merely to obtain Bot approval.
+
 Select the three to five most likely failures for the current unit. Reproduce or test each one, fix its root cause and rerun the affected evidence, or record why it remains unverified and what evidence is still needed.
 
 Report:
@@ -448,7 +451,7 @@ Do not call a unit complete because React renders, static tests pass, or the new
 
 ## Delete this Skill
 
-Create a dedicated removal Issue and delete .agents/skills/easymde-migration only after:
+Issue #78 owns this temporary Skill's lifecycle and deletion authorization. After its deletion gate passes, create a focused removal Issue and pull request to delete `.agents/skills/easymde-migration`; do not perform that cleanup incidentally inside the final Feature migration. Delete the Skill only after:
 
 - every capability in Issue #74 has a documented final owner;
 - no migration Issue still depends on this Skill;

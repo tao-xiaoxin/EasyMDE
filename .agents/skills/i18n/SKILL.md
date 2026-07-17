@@ -284,22 +284,48 @@ Unverified states:
 <domain>-<locale>-<md5(runtime-relative-script-path)>.json
 ```
 
-每个 React Entry 必须明确选择并验证一种文件名策略：
+Handle-based 文件的优先级高于 Runtime-path MD5 文件。只要自定义目录中的 Handle 文件成功加载，WordPress 就直接返回，不再尝试同目录中的 MD5 文件；如果自定义目录中的两种候选都不能加载，WordPress 才继续尝试全局语言包目录中的 MD5 文件。因此过期 Handle 文件会遮蔽内容正确的 MD5 文件，不能把两个候选同时存在当作冗余容错。
 
-- **Handle-based strategy**
-  - domain、locale、已注册生产 Script Handle、JSON filename 和 `languages` 文件系统路径必须完全一致；
-  - Handle 重命名时，旧 JSON 不得被误当作仍可加载的证据。
-- **Runtime-path MD5 strategy**
-  - Hash 输入是 WordPress 从已注册生产 Script URL 计算出的插件相对运行路径；`.min.js` 结尾会先按 Core 规则规范为 `.js`；
-  - 不得使用 TS/TSX source path、Vite entrypoint source path、本地绝对路径、Dev Server URL 或未解析 Manifest key 计算 Hash；
-  - 不得假设 `frontend/src/entrypoints/admin-editor.tsx` 与 `assets/build/...js` 产生相同 Hash。
+每个 React Entry 必须明确选择并验证一种自定义目录文件名策略。
 
-Vite 使用 hashed output 时：
+#### 所有策略
 
-- Manifest 是 source entry 到 built runtime path 的权威映射；
-- JSON 生成必须使用 Manifest 解析后的生产路径；使用 `wp i18n make-json` 时采用经过验证的 `--use-map` 或等效确定映射；
-- Manifest entry、Script Handle、Runtime Script URL、Built Path、JSON filename 和安装 ZIP 内容必须作为一个合同验证；
+- Manifest 或等效构建合同必须验证 Source Entry、Built Asset、已注册 Script Handle、Runtime Script URL 和安装包资产之间的对应关系；
+- 对于同一个 domain、locale、Script Handle 和运行 Entry，安装版 ZIP 的自定义 Translation Path 正常情况下只包含被选定并验证的一种候选策略；
+- 选择 Handle Strategy 时，不遗留同一 Entry 的独立 MD5 候选；选择 MD5 Strategy 时，不遗留会优先匹配的 Handle 候选；
+- 迁移期间若暂时同时存在两种候选，必须证明 Jed JSON 内容和 Source Message 集合等价，记录 WordPress 实际加载的文件和旧文件删除边界，并让 Build / Release Check 在两者不一致时失败；
+- 不得把长期 Dual Strategy、过期 Handle 文件遮蔽新 MD5 文件或两个独立候选并存定义为可接受的回退机制；
 - 不得硬编码某次构建 Hash；缺失、过期、重复或不一致的 mapping 必须失败，而不是静默回退 source English。
+
+#### Handle-based Strategy
+
+目标文件名：
+
+```text
+<domain>-<locale>-<registered-script-handle>.json
+```
+
+- `wp i18n make-json` 原生不直接生成 Handle-based 文件名；`--use-map` 只改变消息引用对应的路径，输出仍然使用映射后路径的 MD5；
+- 选择该策略时，构建必须包含明确、确定且可重现的生成步骤，例如把已验证的 Jed JSON 确定性重命名或复制为 Handle 文件，或使用项目批准并测试过的生成器直接生成 Handle 文件；
+- 该步骤必须验证 domain、locale、已注册生产 Script Handle、Jed JSON 内容、Source Message 集合和安装包路径；
+- 不得手工维护、手工复制 Handle JSON，也不得把一次临时生成的文件名当作长期合同；
+- Handle 重命名后必须删除旧 Handle 文件；构建步骤产生的中间 MD5 文件若会成为同一 Entry 的第二候选，也必须从安装版 ZIP 中排除；
+- Manifest 仍用于验证 Source Entry、Built Asset 与 Script Handle 的对应关系，但 Handle 文件名只由稳定的注册 Script Handle 决定，不使用 Runtime Path 或其 MD5 计算。
+
+#### Runtime-path MD5 Strategy
+
+目标文件名：
+
+```text
+<domain>-<locale>-<md5(runtime-relative-script-path)>.json
+```
+
+- `wp i18n make-json` 默认属于该策略；`wp i18n make-json --use-map` 仍然对映射后的路径取 MD5，不会生成 Handle-based 文件；
+- Vite Source Path 必须通过 Manifest 或等效的确定映射转换为最终 Built Runtime Path；
+- 使用 `--use-map` 时，映射值必须与 WordPress 6.7 从已注册生产 Script URL 得到并用于 Hash 的生产相对路径完全一致；
+- 不得使用 TS/TSX Source Path、本地绝对路径、Dev Server URL、未解析 Manifest Key 或带错误插件目录前缀的路径计算 Hash；
+- `.min.js` 必须按 WordPress 6.7 Core 规则先规范为 `.js`，再计算 MD5；
+- 不得假设 `frontend/src/entrypoints/admin-editor.tsx`、Manifest Key 与 `assets/build/...js` 产生相同 Hash。
 
 ### JSON 生成与 PO 保护
 
@@ -510,6 +536,19 @@ Gettext source message、translator comment、代码示例、测试 fixture、ca
 - JSON generation 可重复，缺失或过期 mapping 会失败；
 - POT/PO/MO 没有被意外破坏，维护的 `zh_CN` 仍满足完整性要求；
 - `npm run i18n:check` 与新增的 TS/TSX catalog 检查通过。
+
+**Filename strategy evidence**
+
+- 为每个运行 Entry 明确选择 Handle-based 或 Runtime-path MD5 Strategy；
+- 记录 WordPress 在维护的非英语 locale 下实际加载的 JSON 文件；
+- 检查自定义 Translation Path 中是否存在会优先匹配并遮蔽所选策略的旧 Handle 文件；
+- 安装版 ZIP 不包含会遮蔽所选策略的过期候选文件，也不把两个独立候选当作冗余容错；
+- Handle Strategy 的生成步骤确定、可重现且不依赖人工复制，并验证对应 Entry / Chunk 的消息集合；
+- MD5 Strategy 的 Hash 输入与 WordPress 6.7 实际使用的 Runtime-relative Script Path 及 `.min.js` 规范化结果完全一致。
+
+**Filename precedence negative-test contract**
+
+首个 React 翻译 owner 必须增加一个未来负向 Fixture：在同一自定义 Translation Path 中同时放入过期 Handle JSON 和内容正确的 MD5 JSON，证明 WordPress 6.7 会优先加载 Handle JSON，并证明 Release Validation 会拒绝两者不一致的安装包状态。该测试是未来实现合同，不是当前文档 PR 已执行的运行时测试。
 
 **Runtime evidence**
 

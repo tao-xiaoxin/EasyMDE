@@ -52,6 +52,7 @@ Use the smallest applicable set for the current migration unit. Read a named Ski
 - vercel-react-best-practices: apply React 18 client-rendering, re-render, async, listener, and bundle guidance that fits EasyMDE.
 - vercel-composition-patterns: use explicit variants, narrow providers, state ownership, and composition where they reduce real complexity.
 - web-design-guidelines: review semantics, keyboard, focus, forms, feedback, motion, internationalization, and interaction quality.
+- `.agents/skills/i18n/SKILL.md`: use when the unit adds or changes user-visible text, transfers a translation owner, removes a Bootstrap string, or affects extraction, catalogs, locale formatting, RTL, accessibility copy, or package language assets.
 
 Project-specific limits override generic advice:
 
@@ -60,7 +61,7 @@ Project-specific limits override generic advice:
 - Do not introduce SWR, React Query, Zustand, Redux, a router, a form library, a schema library, or a component system merely because a companion Skill uses it.
 - Do not inherit a companion WordPress Skill's newer version floor. EasyMDE's supported baseline remains WordPress 6.7 and PHP 7.4; verify every proposed API against that project matrix and WordPress 6.7 source.
 - Do not let generic mobile-first breakpoints, URL-synchronized UI state, automatic retries, optimistic writes, backdrop closing, theme detection, or Core Web Vitals replace the approved editor contract.
-- Do not add a router, remote CDN, preconnect, remote font, or fixed virtualization threshold from generic Web guidance; WordPress owns navigation, runtime assets stay local, and performance decisions require project evidence.
+- Do not add a router, CDN, preconnect, remote font, or fixed virtualization threshold merely because generic Web guidance recommends it; WordPress owns navigation, and any remote asset must first pass the project CDN decision gate in `AGENTS.md` and `.agents/skills/easymde/SKILL.md`.
 - Do not add duplicate keyboard activation handlers to native buttons or links merely because a generic checklist asks for handlers on every interactive element; custom widgets must implement the complete applicable WAI-ARIA keyboard pattern.
 - Do not treat a generic security checklist as authority to add or change site-wide CSP, HSTS, frame, or other response headers during a browser ownership transfer; such host-wide policy requires its own focused Issue and WordPress compatibility review.
 - Preserve repository-owned translated copy and WordPress i18n behavior; do not apply generic capitalization, punctuation, or wording rules mechanically.
@@ -77,7 +78,7 @@ Project-specific limits override generic advice:
 - Cancellation, opening, closing, focusing, previewing, mounting, and unmounting perform no hidden save or migration write.
 - React uses the WordPress-provided React 18 runtime for WordPress 6.7 or newer.
 - Public extension APIs, filters, route namespace, command registries, theme identifiers, metadata, and native submission behavior remain compatible unless an explicit maintainer decision in the current focused task approves a compatibility plan.
-- Runtime assets stay local. The installable ZIP contains required compiled assets and excludes frontend source, tests, source maps unless approved, .agents, docs-only architecture material, caches, logs, and development files.
+- Local, version-controlled runtime assets remain the default. A migration unit does not inherit permission to add a remote asset; any exception requires its own evidence-backed, explicitly approved decision under the long-term EasyMDE Skill. The installable ZIP contains required compiled local assets and excludes frontend source, tests, source maps unless approved, .agents, docs-only architecture material, caches, logs, and development files.
 - Every state-changing behavior has exactly one active owner.
 - The WordPress edit form remains an open compatibility surface. Native and extension-owned fields, controls, meta boxes, submit hooks, and unknown form data remain owned by WordPress or their registering extension unless the focused migration unit explicitly delegates one field to React.
 
@@ -349,7 +350,7 @@ Threat-model each changed boundary:
 - AI prompts and model output;
 - diagnostics and public review artifacts.
 
-Verify server-side validation, capability, nonce, payload limits, sanitization, escaping, same-user custom CSS access, and no remote runtime dependency. React escaping does not make dangerouslySetInnerHTML safe; only the formal sanitized preview contract may enter the preview-owned HTML sink.
+Verify server-side validation, capability, nonce, payload limits, sanitization, escaping, same-user custom CSS access, and compliance with the approved asset-delivery contract. React escaping does not make dangerouslySetInnerHTML safe; only the formal sanitized preview contract may enter the preview-owned HTML sink.
 
 Never log article content, custom CSS, prompts, nonces, credentials, private endpoints, browser storage, or raw server errors. Use operation IDs, stable error codes, durations, feature names, owner state, and privacy-safe context.
 
@@ -384,7 +385,7 @@ Measure before and after when the unit can affect performance:
 
 Define task-specific tolerances before seeing the result. Core Web Vitals do not replace editor interaction metrics. If no representative measurement is available, report performance as unverified rather than claiming improvement.
 
-Build and test the production output. Verify WordPress-provided React is not duplicated, dependency metadata matches imports, asset URLs work outside the default plugin path, runtime assets are local, and the installable ZIP includes every required entry and chunk while excluding development files.
+Build and test the production output. Verify WordPress-provided React is not duplicated, dependency metadata matches imports, local asset URLs work outside the default plugin path, any approved remote asset preserves its documented integrity, privacy, failure, and fallback contract, and the installable ZIP includes every required local entry and chunk while excluding development files.
 
 Also verify the source ZIP / tar.gz is built from the exact tracked commit, contains the tracked `frontend/` source and required build guidance, preserves any required compiled runtime output intentionally tracked by repository policy, and rejects the generated or local-only artifacts disallowed by the source-archive builder. Do not reuse the installable ZIP allowlist for the source archive.
 

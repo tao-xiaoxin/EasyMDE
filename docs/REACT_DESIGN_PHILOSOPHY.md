@@ -957,6 +957,8 @@ accepted editor transaction
 
 聚焦任务只有在明确人工批准后，才能为一个具体 Feature 选择长期稳定的官方 CDN。该决策必须证明 Upstream / Operator Provenance、HTTPS Immutable Identifier、License、Privacy、Availability、Integrity、WordPress Loading Compatibility、Failure / Fallback、Update Ownership 和 Removal Plan。Static JavaScript / CSS 在官方 Endpoint 与 WordPress Loading Path 支持时使用 SRI 与正确 `crossorigin`。Core Editor、Save、Publish 和 Formal Preview 必须保持本地、具备已验证的本地 Fallback，或获得单独批准的完整可靠性合同。
 
+技术上可信的远程交付仍受实际发行渠道约束。WordPress.org Plugin Directory 发行可能要求普通非服务型 JavaScript、CSS 和 Runtime Asset 随插件本地提供，因此官方域名、Immutable Version 和 SRI 不能单独证明该渠道允许使用 CDN；GitHub Releases、自托管和其他明确审查的渠道可继续在项目的逐资产审批 Gate 下独立评估。
+
 这是一项逐资产、逐 Feature 的例外，不是 Host 级白名单。`latest`、Floating / Mutable URL、Unknown Host、Unofficial Mirror、Personal Domain、Proxy、Tracking、Telemetry、Silent Host Substitution 和远程可变 Executable Code 继续禁止。具体证据、失败矩阵和复核触发条件由 `.agents/skills/easymde/SKILL.md` 执行。
 
 首个 Build Implementation 必须选择并验证一个一致策略：

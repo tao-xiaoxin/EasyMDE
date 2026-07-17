@@ -78,6 +78,7 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
   - `wp_set_script_translations()` 注册与 JSON 资源交付；
   - 迁移后统一由 React/Feature owner 提供可验证文案。
   - 当前未实现任何 React i18n ownership 转移。
+  - 在尚无 React 翻译 owner 时，JavaScript JSON catalog 没有运行时 consumer，仍是计划能力；从第一个 React 翻译 owner 激活开始，WordPress-compatible JSON catalog、加载合同和安装包验证成为强制交付条件。
 
 - **Required before migration（迁移前置）**
 
@@ -198,7 +199,7 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 - 新 owner 在测试环境下已完成以下能力：
   - 字符串抽取（front-end/TS 源扫描）；
   - 与 PHP catalog 无损并行；
-  - 发布 JSON（如采用）与脚本句柄注册；
+  - 生成并交付 WordPress-compatible JavaScript JSON catalog；
   - `wp_set_script_translations()` 加载验证；
   - 安装 ZIP 中可见对应语言资源；
   - Lazy/代码分片场景下消息可用。
@@ -242,6 +243,11 @@ Accessibility use:
 Extraction path:
 JSON delivery path:
 Script handle:
+Runtime script source / Manifest entry:
+Built runtime path:
+JSON filename strategy:
+Source-to-build mapping:
+Catalog loading evidence:
 Activation condition:
 Rollback boundary:
 Legacy removal evidence:
@@ -251,13 +257,69 @@ Unverified states:
 
 ## WordPress 6.7 下的技术边界
 
+### JSON Catalog 激活门槛
+
+- 当前没有 React 翻译 owner，不为 legacy-only Feature 预生成无 consumer 的 JavaScript JSON catalog；
+- 从第一个 React 翻译 owner 激活开始，该 owner 的 WordPress-compatible JavaScript JSON catalog、生产加载合同、非英语 locale 运行时证据和安装包证据全部是强制条件；
+- 缺失或过期 JSON 是交付故障，不得用 source English、inline fallback 或浏览器 mock 掩盖。
+
 ### 经典脚本翻译（当前最小兼容路径）
 
-- i18n 包依赖必须有 `wp-i18n`；
-- 不得把 React 运行时打包进前端脚本；
-- 注册脚本后调用 `wp_set_script_translations( $handle, 'easymde', EASYMDE_PLUGIN_DIR . 'languages' )`；
+- React/TypeScript 源码可从 `@wordpress/i18n` 导入 `__`、`_n`、`_x` 和 `sprintf`；
+- Classic Script 构建必须将 `@wordpress/i18n` externalize 或映射到 WordPress 提供的 `wp.i18n` runtime；
+- 最终注册的生产 Script 必须具备 `wp-i18n` 依赖；依赖 metadata、注册结果与生产 Bundle 都要检查，不能只检查源码 import；
+- 不得在生产 Bundle 中同时包含私有 `@wordpress/i18n`、Tannin、重复 locale registry 或第二套 i18n singleton；
+- `wp_set_script_translations()` 会在 WordPress 6.7 的注册对象上补充 `wp-i18n` 依赖，但调用成功不证明 Vite externalization、dependency metadata 或 Bundle 内容正确；
+- 不得把 React、ReactDOM 或 i18n runtime 的私有副本打包进前端脚本；
+- 注册脚本后调用 `wp_set_script_translations( $handle, 'easymde', EASYMDE_PLUGIN_DIR . 'languages' )`；第三个参数是翻译目录的完整文件系统路径；
 - 本地化字符串仍遵循 WordPress 权威机制，不是浏览器语言推断；
-- 本地化 JSON（若引入）必须参与 ZIP 校验且与当前域、版本一致。
+- 从第一个 React 翻译 owner 激活开始，本地化 JSON 必须参与 ZIP 校验且与当前 domain、locale、Script Handle 或运行脚本路径一致。
+
+### WordPress 6.7 JSON 查找与构建映射
+
+向 `wp_set_script_translations()` 提供翻译目录后，WordPress 6.7 会按顺序尝试：
+
+```text
+<domain>-<locale>-<script-handle>.json
+<domain>-<locale>-<md5(runtime-relative-script-path)>.json
+```
+
+每个 React Entry 必须明确选择并验证一种文件名策略：
+
+- **Handle-based strategy**
+  - domain、locale、已注册生产 Script Handle、JSON filename 和 `languages` 文件系统路径必须完全一致；
+  - Handle 重命名时，旧 JSON 不得被误当作仍可加载的证据。
+- **Runtime-path MD5 strategy**
+  - Hash 输入是 WordPress 从已注册生产 Script URL 计算出的插件相对运行路径；`.min.js` 结尾会先按 Core 规则规范为 `.js`；
+  - 不得使用 TS/TSX source path、Vite entrypoint source path、本地绝对路径、Dev Server URL 或未解析 Manifest key 计算 Hash；
+  - 不得假设 `frontend/src/entrypoints/admin-editor.tsx` 与 `assets/build/...js` 产生相同 Hash。
+
+Vite 使用 hashed output 时：
+
+- Manifest 是 source entry 到 built runtime path 的权威映射；
+- JSON 生成必须使用 Manifest 解析后的生产路径；使用 `wp i18n make-json` 时采用经过验证的 `--use-map` 或等效确定映射；
+- Manifest entry、Script Handle、Runtime Script URL、Built Path、JSON filename 和安装 ZIP 内容必须作为一个合同验证；
+- 不得硬编码某次构建 Hash；缺失、过期、重复或不一致的 mapping 必须失败，而不是静默回退 source English。
+
+### JSON 生成与 PO 保护
+
+`wp i18n make-json` 的 PO 修改行为依赖所选 WP-CLI i18n-command 版本，未来实现必须固定并验证实际工具版本，不得按记忆假设：
+
+- 官方 `v2.6.6` 实现默认从输入 PO 清除已输出到 JavaScript JSON 的消息，可用 `--no-purge` 保持 PO 不变；
+- 官方 `v2.7.0` 起移除了 `--purge`、`--no-purge` 和 `--update-mo-files`，当前 `v2.7.3` 实现保持输入 PO 不变；
+- 未来 pipeline 必须记录明确的 PO mutation/purge policy，并通过 fixture 证明所选版本的真实行为；
+- 如果所选工具版本或替代工具可能修改 PO，使用该版本支持的 no-purge 模式、受控临时副本，或经过验证且同步更新 PO/MO 的确定流程；不在本 Skill 中预设其中一种；
+- JSON 生成前后都运行现有 `npm run i18n:check` 以及届时新增的 TS/TSX catalog 校验；
+- 比较 POT、PO、MO 与 JSON，证明 PHP-owned 消息没有丢失、JavaScript 消息进入正确 catalog、共享 source message 不受生成顺序破坏，并且维护的 `zh_CN` 继续满足项目完整性合同；
+- 不得在开发者工作区原地破坏维护中的 PO，再用 Git 回滚掩盖 pipeline 缺陷。
+
+### Lazy Chunk 与可选 Feature
+
+- 不能假设 Entry 的 JSON 自动覆盖所有独立构建 Chunk；
+- 含可翻译消息的 Chunk 必须有经过 WordPress 6.7 实际运行时验证的交付方式；
+- 可接受方式包括在 Entry 执行前加载消息数据、为 Chunk 提供独立稳定 Script Handle 与 catalog，或其他经真实运行时验证的方案；
+- 没有明确合同前，不把用户文案拆进无法注册或加载翻译的动态 Chunk；
+- 不为此预建新的 Chunk Loader，也不把所有消息集中进全局 `messages.ts`。
 
 ### Script Module 翻译
 
@@ -404,7 +466,7 @@ const message = sprintf(
 
 - **Installable plugin ZIP**
   - 排除 `.agents/`、frontend source、测试、缓存、日志、开发工具、临时提取文件和未批准的 source map；
-  - 包含运行所需的 PHP、编译后 JavaScript/CSS、运行时依赖、license/notice、当前 POT/PO/MO，以及未来真实启用后的 JSON catalog；
+  - 包含运行所需的 PHP、编译后 JavaScript/CSS、运行时依赖、license/notice、当前 POT/PO/MO，以及从第一个 React 翻译 owner 激活开始所需的 JSON catalog；
   - 必须验证脚本句柄、text domain、文件名和资源路径与包内文件一致。
 - **Source ZIP / source tar.gz**
   - 可以包含受控且已跟踪的项目源码和维护文件；
@@ -429,6 +491,37 @@ Gettext source message、translator comment、代码示例、测试 fixture、ca
 - user-facing message：由当前渲染 owner 翻译，不附带原始敏感详情。
 
 ## 验收与风险清单（Issue 对齐）
+
+### 首个 React i18n 迁移单元的强制证据
+
+这些是未来首个 React 翻译 owner 的完成条件，不是当前文档 PR 已执行的 runtime 验证。
+
+**Build evidence**
+
+- 生产 Bundle 不包含私有 `@wordpress/i18n`、Tannin 或重复 locale registry；
+- 最终生产 Script 具有正确 `wp-i18n` 依赖；
+- Vite Manifest 指向的 built runtime path 与 JSON filename strategy、source-to-build mapping 一致；
+- 生产 mapping 不包含 Localhost、Dev Server URL、本地绝对路径、TS/TSX source path 或未解析 Manifest key。
+
+**Catalog evidence**
+
+- 记录 JSON filename strategy、source-to-build mapping 和实际加载文件；
+- 固定并记录 WP-CLI i18n-command 或替代工具版本及 PO mutation/purge policy；
+- JSON generation 可重复，缺失或过期 mapping 会失败；
+- POT/PO/MO 没有被意外破坏，维护的 `zh_CN` 仍满足完整性要求；
+- `npm run i18n:check` 与新增的 TS/TSX catalog 检查通过。
+
+**Runtime evidence**
+
+- 在维护的非英语 locale 下安装并运行 installable plugin ZIP；
+- 证明 WordPress 实际加载了对应 JSON，显示翻译来自 JSON 而不是浏览器 mock 或 source-English fallback；
+- 错误 Handle、错误 mapping 和缺失 JSON 都有失败测试。
+
+**Package evidence**
+
+- 必需 JSON 存在于 installable plugin ZIP；
+- JSON filename、domain、locale、Handle 或 runtime-relative script path 完全匹配；
+- Source archive 与 installable plugin ZIP 继续按各自合同独立验证。
 
 ### 必检点（静态）
 
@@ -509,6 +602,11 @@ https://developer.wordpress.org/block-editor/reference-guides/packages/packages-
 https://developer.wordpress.org/block-editor/reference-guides/packages/packages-date/
 https://developer.wordpress.org/reference/functions/wp_set_script_translations/
 https://make.wordpress.org/core/2024/10/21/i18n-improvements-6-7/
+https://github.com/WordPress/wordpress-develop/blob/6.7/src/wp-includes/l10n.php#L1142-L1269
+https://github.com/WordPress/wordpress-develop/blob/6.7/src/wp-includes/class-wp-scripts.php#L652-L708
+https://developer.wordpress.org/cli/commands/i18n/make-json/
+https://github.com/wp-cli/i18n-command/blob/v2.6.6/src/MakeJsonCommand.php
+https://github.com/wp-cli/i18n-command/blob/v2.7.3/src/MakeJsonCommand.php
 ```
 
 React-admin 参考仅限其项目组织思想，不作为翻译实现权威。

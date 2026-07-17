@@ -106,11 +106,12 @@ PHP / WordPress state
 - `post_content` is safely rendered WordPress compatibility output.
 - `EasyMDE\Content\MarkdownRenderer`, backed by `league/commonmark`, is the only formal production Markdown renderer.
 - PHP and WordPress own capability checks, nonces, post meta, revisions, media, taxonomies, save, publish, status, locks, autosave, scheduling, settings persistence, public output, and supported-post admission.
+- Treat the WordPress edit form as an open compatibility surface, not a closed React schema. Native and extension-owned fields, controls, meta boxes, and submit hooks—including slug, excerpt, author, visibility, password, sticky state, featured image, taxonomies, page attributes, and unknown extension data—remain owned by WordPress or their registering extension unless a focused contract explicitly delegates one field to React.
 - PHP integration code remains compatible with PHP 7.4 and follows WordPress Coding Standards; a React task does not authorize newer PHP syntax or bypassing WordPress APIs.
 - React owns admin presentation, interaction, Feature composition, dialogs, panels, layout, and explicitly defined browser-session state.
 - Client capability flags control presentation only; PHP authorizes protected actions.
 - A nonce protects request integrity and does not replace authorization.
-- Opening, closing, focusing, previewing, or cancelling UI performs zero hidden writes.
+- Opening, closing, focusing, previewing, or cancelling UI performs zero hidden document, settings, or server writes. Approved preference or recovery storage changes occur only in response to their explicit owning event and never as fallback article persistence.
 - Native field synchronization is a submission bridge, not proof of persistence.
 - A browser Promise is not success unless it represents the real WordPress or browser owner completing the operation.
 - React must not create a second data authority, renderer, permission system, save path, publish path, revision model, media store, settings store, timezone model, or public-content authority.
@@ -181,7 +182,7 @@ frontend/src/entrypoints/admin-editor.tsx
 frontend/src/entrypoints/settings.tsx
 ```
 
-Each Root owns its Runtime, Store, Providers, Error Boundary, subscriptions, and teardown. Editor and Settings Roots do not share mutable state or lifecycle owners.
+Each Root owns its Runtime, Error Boundary, subscriptions, and teardown. Create a Root Store or Context Provider only when shared session state or subtree injection actually requires one; instantiate it per Mount and keep it owned by that Root. A simple Root passes typed Runtime/data Props and keeps State at the nearest Component or Feature. Editor and Settings Roots never share mutable State, Context instances, caches, or lifecycle owners.
 
 Enqueue each Entrypoint, its CSS, Bootstrap contract, and WordPress dependencies only after the owning PHP screen and capability admission rules have passed. The Editor Root must additionally pass supported-post-type and post admission. Do not load editor or settings applications on unrelated admin screens or public pages, and do not use a missing client Root as the primary asset-loading guard.
 
@@ -210,23 +211,22 @@ frontend/
     ├── domain/
     ├── features/
     ├── integrations/
-    │   ├── wordpress/
+    │   ├── wordpress/          # focused WordPress adapters; ai/ only when approved
     │   ├── preview-runtime/
-    │   ├── browser/
-    │   └── ai/                 # only when an approved AI integration exists
+    │   └── browser/
     ├── shared/
     │   ├── ui/
     │   ├── hooks/
     │   ├── icons/
-    │   ├── i18n/
+    │   ├── i18n/               # only proven platform-neutral helpers with stable consumers
     │   └── types/
     └── test/
 ```
 
 Layer rules:
 
-- `entrypoints/`: discover Roots, parse bootstrap, construct Runtime and Store, mount, signal readiness, and teardown.
-- `app/`: Root shell, Providers, Error Boundary, Store, layout, and top-level composition.
+- `entrypoints/`: discover Roots, parse bootstrap, construct Runtime and any justified Root Store, mount, signal readiness, and teardown.
+- `app/`: Root shell, Error Boundary, layout, top-level composition, and only the Providers or Store justified by actual shared ownership.
 - `contracts/`: runtime schemas, Ports, Results, Error Codes, safe-value types, extension and Manifest contracts.
 - `domain/`: pure rules with no React, DOM, WordPress, network, Storage, or Clipboard access.
 - `features/`: complete user-recognizable capabilities.
@@ -245,6 +245,8 @@ contracts    → domain types and shared types only
 integrations → contracts, domain, shared
 shared       → no app, feature, integration, or WordPress ownership
 ```
+
+This table governs dependencies between architectural layers. Inside `integrations/`, a capability Adapter may depend on one explicitly lower-level, same-platform transport module—for example `integrations/wordpress/preview/` may use `integrations/wordpress/rest/`. Record that internal order, keep it acyclic, and never allow the lower-level transport to import Feature semantics or a capability Adapter. Cross-platform Integration shortcuts, sibling semantic cycles, and generic service facades remain prohibited.
 
 Do not create empty paths, a second package or lockfile, shared mutable `app/store/`, or generic root `components/`, `services/`, `helpers/`, `utils/`, or `lib/` directories.
 
@@ -403,14 +405,14 @@ Rules:
 
 ## State, Events, Effects, and Lifecycle
 
-Use one Store per application Root. Do not export a mutable module-level singleton.
+Keep State local by default. Create at most one Root Store for an application Root only when multiple Features must coordinate shared browser-session State; instantiate it per Mount and do not export a mutable module-level singleton. A Root that does not need shared State does not get a Store merely for structural symmetry.
 
 State ownership:
 
 ```text
 Persisted authority     PHP / WordPress
 Server-derived state    one explicit owner
-Editor session state    root store
+Editor session state    nearest owner; Root Store only when shared across Features
 Local UI draft          nearest Feature
 Derived state           selector or render
 Submission bridge       native WordPress fields
@@ -492,7 +494,7 @@ export interface SettingsRuntime {
 
 Add a Feature-specific capability such as `CustomCssPort` or `AiPort` to the owning Runtime only when that Feature and a real Adapter are implemented. Do not predeclare optional placeholder Ports. `AppearancePort` implementations belong to the focused WordPress appearance integration rather than a generic REST service.
 
-Keep concrete ownership discoverable. `DocumentPort`, `SavePort`, `SessionPort`, `PreviewPort`, `AppearancePort`, `CustomCssPort`, `PublishingPort`, `RevisionPort`, `MediaPort`, and `SettingsPort` implementations belong to their focused `integrations/wordpress/<capability>/` directories when the capability exists. `PreviewPort` owns the server request and response contract; `integrations/preview-runtime/` owns only post-response Mermaid, KaTeX, Highlight.js, and TOC enhancement. Browser `StoragePort`, `ClipboardPort`, and browser diagnostics implementations belong to their corresponding `integrations/browser/` directories. Shared REST transport may live under `integrations/wordpress/rest/`, but it must not become the owner of Feature semantics or a generic service facade.
+Keep concrete ownership discoverable. `DocumentPort`, `SavePort`, `SessionPort`, `PreviewPort`, `AppearancePort`, `CustomCssPort`, `PublishingPort`, `RevisionPort`, `MediaPort`, and `SettingsPort` implementations belong to their focused `integrations/wordpress/<capability>/` directories when the capability exists. `PreviewPort` owns the server request and response contract; `integrations/preview-runtime/` owns only post-response Mermaid, KaTeX, Highlight.js, and TOC enhancement. Browser `StoragePort`, `ClipboardPort`, and browser diagnostics implementations belong to their corresponding `integrations/browser/` directories. Shared REST transport may live under `integrations/wordpress/rest/`, but it must not become the owner of Feature semantics or a generic service facade. If an approved AI Feature is added, its browser `AiPort` Adapter belongs under `integrations/wordpress/ai/` and talks only to the authorized EasyMDE server boundary; provider credentials and provider-specific authority stay in focused PHP/server code, never in `frontend/`.
 
 Representative result contract:
 
@@ -638,6 +640,7 @@ Preview requests support Abort, request identity, stale-result rejection, payloa
 Native operations:
 
 - synchronize accepted document transactions to native submission fields before native serialization;
+- mutate only the explicitly delegated native fields and let WordPress serialize the full form; do not rebuild submission from a closed TypeScript allowlist or drop unknown native, meta-box, or extension-owned fields;
 - do not debounce the Submission Bridge;
 - do not treat field synchronization as persisted success;
 - observe the actual WordPress save or publish result;
@@ -756,7 +759,7 @@ Do not add a State, Query, Form, Router, Schema, Animation, Icon, or Utility lib
 Keep the two publication artifacts distinct:
 
 - the installable plugin ZIP follows the runtime allowlist and excludes development source;
-- source ZIP / tar.gz artifacts are built from the exact tracked commit, include the tracked `frontend/` source and build/maintenance documentation, and reject generated or local-only paths according to `scripts/build-source-archives.mjs`.
+- source ZIP / tar.gz artifacts are built from the exact tracked commit, include the tracked `frontend/` source and build/maintenance documentation, preserve any required compiled runtime output that repository policy intentionally tracks, and reject only the generated or local-only paths disallowed by `scripts/build-source-archives.mjs`.
 
 Do not apply the installable-package allowlist to source archives, and do not use an uncommitted working tree as source-archive input.
 
@@ -769,7 +772,7 @@ Choose tests by responsibility:
 - `contracts`: schema versions, PHP/TS fixture parity, Error Mapping, safe values, and Manifest contracts;
 - `integrations`: WordPress DOM, native form, nonce refresh, Locks, REST, Media, Storage, Clipboard, mounting, and failure paths;
 - `features`: Controller, Hook, Component, Focus, keyboard, and form behavior through mock Runtime;
-- `app`: Providers, independent Stores, Error Boundaries, activation, and teardown;
+- `app`: any required Providers or Root Stores, Error Boundaries, activation, and teardown; do not create test-only Store/Provider infrastructure for a simple Root that does not own it;
 - E2E: real WordPress behavior using the installable ZIP;
 - release: required compiled entries present and development files absent;
 - source archive: exact committed source present, generated/local-only artifacts absent, and archive version/commit identity correct.

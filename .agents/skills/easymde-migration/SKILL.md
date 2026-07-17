@@ -9,7 +9,7 @@ This is a temporary execution Skill for the migration tracked by Issue #74. Use 
 
 Delete this Skill after the full migration and its removal gate are complete. Do not preserve migration ceremony as permanent project architecture.
 
-Issue #74 owns the editor migration program; Issue #78 owns this temporary migration Skill and its eventual cleanup. Do not close Issue #78 or delete this Skill without explicit human maintainer approval.
+Issue #74 owns the editor migration program. Closed Issue #78 records the introduction of this temporary Skill and its deletion gate; it is not the future removal tracker. When the gate eventually passes, create a new focused removal Issue and pull request, and delete the Skill only after explicit human maintainer approval. Closure of #78 is not evidence that #74 or any migration unit is complete.
 
 Keep the three guidance files distinct:
 
@@ -78,6 +78,7 @@ Project-specific limits override generic advice:
 - Public extension APIs, filters, route namespace, command registries, theme identifiers, metadata, and native submission behavior remain compatible unless the linked Issue explicitly changes them.
 - Runtime assets stay local. The installable ZIP contains required compiled assets and excludes frontend source, tests, source maps unless approved, .agents, docs-only architecture material, caches, logs, and development files.
 - Every state-changing behavior has exactly one active owner.
+- The WordPress edit form remains an open compatibility surface. Native and extension-owned fields, controls, meta boxes, submit hooks, and unknown form data remain owned by WordPress or their registering extension unless the focused migration unit explicitly delegates one field to React.
 
 ## Define one migration unit
 
@@ -249,7 +250,7 @@ Required test layers as applicable:
 - contract tests for schemas, versions, errors, and PHP/TypeScript fixtures;
 - adapter tests for native DOM, nonce refresh, locks, REST, media, storage, clipboard, external-store snapshots and subscriptions, cancellation, and cleanup;
 - component tests for accessible user behavior, status announcements, and honest Error Boundary scope through a mock runtime;
-- app tests for providers, independent stores, readiness, activation, error boundaries, and teardown;
+- app tests for readiness, activation, Error Boundaries, teardown, and any Providers or Root Stores the migrated Root actually owns; do not introduce test-only infrastructure for structural symmetry;
 - Playwright tests against an installed release ZIP for the real WordPress flow;
 - release tests for compiled inclusion and development-file exclusion.
 
@@ -301,6 +302,7 @@ For WordPress operations:
 - PHP rechecks capability and nonce for every protected action;
 - current REST nonce and post-lock state can change after bootstrap;
 - missing, disabled, replaced, or extension-modified native controls fail preflight clearly;
+- React mutates only fields explicitly delegated by the migration specification and lets WordPress serialize the complete native form; it must not replace submission with a closed TypeScript allowlist that drops unknown native, meta-box, or extension-owned values;
 - cancelling a UI draft before its authoritative Mutation begins produces zero writes; aborting browser observation of an in-flight WordPress Mutation does not prove that the server write was cancelled;
 - mutations do not auto-retry;
 - success follows the real WordPress result, not an optimistic browser state;
@@ -378,7 +380,7 @@ Define task-specific tolerances before seeing the result. Core Web Vitals do not
 
 Build and test the production output. Verify WordPress-provided React is not duplicated, dependency metadata matches imports, asset URLs work outside the default plugin path, runtime assets are local, and the installable ZIP includes every required entry and chunk while excluding development files.
 
-Also verify the source ZIP / tar.gz is built from the exact tracked commit, contains the tracked `frontend/` source and required build guidance, and rejects generated or local-only artifacts. Do not reuse the installable ZIP allowlist for the source archive.
+Also verify the source ZIP / tar.gz is built from the exact tracked commit, contains the tracked `frontend/` source and required build guidance, preserves any required compiled runtime output intentionally tracked by repository policy, and rejects the generated or local-only artifacts disallowed by the source-archive builder. Do not reuse the installable ZIP allowlist for the source archive.
 
 ## Deprecate and remove the old owner
 
@@ -451,7 +453,7 @@ Do not call a unit complete because React renders, static tests pass, or the new
 
 ## Delete this Skill
 
-Issue #78 owns this temporary Skill's lifecycle and deletion authorization. After its deletion gate passes, create a focused removal Issue and pull request to delete `.agents/skills/easymde-migration`; do not perform that cleanup incidentally inside the final Feature migration. Delete the Skill only after:
+Issue #78 records why this temporary Skill was introduced and the original deletion contract. It is already complete and does not authorize future removal. After the gate below passes, create a new focused removal Issue and pull request to delete `.agents/skills/easymde-migration`; do not perform that cleanup incidentally inside the final Feature migration. Delete the Skill only after:
 
 - every capability in Issue #74 has a documented final owner;
 - no migration Issue still depends on this Skill;

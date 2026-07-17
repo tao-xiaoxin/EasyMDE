@@ -17,25 +17,37 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 4. `.agents/skills/easymde/SKILL.md`；
 5. `.agents/skills/easymde-migration/SKILL.md`（当涉及所有权转移）；
 6. 官方文档（按当前支持版本）；
-7. 参考型技能：`spec-driven-development`、`deprecation-and-migration`、`frontend-ui-engineering`、`test-driven-development`、`browser-testing-with-devtools`、`security-and-hardening`、`wp-plugin-development`、`performance-optimization`、`code-review-and-quality`、`react-best-practices`、`composition-patterns`、`web-design-guidelines`；
+7. 当前任务实际需要的通用 Skill；
 8. react-admin 作为设计思想借鉴，不作为项目权威；
 9. 其他博客、搜索摘要、经验贴仅作为辅助输入。
 
 下层资料不得覆盖上层规则；一旦冲突，以上层为准。
 
+## 最小 Companion Skill 组合
+
+不要把 Companion Skill 当成依赖安装列表，也不要为每个 i18n 任务读取全部通用 Skill。只组合当前任务所需的最小集合：
+
+- 普通 EasyMDE React/TypeScript 文案开发：`easymde`；
+- legacy owner 转移、双实现接管或旧字段删除：`easymde-migration`；
+- 新增或改变可执行逻辑：按风险使用 `test-driven-development`；
+- 处理不可信输入、错误详情或隐私边界：按风险使用 `security-and-hardening`；
+- 修改 ARIA、表单、焦点或可见交互：按风险使用 `web-design-guidelines`，需要真实浏览器证据时再使用 `browser-testing-with-devtools`；
+- 有可测量的渲染、加载或包体积问题：使用 `performance-optimization`。
+
+不要声称读取了当前环境不可访问的 Skill，不要遍历未知 Skill 目录，也不要把本地 Skill 存储路径写入源码、Issue、PR 或公开证据。
+
 ## 先验前置：读取真实文件，不猜结论
 
-每次介入 i18n 工作前必须读取至少这些文件：
+每次介入 i18n 工作先读取与任务直接相关的实时文件。最低基线是：
 
 - `AGENTS.md`
 - `package.json`
 - `.agents/skills/easymde/SKILL.md`
-- `.agents/skills/easymde-migration/SKILL.md`
 - `docs/REACT_DESIGN_PHILOSOPHY.md`
 - `scripts/i18n.mjs`
-- `src/Admin/AdminAssets.php`
-- `src/Frontend/FrontendAssets.php`
-- 相关模板与测试文件（包含待改字符串所在目录）
+- 待改字符串的 owner、consumer、entrypoint 和相关测试。
+
+涉及 legacy owner 转移时再读取 `.agents/skills/easymde-migration/SKILL.md`；涉及后台或公开前台 Bootstrap 时分别读取 `src/Admin/AdminAssets.php` 或 `src/Frontend/FrontendAssets.php`。不要读取与任务无关的完整目录来制造上下文。
 
 禁止基于“理想架构”宣称功能已实现；所有结论必须来源于当前文件中的事实。
 
@@ -107,30 +119,39 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 
 ## 扩展 API 文案所有权
 
-扩展点 `EasyMDE_Plugin::register_toolbar_button()` 与 `EasyMDE_Plugin::register_shortcode_helper()` 的文案边界：
+不得把两个公开扩展点写成相同合同：
 
-- 扩展 `id`、`command id`、`shortcut`、`surface` 等标识属于扩展自身，不应在 EasyMDE 内被重复翻译为显示文案。
-- 典型扩展文案字段（`label`、`description`）进入运行时前若为空则落回 `id`，若为文本则当前由核心在 `ToolbarRegistry::get_commands_for_script()` 使用 `translate( ..., 'easymde' )` 处理。
-- 扩展若提供独立 text domain，优先保留其本身翻译边界；若复用 `easymde`，则必须保证与 `easymde` 文案流程一致。
-- 扩展已翻译字符串不得作为核心“新 owner 文案”重复引导。
+- **Toolbar Command**
+  - `EasyMDE_Plugin::register_toolbar_button()` 进入 `ToolbarRegistry`；
+  - `ToolbarRegistry::get_commands_for_script()` 当前对 `label` 和 `description` 调用 `translate( $value, 'easymde' )`；
+  - 这是现有兼容行为，不代表仓库已经支持扩展声明或加载自有 text domain。
+- **Shortcode Helper**
+  - `EasyMDE_Plugin::register_shortcode_helper()` 进入同一 registry；
+  - `ToolbarRegistry::get_shortcode_helpers_for_script()` 当前直接传输已注册配置，不自动翻译字段；
+  - 不得声称核心会翻译 helper 文案、读取扩展 text-domain descriptor 或加载扩展 catalog。
+
+扩展标识符、command id、shortcut 和配置键不是显示文案。Toolbar 值继续经过现有核心 `easymde` 翻译步骤，浏览器 consumer 将输出视为最终显示值，不再翻译；Shortcode Helper 值保持扩展配置所有权。当前合同没有机制让核心识别并跳过预翻译值，也没有扩展自有 text domain descriptor；任何改变核心 Toolbar 翻译步骤或增加 descriptor 的方案都必须作为独立公共兼容性设计处理，不能在本 Skill 中写成当前能力。
 
 ## 所有权模型（必须单一）
 
-同一个可见字符串必须只有一个“渲染所有者”。
+同一个用户可见消息实例、交互状态或 Bootstrap field 必须只有一个翻译 owner。
 
 - PHP 页面直接渲染：PHP Gettext（domain `easymde`）；
 - 管理后台 legacy UI：`AdminAssets` → `EasyMDEConfig.strings`；
 - 文章增强 legacy UI：`FrontendAssets` → `EasyMDEFrontendConfig.strings`；
 - 未来 React UI：`@wordpress/i18n` 在已迁移的 React 消息源内；
-- 一条消息若迁移成功到 React owner，则必须：
+- 一个消息实例若迁移成功到 React owner，则必须：
   - 在原 bootstrap owner 中删除该条；
-  - 在迁移文档中标记“legacy removable”并通过验证；
+  - 在 Issue、PR 或 migration spec 中记录 legacy removal evidence；
   - 保持 release ZIP 与行为回归检测通过。
 
 规则：
 
-- 不允许“同一英文含义在 PHP 与 React 同时翻译”；
-- 不允许两套 runtime 同时提供同一文案。
+- 同一个 Bootstrap field 不得既作为 PHP 已翻译值传入浏览器，又作为 React source message 进入 JS catalog；
+- 两套 runtime 不得同时为同一渲染实例或交互状态提供消息；
+- 不同 Feature 可以合法拥有相同英文，如 `Save`、`Cancel` 或 `Retry`；
+- 不得仅因英文相同就合并 owner 或创建全局消息桶；
+- 共享消息必须证明语义、Gettext context、consumer、生命周期和删除策略一致。
 
 ## 翻译对象边界
 
@@ -140,7 +161,15 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 - 表单帮助、空状态文案、短提示、工具提示；
 - 需要复数处理的数字模板；
 - 与人类交流的通知和流程引导文案；
-- 日期/数字格式化结果（WordPress 规范下）。
+- 包含日期、时间或数字占位符的完整人类语言句子。
+
+### 应按 Locale 格式化但不进入 Gettext 的
+
+- 原始数字、计数和百分比；
+- 时间戳、ISO 日期和机器可读时间；
+- 已按 WordPress locale 与站点时区格式化的日期、时间和数字值。
+
+消息模板通过 Gettext 或 `@wordpress/i18n` 翻译，格式化值通过 placeholder 插入。发布调度、日期含义和时区换算仍由 WordPress 站点时区权威负责。
 
 ### 禁止翻译（稳定标识/用户数据）
 
@@ -163,8 +192,8 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 
 ### 迁移可接受前置条件
 
-- 已在该 Unit 使用 `spec-driven-development` 明确验收标准；
-- 已在 Issue 中记录 owner 转移计划（迁移矩阵）；
+- 已在关联 Issue、PR 或 migration spec 中明确该 Unit 的验收标准；
+- 已记录 owner 转移计划（迁移矩阵）；
 - 该 Unit 所有新增/变更字符串由同一个 runtime owner 提供；
 - 新 owner 在测试环境下已完成以下能力：
   - 字符串抽取（front-end/TS 源扫描）；
@@ -186,6 +215,16 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 8. 仅当单元验证通过后再进入下一个单元。
 
 禁止把“新增翻译 helper”当成迁移完成条件；迁移完成以 `单元 owner + release + 运行时` 同步通过为准。
+
+### Legacy Bootstrap 维护
+
+在 React 翻译 pipeline 尚未接管对应 Feature 前，不得阻塞现有产品维护：
+
+- legacy-owned Feature 可以维护必要文案，但必须明确 PHP owner、Bootstrap object、field、consumer 和未来移除边界；
+- 后台 map 是 `EasyMDEConfig.strings`，公开前台 map 是 `EasyMDEFrontendConfig.strings`，不得只检查其中一个；
+- 不得创建无边界的全局字符串集合，也不得把已由 React owner 管理的消息重新加入 Bootstrap；
+- 对应运行面的提取、catalog、script translation delivery 和 runtime 已验证后，React-owned 新消息不得继续加入 legacy map；
+- ownership 转移完成后，删除对应 Bootstrap field 和 legacy consumer，并保留回滚边界与删除证据。
 
 ### 迁移规范模板（每个单元必填）
 
@@ -216,7 +255,7 @@ Unverified states:
 
 - i18n 包依赖必须有 `wp-i18n`；
 - 不得把 React 运行时打包进前端脚本；
-- 注册脚本后调用 `wp_set_script_translations( $handle, 'easymde', EASYMDE_ROOT . '/languages' )`；
+- 注册脚本后调用 `wp_set_script_translations( $handle, 'easymde', EASYMDE_PLUGIN_DIR . 'languages' )`；
 - 本地化字符串仍遵循 WordPress 权威机制，不是浏览器语言推断；
 - 本地化 JSON（若引入）必须参与 ZIP 校验且与当前域、版本一致。
 
@@ -258,19 +297,55 @@ $count_label = sprintf(
 import { __, _n, _x, sprintf } from '@wordpress/i18n';
 
 const title = __( 'Live preview', 'easymde' );
-const count = sprintf(
-  _n( '%1$s revision', '%1$s revisions', revisionCount, 'easymde' ),
-  revisionCount
+
+/* translators: %s: formatted revision count. */
+const countLabel = sprintf(
+  _n( '%s revision', '%s revisions', count, 'easymde' ),
+  formattedCount,
 );
+
+const panelTitle = _x( 'Preview', 'editor panel title', 'easymde' );
 ```
 
 - 不引入自建 i18n Provider；
 - 消息 ID 与 context 使用字面量；
+- `_n()` 使用原始数值选择复数，显示参数使用 locale-aware 的格式化值；
+- placeholder 的数量、顺序和类型必须与参数一致；
+- placeholder、count 或歧义术语使用可被所选 TS/TSX 提取工具识别的 `translators:` 注释，并实际验证注释进入 catalog；
 - 不允许模板字符串拼接可翻译句子；
 - 不允许将 translated text 作为 key/id/selector/storage 键；
 - 不允许为默认 WordPress locale 再做一套 runtime provider；
-- 新 owner 就绪前不得扩充 `EasyMDEConfig.strings`；
-- 若未通过提取与发布校验，不得以英文默认值掩盖缺失翻译状态（fail fast）。
+- 不允许将翻译结果放入 Root Store、Post Meta、Options、Local Storage 或 Recovery Draft；
+- 持久化稳定数据，不持久化当前 locale 的显示结果；
+- 若未通过提取与发布校验，不得用 React 自定义 inline English fallback 掩盖合同故障。
+
+### Feature-owned Messages
+
+- 文案属于拥有交互和渲染实例的 Feature 或 Component；
+- 不创建全局 `messages.ts`，不创建无边界的 `common` 消息桶；
+- 不因英文相同就共享消息；
+- 只有多个稳定 consumer 已证明语义、context、生命周期和删除策略一致时，才考虑窄范围共享；
+- shared formatting helper 只负责格式化数据，不因此成为 shared message owner；
+- 翻译尽可能靠近渲染处发生；Store 保存稳定状态和原始数据，不保存当前 locale 的翻译结果；
+- 可选或 lazy Feature 必须验证其消息 chunk、script handle 与 catalog 在激活时可用，不得把消息预先集中到全局文件来规避交付问题。
+
+## Source English 与合同故障
+
+返回 source English 不必然是错误。以下情况合法：
+
+- 当前 locale 就是 source locale；
+- 社区 catalog 没有对应翻译；
+- WordPress 按 Gettext 语义返回原始 msgid。
+
+以下情况是必须可观察并修复的合同故障：
+
+- 项目维护并声明完整的非英语 locale 本应包含该消息，但提取遗漏；
+- 声明随包交付的 catalog 或 JSON 资源缺失、损坏或无法加载；
+- text domain、script handle、资源路径或加载顺序错误；
+- 必需 Bootstrap field 缺失；
+- React 自定义 fallback 掩盖了上述故障。
+
+不要让 source-locale 页面崩溃或显示空白。Fail Fast 针对项目声明的提取、交付和 owner 合同，不针对 Gettext 的正常 source fallback。
 
 ## 与 react-admin 的借鉴边界
 
@@ -285,7 +360,8 @@ const count = sprintf(
 不可照搬：
 
 - 任何 `i18nProvider`、语言切换器、全局 locale 检测流程；
-- 业务与扩展名空间机制（`ra.*`、`resource.*` 等）；
+- Polyglot、`||||` 复数语法或 Language Packs；
+- 业务与扩展名空间机制（`ra.*`、`resources.*` 等）；
 - 浏览器 locale 自动驱动 WordPress 插件；
 - 反向兼容性以“框架约定”取代 WordPress 版本边界。
 
@@ -294,7 +370,6 @@ const count = sprintf(
 - 命名和参数要稳定：`label`, `title`, `helpText`, `errorText`, `emptyStateText`；
 - 同一 feature 内按语义聚合字符串；不要将不同上下文复用同一个字段；
 - 模拟值（demo）与真实数据值需分离；
-- 同一 feature 的翻译字段建议有生命周期说明（开发中/生产中/迁移后禁用）。
 - 代码结构上尽量沿 `docs/REACT_DESIGN_PHILOSOPHY.md` 与 `.agents/skills/easymde/SKILL.md` 的 owner、Port、Feature 组织；
 - 一律避免为了规避翻译问题新增无关依赖（除非 issue 明确要求）。
 
@@ -302,9 +377,18 @@ const count = sprintf(
 
 - 使用 WordPress locale；不得从浏览器 `navigator` 决定 locale；
 - `is_rtl()` / `isRTL()` 决定方向；
-- `number_format_i18n()`、`wp_date()`（或对应 JS 等价）；
+- PHP 使用 `number_format_i18n()`、`wp_date()`；JS 使用与 WordPress locale 数据和项目依赖一致的等价能力；
 - 不要在翻译前后混入布局相关断言（如“按钮固定长度”）；
-- 日期/数字翻译优先与 WordPress 站点配置一致。
+- 格式化结果不是 msgid；包含结果的完整句子使用 placeholder：
+
+```ts
+const message = sprintf(
+  __( 'Last saved at %s', 'easymde' ),
+  formattedTime,
+);
+```
+
+- `formattedTime` 服从 WordPress locale 与站点时区，本身不进入 Gettext。
 
 ## 无障碍文本
 
@@ -314,12 +398,35 @@ const count = sprintf(
 - 不将动态 id/control 参数翻译；
 - 若 React owner 使用 ARIA，需要通过可访问性验证而非文案检查“通过”。
 
-## 目录级构建与发布规则（不变）
+## 构建与发布产物边界
 
-- 开发文件不进入可安装 ZIP；
-- `Node` 依赖、源文件、`source maps`、测试产物、日志、缓存、`.agents/` 不应进入安装产物；
-- 安装包必须包含运行所需的翻译文件（当前是 `.po/.mo`，未来如有 JSON 按新职责纳入）；
-- 发布/源码归档与现有 release 流程一致，不得以单一 i18n 目的临时改动打断打包边界。
+产物类型必须分开验证：
+
+- **Installable plugin ZIP**
+  - 排除 `.agents/`、frontend source、测试、缓存、日志、开发工具、临时提取文件和未批准的 source map；
+  - 包含运行所需的 PHP、编译后 JavaScript/CSS、运行时依赖、license/notice、当前 POT/PO/MO，以及未来真实启用后的 JSON catalog；
+  - 必须验证脚本句柄、text domain、文件名和资源路径与包内文件一致。
+- **Source ZIP / source tar.gz**
+  - 可以包含受控且已跟踪的项目源码和维护文件；
+  - 公开源码归档不是“源码泄漏”，但仍不得包含未跟踪临时文件、秘密或私密运行数据。
+
+不得以单一 i18n 任务临时破坏现有 release 与 source archive 的职责边界。
+
+## 隐私与诊断边界
+
+Gettext source message、translator comment、代码示例、测试 fixture、catalog、公开 Issue/PR 证据、日志和诊断上下文都不得包含：
+
+- 本地绝对路径、用户名、home directory 或机器名；
+- token、cookie、nonce、credential、API key 或私有 endpoint；
+- 真实文章标题、Markdown、摘要、AI prompt/输出或 custom CSS；
+- 真实邮箱、私有媒体 URL、私有文件名、原始环境变量或含用户数据的 CI artifact；
+- 未清理的 stack trace 或可识别个人与运行环境的信息。
+
+示例与 fixture 使用合成数据。Translator comment 只解释占位符、语义和 context，不复制真实用户内容。诊断信息分层：
+
+- stable error code 与 operation ID：不翻译；
+- technical context：不翻译，结构化、最小化且移除隐私；
+- user-facing message：由当前渲染 owner 翻译，不附带原始敏感详情。
 
 ## 验收与风险清单（Issue 对齐）
 
@@ -328,7 +435,7 @@ const count = sprintf(
 - 变更字符串全部在单一 owner；
 - `i18n` 关键词、context、复数逻辑正确；
 - 没有用变量构造 msgid；
-- 已经存在旧 owner → 新 owner 的迁移单元清单；
+- 涉及 ownership 转移时，已经存在旧 owner → 新 owner 的迁移单元清单；
 - `scripts/i18n.mjs` 覆盖了真实变更源（按当前范围）；
 - `npm run i18n:check` 在变更前后通过（若变更涉及 catalogs）。
 
@@ -336,21 +443,21 @@ const count = sprintf(
 
 - 非默认 locale 入口可见真实加载（非模拟）；
 - 错误/状态文案在 user-facing 面展示正确；
-- 无重复 owner 迹象（同 key 同时在 `EasyMDEConfig.strings` 与 React owner）；
+- 无重复 owner 迹象（同一消息实例没有同时来自 `EasyMDEConfig.strings`、`EasyMDEFrontendConfig.strings` 和 React owner）；
 - RTL 与方向检测由 WordPress 提供；
 - 不泄漏用户内容作翻译上下文。
 
 ### 必检点（发布）
 
 - 安装 ZIP 包含目标 locale 文件；
-- release artifact 不泄漏源码；
+- installable plugin ZIP 排除开发源码和临时产物，source archive 只包含受控且已跟踪的公开源码；
 - 变更未触发未授权的远端资源加载；
 - 新增/迁移文案不会影响未迁移的 legacy 页面。
 
 ### 典型失败风险（需逐条记录）
 
 1. 双重翻译 owner（PHP + React 同文案）导致文本乱跳；
-2. 新 owner 渲染了 msgid（英文 fallback 被误当成成功）；
+2. 声明完整的维护 locale 因提取或交付故障意外回退 source English；
 3. TS 抽取未覆盖新源导致语言包缺失；
 4. `wp_set_script_translations` 调用时机错误导致页面空文案；
 5. 新增文案在 release ZIP 中缺失导致 production fallback。
@@ -373,6 +480,8 @@ const count = sprintf(
 5. 安装包是否真正包含该语言资产，CI/运行时证据是否可重放？
 6. 前台增强页与后台编辑页的 locale 边界是否有显式避免互相串用？
 7. 扩展命令/工具的文案是否保持它们的扩展所有权？
+8. Source English 是当前 locale 的正常结果，还是维护 catalog 的提取或交付故障？
+9. Translator comment、fixture 和诊断证据是否只含合成或已清理数据？
 
 未能回答任一项则不允许提交或转交。
 
@@ -384,7 +493,7 @@ const count = sprintf(
 - 同时保留 PHP/React 双 owner 并且不写清移除计划；
 - `wp_set_script_module_translations()` 在当前最小版本下作为已实现状态；
 - 不完整的“预览通过”而不跑 i18n/release 检查；
-- 用 inline English 兜底掩盖缺失提取或 catalog 缺失。
+- 用 React inline English fallback 掩盖缺失提取、catalog 或 delivery 故障；
 - 未声明 rollback boundary 即启动迁移；
 - 创建第二套消息源或未声明的 catalog 运行线。
 

@@ -33,6 +33,7 @@ AGENTS.md
 easymde.php
 src/Plugin.php
 src/Admin/AdminAssets.php
+src/Frontend/FrontendAssets.php
 scripts/i18n.mjs
 package.json
 languages/easymde.pot
@@ -66,7 +67,8 @@ Preserve these facts until a focused Issue changes them:
 - the extractor also has project-specific keyword configuration that must remain covered by tests;
 - the maintained `zh_CN` PO must cover every POT message without fuzzy or untranslated required entries;
 - GNU gettext commands such as `xgettext` and `msgfmt` are explicit build prerequisites and missing tools must fail clearly;
-- the current browser application receives PHP-translated strings through `EasyMDEConfig.strings`;
+- the current admin editor receives PHP-translated strings from `AdminAssets` through `EasyMDEConfig.strings`;
+- the current published-article enhancement receives PHP-translated strings from `FrontendAssets` through `EasyMDEFrontendConfig.strings`;
 - `languages/easymde.pot`, `languages/easymde-zh_CN.po`, and `languages/easymde-zh_CN.mo` are required release files;
 - the minimum supported WordPress version is 6.7;
 - WordPress, not the browser, owns the admin locale;
@@ -82,9 +84,14 @@ Every rendered message has one translation owner.
 PHP-rendered UI or PHP response copy
 → PHP Gettext with domain easymde
 
-Existing legacy browser UI
+Existing legacy admin editor UI
 → PHP Gettext in AdminAssets or its owning PHP service
-→ translated Bootstrap string
+→ EasyMDEConfig.strings
+→ JavaScript renders the supplied value without translating it again
+
+Existing published-article enhancement UI
+→ PHP Gettext in FrontendAssets or its owning PHP service
+→ EasyMDEFrontendConfig.strings
 → JavaScript renders the supplied value without translating it again
 
 Future React or TypeScript UI
@@ -219,7 +226,7 @@ Rules:
 - do not create a custom React i18n Provider for the default WordPress locale;
 - direct `@wordpress/i18n` imports are sufficient unless a focused task proves a custom i18n instance is necessary;
 - do not add an English message object or typed key catalog alongside Gettext;
-- do not grow new bulk `EasyMDEConfig.strings` maps after the React translation pipeline is available; use them only for documented legacy ownership;
+- do not grow new bulk `EasyMDEConfig.strings` or `EasyMDEFrontendConfig.strings` maps after the relevant React translation pipeline is available; use them only for documented legacy ownership;
 - do not use inline English fallback options that hide missing extraction or JSON delivery;
 - React escapes text by default, but translations must not be injected through `dangerouslySetInnerHTML`;
 - if markup is required, compose translated text with React elements instead of translating arbitrary HTML;
@@ -374,7 +381,7 @@ Do not add a second uncoordinated POT generator or a hand-maintained JavaScript 
 
 Use one focused migration unit at a time:
 
-1. inventory the current PHP field and every JavaScript consumer;
+1. identify the exact runtime surface, Bootstrap object, PHP field, and every JavaScript consumer;
 2. record the source English, context, placeholders, and accessibility use;
 3. implement TypeScript extraction and script translation delivery;
 4. add or update tests under a non-English WordPress locale;

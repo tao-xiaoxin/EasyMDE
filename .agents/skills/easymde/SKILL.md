@@ -46,6 +46,51 @@ Also use `easymde-migration` when the task:
 
 Do not turn ordinary feature work into a migration project, and do not use migration wording to justify unrelated redesign.
 
+## Guidance Ownership and Evidence-Triggered Maintenance
+
+Use the repository ownership map in `AGENTS.md`. This Skill owns executable guidance for normal React and TypeScript implementation, WordPress integration, UI quality, dependency and asset decisions, testing, maintenance, and delivery. It does not own current PHP implementation facts, temporary legacy handoff procedures, or the complete i18n pipeline.
+
+Guidance maintenance is triggered by evidence from a focused implementation or review. It is not a background process, scheduled sync, automatic upstream adoption, or reason to rewrite unrelated documents.
+
+Run the maintenance workflow when the focused task changes or audits a durable contract involving:
+
+- supported WordPress, PHP, Node, npm, React, TypeScript, Vite, Composer, or browser versions;
+- runtime or development dependencies, licenses, notices, local assets, or an approved CDN decision;
+- asset fallback, ownership, removal, Vite Manifest, dependency metadata, Script Handle, or loading strategy;
+- directories, layer ownership, Ports, public APIs, REST routes, namespace, metadata, Options, Hooks, Filters, command IDs, or extension descriptors;
+- build, installable ZIP, source archive, translation delivery, storage schema, privacy, diagnostics, or deprecation behavior;
+- guidance ownership or completed migration work that makes temporary guidance obsolete.
+
+Record in the focused Issue or pull request:
+
+```text
+Changed contract:
+Live implementation owner:
+Current guidance owner:
+Stale or duplicate references:
+Compatibility impact:
+Security/privacy impact:
+Build/release impact:
+Required guidance updates:
+Intentionally unchanged guidance:
+Removal candidates:
+Unverified areas:
+```
+
+Maintenance rules:
+
+- inspect the live implementation and every affected guidance owner before editing;
+- verify version-sensitive claims with version-matched official documentation or source;
+- update only owners affected by the real contract change;
+- distinguish current implementation facts from approved target design;
+- remove stale or duplicate rules instead of appending contradictory exceptions;
+- keep `AGENTS.md` concise and keep routing paths and Skill frontmatter names accurate;
+- route translation details to `.agents/skills/i18n/SKILL.md` and ownership-transfer details to `.agents/skills/easymde-migration/SKILL.md`;
+- do not require every Feature pull request to modify every guidance file;
+- do not update durable guidance for a private implementation rename that changes no owned contract;
+- report intentionally unchanged audited files and any fact that could not be verified;
+- do not claim a proposed or unmerged change is current behavior.
+
 ## Start With the Live Contract
 
 Before editing, inspect the actual owners relevant to the task:
@@ -605,21 +650,11 @@ Before tightening a browser descriptor schema or changing dispatch, characterize
 
 ### Internationalization
 
-The current project contract keeps PHP gettext as the source of browser-facing strings and passes translated values through versioned Bootstrap data. Preserve that model until a focused i18n/build Issue explicitly changes it.
+Use `.agents/skills/i18n/SKILL.md` whenever a task adds, changes, moves, reviews, or validates user-visible text, locale formatting, RTL, accessibility copy, extraction, catalogs, translation loading, or package language assets.
 
-When React source begins using `@wordpress/i18n`, the same focused change must provide the complete pipeline:
+The current implementation keeps PHP gettext as the source of browser-facing strings and passes translated values through versioned Bootstrap data. Preserve that fact until a focused i18n/build task activates a complete React translation owner.
 
-- use the `easymde` text domain and WordPress i18n functions such as `__`, `_x`, `_n`, and `sprintf`;
-- extend extraction beyond the current PHP-only `scripts/i18n.mjs` workflow to TypeScript and TSX;
-- generate and validate the required JavaScript JSON translation catalogs;
-- declare `wp-i18n` or the verified Script Module dependency;
-- register the classic Script Handle before calling `wp_set_script_translations()` and package the catalogs in the installable ZIP;
-- verify the exact translation-loading mechanism separately for WordPress Script Modules instead of assuming the classic Script API applies;
-- test non-default locale loading, context, interpolation, plurals, long translations, and RTL.
-
-Each user-visible string has one translation owner. Do not ship the same string as both a PHP-translated Bootstrap value and an independently translated JS literal. Do not concatenate translated fragments; use placeholders, context, and plural APIs. Stable Error Codes, IDs, Routes, Storage Keys, and extension identifiers are never translated. Dynamic extension labels remain validated and translated by their documented owner.
-
-Existing untranslated fallback literals in legacy JavaScript are compatibility behavior, not an additional translation authority and not a pattern for React. A required missing Bootstrap string must fail contract validation or use a deliberately non-text degraded state; do not silently display a new English fallback.
+Each user-visible message instance has one owner. Do not ship the same instance through both PHP-translated Bootstrap data and a JavaScript catalog, add a partial `@wordpress/i18n` path without extraction and release delivery, translate stable Error Codes or identifiers, concatenate translated fragments, or use an English fallback to hide a broken required contract. The i18n Skill owns the complete executable pipeline and evidence.
 
 ## Preview and Native WordPress Operations
 
@@ -669,6 +704,19 @@ Feature boundaries:
 - **AI assistant:** use `AiPort` and explicit user action; keep credentials server-side; disclose the selected provider and content boundary, send only the context required for the requested action, and make retention/logging policy explicit. Treat model output as untrusted; generated changes remain visible, rejectable, undoable, cancellation/stale-safe, and never automatically save, publish, upload, change settings, or execute returned code.
 
 ## Accessibility, UI, and CSS Quality
+
+When implementing from a design, screenshot, prototype, or live reference:
+
+- identify the authoritative revision, target surface, protected surfaces, viewport, browser, zoom, device-pixel ratio, fonts, content, and UI state before editing;
+- separate visual, interaction, responsive, accessibility, data, and compatibility invariants, with observable evidence for each;
+- capture a deterministic baseline only after fonts, images, preview data, and required local or approved remote assets are ready;
+- inspect DOM order, accessibility tree, geometry, computed styles, overflow, stacking, focus, selection, scroll, and asset delivery; screenshots alone are insufficient;
+- scope DOM and CSS to the narrowest stable EasyMDE owner and correct the first divergent ancestor instead of accumulating child offsets, broad `!important`, or legacy-class dependencies;
+- preserve selection, IME composition, undo history, focus, scroll, pointer capture, and all global browser state across success, cancellation, failure, teardown, and repeated entry;
+- exercise identical reference and implementation states immediately below, at, and above declared breakpoints, plus long content, translated text, RTL, zoom, reduced motion, forced colors, and relevant input modes;
+- verify real WordPress Ports, permissions, nonces, native fields, requests, and operation results rather than test-only callbacks or inert visual controls;
+- compare changed and protected surfaces in a real browser, use pixel or screenshot differences only as diagnostics, and never widen a tolerance to hide deterministic divergence;
+- keep temporary screenshots, traces, network captures, and reference exports local and privacy-safe unless the focused task explicitly approves them as deliverables.
 
 Accessibility is part of the Component contract:
 
@@ -729,6 +777,48 @@ Do not trade correctness, accessibility, diagnostics, or stale-result protection
 
 Use Vite from the root npm package. Source belongs under `frontend/`; compiled runtime belongs under `assets/build/`. Vite Build success is not TypeScript validation; `tsc --noEmit` remains a separate required gate.
 
+### Dependency and Remote Asset Decision Gate
+
+Local, version-controlled runtime assets are the default. Do not introduce a remote asset through a dependency default, copied example, generic Skill, or convenience shortcut.
+
+A focused task may propose a long-term stable official CDN only when `AGENTS.md` permits the use case and a human maintainer explicitly approves the recorded decision. Before implementation, record and verify:
+
+```text
+Asset and exact version/content identifier:
+Owning Feature and purpose:
+Upstream owner and official endpoint evidence:
+Operator and long-term availability evidence:
+License and notices:
+Immutable HTTPS URL:
+SRI and crossorigin support:
+CSP, CORS, MIME, redirect, cache, encoding, and referrer behavior:
+Data sent by the request:
+Success and failure behavior:
+Core reliability or local-fallback contract:
+Release-channel, documentation, test, and package impact:
+Update owner and re-review triggers:
+Removal or replacement plan:
+Maintainer approval:
+Unverified areas:
+```
+
+Rules:
+
+- accept only an endpoint operated by the upstream owner or explicitly documented by that upstream as an official distribution endpoint; a marketing label is not proof;
+- pin an exact immutable release, version, commit, or content identifier over HTTPS;
+- for static JavaScript and CSS, use Subresource Integrity and correct `crossorigin` behavior when supported by both the official endpoint and selected WordPress loading path; verify the final HTML and update integrity metadata with the URL;
+- treat an integrity mismatch as delivery failure, never as permission to remove or bypass integrity;
+- send no article content, prompts, credentials, API keys, cookies, nonces, private URLs, user identifiers, administrator data, local paths, or unpublished-media information;
+- reject advertising, analytics, tracking, telemetry, fingerprinting, remote configuration, or independently mutable runtime behavior unless separately approved as a product requirement;
+- test DNS, connection, timeout, HTTP, CSP, integrity, third-party blocking, offline, slow, and partial-load failure relevant to the owning Feature;
+- keep core editor, save, publish, and formal-preview requirements local, provide a tested local fallback, or obtain separate approval for a fully documented reliability contract;
+- let optional enhancements degrade only with honest visible state, no hidden writes, no content corruption, no unusable editor, no silent host substitution, and no infinite retry;
+- prohibit `latest`, floating major versions, mutable aliases or query parameters, unversioned package paths, unknown hosts, unofficial mirrors, personal domains, proxies, paste sites, and file-sharing services;
+- re-review changes to the domain, operator, versioning or immutability model, license, headers, redirects, integrity, privacy, fallback, owning Feature, or WordPress loading strategy;
+- fail production validation when an unapproved remote URL, test CDN, Dev Server URL, private host, or silent local-to-remote substitution appears.
+
+Approval is scoped to the recorded asset and Feature. It does not authorize other assets from the same host, another Feature, or a mutable replacement.
+
 The first build implementation records and validates the selected Vite, TypeScript, Node, and npm versions, browser target, WordPress loading strategy, JSX-runtime mapping, development-server boundary, and release output contract. Browser targets come from the supported WordPress/EasyMDE environment and real test matrix, not an unreviewed Vite default. Do not add global Polyfills without a documented browser requirement, scope, size, and removal rule.
 
 Compile-time packages and declarations must not advertise a newer Runtime than WordPress 6.7 provides. Keep React and ReactDOM development/test packages, `@types/react`, `@types/react-dom`, `@wordpress/element`, and JSX-runtime types aligned with the verified React 18 / WordPress 6.7 surface. A successful TypeScript check against React 19 or a newer Gutenberg package is not proof that the code can run on WordPress 6.7.
@@ -752,13 +842,13 @@ For every strategy:
 - resolve assets from the Plugin Asset Base, never `/`;
 - do not hardcode `/wp-content/plugins/easymde/`;
 - verify subdirectory, Multisite, and non-default Plugin URL behavior where relevant;
-- keep runtime assets local;
+- keep runtime assets local unless the exact asset has passed the approved remote-asset decision gate;
 - fail on missing, stale, duplicate, or inconsistent Manifest entries;
 - fail if a production entry or chunk contains a private React implementation;
-- exclude Dev Server URLs, Localhost, source paths, prohibited Source Maps, remote CDN references, and development code;
+- exclude Dev Server URLs, Localhost, source paths, prohibited Source Maps, unapproved remote references, and development code;
 - treat HMR and Fast Refresh as development conveniences only; correctness must also hold after a full reload, repeated Mount / Unmount, and production build.
 
-A dependency needs a current responsibility, non-duplicative purpose, compatible license, acceptable direct and transitive size, active maintenance, no prohibited telemetry or remote runtime, tests, removal strategy, Lockfile update, and third-party notice update.
+A dependency needs a current responsibility, non-duplicative purpose, compatible license, acceptable direct and transitive size, active maintenance, no unapproved telemetry or remote runtime behavior, tests, removal strategy, Lockfile update, and third-party notice update.
 
 Do not add a State, Query, Form, Router, Schema, Animation, Icon, or Utility library merely because a blog, react-admin, or a generic Skill recommends it.
 
@@ -835,7 +925,7 @@ Before reporting a Feature complete, verify the scope-relevant items:
 10. Native-field synchronization, real operation observation, stale-result rejection, cancellation, failure, and teardown are tested.
 11. Accessibility, Focus, keyboard, IME, Selection, Undo, Scroll, RTL, zoom, and relevant visual states are covered.
 12. Performance conclusions have measurements.
-13. Build metadata, React externalization, local asset URLs, translations, and package exclusions are verified.
+13. Build metadata, React externalization, asset delivery and fallback contracts, translations, and package exclusions are verified.
 14. The exact diff, commands, CI, review findings, unverified areas, and remaining risks are reported honestly.
 
 Maintainability rules:
@@ -867,7 +957,7 @@ Do not introduce:
 12. Effects without cleanup, idempotence, failure handling, and repeated-lifecycle safety.
 13. Browser-local scheduling overriding WordPress Site timezone.
 14. Implementations that ignore extension Registries or only support built-in commands.
-15. Root-relative Plugin asset URLs, remote runtime CDNs, production Dev Server references, or unapproved telemetry.
+15. Root-relative Plugin asset URLs, unapproved, mutable, unofficial, tracking, or privacy-invasive remote runtime assets, production Dev Server references, or unapproved telemetry.
 16. Empty Feature directories, placeholder modules, unused assets, or dependencies without a current Owner.
 17. Private article content, Custom CSS, prompts, Tokens, Nonces, credentials, or secret endpoints in diagnostics.
 18. Source, tests, caches, logs, `.agents/`, or development metadata in the installable ZIP.

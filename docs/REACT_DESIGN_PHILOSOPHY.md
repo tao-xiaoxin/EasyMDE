@@ -11,6 +11,7 @@
 - 先读“权威来源与证据策略”和“核心设计哲学”，理解项目优先级、状态所有权与 WordPress 边界。
 - 查阅目录、依赖与接口决策时，读“React 运行时与应用 Root”至“Port、Runtime 与 Adapter”。
 - 实现功能时，按需查阅状态、跨语言边界、正式数据流、组件 API、UI、性能与发布包章节。
+- 判断本地或远程资源交付方向时，读“资源交付与发行渠道”；逐资产证据、批准与实施检查使用 `.agents/skills/easymde/SKILL.md`。
 - 日常执行检查使用 `.agents/skills/easymde/SKILL.md`；转移现有浏览器功能时另外使用 `.agents/skills/easymde-migration/SKILL.md`。
 - 本文与实时代码不一致时，先根据本文的证据优先级确定是实现欠账还是文档过时，不得默认任何一方自动覆盖另一方。
 
@@ -977,10 +978,20 @@ WordPress 6.7 默认把 `@wordpress/element` 注册为 Classic `wp-element` Scri
 - 从 Plugin Asset Base 解析 Chunk；
 - 失败于 Missing、Stale、Duplicate 或 Inconsistent Manifest；
 - 失败于任何 Production Entry 包含 Private React；
-- 排除 Dev Server URL、Localhost、Source Path、未批准 Source Map、Remote CDN 和 Development Code；
+- 排除 Dev Server URL、Localhost、Source Path、未批准 Source Map、未批准或发行渠道不兼容的 Remote Runtime Resource 和 Development Code；
 - HMR / Fast Refresh 只用于开发体验，Full Reload、重复 Mount / Unmount 和 Production Build 必须同样正确。
 
 依赖必须有当前 Owner、非重复责任、可接受 License、直接和传递体积、活跃维护、无禁止 Telemetry / Remote Runtime、测试、移除策略、Lockfile 更新和 Third-party Notice。
+
+### 资源交付与发行渠道
+
+本地、版本控制内的运行时资源是默认方向，因为它让编辑器在安装包内自包含，使版本、License、完整性、隐私、离线与失败行为、更新责任和可复现发布都能由项目直接控制。当前实现仍使用本地资源；本文不代表项目已经采用 CDN，也不批准任何具体远程 URL。
+
+远程交付不是全局开关。只有一个聚焦 Feature 的单个资源，在人工明确批准且逐项证明官方来源、长期可靠性、不可变 HTTPS 身份、License、隐私、完整性、失败与 Fallback、更新 Owner、移除策略及目标发行渠道兼容后，才可以被考虑。未知 Host、非官方 Mirror、可变 URL、浮动版本、个人域名、Proxy、Tracking、Telemetry、静默换源和远程可变 Executable Code 不属于可接受方向。
+
+技术可信与发行许可是两个独立问题。GitHub Releases、Private Deployment、Self-hosted Package 或其他经过审查的渠道，可以按自身合同评估同一个技术 Gate；一个渠道的结论不能自动扩展到另一个渠道。WordPress.org Plugin Directory 对普通非服务型 JavaScript、CSS、Font 和其他运行时资源有自己的当前官方规则；官方来源、固定版本、SRI 或维护者批准不能覆盖这些规则。真正的 External Service 必须提供实际服务能力，并单独满足 Readme、Privacy、Consent 和数据披露要求。Font 或其他声称的例外也必须依据当前规则逐项核对，分类不明确时交由 Plugin Review Team 判断。
+
+逐资产 Decision Record、SRI / CORS / CSP / MIME / Redirect / Cache / Referrer、数据发送、Fallback、批准、复审触发器和实施验证属于 `.agents/skills/easymde/SKILL.md`，不在本文复制执行清单。当前架构事实仍由 `docs/ARCHITECTURE.md` 记录，测试和发布命令仍由 `docs/TESTING_AND_RELEASE.md` 负责。
 
 安装版 ZIP 只包含必要运行时、Composer Dependency、License、翻译和 Notice；排除：
 
@@ -1065,7 +1076,7 @@ unrelated development files
 12. Effect 缺少 Cleanup、Idempotence、Failure Handling 或 Repeated Lifecycle Safety；
 13. Browser Local Scheduling 覆盖 WordPress Site Timezone；
 14. 忽略 Extension Registry 或只支持 Built-in Command；
-15. Root-relative Plugin Asset URL、Remote Runtime CDN、Production Dev Server Reference 或未批准 Telemetry；
+15. Root-relative Plugin Asset URL、未批准或发行渠道不兼容的 Remote Runtime Resource、Production Dev Server Reference 或未批准 Telemetry；
 16. Empty Feature Directory、Placeholder Module、Unused Asset 或无当前 Owner 的 Dependency；
 17. 私密正文、Custom CSS、Prompt、Token、Nonce、Credential 或 Secret Endpoint 进入 Diagnostics；
 18. Source、Test、Cache、Log、`.agents/` 或 Development Metadata 进入安装版 ZIP；

@@ -65,6 +65,7 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
   - React/TypeScript 字符串源与 `@wordpress/i18n` 提取链路；
   - `wp_set_script_translations()` 注册与 JSON 资源交付；
   - 迁移后统一由 React/Feature owner 提供可验证文案。
+  - 当前未实现任何 React i18n ownership 转移。
 
 - **Required before migration（迁移前置）**
 
@@ -79,6 +80,23 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
     - 通过 `wp_localize_script('easymde-frontend', 'EasyMDEFrontendConfig', [... 'strings' => [ 'renderingFailed' => ... ]])`
   - 目前仓库不包含 TypeScript/React 消息 JSON catalog 或 Script Module 翻译产物（例如 `languages/*.json`）。
   - 当前最低支持为 WordPress 6.7，因此请以经典脚本 i18n（`wp_set_script_translations()`）路径为实际可行基线，不得将 `wp_set_script_module_translations()` 当作可用完成条件。
+
+### 运行面契约快照（当前）
+
+- 后台编辑器
+  - Owner：`AdminAssets`（PHP Gettext `easymde`）；
+  - Bootstrap：`EasyMDEConfig.strings`；
+  - Script Handle：`easymde-admin`；
+  - Locale/方向：WordPress 管理请求上下文；
+  - 装载时机：管理后台编辑页加载 `admin_enqueue_scripts`；
+  - 关键语言资产：`languages/easymde.pot` / `languages/easymde-zh_CN.po` / `languages/easymde-zh_CN.mo`。
+- 公开文章增强
+  - Owner：`FrontendAssets`（PHP Gettext `easymde`）；
+  - Bootstrap：`EasyMDEFrontendConfig.strings`；
+  - Script Handle：`easymde-frontend`；
+  - Locale/方向：公开请求上下文（`is_singular`）；
+  - 装载时机：`is_singular()` 且 `PostDocument::is_easymde_post()`；
+  - 关键语言资产：`languages/easymde.pot` / `languages/easymde-zh_CN.po` / `languages/easymde-zh_CN.mo`。
 
 ## 界面边界（后台与公开前台）
 
@@ -168,6 +186,29 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 8. 仅当单元验证通过后再进入下一个单元。
 
 禁止把“新增翻译 helper”当成迁移完成条件；迁移完成以 `单元 owner + release + 运行时` 同步通过为准。
+
+### 迁移规范模板（每个单元必填）
+
+```text
+Feature / behavior:
+Runtime surface:
+Current PHP translation owner:
+Bootstrap object:
+Bootstrap field:
+Legacy consumers:
+Intended React owner:
+Source message and context:
+Plural/interpolation requirements:
+Accessibility use:
+Extraction path:
+JSON delivery path:
+Script handle:
+Activation condition:
+Rollback boundary:
+Legacy removal evidence:
+Release ZIP evidence:
+Unverified states:
+```
 
 ## WordPress 6.7 下的技术边界
 
@@ -314,6 +355,13 @@ const count = sprintf(
 4. `wp_set_script_translations` 调用时机错误导致页面空文案；
 5. 新增文案在 release ZIP 中缺失导致 production fallback。
 
+### 未验证与失败边界（每次迁移需补齐）
+
+- 非英语 locale 下特定 Feature/entry 的真实可见性；
+- 长文本、复杂布局和高对比度下文案回退行为；
+- 真实发布 ZIP 重放后的 locale 与方向读取行为；
+- 组件未接入 catalog 时的 fail-fast 与错误上报可观测性。
+
 ### 反方审查（每次迁移必须回答）
 
 迁移前后检查下面问题是否可被回答且有证据：
@@ -337,6 +385,8 @@ const count = sprintf(
 - `wp_set_script_module_translations()` 在当前最小版本下作为已实现状态；
 - 不完整的“预览通过”而不跑 i18n/release 检查；
 - 用 inline English 兜底掩盖缺失提取或 catalog 缺失。
+- 未声明 rollback boundary 即启动迁移；
+- 创建第二套消息源或未声明的 catalog 运行线。
 
 ## 官方参考（版本对齐）
 

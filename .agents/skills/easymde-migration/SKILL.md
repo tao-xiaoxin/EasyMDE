@@ -5,7 +5,7 @@ description: Use this temporary skill when planning, implementing, reviewing, or
 
 # EasyMDE Browser Migration Guide
 
-This is a temporary execution Skill for transferring existing browser-side EasyMDE behavior. Closed Issue #74 is the historical umbrella plan and acceptance inventory; it is not an active ownership ledger or proof that any migration unit is complete. Every future unit uses its current focused Issue and pull request. Use the long-term .agents/skills/easymde/SKILL.md for normal React development and docs/REACT_DESIGN_PHILOSOPHY.md for stable architecture decisions.
+This is a temporary execution Skill for transferring existing browser-side EasyMDE behavior. Closed Issue #74 is the historical umbrella plan and acceptance inventory; it is not an active ownership ledger or proof that any migration unit is complete. The active React migration ownership index is maintained by Issue #86. Every future unit uses its current focused Issue and pull request. Use the long-term .agents/skills/easymde/SKILL.md for normal React development and docs/REACT_DESIGN_PHILOSOPHY.md for stable architecture decisions.
 
 Delete this Skill after the full migration and its removal gate are complete. Do not preserve migration ceremony as permanent project architecture.
 
@@ -459,7 +459,7 @@ Do not call a unit complete because React renders, static tests pass, or the new
 
 ## Delete this Skill
 
-Issue #78 records why this temporary Skill was introduced and the original deletion contract. It is already complete and does not authorize future removal. After the gate below passes, create a new focused removal Issue and pull request to delete `.agents/skills/easymde-migration`; do not perform that cleanup incidentally inside the final Feature migration. Delete the Skill only after:
+Issue #78 records why this temporary Skill was introduced and the original deletion contract. It is already complete and does not authorize future removal. After the gate below passes, create a new focused removal Issue and pull request to delete `.agents/skills/easymde-migration`; do not perform that cleanup incidentally inside the final Feature migration. The final migration ownership inventory is tracked by Issue #86. Delete the Skill only after:
 
 - every existing browser-side capability in the final migration inventory has a documented final owner; Issue #74 remains historical scope and acceptance evidence, while its separate future AI product Feature is outside this deletion gate;
 - no migration Issue still depends on this Skill;

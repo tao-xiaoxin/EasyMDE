@@ -2,7 +2,7 @@
 
 EasyMDE is a standalone WordPress plugin wired from `easymde.php` into `EasyMDE\Plugin`. The global `EasyMDE_Plugin` class remains as a compatibility facade for existing extension code.
 
-This document describes the current implementation boundaries. Development setup lives in [Development](DEVELOPMENT.md), and release validation lives in [Testing and Release](TESTING_AND_RELEASE.md).
+This document describes the current implementation boundaries. Approved target decisions for the React, TypeScript, and Vite admin applications live in [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md); that document does not claim that target paths already exist. Development setup lives in [Development](DEVELOPMENT.md), and release validation lives in [Testing and Release](TESTING_AND_RELEASE.md).
 
 ## Directory Boundaries
 

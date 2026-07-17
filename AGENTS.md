@@ -99,7 +99,7 @@ Rules:
 * Put admin HTML in `templates/admin/`, not in service classes.
 * Templates should render prepared data only; business rules belong in PHP classes.
 * Do not create empty abstraction layers or one-method classes without a real boundary.
-* Detailed architecture decisions belong in `docs/ARCHITECTURE.md`; this file defines approved architecture direction and non-negotiable repository boundaries.
+* `docs/ARCHITECTURE.md` describes the current implementation architecture. `docs/REACT_DESIGN_PHILOSOPHY.md` owns the approved React target philosophy, directory and dependency direction, and interface-design principles. This file defines approved direction and non-negotiable repository boundaries without duplicating either architecture owner.
 
 ---
 
@@ -745,7 +745,7 @@ Do not claim verification that was not actually performed.
 * Do not overwrite unrelated uncommitted work.
 * Prefer small, logical Conventional Commits for completed work.
 * Update `README.md` for user-facing behavior changes.
-* Update `docs/ARCHITECTURE.md` for architecture changes.
+* Update the appropriate architecture owner when architecture changes: `docs/ARCHITECTURE.md` for current implementation boundaries and `docs/REACT_DESIGN_PHILOSOPHY.md` for approved React target decisions.
 * Update `docs/MIGRATION.md` for data model, compatibility, or upgrade behavior changes.
 
 At task completion, report:

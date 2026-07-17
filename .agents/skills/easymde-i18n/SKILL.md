@@ -43,25 +43,58 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 
 以下是当前仓库的真实状态，不能在未改代码前改成“未来能力”：
 
-- 文本域是 `easymde`。
-- 插件头定义 `Domain Path: /languages`（以当前源码为准）。
-- i18n 生成是 `scripts/i18n.mjs` 管理的 PHP-only 流程。
-- `scripts/i18n.mjs` 当前扫描 `easymde.php`、`includes`、`src`、`templates`（PHP 文件）。
-- npm 命令是：
+- **Current（已实现）**
+
+  - 文本域是 `easymde`。
+  - 插件头定义 `Domain Path: /languages`（以当前源码为准）。
+  - i18n 生成是 `scripts/i18n.mjs` 管理的 PHP-only 流程。
+  - `scripts/i18n.mjs` 当前扫描 `easymde.php`、`includes`、`src`、`templates`（PHP 文件）。
+  - npm 命令是：
   - `i18n:make-pot`
   - `i18n:compile`
   - `i18n:check`
-- 活跃语言产物是：
+  - 活跃语言产物是：
   - `languages/easymde.pot`
   - `languages/easymde-zh_CN.po`
   - `languages/easymde-zh_CN.mo`
+  - 后台编辑器当前浏览器文本 owner 是 `AdminAssets::get_strings()` 注入到 `EasyMDEConfig.strings`。
+  - 公开文章增强当前浏览器文本 owner 是 `FrontendAssets::enqueue_frontend_assets()` 注入到 `EasyMDEFrontendConfig.strings`。
+
+- **Planned（未来可执行）**
+
+  - React/TypeScript 字符串源与 `@wordpress/i18n` 提取链路；
+  - `wp_set_script_translations()` 注册与 JSON 资源交付；
+  - 迁移后统一由 React/Feature owner 提供可验证文案。
+
+- **Required before migration（迁移前置）**
+
+  - 在代码层面确认所有迁移字段都来自单一 owner 的 runtime；
+  - 提取、校验、发布三个阶段都可复现实地验证；
+  - 安装版 ZIP 中可见对应语言资源且可被 WordPress 加载。
+
 - 当前浏览器文本所有权是“PHP bootstrap 注入”：
   - 管理后台：`src/Admin/AdminAssets.php::get_strings()`
     - 通过 `wp_localize_script('easymde-admin', 'EasyMDEConfig', [... 'strings' => $this->get_strings()])`
   - 文章增强前台：`src/Frontend/FrontendAssets.php`
     - 通过 `wp_localize_script('easymde-frontend', 'EasyMDEFrontendConfig', [... 'strings' => [ 'renderingFailed' => ... ]])`
-- 目前仓库不包含 TypeScript/React 消息 JSON catalog 或 Script Module 翻译产物（例如 `languages/*.json`）；
-- 当前最低支持为 WordPress 6.7，因此请以经典脚本 i18n（`wp_set_script_translations()`）路径为实际可行基线，不得将 `wp_set_script_module_translations()` 当作可用完成条件。
+  - 目前仓库不包含 TypeScript/React 消息 JSON catalog 或 Script Module 翻译产物（例如 `languages/*.json`）。
+  - 当前最低支持为 WordPress 6.7，因此请以经典脚本 i18n（`wp_set_script_translations()`）路径为实际可行基线，不得将 `wp_set_script_module_translations()` 当作可用完成条件。
+
+## 界面边界（后台与公开前台）
+
+- 后台编辑器：使用 WordPress 当前管理请求的语言/方向上下文，owner 是 `AdminAssets`。
+- 公开文章增强：使用当前公开请求上下文的语言/方向，owner 是 `FrontendAssets`。
+- 二者共享 catalog 与文案 domain，但**不得混用 owner**；
+- 后台迁移中的消息删除/新增不能影响 `is_singular()` 下的前台增强渲染。
+
+## 扩展 API 文案所有权
+
+扩展点 `EasyMDE_Plugin::register_toolbar_button()` 与 `EasyMDE_Plugin::register_shortcode_helper()` 的文案边界：
+
+- 扩展 `id`、`command id`、`shortcut`、`surface` 等标识属于扩展自身，不应在 EasyMDE 内被重复翻译为显示文案。
+- 典型扩展文案字段（`label`、`description`）进入运行时前若为空则落回 `id`，若为文本则当前由核心在 `ToolbarRegistry::get_commands_for_script()` 使用 `translate( ..., 'easymde' )` 处理。
+- 扩展若提供独立 text domain，优先保留其本身翻译边界；若复用 `easymde`，则必须保证与 `easymde` 文案流程一致。
+- 扩展已翻译字符串不得作为核心“新 owner 文案”重复引导。
 
 ## 所有权模型（必须单一）
 
@@ -280,6 +313,20 @@ const count = sprintf(
 3. TS 抽取未覆盖新源导致语言包缺失；
 4. `wp_set_script_translations` 调用时机错误导致页面空文案；
 5. 新增文案在 release ZIP 中缺失导致 production fallback。
+
+### 反方审查（每次迁移必须回答）
+
+迁移前后检查下面问题是否可被回答且有证据：
+
+1. 我能否区分当前事实和计划能力？
+2. 我是否明确知道当前是哪一个 owner 负责该文案？
+3. 一条字符串是否可能在 PHP bootstrap 与 React owner 两端同时存在？
+4. 迁移失败时是否有回退路径和未翻译文案的可观测证据？
+5. 安装包是否真正包含该语言资产，CI/运行时证据是否可重放？
+6. 前台增强页与后台编辑页的 locale 边界是否有显式避免互相串用？
+7. 扩展命令/工具的文案是否保持它们的扩展所有权？
+
+未能回答任一项则不允许提交或转交。
 
 ## 禁止模式（Prohibited）
 

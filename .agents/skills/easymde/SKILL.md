@@ -15,14 +15,17 @@ Do not introduce a pattern, dependency, abstraction, directory, service, or fram
 
 Apply rules in this order:
 
-1. The explicit task, linked GitHub Issue, and human maintainer decision.
+1. Explicit current-task instructions and human maintainer decisions.
 2. Root `AGENTS.md`, the live repository, and existing public compatibility contracts.
-3. `docs/ARCHITECTURE.md` and `docs/REACT_DESIGN_PHILOSOPHY.md`.
-4. This Skill; migration work also uses `easymde-migration`.
-5. Official React, WordPress, TypeScript, and WAI-ARIA documentation matching supported versions.
-6. Generic companion Skills that are actually available.
-7. react-admin and other mature projects as design references.
-8. Blogs, search summaries, and copied snippets.
+3. The current focused GitHub Issue and pull request, interpreted within the first two authorities.
+4. `docs/ARCHITECTURE.md` and `docs/REACT_DESIGN_PHILOSOPHY.md`.
+5. This Skill; migration work also uses `easymde-migration`.
+6. Official React, WordPress, TypeScript, and WAI-ARIA documentation matching supported versions.
+7. Generic companion Skills that are actually available.
+8. react-admin and other mature projects as design references.
+9. Blogs, search summaries, and copied snippets.
+
+A linked, umbrella, closed, or historical Issue is evidence and scope context; it does not by itself override merged repository contracts. A material contract change requires an explicit current maintainer decision and the repository workflow required for that change.
 
 Secondary sources are inspiration, not authority. Verify version-sensitive claims against WordPress 6.7 source, the selected TypeScript version, and the live repository. Current React documentation may describe React 19; EasyMDE uses the WordPress-provided React 18 runtime.
 
@@ -167,6 +170,9 @@ Rules:
 - import runtime APIs from `@wordpress/element`;
 - use `createRoot`, not the deprecated legacy `render` path;
 - keep the root object and call `root.unmount()` during teardown;
+- mount into a dedicated, initially empty container that PHP delegates exclusively to that React Root;
+- keep WordPress-, extension-, and legacy-owned children that must survive outside the container; the first `root.render()` replaces any existing child HTML and is not a preservation mechanism;
+- do not let legacy code remove, replace, or write inside an active React container; ownership changes only at the declared handoff and returns only after `root.unmount()` and cleanup;
 - do not hydrate admin roots;
 - do not bundle another React or ReactDOM implementation;
 - do not pass elements, contexts, hooks, portals, or refs between different React runtimes;
@@ -179,10 +185,10 @@ Use one Entrypoint per real WordPress screen or independently loaded application
 
 ```text
 frontend/src/entrypoints/admin-editor.tsx
-frontend/src/entrypoints/settings.tsx
+frontend/src/entrypoints/settings.tsx       # only when a focused task creates a React Settings Root
 ```
 
-Each Root owns its Runtime, Error Boundary, subscriptions, and teardown. Create a Root Store or Context Provider only when shared session state or subtree injection actually requires one; instantiate it per Mount and keep it owned by that Root. A simple Root passes typed Runtime/data Props and keeps State at the nearest Component or Feature. Editor and Settings Roots never share mutable State, Context instances, caches, or lifecycle owners.
+Each existing Root owns its Runtime, Error Boundary, teardown, and any subscriptions it actually creates. Create a Root Store or Context Provider only when shared session state or subtree injection actually requires one; instantiate it per Mount and keep it owned by that Root. A simple Root passes typed Runtime/data Props and keeps State at the nearest Component or Feature. If a focused task creates a React Settings Root, it remains independent from the Editor Root; the two never share mutable State, Context instances, caches, or lifecycle owners.
 
 Enqueue each Entrypoint, its CSS, Bootstrap contract, and WordPress dependencies only after the owning PHP screen and capability admission rules have passed. The Editor Root must additionally pass supported-post-type and post admission. Do not load editor or settings applications on unrelated admin screens or public pages, and do not use a missing client Root as the primary asset-loading guard.
 
@@ -202,7 +208,7 @@ frontend/
     ├── entrypoints/
     ├── app/
     │   ├── editor/
-    │   └── settings/
+    │   └── settings/            # only when a React Settings Root exists
     ├── contracts/
     │   ├── bootstrap/
     │   ├── ports/
@@ -465,25 +471,23 @@ Do not suspend a subtree merely because an external-store snapshot changes. Use 
 
 ## Runtime Ports and Interface Design
 
-Features depend on focused project capabilities rather than WordPress globals or selectors:
+Features depend on focused project capabilities rather than WordPress globals or selectors. Do not begin with a universal all-capability Runtime. Define a narrow capability slice for each real consumer:
 
 ```ts
-export interface EditorRuntime {
-  document: DocumentPort;
-  save: SavePort;
-  session: SessionPort;
+export type PreviewRuntime = Readonly<{
   preview: PreviewPort;
-  appearance: AppearancePort;
-  publishing: PublishingPort;
-  revisions: RevisionPort;
-  media: MediaPort;
-  storage: StoragePort;
-  clipboard: ClipboardPort;
   diagnostics: DiagnosticsPort;
-}
+}>;
+
+export type AppearanceRuntime = Readonly<{
+  appearance: AppearancePort;
+  diagnostics: DiagnosticsPort;
+}>;
 ```
 
-The Settings Root uses its own minimal Runtime rather than receiving `EditorRuntime`:
+At the application boundary, `EditorRuntime` contains only the capability slices that the currently mounted Editor Root actually owns and supplies. Expand it when a real Feature and Adapter are implemented; never add optional placeholder Ports for symmetry or a hoped-for end state. Features receive their narrow slice rather than the whole Root Runtime.
+
+If a focused task creates a React Settings Root, it uses its own minimal Runtime rather than receiving `EditorRuntime`:
 
 ```ts
 export interface SettingsRuntime {
@@ -492,7 +496,7 @@ export interface SettingsRuntime {
 }
 ```
 
-Add a Feature-specific capability such as `CustomCssPort` or `AiPort` to the owning Runtime only when that Feature and a real Adapter are implemented. Do not predeclare optional placeholder Ports. `AppearancePort` implementations belong to the focused WordPress appearance integration rather than a generic REST service.
+Add a Feature-specific capability such as `CustomCssPort` or `AiPort` to the owning Runtime only when that Feature and a real Adapter are implemented. `AppearancePort` implementations belong to the focused WordPress appearance integration rather than a generic REST service.
 
 Keep concrete ownership discoverable. `DocumentPort`, `SavePort`, `SessionPort`, `PreviewPort`, `AppearancePort`, `CustomCssPort`, `PublishingPort`, `RevisionPort`, `MediaPort`, and `SettingsPort` implementations belong to their focused `integrations/wordpress/<capability>/` directories when the capability exists. `PreviewPort` owns the server request and response contract; `integrations/preview-runtime/` owns only post-response Mermaid, KaTeX, Highlight.js, and TOC enhancement. Browser `StoragePort`, `ClipboardPort`, and browser diagnostics implementations belong to their corresponding `integrations/browser/` directories. Shared REST transport may live under `integrations/wordpress/rest/`, but it must not become the owner of Feature semantics or a generic service facade. If an approved AI Feature is added, its browser `AiPort` Adapter belongs under `integrations/wordpress/ai/` and talks only to the authorized EasyMDE server boundary; provider credentials and provider-specific authority stay in focused PHP/server code, never in `frontend/`.
 
@@ -597,6 +601,8 @@ Preserve the live public contracts unless a focused Issue supplies a compatibili
 
 The legacy global `EasyMDE_Plugin` facade is an intentional compatibility surface, not a class-name cleanup target. A new React UI may consume versioned, runtime-validated descriptors produced by these owners, but it must not narrow the existing PHP extension surface to built-in entries, expose private React or DOM implementation, or rename a public identifier for frontend naming consistency. Additive evolution is preferred; removal requires consumer inventory, compatibility coverage, deprecation, and explicit maintainer approval.
 
+Before tightening a browser descriptor schema or changing dispatch, characterize the live PHP-to-browser contract with compatibility tests: accepted and defaulted fields, ID sanitization and collisions, output ordering, unknown actions, and failure behavior. Preserve behavior on which extensions can rely; do not turn an incidental implementation detail into a new promise without a focused compatibility decision.
+
 ### Internationalization
 
 The current project contract keeps PHP gettext as the source of browser-facing strings and passes translated values through versioned Bootstrap data. Preserve that model until a focused i18n/build Issue explicitly changes it.
@@ -654,10 +660,10 @@ Native operations:
 Feature boundaries:
 
 - **Publishing:** React owns a temporary Publish Draft; WordPress owns real fields and final operation. Cancel is zero-write.
-- **Revisions:** WordPress owns identity and persistence. Never discard unsaved session title or Markdown silently; use an explicit confirmation/recovery contract, then reconcile restored title, Markdown, appearance, saved baseline, and PHP-regenerated compatibility HTML.
+- **Revisions:** WordPress owns identity, revision kind, and persistence. Never discard unsaved session title or Markdown silently; use an explicit confirmation/recovery contract, then reconcile the authoritative server result. An EasyMDE revision restores Markdown and appearance and uses PHP-rendered compatibility HTML when rendering succeeds. A renderer-unavailable or render-failure path may use stored revision HTML without generating a new signature; any signature stored on the revision is restored with its metadata and remains subject to normal validation against the restored Markdown, article theme, and compatibility HTML. Restoring a pre-EasyMDE revision removes current EasyMDE document-state metadata and restores historical HTML, so the browser must not fabricate Markdown or assume the post remains an EasyMDE document-state post.
 - **Media:** use `MediaPort`; insert Markdown only after successful upload while the originating transaction remains current; restore Selection and Focus.
 - **Themes and Custom CSS:** choices come from PHP Registries. Full Custom CSS editing requires `unfiltered_html`; the library remains scoped to the current user's WordPress user meta and an endpoint must not read or mutate another user's library. PHP `CustomCssPolicy` and its maintained CSS parser remain authoritative for validation, blocked features, normalization, selector scoping, payload limits, and safe Preview / public output. React may edit and display typed results, but it must not parse CSS as a security boundary, construct trusted scoped CSS, or render rejected or unparseable legacy CSS. Preserve a legacy stored value when required for compatibility without emitting unsafe output.
-- **Settings:** use a separate Root; `manage_options`, Options API, `register_setting()`, and PHP Sanitization remain authoritative.
+- **Settings:** if a focused task creates a React Settings application, use a separate Root; `manage_options`, Options API, `register_setting()`, and PHP Sanitization remain authoritative.
 - **Local drafts:** Recovery data is not a WordPress save; scope Keys by Site, User, Post, and Schema Version; never store Nonces or credentials. Define payload limits, retention/expiry, authoritative-save cleanup, re-keying, explicit discard, and cross-tab conflict behavior without silently losing newer unsaved content.
 - **WeChat export:** copy only the current stable sanitized Preview; Clipboard rejection is a failure; fallback restores Selection, Focus, Scroll, and temporary DOM.
 - **AI assistant:** use `AiPort` and explicit user action; keep credentials server-side; disclose the selected provider and content boundary, send only the context required for the requested action, and make retention/logging policy explicit. Treat model output as untrusted; generated changes remain visible, rejectable, undoable, cancellation/stale-safe, and never automatically save, publish, upload, change settings, or execute returned code.
@@ -795,6 +801,8 @@ Enforce when tooling exists:
 - valid Manifest, dependency metadata, CSS, and chunks;
 - PHP-to-TypeScript contract parity;
 - installable ZIP inclusion and exclusion.
+
+The live `package.json` does not yet provide React, TypeScript, Vite, type-check, lint, or frontend-build scripts. The first focused frontend build implementation must add and execute the applicable gates before claiming them. It must also extend package predicates and tests rather than assume the current legacy checks cover the new layout: the installable ZIP must reject frontend source, source maps, Vite caches, and development files even when nested below compiled-output directories; source archives may include intentionally tracked `frontend/` source but must reject nested dependency trees, coverage, browser reports, caches, local configuration, and other generated or local-only artifacts.
 
 The installable ZIP excludes:
 

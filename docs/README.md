@@ -1,6 +1,6 @@
 # EasyMDE Documentation
 
-This index points to the current English technical docs. The root [README](../README.md) and [Simplified Chinese README](../README.zh-CN.md) are GitHub entry points; this directory is the canonical technical documentation for now.
+This index points to the current technical docs. The root [README](../README.md) and [Simplified Chinese README](../README.zh-CN.md) are GitHub entry points; this directory is the canonical technical documentation for now.
 
 ## Reading Paths
 

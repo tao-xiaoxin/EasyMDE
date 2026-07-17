@@ -18,14 +18,17 @@
 
 规则按以下优先级解释：
 
-1. 当前任务、关联 GitHub Issue 和人工维护者决定。
+1. 当前任务中的明确指令和人工维护者决定。
 2. 根目录 `AGENTS.md`、实时仓库和现有公开兼容合同。
-3. `docs/ARCHITECTURE.md` 与本文。
-4. `.agents/skills/easymde/SKILL.md`；迁移任务再叠加 `.agents/skills/easymde-migration/SKILL.md`。
-5. 与项目最低支持版本匹配的 React、WordPress、TypeScript 和 WAI-ARIA 官方文档及官方源码。
-6. 已实际加载的通用 Skill。
-7. react-admin 等成熟项目的设计经验。
-8. 博客、公众号、搜索摘要和其他二手资料。
+3. 在前两项边界内解释的当前聚焦 GitHub Issue 和 Pull Request。
+4. `docs/ARCHITECTURE.md` 与本文。
+5. `.agents/skills/easymde/SKILL.md`；迁移任务再叠加 `.agents/skills/easymde-migration/SKILL.md`。
+6. 与项目最低支持版本匹配的 React、WordPress、TypeScript 和 WAI-ARIA 官方文档及官方源码。
+7. 已实际加载的通用 Skill。
+8. react-admin 等成熟项目的设计经验。
+9. 博客、公众号、搜索摘要和其他二手资料。
+
+关联、总览、已关闭或历史 Issue 只能提供证据和范围上下文，不能单独覆盖已合并的项目合同。实质性合同变更必须有当前人工维护者的明确决定，并遵循该变更所需的仓库工作流。
 
 低优先级资料只能补充，不能覆盖 EasyMDE 的数据、安全、WordPress、保存、发布、预览、扩展、隐私、测试和发布包合同。
 
@@ -133,9 +136,9 @@ Render 阶段不得：
 
 ```text
 持久化 Markdown             → PHP / _easymde_markdown
-当前编辑会话 Markdown       → Editor Store
+当前编辑会话 Markdown       → 最近的 Editor Session Owner；确需跨 Feature 协调时才进入 Root Store
 持久化文章标题              → WordPress / post_title
-当前编辑会话标题            → Editor Store
+当前编辑会话标题            → 最近的 Editor Session Owner；确需跨 Feature 协调时才进入 Root Store
 兼容 HTML                   → PHP MarkdownRenderer / post_content
 正式预览 HTML               → Preview REST 响应
 原生表单序列化              → WordPress Submission Bridge
@@ -333,11 +336,11 @@ EasyMDE 最低支持 WordPress 6.7，并使用 WordPress 提供的 React 18 Runt
 wp-element
 ```
 
-后台应用是多个独立 Root，而不是一个接管整个 WordPress 后台的 SPA：
+后台应用按真实 Screen 或独立加载 Surface 使用彼此独立的 Root，而不是一个接管整个 WordPress 后台的 SPA：
 
 ```text
 admin-editor
-settings
+settings（仅当聚焦任务实际创建 React Settings 应用时）
 ```
 
 每个 Root 独立拥有：
@@ -346,12 +349,12 @@ settings
 - Bootstrap Contract；
 - Runtime；
 - Error Boundary；
-- Subscription；
+- 实际创建的 Subscription；
 - Mount / Unmount 生命周期。
 
 Root Store 和 App Provider 不是必备层。只有多个 Feature 确实需要共享会话 State，或子树确实需要注入 Runtime 等稳定上下文时，才由该 Root 按 Mount 创建并拥有 Store 或 Provider。简单 Root 使用类型化 Props，State 留在最近的 Component 或 Feature Owner。
 
-Editor 和 Settings 可共享纯 Domain、Contracts 和真正通用的 UI Primitive，但不能共享可变 Store、Context Instance、Query Cache 或生命周期 Owner。
+若聚焦任务创建 React Settings Root，Editor 和 Settings 可共享纯 Domain、Contracts 和真正通用的 UI Primitive，但不能共享可变 Store、Context Instance、Query Cache 或生命周期 Owner。
 
 每个 Entrypoint、CSS、Bootstrap Contract 和 WordPress Dependency 只在所属后台 Screen 的 PHP 准入规则通过后加载。Editor 还必须服从 Supported Post Type 与 Capability 边界；不得在无关后台页面或公开页面加载后台 React 应用，也不得把“浏览器端找不到 Root”当作主要资源准入机制。
 
@@ -360,6 +363,9 @@ Editor 和 Settings 可共享纯 Domain、Contracts 和真正通用的 UI Primit
 - 使用 WordPress 提供的 `@wordpress/element`；
 - 使用 `createRoot`；
 - Root 必须保存并执行 `root.unmount()`；
+- PHP 为每个 Root 输出专属且初始为空的 Mount Container，并把该 Container 的 Child Ownership 独占委托给 React；
+- 必须保留的 WordPress、Extension 与 Legacy DOM 留在 Mount Container 外；首次 `root.render()` 会替换 Container 中的既有 HTML，不能把它当作保留旧 DOM 的机制；
+- Active React Container 不得再由 Legacy Code 删除、替换或写入；Ownership 只在声明的 Handoff 点切换，并在 `root.unmount()` 与 Cleanup 完成后释放；
 - 不对后台 Root 使用 Hydration；
 - 不打包第二份 React 或 ReactDOM；
 - 不跨 React Runtime 传递 Element、Context、Hook、Portal 或 Ref；
@@ -410,7 +416,7 @@ frontend/
 └── src/
     ├── entrypoints/
     │   ├── admin-editor.tsx
-    │   └── settings.tsx
+    │   └── settings.tsx                 # only when a React Settings Root exists
     ├── app/
     │   ├── editor/
     │   │   ├── EditorApp.tsx
@@ -419,7 +425,7 @@ frontend/
     │   │   ├── create-editor-store.ts   # only when cross-Feature session state exists
     │   │   ├── store/                   # same condition as the Root Store
     │   │   └── styles/
-    │   └── settings/
+    │   └── settings/                    # only when a React Settings Root exists
     │       ├── SettingsApp.tsx
     │       ├── SettingsProviders.tsx    # only when subtree injection is required
     │       ├── SettingsErrorBoundary.tsx
@@ -432,7 +438,7 @@ frontend/
     │   ├── schemas/
     │   ├── errors/
     │   ├── editor-runtime.ts
-    │   └── settings-runtime.ts
+    │   └── settings-runtime.ts          # only when a React Settings Root exists
     ├── domain/
     │   ├── document/
     │   ├── markdown/
@@ -449,7 +455,7 @@ frontend/
     │   │   ├── save/
     │   │   ├── preview/
     │   │   ├── appearance/
-    │   │   ├── custom-css/     # 仅在对应 Port 与迁移单元真实存在时创建
+    │   │   ├── custom-css/     # 仅在对应 Port 与真实 Adapter 存在时创建
     │   │   ├── publishing/
     │   │   ├── revisions/
     │   │   ├── media/
@@ -554,25 +560,23 @@ features/publishing/
 
 ### Port、Adapter 和 Runtime
 
-Feature 依赖项目意图，不依赖传输细节：
+Feature 依赖项目意图，不依赖传输细节。不得先定义包含全部未来能力的万能 Runtime；每个真实消费者先声明窄 Capability Slice：
 
 ```ts
-export interface EditorRuntime {
-  document: DocumentPort;
-  save: SavePort;
-  session: SessionPort;
+export type PreviewRuntime = Readonly<{
   preview: PreviewPort;
-  appearance: AppearancePort;
-  publishing: PublishingPort;
-  revisions: RevisionPort;
-  media: MediaPort;
-  storage: StoragePort;
-  clipboard: ClipboardPort;
   diagnostics: DiagnosticsPort;
-}
+}>;
+
+export type AppearanceRuntime = Readonly<{
+  appearance: AppearancePort;
+  diagnostics: DiagnosticsPort;
+}>;
 ```
 
-Settings Root 不复用 Editor Runtime，而只接收自己实际需要的能力：
+应用边界上的 `EditorRuntime` 只组合当前已由该 Editor Root 拥有和提供的 Capability Slice。只有真实 Feature 与 Adapter 实现时才扩展；不得为目录对称或理想终态声明 Optional Placeholder Port。Feature 接收自己的窄 Slice，不接收完整 Root Runtime。
+
+若聚焦任务创建 React Settings Root，它不复用 Editor Runtime，而只接收自己实际需要的能力：
 
 ```ts
 export interface SettingsRuntime {
@@ -581,7 +585,7 @@ export interface SettingsRuntime {
 }
 ```
 
-`AppearancePort` 的具体实现归入 `integrations/wordpress/appearance/`，不得退化为宽泛 `rest/` 杂物。`CustomCssPort`、`AiPort` 等 Feature 专属能力只在对应 Feature 与真实 Adapter 被批准并实现时加入所属 Runtime；不得提前声明 Optional Placeholder Port。
+`AppearancePort` 的具体实现归入 `integrations/wordpress/appearance/`，不得退化为宽泛 `rest/` 杂物。`CustomCssPort`、`AiPort` 等 Feature 专属能力只在对应 Feature 与真实 Adapter 被批准并实现时加入所属 Runtime。
 
 Port 与 Integration 的对应关系必须可从目录直接判断：Document、Save、Session、Preview、Appearance、Custom CSS、Publishing、Revision、Media 和 Settings 的 Adapter 在对应能力真实存在时分别进入 `integrations/wordpress/<capability>/`；Storage、Clipboard 与浏览器 Diagnostics 进入 `integrations/browser/`。批准 AI Feature 后，浏览器 `AiPort` Adapter 进入 `integrations/wordpress/ai/`，并且只连接 EasyMDE 已授权的服务端边界；Provider Credential 与 Provider-specific Authority 留在聚焦的 PHP / Server Owner 中，绝不进入 `frontend/`。`integrations/preview-runtime/` 只负责正式 Preview 响应之后的 Mermaid、KaTeX、Highlight.js 与 TOC Enhancement，不拥有 `PreviewPort` 的服务端请求合同。`integrations/wordpress/rest/` 可承载共享传输机制，但不拥有 Feature 语义，也不能变成万能 Service。
 
@@ -832,9 +836,9 @@ accepted editor transaction
 
 ### 修订、媒体和设置
 
-- Revision Identity 和 Persistence 属于 WordPress；不得静默丢弃当前未保存标题或 Markdown，须先执行明确确认 / Recovery 合同，再让恢复后的 Title、Markdown、Appearance、Saved Baseline 与 PHP 重建的 Compatibility HTML 一致；
+- Revision Identity、Revision Kind 和 Persistence 属于 WordPress；不得静默丢弃当前未保存标题或 Markdown，须先执行明确确认 / Recovery 合同，再与服务端权威结果对账。EasyMDE Revision 在 PHP 渲染成功时恢复 Markdown、Appearance 与新生成的 Compatibility HTML；Renderer 不可用或渲染失败时可使用 Revision 存储的 HTML，但不会生成新 Render Signature。Revision 已存储的 Signature 会随其他 Meta 一同恢复，并继续按恢复后的 Markdown、Article Theme 和 Compatibility HTML 执行正常校验。恢复 Pre-EasyMDE Revision 会删除当前 EasyMDE Document-state Meta 并恢复历史 HTML，Browser 不得虚构 Markdown，也不得假定恢复后仍是 EasyMDE Document-state Post；
 - Media Library 和 Upload 通过 `MediaPort`，成功后才插入 Markdown，并恢复 Selection、Focus 和 Undo Contract；
-- Settings 使用独立 Root，`manage_options`、Options API、`register_setting()` 和 PHP Sanitization 仍是权威；
+- 若聚焦任务创建 React Settings 应用，它使用独立 Root；`manage_options`、Options API、`register_setting()` 和 PHP Sanitization 始终是权威；
 - Local Draft 是 Recovery Data，不是 WordPress Save，Key 必须包含 Site、User、Post Identity 和 Schema Version；合同还必须定义 Payload Limit、Retention / Expiry、权威保存后的 Cleanup、Re-key、显式 Discard 与跨 Tab Conflict，不能静默丢失较新的未保存内容；
 - AI 只通过显式用户动作和 `AiPort` 工作；界面明确 Provider 与数据边界，只发送当前动作所需的最小上下文，并明确 Retention / Logging Policy。Model Output 始终是不可信输入，生成结果必须可预览、拒绝、撤销、取消并防止 Stale Result，不自动保存、发布、上传或执行返回代码。
 
@@ -864,6 +868,8 @@ accepted editor transaction
 - Extension Ordering、Collision 和 Failure 行为。
 
 公共合同小而版本化，具体实现私有。扩展优先使用声明式、版本化 Descriptor 和稳定 Command ID，并验证 ID、Ordering、Collision、Capability Visibility 和 Failure。移除前先 Deprecate，并提供明确迁移和删除计划。
+
+收紧 Browser Descriptor Schema 或改变 Dispatch 前，先用兼容测试刻画实时 PHP-to-Browser 合同：接受值与默认值、ID Sanitization 与 Collision、Output Ordering、Unknown Action 和 Failure Behavior。保留扩展可以依赖的行为；没有聚焦兼容决定时，不把偶然实现细节提升成新的永久承诺。
 
 扩展 Payload 不执行任意 JavaScript，不传 Raw React Element / Component Constructor，不暴露内部 Store、Adapter、DOM Node 或 Feature Private Import。公开 React Render Slot 只有在独立 Issue 明确批准、使用同一 `wp-element` Runtime、定义 Versioned Contract、Failure Isolation、Package Test 和 Compatibility Policy 时才成立；当前 Toolbar Registry 不隐含这种能力。
 
@@ -949,6 +955,8 @@ accepted editor transaction
 首个 Build Implementation 记录并固定选定的 Vite、TypeScript、Node 和 npm Version、Browser Target、WordPress Loading Strategy、JSX Runtime Mapping、Dev Server Boundary 和 Release Output Contract。Browser Target 由 EasyMDE / WordPress 支持范围与实际测试矩阵决定，不由 Vite 默认值静默决定。Global Polyfill 必须有明确浏览器需求、作用域、体积和移除条件。
 
 编译期 Package 与类型声明不能暴露高于最低运行时的 API。React / ReactDOM 的测试依赖、`@types/react`、`@types/react-dom`、`@wordpress/element` 与 JSX Runtime Type 必须和 WordPress 6.7 已核验的 React 18 能力对齐；针对 React 19 或更新 Gutenberg Package 的 Type Check 通过，不代表 WordPress 6.7 运行兼容。
+
+实时 `package.json` 尚未提供 React、TypeScript、Vite、Type Check、Lint 或 Frontend Build Script。首个聚焦 Frontend Build Implementation 必须先加入并实际执行适用 Gate，不能把本文批准的目标能力误报为现有工具能力，也不能假定当前 Legacy Package Check 已覆盖新目录。该任务必须扩展 Package Predicate 与 Test：安装版 ZIP 即使在编译输出目录深处也拒绝 Frontend Source、Source Map、Vite Cache 和 Development File；Source Archive 可以包含有意跟踪的 `frontend/` Source，但必须拒绝嵌套 Dependency Tree、Coverage、Browser Report、Cache、Local Configuration 和其他 Generated / Local-only Artifact。
 
 首个 Build Implementation 必须选择并验证一个一致策略：
 

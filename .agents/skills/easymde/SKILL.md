@@ -786,8 +786,6 @@ A focused task may propose a long-term stable official CDN only when `AGENTS.md`
 ```text
 Asset and exact version/content identifier:
 Owning Feature and purpose:
-Intended release/distribution channel:
-Ordinary asset or genuine external service:
 Upstream owner and official endpoint evidence:
 Operator and long-term availability evidence:
 License and notices:
@@ -798,9 +796,6 @@ Data sent by the request:
 Success and failure behavior:
 Core reliability or local-fallback contract:
 Release-channel, documentation, test, and package impact:
-WordPress.org Plugin Directory rule, when applicable:
-User consent and readme/service disclosure, when applicable:
-Plugin Review Team confirmation, when classification is uncertain:
 Update owner and re-review triggers:
 Removal or replacement plan:
 Maintainer approval:
@@ -809,11 +804,6 @@ Unverified areas:
 
 Rules:
 
-- treat distribution-channel policy as a hard constraint that the technical CDN Gate cannot override;
-- for a WordPress.org Plugin Directory build, keep ordinary non-service JavaScript, CSS, and runtime dependencies local when required by the current directory rules; an official endpoint, immutable identifier, SRI, or maintainer approval is not sufficient to permit remote loading;
-- for GitHub Releases, private or self-hosted deployments, and other explicitly reviewed channels, continue to apply this asset-by-asset Gate;
-- evaluate a genuine external service, remote font, or another documented exception against the current official directory rules, user consent, readme and service disclosure, privacy, licensing, and the intended release channel;
-- obtain written confirmation from the WordPress.org Plugin Review Team before implementation when the service or asset classification is uncertain;
 - accept only an endpoint operated by the upstream owner or explicitly documented by that upstream as an official distribution endpoint; a marketing label is not proof;
 - pin an exact immutable release, version, commit, or content identifier over HTTPS;
 - for static JavaScript and CSS, use Subresource Integrity and correct `crossorigin` behavior when supported by both the official endpoint and selected WordPress loading path; verify the final HTML and update integrity metadata with the URL;
@@ -828,8 +818,6 @@ Rules:
 - fail production validation when an unapproved remote URL, test CDN, Dev Server URL, private host, or silent local-to-remote substitution appears.
 
 Approval is scoped to the recorded asset and Feature. It does not authorize other assets from the same host, another Feature, or a mutable replacement.
-
-The current EasyMDE implementation remains fully local. This Gate records how a future focused proposal would be evaluated; it does not approve or introduce a remote runtime asset.
 
 The first build implementation records and validates the selected Vite, TypeScript, Node, and npm versions, browser target, WordPress loading strategy, JSX-runtime mapping, development-server boundary, and release output contract. Browser targets come from the supported WordPress/EasyMDE environment and real test matrix, not an unreviewed Vite default. Do not add global Polyfills without a documented browser requirement, scope, size, and removal rule.
 

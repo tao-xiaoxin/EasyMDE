@@ -165,8 +165,6 @@ A remote asset is not prohibited solely because it uses a CDN. A focused Issue a
 - successful delivery, integrity failure, network failure, blocking, timeout, and offline behavior;
 - a removal or replacement plan and the events that require re-review.
 
-Distribution policy is a hard constraint in addition to the technical CDN gate. GitHub Releases, private or self-hosted deployments, and another explicitly reviewed distribution channel may consider an official CDN under the existing asset-by-asset approval requirements. A build intended for the WordPress.org Plugin Directory must keep ordinary non-service JavaScript, CSS, and executable or static runtime dependencies local when required by the current Plugin Directory guidelines; maintainer approval, an official domain, an immutable URL, or SRI does not override that rule. A genuine external service, remote font, or another documented exception requires separate evaluation against the current WordPress.org rules, user consent and readme or service disclosure requirements, licensing, privacy, and the actual release channel. When classification is uncertain, obtain confirmation from the WordPress.org Plugin Review Team before implementation.
-
 For core editor, save, publish, and formal-preview requirements, keep the asset local, provide a tested local fallback, or obtain separately explicit approval for a fully documented reliability contract. Optional enhancements may degrade honestly; they must not report false success, write hidden state, corrupt content, disable the editor, silently substitute another host, or retry forever.
 
 Never use unknown or unverifiable hosts, unofficial mirrors, personal domains, proxies, paste or file-sharing services, `latest`, floating or mutable URLs, unpinned packages, mutable query aliases, tracking, advertising, telemetry, fingerprinting, remote configuration, or silently substituted remote code. Do not let a test URL, development server, private host, or unreviewed CDN enter production output.
@@ -212,7 +210,6 @@ Before delivery, identify the three to five most likely failure modes. Test or r
 - Start large, experimental, or architectural work on a new branch; do not break `main`.
 - Preserve unrelated user changes and keep the diff within the authorized scope.
 - Stage explicit paths and inspect the staged diff before committing.
-- Do not push, create or update a remote Pull Request, or otherwise mutate remote repository state unless the current human request explicitly authorizes that action. A request to inspect, edit, test, review, or prepare work locally is not Push authorization.
 - Use normal commits and normal pushes. Do not rewrite existing history or force-push unless a focused reason receives explicit prior maintainer approval.
 - Do not merge a Pull Request, enable auto-merge, or close its Issue without explicit human maintainer confirmation.
 - Run the scope-relevant checks from the live repository and `docs/TESTING_AND_RELEASE.md`; report exact commands, results, skipped checks, and remaining risks.

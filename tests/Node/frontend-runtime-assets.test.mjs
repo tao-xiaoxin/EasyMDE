@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   findFrontendAssetMismatches,
@@ -12,7 +14,7 @@ import {
   validateFrontendAssetManifest
 } from '../../scripts/frontend-runtime-assets.mjs';
 
-const repoRoot = dirname(dirname(dirname(new URL(import.meta.url).pathname)));
+const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
 function makeTempRoot() {
   return mkdtempSync(join(tmpdir(), 'easymde-runtime-assets-'));
@@ -88,6 +90,14 @@ function createFixtureSources(root) {
   writeFixture(root, 'node_modules/example-runtime/fonts/example.woff2', 'font');
 }
 
+function findFixtureAssetMismatches(root, manifest) {
+  return findFrontendAssetMismatches(
+    root,
+    manifest,
+    { checkGitTracking: false }
+  );
+}
+
 test('repository frontend runtime assets match their locked local sources', () => {
   assert.deepEqual(findFrontendAssetMismatches(repoRoot), []);
 });
@@ -121,10 +131,65 @@ test('read-only asset validation reports changed content without repairing it', 
     prepareFrontendAssets(root, manifest);
     writeFixture(root, 'assets/vendor/example/example.js', 'changed');
 
-    const mismatches = findFrontendAssetMismatches(root, manifest);
+    const mismatches = findFixtureAssetMismatches(root, manifest);
 
     assert.ok(mismatches.some((mismatch) => mismatch.code === 'content-mismatch'));
     assert.equal(readFileSync(join(root, 'assets/vendor/example/example.js'), 'utf8'), 'changed');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('read-only asset validation rejects prepared files that Git does not track', () => {
+  const root = makeTempRoot();
+  const manifest = fixtureManifest();
+
+  try {
+    createFixtureSources(root);
+
+    const init = spawnSync('git', ['init'], { cwd: root, encoding: 'utf8' });
+    assert.equal(init.status, 0, init.stderr);
+
+    assert.doesNotThrow(() => prepareFrontendAssets(root, manifest));
+
+    const add = spawnSync(
+      'git',
+      [
+        'add',
+        '--',
+        'assets/vendor/example/example.js',
+        'assets/vendor/example/fonts/example.woff2'
+      ],
+      { cwd: root, encoding: 'utf8' }
+    );
+    assert.equal(add.status, 0, add.stderr);
+
+    const mismatches = findFrontendAssetMismatches(root, manifest);
+
+    assert.ok(
+      mismatches.some(
+        (mismatch) => mismatch.code === 'untracked-destination'
+          && mismatch.path === 'assets/vendor/example/LICENSE'
+      )
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('read-only asset validation fails when the Git repository cannot be discovered', () => {
+  const root = makeTempRoot();
+  const manifest = fixtureManifest();
+
+  try {
+    createFixtureSources(root);
+    prepareFrontendAssets(root, manifest);
+
+    const mismatches = findFrontendAssetMismatches(root, manifest);
+
+    assert.ok(
+      mismatches.some((mismatch) => mismatch.code === 'tracking-check-failed')
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -142,7 +207,7 @@ test('read-only asset validation rejects changed Lucide license content', () => 
     prepareFrontendAssets(root, [lucide]);
     writeFixture(root, 'assets/vendor/lucide/LICENSE', 'truncated');
 
-    const mismatches = findFrontendAssetMismatches(root, [lucide]);
+    const mismatches = findFixtureAssetMismatches(root, [lucide]);
 
     assert.ok(
       mismatches.some(
@@ -170,7 +235,7 @@ test('read-only asset validation reports missing sources, notices, and extra man
     rmSync(join(root, 'assets/vendor/example/LICENSE'), { force: true });
     writeFixture(root, 'assets/vendor/example/stale.js', 'stale');
 
-    const mismatches = findFrontendAssetMismatches(root, manifest);
+    const mismatches = findFixtureAssetMismatches(root, manifest);
     const codes = new Set(mismatches.map((mismatch) => mismatch.code));
 
     assert.ok(codes.has('missing-source'));
@@ -221,7 +286,7 @@ test('read-only asset validation enforces required runtime path types and conten
       { force: true }
     );
 
-    const mismatches = findFrontendAssetMismatches(root, manifest);
+    const mismatches = findFixtureAssetMismatches(root, manifest);
     const mismatchByPath = new Map(
       mismatches.map((mismatch) => [mismatch.path, mismatch.code])
     );
@@ -351,7 +416,7 @@ test('package validation rejects missing locked source and license metadata', ()
     writeFileSync(lockPath, JSON.stringify(lock));
 
     const codes = new Set(
-      findFrontendAssetMismatches(root, manifest).map((mismatch) => mismatch.code)
+      findFixtureAssetMismatches(root, manifest).map((mismatch) => mismatch.code)
     );
 
     assert.ok(codes.has('missing-lock-source'));

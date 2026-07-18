@@ -16,6 +16,7 @@ import test from 'node:test';
 
 import {
   frontendRuntimeAssets,
+  frontendRuntimeReleaseRequirements,
   prepareFrontendAssets
 } from '../../scripts/frontend-runtime-assets.mjs';
 import {
@@ -198,6 +199,23 @@ function createFrontendAssetSources(root) {
   prepareFrontendAssets(root);
 }
 
+function initializeFixtureRepository(root) {
+  const init = spawnSync('git', ['init'], { cwd: root, encoding: 'utf8' });
+  assert.equal(init.status, 0, init.stderr);
+
+  const assetPaths = [
+    ...new Set(
+      frontendRuntimeReleaseRequirements().map((requirement) => requirement.path)
+    )
+  ];
+  const add = spawnSync(
+    'git',
+    ['add', '--', ...assetPaths],
+    { cwd: root, encoding: 'utf8' }
+  );
+  assert.equal(add.status, 0, add.stderr);
+}
+
 function createCompleteFixture(root) {
   createVersionFiles(root);
   createRegistryFiles(root);
@@ -231,9 +249,9 @@ function createCompleteFixture(root) {
   writeText(root, 'vendor/league/commonmark/phpcs.xml.dist');
   writeText(root, 'vendor/league/commonmark/runtime/Parser.php');
   writeText(root, 'node_modules/example/index.js');
-  writeText(root, '.git/config');
   writeText(root, '.github/workflows/ci.yml');
   writeText(root, 'tests/release-fixture.test.js');
+  initializeFixtureRepository(root);
 }
 
 function zipEntries(root) {

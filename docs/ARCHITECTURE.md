@@ -15,7 +15,7 @@ This document describes the current implementation boundaries. Approved target d
 - `templates/admin/`: admin templates that render prepared data.
 - `assets/themes/article/`: EasyMDE-owned article themes.
 - `assets/themes/code/`: EasyMDE-owned code themes.
-- `assets/vendor/`: committed third-party runtime assets prepared from locked npm packages.
+- `assets/vendor/`: committed third-party runtime assets prepared from locked npm packages or verified upstream repository sources.
 - `scripts/`: local asset preparation, i18n/notices, test setup, Plugin Check, clean WordPress install, and release package assembly scripts.
 - `tests/Unit/` and `tests/Integration/`: PHPUnit coverage for rendering, CSS policy, frontend assets, REST permissions, revisions, migration, editor gating, and compatibility facade behavior.
 - `tests/Node/`: Node tests for release packaging, CI invariants, i18n/notices, Plugin Check parsing, and destructive-script safety.

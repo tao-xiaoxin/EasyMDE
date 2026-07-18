@@ -3,10 +3,12 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync
 } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -502,15 +504,72 @@ function findRequiredPathMismatches(root, component) {
   return mismatches;
 }
 
-export function findFrontendAssetMismatches(root = defaultRoot, manifest = frontendRuntimeAssets) {
+function findGitTrackingMismatches(root, expectedPaths) {
+  if (!expectedPaths.size) {
+    return [];
+  }
+
+  const trackingCheckFailed = () => [
+    mismatch(
+      'tracking-check-failed',
+      '.',
+      'Unable to verify that prepared frontend runtime assets are tracked by Git.'
+    )
+  ];
+  const repository = spawnSync(
+    'git',
+    ['-C', root, 'rev-parse', '--show-toplevel'],
+    { encoding: 'utf8' }
+  );
+
+  if (repository.error || 0 !== repository.status || !repository.stdout.trim()) {
+    return trackingCheckFailed();
+  }
+
+  try {
+    if (realpathSync(repository.stdout.trim()) !== realpathSync(root)) {
+      return trackingCheckFailed();
+    }
+  } catch {
+    return trackingCheckFailed();
+  }
+
+  const tracked = spawnSync(
+    'git',
+    ['-C', root, 'ls-files', '-z', '--', ...expectedPaths],
+    { encoding: 'utf8' }
+  );
+
+  if (tracked.error || 0 !== tracked.status) {
+    return trackingCheckFailed();
+  }
+
+  const trackedPaths = new Set(tracked.stdout.split('\0').filter(Boolean));
+
+  return [...expectedPaths]
+    .filter((path) => !trackedPaths.has(path))
+    .map((path) => mismatch(
+      'untracked-destination',
+      path,
+      `Prepared frontend runtime asset is not tracked by Git: ${path}.`
+    ));
+}
+
+export function findFrontendAssetMismatches(
+  root = defaultRoot,
+  manifest = frontendRuntimeAssets,
+  { checkGitTracking = true } = {}
+) {
   validateFrontendAssetManifest(manifest);
 
   const mismatches = findFrontendAssetPackageMismatches(root, manifest);
+  const expectedTrackedPaths = new Set();
 
   for (const component of manifest) {
     const { expected, canCheckUnexpectedFiles } = expectedDestinationFiles(root, component, mismatches);
 
     for (const [destinationPath, sourcePath] of expected) {
+      expectedTrackedPaths.add(destinationPath);
       const destination = join(root, destinationPath);
       const source = join(root, sourcePath);
 
@@ -546,6 +605,15 @@ export function findFrontendAssetMismatches(root = defaultRoot, manifest = front
     }
 
     mismatches.push(...findRequiredPathMismatches(root, component));
+    for (const requirement of component.requiredPaths || []) {
+      if ('file' === requirement.type) {
+        expectedTrackedPaths.add(requirement.path);
+      } else {
+        for (const path of walkRelativeFiles(root, requirement.path)) {
+          expectedTrackedPaths.add(path);
+        }
+      }
+    }
 
     const notice = join(root, component.noticeLocation);
     if (!existsSync(notice) || !statSync(notice).isFile()) {
@@ -555,6 +623,10 @@ export function findFrontendAssetMismatches(root = defaultRoot, manifest = front
         `Missing frontend runtime license or notice: ${component.noticeLocation}.`
       ));
     }
+  }
+
+  if (checkGitTracking) {
+    mismatches.push(...findGitTrackingMismatches(root, expectedTrackedPaths));
   }
 
   return mismatches;
@@ -610,7 +682,11 @@ export function prepareFrontendAssets(root = defaultRoot, manifest = frontendRun
     }
   }
 
-  const mismatches = findFrontendAssetMismatches(root, manifest);
+  const mismatches = findFrontendAssetMismatches(
+    root,
+    manifest,
+    { checkGitTracking: false }
+  );
   if (mismatches.length) {
     throw new Error([
       'Prepared frontend runtime assets did not pass validation:',

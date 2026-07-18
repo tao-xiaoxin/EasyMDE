@@ -205,7 +205,10 @@ Before changing ownership:
 
 1. Use deterministic synthetic content, permissions, post state, viewport, locale, direction, zoom, font, and browser state.
 2. Capture the changed surface and every protected surface that could regress.
-3. Wait for fonts, images, preview, required assets, and async work before measuring.
+3. Establish a readiness barrier for fonts, images, preview, required assets,
+   and async work before measuring. A timeout, rejection, or missing dependency
+   fails the baseline and prohibits measurement or capture; report the evidence
+   as unverified until readiness can be confirmed.
 4. Record DOM order, accessibility tree, focus, selection, scroll, geometry, computed styles, network calls, console output, and writes relevant to the unit.
 5. Exercise success, cancellation, rejection, missing dependency, stale completion, rapid repeat, teardown, and re-entry paths.
 6. Record a performance baseline only for metrics the unit can affect.

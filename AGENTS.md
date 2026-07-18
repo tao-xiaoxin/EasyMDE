@@ -379,6 +379,10 @@ belong to `CONTRIBUTING.md`.
   relevant Issue history, and the responsible guidance owner before acting.
   Do not invent a business requirement or present an assumption as a current
   fact; report any ambiguity that remains unresolved.
+- Do not invent facts, requirements, evidence, approvals, test results, user
+  preferences, or rationale to agree with or please the requester. When a
+  requested premise conflicts with evidence, state the conflict honestly and
+  distinguish facts, explicit decisions, assumptions, and unverified claims.
 - Prefer an existing supported API, extension point, data model, validation
   path, test helper, or release mechanism when its ownership and semantics fit
   the task. Do not create a parallel interface or workaround merely to avoid
@@ -391,6 +395,11 @@ belong to `CONTRIBUTING.md`.
   abstraction.
 - Split work into independently testable hypotheses and prefer the simplest
   design that satisfies current project and platform constraints.
+- Overdesign is prohibited. Do not add architecture, abstractions,
+  dependencies, workflows, documents, compatibility layers, or speculative
+  generality beyond the current verified need. A more elaborate solution
+  requires concrete evidence that the simpler design cannot satisfy the
+  current constraints.
 - For a material architecture, security, compatibility, migration, or release
   decision, explain why the chosen approach is necessary, which constraint it
   satisfies, and why a simpler alternative is insufficient.

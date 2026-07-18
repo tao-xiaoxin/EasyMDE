@@ -341,9 +341,14 @@ update. Human contributors may opt in when the tools are available.
     human separately authorizes it.
 12. After posting, wait for acknowledgement or review activity. Unless the
     review finishes earlier, observe for at least 15 minutes at reasonable
-    60–90 second intervals.
-13. Independently verify every CodeRabbit finding and change the project only
-    for a confirmed defect or human maintainer decision.
+    60–90 second intervals, checking comments, reactions, reviews, threads,
+    walkthrough updates, and CI.
+13. Independently verify every CodeRabbit finding. Fix confirmed defects. Reply
+    to invalid or stale findings with concise privacy-safe evidence when the
+    contributor has repository permission and, for agents or automation,
+    explicit authorization for that remote comment; otherwise report the
+    evidence to the human maintainer. Do not change the project merely to
+    obtain Bot approval.
 14. A push after review starts creates a new Head and invalidates CI and review
     conclusions tied to the old SHA. Repeat local review, CI, and the complete
     re-review template for the new Head.
@@ -372,7 +377,10 @@ shows the request failed, was not accepted, was cancelled, its stated
 rate-limit window expired, or no acknowledgement appeared after a reasonable
 wait. Before retrying, confirm the Head is unchanged, exact-Head CI is still
 green, and no review is queued or in progress. Resend the full template and do
-not repeatedly retry the same Head.
+not repeatedly retry the same Head. Report continued unavailability to the
+human maintainer instead of creating comment spam. When CodeRabbit is rate
+limited, keep the already-green Head unchanged, wait for review capacity, and
+send at most the one permitted complete request for that same SHA.
 
 A reaction, acknowledgement, status comment, updated walkthrough, queued check,
 or in-progress review is evidence that the request was accepted. Continue

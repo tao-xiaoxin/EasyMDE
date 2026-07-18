@@ -4405,7 +4405,22 @@
             listen(win, 'resize', positionAppearancePopover);
             listen(win, 'scroll', positionAppearancePopover, true);
             listen(win, 'resize', positionHeadingMenu);
-            listen(win, 'scroll', positionHeadingMenu, true);
+            listen(win, 'scroll', function (event) {
+                var menu = query('[data-heading-menu]');
+                var target = event.target;
+
+                if (
+                    menu
+                    && target
+                    && (
+                        target === menu
+                        || (target.nodeType && menu.contains(target))
+                    )
+                ) {
+                    return;
+                }
+                positionHeadingMenu();
+            }, true);
             listen(query('[data-ai-form]'), 'submit', function (event) {
                 event.preventDefault();
                 sendAiMessage();

@@ -66,8 +66,9 @@ Project-specific limits override generic advice:
 - Do not let generic mobile-first breakpoints, URL-synchronized UI state, automatic retries, optimistic writes, backdrop closing, theme detection, or Core Web Vitals replace the approved editor contract.
 - Do not add a router, CDN, preconnect, remote Font, or fixed virtualization
   threshold merely because generic Web guidance recommends it; WordPress owns
-  navigation, and a remote asset must first pass the focused Decision Gate in
-  `AGENTS.md` and `.agents/skills/easymde/SKILL.md`.
+  navigation, and a remote asset must satisfy the repository invariant in
+  `AGENTS.md` and the complete focused Decision Gate in
+  `.agents/skills/easymde/SKILL.md`.
 - Do not add duplicate keyboard activation handlers to native buttons or links merely because a generic checklist asks for handlers on every interactive element; custom widgets must implement the complete applicable WAI-ARIA keyboard pattern.
 - Do not treat a generic security checklist as authority to add or change site-wide CSP, HSTS, frame, or other response headers during a browser ownership transfer; such host-wide policy requires its own focused Issue and WordPress compatibility review.
 - Preserve repository-owned translated copy and WordPress i18n behavior; do not apply generic capitalization, punctuation, or wording rules mechanically.
@@ -87,9 +88,11 @@ Project-specific limits override generic advice:
 - Local, version-controlled runtime assets remain the default. A migration unit
   does not inherit permission to add a remote asset; an exception requires its
   own evidence-backed, explicitly approved Decision Gate under the long-term
-  EasyMDE Skill. The installable ZIP contains required compiled local assets
-  and excludes frontend source, tests, source maps unless approved, .agents,
-  docs-only architecture material, caches, logs, and development files.
+  EasyMDE Skill. A migration preserves the distinct installable-ZIP and
+  source-archive contracts and verifies its required compiled entries without
+  copying their complete inclusion or exclusion rules here. Exact current
+  package behavior belongs to `docs/TESTING_AND_RELEASE.md`,
+  `scripts/build-release.mjs`, and `scripts/build-source-archives.mjs`.
 - Every state-changing behavior has exactly one active owner.
 - The WordPress edit form remains an open compatibility surface. Native and extension-owned fields, controls, meta boxes, submit hooks, and unknown form data remain owned by WordPress or their registering extension unless the focused migration unit explicitly delegates one field to React.
 
@@ -408,10 +411,12 @@ Build and test the production output. Verify WordPress-provided React is not
 duplicated, dependency metadata matches imports, local asset URLs work outside
 the default Plugin path, every approved remote asset preserves its documented
 integrity, privacy, failure, fallback, and distribution-channel contract, and
-the installable ZIP includes every required local entry and chunk while
-excluding development files.
-
-Also verify the source ZIP / tar.gz is built from the exact tracked commit, contains the tracked `frontend/` source and required build guidance, preserves any required compiled runtime output intentionally tracked by repository policy, and rejects the generated or local-only artifacts disallowed by the source-archive builder. Do not reuse the installable ZIP allowlist for the source archive.
+the migration's required compiled entries and chunks reach the installable ZIP.
+When the repository intentionally tracks migration source, verify it reaches the
+separate source archive. Apply the exact package and source-archive behavior in
+`docs/TESTING_AND_RELEASE.md`, `scripts/build-release.mjs`, and
+`scripts/build-source-archives.mjs`; do not reuse the installable-ZIP allowlist
+for the source archive.
 
 ## Deprecate and remove the old owner
 

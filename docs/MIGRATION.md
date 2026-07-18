@@ -53,13 +53,20 @@ _easymde_render_signature
 ```
 
 When a revision containing EasyMDE meta is restored, the restored Markdown and
-theme state are copied back to the post. EasyMDE then regenerates `post_content`
-from the restored Markdown using the restored article theme. The restore path
-updates `post_content` directly and clears the post cache to avoid recursive save
-hooks or extra revision loops.
+theme state are copied back to the post. EasyMDE regenerates `post_content` and
+stores a new render signature only when Markdown rendering succeeds. If the
+renderer is unavailable or rendering fails, the restore path uses the
+revision's stored `post_content` without generating a new signature. Any render
+signature stored on that revision is restored with the other revisioned
+metadata and remains subject to normal consistency validation.
 
-Revisions created before this migration may not contain EasyMDE meta. Restoring
-those revisions does not delete current EasyMDE meta automatically.
+The restore path updates `post_content` directly and clears the post cache to
+avoid recursive save hooks or extra revision loops.
+
+When a revision predates EasyMDE document state and contains none of the
+revisioned EasyMDE metadata, restoring it removes the current revisioned
+EasyMDE metadata and restores that revision's historical `post_content`. The
+post then no longer has EasyMDE document state.
 
 ## Fixed Mac Code Frame
 

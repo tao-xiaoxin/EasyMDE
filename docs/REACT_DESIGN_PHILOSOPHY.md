@@ -953,7 +953,7 @@ accepted editor transaction
 
 编译期 Package 与类型声明不能暴露高于最低运行时的 API。React / ReactDOM 的测试依赖、`@types/react`、`@types/react-dom`、`@wordpress/element` 与 JSX Runtime Type 必须和 WordPress 6.7 已核验的 React 18 能力对齐；针对 React 19 或更新 Gutenberg Package 的 Type Check 通过，不代表 WordPress 6.7 运行兼容。
 
-实时 `package.json` 尚未提供 React、TypeScript、Vite、Type Check、Lint 或 Frontend Build Script。首个聚焦 Frontend Build Implementation 必须先加入并实际执行适用 Gate，不能把本文批准的目标能力误报为现有工具能力，也不能假定当前 Legacy Package Check 已覆盖新目录。该任务必须扩展 Package Predicate 与 Test：安装版 ZIP 即使在编译输出目录深处也拒绝 Frontend Source、Source Map、Vite Cache 和 Development File；Source Archive 可以包含有意跟踪的 `frontend/` Source，但必须拒绝嵌套 Dependency Tree、Coverage、Browser Report、Cache、Local Configuration 和其他 Generated / Local-only Artifact。
+实时 `package.json` 尚未提供 React、TypeScript、Vite、Type Check、Lint 或 Frontend Build Script。首个聚焦 Frontend Build Implementation 必须先加入并实际执行适用 Gate，不能把本文批准的目标能力误报为现有工具能力，也不能假定当前 Legacy Package Check 已覆盖新目录。该任务必须更新实时 Release Owner、Package Predicate 和 Test，使新的 Frontend Layout 同时遵守安装版 ZIP 与 Source Archive 的既有产品边界；聚焦 Frontend Package Impact 的执行合同属于 `.agents/skills/easymde/SKILL.md`，准确的当前 Include / Exclude、构建和验证行为属于 `docs/TESTING_AND_RELEASE.md`、`scripts/build-release.mjs` 与 `scripts/build-source-archives.mjs`。
 
 首个 Build Implementation 必须选择并验证一个一致策略：
 
@@ -989,29 +989,14 @@ WordPress 6.7 默认把 `@wordpress/element` 注册为 Classic `wp-element` Scri
 
 逐资产 Decision Record、SRI / CORS / CSP / MIME / Redirect / Cache / Referrer、数据发送、Fallback、批准、复审触发器和实施验证属于 `.agents/skills/easymde/SKILL.md`，不在本文复制执行清单。当前架构事实仍由 `docs/ARCHITECTURE.md` 记录，测试和发布命令仍由 `docs/TESTING_AND_RELEASE.md` 负责。
 
-安装版 ZIP 只包含必要运行时、Composer Dependency、License、翻译和 Notice；排除：
-
-```text
-.agents/
-frontend/
-node_modules/
-tests/
-coverage/
-Playwright output
-TypeScript / React source
-source maps unless explicitly approved
-Vite caches
-local logs and configuration
-development server metadata
-unrelated development files
-```
+安装版 ZIP 必须包含完整运行时、Composer Runtime Dependency、License、翻译和 Notice，同时排除开发源码、测试、Cache、私有或机器相关数据及无关开发产物。准确的当前 Include / Exclude、构建与验证行为属于 `docs/TESTING_AND_RELEASE.md`、`scripts/build-release.mjs` 和 `scripts/build-source-archives.mjs`；本文只保留长期产品边界，不维护第二份会漂移的逐路径执行清单。
 
 安装版 ZIP 与 Source Archive 是不同产品：
 
 - 安装版 ZIP 使用运行时 Allowlist，不包含 Frontend Source；
-- Source ZIP / tar.gz 由 `scripts/build-source-archives.mjs` 从准确的已跟踪 Commit 生成，包含已跟踪的 `frontend/` Source 与构建、维护文档，保留仓库策略明确要求并有意跟踪的编译运行时输出，同时拒绝 Source Archive Builder 明确禁止的 Generated 或 Local-only Path。
+- Source ZIP / tar.gz 可以包含仓库策略明确跟踪的 `frontend/` Source、构建维护文档和运行时输出。
 
-不得把安装包 Allowlist 套用到 Source Archive，也不得用未提交 Working Tree 作为 Source Archive 输入。
+不得把安装包 Allowlist 套用到 Source Archive；准确的 Commit 输入、生成和拒绝规则属于 `scripts/build-source-archives.mjs` 与 `docs/TESTING_AND_RELEASE.md`。
 
 ## 十九、测试与维护
 
@@ -1022,9 +1007,11 @@ unrelated development files
 - `integrations`：WordPress DOM、Native Form、Nonce Refresh、Lock、REST、Media、Storage、Clipboard 和 Cleanup；
 - `features`：通过 Mock Runtime 验证 Controller、Hook 和 UI；
 - `app`：Error Boundary、Activation、Teardown，以及该 Root 确实拥有时的 Provider 和 Store；不得为结构对称创建测试专用 Store / Provider；
-- E2E：安装版 ZIP 上的真实 WordPress Author Flow；
-- Release Test：Compiled Entry 存在且 Development File 缺失。
-- Source Archive Test：准确 Commit 的 Source 存在、Generated / Local-only Artifact 缺失，并且 Archive Version 与 Commit Identity 正确。
+- E2E：安装版 ZIP 上的真实 WordPress Author Flow。
+
+准确的 Release 与 Source Archive 测试属于 `docs/TESTING_AND_RELEASE.md`、
+`scripts/build-release.mjs` 和 `scripts/build-source-archives.mjs`；聚焦
+Frontend Package Impact 的测试选择属于 `.agents/skills/easymde/SKILL.md`。
 
 测试质量：
 
@@ -1032,7 +1019,7 @@ unrelated development files
 - Snapshot 只能补充结构证据，不能独立证明 Interaction、Focus、Failure 或 Accessibility；
 - E2E 使用语义 Ready Condition，不使用固定 Sleep；
 - 测试直接执行 Production Domain Function、Parser、Schema 和 Adapter，不复制一份测试专用实现；
-- External Store、Async Concurrency、Error Boundary Scope、Translation Loading 和 Status Message 都需要最低可靠层级的专门测试。
+- External Store、Async Concurrency、Error Boundary Scope 和 Status Message 都需要最低可靠层级的专门测试；Translation Loading 的完整测试合同属于 `.agents/skills/i18n/SKILL.md`。
 
 工具链存在后自动执行：
 
@@ -1042,7 +1029,7 @@ unrelated development files
 - Approved React Runtime Import；
 - Manifest、Dependency Metadata、CSS 和 Chunk 校验；
 - PHP-to-TypeScript Contract Fixture；
-- Installable ZIP Inclusion / Exclusion。
+- 聚焦 Frontend Package Impact 对实时 Release Owner 的一致性校验。
 
 ### 长期维护
 
@@ -1075,11 +1062,11 @@ unrelated development files
 15. Root-relative Plugin Asset URL、未批准或发行渠道不兼容的 Remote Runtime Resource、Production Dev Server Reference 或未批准 Telemetry；
 16. Empty Feature Directory、Placeholder Module、Unused Asset 或无当前 Owner 的 Dependency；
 17. 私密正文、Custom CSS、Prompt、Token、Nonce、Credential 或 Secret Endpoint 进入 Diagnostics；
-18. Source、Test、Cache、Log、`.agents/` 或 Development Metadata 进入安装版 ZIP；
+18. Development-only、Private、Machine-specific 或无关 Artifact 进入安装版 ZIP；
 19. 把 react-admin、通用 Skill、博客或搜索结果当作高于 EasyMDE 项目证据的规范；
 20. 把 Error Boundary 当作 Event、Promise、Timer、Port 或 Mutation 的通用错误处理器；
 21. Unstable External Store Subscription、未缓存 Snapshot、重复订阅、轮询或 Effect State Mirroring；
 22. 无并发策略、Owner Identity、Stale Result、Cancellation 或权威结果对账的 Async Operation；
-23. Duplicate Translation Owner、未提取的 React Literal、拼接翻译片段或 Release ZIP 缺少 JS Catalog；
+23. Duplicate Translation Owner 或绕过 `.agents/skills/i18n/SKILL.md` 执行合同的用户可见文案；
 24. 把 Vite Build 当作 Type Check、依赖未审查 Browser Target 或让 HMR 成为正确性前提；
 25. 通过公共扩展 Payload 执行任意 JS、传 Raw React Element / Component、暴露内部 Store / Adapter 或依赖 Private DOM。

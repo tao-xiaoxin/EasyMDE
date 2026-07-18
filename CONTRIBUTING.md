@@ -11,9 +11,32 @@ rules belong to `.agents/skills/easymde/SKILL.md`.
 
 EasyMDE is a standalone WordPress Markdown editor. Contributions must preserve
 WordPress-native editing, permissions, media, revisions, saving, publishing,
-and release behavior. Read [AGENTS.md](AGENTS.md) and
-[Core Philosophy](docs/CORE-PHILOSOPHY.md) before material implementation,
-security, compatibility, migration, or release work.
+and release behavior. Read [AGENTS.md](AGENTS.md) before material
+implementation, security, compatibility, migration, or release work.
+[Core Philosophy](docs/CORE-PHILOSOPHY.md) is an optional mnemonic
+introduction; it does not define a second set of binding rules.
+
+## Contributor Applicability
+
+The repository workflow, focused Issue and pull request scope, explicit
+path-based staging, applicable validation, privacy-safe public evidence,
+accurate CI and unverified-result reporting, independent verification of Bot
+findings, human merge and closure control, and private security-reporting
+requirements apply to all contributors.
+
+Agents, Codex, and other automation additionally require explicit authorization
+in the current human request before any remote repository write. Agent-authored
+or automated work must use the Local Codex Review below; its pull request
+updates must also use exact-Head CI and the complete CodeRabbit request
+workflow. A new push invalidates conclusions for an earlier Head.
+
+Human contributors do not need a separate "current human request" before
+pushing to a branch they are permitted to update, and the absence of a local
+`codex-review` tool does not block their commit or push. They may voluntarily
+use the Local Codex Review and CodeRabbit templates, while remaining subject to
+repository permissions, applicable CI and review, privacy requirements, and
+human maintainer control of merge, closure, auto-merge, and remote branch
+deletion.
 
 ## Repository Workflow
 
@@ -30,17 +53,19 @@ security, compatibility, migration, or release work.
   durable React design rationale or boundary changes.
 - Update [Testing and Release](docs/TESTING_AND_RELEASE.md) when current quality
   gates or release execution changes.
-- Update [Upgrading EasyMDE](UPGRADING.md) for data-model, compatibility,
-  upgrade, or rollback changes.
+- Update [Migration](docs/MIGRATION.md) when implemented data-model,
+  compatibility, migration, or upgrade behavior changes.
+- Update [Upgrading EasyMDE](UPGRADING.md) when user-facing upgrade, rollback,
+  or operator guidance changes.
 - Update `README.md` for user-visible behavior changes.
 
 ## Branches and Pull Requests
 
 - Branch from the current `main`.
 - Keep pull requests focused on one behavior, fix, or documentation goal.
-- Use normal commits and normal pushes. Do not reset, rebase, amend, rewrite
-  published history, or force-push without explicit prior maintainer approval
-  for that exact operation.
+- Prefer small, logical Conventional Commits for completed work. Use normal
+  pushes. Do not reset, rebase, amend, rewrite published history, or force-push
+  without explicit prior maintainer approval for that exact operation.
 - Do not merge, squash-merge, rebase-merge, enable auto-merge, close an Issue or
   pull request, or delete a remote branch without explicit human maintainer
   authorization for that action.
@@ -76,11 +101,13 @@ security, compatibility, migration, or release work.
   standalone file.
 - Do not modify `.gitignore` merely to hide artifacts created by the current
   task.
-- Do not create a commit until the focused work can stand alone and its
-  applicable validation and local review have completed.
-- A push, remote pull-request mutation, review comment, label change, or other
-  remote repository write requires explicit authorization in the current human
-  request. Authorization for one remote action does not imply another.
+- Do not create a commit until the focused work can stand alone and applicable
+  validation has completed. Agent-authored or automated work must also complete
+  the Local Codex Review below; human contributors may use it voluntarily.
+- For agents and automation, a push, remote pull-request mutation, review
+  comment, label change, or other remote repository write requires explicit
+  authorization in the current human request. Authorization for one remote
+  action does not imply another.
 
 ## Validation Expectations
 
@@ -164,6 +191,9 @@ test, or an old-SHA result is not completion evidence.
 - Use `Related to #123` for partial, exploratory, blocked, or staged work.
 - Do not claim an Issue is resolved while known required work remains outside
   the pull request.
+- Keep each pull request within its linked Issue scope. Unrelated work requires
+  a separate focused Issue and pull request unless a human maintainer explicitly
+  expands the current scope.
 - Issue linkage does not prove mergeability. Validation, compatibility,
   privacy, CI, and review requirements still apply.
 
@@ -190,11 +220,13 @@ Closing and merging are human maintainer decisions.
 
 ## Local Codex Review Before Commit and Push
 
-A passing local `codex-review` is mandatory before committing and before
-pushing. It is a read-only reviewer; the implementing agent independently
-verifies and resolves its findings.
+A passing local `codex-review` is mandatory before committing and pushing
+agent-authored or automated work. Human contributors may use this workflow
+voluntarily and are not blocked when the tool is unavailable. The review is
+read-only; the implementing agent or contributor independently verifies and
+resolves its findings.
 
-Follow this sequence:
+For agent-authored or automated work, follow this sequence:
 
 1. Complete the focused implementation and applicable local validation.
 2. Inspect `git status --short`, `git diff`, `git diff --cached`, commits and
@@ -286,7 +318,8 @@ Return exactly one final verdict:
 
 ## Push, CI, and CodeRabbit Review Order
 
-Follow this sequence for every pull request update:
+This sequence is mandatory for every agent-authored or automated pull request
+update. Human contributors may opt in when the tools are available.
 
 1. Complete implementation and local validation.
 2. Run local `codex-review`, verify findings, fix confirmed problems, rerun
@@ -323,12 +356,16 @@ Do not:
   or stale;
 - post a bare `@coderabbitai full review` or duplicate a request that may still
   be queued;
+- leave literal placeholders, copied validation claims, stale SHAs, or checks
+  that were not run in a CodeRabbit request;
 - classify a failure as flaky before inspecting evidence;
 - reuse a green run, walkthrough, approval, or review from an earlier SHA;
 - push empty commits, formatting churn, or unrelated edits to retrigger CI or a
   bot;
 - ask CodeRabbit to edit, push, merge, close, change metadata, enable
-  auto-merge, delete branches, or resolve threads.
+  auto-merge, delete branches, or resolve threads;
+- merge while required CI is incomplete or failing or while a confirmed local
+  or remote review finding remains unresolved.
 
 A slow response is not a failed request. Retry once only when concrete evidence
 shows the request failed, was not accepted, was cancelled, its stated
@@ -336,6 +373,10 @@ rate-limit window expired, or no acknowledgement appeared after a reasonable
 wait. Before retrying, confirm the Head is unchanged, exact-Head CI is still
 green, and no review is queued or in progress. Resend the full template and do
 not repeatedly retry the same Head.
+
+A reaction, acknowledgement, status comment, updated walkthrough, queued check,
+or in-progress review is evidence that the request was accepted. Continue
+waiting instead of posting another request.
 
 ### Mandatory CodeRabbit First-Review Template
 
@@ -545,9 +586,10 @@ State unavailable or unverified checks honestly.
 - [ ] Relevant integration or browser checks
 - [ ] PHP, Node, lint, i18n, build, or package checks as applicable
 - [ ] Negative, cancellation, permission, and failure-path checks as applicable
-- [ ] Local `codex-review` completed for the exact committed and pushed diff
-- [ ] Every confirmed local review finding was resolved and affected validation was rerun
-- [ ] Final local review verdict recorded without private local details
+- [ ] For agent-authored or automated work, local `codex-review` covered the exact outgoing state before push
+- [ ] For agent-authored or automated work, the current pushed Head matches the reviewed commit set, or local review was rerun after the state changed
+- [ ] Every confirmed local review finding was resolved and affected validation was rerun, when local review was used
+- [ ] Final local review verdict recorded without private local details, when local review was used
 - [ ] CI status reviewed for the current head SHA
 - [ ] Existing CodeRabbit request status checked before posting a new review command
 
@@ -661,6 +703,8 @@ Apply only the relevant items:
 - Request input is unslashed, validated, sanitized, and escaped for its actual
   context.
 - Every state-changing operation verifies nonce and the target capability.
+- New admin actions do not affect unrelated posts, users, settings, or admin
+  pages.
 - Markdown, HTML, DOM, Custom CSS, media, extension, storage, and preview sinks
   preserve their declared trust boundary.
 - Raw Markdown HTML and unsafe Custom CSS do not become executable output.
@@ -733,8 +777,9 @@ Report:
    impact.
 3. Commands and checks actually run, with results and exact revision when
    relevant.
-4. Local `codex-review` scope, exact-state verdict, confirmed findings fixed,
-   and rejected findings with concise evidence.
+4. For agent-authored or automated work, or when a human contributor
+   voluntarily used it, the Local `codex-review` scope, exact-state verdict,
+   confirmed findings fixed, and rejected findings with concise evidence.
 5. CI and remote review status for the exact current Head.
 6. The three to five most likely failure modes and how each was tested, fixed,
    or left unverified.

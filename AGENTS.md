@@ -25,10 +25,13 @@ repository-level summary and an exact route repeated elsewhere.
 | `CONTRIBUTING.md` | Detailed public contribution workflow, Git and staging sequence, Issue and pull request templates, local review, exact-Head CI, CodeRabbit coordination, finding quality, privacy-safe public evidence, and completion reporting. |
 | `.agents/skills/easymde/SKILL.md` | Executable React, TypeScript, browser, UI fidelity, accessibility, architecture, security, dependency, asset, testing, and delivery contract for normal feature work. |
 | `.agents/skills/easymde-migration/SKILL.md` | Temporary legacy characterization, ownership handoff, activation, rollback, deprecation, removal, and migration evidence. |
-| `.agents/skills/i18n/SKILL.md` | PHP and React internationalization, extraction, catalogs, script translations, locale, plural, context, RTL, and package validation. |
+| `.agents/skills/i18n/SKILL.md` | PHP and React internationalization, extraction, catalogs, script translations, locale, plural, context, RTL, and language-asset package validation. |
 | `docs/ARCHITECTURE.md` | Current, actually implemented architecture. |
 | `docs/REACT_DESIGN_PHILOSOPHY.md` | Durable React design rationale, target boundaries, and long-term direction. |
 | `docs/TESTING_AND_RELEASE.md` | Current test, CI, installable ZIP, source archive, Plugin Check, and E2E execution. |
+| `docs/MIGRATION.md` | Implemented data-model, compatibility, and migration transition notes for contributors. |
+| `UPGRADING.md` | User-facing upgrade, rollback, and operator guidance. |
+| `docs/CORE-PHILOSOPHY.md` | Non-normative mnemonic introduction to the working principles whose binding invariants and procedures are owned by `AGENTS.md` and `CONTRIBUTING.md`. |
 | `docs/README.md` | Documentation navigation. |
 
 The live repository, supported public contracts, and current explicit human
@@ -108,30 +111,17 @@ Non-negotiable product and authority rules:
   frontend framework, a replacement publishing backend, or unrelated build
   architecture without explicit maintainer approval.
 
-An installable plugin ZIP may contain required compiled JavaScript, CSS, static
-runtime assets, Composer dependencies, licenses, translations, and third-party
-notices. It excludes:
+An installable plugin ZIP contains every required runtime file, including
+compiled JavaScript and CSS, static runtime assets, Composer runtime
+dependencies, licenses, translations, and third-party notices. It excludes
+development source, tests, caches, private or machine-specific data, and
+unrelated development artifacts, and remains self-contained and privacy-safe.
 
-```text
-.agents/
-frontend/
-node_modules/
-tests/
-coverage/
-Playwright output
-TypeScript and React source
-source maps unless explicitly approved
-Vite caches
-temporary build files
-local logs and configuration
-browser-test artifacts
-development dependencies and metadata
-unrelated development files
-```
-
-The installable ZIP and source archives are different products. Detailed live
-package and release execution belongs to `docs/TESTING_AND_RELEASE.md`; browser
-implementation and package-impact checks belong to the EasyMDE Skill.
+The installable ZIP and source archives are different products. Exact current
+inclusion, exclusion, build, and validation behavior belongs to
+`docs/TESTING_AND_RELEASE.md`, `scripts/build-release.mjs`, and
+`scripts/build-source-archives.mjs`; browser implementation and focused
+package-impact checks belong to the EasyMDE Skill.
 
 ## Data Authority and Backward Compatibility
 
@@ -381,6 +371,18 @@ belong to `CONTRIBUTING.md`.
 - Make failures observable and traceable without recording sensitive content.
   When evidence is insufficient, add privacy-safe diagnostics or report the
   uncertainty instead of claiming a fix.
+- Verify an unknown interface, public contract, command, metadata shape, Hook,
+  endpoint, parameter, tool option, or release behavior against the live code,
+  available tooling, or version-matched authoritative documentation before
+  using or describing it. Never invent one to bridge missing evidence.
+- Resolve material ambiguity from the current task, live repository, tests,
+  relevant Issue history, and the responsible guidance owner before acting.
+  Do not invent a business requirement or present an assumption as a current
+  fact; report any ambiguity that remains unresolved.
+- Prefer an existing supported API, extension point, data model, validation
+  path, test helper, or release mechanism when its ownership and semantics fit
+  the task. Do not create a parallel interface or workaround merely to avoid
+  understanding the existing owner.
 - Before editing, identify the real user, system, security, compatibility, or
   release problem; the invariant that must remain true; and the observable
   outcome that proves success.
@@ -403,6 +405,10 @@ belong to `CONTRIBUTING.md`.
   rule rather than an incidental one-off check.
 - Treat green tests, existing code, convention, and review comments as evidence
   only when they exercise the actual changed behavior and failure boundary.
+- Verify each material claim with the smallest relevant test, negative case,
+  runtime exercise, manual check, or release-package inspection that reaches
+  the intended path. A successful command is not evidence for a path it did
+  not exercise.
 - Do not confuse a plan, mock, static file-presence check, or plausible output
   with proof of correctness.
 - Before delivery, inspect the exact change skeptically for logic/data-flow,
@@ -426,9 +432,9 @@ completion reporting belong to `CONTRIBUTING.md`.
 Local, version-controlled runtime assets remain the default.
 
 A remote asset may be considered only for one focused Feature after explicit
-human approval and evidence of official provenance, long-term reliability,
-immutable HTTPS identity, license compatibility, privacy, integrity,
-failure/fallback behavior, update ownership, removal strategy, and
+human maintainer approval and evidence of official provenance, long-term
+reliability, immutable HTTPS identity, license compatibility, privacy,
+integrity, failure/fallback behavior, update ownership, removal strategy, and
 distribution-channel compatibility.
 
 Unknown hosts, unofficial mirrors, mutable URLs, floating versions, personal
@@ -463,15 +469,17 @@ Repository workflow hard boundaries:
 - Do not reset, rebase, amend, rewrite history, force-push, or perform another
   destructive Git operation without explicit human authorization for that
   exact action.
-- A push, Issue or pull request mutation, comment, label, review request, or
-  other remote write requires explicit authorization in the current human
-  request. Authorization for one remote action does not imply another.
+- For agents and automation, a push, Issue or pull request mutation, comment,
+  label, review request, or other remote write requires explicit authorization
+  in the current human request. Authorization for one remote action does not
+  imply another.
 - Local review, CI, and remote review are valid only for the exact state or Head
   SHA they inspected. Any material local change or new push invalidates stale
   conclusions and requires the applicable checks again.
-- Before commit and push, use the read-only Local Codex Review workflow in
-  `CONTRIBUTING.md`, independently verify each finding, fix confirmed root
-  causes, and do not change the project merely to obtain a Bot approval.
+- Before an agent-authored or automated commit and push, use the read-only Local
+  Codex Review workflow in `CONTRIBUTING.md`, independently verify each finding,
+  fix confirmed root causes, and do not change the project merely to obtain a
+  Bot approval.
 - Observe all required CI for the exact current Head. Inspect a failed,
   cancelled, or timed-out job before deciding how to respond; do not call it
   flaky without evidence.

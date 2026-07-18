@@ -58,8 +58,9 @@ contract involving:
 - directories, layer ownership, Ports, public APIs, REST Routes or namespace,
   metadata, Options, Hooks, Filters, command IDs, extension descriptors, or
   Storage schemas;
-- build, installable ZIP, source archive, translation delivery, privacy,
-  diagnostics, or deprecation behavior; or
+- build, installable ZIP, source archive, i18n extraction, catalogs,
+  translation loading, locale formatting, RTL, language-asset package behavior,
+  privacy, diagnostics, or deprecation behavior; or
 - guidance ownership or completed migration work that makes temporary guidance
   obsolete.
 
@@ -747,17 +748,18 @@ reviews, or validates user-visible text, locale formatting, RTL, accessibility
 copy, extraction, catalogs, translation loading, or package language assets.
 
 The current implementation keeps PHP gettext as the source of browser-facing
-strings and passes translated values through versioned Bootstrap data. Preserve
-that fact until a focused i18n/build task activates a complete React
+strings and passes translated values through the existing
+`EasyMDEConfig.strings` and `EasyMDEFrontendConfig.strings` Bootstrap maps.
+Preserve that fact until a focused i18n/build task activates a complete React
 translation owner.
 
 Each user-visible message instance has one owner. Do not ship the same instance
-through both PHP-translated Bootstrap data and a JavaScript catalog, add a
-partial `@wordpress/i18n` path without extraction and release delivery,
-translate stable Error Codes or identifiers, concatenate translated fragments,
-or use an English fallback to hide a broken required contract. Dynamic
-extension labels remain validated and translated by their documented owner.
-The i18n Skill owns the complete executable pipeline and evidence.
+through more than one translation path. When translation ownership moves from
+legacy JavaScript or PHP to React, also use
+`.agents/skills/easymde-migration/SKILL.md`. Stable Error Codes, REST Routes,
+Script Handles, Storage Keys, and public identifiers remain untranslated.
+Dynamic extension labels remain validated and translated by their documented
+owner. The i18n Skill owns the complete executable pipeline and evidence.
 
 ## Security Implementation and Threat-Model Checklist
 
@@ -962,6 +964,9 @@ Before editing:
   target surface, and every protected surface that must remain unchanged. A
   design for an isolated mode does not authorize restyling the normal editor or
   reusing its CSS as the new mode's implementation;
+- re-baseline before comparison when the reference changes or cannot be
+  identified; do not combine measurements or captures from different reference
+  revisions as one evidence set;
 - record browser, viewport, zoom, device-pixel ratio, font state, deterministic
   fixture, UI state, and interaction state. Explain any difference between the
   reference and implementation inputs;
@@ -1338,10 +1343,16 @@ not itself approve a URL or change the current local-runtime implementation.
 
 Keep the two publication artifacts distinct:
 
-- the installable plugin ZIP follows the runtime allowlist and excludes development source;
-- source ZIP / tar.gz artifacts are built from the exact tracked commit, include the tracked `frontend/` source and build/maintenance documentation, preserve any required compiled runtime output that repository policy intentionally tracks, and reject only the generated or local-only paths disallowed by `scripts/build-source-archives.mjs`.
+- the installable plugin ZIP follows the runtime allowlist and excludes
+  development source; and
+- source ZIP / tar.gz artifacts may include intentionally tracked `frontend/`
+  source and build guidance under the separate source-archive contract.
 
-Do not apply the installable-package allowlist to source archives, and do not use an uncommitted working tree as source-archive input.
+Do not apply the installable-package allowlist to source archives. Exact current
+inclusion, exclusion, committed-source, build, and validation behavior belongs
+to `docs/TESTING_AND_RELEASE.md`, `scripts/build-release.mjs`, and
+`scripts/build-source-archives.mjs`. This Skill owns only the focused
+React/Vite package impact that those release owners must support.
 
 ## Testing, Release, and Completion
 
@@ -1354,8 +1365,10 @@ Choose tests by responsibility:
 - `features`: Controller, Hook, Component, Focus, keyboard, and form behavior through mock Runtime;
 - `app`: any required Providers or Root Stores, Error Boundaries, activation, and teardown; do not create test-only Store/Provider infrastructure for a simple Root that does not own it;
 - E2E: real WordPress behavior using the installable ZIP;
-- release: required compiled entries present and development files absent;
-- source archive: exact committed source present, generated/local-only artifacts absent, and archive version/commit identity correct.
+- release: required compiled frontend entries present and frontend development
+  files absent; and
+- source archive: intentionally tracked frontend source remains available under
+  the live source-archive contract.
 
 Test-quality rules:
 
@@ -1363,7 +1376,9 @@ Test-quality rules:
 - use snapshots as supplemental evidence only, never as the sole proof of interaction, focus, error, or accessibility behavior;
 - use semantic readiness conditions in E2E tests instead of fixed sleeps;
 - import and execute the production Domain function, Parser, Schema, or Adapter under test rather than reimplementing its logic in a test helper;
-- test Error Boundary limits, asynchronous Result handling, concurrency policy, external-store subscriptions, translation loading, and Status Message announcements at the lowest reliable layer;
+- test Error Boundary limits, asynchronous Result handling, concurrency policy,
+  external-store subscriptions, and Status Message announcements at the lowest
+  reliable layer;
 - keep deterministic fixtures free of credentials and private article content.
 
 Enforce when tooling exists:
@@ -1374,26 +1389,18 @@ Enforce when tooling exists:
 - approved React runtime imports;
 - valid Manifest, dependency metadata, CSS, and chunks;
 - PHP-to-TypeScript contract parity;
-- installable ZIP inclusion and exclusion.
+- focused frontend package impact against the live release owners.
 
-The live `package.json` does not yet provide React, TypeScript, Vite, type-check, lint, or frontend-build scripts. The first focused frontend build implementation must add and execute the applicable gates before claiming them. It must also extend package predicates and tests rather than assume the current legacy checks cover the new layout: the installable ZIP must reject frontend source, source maps, Vite caches, and development files even when nested below compiled-output directories; source archives may include intentionally tracked `frontend/` source but must reject nested dependency trees, coverage, browser reports, caches, local configuration, and other generated or local-only artifacts.
-
-The installable ZIP excludes:
-
-```text
-.agents/
-frontend/
-node_modules/
-tests/
-coverage/
-Playwright output
-TypeScript and React source
-source maps unless explicitly approved
-Vite caches
-local logs and configuration
-development server metadata
-unrelated development files
-```
+The live `package.json` does not yet provide React, TypeScript, Vite,
+type-check, lint, or frontend-build scripts. The first focused frontend build
+implementation must add and execute the applicable gates before claiming them,
+and update the live release owners, package predicates, and tests for the new
+layout. The installable ZIP must reject TypeScript and React source, tests,
+source maps, Vite caches, and development-server metadata; source archives may
+include intentionally tracked `frontend/` source. Exact current inclusion,
+exclusion, build, and validation behavior belongs to
+`docs/TESTING_AND_RELEASE.md`, `scripts/build-release.mjs`, and
+`scripts/build-source-archives.mjs`.
 
 Before reporting a Feature complete, verify the scope-relevant items:
 
@@ -1409,7 +1416,7 @@ Before reporting a Feature complete, verify the scope-relevant items:
 10. Native-field synchronization, real operation observation, stale-result rejection, cancellation, failure, and teardown are tested.
 11. Accessibility, Focus, keyboard, IME, Selection, Undo, Scroll, RTL, zoom, and relevant visual states are covered.
 12. Performance conclusions have measurements.
-13. Build metadata, React externalization, local asset URLs, translations, and package exclusions are verified.
+13. Build metadata, React externalization, local asset URLs, and focused frontend package impact are verified; i18n evidence follows the i18n Skill.
 14. The exact diff, commands, CI, review findings, unverified areas, and remaining risks are reported honestly.
 
 Maintainability rules:
@@ -1444,11 +1451,11 @@ Do not introduce:
 15. Root-relative Plugin asset URLs, unapproved or distribution-incompatible remote runtime resources, production Dev Server references, or unapproved telemetry.
 16. Empty Feature directories, placeholder modules, unused assets, or dependencies without a current Owner.
 17. Private article content, Custom CSS, prompts, Tokens, Nonces, credentials, or secret endpoints in diagnostics.
-18. Source, tests, caches, logs, `.agents/`, or development metadata in the installable ZIP.
+18. Development-only, private, machine-specific, or unrelated artifacts in the installable ZIP.
 19. A react-admin, generic Skill, blog, or search recommendation treated as stronger than EasyMDE project evidence.
 20. Treating an Error Boundary as the handler for Event, Promise, Timer, Port, or Mutation failures.
 21. An unstable external-store `subscribe`, an uncached mutable `getSnapshot`, duplicate subscriptions, or Effect-based State mirroring.
 22. An asynchronous operation with no declared concurrency, Owner identity, stale-result, cancellation, or authoritative-result policy.
-23. Duplicate translation ownership, untranslated user-facing React literals, concatenated translated fragments, or JS catalogs omitted from extraction and release packaging.
+23. Duplicate translation ownership or user-visible text that bypasses the routed i18n contract.
 24. Treating a Vite Build as the TypeScript check, relying on unreviewed Browser Targets, or requiring HMR for correctness.
 25. Public extension data that executes arbitrary JavaScript, passes raw React Components or Elements, exposes internal Stores or Adapters, or depends on private DOM implementation.

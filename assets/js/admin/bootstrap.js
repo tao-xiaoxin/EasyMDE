@@ -977,21 +977,11 @@
         style.textContent = css || '';
     }
 
-    function applyCodeThemeLink(enabled) {
-        var link = document.getElementById('easymde-highlight-theme-css');
-
-        if (!enabled) {
-            if (link && link.parentNode) {
-                link.parentNode.removeChild(link);
-            }
-        }
-    }
-
     function applyArticleThemeLink() {
         themeManager.applyArticleThemeLink(themeOptions, renderState, findById, document);
     }
 
-    function applyRenderState($preview, features, options) {
+    function applyRenderState($preview, options) {
         var preview = $preview[0];
         var markdownClass = renderState.markdownTheme === 'custom'
             ? 'easymde-markdown-theme-custom'
@@ -999,7 +989,6 @@
         var fontStack = buildFontStack();
 
         options = options || {};
-        features = normalizePreviewFeatures(features || activePreviewFeatures);
 
         if (!preview) {
             return;
@@ -1022,7 +1011,6 @@
         }
         syncFontControls();
         applyArticleThemeLink();
-        applyCodeThemeLink(features.syntaxHighlight);
         setCustomCssStyle(renderState.markdownTheme === 'custom' ? selectedCustomCss() : '');
     }
 
@@ -2732,7 +2720,7 @@
 
         setPreviewReady($preview);
 
-        applyRenderState($preview, features, { syncFields: false });
+        applyRenderState($preview, { syncFields: false });
 
         afterPreviewIdle(function () {
             if (!isPreviewCurrent(revision, signature, markdown)) {
@@ -2796,8 +2784,8 @@
         options = options || {};
         delay = options.immediate ? 0 : 180;
 
-        function finishPreviewUpdate(scrollState, features) {
-            applyRenderState($preview, features);
+        function finishPreviewUpdate(scrollState) {
+            applyRenderState($preview);
             restorePreviewScroll(previewNode, scrollState);
         }
 
@@ -2808,7 +2796,7 @@
             activePreviewFeatures = normalizePreviewFeatures(config.features || {});
             setPreviewReady($preview, signature);
             $preview.html('<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty')) + '</p>');
-            finishPreviewUpdate(capturePreviewScroll(previewNode), activePreviewFeatures);
+            finishPreviewUpdate(capturePreviewScroll(previewNode));
             return;
         }
 
@@ -2828,7 +2816,7 @@
             if (!window.wp || !window.wp.apiFetch || !config.restUrl) {
                 activePreviewFeatures = normalizePreviewFeatures(config.features || {});
                 $preview.html(previewFallback(markdown));
-                finishPreviewUpdate(requestScrollState, activePreviewFeatures);
+                finishPreviewUpdate(requestScrollState);
                 enhancePreview($preview, activePreviewFeatures, revision, signature, markdown).then(function (ready) {
                     finishEnhancedPreview($preview, revision, signature, markdown, ready);
                 });
@@ -2869,7 +2857,7 @@
                 responseFeatures = normalizePreviewFeatures(response.features || {});
                 activePreviewFeatures = responseFeatures;
                 $preview.html(response.html || previewFallback(markdown));
-                finishPreviewUpdate(requestScrollState, responseFeatures);
+                finishPreviewUpdate(requestScrollState);
                 enhancePreview($preview, responseFeatures, revision, signature, markdown).then(function (ready) {
                     finishEnhancedPreview($preview, revision, signature, markdown, ready);
                 });
@@ -2881,7 +2869,7 @@
                 activePreviewFeatures = normalizePreviewFeatures(config.features || {});
                 setPreviewReady($preview);
                 $preview.html('<p class="easymde-preview-error">' + escapeHtml(getString('previewError')) + '</p>');
-                finishPreviewUpdate(requestScrollState, activePreviewFeatures);
+                finishPreviewUpdate(requestScrollState);
             });
         }
 

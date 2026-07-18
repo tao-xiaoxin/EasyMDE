@@ -2551,9 +2551,13 @@ test.describe('EasyMDE editor workflows', () => {
 
   test('published plain, code, math, and Mermaid content load only their local runtime assets', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
-    const errors = collectUnexpectedPageErrors(page);
+    const pageErrors = [];
     const runtimeRequests = collectManagedRuntimeRequests(page);
 
+    page.on('pageerror', (error) => pageErrors.push({
+      message: error.message,
+      name: error.name
+    }));
     await login(page, user);
     await openEasyMdeNewPost(page);
     const postId = await currentPostId(page);
@@ -2627,7 +2631,11 @@ test.describe('EasyMDE editor workflows', () => {
       expectManagedRuntimeRequests(runtimeRequests, variant.requestKeys, new URL(permalink).origin);
     }
 
-    expect(errors).toEqual([]);
+    // WordPress cross-document view transitions reject when the browser skips the navigation animation.
+    expect(pageErrors.filter((error) => (
+      error.name !== 'AbortError'
+      || error.message !== 'Transition was skipped'
+    ))).toEqual([]);
   });
 
   test('preserves legacy post and user values while new saves create no obsolete metadata', async ({ page }, testInfo) => {

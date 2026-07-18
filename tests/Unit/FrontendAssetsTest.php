@@ -177,7 +177,7 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         );
         $expected_styles = array(
             'easymde-code-frame' => 'assets/css/frontend/code-frame.css',
-            'easymde-highlight-theme' => 'assets/vendor/highlight/styles/github.min.css',
+            'easymde-highlight-theme' => 'assets/vendor/highlight/styles/atom-one-dark.min.css',
             'easymde-math' => 'assets/css/frontend/math.css',
             'easymde-katex' => 'assets/vendor/katex/katex.min.css',
         );

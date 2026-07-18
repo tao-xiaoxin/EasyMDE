@@ -15,7 +15,7 @@ This document describes the current implementation boundaries. Approved target d
 - `templates/admin/`: admin templates that render prepared data.
 - `assets/themes/article/`: EasyMDE-owned article themes.
 - `assets/themes/code/`: EasyMDE-owned code themes.
-- `assets/vendor/`: local third-party runtime assets prepared by npm.
+- `assets/vendor/`: committed third-party runtime assets prepared from locked npm packages.
 - `scripts/`: local asset preparation, i18n/notices, test setup, Plugin Check, clean WordPress install, and release package assembly scripts.
 - `tests/Unit/` and `tests/Integration/`: PHPUnit coverage for rendering, CSS policy, frontend assets, REST permissions, revisions, migration, editor gating, and compatibility facade behavior.
 - `tests/Node/`: Node tests for release packaging, CI invariants, i18n/notices, Plugin Check parsing, and destructive-script safety.
@@ -121,6 +121,12 @@ Frontend EasyMDE posts enqueue:
 - scoped custom CSS only for the current EasyMDE post when available.
 
 Runtime rendering assets are local. The plugin does not require CDN-hosted Mermaid, KaTeX, Highlight.js, preview, editor, or theme assets.
+
+`scripts/frontend-runtime-assets.mjs` owns the current npm source, local
+destination, purpose, license and notice metadata, and release requirements
+for managed frontend runtime assets. `npm run prepare:assets` deliberately
+refreshes those committed files; `npm run assets:check`, CI, and the release
+builder only validate them and fail on drift.
 
 ## Custom CSS
 

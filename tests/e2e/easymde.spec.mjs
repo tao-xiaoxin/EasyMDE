@@ -10,6 +10,97 @@ const fullCapabilityMarkdown = readFileSync(
   new URL('../../docs/examples/markdown-full-capability-test.md', import.meta.url),
   'utf8'
 );
+const managedRuntimeAssets = [
+  {
+    key: 'codeFrameCss',
+    matches: (pathname) => pathname.endsWith('/assets/css/frontend/code-frame.css')
+  },
+  {
+    key: 'highlightThemeCss',
+    matches: (pathname) => /\/assets\/vendor\/highlight\/styles\/[^/]+\.min\.css$/.test(pathname)
+  },
+  {
+    key: 'highlightScript',
+    matches: (pathname) => pathname.endsWith('/assets/vendor/highlight/highlight.min.js')
+  },
+  {
+    key: 'mathCss',
+    matches: (pathname) => pathname.endsWith('/assets/css/frontend/math.css')
+  },
+  {
+    key: 'katexCss',
+    matches: (pathname) => pathname.endsWith('/assets/vendor/katex/katex.min.css')
+  },
+  {
+    key: 'katexScript',
+    matches: (pathname) => pathname.endsWith('/assets/vendor/katex/katex.min.js')
+  },
+  {
+    key: 'katexFont',
+    matches: (pathname) => /\/assets\/vendor\/katex\/fonts\/[^/]+\.(?:woff2?|ttf|otf)$/.test(pathname)
+  },
+  {
+    key: 'mathRenderer',
+    matches: (pathname) => pathname.endsWith('/assets/js/frontend/math.js')
+  },
+  {
+    key: 'mermaidScript',
+    matches: (pathname) => pathname.endsWith('/assets/vendor/mermaid/mermaid.min.js')
+  },
+  {
+    key: 'mermaidRenderer',
+    matches: (pathname) => pathname.endsWith('/assets/js/frontend/mermaid.js')
+  }
+];
+const optionalRuntimeElementIds = [
+  'easymde-code-frame-css',
+  'easymde-highlight-theme-css',
+  'easymde-highlight-js',
+  'easymde-math-css',
+  'easymde-katex-css',
+  'easymde-katex-js',
+  'easymde-math-renderer-js',
+  'easymde-mermaid-js',
+  'easymde-mermaid-renderer-js'
+];
+
+function collectManagedRuntimeRequests(page) {
+  const requests = [];
+
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    const asset = managedRuntimeAssets.find(({ matches }) => matches(url.pathname));
+
+    if (asset) {
+      requests.push({
+        key: asset.key,
+        origin: url.origin,
+        pathname: url.pathname
+      });
+    }
+  });
+
+  return requests;
+}
+
+async function expectOptionalRuntimeElements(page, expectedIds) {
+  for (const id of optionalRuntimeElementIds) {
+    await expect(page.locator(`#${id}`)).toHaveCount(expectedIds.includes(id) ? 1 : 0);
+  }
+}
+
+function expectManagedRuntimeRequests(requests, expectedKeys, origin) {
+  expect([...new Set(requests.map(({ key }) => key))].sort()).toEqual([...expectedKeys].sort());
+  expect(new Set(requests.map(({ pathname }) => pathname)).size).toBe(requests.length);
+
+  for (const request of requests) {
+    expect(request.origin).toBe(origin);
+  }
+}
+
+function managedRuntimeRequestSnapshot(requests) {
+  return requests.map(({ pathname }) => pathname).sort();
+}
 
 function runWp(args, options = {}) {
   if (!wpPath) {
@@ -2361,29 +2452,181 @@ test.describe('EasyMDE editor workflows', () => {
     expect(errors).toEqual([]);
   });
 
-  test('loads code assets only for regular code while keeping Mermaid separate', async ({ page }, testInfo) => {
+  test('loads optional preview runtimes once and keeps every managed request local', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const errors = collectUnexpectedPageErrors(page);
 
     await login(page, user);
     await openEasyMdeNewPost(page);
+    const runtimeRequests = collectManagedRuntimeRequests(page);
+    const origin = new URL(page.url()).origin;
     await fillMarkdownAndWaitForPreview(page, '# Plain\n\nNo source code here.', 'No source code here.');
-    await expect(page.locator('#easymde-code-frame-css')).toHaveCount(0);
-    await expect(page.locator('#easymde-highlight-theme-css')).toHaveCount(0);
+    await expectOptionalRuntimeElements(page, []);
+    expectManagedRuntimeRequests(runtimeRequests, [], origin);
 
-    await page.reload();
     await fillMarkdownAndWaitForPreview(page, '```mermaid\ngraph TD; A-->B;\n```', '');
     await expect(page.locator('#easymde-preview .easymde-mermaid svg')).toBeVisible();
     await expect(page.locator('#easymde-preview pre code.hljs')).toHaveCount(0);
     await expect(page.locator('#easymde-code-frame-css')).toHaveCount(0);
     await expect(page.locator('#easymde-highlight-theme-css')).toHaveCount(0);
+    await expectOptionalRuntimeElements(page, [
+      'easymde-mermaid-js',
+      'easymde-mermaid-renderer-js'
+    ]);
+    expectManagedRuntimeRequests(runtimeRequests, ['mermaidRenderer', 'mermaidScript'], origin);
+    const mermaidRequests = managedRuntimeRequestSnapshot(runtimeRequests);
+    await fillMarkdownAndWaitForPreview(page, '# Between Mermaid renders', 'Between Mermaid renders');
+    await fillMarkdownAndWaitForPreview(page, '```mermaid\ngraph LR; A-->B;\n```', '');
+    await expect(page.locator('#easymde-preview .easymde-mermaid svg')).toBeVisible();
+    await expectOptionalRuntimeElements(page, [
+      'easymde-mermaid-js',
+      'easymde-mermaid-renderer-js'
+    ]);
+    expect(managedRuntimeRequestSnapshot(runtimeRequests)).toEqual(mermaidRequests);
 
-    await page.reload();
+    await fillMarkdownAndWaitForPreview(page, 'Inline math: $a+b$.', 'Inline math:');
+    await expect(page.locator('#easymde-preview .katex')).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    await expect(page.locator('#easymde-highlight-js')).toHaveCount(0);
+    await expectOptionalRuntimeElements(page, [
+      'easymde-math-css',
+      'easymde-katex-css',
+      'easymde-katex-js',
+      'easymde-math-renderer-js',
+      'easymde-mermaid-js',
+      'easymde-mermaid-renderer-js'
+    ]);
+    expectManagedRuntimeRequests(runtimeRequests, [
+      'katexCss',
+      'katexFont',
+      'katexScript',
+      'mathCss',
+      'mathRenderer',
+      'mermaidRenderer',
+      'mermaidScript'
+    ], origin);
+    const mathRequests = managedRuntimeRequestSnapshot(runtimeRequests);
+    await fillMarkdownAndWaitForPreview(page, '# Between math renders', 'Between math renders');
+    await fillMarkdownAndWaitForPreview(page, 'Repeated math: $c+d$.', 'Repeated math:');
+    await expect(page.locator('#easymde-preview .katex')).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    await expectOptionalRuntimeElements(page, [
+      'easymde-math-css',
+      'easymde-katex-css',
+      'easymde-katex-js',
+      'easymde-math-renderer-js',
+      'easymde-mermaid-js',
+      'easymde-mermaid-renderer-js'
+    ]);
+    expect(managedRuntimeRequestSnapshot(runtimeRequests)).toEqual(mathRequests);
+
     await fillMarkdownAndWaitForPreview(page, '```\nplain fenced source\n```', 'plain fenced source');
     await expect(page.locator('#easymde-preview')).toHaveClass(/easymde-code-mac/);
     await expect(page.locator('#easymde-preview pre code')).toBeVisible();
     await expect(page.locator('#easymde-code-frame-css')).toHaveCount(1);
     await expect(page.locator('#easymde-highlight-theme-css')).toHaveCount(1);
+    const codeRequests = managedRuntimeRequestSnapshot(runtimeRequests);
+    await fillMarkdownAndWaitForPreview(page, '# Between code renders', 'Between code renders');
+    await fillMarkdownAndWaitForPreview(page, '```js\nconst loadedOnce = true;\n```', 'loadedOnce');
+    await expectOptionalRuntimeElements(page, optionalRuntimeElementIds);
+    expect(managedRuntimeRequestSnapshot(runtimeRequests)).toEqual(codeRequests);
+    expectManagedRuntimeRequests(
+      runtimeRequests,
+      [
+        'codeFrameCss',
+        'highlightScript',
+        'highlightThemeCss',
+        'katexCss',
+        'katexFont',
+        'katexScript',
+        'mathCss',
+        'mathRenderer',
+        'mermaidRenderer',
+        'mermaidScript'
+      ],
+      origin
+    );
+    expect(errors).toEqual([]);
+  });
+
+  test('published plain, code, math, and Mermaid content load only their local runtime assets', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const errors = collectUnexpectedPageErrors(page);
+    const runtimeRequests = collectManagedRuntimeRequests(page);
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    const postId = await currentPostId(page);
+    const permalink = postPermalink(postId);
+    const variants = [
+      {
+        markdown: '# Plain runtime\n\nNo optional feature.',
+        previewText: 'No optional feature.',
+        requestKeys: [],
+        elementIds: []
+      },
+      {
+        markdown: '```js\nconst frontendCode = true;\n```',
+        previewText: 'frontendCode',
+        requestKeys: ['codeFrameCss', 'highlightScript', 'highlightThemeCss'],
+        elementIds: [
+          'easymde-code-frame-css',
+          'easymde-highlight-theme-css',
+          'easymde-highlight-js'
+        ],
+        frontendSelector: '.easymde-rendered-content pre code.hljs'
+      },
+      {
+        markdown: 'Inline math: $a+b$.',
+        previewText: 'Inline math:',
+        requestKeys: ['katexCss', 'katexFont', 'katexScript', 'mathCss', 'mathRenderer'],
+        elementIds: [
+          'easymde-math-css',
+          'easymde-katex-css',
+          'easymde-katex-js',
+          'easymde-math-renderer-js'
+        ],
+        frontendSelector: '.easymde-rendered-content .katex'
+      },
+      {
+        markdown: '```mermaid\ngraph TD; A-->B;\n```',
+        previewText: '',
+        requestKeys: ['mermaidRenderer', 'mermaidScript'],
+        elementIds: [
+          'easymde-mermaid-js',
+          'easymde-mermaid-renderer-js'
+        ],
+        frontendSelector: '.easymde-rendered-content .easymde-mermaid svg'
+      }
+    ];
+
+    await page.locator('#title').fill(`Runtime assets ${postId}`);
+
+    for (const [index, variant] of variants.entries()) {
+      if (index > 0) {
+        await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
+        await expect(page.locator('#easymde-editor')).toBeVisible();
+      }
+
+      await fillMarkdownAndWaitForPreview(page, variant.markdown, variant.previewText);
+      await publishOrUpdate(page);
+      runtimeRequests.length = 0;
+
+      const response = await page.goto(permalink);
+      expect(response.status(), permalink).toBe(200);
+      await expect(page.locator('.easymde-rendered-content')).toBeVisible();
+
+      if (variant.frontendSelector) {
+        await expect(page.locator(variant.frontendSelector)).toBeVisible();
+      }
+      if (variant.requestKeys.includes('katexFont')) {
+        await page.evaluate(() => document.fonts.ready);
+      }
+
+      await expectOptionalRuntimeElements(page, variant.elementIds);
+      expectManagedRuntimeRequests(runtimeRequests, variant.requestKeys, new URL(permalink).origin);
+    }
+
     expect(errors).toEqual([]);
   });
 

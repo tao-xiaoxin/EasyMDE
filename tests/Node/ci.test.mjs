@@ -68,6 +68,17 @@ test('Plugin Check and E2E validate the release job ZIP artifact', () => {
   });
 });
 
+test('Node and release jobs validate committed runtime assets without refreshing them', () => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const nodeJob = workflowJobBlock(workflow, 'node');
+  const releaseJob = workflowJobBlock(workflow, 'release');
+
+  [nodeJob, releaseJob].forEach((job) => {
+    assert.match(job, /name:\s+Check local runtime assets[\s\S]*run:\s+npm run assets:check/);
+    assert.doesNotMatch(job, /run:\s+npm run prepare:assets/);
+  });
+});
+
 test('release job uploads explicit source and plugin artifacts without publish privileges', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
   const releaseJob = workflowJobBlock(workflow, 'release');

@@ -14,11 +14,12 @@ This index points to the current technical docs. The root [README](../README.md)
 **Local Contributors**
 
 1. [Contributing](../CONTRIBUTING.md) for project rules and PR expectations.
-2. [Core Philosophy](CORE-PHILOSOPHY.md) for the repository's verification standard.
-3. [Architecture](ARCHITECTURE.md) for the current implementation boundaries.
-4. [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md) for approved React target architecture and interface-design decisions.
-5. [Development](DEVELOPMENT.md) for Composer, npm assets, Docker, `.env`, and WordPress test-suite setup.
-6. [Testing and Release](TESTING_AND_RELEASE.md) for quality gates that apply when code, assets, release scripts, or packaging behavior change.
+2. [Agent Instructions](../AGENTS.md) for binding repository-wide invariants.
+3. [Core Philosophy](CORE-PHILOSOPHY.md) for a non-normative mnemonic introduction.
+4. [Architecture](ARCHITECTURE.md) for the current implementation boundaries.
+5. [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md) for approved React target architecture and interface-design decisions.
+6. [Development](DEVELOPMENT.md) for Composer, npm assets, Docker, `.env`, and WordPress test-suite setup.
+7. [Testing and Release](TESTING_AND_RELEASE.md) for quality gates that apply when code, assets, release scripts, or packaging behavior change.
 
 **Maintainers Preparing Releases**
 
@@ -42,4 +43,3 @@ This index points to the current technical docs. The root [README](../README.md)
 - [Security Policy](../SECURITY.md)
 - [Upgrade Notes](../UPGRADING.md)
 - [Agent Instructions](../AGENTS.md)
-- [Core Philosophy](CORE-PHILOSOPHY.md)

@@ -11,15 +11,16 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 
 ## 规则优先级（执行顺序）
 
-1. 当前任务、关联 Issue、维护者决策；
-2. 根目录 `AGENTS.md` 与实时仓库；
-3. `docs/ARCHITECTURE.md`、`docs/REACT_DESIGN_PHILOSOPHY.md`；
-4. `.agents/skills/easymde/SKILL.md`；
-5. `.agents/skills/easymde-migration/SKILL.md`（当涉及所有权转移）；
-6. 官方文档（按当前支持版本）；
-7. 当前任务实际需要的通用 Skill；
-8. react-admin 作为设计思想借鉴，不作为项目权威；
-9. 其他博客、搜索摘要、经验贴仅作为辅助输入。
+1. 当前任务中的明确指令与当前 Human Maintainer 决策；
+2. 根目录 `AGENTS.md`、实时仓库与受支持的公共合同；
+3. 当前聚焦 Issue 与 Pull Request，在前两项边界内解释；
+4. `docs/ARCHITECTURE.md`、`docs/REACT_DESIGN_PHILOSOPHY.md`；
+5. `.agents/skills/easymde/SKILL.md`；
+6. `.agents/skills/easymde-migration/SKILL.md`（当涉及所有权转移）；
+7. 官方文档（按当前支持版本）；
+8. 当前任务实际需要的通用 Skill；
+9. react-admin 作为设计思想借鉴，不作为项目权威；
+10. 其他博客、搜索摘要、经验贴仅作为辅助输入。
 
 下层资料不得覆盖上层规则；一旦冲突，以上层为准。
 
@@ -488,15 +489,22 @@ const message = sprintf(
 
 ## 构建与发布产物边界
 
-产物类型必须分开验证：
+安装版 ZIP 与 Source Archive 是不同产品。准确的当前 Include / Exclude、
+构建与验证行为属于 `docs/TESTING_AND_RELEASE.md`、
+`scripts/build-release.mjs` 和 `scripts/build-source-archives.mjs`。本 Skill
+只负责语言资源和 Catalog 对这些产物的聚焦影响，不维护第二份通用安装包
+清单。
 
 - **Installable plugin ZIP**
-  - 排除 `.agents/`、frontend source、测试、缓存、日志、开发工具、临时提取文件和未批准的 source map；
-  - 包含运行所需的 PHP、编译后 JavaScript/CSS、运行时依赖、license/notice、当前 POT/PO/MO，以及从第一个 React 翻译 owner 激活开始所需的 JSON catalog；
-  - 必须验证脚本句柄、text domain、文件名和资源路径与包内文件一致。
+  - 包含当前 POT/PO/MO，以及从第一个 React 翻译 owner 激活开始所需的
+    JSON Catalog；
+  - 不包含 i18n Pipeline 产生的临时提取或中间 Catalog；
+  - 验证 Script Handle、Text Domain、Locale、文件名、Runtime Script Path
+    和包内语言资源一致。
 - **Source ZIP / source tar.gz**
-  - 可以包含受控且已跟踪的项目源码和维护文件；
-  - 公开源码归档不是“源码泄漏”，但仍不得包含未跟踪临时文件、秘密或私密运行数据。
+  - 可以包含仓库策略明确跟踪的 i18n Source 和维护文件；
+  - 不得把 Installable ZIP 的 Runtime Allowlist 用作 Source Archive
+    清单。
 
 不得以单一 i18n 任务临时破坏现有 release 与 source archive 的职责边界。
 
@@ -582,7 +590,8 @@ Gettext source message、translator comment、代码示例、测试 fixture、ca
 ### 必检点（发布）
 
 - 安装 ZIP 包含目标 locale 文件；
-- installable plugin ZIP 排除开发源码和临时产物，source archive 只包含受控且已跟踪的公开源码；
+- 安装 ZIP 不包含 i18n Pipeline 的临时提取或中间 Catalog，Source Archive
+  与 Installable ZIP 继续按实时 Release Owner 的不同合同验证；
 - 变更未触发未授权的远端资源加载；
 - 新增/迁移文案不会影响未迁移的 legacy 页面。
 

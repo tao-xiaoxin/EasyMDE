@@ -666,6 +666,9 @@ Apply only the relevant items:
 - Raw Markdown HTML and unsafe Custom CSS do not become executable output.
 - `_easymde_markdown`, `post_content`, revisions, metadata-existence behavior,
   and public compatibility APIs remain consistent.
+- Existing Article Theme and Code Theme choices, Custom CSS snapshots, Font
+  settings, Shortcuts, and user defaults remain readable unless the focused
+  change includes an explicit compatibility and migration path.
 - WordPress remains authoritative for save, publish, media, revisions, settings,
   permissions, locks, taxonomies, and unknown extension-owned form fields.
 - Assets load only where needed and follow the approved local/remote and

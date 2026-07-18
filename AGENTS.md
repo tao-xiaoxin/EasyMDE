@@ -97,11 +97,11 @@ Non-negotiable product and authority rules:
 - Project Skills guide implementation within repository and Issue boundaries.
   Loading a Skill does not block normal focused development, expand linked
   scope, or authorize unrelated refactors.
-- The root npm project is the only approved home for local vendor preparation,
-  Node and Playwright tests, i18n, notices, release/source packaging, and future
-  React/TypeScript/Vite work. Inspect the live `package.json` before claiming
-  or invoking a script; approved direction is not proof that a tool currently
-  exists.
+- One root `package.json` and one root Lockfile define the only approved npm
+  project for local vendor preparation, Node and Playwright tests, i18n,
+  notices, release/source packaging, and future React/TypeScript/Vite work.
+  Inspect the live `package.json` before claiming or invoking a script;
+  approved direction is not proof that a tool currently exists.
 - Public visitor pages remain PHP-rendered and must not load an admin React
   application.
 - Do not introduce a Gutenberg editor rewrite, Next.js, Webpack, another
@@ -331,8 +331,8 @@ Custom CSS:
 - A maintained, license-compatible parser owns validation, nested at-rules,
   selector scoping, and safe output. Regex is not a complete parser or security
   boundary.
-- Block `@import`, `@charset`, `url(...)`, `expression(...)`, `behavior`,
-  `-moz-binding`, and `javascript:`.
+- Block `@import`, `@charset`, `@font-face`, `url(...)`, `expression(...)`,
+  `behavior`, `-moz-binding`, and `javascript:`.
 - Preserve valid `@media`, `@supports`, `@keyframes`, CSS variables, and
   percentage selectors.
 - Retain a required legacy value that cannot be parsed safely, but never render
@@ -389,8 +389,18 @@ belong to `CONTRIBUTING.md`.
   abstraction.
 - Split work into independently testable hypotheses and prefer the simplest
   design that satisfies current project and platform constraints.
+- For a material architecture, security, compatibility, migration, or release
+  decision, explain why the chosen approach is necessary, which constraint it
+  satisfies, and why a simpler alternative is insufficient.
 - Add a dependency, abstraction, service, asset, script, file, or document only
   for a current explicit responsibility and consumer.
+- Derive behavior from an explicit product rule, data model, capability,
+  configuration, or supported extension boundary. Do not hard-code an
+  implementation merely to satisfy a requirement example, test, URL, title,
+  identifier, fixture, or sample input.
+- An intentionally narrow product boundary is valid only when the requirement
+  defines it explicitly; express it as a named, documented, and tested Domain
+  rule rather than an incidental one-off check.
 - Treat green tests, existing code, convention, and review comments as evidence
   only when they exercise the actual changed behavior and failure boundary.
 - Do not confuse a plan, mock, static file-presence check, or plausible output

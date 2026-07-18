@@ -64,20 +64,24 @@ const optionalRuntimeElementIds = [
   'easymde-mermaid-renderer-js'
 ];
 
-function collectManagedRuntimeRequests(page) {
+function collectRuntimeAssetRequests(page) {
   const requests = [];
+  const runtimeResourceTypes = new Set(['font', 'script', 'stylesheet']);
 
   page.on('request', (request) => {
+    if (!runtimeResourceTypes.has(request.resourceType())) {
+      return;
+    }
+
     const url = new URL(request.url());
     const asset = managedRuntimeAssets.find(({ matches }) => matches(url.pathname));
 
-    if (asset) {
-      requests.push({
-        key: asset.key,
-        origin: url.origin,
-        pathname: url.pathname
-      });
-    }
+    requests.push({
+      key: asset ? asset.key : null,
+      origin: url.origin,
+      pathname: url.pathname,
+      resourceType: request.resourceType()
+    });
   });
 
   return requests;
@@ -89,9 +93,11 @@ async function expectOptionalRuntimeElements(page, expectedIds) {
   }
 }
 
-function expectManagedRuntimeRequests(requests, expectedKeys, origin) {
-  expect([...new Set(requests.map(({ key }) => key))].sort()).toEqual([...expectedKeys].sort());
-  expect(new Set(requests.map(({ pathname }) => pathname)).size).toBe(requests.length);
+function expectRuntimeAssetRequests(requests, expectedKeys, origin) {
+  const managedRequests = requests.filter(({ key }) => null !== key);
+
+  expect([...new Set(managedRequests.map(({ key }) => key))].sort()).toEqual([...expectedKeys].sort());
+  expect(new Set(managedRequests.map(({ pathname }) => pathname)).size).toBe(managedRequests.length);
 
   for (const request of requests) {
     expect(request.origin).toBe(origin);
@@ -99,7 +105,10 @@ function expectManagedRuntimeRequests(requests, expectedKeys, origin) {
 }
 
 function managedRuntimeRequestSnapshot(requests) {
-  return requests.map(({ pathname }) => pathname).sort();
+  return requests
+    .filter(({ key }) => null !== key)
+    .map(({ pathname }) => pathname)
+    .sort();
 }
 
 function runWp(args, options = {}) {
@@ -2458,11 +2467,11 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
-    const runtimeRequests = collectManagedRuntimeRequests(page);
+    const runtimeRequests = collectRuntimeAssetRequests(page);
     const origin = new URL(page.url()).origin;
     await fillMarkdownAndWaitForPreview(page, '# Plain\n\nNo source code here.', 'No source code here.');
     await expectOptionalRuntimeElements(page, []);
-    expectManagedRuntimeRequests(runtimeRequests, [], origin);
+    expectRuntimeAssetRequests(runtimeRequests, [], origin);
 
     await fillMarkdownAndWaitForPreview(page, '```mermaid\ngraph TD; A-->B;\n```', '');
     await expect(page.locator('#easymde-preview .easymde-mermaid svg')).toBeVisible();
@@ -2473,7 +2482,7 @@ test.describe('EasyMDE editor workflows', () => {
       'easymde-mermaid-js',
       'easymde-mermaid-renderer-js'
     ]);
-    expectManagedRuntimeRequests(runtimeRequests, ['mermaidRenderer', 'mermaidScript'], origin);
+    expectRuntimeAssetRequests(runtimeRequests, ['mermaidRenderer', 'mermaidScript'], origin);
     const mermaidRequests = managedRuntimeRequestSnapshot(runtimeRequests);
     await fillMarkdownAndWaitForPreview(page, '# Between Mermaid renders', 'Between Mermaid renders');
     await fillMarkdownAndWaitForPreview(page, '```mermaid\ngraph LR; A-->B;\n```', '');
@@ -2496,7 +2505,7 @@ test.describe('EasyMDE editor workflows', () => {
       'easymde-mermaid-js',
       'easymde-mermaid-renderer-js'
     ]);
-    expectManagedRuntimeRequests(runtimeRequests, [
+    expectRuntimeAssetRequests(runtimeRequests, [
       'katexCss',
       'katexFont',
       'katexScript',
@@ -2530,7 +2539,7 @@ test.describe('EasyMDE editor workflows', () => {
     await fillMarkdownAndWaitForPreview(page, '```js\nconst loadedOnce = true;\n```', 'loadedOnce');
     await expectOptionalRuntimeElements(page, optionalRuntimeElementIds);
     expect(managedRuntimeRequestSnapshot(runtimeRequests)).toEqual(codeRequests);
-    expectManagedRuntimeRequests(
+    expectRuntimeAssetRequests(
       runtimeRequests,
       [
         'codeFrameCss',
@@ -2552,7 +2561,7 @@ test.describe('EasyMDE editor workflows', () => {
   test('published plain, code, math, and Mermaid content load only their local runtime assets', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const pageErrors = [];
-    const runtimeRequests = collectManagedRuntimeRequests(page);
+    const runtimeRequests = collectRuntimeAssetRequests(page);
 
     page.on('pageerror', (error) => pageErrors.push({
       message: error.message,
@@ -2628,7 +2637,7 @@ test.describe('EasyMDE editor workflows', () => {
       }
 
       await expectOptionalRuntimeElements(page, variant.elementIds);
-      expectManagedRuntimeRequests(runtimeRequests, variant.requestKeys, new URL(permalink).origin);
+      expectRuntimeAssetRequests(runtimeRequests, variant.requestKeys, new URL(permalink).origin);
     }
 
     // WordPress cross-document view transitions reject when the browser skips the navigation animation.

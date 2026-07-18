@@ -38,6 +38,11 @@ function workflowJobBlock(source, jobName) {
   return lines.slice(start, -1 === end ? undefined : end).join('\n');
 }
 
+function assertJobChecksAssetsWithoutPreparing(job) {
+  assert.match(job, /name:\s+Check local runtime assets[\s\S]*run:\s+npm run assets:check/);
+  assert.doesNotMatch(job, /\bnpm run prepare:assets\b/);
+}
+
 test('GitHub Actions checkouts do not persist repository credentials', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
   const checkoutBlocks = workflowStepBlocks(workflow).filter((block) => block.includes('uses: actions/checkout@v4'));
@@ -74,9 +79,25 @@ test('Node and release jobs validate committed runtime assets without refreshing
   const releaseJob = workflowJobBlock(workflow, 'release');
 
   [nodeJob, releaseJob].forEach((job) => {
-    assert.match(job, /name:\s+Check local runtime assets[\s\S]*run:\s+npm run assets:check/);
-    assert.doesNotMatch(job, /run:\s+npm run prepare:assets/);
+    assertJobChecksAssetsWithoutPreparing(job);
   });
+});
+
+test('runtime asset CI guard rejects preparation inside multiline commands', () => {
+  const job = [
+    '  node:',
+    '    steps:',
+    '      - name: Check local runtime assets',
+    '        run: npm run assets:check',
+    '      - name: Hidden refresh',
+    '        run: |',
+    '          npm run prepare:assets && git diff --exit-code'
+  ].join('\n');
+
+  assert.throws(
+    () => assertJobChecksAssetsWithoutPreparing(job),
+    /prepare:assets/
+  );
 });
 
 test('release job uploads explicit source and plugin artifacts without publish privileges', () => {

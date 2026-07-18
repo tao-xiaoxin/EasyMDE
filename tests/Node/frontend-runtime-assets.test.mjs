@@ -57,6 +57,39 @@ function fixtureManifest() {
   ];
 }
 
+function embeddedIconManifest() {
+  return [
+    {
+      id: 'lucide-fixture',
+      displayName: 'Lucide fixture icons',
+      packageName: 'lucide-static',
+      bundledPaths: 'assets/js/admin/immersive-workspace.js',
+      purpose: 'Test-only embedded icon payload.',
+      noticeLocation: 'assets/vendor/lucide-fixture/LICENSE',
+      managedRoot: 'assets/vendor/lucide-fixture',
+      copies: [
+        {
+          source: 'node_modules/lucide-static/LICENSE',
+          destination: 'assets/vendor/lucide-fixture/LICENSE',
+          type: 'file'
+        }
+      ],
+      embeddedIconMap: {
+        sourceDirectory: 'node_modules/lucide-static/icons',
+        destination: 'assets/js/admin/immersive-workspace.js',
+        startMarker: '    // BEGIN GENERATED LUCIDE ICON NODES.',
+        endMarker: '    // END GENERATED LUCIDE ICON NODES.',
+        icons: [
+          {
+            name: 'check',
+            source: 'check'
+          }
+        ]
+      }
+    }
+  ];
+}
+
 function createFixtureSources(root) {
   writeFixture(
     root,
@@ -88,6 +121,61 @@ function createFixtureSources(root) {
   writeFixture(root, 'node_modules/example-runtime/dist/example.js', 'runtime');
   writeFixture(root, 'node_modules/example-runtime/LICENSE', 'MIT');
   writeFixture(root, 'node_modules/example-runtime/fonts/example.woff2', 'font');
+}
+
+function createEmbeddedIconSources(root) {
+  writeFixture(
+    root,
+    'package.json',
+    JSON.stringify({
+      dependencies: {
+        'lucide-static': '0.487.0'
+      }
+    })
+  );
+  writeFixture(
+    root,
+    'package-lock.json',
+    JSON.stringify({
+      packages: {
+        '': {
+          dependencies: {
+            'lucide-static': '0.487.0'
+          }
+        },
+        'node_modules/lucide-static': {
+          version: '0.487.0',
+          resolved: 'https://registry.npmjs.org/lucide-static/-/lucide-static-0.487.0.tgz',
+          license: 'ISC'
+        }
+      }
+    })
+  );
+  writeFixture(root, 'node_modules/lucide-static/LICENSE', 'ISC License');
+  writeFixture(
+    root,
+    'node_modules/lucide-static/icons/check.svg',
+    [
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">',
+      '  <path d="M20 6 9 17l-5-5" />',
+      '</svg>',
+      ''
+    ].join('\n')
+  );
+  writeFixture(
+    root,
+    'assets/js/admin/immersive-workspace.js',
+    [
+      'before();',
+      '    // BEGIN GENERATED LUCIDE ICON NODES.',
+      '    var ICON_NODES = {',
+      "        'check': '<path d=\"stale\"></path>'",
+      '    };',
+      '    // END GENERATED LUCIDE ICON NODES.',
+      'after();',
+      ''
+    ].join('\n')
+  );
 }
 
 function findFixtureAssetMismatches(root, manifest) {
@@ -197,27 +285,94 @@ test('read-only asset validation fails when the Git repository cannot be discove
 
 test('read-only asset validation rejects changed Lucide license content', () => {
   const root = makeTempRoot();
-  const lucide = structuredClone(
-    frontendRuntimeAssets.find((component) => component.id === 'lucide')
-  );
+  const manifest = embeddedIconManifest();
 
   try {
-    writeFixture(root, 'scripts/vendor-licenses/lucide-LICENSE', 'ISC License');
-    writeFixture(root, 'assets/js/admin/immersive-workspace.js', 'lucide icon paths');
-    prepareFrontendAssets(root, [lucide]);
-    writeFixture(root, 'assets/vendor/lucide/LICENSE', 'truncated');
+    createEmbeddedIconSources(root);
+    prepareFrontendAssets(root, manifest);
+    writeFixture(root, 'assets/vendor/lucide-fixture/LICENSE', 'truncated');
 
-    const mismatches = findFixtureAssetMismatches(root, [lucide]);
+    const mismatches = findFixtureAssetMismatches(root, manifest);
 
     assert.ok(
       mismatches.some(
         (mismatch) => mismatch.code === 'content-mismatch'
-          && mismatch.path === 'assets/vendor/lucide/LICENSE'
+          && mismatch.path === 'assets/vendor/lucide-fixture/LICENSE'
       )
     );
     assert.equal(
-      readFileSync(join(root, 'assets/vendor/lucide/LICENSE'), 'utf8'),
+      readFileSync(join(root, 'assets/vendor/lucide-fixture/LICENSE'), 'utf8'),
       'truncated'
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Lucide icon payload preparation preserves the owner script and rejects later drift', () => {
+  const root = makeTempRoot();
+  const manifest = embeddedIconManifest();
+
+  try {
+    createEmbeddedIconSources(root);
+    prepareFrontendAssets(root, manifest);
+
+    const prepared = readFileSync(
+      join(root, 'assets/js/admin/immersive-workspace.js'),
+      'utf8'
+    );
+    assert.match(prepared, /^before\(\);/);
+    assert.match(prepared, /after\(\);\n$/);
+    assert.match(
+      prepared,
+      /'check': '<path d="M20 6 9 17l-5-5"><\/path>'/
+    );
+
+    writeFixture(
+      root,
+      'assets/js/admin/immersive-workspace.js',
+      prepared.replace('M20 6 9 17l-5-5', 'M0 0')
+    );
+
+    const mismatches = findFixtureAssetMismatches(root, manifest);
+
+    assert.ok(
+      mismatches.some(
+        (mismatch) => mismatch.code === 'embedded-content-mismatch'
+          && mismatch.path === 'assets/js/admin/immersive-workspace.js'
+      )
+    );
+    assert.match(
+      readFileSync(join(root, 'assets/js/admin/immersive-workspace.js'), 'utf8'),
+      /M0 0/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('embedded icon validation requires exactly one complete marker pair', () => {
+  const root = makeTempRoot();
+  const manifest = embeddedIconManifest();
+
+  try {
+    createEmbeddedIconSources(root);
+    prepareFrontendAssets(root, manifest);
+
+    const destination = join(root, 'assets/js/admin/immersive-workspace.js');
+    const prepared = readFileSync(destination, 'utf8');
+    writeFileSync(
+      destination,
+      `${manifest[0].embeddedIconMap.endMarker}\n${prepared}`
+    );
+
+    const mismatches = findFixtureAssetMismatches(root, manifest);
+
+    assert.ok(
+      mismatches.some(
+        (mismatch) => mismatch.code === 'missing-embedded-markers'
+          && mismatch.path === 'assets/js/admin/immersive-workspace.js'
+      )
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -348,6 +503,14 @@ test('manifest validation rejects remote and out-of-tree sources and destination
   assert.throws(
     () => validateFrontendAssetManifest(escapedRequirementManifest),
     /required paths must stay inside the repository/
+  );
+
+  const remoteEmbeddedDestinationManifest = embeddedIconManifest();
+  remoteEmbeddedDestinationManifest[0].embeddedIconMap.destination = 'https://cdn.example.test/icons.js';
+
+  assert.throws(
+    () => validateFrontendAssetManifest(remoteEmbeddedDestinationManifest),
+    /embedded icon map destination must stay inside the repository/
   );
 });
 

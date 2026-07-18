@@ -19,6 +19,7 @@
   "dependencies": {
     "@highlightjs/cdn-assets": "^11.11.1",
     "katex": "^0.16.22",
+    "lucide-static": "0.487.0",
     "mermaid": "^10.9.3"
   },
   "devDependencies": {

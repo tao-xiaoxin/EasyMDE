@@ -110,7 +110,7 @@ npm install
 npm run assets:check
 ```
 
-Highlight.js、Mermaid 和 KaTeX 来自锁定的 npm 包，并以已提交文件的形式随插件发布。常规依赖安装不会改写这些文件；只有在依赖版本或资源清单有意变更时，才运行 `npm run prepare:assets` 刷新资源并审查差异。CI 和发布流程通过只读的 `npm run assets:check` 检查缺失、变更或额外文件。修改代码、测试或发布流程前，请先阅读 [Development setup](docs/DEVELOPMENT.md) 和 [Testing and release](docs/TESTING_AND_RELEASE.md)。
+Highlight.js、Mermaid、KaTeX 和 Lucide 来自锁定的 npm 包，并以已提交文件的形式随插件发布。常规依赖安装不会改写这些文件；只有在依赖版本或资源清单有意变更时，才运行 `npm run prepare:assets` 刷新资源并审查差异。CI 和发布流程通过只读的 `npm run assets:check` 检查缺失、变更或额外文件。修改代码、测试或发布流程前，请先阅读 [Development setup](docs/DEVELOPMENT.md) 和 [Testing and release](docs/TESTING_AND_RELEASE.md)。
 
 ## 许可证
 

@@ -6,7 +6,8 @@ import {
   realpathSync,
   readdirSync,
   rmSync,
-  statSync
+  statSync,
+  writeFileSync
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, isAbsolute, join, relative } from 'node:path';
@@ -164,26 +165,97 @@ export const frontendRuntimeAssets = [
   {
     id: 'lucide',
     displayName: 'Lucide icon paths',
-    version: '0.487.0',
-    source: 'https://github.com/lucide-icons/lucide/tree/0.487.0',
-    license: 'ISC',
+    packageName: 'lucide-static',
     bundledPaths: 'assets/js/admin/immersive-workspace.js',
     purpose: 'Locally embedded SVG path data for the isolated immersive workspace controls.',
     noticeLocation: 'assets/vendor/lucide/LICENSE',
     managedRoot: 'assets/vendor/lucide',
-    requiredPaths: [
-      {
-        path: 'assets/js/admin/immersive-workspace.js',
-        type: 'file'
-      }
-    ],
     copies: [
       {
-        source: 'scripts/vendor-licenses/lucide-LICENSE',
+        source: 'node_modules/lucide-static/LICENSE',
         destination: 'assets/vendor/lucide/LICENSE',
         type: 'file'
       }
-    ]
+    ],
+    embeddedIconMap: {
+      sourceDirectory: 'node_modules/lucide-static/icons',
+      destination: 'assets/js/admin/immersive-workspace.js',
+      startMarker: '    // BEGIN GENERATED LUCIDE ICON NODES.',
+      endMarker: '    // END GENERATED LUCIDE ICON NODES.',
+      icons: [
+        'align-left',
+        'at-sign',
+        { name: 'bar-chart-3', source: 'chart-column' },
+        'bot',
+        'brain',
+        'bold',
+        'boxes',
+        'calendar-check',
+        'check',
+        'chevron-down',
+        'chevron-left',
+        'chevron-right',
+        'chevrons-left',
+        'circle-dot',
+        'clock',
+        'code',
+        'code-xml',
+        'columns-2',
+        'copy',
+        'database',
+        'ellipsis',
+        'eye',
+        'file-text',
+        'git-branch',
+        'hash',
+        'history',
+        'info',
+        'image',
+        'image-plus',
+        'italic',
+        'layout-grid',
+        { name: 'link', source: 'link-2' },
+        'lightbulb',
+        'list',
+        'list-checks',
+        'list-collapse',
+        'list-ordered',
+        'maximize',
+        'menu',
+        'minimize',
+        'minus',
+        'palette',
+        'paperclip',
+        'pen-line',
+        'pin',
+        'plus',
+        { name: 'pie-chart', source: 'chart-pie' },
+        'quote',
+        'refresh-cw',
+        'rotate-ccw',
+        'save',
+        'send',
+        'settings-2',
+        'shield-check',
+        'settings',
+        'smartphone',
+        'square-pen',
+        'sigma',
+        'sparkles',
+        'strikethrough',
+        'table',
+        'trash-2',
+        'type',
+        'wand-sparkles',
+        'graduation-cap',
+        'workflow',
+        'x'
+      ].map((icon) => (
+        'string' === typeof icon
+          ? { name: icon, source: icon }
+          : icon
+      ))
+    }
   }
 ];
 
@@ -202,6 +274,12 @@ function isLocalVendorPath(path) {
 
 function normalizedCopies(component) {
   return Array.isArray(component.copies) ? component.copies : [];
+}
+
+function embeddedIconMap(component) {
+  return component && component.embeddedIconMap
+    ? component.embeddedIconMap
+    : null;
 }
 
 function hasNonEmptyString(value) {
@@ -279,7 +357,11 @@ export function validateFrontendAssetManifest(manifest = frontendRuntimeAssets) 
     if (component.requiredPaths && !Array.isArray(component.requiredPaths)) {
       throw new Error(`${component.id} requiredPaths must be an array.`);
     }
-    if (!normalizedCopies(component).length && !(component.requiredPaths || []).length) {
+    if (
+      !normalizedCopies(component).length
+      && !(component.requiredPaths || []).length
+      && !embeddedIconMap(component)
+    ) {
       throw new Error(`${component.id} requires at least one copied or required runtime path.`);
     }
     for (const requirement of component.requiredPaths || []) {
@@ -310,6 +392,47 @@ export function validateFrontendAssetManifest(manifest = frontendRuntimeAssets) 
       }
       destinations.add(copy.destination);
     }
+
+    const iconMap = embeddedIconMap(component);
+    if (iconMap) {
+      if (!isRepositoryRelativePath(iconMap.sourceDirectory)) {
+        throw new Error(`${component.id} embedded icon map source directory must stay inside the repository.`);
+      }
+      if (!isRepositoryRelativePath(iconMap.destination)) {
+        throw new Error(`${component.id} embedded icon map destination must stay inside the repository.`);
+      }
+      if (
+        !hasNonEmptyString(iconMap.startMarker)
+        || !hasNonEmptyString(iconMap.endMarker)
+        || iconMap.startMarker === iconMap.endMarker
+        || /[\r\n]/.test(iconMap.startMarker)
+        || /[\r\n]/.test(iconMap.endMarker)
+      ) {
+        throw new Error(`${component.id} embedded icon map requires distinct single-line markers.`);
+      }
+      if (!Array.isArray(iconMap.icons) || !iconMap.icons.length) {
+        throw new Error(`${component.id} embedded icon map requires at least one icon.`);
+      }
+      if (destinations.has(iconMap.destination)) {
+        throw new Error(`Duplicate frontend runtime destination: ${iconMap.destination}.`);
+      }
+      destinations.add(iconMap.destination);
+
+      const iconNames = new Set();
+      for (const icon of iconMap.icons) {
+        if (
+          !icon
+          || !/^[a-z][a-z0-9-]*$/.test(icon.name)
+          || !/^[a-z][a-z0-9-]*$/.test(icon.source)
+        ) {
+          throw new Error(`${component.id} embedded icon names and sources must use kebab-case identifiers.`);
+        }
+        if (iconNames.has(icon.name)) {
+          throw new Error(`${component.id} contains duplicate embedded icon name: ${icon.name}.`);
+        }
+        iconNames.add(icon.name);
+      }
+    }
   }
 
   return manifest;
@@ -327,6 +450,160 @@ function readJson(root, path) {
 
 function mismatch(code, path, message) {
   return { code, path, message };
+}
+
+function embeddedIconSourcePath(iconMap, icon) {
+  return `${iconMap.sourceDirectory}/${icon.source}.svg`;
+}
+
+function embeddedIconError(code, path, message) {
+  const error = new Error(message);
+  error.code = code;
+  error.path = path;
+  return error;
+}
+
+function readEmbeddedIconNodes(root, iconMap, icon) {
+  const sourcePath = embeddedIconSourcePath(iconMap, icon);
+  const absolute = join(root, sourcePath);
+
+  if (!existsSync(absolute) || !statSync(absolute).isFile()) {
+    throw embeddedIconError(
+      'missing-embedded-source',
+      sourcePath,
+      `Missing embedded icon source: ${sourcePath}.`
+    );
+  }
+
+  const source = readFileSync(absolute, 'utf8');
+  const svgMatches = [...source.matchAll(/<svg\b[^>]*>([\s\S]*?)<\/svg>/g)];
+  if (1 !== svgMatches.length) {
+    throw embeddedIconError(
+      'invalid-embedded-source',
+      sourcePath,
+      `Embedded icon source must contain exactly one SVG element: ${sourcePath}.`
+    );
+  }
+
+  const nodes = svgMatches[0][1]
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const node = line.match(/^<([a-z][a-z0-9-]*)(\s+[^<>]*?)\s*\/>$/);
+      if (!node) {
+        throw embeddedIconError(
+          'invalid-embedded-source',
+          sourcePath,
+          `Embedded icon source contains an unsupported SVG node: ${sourcePath}.`
+        );
+      }
+
+      return `<${node[1]}${node[2]}></${node[1]}>`;
+    })
+    .join('');
+
+  if (!nodes || nodes.includes("'") || nodes.includes('\\')) {
+    throw embeddedIconError(
+      'invalid-embedded-source',
+      sourcePath,
+      `Embedded icon source cannot be represented safely in the generated payload: ${sourcePath}.`
+    );
+  }
+
+  return nodes;
+}
+
+function renderEmbeddedIconMap(root, iconMap) {
+  const iconLines = iconMap.icons.map((icon, index) => {
+    const suffix = index === iconMap.icons.length - 1 ? '' : ',';
+    return `        '${icon.name}': '${readEmbeddedIconNodes(root, iconMap, icon)}'${suffix}`;
+  });
+
+  return [
+    iconMap.startMarker,
+    '    var ICON_NODES = {',
+    ...iconLines,
+    '    };',
+    iconMap.endMarker
+  ].join('\n');
+}
+
+function embeddedPayloadRange(source, iconMap) {
+  const start = source.indexOf(iconMap.startMarker);
+  const endMarkerStart = source.indexOf(iconMap.endMarker);
+  const hasDuplicateStart = -1 !== source.indexOf(iconMap.startMarker, start + iconMap.startMarker.length);
+  const hasDuplicateEnd = -1 !== source.indexOf(iconMap.endMarker, endMarkerStart + iconMap.endMarker.length);
+
+  if (
+    -1 === start
+    || -1 === endMarkerStart
+    || endMarkerStart < start
+    || hasDuplicateStart
+    || hasDuplicateEnd
+  ) {
+    return null;
+  }
+
+  return {
+    start,
+    end: endMarkerStart + iconMap.endMarker.length
+  };
+}
+
+function findEmbeddedIconMapMismatches(root, component) {
+  const iconMap = embeddedIconMap(component);
+  if (!iconMap) {
+    return [];
+  }
+
+  let expected;
+  try {
+    expected = renderEmbeddedIconMap(root, iconMap);
+  } catch (error) {
+    return [
+      mismatch(
+        error.code || 'invalid-embedded-source',
+        error.path || iconMap.sourceDirectory,
+        error.message
+      )
+    ];
+  }
+
+  const destination = join(root, iconMap.destination);
+  if (!existsSync(destination) || !statSync(destination).isFile()) {
+    return [
+      mismatch(
+        'missing-embedded-destination',
+        iconMap.destination,
+        `Missing embedded icon destination: ${iconMap.destination}.`
+      )
+    ];
+  }
+
+  const source = readFileSync(destination, 'utf8');
+  const range = embeddedPayloadRange(source, iconMap);
+  if (!range) {
+    return [
+      mismatch(
+        'missing-embedded-markers',
+        iconMap.destination,
+        `Embedded icon destination requires exactly one generated marker pair: ${iconMap.destination}.`
+      )
+    ];
+  }
+
+  if (source.slice(range.start, range.end) !== expected) {
+    return [
+      mismatch(
+        'embedded-content-mismatch',
+        iconMap.destination,
+        `Embedded icon payload differs from its locked sources: ${iconMap.destination}.`
+      )
+    ];
+  }
+
+  return [];
 }
 
 export function findFrontendAssetPackageMismatches(root = defaultRoot, manifest = frontendRuntimeAssets) {
@@ -615,6 +892,12 @@ export function findFrontendAssetMismatches(
       }
     }
 
+    const iconMap = embeddedIconMap(component);
+    if (iconMap) {
+      expectedTrackedPaths.add(iconMap.destination);
+      mismatches.push(...findEmbeddedIconMapMismatches(root, component));
+    }
+
     const notice = join(root, component.noticeLocation);
     if (!existsSync(notice) || !statSync(notice).isFile()) {
       mismatches.push(mismatch(
@@ -649,6 +932,19 @@ function assertSourcesAvailable(root, manifest) {
         failures.push(mismatch('invalid-source-type', copy.source, `Frontend runtime source has the wrong type: ${copy.source}.`));
       }
     }
+
+    const iconMap = embeddedIconMap(component);
+    if (iconMap) {
+      try {
+        renderEmbeddedIconMap(root, iconMap);
+      } catch (error) {
+        failures.push(mismatch(
+          error.code || 'invalid-embedded-source',
+          error.path || iconMap.sourceDirectory,
+          error.message
+        ));
+      }
+    }
   }
 
   if (failures.length) {
@@ -679,6 +975,27 @@ export function prepareFrontendAssets(root = defaultRoot, manifest = frontendRun
         recursive: 'directory' === copy.type,
         dereference: true
       });
+    }
+
+    const iconMap = embeddedIconMap(component);
+    if (iconMap) {
+      const destination = join(root, iconMap.destination);
+      if (!existsSync(destination) || !statSync(destination).isFile()) {
+        throw new Error(`Missing embedded icon destination: ${iconMap.destination}.`);
+      }
+
+      const source = readFileSync(destination, 'utf8');
+      const range = embeddedPayloadRange(source, iconMap);
+      if (!range) {
+        throw new Error(
+          `Embedded icon destination requires exactly one generated marker pair: ${iconMap.destination}.`
+        );
+      }
+
+      writeFileSync(
+        destination,
+        `${source.slice(0, range.start)}${renderEmbeddedIconMap(root, iconMap)}${source.slice(range.end)}`
+      );
     }
   }
 
@@ -717,6 +1034,12 @@ export function frontendRuntimeReleaseRequirements(manifest = frontendRuntimeAss
       type: 'directory' === copy.type ? 'non-empty-dir' : 'file'
     })),
     ...(component.requiredPaths || []),
+    ...(embeddedIconMap(component)
+      ? [{
+          path: embeddedIconMap(component).destination,
+          type: 'file'
+        }]
+      : []),
     {
       path: component.noticeLocation,
       type: 'file'

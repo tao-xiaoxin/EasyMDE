@@ -188,6 +188,31 @@ function createFrontendAssetSources(root) {
       }
     }
 
+    if (component.embeddedIconMap) {
+      for (const icon of component.embeddedIconMap.icons) {
+        writeText(
+          root,
+          `${component.embeddedIconMap.sourceDirectory}/${icon.source}.svg`,
+          [
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">',
+            `  <path d="${icon.source}" />`,
+            '</svg>',
+            ''
+          ].join('\n')
+        );
+      }
+      writeText(
+        root,
+        component.embeddedIconMap.destination,
+        [
+          component.embeddedIconMap.startMarker,
+          '    var ICON_NODES = {};',
+          component.embeddedIconMap.endMarker,
+          ''
+        ].join('\n')
+      );
+    }
+
     if (!(component.copies || []).length) {
       writeText(root, component.noticeLocation, `notice:${component.id}`);
     }
@@ -481,12 +506,8 @@ test('release build fails when required runtime assets or templates are missing'
     });
 
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /templates/);
     assert.match(result.stderr, /assets\/vendor\/mermaid\/mermaid\.min\.js/);
-    assert.match(result.stderr, /assets\/js\/admin\/media-picker\.js/);
-    assert.match(result.stderr, /assets\/js\/admin\/image-paste\.js/);
-    assert.match(result.stderr, /assets\/js\/frontend\/bootstrap\.js/);
-    assert.match(result.stderr, /THIRD-PARTY-NOTICES\.md/);
+    assert.match(result.stderr, /npm run prepare:assets/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -534,6 +555,22 @@ test('release build fails when third-party notices exist but are stale', () => {
     assert.throws(
       () => buildRelease({ root }),
       /THIRD-PARTY-NOTICES\.md is out of date/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build gives notice regeneration guidance when third-party notices are missing', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /npm run notices:write/
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

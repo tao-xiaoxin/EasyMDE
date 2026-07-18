@@ -406,8 +406,11 @@ export function collectReleaseRequirements(root = defaultRoot) {
   ]);
 }
 
-export function findMissingReleaseRequirements(root = defaultRoot) {
-  return collectReleaseRequirements(root).filter((requirement) => {
+export function findMissingReleaseRequirements(
+  root = defaultRoot,
+  requirements = collectReleaseRequirements(root)
+) {
+  return requirements.filter((requirement) => {
     const absolute = fromRoot(root, requirement.path);
     if (!existsSync(absolute)) {
       return true;
@@ -425,8 +428,8 @@ export function findMissingReleaseRequirements(root = defaultRoot) {
   });
 }
 
-function assertReleaseRequirements(root) {
-  const missing = findMissingReleaseRequirements(root);
+function assertReleaseRequirements(root, requirements) {
+  const missing = findMissingReleaseRequirements(root, requirements);
 
   if (!missing.length) {
     return;
@@ -527,9 +530,10 @@ export function buildRelease(options = {}) {
 
   assertReleaseVersionConsistency(root);
   assertNoInstalledComposerDevPackages(root);
-  assertReleaseRequirements(root);
+  const releaseRequirements = collectReleaseRequirements(root);
   assertFrontendAssetsCurrent(root);
   checkNotice(root);
+  assertReleaseRequirements(root, releaseRequirements);
 
   rmSync(packageRoot, { recursive: true, force: true });
   mkdirSync(packageRoot, { recursive: true });

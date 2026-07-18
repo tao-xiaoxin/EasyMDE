@@ -2,6 +2,7 @@
 
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Frontend\FrontendAssets;
+use EasyMDE\Support\Asset;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
 use EasyMDE\Theme\CustomCssPolicy;
@@ -184,13 +185,13 @@ final class FrontendAssetsTest extends WP_UnitTestCase
 
         foreach ($expected_scripts as $handle => $path) {
             $this->assertTrue(wp_script_is($handle, 'enqueued'));
-            $this->assertStringEndsWith($path, wp_scripts()->registered[$handle]->src);
+            $this->assertSame(Asset::url($path), wp_scripts()->registered[$handle]->src);
             $this->assertSame(1, count(array_keys(wp_scripts()->queue, $handle, true)));
         }
 
         foreach ($expected_styles as $handle => $path) {
             $this->assertTrue(wp_style_is($handle, 'enqueued'));
-            $this->assertStringEndsWith($path, wp_styles()->registered[$handle]->src);
+            $this->assertSame(Asset::url($path), wp_styles()->registered[$handle]->src);
             $this->assertSame(1, count(array_keys(wp_styles()->queue, $handle, true)));
         }
     }

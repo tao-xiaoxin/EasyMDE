@@ -44,11 +44,14 @@ Useful local commands:
 ```bash
 npm install
 npm run assets:check
+npm run frontend:check
 git ls-files -z -- '*.js' '*.mjs' | xargs -0 -n1 node --check
 npm run i18n:check
 npm run notices:check
 npm test
 ```
+
+`npm run frontend:check` runs strict TypeScript checking independently from the Vite build, then validates the test-only WordPress Classic Script contract. The current locked toolchain uses Vite 8.1.5 and TypeScript 7.0.2 on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime. The build writes only to `.cache/easymde-frontend-contract/` and fails on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps.
 
 Translation maintenance commands are:
 
@@ -75,6 +78,7 @@ The release job builds the installable plugin ZIP from runtime files:
 composer install --no-dev --no-interaction --prefer-dist
 npm ci
 npm run assets:check
+npm run frontend:check
 npm run i18n:check
 npm run notices:check
 npm run build:release
@@ -101,6 +105,8 @@ The CI release package job also creates source snapshots from the checked-out tr
 - `dist/EasyMDE-<version>-source.tar.gz`
 
 Those source archives use `EasyMDE-<version>/` as their root directory. They are separate from the installable runtime plugin ZIP and are not consumed by Plugin Check or E2E.
+
+The installable plugin ZIP excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
 
 CI uploads the release outputs as separate Actions artifacts:
 

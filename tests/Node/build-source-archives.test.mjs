@@ -54,6 +54,10 @@ function createGitFixture(root) {
 
   createVersionFiles(root);
   writeText(root, 'src/Plugin.php', '<?php\nnamespace EasyMDE;\n');
+  writeText(root, 'frontend/tsconfig.json', '{"compilerOptions":{"strict":true}}\n');
+  writeText(root, 'frontend/vite.config.ts', 'export default {};\n');
+  writeText(root, 'frontend/test/build-contract/entry.tsx', 'export const fixture = true;\n');
+  writeText(root, 'frontend/test/build-contract/fixture.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>\n');
   writeText(root, '.github/workflows/ci.yml', 'name: CI\n');
 
   run(root, 'git', [
@@ -62,6 +66,10 @@ function createGitFixture(root) {
     'readme.txt',
     'package.json',
     'src/Plugin.php',
+    'frontend/tsconfig.json',
+    'frontend/vite.config.ts',
+    'frontend/test/build-contract/entry.tsx',
+    'frontend/test/build-contract/fixture.svg',
     '.github/workflows/ci.yml'
   ]);
   run(root, 'git', ['commit', '--quiet', '-m', 'Initial source fixture']);
@@ -115,6 +123,10 @@ function assertArchiveEntries(entries, version) {
   assert.ok(entries.includes(`${prefix}readme.txt`));
   assert.ok(entries.includes(`${prefix}package.json`));
   assert.ok(entries.includes(`${prefix}src/Plugin.php`));
+  assert.ok(entries.includes(`${prefix}frontend/tsconfig.json`));
+  assert.ok(entries.includes(`${prefix}frontend/vite.config.ts`));
+  assert.ok(entries.includes(`${prefix}frontend/test/build-contract/entry.tsx`));
+  assert.ok(entries.includes(`${prefix}frontend/test/build-contract/fixture.svg`));
   assert.ok(entries.includes(`${prefix}.github/workflows/ci.yml`));
   assert.equal(entries.some((entry) => entry.includes('/.git/')), false);
   assert.equal(entries.some((entry) => entry.includes('/node_modules/')), false);

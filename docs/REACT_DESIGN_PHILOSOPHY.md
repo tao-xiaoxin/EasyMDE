@@ -953,7 +953,7 @@ accepted editor transaction
 
 编译期 Package 与类型声明不能暴露高于最低运行时的 API。React / ReactDOM 的测试依赖、`@types/react`、`@types/react-dom`、`@wordpress/element` 与 JSX Runtime Type 必须和 WordPress 6.7 已核验的 React 18 能力对齐；针对 React 19 或更新 Gutenberg Package 的 Type Check 通过，不代表 WordPress 6.7 运行兼容。
 
-实时 `package.json` 尚未提供 React、TypeScript、Vite、Type Check、Lint 或 Frontend Build Script。首个聚焦 Frontend Build Implementation 必须先加入并实际执行适用 Gate，不能把本文批准的目标能力误报为现有工具能力，也不能假定当前 Legacy Package Check 已覆盖新目录。该任务必须更新实时 Release Owner、Package Predicate 和 Test，使新的 Frontend Layout 同时遵守安装版 ZIP 与 Source Archive 的既有产品边界；聚焦 Frontend Package Impact 的执行合同属于 `.agents/skills/easymde/SKILL.md`，准确的当前 Include / Exclude、构建和验证行为属于 `docs/TESTING_AND_RELEASE.md`、`scripts/build-release.mjs` 与 `scripts/build-source-archives.mjs`。
+实时根 `package.json` 已提供严格 TypeScript、独立 `tsc --noEmit`、Vite 与 Frontend Build Contract Gate。当前实现只构建测试专用的 WordPress Classic Script Contract Fixture，不提供 Production React Entrypoint、Root 或 Feature Owner。后续聚焦迁移任务必须在出现真实消费者时才创建对应目录和 Production Output，并继续更新实时 Release Owner、Package Predicate 与测试，使 Frontend Layout 同时遵守安装版 ZIP 与 Source Archive 的既有产品边界；聚焦 Frontend Package Impact 的执行合同属于 `.agents/skills/easymde/SKILL.md`，准确的当前 Include / Exclude、构建和验证行为属于 `docs/TESTING_AND_RELEASE.md`、`scripts/build-release.mjs` 与 `scripts/build-source-archives.mjs`。
 
 首个 Build Implementation 必须选择并验证一个一致策略：
 

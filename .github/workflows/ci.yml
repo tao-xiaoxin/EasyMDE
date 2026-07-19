@@ -163,6 +163,9 @@ jobs:
       - name: Check local runtime assets
         run: npm run assets:check
 
+      - name: Check frontend build contract
+        run: npm run frontend:check
+
       - name: Check JavaScript syntax
         run: git ls-files -z -- '*.js' '*.mjs' | xargs -0 -n1 node --check
 
@@ -260,6 +263,9 @@ jobs:
 
       - name: Check local runtime assets
         run: npm run assets:check
+
+      - name: Check frontend build contract
+        run: npm run frontend:check
 
       - name: Check i18n files
         run: npm run i18n:check

@@ -16,10 +16,19 @@ This document describes the current implementation boundaries. Approved target d
 - `assets/themes/article/`: EasyMDE-owned article themes.
 - `assets/themes/code/`: EasyMDE-owned code themes.
 - `assets/vendor/`: committed third-party runtime assets prepared from locked npm packages or verified upstream repository sources.
+- `frontend/`: strict TypeScript and Vite build-contract source. The current tree contains only toolchain configuration and a test-only WordPress React contract fixture; it does not contain a production application root.
 - `scripts/`: local asset preparation, i18n/notices, test setup, Plugin Check, clean WordPress install, and release package assembly scripts.
 - `tests/Unit/` and `tests/Integration/`: PHPUnit coverage for rendering, CSS policy, frontend assets, REST permissions, revisions, migration, editor gating, and compatibility facade behavior.
 - `tests/Node/`: Node tests for release packaging, CI invariants, i18n/notices, Plugin Check parsing, and destructive-script safety.
 - `tests/e2e/`: Chromium Playwright coverage for installed release ZIP author workflows.
+
+## Frontend Build Foundation
+
+The root npm project owns Vite, TypeScript, React 18 development declarations, and the WordPress Element package used to verify browser-build compatibility. `npm run frontend:check` runs strict `tsc --noEmit` independently from a Vite build.
+
+The current Vite entry under `frontend/test/build-contract/` is test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
+
+No production React root, React Feature, Port, Adapter, or browser capability owner exists yet. Those directories are created only when a focused migration Issue introduces a real consumer.
 
 ## Service Wiring
 

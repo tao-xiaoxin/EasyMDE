@@ -83,6 +83,16 @@ test('Node and release jobs validate committed runtime assets without refreshing
   });
 });
 
+test('Node and release jobs run the frontend type-check and build contract', () => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const nodeJob = workflowJobBlock(workflow, 'node');
+  const releaseJob = workflowJobBlock(workflow, 'release');
+
+  [nodeJob, releaseJob].forEach((job) => {
+    assert.match(job, /name:\s+Check frontend build contract[\s\S]*run:\s+npm run frontend:check/);
+  });
+});
+
 test('runtime asset CI guard rejects preparation inside multiline commands', () => {
   const job = [
     '  node:',

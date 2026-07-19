@@ -989,8 +989,8 @@ Before changing code, render both the target surface and every protected
 surface that could regress.
 
 - Use identical deterministic content, viewport, browser state, and required
-  assets for reference and implementation captures. Any remote delivery remains
-  subject to the Remote Runtime Asset Decision Gate.
+  local assets for reference and implementation captures. Any approved external
+  service behavior remains subject to the External Service Decision Gate.
 - Establish a render-readiness barrier before measurement or capture: required
   fonts loaded, images decoded, Preview and asynchronous data settled, and
   animation, transition, caret, and clock state made deterministic. A rejected
@@ -1216,8 +1216,10 @@ For every strategy:
 - resolve assets from the Plugin Asset Base, never `/`;
 - do not hardcode `/wp-content/plugins/easymde/`;
 - verify subdirectory, Multisite, and non-default Plugin URL behavior where relevant;
-- keep version-controlled local runtime assets as the default and apply the
-  complete remote-asset decision record below before proposing an exception;
+- keep redistributable runtime JavaScript, CSS, fonts, icons, and similar
+  static assets version-controlled and local; route only genuine external
+  services with substantive remote functionality through the External Service
+  Decision Gate below;
 - fail on missing, stale, duplicate, or inconsistent Manifest entries;
 - fail if a production entry or chunk contains a private React implementation;
 - exclude Dev Server URLs, Localhost, source paths, prohibited Source Maps,
@@ -1229,33 +1231,62 @@ A dependency needs a current responsibility, non-duplicative purpose, compatible
 
 Do not add a State, Query, Form, Router, Schema, Animation, Icon, or Utility library merely because a blog, react-admin, or a generic Skill recommends it.
 
-### Remote Runtime Asset Decision Gate
+### Local Runtime Asset Supply Chain
 
-Local, version-controlled runtime assets remain the default. A remote asset may
-be considered only for one focused Feature after explicit human maintainer
-approval and a completed record proving that the choice is compatible with the
-intended distribution channel.
+Redistributable browser JavaScript, CSS, fonts, icons, and similar static
+runtime assets use locked npm or verified upstream packages only as build-time
+sources. Commit the runtime files under the plugin-owned asset tree so the
+installable ZIP remains self-contained and runtime requests remain same-origin.
+
+Use one internal manifest as the authoritative inventory for:
+
+- exact package source and managed local destination;
+- current Feature purpose and loading owner;
+- license identity and packaged license/notice location;
+- release requirements and managed-directory boundaries.
+
+Dependency installation must not silently rewrite committed runtime files.
+Keep preparation an explicit maintainer action. CI, tests, and release builds
+must perform read-only byte/content and inventory validation, fail on missing,
+changed, or unexpected managed files, and never repair drift before checking
+it. Update the Lockfile, manifest, committed assets, third-party notices,
+focused tests, and release evidence together.
+
+Do not add a plugin-level CDN toggle, remote static fallback, silent mirror, or
+local-to-remote substitution for redistributable runtime assets. Site-level
+reverse proxies and CDNs remain an operator/deployment concern outside the
+plugin. A genuine external service is a separate product, privacy, consent,
+failure, and distribution-channel decision governed by the gate below.
+
+### External Service Decision Gate
+
+Redistributable runtime JavaScript, CSS, fonts, icons, SDKs, and similar static
+assets remain local across every supported EasyMDE distribution channel.
+Official origin, version pinning, SRI, or maintainer approval does not create a
+remote-static exception.
+
+A genuine external service may be considered only for one focused Feature
+after explicit human maintainer approval and a completed record proving
+substantive service functionality and compatibility with the intended
+distribution channel.
 
 Record:
 
 ```text
-Asset and exact version/content identifier:
-Owning Feature and purpose:
-Upstream owner and official endpoint evidence:
-Operator and long-term availability evidence:
-License and notices:
-Immutable HTTPS URL:
-SRI and crossorigin support:
-CSP/CORS/MIME/redirect/cache/content-encoding/referrer behavior:
-WordPress registration and dependency ordering:
-Data sent by the request:
-Success and failure behavior:
-Core reliability or local-fallback contract:
-Intended distribution channel:
-Ordinary static asset or genuine external service:
-WordPress.org Plugin Directory rule:
-Consent/readme/service disclosure:
-Release-channel, documentation, test, and package impact:
+Service and owning Feature:
+Substantive remote functionality:
+Operator identity and official endpoint evidence:
+Terms, privacy policy, retention, and deletion behavior:
+Exact data fields sent and purpose:
+Authentication and credential owner:
+Consent and WordPress readme/service disclosure:
+HTTPS endpoint, CORS, CSP, redirects, and referrer behavior:
+Redistributable local client runtime and license/notices:
+Success, cancellation, timeout, retry, and failure behavior:
+Core reliability or local-degradation contract:
+Tracking, telemetry, remote configuration, and subprocessors:
+Intended distribution channel and current applicable rule:
+Release, documentation, test, observability, and package impact:
 Update owner and re-review triggers:
 Removal/replacement plan:
 Maintainer approval:
@@ -1264,82 +1295,61 @@ Unverified areas:
 
 Rules:
 
-- Accept only an endpoint operated by the upstream owner or explicitly
-  documented by that upstream as an official distribution endpoint; a
-  marketing label is not proof.
-- Pin an exact immutable release, version, commit, or content identifier over
-  HTTPS. Prohibit `latest`, floating major versions, mutable aliases or query
-  parameters, unversioned package paths, unknown hosts, unofficial mirrors,
-  temporary proxies, personal domains, paste sites, file-sharing services, and
-  hosts whose ownership cannot be verified.
-- For static JavaScript and CSS, use Subresource Integrity and correct
-  `crossorigin` behavior when supported by both the official endpoint and the
-  selected WordPress loading path. Verify the final HTML, and update integrity
-  metadata with every version or URL change. Treat an integrity mismatch as a
-  delivery failure, never as permission to remove or bypass integrity.
-- Verify CSP, CORS, MIME type, redirects, cache policy, content encoding,
-  referrer behavior, WordPress registration, dependency ordering, and license
-  obligations for the actual loading path.
-- Send no article content, prompts, model output, credentials, API Keys,
-  Cookies, Nonces, private URLs, user identifiers, administrator data, local
-  paths, or unpublished-media information.
+- A service must provide substantive remote functionality. Hosting ordinary
+  static files, fonts, executable code, configuration, or a client SDK is not
+  a service.
+- Bundle every redistributable client runtime locally with its compatible
+  license, notice, locked source, update owner, and removal strategy. Never use
+  a CDN, remote import, remote static fallback, mutable script response, or
+  silent host substitution.
+- Accept only service endpoints operated by the identified service provider
+  and documented for the approved function. Prohibit unknown hosts,
+  unofficial mirrors, temporary proxies, personal domains, paste sites, and
+  file-sharing services.
+- Send only the approved minimum fields. Never send article content, prompts,
+  model output, credentials, API Keys, Cookies, Nonces, private URLs, user
+  identifiers, administrator data, local paths, or unpublished-media
+  information unless the focused product requirement, authorization,
+  disclosure, and consent explicitly require that exact field.
 - Reject advertising, analytics, tracking, telemetry, fingerprinting, remote
-  configuration, or independently mutable runtime behavior unless separately
-  approved as a product requirement.
-- Test the DNS, connection, timeout, HTTP, CSP, integrity, third-party blocking,
-  offline, slow-response, and partial-load failures relevant to the owning
-  Feature.
-- Keep core editor, Save, Publish, and formal-Preview requirements local,
-  provide a tested local fallback, or obtain separate approval for a fully
-  documented reliability contract.
-- Let an optional enhancement degrade only with truthful visible State, no
-  hidden write, no content corruption, no unusable editor, no silent host
-  substitution, and no infinite retry.
-- Re-review a change to the domain, operator, asset versioning or immutability
-  model, license, response Headers, Redirect policy, integrity support, privacy
-  behavior, fallback, owning Feature, or WordPress loading strategy.
-- Fail production validation when an unapproved remote URL, test-only CDN URL,
-  Dev Server URL, private host, remotely mutable executable, or silent
-  local-to-remote substitution appears.
+  configuration, or undisclosed subprocessors unless separately approved as a
+  product requirement and disclosed truthfully.
+- Keep server-side credentials out of browser bootstrap, HTML, logs, public
+  evidence, and archives. Client capability flags and Nonces never replace
+  server authorization.
+- Test DNS, connection, timeout, HTTP, CORS, CSP, authentication expiry,
+  cancellation, stale response, rate-limit, offline, slow-response, duplicate
+  activation, and partial-failure paths relevant to the owning Feature.
+- Protected Mutations do not retry automatically. Optional enhancements
+  degrade with truthful visible State, no hidden write, no content corruption,
+  no unusable editor, no silent provider substitution, and no infinite retry.
+- Re-review any change to the operator, endpoint, terms, data fields, retention,
+  subprocessors, authentication, privacy behavior, consent, failure contract,
+  owning Feature, or distribution channel.
+- Fail production validation when a CDN URL, remote static asset, test-only
+  remote URL, Dev Server URL, private host, remotely mutable executable, or
+  silent local-to-remote substitution appears.
 
-Approval is scoped to the recorded asset and Feature. It does not authorize
-another asset from the same host, another Feature, or a mutable replacement. If
-any required field or applicable rule is unverified, the exception is not
-approved.
+Approval is scoped to the recorded service and Feature. It does not authorize
+another service, another Feature, more data, another endpoint, or a remotely
+hosted client runtime. If any required field or applicable rule is unverified,
+the service is not approved.
 
-Distribution-channel rules:
-
-- GitHub Releases, private deployments, self-hosted packages, or another
-  reviewed channel may evaluate the project gate for their specific channel;
-  passing that gate is not universal approval.
-- For WordPress.org Plugin Directory distribution, ordinary non-service
-  JavaScript, CSS, and other runtime executable or presentation code must
-  follow the current official directory rules requiring non-service code to be
-  included locally. Offloading unrelated static assets is not a genuine
-  service.
-- A genuine external service must provide substantive service functionality,
-  not merely host code or assets. Its use, terms, data disclosure, and any
-  required explicit consent must be documented in the readme and privacy
-  behavior according to current official rules.
-- Official origin, immutable URLs, SRI, and maintainer approval cannot waive
-  the intended channel's rules.
-- Treat a remote Font or Font-CDN proposal as a separate classification. Verify
-  the current official rule and any official exception, then record the
-  official source, exact version and immutable URL, license, data and privacy
-  behavior, SRI and `crossorigin` where applicable, failure/fallback behavior,
-  distribution-channel acceptance, and explicit maintainer approval. Without
-  that evidence, keep the Font local and mark the proposal unapproved.
-- When classification or an exception is unclear, contact the WordPress.org
-  Plugin Review Team rather than guessing.
+WordPress.org Plugin Directory service, external-service, and privacy rules
+remain independently binding. Document the service, terms, exact data
+disclosure, and required consent in the readme and product behavior. When
+classification or channel acceptance is unclear, contact the WordPress.org
+Plugin Review Team rather than guessing.
 
 Verify the current WordPress.org rule at:
 
 - <https://developer.wordpress.org/plugins/wordpress-org/detailed-plugin-guidelines/>
 - <https://developer.wordpress.org/plugins/wordpress-org/common-issues/#calling-files-remotely>
 
-An approved future exception must update runtime, privacy, packaging, tests,
+An approved future service must update runtime, privacy, packaging, tests,
 documentation, and release evidence in one focused change. This guidance does
-not itself approve a URL or change the current local-runtime implementation.
+not itself approve a service URL or change the current local-runtime
+implementation.
 
 Keep the two publication artifacts distinct:
 

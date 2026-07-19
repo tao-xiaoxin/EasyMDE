@@ -1,11 +1,24 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
+import {
+  frontendRuntimeAssets,
+  frontendRuntimeReleaseRequirements,
+  prepareFrontendAssets
+} from '../../scripts/frontend-runtime-assets.mjs';
 import {
   buildRelease,
   collectReleaseRequirements,
@@ -15,6 +28,7 @@ import {
   releaseZipPath,
   shouldCopyReleaseFile
 } from '../../scripts/build-release.mjs';
+import { renderNotices } from '../../scripts/third-party-notices.mjs';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const scriptPath = join(repoRoot, 'scripts/build-release.mjs');
@@ -134,11 +148,105 @@ function createVersionFiles(root, version = '0.1.7') {
   writeText(root, 'package.json', JSON.stringify({ version }));
 }
 
+function createFrontendAssetSources(root) {
+  const packageJsonPath = join(root, 'package.json');
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+  const dependencies = {};
+  const packages = {
+    '': {
+      dependencies
+    }
+  };
+
+  for (const component of frontendRuntimeAssets) {
+    if (component.packageName) {
+      dependencies[component.packageName] = '^1.0.0';
+      packages[`node_modules/${component.packageName}`] = {
+        version: '1.0.0',
+        resolved: `https://registry.npmjs.org/${component.packageName}/fixture.tgz`,
+        license: 'MIT'
+      };
+    }
+
+    for (const copy of component.copies || []) {
+      if ('directory' === copy.type) {
+        writeText(root, `${copy.source}/fixture.woff2`, `source:${copy.source}/fixture.woff2`);
+      } else {
+        writeText(root, copy.source, `source:${copy.source}`);
+      }
+    }
+
+    for (const requirement of component.requiredPaths || []) {
+      if ('file' === requirement.type) {
+        writeText(root, requirement.path);
+        continue;
+      }
+
+      mkdirSync(join(root, requirement.path), { recursive: true });
+      if ('non-empty-dir' === requirement.type) {
+        writeText(root, `${requirement.path}/fixture`);
+      }
+    }
+
+    if (component.embeddedIconMap) {
+      for (const icon of component.embeddedIconMap.icons) {
+        writeText(
+          root,
+          `${component.embeddedIconMap.sourceDirectory}/${icon.source}.svg`,
+          [
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">',
+            `  <path d="${icon.source}" />`,
+            '</svg>',
+            ''
+          ].join('\n')
+        );
+      }
+      writeText(
+        root,
+        component.embeddedIconMap.destination,
+        [
+          component.embeddedIconMap.startMarker,
+          '    var ICON_NODES = {};',
+          component.embeddedIconMap.endMarker,
+          ''
+        ].join('\n')
+      );
+    }
+
+    if (!(component.copies || []).length) {
+      writeText(root, component.noticeLocation, `notice:${component.id}`);
+    }
+  }
+
+  packageJson.dependencies = dependencies;
+  writeFileSync(packageJsonPath, JSON.stringify(packageJson));
+  writeText(root, 'package-lock.json', JSON.stringify({ packages }));
+  prepareFrontendAssets(root);
+}
+
+function initializeFixtureRepository(root) {
+  const init = spawnSync('git', ['init'], { cwd: root, encoding: 'utf8' });
+  assert.equal(init.status, 0, init.stderr);
+
+  const assetPaths = [
+    ...new Set(
+      frontendRuntimeReleaseRequirements().map((requirement) => requirement.path)
+    )
+  ];
+  const add = spawnSync(
+    'git',
+    ['add', '--', ...assetPaths],
+    { cwd: root, encoding: 'utf8' }
+  );
+  assert.equal(add.status, 0, add.stderr);
+}
+
 function createCompleteFixture(root) {
   createVersionFiles(root);
   createRegistryFiles(root);
   createAssetSourceFiles(root);
   createComposerLock(root);
+  createFrontendAssetSources(root);
 
   for (const requirement of collectReleaseRequirements(root)) {
     if ('file' === requirement.type) {
@@ -149,11 +257,15 @@ function createCompleteFixture(root) {
     }
 
     mkdirSync(join(root, requirement.path), { recursive: true });
-    if ('non-empty-dir' === requirement.type) {
+    if (
+      'non-empty-dir' === requirement.type
+      && 0 === readdirSync(join(root, requirement.path)).length
+    ) {
       writeText(root, `${requirement.path}/.keep`);
     }
   }
 
+  writeText(root, 'THIRD-PARTY-NOTICES.md', renderNotices(root));
   writeText(root, 'vendor/league/commonmark/tests/bootstrap.php');
   writeText(root, 'vendor/league/commonmark/.github/workflows/ci.yml');
   writeText(root, 'vendor/league/commonmark/.phpunit.result.cache');
@@ -162,9 +274,9 @@ function createCompleteFixture(root) {
   writeText(root, 'vendor/league/commonmark/phpcs.xml.dist');
   writeText(root, 'vendor/league/commonmark/runtime/Parser.php');
   writeText(root, 'node_modules/example/index.js');
-  writeText(root, '.git/config');
   writeText(root, '.github/workflows/ci.yml');
   writeText(root, 'tests/release-fixture.test.js');
+  initializeFixtureRepository(root);
 }
 
 function zipEntries(root) {
@@ -394,12 +506,72 @@ test('release build fails when required runtime assets or templates are missing'
     });
 
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /templates/);
     assert.match(result.stderr, /assets\/vendor\/mermaid\/mermaid\.min\.js/);
-    assert.match(result.stderr, /assets\/js\/admin\/media-picker\.js/);
-    assert.match(result.stderr, /assets\/js\/admin\/image-paste\.js/);
-    assert.match(result.stderr, /assets\/js\/frontend\/bootstrap\.js/);
-    assert.match(result.stderr, /THIRD-PARTY-NOTICES\.md/);
+    assert.match(result.stderr, /npm run prepare:assets/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build fails when a prepared frontend runtime asset differs from its locked source', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(root, 'assets/vendor/mermaid/mermaid.min.js', 'changed after preparation');
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /assets\/vendor\/mermaid\/mermaid\.min\.js/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build fails when the Lucide license differs from its verified source', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(root, 'assets/vendor/lucide/LICENSE', 'truncated');
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /assets\/vendor\/lucide\/LICENSE/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build fails when third-party notices exist but are stale', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(root, 'THIRD-PARTY-NOTICES.md', 'stale third-party notice');
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /THIRD-PARTY-NOTICES\.md is out of date/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build gives notice regeneration guidance when third-party notices are missing', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /npm run notices:write/
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

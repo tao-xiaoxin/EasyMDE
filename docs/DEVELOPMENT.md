@@ -32,17 +32,37 @@ composer run lint:phpcs
 
 ## npm Runtime Assets
 
-Install Node dependencies and prepare local runtime assets:
+Install Node dependencies:
 
 ```bash
 npm install
 ```
 
-The `postinstall` script copies local Highlight.js, Mermaid, and KaTeX runtime assets into `assets/vendor/`. You can rerun that step directly:
+Highlight.js, Mermaid, KaTeX, and Lucide are build-time npm dependencies, not
+remote runtime dependencies. The plugin serves their committed runtime files
+from its local asset tree; normal npm installation does not rewrite those
+files.
+
+When the locked package version or runtime-asset selection intentionally
+changes, refresh the committed copies explicitly:
 
 ```bash
 npm run prepare:assets
 ```
+
+Then verify that every managed destination exactly matches its locked local
+source and that no unexpected file exists within a managed directory:
+
+```bash
+npm run assets:check
+```
+
+`scripts/frontend-runtime-assets.mjs` is the single manifest for package
+sources, runtime destinations, purpose, license, notice location, and release
+requirements. Update that manifest and `package-lock.json` together; run
+`npm run notices:write`, the focused tests, and release validation before
+committing an asset change. Do not add a CDN or remote fallback for these
+redistributable static assets.
 
 Do not commit `node_modules/`, `vendor/`, `dist/`, local logs, caches, browser reports, or machine-specific files.
 

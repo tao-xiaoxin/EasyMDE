@@ -160,6 +160,9 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Check local runtime assets
+        run: npm run assets:check
+
       - name: Check JavaScript syntax
         run: git ls-files -z -- '*.js' '*.mjs' | xargs -0 -n1 node --check
 
@@ -252,11 +255,11 @@ jobs:
       - name: Install PHP runtime dependencies
         run: composer install --no-dev --no-interaction --no-progress --prefer-dist
 
-      - name: Install Node dependencies and local assets
+      - name: Install Node dependencies
         run: npm ci
 
-      - name: Refresh local runtime assets
-        run: npm run prepare:assets
+      - name: Check local runtime assets
+        run: npm run assets:check
 
       - name: Check i18n files
         run: npm run i18n:check
@@ -457,7 +460,7 @@ jobs:
       - name: Install PHP runtime dependencies
         run: composer install --no-dev --no-interaction --no-progress --prefer-dist
 
-      - name: Install Node dependencies and local assets
+      - name: Install Node dependencies
         run: npm ci
 
       - name: Install Chromium

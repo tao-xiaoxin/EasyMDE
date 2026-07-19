@@ -104,9 +104,10 @@ Start with:
 ```bash
 composer install
 npm install
+npm run assets:check
 ```
 
-`npm install` runs the local runtime-asset preparation step for Highlight.js, Mermaid, and KaTeX assets under `assets/vendor/`. See [Development](docs/DEVELOPMENT.md) and [Testing and Release](docs/TESTING_AND_RELEASE.md) before changing runtime code, release packaging, or tests.
+Highlight.js, Mermaid, and KaTeX are sourced from locked npm packages, prepared explicitly under `assets/vendor/` only when their dependency or manifest changes, committed, and shipped with the plugin. Runtime requests stay local; CI and release builds use the read-only asset check and fail on missing, changed, or unexpected managed files. See [Development](docs/DEVELOPMENT.md) and [Testing and Release](docs/TESTING_AND_RELEASE.md) before changing runtime code, release packaging, or tests.
 
 ## Support EasyMDE
 

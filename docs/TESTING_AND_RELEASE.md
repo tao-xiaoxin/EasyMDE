@@ -37,12 +37,13 @@ composer run test:phpunit
 
 ## Node, i18n, And Notices
 
-CI uses npm for JavaScript syntax checks, Node tests, runtime asset preparation, i18n validation, and third-party notice validation.
+CI uses npm for JavaScript syntax checks, Node tests, read-only runtime asset validation, i18n validation, and third-party notice validation.
 
 Useful local commands:
 
 ```bash
 npm install
+npm run assets:check
 git ls-files -z -- '*.js' '*.mjs' | xargs -0 -n1 node --check
 npm run i18n:check
 npm run notices:check
@@ -73,7 +74,7 @@ The release job builds the installable plugin ZIP from runtime files:
 ```bash
 composer install --no-dev --no-interaction --prefer-dist
 npm ci
-npm run prepare:assets
+npm run assets:check
 npm run i18n:check
 npm run notices:check
 npm run build:release
@@ -84,7 +85,13 @@ npm run build:release
 - `dist/easymde/`
 - `dist/EasyMDE.zip`
 
-The build verifies version consistency across `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json`. It also fails if required runtime dependencies, local runtime assets, registered theme assets, translation files, or third-party notices are missing.
+The release path never refreshes committed runtime assets. `npm run assets:check`
+and the release builder compare every manifest-owned Highlight.js, Mermaid,
+KaTeX, font, license, and notice destination with its declared local source;
+npm-backed sources must also exist in the root dependency and lockfile
+metadata. Validation fails on missing, changed, or unexpected managed files.
+
+The build verifies version consistency across `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json`. It also fails if required runtime dependencies, local runtime assets, registered theme assets, translation files, or third-party notices are missing, or if the generated third-party notice content is stale.
 
 The release build requires Composer runtime dependencies only. If Composer development packages are installed under `vendor/`, rebuild with Composer `--no-dev` before packaging.
 

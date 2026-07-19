@@ -440,29 +440,42 @@ completion reporting belong to `CONTRIBUTING.md`.
 
 Local, version-controlled runtime assets remain the default.
 
-A remote asset may be considered only for one focused Feature after explicit
-human maintainer approval and evidence of official provenance, long-term
-reliability, immutable HTTPS identity, license compatibility, privacy,
-integrity, failure/fallback behavior, update ownership, removal strategy, and
-distribution-channel compatibility.
+Redistributable browser JavaScript, CSS, fonts, icons, and similar static
+runtime assets use locked npm or verified upstream packages as build-time
+sources and are committed under the plugin-owned runtime tree. One internal
+manifest owns each managed source, destination, purpose, license, notice, and
+release requirement. Dependency installation does not silently rewrite
+committed runtime files: preparation is explicit, while CI and release paths
+perform read-only comparison and fail on missing, changed, or unexpected
+managed files.
 
-Unknown hosts, unofficial mirrors, mutable URLs, floating versions, personal
-domains, proxies, tracking, telemetry, silent host substitution, and remotely
-mutable executable code remain prohibited.
+Do not add a plugin-level CDN switch, remote static fallback, or local-to-remote
+host substitution for redistributable runtime assets. A site operator's
+reverse proxy or CDN remains outside plugin ownership. A genuine external
+service is a separate product and privacy decision, not an asset-hosting
+shortcut.
 
-Technical trust does not imply acceptance by every distribution channel.
-WordPress.org Plugin Directory rules for ordinary non-service JavaScript, CSS,
-and other runtime code remain independently binding; official provenance,
-pinning, SRI, and maintainer approval cannot waive them. A Font-CDN proposal,
-genuine external service, or claimed exception requires separate current-rule
-verification, privacy and consent analysis, exact asset identity, and
-channel-specific approval. Ask the WordPress.org Plugin Review Team when
-classification is unclear.
+A genuine external service may be considered only for one focused Feature
+after explicit human maintainer approval and evidence of substantive remote
+service functionality, operator identity, terms, privacy and consent behavior,
+data flow, authentication, reliability, truthful failure behavior, update
+ownership, removal strategy, and distribution-channel compatibility. Ordinary
+static hosting is not a service, and any redistributable client JavaScript,
+CSS, font, icon, or SDK required to use an approved service remains local.
 
-The current runtime remains local. This policy does not approve a URL, add SRI,
-change CSP, alter Enqueue behavior, remove local assets, or change a package or
-build. The complete per-asset Decision Record and official-policy sources
-belong to `.agents/skills/easymde/SKILL.md`; durable rationale belongs to
+Unknown hosts, unofficial mirrors, personal domains, proxies, tracking,
+unapproved telemetry, silent host substitution, and remotely mutable
+executable code remain prohibited.
+
+WordPress.org Plugin Directory service and privacy rules remain independently
+binding; maintainer approval cannot waive them. Ask the WordPress.org Plugin
+Review Team when service classification or channel acceptance is unclear.
+
+The current runtime remains local and no external service is approved. This
+policy does not approve a URL, change CSP, alter Enqueue behavior, remove local
+assets, or change a package or build. The complete external-service Decision
+Record and official-policy sources belong to
+`.agents/skills/easymde/SKILL.md`; durable rationale belongs to
 `docs/REACT_DESIGN_PHILOSOPHY.md`; current facts remain in
 `docs/ARCHITECTURE.md`.
 

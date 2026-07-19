@@ -11,7 +11,7 @@
 - 先读“权威来源与证据策略”和“核心设计哲学”，理解项目优先级、状态所有权与 WordPress 边界。
 - 查阅目录、依赖与接口决策时，读“React 运行时与应用 Root”至“Port、Runtime 与 Adapter”。
 - 实现功能时，按需查阅状态、跨语言边界、正式数据流、组件 API、UI、性能与发布包章节。
-- 判断本地或远程资源交付方向时，读“资源交付与发行渠道”；逐资产证据、批准与实施检查使用 `.agents/skills/easymde/SKILL.md`。
+- 判断本地静态资源或真正 External Service 边界时，读“资源交付与发行渠道”；Service 证据、批准与实施检查使用 `.agents/skills/easymde/SKILL.md`。
 - 日常执行检查使用 `.agents/skills/easymde/SKILL.md`；转移现有浏览器功能时另外使用 `.agents/skills/easymde-migration/SKILL.md`。
 - 本文与实时代码不一致时，先根据本文的证据优先级确定是实现欠账还是文档过时，不得默认任何一方自动覆盖另一方。
 
@@ -983,11 +983,15 @@ WordPress 6.7 默认把 `@wordpress/element` 注册为 Classic `wp-element` Scri
 
 本地、版本控制内的运行时资源是默认方向，因为它让编辑器在安装包内自包含，使版本、License、完整性、隐私、离线与失败行为、更新责任和可复现发布都能由项目直接控制。当前实现仍使用本地资源；本文不代表项目已经采用 CDN，也不批准任何具体远程 URL。
 
-远程交付不是全局开关。只有一个聚焦 Feature 的单个资源，在人工明确批准且逐项证明官方来源、长期可靠性、不可变 HTTPS 身份、License、隐私、完整性、失败与 Fallback、更新 Owner、移除策略及目标发行渠道兼容后，才可以被考虑。未知 Host、非官方 Mirror、可变 URL、浮动版本、个人域名、Proxy、Tracking、Telemetry、静默换源和远程可变 Executable Code 不属于可接受方向。
+对于可再发行的 JavaScript、CSS、Font、Icon 等静态资源，npm 或经过验证的 Upstream Package 只承担 Build-time Source；实际 Runtime File 提交到 Plugin 自有目录并随安装包交付。一个内部 Manifest 统一拥有 Source、Destination、Purpose、License、Notice 和 Release Requirement。Dependency Installation 不隐式改写已提交资源：Preparation 是显式维护动作，CI 与 Release 只读比较并在 Missing、Changed 或 Unexpected Managed File 时失败，不能先刷新再假装验证通过。
 
-技术可信与发行许可是两个独立问题。GitHub Releases、Private Deployment、Self-hosted Package 或其他经过审查的渠道，可以按自身合同评估同一个技术 Gate；一个渠道的结论不能自动扩展到另一个渠道。WordPress.org Plugin Directory 对普通非服务型 JavaScript、CSS 和其他运行时代码有自己的当前官方规则；官方来源、固定版本、SRI 或维护者批准不能覆盖这些规则。真正的 External Service 必须提供实际服务能力，并单独满足 Readme、Privacy、Consent 和数据披露要求。Remote Font 或 Font CDN 是独立分类，必须依据当前官方规则和例外逐项核对 Official Source、Exact Version / URL、License、Data / Privacy、SRI / `crossorigin`、Failure / Fallback、发行渠道接受状态和人工批准；证据不足时保持本地。其他声称的例外同样单独核对，分类不明确时交由 Plugin Review Team 判断。
+插件不提供全局 CDN Switch、Remote Static Fallback 或静默换源。Site-level Reverse Proxy / CDN 属于部署者在插件边界之外的交付策略；真正提供实质能力的 External Service 是独立的产品、隐私、Consent、Failure 和发行渠道决策，不能以“托管静态文件”的方式绕过本地交付责任。
 
-逐资产 Decision Record、SRI / CORS / CSP / MIME / Redirect / Cache / Referrer、数据发送、Fallback、批准、复审触发器和实施验证属于 `.agents/skills/easymde/SKILL.md`，不在本文复制执行清单。当前架构事实仍由 `docs/ARCHITECTURE.md` 记录，测试和发布命令仍由 `docs/TESTING_AND_RELEASE.md` 负责。
+远程静态交付不是可批准的例外。普通 JavaScript、CSS、Font、Icon、SDK 或其他可再发行运行时资源，无论目标是 GitHub Release、Private Deployment、Self-hosted Package 还是 WordPress.org，都继续本地交付；Official Origin、Pinned Version、SRI 或人工批准不改变这个项目边界。
+
+真正的 External Service 必须提供静态托管之外的实际服务能力，并由单独聚焦 Issue 与人工批准核对 Operator、Terms、Data Flow、Privacy、Consent、Authentication、Reliability、Failure、Documentation、Update Owner、Removal Plan 和目标发行渠道规则。使用服务所需的可再发行 Client Runtime 仍随插件本地交付。WordPress.org Plugin Directory 的 Service 与 Privacy 规则独立生效，分类或接受状态不明确时交由 Plugin Review Team 判断。
+
+External Service Decision Record、CORS / CSP、数据发送、Authentication、Consent、Failure、批准、复审触发器和实施验证属于 `.agents/skills/easymde/SKILL.md`，不在本文复制执行清单。当前架构事实仍由 `docs/ARCHITECTURE.md` 记录，测试和发布命令仍由 `docs/TESTING_AND_RELEASE.md` 负责。
 
 安装版 ZIP 必须包含完整运行时、Composer Runtime Dependency、License、翻译和 Notice，同时排除开发源码、测试、Cache、私有或机器相关数据及无关开发产物。准确的当前 Include / Exclude、构建与验证行为属于 `docs/TESTING_AND_RELEASE.md`、`scripts/build-release.mjs` 和 `scripts/build-source-archives.mjs`；本文只保留长期产品边界，不维护第二份会漂移的逐路径执行清单。
 

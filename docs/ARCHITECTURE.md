@@ -16,7 +16,7 @@ This document describes the current implementation boundaries. Approved target d
 - `assets/themes/article/`: EasyMDE-owned article themes.
 - `assets/themes/code/`: EasyMDE-owned code themes.
 - `assets/vendor/`: committed third-party runtime assets prepared from locked npm packages or verified upstream repository sources.
-- `frontend/`: strict TypeScript and Vite build-contract source. The current tree contains only toolchain configuration and a test-only WordPress React contract fixture; it does not contain a production application root.
+- `frontend/`: strict TypeScript, React component and Vite source for the production normal-editor main Toolbar, plus the test-only WordPress React build-contract fixture.
 - `scripts/`: local asset preparation, i18n/notices, test setup, Plugin Check, clean WordPress install, and release package assembly scripts.
 - `tests/Unit/` and `tests/Integration/`: PHPUnit coverage for rendering, CSS policy, frontend assets, REST permissions, revisions, migration, editor gating, and compatibility facade behavior.
 - `tests/Node/`: Node tests for release packaging, CI invariants, i18n/notices, Plugin Check parsing, and destructive-script safety.
@@ -24,11 +24,13 @@ This document describes the current implementation boundaries. Approved target d
 
 ## Frontend Build Foundation
 
-The root npm project owns Vite, TypeScript, React 18 development declarations, and the WordPress Element package used to verify browser-build compatibility. `npm run frontend:check` runs strict `tsc --noEmit` independently from a Vite build.
+The root npm project owns Vite, TypeScript, Biome linting, React 18 development declarations, Vitest, and the WordPress Element package used by browser builds. `npm run frontend:check` runs frontend linting, strict `tsc --noEmit`, component and contract tests, the test-only build contract, and a temporary production Toolbar build that must match the committed runtime byte for byte.
 
-The current Vite entry under `frontend/test/build-contract/` is test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
+The Vite entry under `frontend/test/build-contract/` remains test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
 
-No production React root, React Feature, Port, Adapter, or browser capability owner exists yet. Those directories are created only when a focused migration Issue introduces a real consumer.
+`frontend/src/entrypoints/admin-editor-toolbar.tsx` is the first production React entry. It mounts the normal editor's main Markdown Toolbar into a PHP-delegated container and renders `features/toolbar/ui/EditorToolbar.tsx`. PHP `ToolbarRegistry` descriptors and translated labels remain the bootstrap authority, and `assets/js/admin/commands.js` remains the Markdown command-mutation owner through the focused `executeCommand` bridge. The legacy secondary Toolbar, including appearance, draft status, WeChat export, and the immersive-workspace entry, remains outside the React Root.
+
+`AdminAssets` reads `assets/build/wordpress-manifest.json` and the matching dependency metadata before enqueueing the stable `easymde-admin-editor-toolbar` handle ahead of `easymde-admin`. The legacy main Toolbar stays visible during React preparation and mount. Only the React readiness callback switches the explicit Toolbar owner and visibility; a missing, invalid, or failed production entry leaves the legacy main Toolbar usable and reports a stable privacy-safe diagnostic. Teardown unmounts the React Root before the container returns to legacy ownership.
 
 ## Service Wiring
 

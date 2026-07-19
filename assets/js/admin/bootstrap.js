@@ -3122,15 +3122,178 @@
         }
     }
 
+    function reportReactToolbarFailure(code) {
+        if (window.console && typeof window.console.error === 'function') {
+            window.console.error('[EasyMDE] ' + code);
+        }
+    }
+
+    function activateReactToolbar(toolbar, reactMain, legacyMain, context) {
+        var reactToolbar = window.EasyMDEReactToolbar;
+        var disposed = false;
+        var failed = false;
+        var ready = false;
+        var cleanup;
+        var cleanupScheduled = false;
+        var pagehideRegistered = false;
+
+        function dispose() {
+            if (disposed) {
+                return;
+            }
+
+            disposed = true;
+            if (pagehideRegistered && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('pagehide', dispose);
+                pagehideRegistered = false;
+            }
+            if (typeof cleanup === 'function') {
+                cleanup();
+            }
+            reactMain.hidden = true;
+            legacyMain.hidden = false;
+            toolbar.setAttribute('data-easymde-main-toolbar-owner', 'legacy');
+        }
+
+        function scheduleCleanup() {
+            if (cleanupScheduled) {
+                return;
+            }
+
+            cleanupScheduled = true;
+            if (typeof window.queueMicrotask === 'function') {
+                window.queueMicrotask(dispose);
+                return;
+            }
+
+            Promise.resolve().then(dispose);
+        }
+
+        if (
+            !toolbar
+            || typeof toolbar.setAttribute !== 'function'
+            || !reactMain
+            || !legacyMain
+        ) {
+            return null;
+        }
+
+        toolbar.setAttribute('data-easymde-main-toolbar-owner', 'legacy');
+        reactMain.hidden = true;
+        legacyMain.hidden = false;
+
+        if (!reactToolbar || typeof reactToolbar.prepare !== 'function') {
+            reportReactToolbarFailure('react-toolbar-entry-unavailable');
+            return null;
+        }
+
+        try {
+            reactToolbar = reactToolbar.prepare({
+                commands: config.commands || [],
+                shortcuts: config.shortcuts || {},
+                strings: {
+                    headings: getString('headings')
+                }
+            });
+        } catch (error) {
+            reportReactToolbarFailure('react-toolbar-prepare-failed');
+            return null;
+        }
+
+        if (!reactToolbar || typeof reactToolbar.mount !== 'function') {
+            reportReactToolbarFailure('react-toolbar-contract-invalid');
+            return null;
+        }
+
+        try {
+            cleanup = reactToolbar.mount({
+                container: reactMain,
+                executeCommand: function (commandId) {
+                    var textarea = context && context.textarea ? context.textarea : null;
+                    var selectionDirection = textarea ? textarea.selectionDirection : 'none';
+                    var result = executeCommand(commandId, context);
+
+                    if (
+                        textarea
+                        && typeof textarea.setSelectionRange === 'function'
+                        && (selectionDirection === 'forward' || selectionDirection === 'backward')
+                    ) {
+                        textarea.setSelectionRange(
+                            textarea.selectionStart,
+                            textarea.selectionEnd,
+                            selectionDirection
+                        );
+                    }
+
+                    return result;
+                },
+                onFailure: function () {
+                    if (disposed || failed) {
+                        return;
+                    }
+
+                    failed = true;
+                    reactMain.hidden = true;
+                    legacyMain.hidden = false;
+                    toolbar.setAttribute('data-easymde-main-toolbar-owner', 'legacy');
+                    reportReactToolbarFailure('react-toolbar-render-failed');
+                    scheduleCleanup();
+                },
+                onReady: function () {
+                    if (disposed || failed || ready) {
+                        return;
+                    }
+
+                    ready = true;
+                    legacyMain.hidden = true;
+                    reactMain.hidden = false;
+                    toolbar.setAttribute('data-easymde-main-toolbar-owner', 'react');
+                },
+                platform: getIsMac() ? 'mac' : 'win'
+            });
+        } catch (error) {
+            reportReactToolbarFailure('react-toolbar-mount-failed');
+            return null;
+        }
+
+        if (typeof cleanup !== 'function') {
+            reportReactToolbarFailure('react-toolbar-cleanup-invalid');
+            return null;
+        }
+
+        if (typeof window.addEventListener === 'function') {
+            window.addEventListener('pagehide', dispose, { once: true });
+            pagehideRegistered = true;
+        }
+
+        return dispose;
+    }
+
     function createToolbar($toolbar, context) {
-        var $main = $('<div class="easymde-toolbar-section easymde-toolbar-section-main"></div>');
-        var $secondary = $('<div class="easymde-toolbar-section easymde-toolbar-section-secondary"></div>');
+        var $reactMain = $('#easymde-toolbar-react-main');
+        var $main = $('#easymde-toolbar-legacy-main');
+        var $secondary = $('#easymde-toolbar-legacy-secondary');
         var formatCommands = getGroupCommands('main', 'format');
         var blockCommands = getGroupCommands('main', 'block');
         var insertCommands = getGroupCommands('main', 'insert');
         var exportCommands = getGroupCommands('main', 'export');
 
-        $toolbar.empty();
+        if (context.reactToolbarCleanup) {
+            context.reactToolbarCleanup();
+            context.reactToolbarCleanup = null;
+        }
+
+        if (!$reactMain.length || !$main.length || !$secondary.length) {
+            $toolbar.empty();
+            $reactMain = $('<div id="easymde-toolbar-react-main" class="easymde-toolbar-section easymde-toolbar-section-main" hidden></div>');
+            $main = $('<div id="easymde-toolbar-legacy-main" class="easymde-toolbar-section easymde-toolbar-section-main"></div>');
+            $secondary = $('<div id="easymde-toolbar-legacy-secondary" class="easymde-toolbar-section easymde-toolbar-section-secondary"></div>');
+            $toolbar.append($reactMain, $main, $secondary);
+        } else {
+            $reactMain.empty().prop('hidden', true);
+            $main.empty().prop('hidden', false);
+            $secondary.empty();
+        }
 
         formatCommands.forEach(function (command) {
             $main.append(createCommandButton(command, { compact: true, context: context }));
@@ -3169,7 +3332,12 @@
         createAppearanceMenu($secondary, context.root, context.preview, context.refreshPreview);
         context.draftStatus = createDraftStatus($secondary);
 
-        $toolbar.append($main, $secondary);
+        context.reactToolbarCleanup = activateReactToolbar(
+            $toolbar[0],
+            $reactMain[0],
+            $main[0],
+            context
+        );
 
         return context.draftStatus;
     }
@@ -3420,6 +3588,7 @@
         window.EasyMDETestHooks.currentPreviewSignature = currentPreviewSignature;
         window.EasyMDETestHooks.isPreviewReady = isPreviewReady;
         window.EasyMDETestHooks.executeCommand = executeCommand;
+        window.EasyMDETestHooks.activateReactToolbar = activateReactToolbar;
         window.EasyMDETestHooks.getLocalDraftsEnabled = getLocalDraftsEnabled;
         window.EasyMDETestHooks.setLocalDraftsEnabled = setLocalDraftsEnabled;
         window.EasyMDETestHooks.scheduleLocalDraft = scheduleLocalDraft;

@@ -18,8 +18,16 @@
     min-width: 0;
 }
 
+.easymde-toolbar-section[hidden] {
+    display: none;
+}
+
 .easymde-toolbar-section-secondary {
     margin-left: auto;
+}
+
+.easymde-react-toolbar-contents {
+    display: contents;
 }
 
 .easymde-toolbar-divider {

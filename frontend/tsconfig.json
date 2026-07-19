@@ -22,5 +22,14 @@
     "skipLibCheck": true,
     "types": ["node", "vite/client"]
   },
-  "include": ["vite.config.ts", "test/build-contract/**/*.ts", "test/build-contract/**/*.tsx"]
+  "include": [
+    "vite.config.ts",
+    "vite.production.config.ts",
+    "vitest.config.ts",
+    "wordpress-classic-metadata.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "test/build-contract/**/*.ts",
+    "test/build-contract/**/*.tsx"
+  ]
 }

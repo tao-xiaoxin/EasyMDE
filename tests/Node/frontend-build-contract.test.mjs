@@ -61,10 +61,10 @@ function copyBuildOutput() {
 }
 
 before(() => {
-  frontendCheckResult = runNpmScript('frontend:check');
+  frontendCheckResult = runNpmScript('build:frontend-contract');
 });
 
-test('root package exposes independent frontend type-check and build gates', () => {
+test('root package exposes independent frontend type-check, component-test, and build gates', () => {
   const packageJson = readJson(join(repoRoot, 'package.json'));
 
   assert.equal(packageJson.scripts['typecheck:frontend'], 'tsc --noEmit -p frontend/tsconfig.json');
@@ -74,7 +74,7 @@ test('root package exposes independent frontend type-check and build gates', () 
   );
   assert.equal(
     packageJson.scripts['frontend:check'],
-    'npm run typecheck:frontend && npm run build:frontend-contract'
+    'npm run lint:frontend && npm run typecheck:frontend && npm run test:frontend && npm run build:frontend-contract && npm run check:frontend-production'
   );
   assert.equal(packageJson.devDependencies.vite, '8.1.5');
   assert.equal(packageJson.devDependencies.typescript, '7.0.2');

@@ -247,6 +247,43 @@ function createCompleteFixture(root) {
   createAssetSourceFiles(root);
   createComposerLock(root);
   createFrontendAssetSources(root);
+  const frontendEntry = 'frontend/src/entrypoints/admin-editor-toolbar.tsx';
+  const frontendScript = 'assets/admin-editor-toolbar-fixture.js';
+  const frontendMetadata = 'assets/admin-editor-toolbar-fixture.asset.php';
+
+  writeText(
+    root,
+    'assets/build/manifest.json',
+    JSON.stringify({
+      [frontendEntry]: {
+        file: frontendScript,
+        isEntry: true,
+        src: frontendEntry
+      }
+    })
+  );
+  writeText(
+    root,
+    'assets/build/wordpress-manifest.json',
+    JSON.stringify({
+      schemaVersion: 1,
+      entries: {
+        [frontendEntry]: {
+          handle: 'easymde-admin-editor-toolbar',
+          file: frontendScript,
+          asset: frontendMetadata,
+          dependencies: ['wp-element'],
+          resources: []
+        }
+      }
+    })
+  );
+  writeText(root, `assets/build/${frontendScript}`, 'window.EasyMDEReactToolbar = {};\n');
+  writeText(
+    root,
+    `assets/build/${frontendMetadata}`,
+    "<?php return array( 'dependencies' => array( 'wp-element' ), 'version' => '0123456789abcdef' );\n"
+  );
 
   for (const requirement of collectReleaseRequirements(root)) {
     if ('file' === requirement.type) {
@@ -325,6 +362,9 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.mo'));
     assert.ok(entries.includes('easymde/assets/js/admin/media-picker.js'));
     assert.ok(entries.includes('easymde/assets/js/admin/image-paste.js'));
+    assert.ok(entries.includes('easymde/assets/build/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-toolbar-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-toolbar-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/js/frontend/bootstrap.js'));
     assert.ok(entries.includes('easymde/assets/vendor/mermaid/LICENSE'));
     assert.ok(entries.includes('easymde/assets/vendor/lucide/LICENSE'));
@@ -374,6 +414,22 @@ test('release package excludes obsolete editor dark-mode CSS and keeps dark code
     }
     assert.equal(entries.some((entry) => /\/(?:tests?|\.cache|coverage)\//.test(entry)), false);
     assert.equal(entries.some((entry) => /(?:\.log|\.codex-)/.test(entry)), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build rejects frontend artifacts outside the production manifests', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(root, 'assets/build/assets/admin-editor-toolbar-stale.js', 'stale build output\n');
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /unexpected production frontend artifacts:[\s\S]*admin-editor-toolbar-stale\.js/
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -492,6 +548,7 @@ test('release build fails when required runtime assets or templates are missing'
     rmSync(join(root, 'assets/js/admin/media-picker.js'), { force: true });
     rmSync(join(root, 'assets/js/admin/image-paste.js'), { force: true });
     rmSync(join(root, 'assets/js/frontend/bootstrap.js'), { force: true });
+    rmSync(join(root, 'assets/build/assets/admin-editor-toolbar-fixture.js'), { force: true });
     rmSync(join(root, 'assets/images/tech-blue-code-window.svg'), { force: true });
     rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
 
@@ -505,6 +562,7 @@ test('release build fails when required runtime assets or templates are missing'
     assert.ok(missing.includes('assets/js/admin/media-picker.js'));
     assert.ok(missing.includes('assets/js/admin/image-paste.js'));
     assert.ok(missing.includes('assets/js/frontend/bootstrap.js'));
+    assert.ok(missing.includes('assets/build/assets/admin-editor-toolbar-fixture.js'));
     assert.ok(missing.includes('assets/images/tech-blue-code-window.svg'));
     assert.ok(missing.includes('THIRD-PARTY-NOTICES.md'));
 

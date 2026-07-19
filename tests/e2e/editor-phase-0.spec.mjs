@@ -1,6 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import {
+  createVisualTestUserWithCleanup,
+  deleteVisualTestUser
+} from './editor-visual-capture-lifecycle.mjs';
 
 const wpPath = process.env.EASYMDE_E2E_WP_PATH;
 const wpCli = process.env.EASYMDE_E2E_WP_CLI || 'wp';
@@ -32,39 +36,6 @@ function runWp(args) {
 
 function testSlug(testInfo) {
   return `phase-0-${testInfo.workerIndex}-${Date.now()}-${randomUUID().slice(0, 8)}`;
-}
-
-function createUser(slug) {
-  const username = `${slug}-user`;
-  const email = `${slug}@example.test`;
-  const id = runWp([
-    'user',
-    'create',
-    username,
-    email,
-    '--role=administrator',
-    `--user_pass=${adminPassword}`,
-    '--porcelain'
-  ]);
-
-  return { id, password: adminPassword, username };
-}
-
-function deleteUserContent(userId) {
-  const postIds = runWp([
-    'post',
-    'list',
-    `--author=${userId}`,
-    '--post_type=post,page,attachment',
-    '--post_status=any',
-    '--format=ids'
-  ]);
-
-  if (postIds) {
-    runWp(['post', 'delete', ...postIds.split(/\s+/), '--force']);
-  }
-
-  runWp(['user', 'delete', userId, '--yes', '--reassign=1']);
 }
 
 function postState(postId) {
@@ -113,12 +84,22 @@ function immersiveListenerCount(page) {
 
 test.describe('EasyMDE editor Phase 0 protection', () => {
   test.beforeEach(async ({}, testInfo) => {
-    testInfo.easymdeUser = createUser(testSlug(testInfo));
+    const slug = testSlug(testInfo);
+
+    testInfo.easymdeUser = createVisualTestUserWithCleanup(
+      runWp,
+      {
+        displayName: 'EasyMDE Phase 0 Test User',
+        email: `${slug}@example.test`,
+        password: adminPassword,
+        username: `${slug}-user`
+      }
+    );
   });
 
   test.afterEach(async ({}, testInfo) => {
     if (testInfo.easymdeUser) {
-      deleteUserContent(testInfo.easymdeUser.id);
+      deleteVisualTestUser(runWp, testInfo.easymdeUser.username);
     }
   });
 

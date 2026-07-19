@@ -209,6 +209,36 @@ runtime_identity() {
 	' "${origin}" "${browser_context}" "${session}" "${uploads}" "${release_sha256}" "${source_commit}"
 }
 
+capture_reference_runtime() {
+	: "${EASYMDE_VISUAL_REFERENCE_ZIP:?Set EASYMDE_VISUAL_REFERENCE_ZIP to the fixed reference ZIP}"
+	: "${EASYMDE_VISUAL_REFACTOR_ZIP:?Set EASYMDE_VISUAL_REFACTOR_ZIP for the visual Compose configuration}"
+
+	[[ -f "${EASYMDE_VISUAL_REFERENCE_ZIP}" ]] || fail "Reference ZIP not found."
+
+	local expected_reference_sha
+	expected_reference_sha="$(
+		node -e "const value=require(process.argv[1]); process.stdout.write(value.referenceRelease.sha256)" \
+			"${REPO_ROOT}/tests/e2e/fixtures/editor-visual-reference.json"
+	)"
+	REFERENCE_SOURCE_COMMIT="$(
+		node -e "const value=require(process.argv[1]); process.stdout.write(value.referenceCommit)" \
+			"${REPO_ROOT}/tests/e2e/fixtures/editor-visual-reference.json"
+	)"
+	REFERENCE_RELEASE_SHA256="$(sha256_file "${EASYMDE_VISUAL_REFERENCE_ZIP}")"
+
+	[[ "${REFERENCE_RELEASE_SHA256}" == "${expected_reference_sha}" ]] ||
+		fail "Reference ZIP SHA-256 does not match the fixed Legacy Reference identity."
+
+	wait_for_site "http://127.0.0.1:${REFERENCE_PORT}"
+	runtime_identity \
+		reference-wordpress \
+		"http://127.0.0.1:${REFERENCE_PORT}" \
+		"reference-capture-browser-context" \
+		"reference-capture-session" \
+		"${REFERENCE_RELEASE_SHA256}" \
+		"${REFERENCE_SOURCE_COMMIT}"
+}
+
 cleanup_authority_probes() {
 	local service
 
@@ -364,6 +394,10 @@ case "${COMMAND}" in
 	contract)
 		validate_contract
 		;;
+	reference-runtime)
+		validate_contract >/dev/null
+		capture_reference_runtime
+		;;
 	up)
 		validate_contract
 		prepare_refactor_release
@@ -390,6 +424,6 @@ case "${COMMAND}" in
 		compose down --volumes --remove-orphans
 		;;
 	*)
-		fail "Usage: scripts/editor-visual-environments.sh {contract|up|reset|verify|down}"
+		fail "Usage: scripts/editor-visual-environments.sh {contract|reference-runtime|up|reset|verify|down}"
 		;;
 esac

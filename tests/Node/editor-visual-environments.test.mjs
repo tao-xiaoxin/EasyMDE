@@ -172,6 +172,19 @@ test('runtime identity and authority probes execute as the Apache runtime owner'
   assert.doesNotMatch(authorityProbes, /compose exec -T (?!-\-user )/);
 });
 
+test('visual capture reads Reference identity from the Apache runtime owner', () => {
+  const source = readFileSync(controlScript, 'utf8');
+  const captureRuntime = source.slice(
+    source.indexOf('capture_reference_runtime()'),
+    source.indexOf('cleanup_authority_probes()')
+  );
+
+  assert.match(captureRuntime, /runtime_identity[\s\S]*reference-wordpress/);
+  assert.match(captureRuntime, /REFERENCE_RELEASE_SHA256/);
+  assert.match(captureRuntime, /REFERENCE_SOURCE_COMMIT/);
+  assert.match(source, /reference-runtime\)[\s\S]*capture_reference_runtime/);
+});
+
 test('environment setup builds the canonical refactor ZIP from the selected clean commit', () => {
   const source = readFileSync(controlScript, 'utf8');
   const prepareRelease = source.slice(

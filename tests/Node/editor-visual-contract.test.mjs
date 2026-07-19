@@ -10,6 +10,11 @@ import {
   validateEditorVisualManifest,
   validateEnvironmentIsolation
 } from '../../scripts/editor-visual-contract.mjs';
+import {
+  createVisualTestUserWithCleanup,
+  runVisualCaptureLifecycle,
+  validateReferenceCaptureRuntime
+} from '../e2e/editor-visual-capture-lifecycle.mjs';
 
 const repoRoot = new URL('../..', import.meta.url);
 
@@ -77,13 +82,274 @@ test('visual capture localizes fixture images and waits for deterministic render
   assert.match(captureSource, /page\.on\('request'/);
   assert.match(captureSource, /unexpectedExternalRequests/);
   assert.match(captureSource, /document\.fonts\.ready/);
+  assert.match(captureSource, /image\.getClientRects\(\)\.length > 0/);
   assert.match(captureSource, /image\.decode\(\)/);
   assert.match(captureSource, /naturalWidth/);
+  assert.match(captureSource, /Rendered image readiness failed/);
   assert.match(captureSource, /data-easymde-preview-enhancement-error/);
   assert.match(captureSource, /\.easymde-mermaid svg/);
   assert.match(captureSource, /\.katex/);
   assert.match(captureSource, /\.hljs/);
   assert.match(captureSource, /await waitForCaptureReadiness\(readiness\)/);
+});
+
+test('visual capture uses one fixed synthetic WordPress account', () => {
+  const captureSource = readFileSync(
+    join(repoRoot.pathname, 'tests/e2e/editor-visual-capture.spec.mjs'),
+    'utf8'
+  );
+  const lifecycleSource = readFileSync(
+    join(repoRoot.pathname, 'tests/e2e/editor-visual-capture-lifecycle.mjs'),
+    'utf8'
+  );
+
+  assert.match(captureSource, /const captureUsername = 'easymde-visual-capture';/);
+  assert.match(captureSource, /const captureDisplayName = 'EasyMDE Visual Capture';/);
+  assert.match(captureSource, /runVisualCaptureLifecycle\(/);
+  assert.match(captureSource, /readReferenceRuntime\(\)/);
+  assert.match(captureSource, /fixtureContractSha256/);
+  assert.match(lifecycleSource, /`--login=\$\{username\}`/);
+  assert.match(lifecycleSource, /`--display_name=\$\{account\.displayName\}`/);
+  assert.match(lifecycleSource, /finally \{[\s\S]*deleteVisualTestUser\(runWp, account\.username\)/);
+  assert.doesNotMatch(captureSource, /randomUUID/);
+});
+
+test('visual capture removes an account committed by a failed create command', async () => {
+  const createFailure = new Error('wp user create failed after commit');
+  const commands = [];
+  let accountId = '';
+
+  function runWp(args) {
+    commands.push(args);
+
+    if (args[0] === 'user' && args[1] === 'list') {
+      return accountId;
+    }
+    if (args[0] === 'user' && args[1] === 'create') {
+      accountId = '42';
+      throw createFailure;
+    }
+    if (args[0] === 'post' && args[1] === 'list') {
+      return '';
+    }
+    if (args[0] === 'user' && args[1] === 'delete') {
+      accountId = '';
+      return '';
+    }
+
+    throw new Error(`Unexpected WP command: ${args.join(' ')}`);
+  }
+
+  await assert.rejects(
+    () => runVisualCaptureLifecycle(
+      {
+        account: {
+          displayName: 'EasyMDE Visual Capture',
+          email: 'easymde-visual-capture@example.test',
+          password: 'synthetic-password',
+          username: 'easymde-visual-capture'
+        },
+        preflight: () => {},
+        prepare: () => {},
+        runWp
+      },
+      async () => {}
+    ),
+    (error) => error === createFailure
+  );
+
+  assert.equal(accountId, '');
+  assert.equal(
+    commands.filter((args) => args[0] === 'user' && args[1] === 'delete').length,
+    1
+  );
+});
+
+test('Phase 0 user creation removes an administrator committed by a failed command', () => {
+  const createFailure = new Error('wp user create failed after commit');
+  let accountId = '';
+
+  function runWp(args) {
+    if (args[0] === 'user' && args[1] === 'list') {
+      return accountId;
+    }
+    if (args[0] === 'user' && args[1] === 'create') {
+      accountId = '42';
+      throw createFailure;
+    }
+    if (args[0] === 'post' && args[1] === 'list') {
+      return '';
+    }
+    if (args[0] === 'user' && args[1] === 'delete') {
+      accountId = '';
+      return '';
+    }
+
+    throw new Error(`Unexpected WP command: ${args.join(' ')}`);
+  }
+
+  assert.throws(
+    () => createVisualTestUserWithCleanup(
+      runWp,
+      {
+        displayName: 'EasyMDE Phase 0 Test User',
+        email: 'phase-0@example.test',
+        password: 'synthetic-password',
+        username: 'phase-0-user'
+      }
+    ),
+    (error) => error === createFailure
+  );
+
+  assert.equal(accountId, '');
+});
+
+test('visual capture removes its fixed account when artifact preparation fails', async () => {
+  const prepareFailure = new Error('visual evidence directory creation failed');
+  let accountId = '';
+  let captureAttempted = false;
+
+  function runWp(args) {
+    if (args[0] === 'user' && args[1] === 'list') {
+      return accountId;
+    }
+    if (args[0] === 'user' && args[1] === 'create') {
+      accountId = '42';
+      return accountId;
+    }
+    if (args[0] === 'post' && args[1] === 'list') {
+      return '';
+    }
+    if (args[0] === 'user' && args[1] === 'delete') {
+      accountId = '';
+      return '';
+    }
+
+    throw new Error(`Unexpected WP command: ${args.join(' ')}`);
+  }
+
+  await assert.rejects(
+    () => runVisualCaptureLifecycle(
+      {
+        account: {
+          displayName: 'EasyMDE Visual Capture',
+          email: 'easymde-visual-capture@example.test',
+          password: 'synthetic-password',
+          username: 'easymde-visual-capture'
+        },
+        preflight: () => {},
+        prepare: () => {
+          throw prepareFailure;
+        },
+        runWp
+      },
+      async () => {
+        captureAttempted = true;
+      }
+    ),
+    (error) => error === prepareFailure
+  );
+
+  assert.equal(accountId, '');
+  assert.equal(captureAttempted, false);
+});
+
+test('visual capture reports both operation and account cleanup failures', async () => {
+  const createFailure = new Error('wp user create failed after commit');
+  const cleanupFailure = new Error('wp post list failed during cleanup');
+  let accountId = '';
+
+  function runWp(args) {
+    if (args[0] === 'user' && args[1] === 'list') {
+      return accountId;
+    }
+    if (args[0] === 'user' && args[1] === 'create') {
+      accountId = '42';
+      throw createFailure;
+    }
+    if (args[0] === 'post' && args[1] === 'list') {
+      throw cleanupFailure;
+    }
+
+    throw new Error(`Unexpected WP command: ${args.join(' ')}`);
+  }
+
+  await assert.rejects(
+    () => runVisualCaptureLifecycle(
+      {
+        account: {
+          displayName: 'EasyMDE Visual Capture',
+          email: 'easymde-visual-capture@example.test',
+          password: 'synthetic-password',
+          username: 'easymde-visual-capture'
+        },
+        preflight: () => {},
+        prepare: () => {},
+        runWp
+      },
+      async () => {}
+    ),
+    (error) => {
+      assert.equal(error instanceof AggregateError, true);
+      assert.deepEqual(error.errors, [createFailure, cleanupFailure]);
+      return true;
+    }
+  );
+
+  assert.equal(accountId, '42');
+});
+
+test('visual capture rejects a drifting Reference before account creation', async () => {
+  const expected = {
+    externalHttpBlocked: true,
+    fixtureContractSha256: '1'.repeat(64),
+    fixtureIdentity: 'editor-phase-0-synthetic-v1',
+    locale: 'en_US',
+    phpVersion: '8.3.20',
+    pluginVersion: '0.1.8',
+    releaseSha256: '2'.repeat(64),
+    sourceCommit: '3'.repeat(40),
+    wordpressVersion: '6.7'
+  };
+  let createAttempted = false;
+  let artifactPathCreated = false;
+  const testInfo = {
+    outputPath() {
+      artifactPathCreated = true;
+      return 'visual-evidence';
+    }
+  };
+
+  await assert.rejects(
+    () => runVisualCaptureLifecycle(
+      {
+        account: {
+          displayName: 'EasyMDE Visual Capture',
+          email: 'easymde-visual-capture@example.test',
+          password: 'synthetic-password',
+          username: 'easymde-visual-capture'
+        },
+        preflight: () => validateReferenceCaptureRuntime(
+          { ...expected, sourceCommit: '4'.repeat(40) },
+          expected
+        ),
+        prepare: () => {
+          testInfo.outputPath('visual-evidence');
+        },
+        runWp: (args) => {
+          if (args[0] === 'user' && args[1] === 'create') {
+            createAttempted = true;
+          }
+          return '';
+        }
+      },
+      async () => {}
+    ),
+    /sourceCommit does not match the fixed Reference contract/
+  );
+
+  assert.equal(createAttempted, false);
+  assert.equal(artifactPathCreated, false);
 });
 
 test('editor visual contract rejects an incomplete browser failure fixture', () => {

@@ -248,7 +248,7 @@ EASYMDE_E2E_WP_CLI="$PWD/scripts/editor-visual-wp-cli.sh" \
 npx playwright test tests/e2e/editor-visual-capture.spec.mjs
 ```
 
-The capture test fixes browser time, uses only synthetic content, exercises the declared full-page/component/immersive states, checks the actual Chromium version, and writes PNG files plus `editor-visual-manifest.json` under `test-results/playwright/`.
+The capture test first uses the read-only `reference-runtime` environment command to compare the installed fixture, release ZIP, source commit, plugin, WordPress, PHP, locale, and blocked-external-HTTP identities with the fixed Reference contract. It fails before creating the synthetic capture account or writing capture artifacts when that identity drifts. The test then fixes browser time, uses only synthetic content, exercises the declared full-page/component/immersive states, checks the actual Chromium version, and writes PNG files plus `editor-visual-manifest.json` under `test-results/playwright/`. The fixed capture account is resolved by username and removed with its authored content even when account creation reports a failure after committing the user.
 
 Screenshots, overlays, pixel diffs, traces, videos, storage state, and browser profiles are temporary test or CI artifacts. They are excluded from the installable ZIP and are not tracked in Git. Only the capture rules, synthetic fixture, state matrix, reference identity, and Manifest Schema are repository sources.
 

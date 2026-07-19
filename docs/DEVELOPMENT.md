@@ -55,7 +55,10 @@ source and that no unexpected file exists within a managed directory:
 
 ```bash
 npm run assets:check
+npm run frontend:check
 ```
+
+The frontend check uses the single root npm project. It type-checks `frontend/` with strict TypeScript and validates the test-only Vite and WordPress React build contract under `.cache/easymde-frontend-contract/`; it does not mount or enqueue a React application.
 
 `scripts/frontend-runtime-assets.mjs` is the single manifest for package
 sources, runtime destinations, purpose, license, notice location, and release

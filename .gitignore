@@ -6,6 +6,7 @@ node_modules/
 dist/
 build/
 coverage/
+.cache/
 test-results/
 playwright-report/
 .phpunit.result.cache

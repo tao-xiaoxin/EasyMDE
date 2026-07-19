@@ -3,9 +3,15 @@
   "private": true,
   "version": "0.1.8",
   "description": "Local frontend assets for the EasyMDE WordPress plugin.",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "prepare:assets": "node scripts/copy-vendor-assets.mjs",
     "assets:check": "node scripts/copy-vendor-assets.mjs --check",
+    "typecheck:frontend": "tsc --noEmit -p frontend/tsconfig.json",
+    "build:frontend-contract": "vite build --config frontend/vite.config.ts && node scripts/verify-frontend-build.mjs",
+    "frontend:check": "npm run typecheck:frontend && npm run build:frontend-contract",
     "build:release": "node scripts/build-release.mjs",
     "build:source-archives": "node scripts/build-source-archives.mjs",
     "i18n:make-pot": "node scripts/i18n.mjs make-pot",
@@ -23,6 +29,14 @@
     "mermaid": "^10.9.3"
   },
   "devDependencies": {
-    "@playwright/test": "^1.61.1"
+    "@playwright/test": "^1.61.1",
+    "@types/node": "20.19.43",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@wordpress/element": "6.8.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "7.0.2",
+    "vite": "8.1.5"
   }
 }

@@ -294,6 +294,11 @@ test('release build succeeds for a complete runtime fixture', () => {
 
   try {
     createCompleteFixture(root);
+    writeText(root, 'frontend/tsconfig.json', '{"compilerOptions":{"strict":true}}\n');
+    writeText(root, 'frontend/vite.config.ts', 'export default {};\n');
+    writeText(root, 'frontend/test/build-contract/entry.tsx', 'export const fixture = true;\n');
+    writeText(root, 'frontend/test/build-contract/fixture.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>\n');
+    writeText(root, '.cache/easymde-frontend-contract/manifest.json', '{}\n');
     const legacyZipPath = join(root, 'dist/easymde.zip');
     const canDistinguishLegacyZip = isCaseSensitiveFilesystem(root);
 
@@ -334,6 +339,8 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.equal(entries.some((entry) => entry.includes('/.git/')), false);
     assert.equal(entries.some((entry) => entry.includes('/.github/')), false);
     assert.equal(entries.some((entry) => entry.includes('/tests/')), false);
+    assert.equal(entries.some((entry) => entry.startsWith('easymde/frontend/')), false);
+    assert.equal(entries.some((entry) => entry.includes('/.cache/')), false);
     assert.deepEqual(findMissingReleaseRequirements(root), []);
   } finally {
     rmSync(root, { recursive: true, force: true });

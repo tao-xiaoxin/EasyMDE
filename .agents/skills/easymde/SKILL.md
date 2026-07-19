@@ -1209,7 +1209,7 @@ WordPress 6.7 registers `@wordpress/element` as the classic `wp-element` Script 
 For every strategy:
 
 - use the WordPress React runtime;
-- correctly externalize or map `react`, `react-dom`, `@wordpress/element`, and the JSX runtime;
+- correctly externalize or map `react`, `react-dom`, and `@wordpress/element`, and configure the selected JSX transform without bundling React or assuming an unavailable WordPress global;
 - generate and verify Manifest and dependency metadata;
 - keep primary WordPress handles stable;
 - allow hashed chunks only with a Manifest-backed loader;
@@ -1401,14 +1401,15 @@ Enforce when tooling exists:
 - PHP-to-TypeScript contract parity;
 - focused frontend package impact against the live release owners.
 
-The live `package.json` does not yet provide React, TypeScript, Vite,
-type-check, lint, or frontend-build scripts. The first focused frontend build
-implementation must add and execute the applicable gates before claiming them,
-and update the live release owners, package predicates, and tests for the new
-layout. The installable ZIP must reject TypeScript and React source, tests,
-source maps, Vite caches, and development-server metadata; source archives may
-include intentionally tracked `frontend/` source. Exact current inclusion,
-exclusion, build, and validation behavior belongs to
+The live root `package.json` provides strict TypeScript, an independent
+`tsc --noEmit` gate, Vite, and a test-only WordPress Classic Script build
+contract. It does not yet provide a production React entry, Root, Feature, or
+lint pipeline. A focused migration creates production paths only for a real
+consumer and must update the live release owners, package predicates, and tests
+for that layout. The installable ZIP must reject TypeScript and React source,
+tests, source maps, Vite caches, and development-server metadata; source
+archives may include intentionally tracked `frontend/` source. Exact current
+inclusion, exclusion, build, and validation behavior belongs to
 `docs/TESTING_AND_RELEASE.md`, `scripts/build-release.mjs`, and
 `scripts/build-source-archives.mjs`.
 

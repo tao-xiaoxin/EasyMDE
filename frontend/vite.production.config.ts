@@ -36,6 +36,7 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: true,
       manifest: 'manifest.json',
       sourcemap: false,
+      assetsInlineLimit: 0,
       rollupOptions: {
         input: { toolbar: resolve(repositoryRoot, sourceEntry) },
         external: [...reactExternals],

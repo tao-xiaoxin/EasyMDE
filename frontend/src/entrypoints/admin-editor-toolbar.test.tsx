@@ -13,6 +13,12 @@ const bootstrap = {
 };
 
 describe('createAdminEditorToolbarBridge', () => {
+  it('rejects invalid bootstrap before creating a mountable bridge', () => {
+    expect(() => createAdminEditorToolbarBridge(null)).toThrowError(
+      expect.objectContaining({ code: 'invalid-bootstrap' })
+    );
+  });
+
   it('signals readiness only after React commits and returns idempotent teardown', async () => {
     const bridge = createAdminEditorToolbarBridge(bootstrap);
     const container = document.createElement('div');

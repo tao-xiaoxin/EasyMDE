@@ -2,6 +2,12 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import {
+  findFrontendAssetPackageMismatches,
+  frontendRuntimeAssets,
+  validateFrontendAssetManifest
+} from './frontend-runtime-assets.mjs';
+
 const defaultRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const composerPurposes = {
@@ -15,66 +21,6 @@ const composerPurposes = {
   'symfony/deprecation-contracts': 'Deprecation helper contracts used by runtime dependencies.',
   'symfony/polyfill-php80': 'PHP 8.0 compatibility polyfills required by runtime dependencies on PHP 7.4.'
 };
-
-const frontendAssets = [
-  {
-    packageName: '@highlightjs/cdn-assets',
-    displayName: 'Highlight.js CDN assets',
-    assetPaths: 'assets/vendor/highlight/highlight.min.js, assets/vendor/highlight/styles/*.css',
-    purpose: 'Local syntax highlighting script and bundled Highlight.js code themes.',
-    noticeLocation: 'assets/vendor/highlight/LICENSE'
-  },
-  {
-    packageName: 'katex',
-    displayName: 'KaTeX',
-    assetPaths: 'assets/vendor/katex/katex.min.js, assets/vendor/katex/katex.min.css, assets/vendor/katex/fonts/',
-    purpose: 'Local math rendering script, stylesheet, and fonts.',
-    noticeLocation: 'assets/vendor/katex/LICENSE'
-  },
-  {
-    packageName: 'mermaid',
-    displayName: 'Mermaid',
-    assetPaths: 'assets/vendor/mermaid/mermaid.min.js',
-    purpose: 'Local diagram rendering script.',
-    noticeLocation: 'assets/vendor/mermaid/LICENSE'
-  },
-  {
-    displayName: 'Inter Latin variable font',
-    version: '4.1',
-    source: 'https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7W0Q5nw.woff2',
-    license: 'OFL-1.1',
-    assetPaths: 'assets/vendor/inter/inter-latin-variable.woff2',
-    purpose: 'Theme-isolated typography for the immersive writing workspace.',
-    noticeLocation: 'assets/vendor/inter/LICENSE'
-  },
-  {
-    displayName: 'JetBrains Mono Latin variable font',
-    version: '2.304',
-    source: 'https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPxDcwgknk-4.woff2',
-    license: 'OFL-1.1',
-    assetPaths: 'assets/vendor/jetbrains-mono/jetbrains-mono-latin-variable.woff2',
-    purpose: 'Theme-isolated source and statistics typography for the immersive writing workspace.',
-    noticeLocation: 'assets/vendor/jetbrains-mono/LICENSE'
-  },
-  {
-    displayName: 'Lora Latin variable font',
-    version: 'Google Fonts v37',
-    source: 'https://fonts.gstatic.com/s/lora/v37/',
-    license: 'OFL-1.1',
-    assetPaths: 'assets/vendor/lora/lora-latin-variable.woff2, assets/vendor/lora/lora-latin-italic-variable.woff2',
-    purpose: 'Local serif typography for the immersive revision preview.',
-    noticeLocation: 'assets/vendor/lora/LICENSE'
-  },
-  {
-    displayName: 'Lucide icon paths',
-    version: '0.487.0',
-    source: 'https://github.com/lucide-icons/lucide/tree/0.487.0',
-    license: 'ISC',
-    assetPaths: 'assets/js/admin/immersive-workspace.js',
-    purpose: 'Locally embedded SVG path data for the isolated immersive workspace controls.',
-    noticeLocation: 'assets/vendor/lucide/LICENSE'
-  }
-];
 
 function readJson(root, path) {
   return JSON.parse(readFileSync(join(root, path), 'utf8'));
@@ -112,27 +58,37 @@ export function composerRows(root = defaultRoot) {
 }
 
 export function frontendRows(root = defaultRoot) {
+  validateFrontendAssetManifest();
+
+  const mismatches = findFrontendAssetPackageMismatches(root);
+  if (mismatches.length) {
+    throw new Error([
+      'Frontend runtime notice metadata is incomplete:',
+      ...mismatches.map((mismatch) => `- ${mismatch.message}`)
+    ].join('\n'));
+  }
+
   const lock = readJson(root, 'package-lock.json');
   const packages = lock.packages || {};
 
-  return frontendAssets.map((asset) => {
-    let metadata = asset;
+  return frontendRuntimeAssets.map((component) => {
+    let metadata = component;
 
-    if (asset.packageName) {
-      metadata = packages[`node_modules/${asset.packageName}`];
+    if (component.packageName) {
+      metadata = packages[`node_modules/${component.packageName}`];
       if (!metadata) {
-        throw new Error(`Missing ${asset.packageName} in package-lock.json.`);
+        throw new Error(`Missing ${component.packageName} in package-lock.json.`);
       }
     }
 
     return {
-      name: asset.displayName,
+      name: component.displayName,
       version: metadata.version,
       source: metadata.resolved || metadata.source || 'See package-lock.json',
       license: licenseText(metadata.license),
-      purpose: asset.purpose,
-      bundled: `Yes, copied to ${asset.assetPaths}`,
-      notice: asset.noticeLocation
+      purpose: component.purpose,
+      bundled: `Yes, copied to ${component.bundledPaths}`,
+      notice: component.noticeLocation
     };
   });
 }

@@ -3,6 +3,12 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import {
+  findFrontendAssetMismatches,
+  frontendRuntimeReleaseRequirements
+} from './frontend-runtime-assets.mjs';
+import { checkNotice } from './third-party-notices.mjs';
+
 const defaultRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const registryFiles = [
   'src/Theme/ArticleThemeRegistry.php',
@@ -56,22 +62,6 @@ const baseRequirements = [
   { path: 'composer.lock', type: 'file' },
   { path: 'vendor/autoload.php', type: 'file' },
   { path: 'vendor/composer/platform_check.php', type: 'file' },
-  { path: 'assets/vendor/highlight/highlight.min.js', type: 'file' },
-  { path: 'assets/vendor/highlight/LICENSE', type: 'file' },
-  { path: 'assets/vendor/inter/inter-latin-variable.woff2', type: 'file' },
-  { path: 'assets/vendor/inter/LICENSE', type: 'file' },
-  { path: 'assets/vendor/jetbrains-mono/jetbrains-mono-latin-variable.woff2', type: 'file' },
-  { path: 'assets/vendor/jetbrains-mono/LICENSE', type: 'file' },
-  { path: 'assets/vendor/lora/lora-latin-variable.woff2', type: 'file' },
-  { path: 'assets/vendor/lora/lora-latin-italic-variable.woff2', type: 'file' },
-  { path: 'assets/vendor/lora/LICENSE', type: 'file' },
-  { path: 'assets/vendor/lucide/LICENSE', type: 'file' },
-  { path: 'assets/vendor/katex/katex.min.css', type: 'file' },
-  { path: 'assets/vendor/katex/katex.min.js', type: 'file' },
-  { path: 'assets/vendor/katex/LICENSE', type: 'file' },
-  { path: 'assets/vendor/katex/fonts', type: 'non-empty-dir' },
-  { path: 'assets/vendor/mermaid/mermaid.min.js', type: 'file' },
-  { path: 'assets/vendor/mermaid/LICENSE', type: 'file' },
   { path: 'languages/easymde.pot', type: 'file' },
   { path: 'languages/easymde-zh_CN.po', type: 'file' },
   { path: 'languages/easymde-zh_CN.mo', type: 'file' }
@@ -409,14 +399,18 @@ export function collectReleaseRequirements(root = defaultRoot) {
       type: directoryPackagePaths.has(path) ? 'dir' : 'file'
     })),
     ...baseRequirements,
+    ...frontendRuntimeReleaseRequirements(),
     ...composerPackageRequirements(root),
     ...runtimeAssetRequirements(root),
     ...registeredAssetRequirements(root)
   ]);
 }
 
-export function findMissingReleaseRequirements(root = defaultRoot) {
-  return collectReleaseRequirements(root).filter((requirement) => {
+export function findMissingReleaseRequirements(
+  root = defaultRoot,
+  requirements = collectReleaseRequirements(root)
+) {
+  return requirements.filter((requirement) => {
     const absolute = fromRoot(root, requirement.path);
     if (!existsSync(absolute)) {
       return true;
@@ -434,8 +428,8 @@ export function findMissingReleaseRequirements(root = defaultRoot) {
   });
 }
 
-function assertReleaseRequirements(root) {
-  const missing = findMissingReleaseRequirements(root);
+function assertReleaseRequirements(root, requirements) {
+  const missing = findMissingReleaseRequirements(root, requirements);
 
   if (!missing.length) {
     return;
@@ -450,6 +444,22 @@ function assertReleaseRequirements(root) {
   );
   error.missing = missing;
   throw error;
+}
+
+function assertFrontendAssetsCurrent(root) {
+  const mismatches = findFrontendAssetMismatches(root);
+
+  if (!mismatches.length) {
+    return;
+  }
+
+  throw new Error(
+    [
+      'Release build requires local frontend runtime assets to match their locked sources:',
+      ...mismatches.map((mismatch) => `- ${mismatch.message}`),
+      'Run npm run prepare:assets, review the tracked changes, and rerun npm run assets:check.'
+    ].join('\n')
+  );
 }
 
 function assertZipCommand() {
@@ -520,7 +530,10 @@ export function buildRelease(options = {}) {
 
   assertReleaseVersionConsistency(root);
   assertNoInstalledComposerDevPackages(root);
-  assertReleaseRequirements(root);
+  const releaseRequirements = collectReleaseRequirements(root);
+  assertFrontendAssetsCurrent(root);
+  checkNotice(root);
+  assertReleaseRequirements(root, releaseRequirements);
 
   rmSync(packageRoot, { recursive: true, force: true });
   mkdirSync(packageRoot, { recursive: true });

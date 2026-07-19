@@ -128,11 +128,17 @@ For JavaScript, assets, notices, or release scripts, start with:
 
 ```bash
 npm install
+npm run assets:check
 git ls-files -z -- '*.js' '*.mjs' | xargs -0 -n1 node --check
 npm run i18n:check
 npm run notices:check
 npm test
 ```
+
+Run `npm run prepare:assets` only when intentionally updating a locked
+runtime package or its manifest-owned local files. Review and commit the
+resulting asset, lockfile, notice, and manifest changes together; CI and
+release validation do not repair drift.
 
 For documentation-only changes, run:
 

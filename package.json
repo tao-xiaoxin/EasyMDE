@@ -5,6 +5,7 @@
   "description": "Local frontend assets for the EasyMDE WordPress plugin.",
   "scripts": {
     "prepare:assets": "node scripts/copy-vendor-assets.mjs",
+    "assets:check": "node scripts/copy-vendor-assets.mjs --check",
     "build:release": "node scripts/build-release.mjs",
     "build:source-archives": "node scripts/build-source-archives.mjs",
     "i18n:make-pot": "node scripts/i18n.mjs make-pot",
@@ -12,14 +13,13 @@
     "i18n:check": "node scripts/i18n.mjs check",
     "notices:write": "node scripts/third-party-notices.mjs --write",
     "notices:check": "node scripts/third-party-notices.mjs --check",
-    "postinstall": "node scripts/copy-vendor-assets.mjs",
     "test": "node --test tests/Node/*.test.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "^11.11.1",
-    "highlight.js": "^11.11.1",
     "katex": "^0.16.22",
+    "lucide-static": "0.487.0",
     "mermaid": "^10.9.3"
   },
   "devDependencies": {

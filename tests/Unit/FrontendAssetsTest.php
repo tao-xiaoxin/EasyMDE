@@ -2,6 +2,7 @@
 
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Frontend\FrontendAssets;
+use EasyMDE\Support\Asset;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
 use EasyMDE\Theme\CustomCssPolicy;
@@ -155,6 +156,44 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertFalse(wp_script_is('easymde-mermaid', 'enqueued'));
         $this->assertFalse(wp_script_is('easymde-mermaid-renderer', 'enqueued'));
         $this->assertSame(array(), wp_scripts()->registered['easymde-enhancements']->deps);
+    }
+
+    public function test_combined_render_assets_are_local_and_enqueued_once()
+    {
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+        $markdown = "```php\necho 'hello';\n```\n\nInline \$a+b\$.\n\n```mermaid\ngraph TD; A-->B;\n```";
+
+        $assets->enqueue_render_assets(0, $markdown);
+        $assets->enqueue_render_assets(0, $markdown);
+
+        $expected_scripts = array(
+            'easymde-highlight' => 'assets/vendor/highlight/highlight.min.js',
+            'easymde-katex' => 'assets/vendor/katex/katex.min.js',
+            'easymde-math-renderer' => 'assets/js/frontend/math.js',
+            'easymde-mermaid' => 'assets/vendor/mermaid/mermaid.min.js',
+            'easymde-mermaid-renderer' => 'assets/js/frontend/mermaid.js',
+        );
+        $expected_styles = array(
+            'easymde-code-frame' => 'assets/css/frontend/code-frame.css',
+            'easymde-highlight-theme' => 'assets/vendor/highlight/styles/atom-one-dark.min.css',
+            'easymde-math' => 'assets/css/frontend/math.css',
+            'easymde-katex' => 'assets/vendor/katex/katex.min.css',
+        );
+
+        foreach ($expected_scripts as $handle => $path) {
+            $this->assertTrue(wp_script_is($handle, 'enqueued'));
+            $this->assertSame(Asset::url($path), wp_scripts()->registered[$handle]->src);
+            $this->assertSame(1, count(array_keys(wp_scripts()->queue, $handle, true)));
+        }
+
+        foreach ($expected_styles as $handle => $path) {
+            $this->assertTrue(wp_style_is($handle, 'enqueued'));
+            $this->assertSame(Asset::url($path), wp_styles()->registered[$handle]->src);
+            $this->assertSame(1, count(array_keys(wp_styles()->queue, $handle, true)));
+        }
     }
 
     public function test_feature_manifest_distinguishes_plain_code_math_and_mermaid()

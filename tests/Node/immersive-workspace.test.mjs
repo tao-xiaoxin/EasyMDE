@@ -677,8 +677,8 @@ test('header and toolbar actions follow the current reference layout order', () 
   assert.match(headerMarkup, /data-view="preview"[^>]*title="' \+ label\('previewMode', 'Preview'\) \+ '"[^>]*aria-label="' \+ label\('previewMode', 'Preview'\) \+ '"/);
   assert.match(headerMarkup, /data-action="ai"[^>]*title="' \+ label\('aiAssistant', 'AI Assistant'\) \+ '"[^>]*aria-label="' \+ label\('aiAssistant', 'AI Assistant'\) \+ '"/);
   assert.match(source, /data-action="exit"[\s\S]*?iconMarkup\('maximize', 14, 2\)/);
-  assert.match(source, /sparkles:\s*'<path d="M9\.937 15\.5/);
-  assert.match(source, /maximize:\s*'<path d="M8 3H5a2 2 0 0 0-2 2v3/);
+  assert.match(source, /'sparkles':\s*'<path d="M9\.937 15\.5/);
+  assert.match(source, /'maximize':\s*'<path d="M8 3H5a2 2 0 0 0-2 2v3/);
   assert.doesNotMatch(headerMarkup, /data-action="(?:theme|font|history|copy-markdown|wechat|settings|mobile-preview)"/);
   assert.match(
     toolbarMarkup,
@@ -715,8 +715,8 @@ test('header and toolbar actions follow the current reference layout order', () 
   assert.doesNotMatch(toolbarMarkup, /data-action="(?:copy-markdown|ai)"/);
   assert.doesNotMatch(toolbarMarkup, /data-action="mobile-preview"/);
   assert.match(toolbarMarkup, /data-action="settings"[^>]*>[\s\S]*?iconMarkup\('settings', 14, 2\)[\s\S]*?iconMarkup\('chevron-down', 10, 2\.5\)/);
-  assert.match(source, /settings:\s*'<path d="M12\.22 2h-\.44/);
-  assert.match(source, /settings:\s*'[\s\S]*?\.22-\.39a2 2 0 0 0-\.73-2\.73l-\.15-\.08[\s\S]*?v-\.5a2 2 0 0 1 1-1\.74/);
+  assert.match(source, /'settings':\s*'<path d="M12\.22 2h-\.44/);
+  assert.match(source, /'settings':\s*'[\s\S]*?\.22-\.39a2 2 0 0 0-\.73-2\.73l-\.15-\.08[\s\S]*?v-\.5a2 2 0 0 1 1-1\.74/);
   assert.doesNotMatch(toolbarMarkup, /iconMarkup\('sliders-horizontal'/);
 
   assert.match(css, /__save-status[^}]*height:\s*26\.25px;/s);
@@ -1095,7 +1095,7 @@ test('AI assistant matches the reference local-only panel and interaction struct
   assert.match(css, /button\.easymde-immersive-workspace__ai-attachment\[hidden\]\s*\{\s*display:\s*none;\s*\}/s);
   assert.match(aiMarkup, /data-ai-attachment title="' \+ label\('aiRemoveAttachment', 'Remove attachment'\) \+ '" hidden/);
   assert.match(source, /iconMarkup\('paperclip', 12, 2\)[\s\S]*attachment_name\.textContent = String\(name\);[\s\S]*iconMarkup\('x', 11, 2\)/);
-  assert.match(source, /paperclip: '<path d="M13\.234 20\.252 21 12\.3"><\/path><path d="m16 6-8\.414 8\.586/);
+  assert.match(source, /'paperclip': '<path d="M13\.234 20\.252 21 12\.3"><\/path><path d="m16 6-8\.414 8\.586/);
   assert.match(css, /button\.easymde-immersive-workspace__ai-attachment\s*\{[^}]*top:\s*37\.5px;[^}]*left:\s*52px;[^}]*display:\s*flex;[^}]*max-width:\s*210px;[^}]*gap:\s*5\.625px;[^}]*border-radius:\s*3\.625px;[^}]*cursor:\s*default;[^}]*font-weight:\s*500;[^}]*line-height:\s*15\.75px;/s);
   assert.match(css, /__ai-mode-trigger\s*\{[^}]*height:\s*33\.75px;[^}]*min-width:\s*96px;[^}]*padding:\s*0 9\.375px;[^}]*border:\s*1px solid #e1e5ee;[^}]*border-radius:\s*7px;/s);
   assert.match(css, /__ai-config-trigger\s*\{[^}]*height:\s*30px;[^}]*max-width:\s*196px;[^}]*font-size:\s*11\.5px;/s);
@@ -1125,7 +1125,7 @@ test('publish dialog uses the reference shell hierarchy while preserving native 
   assert.match(css, /button\.easymde-immersive-workspace__publish-ai-summary:disabled\s*\{[^}]*cursor:\s*not-allowed;[^}]*opacity:\s*0\.55;/s);
   assert.doesNotMatch(source, /action === 'ai-generate-summary'/);
   assert.doesNotMatch(publishMarkup, /is-featured[^>]*>[\s\S]*?publish-section-title[^>]*>[\s\S]*?iconMarkup\('image-plus'/);
-  assert.match(source, /hash:\s*'<line x1="4" x2="20" y1="9" y2="9">/);
+  assert.match(source, /'hash':\s*'<line x1="4" x2="20" y1="9" y2="9">/);
   assert.match(source, /'list-checks':\s*'<path d="m3 17 2 2 4-4">/);
   assert.match(source, /'image-plus':\s*'<path d="M16 5h6">/);
   assert.match(source, /throw new Error\('Unknown immersive workspace icon: ' \+ name\)/);

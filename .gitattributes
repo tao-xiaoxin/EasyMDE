@@ -1,0 +1,7 @@
+assets/vendor/** -text
+assets/vendor/**/*.css text eol=lf -whitespace
+assets/vendor/**/*.js text eol=lf -whitespace
+assets/vendor/**/LICENSE text eol=lf -whitespace
+scripts/vendor-fonts/** -text
+scripts/vendor-fonts/**/LICENSE text eol=lf -whitespace
+scripts/vendor-licenses/** text eol=lf -whitespace

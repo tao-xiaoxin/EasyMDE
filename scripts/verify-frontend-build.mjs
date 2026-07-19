@@ -141,7 +141,9 @@ function assertAssetList(value, expectedCount, label) {
     throw new Error(`${label} must contain exactly ${expectedCount} asset paths.`);
   }
 
-  value.forEach((path) => assertRelativeAssetPath(path, `${label} path`));
+  value.forEach((path) => {
+    assertRelativeAssetPath(path, `${label} path`);
+  });
 
   return value;
 }

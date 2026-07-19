@@ -150,12 +150,11 @@ function HeadingMenu({ commands, label, shortcuts, executeCommand }: HeadingMenu
         onMouseDown={(event) => event.preventDefault()}
         onClick={(event) => {
           event.stopPropagation();
-          setIsOpen((open) => {
-            if (!open) {
-              initialFocus.current = 'first';
-            }
-            return !open;
-          });
+          const nextIsOpen = !isOpen;
+          if (nextIsOpen) {
+            initialFocus.current = 'first';
+          }
+          setIsOpen(nextIsOpen);
         }}
         onKeyDown={(event) => {
           if ('ArrowDown' !== event.key && 'ArrowUp' !== event.key) {

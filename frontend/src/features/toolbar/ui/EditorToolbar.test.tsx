@@ -60,7 +60,12 @@ describe('EditorToolbar', () => {
   it('exposes heading menu state and returns focus on Escape', async () => {
     const executeCommand = vi.fn();
     const user = userEvent.setup();
-    render(<EditorToolbar bootstrap={bootstrap} platform="win" executeCommand={executeCommand} />);
+    render(
+      <div>
+        <EditorToolbar bootstrap={bootstrap} platform="win" executeCommand={executeCommand} />
+        <button type="button">外部控件</button>
+      </div>
+    );
     const trigger = screen.getByRole('button', { name: '标题' });
 
     await user.click(trigger);
@@ -82,5 +87,14 @@ describe('EditorToolbar', () => {
     await user.keyboard('{Escape}');
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(trigger);
+
+    await user.keyboard('{ArrowUp}');
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(heading);
+
+    const outsideControl = screen.getByRole('button', { name: '外部控件' });
+    await user.click(outsideControl);
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(outsideControl);
   });
 });

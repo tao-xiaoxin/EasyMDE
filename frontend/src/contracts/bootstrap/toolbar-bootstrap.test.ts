@@ -54,4 +54,24 @@ describe('parseToolbarBootstrap', () => {
       })
     ).toThrowError(new ToolbarBootstrapError('invalid-command-label'));
   });
+
+  it.each([
+    ['invalid-bootstrap', null],
+    ['invalid-commands', { ...validBootstrap, commands: {} }],
+    ['invalid-shortcuts', { ...validBootstrap, shortcuts: [] }],
+    ['invalid-strings', { ...validBootstrap, strings: [] }],
+    [
+      'invalid-command-shortcut',
+      {
+        ...validBootstrap,
+        shortcuts: {
+          ...validBootstrap.shortcuts,
+          bold: { win: 42, mac: 'Cmd+B' }
+        }
+      }
+    ],
+    ['invalid-headings-label', { ...validBootstrap, strings: { headings: '' } }]
+  ])('reports the stable %s boundary error', (code, input) => {
+    expect(() => parseToolbarBootstrap(input)).toThrowError(new ToolbarBootstrapError(code));
+  });
 });

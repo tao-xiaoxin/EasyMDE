@@ -1,0 +1,274 @@
+{
+  "schemaVersion": 1,
+  "identity": "editor-phase-0-synthetic-v1",
+  "canonicalMarkdown": "docs/examples/markdown-full-capability-test.md",
+  "seed": {
+    "schemaVersion": 1,
+    "optionName": "easymde_editor_visual_fixture",
+    "users": [
+      {
+        "key": "administrator",
+        "login": "easymde-visual-administrator",
+        "role": "administrator"
+      },
+      {
+        "key": "restricted-author",
+        "login": "easymde-visual-restricted-author",
+        "role": "contributor"
+      },
+      {
+        "key": "lock-owner",
+        "login": "easymde-visual-lock-owner",
+        "role": "editor"
+      }
+    ],
+    "categories": [
+      {
+        "key": "parent",
+        "name": "Synthetic Parent",
+        "slug": "easymde-visual-parent"
+      },
+      {
+        "key": "child",
+        "name": "Synthetic Child",
+        "slug": "easymde-visual-child",
+        "parent": "parent"
+      }
+    ],
+    "tags": [
+      {
+        "name": "Synthetic Tag",
+        "slug": "easymde-visual-tag"
+      }
+    ],
+    "customCss": [
+      {
+        "id": "visual-valid",
+        "name": "Synthetic valid CSS",
+        "css": "h2 { color: #135e96; }",
+        "state": "valid"
+      },
+      {
+        "id": "visual-rejected",
+        "name": "Synthetic rejected CSS",
+        "css": "@import url('https://example.invalid/blocked.css');",
+        "state": "rejected"
+      },
+      {
+        "id": "visual-legacy-unparseable",
+        "name": "Synthetic legacy CSS",
+        "css": ".legacy { color: var(--synthetic-color);",
+        "state": "legacy-unparseable"
+      }
+    ],
+    "posts": [
+      {
+        "key": "easymde-markdown",
+        "slug": "easymde-visual-markdown",
+        "contentKind": "easymde",
+        "contentSource": "canonical",
+        "status": "draft"
+      },
+      {
+        "key": "ordinary-html",
+        "slug": "easymde-visual-ordinary-html",
+        "contentKind": "wordpress-html",
+        "contentSource": "ordinary-html",
+        "status": "draft"
+      },
+      {
+        "key": "empty",
+        "slug": "easymde-visual-empty",
+        "contentKind": "easymde",
+        "contentSource": "empty",
+        "status": "draft"
+      },
+      {
+        "key": "long-title",
+        "slug": "easymde-visual-long-title",
+        "contentKind": "easymde",
+        "contentSource": "short",
+        "status": "draft"
+      },
+      {
+        "key": "large-markdown",
+        "slug": "easymde-visual-large-markdown",
+        "contentKind": "easymde",
+        "contentSource": "canonical-repeat-3",
+        "status": "draft"
+      },
+      {
+        "key": "mixed-language",
+        "slug": "easymde-visual-mixed-language",
+        "contentKind": "easymde",
+        "contentSource": "mixed",
+        "status": "draft"
+      },
+      {
+        "key": "rtl",
+        "slug": "easymde-visual-rtl",
+        "contentKind": "easymde",
+        "contentSource": "rtl",
+        "status": "draft"
+      },
+      {
+        "key": "long-translation",
+        "slug": "easymde-visual-long-translation",
+        "contentKind": "easymde",
+        "contentSource": "long-translation",
+        "status": "draft"
+      },
+      {
+        "key": "published",
+        "slug": "easymde-visual-published",
+        "contentKind": "easymde",
+        "contentSource": "short",
+        "status": "publish"
+      },
+      {
+        "key": "private",
+        "slug": "easymde-visual-private",
+        "contentKind": "easymde",
+        "contentSource": "short",
+        "status": "private"
+      },
+      {
+        "key": "password-protected",
+        "slug": "easymde-visual-password-protected",
+        "contentKind": "easymde",
+        "contentSource": "short",
+        "status": "publish",
+        "password": "synthetic-visual-password"
+      },
+      {
+        "key": "scheduled",
+        "slug": "easymde-visual-scheduled",
+        "contentKind": "easymde",
+        "contentSource": "short",
+        "status": "future",
+        "date": "2030-01-01 00:00:00"
+      },
+      {
+        "key": "taxonomy-media",
+        "slug": "easymde-visual-taxonomy-media",
+        "contentKind": "easymde",
+        "contentSource": "local-image",
+        "status": "draft",
+        "categoryKeys": [
+          "child"
+        ],
+        "tagSlugs": [
+          "easymde-visual-tag"
+        ],
+        "excerpt": "Synthetic excerpt for deterministic editor coverage.",
+        "featuredImage": true
+      },
+      {
+        "key": "with-revisions",
+        "slug": "easymde-visual-with-revisions",
+        "contentKind": "easymde",
+        "contentSource": "short",
+        "status": "draft",
+        "revisionCount": 2
+      },
+      {
+        "key": "without-revisions",
+        "slug": "easymde-visual-without-revisions",
+        "contentKind": "easymde",
+        "contentSource": "short",
+        "status": "draft",
+        "revisionCount": 0
+      },
+      {
+        "key": "post-lock",
+        "slug": "easymde-visual-post-lock",
+        "contentKind": "easymde",
+        "contentSource": "short",
+        "status": "draft",
+        "lockOwner": "lock-owner"
+      }
+    ]
+  },
+  "documentStates": [
+    "new-empty-post",
+    "existing-easymde-markdown-post",
+    "ordinary-wordpress-html-post",
+    "empty-title",
+    "empty-body",
+    "long-title",
+    "large-markdown",
+    "mixed-chinese-english",
+    "rtl",
+    "long-translation"
+  ],
+  "markdownFeatures": [
+    "heading",
+    "bold",
+    "italic",
+    "strikethrough",
+    "unordered-list",
+    "ordered-list",
+    "blockquote",
+    "link",
+    "local-image",
+    "table",
+    "inline-code",
+    "code-block",
+    "mermaid",
+    "katex",
+    "toc"
+  ],
+  "appearanceStates": [
+    "all-registered-article-themes",
+    "all-registered-code-themes",
+    "default-font",
+    "windows-font",
+    "apple-font",
+    "serif-font",
+    "custom-font",
+    "fixed-mac-code-frame",
+    "custom-css-valid",
+    "custom-css-rejected",
+    "custom-css-legacy-unparseable"
+  ],
+  "wordpressStates": [
+    "draft",
+    "published",
+    "private",
+    "password-protected",
+    "scheduled",
+    "categories",
+    "tags",
+    "excerpt",
+    "featured-image",
+    "upload-capability",
+    "no-upload-capability",
+    "unfiltered-html-capability",
+    "no-unfiltered-html-capability",
+    "revisions",
+    "no-revisions",
+    "post-lock",
+    "nonce-refresh",
+    "authentication-loss"
+  ],
+  "browserFailureStates": [
+    "preview-pending",
+    "preview-failure",
+    "preview-stale-completion",
+    "network-slow",
+    "network-offline",
+    "storage-unavailable",
+    "storage-quota-failure",
+    "corrupt-local-draft",
+    "clipboard-failure",
+    "upload-failure"
+  ],
+  "syntheticValues": {
+    "emptyTitle": "",
+    "emptyBody": "",
+    "longTitle": "Deterministic visual baseline title repeated for wrapping and zoom verification Deterministic visual baseline title",
+    "mixedText": "EasyMDE 合成基线 mixed-language fixture",
+    "rtlText": "مرحبا بكم في اختبار EasyMDE",
+    "longTranslation": "Deterministic translated control label used only to verify wrapping without private content."
+  }
+}

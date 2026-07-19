@@ -12,7 +12,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class AdminAssets {
-	const CATEGORY_OPTIONS_CACHE_TTL = 300;
+	const CATEGORY_OPTIONS_CACHE_TTL    = 300;
+	const IMMERSIVE_WORKSPACE_AVAILABLE = false;
 
 	private $post_mode_controller;
 	private $frontend_assets;
@@ -171,32 +172,44 @@ final class AdminAssets {
 			'easymde-admin',
 			'EasyMDEConfig',
 			array(
-				'restUrl'                 => esc_url_raw( rest_url( 'easymde/v1/preview' ) ),
-				'nonce'                   => wp_create_nonce( 'wp_rest' ),
-				'features'                => $this->frontend_assets->get_feature_config( '' ),
-				'previewAssets'           => $this->frontend_assets->get_editor_preview_assets(),
-				'storage'                 => $this->get_storage_config( $post_id ),
-				'themeOptionsUrl'         => esc_url_raw( rest_url( 'easymde/v1/theme-options' ) ),
-				'customCssUrl'            => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
-				'customCssPreviewUrl'     => esc_url_raw( rest_url( 'easymde/v1/custom-css/preview' ) ),
-				'imageUploadUrl'          => esc_url_raw( rest_url( 'easymde/v1/media' ) ),
-				'uploadsBaseUrl'          => empty( $uploads['error'] ) ? esc_url_raw( $uploads['baseurl'] ) : '',
-				'mediaPickerScriptUrl'    => esc_url_raw( add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( 'assets/js/admin/media-picker.js' ) ) ),
-				'imagePasteScriptUrl'     => esc_url_raw( add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( 'assets/js/admin/image-paste.js' ) ) ),
-				'wechatExporterScriptUrl' => esc_url_raw( add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( 'assets/js/admin/wechat-exporter.js' ) ) ),
-				'imageUpload'             => $this->get_image_upload_config(),
-				'themeOptions'            => $this->theme_state_repository->get_theme_options_for_script( $post_id ),
-				'commands'                => $this->toolbar_registry->get_commands_for_script(),
-				'shortcuts'               => $this->settings_page->get_shortcut_config_for_script(),
-				'editorSettings'          => $this->settings_page->get_editor_settings(),
-				'categoryOptions'         => $category_options,
-				'categoryLoadError'       => $this->category_load_error,
-				'copy'                    => array(
+				'immersiveWorkspaceAvailable' => self::IMMERSIVE_WORKSPACE_AVAILABLE,
+				'restUrl'                     => esc_url_raw( rest_url( 'easymde/v1/preview' ) ),
+				'nonce'                       => wp_create_nonce( 'wp_rest' ),
+				'features'                    => $this->frontend_assets->get_feature_config( '' ),
+				'previewAssets'               => $this->frontend_assets->get_editor_preview_assets(),
+				'storage'                     => $this->get_storage_config( $post_id ),
+				'themeOptionsUrl'             => esc_url_raw( rest_url( 'easymde/v1/theme-options' ) ),
+				'customCssUrl'                => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
+				'customCssPreviewUrl'         => esc_url_raw( rest_url( 'easymde/v1/custom-css/preview' ) ),
+				'imageUploadUrl'              => esc_url_raw( rest_url( 'easymde/v1/media' ) ),
+				'uploadsBaseUrl'              => empty( $uploads['error'] ) ? esc_url_raw( $uploads['baseurl'] ) : '',
+				'mediaPickerScriptUrl'        => esc_url_raw( add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( 'assets/js/admin/media-picker.js' ) ) ),
+				'imagePasteScriptUrl'         => esc_url_raw( add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( 'assets/js/admin/image-paste.js' ) ) ),
+				'wechatExporterScriptUrl'     => esc_url_raw( add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( 'assets/js/admin/wechat-exporter.js' ) ) ),
+				'imageUpload'                 => $this->get_image_upload_config(),
+				'themeOptions'                => $this->theme_state_repository->get_theme_options_for_script( $post_id ),
+				'commands'                    => $this->toolbar_registry->get_commands_for_script(),
+				'shortcuts'                   => $this->settings_page->get_shortcut_config_for_script(),
+				'editorSettings'              => $this->settings_page->get_editor_settings(),
+				'categoryOptions'             => $category_options,
+				'categoryLoadError'           => $this->category_load_error,
+				'copy'                        => array(
 					'mode' => 'wechat-rich-text',
 				),
-				'shortcodeHelpers'        => $this->toolbar_registry->get_shortcode_helpers_for_script(),
-				'strings'                 => $this->get_strings(),
+				'shortcodeHelpers'            => $this->toolbar_registry->get_shortcode_helpers_for_script(),
+				'strings'                     => $this->get_strings(),
 			)
+		);
+		$this->add_immersive_availability_contract();
+	}
+
+	private function add_immersive_availability_contract() {
+		$availability = self::IMMERSIVE_WORKSPACE_AVAILABLE ? 'true' : 'false';
+
+		wp_add_inline_script(
+			'easymde-admin',
+			'window.EasyMDEConfig.immersiveWorkspaceAvailable = ' . $availability . ';',
+			'before'
 		);
 	}
 

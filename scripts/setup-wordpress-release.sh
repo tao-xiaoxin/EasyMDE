@@ -9,6 +9,7 @@ WP_ADMIN_USER="${EASYMDE_WP_ADMIN_USER:-admin}"
 WP_ADMIN_PASSWORD="${EASYMDE_WP_ADMIN_PASSWORD:-password}"
 WP_ADMIN_EMAIL="${EASYMDE_WP_ADMIN_EMAIL:-admin@example.test}"
 WP_VERSION="${EASYMDE_WP_VERSION:-latest}"
+WP_RUNTIME_OWNER="${EASYMDE_WP_RUNTIME_OWNER:-}"
 DB_NAME="${EASYMDE_DB_NAME:-easymde_release}"
 DB_USER="${EASYMDE_DB_USER:-root}"
 DB_PASS="${EASYMDE_DB_PASS:-root}"
@@ -61,6 +62,9 @@ wp config create \
 	--dbhost="${DB_HOST}" \
 	--skip-check \
 	--allow-root
+if [ "${EASYMDE_WP_BLOCK_EXTERNAL:-}" = "1" ]; then
+	wp config set WP_HTTP_BLOCK_EXTERNAL true --raw --path="${WP_PATH}" --allow-root
+fi
 wp db create --path="${WP_PATH}" --allow-root >/dev/null 2>&1 || true
 wp db reset --path="${WP_PATH}" --yes --allow-root
 wp core install \
@@ -74,5 +78,16 @@ wp core install \
 	--allow-root
 wp plugin install "${RELEASE_ZIP}" --path="${WP_PATH}" --force --activate --allow-root
 wp rewrite structure '/%postname%/' --path="${WP_PATH}" --allow-root
+export WP_CLI_CONFIG_PATH="${SCRIPT_DIR}/wp-cli-apache.yml"
+wp rewrite flush --hard --path="${WP_PATH}" --allow-root
+if [ ! -f "${WP_PATH}/.htaccess" ] || ! grep -q '^# BEGIN WordPress$' "${WP_PATH}/.htaccess"; then
+	fail "WordPress rewrite rules were not written to ${WP_PATH}/.htaccess."
+fi
+if [ -n "${WP_RUNTIME_OWNER}" ]; then
+	if [[ ! "${WP_RUNTIME_OWNER}" =~ ^[0-9]+:[0-9]+$ ]]; then
+		fail "EASYMDE_WP_RUNTIME_OWNER must be a numeric uid:gid pair."
+	fi
+	chown -R "${WP_RUNTIME_OWNER}" "${WP_PATH}"
+fi
 
 echo "Installed and activated EasyMDE release ZIP in ${WP_PATH}."

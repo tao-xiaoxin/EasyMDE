@@ -286,6 +286,38 @@ test('release setup keeps the WP_CLI_PHP_ARGS shellcheck directive parseable', (
   assert.doesNotMatch(source, /shellcheck disable=SC2086 --/);
 });
 
+test('release setup flushes Apache rewrite rules after selecting the permalink structure', () => {
+  const source = readFileSync(join(repoRoot, 'scripts/setup-wordpress-release.sh'), 'utf8');
+  const wpCliConfig = readFileSync(join(repoRoot, 'scripts/wp-cli-apache.yml'), 'utf8');
+  const structure = source.indexOf("wp rewrite structure '/%postname%/'");
+  const apacheConfig = source.indexOf('export WP_CLI_CONFIG_PATH="${SCRIPT_DIR}/wp-cli-apache.yml"');
+  const flush = source.indexOf('wp rewrite flush --hard');
+  const verification = source.indexOf('grep -q \'^# BEGIN WordPress$\'');
+
+  assert.notEqual(structure, -1);
+  assert.ok(apacheConfig > structure);
+  assert.ok(flush > structure);
+  assert.ok(verification > flush);
+  assert.match(wpCliConfig, /^apache_modules:\n  - mod_rewrite\n$/);
+});
+
+test('release setup can block external HTTP in deterministic visual environments', () => {
+  const source = readFileSync(join(repoRoot, 'scripts/setup-wordpress-release.sh'), 'utf8');
+
+  assert.match(source, /if \[ "\$\{EASYMDE_WP_BLOCK_EXTERNAL:-\}" = "1" \]; then/);
+  assert.match(source, /wp config set WP_HTTP_BLOCK_EXTERNAL true --raw/);
+});
+
+test('release setup validates and restores an explicit numeric WordPress runtime owner', () => {
+  const source = readFileSync(join(repoRoot, 'scripts/setup-wordpress-release.sh'), 'utf8');
+  const validation = source.indexOf('^[0-9]+:[0-9]+$');
+  const ownership = source.indexOf('chown -R "${WP_RUNTIME_OWNER}" "${WP_PATH}"');
+
+  assert.notEqual(validation, -1);
+  assert.ok(ownership > validation);
+  assert.doesNotMatch(source, /chown -R \$\{WP_RUNTIME_OWNER\}/);
+});
+
 test('destructive script safety logic is shared instead of copied into setup scripts', () => {
   const helper = readFileSync(join(repoRoot, 'scripts/lib/easymde-script-safety.sh'), 'utf8');
   const releaseSetup = readFileSync(join(repoRoot, 'scripts/setup-wordpress-release.sh'), 'utf8');

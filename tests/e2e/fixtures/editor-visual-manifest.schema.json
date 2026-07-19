@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easymde.example.test/schemas/editor-visual-manifest.schema.json",
+  "title": "EasyMDE editor visual capture manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "captures"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "captures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "referenceCommit",
+          "environment",
+          "fixture",
+          "component",
+          "state",
+          "viewport",
+          "zoom",
+          "locale",
+          "direction",
+          "theme",
+          "font",
+          "browser",
+          "browserVersion",
+          "runIdentity",
+          "file"
+        ],
+        "properties": {
+          "referenceCommit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "environment": {
+            "enum": [
+              "reference",
+              "refactor"
+            ]
+          },
+          "fixture": {
+            "type": "string",
+            "minLength": 1
+          },
+          "component": {
+            "type": "string",
+            "minLength": 1
+          },
+          "state": {
+            "type": "string",
+            "minLength": 1
+          },
+          "viewport": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "width",
+              "height"
+            ],
+            "properties": {
+              "width": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "zoom": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "locale": {
+            "type": "string",
+            "minLength": 1
+          },
+          "direction": {
+            "enum": [
+              "ltr",
+              "rtl"
+            ]
+          },
+          "theme": {
+            "type": "string",
+            "minLength": 1
+          },
+          "font": {
+            "type": "string",
+            "minLength": 1
+          },
+          "browser": {
+            "type": "string",
+            "minLength": 1
+          },
+          "browserVersion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runIdentity": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "file": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*\\.\\.).+\\.png$"
+          }
+        }
+      }
+    }
+  }
+}

@@ -8,6 +8,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	private $get_category_options;
 	private $get_category_options_cache_key;
 	private $category_load_error;
+	private $add_immersive_availability_contract;
 
 	public function set_up() {
 		parent::set_up();
@@ -17,10 +18,41 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->get_category_options = $reflection->getMethod( 'get_category_options' );
 		$this->get_category_options_cache_key = $reflection->getMethod( 'get_category_options_cache_key' );
 		$this->category_load_error = $reflection->getProperty( 'category_load_error' );
+		$this->add_immersive_availability_contract = $reflection->getMethod( 'add_immersive_availability_contract' );
 		$this->get_category_options->setAccessible( true );
 		$this->get_category_options_cache_key->setAccessible( true );
 		$this->category_load_error->setAccessible( true );
+		$this->add_immersive_availability_contract->setAccessible( true );
 		wp_cache_flush();
+	}
+
+	public function test_immersive_workspace_is_explicitly_unavailable_during_editor_refactor() {
+		$this->assertFalse( AdminAssets::IMMERSIVE_WORKSPACE_AVAILABLE );
+	}
+
+	public function test_immersive_workspace_availability_remains_a_boolean_in_browser_bootstrap() {
+		wp_register_script( 'easymde-admin', 'https://example.test/easymde-admin.js', array(), 'test', true );
+		wp_localize_script(
+			'easymde-admin',
+			'EasyMDEConfig',
+			array( 'immersiveWorkspaceAvailable' => AdminAssets::IMMERSIVE_WORKSPACE_AVAILABLE )
+		);
+
+		$this->add_immersive_availability_contract->invoke( $this->admin_assets );
+		wp_enqueue_script( 'easymde-admin' );
+		ob_start();
+		wp_print_footer_scripts();
+		$printed_scripts = ob_get_clean();
+
+		$this->assertStringContainsString( '"immersiveWorkspaceAvailable":""', $printed_scripts );
+		$this->assertStringContainsString(
+			'window.EasyMDEConfig.immersiveWorkspaceAvailable = false;',
+			$printed_scripts
+		);
+		$this->assertLessThan(
+			strpos( $printed_scripts, 'window.EasyMDEConfig.immersiveWorkspaceAvailable = false;' ),
+			strpos( $printed_scripts, '"immersiveWorkspaceAvailable":""' )
+		);
 	}
 
 	public function tear_down() {

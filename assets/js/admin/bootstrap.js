@@ -1557,6 +1557,10 @@
         };
     }
 
+    function isImmersiveWorkspaceAvailable() {
+        return config.immersiveWorkspaceAvailable === true;
+    }
+
     function updateImmersiveToggle(context) {
         var $button = context && context.immersiveButton ? context.immersiveButton : null;
         var isImmersive = !!(
@@ -1588,6 +1592,10 @@
     function setImmersiveMode(context, enabled) {
         var workspace = context && context.immersiveWorkspace ? context.immersiveWorkspace : null;
         var isImmersive = !!(workspace && workspace.isActive && workspace.isActive());
+
+        if (enabled && !isImmersiveWorkspaceAvailable()) {
+            throw new Error('Immersive workspace is unavailable.');
+        }
 
         if (!workspace || enabled === isImmersive) {
             return;
@@ -3176,7 +3184,9 @@
             $secondary.append($('<span class="easymde-toolbar-divider" aria-hidden="true"></span>'));
         }
 
-        createImmersiveToggleButton($secondary, context);
+        if (isImmersiveWorkspaceAvailable()) {
+            createImmersiveToggleButton($secondary, context);
+        }
         createFontMenu($secondary, context.preview);
         createAppearanceMenu($secondary, context.root, context.preview, context.refreshPreview);
         context.draftStatus = createDraftStatus($secondary);
@@ -3331,7 +3341,9 @@
             savedMarkdown: String($source[0].defaultValue || ''),
             savedTitle: String((document.getElementById('title') || {}).defaultValue || '')
         };
-        context.immersiveWorkspace = createImmersiveWorkspace(context);
+        context.immersiveWorkspace = isImmersiveWorkspaceAvailable()
+            ? createImmersiveWorkspace(context)
+            : null;
 
         function initializeEditorChrome() {
             if (editorChromeReady) {
@@ -3346,7 +3358,9 @@
             createSideActions($sideActions, context);
             bindScrollSync($source[0], $preview[0]);
             bindShortcuts($root, $source[0], context);
-            bindImmersiveModeShortcuts(context);
+            if (isImmersiveWorkspaceAvailable()) {
+                bindImmersiveModeShortcuts(context);
+            }
             $root.attr('data-easymde-shell-ready', '1');
         }
 
@@ -3402,7 +3416,9 @@
                 preloadWechatExporter();
             }
 
-            consumeImmersivePublishPreview(context);
+            if (isImmersiveWorkspaceAvailable()) {
+                consumeImmersivePublishPreview(context);
+            }
 
             if (getLocalDraftsEnabled()) {
                 afterPreviewIdle(function () {
@@ -3439,6 +3455,8 @@
         window.EasyMDETestHooks.showFlash = showFlash;
         window.EasyMDETestHooks.reportStartupConfigErrors = reportStartupConfigErrors;
         window.EasyMDETestHooks.hasUnsavedDocumentChanges = hasUnsavedDocumentChanges;
+        window.EasyMDETestHooks.isImmersiveWorkspaceAvailable = isImmersiveWorkspaceAvailable;
+        window.EasyMDETestHooks.setImmersiveMode = setImmersiveMode;
         window.EasyMDETestHooks.updatePreview = updatePreview;
     }
 

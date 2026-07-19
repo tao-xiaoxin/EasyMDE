@@ -1,0 +1,136 @@
+x-wordpress: &wordpress
+  image: wordpress:6.7-php8.3-apache@sha256:10f35d0dd608ee9f907c22aa3f2bbb9ac64fee72726503e53f2afd298d2a09f1
+  restart: "no"
+
+x-init: &init
+  image: wordpress:cli-php8.3@sha256:8c63570c29d2357eef1215547619b968284ef897953a109b0e00cdd21f417343
+  user: "0:0"
+  restart: "no"
+  entrypoint:
+    - /bin/bash
+  command:
+    - /workspace/scripts/setup-wordpress-release.sh
+    - /artifacts/EasyMDE.zip
+
+x-database: &database
+  image: mariadb:11.4@sha256:1b46b73d4b629022dfa29e6db3bb0d63b5df714fc3bfbe5057d63d76d8f6054b
+  restart: "no"
+  healthcheck:
+    test:
+      - CMD-SHELL
+      - mariadb-admin ping -h 127.0.0.1 -uroot -peasymde-visual-root --silent
+    interval: 2s
+    timeout: 5s
+    retries: 30
+
+services:
+  reference-db:
+    <<: *database
+    environment:
+      MYSQL_DATABASE: easymde_e2e_visual_reference
+      MYSQL_ROOT_PASSWORD: easymde-visual-root
+    volumes:
+      - reference-db:/var/lib/mysql
+
+  reference-init:
+    <<: *init
+    environment:
+      EASYMDE_DB_HOST: reference-db:3306
+      EASYMDE_DB_NAME: easymde_e2e_visual_reference
+      EASYMDE_DB_PASS: easymde-visual-root
+      EASYMDE_DB_USER: root
+      EASYMDE_WP_BLOCK_EXTERNAL: "1"
+      EASYMDE_WP_ADMIN_PASSWORD: easymde-visual-admin
+      EASYMDE_WP_PATH: /tmp/easymde-visual-reference-wp
+      EASYMDE_WP_RUNTIME_OWNER: "33:33"
+      EASYMDE_WP_TITLE: EasyMDE Legacy Reference
+      EASYMDE_WP_URL: http://127.0.0.1:${EASYMDE_VISUAL_REFERENCE_PORT:-8090}
+      EASYMDE_WP_VERSION: "6.7"
+      WP_CLI_CACHE_DIR: /tmp/easymde-wp-cli-cache
+    volumes:
+      - reference-wordpress:/tmp/easymde-visual-reference-wp
+      - wordpress-download-cache:/tmp/easymde-wp-cli-cache
+      - ./:/workspace:ro
+      - type: bind
+        source: ${EASYMDE_VISUAL_REFERENCE_ZIP:?Set EASYMDE_VISUAL_REFERENCE_ZIP}
+        target: /artifacts/EasyMDE.zip
+        read_only: true
+    depends_on:
+      reference-db:
+        condition: service_healthy
+
+  reference-wordpress:
+    <<: *wordpress
+    ports:
+      - "${EASYMDE_VISUAL_REFERENCE_PORT:-8090}:80"
+    environment:
+      WORDPRESS_DB_HOST: reference-db:3306
+      WORDPRESS_DB_NAME: easymde_e2e_visual_reference
+      WORDPRESS_DB_PASSWORD: easymde-visual-root
+      WORDPRESS_DB_USER: root
+      WORDPRESS_DEBUG: "1"
+    volumes:
+      - reference-wordpress:/var/www/html
+    depends_on:
+      reference-init:
+        condition: service_completed_successfully
+
+  refactor-db:
+    <<: *database
+    environment:
+      MYSQL_DATABASE: easymde_e2e_visual_refactor
+      MYSQL_ROOT_PASSWORD: easymde-visual-root
+    volumes:
+      - refactor-db:/var/lib/mysql
+
+  refactor-init:
+    <<: *init
+    environment:
+      EASYMDE_DB_HOST: refactor-db:3306
+      EASYMDE_DB_NAME: easymde_e2e_visual_refactor
+      EASYMDE_DB_PASS: easymde-visual-root
+      EASYMDE_DB_USER: root
+      EASYMDE_WP_BLOCK_EXTERNAL: "1"
+      EASYMDE_WP_ADMIN_PASSWORD: easymde-visual-admin
+      EASYMDE_WP_PATH: /tmp/easymde-visual-refactor-wp
+      EASYMDE_WP_RUNTIME_OWNER: "33:33"
+      EASYMDE_WP_TITLE: EasyMDE React Refactor
+      EASYMDE_WP_URL: http://127.0.0.1:${EASYMDE_VISUAL_REFACTOR_PORT:-8091}
+      EASYMDE_WP_VERSION: "6.7"
+      WP_CLI_CACHE_DIR: /tmp/easymde-wp-cli-cache
+    volumes:
+      - refactor-wordpress:/tmp/easymde-visual-refactor-wp
+      - wordpress-download-cache:/tmp/easymde-wp-cli-cache
+      - ./:/workspace:ro
+      - type: bind
+        source: ${EASYMDE_VISUAL_REFACTOR_ZIP:?Set EASYMDE_VISUAL_REFACTOR_ZIP}
+        target: /artifacts/EasyMDE.zip
+        read_only: true
+    depends_on:
+      refactor-db:
+        condition: service_healthy
+      reference-init:
+        condition: service_completed_successfully
+
+  refactor-wordpress:
+    <<: *wordpress
+    ports:
+      - "${EASYMDE_VISUAL_REFACTOR_PORT:-8091}:80"
+    environment:
+      WORDPRESS_DB_HOST: refactor-db:3306
+      WORDPRESS_DB_NAME: easymde_e2e_visual_refactor
+      WORDPRESS_DB_PASSWORD: easymde-visual-root
+      WORDPRESS_DB_USER: root
+      WORDPRESS_DEBUG: "1"
+    volumes:
+      - refactor-wordpress:/var/www/html
+    depends_on:
+      refactor-init:
+        condition: service_completed_successfully
+
+volumes:
+  reference-db:
+  reference-wordpress:
+  refactor-db:
+  refactor-wordpress:
+  wordpress-download-cache:

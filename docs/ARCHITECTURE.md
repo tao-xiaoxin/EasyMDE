@@ -19,7 +19,7 @@ This document describes the current implementation boundaries. Approved target d
 - `scripts/`: local asset preparation, i18n/notices, test setup, Plugin Check, clean WordPress install, and release package assembly scripts.
 - `tests/Unit/` and `tests/Integration/`: PHPUnit coverage for rendering, CSS policy, frontend assets, REST permissions, revisions, migration, editor gating, and compatibility facade behavior.
 - `tests/Node/`: Node tests for release packaging, CI invariants, i18n/notices, Plugin Check parsing, and destructive-script safety.
-- `tests/e2e/`: Chromium Playwright coverage for installed release ZIP author workflows.
+- `tests/e2e/`: Chromium Playwright coverage for installed release ZIP author workflows, Phase 0 editor protection, fixed Legacy Reference capture, and dual-environment browser isolation.
 
 ## Service Wiring
 
@@ -39,11 +39,19 @@ Opening an ordinary existing supported post imports the current `post_content` i
 
 ## Immersive Workspace Boundary
 
-The normal WordPress edit screen and the immersive workspace are separate visual surfaces. The normal editor keeps its existing template and styles. Selecting **Enter immersive writing** creates the fixed white workspace from `assets/js/admin/immersive-workspace.js` and `assets/css/admin/immersive-workspace.css`; closing it removes that DOM and restores focus, scroll, and WordPress interactivity.
+The immersive workspace is temporarily unavailable while the editor refactor is staged. `AdminAssets::IMMERSIVE_WORKSPACE_AVAILABLE` is the PHP availability owner. Admin bootstrap exposes that value as a real browser boolean; when it is `false`, `bootstrap.js` does not create an immersive controller, render an entry control, bind the immersive shortcut listener, or consume immersive publish-preview session state. A direct activation request fails explicitly.
+
+The normal WordPress edit screen keeps its existing template, styles, toolbar, Markdown source, Preview, appearance, font, Custom CSS, local draft, media, save, and publish behavior. Opening the screen does not store the availability state in post metadata, user settings, or browser storage, and existing immersive layout preferences are left untouched.
+
+`assets/js/admin/immersive-workspace.js`, `assets/css/admin/immersive-workspace.css`, their strings, storage keys, Node tests, and fixed Legacy Reference Playwright coverage remain in the repository. They are characterization evidence, not an active React owner and not removable legacy code. The fixed Legacy Reference environment may explicitly enable the retained owner for capture and regression work; production bootstrap cannot.
+
+When enabled in the fixed Legacy Reference, the normal WordPress edit screen and immersive workspace are separate visual surfaces. Selecting **Enter immersive writing** creates the fixed white workspace; closing it removes that DOM and restores focus, scroll, and WordPress interactivity.
 
 The workspace owns presentation and transient UI state only. It synchronizes with the existing WordPress title field, EasyMDE Markdown source, preview renderer, theme/font fields, local draft service, media frame, revision REST API, and native save/publish form. Opening or cancelling its publish dialog writes nothing. Confirming maps the dialog draft back to the existing WordPress fields and triggers the native publish action so nonce, capability, taxonomy, visibility, scheduling, autosave, revision, and media behavior remain WordPress-owned.
 
 The workspace may persist only layout preferences in browser storage: the source/preview split ratio and outline width. Its AI panel is a local interface demonstration and must not read article content, make network requests, or persist AI input or output.
+
+No production React root, TypeScript entry, Vite build, or migrated React UI owner exists in this Phase 0 state.
 
 ## Data Model
 

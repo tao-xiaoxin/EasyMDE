@@ -374,6 +374,7 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   const jQueryRef = contextOverrides.jQuery || createJQueryStub();
   const windowRef = {
     EasyMDEConfig: {
+      immersiveWorkspaceAvailable: false,
       testHooks: true,
       restUrl: '/wp-json/easymde/v1/preview',
       nonce: 'test-nonce',
@@ -430,6 +431,8 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.skipNextCrossDocumentViewTransition, 'function', 'bootstrap harness should expose immersive navigation transition guards');
   assert.equal(typeof context.window.EasyMDETestHooks.executeCommand, 'function', 'bootstrap harness should expose toolbar command execution');
   assert.equal(typeof context.window.EasyMDETestHooks.enhancePreviewSurface, 'function', 'bootstrap harness should expose detached preview enhancement');
+  assert.equal(typeof context.window.EasyMDETestHooks.isImmersiveWorkspaceAvailable, 'function', 'bootstrap harness should expose immersive availability');
+  assert.equal(typeof context.window.EasyMDETestHooks.setImmersiveMode, 'function', 'bootstrap harness should expose guarded immersive activation');
 
   return {
     document: documentRef,
@@ -438,6 +441,59 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
     window: context.window
   };
 }
+
+test('unavailable immersive workspace rejects direct activation without invoking the legacy owner', () => {
+  let activations = 0;
+  const { hooks } = loadBootstrap();
+  const context = {
+    immersiveWorkspace: {
+      activate() {
+        activations += 1;
+      },
+      isActive() {
+        return false;
+      }
+    }
+  };
+
+  assert.equal(hooks.isImmersiveWorkspaceAvailable(), false);
+  assert.throws(
+    () => hooks.setImmersiveMode(context, true),
+    /Immersive workspace is unavailable/
+  );
+  assert.equal(activations, 0);
+});
+
+test('legacy reference mode can still exercise the retained immersive owner', () => {
+  let activations = 0;
+  const { hooks } = loadBootstrap({
+    EasyMDEConfig: {
+      immersiveWorkspaceAvailable: true,
+      testHooks: true,
+      features: {},
+      strings: {},
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    }
+  });
+  const context = {
+    immersiveWorkspace: {
+      activate() {
+        activations += 1;
+      },
+      isActive() {
+        return false;
+      }
+    }
+  };
+
+  assert.equal(hooks.isImmersiveWorkspaceAvailable(), true);
+  hooks.setImmersiveMode(context, true);
+  assert.equal(activations, 1);
+});
 
 test('native category adapter preserves WordPress hierarchy without inferring from labels', () => {
   const parentList = { classList: { contains: () => false } };

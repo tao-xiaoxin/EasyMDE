@@ -27,6 +27,10 @@
     var previewTimer = null;
     var previewRevision = 0;
     var previewAbortController = null;
+    var normalPreviewGeneration = 0;
+    var normalPreviewNode = null;
+    var reactPreviewRequestSession = null;
+    var reactPreviewNode = null;
     var imagePasteLoadPromise = null;
     var mediaPickerLoadPromise = null;
     var wechatExporterLoadPromise = null;
@@ -2726,6 +2730,7 @@
     function hydrateInitialPreview($preview, markdown, options) {
         var previewNode = $preview[0];
         var features;
+        var generation;
         var revision;
         var scheduleEnhancement;
         var signature;
@@ -2742,16 +2747,22 @@
 
         features = normalizePreviewFeatures(initialPreviewFeatures($preview) || config.features || {});
         activePreviewFeatures = features;
+        generation = ++normalPreviewGeneration;
         revision = ++previewRevision;
         signature = currentPreviewSignature(markdown);
         scrollState = capturePreviewScrollIfMoved(previewNode);
+
+        function isHydrationCurrent(candidateMarkdown, candidateSignature) {
+            return generation === normalPreviewGeneration
+                && isPreviewCurrent(revision, candidateSignature, candidateMarkdown);
+        }
 
         setPreviewReady($preview);
 
         applyRenderState($preview, { syncFields: false });
 
         afterPreviewIdle(function () {
-            if (!isPreviewCurrent(revision, signature, markdown)) {
+            if (!isHydrationCurrent(markdown, signature)) {
                 return;
             }
 
@@ -2765,16 +2776,25 @@
         setPreviewPending($preview, false);
         scheduleEnhancement = function (currentMarkdown) {
             var enhancementMarkdown = typeof currentMarkdown === 'string' ? currentMarkdown : markdown;
-            var enhancementRevision = revision;
             var enhancementSignature = currentPreviewSignature(enhancementMarkdown);
 
             afterPreviewIdle(function () {
-                if (!isPreviewCurrent(enhancementRevision, enhancementSignature, enhancementMarkdown)) {
+                if (!isHydrationCurrent(enhancementMarkdown, enhancementSignature)) {
                     return;
                 }
 
-                enhancePreview($preview, features, enhancementRevision, enhancementSignature, enhancementMarkdown).then(function (ready) {
-                    finishEnhancedPreview($preview, enhancementRevision, enhancementSignature, enhancementMarkdown, ready);
+                enhancePreviewSurface($preview, features, function () {
+                    return isHydrationCurrent(enhancementMarkdown, enhancementSignature);
+                }).catch(function () {
+                    if (isHydrationCurrent(enhancementMarkdown, enhancementSignature)) {
+                        setPreviewEnhancementError($preview);
+                    }
+
+                    return false;
+                }).then(function (ready) {
+                    if (ready !== false && isHydrationCurrent(enhancementMarkdown, enhancementSignature)) {
+                        setPreviewReady($preview, enhancementSignature);
+                    }
                 });
             });
         };
@@ -2803,13 +2823,224 @@
         previewAbortController = null;
     }
 
+    function applyReactPreviewState($preview, state) {
+        var previewNode = $preview[0];
+        var request = state.request;
+        var scrollState = capturePreviewScroll(previewNode);
+        var responseFeatures;
+
+        if (state.kind === 'loading') {
+            setPreviewPending($preview, !previewHasRenderedContent($preview));
+            return;
+        }
+
+        if (state.kind === 'empty') {
+            activePreviewFeatures = normalizePreviewFeatures(config.features || {});
+            setPreviewReady($preview, request.signature);
+            $preview.html('<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty')) + '</p>');
+            applyRenderState($preview);
+            restorePreviewScroll(previewNode, scrollState);
+            return;
+        }
+
+        if (state.kind === 'error') {
+            activePreviewFeatures = normalizePreviewFeatures(config.features || {});
+            setPreviewReady($preview);
+            $preview.html('<p class="easymde-preview-error">' + escapeHtml(getString('previewError')) + '</p>');
+            applyRenderState($preview);
+            restorePreviewScroll(previewNode, scrollState);
+            return;
+        }
+
+        responseFeatures = normalizePreviewFeatures(state.response.features || {});
+        activePreviewFeatures = responseFeatures;
+        $preview.html(state.response.html || previewFallback(request.markdown));
+        applyRenderState($preview);
+        restorePreviewScroll(previewNode, scrollState);
+        enhancePreviewSurface($preview, responseFeatures, function () {
+            return !!(
+                reactPreviewRequestSession
+                && typeof reactPreviewRequestSession.isCurrent === 'function'
+                && reactPreviewRequestSession.isCurrent(state.revision, request.signature)
+                && request.signature === currentPreviewSignature(request.markdown)
+            );
+        }).catch(function () {
+            if (
+                reactPreviewRequestSession
+                && reactPreviewRequestSession.isCurrent(state.revision, request.signature)
+            ) {
+                setPreviewEnhancementError($preview);
+            }
+
+            return false;
+        }).then(function (ready) {
+            if (
+                ready !== false
+                && reactPreviewRequestSession
+                && reactPreviewRequestSession.isCurrent(state.revision, request.signature)
+                && request.signature === currentPreviewSignature(request.markdown)
+            ) {
+                setPreviewReady($preview, request.signature);
+            }
+        });
+    }
+
+    function activateReactPreviewSession(container, $root, $preview, context) {
+        var bridgeApi = window.EasyMDEReactPreviewSession;
+        var bridge;
+        var cleanup;
+        var cleanupScheduled = false;
+        var disposed = false;
+        var failed = false;
+        var pagehideRegistered = false;
+        var ready = false;
+
+        function dispose() {
+            if (disposed) {
+                return;
+            }
+            disposed = true;
+            if (pagehideRegistered && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('pagehide', dispose);
+                pagehideRegistered = false;
+            }
+            if (reactPreviewRequestSession === context.previewRequestSession) {
+                reactPreviewRequestSession = null;
+                reactPreviewNode = null;
+                context.previewRequestSession = null;
+                $root.attr('data-easymde-preview-request-owner', 'legacy');
+            }
+            if (typeof cleanup === 'function') {
+                cleanup();
+            }
+        }
+
+        function scheduleCleanup() {
+            if (cleanupScheduled) {
+                return;
+            }
+            cleanupScheduled = true;
+            if (typeof window.queueMicrotask === 'function') {
+                window.queueMicrotask(dispose);
+                return;
+            }
+            Promise.resolve().then(dispose);
+        }
+
+        $root.attr('data-easymde-preview-request-owner', 'legacy');
+        if (!container) {
+            return null;
+        }
+
+        if (!bridgeApi || typeof bridgeApi.prepare !== 'function') {
+            reportReactPreviewSessionFailure('react-preview-session-entry-unavailable');
+            return null;
+        }
+
+        try {
+            bridge = bridgeApi.prepare(config);
+        } catch (error) {
+            reportReactPreviewSessionFailure('react-preview-session-prepare-failed');
+            return null;
+        }
+
+        if (!bridge || typeof bridge.mount !== 'function') {
+            reportReactPreviewSessionFailure('react-preview-session-contract-invalid');
+            return null;
+        }
+
+        try {
+            cleanup = bridge.mount({
+                container: container,
+                initialRevision: previewRevision,
+                onFailure: function () {
+                    if (disposed || failed) {
+                        return;
+                    }
+                    failed = true;
+                    if (ready) {
+                        $root.attr('data-easymde-preview-request-owner', 'react-reload-required');
+                        reportReactPreviewSessionFailure('react-preview-session-failed-after-handoff');
+                        return;
+                    }
+                    $root.attr('data-easymde-preview-request-owner', 'legacy');
+                    reportReactPreviewSessionFailure('react-preview-session-render-failed');
+                    scheduleCleanup();
+                },
+                onReady: function (session) {
+                    if (disposed || failed || ready) {
+                        return;
+                    }
+                    if (
+                        !session
+                        || typeof session.schedule !== 'function'
+                        || typeof session.isCurrent !== 'function'
+                    ) {
+                        throw new Error('react-preview-session-invalid');
+                    }
+
+                    window.clearTimeout(previewTimer);
+                    previewTimer = null;
+                    abortPreviewRequest();
+                    reactPreviewNode = $preview[0];
+                    reactPreviewRequestSession = session;
+                    context.previewRequestSession = session;
+                    ready = true;
+                    $root.attr('data-easymde-preview-request-owner', 'react');
+                },
+                onState: function (state) {
+                    if (!disposed && ready && reactPreviewRequestSession) {
+                        applyReactPreviewState($preview, state);
+                    }
+                }
+            });
+        } catch (error) {
+            reportReactPreviewSessionFailure('react-preview-session-mount-failed');
+            return null;
+        }
+
+        if (typeof cleanup !== 'function') {
+            reportReactPreviewSessionFailure('react-preview-session-cleanup-invalid');
+            return null;
+        }
+
+        if (typeof window.addEventListener === 'function') {
+            window.addEventListener('pagehide', dispose, { once: true });
+            pagehideRegistered = true;
+        }
+
+        return dispose;
+    }
+
     function updatePreview($preview, markdown, options) {
         var previewNode = $preview[0];
-        var revision = ++previewRevision;
+        var revision;
         var signature = currentPreviewSignature(markdown);
         var delay;
 
         options = options || {};
+
+        if (previewNode === normalPreviewNode || previewNode === reactPreviewNode) {
+            normalPreviewGeneration += 1;
+        }
+
+        if (
+            reactPreviewRequestSession
+            && previewNode === reactPreviewNode
+            && typeof reactPreviewRequestSession.schedule === 'function'
+        ) {
+            reactPreviewRequestSession.schedule({
+                markdown: markdown,
+                postId: parseInt(String($('#easymde-editor').data('post-id') || 0), 10) || 0,
+                markdownTheme: String(renderState.markdownTheme || ''),
+                codeTheme: String(renderState.codeTheme || ''),
+                customCssId: String(renderState.customCssId || ''),
+                signature: signature
+            }, options.immediate === true);
+            return;
+        }
+
+        revision = ++previewRevision;
         delay = options.immediate ? 0 : 180;
 
         function finishPreviewUpdate(scrollState) {
@@ -3170,6 +3401,12 @@
     }
 
     function reportReactDocumentSourceFailure(code) {
+        if (window.console && typeof window.console.error === 'function') {
+            window.console.error('[EasyMDE] ' + code);
+        }
+    }
+
+    function reportReactPreviewSessionFailure(code) {
         if (window.console && typeof window.console.error === 'function') {
             window.console.error('[EasyMDE] ' + code);
         }
@@ -3647,6 +3884,7 @@
         var $root = $('#easymde-editor');
         var $source = $('#easymde-source');
         var $reactSource = $('#easymde-source-react');
+        var $reactPreviewSession = $('#easymde-preview-session-react');
         var $preview = $('#easymde-preview');
         var $content = $('#postdivrich');
         var $toolbar = $('#easymde-toolbar');
@@ -3669,6 +3907,8 @@
         if (!$root.length || !$source.length || !$preview.length) {
             return;
         }
+
+        normalPreviewNode = $preview[0];
 
         if (!$toolbar.length) {
             $toolbar = $root.find('.easymde-toolbar');
@@ -3796,6 +4036,12 @@
             titleField,
             context
         );
+        context.reactPreviewSessionCleanup = activateReactPreviewSession(
+            $reactPreviewSession[0],
+            $root,
+            $preview,
+            context
+        );
 
         afterShellPaint(function () {
             var shellMarkdown = $source.val();
@@ -3853,6 +4099,7 @@
         window.EasyMDETestHooks.executeCommand = executeCommand;
         window.EasyMDETestHooks.bindScrollSync = bindScrollSync;
         window.EasyMDETestHooks.activateReactDocumentSource = activateReactDocumentSource;
+        window.EasyMDETestHooks.activateReactPreviewSession = activateReactPreviewSession;
         window.EasyMDETestHooks.activateReactToolbar = activateReactToolbar;
         window.EasyMDETestHooks.getLocalDraftsEnabled = getLocalDraftsEnabled;
         window.EasyMDETestHooks.setLocalDraftsEnabled = setLocalDraftsEnabled;

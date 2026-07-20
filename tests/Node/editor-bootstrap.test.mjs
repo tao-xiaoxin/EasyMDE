@@ -653,6 +653,7 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.bindScrollSync, 'function', 'bootstrap harness should expose isolated scroll synchronization');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactToolbar, 'function', 'bootstrap harness should expose the toolbar ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactDocumentSource, 'function', 'bootstrap harness should expose the document source ownership handoff');
+  assert.equal(typeof context.window.EasyMDETestHooks.activateReactPreviewSession, 'function', 'bootstrap harness should expose the preview request ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.enhancePreviewSurface, 'function', 'bootstrap harness should expose detached preview enhancement');
 
   return {
@@ -1018,6 +1019,151 @@ test('React document source startup failure keeps the legacy source usable', () 
   assert.equal(legacySource.hidden, false);
   assert.deepEqual(messages, ['[EasyMDE] react-document-source-prepare-failed']);
   assert.equal(messages.some((message) => message.includes('Synthetic private detail')), false);
+});
+
+test('React preview request session hands off once and returns ownership on pagehide', () => {
+  let mountOptions;
+  let cleanupCalls = 0;
+  const pagehideListeners = new Set();
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper();
+  const container = createElement('div');
+  const session = {
+    isCurrent() {
+      return true;
+    },
+    schedule() {}
+  };
+  const context = {};
+  const loaded = loadBootstrap({
+    addEventListener(type, listener) {
+      if ('pagehide' === type) {
+        pagehideListeners.add(listener);
+      }
+    },
+    removeEventListener(type, listener) {
+      if ('pagehide' === type) {
+        pagehideListeners.delete(listener);
+      }
+    },
+    EasyMDEReactPreviewSession: {
+      prepare(value) {
+        assert.equal(value.restUrl, '/wp-json/easymde/v1/preview');
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {
+              cleanupCalls += 1;
+            };
+          }
+        };
+      }
+    }
+  });
+
+  const cleanup = loaded.hooks.activateReactPreviewSession(container, root, preview, context);
+
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'legacy');
+  assert.equal(typeof cleanup, 'function');
+  assert.equal(pagehideListeners.size, 1);
+
+  mountOptions.onReady(session);
+
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'react');
+  assert.equal(context.previewRequestSession, session);
+
+  for (const listener of pagehideListeners) {
+    listener();
+  }
+
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'legacy');
+  assert.equal(context.previewRequestSession, null);
+  assert.equal(cleanupCalls, 1);
+  assert.equal(pagehideListeners.size, 0);
+  cleanup();
+  assert.equal(cleanupCalls, 1, 'preview session teardown should be idempotent');
+});
+
+test('React preview request startup failure keeps the legacy scheduler and reports a stable code', () => {
+  const messages = [];
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper();
+  const loaded = loadBootstrap({
+    console: {
+      error(message) {
+        messages.push(message);
+      }
+    },
+    EasyMDEReactPreviewSession: {
+      prepare() {
+        throw new Error('Synthetic private detail');
+      }
+    }
+  });
+
+  const cleanup = loaded.hooks.activateReactPreviewSession(
+    createElement('div'),
+    root,
+    preview,
+    {}
+  );
+
+  assert.equal(cleanup, null);
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'legacy');
+  assert.deepEqual(messages, ['[EasyMDE] react-preview-session-prepare-failed']);
+  assert.equal(messages.some((message) => message.includes('Synthetic private detail')), false);
+});
+
+test('React preview scheduling invalidates queued legacy initial-preview enhancement', async () => {
+  let deferredEnhancement;
+  let enhancementCalls = 0;
+  let mountOptions;
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper('<pre><code>initial</code></pre>');
+  const loaded = loadBootstrap({
+    EasyMDEEnhancements: {
+      enhance() {
+        enhancementCalls += 1;
+        return Promise.resolve();
+      }
+    },
+    EasyMDEReactPreviewSession: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    }
+  });
+
+  preview.attr('data-easymde-initial-preview', '1');
+  preview.attr('data-easymde-preview-features', JSON.stringify({
+    codeBlocks: true,
+    syntaxHighlight: true
+  }));
+  assert.equal(loaded.hooks.hydrateInitialPreview(preview, '```js\ninitial\n```', {
+    deferEnhancement(callback) {
+      deferredEnhancement = callback;
+    }
+  }), true);
+
+  loaded.hooks.activateReactPreviewSession(createElement('div'), root, preview, {});
+  mountOptions.onReady({
+    isCurrent() {
+      return true;
+    },
+    schedule() {}
+  });
+  loaded.hooks.updatePreview(preview, 'new preview', { immediate: true });
+  deferredEnhancement('```js\ninitial\n```');
+  loaded.flushTimers();
+  await flushMicrotasks();
+
+  assert.equal(enhancementCalls, 0);
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'react');
 });
 
 test('native category adapter preserves WordPress hierarchy without inferring from labels', () => {

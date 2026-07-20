@@ -629,6 +629,11 @@ test.describe('EasyMDE editor workflows', () => {
     const sourceEditor = reactSource.locator('.cm-content');
 
     await expect(sourcePane).toHaveAttribute('data-easymde-document-owner', 'react');
+    await expect(page.locator('#easymde-editor')).toHaveAttribute(
+      'data-easymde-preview-request-owner',
+      'react'
+    );
+    await expect(page.locator('[data-easymde-react-preview-session="ready"]')).toHaveCount(1);
     await expect(reactSource).toBeVisible();
     await expect(sourceEditor).toHaveAttribute('contenteditable', 'true');
     await expect(nativeSource).toBeHidden();
@@ -695,6 +700,60 @@ test.describe('EasyMDE editor workflows', () => {
     );
     await expect(nativeSource).toHaveValue(beforeRejectedDrop);
     await expect(sourceEditor).toHaveText(beforeRejectedDrop);
+  });
+
+  test('rejects an older normal preview response after a newer React request wins', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    let releaseFirstResponse;
+    const firstResponseGate = new Promise((resolve) => {
+      releaseFirstResponse = resolve;
+    });
+    let requestCount = 0;
+
+    await page.route(/\/wp-json\/easymde\/v1\/preview(?:\?.*)?$/, async (route) => {
+      requestCount += 1;
+      const requestNumber = requestCount;
+      const payload = route.request().postDataJSON();
+
+      if (1 === requestNumber) {
+        await firstResponseGate;
+      }
+
+      try {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            html: `<p>${1 === requestNumber ? 'stale preview' : 'current preview'}</p>`,
+            features: {}
+          })
+        });
+      } catch (error) {
+        if (!route.request().failure()) {
+          throw error;
+        }
+      }
+
+      expect(payload).toEqual(expect.objectContaining({ markdown: expect.any(String) }));
+    });
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await expect(page.locator('#easymde-editor')).toHaveAttribute(
+      'data-easymde-preview-request-owner',
+      'react'
+    );
+
+    const sourceEditor = page.locator('.easymde-source-react .cm-content');
+    const firstRequest = page.waitForRequest(/\/wp-json\/easymde\/v1\/preview(?:\?.*)?$/);
+    await sourceEditor.fill('first request');
+    await firstRequest;
+    await sourceEditor.fill('second request');
+    await expect(page.locator('#easymde-preview')).toContainText('current preview');
+
+    releaseFirstResponse();
+    await expect(page.locator('#easymde-preview')).toContainText('current preview');
+    await expect(page.locator('#easymde-preview')).not.toContainText('stale preview');
+    expect(requestCount).toBe(2);
   });
 
   test('synchronizes legacy shortcut, draft restore, and submit writes into the React document session', async ({ page }, testInfo) => {

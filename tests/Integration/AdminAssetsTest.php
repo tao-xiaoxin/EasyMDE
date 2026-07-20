@@ -48,6 +48,15 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertNotSame( EASYMDE_VERSION, $version );
 	}
 
+	public function test_editor_bootstrap_uses_a_content_version_for_runtime_owner_handoffs() {
+		$asset_path = 'assets/js/admin/bootstrap.js';
+		$version    = $this->get_static_asset_version->invoke( $this->admin_assets, $asset_path );
+
+		$this->assertMatchesRegularExpression( '/^[a-f0-9]{16}$/', $version );
+		$this->assertSame( substr( hash_file( 'sha256', Asset::path( $asset_path ) ), 0, 16 ), $version );
+		$this->assertNotSame( EASYMDE_VERSION, $version );
+	}
+
 	public function test_resolves_the_committed_react_editor_manifest_and_dependency_metadata() {
 		$asset = $this->get_react_editor_asset->invoke( $this->admin_assets );
 

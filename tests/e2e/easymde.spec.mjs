@@ -578,8 +578,11 @@ test.describe('EasyMDE editor workflows', () => {
     const legacyMain = page.locator('#easymde-toolbar-legacy-main');
     const legacySecondary = page.locator('#easymde-toolbar-legacy-secondary');
     const toolbarStylesheet = page.locator('#easymde-admin-toolbar-css');
+    const editorBootstrap = page.locator('#easymde-admin-js');
     const toolbarStylesheetUrl = new URL(await toolbarStylesheet.getAttribute('href'));
+    const editorBootstrapUrl = new URL(await editorBootstrap.getAttribute('src'));
     expect(toolbarStylesheetUrl.searchParams.get('ver')).toMatch(/^[a-f0-9]{16}$/);
+    expect(editorBootstrapUrl.searchParams.get('ver')).toMatch(/^[a-f0-9]{16}$/);
     await expect(toolbar).toHaveAttribute('data-easymde-main-toolbar-owner', 'react');
     await expect(reactMain).toBeVisible();
     await expect(reactMain.locator('[data-easymde-react-toolbar="ready"]')).toHaveCount(1);
@@ -587,6 +590,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(legacySecondary).toBeVisible();
     await expect(legacySecondary.locator('.easymde-toolbar-immersive-toggle')).toBeVisible();
     await expect(legacySecondary.locator('[data-easymde-command="copywechat"]')).toBeVisible();
+    await expect(toolbar.locator('[data-easymde-command="bold"]:visible')).toHaveCount(1);
 
     const source = page.locator('#easymde-source');
     const sourceEditor = page.locator('.easymde-source-react .cm-content');

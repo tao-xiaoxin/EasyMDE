@@ -165,7 +165,7 @@ final class AdminAssets {
 			'easymde-admin',
 			Asset::url( 'assets/js/admin/bootstrap.js' ),
 			$admin_dependencies,
-			EASYMDE_VERSION,
+			$this->get_static_asset_version( 'assets/js/admin/bootstrap.js' ),
 			true
 		);
 

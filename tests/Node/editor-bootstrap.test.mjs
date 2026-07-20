@@ -1084,6 +1084,329 @@ test('React preview request session hands off once and returns ownership on page
   assert.equal(cleanupCalls, 1, 'preview session teardown should be idempotent');
 });
 
+test('React preview request handoff preserves a pending legacy refresh', () => {
+  let mountOptions;
+  const scheduled = [];
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper('<p>Provisional preview</p>');
+  const context = {
+    textarea: { value: '# Current Markdown' }
+  };
+  const loaded = loadBootstrap({
+    EasyMDEReactPreviewSession: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    }
+  });
+
+  loaded.hooks.updatePreview(preview, '# Stale queued Markdown');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
+  loaded.hooks.activateReactPreviewSession(createElement('div'), root, preview, context);
+  mountOptions.onReady({
+    isCurrent() {
+      return true;
+    },
+    schedule(request, immediate) {
+      scheduled.push({ immediate, request });
+    }
+  });
+
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'react');
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].immediate, true);
+  assert.equal(scheduled[0].request.markdown, '# Current Markdown');
+  loaded.flushTimers();
+  assert.equal(scheduled.length, 1, 'the cancelled legacy timer must not schedule another request');
+});
+
+test('React preview request handoff aborts and reschedules an in-flight legacy request', async () => {
+  let mountOptions;
+  let aborted = false;
+  const scheduled = [];
+  const pendingRequest = createDeferred();
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper('<p>Previous preview</p>');
+  const loaded = loadBootstrap({
+    AbortController: class {
+      constructor() {
+        this.signal = {};
+      }
+
+      abort() {
+        aborted = true;
+      }
+    },
+    EasyMDEReactPreviewSession: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    },
+    wp: {
+      apiFetch() {
+        return pendingRequest.promise;
+      }
+    }
+  });
+
+  loaded.hooks.updatePreview(preview, '# Stale in-flight Markdown', { immediate: true });
+  loaded.hooks.activateReactPreviewSession(
+    createElement('div'),
+    root,
+    preview,
+    { textarea: { value: '# Current Markdown' } }
+  );
+  mountOptions.onReady({
+    isCurrent() {
+      return true;
+    },
+    schedule(request, immediate) {
+      scheduled.push({ immediate, request });
+    }
+  });
+
+  assert.equal(aborted, true);
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].immediate, true);
+  assert.equal(scheduled[0].request.markdown, '# Current Markdown');
+  pendingRequest.resolve({ html: '<h1>Stale legacy response</h1>', features: {} });
+  await flushMicrotasks();
+  assert.equal(preview.html(), '<p>Previous preview</p>');
+});
+
+test('React preview request handoff reschedules an in-flight request without AbortController', async () => {
+  let mountOptions;
+  const scheduled = [];
+  const pendingRequest = createDeferred();
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper('<p>Previous preview</p>');
+  const loaded = loadBootstrap({
+    AbortController: undefined,
+    EasyMDEReactPreviewSession: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    },
+    wp: {
+      apiFetch() {
+        return pendingRequest.promise;
+      }
+    }
+  });
+
+  loaded.hooks.updatePreview(preview, '# Current Markdown', { immediate: true });
+  loaded.hooks.activateReactPreviewSession(
+    createElement('div'),
+    root,
+    preview,
+    { textarea: { value: '# Current Markdown' } }
+  );
+  mountOptions.onReady({
+    isCurrent() {
+      return true;
+    },
+    schedule(request, immediate) {
+      scheduled.push({ immediate, request });
+    }
+  });
+
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].immediate, true);
+  pendingRequest.resolve({ html: '<h1>Stale legacy response</h1>', features: {} });
+  await flushMicrotasks();
+  assert.equal(preview.html(), '<p>Previous preview</p>');
+});
+
+test('React preview request handoff does not reschedule a settled legacy request', async () => {
+  let mountOptions;
+  let scheduleCalls = 0;
+  const response = createDeferred();
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper('<p>Previous preview</p>');
+  const loaded = loadBootstrap({
+    AbortController: class {
+      constructor() {
+        this.signal = {};
+      }
+
+      abort() {}
+    },
+    EasyMDEReactPreviewSession: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    },
+    wp: {
+      apiFetch() {
+        return response.promise;
+      }
+    }
+  });
+
+  loaded.hooks.updatePreview(preview, '# Settled Markdown', { immediate: true });
+  response.resolve({ html: '<h1>Settled Markdown</h1>', features: {} });
+  await flushMicrotasks();
+  loaded.hooks.activateReactPreviewSession(
+    createElement('div'),
+    root,
+    preview,
+    { textarea: { value: '# Settled Markdown' } }
+  );
+  mountOptions.onReady({
+    isCurrent() {
+      return true;
+    },
+    schedule() {
+      scheduleCalls += 1;
+    }
+  });
+
+  assert.equal(preview.html(), '<h1>Settled Markdown</h1>');
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'react');
+  assert.equal(scheduleCalls, 0);
+});
+
+test('React preview request handoff does not schedule an idle preview', () => {
+  let mountOptions;
+  let scheduleCalls = 0;
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper('<p>Ready preview</p>');
+  const loaded = loadBootstrap({
+    EasyMDEReactPreviewSession: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    }
+  });
+
+  preview.attr('aria-busy', 'false');
+  loaded.hooks.activateReactPreviewSession(
+    createElement('div'),
+    root,
+    preview,
+    { textarea: { value: '# Current Markdown' } }
+  );
+  mountOptions.onReady({
+    isCurrent() {
+      return true;
+    },
+    schedule() {
+      scheduleCalls += 1;
+    }
+  });
+
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'react');
+  assert.equal(scheduleCalls, 0);
+});
+
+test('React preview request handoff does not reschedule a settled empty preview', () => {
+  let mountOptions;
+  let scheduleCalls = 0;
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper('<p>Previous preview</p>');
+  const loaded = loadBootstrap({
+    EasyMDEReactPreviewSession: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    }
+  });
+
+  loaded.hooks.updatePreview(preview, '# Queued Markdown');
+  loaded.hooks.updatePreview(preview, '');
+  loaded.hooks.activateReactPreviewSession(
+    createElement('div'),
+    root,
+    preview,
+    { textarea: { value: '' } }
+  );
+  mountOptions.onReady({
+    isCurrent() {
+      return true;
+    },
+    schedule() {
+      scheduleCalls += 1;
+    }
+  });
+
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'react');
+  assert.equal(scheduleCalls, 0);
+  loaded.flushTimers();
+  assert.equal(scheduleCalls, 0, 'the cancelled legacy timer must stay inactive');
+});
+
+test('React preview request handoff does not rerender a server preview awaiting enhancement', () => {
+  let mountOptions;
+  let scheduleCalls = 0;
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper('<p>Server-rendered preview</p>');
+  const loaded = loadBootstrap({
+    EasyMDEReactPreviewSession: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    }
+  });
+
+  preview.attr('data-easymde-initial-preview', '1');
+  preview.attr('data-easymde-preview-features', JSON.stringify({ math: true }));
+  assert.equal(loaded.hooks.hydrateInitialPreview(preview, '$x$'), true);
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
+
+  loaded.hooks.activateReactPreviewSession(
+    createElement('div'),
+    root,
+    preview,
+    { textarea: { value: '$x$' } }
+  );
+  mountOptions.onReady({
+    isCurrent() {
+      return true;
+    },
+    schedule() {
+      scheduleCalls += 1;
+    }
+  });
+
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'react');
+  assert.equal(scheduleCalls, 0);
+});
+
 test('React preview request startup failure keeps the legacy scheduler and reports a stable code', () => {
   const messages = [];
   const root = createPreviewWrapper();

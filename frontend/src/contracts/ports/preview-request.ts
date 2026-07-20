@@ -1,5 +1,9 @@
 export type PreviewFeatures = Readonly<Record<string, boolean>>;
 
+declare const safePreviewHtmlBrand: unique symbol;
+
+export type SafePreviewHtml = string & Readonly<{ [safePreviewHtmlBrand]: true }>;
+
 export type PreviewRequest = Readonly<{
   markdown: string;
   postId: number;
@@ -10,7 +14,7 @@ export type PreviewRequest = Readonly<{
 }>;
 
 export type PreviewResponse = Readonly<{
-  html: string;
+  html: SafePreviewHtml;
   features: PreviewFeatures;
 }>;
 

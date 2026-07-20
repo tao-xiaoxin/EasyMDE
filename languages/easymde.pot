@@ -1527,7 +1527,7 @@ msgstr ""
 msgid "Markdown"
 msgstr ""
 
-#: templates/admin/editor-shell.php:64
+#: templates/admin/editor-shell.php:65
 msgid "Output actions"
 msgstr ""
 

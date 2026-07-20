@@ -1032,7 +1032,7 @@
         $panel.find('.easymde-custom-css-code').val(item ? item.css : '');
     }
 
-    function createAppearanceMenu($container, $root, $preview, refreshPreview) {
+    function createAppearanceMenu($container, context) {
         var $anchor = createMenuAnchor('easymde-toolbar-popover-appearance');
         var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-menu easymde-toolbar-button-compact"></button>');
         var $panel = $('<div class="easymde-toolbar-popover easymde-toolbar-popover-appearance-panel" hidden></div>');
@@ -1107,14 +1107,14 @@
                     applyThemeFontDefaults(renderState.markdownTheme);
                 }
 
-                applyRenderState($preview);
-                refreshPreview();
+                applyRenderState(context.preview);
+                context.refreshPreview();
             });
 
             codeControl.select.on('change', function () {
                 renderState.codeTheme = String($(this).val() || 'atom-one-dark');
-                applyRenderState($preview);
-                refreshPreview();
+                applyRenderState(context.preview);
+                context.refreshPreview();
             });
 
             $customToggle.on('click', function () {
@@ -1131,8 +1131,8 @@
                 }).then(function (response) {
                     renderThemeSelect(themeControl.select);
                     themeControl.select.val('custom:' + response.item.id);
-                    applyRenderState($preview);
-                    refreshPreview();
+                    applyRenderState(context.preview);
+                    context.refreshPreview();
                     $status.text(getString('cssSaved'));
                 }).catch(function () {
                     $status.text(getString('cssSaveFailed'));
@@ -1145,7 +1145,7 @@
         $container.append($anchor);
     }
 
-    function createFontMenu($container, $preview) {
+    function createFontMenu($container, context) {
         var $anchor = createMenuAnchor('easymde-toolbar-popover-font');
         var $button = $('<button type="button" class="easymde-toolbar-button easymde-toolbar-button-menu easymde-toolbar-button-compact"></button>');
         var $panel = $('<div class="easymde-toolbar-popover easymde-toolbar-popover-font-panel" hidden></div>');
@@ -1200,7 +1200,7 @@
 
                 control.select.on('change', function () {
                     renderState[stateKey] = String($(this).val() || '');
-                    applyRenderState($preview);
+                    applyRenderState(context.preview);
                 });
 
                 $panel.append(control.root);
@@ -2826,68 +2826,6 @@
         previewRequestRevision = null;
     }
 
-    function applyReactPreviewState($preview, state) {
-        var previewNode = $preview[0];
-        var request = state.request;
-        var scrollState = capturePreviewScroll(previewNode);
-        var responseFeatures;
-
-        if (state.kind === 'loading') {
-            setPreviewPending($preview, !previewHasRenderedContent($preview));
-            return;
-        }
-
-        if (state.kind === 'empty') {
-            activePreviewFeatures = normalizePreviewFeatures(config.features || {});
-            setPreviewReady($preview, request.signature);
-            $preview.html('<p class="easymde-preview-empty">' + escapeHtml(getString('previewEmpty')) + '</p>');
-            applyRenderState($preview);
-            restorePreviewScroll(previewNode, scrollState);
-            return;
-        }
-
-        if (state.kind === 'error') {
-            activePreviewFeatures = normalizePreviewFeatures(config.features || {});
-            setPreviewReady($preview);
-            $preview.html('<p class="easymde-preview-error">' + escapeHtml(getString('previewError')) + '</p>');
-            applyRenderState($preview);
-            restorePreviewScroll(previewNode, scrollState);
-            return;
-        }
-
-        responseFeatures = normalizePreviewFeatures(state.response.features || {});
-        activePreviewFeatures = responseFeatures;
-        $preview.html(state.response.html || previewFallback(request.markdown));
-        applyRenderState($preview);
-        restorePreviewScroll(previewNode, scrollState);
-        enhancePreviewSurface($preview, responseFeatures, function () {
-            return !!(
-                reactPreviewRequestSession
-                && typeof reactPreviewRequestSession.isCurrent === 'function'
-                && reactPreviewRequestSession.isCurrent(state.revision, request.signature)
-                && request.signature === currentPreviewSignature(request.markdown)
-            );
-        }).catch(function () {
-            if (
-                reactPreviewRequestSession
-                && reactPreviewRequestSession.isCurrent(state.revision, request.signature)
-            ) {
-                setPreviewEnhancementError($preview);
-            }
-
-            return false;
-        }).then(function (ready) {
-            if (
-                ready !== false
-                && reactPreviewRequestSession
-                && reactPreviewRequestSession.isCurrent(state.revision, request.signature)
-                && request.signature === currentPreviewSignature(request.markdown)
-            ) {
-                setPreviewReady($preview, request.signature);
-            }
-        });
-    }
-
     function activateReactPreviewSession(container, $root, $preview, context) {
         var bridgeApi = window.EasyMDEReactPreviewSession;
         var bridge;
@@ -2895,8 +2833,45 @@
         var cleanupScheduled = false;
         var disposed = false;
         var failed = false;
+        var mountPreviewGeneration;
         var pagehideRegistered = false;
         var ready = false;
+
+        function activateSurface(surface) {
+            var legacyNode = $preview[0];
+            var nextPreview;
+            var scrollState;
+            var style;
+
+            if (!legacyNode || !surface || surface === legacyNode || !surface.parentElement) {
+                throw new Error('react-preview-surface-invalid');
+            }
+
+            if (typeof context.onPreviewSurfaceReady !== 'function') {
+                throw new Error('react-preview-surface-consumer-invalid');
+            }
+            nextPreview = context.onPreviewSurfaceReady(surface);
+            if (!nextPreview || !nextPreview[0] || nextPreview[0] !== surface) {
+                throw new Error('react-preview-surface-consumer-invalid');
+            }
+
+            scrollState = capturePreviewScroll(legacyNode);
+            style = legacyNode.getAttribute('style');
+            surface.className = legacyNode.className;
+            if (style) {
+                surface.setAttribute('style', style);
+            }
+            legacyNode.removeAttribute('id');
+            legacyNode.hidden = true;
+            container.hidden = false;
+            surface.id = 'easymde-preview';
+            restorePreviewScroll(surface, scrollState);
+
+            context.preview = nextPreview;
+            $preview = context.preview;
+            normalPreviewNode = surface;
+            reactPreviewNode = surface;
+        }
 
         function dispose() {
             if (disposed) {
@@ -2911,7 +2886,13 @@
                 reactPreviewRequestSession = null;
                 reactPreviewNode = null;
                 context.previewRequestSession = null;
-                $root.attr('data-easymde-preview-request-owner', 'legacy');
+                if (ready) {
+                    $root.attr('data-easymde-preview-request-owner', 'react-reload-required');
+                    $root.attr('data-easymde-preview-surface-owner', 'react-reload-required');
+                } else {
+                    $root.attr('data-easymde-preview-request-owner', 'legacy');
+                    $root.attr('data-easymde-preview-surface-owner', 'legacy');
+                }
             }
             if (typeof cleanup === 'function') {
                 cleanup();
@@ -2931,6 +2912,7 @@
         }
 
         $root.attr('data-easymde-preview-request-owner', 'legacy');
+        $root.attr('data-easymde-preview-surface-owner', 'legacy');
         if (!container) {
             return null;
         }
@@ -2953,6 +2935,7 @@
         }
 
         try {
+            mountPreviewGeneration = normalPreviewGeneration;
             cleanup = bridge.mount({
                 container: container,
                 initialRevision: previewRevision,
@@ -2963,15 +2946,38 @@
                     failed = true;
                     if (ready) {
                         $root.attr('data-easymde-preview-request-owner', 'react-reload-required');
+                        $root.attr('data-easymde-preview-surface-owner', 'react-reload-required');
                         reportReactPreviewSessionFailure('react-preview-session-failed-after-handoff');
                         return;
                     }
                     $root.attr('data-easymde-preview-request-owner', 'legacy');
+                    $root.attr('data-easymde-preview-surface-owner', 'legacy');
                     reportReactPreviewSessionFailure('react-preview-session-render-failed');
                     scheduleCleanup();
                 },
-                onReady: function (session) {
+                enhancementPort: {
+                    enhance: function (surface, features, isCurrent) {
+                        return enhancePreviewSurface($(surface), features, isCurrent).then(function (enhanced) {
+                            if (enhanced === false) {
+                                throw new Error('react-preview-enhancement-stale');
+                            }
+                        });
+                    }
+                },
+                initial: {
+                    features: normalizePreviewFeatures(initialPreviewFeatures($preview) || config.features || {}),
+                    html: previewHasRenderedContent($preview) ? $preview.html() : '',
+                    signature: currentPreviewSignature(String((context.textarea || {}).value || ''))
+                },
+                messages: {
+                    empty: getString('previewEmpty'),
+                    error: getString('previewError'),
+                    rendering: getString('previewRendering')
+                },
+                onReady: function (runtime) {
                     var pendingRefresh;
+                    var session = runtime && runtime.session;
+                    var surface = runtime && runtime.surface;
 
                     if (disposed || failed || ready) {
                         return;
@@ -2984,26 +2990,33 @@
                         throw new Error('react-preview-session-invalid');
                     }
 
-                    pendingRefresh = previewTimer !== null || previewRequestRevision !== null;
+                    pendingRefresh = previewTimer !== null
+                        || previewRequestRevision !== null
+                        || normalPreviewGeneration !== mountPreviewGeneration;
+                    normalPreviewGeneration += 1;
                     window.clearTimeout(previewTimer);
                     previewTimer = null;
                     if (pendingRefresh) {
                         previewRevision += 1;
                     }
                     abortPreviewRequest();
-                    reactPreviewNode = $preview[0];
+                    activateSurface(surface);
                     reactPreviewRequestSession = session;
                     context.previewRequestSession = session;
                     ready = true;
                     $root.attr('data-easymde-preview-request-owner', 'react');
+                    $root.attr('data-easymde-preview-surface-owner', 'react');
 
                     if (pendingRefresh) {
                         updatePreview($preview, String((context.textarea || {}).value || ''), { immediate: true });
                     }
                 },
-                onState: function (state) {
-                    if (!disposed && ready && reactPreviewRequestSession) {
-                        applyReactPreviewState($preview, state);
+                scrollPort: {
+                    capture: function (surface) {
+                        return capturePreviewScroll(surface);
+                    },
+                    restore: function (surface, state) {
+                        restorePreviewScroll(surface, state);
                     }
                 }
             });
@@ -3809,8 +3822,8 @@
         }
 
         createImmersiveToggleButton($secondary, context);
-        createFontMenu($secondary, context.preview);
-        createAppearanceMenu($secondary, context.root, context.preview, context.refreshPreview);
+        createFontMenu($secondary, context);
+        createAppearanceMenu($secondary, context);
         context.draftStatus = createDraftStatus($secondary);
 
         context.reactToolbarCleanup = activateReactToolbar(
@@ -3963,12 +3976,13 @@
         }
 
         function refreshPreview(options) {
-            updatePreview($preview, $source.val(), options || { immediate: true });
+            updatePreview(context.preview, $source.val(), options || { immediate: true });
         }
 
         context = {
             root: $root,
             textarea: $source[0],
+            sourceScrollElement: $source[0],
             preview: $preview,
             refreshPreview: refreshPreview,
             flash: null,
@@ -4009,7 +4023,7 @@
                 throw new Error('react-document-source-surface-invalid');
             }
 
-            nextScrollSyncCleanup = bindScrollSync(scrollElement, $preview[0]);
+            nextScrollSyncCleanup = bindScrollSync(scrollElement, context.preview[0]);
             try {
                 bindLazyImagePasteUpload($source[0], $root, $flash, inputElement);
             } catch (error) {
@@ -4020,10 +4034,29 @@
             if (typeof context.scrollSyncCleanup === 'function') {
                 context.scrollSyncCleanup();
             }
+            context.sourceScrollElement = scrollElement;
             context.scrollSyncCleanup = nextScrollSyncCleanup;
         };
         context.onDocumentSourceDisposed = function () {
+            context.sourceScrollElement = $source[0];
             restoreLegacyDocumentSource(context, $source[0], $preview[0]);
+        };
+        context.onPreviewSurfaceReady = function (surface) {
+            var nextPreview = $(surface);
+            var nextScrollSyncCleanup;
+
+            if (!nextPreview.length) {
+                throw new Error('react-preview-surface-wrapper-invalid');
+            }
+            nextScrollSyncCleanup = bindScrollSync(context.sourceScrollElement, surface);
+            if (typeof nextScrollSyncCleanup !== 'function') {
+                throw new Error('react-preview-scroll-contract-invalid');
+            }
+            if (typeof context.scrollSyncCleanup === 'function') {
+                context.scrollSyncCleanup();
+            }
+            context.scrollSyncCleanup = nextScrollSyncCleanup;
+            return nextPreview;
         };
         $source.on('input', function () {
             if (initialMarkdown === null) {
@@ -4031,7 +4064,7 @@
             }
 
             mirrorToPostContent(this.value);
-            updatePreview($preview, this.value);
+            updatePreview(context.preview, this.value);
 
             scheduleLocalDraft(
                 storage,
@@ -4074,11 +4107,11 @@
             syncMarkdownFields(shellMarkdown);
 
             if (!initialPreviewHydrated) {
-                updatePreview($preview, shellMarkdown, { immediate: true });
+                updatePreview(context.preview, shellMarkdown, { immediate: true });
             }
 
             if (initialPreviewEnhancement) {
-                if (!sourceChangedBeforeShell) {
+                if (!sourceChangedBeforeShell && context.preview[0] === $preview[0]) {
                     initialPreviewEnhancement(shellMarkdown);
                     deferWechatPreload = true;
                 }

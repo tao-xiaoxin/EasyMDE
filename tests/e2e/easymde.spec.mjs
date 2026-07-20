@@ -547,7 +547,11 @@ function revisionMarkdownSummary(postId) {
 
 async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
   await page.locator('.easymde-source-react .cm-content').fill(markdown);
-  await expect(page.locator('#easymde-preview')).toContainText(expectedText);
+  await expect(page.locator('#easymde-source')).toHaveValue(markdown);
+  const preview = page.locator('#easymde-preview');
+  await expect(preview).toHaveAttribute('aria-busy', 'false');
+  await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
+  if (expectedText) await expect(preview).toContainText(expectedText);
 }
 
 function readSerializedOption(optionName) {
@@ -643,17 +647,24 @@ test.describe('EasyMDE editor workflows', () => {
     const reactSource = page.locator('#easymde-source-react');
     const nativeSource = page.locator('#easymde-source');
     const sourceEditor = reactSource.locator('.cm-content');
+    const editor = page.locator('#easymde-editor');
+    const reactPreviewRoot = page.locator('#easymde-preview-session-react');
+    const activePreview = page.locator('#easymde-preview');
+    const legacyPreview = page.locator('.easymde-pane-preview > article:not(#easymde-preview)');
 
     await expect(sourcePane).toHaveAttribute('data-easymde-document-owner', 'react');
-    await expect(page.locator('#easymde-editor')).toHaveAttribute(
-      'data-easymde-preview-request-owner',
-      'react'
-    );
-    await expect(page.locator('[data-easymde-react-preview-session="ready"]')).toHaveCount(1);
+    await expect(editor).toHaveAttribute('data-easymde-preview-request-owner', 'react');
+    await expect(editor).toHaveAttribute('data-easymde-preview-surface-owner', 'react');
     await expect(reactSource).toBeVisible();
     await expect(sourceEditor).toHaveAttribute('contenteditable', 'true');
     await expect(nativeSource).toBeHidden();
     await expect(page.locator('.easymde-pane-source .easymde-source:visible')).toHaveCount(1);
+    await expect(reactPreviewRoot).toBeVisible();
+    await expect(activePreview).toBeVisible();
+    await expect(reactPreviewRoot.locator('#easymde-preview')).toHaveCount(1);
+    await expect(page.locator('.easymde-pane-preview #easymde-preview:visible')).toHaveCount(1);
+    await expect(legacyPreview).toBeHidden();
+    await expect(legacyPreview).not.toHaveAttribute('id', 'easymde-preview');
 
     await sourceEditor.fill('# React source\n\nBridge value');
     await expect(nativeSource).toHaveValue('# React source\n\nBridge value');
@@ -698,6 +709,8 @@ test.describe('EasyMDE editor workflows', () => {
 
     const beforeRejectedDrop = 'Before rejected image drop.';
     await sourceEditor.fill(beforeRejectedDrop);
+    await expect(nativeSource).toHaveValue(beforeRejectedDrop);
+    await expect(sourceEditor).toHaveText(beforeRejectedDrop);
     await sourceEditor.evaluate((editor) => {
       const transfer = new DataTransfer();
       transfer.items.add(new File(
@@ -2780,11 +2793,33 @@ test.describe('EasyMDE editor workflows', () => {
   test('loads optional preview runtimes once and keeps every managed request local', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const errors = collectUnexpectedPageErrors(page);
+    const consoleErrors = [];
+    const failedRequests = [];
+    const failedResponses = [];
 
     await login(page, user);
     await openEasyMdeNewPost(page);
     const runtimeRequests = collectRuntimeAssetRequests(page);
     const origin = new URL(page.url()).origin;
+    page.on('console', (message) => {
+      if ('error' === message.type()) consoleErrors.push(message.text());
+    });
+    page.on('requestfailed', (request) => {
+      const url = new URL(request.url());
+      if (url.origin === origin) {
+        failedRequests.push({
+          error: request.failure()?.errorText || 'unknown',
+          pathname: url.pathname,
+          resourceType: request.resourceType()
+        });
+      }
+    });
+    page.on('response', (response) => {
+      const url = new URL(response.url());
+      if (url.origin === origin && response.status() >= 400) {
+        failedResponses.push({ pathname: url.pathname, status: response.status() });
+      }
+    });
     await fillMarkdownAndWaitForPreview(page, '# Plain\n\nNo source code here.', 'No source code here.');
     await expectOptionalRuntimeElements(page, []);
     expectRuntimeAssetRequests(runtimeRequests, [], origin);
@@ -2872,6 +2907,9 @@ test.describe('EasyMDE editor workflows', () => {
       origin
     );
     expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+    expect(failedRequests).toEqual([]);
+    expect(failedResponses).toEqual([]);
   });
 
   test('published plain, code, math, and Mermaid content load only their local runtime assets', async ({ page }, testInfo) => {

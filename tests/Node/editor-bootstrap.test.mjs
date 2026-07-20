@@ -57,6 +57,40 @@ test('editor shell keeps source before preview in DOM order', () => {
   assert.ok(previewPosition > sourcePosition, 'preview pane must follow source in the DOM');
 });
 
+test('normal preview callbacks follow the active preview owner after React handoff', () => {
+  const bootstrap = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
+  const initStart = bootstrap.indexOf('function initEditor()');
+  const initEnd = bootstrap.indexOf('\n    if (config.testHooks', initStart);
+  const initEditor = bootstrap.slice(initStart, initEnd);
+
+  assert.ok(initStart >= 0, 'editor initialization should exist');
+  assert.match(
+    initEditor,
+    /function refreshPreview\(options\) \{\s*updatePreview\(context\.preview, \$source\.val\(\), options \|\| \{ immediate: true \}\);/
+  );
+  assert.match(
+    initEditor,
+    /mirrorToPostContent\(this\.value\);\s*updatePreview\(context\.preview, this\.value\);/
+  );
+  assert.match(
+    initEditor,
+    /if \(!initialPreviewHydrated\) \{\s*updatePreview\(context\.preview, shellMarkdown, \{ immediate: true \}\);/
+  );
+  assert.match(
+    initEditor,
+    /if \(!sourceChangedBeforeShell && context\.preview\[0\] === \$preview\[0\]\) \{\s*initialPreviewEnhancement\(shellMarkdown\);/
+  );
+  assert.match(bootstrap, /function createAppearanceMenu\(\$container, context\)/);
+  assert.match(bootstrap, /function createFontMenu\(\$container, context\)/);
+  assert.doesNotMatch(
+    bootstrap.slice(
+      bootstrap.indexOf('function createAppearanceMenu'),
+      bootstrap.indexOf('function createFlash')
+    ),
+    /applyRenderState\(\$preview\)/
+  );
+});
+
 test('editor shell delegates exclusive React and legacy toolbar containers', () => {
   const template = readFileSync(join(repoRoot, 'templates/admin/editor-shell.php'), 'utf8');
   const toolbarPosition = template.indexOf('id="easymde-toolbar"');
@@ -143,6 +177,11 @@ test('document source consumer handoff prepares React bindings before releasing 
 
   assert.ok(handoffStart >= 0, 'the document source consumer handoff should exist');
   assert.ok(preparePosition >= 0, 'React scroll sync should be prepared');
+  assert.match(
+    handoff,
+    /nextScrollSyncCleanup = bindScrollSync\(scrollElement, context\.preview\[0\]\);/,
+    'document source readiness must bind to whichever preview owner is active at handoff time'
+  );
   assert.ok(pastePosition > preparePosition, 'React paste behavior should join the prepared handoff');
   assert.ok(releasePosition > pastePosition, 'legacy scroll sync must remain active until preparation succeeds');
   assert.ok(commitPosition > releasePosition, 'the prepared React cleanup becomes authoritative only after release');
@@ -447,7 +486,10 @@ function createPreviewWrapper(html = '') {
   const classes = new Set();
   const node = {
     className: '',
+    hidden: false,
+    id: '',
     innerHTML: html,
+    parentElement: {},
     firstChild: null,
     firstElementChild: null,
     scrollHeight: 100,
@@ -457,6 +499,21 @@ function createPreviewWrapper(html = '') {
     style: {
       removeProperty() {},
       setProperty() {}
+    },
+    getAttribute(name) {
+      return attributes.has(name) ? attributes.get(name) : null;
+    },
+    removeAttribute(name) {
+      attributes.delete(name);
+      if ('id' === name) {
+        node.id = '';
+      }
+    },
+    setAttribute(name, value) {
+      attributes.set(name, String(value));
+      if ('id' === name) {
+        node.id = String(value);
+      }
     },
     querySelector(selector) {
       const wanted = String(selector).match(/\.([a-z0-9_-]+)/gi) || [];
@@ -493,7 +550,7 @@ function createPreviewWrapper(html = '') {
 
   syncChildState();
 
-  return {
+  const wrapper = {
     0: node,
     length: 1,
     findCalls: 0,
@@ -545,6 +602,32 @@ function createPreviewWrapper(html = '') {
       return this;
     }
   };
+
+  return wrapper;
+}
+
+function createPreviewRuntime(session, surface = createPreviewWrapper()) {
+
+  return {
+    context: {
+      onPreviewSurfaceReady() {
+        return surface;
+      }
+    },
+    runtime: {
+      session,
+      surface: surface[0]
+    },
+    surface
+  };
+}
+
+function handoffPreview(mountOptions, context, session, surface) {
+  const previewRuntime = createPreviewRuntime(session, surface);
+
+  Object.assign(context, previewRuntime.context);
+  mountOptions.onReady(previewRuntime.runtime);
+  return previewRuntime;
 }
 
 function createDeferred() {
@@ -1021,13 +1104,20 @@ test('React document source startup failure keeps the legacy source usable', () 
   assert.equal(messages.some((message) => message.includes('Synthetic private detail')), false);
 });
 
-test('React preview request session hands off once and returns ownership on pagehide', () => {
+test('React preview surface handoff requires reload after active teardown', () => {
   let mountOptions;
   let cleanupCalls = 0;
   const pagehideListeners = new Set();
   const root = createPreviewWrapper();
   const preview = createPreviewWrapper();
   const container = createElement('div');
+  container.hidden = true;
+  preview[0].id = 'easymde-preview';
+  preview[0].className = 'easymde-preview article-theme-default';
+  preview[0].scrollHeight = 500;
+  preview[0].scrollLeft = 6;
+  preview[0].scrollTop = 31;
+  preview[0].setAttribute('style', '--easymde-article-font: serif;');
   const session = {
     isCurrent() {
       return true;
@@ -1064,24 +1154,100 @@ test('React preview request session hands off once and returns ownership on page
   const cleanup = loaded.hooks.activateReactPreviewSession(container, root, preview, context);
 
   assert.equal(root.attr('data-easymde-preview-request-owner'), 'legacy');
+  assert.equal(root.attr('data-easymde-preview-surface-owner'), 'legacy');
+  assert.equal(container.hidden, true);
+  assert.equal(preview[0].hidden, false);
   assert.equal(typeof cleanup, 'function');
   assert.equal(pagehideListeners.size, 1);
 
-  mountOptions.onReady(session);
+  const reactSurface = createPreviewWrapper();
+  reactSurface[0].scrollHeight = 500;
+  const previewRuntime = handoffPreview(mountOptions, context, session, reactSurface);
 
   assert.equal(root.attr('data-easymde-preview-request-owner'), 'react');
+  assert.equal(root.attr('data-easymde-preview-surface-owner'), 'react');
   assert.equal(context.previewRequestSession, session);
+  assert.equal(context.preview, previewRuntime.surface);
+  assert.equal(preview[0].id, '');
+  assert.equal(preview[0].hidden, true);
+  assert.equal(container.hidden, false);
+  assert.equal(previewRuntime.surface[0].id, 'easymde-preview');
+  assert.equal(previewRuntime.surface[0].className, preview[0].className);
+  assert.equal(previewRuntime.surface[0].getAttribute('style'), '--easymde-article-font: serif;');
+  assert.equal(previewRuntime.surface[0].scrollLeft, 6);
+  assert.equal(previewRuntime.surface[0].scrollTop, 31);
 
   for (const listener of pagehideListeners) {
     listener();
   }
 
-  assert.equal(root.attr('data-easymde-preview-request-owner'), 'legacy');
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'react-reload-required');
+  assert.equal(root.attr('data-easymde-preview-surface-owner'), 'react-reload-required');
   assert.equal(context.previewRequestSession, null);
   assert.equal(cleanupCalls, 1);
   assert.equal(pagehideListeners.size, 0);
   cleanup();
   assert.equal(cleanupCalls, 1, 'preview session teardown should be idempotent');
+});
+
+test('React preview consumer failure before handoff keeps the legacy surface visible', async () => {
+  let mountOptions;
+  let cleanupCalls = 0;
+  const messages = [];
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper('<p>Legacy preview</p>');
+  const container = createElement('div');
+  const context = {
+    onPreviewSurfaceReady() {
+      throw new Error('Synthetic private consumer detail');
+    },
+    textarea: { value: '# Synthetic Markdown' }
+  };
+  const session = {
+    isCurrent() {
+      return true;
+    },
+    schedule() {}
+  };
+  container.hidden = true;
+  preview[0].id = 'easymde-preview';
+  const loaded = loadBootstrap({
+    console: {
+      error(message) {
+        messages.push(message);
+      }
+    },
+    EasyMDEReactPreviewSession: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {
+              cleanupCalls += 1;
+            };
+          }
+        };
+      }
+    }
+  });
+
+  loaded.hooks.activateReactPreviewSession(container, root, preview, context);
+  const surface = createPreviewWrapper('<p>React preview</p>');
+  assert.throws(
+    () => mountOptions.onReady({ session, surface: surface[0] }),
+    /Synthetic private consumer detail/
+  );
+  mountOptions.onFailure();
+  await flushMicrotasks();
+
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'legacy');
+  assert.equal(root.attr('data-easymde-preview-surface-owner'), 'legacy');
+  assert.equal(preview[0].id, 'easymde-preview');
+  assert.equal(preview[0].hidden, false);
+  assert.equal(container.hidden, true);
+  assert.deepEqual(messages, ['[EasyMDE] react-preview-session-render-failed']);
+  assert.equal(messages.some((message) => message.includes('Synthetic private consumer detail')), false);
+  assert.equal(cleanupCalls, 1);
 });
 
 test('React preview request handoff preserves a pending legacy refresh', () => {
@@ -1108,7 +1274,7 @@ test('React preview request handoff preserves a pending legacy refresh', () => {
   loaded.hooks.updatePreview(preview, '# Stale queued Markdown');
   assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
   loaded.hooks.activateReactPreviewSession(createElement('div'), root, preview, context);
-  mountOptions.onReady({
+  handoffPreview(mountOptions, context, {
     isCurrent() {
       return true;
     },
@@ -1132,6 +1298,7 @@ test('React preview request handoff aborts and reschedules an in-flight legacy r
   const pendingRequest = createDeferred();
   const root = createPreviewWrapper();
   const preview = createPreviewWrapper('<p>Previous preview</p>');
+  const context = { textarea: { value: '# Current Markdown' } };
   const loaded = loadBootstrap({
     AbortController: class {
       constructor() {
@@ -1164,9 +1331,9 @@ test('React preview request handoff aborts and reschedules an in-flight legacy r
     createElement('div'),
     root,
     preview,
-    { textarea: { value: '# Current Markdown' } }
+    context
   );
-  mountOptions.onReady({
+  handoffPreview(mountOptions, context, {
     isCurrent() {
       return true;
     },
@@ -1184,12 +1351,61 @@ test('React preview request handoff aborts and reschedules an in-flight legacy r
   assert.equal(preview.html(), '<p>Previous preview</p>');
 });
 
+test('React preview handoff reschedules a preview generation that settled after the mount snapshot', async () => {
+  let mountOptions;
+  const scheduled = [];
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper('<p>Mount snapshot</p>');
+  const context = { textarea: { value: '# Latest Markdown' } };
+  const loaded = loadBootstrap({
+    EasyMDEReactPreviewSession: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    }
+  });
+
+  loaded.hooks.activateReactPreviewSession(createElement('div'), root, preview, context);
+  preview.attr('data-easymde-initial-preview', '1');
+  preview.attr('data-easymde-preview-features', JSON.stringify({}));
+  assert.equal(loaded.hooks.hydrateInitialPreview(preview, '# Latest Markdown'), true);
+  preview.html('<h1>Latest Markdown</h1>');
+  loaded.flushTimers();
+  await flushMicrotasks();
+
+  handoffPreview(mountOptions, context, {
+    isCurrent() {
+      return true;
+    },
+    schedule(request, immediate) {
+      scheduled.push({ immediate, request });
+    }
+  });
+
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].immediate, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(scheduled[0].request)), {
+    codeTheme: 'atom-one-dark',
+    customCssId: '',
+    markdown: '# Latest Markdown',
+    markdownTheme: 'default',
+    postId: 123,
+    signature: loaded.hooks.currentPreviewSignature('# Latest Markdown')
+  });
+});
+
 test('React preview request handoff reschedules an in-flight request without AbortController', async () => {
   let mountOptions;
   const scheduled = [];
   const pendingRequest = createDeferred();
   const root = createPreviewWrapper();
   const preview = createPreviewWrapper('<p>Previous preview</p>');
+  const context = { textarea: { value: '# Current Markdown' } };
   const loaded = loadBootstrap({
     AbortController: undefined,
     EasyMDEReactPreviewSession: {
@@ -1214,9 +1430,9 @@ test('React preview request handoff reschedules an in-flight request without Abo
     createElement('div'),
     root,
     preview,
-    { textarea: { value: '# Current Markdown' } }
+    context
   );
-  mountOptions.onReady({
+  handoffPreview(mountOptions, context, {
     isCurrent() {
       return true;
     },
@@ -1238,6 +1454,7 @@ test('React preview request handoff does not reschedule a settled legacy request
   const response = createDeferred();
   const root = createPreviewWrapper();
   const preview = createPreviewWrapper('<p>Previous preview</p>');
+  const context = { textarea: { value: '# Settled Markdown' } };
   const loaded = loadBootstrap({
     AbortController: class {
       constructor() {
@@ -1270,9 +1487,9 @@ test('React preview request handoff does not reschedule a settled legacy request
     createElement('div'),
     root,
     preview,
-    { textarea: { value: '# Settled Markdown' } }
+    context
   );
-  mountOptions.onReady({
+  handoffPreview(mountOptions, context, {
     isCurrent() {
       return true;
     },
@@ -1291,6 +1508,7 @@ test('React preview request handoff does not schedule an idle preview', () => {
   let scheduleCalls = 0;
   const root = createPreviewWrapper();
   const preview = createPreviewWrapper('<p>Ready preview</p>');
+  const context = { textarea: { value: '# Current Markdown' } };
   const loaded = loadBootstrap({
     EasyMDEReactPreviewSession: {
       prepare() {
@@ -1309,9 +1527,9 @@ test('React preview request handoff does not schedule an idle preview', () => {
     createElement('div'),
     root,
     preview,
-    { textarea: { value: '# Current Markdown' } }
+    context
   );
-  mountOptions.onReady({
+  handoffPreview(mountOptions, context, {
     isCurrent() {
       return true;
     },
@@ -1329,6 +1547,7 @@ test('React preview request handoff does not reschedule a settled empty preview'
   let scheduleCalls = 0;
   const root = createPreviewWrapper();
   const preview = createPreviewWrapper('<p>Previous preview</p>');
+  const context = { textarea: { value: '' } };
   const loaded = loadBootstrap({
     EasyMDEReactPreviewSession: {
       prepare() {
@@ -1348,9 +1567,9 @@ test('React preview request handoff does not reschedule a settled empty preview'
     createElement('div'),
     root,
     preview,
-    { textarea: { value: '' } }
+    context
   );
-  mountOptions.onReady({
+  handoffPreview(mountOptions, context, {
     isCurrent() {
       return true;
     },
@@ -1370,6 +1589,7 @@ test('React preview request handoff does not rerender a server preview awaiting 
   let scheduleCalls = 0;
   const root = createPreviewWrapper();
   const preview = createPreviewWrapper('<p>Server-rendered preview</p>');
+  const context = { textarea: { value: '$x$' } };
   const loaded = loadBootstrap({
     EasyMDEReactPreviewSession: {
       prepare() {
@@ -1392,9 +1612,9 @@ test('React preview request handoff does not rerender a server preview awaiting 
     createElement('div'),
     root,
     preview,
-    { textarea: { value: '$x$' } }
+    context
   );
-  mountOptions.onReady({
+  handoffPreview(mountOptions, context, {
     isCurrent() {
       return true;
     },
@@ -1443,6 +1663,7 @@ test('React preview scheduling invalidates queued legacy initial-preview enhance
   let mountOptions;
   const root = createPreviewWrapper();
   const preview = createPreviewWrapper('<pre><code>initial</code></pre>');
+  const context = {};
   const loaded = loadBootstrap({
     EasyMDEEnhancements: {
       enhance() {
@@ -1473,14 +1694,14 @@ test('React preview scheduling invalidates queued legacy initial-preview enhance
     }
   }), true);
 
-  loaded.hooks.activateReactPreviewSession(createElement('div'), root, preview, {});
-  mountOptions.onReady({
+  loaded.hooks.activateReactPreviewSession(createElement('div'), root, preview, context);
+  const previewRuntime = handoffPreview(mountOptions, context, {
     isCurrent() {
       return true;
     },
     schedule() {}
   });
-  loaded.hooks.updatePreview(preview, 'new preview', { immediate: true });
+  loaded.hooks.updatePreview(previewRuntime.surface, 'new preview', { immediate: true });
   deferredEnhancement('```js\ninitial\n```');
   loaded.flushTimers();
   await flushMicrotasks();

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PreviewRequest, PreviewResponse } from '../../../contracts/ports/preview-request';
+import type {
+  PreviewRequest,
+  PreviewResponse,
+  SafePreviewHtml
+} from '../../../contracts/ports/preview-request';
 import { createPreviewRequestSession } from './create-preview-request-session';
 
 const request = (markdown: string): PreviewRequest => ({
@@ -22,6 +26,10 @@ function deferred<T>() {
   return { promise, reject, resolve };
 }
 
+function safeHtml(value: string): SafePreviewHtml {
+  return value as SafePreviewHtml;
+}
+
 describe('createPreviewRequestSession', () => {
   it('debounces for 180ms and publishes only the latest result', async () => {
     vi.useFakeTimers();
@@ -35,8 +43,8 @@ describe('createPreviewRequestSession', () => {
     await vi.advanceTimersByTimeAsync(180);
     session.schedule(request('second'));
     await vi.advanceTimersByTimeAsync(180);
-    first.resolve({ html: '<p>first</p>', features: {} });
-    second.resolve({ html: '<p>second</p>', features: {} });
+    first.resolve({ html: safeHtml('<p>first</p>'), features: {} });
+    second.resolve({ html: safeHtml('<p>second</p>'), features: {} });
     await Promise.resolve();
 
     expect(render).toHaveBeenCalledTimes(2);
@@ -77,7 +85,7 @@ describe('createPreviewRequestSession', () => {
     session.schedule(request('pending'), true);
     const signal = render.mock.calls[0]?.[1] as AbortSignal;
     session.destroy();
-    pending.resolve({ html: '<p>late</p>', features: {} });
+    pending.resolve({ html: safeHtml('<p>late</p>'), features: {} });
     await Promise.resolve();
 
     expect(signal.aborted).toBe(true);

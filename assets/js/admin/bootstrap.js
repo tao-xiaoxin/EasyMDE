@@ -3783,6 +3783,7 @@
         });
 
         $('#post').on('submit', function () {
+            skipNextCrossDocumentViewTransition();
             if (context.documentSession && typeof context.documentSession.flush === 'function') {
                 context.documentSession.flush();
             }

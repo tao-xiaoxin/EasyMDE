@@ -1367,6 +1367,19 @@ test('immersive native navigation skips one cross-document transition and cleans
   assert.equal(removed, 3);
 });
 
+test('normal native form submission skips the next cross-document transition before flushing fields', () => {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
+  const submitStart = source.indexOf("$('#post').on('submit', function ()");
+  const submitEnd = source.indexOf('});', submitStart);
+  const submitHandler = source.slice(submitStart, submitEnd);
+  const transitionAt = submitHandler.indexOf('skipNextCrossDocumentViewTransition();');
+  const flushAt = submitHandler.indexOf('context.documentSession.flush();');
+
+  assert.ok(submitStart >= 0, 'the native WordPress form submit bridge should exist');
+  assert.ok(transitionAt >= 0, 'normal native submission should disable the unstable cross-document transition');
+  assert.ok(flushAt > transitionAt, 'the transition guard must be registered before native field flushing');
+});
+
 test('preview readiness requires the current Markdown signature and an idle preview', () => {
   const { hooks } = loadBootstrap();
   const preview = {

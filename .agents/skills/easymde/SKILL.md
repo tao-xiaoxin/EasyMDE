@@ -241,9 +241,9 @@ Choose the smallest fitting UI capability in this order:
 1. reuse an existing EasyMDE UI Primitive, Feature API, WordPress API, or
    WordPress-provided Component whose supported Runtime, Styles,
    accessibility, and visual contract fit the focused surface;
-2. use a native semantic React control for straightforward Button, Link, Input,
-   Textarea, Checkbox, or Select behavior that the browser implements
-   completely;
+2. use native semantic HTML elements rendered by React, such as `<button>`,
+   `<a>`, `<input>`, `<textarea>`, checkbox inputs, or `<select>`, when the
+   browser implements the required behavior completely;
 3. for a complex widget, select only the maintained headless Primitive that
    owns the required Focus, keyboard, Portal, positioning, dismissal, and ARIA
    behavior while EasyMDE retains visual ownership; or
@@ -254,8 +254,9 @@ Choose the smallest fitting UI capability in this order:
 For WordPress-native Settings and Administration surfaces, evaluate the
 WordPress-provided `@wordpress/components` capability first, but do not claim or
 import it until its WordPress 6.7 Package version, `wp-components` Script and
-Style dependencies, TypeScript contract, visual fit, and production metadata
-are verified. For design-specific editor overlays, evaluate individual React
+Style dependencies, TypeScript contract, visual fit, Vite external and global
+mapping, generated WordPress dependency metadata, and production output are
+verified. For design-specific editor overlays, evaluate individual React
 18-compatible headless packages rather than adopting a complete design system.
 The default shortlist for focused evaluation is Radix Dialog or AlertDialog,
 Popover, Tooltip, DropdownMenu, Select, Tabs, and ScrollArea; this is not

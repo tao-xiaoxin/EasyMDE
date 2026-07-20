@@ -1190,6 +1190,65 @@ test('React preview surface handoff requires reload after active teardown', () =
   assert.equal(cleanupCalls, 1, 'preview session teardown should be idempotent');
 });
 
+test('React preview failure after handoff does not reuse the destroyed request session', () => {
+  let mountOptions;
+  let destroyed = false;
+  let scheduleCalls = 0;
+  const draftWrites = [];
+  const root = createPreviewWrapper();
+  const preview = createPreviewWrapper('<p>Legacy preview</p>');
+  const container = createElement('div');
+  const context = { textarea: { value: '# Current Markdown' } };
+  const session = {
+    isCurrent() {
+      return !destroyed;
+    },
+    schedule() {
+      scheduleCalls += 1;
+      if (destroyed) throw new Error('preview-session-destroyed');
+    }
+  };
+  const loaded = loadBootstrap({
+    EasyMDEDraftStorage: {
+      write(storage, markdown) {
+        draftWrites.push({ markdown, storage });
+      }
+    },
+    EasyMDEReactPreviewSession: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    }
+  });
+
+  loaded.hooks.activateReactPreviewSession(container, root, preview, context);
+  const previewRuntime = handoffPreview(mountOptions, context, session);
+  previewRuntime.surface[0].easymdePreviewSignature = 'ready-signature';
+
+  mountOptions.onFailure();
+  destroyed = true;
+
+  assert.equal(root.attr('data-easymde-preview-request-owner'), 'react-reload-required');
+  assert.equal(root.attr('data-easymde-preview-surface-owner'), 'react-reload-required');
+  assert.equal(context.previewRequestSession, null);
+  assert.equal(previewRuntime.surface[0].easymdePreviewSignature, null);
+  assert.doesNotThrow(() => {
+    loaded.hooks.updatePreview(previewRuntime.surface, '# Edit after Preview failure');
+    loaded.hooks.scheduleLocalDraft('synthetic-storage', () => '# Recoverable draft');
+  });
+  loaded.flushTimers();
+
+  assert.equal(scheduleCalls, 0);
+  assert.deepEqual(draftWrites, [
+    { markdown: '# Recoverable draft', storage: 'synthetic-storage' }
+  ]);
+});
+
 test('React preview consumer failure before handoff keeps the legacy surface visible', async () => {
   let mountOptions;
   let cleanupCalls = 0;
@@ -1231,6 +1290,8 @@ test('React preview consumer failure before handoff keeps the legacy surface vis
     }
   });
 
+  loaded.hooks.updatePreview(preview, '# Pending Legacy Refresh');
+  assert.equal(preview.attr('data-easymde-preview-refreshing'), '1');
   loaded.hooks.activateReactPreviewSession(container, root, preview, context);
   const surface = createPreviewWrapper('<p>React preview</p>');
   assert.throws(
@@ -1248,6 +1309,9 @@ test('React preview consumer failure before handoff keeps the legacy surface vis
   assert.deepEqual(messages, ['[EasyMDE] react-preview-session-render-failed']);
   assert.equal(messages.some((message) => message.includes('Synthetic private consumer detail')), false);
   assert.equal(cleanupCalls, 1);
+  loaded.flushTimers();
+  await flushMicrotasks();
+  assert.match(preview.html(), /Pending Legacy Refresh/);
 });
 
 test('React preview request handoff preserves a pending legacy refresh', () => {

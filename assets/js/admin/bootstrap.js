@@ -32,6 +32,7 @@
     var normalPreviewNode = null;
     var reactPreviewRequestSession = null;
     var reactPreviewNode = null;
+    var reactPreviewSessionFailed = false;
     var imagePasteLoadPromise = null;
     var mediaPickerLoadPromise = null;
     var wechatExporterLoadPromise = null;
@@ -2945,6 +2946,12 @@
                     }
                     failed = true;
                     if (ready) {
+                        reactPreviewSessionFailed = true;
+                        reactPreviewRequestSession = null;
+                        context.previewRequestSession = null;
+                        if (reactPreviewNode) {
+                            reactPreviewNode.easymdePreviewSignature = null;
+                        }
                         $root.attr('data-easymde-preview-request-owner', 'react-reload-required');
                         $root.attr('data-easymde-preview-surface-owner', 'react-reload-required');
                         reportReactPreviewSessionFailure('react-preview-session-failed-after-handoff');
@@ -2990,6 +2997,7 @@
                         throw new Error('react-preview-session-invalid');
                     }
 
+                    activateSurface(surface);
                     pendingRefresh = previewTimer !== null
                         || previewRequestRevision !== null
                         || normalPreviewGeneration !== mountPreviewGeneration;
@@ -3000,8 +3008,8 @@
                         previewRevision += 1;
                     }
                     abortPreviewRequest();
-                    activateSurface(surface);
                     reactPreviewRequestSession = session;
+                    reactPreviewSessionFailed = false;
                     context.previewRequestSession = session;
                     ready = true;
                     $root.attr('data-easymde-preview-request-owner', 'react');
@@ -3045,6 +3053,10 @@
         var delay;
 
         options = options || {};
+
+        if (reactPreviewSessionFailed && previewNode === reactPreviewNode) {
+            return;
+        }
 
         if (previewNode === normalPreviewNode || previewNode === reactPreviewNode) {
             normalPreviewGeneration += 1;

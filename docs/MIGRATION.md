@@ -46,6 +46,32 @@ save, publish, permissions, nonces, revisions, autosave, and post locks. The
 secondary Toolbar and immersive workspace remain legacy-owned, and this unit
 does not migrate immersive writing.
 
+## Normal Editor Preview Request Session Ownership
+
+The normal editor's Preview request scheduler and latest-response policy are a
+React browser-session responsibility after readiness. A focused Preview Port
+uses the existing WordPress REST contract, while PHP remains authoritative for
+capabilities, Nonces, Markdown rendering, sanitization, and response data.
+React applies the existing 180 millisecond debounce, aborts superseded browser
+requests, and binds every completion to the active request revision and
+Markdown signature so stale responses cannot replace newer Preview output.
+
+The PHP shell provides a dedicated empty React container and declares legacy
+request ownership initially. Legacy scheduling remains active while React
+validates the bootstrap contract, transport, Root, and session. Readiness
+clears the legacy normal-Preview timer and request before one explicit owner
+handoff. Startup failure keeps the legacy scheduler usable and emits only a
+stable privacy-safe diagnostic. Teardown aborts pending React work and restores
+legacy ownership for a clean lifecycle.
+
+Preview DOM rendering, feature enhancement, scroll restoration, and error
+presentation remain legacy-owned during this unit. Immersive Preview also
+remains fully legacy-owned and keeps an independent request revision, timer,
+and abort lifecycle. This separation prevents normal and immersive Preview
+work from invalidating each other's latest-response identity. No persistence,
+Save, Publish, public rendering, or immersive-writing authority moves to
+React.
+
 ## Editor Enablement
 
 EasyMDE opens new and existing content for post types explicitly supported by `easymde_supported_post_types` in EasyMDE through normal WordPress editing when the current user can edit or create that content. The default supported post types are `post` and `page`.

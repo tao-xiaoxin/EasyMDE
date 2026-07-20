@@ -27,7 +27,7 @@ if ( $easymde_initial_preview_pending ) {
 		: $easymde_initial_pending_status;
 }
 ?>
-<div id="easymde-editor" class="easymde-editor" data-post-id="<?php echo esc_attr( $easymde_editor_post->ID ); ?>" data-easymde-markdown-fingerprint="<?php echo esc_attr( $easymde_markdown_fingerprint ); ?>">
+<div id="easymde-editor" class="easymde-editor" data-post-id="<?php echo esc_attr( $easymde_editor_post->ID ); ?>" data-easymde-markdown-fingerprint="<?php echo esc_attr( $easymde_markdown_fingerprint ); ?>" data-easymde-preview-request-owner="legacy">
 	<input type="hidden" id="easymde-enabled-field" name="easymde_enabled" value="1">
 	<input type="hidden" id="easymde-markdown-theme-field" name="easymde_markdown_theme" value="<?php echo esc_attr( $easymde_theme_state['markdownTheme'] ); ?>">
 	<input type="hidden" id="easymde-code-theme-field" name="easymde_code_theme" value="<?php echo esc_attr( $easymde_theme_state['codeTheme'] ); ?>">
@@ -63,4 +63,5 @@ if ( $easymde_initial_preview_pending ) {
 		</section>
 		<aside id="easymde-side-actions" class="easymde-side-actions" aria-label="<?php esc_attr_e( 'Output actions', 'easymde' ); ?>"></aside>
 	</div>
+	<div id="easymde-preview-session-react" hidden></div>
 </div>

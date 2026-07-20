@@ -2170,6 +2170,8 @@ test.describe('EasyMDE editor workflows', () => {
       };
     })).toEqual({ bottom: 367, clipped: true });
     await expect(heading1Item).toBeFocused();
+    await page.evaluate(() => document.querySelector('#content_ifr').focus());
+    await expect(heading1Item).toBeFocused();
     await heading1Item.press('End');
     await expect(heading6Item).toBeFocused();
     expect(await heading6Item.evaluate((item) => {

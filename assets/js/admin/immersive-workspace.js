@@ -1033,6 +1033,8 @@
         var lineNumbers = null;
         var sourceHighlight = null;
         var previousFocus = null;
+        var lastWorkspaceFocus = null;
+        var focusRestoreTimer = null;
         var previousScroll = null;
         var previousWpWrapInert = false;
         var previousWpWrapHadInert = false;
@@ -3633,6 +3635,48 @@
             return root;
         }
 
+        function isAllowedExternalFocus(target) {
+            return !!(
+                target
+                && target.closest
+                && target.closest('.media-modal')
+            );
+        }
+
+        function restoreWorkspaceFocus() {
+            var scope = focusScope();
+            var target = lastWorkspaceFocus;
+
+            if (!target || !target.isConnected || !scope.contains(target)) {
+                target = scope.querySelector(
+                    'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+                );
+            }
+            if (!target || !target.focus) {
+                return;
+            }
+            try {
+                target.focus({ preventScroll: true });
+            } catch (error) {
+                target.focus();
+            }
+        }
+
+        function scheduleWorkspaceFocusRestore() {
+            win.clearTimeout(focusRestoreTimer);
+            focusRestoreTimer = win.setTimeout(function () {
+                focusRestoreTimer = null;
+                if (
+                    !root
+                    || root.contains(doc.activeElement)
+                    || isAllowedExternalFocus(doc.activeElement)
+                ) {
+                    return;
+                }
+                restoreWorkspaceFocus();
+            }, 0);
+        }
+
         function openHistory(trigger) {
             var history = query('.easymde-immersive-workspace__history');
             var list = query('[data-history-list]');
@@ -4081,6 +4125,13 @@
         }
 
         function bindUi() {
+            listen(root, 'focusin', function (event) {
+                lastWorkspaceFocus = event.target;
+            }, true);
+            listen(root, 'focusout', function () {
+                // WordPress resize handlers can focus the inert editor iframe without a parent focusin event.
+                scheduleWorkspaceFocusRestore();
+            }, true);
             root.querySelectorAll('button[data-view]').forEach(function (button) {
                 listen(button, 'click', function () {
                     setView(button.getAttribute('data-view'));
@@ -4742,6 +4793,8 @@
             }
             clearWechatFeedbackTimer();
             clearCustomCssTimers();
+            win.clearTimeout(focusRestoreTimer);
+            focusRestoreTimer = null;
             customCssPreviewSequence += 1;
             listeners.splice(0).forEach(function (remove) {
                 remove();
@@ -4755,6 +4808,7 @@
             }
             root.remove();
             root = null;
+            lastWorkspaceFocus = null;
             source = null;
             title = null;
             preview = null;

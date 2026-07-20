@@ -291,6 +291,50 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertFalse($controller->should_load_editor($post_id, 'movie'));
     }
 
+    public function test_supported_post_disables_only_the_native_content_tinymce_editor()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+            )
+        );
+
+        wp_set_current_user($user_id);
+        $GLOBALS['post'] = get_post($post_id);
+
+        $controller = new PostModeController(new PostDocument());
+        $settings = array('tinymce' => true, 'quicktags' => true);
+
+        $this->assertSame(
+            array('tinymce' => false, 'quicktags' => true),
+            $controller->maybe_disable_tinymce($settings, 'content')
+        );
+        $this->assertSame($settings, $controller->maybe_disable_tinymce($settings, 'extension_editor'));
+    }
+
+    public function test_unsupported_post_type_keeps_native_tinymce_editor()
+    {
+        $this->register_custom_post_type('movie');
+
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'movie',
+                'post_author' => $user_id,
+            )
+        );
+
+        wp_set_current_user($user_id);
+        $GLOBALS['post'] = get_post($post_id);
+
+        $controller = new PostModeController(new PostDocument());
+        $settings = array('tinymce' => true, 'quicktags' => true);
+
+        $this->assertSame($settings, $controller->maybe_disable_tinymce($settings, 'content'));
+    }
+
     public function test_opening_existing_ordinary_post_renders_editor_without_writing_post_state()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));

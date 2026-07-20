@@ -1958,6 +1958,8 @@ test.describe('EasyMDE editor workflows', () => {
     await openEasyMdeNewPost(page);
     await enterImmersiveWithKeyboard(page);
 
+    await expect(page.locator('#content_ifr')).toHaveCount(0);
+
     const source = page.locator('.easymde-immersive-workspace__source');
     const nativeSource = page.locator('#easymde-source');
     const commandCases = [

@@ -18,6 +18,7 @@ final class PostModeController {
 
 	public function register_hooks() {
 		add_filter( 'use_block_editor_for_post', array( $this, 'maybe_disable_block_editor' ), 10, 2 );
+		add_filter( 'wp_editor_settings', array( $this, 'maybe_disable_tinymce' ), 10, 2 );
 		add_action( 'admin_init', array( $this, 'maybe_redirect_new_post_entry' ) );
 	}
 
@@ -27,6 +28,16 @@ final class PostModeController {
 		}
 
 		return $use_block_editor;
+	}
+
+	public function maybe_disable_tinymce( $settings, $editor_id ) {
+		global $post;
+
+		if ( 'content' === $editor_id && $this->should_use_easymde_editor_for_post( $post ) ) {
+			$settings['tinymce'] = false;
+		}
+
+		return $settings;
 	}
 
 	public function redirect_new_post() {

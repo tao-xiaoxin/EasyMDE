@@ -9,7 +9,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	private $get_category_options;
 	private $get_category_options_cache_key;
 	private $category_load_error;
-	private $get_react_toolbar_asset;
+	private $get_react_editor_asset;
 	private $get_static_asset_version;
 
 	public function set_up() {
@@ -20,12 +20,12 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->get_category_options = $reflection->getMethod( 'get_category_options' );
 		$this->get_category_options_cache_key = $reflection->getMethod( 'get_category_options_cache_key' );
 		$this->category_load_error = $reflection->getProperty( 'category_load_error' );
-		$this->get_react_toolbar_asset = $reflection->getMethod( 'get_react_toolbar_asset' );
+		$this->get_react_editor_asset = $reflection->getMethod( 'get_react_editor_asset' );
 		$this->get_static_asset_version = $reflection->getMethod( 'get_static_asset_version' );
 		$this->get_category_options->setAccessible( true );
 		$this->get_category_options_cache_key->setAccessible( true );
 		$this->category_load_error->setAccessible( true );
-		$this->get_react_toolbar_asset->setAccessible( true );
+		$this->get_react_editor_asset->setAccessible( true );
 		$this->get_static_asset_version->setAccessible( true );
 		wp_cache_flush();
 	}
@@ -39,18 +39,27 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertNotSame( EASYMDE_VERSION, $version );
 	}
 
-	public function test_resolves_the_committed_react_toolbar_manifest_and_dependency_metadata() {
-		$asset = $this->get_react_toolbar_asset->invoke( $this->admin_assets );
+	public function test_editor_stylesheet_uses_a_content_version_for_document_owner_handoff() {
+		$asset_path = 'assets/css/admin/editor.css';
+		$version    = $this->get_static_asset_version->invoke( $this->admin_assets, $asset_path );
+
+		$this->assertMatchesRegularExpression( '/^[a-f0-9]{16}$/', $version );
+		$this->assertSame( substr( hash_file( 'sha256', Asset::path( $asset_path ) ), 0, 16 ), $version );
+		$this->assertNotSame( EASYMDE_VERSION, $version );
+	}
+
+	public function test_resolves_the_committed_react_editor_manifest_and_dependency_metadata() {
+		$asset = $this->get_react_editor_asset->invoke( $this->admin_assets );
 
 		$this->assertSame( 'easymde-admin-editor-toolbar', $asset['handle'] );
-		$this->assertMatchesRegularExpression( '#^assets/build/assets/admin-editor-toolbar-[A-Za-z0-9_-]+\.js$#', $asset['path'] );
+		$this->assertMatchesRegularExpression( '#^assets/build/assets/admin-editor-[A-Za-z0-9_-]+\.js$#', $asset['path'] );
 		$this->assertSame( array( 'wp-element' ), $asset['dependencies'] );
 		$this->assertMatchesRegularExpression( '/^[a-f0-9]{16}$/', $asset['version'] );
 		$this->assertFileExists( Asset::path( $asset['path'] ) );
 	}
 
-	public function test_rejects_an_incompatible_react_toolbar_manifest_contract() {
-		$build_dir = trailingslashit( get_temp_dir() ) . 'easymde-react-toolbar-invalid-' . wp_generate_uuid4();
+	public function test_rejects_an_incompatible_react_editor_manifest_contract() {
+		$build_dir = trailingslashit( get_temp_dir() ) . 'easymde-react-editor-invalid-' . wp_generate_uuid4();
 		wp_mkdir_p( $build_dir );
 		file_put_contents(
 			$build_dir . '/wordpress-manifest.json',
@@ -64,8 +73,8 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		try {
 			$this->expectException( RuntimeException::class );
-			$this->expectExceptionMessage( 'react-toolbar-manifest-invalid' );
-			$this->get_react_toolbar_asset->invoke( $this->admin_assets, $build_dir );
+			$this->expectExceptionMessage( 'react-editor-manifest-invalid' );
+			$this->get_react_editor_asset->invoke( $this->admin_assets, $build_dir );
 		} finally {
 			wp_delete_file( $build_dir . '/wordpress-manifest.json' );
 			rmdir( $build_dir );

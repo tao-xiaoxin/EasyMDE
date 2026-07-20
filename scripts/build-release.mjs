@@ -66,7 +66,7 @@ const baseRequirements = [
   { path: 'languages/easymde-zh_CN.po', type: 'file' },
   { path: 'languages/easymde-zh_CN.mo', type: 'file' }
 ];
-const productionFrontendEntry = 'frontend/src/entrypoints/admin-editor-toolbar.tsx';
+const productionFrontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 
 const runtimeSupportAssetPaths = [
   'assets/images/cupid-busy-h2-prefix.png',
@@ -433,7 +433,7 @@ function productionFrontendRequirements(root) {
     || !Array.isArray(wordpressEntry.resources)
     || 0 !== wordpressEntry.resources.length
     || 'string' !== typeof wordpressEntry.file
-    || !/^assets\/admin-editor-toolbar-[A-Za-z0-9_-]+\.js$/.test(wordpressEntry.file)
+    || !/^assets\/admin-editor-[A-Za-z0-9_-]+\.js$/.test(wordpressEntry.file)
     || wordpressEntry.file.replace(/\.js$/, '.asset.php') !== wordpressEntry.asset
   ) {
     throw new Error('Release build requires matching production frontend manifest contracts.');

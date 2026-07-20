@@ -16,7 +16,7 @@ const contractSpec = {
 };
 const productionSpec = {
   outputRoot: join(repositoryRoot, 'assets/build'),
-  sourceEntry: 'frontend/src/entrypoints/admin-editor-toolbar.tsx',
+  sourceEntry: 'frontend/src/entrypoints/admin-editor.tsx',
   expectedHandle: 'easymde-admin-editor-toolbar',
   expectedDependencies: ['wp-element'],
   resourceField: null,
@@ -32,7 +32,7 @@ const forbiddenContent = [
   { pattern: /https?:\/\//i, label: 'remote runtime URL' },
   {
     pattern:
-      /(?:file:\/\/\/|(?:^|[\r\n"'=:(])\/(?!\/)(?:[A-Za-z0-9._~%+-]+\/)+[A-Za-z0-9._~%+-]+|(?:^|[\s"'=:(])\/(?:Users|home|private|tmp|var\/folders|Volumes|workspace|workspaces|root|mnt|opt)\/|\b[A-Za-z]:[\\/]|\\\\[^\\\s"'<>]+\\)/m,
+      /(?:file:\/\/\/|(?:^|[\s"'=:(])\/(?:Users|home|private|tmp|var|Volumes|workspace|workspaces|root|mnt|opt|srv|etc|usr)(?:\/|["'\s])|(?:^|[\r\n"'=:(])\/(?!\/)(?:[A-Za-z0-9._~%+-]+\/){2,}[A-Za-z0-9._~%+-]+|\b[A-Za-z]:[\\/]|\\\\[A-Za-z0-9._-]+\\[A-Za-z0-9$._-]+)/m,
     label: 'absolute local path'
   },
   { pattern: /sourceMappingURL=/, label: 'source map reference' }
@@ -109,6 +109,10 @@ function assertFile(root, path, label) {
 }
 
 function assertSafeProductionText(source, label) {
+  for (const declaration of nonFetchingXmlNamespaceDeclarations) {
+    source = source.replace(declaration, '');
+  }
+
   for (const forbidden of forbiddenContent) {
     if (forbidden.pattern.test(source)) {
       throw new Error(`${label} contains a prohibited ${forbidden.label}.`);

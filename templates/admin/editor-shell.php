@@ -42,8 +42,9 @@ if ( $easymde_initial_preview_pending ) {
 		<div id="easymde-toolbar-legacy-secondary" class="easymde-toolbar-section easymde-toolbar-section-secondary"></div>
 	</div>
 	<div class="easymde-workspace">
-		<section class="easymde-pane easymde-pane-source">
+		<section class="easymde-pane easymde-pane-source" data-easymde-document-owner="legacy">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>
+			<div id="easymde-source-react" class="easymde-source easymde-source-react" hidden></div>
 			<textarea id="easymde-source" name="easymde_markdown" class="easymde-source" spellcheck="false"><?php echo esc_textarea( $context['markdown'] ); ?></textarea>
 		</section>
 		<section class="easymde-pane easymde-pane-preview">

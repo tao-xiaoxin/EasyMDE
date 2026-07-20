@@ -27,6 +27,9 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@codemirror/commands": "6.10.4",
+    "@codemirror/state": "6.7.1",
+    "@codemirror/view": "6.43.6",
     "@highlightjs/cdn-assets": "^11.11.1",
     "katex": "^0.16.22",
     "lucide-static": "0.487.0",

@@ -6,7 +6,7 @@ import { defineConfig } from 'vite';
 import { wordpressClassicMetadata } from './wordpress-classic-metadata';
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const sourceEntry = 'frontend/src/entrypoints/admin-editor-toolbar.tsx';
+const sourceEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const committedOutputRoot = resolve(repositoryRoot, 'assets/build');
 const checkOutputRoot = resolve(repositoryRoot, '.cache/easymde-frontend-production-check');
 const reactExternals = [
@@ -38,14 +38,14 @@ export default defineConfig(({ mode }) => {
       sourcemap: false,
       assetsInlineLimit: 0,
       rollupOptions: {
-        input: { toolbar: resolve(repositoryRoot, sourceEntry) },
+        input: { editor: resolve(repositoryRoot, sourceEntry) },
         external: [...reactExternals],
         output: {
           format: 'iife',
-          name: 'EasyMDEAdminEditorToolbar',
-          entryFileNames: 'assets/admin-editor-toolbar-[hash].js',
-          chunkFileNames: 'assets/admin-editor-toolbar-chunk-[hash].js',
-          assetFileNames: 'assets/admin-editor-toolbar-[hash][extname]',
+          name: 'EasyMDEAdminEditorReact',
+          entryFileNames: 'assets/admin-editor-[hash].js',
+          chunkFileNames: 'assets/admin-editor-chunk-[hash].js',
+          assetFileNames: 'assets/admin-editor-[hash][extname]',
           globals: Object.fromEntries(reactExternals.map((id) => [id, 'wp.element']))
         }
       }

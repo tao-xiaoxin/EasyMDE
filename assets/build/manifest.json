@@ -1,8 +1,8 @@
 {
-  "frontend/src/entrypoints/admin-editor-toolbar.tsx": {
-    "file": "assets/admin-editor-toolbar-DnoEMhZa.js",
-    "name": "toolbar",
-    "src": "frontend/src/entrypoints/admin-editor-toolbar.tsx",
+  "frontend/src/entrypoints/admin-editor.tsx": {
+    "file": "assets/admin-editor-DnTVdfEA.js",
+    "name": "editor",
+    "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true
   }
 }

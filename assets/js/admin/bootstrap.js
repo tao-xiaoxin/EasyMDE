@@ -43,6 +43,7 @@
     var openPopovers = [];
     var fontControls = null;
     var revisionPreviewRevision = 0;
+    var scrollSyncBindingId = 0;
 
     function readNativeCategoryOptions(documentRef, configuredOptions) {
         var doc = documentRef || document;
@@ -239,9 +240,14 @@
     function getCommandServices() {
         return {
             $: $,
+            dispatchNativeInput: dispatchNativeInput,
             focusWithoutScrolling: focusWithoutScrolling,
             restoreScrollPosition: restoreScrollPosition
         };
+    }
+
+    function dispatchNativeInput(field) {
+        field.dispatchEvent(new window.Event('input', { bubbles: true }));
     }
 
     function detectMacPlatform() {
@@ -435,6 +441,7 @@
     function applyTextChange(textarea, value, selectionStart, selectionEnd) {
         var scrollTop = textarea.scrollTop;
         var scrollLeft = textarea.scrollLeft;
+        var selectionDirection = textarea.selectionDirection;
         var windowScrollX = window.pageXOffset;
         var windowScrollY = window.pageYOffset;
 
@@ -442,13 +449,12 @@
         focusWithoutScrolling(textarea);
 
         if (typeof selectionStart === 'number' && typeof selectionEnd === 'number') {
-            textarea.selectionStart = selectionStart;
-            textarea.selectionEnd = selectionEnd;
+            textarea.setSelectionRange(selectionStart, selectionEnd, selectionDirection || 'none');
         }
 
         restoreScrollPosition(textarea, scrollTop, scrollLeft);
         window.scrollTo(windowScrollX, windowScrollY);
-        $(textarea).trigger('input');
+        dispatchNativeInput(textarea);
         window.setTimeout(function () {
             restoreScrollPosition(textarea, scrollTop, scrollLeft);
             window.scrollTo(windowScrollX, windowScrollY);
@@ -1242,12 +1248,26 @@
     }
 
     function hasUnsavedDocumentChanges(workspaceApi, context, titleValue) {
+        var titleSnapshot = context.titleSession
+            && typeof context.titleSession.getSnapshot === 'function'
+            ? context.titleSession.getSnapshot()
+            : null;
+
         return workspaceApi.hasUnsavedWorkspaceChanges({
             initialMarkdown: context.savedMarkdown,
-            initialTitle: context.savedTitle,
+            initialTitle: titleSnapshot ? titleSnapshot.savedValue : context.savedTitle,
             markdown: context.textarea.value || '',
-            title: String(titleValue || '')
+            title: titleSnapshot ? titleSnapshot.value : String(titleValue || '')
         });
+    }
+
+    function restoreLegacyDocumentSource(context, legacySource, preview) {
+        if (typeof context.scrollSyncCleanup === 'function') {
+            context.scrollSyncCleanup();
+        }
+        context.scrollSyncCleanup = bindScrollSync(legacySource, preview);
+        context.documentSession = null;
+        context.titleSession = null;
     }
 
     function createDraftNotice($root, textarea, storage, $flash) {
@@ -1264,7 +1284,7 @@
 
         $restore.on('click', function () {
             textarea.value = draft.content;
-            $(textarea).trigger('input');
+            dispatchNativeInput(textarea);
             $notice.remove();
             showFlash($flash, 'success', getString('draftRestored'));
         });
@@ -1275,6 +1295,7 @@
             showFlash($flash, 'info', getString('draftDiscarded'));
         });
 
+        $notice.append($message, $restore, $discard);
         if ($root.find('.easymde-editor-flash').length) {
             $root.find('.easymde-editor-flash').after($notice);
         } else {
@@ -1672,7 +1693,8 @@
                     if (context.textarea.value === markdown) {
                         return;
                     }
-                    $(context.textarea).val(markdown).trigger('input');
+                    context.textarea.value = markdown;
+                    dispatchNativeInput(context.textarea);
                 },
                 getTitle: function () {
                     return String($('#title').val() || '');
@@ -1680,7 +1702,8 @@
                 setTitle: function (nextTitle) {
                     var $title = $('#title');
                     if ($title.length && $title.val() !== nextTitle) {
-                        $title.val(nextTitle).trigger('input');
+                        $title.val(nextTitle);
+                        dispatchNativeInput($title[0]);
                     }
                 },
                 subscribeTitle: function (callback) {
@@ -1843,7 +1866,6 @@
                     firstCellStart = start + leading.length + Math.max(0, firstCellOffset);
                     firstCellEnd = firstCellStart + firstCellLabel.length;
                     applyTextChange(textarea, value.slice(0, start) + replacement + value.slice(end), firstCellStart, firstCellEnd);
-                    textarea.dispatchEvent(new window.Event('input', { bubbles: true }));
                     textarea.setSelectionRange(firstCellStart, firstCellEnd);
                     textarea.focus();
                 },
@@ -2466,11 +2488,16 @@
         });
     }
 
-    function bindLazyImagePasteUpload(textarea, $root, $flash) {
+    function bindLazyImagePasteUpload(textarea, $root, $flash, eventTarget) {
+        eventTarget = eventTarget || textarea;
+
         function replayWhenLoaded(event, handlerName, source) {
             var transfer;
 
-            if (textarea.easymdeImagePasteBound || !eventHasImageFileTransfer(event)) {
+            if (
+                (eventTarget === textarea && textarea.easymdeImagePasteBound)
+                || !eventHasImageFileTransfer(event)
+            ) {
                 return;
             }
 
@@ -2510,27 +2537,28 @@
             });
         }
 
-        if (bindImagePaste(textarea, $root, $flash)) {
+        if (eventTarget === textarea && bindImagePaste(textarea, $root, $flash)) {
             return true;
         }
 
         if (
             !textarea
-            || textarea.easymdeImagePasteLazyBound
-            || typeof textarea.addEventListener !== 'function'
+            || !eventTarget
+            || eventTarget.easymdeImagePasteLazyBound
+            || typeof eventTarget.addEventListener !== 'function'
             || !canUseImagePasteUpload()
         ) {
             return false;
         }
 
-        textarea.easymdeImagePasteLazyBound = true;
-        textarea.addEventListener('paste', function (event) {
+        eventTarget.easymdeImagePasteLazyBound = true;
+        eventTarget.addEventListener('paste', function (event) {
             replayWhenLoaded(event, 'handlePaste', 'paste');
         });
-        textarea.addEventListener('dragover', function (event) {
+        eventTarget.addEventListener('dragover', function (event) {
             replayWhenLoaded(event, 'handleDragOver', 'dragover');
         });
-        textarea.addEventListener('drop', function (event) {
+        eventTarget.addEventListener('drop', function (event) {
             replayWhenLoaded(event, 'handleDrop', 'drop');
         });
 
@@ -2881,32 +2909,45 @@
         previewTimer = window.setTimeout(runPreviewRequest, delay);
     }
 
-    function bindScrollSync(textarea, preview) {
-        $(textarea).on('scroll', function () {
+    function bindScrollSync(sourceScroller, preview) {
+        var $sourceScroller = $(sourceScroller);
+        var $preview = $(preview);
+        var namespace = '.easymdeScrollSync' + (++scrollSyncBindingId);
+
+        $sourceScroller.on('scroll' + namespace, function () {
             if (syncLock) {
                 return;
             }
 
             syncLock = true;
-            var ratio = textarea.scrollTop / Math.max(1, textarea.scrollHeight - textarea.clientHeight);
+            var ratio = sourceScroller.scrollTop / Math.max(1, sourceScroller.scrollHeight - sourceScroller.clientHeight);
             preview.scrollTop = ratio * Math.max(1, preview.scrollHeight - preview.clientHeight);
             window.setTimeout(function () {
                 syncLock = false;
             }, 30);
         });
 
-        $(preview).on('scroll', function () {
+        $preview.on('scroll' + namespace, function () {
             if (syncLock) {
                 return;
             }
 
             syncLock = true;
             var ratio = preview.scrollTop / Math.max(1, preview.scrollHeight - preview.clientHeight);
-            textarea.scrollTop = ratio * Math.max(1, textarea.scrollHeight - textarea.clientHeight);
+            sourceScroller.scrollTop = ratio * Math.max(1, sourceScroller.scrollHeight - sourceScroller.clientHeight);
             window.setTimeout(function () {
                 syncLock = false;
             }, 30);
         });
+
+        return function () {
+            if (typeof $sourceScroller.off === 'function') {
+                $sourceScroller.off(namespace);
+            }
+            if (typeof $preview.off === 'function') {
+                $preview.off(namespace);
+            }
+        };
     }
 
     function normalizeEventKey(key) {
@@ -3128,6 +3169,189 @@
         }
     }
 
+    function reportReactDocumentSourceFailure(code) {
+        if (window.console && typeof window.console.error === 'function') {
+            window.console.error('[EasyMDE] ' + code);
+        }
+    }
+
+    function isReactDocumentSession(session) {
+        var documentSession = session && session.document;
+        var titleSession = session && session.title;
+
+        return !!(
+            documentSession
+            && typeof documentSession.flush === 'function'
+            && typeof documentSession.focus === 'function'
+            && typeof documentSession.getInputElement === 'function'
+            && typeof documentSession.getScrollElement === 'function'
+            && typeof documentSession.getSelection === 'function'
+            && typeof documentSession.getValue === 'function'
+            && typeof documentSession.syncFromSubmissionField === 'function'
+            && titleSession
+            && typeof titleSession.getSnapshot === 'function'
+            && typeof titleSession.subscribe === 'function'
+        );
+    }
+
+    function activateReactDocumentSource(sourcePane, reactSource, legacySource, titleField, context) {
+        var reactDocumentSource = window.EasyMDEReactDocumentSource;
+        var disposed = false;
+        var failed = false;
+        var ready = false;
+        var cleanup;
+        var cleanupScheduled = false;
+        var pagehideRegistered = false;
+
+        function restoreLegacyOwner() {
+            reactSource.hidden = true;
+            legacySource.hidden = false;
+            sourcePane.setAttribute('data-easymde-document-owner', 'legacy');
+        }
+
+        function dispose() {
+            if (disposed) {
+                return;
+            }
+
+            disposed = true;
+            if (pagehideRegistered && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('pagehide', dispose);
+                pagehideRegistered = false;
+            }
+            if (context.documentSession && typeof context.documentSession.flush === 'function') {
+                context.documentSession.flush();
+            }
+            if (typeof cleanup === 'function') {
+                cleanup();
+            }
+            if (ready && typeof context.onDocumentSourceDisposed === 'function') {
+                context.onDocumentSourceDisposed();
+            }
+            restoreLegacyOwner();
+        }
+
+        function scheduleCleanup() {
+            if (cleanupScheduled) {
+                return;
+            }
+
+            cleanupScheduled = true;
+            if (typeof window.queueMicrotask === 'function') {
+                window.queueMicrotask(dispose);
+                return;
+            }
+
+            Promise.resolve().then(dispose);
+        }
+
+        function failBeforeHandoff(code) {
+            if (disposed || failed || ready) {
+                return;
+            }
+
+            failed = true;
+            restoreLegacyOwner();
+            reportReactDocumentSourceFailure(code);
+            scheduleCleanup();
+        }
+
+        if (
+            !sourcePane
+            || typeof sourcePane.setAttribute !== 'function'
+            || !reactSource
+            || !legacySource
+            || !titleField
+        ) {
+            return null;
+        }
+
+        restoreLegacyOwner();
+
+        if (!reactDocumentSource || typeof reactDocumentSource.prepare !== 'function') {
+            reportReactDocumentSourceFailure('react-document-source-entry-unavailable');
+            return null;
+        }
+
+        try {
+            reactDocumentSource = reactDocumentSource.prepare({
+                strings: {
+                    editorLabel: getString('editorLabel')
+                }
+            });
+        } catch (error) {
+            reportReactDocumentSourceFailure('react-document-source-prepare-failed');
+            return null;
+        }
+
+        if (!reactDocumentSource || typeof reactDocumentSource.mount !== 'function') {
+            reportReactDocumentSourceFailure('react-document-source-contract-invalid');
+            return null;
+        }
+
+        try {
+            cleanup = reactDocumentSource.mount({
+                container: reactSource,
+                submissionField: legacySource,
+                titleField: titleField,
+                onFailure: function () {
+                    if (disposed || failed) {
+                        return;
+                    }
+
+                    if (ready) {
+                        sourcePane.setAttribute('data-easymde-document-owner', 'react-reload-required');
+                        reportReactDocumentSourceFailure('react-document-source-failed-after-handoff');
+                        return;
+                    }
+
+                    failBeforeHandoff('react-document-source-render-failed');
+                },
+                onReady: function (session) {
+                    if (disposed || failed || ready) {
+                        return;
+                    }
+
+                    if (!isReactDocumentSession(session)) {
+                        failBeforeHandoff('react-document-source-session-invalid');
+                        return;
+                    }
+
+                    try {
+                        if (typeof context.onDocumentSourceReady === 'function') {
+                            context.onDocumentSourceReady(session);
+                        }
+                    } catch (error) {
+                        failBeforeHandoff('react-document-source-consumer-preflight-failed');
+                        return;
+                    }
+
+                    context.documentSession = session.document;
+                    context.titleSession = session.title;
+                    ready = true;
+                    legacySource.hidden = true;
+                    reactSource.hidden = false;
+                    sourcePane.setAttribute('data-easymde-document-owner', 'react');
+                }
+            });
+        } catch (error) {
+            reportReactDocumentSourceFailure('react-document-source-mount-failed');
+            return null;
+        }
+
+        if (typeof cleanup !== 'function') {
+            reportReactDocumentSourceFailure('react-document-source-cleanup-invalid');
+            return null;
+        }
+
+        if (typeof window.addEventListener === 'function') {
+            window.addEventListener('pagehide', dispose, { once: true });
+            pagehideRegistered = true;
+        }
+
+        return dispose;
+    }
+
     function activateReactToolbar(toolbar, reactMain, legacyMain, context) {
         var reactToolbar = window.EasyMDEReactToolbar;
         var disposed = false;
@@ -3209,20 +3433,16 @@
             cleanup = reactToolbar.mount({
                 container: reactMain,
                 executeCommand: function (commandId) {
-                    var textarea = context && context.textarea ? context.textarea : null;
-                    var selectionDirection = textarea ? textarea.selectionDirection : 'none';
+                    var command = getCommand(commandId);
                     var result = executeCommand(commandId, context);
 
                     if (
-                        textarea
-                        && typeof textarea.setSelectionRange === 'function'
-                        && (selectionDirection === 'forward' || selectionDirection === 'backward')
+                        context
+                        && context.documentSession
+                        && (!command || 'image' !== command.action)
+                        && typeof context.documentSession.focus === 'function'
                     ) {
-                        textarea.setSelectionRange(
-                            textarea.selectionStart,
-                            textarea.selectionEnd,
-                            selectionDirection
-                        );
+                        context.documentSession.focus();
                     }
 
                     return result;
@@ -3426,10 +3646,12 @@
     function initEditor() {
         var $root = $('#easymde-editor');
         var $source = $('#easymde-source');
+        var $reactSource = $('#easymde-source-react');
         var $preview = $('#easymde-preview');
         var $content = $('#postdivrich');
         var $toolbar = $('#easymde-toolbar');
         var $sideActions = $('#easymde-side-actions');
+        var $title = $('#title');
         var storage = window.EasyMDEDraftStorage.normalizeStorage(config, $root.data('post-id'));
         var initialMarkdown = null;
         var initialPreviewHydrated = false;
@@ -3441,6 +3663,8 @@
         var $flash;
         var $draftStatus;
         var context;
+        var sourcePane = $source[0] ? $source[0].parentElement : null;
+        var titleField = $title[0] || null;
 
         if (!$root.length || !$source.length || !$preview.length) {
             return;
@@ -3485,7 +3709,7 @@
             refreshPreview: refreshPreview,
             flash: null,
             savedMarkdown: String($source[0].defaultValue || ''),
-            savedTitle: String((document.getElementById('title') || {}).defaultValue || '')
+            savedTitle: String((titleField || {}).defaultValue || '')
         };
         context.immersiveWorkspace = createImmersiveWorkspace(context);
 
@@ -3500,7 +3724,7 @@
             reportStartupConfigErrors($flash);
             $draftStatus = createToolbar($toolbar, context);
             createSideActions($sideActions, context);
-            bindScrollSync($source[0], $preview[0]);
+            context.scrollSyncCleanup = bindScrollSync($source[0], $preview[0]);
             bindShortcuts($root, $source[0], context);
             bindImmersiveModeShortcuts(context);
             $root.attr('data-easymde-shell-ready', '1');
@@ -3508,7 +3732,35 @@
 
         initializeEditorChrome();
         bindLazyImagePasteUpload($source[0], $root, $flash);
+        context.onDocumentSourceReady = function (session) {
+            var inputElement = session.document.getInputElement();
+            var scrollElement = session.document.getScrollElement();
+            var nextScrollSyncCleanup;
 
+            if (
+                !inputElement
+                || typeof inputElement.addEventListener !== 'function'
+                || !scrollElement
+            ) {
+                throw new Error('react-document-source-surface-invalid');
+            }
+
+            nextScrollSyncCleanup = bindScrollSync(scrollElement, $preview[0]);
+            try {
+                bindLazyImagePasteUpload($source[0], $root, $flash, inputElement);
+            } catch (error) {
+                nextScrollSyncCleanup();
+                throw error;
+            }
+
+            if (typeof context.scrollSyncCleanup === 'function') {
+                context.scrollSyncCleanup();
+            }
+            context.scrollSyncCleanup = nextScrollSyncCleanup;
+        };
+        context.onDocumentSourceDisposed = function () {
+            restoreLegacyDocumentSource(context, $source[0], $preview[0]);
+        };
         $source.on('input', function () {
             if (initialMarkdown === null) {
                 sourceChangedBeforeShell = true;
@@ -3531,8 +3783,19 @@
         });
 
         $('#post').on('submit', function () {
+            skipNextCrossDocumentViewTransition();
+            if (context.documentSession && typeof context.documentSession.flush === 'function') {
+                context.documentSession.flush();
+            }
             mirrorToPostContent($source.val());
         });
+        context.reactDocumentSourceCleanup = activateReactDocumentSource(
+            sourcePane,
+            $reactSource[0],
+            $source[0],
+            titleField,
+            context
+        );
 
         afterShellPaint(function () {
             var shellMarkdown = $source.val();
@@ -3588,6 +3851,8 @@
         window.EasyMDETestHooks.currentPreviewSignature = currentPreviewSignature;
         window.EasyMDETestHooks.isPreviewReady = isPreviewReady;
         window.EasyMDETestHooks.executeCommand = executeCommand;
+        window.EasyMDETestHooks.bindScrollSync = bindScrollSync;
+        window.EasyMDETestHooks.activateReactDocumentSource = activateReactDocumentSource;
         window.EasyMDETestHooks.activateReactToolbar = activateReactToolbar;
         window.EasyMDETestHooks.getLocalDraftsEnabled = getLocalDraftsEnabled;
         window.EasyMDETestHooks.setLocalDraftsEnabled = setLocalDraftsEnabled;
@@ -3596,6 +3861,7 @@
         window.EasyMDETestHooks.showFlash = showFlash;
         window.EasyMDETestHooks.reportStartupConfigErrors = reportStartupConfigErrors;
         window.EasyMDETestHooks.hasUnsavedDocumentChanges = hasUnsavedDocumentChanges;
+        window.EasyMDETestHooks.restoreLegacyDocumentSource = restoreLegacyDocumentSource;
         window.EasyMDETestHooks.updatePreview = updatePreview;
     }
 

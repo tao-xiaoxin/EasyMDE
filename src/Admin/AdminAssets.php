@@ -69,7 +69,7 @@ final class AdminAssets {
 			'easymde-admin',
 			Asset::url( 'assets/css/admin/editor.css' ),
 			array( 'easymde-admin-toolbar', 'easymde-admin-popover' ),
-			EASYMDE_VERSION
+			$this->get_static_asset_version( 'assets/css/admin/editor.css' )
 		);
 		wp_enqueue_style(
 			'easymde-immersive-workspace',
@@ -157,7 +157,7 @@ final class AdminAssets {
 			'easymde-draft-storage',
 			'easymde-immersive-workspace',
 		);
-		if ( $this->enqueue_react_toolbar_asset() ) {
+		if ( $this->enqueue_react_editor_asset() ) {
 			$admin_dependencies[] = 'easymde-admin-editor-toolbar';
 		}
 
@@ -205,13 +205,13 @@ final class AdminAssets {
 		);
 	}
 
-	private function enqueue_react_toolbar_asset() {
+	private function enqueue_react_editor_asset() {
 		try {
-			$asset = $this->get_react_toolbar_asset();
+			$asset = $this->get_react_editor_asset();
 		} catch ( \Throwable $error ) {
 			wp_trigger_error(
 				__METHOD__,
-				'EasyMDE React toolbar asset contract failed (react-toolbar-asset-invalid).',
+				'EasyMDE React editor asset contract failed (react-editor-asset-invalid).',
 				E_USER_WARNING
 			);
 
@@ -229,13 +229,13 @@ final class AdminAssets {
 		return true;
 	}
 
-	private function get_react_toolbar_asset( $build_dir = '' ) {
+	private function get_react_editor_asset( $build_dir = '' ) {
 		$build_dir     = $build_dir ? trailingslashit( $build_dir ) : Asset::path( 'assets/build/' );
 		$manifest_path = $build_dir . 'wordpress-manifest.json';
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads a local committed build manifest, never a remote URL.
 		$manifest_json = is_readable( $manifest_path ) ? file_get_contents( $manifest_path ) : false;
 		$manifest      = false === $manifest_json ? null : json_decode( $manifest_json, true );
-		$entry_key     = 'frontend/src/entrypoints/admin-editor-toolbar.tsx';
+		$entry_key     = 'frontend/src/entrypoints/admin-editor.tsx';
 
 		if (
 			! is_array( $manifest )
@@ -245,7 +245,7 @@ final class AdminAssets {
 			|| array( $entry_key ) !== array_keys( $manifest['entries'] )
 			|| ! is_array( $manifest['entries'][ $entry_key ] )
 		) {
-			throw new \RuntimeException( 'react-toolbar-manifest-invalid' );
+			throw new \RuntimeException( 'react-editor-manifest-invalid' );
 		}
 
 		$entry = $manifest['entries'][ $entry_key ];
@@ -255,16 +255,16 @@ final class AdminAssets {
 			'easymde-admin-editor-toolbar' !== ( $entry['handle'] ?? null )
 			|| array( 'wp-element' ) !== ( $entry['dependencies'] ?? null )
 			|| array() !== ( $entry['resources'] ?? null )
-			|| ! preg_match( '#^assets/admin-editor-toolbar-[A-Za-z0-9_-]+\.js$#', $file )
+			|| ! preg_match( '#^assets/admin-editor-[A-Za-z0-9_-]+\.js$#', $file )
 			|| preg_replace( '/\.js$/', '.asset.php', $file ) !== $asset
 		) {
-			throw new \RuntimeException( 'react-toolbar-manifest-invalid' );
+			throw new \RuntimeException( 'react-editor-manifest-invalid' );
 		}
 
 		$script_path   = $build_dir . $file;
 		$metadata_path = $build_dir . $asset;
 		if ( ! is_file( $script_path ) || ! is_readable( $metadata_path ) ) {
-			throw new \RuntimeException( 'react-toolbar-build-missing' );
+			throw new \RuntimeException( 'react-editor-build-missing' );
 		}
 
 		$metadata = require $metadata_path;
@@ -274,7 +274,7 @@ final class AdminAssets {
 			|| ! isset( $metadata['version'] )
 			|| ! preg_match( '/^[a-f0-9]{16}$/', (string) $metadata['version'] )
 		) {
-			throw new \RuntimeException( 'react-toolbar-metadata-invalid' );
+			throw new \RuntimeException( 'react-editor-metadata-invalid' );
 		}
 
 		return array(

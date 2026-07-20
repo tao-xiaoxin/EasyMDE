@@ -225,6 +225,90 @@ Reuse only when ownership and semantics match. Do not force an unrelated abstrac
 
 A new abstraction must state its responsibility, consumers, failure contract, test boundary, and removal or replacement path.
 
+### Component and Dependency Selection
+
+Before hand-writing a reusable Component, widget, interaction engine, or DOM
+implementation, inspect the live project, WordPress-provided packages, and
+maintained ecosystem packages for a fitting existing capability. Evaluate
+ownership, accessibility, visual fidelity, lifecycle, security, privacy,
+bundle size, license, local-asset delivery, testing, and removal before choosing
+it. Package declarations and source-file presence alone do not prove that a
+capability is used or suitable; verify the application import graph, rendered
+behavior, build output, CSS ownership, and runtime asset path.
+
+Choose the smallest fitting UI capability in this order:
+
+1. reuse an existing EasyMDE UI Primitive, Feature API, WordPress API, or
+   WordPress-provided Component whose supported Runtime, Styles,
+   accessibility, and visual contract fit the focused surface;
+2. use a native semantic React control for straightforward Button, Link, Input,
+   Textarea, Checkbox, or Select behavior that the browser implements
+   completely;
+3. for a complex widget, select only the maintained headless Primitive that
+   owns the required Focus, keyboard, Portal, positioning, dismissal, and ARIA
+   behavior while EasyMDE retains visual ownership; or
+4. implement a focused project Component only when the preceding candidates
+   cannot satisfy a verified requirement, and test the missing behavior
+   directly.
+
+For WordPress-native Settings and Administration surfaces, evaluate the
+WordPress-provided `@wordpress/components` capability first, but do not claim or
+import it until its WordPress 6.7 Package version, `wp-components` Script and
+Style dependencies, TypeScript contract, visual fit, and production metadata
+are verified. For design-specific editor overlays, evaluate individual React
+18-compatible headless packages rather than adopting a complete design system.
+The default shortlist for focused evaluation is Radix Dialog or AlertDialog,
+Popover, Tooltip, DropdownMenu, Select, Tabs, and ScrollArea; this is not
+preapproval or an instruction to install them together. Evaluate
+`react-resizable-panels` only when a focused Split Pane requires accessible user
+resizing that the existing layout cannot provide.
+
+When multiple candidates satisfy the same contract, choose the capability
+already provided or locked by EasyMDE or WordPress. Otherwise prefer complete
+accessible behavior, active React 18 support, the smallest non-duplicative
+transitive and CSS footprint, no private React Runtime, no remote runtime or
+remote static resource, no CDN or telemetry requirement, clear lifecycle
+cleanup, a compatible license, and maintained releases. A focused React dependency that
+satisfies these standing rules does not need separate architecture approval;
+package size alone is not an approval boundary. Explicit maintainer approval is
+still required when a proposal changes a higher-level architecture or authority
+boundary, introduces another frontend framework, or exceeds the focused Issue.
+
+For a new or updated package, start from the latest stable release compatible
+with the verified WordPress 6.7 / React 18 Runtime, supported Node and browser
+targets, TypeScript and Vite toolchain, dependency metadata, local-asset policy,
+and release-package contract. When the latest stable release conflicts with a
+verified constraint, identify the actual conflict and choose the newest
+compatible version or a better-fitting maintained alternative. Record evidence
+for a downgrade and update the Lockfile and notices. Do not force installation,
+ignore peer-dependency errors, duplicate React, use a broad package-manager
+override, or silently downgrade to hide incompatibility.
+
+The live root `package.json`, Lockfile, and `docs/ARCHITECTURE.md` are the
+sources of truth for currently installed capabilities. A candidate named here
+is not an installed capability. Ant Design, Material UI, Redux,
+`react-syntax-highlighter`, `shadcn/ui`, Tailwind CSS, Remark/Rehype packages,
+Zustand, `next-themes`, and `lucide-react` are
+candidates rather than project defaults and are not absolute prohibitions
+except where another project rule says otherwise. Add one only for a focused
+responsibility that the existing project, WordPress, native, and headless
+capabilities cannot satisfy, then validate ownership, compatibility,
+accessibility, bundle, license, local assets, tests, update, removal, and
+release impact.
+
+Installing a React Markdown package does not authorize a second formal renderer
+beside the PHP `MarkdownRenderer`. Do not add Zustand while local React State, a
+Reducer, or a focused `useSyncExternalStore` Adapter satisfies the verified
+ownership. Evaluate `next-themes` only when a focused browser-session Theme
+requirement cannot be satisfied by PHP, WordPress Settings, the Theme
+Registries, and local React State, and do not transfer persisted Theme
+authority.
+Prefer React composition, native semantic controls, and a selected library's
+supported API over imperative DOM construction. Reserve direct DOM access for
+focused Entrypoint or Integration Adapters and unavoidable browser or WordPress
+interop; keep it out of Domain code and ordinary Components and test cleanup
+and repeated lifecycle behavior.
+
 ## React Runtime and Application Roots
 
 EasyMDE supports WordPress 6.7 or newer and uses the WordPress-provided React 18 runtime through `@wordpress/element` and the `wp-element` dependency.
@@ -267,7 +351,7 @@ Each existing Root owns its Runtime, Error Boundary, teardown, and any subscript
 
 Enqueue each Entrypoint, its CSS, Bootstrap contract, and WordPress dependencies only after the owning PHP screen and capability admission rules have passed. The Editor Root must additionally pass supported-post-type and post admission. Do not load editor or settings applications on unrelated admin screens or public pages, and do not use a missing client Root as the primary asset-loading guard.
 
-Do not add a Router for tabs, dialogs, panels, or WordPress page navigation unless a focused Issue proves a real URL-addressable application need.
+Do not add a Router. WordPress owns page navigation; tabs, dialogs, and panels use local UI State and do not create browser routes.
 
 ## Source Placement
 

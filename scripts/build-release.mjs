@@ -66,6 +66,7 @@ const baseRequirements = [
   { path: 'languages/easymde-zh_CN.po', type: 'file' },
   { path: 'languages/easymde-zh_CN.mo', type: 'file' }
 ];
+const productionFrontendEntry = 'frontend/src/entrypoints/admin-editor-toolbar.tsx';
 
 const runtimeSupportAssetPaths = [
   'assets/images/cupid-busy-h2-prefix.png',
@@ -392,6 +393,80 @@ function runtimeAssetRequirements(root) {
   ];
 }
 
+function productionFrontendRequirements(root) {
+  const manifestPath = 'assets/build/manifest.json';
+  const wordpressManifestPath = 'assets/build/wordpress-manifest.json';
+  const requirements = [
+    { path: manifestPath, type: 'file' },
+    { path: wordpressManifestPath, type: 'file' }
+  ];
+
+  if (!existsSync(fromRoot(root, manifestPath)) || !existsSync(fromRoot(root, wordpressManifestPath))) {
+    return requirements;
+  }
+
+  let manifest;
+  let wordpressManifest;
+  try {
+    manifest = JSON.parse(readText(root, manifestPath));
+    wordpressManifest = JSON.parse(readText(root, wordpressManifestPath));
+  } catch (error) {
+    throw new Error('Release build requires valid production frontend manifests.');
+  }
+
+  const viteEntry = manifest && manifest[productionFrontendEntry];
+  const entries = wordpressManifest && wordpressManifest.entries;
+  const wordpressEntry = entries && entries[productionFrontendEntry];
+  if (
+    1 !== Object.keys(manifest || {}).length
+    || 1 !== wordpressManifest.schemaVersion
+    || !entries
+    || 1 !== Object.keys(entries).length
+    || !viteEntry
+    || true !== viteEntry.isEntry
+    || !wordpressEntry
+    || 'easymde-admin-editor-toolbar' !== wordpressEntry.handle
+    || viteEntry.file !== wordpressEntry.file
+    || !Array.isArray(wordpressEntry.dependencies)
+    || 'wp-element' !== wordpressEntry.dependencies[0]
+    || 1 !== wordpressEntry.dependencies.length
+    || !Array.isArray(wordpressEntry.resources)
+    || 0 !== wordpressEntry.resources.length
+    || 'string' !== typeof wordpressEntry.file
+    || !/^assets\/admin-editor-toolbar-[A-Za-z0-9_-]+\.js$/.test(wordpressEntry.file)
+    || wordpressEntry.file.replace(/\.js$/, '.asset.php') !== wordpressEntry.asset
+  ) {
+    throw new Error('Release build requires matching production frontend manifest contracts.');
+  }
+
+  const managedRequirements = [
+    ...requirements,
+    { path: `assets/build/${wordpressEntry.file}`, type: 'file' },
+    { path: `assets/build/${wordpressEntry.asset}`, type: 'file' }
+  ];
+  const expectedPaths = new Set(managedRequirements.map((requirement) => requirement.path));
+  const unexpectedPaths = [];
+
+  walkFiles(fromRoot(root, 'assets/build'), (file) => {
+    const path = relative(root, file).split(/[\\/]+/).join('/');
+    if (!expectedPaths.has(path)) {
+      unexpectedPaths.push(path);
+    }
+  });
+
+  if (unexpectedPaths.length) {
+    throw new Error(
+      [
+        'Release build found unexpected production frontend artifacts:',
+        ...unexpectedPaths.sort().map((path) => `- ${path}`),
+        'Run npm run build:frontend, review the managed output, and rerun the release build.'
+      ].join('\n')
+    );
+  }
+
+  return managedRequirements;
+}
+
 export function collectReleaseRequirements(root = defaultRoot) {
   return uniqueRequirements([
     ...packagePaths.map((path) => ({
@@ -401,6 +476,7 @@ export function collectReleaseRequirements(root = defaultRoot) {
     ...baseRequirements,
     ...frontendRuntimeReleaseRequirements(),
     ...composerPackageRequirements(root),
+    ...productionFrontendRequirements(root),
     ...runtimeAssetRequirements(root),
     ...registeredAssetRequirements(root)
   ]);

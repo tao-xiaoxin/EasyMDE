@@ -4,7 +4,7 @@
 node_modules/
 /vendor/
 dist/
-build/
+/build/
 coverage/
 .cache/
 test-results/

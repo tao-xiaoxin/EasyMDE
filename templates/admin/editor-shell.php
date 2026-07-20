@@ -36,7 +36,11 @@ if ( $easymde_initial_preview_pending ) {
 	<input type="hidden" id="easymde-windows-font-field" name="easymde_windows_font" value="<?php echo esc_attr( $easymde_theme_state['windowsFont'] ); ?>">
 	<input type="hidden" id="easymde-apple-font-field" name="easymde_apple_font" value="<?php echo esc_attr( $easymde_theme_state['appleFont'] ); ?>">
 	<input type="hidden" id="easymde-serif-font-field" name="easymde_serif_font" value="<?php echo esc_attr( $easymde_theme_state['serifFont'] ); ?>">
-	<div id="easymde-toolbar" class="easymde-toolbar" role="toolbar" aria-label="<?php esc_attr_e( 'Markdown toolbar', 'easymde' ); ?>"></div>
+	<div id="easymde-toolbar" class="easymde-toolbar" role="toolbar" aria-label="<?php esc_attr_e( 'Markdown toolbar', 'easymde' ); ?>" data-easymde-main-toolbar-owner="legacy">
+		<div id="easymde-toolbar-react-main" class="easymde-toolbar-section easymde-toolbar-section-main" hidden></div>
+		<div id="easymde-toolbar-legacy-main" class="easymde-toolbar-section easymde-toolbar-section-main"></div>
+		<div id="easymde-toolbar-legacy-secondary" class="easymde-toolbar-section easymde-toolbar-section-secondary"></div>
+	</div>
 	<div class="easymde-workspace">
 		<section class="easymde-pane easymde-pane-source">
 			<header class="easymde-pane-header"><?php esc_html_e( 'Markdown', 'easymde' ); ?></header>

@@ -3,10 +3,29 @@ import { dirname, extname, join, posix, relative, resolve, sep } from 'node:path
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const defaultOutputRoot = join(repositoryRoot, '.cache/easymde-frontend-contract');
-const sourceEntry = 'frontend/test/build-contract/entry.tsx';
-const expectedHandle = 'easymde-build-contract';
-const expectedDependencies = ['wp-element'];
+const contractSpec = {
+  outputRoot: join(repositoryRoot, '.cache/easymde-frontend-contract'),
+  sourceEntry: 'frontend/test/build-contract/entry.tsx',
+  expectedHandle: 'easymde-build-contract',
+  expectedDependencies: ['wp-element'],
+  resourceField: 'assets',
+  expectedResourceCount: 1,
+  resourceHasManifestRecord: true,
+  resourceReferencedByScript: true,
+  label: 'build contract'
+};
+const productionSpec = {
+  outputRoot: join(repositoryRoot, 'assets/build'),
+  sourceEntry: 'frontend/src/entrypoints/admin-editor-toolbar.tsx',
+  expectedHandle: 'easymde-admin-editor-toolbar',
+  expectedDependencies: ['wp-element'],
+  resourceField: null,
+  expectedResourceCount: 0,
+  resourceHasManifestRecord: false,
+  resourceReferencedByScript: false,
+  label: 'production build'
+};
+const productionCheckRoot = join(repositoryRoot, '.cache/easymde-frontend-production-check');
 const forbiddenContent = [
   { pattern: /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/, label: 'private React runtime' },
   { pattern: /(?:localhost|127\.0\.0\.1)/i, label: 'development host' },
@@ -113,17 +132,23 @@ function assertSafeGeneratedTextFile(root, path) {
   assertSafeProductionText(source, `Generated text output ${path}`);
 }
 
-function assertAssetList(value, label) {
-  if (!Array.isArray(value) || 1 !== value.length || 'string' !== typeof value[0]) {
-    throw new Error(`${label} must contain exactly one asset path.`);
+function assertAssetList(value, expectedCount, label) {
+  if (
+    !Array.isArray(value) ||
+    expectedCount !== value.length ||
+    value.some((path) => 'string' !== typeof path)
+  ) {
+    throw new Error(`${label} must contain exactly ${expectedCount} asset paths.`);
   }
 
-  assertRelativeAssetPath(value[0], `${label} path`);
+  value.forEach((path) => {
+    assertRelativeAssetPath(path, `${label} path`);
+  });
 
   return value;
 }
 
-export function validateFrontendBuild(outputRoot = defaultOutputRoot) {
+function validateBuild(spec, outputRoot = spec.outputRoot) {
   const root = resolve(outputRoot);
   const manifestPath = join(root, 'manifest.json');
   const wordpressManifestPath = join(root, 'wordpress-manifest.json');
@@ -142,7 +167,7 @@ export function validateFrontendBuild(outputRoot = defaultOutputRoot) {
     throw new Error('WordPress manifest has an unsupported schema version.');
   }
 
-  const viteEntry = assertObject(manifest[sourceEntry], 'Vite entry');
+  const viteEntry = assertObject(manifest[spec.sourceEntry], 'Vite entry');
   const viteEntryCount = manifestKeys.filter((key) => {
     const candidate = manifest[key];
     return candidate && 'object' === typeof candidate && true === candidate.isEntry;
@@ -152,41 +177,51 @@ export function validateFrontendBuild(outputRoot = defaultOutputRoot) {
   }
   const wordpressEntries = assertObject(wordpressManifest.entries, 'WordPress entries');
   const wordpressKeys = Object.keys(wordpressEntries);
-  if (1 !== wordpressKeys.length || sourceEntry !== wordpressKeys[0]) {
-    throw new Error('WordPress manifest must contain exactly the configured build-contract entry.');
+  if (1 !== wordpressKeys.length || spec.sourceEntry !== wordpressKeys[0]) {
+    throw new Error(`WordPress manifest must contain exactly the configured ${spec.label} entry.`);
   }
 
-  const wordpressEntry = assertObject(wordpressEntries[sourceEntry], 'WordPress entry');
+  const wordpressEntry = assertObject(wordpressEntries[spec.sourceEntry], 'WordPress entry');
   if (true !== viteEntry.isEntry || 'string' !== typeof viteEntry.file) {
     throw new Error('Vite entry must identify one built JavaScript entry.');
   }
-  if (expectedHandle !== wordpressEntry.handle || viteEntry.file !== wordpressEntry.file) {
+  if (spec.expectedHandle !== wordpressEntry.handle || viteEntry.file !== wordpressEntry.file) {
     throw new Error('WordPress manifest does not match the Vite entry and stable handle.');
   }
   if (
     !Array.isArray(wordpressEntry.dependencies) ||
-    JSON.stringify(expectedDependencies) !== JSON.stringify(wordpressEntry.dependencies)
+    JSON.stringify(spec.expectedDependencies) !== JSON.stringify(wordpressEntry.dependencies)
   ) {
     throw new Error('WordPress entry must depend only on wp-element.');
   }
 
-  const viteResources = assertAssetList(viteEntry.assets, 'Vite resources');
-  const wordpressResources = assertAssetList(wordpressEntry.resources, 'WordPress resources');
+  const viteResources = spec.resourceField
+    ? assertAssetList(viteEntry[spec.resourceField], spec.expectedResourceCount, 'Vite resources')
+    : [];
+  const wordpressResources = assertAssetList(
+    wordpressEntry.resources,
+    spec.expectedResourceCount,
+    'WordPress resources'
+  );
   if (JSON.stringify(viteResources) !== JSON.stringify(wordpressResources)) {
     throw new Error('WordPress resource metadata does not match the Vite entry.');
   }
-  const viteResourceRecords = manifestKeys
-    .filter((key) => key !== sourceEntry)
-    .map((key) => {
-      assertRelativeAssetPath(key, 'Vite resource source');
-      return assertObject(manifest[key], `Vite resource ${key}`);
-    });
-  const recordedResourceFiles = viteResourceRecords.map((record) => record.file).sort();
-  if (
-    viteResourceRecords.some((record) => true === record.isEntry) ||
-    JSON.stringify([...viteResources].sort()) !== JSON.stringify(recordedResourceFiles)
-  ) {
-    throw new Error('Vite manifest resource records do not match the entry resources.');
+  if (spec.resourceHasManifestRecord) {
+    const viteResourceRecords = manifestKeys
+      .filter((key) => key !== spec.sourceEntry)
+      .map((key) => {
+        assertRelativeAssetPath(key, 'Vite resource source');
+        return assertObject(manifest[key], `Vite resource ${key}`);
+      });
+    const recordedResourceFiles = viteResourceRecords.map((record) => record.file).sort();
+    if (
+      viteResourceRecords.some((record) => true === record.isEntry) ||
+      JSON.stringify([...viteResources].sort()) !== JSON.stringify(recordedResourceFiles)
+    ) {
+      throw new Error('Vite manifest resource records do not match the entry resources.');
+    }
+  } else if (1 !== manifestKeys.length) {
+    throw new Error('The production Vite manifest contains an unexpected resource entry.');
   }
 
   const expectedAsset = viteEntry.file.replace(/\.js$/, '.asset.php');
@@ -196,7 +231,9 @@ export function validateFrontendBuild(outputRoot = defaultOutputRoot) {
 
   assertFile(root, viteEntry.file, 'Built script');
   assertFile(root, wordpressEntry.asset, 'WordPress dependency metadata');
-  assertFile(root, viteResources[0], 'Built resource');
+  for (const resource of viteResources) {
+    assertFile(root, resource, 'Built resource');
+  }
 
   const script = readFileSync(join(root, viteEntry.file), 'utf8');
   const assetMetadata = readFileSync(join(root, wordpressEntry.asset), 'utf8');
@@ -211,8 +248,8 @@ export function validateFrontendBuild(outputRoot = defaultOutputRoot) {
     throw new Error('WordPress dependency metadata does not contain a deterministic build version.');
   }
 
-  const resourceName = posix.basename(viteResources[0]);
-  if (!script.includes(resourceName)) {
+  const resourceName = viteResources[0] ? posix.basename(viteResources[0]) : '';
+  if (spec.resourceReferencedByScript && !script.includes(resourceName)) {
     throw new Error('Built script does not resolve the Vite manifest resource.');
   }
 
@@ -232,18 +269,60 @@ export function validateFrontendBuild(outputRoot = defaultOutputRoot) {
   }
 
   return {
-    sourceEntry,
+    sourceEntry: spec.sourceEntry,
     script: viteEntry.file,
     asset: wordpressEntry.asset,
-    handle: expectedHandle,
-    dependencies: expectedDependencies
+    handle: spec.expectedHandle,
+    dependencies: spec.expectedDependencies
   };
+}
+
+export function validateFrontendBuild(outputRoot = contractSpec.outputRoot) {
+  return validateBuild(contractSpec, outputRoot);
+}
+
+export function validateFrontendProductionBuild(outputRoot = productionSpec.outputRoot) {
+  return validateBuild(productionSpec, outputRoot);
+}
+
+export function compareFrontendProductionBuilds(
+  generatedRoot = productionCheckRoot,
+  committedRoot = productionSpec.outputRoot
+) {
+  validateFrontendProductionBuild(generatedRoot);
+  validateFrontendProductionBuild(committedRoot);
+
+  const generatedFiles = collectFiles(resolve(generatedRoot));
+  const committedFiles = collectFiles(resolve(committedRoot));
+  if (JSON.stringify(generatedFiles) !== JSON.stringify(committedFiles)) {
+    throw new Error(
+      'Committed production frontend artifacts are missing, stale, or unexpected. Run npm run build:frontend and review the generated files.'
+    );
+  }
+
+  for (const path of generatedFiles) {
+    const generated = readFileSync(join(generatedRoot, path));
+    const committed = readFileSync(join(committedRoot, path));
+    if (!generated.equals(committed)) {
+      throw new Error(
+        `Committed production frontend artifact is stale: ${path}. Run npm run build:frontend and review the generated files.`
+      );
+    }
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    validateFrontendBuild();
-    console.log('Frontend build contract is valid.');
+    if (process.argv.includes('--production-check')) {
+      compareFrontendProductionBuilds();
+      console.log('Committed frontend production build matches the validated source build.');
+    } else if (process.argv.includes('--production')) {
+      validateFrontendProductionBuild();
+      console.log('Frontend production build is valid.');
+    } else {
+      validateFrontendBuild();
+      console.log('Frontend build contract is valid.');
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

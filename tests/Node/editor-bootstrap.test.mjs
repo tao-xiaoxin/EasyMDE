@@ -16,6 +16,47 @@ test('editor shell keeps source before preview in DOM order', () => {
   assert.ok(previewPosition > sourcePosition, 'preview pane must follow source in the DOM');
 });
 
+test('editor shell delegates exclusive React and legacy toolbar containers', () => {
+  const template = readFileSync(join(repoRoot, 'templates/admin/editor-shell.php'), 'utf8');
+  const toolbarPosition = template.indexOf('id="easymde-toolbar"');
+  const reactPosition = template.indexOf('id="easymde-toolbar-react-main"', toolbarPosition);
+  const legacyPosition = template.indexOf('id="easymde-toolbar-legacy-main"', reactPosition);
+  const secondaryPosition = template.indexOf('id="easymde-toolbar-legacy-secondary"', legacyPosition);
+
+  assert.ok(toolbarPosition >= 0, 'toolbar host should be rendered');
+  assert.ok(reactPosition > toolbarPosition, 'the exclusive React main container should be inside the toolbar');
+  assert.ok(legacyPosition > reactPosition, 'the legacy main fallback should follow the React container');
+  assert.ok(secondaryPosition > legacyPosition, 'the legacy secondary controls should remain outside the React root');
+  assert.match(
+    template.slice(reactPosition, legacyPosition),
+    /\bhidden\b/,
+    'React presentation must remain hidden before readiness'
+  );
+});
+
+test('toolbar ownership styles keep every hidden section out of layout', () => {
+  const stylesheet = readFileSync(join(repoRoot, 'assets/css/admin/toolbar.css'), 'utf8');
+
+  assert.match(
+    stylesheet,
+    /\.easymde-toolbar-section\[hidden\]\s*\{\s*display:\s*none;\s*\}/,
+    'author styles must not override the hidden state used by the atomic toolbar handoff'
+  );
+});
+
+test('toolbar reconstruction unmounts React before clearing its owned container', () => {
+  const bootstrap = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
+  const createToolbarStart = bootstrap.indexOf('function createToolbar($toolbar, context)');
+  const activateToolbarStart = bootstrap.indexOf('context.reactToolbarCleanup = activateReactToolbar(', createToolbarStart);
+  const reconstruction = bootstrap.slice(createToolbarStart, activateToolbarStart);
+  const cleanupPosition = reconstruction.indexOf('context.reactToolbarCleanup();');
+  const clearPosition = reconstruction.indexOf('$reactMain.empty()');
+
+  assert.ok(createToolbarStart >= 0, 'toolbar reconstruction should exist');
+  assert.ok(cleanupPosition >= 0, 'an active React root should be disposed during reconstruction');
+  assert.ok(clearPosition > cleanupPosition, 'React must unmount before legacy code clears its container');
+});
+
 function createTimerHarness() {
   let nextId = 1;
   const timers = [];
@@ -379,6 +420,7 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
       nonce: 'test-nonce',
       features: {},
       strings: {
+        headings: 'Headings',
         previewEmpty: 'Empty',
         previewError: 'Preview failed',
         previewRendering: 'Rendering preview'
@@ -429,6 +471,7 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.applyNativePublishVisibility, 'function', 'bootstrap harness should expose native visibility writes');
   assert.equal(typeof context.window.EasyMDETestHooks.skipNextCrossDocumentViewTransition, 'function', 'bootstrap harness should expose immersive navigation transition guards');
   assert.equal(typeof context.window.EasyMDETestHooks.executeCommand, 'function', 'bootstrap harness should expose toolbar command execution');
+  assert.equal(typeof context.window.EasyMDETestHooks.activateReactToolbar, 'function', 'bootstrap harness should expose the toolbar ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.enhancePreviewSurface, 'function', 'bootstrap harness should expose detached preview enhancement');
 
   return {
@@ -438,6 +481,160 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
     window: context.window
   };
 }
+
+function createToolbarOwnerElement() {
+  const element = createElement('div');
+  element.hidden = false;
+
+  return element;
+}
+
+test('React toolbar stays hidden until readiness and then becomes the only visible main owner', async () => {
+  let mountOptions;
+  let cleanupCalls = 0;
+  const pagehideListeners = new Set();
+  const toolbar = createToolbarOwnerElement();
+  const reactMain = createToolbarOwnerElement();
+  const legacyMain = createToolbarOwnerElement();
+  const textarea = {
+    value: 'Toolbar parity',
+    selectionStart: 0,
+    selectionEnd: 7,
+    selectionDirection: 'backward',
+    scrollTop: 0,
+    scrollLeft: 0,
+    focus() {},
+    setSelectionRange(start, end, direction) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+      this.selectionDirection = direction;
+    }
+  };
+  const loaded = loadBootstrap({
+    pageXOffset: 0,
+    pageYOffset: 0,
+    scrollTo() {},
+    addEventListener(type, listener) {
+      if ('pagehide' === type) {
+        pagehideListeners.add(listener);
+      }
+    },
+    removeEventListener(type, listener) {
+      if ('pagehide' === type) {
+        pagehideListeners.delete(listener);
+      }
+    },
+    EasyMDEReactToolbar: {
+      prepare(value) {
+        assert.equal(value.strings.headings, 'Headings');
+
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {
+              cleanupCalls += 1;
+            };
+          }
+        };
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      commands: [
+        {
+          id: 'bold',
+          label: 'Bold',
+          icon: 'editor-bold',
+          surface: 'main',
+          action: 'wrap',
+          group: 'format',
+          prefix: '**',
+          suffix: '**'
+        }
+      ],
+      shortcuts: {},
+      strings: {
+        headings: 'Headings',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      features: {},
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    }
+  });
+
+  const cleanup = loaded.hooks.activateReactToolbar(toolbar, reactMain, legacyMain, { textarea });
+
+  assert.equal(toolbar.getAttribute('data-easymde-main-toolbar-owner'), 'legacy');
+  assert.equal(reactMain.hidden, true);
+  assert.equal(legacyMain.hidden, false);
+  assert.equal(typeof cleanup, 'function');
+  assert.equal(pagehideListeners.size, 1);
+
+  mountOptions.onReady();
+
+  assert.equal(toolbar.getAttribute('data-easymde-main-toolbar-owner'), 'react');
+  assert.equal(reactMain.hidden, false);
+  assert.equal(legacyMain.hidden, true);
+
+  mountOptions.executeCommand('bold');
+  assert.equal(textarea.value, '**Toolbar** parity');
+  assert.equal(textarea.selectionStart, 2);
+  assert.equal(textarea.selectionEnd, 9);
+  assert.equal(textarea.selectionDirection, 'backward');
+
+  mountOptions.onFailure();
+  assert.equal(toolbar.getAttribute('data-easymde-main-toolbar-owner'), 'legacy');
+  assert.equal(reactMain.hidden, true);
+  assert.equal(legacyMain.hidden, false);
+  await flushMicrotasks();
+  assert.equal(cleanupCalls, 1, 'the failed React root should be unmounted');
+  assert.equal(pagehideListeners.size, 0, 'failed activation should release its pagehide listener');
+
+  mountOptions.onReady();
+  assert.equal(
+    toolbar.getAttribute('data-easymde-main-toolbar-owner'),
+    'legacy',
+    'a late readiness signal after failure must not reactivate the failed owner'
+  );
+
+  cleanup();
+  cleanup();
+  assert.equal(cleanupCalls, 1);
+});
+
+test('React toolbar startup failure keeps the legacy owner usable and reports a stable code', () => {
+  const messages = [];
+  const toolbar = createToolbarOwnerElement();
+  const reactMain = createToolbarOwnerElement();
+  const legacyMain = createToolbarOwnerElement();
+  const loaded = loadBootstrap({
+    console: {
+      error(message) {
+        messages.push(message);
+      }
+    },
+    EasyMDEReactToolbar: {
+      prepare() {
+        throw new Error('Synthetic private detail');
+      }
+    }
+  });
+
+  const cleanup = loaded.hooks.activateReactToolbar(toolbar, reactMain, legacyMain, { textarea: {} });
+
+  assert.equal(cleanup, null);
+  assert.equal(toolbar.getAttribute('data-easymde-main-toolbar-owner'), 'legacy');
+  assert.equal(reactMain.hidden, true);
+  assert.equal(legacyMain.hidden, false);
+  assert.deepEqual(messages, ['[EasyMDE] react-toolbar-prepare-failed']);
+  assert.equal(messages.some((message) => message.includes('Synthetic private detail')), false);
+});
 
 test('native category adapter preserves WordPress hierarchy without inferring from labels', () => {
   const parentList = { classList: { contains: () => false } };

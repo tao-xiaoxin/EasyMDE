@@ -1,5 +1,26 @@
 # EasyMDE Migration Notes
 
+## Normal Editor Toolbar Ownership
+
+The normal editor's main Markdown Toolbar is the first production React
+migration unit. PHP `ToolbarRegistry` descriptors, command IDs, ordering,
+translated labels, and shortcut configuration remain authoritative. React owns
+the main Toolbar presentation, heading-menu interaction, and command intent
+dispatch; the existing browser command engine continues to own the actual
+Markdown selection transformations.
+
+The PHP editor shell renders separate React, legacy-main, and legacy-secondary
+containers. The legacy main Toolbar remains active while the React entry
+validates bootstrap data and mounts. Readiness performs one visibility and
+presentation-owner handoff. Startup failure leaves the legacy main Toolbar
+usable, and teardown unmounts React before legacy code may clear or reuse its
+container.
+
+The secondary Toolbar and immersive workspace remain legacy-owned. This unit
+does not transfer Preview, appearance, draft storage, WeChat export, immersive
+writing, native submission, Save, Publish, or WordPress authority, and it
+removes no legacy implementation.
+
 ## Editor Enablement
 
 EasyMDE opens new and existing content for post types explicitly supported by `easymde_supported_post_types` in EasyMDE through normal WordPress editing when the current user can edit or create that content. The default supported post types are `post` and `page`.

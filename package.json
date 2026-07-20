@@ -9,9 +9,13 @@
   "scripts": {
     "prepare:assets": "node scripts/copy-vendor-assets.mjs",
     "assets:check": "node scripts/copy-vendor-assets.mjs --check",
+    "lint:frontend": "biome lint frontend/src frontend/vite.config.ts frontend/vite.production.config.ts frontend/vitest.config.ts frontend/wordpress-classic-metadata.ts",
     "typecheck:frontend": "tsc --noEmit -p frontend/tsconfig.json",
+    "test:frontend": "vitest run --config frontend/vitest.config.ts",
     "build:frontend-contract": "vite build --config frontend/vite.config.ts && node scripts/verify-frontend-build.mjs",
-    "frontend:check": "npm run typecheck:frontend && npm run build:frontend-contract",
+    "build:frontend": "vite build --config frontend/vite.production.config.ts && node scripts/verify-frontend-build.mjs --production",
+    "check:frontend-production": "vite build --mode easymde-check --config frontend/vite.production.config.ts && node scripts/verify-frontend-build.mjs --production-check",
+    "frontend:check": "npm run lint:frontend && npm run typecheck:frontend && npm run test:frontend && npm run build:frontend-contract && npm run check:frontend-production",
     "build:release": "node scripts/build-release.mjs",
     "build:source-archives": "node scripts/build-source-archives.mjs",
     "i18n:make-pot": "node scripts/i18n.mjs make-pot",
@@ -29,14 +33,20 @@
     "mermaid": "^10.9.3"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.4",
     "@playwright/test": "^1.61.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "20.19.43",
     "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",
     "@wordpress/element": "6.8.1",
+    "jsdom": "^29.1.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "typescript": "7.0.2",
-    "vite": "8.1.5"
+    "vite": "8.1.5",
+    "vitest": "^4.1.10"
   }
 }

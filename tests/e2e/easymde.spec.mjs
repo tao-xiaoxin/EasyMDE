@@ -567,6 +567,80 @@ test.describe('EasyMDE editor workflows', () => {
     }
   });
 
+  test('hands the normal Markdown toolbar to React while preserving legacy secondary controls', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+
+    const toolbar = page.locator('#easymde-toolbar');
+    const reactMain = page.locator('#easymde-toolbar-react-main');
+    const legacyMain = page.locator('#easymde-toolbar-legacy-main');
+    const legacySecondary = page.locator('#easymde-toolbar-legacy-secondary');
+    const toolbarStylesheet = page.locator('#easymde-admin-toolbar-css');
+    const toolbarStylesheetUrl = new URL(await toolbarStylesheet.getAttribute('href'));
+    expect(toolbarStylesheetUrl.searchParams.get('ver')).toMatch(/^[a-f0-9]{16}$/);
+    await expect(toolbar).toHaveAttribute('data-easymde-main-toolbar-owner', 'react');
+    await expect(reactMain).toBeVisible();
+    await expect(reactMain.locator('[data-easymde-react-toolbar="ready"]')).toHaveCount(1);
+    await expect(legacyMain).toBeHidden();
+    await expect(legacySecondary).toBeVisible();
+    await expect(legacySecondary.locator('.easymde-toolbar-immersive-toggle')).toBeVisible();
+    await expect(legacySecondary.locator('[data-easymde-command="copywechat"]')).toBeVisible();
+
+    const source = page.locator('#easymde-source');
+    await source.fill('Toolbar parity');
+    await source.evaluate((field) => {
+      field.focus();
+      field.setSelectionRange(0, 7, 'backward');
+    });
+    await reactMain.locator('[data-easymde-command="bold"]').click();
+    await expect(source).toHaveValue('**Toolbar** parity');
+    await expect(source).toBeFocused();
+    expect(await source.evaluate((field) => field.selectionDirection)).toBe('backward');
+
+    await source.fill('Heading parity');
+    await source.evaluate((field) => {
+      field.focus();
+      field.setSelectionRange(0, 0);
+    });
+    const headingTrigger = reactMain.locator('.easymde-toolbar-popover-headings > button');
+    await headingTrigger.focus();
+    await headingTrigger.press('ArrowDown');
+    await expect(headingTrigger).toHaveAttribute('aria-expanded', 'true');
+    await expect(reactMain.locator('[data-easymde-command="paragraph"]')).toBeFocused();
+    await page.keyboard.press('End');
+    await expect(reactMain.locator('[data-easymde-command="heading6"]')).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(source).toHaveValue('###### Heading parity');
+    await expect(source).toBeFocused();
+  });
+
+  test('keeps the legacy main toolbar active when the React entry cannot load', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await page.route(/\/assets\/build\/assets\/admin-editor-toolbar-[^/?]+\.js(?:\?.*)?$/, (route) => route.abort());
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+
+    const toolbar = page.locator('#easymde-toolbar');
+    const reactMain = page.locator('#easymde-toolbar-react-main');
+    const legacyMain = page.locator('#easymde-toolbar-legacy-main');
+    await expect(toolbar).toHaveAttribute('data-easymde-main-toolbar-owner', 'legacy');
+    await expect(reactMain).toBeHidden();
+    await expect(legacyMain).toBeVisible();
+    await expect(legacyMain.locator('[data-easymde-command="bold"]')).toBeVisible();
+
+    const source = page.locator('#easymde-source');
+    await source.fill('Legacy fallback');
+    await source.evaluate((field) => {
+      field.focus();
+      field.setSelectionRange(0, 6);
+    });
+    await legacyMain.locator('[data-easymde-command="bold"]').click();
+    await expect(source).toHaveValue('**Legacy** fallback');
+  });
+
   test('opens the isolated article workspace without changing the normal WordPress editor', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = `Immersive Workspace ${testSlug(testInfo)}`;
@@ -1259,7 +1333,10 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
-    const boldTitle = await page.locator('[data-easymde-command="bold"]').getAttribute('title');
+    const normalToolbar = page.locator('#easymde-toolbar[data-easymde-main-toolbar-owner="react"]');
+    const boldTitle = await normalToolbar
+      .locator('#easymde-toolbar-react-main [data-easymde-command="bold"]')
+      .getAttribute('title');
     const originalWechatPaths = await page.locator('[data-easymde-command="copywechat"] .easymde-wechat-glyph path').evaluateAll(
       (paths) => paths.map((path) => path.getAttribute('d'))
     );

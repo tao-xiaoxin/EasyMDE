@@ -44,6 +44,7 @@ Useful local commands:
 ```bash
 npm install
 npm run assets:check
+npm run lint:frontend
 npm run frontend:check
 git ls-files -z -- '*.js' '*.mjs' | xargs -0 -n1 node --check
 npm run i18n:check
@@ -51,7 +52,9 @@ npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` runs strict TypeScript checking independently from the Vite build, then validates the test-only WordPress Classic Script contract. The current locked toolchain uses Vite 8.1.5 and TypeScript 7.0.2 on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime. The build writes only to `.cache/easymde-frontend-contract/` and fails on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps.
+`npm run frontend:check` runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and a read-only production normal-editor Toolbar comparison. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, and TypeScript 7.0.2 on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+
+The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds into `.cache/easymde-frontend-production-check/`, validates that output, and compares its complete file set and bytes with the committed `assets/build/` runtime without rewriting it. `npm run build:frontend` is the explicit maintainer command that regenerates the committed Vite Manifest, WordPress Manifest, hashed Toolbar script, and matching `.asset.php` dependency metadata. Both validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The production entry must use the stable `easymde-admin-editor-toolbar` handle and depend only on `wp-element`.
 
 Translation maintenance commands are:
 
@@ -95,7 +98,7 @@ KaTeX, font, license, and notice destination with its declared local source;
 npm-backed sources must also exist in the root dependency and lockfile
 metadata. Validation fails on missing, changed, or unexpected managed files.
 
-The build verifies version consistency across `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json`. It also fails if required runtime dependencies, local runtime assets, registered theme assets, translation files, or third-party notices are missing, or if the generated third-party notice content is stale.
+The build verifies version consistency across `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json`. It also fails if required runtime dependencies, local runtime assets, registered theme assets, production Frontend manifests and hashed Toolbar artifacts, translation files, or third-party notices are missing, or if the generated third-party notice content is stale.
 
 The release build requires Composer runtime dependencies only. If Composer development packages are installed under `vendor/`, rebuild with Composer `--no-dev` before packaging.
 
@@ -106,7 +109,7 @@ The CI release package job also creates source snapshots from the checked-out tr
 
 Those source archives use `EasyMDE-<version>/` as their root directory. They are separate from the installable runtime plugin ZIP and are not consumed by Plugin Check or E2E.
 
-The installable plugin ZIP excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
+The installable plugin ZIP includes the committed production artifacts under `assets/build/` and excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
 
 CI uploads the release outputs as separate Actions artifacts:
 

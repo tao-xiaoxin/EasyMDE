@@ -2862,6 +2862,7 @@ test.describe('EasyMDE editor workflows', () => {
 
       await fillMarkdownAndWaitForPreview(page, variant.markdown, variant.previewText);
       await publishOrUpdate(page);
+      await expect(page.locator('#easymde-preview')).toHaveAttribute('aria-busy', 'false');
       runtimeRequests.length = 0;
 
       const response = await page.goto(permalink);

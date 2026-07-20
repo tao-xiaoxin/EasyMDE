@@ -21,6 +21,31 @@ does not transfer Preview, appearance, draft storage, WeChat export, immersive
 writing, native submission, Save, Publish, or WordPress authority, and it
 removes no legacy implementation.
 
+## Normal Editor Document Session Ownership
+
+The normal editor Markdown source and title session are the next React
+migration unit. CodeMirror 6 owns the in-browser Markdown value, selection,
+focus, undo history, and source scrolling after its readiness contract passes.
+The native `#easymde-source` textarea stays in the WordPress form as a hidden,
+synchronously updated submission bridge and as the compatibility boundary for
+legacy Markdown commands. The native title input remains visible and
+WordPress-owned; React observes it through a focused title session adapter
+without creating another persisted title.
+
+The PHP editor shell renders separate React and legacy source containers.
+Startup keeps the textarea visible until the CodeMirror document session, title
+session, native fields, and legacy consumers validate. Readiness switches one
+explicit document owner, rebinds source scroll and paste/drop surfaces, and
+hides the textarea. Startup failure keeps the legacy textarea usable. A failure
+after handoff requires reload rather than switching two live document writers.
+Native form submission flushes CodeMirror to the textarea before WordPress
+serializes the open form.
+
+PHP and WordPress continue to own Markdown and title persistence, rendering,
+save, publish, permissions, nonces, revisions, autosave, and post locks. The
+secondary Toolbar and immersive workspace remain legacy-owned, and this unit
+does not migrate immersive writing.
+
 ## Editor Enablement
 
 EasyMDE opens new and existing content for post types explicitly supported by `easymde_supported_post_types` in EasyMDE through normal WordPress editing when the current user can edit or create that content. The default supported post types are `post` and `page`.

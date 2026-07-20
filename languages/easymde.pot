@@ -87,7 +87,7 @@ msgstr ""
 msgid "Split mode"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:441 templates/admin/editor-shell.php:50
+#: src/Admin/AdminAssets.php:441 templates/admin/editor-shell.php:51
 msgid "Preview"
 msgstr ""
 
@@ -1527,7 +1527,7 @@ msgstr ""
 msgid "Markdown"
 msgstr ""
 
-#: templates/admin/editor-shell.php:63
+#: templates/admin/editor-shell.php:64
 msgid "Output actions"
 msgstr ""
 

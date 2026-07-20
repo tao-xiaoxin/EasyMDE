@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "entries": {
-    "frontend/src/entrypoints/admin-editor-toolbar.tsx": {
+    "frontend/src/entrypoints/admin-editor.tsx": {
       "handle": "easymde-admin-editor-toolbar",
-      "file": "assets/admin-editor-toolbar-DnoEMhZa.js",
-      "asset": "assets/admin-editor-toolbar-DnoEMhZa.asset.php",
+      "file": "assets/admin-editor-DnTVdfEA.js",
+      "asset": "assets/admin-editor-DnTVdfEA.asset.php",
       "dependencies": [
         "wp-element"
       ],

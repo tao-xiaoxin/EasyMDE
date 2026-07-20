@@ -534,7 +534,7 @@ function revisionMarkdownSummary(postId) {
 }
 
 async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
-  await page.locator('#easymde-source').fill(markdown);
+  await page.locator('.easymde-source-react .cm-content').fill(markdown);
   await expect(page.locator('#easymde-preview')).toContainText(expectedText);
 }
 
@@ -589,19 +589,19 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(legacySecondary.locator('[data-easymde-command="copywechat"]')).toBeVisible();
 
     const source = page.locator('#easymde-source');
-    await source.fill('Toolbar parity');
+    const sourceEditor = page.locator('.easymde-source-react .cm-content');
+    await sourceEditor.fill('Toolbar parity');
     await source.evaluate((field) => {
-      field.focus();
       field.setSelectionRange(0, 7, 'backward');
     });
     await reactMain.locator('[data-easymde-command="bold"]').click();
     await expect(source).toHaveValue('**Toolbar** parity');
-    await expect(source).toBeFocused();
+    await expect(sourceEditor).toHaveText('**Toolbar** parity');
+    await expect(sourceEditor).toBeFocused();
     expect(await source.evaluate((field) => field.selectionDirection)).toBe('backward');
 
-    await source.fill('Heading parity');
+    await sourceEditor.fill('Heading parity');
     await source.evaluate((field) => {
-      field.focus();
       field.setSelectionRange(0, 0);
     });
     const headingTrigger = reactMain.locator('.easymde-toolbar-popover-headings > button');
@@ -613,23 +613,185 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(reactMain.locator('[data-easymde-command="heading6"]')).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(source).toHaveValue('###### Heading parity');
-    await expect(source).toBeFocused();
+    await expect(sourceEditor).toHaveText('###### Heading parity');
+    await expect(sourceEditor).toBeFocused();
+  });
+
+  test('hands the normal document session to React with one visible source and a fresh native bridge', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+
+    const sourcePane = page.locator('.easymde-pane-source');
+    const reactSource = page.locator('#easymde-source-react');
+    const nativeSource = page.locator('#easymde-source');
+    const sourceEditor = reactSource.locator('.cm-content');
+
+    await expect(sourcePane).toHaveAttribute('data-easymde-document-owner', 'react');
+    await expect(reactSource).toBeVisible();
+    await expect(sourceEditor).toHaveAttribute('contenteditable', 'true');
+    await expect(nativeSource).toBeHidden();
+    await expect(page.locator('.easymde-pane-source .easymde-source:visible')).toHaveCount(1);
+
+    await sourceEditor.fill('# React source\n\nBridge value');
+    await expect(nativeSource).toHaveValue('# React source\n\nBridge value');
+    await expect(page.locator('#easymde-preview')).toContainText('Bridge value');
+
+    await sourceEditor.focus();
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z');
+    await expect(nativeSource).toHaveValue('');
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+Z' : 'Control+Shift+Z');
+    await expect(nativeSource).toHaveValue('# React source\n\nBridge value');
+    await page.keyboard.insertText('Z');
+    await expect(nativeSource).toHaveValue('# React source\n\nBridge valueZ');
+
+    const cdp = await page.context().newCDPSession(page);
+    await sourceEditor.fill('# IME\n\n');
+    await sourceEditor.focus();
+    await cdp.send('Input.imeSetComposition', {
+      text: '中文组合',
+      selectionStart: 4,
+      selectionEnd: 4
+    });
+    await expect(nativeSource).toHaveValue('# IME\n\n中文组合');
+    await cdp.send('Input.insertText', { text: '中文组合' });
+    await expect(nativeSource).toHaveValue('# IME\n\n中文组合');
+    await expect(sourceEditor).toBeFocused();
+    await expect(page.locator('#easymde-preview')).toContainText('中文组合');
+    await cdp.detach();
+
+    const scrollingMarkdown = Array.from(
+      { length: 160 },
+      (_, index) => `## Section ${index + 1}\n\nScroll synchronization content ${index + 1}.`
+    ).join('\n\n');
+    await sourceEditor.fill(scrollingMarkdown);
+    await expect(page.locator('#easymde-preview')).toContainText('Scroll synchronization content 160.');
+    await page.locator('#easymde-preview').evaluate((preview) => {
+      preview.scrollTop = (preview.scrollHeight - preview.clientHeight) / 2;
+      preview.dispatchEvent(new Event('scroll'));
+    });
+    await expect.poll(
+      () => reactSource.locator('.cm-scroller').evaluate((scroller) => scroller.scrollTop)
+    ).toBeGreaterThan(0);
+
+    const beforeRejectedDrop = 'Before rejected image drop.';
+    await sourceEditor.fill(beforeRejectedDrop);
+    await sourceEditor.evaluate((editor) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(
+        ['<svg xmlns="http://www.w3.org/2000/svg"><text>must not enter Markdown</text></svg>'],
+        'rejected.svg',
+        { type: 'image/svg+xml' }
+      ));
+      editor.dispatchEvent(new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: transfer
+      }));
+    });
+    await expect(page.locator('.easymde-editor-flash')).toContainText(
+      await page.evaluate(() => window.EasyMDEConfig.strings.imageDropFailed)
+    );
+    await expect(nativeSource).toHaveValue(beforeRejectedDrop);
+    await expect(sourceEditor).toHaveText(beforeRejectedDrop);
+  });
+
+  test('synchronizes legacy shortcut, draft restore, and submit writes into the React document session', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `React bridge ${testSlug(testInfo)}`;
+    const restoredMarkdown = `# ${title}\n\nRestored local draft.`;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+
+    const sourceEditor = page.locator('.easymde-source-react .cm-content');
+    const nativeSource = page.locator('#easymde-source');
+    const boldButton = page.locator('#easymde-toolbar-react-main [data-easymde-command="bold"]');
+    const boldTitle = await boldButton.getAttribute('title');
+    const usesCommandKey = !!boldTitle && boldTitle.includes('Cmd+B');
+
+    await sourceEditor.fill('shortcut target');
+    await sourceEditor.focus();
+    await nativeSource.evaluate((field) => {
+      field.setSelectionRange(0, field.value.length, 'backward');
+    });
+    await sourceEditor.press(usesCommandKey ? 'Meta+b' : 'Control+b');
+    await expect(sourceEditor).toHaveText('**shortcut target**');
+    await expect(nativeSource).toHaveValue('**shortcut target**');
+
+    await page.locator('#title').fill(title);
+    const draftNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await page.locator('#save-post').click();
+    await draftNavigation;
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+
+    await page.evaluate((markdown) => {
+      window.EasyMDEDraftStorage.write(window.EasyMDEConfig.storage, markdown);
+    }, restoredMarkdown);
+    await page.reload();
+
+    const draftNotice = page.locator('.easymde-draft-notice');
+    await expect(draftNotice).toBeVisible();
+    await draftNotice.locator('button').first().click();
+    await expect(page.locator('.easymde-source-react .cm-content')).toContainText(`# ${title}`);
+    await expect(page.locator('.easymde-source-react .cm-content')).toContainText('Restored local draft.');
+    await expect(nativeSource).toHaveValue(restoredMarkdown);
+
+    await page.locator('#title').fill(title);
+    await publishOrUpdate(page);
+    const postId = await currentPostId(page);
+    expect(normalizeMarkdown(postMetaValue(postId, '_easymde_markdown'))).toBe(restoredMarkdown);
+  });
+
+  test('synchronizes asynchronous native media insertion into the React document session', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const slug = testSlug(testInfo);
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    const media = await uploadTestImage(page, `${slug}-react-source.png`, 'React source image');
+    const sourceEditor = page.locator('.easymde-source-react .cm-content');
+    const nativeSource = page.locator('#easymde-source');
+
+    await sourceEditor.fill('before IMAGE after');
+    await nativeSource.evaluate((field) => {
+      field.setSelectionRange(7, 12, 'backward');
+    });
+    await page.locator('#easymde-toolbar-react-main [data-easymde-command="image"]').click();
+
+    const mediaModal = page.locator('.media-modal:visible');
+    await expect(mediaModal).toBeVisible();
+    await mediaModal.locator('.media-menu-item').filter({ hasText: 'Media Library' }).click();
+    const attachment = mediaModal.locator(`.attachment[data-id="${media.id}"]`);
+    await expect(attachment).toBeVisible();
+    await attachment.click();
+    await mediaModal.locator('.media-button-select').click();
+    await expect(mediaModal).toBeHidden();
+
+    const expected = `before ![React source image](${media.source_url}) after`;
+    await expect(nativeSource).toHaveValue(expected);
+    await expect(sourceEditor).toHaveText(expected);
   });
 
   test('keeps the legacy main toolbar active when the React entry cannot load', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
 
-    await page.route(/\/assets\/build\/assets\/admin-editor-toolbar-[^/?]+\.js(?:\?.*)?$/, (route) => route.abort());
+    await page.route(/\/assets\/build\/assets\/admin-editor-[^/?]+\.js(?:\?.*)?$/, (route) => route.abort());
     await login(page, user);
     await openEasyMdeNewPost(page);
 
     const toolbar = page.locator('#easymde-toolbar');
     const reactMain = page.locator('#easymde-toolbar-react-main');
     const legacyMain = page.locator('#easymde-toolbar-legacy-main');
+    const sourcePane = page.locator('.easymde-pane-source');
+    const reactSource = page.locator('#easymde-source-react');
     await expect(toolbar).toHaveAttribute('data-easymde-main-toolbar-owner', 'legacy');
     await expect(reactMain).toBeHidden();
     await expect(legacyMain).toBeVisible();
     await expect(legacyMain.locator('[data-easymde-command="bold"]')).toBeVisible();
+    await expect(sourcePane).toHaveAttribute('data-easymde-document-owner', 'legacy');
+    await expect(reactSource).toBeHidden();
 
     const source = page.locator('#easymde-source');
     await source.fill('Legacy fallback');
@@ -1341,7 +1503,7 @@ test.describe('EasyMDE editor workflows', () => {
       (paths) => paths.map((path) => path.getAttribute('d'))
     );
     const shortcut = boldTitle && boldTitle.includes('Cmd+B') ? 'Meta+B' : 'Control+B';
-    await page.locator('#easymde-source').fill('plain\nsecond line');
+    await page.locator('.easymde-source-react .cm-content').fill('plain\nsecond line');
     await page.locator('.easymde-toolbar-immersive-toggle').click();
     await expect(page.locator('.easymde-immersive-workspace')).toBeVisible();
 
@@ -1574,11 +1736,11 @@ test.describe('EasyMDE editor workflows', () => {
     const restored = await page.evaluate(() => ({
       ariaHidden: document.querySelector('#wpwrap').getAttribute('aria-hidden'),
       inert: document.querySelector('#wpwrap').inert,
-      activeId: document.activeElement?.id || ''
+      activeReactDocument: document.activeElement?.matches('#easymde-source-react .cm-content') || false
     }));
     expect(restored.ariaHidden).toBeNull();
     expect(restored.inert).toBe(false);
-    expect(restored.activeId).toBe('easymde-source');
+    expect(restored.activeReactDocument).toBe(true);
 
     await page.locator('.easymde-toolbar-immersive-toggle').click();
     await expect(page.locator('.easymde-immersive-workspace__divider')).toHaveAttribute(
@@ -1593,7 +1755,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
-    await page.locator('#easymde-source').fill('# Verification\n\nBefore table');
+    await page.locator('.easymde-source-react .cm-content').fill('# Verification\n\nBefore table');
     const legacyStyleBefore = await page.locator('#easymde-editor').evaluate((node) => {
       const style = window.getComputedStyle(node);
       return { display: style.display, background: style.backgroundColor };
@@ -2784,7 +2946,7 @@ test.describe('EasyMDE editor workflows', () => {
       body: document.body.scrollWidth - document.body.clientWidth,
       document: document.documentElement.scrollWidth - document.documentElement.clientWidth
     }));
-    await page.locator('#easymde-source').fill('# Narrow workspace\n\nMobile preview content.');
+    await page.locator('.easymde-source-react .cm-content').fill('# Narrow workspace\n\nMobile preview content.');
     await page.locator('.easymde-toolbar-immersive-toggle').click();
 
     const workspace = page.locator('.easymde-immersive-workspace');

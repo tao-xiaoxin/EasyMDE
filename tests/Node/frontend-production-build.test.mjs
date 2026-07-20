@@ -14,12 +14,15 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test, { before } from 'node:test';
 
-import { compareFrontendProductionBuilds } from '../../scripts/verify-frontend-build.mjs';
+import {
+  compareFrontendProductionBuilds,
+  validateFrontendProductionBuild
+} from '../../scripts/verify-frontend-build.mjs';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const outputRoot = join(repoRoot, '.cache/easymde-frontend-production-check');
 const committedOutputRoot = join(repoRoot, 'assets/build');
-const sourceEntry = 'frontend/src/entrypoints/admin-editor-toolbar.tsx';
+const sourceEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 let buildResult;
 
 function readJson(path) {
@@ -50,7 +53,7 @@ test('root package exposes the production frontend build and includes it in the 
   );
 });
 
-test('production build emits one self-contained WordPress classic entry', () => {
+test('production build emits one self-contained WordPress editor React entry', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
   assert.equal(existsSync(outputRoot), true);
 
@@ -61,7 +64,7 @@ test('production build emits one self-contained WordPress classic entry', () => 
 
   assert.equal(wordpressManifest.schemaVersion, 1);
   assert.equal(viteEntry.isEntry, true);
-  assert.match(viteEntry.file, /^assets\/admin-editor-toolbar-[a-zA-Z0-9_-]+\.js$/);
+  assert.match(viteEntry.file, /^assets\/admin-editor-[a-zA-Z0-9_-]+\.js$/);
   assert.equal(wordpressEntry.handle, 'easymde-admin-editor-toolbar');
   assert.equal(wordpressEntry.file, viteEntry.file);
   assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
@@ -75,8 +78,13 @@ test('production build emits one self-contained WordPress classic entry', () => 
 
   assert.match(script, /wp\.element/);
   assert.match(script, /EasyMDEReactToolbar/);
+  assert.match(script, /EasyMDEReactDocumentSource/);
+  assert.match(script, /cm-editor/);
   assert.doesNotMatch(script, /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/);
-  assert.doesNotMatch(script, /localhost|127\.0\.0\.1|https?:\/\//i);
+  assert.doesNotMatch(
+    script.replaceAll('http://www.w3.org/2000/svg', ''),
+    /localhost|127\.0\.0\.1|https?:\/\/[A-Za-z0-9]/i
+  );
   assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
   assert.match(css, /\.easymde-react-toolbar-contents\s*\{[^}]*display:\s*contents;/s);
   assert.match(metadata, /'wp-element'/);
@@ -110,6 +118,29 @@ test('production comparison rejects stale or omitted committed runtime artifacts
   } finally {
     rmSync(generatedRoot, { recursive: true, force: true });
     rmSync(committedRoot, { recursive: true, force: true });
+  }
+});
+
+test('production validation rejects broad remote URLs and absolute build paths', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+
+  for (const prohibited of [
+    'const remote = "https://[::1]/runtime.js";',
+    'const buildFile = "/srv/ci/workspace/runtime.js";'
+  ]) {
+    const generatedRoot = mkdtempSync(join(tmpdir(), 'easymde-frontend-unsafe-'));
+    cpSync(outputRoot, generatedRoot, { recursive: true });
+
+    try {
+      const manifest = readJson(join(generatedRoot, 'manifest.json'));
+      appendFileSync(join(generatedRoot, manifest[sourceEntry].file), `\n${prohibited}\n`);
+      assert.throws(
+        () => validateFrontendProductionBuild(generatedRoot),
+        /prohibited (?:remote runtime URL|absolute local path)/
+      );
+    } finally {
+      rmSync(generatedRoot, { recursive: true, force: true });
+    }
   }
 });
 

@@ -28,7 +28,10 @@ import {
   releaseZipPath,
   shouldCopyReleaseFile
 } from '../../scripts/build-release.mjs';
-import { renderNotices } from '../../scripts/third-party-notices.mjs';
+import {
+  bundledFrontendPackages,
+  renderNotices
+} from '../../scripts/third-party-notices.mjs';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const scriptPath = join(repoRoot, 'scripts/build-release.mjs');
@@ -219,6 +222,18 @@ function createFrontendAssetSources(root) {
   }
 
   packageJson.dependencies = dependencies;
+  for (const packageName of Object.keys(bundledFrontendPackages)) {
+    packages[`node_modules/${packageName}`] = {
+      version: '1.0.0',
+      resolved: `https://registry.npmjs.org/${packageName}/fixture.tgz`,
+      license: 'MIT'
+    };
+    writeText(
+      root,
+      `node_modules/${packageName}/LICENSE`,
+      `MIT License\n\nCopyright fixture for ${packageName}\n`
+    );
+  }
   writeFileSync(packageJsonPath, JSON.stringify(packageJson));
   writeText(root, 'package-lock.json', JSON.stringify({ packages }));
   prepareFrontendAssets(root);
@@ -247,9 +262,9 @@ function createCompleteFixture(root) {
   createAssetSourceFiles(root);
   createComposerLock(root);
   createFrontendAssetSources(root);
-  const frontendEntry = 'frontend/src/entrypoints/admin-editor-toolbar.tsx';
-  const frontendScript = 'assets/admin-editor-toolbar-fixture.js';
-  const frontendMetadata = 'assets/admin-editor-toolbar-fixture.asset.php';
+  const frontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
+  const frontendScript = 'assets/admin-editor-fixture.js';
+  const frontendMetadata = 'assets/admin-editor-fixture.asset.php';
 
   writeText(
     root,
@@ -363,8 +378,8 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/assets/js/admin/media-picker.js'));
     assert.ok(entries.includes('easymde/assets/js/admin/image-paste.js'));
     assert.ok(entries.includes('easymde/assets/build/wordpress-manifest.json'));
-    assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-toolbar-[A-Za-z0-9_-]+\.js$/.test(entry)));
-    assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-toolbar-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/js/frontend/bootstrap.js'));
     assert.ok(entries.includes('easymde/assets/vendor/mermaid/LICENSE'));
     assert.ok(entries.includes('easymde/assets/vendor/lucide/LICENSE'));
@@ -424,11 +439,11 @@ test('release build rejects frontend artifacts outside the production manifests'
 
   try {
     createCompleteFixture(root);
-    writeText(root, 'assets/build/assets/admin-editor-toolbar-stale.js', 'stale build output\n');
+    writeText(root, 'assets/build/assets/admin-editor-stale.js', 'stale build output\n');
 
     assert.throws(
       () => buildRelease({ root }),
-      /unexpected production frontend artifacts:[\s\S]*admin-editor-toolbar-stale\.js/
+      /unexpected production frontend artifacts:[\s\S]*admin-editor-stale\.js/
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -548,7 +563,7 @@ test('release build fails when required runtime assets or templates are missing'
     rmSync(join(root, 'assets/js/admin/media-picker.js'), { force: true });
     rmSync(join(root, 'assets/js/admin/image-paste.js'), { force: true });
     rmSync(join(root, 'assets/js/frontend/bootstrap.js'), { force: true });
-    rmSync(join(root, 'assets/build/assets/admin-editor-toolbar-fixture.js'), { force: true });
+    rmSync(join(root, 'assets/build/assets/admin-editor-fixture.js'), { force: true });
     rmSync(join(root, 'assets/images/tech-blue-code-window.svg'), { force: true });
     rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
 
@@ -562,7 +577,7 @@ test('release build fails when required runtime assets or templates are missing'
     assert.ok(missing.includes('assets/js/admin/media-picker.js'));
     assert.ok(missing.includes('assets/js/admin/image-paste.js'));
     assert.ok(missing.includes('assets/js/frontend/bootstrap.js'));
-    assert.ok(missing.includes('assets/build/assets/admin-editor-toolbar-fixture.js'));
+    assert.ok(missing.includes('assets/build/assets/admin-editor-fixture.js'));
     assert.ok(missing.includes('assets/images/tech-blue-code-window.svg'));
     assert.ok(missing.includes('THIRD-PARTY-NOTICES.md'));
 

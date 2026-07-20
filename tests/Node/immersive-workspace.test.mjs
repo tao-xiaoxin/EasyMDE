@@ -95,9 +95,12 @@ test('revision navigation asks the adapter for dirty state against the saved doc
   assert.match(source, /typeof adapter\.hasUnsavedChanges === 'function'/);
   assert.match(source, /adapter\.hasUnsavedChanges\(navigationState\)/);
   assert.match(bootstrap, /initialMarkdown:\s*context\.savedMarkdown/);
-  assert.match(bootstrap, /initialTitle:\s*context\.savedTitle/);
+  assert.match(
+    bootstrap,
+    /initialTitle:\s*titleSnapshot \? titleSnapshot\.savedValue : context\.savedTitle/
+  );
   assert.match(bootstrap, /savedMarkdown:\s*String\(\$source\[0\]\.defaultValue \|\| ''\)/);
-  assert.match(bootstrap, /savedTitle:\s*String\(\(document\.getElementById\('title'\) \|\| \{\}\)\.defaultValue \|\| ''\)/);
+  assert.match(bootstrap, /savedTitle:\s*String\(\(titleField \|\| \{\}\)\.defaultValue \|\| ''\)/);
 });
 
 test('immersive workspace reports deactivation only after its active state is cleared', () => {

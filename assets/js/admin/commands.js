@@ -44,6 +44,7 @@
     function applyTextChange(textarea, value, selectionStart, selectionEnd, services) {
         var scrollTop = textarea.scrollTop;
         var scrollLeft = textarea.scrollLeft;
+        var selectionDirection = textarea.selectionDirection;
         var windowScrollX = window.pageXOffset;
         var windowScrollY = window.pageYOffset;
 
@@ -51,13 +52,12 @@
         services.focusWithoutScrolling(textarea);
 
         if (typeof selectionStart === 'number' && typeof selectionEnd === 'number') {
-            textarea.selectionStart = selectionStart;
-            textarea.selectionEnd = selectionEnd;
+            textarea.setSelectionRange(selectionStart, selectionEnd, selectionDirection || 'none');
         }
 
         services.restoreScrollPosition(textarea, scrollTop, scrollLeft);
         window.scrollTo(windowScrollX, windowScrollY);
-        services.$(textarea).trigger('input');
+        services.dispatchNativeInput(textarea);
         window.setTimeout(function () {
             services.restoreScrollPosition(textarea, scrollTop, scrollLeft);
             window.scrollTo(windowScrollX, windowScrollY);

@@ -7,6 +7,47 @@ import test from 'node:test';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
+function createEventJQuery() {
+  const handlers = new WeakMap();
+
+  function listeners(node) {
+    if (!handlers.has(node)) {
+      handlers.set(node, new Map());
+    }
+
+    return handlers.get(node);
+  }
+
+  function jQuery(node) {
+    return {
+      off(name) {
+        const registered = listeners(node);
+        for (const eventName of registered.keys()) {
+          if (eventName === name || eventName.endsWith(name)) {
+            registered.delete(eventName);
+          }
+        }
+        return this;
+      },
+      on(name, callback) {
+        listeners(node).set(name, callback);
+        return this;
+      }
+    };
+  }
+
+  jQuery.contains = () => false;
+  jQuery.emit = (node, type) => {
+    for (const [name, callback] of listeners(node)) {
+      if (name.split('.')[0] === type) {
+        callback.call(node);
+      }
+    }
+  };
+
+  return jQuery;
+}
+
 test('editor shell keeps source before preview in DOM order', () => {
   const template = readFileSync(join(repoRoot, 'templates/admin/editor-shell.php'), 'utf8');
   const sourcePosition = template.indexOf('class="easymde-pane easymde-pane-source"');
@@ -34,6 +75,29 @@ test('editor shell delegates exclusive React and legacy toolbar containers', () 
   );
 });
 
+test('editor shell delegates exclusive React and legacy document source containers', () => {
+  const template = readFileSync(join(repoRoot, 'templates/admin/editor-shell.php'), 'utf8');
+  const sourcePanePosition = template.indexOf('class="easymde-pane easymde-pane-source"');
+  const reactPosition = template.indexOf('id="easymde-source-react"', sourcePanePosition);
+  const legacyPosition = template.indexOf('id="easymde-source"', reactPosition);
+  const previewPosition = template.indexOf('class="easymde-pane easymde-pane-preview"', legacyPosition);
+
+  assert.ok(sourcePanePosition >= 0, 'source pane should be rendered');
+  assert.ok(reactPosition > sourcePanePosition, 'the exclusive React source container should be inside the source pane');
+  assert.ok(legacyPosition > reactPosition, 'the legacy source fallback should follow the React container');
+  assert.ok(previewPosition > legacyPosition, 'the preview pane must remain outside the React source root');
+  assert.match(
+    template.slice(reactPosition, legacyPosition),
+    /\bhidden\b/,
+    'React document source must remain hidden before readiness'
+  );
+  assert.match(
+    template.slice(sourcePanePosition, reactPosition),
+    /data-easymde-document-owner="legacy"/,
+    'the server-rendered source pane must declare the initial owner'
+  );
+});
+
 test('toolbar ownership styles keep every hidden section out of layout', () => {
   const stylesheet = readFileSync(join(repoRoot, 'assets/css/admin/toolbar.css'), 'utf8');
 
@@ -41,6 +105,16 @@ test('toolbar ownership styles keep every hidden section out of layout', () => {
     stylesheet,
     /\.easymde-toolbar-section\[hidden\]\s*\{\s*display:\s*none;\s*\}/,
     'author styles must not override the hidden state used by the atomic toolbar handoff'
+  );
+});
+
+test('document source ownership styles keep the inactive surface out of layout', () => {
+  const stylesheet = readFileSync(join(repoRoot, 'assets/css/admin/editor.css'), 'utf8');
+
+  assert.match(
+    stylesheet,
+    /\.easymde-source\[hidden\]\s*\{\s*display:\s*none;\s*\}/,
+    'author styles must not override the hidden state used by the document handoff'
   );
 });
 
@@ -55,6 +129,104 @@ test('toolbar reconstruction unmounts React before clearing its owned container'
   assert.ok(createToolbarStart >= 0, 'toolbar reconstruction should exist');
   assert.ok(cleanupPosition >= 0, 'an active React root should be disposed during reconstruction');
   assert.ok(clearPosition > cleanupPosition, 'React must unmount before legacy code clears its container');
+});
+
+test('document source consumer handoff prepares React bindings before releasing legacy scroll sync', () => {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
+  const handoffStart = source.indexOf('context.onDocumentSourceReady = function (session)');
+  const handoffEnd = source.indexOf("$source.on('input'", handoffStart);
+  const handoff = source.slice(handoffStart, handoffEnd);
+  const preparePosition = handoff.indexOf('nextScrollSyncCleanup = bindScrollSync(');
+  const pastePosition = handoff.indexOf('bindLazyImagePasteUpload(');
+  const releasePosition = handoff.indexOf('context.scrollSyncCleanup();');
+  const commitPosition = handoff.indexOf('context.scrollSyncCleanup = nextScrollSyncCleanup;');
+
+  assert.ok(handoffStart >= 0, 'the document source consumer handoff should exist');
+  assert.ok(preparePosition >= 0, 'React scroll sync should be prepared');
+  assert.ok(pastePosition > preparePosition, 'React paste behavior should join the prepared handoff');
+  assert.ok(releasePosition > pastePosition, 'legacy scroll sync must remain active until preparation succeeds');
+  assert.ok(commitPosition > releasePosition, 'the prepared React cleanup becomes authoritative only after release');
+  assert.match(handoff, /catch \(error\) \{\s*nextScrollSyncCleanup\(\);\s*throw error;/);
+});
+
+test('scroll sync cleanup preserves the next binding and failed handoff rollback', () => {
+  const jQueryRef = createEventJQuery();
+  const { flushTimers, hooks } = loadBootstrap({}, { jQuery: jQueryRef });
+  const preview = {
+    clientHeight: 100,
+    scrollHeight: 500,
+    scrollTop: 0
+  };
+  const legacySource = {
+    clientHeight: 100,
+    scrollHeight: 300,
+    scrollTop: 0
+  };
+  const reactSource = {
+    clientHeight: 100,
+    scrollHeight: 900,
+    scrollTop: 0
+  };
+
+  const releaseLegacy = hooks.bindScrollSync(legacySource, preview);
+  const releaseReact = hooks.bindScrollSync(reactSource, preview);
+  releaseLegacy();
+
+  preview.scrollTop = 200;
+  jQueryRef.emit(preview, 'scroll');
+  assert.equal(reactSource.scrollTop, 400);
+  flushTimers();
+
+  reactSource.scrollTop = 600;
+  jQueryRef.emit(reactSource, 'scroll');
+  assert.equal(preview.scrollTop, 300);
+  flushTimers();
+  releaseReact();
+
+  const restoreLegacy = hooks.bindScrollSync(legacySource, preview);
+  const rollbackReact = hooks.bindScrollSync(reactSource, preview);
+  rollbackReact();
+  preview.scrollTop = 100;
+  jQueryRef.emit(preview, 'scroll');
+  assert.equal(legacySource.scrollTop, 50);
+  restoreLegacy();
+});
+
+test('document source teardown returns reverse scroll ownership to the legacy source', () => {
+  const jQueryRef = createEventJQuery();
+  const { flushTimers, hooks } = loadBootstrap({}, { jQuery: jQueryRef });
+  const preview = {
+    clientHeight: 100,
+    scrollHeight: 500,
+    scrollTop: 0
+  };
+  const legacySource = {
+    clientHeight: 100,
+    scrollHeight: 300,
+    scrollTop: 0
+  };
+  const reactSource = {
+    clientHeight: 100,
+    scrollHeight: 900,
+    scrollTop: 0
+  };
+  const context = {
+    documentSession: {},
+    titleSession: {},
+    scrollSyncCleanup: hooks.bindScrollSync(reactSource, preview)
+  };
+
+  hooks.restoreLegacyDocumentSource(context, legacySource, preview);
+
+  preview.scrollTop = 200;
+  jQueryRef.emit(preview, 'scroll');
+  flushTimers();
+
+  assert.equal(legacySource.scrollTop, 100);
+  assert.equal(reactSource.scrollTop, 0);
+  assert.equal(context.documentSession, null);
+  assert.equal(context.titleSession, null);
+  context.scrollSyncCleanup();
 });
 
 function createTimerHarness() {
@@ -414,6 +586,13 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   const documentRef = createDocumentStub(contextOverrides.documentElements || {});
   const jQueryRef = contextOverrides.jQuery || createJQueryStub();
   const windowRef = {
+    Event: class {
+      constructor(type, options = {}) {
+        this.bubbles = !!options.bubbles;
+        this.defaultPrevented = false;
+        this.type = type;
+      }
+    },
     EasyMDEConfig: {
       testHooks: true,
       restUrl: '/wp-json/easymde/v1/preview',
@@ -471,7 +650,9 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.applyNativePublishVisibility, 'function', 'bootstrap harness should expose native visibility writes');
   assert.equal(typeof context.window.EasyMDETestHooks.skipNextCrossDocumentViewTransition, 'function', 'bootstrap harness should expose immersive navigation transition guards');
   assert.equal(typeof context.window.EasyMDETestHooks.executeCommand, 'function', 'bootstrap harness should expose toolbar command execution');
+  assert.equal(typeof context.window.EasyMDETestHooks.bindScrollSync, 'function', 'bootstrap harness should expose isolated scroll synchronization');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactToolbar, 'function', 'bootstrap harness should expose the toolbar ownership handoff');
+  assert.equal(typeof context.window.EasyMDETestHooks.activateReactDocumentSource, 'function', 'bootstrap harness should expose the document source ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.enhancePreviewSurface, 'function', 'bootstrap harness should expose detached preview enhancement');
 
   return {
@@ -503,6 +684,9 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
     selectionDirection: 'backward',
     scrollTop: 0,
     scrollLeft: 0,
+    dispatchEvent() {
+      return true;
+    },
     focus() {},
     setSelectionRange(start, end, direction) {
       this.selectionStart = start;
@@ -633,6 +817,206 @@ test('React toolbar startup failure keeps the legacy owner usable and reports a 
   assert.equal(reactMain.hidden, true);
   assert.equal(legacyMain.hidden, false);
   assert.deepEqual(messages, ['[EasyMDE] react-toolbar-prepare-failed']);
+  assert.equal(messages.some((message) => message.includes('Synthetic private detail')), false);
+});
+
+test('React document source stays hidden until a complete session is ready', async () => {
+  let mountOptions;
+  let cleanupCalls = 0;
+  const pagehideListeners = new Set();
+  const sourcePane = createToolbarOwnerElement();
+  const reactSource = createToolbarOwnerElement();
+  const legacySource = createToolbarOwnerElement();
+  const titleField = { tagName: 'INPUT' };
+  const documentSession = {
+    flush() {},
+    focus() {},
+    getInputElement() {
+      return {};
+    },
+    getScrollElement() {
+      return {};
+    },
+    getSelection() {
+      return { start: 0, end: 0, direction: 'none' };
+    },
+    getValue() {
+      return '# Source';
+    },
+    syncFromSubmissionField() {
+    }
+  };
+  const titleSession = {
+    getSnapshot() {
+      return { savedValue: 'Saved title', value: 'Current title' };
+    },
+    subscribe() {
+      return () => {};
+    }
+  };
+  const readySessions = [];
+  let disposeCalls = 0;
+  const loaded = loadBootstrap({
+    addEventListener(type, listener) {
+      if ('pagehide' === type) {
+        pagehideListeners.add(listener);
+      }
+    },
+    removeEventListener(type, listener) {
+      if ('pagehide' === type) {
+        pagehideListeners.delete(listener);
+      }
+    },
+    EasyMDEReactDocumentSource: {
+      prepare(value) {
+        assert.equal(value.strings.editorLabel, 'Markdown source');
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {
+              cleanupCalls += 1;
+            };
+          }
+        };
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      strings: {
+        editorLabel: 'Markdown source',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      features: {},
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {},
+        state: {}
+      }
+    }
+  });
+  const context = {
+    onDocumentSourceDisposed() {
+      disposeCalls += 1;
+    },
+    onDocumentSourceReady(session) {
+      readySessions.push(session);
+    }
+  };
+
+  const cleanup = loaded.hooks.activateReactDocumentSource(
+    sourcePane,
+    reactSource,
+    legacySource,
+    titleField,
+    context
+  );
+
+  assert.equal(sourcePane.getAttribute('data-easymde-document-owner'), 'legacy');
+  assert.equal(reactSource.hidden, true);
+  assert.equal(legacySource.hidden, false);
+  assert.equal(typeof cleanup, 'function');
+  assert.equal(pagehideListeners.size, 1);
+
+  mountOptions.onReady({ document: documentSession, title: titleSession });
+
+  assert.equal(sourcePane.getAttribute('data-easymde-document-owner'), 'react');
+  assert.equal(reactSource.hidden, false);
+  assert.equal(legacySource.hidden, true);
+  assert.equal(context.documentSession, documentSession);
+  assert.equal(context.titleSession, titleSession);
+  assert.deepEqual(readySessions, [{ document: documentSession, title: titleSession }]);
+
+  mountOptions.onFailure();
+  assert.equal(
+    sourcePane.getAttribute('data-easymde-document-owner'),
+    'react-reload-required',
+    'a post-handoff failure must not live-switch the document writer'
+  );
+  assert.equal(reactSource.hidden, false);
+  assert.equal(legacySource.hidden, true);
+  await flushMicrotasks();
+  assert.equal(cleanupCalls, 0, 'post-handoff failure keeps the recovery bridge available until reload');
+
+  cleanup();
+  cleanup();
+  assert.equal(cleanupCalls, 1);
+  assert.equal(disposeCalls, 1);
+  assert.equal(pagehideListeners.size, 0);
+});
+
+test('React document source rejects an incomplete session before ownership handoff', async () => {
+  let mountOptions;
+  const messages = [];
+  const sourcePane = createToolbarOwnerElement();
+  const reactSource = createToolbarOwnerElement();
+  const legacySource = createToolbarOwnerElement();
+  const loaded = loadBootstrap({
+    console: {
+      error(message) {
+        messages.push(message);
+      }
+    },
+    EasyMDEReactDocumentSource: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    }
+  });
+
+  loaded.hooks.activateReactDocumentSource(
+    sourcePane,
+    reactSource,
+    legacySource,
+    {},
+    {}
+  );
+  mountOptions.onReady({ document: { getValue() {} }, title: {} });
+
+  assert.equal(sourcePane.getAttribute('data-easymde-document-owner'), 'legacy');
+  assert.equal(reactSource.hidden, true);
+  assert.equal(legacySource.hidden, false);
+  assert.deepEqual(messages, ['[EasyMDE] react-document-source-session-invalid']);
+  await flushMicrotasks();
+});
+
+test('React document source startup failure keeps the legacy source usable', () => {
+  const messages = [];
+  const sourcePane = createToolbarOwnerElement();
+  const reactSource = createToolbarOwnerElement();
+  const legacySource = createToolbarOwnerElement();
+  const loaded = loadBootstrap({
+    console: {
+      error(message) {
+        messages.push(message);
+      }
+    },
+    EasyMDEReactDocumentSource: {
+      prepare() {
+        throw new Error('Synthetic private detail');
+      }
+    }
+  });
+
+  const cleanup = loaded.hooks.activateReactDocumentSource(
+    sourcePane,
+    reactSource,
+    legacySource,
+    {},
+    {}
+  );
+
+  assert.equal(cleanup, null);
+  assert.equal(sourcePane.getAttribute('data-easymde-document-owner'), 'legacy');
+  assert.equal(reactSource.hidden, true);
+  assert.equal(legacySource.hidden, false);
+  assert.deepEqual(messages, ['[EasyMDE] react-document-source-prepare-failed']);
   assert.equal(messages.some((message) => message.includes('Synthetic private detail')), false);
 });
 
@@ -1082,6 +1466,40 @@ test('immersive adapter inserts sized tables and returns the real WeChat copy pr
   assert.match(
     source,
     /onActivate:\s*function \(workspaceContext\) \{\s*bindLazyImagePasteUpload\(workspaceContext\.source, context\.root, context\.flash\);/
+  );
+});
+
+test('legacy Markdown and title bridges notify native-listener-backed React sessions', () => {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
+  const commands = readFileSync(join(repoRoot, 'assets/js/admin/commands.js'), 'utf8');
+  const setMarkdownStart = source.indexOf('setMarkdown: function (markdown)');
+  const getTitleStart = source.indexOf('getTitle: function ()', setMarkdownStart);
+  const setMarkdown = source.slice(setMarkdownStart, getTitleStart);
+  const setTitleStart = source.indexOf('setTitle: function (nextTitle)', getTitleStart);
+  const subscribeTitleStart = source.indexOf('subscribeTitle: function (callback)', setTitleStart);
+  const setTitle = source.slice(setTitleStart, subscribeTitleStart);
+
+  assert.ok(setMarkdownStart >= 0, 'the immersive Markdown bridge should exist');
+  assert.match(setMarkdown, /dispatchNativeInput\(context\.textarea\);/);
+  assert.doesNotMatch(setMarkdown, /syncFromSubmissionField/);
+  assert.match(setTitle, /dispatchNativeInput\(\$title\[0\]\);/);
+  assert.match(commands, /services\.dispatchNativeInput\(textarea\);/);
+  assert.match(source, /field\.dispatchEvent\(new window\.Event\('input', \{ bubbles: true \}\)\);/);
+  assert.doesNotMatch(commands, /\.trigger\('input'\)/);
+});
+
+test('local draft notice renders both recovery actions before insertion', () => {
+  const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
+  const noticeStart = source.indexOf('function createDraftNotice(');
+  const noticeEnd = source.indexOf('function hasLocalDraft(', noticeStart);
+  const createDraftNotice = source.slice(noticeStart, noticeEnd);
+
+  assert.ok(noticeStart >= 0, 'the local draft notice should exist');
+  assert.match(createDraftNotice, /\$notice\.append\(\$message, \$restore, \$discard\);/);
+  assert.ok(
+    createDraftNotice.indexOf('$notice.append($message, $restore, $discard);')
+      < createDraftNotice.indexOf("$root.find('.easymde-editor-flash').after($notice);"),
+    'draft notice content must be assembled before the notice enters the document'
   );
 });
 
@@ -3278,6 +3696,9 @@ test('openMediaPicker restores source context when the loaded media wrapper thro
     selectionDirection: 'none',
     scrollTop: 0,
     scrollLeft: 0,
+    dispatchEvent() {
+      return true;
+    },
     setSelectionRange(start, end, direction) {
       this.selectionStart = start;
       this.selectionEnd = end;
@@ -3344,6 +3765,9 @@ test('openMediaPicker falls back to the existing Markdown placeholder when lazy 
     selectionEnd: 5,
     scrollTop: 0,
     scrollLeft: 0,
+    dispatchEvent() {
+      return true;
+    },
     setSelectionRange(start, end, direction) {
       this.selectionStart = start;
       this.selectionEnd = end;
@@ -3982,6 +4406,32 @@ test('revision dirty checks detect edits made before immersive activation', () =
   );
   assert.equal(
     hooks.hasUnsavedDocumentChanges(workspaceApi, context, 'Server title'),
+    false
+  );
+
+  context.titleSession = {
+    getSnapshot() {
+      return {
+        savedValue: 'React saved title',
+        value: 'React edited title'
+      };
+    }
+  };
+  context.savedTitle = 'Stale legacy baseline';
+  assert.equal(
+    hooks.hasUnsavedDocumentChanges(workspaceApi, context, 'Stale direct title'),
+    true,
+    'the active React title session owns title dirty comparison after handoff'
+  );
+
+  context.titleSession.getSnapshot = function () {
+    return {
+      savedValue: 'React saved title',
+      value: 'React saved title'
+    };
+  };
+  assert.equal(
+    hooks.hasUnsavedDocumentChanges(workspaceApi, context, 'Stale direct title'),
     false
   );
 });

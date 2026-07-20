@@ -22,6 +22,20 @@ const composerPurposes = {
   'symfony/polyfill-php80': 'PHP 8.0 compatibility polyfills required by runtime dependencies on PHP 7.4.'
 };
 
+export const bundledFrontendPackages = {
+  '@codemirror/commands': 'CodeMirror editing commands, keymaps, and undo history.',
+  '@codemirror/language': 'Language-aware command infrastructure used by CodeMirror commands.',
+  '@codemirror/state': 'CodeMirror document, selection, transaction, and editor state.',
+  '@codemirror/view': 'CodeMirror browser editor view and input handling.',
+  '@lezer/common': 'Shared syntax-tree infrastructure required by CodeMirror.',
+  '@lezer/highlight': 'Highlighting infrastructure required by CodeMirror language support.',
+  '@lezer/lr': 'LR parser infrastructure required by CodeMirror language support.',
+  '@marijn/find-cluster-break': 'Unicode grapheme boundary handling used by CodeMirror state.',
+  crelt: 'DOM element construction used by CodeMirror view.',
+  'style-mod': 'Scoped runtime style modules used by CodeMirror view.',
+  'w3c-keyname': 'Cross-browser keyboard key normalization used by CodeMirror view.'
+};
+
 function readJson(root, path) {
   return JSON.parse(readFileSync(join(root, path), 'utf8'));
 }
@@ -93,6 +107,39 @@ export function frontendRows(root = defaultRoot) {
   });
 }
 
+export function bundledFrontendRows(root = defaultRoot) {
+  const lock = readJson(root, 'package-lock.json');
+  const packages = lock.packages || {};
+
+  return Object.entries(bundledFrontendPackages).map(([name, purpose]) => {
+    const metadata = packages[`node_modules/${name}`];
+    if (!metadata) {
+      throw new Error(`Missing bundled frontend package ${name} in package-lock.json.`);
+    }
+
+    return {
+      name,
+      version: metadata.version,
+      source: metadata.resolved || 'See package-lock.json',
+      license: licenseText(metadata.license),
+      purpose,
+      bundled: 'Yes, compiled into assets/build/',
+      notice: 'THIRD-PARTY-NOTICES.md'
+    };
+  });
+}
+
+function bundledFrontendLicenseTexts(root = defaultRoot) {
+  return Object.keys(bundledFrontendPackages).map((name) => {
+    const path = join(root, 'node_modules', name, 'LICENSE');
+    if (!existsSync(path)) {
+      throw new Error(`Missing bundled frontend package license for ${name}.`);
+    }
+
+    return `### ${name}\n\n\`\`\`text\n${readFileSync(path, 'utf8').trim()}\n\`\`\``;
+  });
+}
+
 function table(rows) {
   return [
     '| Name | Version | Source | License | Purpose | Bundled in ZIP | Notice location |',
@@ -119,7 +166,15 @@ export function renderNotices(root = defaultRoot) {
     '',
     table(frontendRows(root)),
     '',
-    'Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, Mermaid, Inter, JetBrains Mono, Lora, and the embedded Lucide icon paths retain license files under `assets/vendor/`.'
+    'Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, Mermaid, Inter, JetBrains Mono, Lora, and the embedded Lucide icon paths retain license files under `assets/vendor/`.',
+    '',
+    '## Compiled Frontend Runtime Packages',
+    '',
+    table(bundledFrontendRows(root)),
+    '',
+    'These packages are compiled into the production WordPress Editor entry. Their required license notices follow.',
+    '',
+    bundledFrontendLicenseTexts(root).join('\n\n')
   ].join('\n')}\n`;
 }
 

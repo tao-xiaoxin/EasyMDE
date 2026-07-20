@@ -52,9 +52,9 @@ npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and a read-only production normal-editor Toolbar comparison. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, and TypeScript 7.0.2 on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+`npm run frontend:check` runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and a read-only production normal-editor comparison. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, and CodeMirror 6 on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
-The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds into `.cache/easymde-frontend-production-check/`, validates that output, and compares its complete file set and bytes with the committed `assets/build/` runtime without rewriting it. `npm run build:frontend` is the explicit maintainer command that regenerates the committed Vite Manifest, WordPress Manifest, hashed Toolbar script, and matching `.asset.php` dependency metadata. Both validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The production entry must use the stable `easymde-admin-editor-toolbar` handle and depend only on `wp-element`.
+The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds into `.cache/easymde-frontend-production-check/`, validates that output, and compares its complete file set and bytes with the committed `assets/build/` runtime without rewriting it. `npm run build:frontend` is the explicit maintainer command that regenerates the committed Vite Manifest, WordPress Manifest, hashed Editor script, and matching `.asset.php` dependency metadata. Both validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The production entry must retain the stable `easymde-admin-editor-toolbar` handle and depend only on `wp-element`.
 
 Translation maintenance commands are:
 
@@ -98,7 +98,7 @@ KaTeX, font, license, and notice destination with its declared local source;
 npm-backed sources must also exist in the root dependency and lockfile
 metadata. Validation fails on missing, changed, or unexpected managed files.
 
-The build verifies version consistency across `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json`. It also fails if required runtime dependencies, local runtime assets, registered theme assets, production Frontend manifests and hashed Toolbar artifacts, translation files, or third-party notices are missing, or if the generated third-party notice content is stale.
+The build verifies version consistency across `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json`. It also fails if required runtime dependencies, local runtime assets, registered theme assets, production Frontend manifests and hashed Editor artifacts, translation files, or third-party notices are missing, or if the generated third-party notice content is stale. CodeMirror and its compiled runtime dependencies are listed with their full license notices in `THIRD-PARTY-NOTICES.md`.
 
 The release build requires Composer runtime dependencies only. If Composer development packages are installed under `vendor/`, rebuild with Composer `--no-dev` before packaging.
 

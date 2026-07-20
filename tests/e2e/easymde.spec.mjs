@@ -251,9 +251,21 @@ async function uploadTestImage(page, filename, altText) {
 
 async function login(page, user) {
   await page.goto('/wp-login.php');
-  await page.locator('#user_login').fill(user.username);
-  await page.locator('#user_pass').fill(user.password);
-  await page.locator('#wp-submit').click();
+  await page.locator('#loginform').evaluate((form, credentials) => {
+    const username = form.elements.namedItem('log');
+    const password = form.elements.namedItem('pwd');
+    const submit = form.elements.namedItem('wp-submit');
+
+    if (!(username instanceof HTMLInputElement)
+      || !(password instanceof HTMLInputElement)
+      || !(submit instanceof HTMLInputElement)) {
+      throw new Error('WordPress login fields are unavailable.');
+    }
+
+    username.value = credentials.username;
+    password.value = credentials.password;
+    form.requestSubmit(submit);
+  }, user);
   await expect(page.locator('#wpadminbar')).toBeVisible();
 }
 
@@ -1949,6 +1961,8 @@ test.describe('EasyMDE editor workflows', () => {
     await login(page, user);
     await openEasyMdeNewPost(page);
     await enterImmersiveWithKeyboard(page);
+
+    await expect(page.locator('#content_ifr')).toHaveCount(0);
 
     const source = page.locator('.easymde-immersive-workspace__source');
     const nativeSource = page.locator('#easymde-source');

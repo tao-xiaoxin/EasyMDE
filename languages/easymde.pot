@@ -1119,7 +1119,7 @@ msgid ""
 "packages."
 msgstr ""
 
-#: src/Admin/PostModeController.php:39
+#: src/Admin/PostModeController.php:50
 msgid "You are not allowed to create this EasyMDE post."
 msgstr ""
 

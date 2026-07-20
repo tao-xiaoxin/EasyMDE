@@ -1958,6 +1958,8 @@ test.describe('EasyMDE editor workflows', () => {
     await openEasyMdeNewPost(page);
     await enterImmersiveWithKeyboard(page);
 
+    await expect(page.locator('#content_ifr')).toHaveCount(0);
+
     const source = page.locator('.easymde-immersive-workspace__source');
     const nativeSource = page.locator('#easymde-source');
     const commandCases = [
@@ -2173,49 +2175,6 @@ test.describe('EasyMDE editor workflows', () => {
     await page.setViewportSize({ width: 640, height: 375 });
     await source.fill('## Short viewport');
     await selectImmersiveRange(page, 0, 17);
-    await page.evaluate(() => {
-      const classify = (node) => {
-        if (!node) {
-          return 'none';
-        }
-        if (node === document.body) {
-          return 'body';
-        }
-        if (node === document.documentElement) {
-          return 'document';
-        }
-        if (node.matches?.('.easymde-immersive-workspace__source')) {
-          return 'source';
-        }
-        if (node.matches?.('[data-command="heading"]')) {
-          return 'heading-button';
-        }
-        if (node.matches?.('[data-heading-command]')) {
-          return `heading-item:${node.getAttribute('data-heading-command')}`;
-        }
-        if (node.matches?.('[data-heading-menu]')) {
-          return 'heading-menu';
-        }
-        return `${String(node.nodeName || 'unknown').toLowerCase()}:${node.getAttribute?.('role') || 'none'}`;
-      };
-      const events = [];
-      const record = (event) => {
-        if (events.length >= 40) {
-          return;
-        }
-        events.push({
-          active: classify(document.activeElement),
-          related: classify(event.relatedTarget),
-          target: classify(event.target),
-          type: event.type
-        });
-      };
-
-      window.__easymdeHeadingFocusEvents = events;
-      ['pointerdown', 'mousedown', 'focusout', 'focusin', 'pointerup', 'mouseup', 'click', 'scroll']
-        .forEach((type) => document.addEventListener(type, record, true));
-      window.addEventListener('resize', record, true);
-    });
     await headingButton.click();
     await expect.poll(() => headingMenu.evaluate((menu) => {
       const rect = menu.getBoundingClientRect();
@@ -2224,27 +2183,7 @@ test.describe('EasyMDE editor workflows', () => {
         clipped: menu.clientHeight < menu.scrollHeight
       };
     })).toEqual({ bottom: 367, clipped: true });
-    const headingFocusDiagnostics = await page.evaluate(() => {
-      const active = document.activeElement;
-      const menu = document.querySelector('[data-heading-menu]');
-      const button = document.querySelector('[data-command="heading"]');
-      return {
-        active: active?.matches?.('[data-heading-command]')
-          ? `heading-item:${active.getAttribute('data-heading-command')}`
-          : active?.matches?.('.easymde-immersive-workspace__source')
-            ? 'source'
-            : active?.matches?.('[data-command="heading"]')
-              ? 'heading-button'
-              : active === document.body
-                ? 'body'
-                : `${String(active?.nodeName || 'none').toLowerCase()}:${active?.getAttribute?.('role') || 'none'}`,
-        ariaExpanded: button?.getAttribute('aria-expanded'),
-        events: window.__easymdeHeadingFocusEvents,
-        menuVisible: Boolean(menu && !menu.hidden),
-        viewport: [window.innerWidth, window.innerHeight]
-      };
-    });
-    expect(headingFocusDiagnostics.active, JSON.stringify(headingFocusDiagnostics)).toBe('heading-item:heading1');
+    await expect(heading1Item).toBeFocused();
     await heading1Item.press('End');
     await expect(heading6Item).toBeFocused();
     expect(await heading6Item.evaluate((item) => {

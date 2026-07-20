@@ -27,6 +27,7 @@
     var previewTimer = null;
     var previewRevision = 0;
     var previewAbortController = null;
+    var previewRequestRevision = null;
     var normalPreviewGeneration = 0;
     var normalPreviewNode = null;
     var reactPreviewRequestSession = null;
@@ -2743,6 +2744,7 @@
         }
 
         window.clearTimeout(previewTimer);
+        previewTimer = null;
         abortPreviewRequest();
 
         features = normalizePreviewFeatures(initialPreviewFeatures($preview) || config.features || {});
@@ -2821,6 +2823,7 @@
         }
 
         previewAbortController = null;
+        previewRequestRevision = null;
     }
 
     function applyReactPreviewState($preview, state) {
@@ -2968,6 +2971,8 @@
                     scheduleCleanup();
                 },
                 onReady: function (session) {
+                    var pendingRefresh;
+
                     if (disposed || failed || ready) {
                         return;
                     }
@@ -2979,14 +2984,22 @@
                         throw new Error('react-preview-session-invalid');
                     }
 
+                    pendingRefresh = previewTimer !== null || previewRequestRevision !== null;
                     window.clearTimeout(previewTimer);
                     previewTimer = null;
+                    if (pendingRefresh) {
+                        previewRevision += 1;
+                    }
                     abortPreviewRequest();
                     reactPreviewNode = $preview[0];
                     reactPreviewRequestSession = session;
                     context.previewRequestSession = session;
                     ready = true;
                     $root.attr('data-easymde-preview-request-owner', 'react');
+
+                    if (pendingRefresh) {
+                        updatePreview($preview, String((context.textarea || {}).value || ''), { immediate: true });
+                    }
                 },
                 onState: function (state) {
                     if (!disposed && ready && reactPreviewRequestSession) {
@@ -3049,6 +3062,7 @@
         }
 
         window.clearTimeout(previewTimer);
+        previewTimer = null;
         abortPreviewRequest();
 
         if (!markdown.trim()) {
@@ -3064,6 +3078,7 @@
         function runPreviewRequest() {
             var requestScrollState;
             var fetchOptions;
+            var requestAbortController = null;
 
             if (!isPreviewCurrent(revision, signature, markdown)) {
                 return;
@@ -3084,7 +3099,9 @@
 
             if (window.AbortController) {
                 previewAbortController = new window.AbortController();
+                requestAbortController = previewAbortController;
             }
+            previewRequestRevision = revision;
 
             fetchOptions = {
                 url: config.restUrl,
@@ -3101,8 +3118,8 @@
                 }
             };
 
-            if (previewAbortController) {
-                fetchOptions.signal = previewAbortController.signal;
+            if (requestAbortController) {
+                fetchOptions.signal = requestAbortController.signal;
             }
 
             window.wp.apiFetch(fetchOptions).then(function (response) {
@@ -3129,6 +3146,13 @@
                 setPreviewReady($preview);
                 $preview.html('<p class="easymde-preview-error">' + escapeHtml(getString('previewError')) + '</p>');
                 finishPreviewUpdate(requestScrollState);
+            }).then(function () {
+                if (previewAbortController === requestAbortController) {
+                    previewAbortController = null;
+                }
+                if (previewRequestRevision === revision) {
+                    previewRequestRevision = null;
+                }
             });
         }
 

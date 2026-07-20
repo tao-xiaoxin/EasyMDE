@@ -57,7 +57,7 @@ final class AdminAssets {
 			'easymde-admin-toolbar',
 			Asset::url( 'assets/css/admin/toolbar.css' ),
 			array(),
-			EASYMDE_VERSION
+			$this->get_static_asset_version( 'assets/css/admin/toolbar.css' )
 		);
 		wp_enqueue_style(
 			'easymde-admin-popover',
@@ -695,5 +695,19 @@ final class AdminAssets {
 			'mediaPickerFailed'             => __( 'The WordPress media library could not be opened.', 'easymde' ),
 			'linkText'                      => __( 'link text', 'easymde' ),
 		);
+	}
+
+	private function get_static_asset_version( $asset_path ) {
+		$path = Asset::path( $asset_path );
+		if ( ! is_readable( $path ) ) {
+			throw new \RuntimeException( 'admin-asset-unreadable' );
+		}
+
+		$hash = hash_file( 'sha256', $path );
+		if ( ! is_string( $hash ) || ! preg_match( '/^[a-f0-9]{64}$/', $hash ) ) {
+			throw new \RuntimeException( 'admin-asset-version-invalid' );
+		}
+
+		return substr( $hash, 0, 16 );
 	}
 }

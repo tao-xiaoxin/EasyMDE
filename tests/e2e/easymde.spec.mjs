@@ -577,6 +577,9 @@ test.describe('EasyMDE editor workflows', () => {
     const reactMain = page.locator('#easymde-toolbar-react-main');
     const legacyMain = page.locator('#easymde-toolbar-legacy-main');
     const legacySecondary = page.locator('#easymde-toolbar-legacy-secondary');
+    const toolbarStylesheet = page.locator('#easymde-admin-toolbar-css');
+    const toolbarStylesheetUrl = new URL(await toolbarStylesheet.getAttribute('href'));
+    expect(toolbarStylesheetUrl.searchParams.get('ver')).toMatch(/^[a-f0-9]{16}$/);
     await expect(toolbar).toHaveAttribute('data-easymde-main-toolbar-owner', 'react');
     await expect(reactMain).toBeVisible();
     await expect(reactMain.locator('[data-easymde-react-toolbar="ready"]')).toHaveCount(1);

@@ -10,6 +10,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	private $get_category_options_cache_key;
 	private $category_load_error;
 	private $get_react_toolbar_asset;
+	private $get_static_asset_version;
 
 	public function set_up() {
 		parent::set_up();
@@ -20,11 +21,22 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->get_category_options_cache_key = $reflection->getMethod( 'get_category_options_cache_key' );
 		$this->category_load_error = $reflection->getProperty( 'category_load_error' );
 		$this->get_react_toolbar_asset = $reflection->getMethod( 'get_react_toolbar_asset' );
+		$this->get_static_asset_version = $reflection->getMethod( 'get_static_asset_version' );
 		$this->get_category_options->setAccessible( true );
 		$this->get_category_options_cache_key->setAccessible( true );
 		$this->category_load_error->setAccessible( true );
 		$this->get_react_toolbar_asset->setAccessible( true );
+		$this->get_static_asset_version->setAccessible( true );
 		wp_cache_flush();
+	}
+
+	public function test_toolbar_stylesheet_uses_a_content_version_for_atomic_owner_handoff() {
+		$asset_path = 'assets/css/admin/toolbar.css';
+		$version    = $this->get_static_asset_version->invoke( $this->admin_assets, $asset_path );
+
+		$this->assertMatchesRegularExpression( '/^[a-f0-9]{16}$/', $version );
+		$this->assertSame( substr( hash_file( 'sha256', Asset::path( $asset_path ) ), 0, 16 ), $version );
+		$this->assertNotSame( EASYMDE_VERSION, $version );
 	}
 
 	public function test_resolves_the_committed_react_toolbar_manifest_and_dependency_metadata() {

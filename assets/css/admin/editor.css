@@ -130,11 +130,28 @@ body.easymde-immersive-active .media-modal-backdrop {
 }
 
 .easymde-source,
-.easymde-preview {
+.easymde-preview,
+.easymde-preview-react-root {
     flex: 1 1 0;
     min-height: 0;
     max-height: none;
+}
+
+.easymde-source,
+.easymde-preview {
     overflow: auto;
+}
+
+.easymde-preview-react-root {
+    display: flex;
+}
+
+.easymde-preview-react-root[hidden] {
+    display: none;
+}
+
+.easymde-preview-react-root > .easymde-preview {
+    width: 100%;
 }
 
 .easymde-source[hidden] {

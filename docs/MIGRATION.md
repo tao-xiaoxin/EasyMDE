@@ -46,31 +46,40 @@ save, publish, permissions, nonces, revisions, autosave, and post locks. The
 secondary Toolbar and immersive workspace remain legacy-owned, and this unit
 does not migrate immersive writing.
 
-## Normal Editor Preview Request Session Ownership
+## Normal Editor Preview Surface Ownership
 
-The normal editor's Preview request scheduler and latest-response policy are a
-React browser-session responsibility after readiness. A focused Preview Port
-uses the existing WordPress REST contract, while PHP remains authoritative for
-capabilities, Nonces, Markdown rendering, sanitization, and response data.
-React applies the existing 180 millisecond debounce, aborts superseded browser
-requests, and binds every completion to the active request revision and
-Markdown signature so stale responses cannot replace newer Preview output.
+The normal editor's Preview request scheduler, visible state, DOM output, and
+scroll preservation are React browser-session responsibilities after
+readiness. A focused Preview Port uses the existing WordPress REST contract,
+while PHP remains authoritative for capabilities, Nonces, Markdown rendering,
+sanitization, and response data. React applies the existing 180 millisecond
+debounce, aborts superseded browser requests, and binds every completion to the
+active request revision and Markdown signature so stale responses cannot
+replace newer Preview output.
 
-The PHP shell provides a dedicated empty React container and declares legacy
-request ownership initially. Legacy scheduling remains active while React
-validates the bootstrap contract, transport, Root, and session. Readiness
-clears the legacy normal-Preview timer and request before one explicit owner
-handoff. Startup failure keeps the legacy scheduler usable and emits only a
-stable privacy-safe diagnostic. Teardown aborts pending React work and restores
-legacy ownership for a clean lifecycle.
+The PHP shell provides a dedicated empty React container beside the rendered
+legacy article and declares legacy request and Surface ownership initially.
+The legacy article remains visible while React validates the Bootstrap
+contract, transport, Ports, Root, session, and committed article. Readiness
+invalidates legacy work, copies the existing Theme classes and inline Font
+style, preserves scroll, hides the legacy article, exposes the React article,
+rebinds synchronized scrolling, and switches request and Surface ownership in
+one handoff. Startup failure before that point keeps the legacy Preview usable
+and emits only a stable privacy-safe diagnostic. Failure or teardown after
+handoff requires a clean reload and never switches two live DOM writers.
 
-Preview DOM rendering, feature enhancement, scroll restoration, and error
-presentation remain legacy-owned during this unit. Immersive Preview also
-remains fully legacy-owned and keeps an independent request revision, timer,
-and abort lifecycle. This separation prevents normal and immersive Preview
-work from invalidating each other's latest-response identity. No persistence,
-Save, Publish, public rendering, or immersive-writing authority moves to
-React.
+The React article is the single normal-editor Safe Preview HTML sink. It keeps
+existing sanitized HTML visible while a replacement request is loading,
+renders mutually exclusive Loading, Empty, Error, Enhancing, and Ready states,
+and restores the latest scroll snapshot. PHP Bootstrap remains the translation
+owner for those messages. The existing local Preview feature loader remains a
+focused Adapter for Mermaid, KaTeX, Highlight.js, TOC, and code-frame
+enhancement; stale completion is rejected and failed enhancement preserves the
+sanitized HTML without reporting export readiness.
+
+Immersive Preview remains fully legacy-owned and keeps an independent request
+revision, timer, abort, DOM, and enhancement lifecycle. No persistence, Save,
+Publish, public rendering, or immersive-writing authority moves to React.
 
 ## Editor Enablement
 

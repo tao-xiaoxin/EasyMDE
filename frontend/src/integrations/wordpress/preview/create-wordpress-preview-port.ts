@@ -1,7 +1,8 @@
 import type {
   PreviewRequest,
   PreviewRequestPort,
-  PreviewResponse
+  PreviewResponse,
+  SafePreviewHtml
 } from '../../../contracts/ports/preview-request';
 
 export type WordPressApiFetch = (options: Readonly<Record<string, unknown>>) => Promise<unknown>;
@@ -31,7 +32,8 @@ function parseResponse(value: unknown): PreviewResponse {
     features[key] = enabled;
   }
 
-  return { html: response.html, features };
+  // The protected Preview route returns only PHP-rendered, server-sanitized HTML.
+  return { html: response.html as SafePreviewHtml, features };
 }
 
 export function createWordPressPreviewPort(

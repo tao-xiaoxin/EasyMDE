@@ -16,6 +16,15 @@ const bootstrap = {
       group: 'format',
       prefix: '**',
       suffix: '**'
+    },
+    {
+      id: 'heading1',
+      label: 'Heading 1',
+      icon: 'heading',
+      surface: 'heading-menu',
+      action: 'heading',
+      group: 'heading',
+      level: 1
     }
   ],
   shortcuts: { bold: { win: 'Ctrl+B', mac: 'Cmd+B' } },
@@ -33,6 +42,7 @@ describe('createAdminEditorToolbarBridge', () => {
     const bridge = createAdminEditorToolbarBridge(bootstrap);
     const container = document.createElement('div');
     const onReady = vi.fn();
+    const closeOtherPopovers = vi.fn();
     const editorRoot = document.createElement('div');
     const legacySource = document.createElement('textarea');
     editorRoot.append(container, legacySource);
@@ -45,6 +55,7 @@ describe('createAdminEditorToolbarBridge', () => {
     let teardown: () => void = () => {};
     await act(async () => {
       teardown = bridge.mount({
+        closeOtherPopovers,
         container,
         document: {
           applyTextChange(change) {
@@ -66,11 +77,14 @@ describe('createAdminEditorToolbarBridge', () => {
     const session = onReady.mock.calls[0]?.[0];
     expect(session).toEqual(expect.objectContaining({
       activateShortcuts: expect.any(Function),
+      closePopovers: expect.any(Function),
       dispose: expect.any(Function),
       execute: expect.any(Function),
       owns: expect.any(Function)
     }));
     expect(container.querySelector('[data-easymde-react-toolbar]')).not.toBeNull();
+    fireEvent.click(container.querySelector('[aria-label="Headings"]') as HTMLButtonElement);
+    expect(closeOtherPopovers).toHaveBeenCalledTimes(1);
     legacySource.dispatchEvent(new KeyboardEvent('keydown', {
       bubbles: true,
       cancelable: true,

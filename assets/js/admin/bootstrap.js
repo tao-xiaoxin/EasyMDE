@@ -54,6 +54,7 @@
     var isMac = null;
     var openPopovers = [];
     var fontControls = null;
+    var reactToolbarSession = null;
     var reactFontControlsSession = null;
     var reactFontPreviewNode = null;
     var reactAppearanceSession = null;
@@ -803,6 +804,9 @@
         }
         if (reactAppearanceSession && typeof reactAppearanceSession.close === 'function') {
             reactAppearanceSession.close();
+        }
+        if (reactToolbarSession && typeof reactToolbarSession.closePopovers === 'function') {
+            reactToolbarSession.closePopovers();
         }
     }
 
@@ -4903,6 +4907,9 @@
         }
 
         function restoreLegacyOwner() {
+            if (reactToolbarSession === commandSession) {
+                reactToolbarSession = null;
+            }
             if (context && context.reactToolbarCommandSession === commandSession) {
                 context.reactToolbarCommandSession = null;
             }
@@ -4992,6 +4999,7 @@
 
         try {
             cleanup = reactToolbar.mount({
+                closeOtherPopovers: closePopovers,
                 container: reactMain,
                 document: documentPort,
                 editorRoot: context && context.root ? context.root[0] : null,
@@ -5017,6 +5025,7 @@
                     if (
                         !nextSession
                         || typeof nextSession.activateShortcuts !== 'function'
+                        || typeof nextSession.closePopovers !== 'function'
                         || typeof nextSession.dispose !== 'function'
                         || typeof nextSession.execute !== 'function'
                         || typeof nextSession.owns !== 'function'
@@ -5064,6 +5073,7 @@
                         scheduleCleanup();
                         return;
                     }
+                    reactToolbarSession = commandSession;
                     context.reactToolbarCommandSession = commandSession;
                     ready = true;
                     legacyMain.hidden = true;

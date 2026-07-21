@@ -10,15 +10,18 @@ import {
 } from '../features/toolbar/toolbar-command-session';
 import {
   EditorToolbar,
+  type EditorToolbarSession,
   type ToolbarPlatform
 } from '../features/toolbar/ui/EditorToolbar';
 import { createBrowserToolbarShortcuts } from '../integrations/browser/keyboard/create-browser-toolbar-shortcuts';
 
 export type AdminEditorToolbarSession = ToolbarCommandSession & Readonly<{
   activateShortcuts: () => void;
+  closePopovers: () => void;
 }>;
 
 export type ToolbarMountOptions = Readonly<{
+  closeOtherPopovers: () => void;
   container: HTMLElement;
   document: ToolbarCommandDocumentPort;
   editorRoot: HTMLElement;
@@ -38,6 +41,7 @@ export function createAdminEditorToolbarBridge(value: unknown): AdminEditorToolb
 
   return {
     mount({
+      closeOtherPopovers,
       container,
       document,
       editorRoot,
@@ -49,6 +53,7 @@ export function createAdminEditorToolbarBridge(value: unknown): AdminEditorToolb
     }: ToolbarMountOptions): () => void {
       const root = createRoot(container);
       let active = true;
+      let toolbarSession: EditorToolbarSession | null = null;
       const commandSession = createToolbarCommandSession({
         commands: bootstrap.commands,
         document,
@@ -72,9 +77,13 @@ export function createAdminEditorToolbarBridge(value: unknown): AdminEditorToolb
       let sessionActive = true;
       const session: AdminEditorToolbarSession = {
         activateShortcuts: shortcutBinding.activate,
+        closePopovers() {
+          toolbarSession?.closePopovers();
+        },
         dispose() {
           if (!sessionActive) return;
           sessionActive = false;
+          toolbarSession = null;
           shortcutBinding.dispose();
           commandSession.dispose();
         },
@@ -88,7 +97,11 @@ export function createAdminEditorToolbarBridge(value: unknown): AdminEditorToolb
             bootstrap={bootstrap}
             platform={platform}
             executeCommand={commandSession.execute}
-            onReady={() => onReady(session)}
+            onPopoverOpen={closeOtherPopovers}
+            onReady={(nextSession) => {
+              toolbarSession = nextSession;
+              onReady(session);
+            }}
           />
         </ToolbarErrorBoundary>
       );

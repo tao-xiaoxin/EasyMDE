@@ -1852,6 +1852,7 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
   const wechatCopies = [];
   const shortcutEvents = [];
   let commandSessionActive = true;
+  let closePopoverCalls = 0;
   const commandSession = {
     activateShortcuts() {
       shortcutEvents.push('react-activate');
@@ -1862,6 +1863,9 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
       }
       commandSessionActive = false;
       shortcutEvents.push('react-dispose');
+    },
+    closePopovers() {
+      closePopoverCalls += 1;
     },
     execute(commandId) {
       executed.push(commandId);
@@ -1993,6 +1997,10 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
   );
   mountOptions.onReady(commandSession);
 
+  assert.equal(typeof mountOptions.closeOtherPopovers, 'function');
+  mountOptions.closeOtherPopovers();
+  assert.equal(closePopoverCalls, 1, 'Legacy dismissal must close the React heading menu');
+
   assert.equal(toolbar.getAttribute('data-easymde-main-toolbar-owner'), 'react');
   assert.equal(toolbar.getAttribute('data-easymde-toolbar-command-owner'), 'react');
   assert.equal(reactMain.hidden, false);
@@ -2111,6 +2119,7 @@ test('React shortcut activation failure restores one Legacy owner before exposin
       shortcutEvents.push('react-activate');
       throw new Error('private activation detail');
     },
+    closePopovers() {},
     dispose() {
       shortcutEvents.push('react-dispose');
     },
@@ -2170,6 +2179,7 @@ test('Legacy shortcut cleanup failure requires reload without exposing a second 
     activateShortcuts() {
       throw new Error('must not activate');
     },
+    closePopovers() {},
     dispose() {
       disposeCalls += 1;
     },

@@ -30,9 +30,57 @@ function fixture(): EditorRootProps & Readonly<{
   };
 
   return {
+    appearance: {
+      articleThemes: [
+        { id: 'default', label: 'Default' },
+        { id: 'newsprint', label: 'Newsprint' }
+      ],
+      codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
+      customCss: [],
+      state: { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'default' },
+      strings: {
+        appearance: 'Appearance',
+        articleTheme: 'Article theme',
+        codeTheme: 'Code theme',
+        cssName: 'CSS name',
+        cssSaveFailed: 'CSS save failed',
+        cssSaved: 'CSS saved',
+        customCss: 'Custom CSS',
+        namedCustomCss: 'Named CSS',
+        saveCss: 'Save CSS'
+      }
+    },
+    appearancePort: {
+      applyState: vi.fn(),
+      closeOtherPopovers: vi.fn(),
+      saveCustomCss: vi.fn().mockResolvedValue({ status: 'failed', code: 'synthetic' })
+    },
     document: { editorLabel: 'Markdown source' },
     enhancementPort: { enhance: vi.fn().mockResolvedValue(undefined) },
     executeExternalCommand: vi.fn(),
+    fontControlsPort: { applyState: vi.fn(), closeOtherPopovers: vi.fn() },
+    fonts: {
+      options: {
+        appleFonts: [{ fontFamily: '', id: 'system', label: 'System' }],
+        customFonts: [{ fontFamily: '', id: 'none', label: 'None' }],
+        serifOptions: [{ fontFamily: '', id: 'off', label: 'Off' }],
+        windowsFonts: [{ fontFamily: '', id: 'system', label: 'System' }]
+      },
+      state: {
+        appleFont: 'system',
+        customFont: 'none',
+        serifFont: 'off',
+        windowsFont: 'system'
+      },
+      strings: {
+        appleFont: 'Apple font',
+        customFont: 'Custom font',
+        font: 'Font',
+        fontStackHelp: 'Font stack help',
+        serifFont: 'Serif',
+        windowsFont: 'Windows font'
+      }
+    },
     labels: { preview: 'Preview', source: 'Markdown', toolbar: 'Markdown toolbar' },
     onFailure: vi.fn(),
     platform: 'win',
@@ -40,11 +88,8 @@ function fixture(): EditorRootProps & Readonly<{
       prepareBinding: vi.fn(() => shortcutBinding)
     })),
     preview: {
-      codeTheme: 'atom-one-dark',
-      customCssId: '',
       features: {},
       html: '<p>Initial</p>' as SafePreviewHtml,
-      markdownTheme: 'default',
       messages: { empty: 'Empty', error: 'Failed', rendering: 'Rendering' },
       postId: 7,
       signature: 'initial'
@@ -147,5 +192,54 @@ describe('EditorRoot', () => {
       window.removeEventListener('error', preventSyntheticError);
       consoleError.mockRestore();
     }
+  });
+
+  it('keeps exactly one React toolbar popover open', async () => {
+    const props = fixture();
+    const toolbar = {
+      ...props.toolbar,
+      commands: [...props.toolbar.commands, {
+        action: 'heading',
+        group: 'heading',
+        icon: 'heading',
+        id: 'heading1',
+        label: 'Heading 1',
+        level: 1,
+        surface: 'heading-menu'
+      }]
+    } as const;
+    const view = render(<EditorRoot {...props} toolbar={toolbar} />);
+    const heading = view.getByRole('button', { name: 'Headings' });
+    const appearance = view.getByRole('button', { name: 'Appearance' });
+    const fonts = view.getByRole('button', { name: 'Font' });
+
+    fireEvent.click(heading);
+    expect(heading.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.click(appearance);
+    expect(heading.getAttribute('aria-expanded')).toBe('false');
+    expect(appearance.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.click(fonts);
+    expect(appearance.getAttribute('aria-expanded')).toBe('false');
+    expect(fonts.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('renders Preview from the current Appearance state', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() => expect(props.previewPort.render).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
+    fireEvent.change(view.getByLabelText('Article theme'), {
+      target: { value: 'theme:newsprint' }
+    });
+
+    await waitFor(() => {
+      expect(props.previewPort.render).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        expect.any(AbortSignal)
+      );
+    });
   });
 });

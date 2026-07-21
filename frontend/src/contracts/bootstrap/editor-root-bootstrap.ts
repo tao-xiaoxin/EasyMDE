@@ -4,20 +4,25 @@ import {
   type SafePreviewHtml
 } from '../ports/preview-request';
 import {
+  parseAppearanceBootstrap,
+  type AppearanceBootstrap
+} from './appearance-bootstrap';
+import {
   parseDocumentSourceBootstrap,
   type DocumentSourceBootstrap
 } from './document-source-bootstrap';
+import {
+  parseFontControlsBootstrap,
+  type FontControlsBootstrap
+} from './font-controls-bootstrap';
 import {
   parseToolbarBootstrap,
   type ToolbarBootstrap
 } from './toolbar-bootstrap';
 
 export type EditorRootPreviewBootstrap = Readonly<{
-  codeTheme: string;
-  customCssId: string;
   features: PreviewFeatures;
   html: SafePreviewHtml;
-  markdownTheme: string;
   messages: Readonly<{
     empty: string;
     error: string;
@@ -28,8 +33,10 @@ export type EditorRootPreviewBootstrap = Readonly<{
 }>;
 
 export type EditorRootBootstrap = Readonly<{
+  appearance: AppearanceBootstrap;
   schemaVersion: 1;
   document: DocumentSourceBootstrap;
+  fonts: FontControlsBootstrap;
   labels: Readonly<{
     preview: string;
     source: string;
@@ -72,14 +79,6 @@ function boundedString(
   return value;
 }
 
-function identifier(value: unknown, code: string, allowEmpty = false): string {
-  const id = boundedString(value, code, { allowEmpty, maxLength: 200 });
-  if (id && !/^[a-z0-9_-]+$/i.test(id)) {
-    throw new EditorRootBootstrapError(code);
-  }
-  return id;
-}
-
 function unboundedString(value: unknown, code: string, allowEmpty = false): string {
   if ('string' !== typeof value || (!allowEmpty && '' === value.trim())) {
     throw new EditorRootBootstrapError(code);
@@ -112,11 +111,8 @@ function parsePreview(value: unknown): EditorRootPreviewBootstrap {
   }
 
   return {
-    codeTheme: identifier(preview.codeTheme, 'editor-root-preview-invalid'),
-    customCssId: identifier(preview.customCssId, 'editor-root-preview-invalid', true),
     features: parseFeatures(preview.features),
     html: unboundedString(preview.html, 'editor-root-preview-invalid', true) as SafePreviewHtml,
-    markdownTheme: identifier(preview.markdownTheme, 'editor-root-preview-invalid'),
     messages: {
       empty: boundedString(messages.empty, 'editor-root-preview-invalid'),
       error: boundedString(messages.error, 'editor-root-preview-invalid'),
@@ -137,12 +133,24 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   }
   const labels = objectValue(bootstrap.strings, 'editor-root-label-invalid');
   let document: DocumentSourceBootstrap;
+  let appearance: AppearanceBootstrap;
+  let fonts: FontControlsBootstrap;
   let toolbar: ToolbarBootstrap;
 
+  try {
+    appearance = parseAppearanceBootstrap(bootstrap.appearance);
+  } catch {
+    throw new EditorRootBootstrapError('editor-root-appearance-invalid');
+  }
   try {
     document = parseDocumentSourceBootstrap(bootstrap.document);
   } catch {
     throw new EditorRootBootstrapError('editor-root-document-invalid');
+  }
+  try {
+    fonts = parseFontControlsBootstrap(bootstrap.fonts);
+  } catch {
+    throw new EditorRootBootstrapError('editor-root-fonts-invalid');
   }
   try {
     toolbar = parseToolbarBootstrap(bootstrap.toolbar);
@@ -151,8 +159,10 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   }
 
   return {
+    appearance,
     schemaVersion: 1,
     document,
+    fonts,
     labels: {
       preview: boundedString(labels.preview, 'editor-root-label-invalid'),
       source: boundedString(labels.source, 'editor-root-label-invalid'),

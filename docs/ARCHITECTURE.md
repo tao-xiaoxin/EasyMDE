@@ -4,6 +4,42 @@ EasyMDE is a standalone WordPress plugin wired from `easymde.php` into `EasyMDE\
 
 This document describes the current implementation boundaries. Approved target decisions for the React, TypeScript, and Vite admin applications live in [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md); that document does not claim that target paths already exist. Development setup lives in [Development](DEVELOPMENT.md), and release validation lives in [Testing and Release](TESTING_AND_RELEASE.md).
 
+## Issue #91 Direct React Cutover
+
+The maintainer-approved target for the ordinary WordPress Editor is one Vite
+production entry mounting one React 18 Editor Root. This is a direct cutover,
+not another sequence of Legacy-to-React runtime handoffs. The final ordinary
+Editor does not enqueue or execute `assets/js/admin/bootstrap.js`, jQuery, the
+Legacy Toolbar, Preview, Theme, Draft, Media runtimes, Legacy fallback DOM, or
+Focus Mode / immersive-writing assets.
+
+Direct cutover does not authorize feature removal. The React Root must preserve
+the complete ordinary Editor capability matrix from Issues #91 and #86:
+
+- title and Markdown editing, Selection, IME, Undo/Redo, shortcuts, and every
+  registered Toolbar command;
+- live server Preview, GFM tables and task lists, Mermaid, KaTeX, Highlight.js,
+  TOC, synchronized scrolling, themes, fonts, and Custom CSS;
+- WordPress Media selection, Paste/Drop upload, Local Draft recovery, WeChat
+  export, Outline, statistics, and status feedback;
+- publishing fields and flows, revisions, the native WordPress form and unknown
+  extension fields, permissions, Nonces, locks, failure states, responsive
+  layouts, RTL, and accessibility.
+
+PHP and WordPress retain their existing data, authorization, rendering, native
+form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown`
+remains canonical Markdown and `post_content` remains compatibility HTML.
+Focus Mode is the only explicit product exclusion: it is not implemented,
+connected, enqueued, or loaded by the ordinary Editor.
+
+The branch currently still contains transitional bridge code from earlier
+local increments. Until the direct-cutover commits replace the PHP shell and
+enqueue path, the detailed bridge descriptions below document current code,
+not the approved final runtime. No new bridge, `react-ready` handoff,
+`reload-required` fallback, or Legacy consumer may be added. Completion requires
+removing those transitional owners and updating this document so only the live
+single-Root architecture remains.
+
 ## Directory Boundaries
 
 - `src/Admin/`: editor screen rendering, per-post editor gating, admin settings, admin assets, and save handling.
@@ -70,7 +106,12 @@ Editor admission does not depend on `_easymde_enabled`, `_easymde_markdown`, or 
 
 Opening an ordinary existing supported post imports the current `post_content` into Markdown in memory for the editor. It does not write metadata, rewrite content, create revisions, or migrate the post on open.
 
-## Immersive Workspace Boundary
+## Immersive Workspace Boundary (Transitional Code Only)
+
+The approved Issue #91 product does not include or load this surface. The
+following paragraphs describe code that remains temporarily present while the
+direct-cutover removal work is incomplete; they are not a target contract or a
+reason to connect Focus Mode to the React Editor Root.
 
 The normal WordPress edit screen and the immersive workspace are separate visual surfaces. The normal editor keeps its existing template and styles. Selecting **Enter immersive writing** creates the fixed white workspace from `assets/js/admin/immersive-workspace.js` and `assets/css/admin/immersive-workspace.css`; closing it removes that DOM and restores focus, scroll, and WordPress interactivity.
 

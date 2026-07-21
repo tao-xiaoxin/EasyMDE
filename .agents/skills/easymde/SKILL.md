@@ -11,6 +11,18 @@ This Skill is the executable development contract. The durable rationale lives i
 
 Do not introduce a pattern, dependency, abstraction, directory, service, or framework merely because it is common in another React project.
 
+## Issue #91 Direct-Cutover Contract
+
+The current maintainer decision for Issue #91 supersedes this Skill's generic
+incremental-handoff default. Build one complete ordinary WordPress Editor Root
+and remove the ordinary Editor's `bootstrap.js`, jQuery, Legacy DOM, dual-owner
+handoff, and fallback runtime. Do not add another bridge or handoff state.
+Focus Mode / immersive writing is excluded and must not be implemented,
+connected, enqueued, or loaded. Every other ordinary Editor capability in
+Issues #91 and #86 remains required; direct cutover is not feature reduction.
+Use the migration Skill only for Legacy inventory and deletion evidence where
+it does not conflict with this explicit decision.
+
 ## Rule Priority and Evidence
 
 Apply rules in this order:

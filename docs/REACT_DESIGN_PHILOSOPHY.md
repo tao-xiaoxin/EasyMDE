@@ -2,7 +2,13 @@
 
 本文定义 EasyMDE WordPress 后台 React、TypeScript 与 Vite 应用的长期设计哲学和架构原则。
 
-它回答“为什么这样设计、责任属于谁、边界如何长期保持稳定”，不是迁移阶段清单，也不是逐条编码检查表。日常实现规则由 `.agents/skills/easymde/SKILL.md` 负责；旧 JavaScript 向 React 转移期间的临时执行规则由 `.agents/skills/easymde-migration/SKILL.md` 负责。
+它回答“为什么这样设计、责任属于谁、边界如何长期保持稳定”，不是迁移阶段清单，也不是逐条编码检查表。日常实现规则由 `.agents/skills/easymde/SKILL.md` 负责；`.agents/skills/easymde-migration/SKILL.md` 仅负责 Legacy 清点与删除证据，不得覆盖 Issue #91 已批准的直接 React Cutover。
+
+Issue #91 的普通 WordPress Editor 目标是一个完整的 React Editor Root，
+不是多个 React Root 与 Legacy DOM 的长期拼装。直接 Cutover 删除
+`bootstrap.js`、jQuery、Legacy runtime、双 Owner、Handoff 与 Fallback，
+但必须完整保留普通 Editor 功能。Focus Mode / 沉浸式写作是唯一明确排除
+项，不实现、不接入、不加载。
 
 任何目录、接口、依赖或抽象都只能在当前功能确有需要时创建。本文描述目标边界，不授权批量创建空目录、占位模块或未来框架。
 
@@ -12,7 +18,7 @@
 - 查阅目录、依赖与接口决策时，读“React 运行时与应用 Root”至“Port、Runtime 与 Adapter”。
 - 实现功能时，按需查阅状态、跨语言边界、正式数据流、组件 API、UI、性能与发布包章节。
 - 判断本地静态资源或真正 External Service 边界时，读“资源交付与发行渠道”；Service 证据、批准与实施检查使用 `.agents/skills/easymde/SKILL.md`。
-- 日常执行检查使用 `.agents/skills/easymde/SKILL.md`；转移现有浏览器功能时另外使用 `.agents/skills/easymde-migration/SKILL.md`。
+- 日常执行检查使用 `.agents/skills/easymde/SKILL.md`；Issue #91 直接 Cutover 仅使用 `.agents/skills/easymde-migration/SKILL.md` 清点旧消费者和证明删除，不建立运行时 Handoff。
 - 本文与实时代码不一致时，先根据本文的证据优先级确定是实现欠账还是文档过时，不得默认任何一方自动覆盖另一方。
 
 ## 一、权威来源与证据策略

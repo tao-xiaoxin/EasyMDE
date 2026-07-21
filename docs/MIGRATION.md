@@ -1,5 +1,38 @@
 # EasyMDE Migration Notes
 
+## Issue #91 Direct-Cutover Decision
+
+The ordinary WordPress Editor will now cut over directly to one componentized
+React 18 + TypeScript + Vite Editor Root. Do not add further runtime
+Legacy-to-React handoffs, parallel DOM owners, startup fallbacks, live rollback,
+or `react-ready` / `reload-required` state machines. Old JavaScript is reference
+material only for verified command semantics, visual tokens, icons, WordPress
+fields, REST contracts, and compatibility behavior.
+
+The deletion boundary is runtime implementation, not user capability. The new
+Root must preserve every ordinary Editor capability tracked by Issues #91 and
+#86: editing and Toolbar semantics; Preview and all Markdown enhancements;
+appearance, Media, Drafts, WeChat export, Outline, statistics/status,
+publishing, revisions, native-form and unknown-extension-field compatibility;
+permissions, Nonces, locks, failure states, responsive behavior, RTL, and
+accessibility. Focus Mode / immersive writing is the sole explicit exclusion
+and must not be implemented, connected, enqueued, or loaded.
+
+Current state: the branch contains earlier local bridge commits and the live
+PHP enqueue path still loads Legacy owners. Target state: PHP renders one React
+mount plus WordPress-owned native submission fields, the React Root composes all
+ordinary Editor Features, and the normal screen loads only the production React
+entry and necessary WordPress/platform dependencies. PHP continues to own
+Markdown rendering, authorization, Nonces, persistence, Save/Publish,
+Revisions, Media, and final native-form serialization.
+
+The ownership sections below are retained temporarily as implementation and
+removal evidence for those earlier local increments. They do not authorize new
+handoff work. Each section must be replaced by the final single-Root owner or
+removed once its ordinary Editor behavior is composed and verified. Final
+acceptance uses a feature matrix to prove no ordinary Editor capability was
+lost and searches/build/browser evidence to prove no Legacy runtime remains.
+
 ## Normal Editor Toolbar Ownership
 
 The normal editor's main Markdown Toolbar is the first production React

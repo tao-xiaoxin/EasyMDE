@@ -24,7 +24,7 @@ repository-level summary and an exact route repeated elsewhere.
 | `AGENTS.md` | Repository-wide product, data, compatibility, security, privacy, architecture-routing, release-boundary, evidence, and authorization invariants. |
 | `CONTRIBUTING.md` | Detailed public contribution workflow, Git and staging sequence, Issue and pull request templates, local review, exact-Head CI, CodeRabbit coordination, finding quality, privacy-safe public evidence, and completion reporting. |
 | `.agents/skills/easymde/SKILL.md` | Executable React, TypeScript, browser, UI fidelity, accessibility, architecture, security, dependency, asset, testing, and delivery contract for normal feature work. |
-| `.agents/skills/easymde-migration/SKILL.md` | Temporary legacy characterization, ownership handoff, activation, rollback, deprecation, removal, and migration evidence. |
+| `.agents/skills/easymde-migration/SKILL.md` | Temporary legacy inventory, deprecation, removal, and migration evidence. Issue #91 uses the approved direct-cutover exception below rather than runtime dual-owner handoff. |
 | `.agents/skills/i18n/SKILL.md` | PHP and React internationalization, extraction, catalogs, script translations, locale, plural, context, RTL, and language-asset package validation. |
 | `docs/ARCHITECTURE.md` | Current, actually implemented architecture. |
 | `docs/REACT_DESIGN_PHILOSOPHY.md` | Durable React design rationale, target boundaries, and long-term direction. |
@@ -85,10 +85,22 @@ Non-negotiable product and authority rules:
 - Opening, closing, focusing, Previewing, or cancelling React UI performs no
   hidden document, settings, or server write. Native-field synchronization is
   a submission bridge, not persistence proof.
-- React integration is incremental and uses focused Ports and Adapters rather
-  than scattering WordPress DOM, jQuery, browser-global, or REST access through
-  Components. Async owners handle cancellation where meaningful, stale
-  results, authoritative completion, repeated lifecycle, and teardown.
+- The ordinary WordPress Editor is delivered by one React Editor Root composed
+  from focused Features, Ports, and Adapters. Its final runtime does not load
+  `assets/js/admin/bootstrap.js`, jQuery, Legacy Toolbar, Preview, Theme, Draft,
+  Media, Focus Mode, dual-DOM handoff, or Legacy fallback implementations.
+- Direct React cutover removes Legacy runtime ownership, not ordinary Editor
+  capability. The React Root must retain the full Issue #91/#86 ordinary Editor
+  feature matrix, including editing semantics, Preview enhancements,
+  appearance, media, recovery, export, Outline, statistics/status, publishing,
+  revisions, native-form compatibility, failure states, responsive behavior,
+  RTL, and accessibility.
+- Focus Mode / immersive writing is intentionally excluded: do not implement,
+  connect, enqueue, or load it as part of the ordinary Editor.
+- React integration uses focused Ports and Adapters rather than scattering
+  WordPress DOM, browser globals, or REST access through Components. Async
+  owners handle cancellation where meaningful, stale results, authoritative
+  completion, repeated lifecycle, and teardown.
 - React and TypeScript, built with Vite and the WordPress-provided React 18
   runtime, are the approved browser architecture. Normal focused Feature work
   does not need a separate architecture-only Issue.
@@ -428,8 +440,10 @@ belong to `CONTRIBUTING.md`.
 For UI work, real behavior, accessibility, protected surfaces, lifecycle
 cleanup, privacy-safe evidence, and an honest unverified scope are mandatory.
 The complete seven-stage fidelity workflow belongs to
-`.agents/skills/easymde/SKILL.md`; do not recreate it here. When UI ownership
-moves from legacy code, also use the migration Skill.
+`.agents/skills/easymde/SKILL.md`; do not recreate it here. For Issue #91's
+approved direct React cutover, use the migration Skill only for Legacy
+inventory and deletion evidence; do not introduce runtime handoff, fallback,
+or dual-owner architecture.
 
 Use live, scope-relevant commands only. Detailed current commands and release
 execution belong to `docs/TESTING_AND_RELEASE.md`; browser test selection and

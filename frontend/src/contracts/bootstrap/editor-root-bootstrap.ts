@@ -24,9 +24,21 @@ import {
   type MediaPickerBootstrap
 } from './media-picker-bootstrap';
 import {
+  parseLocalDraftsBootstrap,
+  type LocalDraftsBootstrap
+} from './local-drafts-bootstrap';
+import {
   parseToolbarBootstrap,
   type ToolbarBootstrap
 } from './toolbar-bootstrap';
+import {
+  parseWechatExportBootstrap,
+  type WechatExportBootstrap
+} from './wechat-export-bootstrap';
+
+export type EditorRootLocalDraftsBootstrap = LocalDraftsBootstrap & Readonly<{
+  savedFingerprint: string;
+}>;
 
 export type EditorRootPreviewBootstrap = Readonly<{
   features: PreviewFeatures;
@@ -46,6 +58,7 @@ export type EditorRootBootstrap = Readonly<{
   document: DocumentSourceBootstrap;
   fonts: FontControlsBootstrap;
   imageUpload: ImageUploadBootstrap;
+  localDrafts: EditorRootLocalDraftsBootstrap;
   labels: Readonly<{
     preview: string;
     source: string;
@@ -54,6 +67,7 @@ export type EditorRootBootstrap = Readonly<{
   preview: EditorRootPreviewBootstrap;
   mediaPicker: MediaPickerBootstrap;
   toolbar: ToolbarBootstrap;
+  wechatExport: WechatExportBootstrap;
 }>;
 
 export class EditorRootBootstrapError extends Error {
@@ -136,6 +150,19 @@ function parsePreview(value: unknown): EditorRootPreviewBootstrap {
   };
 }
 
+function parseLocalDrafts(value: unknown): EditorRootLocalDraftsBootstrap {
+  const localDrafts = objectValue(value, 'editor-root-local-drafts-invalid');
+  const parsed = parseLocalDraftsBootstrap(localDrafts);
+  return {
+    ...parsed,
+    savedFingerprint: boundedString(
+      localDrafts.savedFingerprint,
+      'editor-root-local-drafts-invalid',
+      { allowEmpty: true, maxLength: 128 }
+    )
+  };
+}
+
 export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   const bootstrap = objectValue(value, 'editor-root-bootstrap-invalid');
   if (1 !== bootstrap.schemaVersion) {
@@ -146,8 +173,10 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   let appearance: AppearanceBootstrap;
   let fonts: FontControlsBootstrap;
   let imageUpload: ImageUploadBootstrap;
+  let localDrafts: EditorRootLocalDraftsBootstrap;
   let mediaPicker: MediaPickerBootstrap;
   let toolbar: ToolbarBootstrap;
+  let wechatExport: WechatExportBootstrap;
 
   try {
     appearance = parseAppearanceBootstrap(bootstrap.appearance);
@@ -170,6 +199,11 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     throw new EditorRootBootstrapError('editor-root-image-upload-invalid');
   }
   try {
+    localDrafts = parseLocalDrafts(bootstrap.localDrafts);
+  } catch {
+    throw new EditorRootBootstrapError('editor-root-local-drafts-invalid');
+  }
+  try {
     mediaPicker = parseMediaPickerBootstrap(bootstrap.mediaPicker);
   } catch {
     throw new EditorRootBootstrapError('editor-root-media-picker-invalid');
@@ -179,6 +213,11 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   } catch {
     throw new EditorRootBootstrapError('editor-root-toolbar-invalid');
   }
+  try {
+    wechatExport = parseWechatExportBootstrap(bootstrap.wechatExport);
+  } catch {
+    throw new EditorRootBootstrapError('editor-root-wechat-export-invalid');
+  }
 
   return {
     appearance,
@@ -186,6 +225,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     document,
     fonts,
     imageUpload,
+    localDrafts,
     labels: {
       preview: boundedString(labels.preview, 'editor-root-label-invalid'),
       source: boundedString(labels.source, 'editor-root-label-invalid'),
@@ -193,6 +233,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     },
     preview: parsePreview(bootstrap.preview),
     mediaPicker,
-    toolbar
+    toolbar,
+    wechatExport
   };
 }

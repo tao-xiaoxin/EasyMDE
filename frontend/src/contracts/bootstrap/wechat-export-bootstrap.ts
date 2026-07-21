@@ -1,4 +1,8 @@
-import type { WechatExportStrings } from '../../features/wechat-export/wechat-export-session';
+export type WechatExportStrings = Readonly<{
+  failed: string;
+  success: string;
+  unsupported: string;
+}>;
 
 export type WechatExportBootstrap = Readonly<{
   enabled: boolean;

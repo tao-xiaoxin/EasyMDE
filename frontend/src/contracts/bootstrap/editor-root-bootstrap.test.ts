@@ -67,6 +67,29 @@ function validBootstrap() {
         pasteUploading: 'Paste uploading'
       }
     },
+    localDrafts: {
+      enabled: true,
+      locale: 'en_US',
+      maxBytes: 1048576,
+      postId: 7,
+      savedFingerprint: 'saved-fingerprint',
+      schemaVersion: 1,
+      siteKey: 'synthetic-site',
+      strings: {
+        available: 'A newer local draft is available.',
+        conflict: 'A different local draft was saved in another tab.',
+        discard: 'Discard draft',
+        discardFailed: 'Discard failed',
+        discarded: 'Draft discarded',
+        readFailed: 'Draft read failed',
+        restore: 'Restore draft',
+        restored: 'Draft restored',
+        saveFailed: 'Draft save failed',
+        saved: 'Local draft saved'
+      },
+      timeZone: 'UTC',
+      userId: 42
+    },
     mediaPicker: {
       defaultAlt: 'image',
       insertMedia: 'Insert Media',
@@ -97,6 +120,14 @@ function validBootstrap() {
       }],
       shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } },
       strings: { headings: 'Headings', linkText: 'link text' }
+    },
+    wechatExport: {
+      enabled: true,
+      strings: {
+        failed: 'Copy failed',
+        success: 'Copied',
+        unsupported: 'Clipboard unsupported'
+      }
     }
   };
 }
@@ -109,6 +140,7 @@ describe('parseEditorRootBootstrap', () => {
       document: { editorLabel: 'Markdown source' },
       fonts: validBootstrap().fonts,
       imageUpload: validBootstrap().imageUpload,
+      localDrafts: validBootstrap().localDrafts,
       labels: {
         preview: 'Preview',
         source: 'Markdown',
@@ -125,7 +157,8 @@ describe('parseEditorRootBootstrap', () => {
       toolbar: expect.objectContaining({
         headingsLabel: 'Headings',
         linkText: 'link text'
-      })
+      }),
+      wechatExport: validBootstrap().wechatExport
     });
   });
 
@@ -136,8 +169,10 @@ describe('parseEditorRootBootstrap', () => {
     [{ ...validBootstrap(), appearance: null }, 'editor-root-appearance-invalid'],
     [{ ...validBootstrap(), fonts: null }, 'editor-root-fonts-invalid'],
     [{ ...validBootstrap(), imageUpload: null }, 'editor-root-image-upload-invalid'],
+    [{ ...validBootstrap(), localDrafts: null }, 'editor-root-local-drafts-invalid'],
     [{ ...validBootstrap(), mediaPicker: null }, 'editor-root-media-picker-invalid'],
     [{ ...validBootstrap(), toolbar: null }, 'editor-root-toolbar-invalid'],
+    [{ ...validBootstrap(), wechatExport: null }, 'editor-root-wechat-export-invalid'],
     [{ ...validBootstrap(), strings: { ...validBootstrap().strings, source: '' } }, 'editor-root-label-invalid'],
     [{ ...validBootstrap(), preview: { ...validBootstrap().preview, postId: -1 } }, 'editor-root-preview-invalid'],
     [{ ...validBootstrap(), preview: { ...validBootstrap().preview, features: { mermaid: 'yes' } } }, 'editor-root-preview-invalid'],

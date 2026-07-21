@@ -2,12 +2,7 @@ import type {
   WechatClipboardPort,
   WechatClipboardResult
 } from '../../contracts/ports/wechat-clipboard-port';
-
-export type WechatExportStrings = Readonly<{
-  failed: string;
-  success: string;
-  unsupported: string;
-}>;
+import type { WechatExportStrings } from '../../contracts/bootstrap/wechat-export-bootstrap';
 
 export type WechatExportStatus = Readonly<{
   message: string;

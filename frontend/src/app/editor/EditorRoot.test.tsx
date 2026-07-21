@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SafePreviewHtml } from '../../contracts/ports/preview-request';
 import type { ImageUploadResult } from '../../contracts/ports/image-upload-port';
+import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
 import { EditorRoot, type EditorRootProps } from './EditorRoot';
 import { EditorRootErrorBoundary } from './EditorRootErrorBoundary';
@@ -15,6 +16,8 @@ function BrokenEditorRoot(): never {
 }
 
 function fixture(): EditorRootProps & Readonly<{
+  localDraftStorage: LocalDraftStoragePort;
+  scrollSyncBinding: Readonly<{ activate: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }>;
   shortcutBinding: PreparedToolbarShortcutBinding;
 }> {
   const submissionField = document.createElement('textarea');
@@ -38,6 +41,15 @@ function fixture(): EditorRootProps & Readonly<{
     mediaFrame.close = options.onClose;
     mediaFrame.select = options.onSelect;
   });
+  const localDraftStorage: LocalDraftStoragePort = {
+    discard: vi.fn(() => ({ status: 'discarded' as const })),
+    fingerprint: vi.fn((content) => `hash:${content}`),
+    formatTime: vi.fn(() => ({ status: 'formatted' as const, value: '12:34' })),
+    read: vi.fn(() => ({ status: 'missing' as const })),
+    subscribe: vi.fn(() => vi.fn()),
+    write: vi.fn(() => ({ status: 'saved' as const, updatedAt: 1234 }))
+  };
+  const scrollSyncBinding = { activate: vi.fn(), dispose: vi.fn() };
 
   return {
     appearance: {
@@ -115,6 +127,30 @@ function fixture(): EditorRootProps & Readonly<{
         url: 'https://example.test/upload.png'
       } satisfies ImageUploadResult)
     },
+    localDraftStorage,
+    localDrafts: {
+      enabled: true,
+      locale: 'en_US',
+      maxBytes: 1048576,
+      postId: 7,
+      savedFingerprint: 'hash:selected',
+      schemaVersion: 1,
+      siteKey: 'synthetic-site',
+      strings: {
+        available: 'A newer local draft is available.',
+        conflict: 'A different local draft was saved in another tab.',
+        discard: 'Discard draft',
+        discardFailed: 'Discard failed',
+        discarded: 'Draft discarded',
+        readFailed: 'Draft read failed',
+        restore: 'Restore draft',
+        restored: 'Draft restored',
+        saveFailed: 'Draft save failed',
+        saved: 'Local draft saved'
+      },
+      timeZone: 'UTC',
+      userId: 42
+    },
     mediaPicker: {
       defaultAlt: 'image',
       insertMedia: 'Insert Media',
@@ -144,6 +180,10 @@ function fixture(): EditorRootProps & Readonly<{
       capture: () => ({ left: 0, ratio: 0, top: 0 }),
       restore: vi.fn()
     },
+    scrollSyncBinding,
+    scrollSyncPort: {
+      prepareBinding: vi.fn(() => scrollSyncBinding)
+    },
     shortcutBinding,
     submissionField,
     titleField,
@@ -165,10 +205,28 @@ function fixture(): EditorRootProps & Readonly<{
         id: 'image',
         label: 'Image',
         surface: 'main'
+      }, {
+        action: 'copyWechat',
+        group: 'export',
+        icon: 'clipboard',
+        id: 'copywechat',
+        label: 'Copy to WeChat',
+        surface: 'main'
       }],
       headingsLabel: 'Headings',
       linkText: 'link text',
       shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } }
+    },
+    wechatClipboard: {
+      copy: vi.fn().mockResolvedValue({ method: 'clipboard', status: 'copied' })
+    },
+    wechatExport: {
+      enabled: true,
+      strings: {
+        failed: 'Copy failed',
+        success: 'Copied',
+        unsupported: 'Clipboard unsupported'
+      }
     }
   };
 }
@@ -364,5 +422,65 @@ describe('EditorRoot', () => {
     );
     source?.dispatchEvent(afterUnmount);
     expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores an available local draft and releases its storage subscription', async () => {
+    const props = fixture();
+    const unsubscribe = vi.fn();
+    vi.mocked(props.localDraftStorage.subscribe).mockReturnValue(unsubscribe);
+    vi.mocked(props.localDraftStorage.read).mockReturnValue({
+      draft: {
+        content: 'Recovered draft',
+        contentHash: 'hash:Recovered draft',
+        schemaVersion: 1,
+        updatedAt: 2000
+      },
+      source: 'current',
+      status: 'available'
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    expect(view.getByText('A newer local draft is available.')).not.toBeNull();
+    fireEvent.click(view.getByRole('button', { name: 'Restore draft' }));
+
+    await waitFor(() => expect(props.submissionField.value).toBe('Recovered draft'));
+    expect(view.getByText('Draft restored')).not.toBeNull();
+    view.unmount();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('copies the stable Preview through the React WeChat session', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() => {
+      expect(view.container.querySelector('[data-easymde-preview-html-sink="1"]')).not.toBeNull();
+    });
+    fireEvent.click(view.getByRole('button', { name: 'Copy to WeChat' }));
+
+    await waitFor(() => expect(props.wechatClipboard.copy).toHaveBeenCalledTimes(1));
+    expect(
+      view.getByRole('button', { name: 'Copy to WeChat' })
+        .querySelectorAll('.easymde-wechat-glyph path')
+    ).toHaveLength(3);
+    expect(props.wechatClipboard.copy).toHaveBeenCalledWith(
+      view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+    );
+    expect(view.getByText('Copied')).not.toBeNull();
+    expect(props.executeExternalCommand).not.toHaveBeenCalledWith('copywechat', expect.anything());
+  });
+
+  it('activates synchronized scrolling once and disposes it with the Root', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() => expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(1));
+    expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledWith({
+      preview: view.container.querySelector('[data-easymde-preview-html-sink="1"]'),
+      source: view.container.querySelector('.cm-scroller')
+    });
+
+    view.unmount();
+    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,4 +1,5 @@
 import {
+  Fragment,
   createElement,
   useCallback,
   useEffect,
@@ -9,7 +10,10 @@ import {
 } from '@wordpress/element';
 
 import type { DocumentSourceBootstrap } from '../../contracts/bootstrap/document-source-bootstrap';
-import type { EditorRootPreviewBootstrap } from '../../contracts/bootstrap/editor-root-bootstrap';
+import type {
+  EditorRootLocalDraftsBootstrap,
+  EditorRootPreviewBootstrap
+} from '../../contracts/bootstrap/editor-root-bootstrap';
 import type {
   AppearanceBootstrap,
   AppearanceState
@@ -18,15 +22,19 @@ import type { FontControlsBootstrap } from '../../contracts/bootstrap/font-contr
 import type { ImageUploadBootstrap } from '../../contracts/bootstrap/image-upload-bootstrap';
 import type { MediaPickerBootstrap } from '../../contracts/bootstrap/media-picker-bootstrap';
 import type { ToolbarBootstrap } from '../../contracts/bootstrap/toolbar-bootstrap';
+import type { WechatExportBootstrap } from '../../contracts/bootstrap/wechat-export-bootstrap';
 import type { AppearancePort } from '../../contracts/ports/appearance-port';
 import type { FontControlsPort } from '../../contracts/ports/font-controls-port';
 import type { ImageUploadPort } from '../../contracts/ports/image-upload-port';
+import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type {
   MediaPickerDocumentPort,
   MediaPickerFramePort
 } from '../../contracts/ports/media-picker-port';
 import type { PreviewRequest, PreviewRequestPort } from '../../contracts/ports/preview-request';
+import type { ScrollSyncPort } from '../../contracts/ports/scroll-sync-port';
 import type { ToolbarShortcutsPort } from '../../contracts/ports/toolbar-shortcuts-port';
+import type { WechatClipboardPort } from '../../contracts/ports/wechat-clipboard-port';
 import {
   AppearanceControls,
   type AppearanceControlsSession
@@ -44,12 +52,17 @@ import type { PreviewEnhancementPort } from '../../features/live-preview/ports/p
 import type { PreviewScrollPort } from '../../features/live-preview/ports/preview-scroll-port';
 import { PreviewSurfaceOwner, type PreviewSurfaceRuntime } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { openMediaPickerSession } from '../../features/media-picker/media-picker-session';
+import {
+  createLocalDraftSession,
+  type LocalDraftSession
+} from '../../features/local-drafts/local-draft-session';
 import { createToolbarCommandSession } from '../../features/toolbar/toolbar-command-session';
 import {
   EditorToolbar,
   type EditorToolbarSession,
   type ToolbarPlatform
 } from '../../features/toolbar/ui/EditorToolbar';
+import { createWechatExportSession } from '../../features/wechat-export/wechat-export-session';
 
 export type EditorRootProps = Readonly<{
   appearance: AppearanceBootstrap;
@@ -61,6 +74,8 @@ export type EditorRootProps = Readonly<{
   fonts: FontControlsBootstrap;
   imageUpload: Pick<ImageUploadBootstrap, 'enabled' | 'maxBytes' | 'postId' | 'strings'>;
   imageUploadPort: ImageUploadPort;
+  localDrafts: EditorRootLocalDraftsBootstrap;
+  localDraftStorage: LocalDraftStoragePort;
   labels: Readonly<{
     preview: string;
     source: string;
@@ -78,9 +93,12 @@ export type EditorRootProps = Readonly<{
   preview: EditorRootPreviewBootstrap;
   previewPort: PreviewRequestPort;
   scrollPort: PreviewScrollPort;
+  scrollSyncPort: ScrollSyncPort;
   submissionField: HTMLTextAreaElement;
   titleField: HTMLInputElement;
   toolbar: ToolbarBootstrap;
+  wechatClipboard: WechatClipboardPort;
+  wechatExport: WechatExportBootstrap;
 }>;
 
 type ActiveToolbarProps = Readonly<{
@@ -93,6 +111,67 @@ type ActiveToolbarProps = Readonly<{
   session: EditorDocumentSession;
   toolbar: ToolbarBootstrap;
 }>;
+
+type RootExportCommandsProps = Readonly<{
+  executeCommand: (commandId: string) => void;
+  platform: ToolbarPlatform;
+  toolbar: ToolbarBootstrap;
+}>;
+
+const WECHAT_ICON_PATHS = [
+  'M38.7,15.3c-3.7-4.9-10.2-6.2-16.1-4.1c0.2,0.1,0.4,0.1,0.6,0.2c8.7,2.9,13.3,12.3,10.4,21 c-0.8,2.3-2,4.3-3.5,6c1.9-0.5,3.8-1.3,5.4-2.5C42.1,30.8,43.4,21.4,38.7,15.3z',
+  'M17,10.4L17,10.4C17,10.4,17,10.4,17,10.4c0.4-0.3,0.7-0.5,1.1-0.8c0,0,0,0,0.1,0c0.4-0.2,0.8-0.4,1.1-0.7 c0,0,0.1,0,0.1-0.1c0.8-0.4,1.6-0.7,2.4-1c0.1,0,0.1,0,0.2-0.1c0.4-0.1,0.8-0.3,1.2-0.4c0,0,0.1,0,0.1,0c0.4-0.1,0.8-0.2,1.2-0.2 c0.1,0,0.1,0,0.2,0C25.3,7,25.7,7,26.1,7c0.1,0,0.2,0,0.3,0c0.4,0,0.9-0.1,1.3-0.1c0.5,0,1,0,1.5,0.1c0.1,0,0.1,0,0.2,0 c0.5,0,0.9,0.1,1.4,0.2c0.1,0,0.2,0,0.2,0c0.5,0.1,0.9,0.2,1.3,0.3c0.1,0,0.1,0,0.2,0.1C33,7.7,33.5,7.8,33.9,8 c-0.2-0.4-0.4-0.7-0.4-0.7C30.6,2.7,25.8,0,20.6,0c-3.1,0-7.9,1.1-11.5,5.4c-2.4,2.9-3.2,6.3-2.7,9.7c0.3,2.3,1.6,5.4,3.5,7.3 C10.6,17.5,13.2,13.2,17,10.4z',
+  'M20.6,30.9c-1.3,0-2.6-0.2-3.8-0.4c-0.1,0-0.3,0-0.5,0c-0.4,0-0.7,0.1-1,0.3l-4,2.6 c-0.1,0.1-0.2,0.1-0.4,0.1c-0.3,0-0.6-0.3-0.7-0.6c0-0.2,0-0.3,0.1-0.5c0-0.1,0.4-2,0.7-3.2c0-0.1,0.1-0.3,0-0.4 c0-0.4-0.2-0.8-0.6-1c-4.3-2.9-7.2-7.5-7.8-12.2c-1.1,1.7-1.6,3-2.2,5c-2.1,7.3,2.5,16,9.9,18.4c8.6,2.8,16.7-0.3,19.5-7.6 c0.3-0.9,0.7-2.4,0.8-3.6C27.7,29.9,24.6,30.9,20.6,30.9z'
+] as const;
+
+function WechatIcon() {
+  return (
+    <span className="easymde-wechat-glyph" aria-hidden="true">
+      <svg viewBox="0 0 40 40" focusable="false" aria-hidden="true">
+        {WECHAT_ICON_PATHS.map((path) => <path key={path} d={path} />)}
+      </svg>
+    </span>
+  );
+}
+
+function RootExportCommands({
+  executeCommand,
+  platform,
+  toolbar
+}: RootExportCommandsProps) {
+  const commands = toolbar.commands.filter(
+    (command) => 'main' === command.surface && 'export' === command.group
+  );
+  if (!commands.length) {
+    return null;
+  }
+
+  return (
+    <Fragment>
+      <span className="easymde-toolbar-divider" aria-hidden="true" />
+      {commands.map((command) => {
+        const shortcut = toolbar.shortcuts[command.id]?.[platform] ?? '';
+        const title = shortcut ? `${command.label} (${shortcut})` : command.label;
+        return (
+          <button
+            key={command.id}
+            type="button"
+            className={`easymde-toolbar-button easymde-toolbar-button-compact${'copyWechat' === command.action ? ' easymde-toolbar-copy-action' : ''}`}
+            data-easymde-command={command.id}
+            aria-label={command.label}
+            title={title}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => executeCommand(command.id)}
+          >
+            {'copyWechat' === command.action
+              ? <WechatIcon />
+              : <span className={`dashicons dashicons-${command.icon}`} aria-hidden="true" />}
+          </button>
+        );
+      })}
+    </Fragment>
+  );
+}
 
 function ActiveToolbar({
   editorRoot,
@@ -210,11 +289,21 @@ export function EditorRoot(props: EditorRootProps) {
   const previewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
   const previewRevisionRef = useRef(0);
   const previewAppearanceRef = useRef(props.appearance.state);
+  const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
   const rootActiveRef = useRef(true);
   const [documentSession, setDocumentSession] = useState<EditorDocumentSession | null>(null);
+  const [draftCandidate, setDraftCandidate] = useState(false);
   const [editorStatus, setEditorStatus] = useState<ImageUploadStatus | null>(null);
-  const [, setPreviewRuntimeReady] = useState(false);
+  const [previewRuntimeReady, setPreviewRuntimeReady] = useState(false);
+  const wechatSession = useMemo(() => createWechatExportSession({
+    clipboard: props.wechatClipboard,
+    enabled: props.wechatExport.enabled,
+    getPreview: () => previewRuntimeRef.current?.surface ?? null,
+    onDiagnostic: props.onFailure,
+    onStatus: setEditorStatus,
+    strings: props.wechatExport.strings
+  }), [props.onFailure, props.wechatClipboard, props.wechatExport]);
 
   const handleDocumentReady = useCallback((session: EditorDocumentSession) => {
     setDocumentSession(session);
@@ -311,8 +400,12 @@ export function EditorRoot(props: EditorRootProps) {
       void openMediaPicker(session);
       return true;
     }
+    if ('copyWechat' === props.toolbar.commands.find((command) => command.id === commandId)?.action) {
+      void wechatSession.copy();
+      return true;
+    }
     return props.executeExternalCommand(commandId, session);
-  }, [openMediaPicker, props.executeExternalCommand, props.toolbar.commands]);
+  }, [openMediaPicker, props.executeExternalCommand, props.toolbar.commands, wechatSession]);
 
   useEffect(() => {
     rootActiveRef.current = true;
@@ -320,6 +413,8 @@ export function EditorRoot(props: EditorRootProps) {
       rootActiveRef.current = false;
     };
   }, []);
+
+  useEffect(() => () => wechatSession.dispose(), [wechatSession]);
 
   useEffect(() => {
     if (!documentSession) {
@@ -337,6 +432,52 @@ export function EditorRoot(props: EditorRootProps) {
       upload: props.imageUploadPort
     });
   }, [documentSession, props.imageUpload, props.imageUploadPort, props.onFailure]);
+
+  useEffect(() => {
+    if (!documentSession) {
+      return;
+    }
+    const session = createLocalDraftSession({
+      delayMs: 500,
+      document: {
+        applyTextChange: documentSession.document.applyTextChange,
+        focus: documentSession.document.focus,
+        getValue: documentSession.document.getValue
+      },
+      enabled: props.localDrafts.enabled,
+      onCandidate: setDraftCandidate,
+      onDiagnostic: props.onFailure,
+      onStatus: setEditorStatus,
+      savedFingerprint: props.localDrafts.savedFingerprint,
+      storage: props.localDraftStorage,
+      strings: props.localDrafts.strings
+    });
+    localDraftSessionRef.current = session;
+    const schedule = () => session.schedule();
+    props.submissionField.addEventListener('input', schedule);
+    session.reconcileSavedDraft();
+
+    return () => {
+      props.submissionField.removeEventListener('input', schedule);
+      if (localDraftSessionRef.current === session) {
+        localDraftSessionRef.current = null;
+      }
+      session.dispose();
+    };
+  }, [documentSession, props.localDraftStorage, props.localDrafts, props.onFailure, props.submissionField]);
+
+  useEffect(() => {
+    const previewRuntime = previewRuntimeRef.current;
+    if (!documentSession || !previewRuntime) {
+      return;
+    }
+    const binding = props.scrollSyncPort.prepareBinding({
+      preview: previewRuntime.surface,
+      source: documentSession.document.getScrollElement()
+    });
+    binding.activate();
+    return () => binding.dispose();
+  }, [documentSession, previewRuntimeReady, props.scrollSyncPort]);
 
   useLayoutEffect(() => {
     if (!previewRuntimeRef.current) return;
@@ -356,16 +497,23 @@ export function EditorRoot(props: EditorRootProps) {
       <div className="easymde-toolbar" role="toolbar" aria-label={props.labels.toolbar}>
         <div className="easymde-toolbar-section easymde-toolbar-section-main">
           {documentSession && rootRef.current ? (
-            <ActiveToolbar
-              editorRoot={rootRef.current}
-              executeExternalCommand={executeRootExternalCommand}
-              platform={props.platform}
-              prepareToolbarShortcuts={props.prepareToolbarShortcuts}
-              onPopoverOpen={closeForToolbar}
-              onReady={handleToolbarReady}
-              session={documentSession}
-              toolbar={props.toolbar}
-            />
+            <Fragment>
+              <ActiveToolbar
+                editorRoot={rootRef.current}
+                executeExternalCommand={executeRootExternalCommand}
+                platform={props.platform}
+                prepareToolbarShortcuts={props.prepareToolbarShortcuts}
+                onPopoverOpen={closeForToolbar}
+                onReady={handleToolbarReady}
+                session={documentSession}
+                toolbar={props.toolbar}
+              />
+              <RootExportCommands
+                executeCommand={(commandId) => executeRootExternalCommand(commandId, documentSession)}
+                platform={props.platform}
+                toolbar={props.toolbar}
+              />
+            </Fragment>
           ) : null}
         </div>
         <div className="easymde-toolbar-section easymde-toolbar-section-secondary">
@@ -389,6 +537,25 @@ export function EditorRoot(props: EditorRootProps) {
           aria-live="polite"
         >
           {editorStatus.message}
+        </div>
+      ) : null}
+      {draftCandidate ? (
+        <div className="easymde-draft-notice">
+          <span>{props.localDrafts.strings.available}</span>
+          <button
+            type="button"
+            className="button button-small"
+            onClick={() => localDraftSessionRef.current?.restore()}
+          >
+            {props.localDrafts.strings.restore}
+          </button>
+          <button
+            type="button"
+            className="button button-small"
+            onClick={() => localDraftSessionRef.current?.discard()}
+          >
+            {props.localDrafts.strings.discard}
+          </button>
         </div>
       ) : null}
       <div className="easymde-workspace">

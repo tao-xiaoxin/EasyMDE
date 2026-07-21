@@ -66,6 +66,9 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( 'Unsaved', $strings['unsaved'] );
 		$this->assertSame( 'Resize source and preview', $strings['resizePanes'] );
 		$this->assertSame( 'Line %1$s, Column %2$s', $strings['cursorPosition'] );
+		$this->assertSame( 'Publishing', $strings['publishingTitle'] );
+		$this->assertSame( 'Schedule', $strings['publishSchedule'] );
+		$this->assertSame( 'WordPress could not start the requested action.', $strings['publishRequestFailed'] );
 		$this->assertSame( 'Show more headings', $strings['showMoreHeadings'] );
 	}
 

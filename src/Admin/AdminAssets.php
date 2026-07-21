@@ -316,7 +316,7 @@ final class AdminAssets {
 	}
 
 	/**
-	 * Return the native category hierarchy used by the immersive publish panel.
+	 * Return the native category hierarchy used by editor publishing controls.
 	 *
 	 * @param string $post_type Current editor post type.
 	 * @param int    $post_id   Current editor post ID.
@@ -398,7 +398,7 @@ final class AdminAssets {
 		);
 
 		/**
-		 * Filters the context used to cache immersive category options.
+		 * Filters the context used to cache editor category options.
 		 *
 		 * Return false when category query filters depend on request state that
 		 * cannot be represented by a stable cache context.
@@ -520,6 +520,11 @@ final class AdminAssets {
 			'aiRemoveAttachment'            => __( 'Remove attachment', 'easymde' ),
 			'send'                          => __( 'Send', 'easymde' ),
 			'publishArticle'                => __( 'Publish article', 'easymde' ),
+			'publishingTitle'               => __( 'Publishing', 'easymde' ),
+			'publishStatus'                 => __( 'Status', 'easymde' ),
+			'publishSchedule'               => __( 'Schedule', 'easymde' ),
+			'publishSubmitting'             => __( 'Submitting...', 'easymde' ),
+			'publishRequestFailed'          => __( 'WordPress could not start the requested action.', 'easymde' ),
 			/* translators: %s is the keyboard shortcut used to publish an article. */
 			'publishArticleShortcut'        => sprintf( __( 'Publish article (%s)', 'easymde' ), '⌘↵' ),
 			'updateArticle'                 => __( 'Update article', 'easymde' ),

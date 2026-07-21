@@ -22,6 +22,7 @@ import type { FontControlsBootstrap } from '../../contracts/bootstrap/font-contr
 import type { ImageUploadBootstrap } from '../../contracts/bootstrap/image-upload-bootstrap';
 import type { EditorLayoutBootstrap } from '../../contracts/bootstrap/editor-layout-bootstrap';
 import type { MediaPickerBootstrap } from '../../contracts/bootstrap/media-picker-bootstrap';
+import type { PublishingBootstrap } from '../../contracts/bootstrap/publishing-bootstrap';
 import type { ToolbarBootstrap } from '../../contracts/bootstrap/toolbar-bootstrap';
 import type { WechatExportBootstrap } from '../../contracts/bootstrap/wechat-export-bootstrap';
 import type { AppearancePort } from '../../contracts/ports/appearance-port';
@@ -29,6 +30,7 @@ import type { FontControlsPort } from '../../contracts/ports/font-controls-port'
 import type { ImageUploadPort } from '../../contracts/ports/image-upload-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type { NativeSubmissionPort } from '../../contracts/ports/native-submission-port';
+import type { PublishingPort } from '../../contracts/ports/publishing-port';
 import type {
   MediaPickerDocumentPort,
   MediaPickerFramePort
@@ -58,6 +60,10 @@ import type { PreviewEnhancementPort } from '../../features/live-preview/ports/p
 import type { PreviewScrollPort } from '../../features/live-preview/ports/preview-scroll-port';
 import { PreviewSurfaceOwner, type PreviewSurfaceRuntime } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { openMediaPickerSession } from '../../features/media-picker/media-picker-session';
+import {
+  PublishingControls,
+  type PublishingControlsSession
+} from '../../features/publishing/ui/PublishingControls';
 import {
   createLocalDraftSession,
   type LocalDraftSession
@@ -100,6 +106,8 @@ export type EditorRootProps = Readonly<{
   }>) => ToolbarShortcutsPort;
   preview: EditorRootPreviewBootstrap;
   previewPort: PreviewRequestPort;
+  publishing: PublishingBootstrap;
+  publishingPort: PublishingPort;
   scrollPort: PreviewScrollPort;
   scrollSyncPort: ScrollSyncPort;
   submissionField: HTMLTextAreaElement;
@@ -295,6 +303,7 @@ export function EditorRoot(props: EditorRootProps) {
   const fontControlsSessionRef = useRef<FontControlsSession | null>(null);
   const toolbarSessionRef = useRef<EditorToolbarSession | null>(null);
   const previewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
+  const publishingSessionRef = useRef<PublishingControlsSession | null>(null);
   const previewRevisionRef = useRef(0);
   const previewAppearanceRef = useRef(props.appearance.state);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
@@ -330,6 +339,7 @@ export function EditorRoot(props: EditorRootProps) {
   const closeForToolbar = useCallback(() => {
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
+    publishingSessionRef.current?.close(false);
   }, []);
   const schedulePreview = useCallback((immediate = false) => {
     const runtime = previewRuntimeRef.current;
@@ -358,6 +368,7 @@ export function EditorRoot(props: EditorRootProps) {
     closeOtherPopovers: () => {
       toolbarSessionRef.current?.closePopovers();
       fontControlsSessionRef.current?.close();
+      publishingSessionRef.current?.close(false);
       props.appearancePort.closeOtherPopovers();
     },
     saveCustomCss: async (input) => {
@@ -383,6 +394,7 @@ export function EditorRoot(props: EditorRootProps) {
     closeOtherPopovers: () => {
       toolbarSessionRef.current?.closePopovers();
       appearanceSessionRef.current?.close();
+      publishingSessionRef.current?.close(false);
       props.fontControlsPort.closeOtherPopovers();
     }
   }), [documentSession, props.fontControlsPort]);
@@ -394,6 +406,14 @@ export function EditorRoot(props: EditorRootProps) {
   }, []);
   const handleToolbarReady = useCallback((session: EditorToolbarSession) => {
     toolbarSessionRef.current = session;
+  }, []);
+  const handlePublishingReady = useCallback((session: PublishingControlsSession) => {
+    publishingSessionRef.current = session;
+  }, []);
+  const handlePublishingOpen = useCallback(() => {
+    toolbarSessionRef.current?.closePopovers();
+    appearanceSessionRef.current?.close();
+    fontControlsSessionRef.current?.close();
   }, []);
   const openMediaPicker = useCallback((session: EditorDocumentSession) => {
     if (mediaOperationRef.current) {
@@ -563,6 +583,13 @@ export function EditorRoot(props: EditorRootProps) {
             onFailure={() => props.onFailure('react-editor-fonts-failed')}
             onReady={handleFontControlsReady}
             port={fontControlsPort}
+          />
+          <PublishingControls
+            bootstrap={props.publishing}
+            onDiagnostic={props.onFailure}
+            onOpen={handlePublishingOpen}
+            onReady={handlePublishingReady}
+            port={props.publishingPort}
           />
         </div>
       </div>

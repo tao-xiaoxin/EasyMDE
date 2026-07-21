@@ -8,6 +8,7 @@ import type { ImageUploadResult } from '../../contracts/ports/image-upload-port'
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
 import { editorLayoutBootstrapFixture } from '../../test/editor-layout-bootstrap-fixture';
+import { publishingBootstrapFixture } from '../../test/publishing-bootstrap-fixture';
 import { createWordPressNativeSubmissionPort } from '../../integrations/wordpress/native-form/wordpress-native-submission';
 import { EditorRoot, type EditorRootProps } from './EditorRoot';
 import { EditorRootErrorBoundary } from './EditorRootErrorBoundary';
@@ -189,6 +190,29 @@ function fixture(): EditorRootProps & Readonly<{
         html: '<p>Rendered</p>' as SafePreviewHtml
       })
     },
+    publishing: publishingBootstrapFixture,
+    publishingPort: {
+      read: vi.fn(() => ({
+        draft: {
+          capabilities: {
+            categories: false,
+            excerpt: false,
+            featuredImage: false,
+            schedule: false,
+            sticky: false,
+            tags: false,
+            visibility: false
+          },
+          categories: [], excerpt: '', featuredImage: null, password: '', schedule: null,
+          status: 'draft', sticky: false, tags: [], visibility: 'public' as const
+        },
+        primaryActionLabel: 'Publish',
+        saveDraftActionLabel: 'Save Draft',
+        statusOptions: [{ disabled: false, id: 'draft', label: 'Draft' }]
+      })),
+      requestSubmit: vi.fn(() => ({ status: 'requested' as const })),
+      selectFeaturedImage: vi.fn().mockResolvedValue(null)
+    },
     scrollPort: {
       capture: () => ({ left: 0, ratio: 0, top: 0 }),
       restore: vi.fn()
@@ -315,6 +339,22 @@ describe('EditorRoot', () => {
     expect(props.submissionField.value).toBe('after teardown');
   });
 
+  it('composes publishing as a temporary draft over the WordPress submission port', () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    const publishActions = view.getAllByRole('button', { name: 'Publish' });
+    fireEvent.click(publishActions[publishActions.length - 1] as HTMLButtonElement);
+    expect(props.publishingPort.read).toHaveBeenCalledTimes(1);
+    expect(view.getByRole('dialog', { name: 'Publishing' })).not.toBeNull();
+    const openPublishActions = view.getAllByRole('button', { name: 'Publish' });
+    fireEvent.click(openPublishActions[openPublishActions.length - 1] as HTMLButtonElement);
+    expect(props.publishingPort.requestSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'draft' }),
+      'primary'
+    );
+  });
+
   it('reports a render failure without leaving a partial editor owner', () => {
     const props = fixture();
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -365,6 +405,14 @@ describe('EditorRoot', () => {
     fireEvent.click(fonts);
     expect(appearance.getAttribute('aria-expanded')).toBe('false');
     expect(fonts.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.click(view.getByRole('button', { name: 'Publish' }));
+    expect(view.getByRole('dialog', { name: 'Publishing' })).not.toBeNull();
+    appearance.focus();
+    fireEvent.click(appearance);
+    expect(view.queryByRole('dialog', { name: 'Publishing' })).toBeNull();
+    expect(appearance.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(view.getByLabelText('Article theme'));
   });
 
   it('renders Preview from the current Appearance state', async () => {

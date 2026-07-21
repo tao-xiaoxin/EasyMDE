@@ -168,6 +168,37 @@ removal therefore requires a separate consumer inventory proving that both the
 normal startup fallback and every immersive consumer have an approved
 replacement or retention decision.
 
+## Normal Editor Image Paste/Drop Ownership
+
+The normal editor's pasted and dropped image recognition, upload coordination,
+progress and failure status, Markdown insertion, and Selection, Scroll, Focus,
+and teardown behavior are a focused TypeScript migration unit. The session
+receives the active normal document owner through a narrow Port and delegates
+the protected request to a WordPress Adapter. PHP and WordPress continue to own
+capability and nonce checks, file validation, Media Library persistence,
+attachment identity, and the authoritative upload response.
+
+Activation validates the production bridge, WordPress upload runtime, complete
+PHP-translated Bootstrap strings, document Port, event target, and cleanup
+contract before marking the normal image-upload owner as React. Only after that
+handoff does the coordinator detach the normal Legacy lazy listener. If any
+preflight fails, the existing lazy Legacy owner remains usable. Teardown removes
+the React listeners before restoring the normal Legacy binding.
+
+Uploads are parallel and isolated by their captured operation snapshot. An
+oversized or failed upload never mutates Markdown. A successful upload rebases
+its captured selection against current Markdown before inserting, preserves the
+active document's Scroll and Focus, and enters the existing Undo history.
+Completion after teardown is diagnosed with a stable privacy-safe code and
+cannot write into a later document session. Browser cancellation does not claim
+that an already-started WordPress upload was cancelled.
+
+The retained `assets/js/admin/image-paste.js` implementation remains the active
+owner for the intentionally excluded immersive workspace and the normal-editor
+startup fallback. It is not removed by this unit. Final Legacy removal requires
+a separate consumer inventory proving that every immersive and fallback
+consumer has an approved replacement or retention decision.
+
 ## Editor Enablement
 
 EasyMDE opens new and existing content for post types explicitly supported by `easymde_supported_post_types` in EasyMDE through normal WordPress editing when the current user can edit or create that content. The default supported post types are `post` and `page`.

@@ -203,7 +203,7 @@ test('document source consumer handoff prepares React bindings before releasing 
   const handoffEnd = source.indexOf("$source.on('input'", handoffStart);
   const handoff = source.slice(handoffStart, handoffEnd);
   const preparePosition = handoff.indexOf('nextScrollSyncCleanup = bindScrollSync(');
-  const pastePosition = handoff.indexOf('bindLazyImagePasteUpload(');
+  const uploadPosition = handoff.indexOf('nextImageUploadCleanup = activateReactImageUpload(');
   const releasePosition = handoff.indexOf('context.scrollSyncCleanup();');
   const commitPosition = handoff.indexOf('context.scrollSyncCleanup = nextScrollSyncCleanup;');
 
@@ -214,9 +214,19 @@ test('document source consumer handoff prepares React bindings before releasing 
     /nextScrollSyncCleanup = bindScrollSync\(scrollElement, context\.preview\[0\]\);/,
     'document source readiness must bind to whichever preview owner is active at handoff time'
   );
-  assert.ok(pastePosition > preparePosition, 'React paste behavior should join the prepared handoff');
-  assert.ok(releasePosition > pastePosition, 'legacy scroll sync must remain active until preparation succeeds');
+  assert.ok(uploadPosition > preparePosition, 'React upload behavior should join the prepared handoff');
+  assert.ok(releasePosition > uploadPosition, 'legacy scroll sync must remain active until preparation succeeds');
   assert.ok(commitPosition > releasePosition, 'the prepared React cleanup becomes authoritative only after release');
+  assert.match(
+    handoff,
+    /if \(!nextImageUploadCleanup\) \{\s*throw new Error\('react-image-upload-consumer-preflight-failed'\);\s*\}/,
+    'image upload startup failure must abort the document-source handoff instead of mixing owners'
+  );
+  assert.doesNotMatch(
+    handoff.slice(0, handoff.indexOf('context.onDocumentSourceDisposed')),
+    /bindLazyImagePasteUpload\([^)]*inputElement/,
+    'the hidden submission bridge must never become the Legacy upload mutation target'
+  );
   assert.match(handoff, /catch \(error\) \{\s*nextScrollSyncCleanup\(\);\s*throw error;/);
 });
 
@@ -5328,6 +5338,115 @@ test('React media picker keeps the Legacy normal-editor owner when its entry is 
   assert.equal(loaded.hooks.activateReactMediaPicker(root, context), null);
   assert.equal(context.mediaPickerSession, undefined);
   assert.equal(root.getAttribute('data-easymde-media-picker-owner'), 'legacy');
+});
+
+test('React image upload atomically owns normal paste and drop until teardown', () => {
+  let preparedBootstrap;
+  let activateOptions;
+  let sessionCleanupCalls = 0;
+  const owner = createToolbarOwnerElement();
+  const input = createSourceWrapper('Intro')[0];
+  const textarea = createSourceWrapper('Stale native bridge')[0];
+  const root = createRootWrapper(456);
+  const flash = createFlashWrapper();
+  const documentSession = {
+    applyTextChange() {},
+    focus() {},
+    getInputElement() {
+      return input;
+    },
+    getScrollElement() {
+      return input;
+    },
+    getSelection() {
+      return { direction: 'backward', end: 4, start: 1 };
+    },
+    getValue() {
+      return 'Intro';
+    }
+  };
+  const loaded = loadBootstrap({
+    EasyMDEReactImageUpload: {
+      prepare(value) {
+        preparedBootstrap = value;
+        return {
+          activate(options) {
+            activateOptions = options;
+            return () => {
+              sessionCleanupCalls += 1;
+            };
+          }
+        };
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      imageUploadUrl: '/wp-json/easymde/v1/media',
+      nonce: 'synthetic-nonce',
+      imageUpload: { enabled: true, maxBytes: 1024 },
+      features: {},
+      strings: {
+        imageDropFailed: 'Drop failed',
+        imageDropTooLarge: 'Drop too large',
+        imageDropUploaded: 'Drop uploaded',
+        imageDropUploading: 'Drop uploading',
+        imagePasteFailed: 'Paste failed',
+        imagePasteTooLarge: 'Paste too large',
+        imagePasteUploaded: 'Paste uploaded',
+        imagePasteUploading: 'Paste uploading',
+        mediaDefaultAlt: 'image',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: { codeThemes: [], fontOptions: {}, state: {} }
+    }
+  });
+  const cleanup = loaded.hooks.activateReactImageUpload(
+    owner,
+    textarea,
+    documentSession,
+    { flash, root }
+  );
+
+  assert.equal(preparedBootstrap.postId, 456);
+  assert.equal(preparedBootstrap.endpoint, '/wp-json/easymde/v1/media');
+  assert.equal(preparedBootstrap.strings.dropUploaded, 'Drop uploaded');
+  assert.equal(owner.getAttribute('data-easymde-image-upload-owner'), 'react');
+  assert.equal(activateOptions.target, input);
+  const snapshot = activateOptions.document.getSnapshot();
+  assert.equal(snapshot.value, 'Intro');
+  assert.equal(snapshot.selection.direction, 'backward');
+  assert.equal(snapshot.selection.end, 4);
+  assert.equal(snapshot.selection.start, 1);
+
+  activateOptions.onStatus({ message: 'Drop uploaded', type: 'success' });
+  assert.equal(flash.state.text, 'Drop uploaded');
+  cleanup();
+  cleanup();
+  assert.equal(sessionCleanupCalls, 1);
+  assert.equal(owner.getAttribute('data-easymde-image-upload-owner'), 'legacy');
+});
+
+test('React image upload startup failure keeps the Legacy normal owner', () => {
+  const owner = createToolbarOwnerElement();
+  const loaded = loadBootstrap({
+    console: { error() {} },
+    EasyMDEConfig: {
+      testHooks: true,
+      features: {},
+      strings: {},
+      themeOptions: { codeThemes: [], fontOptions: {}, state: {} }
+    }
+  });
+
+  assert.equal(loaded.hooks.activateReactImageUpload(
+    owner,
+    createSourceWrapper('Intro')[0],
+    { getInputElement: () => createSourceWrapper('Intro')[0] },
+    { root: createRootWrapper(), flash: createFlashWrapper() }
+  ), null);
+  assert.equal(owner.getAttribute('data-easymde-image-upload-owner'), 'legacy');
 });
 
 test('openMediaPicker lazy-loads the media wrapper on first image insertion', async () => {

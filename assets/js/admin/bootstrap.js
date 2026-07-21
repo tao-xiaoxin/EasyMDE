@@ -2741,6 +2741,9 @@
     }
 
     function bindLazyImagePasteUpload(textarea, $root, $flash, eventTarget) {
+        var pasteHandler;
+        var dragOverHandler;
+        var dropHandler;
         eventTarget = eventTarget || textarea;
 
         function replayWhenLoaded(event, handlerName, source) {
@@ -2803,18 +2806,37 @@
             return false;
         }
 
-        eventTarget.easymdeImagePasteLazyBound = true;
-        eventTarget.addEventListener('paste', function (event) {
+        pasteHandler = function (event) {
             replayWhenLoaded(event, 'handlePaste', 'paste');
-        });
-        eventTarget.addEventListener('dragover', function (event) {
+        };
+        dragOverHandler = function (event) {
             replayWhenLoaded(event, 'handleDragOver', 'dragover');
-        });
-        eventTarget.addEventListener('drop', function (event) {
+        };
+        dropHandler = function (event) {
             replayWhenLoaded(event, 'handleDrop', 'drop');
-        });
+        };
+        eventTarget.easymdeImagePasteLazyBound = true;
+        eventTarget.addEventListener('paste', pasteHandler);
+        eventTarget.addEventListener('dragover', dragOverHandler);
+        eventTarget.addEventListener('drop', dropHandler);
+        eventTarget.easymdeImagePasteLazyCleanup = function () {
+            if (!eventTarget.easymdeImagePasteLazyBound) {
+                return;
+            }
+            eventTarget.removeEventListener('paste', pasteHandler);
+            eventTarget.removeEventListener('dragover', dragOverHandler);
+            eventTarget.removeEventListener('drop', dropHandler);
+            eventTarget.easymdeImagePasteLazyBound = false;
+            eventTarget.easymdeImagePasteLazyCleanup = null;
+        };
 
         return true;
+    }
+
+    function releaseLazyImagePasteUpload(eventTarget) {
+        if (eventTarget && typeof eventTarget.easymdeImagePasteLazyCleanup === 'function') {
+            eventTarget.easymdeImagePasteLazyCleanup();
+        }
     }
 
     function copyWechat(context) {
@@ -2868,11 +2890,11 @@
         };
     }
 
-    function createReactMediaPickerDocumentPort(textarea, context) {
+    function createReactMediaPickerDocumentPort(textarea, context, sessionOverride) {
         var capturedScroll = null;
 
         function activeSession() {
-            var session = context && context.documentSession;
+            var session = sessionOverride || (context && context.documentSession);
 
             if (
                 session
@@ -2964,6 +2986,90 @@
                     value: value
                 };
             }
+        };
+    }
+
+    function activateReactImageUpload(root, textarea, documentSession, context) {
+        var bridgeApi = window.EasyMDEReactImageUpload;
+        var bridge;
+        var cleanup;
+        var disposed = false;
+        var inputElement;
+
+        if (
+            !root
+            || typeof root.setAttribute !== 'function'
+            || !documentSession
+            || typeof documentSession.getInputElement !== 'function'
+        ) {
+            reportReactImageUploadFailure('react-image-upload-surface-invalid');
+            return null;
+        }
+        root.setAttribute('data-easymde-image-upload-owner', 'legacy');
+        if (!bridgeApi || typeof bridgeApi.prepare !== 'function') {
+            reportReactImageUploadFailure('react-image-upload-entry-unavailable');
+            return null;
+        }
+        inputElement = documentSession.getInputElement();
+        if (!inputElement || typeof inputElement.addEventListener !== 'function') {
+            reportReactImageUploadFailure('react-image-upload-target-invalid');
+            return null;
+        }
+        try {
+            bridge = bridgeApi.prepare({
+                enabled: !!(config.imageUpload && config.imageUpload.enabled),
+                endpoint: config.imageUploadUrl,
+                maxBytes: config.imageUpload && config.imageUpload.maxBytes,
+                nonce: config.nonce,
+                postId: context.root.data('post-id') || 0,
+                strings: {
+                    defaultAlt: getString('mediaDefaultAlt'),
+                    dropFailed: getString('imageDropFailed') || getString('imagePasteFailed'),
+                    dropTooLarge: getString('imageDropTooLarge') || getString('imagePasteTooLarge'),
+                    dropUploaded: getString('imageDropUploaded') || getString('imagePasteUploaded'),
+                    dropUploading: getString('imageDropUploading') || getString('imagePasteUploading'),
+                    pasteFailed: getString('imagePasteFailed'),
+                    pasteTooLarge: getString('imagePasteTooLarge'),
+                    pasteUploaded: getString('imagePasteUploaded'),
+                    pasteUploading: getString('imagePasteUploading')
+                }
+            });
+            if (!bridge || typeof bridge.activate !== 'function') {
+                throw new Error('react-image-upload-contract-invalid');
+            }
+            cleanup = bridge.activate({
+                document: createReactMediaPickerDocumentPort(textarea, context, documentSession),
+                target: inputElement,
+                onDiagnostic: reportReactImageUploadFailure,
+                onStatus: function (status) {
+                    if (
+                        !status
+                        || ['error', 'info', 'success'].indexOf(status.type) === -1
+                        || typeof status.message !== 'string'
+                    ) {
+                        reportReactImageUploadFailure('react-image-upload-status-invalid');
+                        return;
+                    }
+                    showFlash(context.flash, status.type, status.message);
+                }
+            });
+        } catch (error) {
+            reportReactImageUploadFailure('react-image-upload-activation-failed');
+            return null;
+        }
+        if (typeof cleanup !== 'function') {
+            reportReactImageUploadFailure('react-image-upload-cleanup-invalid');
+            return null;
+        }
+        root.setAttribute('data-easymde-image-upload-owner', 'react');
+
+        return function () {
+            if (disposed) {
+                return;
+            }
+            disposed = true;
+            cleanup();
+            root.setAttribute('data-easymde-image-upload-owner', 'legacy');
         };
     }
 
@@ -3845,6 +3951,12 @@
     }
 
     function reportReactMediaPickerFailure(code) {
+        if (window.console && typeof window.console.error === 'function') {
+            window.console.error('[EasyMDE] ' + code);
+        }
+    }
+
+    function reportReactImageUploadFailure(code) {
         if (window.console && typeof window.console.error === 'function') {
             window.console.error('[EasyMDE] ' + code);
         }
@@ -5028,6 +5140,7 @@
             var inputElement = session.document.getInputElement();
             var scrollElement = session.document.getScrollElement();
             var nextScrollSyncCleanup;
+            var nextImageUploadCleanup;
 
             if (
                 !inputElement
@@ -5039,19 +5152,40 @@
 
             nextScrollSyncCleanup = bindScrollSync(scrollElement, context.preview[0]);
             try {
-                bindLazyImagePasteUpload($source[0], $root, $flash, inputElement);
+                nextImageUploadCleanup = activateReactImageUpload(
+                    $root[0],
+                    $source[0],
+                    session.document,
+                    context
+                );
+                if (!nextImageUploadCleanup) {
+                    throw new Error('react-image-upload-consumer-preflight-failed');
+                }
             } catch (error) {
                 nextScrollSyncCleanup();
                 throw error;
             }
 
-            if (typeof context.scrollSyncCleanup === 'function') {
-                context.scrollSyncCleanup();
+            try {
+                if (typeof context.scrollSyncCleanup === 'function') {
+                    context.scrollSyncCleanup();
+                }
+            } catch (error) {
+                nextImageUploadCleanup();
+                nextScrollSyncCleanup();
+                throw error;
             }
+            releaseLazyImagePasteUpload($source[0]);
             context.sourceScrollElement = scrollElement;
             context.scrollSyncCleanup = nextScrollSyncCleanup;
+            context.normalImageUploadCleanup = nextImageUploadCleanup;
         };
         context.onDocumentSourceDisposed = function () {
+            if (typeof context.normalImageUploadCleanup === 'function') {
+                context.normalImageUploadCleanup();
+                context.normalImageUploadCleanup = null;
+            }
+            bindLazyImagePasteUpload($source[0], $root, $flash);
             context.sourceScrollElement = $source[0];
             restoreLegacyDocumentSource(context, $source[0], $preview[0]);
         };
@@ -5154,6 +5288,7 @@
         window.EasyMDETestHooks.afterShellPaint = afterShellPaint;
         window.EasyMDETestHooks.copyWechat = copyWechat;
         window.EasyMDETestHooks.bindLazyImagePasteUpload = bindLazyImagePasteUpload;
+        window.EasyMDETestHooks.releaseLazyImagePasteUpload = releaseLazyImagePasteUpload;
         window.EasyMDETestHooks.hydrateInitialPreview = hydrateInitialPreview;
         window.EasyMDETestHooks.ensureImagePasteBound = ensureImagePasteBound;
         window.EasyMDETestHooks.openMediaPicker = openMediaPicker;
@@ -5175,6 +5310,7 @@
         window.EasyMDETestHooks.activateReactFontControls = activateReactFontControls;
         window.EasyMDETestHooks.activateReactAppearance = activateReactAppearance;
         window.EasyMDETestHooks.activateReactMediaPicker = activateReactMediaPicker;
+        window.EasyMDETestHooks.activateReactImageUpload = activateReactImageUpload;
         window.EasyMDETestHooks.createReactMediaPickerDocumentPort = createReactMediaPickerDocumentPort;
         window.EasyMDETestHooks.applyThemeFontDefaults = applyThemeFontDefaults;
         window.EasyMDETestHooks.replaceFontState = replaceFontState;

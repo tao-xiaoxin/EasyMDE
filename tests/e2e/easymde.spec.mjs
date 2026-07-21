@@ -646,6 +646,13 @@ test.describe('EasyMDE editor workflows', () => {
 
   test('hands the normal document session to React with one visible source and a fresh native bridge', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
+    const imageUploadRequests = [];
+
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/media')) {
+        imageUploadRequests.push(request);
+      }
+    });
 
     await login(page, user);
     await openEasyMdeNewPost(page);
@@ -662,6 +669,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(sourcePane).toHaveAttribute('data-easymde-document-owner', 'react');
     await expect(editor).toHaveAttribute('data-easymde-preview-request-owner', 'react');
     await expect(editor).toHaveAttribute('data-easymde-preview-surface-owner', 'react');
+    await expect(editor).toHaveAttribute('data-easymde-image-upload-owner', 'react');
     await expect(reactSource).toBeVisible();
     await expect(sourceEditor).toHaveAttribute('contenteditable', 'true');
     await expect(nativeSource).toBeHidden();
@@ -718,6 +726,9 @@ test.describe('EasyMDE editor workflows', () => {
     await sourceEditor.fill(beforeRejectedDrop);
     await expect(nativeSource).toHaveValue(beforeRejectedDrop);
     await expect(sourceEditor).toHaveText(beforeRejectedDrop);
+    const rejectedUploadResponse = page.waitForResponse(
+      (response) => new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/media')
+    );
     await sourceEditor.evaluate((editor) => {
       const transfer = new DataTransfer();
       transfer.items.add(new File(
@@ -731,11 +742,41 @@ test.describe('EasyMDE editor workflows', () => {
         dataTransfer: transfer
       }));
     });
+    expect((await rejectedUploadResponse).status()).toBe(415);
     await expect(page.locator('.easymde-editor-flash')).toContainText(
       await page.evaluate(() => window.EasyMDEConfig.strings.imageDropFailed)
     );
     await expect(nativeSource).toHaveValue(beforeRejectedDrop);
     await expect(sourceEditor).toHaveText(beforeRejectedDrop);
+    expect(imageUploadRequests).toHaveLength(1);
+
+    const beforeAcceptedDrop = 'Before accepted image drop.';
+    await sourceEditor.fill(beforeAcceptedDrop);
+    await sourceEditor.press('End');
+    const acceptedUploadResponse = page.waitForResponse(
+      (response) => new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/media')
+    );
+    await sourceEditor.evaluate((source) => {
+      const binary = atob(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+      );
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([bytes], 'synthetic-pixel.png', { type: 'image/png' }));
+      source.dispatchEvent(new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: transfer
+      }));
+    });
+    expect((await acceptedUploadResponse).ok()).toBe(true);
+    await expect(page.locator('.easymde-editor-flash')).toContainText(
+      await page.evaluate(() => window.EasyMDEConfig.strings.imageDropUploaded)
+    );
+    await expect(nativeSource).toHaveValue(/^Before accepted image drop\.\!\[synthetic pixel\]\(.+\)$/);
+    await expect(sourceEditor).toBeFocused();
+    expect(imageUploadRequests).toHaveLength(2);
+    expect(await page.evaluate(() => typeof window.EasyMDEImagePaste)).toBe('undefined');
   });
 
   test('rejects an older normal preview response after a newer React request wins', async ({ page }, testInfo) => {
@@ -2239,6 +2280,29 @@ test.describe('EasyMDE editor workflows', () => {
     await enterImmersiveWithKeyboard(page);
 
     const source = page.locator('.easymde-immersive-workspace__source');
+    await source.fill('Legacy drop ');
+    await source.press('End');
+    const legacyDropResponse = page.waitForResponse(
+      (response) => new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/media')
+    );
+    await source.evaluate((textarea) => {
+      const binary = atob(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+      );
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([bytes], 'immersive-pixel.png', { type: 'image/png' }));
+      textarea.dispatchEvent(new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: transfer
+      }));
+    });
+    expect((await legacyDropResponse).ok()).toBe(true);
+    await expect(source).toHaveValue(/^Legacy drop !\[immersive pixel\]\(.+\)$/);
+    await expect(source).toBeFocused();
+    expect(await page.evaluate(() => typeof window.EasyMDEImagePaste)).toBe('object');
+
     await source.fill('before IMAGE after');
     await source.evaluate((field) => {
       field.focus();

@@ -312,6 +312,8 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $this->assertSame(200, $list->get_status());
         $this->assertSame($revision_id, $list->get_data()['revisions'][0]['id']);
         $this->assertSame('manual', $list->get_data()['revisions'][0]['type']);
+        $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/', $list->get_data()['revisions'][0]['date']);
+        $this->assertNotSame('', $list->get_data()['revisions'][0]['date_label']);
         $this->assertSame(200, $detail->get_status());
         $this->assertStringContainsString('<h1', $detail->get_data()['html']);
         $this->assertStringContainsString('Revision source', $detail->get_data()['html']);

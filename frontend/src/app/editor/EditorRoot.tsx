@@ -23,6 +23,7 @@ import type { ImageUploadBootstrap } from '../../contracts/bootstrap/image-uploa
 import type { EditorLayoutBootstrap } from '../../contracts/bootstrap/editor-layout-bootstrap';
 import type { MediaPickerBootstrap } from '../../contracts/bootstrap/media-picker-bootstrap';
 import type { PublishingBootstrap } from '../../contracts/bootstrap/publishing-bootstrap';
+import type { RevisionsBootstrap } from '../../contracts/bootstrap/revisions-bootstrap';
 import type { ToolbarBootstrap } from '../../contracts/bootstrap/toolbar-bootstrap';
 import type { WechatExportBootstrap } from '../../contracts/bootstrap/wechat-export-bootstrap';
 import type { AppearancePort } from '../../contracts/ports/appearance-port';
@@ -31,6 +32,7 @@ import type { ImageUploadPort } from '../../contracts/ports/image-upload-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type { NativeSubmissionPort } from '../../contracts/ports/native-submission-port';
 import type { PublishingPort } from '../../contracts/ports/publishing-port';
+import type { RevisionsPort } from '../../contracts/ports/revisions-port';
 import type {
   MediaPickerDocumentPort,
   MediaPickerFramePort
@@ -64,6 +66,10 @@ import {
   PublishingControls,
   type PublishingControlsSession
 } from '../../features/publishing/ui/PublishingControls';
+import {
+  RevisionsControls,
+  type RevisionsControlsSession
+} from '../../features/revisions/ui/RevisionsControls';
 import {
   createLocalDraftSession,
   type LocalDraftSession
@@ -108,6 +114,8 @@ export type EditorRootProps = Readonly<{
   previewPort: PreviewRequestPort;
   publishing: PublishingBootstrap;
   publishingPort: PublishingPort;
+  revisions: RevisionsBootstrap;
+  revisionsPort: RevisionsPort;
   scrollPort: PreviewScrollPort;
   scrollSyncPort: ScrollSyncPort;
   submissionField: HTMLTextAreaElement;
@@ -304,6 +312,7 @@ export function EditorRoot(props: EditorRootProps) {
   const toolbarSessionRef = useRef<EditorToolbarSession | null>(null);
   const previewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
   const publishingSessionRef = useRef<PublishingControlsSession | null>(null);
+  const revisionsSessionRef = useRef<RevisionsControlsSession | null>(null);
   const previewRevisionRef = useRef(0);
   const previewAppearanceRef = useRef(props.appearance.state);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
@@ -318,6 +327,7 @@ export function EditorRoot(props: EditorRootProps) {
   const [draftCandidate, setDraftCandidate] = useState(false);
   const [editorStatus, setEditorStatus] = useState<ImageUploadStatus | null>(null);
   const [previewRuntimeReady, setPreviewRuntimeReady] = useState(false);
+  const [revisionCodeTheme, setRevisionCodeTheme] = useState(props.appearance.state.codeTheme);
   const [viewMode, setViewMode] = useState<EditorViewMode>('split');
   const wechatSession = useMemo(() => createWechatExportSession({
     clipboard: props.wechatClipboard,
@@ -340,6 +350,7 @@ export function EditorRoot(props: EditorRootProps) {
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
     publishingSessionRef.current?.close(false);
+    revisionsSessionRef.current?.close(false);
   }, []);
   const schedulePreview = useCallback((immediate = false) => {
     const runtime = previewRuntimeRef.current;
@@ -363,12 +374,14 @@ export function EditorRoot(props: EditorRootProps) {
       submissionStateRef.current = { ...submissionStateRef.current, ...state };
       documentSession?.replaceSubmissionState(submissionStateRef.current);
       previewAppearanceRef.current = state;
+      setRevisionCodeTheme(state.codeTheme);
       schedulePreview(true);
     },
     closeOtherPopovers: () => {
       toolbarSessionRef.current?.closePopovers();
       fontControlsSessionRef.current?.close();
       publishingSessionRef.current?.close(false);
+      revisionsSessionRef.current?.close(false);
       props.appearancePort.closeOtherPopovers();
     },
     saveCustomCss: async (input) => {
@@ -380,6 +393,7 @@ export function EditorRoot(props: EditorRootProps) {
         };
         documentSession?.replaceSubmissionState(submissionStateRef.current);
         previewAppearanceRef.current = result.snapshot.state;
+        setRevisionCodeTheme(result.snapshot.state.codeTheme);
         schedulePreview(true);
       }
       return result;
@@ -395,6 +409,7 @@ export function EditorRoot(props: EditorRootProps) {
       toolbarSessionRef.current?.closePopovers();
       appearanceSessionRef.current?.close();
       publishingSessionRef.current?.close(false);
+      revisionsSessionRef.current?.close(false);
       props.fontControlsPort.closeOtherPopovers();
     }
   }), [documentSession, props.fontControlsPort]);
@@ -414,6 +429,16 @@ export function EditorRoot(props: EditorRootProps) {
     toolbarSessionRef.current?.closePopovers();
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
+    revisionsSessionRef.current?.close(false);
+  }, []);
+  const handleRevisionsReady = useCallback((session: RevisionsControlsSession) => {
+    revisionsSessionRef.current = session;
+  }, []);
+  const handleRevisionsOpen = useCallback(() => {
+    toolbarSessionRef.current?.closePopovers();
+    appearanceSessionRef.current?.close();
+    fontControlsSessionRef.current?.close();
+    publishingSessionRef.current?.close(false);
   }, []);
   const openMediaPicker = useCallback((session: EditorDocumentSession) => {
     if (mediaOperationRef.current) {
@@ -583,6 +608,16 @@ export function EditorRoot(props: EditorRootProps) {
             onFailure={() => props.onFailure('react-editor-fonts-failed')}
             onReady={handleFontControlsReady}
             port={fontControlsPort}
+          />
+          <RevisionsControls
+            bootstrap={props.revisions}
+            codeTheme={revisionCodeTheme}
+            enhancementPort={props.enhancementPort}
+            isDirty={() => documentSession?.getSnapshot().dirty ?? false}
+            onDiagnostic={props.onFailure}
+            onOpen={handleRevisionsOpen}
+            onReady={handleRevisionsReady}
+            port={props.revisionsPort}
           />
           <PublishingControls
             bootstrap={props.publishing}

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { editorLayoutBootstrapFixture } from '../../test/editor-layout-bootstrap-fixture';
 import { previewEnhancementBootstrapFixture } from '../../test/preview-enhancement-bootstrap-fixture';
 import { publishingBootstrapFixture } from '../../test/publishing-bootstrap-fixture';
+import { revisionsBootstrapFixture } from '../../test/revisions-bootstrap-fixture';
 import { parseEditorRootBootstrap } from './editor-root-bootstrap';
 
 function validBootstrap() {
@@ -108,6 +109,7 @@ function validBootstrap() {
     },
     previewEnhancement: previewEnhancementBootstrapFixture,
     publishing: publishingBootstrapFixture,
+    revisions: revisionsBootstrapFixture,
     strings: {
       preview: 'Preview',
       source: 'Markdown',
@@ -162,6 +164,7 @@ describe('parseEditorRootBootstrap', () => {
       },
       previewEnhancement: previewEnhancementBootstrapFixture,
       publishing: publishingBootstrapFixture,
+      revisions: revisionsBootstrapFixture,
       mediaPicker: validBootstrap().mediaPicker,
       toolbar: expect.objectContaining({
         headingsLabel: 'Headings',
@@ -183,6 +186,7 @@ describe('parseEditorRootBootstrap', () => {
     [{ ...validBootstrap(), mediaPicker: null }, 'editor-root-media-picker-invalid'],
     [{ ...validBootstrap(), previewEnhancement: null }, 'editor-root-preview-enhancement-invalid'],
     [{ ...validBootstrap(), publishing: null }, 'editor-root-publishing-invalid'],
+    [{ ...validBootstrap(), revisions: null }, 'editor-root-revisions-invalid'],
     [{ ...validBootstrap(), toolbar: null }, 'editor-root-toolbar-invalid'],
     [{ ...validBootstrap(), wechatExport: null }, 'editor-root-wechat-export-invalid'],
     [{ ...validBootstrap(), strings: { ...validBootstrap().strings, source: '' } }, 'editor-root-label-invalid'],

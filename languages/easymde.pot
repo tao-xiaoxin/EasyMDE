@@ -1257,7 +1257,7 @@ msgstr ""
 msgid "The selected revision is too large to preview."
 msgstr ""
 
-#: src/Rest/RevisionController.php:172
+#: src/Rest/RevisionController.php:183
 msgid "The requested revision could not be found."
 msgstr ""
 

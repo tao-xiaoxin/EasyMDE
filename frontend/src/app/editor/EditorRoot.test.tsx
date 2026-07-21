@@ -9,6 +9,7 @@ import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-p
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
 import { editorLayoutBootstrapFixture } from '../../test/editor-layout-bootstrap-fixture';
 import { publishingBootstrapFixture } from '../../test/publishing-bootstrap-fixture';
+import { revisionsBootstrapFixture } from '../../test/revisions-bootstrap-fixture';
 import { createWordPressNativeSubmissionPort } from '../../integrations/wordpress/native-form/wordpress-native-submission';
 import { EditorRoot, type EditorRootProps } from './EditorRoot';
 import { EditorRootErrorBoundary } from './EditorRootErrorBoundary';
@@ -213,6 +214,13 @@ function fixture(): EditorRootProps & Readonly<{
       requestSubmit: vi.fn(() => ({ status: 'requested' as const })),
       selectFeaturedImage: vi.fn().mockResolvedValue(null)
     },
+    revisions: revisionsBootstrapFixture,
+    revisionsPort: {
+      confirmNavigation: vi.fn(() => true),
+      getRevision: vi.fn().mockResolvedValue({ features: {}, html: '<p>Revision</p>', id: 11 }),
+      listRevisions: vi.fn().mockResolvedValue([]),
+      openRevision: vi.fn()
+    },
     scrollPort: {
       capture: () => ({ left: 0, ratio: 0, top: 0 }),
       restore: vi.fn()
@@ -353,6 +361,20 @@ describe('EditorRoot', () => {
       expect.objectContaining({ status: 'draft' }),
       'primary'
     );
+  });
+
+  it('composes revision history without turning navigation into a browser-side restore', async () => {
+    const props = fixture();
+    vi.mocked(props.revisionsPort.listRevisions).mockResolvedValue([
+      { date: '2026-07-21T12:34:56+08:00', dateLabel: '2026年7月21日 12:34', id: 11, title: 'Saved version', type: 'manual' }
+    ]);
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(view.getByRole('button', { name: 'History' }));
+    await waitFor(() => expect(props.revisionsPort.getRevision).toHaveBeenCalledWith(11, expect.any(AbortSignal)));
+    await waitFor(() => expect((view.getByRole('button', { name: 'Restore this version' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(view.getByRole('button', { name: 'Restore this version' }));
+    expect(props.revisionsPort.openRevision).toHaveBeenCalledWith(11);
   });
 
   it('reports a render failure without leaving a partial editor owner', () => {

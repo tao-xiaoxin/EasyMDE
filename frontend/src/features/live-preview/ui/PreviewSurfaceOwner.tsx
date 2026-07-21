@@ -21,6 +21,7 @@ import {
   type PreviewEnhancementPort
 } from '../ports/preview-enhancement-port';
 import type { PreviewScrollPort, PreviewScrollSnapshot } from '../ports/preview-scroll-port';
+import { SafePreviewHtmlSink } from './SafePreviewHtmlSink';
 
 type PreviewMessages = Readonly<{
   empty: string;
@@ -195,38 +196,24 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   const busy = 'loading' === state.kind || ('html' === state.kind && ('enhancing' === state.phase || 'loading' === state.phase));
   const failed = 'html' === state.kind && 'failed' === state.phase;
 
-  if ('html' === state.kind) {
-    return (
-      <article
-        aria-busy={busy ? 'true' : 'false'}
-        aria-live="polite"
-        data-easymde-preview-error={failed ? '1' : undefined}
-        data-easymde-preview-html-sink="1"
-        data-easymde-preview-refreshing={busy ? '1' : undefined}
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: This is the sole sink for PHP-rendered, server-sanitized Preview HTML.
-        dangerouslySetInnerHTML={{ __html: state.html }}
-        ref={surfaceRef}
-      />
-    );
-  }
-
   return (
-    <article
-      aria-busy={busy ? 'true' : 'false'}
-      aria-live="polite"
-      data-easymde-preview-refreshing={busy ? '1' : undefined}
-      ref={surfaceRef}
+    <SafePreviewHtmlSink
+      ariaBusy={busy}
+      error={failed}
+      html={'html' === state.kind ? state.html : null}
+      refreshing={busy}
+      surfaceRef={surfaceRef}
     >
-      {'empty' === state.kind ? (
+      {'html' !== state.kind && 'empty' === state.kind ? (
         <p className="easymde-preview-empty">{props.messages.empty}</p>
-      ) : 'error' === state.kind ? (
+      ) : 'html' !== state.kind && 'error' === state.kind ? (
         <p className="easymde-preview-error">{props.messages.error}</p>
-      ) : (
+      ) : 'html' !== state.kind ? (
         <p className="easymde-preview-pending" role="status">
           {props.messages.rendering}
         </p>
-      )}
-    </article>
+      ) : null}
+    </SafePreviewHtmlSink>
   );
 }
 

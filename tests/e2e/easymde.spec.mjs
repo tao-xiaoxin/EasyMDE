@@ -608,6 +608,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(editorBootstrapUrl.searchParams.get('ver')).toMatch(/^[a-f0-9]{16}$/);
     await expect(toolbar).toHaveAttribute('data-easymde-main-toolbar-owner', 'react');
     await expect(toolbar).toHaveAttribute('data-easymde-toolbar-command-owner', 'react');
+    await expect(toolbar).toHaveAttribute('data-easymde-toolbar-shortcut-owner', 'react');
     await expect(reactMain).toBeVisible();
     await expect(reactMain.locator('[data-easymde-react-toolbar="ready"]')).toHaveCount(1);
     await expect(legacyMain).toBeHidden();
@@ -866,20 +867,60 @@ test.describe('EasyMDE editor workflows', () => {
     expect(requestCount).toBe(2);
   });
 
-  test('synchronizes legacy shortcut, draft restore, and submit writes into the React document session', async ({ page }, testInfo) => {
+  test('synchronizes React shortcut, draft restore, and submit writes into the React document session', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = `React bridge ${testSlug(testInfo)}`;
     const restoredMarkdown = `# ${title}\n\nRestored local draft.`;
+    const browserErrors = [];
+    const failedRequests = [];
+
+    page.on('console', (message) => {
+      if (['error', 'warning'].includes(message.type())) browserErrors.push(message.text());
+    });
+    page.on('pageerror', (error) => browserErrors.push(error.message));
+    page.on('requestfailed', (request) => {
+      const pathname = new URL(request.url()).pathname;
+      if (pathname.includes('/wp-content/plugins/easymde/') || pathname.includes('/wp-json/easymde/')) {
+        failedRequests.push(pathname);
+      }
+    });
 
     await login(page, user);
     await openEasyMdeNewPost(page);
     await expect(page.locator('#easymde-editor')).toHaveAttribute('data-easymde-local-draft-owner', 'react');
+    await expect(page.locator('#easymde-toolbar')).toHaveAttribute(
+      'data-easymde-toolbar-shortcut-owner',
+      'react'
+    );
 
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
     const nativeSource = page.locator('#easymde-source');
     const boldButton = page.locator('#easymde-toolbar-react-main [data-easymde-command="bold"]');
     const boldTitle = await boldButton.getAttribute('title');
     const usesCommandKey = !!boldTitle && boldTitle.includes('Cmd+B');
+
+    await sourceEditor.fill('excluded shortcut target');
+    const fontLabel = await page.evaluate(() => window.EasyMDEConfig.strings.font);
+    const fontButton = page
+      .locator('#easymde-toolbar-legacy-secondary')
+      .getByRole('button', { name: fontLabel, exact: true });
+    await fontButton.click();
+    const fontSelect = page.locator('#easymde-toolbar-react-font select').first();
+    await fontSelect.focus();
+    await fontSelect.press(usesCommandKey ? 'Meta+b' : 'Control+b');
+    await expect(nativeSource).toHaveValue('excluded shortcut target');
+    await page.keyboard.press('Escape');
+
+    await sourceEditor.fill('composition target');
+    await sourceEditor.dispatchEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: !usesCommandKey,
+      isComposing: true,
+      key: 'b',
+      metaKey: usesCommandKey
+    });
+    await expect(nativeSource).toHaveValue('composition target');
 
     await sourceEditor.fill('shortcut target');
     await sourceEditor.focus();
@@ -899,6 +940,8 @@ test.describe('EasyMDE editor workflows', () => {
       const value = window.localStorage.getItem(key);
       return value ? JSON.parse(value).content : null;
     })).toBe('**shortcut target**');
+    expect(browserErrors).toEqual([]);
+    expect(failedRequests).toEqual([]);
 
     await page.locator('#title').fill(title);
     const draftNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
@@ -3925,10 +3968,26 @@ test.describe('EasyMDE editor workflows', () => {
     await login(page, user);
     await openEasyMdeNewPost(page);
     await expect(page.locator('#easymde-editor')).toHaveAttribute('data-easymde-wechat-export-owner', 'react');
+    await expect(page.locator('#easymde-toolbar')).toHaveAttribute('data-easymde-toolbar-shortcut-owner', 'react');
     await page.locator('#title').fill(title);
     await fillMarkdownAndWaitForPreview(page, markdown, 'Current preview body.');
+    const wechatShortcut = await page.evaluate(() => {
+      window.__easymdeLegacyWechatCopies = 0;
+      window.EasyMDEWechatExporter.copy = () => {
+        window.__easymdeLegacyWechatCopies += 1;
+        return Promise.resolve(false);
+      };
+      const runtimePlatform = window.navigator.userAgentData?.platform || window.navigator.platform;
+      const platform = /Mac/i.test(runtimePlatform) ? 'mac' : 'win';
+      return window.EasyMDEConfig.shortcuts.copywechat[platform]
+        .replace(/Cmd/g, 'Meta')
+        .replace(/Ctrl/g, 'Control')
+        .replace(/Option/g, 'Alt');
+    });
     copyStarted = true;
-    await page.locator('[data-easymde-command="copywechat"]').click();
+    const sourceEditor = page.locator('.easymde-source-react .cm-content');
+    await sourceEditor.focus();
+    await page.keyboard.press(wechatShortcut);
 
     const copied = await page.waitForFunction(async () => {
       const writes = window.__easymdeClipboardWrites || [];
@@ -3954,6 +4013,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(html).not.toContain('onerror');
     expect(html).not.toContain('easymde-preview-error');
     expect(html).not.toContain('REST');
+    expect(await page.evaluate(() => window.__easymdeLegacyWechatCopies)).toBe(0);
     expect(copyRequests).toEqual([]);
     expect(consoleErrors).toEqual([]);
   });

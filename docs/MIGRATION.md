@@ -13,6 +13,12 @@ Selection direction, and Focus restoration. Its document Port follows the
 active normal document owner: the native textarea before the document-session
 handoff and the React document session afterward. Image intents delegate to the
 separate Media Picker owner rather than creating another media authority.
+The focused browser shortcut Adapter prepares without listening, then readiness
+removes the Legacy normal-editor command listener before activating React's
+single capture listener. It preserves the configured platform key matching,
+editor-root scoping, native source handling, input exclusion, command ordering,
+IME exclusion, and command delegation without creating another Save, Media, or
+Clipboard authority.
 
 The PHP editor shell renders separate React, legacy-main, and legacy-secondary
 containers. The legacy main Toolbar remains active while the React entry
@@ -22,13 +28,18 @@ usable, and teardown unmounts React before legacy code may clear or reuse its
 container.
 
 The legacy command engine remains the startup fallback and continues to serve
-the secondary Toolbar, Save, WeChat export, and the immersive Toolbar. The
-handoff publishes an explicit command owner only after the React session is
-ready; startup failure or teardown clears that session before restoring the
-legacy owner, so the two engines cannot mutate the normal document at the same
-time. This unit did not transfer draft storage, WeChat export, immersive
-writing, native submission, Save, Publish, or WordPress authority, and it
-removed no shared legacy implementation while those consumers remain.
+the secondary Toolbar and the immersive Toolbar. Legacy Popover dismissal is a
+separate retained listener so Font and Appearance startup fallback remains
+usable after the normal command-shortcut handoff. If React shortcut activation
+fails before any command can run, React detaches and the one Legacy command
+listener is restored; if Legacy listener cleanup throws, ownership is marked
+reload-required rather than claiming a successful handoff. The handoff
+publishes explicit command and shortcut owners only after the React session is
+ready, so the engines cannot mutate the normal document at the same time. Save,
+Media, and WeChat shortcuts continue to delegate to their established owners.
+This unit did not transfer draft storage, immersive writing, native submission,
+Save, Publish, or WordPress authority, and it removed no shared legacy
+implementation while those consumers remain.
 
 ## Normal Editor Document Session Ownership
 

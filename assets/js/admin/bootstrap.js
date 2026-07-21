@@ -4420,7 +4420,9 @@
     }
 
     function bindShortcuts($root, textarea, context) {
-        document.addEventListener('keydown', function (event) {
+        var active = true;
+
+        function handleKeydown(event) {
             var shortcut;
             var matchedCommand = null;
 
@@ -4430,9 +4432,6 @@
 
             shortcut = normalizeEventShortcut(event);
             if (!shortcut) {
-                if ('Escape' === normalizeEventKey(event.key)) {
-                    closePopovers();
-                }
                 return;
             }
 
@@ -4452,11 +4451,46 @@
             event.preventDefault();
             event.stopPropagation();
             executeCommand(matchedCommand, context);
-        }, true);
+        }
 
-        document.addEventListener('click', function () {
+        document.addEventListener('keydown', handleKeydown, true);
+
+        return function () {
+            if (!active) {
+                return;
+            }
+            active = false;
+            document.removeEventListener('keydown', handleKeydown, true);
+        };
+    }
+
+    function bindPopoverDismissal($root, textarea) {
+        var active = true;
+
+        function handleKeydown(event) {
+            if (
+                shouldHandleShortcut(event, $root, textarea)
+                && 'Escape' === normalizeEventKey(event.key)
+            ) {
+                closePopovers();
+            }
+        }
+
+        function handleClick() {
             closePopovers();
-        });
+        }
+
+        document.addEventListener('keydown', handleKeydown, true);
+        document.addEventListener('click', handleClick);
+
+        return function () {
+            if (!active) {
+                return;
+            }
+            active = false;
+            document.removeEventListener('keydown', handleKeydown, true);
+            document.removeEventListener('click', handleClick);
+        };
     }
 
     function executeLegacyCommand(commandId, context) {
@@ -4517,7 +4551,7 @@
         }
     }
 
-    function executeCommand(commandId, context) {
+    function executeToolbarExternalCommand(commandId, context) {
         var command = getCommand(commandId);
 
         if (command && command.action === 'copyWechat') {
@@ -4534,6 +4568,11 @@
                 return Promise.resolve(false);
             }
         }
+
+        return executeLegacyCommand(commandId, context);
+    }
+
+    function executeCommand(commandId, context) {
         if (
             context
             && context.reactToolbarCommandSession
@@ -4544,7 +4583,7 @@
             return context.reactToolbarCommandSession.execute(commandId);
         }
 
-        return executeLegacyCommand(commandId, context);
+        return executeToolbarExternalCommand(commandId, context);
     }
 
     function reportReactToolbarFailure(code) {
@@ -4850,10 +4889,29 @@
         var pagehideRegistered = false;
         var commandSession = null;
         var documentPort;
+        var shortcutRollbackBlocked = false;
+
+        function restoreLegacyShortcuts() {
+            if (
+                context
+                && typeof context.shortcutCleanup !== 'function'
+                && typeof context.bindLegacyShortcuts === 'function'
+            ) {
+                context.shortcutCleanup = context.bindLegacyShortcuts();
+            }
+            toolbar.setAttribute('data-easymde-toolbar-shortcut-owner', 'legacy');
+        }
 
         function restoreLegacyOwner() {
             if (context && context.reactToolbarCommandSession === commandSession) {
                 context.reactToolbarCommandSession = null;
+            }
+            if (commandSession && typeof commandSession.dispose === 'function') {
+                commandSession.dispose();
+                commandSession = null;
+            }
+            if (!shortcutRollbackBlocked) {
+                restoreLegacyShortcuts();
             }
             reactMain.hidden = true;
             legacyMain.hidden = false;
@@ -4936,9 +4994,11 @@
             cleanup = reactToolbar.mount({
                 container: reactMain,
                 document: documentPort,
+                editorRoot: context && context.root ? context.root[0] : null,
                 executeExternalCommand: function (commandId) {
-                    return executeLegacyCommand(commandId, context);
+                    return executeToolbarExternalCommand(commandId, context);
                 },
+                legacySource: context ? context.textarea : null,
                 onFailure: function () {
                     if (disposed || failed) {
                         return;
@@ -4956,6 +5016,8 @@
 
                     if (
                         !nextSession
+                        || typeof nextSession.activateShortcuts !== 'function'
+                        || typeof nextSession.dispose !== 'function'
                         || typeof nextSession.execute !== 'function'
                         || typeof nextSession.owns !== 'function'
                     ) {
@@ -4967,12 +5029,48 @@
                     }
 
                     commandSession = nextSession;
+                    if (
+                        !context
+                        || typeof context.shortcutCleanup !== 'function'
+                        || typeof context.bindLegacyShortcuts !== 'function'
+                    ) {
+                        failed = true;
+                        restoreLegacyOwner();
+                        reportReactToolbarFailure('react-toolbar-shortcut-owner-invalid');
+                        scheduleCleanup();
+                        return;
+                    }
+                    try {
+                        context.shortcutCleanup();
+                        context.shortcutCleanup = null;
+                    } catch (error) {
+                        failed = true;
+                        shortcutRollbackBlocked = true;
+                        commandSession.dispose();
+                        commandSession = null;
+                        toolbar.setAttribute('data-easymde-toolbar-shortcut-owner', 'react-reload-required');
+                        reportReactToolbarFailure('react-toolbar-shortcut-cleanup-failed');
+                        scheduleCleanup();
+                        return;
+                    }
+                    try {
+                        commandSession.activateShortcuts();
+                    } catch (error) {
+                        failed = true;
+                        commandSession.dispose();
+                        commandSession = null;
+                        restoreLegacyShortcuts();
+                        reportReactToolbarFailure('react-toolbar-shortcut-activation-failed');
+                        scheduleCleanup();
+                        return;
+                    }
                     context.reactToolbarCommandSession = commandSession;
                     ready = true;
                     legacyMain.hidden = true;
                     reactMain.hidden = false;
                     toolbar.setAttribute('data-easymde-main-toolbar-owner', 'react');
                     toolbar.setAttribute('data-easymde-toolbar-command-owner', 'react');
+                    toolbar.setAttribute('data-easymde-toolbar-shortcut-owner', 'react');
                 },
                 platform: getIsMac() ? 'mac' : 'win'
             });
@@ -5798,6 +5896,11 @@
             context.flash = $flash;
             reportStartupConfigErrors($flash);
             context.reactMediaPickerCleanup = activateReactMediaPicker($root[0], context);
+            context.bindLegacyShortcuts = function () {
+                return bindShortcuts($root, $source[0], context);
+            };
+            context.popoverDismissalCleanup = bindPopoverDismissal($root, $source[0]);
+            context.shortcutCleanup = context.bindLegacyShortcuts();
             $draftStatus = createToolbar($toolbar, context);
             if (preparedReactWechatExport) {
                 context.reactWechatExportCleanup = activateReactWechatExport(
@@ -5816,7 +5919,6 @@
             }
             createSideActions($sideActions, context);
             context.scrollSyncCleanup = bindScrollSync($source[0], $preview[0]);
-            bindShortcuts($root, $source[0], context);
             bindImmersiveModeShortcuts(context);
             $root.attr('data-easymde-shell-ready', '1');
         }
@@ -5997,6 +6099,8 @@
         window.EasyMDETestHooks.currentPreviewSignature = currentPreviewSignature;
         window.EasyMDETestHooks.isPreviewReady = isPreviewReady;
         window.EasyMDETestHooks.executeCommand = executeCommand;
+        window.EasyMDETestHooks.bindShortcuts = bindShortcuts;
+        window.EasyMDETestHooks.bindPopoverDismissal = bindPopoverDismissal;
         window.EasyMDETestHooks.bindScrollSync = bindScrollSync;
         window.EasyMDETestHooks.replaceScrollSyncBinding = replaceScrollSyncBinding;
         window.EasyMDETestHooks.prepareReactScrollSync = prepareReactScrollSync;

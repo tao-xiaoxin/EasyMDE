@@ -590,6 +590,7 @@ function createElement(tagName) {
 
 function createDocumentStub(initialElements = {}) {
   const elements = new Map(Object.entries(initialElements));
+  const listeners = new Map();
 
   return {
     body: {},
@@ -618,13 +619,28 @@ function createDocumentStub(initialElements = {}) {
         node.parentNode = null;
       }
     },
-    addEventListener() {},
+    addEventListener(type, listener) {
+      const registered = listeners.get(type) || [];
+      registered.push(listener);
+      listeners.set(type, registered);
+    },
     createElement,
+    dispatchEvent(event) {
+      for (const listener of listeners.get(event.type) || []) {
+        listener(event);
+      }
+    },
     getElementById(id) {
       return elements.get(id) || null;
     },
     getElementsByTagName(name) {
       return name === 'head' ? [this.head] : [];
+    },
+    listenerCount(type) {
+      return (listeners.get(type) || []).length;
+    },
+    removeEventListener(type, listener) {
+      listeners.set(type, (listeners.get(type) || []).filter((entry) => entry !== listener));
     }
   };
 }
@@ -1833,7 +1849,20 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
   const reactMain = createToolbarOwnerElement();
   const legacyMain = createToolbarOwnerElement();
   const executed = [];
+  const wechatCopies = [];
+  const shortcutEvents = [];
+  let commandSessionActive = true;
   const commandSession = {
+    activateShortcuts() {
+      shortcutEvents.push('react-activate');
+    },
+    dispose() {
+      if (!commandSessionActive) {
+        return;
+      }
+      commandSessionActive = false;
+      shortcutEvents.push('react-dispose');
+    },
     execute(commandId) {
       executed.push(commandId);
       return true;
@@ -1882,6 +1911,7 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
           mount(options) {
             mountOptions = options;
             return () => {
+              commandSession.dispose();
               cleanupCalls += 1;
             };
           }
@@ -1900,6 +1930,14 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
           group: 'format',
           prefix: '**',
           suffix: '**'
+        },
+        {
+          id: 'copywechat',
+          label: 'Copy to WeChat',
+          icon: 'copy',
+          surface: 'main',
+          action: 'copyWechat',
+          group: 'export'
         }
       ],
       shortcuts: {},
@@ -1919,7 +1957,22 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
     }
   });
 
-  const context = { textarea };
+  const editorRoot = createToolbarOwnerElement();
+  const context = {
+    bindLegacyShortcuts() {
+      shortcutEvents.push('legacy-bind');
+      return () => shortcutEvents.push('legacy-dispose');
+    },
+    root: [editorRoot],
+    reactWechatExportSession: {
+      copy() {
+        wechatCopies.push('react-copy');
+        return 'react-copy-result';
+      }
+    },
+    shortcutCleanup: () => shortcutEvents.push('legacy-dispose'),
+    textarea
+  };
   const cleanup = loaded.hooks.activateReactToolbar(toolbar, reactMain, legacyMain, context);
 
   assert.equal(toolbar.getAttribute('data-easymde-main-toolbar-owner'), 'legacy');
@@ -1928,6 +1981,8 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
   assert.equal(legacyMain.hidden, false);
   assert.equal(typeof cleanup, 'function');
   assert.equal(pagehideListeners.size, 1);
+  assert.equal(mountOptions.editorRoot, editorRoot);
+  assert.equal(mountOptions.legacySource, textarea);
 
   assert.deepEqual(
     JSON.parse(JSON.stringify(mountOptions.document.getSnapshot())),
@@ -1942,6 +1997,10 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
   assert.equal(toolbar.getAttribute('data-easymde-toolbar-command-owner'), 'react');
   assert.equal(reactMain.hidden, false);
   assert.equal(legacyMain.hidden, true);
+  assert.equal(toolbar.getAttribute('data-easymde-toolbar-shortcut-owner'), 'react');
+  assert.deepEqual(shortcutEvents, ['legacy-dispose', 'react-activate']);
+  assert.equal(mountOptions.executeExternalCommand('copywechat'), 'react-copy-result');
+  assert.deepEqual(wechatCopies, ['react-copy']);
 
   assert.equal(loaded.hooks.executeCommand('bold', context), true);
   assert.deepEqual(executed, ['bold']);
@@ -1954,6 +2013,11 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
   await flushMicrotasks();
   assert.equal(cleanupCalls, 1, 'the failed React root should be unmounted');
   assert.equal(pagehideListeners.size, 0, 'failed activation should release its pagehide listener');
+  assert.deepEqual(
+    shortcutEvents,
+    ['legacy-dispose', 'react-activate', 'react-dispose', 'legacy-bind'],
+    'React shortcuts must detach before Legacy shortcuts resume'
+  );
 
   mountOptions.onReady(commandSession);
   assert.equal(
@@ -1965,6 +2029,165 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
   cleanup();
   cleanup();
   assert.equal(cleanupCalls, 1);
+});
+
+test('normal shortcut handoff leaves Legacy popover dismissal independently active', () => {
+  const source = createSourceWrapper('Shortcut source')[0];
+  const loaded = loadBootstrap({
+    EasyMDEConfig: {
+      testHooks: true,
+      commands: [{
+        id: 'save',
+        label: 'Save',
+        icon: 'saved',
+        surface: 'side',
+        action: 'savePost',
+        group: 'save'
+      }],
+      shortcuts: { save: { mac: 'Cmd+S', win: 'Ctrl+S' } },
+      strings: {
+        headings: 'Headings',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      features: {},
+      themeOptions: { codeThemes: [], fontOptions: {}, state: {} }
+    }
+  });
+
+  const dismissalCleanup = loaded.hooks.bindPopoverDismissal([source], source);
+  const shortcutCleanup = loaded.hooks.bindShortcuts([source], source, {});
+  assert.equal(loaded.document.listenerCount('keydown'), 2);
+  assert.equal(loaded.document.listenerCount('click'), 1);
+  shortcutCleanup();
+  shortcutCleanup();
+  assert.equal(loaded.document.listenerCount('keydown'), 1);
+  assert.equal(loaded.document.listenerCount('click'), 1);
+  dismissalCleanup();
+  assert.equal(loaded.document.listenerCount('keydown'), 0);
+  assert.equal(loaded.document.listenerCount('click'), 0);
+});
+
+test('React shortcut activation failure restores one Legacy owner before exposing the toolbar', async () => {
+  let mountOptions;
+  const messages = [];
+  const shortcutEvents = [];
+  const toolbar = createToolbarOwnerElement();
+  const editorRoot = createToolbarOwnerElement();
+  const textarea = createSourceWrapper('Shortcut fallback')[0];
+  textarea.setSelectionRange = function () {};
+  const loaded = loadBootstrap({
+    console: { error: (message) => messages.push(message) },
+    EasyMDEReactToolbar: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => options.sessionDisposed?.();
+          }
+        };
+      }
+    }
+  });
+  const context = {
+    bindLegacyShortcuts() {
+      shortcutEvents.push('legacy-bind');
+      return () => shortcutEvents.push('legacy-dispose-again');
+    },
+    root: [editorRoot],
+    shortcutCleanup: () => shortcutEvents.push('legacy-dispose'),
+    textarea
+  };
+  loaded.hooks.activateReactToolbar(
+    toolbar,
+    createToolbarOwnerElement(),
+    createToolbarOwnerElement(),
+    context
+  );
+
+  mountOptions.onReady({
+    activateShortcuts() {
+      shortcutEvents.push('react-activate');
+      throw new Error('private activation detail');
+    },
+    dispose() {
+      shortcutEvents.push('react-dispose');
+    },
+    execute() { return true; },
+    owns() { return true; }
+  });
+  await flushMicrotasks();
+
+  assert.deepEqual(shortcutEvents, [
+    'legacy-dispose',
+    'react-activate',
+    'react-dispose',
+    'legacy-bind'
+  ]);
+  assert.equal(toolbar.getAttribute('data-easymde-toolbar-shortcut-owner'), 'legacy');
+  assert.deepEqual(messages, ['[EasyMDE] react-toolbar-shortcut-activation-failed']);
+  assert.equal(messages.some((message) => message.includes('private activation detail')), false);
+});
+
+test('Legacy shortcut cleanup failure requires reload without exposing a second owner', async () => {
+  let mountOptions;
+  let disposeCalls = 0;
+  let legacyBindCalls = 0;
+  const messages = [];
+  const toolbar = createToolbarOwnerElement();
+  const reactMain = createToolbarOwnerElement();
+  const legacyMain = createToolbarOwnerElement();
+  const textarea = createSourceWrapper('Shortcut cleanup failure')[0];
+  textarea.setSelectionRange = function () {};
+  const loaded = loadBootstrap({
+    console: { error: (message) => messages.push(message) },
+    EasyMDEReactToolbar: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    }
+  });
+  const context = {
+    bindLegacyShortcuts() {
+      legacyBindCalls += 1;
+      return () => {};
+    },
+    root: [createToolbarOwnerElement()],
+    shortcutCleanup() {
+      throw new Error('private cleanup detail');
+    },
+    textarea
+  };
+  loaded.hooks.activateReactToolbar(toolbar, reactMain, legacyMain, context);
+
+  mountOptions.onReady({
+    activateShortcuts() {
+      throw new Error('must not activate');
+    },
+    dispose() {
+      disposeCalls += 1;
+    },
+    execute() { return true; },
+    owns() { return true; }
+  });
+  await flushMicrotasks();
+
+  assert.equal(disposeCalls, 1);
+  assert.equal(legacyBindCalls, 0);
+  assert.equal(reactMain.hidden, true);
+  assert.equal(legacyMain.hidden, false);
+  assert.equal(
+    toolbar.getAttribute('data-easymde-toolbar-shortcut-owner'),
+    'react-reload-required'
+  );
+  assert.deepEqual(messages, ['[EasyMDE] react-toolbar-shortcut-cleanup-failed']);
+  assert.equal(messages.some((message) => message.includes('private cleanup detail')), false);
 });
 
 test('React toolbar startup failure keeps the legacy owner usable and reports a stable code', () => {

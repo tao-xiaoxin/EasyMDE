@@ -33,6 +33,10 @@ describe('createAdminEditorToolbarBridge', () => {
     const bridge = createAdminEditorToolbarBridge(bootstrap);
     const container = document.createElement('div');
     const onReady = vi.fn();
+    const editorRoot = document.createElement('div');
+    const legacySource = document.createElement('textarea');
+    editorRoot.append(container, legacySource);
+    document.body.append(editorRoot);
     let snapshot: ToolbarCommandDocumentSnapshot = {
       value: 'Toolbar',
       selection: { direction: 'backward' as const, end: 7, start: 0 }
@@ -49,7 +53,9 @@ describe('createAdminEditorToolbarBridge', () => {
           focus: vi.fn(),
           getSnapshot: () => snapshot
         },
+        editorRoot,
         executeExternalCommand: vi.fn(),
+        legacySource,
         onFailure: vi.fn(),
         onReady,
         platform: 'win'
@@ -57,7 +63,33 @@ describe('createAdminEditorToolbarBridge', () => {
     });
 
     expect(onReady).toHaveBeenCalledTimes(1);
+    const session = onReady.mock.calls[0]?.[0];
+    expect(session).toEqual(expect.objectContaining({
+      activateShortcuts: expect.any(Function),
+      dispose: expect.any(Function),
+      execute: expect.any(Function),
+      owns: expect.any(Function)
+    }));
     expect(container.querySelector('[data-easymde-react-toolbar]')).not.toBeNull();
+    legacySource.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: 'b'
+    }));
+    expect(snapshot.value).toBe('Toolbar');
+    session.activateShortcuts();
+    legacySource.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: 'b'
+    }));
+    expect(snapshot.value).toBe('**Toolbar**');
+    snapshot = {
+      value: 'Toolbar',
+      selection: { direction: 'backward' as const, end: 7, start: 0 }
+    };
     fireEvent.click(container.querySelector('[data-easymde-command="bold"]') as HTMLButtonElement);
     expect(snapshot).toEqual({
       value: '**Toolbar**',

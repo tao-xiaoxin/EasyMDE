@@ -655,6 +655,19 @@ test.describe('EasyMDE editor workflows', () => {
   test('hands the normal document session to React with one visible source and a fresh native bridge', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const imageUploadRequests = [];
+    const browserErrors = [];
+    const failedRequests = [];
+
+    page.on('console', (message) => {
+      if (['error', 'warning'].includes(message.type())) browserErrors.push(message.text());
+    });
+    page.on('pageerror', (error) => browserErrors.push(error.message));
+    page.on('requestfailed', (request) => {
+      const pathname = new URL(request.url()).pathname;
+      if (pathname.includes('/wp-content/plugins/easymde/') || pathname.includes('/wp-json/easymde/')) {
+        failedRequests.push(pathname);
+      }
+    });
 
     page.on('request', (request) => {
       if (new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/media')) {
@@ -677,6 +690,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(sourcePane).toHaveAttribute('data-easymde-document-owner', 'react');
     await expect(editor).toHaveAttribute('data-easymde-preview-request-owner', 'react');
     await expect(editor).toHaveAttribute('data-easymde-preview-surface-owner', 'react');
+    await expect(editor).toHaveAttribute('data-easymde-scroll-sync-owner', 'react');
     await expect(editor).toHaveAttribute('data-easymde-image-upload-owner', 'react');
     await expect(reactSource).toBeVisible();
     await expect(sourceEditor).toHaveAttribute('contenteditable', 'true');
@@ -722,13 +736,21 @@ test.describe('EasyMDE editor workflows', () => {
     ).join('\n\n');
     await sourceEditor.fill(scrollingMarkdown);
     await expect(page.locator('#easymde-preview')).toContainText('Scroll synchronization content 160.');
-    await page.locator('#easymde-preview').evaluate((preview) => {
-      preview.scrollTop = (preview.scrollHeight - preview.clientHeight) / 2;
-      preview.dispatchEvent(new Event('scroll'));
+    await reactSource.locator('.cm-scroller').evaluate((scroller) => {
+      scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) / 2;
+      scroller.dispatchEvent(new Event('scroll'));
     });
     await expect.poll(
-      () => reactSource.locator('.cm-scroller').evaluate((scroller) => scroller.scrollTop)
+      () => page.locator('#easymde-preview').evaluate((preview) => preview.scrollTop)
     ).toBeGreaterThan(0);
+    await expect.poll(() => page.locator('#easymde-preview').evaluate((preview) => {
+      const sourceScroller = document.querySelector('#easymde-source-react .cm-scroller');
+      preview.scrollTop = 0;
+      preview.dispatchEvent(new Event('scroll'));
+      return sourceScroller.scrollTop;
+    })).toBe(0);
+    expect(browserErrors).toEqual([]);
+    expect(failedRequests).toEqual([]);
 
     const beforeRejectedDrop = 'Before rejected image drop.';
     await sourceEditor.fill(beforeRejectedDrop);
@@ -785,6 +807,9 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(sourceEditor).toBeFocused();
     expect(imageUploadRequests).toHaveLength(2);
     expect(await page.evaluate(() => typeof window.EasyMDEImagePaste)).toBe('undefined');
+    expect(browserErrors.filter((message) => !message.includes('status of 415'))).toEqual([]);
+    expect(browserErrors.filter((message) => message.includes('status of 415'))).toHaveLength(1);
+    expect(failedRequests).toEqual([]);
   });
 
   test('rejects an older normal preview response after a newer React request wins', async ({ page }, testInfo) => {

@@ -90,6 +90,30 @@ Immersive Preview remains fully legacy-owned and keeps an independent request
 revision, timer, abort, DOM, and enhancement lifecycle. No persistence, Save,
 Publish, public rendering, or immersive-writing authority moves to React.
 
+## Normal Editor Synchronized Scroll Ownership
+
+The normal editor's bidirectional Source/Preview scroll coordination is a
+focused TypeScript migration unit. A browser Adapter owns the two scroll
+listeners, ratio mapping, 30 millisecond re-entry lock, pending unlock timer,
+and idempotent cleanup after the first validated binding activates. It follows
+the active normal Source and Preview surfaces, so CodeMirror and React Preview
+replacement rebind through the same owner without creating another document or
+Preview authority.
+
+Bootstrap validates the production entry without registering listeners while
+the Legacy normal-editor binding remains available. The first successful
+binding commits React ownership. Preparation or activation failure before that
+point emits only a stable privacy-safe code and keeps the Legacy binding usable.
+Failure after handoff marks synchronized scrolling reload-required and never
+installs a Legacy listener in the same session. Listener activation rolls back
+partial registration, and cleanup removes both listeners and the pending timer.
+
+This unit does not migrate Focus Mode view modes, its sync-scroll toggle,
+divider, layout preferences, resizing, or workspace scroll behavior. Those
+surfaces remain owned by `assets/js/admin/immersive-workspace.js`. The retained
+Legacy normal-editor binding also remains as production-entry startup fallback
+until the final consumer and removal gates are satisfied.
+
 ## Normal Editor Font Controls Ownership
 
 The normal editor's Font button, Popover, and Custom, Windows, Apple, and Serif

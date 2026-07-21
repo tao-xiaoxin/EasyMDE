@@ -42,6 +42,9 @@
     var reactLocalDraftsHandoffCommitted = false;
     var reactLocalDraftSession = null;
     var reactWechatExportHandoffCommitted = false;
+    var reactScrollSyncBridge = null;
+    var reactScrollSyncRoot = null;
+    var reactScrollSyncHandoffCommitted = false;
     var syncLock = false;
     var flashTimer = null;
     var commandMap = null;
@@ -1494,10 +1497,11 @@
     }
 
     function restoreLegacyDocumentSource(context, legacySource, preview) {
-        if (typeof context.scrollSyncCleanup === 'function') {
-            context.scrollSyncCleanup();
-        }
-        context.scrollSyncCleanup = bindScrollSync(legacySource, preview);
+        context.scrollSyncCleanup = replaceScrollSyncBinding(
+            context.scrollSyncCleanup,
+            legacySource,
+            preview
+        );
         context.documentSession = null;
         context.titleSession = null;
     }
@@ -4078,7 +4082,7 @@
         previewTimer = window.setTimeout(runPreviewRequest, delay);
     }
 
-    function bindScrollSync(sourceScroller, preview) {
+    function bindLegacyScrollSync(sourceScroller, preview) {
         var $sourceScroller = $(sourceScroller);
         var $preview = $(preview);
         var namespace = '.easymdeScrollSync' + (++scrollSyncBindingId);
@@ -4117,6 +4121,187 @@
                 $preview.off(namespace);
             }
         };
+    }
+
+    function prepareReactScrollSync(root) {
+        var bridgeApi = window.EasyMDEReactScrollSync;
+        var bridge;
+
+        if (!root || typeof root.setAttribute !== 'function') {
+            reportReactScrollSyncFailure('react-scroll-sync-surface-invalid');
+            return null;
+        }
+        reactScrollSyncRoot = root;
+        root.setAttribute('data-easymde-scroll-sync-owner', 'legacy');
+        if (!bridgeApi || typeof bridgeApi.prepare !== 'function') {
+            reportReactScrollSyncFailure('react-scroll-sync-entry-unavailable');
+            return null;
+        }
+        try {
+            bridge = bridgeApi.prepare();
+        } catch (error) {
+            reportReactScrollSyncFailure('react-scroll-sync-prepare-failed');
+            return null;
+        }
+        if (!bridge || typeof bridge.prepareBinding !== 'function') {
+            reportReactScrollSyncFailure('react-scroll-sync-contract-invalid');
+            return null;
+        }
+        reactScrollSyncBridge = bridge;
+        return bridge;
+    }
+
+    function prepareLegacyScrollSyncBinding(sourceScroller, preview) {
+        var cleanup = null;
+        var activated = false;
+        var disposed = false;
+
+        return {
+            activate: function () {
+                if (activated || disposed) {
+                    throw new Error('legacy-scroll-sync-binding-already-activated');
+                }
+                activated = true;
+                cleanup = bindLegacyScrollSync(sourceScroller, preview);
+            },
+            dispose: function () {
+                if (disposed) {
+                    return;
+                }
+                disposed = true;
+                if (typeof cleanup === 'function') {
+                    cleanup();
+                }
+            }
+        };
+    }
+
+    function prepareScrollSyncBinding(sourceScroller, preview) {
+        var binding;
+        var fallbackBinding = null;
+        var activated = false;
+        var disposed = false;
+
+        if (!reactScrollSyncBridge) {
+            return prepareLegacyScrollSyncBinding(sourceScroller, preview);
+        }
+        try {
+            binding = reactScrollSyncBridge.prepareBinding({
+                preview: preview,
+                source: sourceScroller
+            });
+            if (
+                !binding
+                || typeof binding.activate !== 'function'
+                || typeof binding.dispose !== 'function'
+            ) {
+                throw new Error('react-scroll-sync-binding-contract-invalid');
+            }
+        } catch (error) {
+            if (reactScrollSyncHandoffCommitted) {
+                reportReactScrollSyncFailure('react-scroll-sync-rebinding-preflight-failed');
+                throw new Error('react-scroll-sync-rebinding-preflight-failed');
+            }
+            reactScrollSyncBridge = null;
+            if (reactScrollSyncRoot) {
+                reactScrollSyncRoot.setAttribute('data-easymde-scroll-sync-owner', 'legacy');
+            }
+            reportReactScrollSyncFailure('react-scroll-sync-preflight-failed');
+            return prepareLegacyScrollSyncBinding(sourceScroller, preview);
+        }
+
+        return {
+            activate: function () {
+                if (activated || disposed) {
+                    throw new Error('react-scroll-sync-binding-already-activated');
+                }
+                try {
+                    binding.activate();
+                } catch (error) {
+                    try {
+                        binding.dispose();
+                    } catch (cleanupError) {
+                        if (reactScrollSyncRoot) {
+                            reactScrollSyncRoot.setAttribute(
+                                'data-easymde-scroll-sync-owner',
+                                'react-reload-required'
+                            );
+                        }
+                        reportReactScrollSyncFailure('react-scroll-sync-cleanup-failed');
+                        throw new Error('react-scroll-sync-cleanup-failed');
+                    }
+                    if (reactScrollSyncHandoffCommitted) {
+                        if (reactScrollSyncRoot) {
+                            reactScrollSyncRoot.setAttribute(
+                                'data-easymde-scroll-sync-owner',
+                                'react-reload-required'
+                            );
+                        }
+                        reportReactScrollSyncFailure('react-scroll-sync-failed-after-handoff');
+                        throw new Error('react-scroll-sync-failed-after-handoff');
+                    }
+                    reactScrollSyncBridge = null;
+                    if (reactScrollSyncRoot) {
+                        reactScrollSyncRoot.setAttribute('data-easymde-scroll-sync-owner', 'legacy');
+                    }
+                    reportReactScrollSyncFailure('react-scroll-sync-activation-failed');
+                    fallbackBinding = prepareLegacyScrollSyncBinding(sourceScroller, preview);
+                    fallbackBinding.activate();
+                    activated = true;
+                    return;
+                }
+                activated = true;
+                reactScrollSyncHandoffCommitted = true;
+                if (reactScrollSyncRoot) {
+                    reactScrollSyncRoot.setAttribute('data-easymde-scroll-sync-owner', 'react');
+                }
+            },
+            dispose: function () {
+                if (disposed) {
+                    return;
+                }
+                disposed = true;
+                if (fallbackBinding) {
+                    fallbackBinding.dispose();
+                    return;
+                }
+                binding.dispose();
+            }
+        };
+    }
+
+    function bindScrollSync(sourceScroller, preview) {
+        var prepared = prepareScrollSyncBinding(sourceScroller, preview);
+
+        prepared.activate();
+        return prepared.dispose;
+    }
+
+    function activateScrollSyncReplacement(previousCleanup, prepared) {
+        try {
+            if (typeof previousCleanup === 'function') {
+                previousCleanup();
+            }
+        } catch (error) {
+            prepared.dispose();
+            if (reactScrollSyncRoot) {
+                reactScrollSyncRoot.setAttribute(
+                    'data-easymde-scroll-sync-owner',
+                    'react-reload-required'
+                );
+            }
+            reportReactScrollSyncFailure('react-scroll-sync-cleanup-failed');
+            throw new Error('react-scroll-sync-cleanup-failed');
+        }
+        prepared.activate();
+        return prepared.dispose;
+    }
+
+    function replaceScrollSyncBinding(previousCleanup, sourceScroller, preview) {
+        return activateScrollSyncReplacement(
+            previousCleanup,
+            prepareScrollSyncBinding(sourceScroller, preview)
+        );
     }
 
     function normalizeEventKey(key) {
@@ -4411,6 +4596,12 @@
     }
 
     function reportReactWechatExportFailure(code) {
+        if (window.console && typeof window.console.error === 'function') {
+            window.console.error('[EasyMDE] ' + code);
+        }
+    }
+
+    function reportReactScrollSyncFailure(code) {
         if (window.console && typeof window.console.error === 'function') {
             window.console.error('[EasyMDE] ' + code);
         }
@@ -5545,6 +5736,7 @@
 
         preparedReactLocalDrafts = prepareReactLocalDrafts($root[0], storage, savedMarkdownFingerprint);
         preparedReactWechatExport = prepareReactWechatExport($root[0]);
+        prepareReactScrollSync($root[0]);
 
         normalPreviewNode = $preview[0];
 
@@ -5634,6 +5826,7 @@
         context.onDocumentSourceReady = function (session) {
             var inputElement = session.document.getInputElement();
             var scrollElement = session.document.getScrollElement();
+            var nextScrollSyncBinding;
             var nextScrollSyncCleanup;
             var nextImageUploadCleanup;
 
@@ -5645,7 +5838,7 @@
                 throw new Error('react-document-source-surface-invalid');
             }
 
-            nextScrollSyncCleanup = bindScrollSync(scrollElement, context.preview[0]);
+            nextScrollSyncBinding = prepareScrollSyncBinding(scrollElement, context.preview[0]);
             try {
                 nextImageUploadCleanup = activateReactImageUpload(
                     $root[0],
@@ -5657,19 +5850,20 @@
                     throw new Error('react-image-upload-consumer-preflight-failed');
                 }
             } catch (error) {
-                nextScrollSyncCleanup();
+                nextScrollSyncBinding.dispose();
                 throw error;
             }
 
             try {
-                if (typeof context.scrollSyncCleanup === 'function') {
-                    context.scrollSyncCleanup();
-                }
+                nextScrollSyncCleanup = activateScrollSyncReplacement(
+                    context.scrollSyncCleanup,
+                    nextScrollSyncBinding
+                );
             } catch (error) {
                 nextImageUploadCleanup();
-                nextScrollSyncCleanup();
                 throw error;
             }
+
             releaseLazyImagePasteUpload($source[0]);
             context.sourceScrollElement = scrollElement;
             context.scrollSyncCleanup = nextScrollSyncCleanup;
@@ -5691,12 +5885,13 @@
             if (!nextPreview.length) {
                 throw new Error('react-preview-surface-wrapper-invalid');
             }
-            nextScrollSyncCleanup = bindScrollSync(context.sourceScrollElement, surface);
+            nextScrollSyncCleanup = replaceScrollSyncBinding(
+                context.scrollSyncCleanup,
+                context.sourceScrollElement,
+                surface
+            );
             if (typeof nextScrollSyncCleanup !== 'function') {
                 throw new Error('react-preview-scroll-contract-invalid');
-            }
-            if (typeof context.scrollSyncCleanup === 'function') {
-                context.scrollSyncCleanup();
             }
             context.scrollSyncCleanup = nextScrollSyncCleanup;
             return nextPreview;
@@ -5803,6 +5998,8 @@
         window.EasyMDETestHooks.isPreviewReady = isPreviewReady;
         window.EasyMDETestHooks.executeCommand = executeCommand;
         window.EasyMDETestHooks.bindScrollSync = bindScrollSync;
+        window.EasyMDETestHooks.replaceScrollSyncBinding = replaceScrollSyncBinding;
+        window.EasyMDETestHooks.prepareReactScrollSync = prepareReactScrollSync;
         window.EasyMDETestHooks.activateReactDocumentSource = activateReactDocumentSource;
         window.EasyMDETestHooks.activateReactPreviewSession = activateReactPreviewSession;
         window.EasyMDETestHooks.activateReactToolbar = activateReactToolbar;

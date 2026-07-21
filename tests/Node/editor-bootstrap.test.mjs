@@ -202,20 +202,20 @@ test('document source consumer handoff prepares React bindings before releasing 
   const handoffStart = source.indexOf('context.onDocumentSourceReady = function (session)');
   const handoffEnd = source.indexOf("$source.on('input'", handoffStart);
   const handoff = source.slice(handoffStart, handoffEnd);
-  const preparePosition = handoff.indexOf('nextScrollSyncCleanup = bindScrollSync(');
+  const preparePosition = handoff.indexOf('nextScrollSyncBinding = prepareScrollSyncBinding(');
   const uploadPosition = handoff.indexOf('nextImageUploadCleanup = activateReactImageUpload(');
-  const releasePosition = handoff.indexOf('context.scrollSyncCleanup();');
+  const releasePosition = handoff.indexOf('nextScrollSyncCleanup = activateScrollSyncReplacement(');
   const commitPosition = handoff.indexOf('context.scrollSyncCleanup = nextScrollSyncCleanup;');
 
   assert.ok(handoffStart >= 0, 'the document source consumer handoff should exist');
   assert.ok(preparePosition >= 0, 'React scroll sync should be prepared');
   assert.match(
     handoff,
-    /nextScrollSyncCleanup = bindScrollSync\(scrollElement, context\.preview\[0\]\);/,
+    /nextScrollSyncBinding = prepareScrollSyncBinding\(scrollElement, context\.preview\[0\]\);/,
     'document source readiness must bind to whichever preview owner is active at handoff time'
   );
   assert.ok(uploadPosition > preparePosition, 'React upload behavior should join the prepared handoff');
-  assert.ok(releasePosition > uploadPosition, 'legacy scroll sync must remain active until preparation succeeds');
+  assert.ok(releasePosition > uploadPosition, 'legacy scroll sync must remain active until every consumer prepares');
   assert.ok(commitPosition > releasePosition, 'the prepared React cleanup becomes authoritative only after release');
   assert.match(
     handoff,
@@ -227,7 +227,7 @@ test('document source consumer handoff prepares React bindings before releasing 
     /bindLazyImagePasteUpload\([^)]*inputElement/,
     'the hidden submission bridge must never become the Legacy upload mutation target'
   );
-  assert.match(handoff, /catch \(error\) \{\s*nextScrollSyncCleanup\(\);\s*throw error;/);
+  assert.match(handoff, /catch \(error\) \{\s*nextScrollSyncBinding\.dispose\(\);\s*throw error;/);
 });
 
 test('scroll sync cleanup preserves the next binding and failed handoff rollback', () => {
@@ -271,6 +271,195 @@ test('scroll sync cleanup preserves the next binding and failed handoff rollback
   jQueryRef.emit(preview, 'scroll');
   assert.equal(legacySource.scrollTop, 50);
   restoreLegacy();
+});
+
+test('React scroll sync owns normal-editor bindings after read-only preflight', () => {
+  const calls = [];
+  const root = createElement('div');
+  const source = createElement('div');
+  const preview = createElement('div');
+  const loaded = loadBootstrap({
+    EasyMDEReactScrollSync: {
+      prepare() {
+        calls.push('prepare');
+        return {
+          prepareBinding(options) {
+            calls.push(['prepare-binding', options]);
+            let active = false;
+            return {
+              activate() {
+                active = true;
+                calls.push('activate');
+              },
+              dispose() {
+                if (!active) return;
+                active = false;
+                calls.push('dispose');
+              }
+            };
+          }
+        };
+      }
+    }
+  });
+
+  assert.ok(loaded.hooks.prepareReactScrollSync(root));
+  assert.equal(root.getAttribute('data-easymde-scroll-sync-owner'), 'legacy');
+  const cleanup = loaded.hooks.bindScrollSync(source, preview);
+
+  assert.equal(root.getAttribute('data-easymde-scroll-sync-owner'), 'react');
+  assert.equal(calls[0], 'prepare');
+  assert.equal(calls[1][0], 'prepare-binding');
+  assert.equal(calls[1][1].preview, preview);
+  assert.equal(calls[1][1].source, source);
+  assert.equal(calls[2], 'activate');
+  cleanup();
+  cleanup();
+  assert.equal(calls.filter((call) => 'dispose' === call).length, 1);
+});
+
+test('React scroll sync prepares a replacement before detaching the current binding and activates it afterward', () => {
+  const calls = [];
+  const root = createElement('div');
+  const source = createElement('div');
+  const preview = createElement('div');
+  const loaded = loadBootstrap({
+    EasyMDEReactScrollSync: {
+      prepare() {
+        return {
+          prepareBinding() {
+            calls.push('prepare-binding');
+            return {
+              activate() {
+                calls.push('activate');
+              },
+              dispose() {
+                calls.push('dispose');
+              }
+            };
+          }
+        };
+      }
+    }
+  });
+
+  assert.ok(loaded.hooks.prepareReactScrollSync(root));
+  const cleanup = loaded.hooks.replaceScrollSyncBinding(
+    () => calls.push('previous-dispose'),
+    source,
+    preview
+  );
+
+  assert.deepEqual(calls, ['prepare-binding', 'previous-dispose', 'activate']);
+  cleanup();
+  assert.deepEqual(calls, ['prepare-binding', 'previous-dispose', 'activate', 'dispose']);
+});
+
+test('React scroll sync requires reload when the current binding cannot detach cleanly', () => {
+  const errors = [];
+  const root = createElement('div');
+  const source = createElement('div');
+  const preview = createElement('div');
+  const loaded = loadBootstrap({
+    EasyMDEReactScrollSync: {
+      prepare() {
+        return {
+          prepareBinding() {
+            return {
+              activate() {},
+              dispose() {}
+            };
+          }
+        };
+      }
+    },
+    console: { error: (message) => errors.push(message) }
+  });
+
+  assert.ok(loaded.hooks.prepareReactScrollSync(root));
+  const cleanup = loaded.hooks.bindScrollSync(source, preview);
+  assert.throws(
+    () => loaded.hooks.replaceScrollSyncBinding(
+      () => {
+        throw new Error('private cleanup failure');
+      },
+      source,
+      preview
+    ),
+    /react-scroll-sync-cleanup-failed/
+  );
+
+  assert.equal(root.getAttribute('data-easymde-scroll-sync-owner'), 'react-reload-required');
+  assert.equal(errors.some((message) => message.includes('react-scroll-sync-cleanup-failed')), true);
+  cleanup();
+});
+
+test('React scroll sync startup failure keeps the Legacy normal-editor binding', () => {
+  const errors = [];
+  const jQueryRef = createEventJQuery();
+  const root = createElement('div');
+  const source = { clientHeight: 100, scrollHeight: 300, scrollTop: 0 };
+  const preview = { clientHeight: 100, scrollHeight: 500, scrollTop: 0 };
+  const loaded = loadBootstrap({
+    EasyMDEReactScrollSync: {
+      prepare() {
+        throw new Error('private startup failure');
+      }
+    },
+    console: { error: (message) => errors.push(message) }
+  }, { jQuery: jQueryRef });
+
+  assert.equal(loaded.hooks.prepareReactScrollSync(root), null);
+  const cleanup = loaded.hooks.bindScrollSync(source, preview);
+  source.scrollTop = 100;
+  jQueryRef.emit(source, 'scroll');
+  assert.equal(preview.scrollTop, 200);
+  assert.equal(root.getAttribute('data-easymde-scroll-sync-owner'), 'legacy');
+  assert.equal(errors.some((message) => message.includes('react-scroll-sync-prepare-failed')), true);
+  cleanup();
+});
+
+test('React scroll sync preserves the current owner when replacement preflight fails', () => {
+  const errors = [];
+  const jQueryRef = createEventJQuery();
+  const root = createElement('div');
+  const source = { clientHeight: 100, scrollHeight: 300, scrollTop: 0 };
+  const preview = { clientHeight: 100, scrollHeight: 500, scrollTop: 0 };
+  let bindingCount = 0;
+  const loaded = loadBootstrap({
+    EasyMDEReactScrollSync: {
+      prepare() {
+        return {
+          prepareBinding() {
+            bindingCount += 1;
+            if (bindingCount > 1) throw new Error('private rebinding failure');
+            return {
+              activate() {},
+              dispose() {}
+            };
+          }
+        };
+      }
+    },
+    console: { error: (message) => errors.push(message) }
+  }, { jQuery: jQueryRef });
+
+  assert.ok(loaded.hooks.prepareReactScrollSync(root));
+  const cleanup = loaded.hooks.bindScrollSync(source, preview);
+  assert.throws(
+    () => loaded.hooks.bindScrollSync(source, preview),
+    /react-scroll-sync-rebinding-preflight-failed/
+  );
+  source.scrollTop = 100;
+  jQueryRef.emit(source, 'scroll');
+
+  assert.equal(preview.scrollTop, 0);
+  assert.equal(root.getAttribute('data-easymde-scroll-sync-owner'), 'react');
+  assert.equal(
+    errors.some((message) => message.includes('react-scroll-sync-rebinding-preflight-failed')),
+    true
+  );
+  cleanup();
 });
 
 test('document source teardown returns reverse scroll ownership to the legacy source', () => {
@@ -779,6 +968,8 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.skipNextCrossDocumentViewTransition, 'function', 'bootstrap harness should expose immersive navigation transition guards');
   assert.equal(typeof context.window.EasyMDETestHooks.executeCommand, 'function', 'bootstrap harness should expose toolbar command execution');
   assert.equal(typeof context.window.EasyMDETestHooks.bindScrollSync, 'function', 'bootstrap harness should expose isolated scroll synchronization');
+  assert.equal(typeof context.window.EasyMDETestHooks.replaceScrollSyncBinding, 'function', 'bootstrap harness should expose atomic scroll synchronization replacement');
+  assert.equal(typeof context.window.EasyMDETestHooks.prepareReactScrollSync, 'function', 'bootstrap harness should expose scroll synchronization preflight');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactToolbar, 'function', 'bootstrap harness should expose the toolbar ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactFontControls, 'function', 'bootstrap harness should expose the font controls ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactAppearance, 'function', 'bootstrap harness should expose the appearance ownership handoff');

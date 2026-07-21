@@ -779,6 +779,8 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactToolbar, 'function', 'bootstrap harness should expose the toolbar ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactFontControls, 'function', 'bootstrap harness should expose the font controls ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactAppearance, 'function', 'bootstrap harness should expose the appearance ownership handoff');
+  assert.equal(typeof context.window.EasyMDETestHooks.prepareReactLocalDrafts, 'function', 'bootstrap harness should expose local draft read-only preflight');
+  assert.equal(typeof context.window.EasyMDETestHooks.activateReactLocalDrafts, 'function', 'bootstrap harness should expose the local draft ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.replaceFontState, 'function', 'bootstrap harness should expose cross-surface font state replacement');
   assert.equal(typeof context.window.EasyMDETestHooks.applyRenderState, 'function', 'bootstrap harness should expose render ownership checks');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactDocumentSource, 'function', 'bootstrap harness should expose the document source ownership handoff');
@@ -3177,6 +3179,193 @@ test('runtime local draft setting cancels pending writes without deleting stored
   hooks.scheduleLocalDraft(storage, () => 'enabled draft');
   flushTimers();
   assert.deepEqual(writes, [{ target: storage, markdown: 'enabled draft' }]);
+});
+
+test('React local drafts preflight is read-only and activates one storage owner', () => {
+  const legacyWrites = [];
+  const bridgeCalls = [];
+  const sessionCalls = [];
+  const root = createElement('div');
+  const session = {
+    discard() { return true; },
+    dispose() { sessionCalls.push('dispose'); },
+    getEnabled() { return true; },
+    reconcileSavedDraft() { sessionCalls.push('reconcile'); return false; },
+    restore() { return true; },
+    schedule(markdown) { sessionCalls.push(['schedule', markdown]); return true; },
+    setEnabled(enabled) { sessionCalls.push(['enabled', enabled]); return !!enabled; }
+  };
+  const loaded = loadBootstrap({
+    EasyMDEDraftStorage: {
+      write(storage, markdown) {
+        legacyWrites.push({ markdown, storage });
+      }
+    },
+    EasyMDEReactLocalDrafts: {
+      prepare(value) {
+        bridgeCalls.push(['prepare', value]);
+        return {
+          activate(options) {
+            bridgeCalls.push(['activate', options]);
+            return session;
+          },
+          inspect(savedFingerprint) {
+            bridgeCalls.push(['inspect', savedFingerprint]);
+            return { differentFromSaved: true, status: 'available' };
+          }
+        };
+      }
+    },
+    addEventListener() {},
+    removeEventListener() {}
+  });
+  loaded.window.EasyMDEConfig.storage = {
+    draftMaxBytes: 1048576,
+    draftSchemaVersion: 1,
+    locale: 'en_US',
+    postId: 17,
+    siteKey: 'site',
+    timeZone: 'UTC',
+    userId: 7
+  };
+  loaded.window.EasyMDEConfig.strings = {
+    draftAvailable: 'Available',
+    draftConflict: 'Conflict',
+    draftDiscarded: 'Discarded',
+    draftDiscardFailed: 'Discard failed',
+    discardDraft: 'Discard',
+    draftReadFailed: 'Read failed',
+    draftRestored: 'Restored',
+    restoreDraft: 'Restore',
+    draftSaveFailed: 'Save failed',
+    draftSaved: 'Saved'
+  };
+
+  const prepared = loaded.hooks.prepareReactLocalDrafts(root, loaded.window.EasyMDEConfig.storage, 'saved');
+  assert.equal(prepared.blocksSavedPreview, true);
+  assert.equal(root.getAttribute('data-easymde-local-draft-owner'), 'legacy');
+  const context = {
+    draftStatus: { text(value) { sessionCalls.push(['status', value]); } },
+    flash: null,
+    root: { find() { return { length: 0, remove() {} }; } },
+    textarea: {
+      focus() {},
+      selectionDirection: 'none',
+      selectionEnd: 0,
+      selectionStart: 0,
+      setSelectionRange() {},
+      value: 'Current'
+    }
+  };
+  loaded.hooks.activateReactLocalDrafts(root, prepared, context, 'saved');
+  assert.equal(root.getAttribute('data-easymde-local-draft-owner'), 'react');
+
+  loaded.hooks.scheduleLocalDraft('legacy-storage', () => 'React value');
+  loaded.flushTimers();
+  assert.deepEqual(legacyWrites, []);
+  assert.deepEqual(sessionCalls, ['reconcile', ['schedule', 'React value']]);
+  assert.equal(loaded.hooks.setLocalDraftsEnabled(false), false);
+  assert.equal(loaded.hooks.getLocalDraftsEnabled(), true, 'the fake session remains authoritative for its reported state');
+  assert.deepEqual(sessionCalls, ['reconcile', ['schedule', 'React value'], ['enabled', false]]);
+  assert.equal(bridgeCalls[0][0], 'prepare');
+  assert.deepEqual(bridgeCalls[1], ['inspect', 'saved']);
+});
+
+test('React local draft startup failure keeps the Legacy owner and writer usable', () => {
+  const writes = [];
+  const root = createElement('div');
+  const loaded = loadBootstrap({
+    EasyMDEDraftStorage: {
+      write(storage, markdown) {
+        writes.push({ markdown, storage });
+      }
+    },
+    EasyMDEReactLocalDrafts: {
+      prepare() {
+        throw new Error('private failure');
+      }
+    }
+  });
+
+  assert.equal(loaded.hooks.prepareReactLocalDrafts(root, {}, 'saved'), null);
+  assert.equal(root.getAttribute('data-easymde-local-draft-owner'), 'legacy');
+  loaded.hooks.scheduleLocalDraft('legacy-storage', () => 'Legacy value');
+  loaded.flushTimers();
+  assert.deepEqual(writes, [{ markdown: 'Legacy value', storage: 'legacy-storage' }]);
+});
+
+test('React local draft teardown requires reload and never reactivates the Legacy writer', () => {
+  const legacyWrites = [];
+  const root = createElement('div');
+  const session = {
+    discard() { return true; },
+    dispose() {},
+    getEnabled() { return true; },
+    reconcileSavedDraft() { return false; },
+    restore() { return true; },
+    schedule() { return true; },
+    setEnabled(enabled) { return !!enabled; }
+  };
+  const loaded = loadBootstrap({
+    EasyMDEDraftStorage: {
+      write(storage, markdown) {
+        legacyWrites.push({ markdown, storage });
+      }
+    },
+    EasyMDEReactLocalDrafts: {
+      prepare() {
+        return {
+          activate() { return session; },
+          inspect() { return { status: 'missing' }; }
+        };
+      }
+    },
+    addEventListener() {},
+    removeEventListener() {}
+  });
+  loaded.window.EasyMDEConfig.storage = {
+    draftMaxBytes: 1048576,
+    draftSchemaVersion: 1,
+    locale: 'en_US',
+    postId: 17,
+    siteKey: 'site',
+    timeZone: 'UTC',
+    userId: 7
+  };
+  loaded.window.EasyMDEConfig.strings = {
+    draftAvailable: 'Available',
+    draftConflict: 'Conflict',
+    draftDiscarded: 'Discarded',
+    draftDiscardFailed: 'Discard failed',
+    discardDraft: 'Discard',
+    draftReadFailed: 'Read failed',
+    draftRestored: 'Restored',
+    restoreDraft: 'Restore',
+    draftSaveFailed: 'Save failed',
+    draftSaved: 'Saved'
+  };
+  const prepared = loaded.hooks.prepareReactLocalDrafts(root, loaded.window.EasyMDEConfig.storage, 'saved');
+  const context = {
+    draftStatus: { text() {} },
+    flash: null,
+    root: { find() { return { length: 0, remove() {} }; } },
+    textarea: {
+      focus() {},
+      selectionDirection: 'none',
+      selectionEnd: 0,
+      selectionStart: 0,
+      setSelectionRange() {},
+      value: 'Current'
+    }
+  };
+  const cleanup = loaded.hooks.activateReactLocalDrafts(root, prepared, context, 'saved');
+
+  cleanup();
+  assert.equal(root.getAttribute('data-easymde-local-draft-owner'), 'react-reload-required');
+  assert.equal(loaded.hooks.scheduleLocalDraft('legacy-storage', () => 'Must not write'), false);
+  loaded.flushTimers();
+  assert.deepEqual(legacyWrites, []);
+  assert.equal(loaded.hooks.setLocalDraftsEnabled(true), false);
 });
 
 test('Mac code frame is fixed without editor state, request, signature, or hidden form fields', () => {

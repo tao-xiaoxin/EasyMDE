@@ -43,6 +43,7 @@
         if (storage.siteKey && storage.userId !== undefined) {
             storage.postId = resolvedPostId;
             storage.draftKey = 'easymde:draft:' + storage.siteKey + ':' + storage.userId + ':' + resolvedPostId;
+            storage.currentDraftKey = 'easymde:draft:v1:' + storage.siteKey + ':' + storage.userId + ':' + resolvedPostId;
         }
 
         config.storage = storage;
@@ -171,16 +172,62 @@
         return formatFingerprint(byteLength, hash);
     }
 
+    function parseStoredDraft(value, key) {
+        var draft;
+
+        if (value === null) {
+            return null;
+        }
+
+        try {
+            draft = JSON.parse(value);
+        } catch (error) {
+            return null;
+        }
+
+        if (!draft || typeof draft !== 'object' || typeof draft.updatedAt !== 'number' || !isFinite(draft.updatedAt)) {
+            return null;
+        }
+
+        return {
+            draft: draft,
+            key: key
+        };
+    }
+
+    function selectStoredDraft(storage, localStorage) {
+        var current = storage.currentDraftKey
+            ? parseStoredDraft(localStorage.getItem(storage.currentDraftKey), storage.currentDraftKey)
+            : null;
+        var legacy = storage.draftKey
+            ? parseStoredDraft(localStorage.getItem(storage.draftKey), storage.draftKey)
+            : null;
+
+        if (!current) {
+            return legacy;
+        }
+        if (!legacy || current.draft.updatedAt >= legacy.draft.updatedAt) {
+            return current;
+        }
+
+        return legacy;
+    }
+
     function read(storage) {
         var localStorage;
+        var selected;
 
-        if (!storage.draftKey) {
+        if (!storage.draftKey && !storage.currentDraftKey) {
             return null;
         }
 
         try {
             localStorage = getLocalStorage();
-            return localStorage ? JSON.parse(localStorage.getItem(storage.draftKey) || 'null') : null;
+            if (!localStorage) {
+                return null;
+            }
+            selected = selectStoredDraft(storage, localStorage);
+            return selected ? selected.draft : null;
         } catch (error) {
             return null;
         }
@@ -189,14 +236,31 @@
     function readContentHash(storage) {
         var localStorage;
         var hashKey = draftHashKey(storage);
+        var currentHashKey = storage.currentDraftKey ? storage.currentDraftKey + ':hash' : '';
+        var selected;
+        var value;
 
-        if (!hashKey) {
+        if (!hashKey && !currentHashKey) {
             return '';
         }
 
         try {
             localStorage = getLocalStorage();
-            return localStorage ? String(localStorage.getItem(hashKey) || '') : '';
+            if (!localStorage) {
+                return '';
+            }
+            selected = selectStoredDraft(storage, localStorage);
+            if (!selected) {
+                return '';
+            }
+            if (selected.draft.contentHash) {
+                return String(selected.draft.contentHash);
+            }
+            value = localStorage.getItem(selected.key + ':hash');
+            if (value) {
+                return String(value);
+            }
+            return '';
         } catch (error) {
             return '';
         }
@@ -207,10 +271,13 @@
 
         try {
             return !!(
-                storage.draftKey
+                (storage.draftKey || storage.currentDraftKey)
                 && localStorage
                 && typeof localStorage.getItem === 'function'
-                && localStorage.getItem(storage.draftKey) !== null
+                && (
+                    (storage.currentDraftKey && localStorage.getItem(storage.currentDraftKey) !== null)
+                    || (storage.draftKey && localStorage.getItem(storage.draftKey) !== null)
+                )
             );
         } catch (error) {
             return false;
@@ -253,15 +320,21 @@
     function discard(storage) {
         var localStorage;
 
-        if (!storage.draftKey || !storageAvailable()) {
+        if ((!storage.draftKey && !storage.currentDraftKey) || !storageAvailable()) {
             return;
         }
 
         try {
             localStorage = getLocalStorage();
             if (localStorage) {
-                localStorage.removeItem(storage.draftKey);
-                localStorage.removeItem(draftHashKey(storage));
+                if (storage.currentDraftKey) {
+                    localStorage.removeItem(storage.currentDraftKey);
+                    localStorage.removeItem(storage.currentDraftKey + ':hash');
+                }
+                if (storage.draftKey) {
+                    localStorage.removeItem(storage.draftKey);
+                    localStorage.removeItem(draftHashKey(storage));
+                }
             }
         } catch (error) {
             return;

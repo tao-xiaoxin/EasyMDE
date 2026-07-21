@@ -39,6 +39,8 @@
     var activePreviewFeatures = normalizePreviewFeatures(config.features || {});
     var draftTimer = null;
     var localDraftsEnabled = !(config.features && config.features.localDrafts === false);
+    var reactLocalDraftsHandoffCommitted = false;
+    var reactLocalDraftSession = null;
     var syncLock = false;
     var flashTimer = null;
     var commandMap = null;
@@ -1532,6 +1534,41 @@
         }
     }
 
+    function syncReactDraftNotice(context, available) {
+        var $existing = context.root.find('.easymde-draft-notice');
+        var $notice;
+        var $message;
+        var $restore;
+        var $discard;
+
+        $existing.remove();
+        if (!available) {
+            return;
+        }
+
+        $notice = $('<div class="easymde-draft-notice"></div>');
+        $message = $('<span></span>').text(getString('draftAvailable'));
+        $restore = $('<button type="button" class="button button-small"></button>').text(getString('restoreDraft'));
+        $discard = $('<button type="button" class="button button-small"></button>').text(getString('discardDraft'));
+
+        $restore.on('click', function () {
+            if (context.localDraftSession) {
+                context.localDraftSession.restore();
+            }
+        });
+        $discard.on('click', function () {
+            if (context.localDraftSession) {
+                context.localDraftSession.discard();
+            }
+        });
+        $notice.append($message, $restore, $discard);
+        if (context.root.find('.easymde-editor-flash').length) {
+            context.root.find('.easymde-editor-flash').after($notice);
+        } else {
+            context.root.find('.easymde-toolbar').after($notice);
+        }
+    }
+
     function hasLocalDraft(storage, savedMarkdownFingerprint) {
         var draft;
         var draftContentHash;
@@ -2445,10 +2482,22 @@
     }
 
     function getLocalDraftsEnabled() {
+        if (reactLocalDraftSession && typeof reactLocalDraftSession.getEnabled === 'function') {
+            return reactLocalDraftSession.getEnabled();
+        }
+        if (reactLocalDraftsHandoffCommitted) {
+            return false;
+        }
         return localDraftsEnabled;
     }
 
     function setLocalDraftsEnabled(enabled) {
+        if (reactLocalDraftSession && typeof reactLocalDraftSession.setEnabled === 'function') {
+            return reactLocalDraftSession.setEnabled(!!enabled);
+        }
+        if (reactLocalDraftsHandoffCommitted) {
+            return false;
+        }
         localDraftsEnabled = !!enabled;
 
         if (!localDraftsEnabled && draftTimer !== null) {
@@ -2460,6 +2509,12 @@
     }
 
     function scheduleLocalDraft(storage, getMarkdown, onSaved) {
+        if (reactLocalDraftSession && typeof reactLocalDraftSession.schedule === 'function') {
+            return reactLocalDraftSession.schedule(getMarkdown());
+        }
+        if (reactLocalDraftsHandoffCommitted) {
+            return false;
+        }
         if (!localDraftsEnabled) {
             return false;
         }
@@ -3007,6 +3062,11 @@
         }
 
         return {
+            getValue: function () {
+                var session = activeSession();
+
+                return session ? session.getValue() : String(textarea.value || '');
+            },
             getSnapshot: function () {
                 var session = activeSession();
 
@@ -3067,6 +3127,161 @@
                 focusWithoutScrolling(textarea);
             }
         };
+    }
+
+    function prepareReactLocalDrafts(root, storage, savedFingerprint) {
+        var bridgeApi = window.EasyMDEReactLocalDrafts;
+        var bridge;
+        var inspection;
+
+        if (!root || typeof root.setAttribute !== 'function') {
+            reportReactLocalDraftFailure('react-local-drafts-surface-invalid');
+            return null;
+        }
+        root.setAttribute('data-easymde-local-draft-owner', 'legacy');
+        if (!bridgeApi || typeof bridgeApi.prepare !== 'function') {
+            reportReactLocalDraftFailure('react-local-drafts-entry-unavailable');
+            return null;
+        }
+
+        storage = storage || {};
+        try {
+            bridge = bridgeApi.prepare({
+                enabled: !(config.features && config.features.localDrafts === false),
+                locale: storage.locale,
+                maxBytes: storage.draftMaxBytes,
+                postId: storage.postId,
+                schemaVersion: storage.draftSchemaVersion,
+                siteKey: storage.siteKey,
+                strings: {
+                    available: getString('draftAvailable'),
+                    conflict: getString('draftConflict'),
+                    discard: getString('discardDraft'),
+                    discardFailed: getString('draftDiscardFailed'),
+                    discarded: getString('draftDiscarded'),
+                    readFailed: getString('draftReadFailed'),
+                    restore: getString('restoreDraft'),
+                    restored: getString('draftRestored'),
+                    saveFailed: getString('draftSaveFailed'),
+                    saved: getString('draftSaved')
+                },
+                timeZone: storage.timeZone,
+                userId: storage.userId
+            });
+            if (!bridge || typeof bridge.activate !== 'function' || typeof bridge.inspect !== 'function') {
+                throw new Error('react-local-drafts-contract-invalid');
+            }
+            inspection = bridge.inspect(String(savedFingerprint || ''));
+        } catch (error) {
+            reportReactLocalDraftFailure('react-local-drafts-prepare-failed');
+            return null;
+        }
+
+        if (!inspection || ['available', 'failed', 'missing'].indexOf(inspection.status) === -1) {
+            reportReactLocalDraftFailure('react-local-drafts-inspection-invalid');
+            return null;
+        }
+        if (inspection.status === 'failed') {
+            reportReactLocalDraftFailure(inspection.code || 'react-local-drafts-inspection-failed');
+        }
+
+        return {
+            blocksSavedPreview: inspection.status === 'failed'
+                || (inspection.status === 'available' && inspection.differentFromSaved === true),
+            bridge: bridge,
+            inspection: inspection
+        };
+    }
+
+    function activateReactLocalDrafts(root, prepared, context, savedFingerprint) {
+        var disposed = false;
+        var pagehideRegistered = false;
+        var session = null;
+        var candidateAvailable = false;
+        var documentPort = createReactToolbarDocumentPort(context);
+
+        function dispose() {
+            if (disposed) {
+                return;
+            }
+            disposed = true;
+            if (pagehideRegistered && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('pagehide', dispose);
+                pagehideRegistered = false;
+            }
+            if (session && typeof session.dispose === 'function') {
+                session.dispose();
+            }
+            if (reactLocalDraftSession === session) {
+                reactLocalDraftSession = null;
+            }
+            if (context.localDraftSession === session) {
+                context.localDraftSession = null;
+            }
+            syncReactDraftNotice(context, false);
+            root.setAttribute('data-easymde-local-draft-owner', 'react-reload-required');
+        }
+
+        if (!root || !prepared || !prepared.bridge || !documentPort) {
+            reportReactLocalDraftFailure('react-local-drafts-activation-invalid');
+            return null;
+        }
+
+        try {
+            session = prepared.bridge.activate({
+                document: documentPort,
+                onCandidate: function (available) {
+                    candidateAvailable = !!available;
+                    if (session) {
+                        syncReactDraftNotice(context, candidateAvailable);
+                    }
+                },
+                onDiagnostic: reportReactLocalDraftFailure,
+                onStatus: function (status) {
+                    if (!status || typeof status.message !== 'string') {
+                        reportReactLocalDraftFailure('react-local-drafts-status-invalid');
+                        return;
+                    }
+                    if (status.code === 'saved' && context.draftStatus && context.draftStatus.length !== 0) {
+                        context.draftStatus.text(status.message);
+                        return;
+                    }
+                    showFlash(context.flash, status.type, status.message);
+                },
+                savedFingerprint: String(savedFingerprint || '')
+            });
+        } catch (error) {
+            reportReactLocalDraftFailure('react-local-drafts-activation-failed');
+            return null;
+        }
+        if (
+            !session
+            || typeof session.discard !== 'function'
+            || typeof session.dispose !== 'function'
+            || typeof session.getEnabled !== 'function'
+            || typeof session.reconcileSavedDraft !== 'function'
+            || typeof session.restore !== 'function'
+            || typeof session.schedule !== 'function'
+            || typeof session.setEnabled !== 'function'
+        ) {
+            if (session && typeof session.dispose === 'function') {
+                session.dispose();
+            }
+            reportReactLocalDraftFailure('react-local-drafts-session-invalid');
+            return null;
+        }
+
+        reactLocalDraftsHandoffCommitted = true;
+        reactLocalDraftSession = session;
+        context.localDraftSession = session;
+        syncReactDraftNotice(context, candidateAvailable);
+        root.setAttribute('data-easymde-local-draft-owner', 'react');
+        session.reconcileSavedDraft();
+        if (typeof window.addEventListener === 'function') {
+            window.addEventListener('pagehide', dispose, { once: true });
+            pagehideRegistered = true;
+        }
+        return dispose;
     }
 
     function activateReactImageUpload(root, textarea, documentSession, context) {
@@ -4051,6 +4266,12 @@
     }
 
     function reportReactImageUploadFailure(code) {
+        if (window.console && typeof window.console.error === 'function') {
+            window.console.error('[EasyMDE] ' + code);
+        }
+    }
+
+    function reportReactLocalDraftFailure(code) {
         if (window.console && typeof window.console.error === 'function') {
             window.console.error('[EasyMDE] ' + code);
         }
@@ -5167,6 +5388,7 @@
         var initialMarkdown = null;
         var initialPreviewHydrated = false;
         var initialPreviewEnhancement = null;
+        var preparedReactLocalDrafts = null;
         var editorChromeReady = false;
         var sourceChangedBeforeShell = false;
         var deferWechatPreload = false;
@@ -5180,6 +5402,8 @@
         if (!$root.length || !$source.length || !$preview.length) {
             return;
         }
+
+        preparedReactLocalDrafts = prepareReactLocalDrafts($root[0], storage, savedMarkdownFingerprint);
 
         normalPreviewNode = $preview[0];
 
@@ -5200,7 +5424,11 @@
                 $preview.attr('data-easymde-initial-preview') === '1'
                 || $preview.attr('data-easymde-initial-preview-provisional') === '1'
             )
-            && hasLocalDraft(storage, savedMarkdownFingerprint)
+            && (
+                preparedReactLocalDrafts
+                    ? preparedReactLocalDrafts.blocksSavedPreview
+                    : hasLocalDraft(storage, savedMarkdownFingerprint)
+            )
         ) {
             setPreviewPending($preview, true);
         } else {
@@ -5238,6 +5466,14 @@
             reportStartupConfigErrors($flash);
             context.reactMediaPickerCleanup = activateReactMediaPicker($root[0], context);
             $draftStatus = createToolbar($toolbar, context);
+            if (preparedReactLocalDrafts) {
+                context.reactLocalDraftsCleanup = activateReactLocalDrafts(
+                    $root[0],
+                    preparedReactLocalDrafts,
+                    context,
+                    savedMarkdownFingerprint
+                );
+            }
             createSideActions($sideActions, context);
             context.scrollSyncCleanup = bindScrollSync($source[0], $preview[0]);
             bindShortcuts($root, $source[0], context);
@@ -5387,7 +5623,11 @@
 
             if (getLocalDraftsEnabled()) {
                 afterPreviewIdle(function () {
-                    if (!sourceChangedBeforeShell && $source.val() === initialMarkdown) {
+                    if (
+                        !context.localDraftSession
+                        && !sourceChangedBeforeShell
+                        && $source.val() === initialMarkdown
+                    ) {
                         createDraftNotice($root, $source[0], storage, $flash);
                     }
                 });
@@ -5422,6 +5662,8 @@
         window.EasyMDETestHooks.activateReactAppearance = activateReactAppearance;
         window.EasyMDETestHooks.activateReactMediaPicker = activateReactMediaPicker;
         window.EasyMDETestHooks.activateReactImageUpload = activateReactImageUpload;
+        window.EasyMDETestHooks.prepareReactLocalDrafts = prepareReactLocalDrafts;
+        window.EasyMDETestHooks.activateReactLocalDrafts = activateReactLocalDrafts;
         window.EasyMDETestHooks.createReactMediaPickerDocumentPort = createReactMediaPickerDocumentPort;
         window.EasyMDETestHooks.createReactToolbarDocumentPort = createReactToolbarDocumentPort;
         window.EasyMDETestHooks.applyThemeFontDefaults = applyThemeFontDefaults;

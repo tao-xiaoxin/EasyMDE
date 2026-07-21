@@ -65,7 +65,7 @@ test('draft storage caches localStorage availability checks', () => {
   assert.equal(draftStorage.readContentHash(normalized), '');
 
   assert.equal(setItemCalls, 3);
-  assert.equal(removeItemCalls, 4);
+  assert.equal(removeItemCalls, 6);
 });
 
 test('draft content fingerprints use stable UTF-8 FNV-1a values', () => {
@@ -141,4 +141,75 @@ test('draft storage treats blocked localStorage getters as unavailable', () => {
   assert.equal(draftStorage.read(normalized), null);
   assert.doesNotThrow(() => draftStorage.write(normalized, 'Draft body'));
   assert.doesNotThrow(() => draftStorage.discard(normalized));
+});
+
+test('legacy fallback can recover and discard the versioned React draft key', () => {
+  const values = new Map();
+  const storage = {
+    getItem(key) {
+      return values.get(key) ?? null;
+    },
+    removeItem(key) {
+      values.delete(key);
+    },
+    setItem(key, value) {
+      values.set(key, String(value));
+    }
+  };
+  const draftStorage = loadDraftStorage(storage);
+  const config = { storage: { siteKey: 'site', userId: 7 } };
+  const normalized = draftStorage.normalizeStorage(config, 42);
+  const contentHash = draftStorage.contentFingerprint('React recovery');
+  values.set(normalized.currentDraftKey, JSON.stringify({
+    content: 'React recovery',
+    contentHash,
+    schemaVersion: 1,
+    updatedAt: 1000
+  }));
+  values.set(`${normalized.currentDraftKey}:hash`, contentHash);
+
+  assert.equal(draftStorage.exists(normalized), true);
+  assert.equal(draftStorage.read(normalized).content, 'React recovery');
+  assert.equal(draftStorage.readContentHash(normalized), contentHash);
+  draftStorage.discard(normalized);
+  assert.equal(draftStorage.exists(normalized), false);
+});
+
+test('legacy fallback and React reload recover the newest draft across both schema keys', () => {
+  const values = new Map();
+  const storage = {
+    getItem(key) {
+      return values.get(key) ?? null;
+    },
+    removeItem(key) {
+      values.delete(key);
+    },
+    setItem(key, value) {
+      values.set(key, String(value));
+    }
+  };
+  const draftStorage = loadDraftStorage(storage);
+  const normalized = draftStorage.normalizeStorage({ storage: { siteKey: 'site', userId: 7 } }, 42);
+  const currentHash = draftStorage.contentFingerprint('React recovery');
+  values.set(normalized.currentDraftKey, JSON.stringify({
+    content: 'React recovery',
+    contentHash: currentHash,
+    schemaVersion: 1,
+    updatedAt: 1000
+  }));
+  values.set(`${normalized.currentDraftKey}:hash`, currentHash);
+
+  const originalNow = Date.now;
+  Date.now = () => 2000;
+  try {
+    draftStorage.write(normalized, 'Newer Legacy recovery');
+  } finally {
+    Date.now = originalNow;
+  }
+
+  assert.equal(draftStorage.read(normalized).content, 'Newer Legacy recovery');
+  assert.equal(
+    draftStorage.readContentHash(normalized),
+    draftStorage.contentFingerprint('Newer Legacy recovery')
+  );
 });

@@ -1490,17 +1490,21 @@ The live root `package.json` provides Biome frontend linting, strict TypeScript,
 an independent `tsc --noEmit` gate, Vitest, Vite, a test-only WordPress Classic
 Script build contract, a read-only source-to-committed production comparison,
 and one production React entry for the normal editor's main Toolbar, document
-session, Preview Surface, and Font controls. That entry owns Toolbar
+session, Preview Surface, Font controls, Appearance controls, Media Picker,
+image Paste/Drop upload, and Local Draft session. That entry owns Toolbar
 presentation, heading-menu interaction, command-intent dispatch, normal-editor
 Markdown command rules and transactions, the normal browser-session Markdown
 value, selection, focus, undo history and source
-scrolling, the normal Preview request/surface lifecycle, and the normal Font
-control session. The native title and Font fields remain WordPress-owned
-submission bridges exposed through focused React session Adapters. PHP
+scrolling, the normal Preview request/surface lifecycle, normal Font and
+Appearance browser-session controls, normal Media selection and image-upload
+coordination, and the normal Local Draft recovery scheduler. Native title,
+Font, Appearance, and Markdown fields remain WordPress-owned submission
+bridges exposed through focused React session Adapters. PHP
 descriptors and translations, the remaining secondary Toolbar, immersive
 writing, and persistence retain their current owners. The legacy Markdown
-command engine remains required for normal-editor startup fallback, retained
-secondary and compatibility consumers, and immersive writing. A focused
+command, Media, image-upload, and Draft implementations remain required for
+normal-editor startup fallback, retained secondary and compatibility consumers,
+and immersive writing. A focused
 migration creates or expands production paths only for a real
 consumer and must update the live release owners, package predicates, and tests
 for that layout. The installable ZIP must reject

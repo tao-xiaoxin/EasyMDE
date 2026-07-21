@@ -207,6 +207,47 @@ startup fallback. It is not removed by this unit. Final Legacy removal requires
 a separate consumer inventory proving that every immersive and fallback
 consumer has an approved replacement or retention decision.
 
+## Normal Editor Local Draft Ownership
+
+The normal editor's Local Draft recovery reads, bounded writes, 500 millisecond
+latest-write scheduling, restore/discard actions, and cross-tab conflict state
+are a focused TypeScript migration unit. Browser `localStorage` remains the
+recovery authority; a Local Draft is not a WordPress Save and never contains a
+Nonce, credential, title, Preview HTML, or persisted WordPress result. PHP
+Bootstrap supplies the Site, User, Post, Schema, 1 MiB limit, WordPress user
+locale, Site timezone, and translated status messages.
+
+The TypeScript storage Adapter writes the versioned
+`easymde:draft:v1:<site>:<user>:<post-or-new>` payload and validates its shape,
+UTF-8 size, fingerprint, timestamp, and schema on every read. A successful new
+payload is authoritative even when an optional fingerprint sidecar or Legacy
+key cleanup fails; those partial failures emit stable privacy-safe diagnostics
+without claiming the recovery payload was lost. The old key is removed only
+after the new payload and sidecar succeed. When both keys exist after a
+pre-handoff Legacy fallback write or partial cleanup, both readers select the
+newest valid payload by `updatedAt` rather than allowing a stale versioned key
+to hide newer recovery content. The retained Legacy reader can read and discard
+v1 payloads so a future pre-handoff startup failure does not strand recovery
+data.
+
+Preparation performs only a read-only inspection while Legacy remains active.
+Activation subscribes to browser Storage, cancels the Legacy timer, and commits
+one React-owned scheduler. A corrupt or unavailable read blocks writes instead
+of overwriting uncertain recovery data. A different Draft arriving from
+another tab cancels pending work and remains available until explicit Restore
+or Discard. Disable and teardown cancel timers and listeners without deleting
+recovery data; after handoff, teardown requires a clean reload and never
+reactivates the Legacy writer in the same page.
+
+The Local Draft notice and status elements remain in the established normal
+editor chrome and use PHP Gettext strings. The intentionally excluded immersive
+workspace continues to call the stable Local Draft compatibility surface and
+passes its current Markdown into the React-owned latest-write scheduler; React
+remains the only active Storage writer after handoff, while Focus Mode retains
+its document and interaction ownership. Final removal of `assets/js/admin/draft-storage.js`
+therefore requires a separate consumer inventory and explicit Focus Mode
+decision.
+
 ## Editor Enablement
 
 EasyMDE opens new and existing content for post types explicitly supported by `easymde_supported_post_types` in EasyMDE through normal WordPress editing when the current user can edit or create that content. The default supported post types are `post` and `page`.

@@ -848,6 +848,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
+    await expect(page.locator('#easymde-editor')).toHaveAttribute('data-easymde-local-draft-owner', 'react');
 
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
     const nativeSource = page.locator('#easymde-source');
@@ -866,6 +867,13 @@ test.describe('EasyMDE editor workflows', () => {
     await sourceEditor.press(usesCommandKey ? 'Meta+b' : 'Control+b');
     await expect(sourceEditor).toHaveText('**shortcut target**');
     await expect(nativeSource).toHaveValue('**shortcut target**');
+    await expect.poll(() => page.evaluate(() => {
+      const storage = window.EasyMDEConfig.storage;
+      const postIdentity = storage.postId || 'new';
+      const key = `easymde:draft:v${storage.draftSchemaVersion}:${storage.siteKey}:${storage.userId}:${postIdentity}`;
+      const value = window.localStorage.getItem(key);
+      return value ? JSON.parse(value).content : null;
+    })).toBe('**shortcut target**');
 
     await page.locator('#title').fill(title);
     const draftNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
@@ -889,6 +897,66 @@ test.describe('EasyMDE editor workflows', () => {
     await publishOrUpdate(page);
     const postId = await currentPostId(page);
     expect(normalizeMarkdown(postMetaValue(postId, '_easymde_markdown'))).toBe(restoredMarkdown);
+  });
+
+  test('pauses local draft writes when another tab owns a different recovery candidate', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `Draft conflict ${testSlug(testInfo)}`;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('#title').fill(title);
+    await page.locator('.easymde-source-react .cm-content').fill('Saved baseline');
+    const draftNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await page.locator('#save-post').click();
+    await draftNavigation;
+    const editUrl = page.url();
+    const secondPage = await page.context().newPage();
+
+    try {
+      await secondPage.goto(editUrl);
+      await expect(secondPage.locator('#easymde-editor')).toHaveAttribute(
+        'data-easymde-local-draft-owner',
+        'react'
+      );
+      await page.locator('.easymde-source-react .cm-content').fill('First tab recovery');
+      await expect(page.locator('.easymde-draft-status')).toContainText('Local draft saved');
+      const secondNotice = secondPage.locator('.easymde-draft-notice');
+      await expect(secondNotice).toBeVisible();
+      await secondPage.locator('.easymde-source-react .cm-content').fill('Second tab unsaved edit');
+
+      await expect.poll(() => secondPage.evaluate(() => {
+        const storage = window.EasyMDEConfig.storage;
+        const key = `easymde:draft:v${storage.draftSchemaVersion}:${storage.siteKey}:${storage.userId}:${storage.postId}`;
+        const value = window.localStorage.getItem(key);
+        return value ? JSON.parse(value).content : null;
+      })).toBe('First tab recovery');
+      await expect(secondNotice).toBeVisible();
+    } finally {
+      await secondPage.close();
+    }
+  });
+
+  test('surfaces local draft quota failures without reporting save success', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await page.addInitScript(() => {
+      const setItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (String(key).startsWith('easymde:draft:v1:')) {
+          throw new DOMException('Synthetic local draft quota failure.', 'QuotaExceededError');
+        }
+        return setItem.call(this, key, value);
+      };
+    });
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await expect(page.locator('#easymde-editor')).toHaveAttribute('data-easymde-local-draft-owner', 'react');
+    const failureMessage = await page.evaluate(() => window.EasyMDEConfig.strings.draftSaveFailed);
+
+    await page.locator('.easymde-source-react .cm-content').fill('Quota failure recovery');
+    await expect(page.locator('.easymde-editor-flash')).toContainText(failureMessage);
+    await expect(page.locator('.easymde-draft-status')).not.toContainText('Local draft saved');
   });
 
   test('synchronizes asynchronous native media insertion into the React document session', async ({ page }, testInfo) => {
@@ -1048,6 +1116,13 @@ test.describe('EasyMDE editor workflows', () => {
     await expect.poll(() => sourceField.evaluate((field) => getComputedStyle(field).outlineStyle)).toBe('none');
     await expect(page.locator('#title')).toHaveValue(`${title} Second line`);
     await expect(page.locator('#easymde-source')).toHaveValue(markdown);
+    await expect.poll(() => page.evaluate(() => {
+      const storage = window.EasyMDEConfig.storage;
+      const postIdentity = storage.postId || 'new';
+      const key = `easymde:draft:v${storage.draftSchemaVersion}:${storage.siteKey}:${storage.userId}:${postIdentity}`;
+      const value = window.localStorage.getItem(key);
+      return value ? JSON.parse(value).content : null;
+    })).toBe(markdown);
     await page.locator('.easymde-immersive-workspace__outline-handle').click();
     await expect(page.locator('.easymde-immersive-workspace__outline-card')).toBeVisible();
     await expect(page.locator('.easymde-immersive-workspace__outline-entry')).toContainText(title);

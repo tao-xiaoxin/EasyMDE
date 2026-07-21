@@ -296,11 +296,15 @@ final class AdminAssets {
 		$post_key = $post_id ? (string) $post_id : 'new';
 
 		return array(
-			'siteKey'   => $site_key,
-			'userId'    => $user_id,
-			'postId'    => $post_id,
-			'draftKey'  => 'easymde:draft:' . $site_key . ':' . $user_id . ':' . $post_key,
-			'layoutKey' => 'easymde:immersive-layout:' . $site_key . ':' . $user_id,
+			'siteKey'            => $site_key,
+			'userId'             => $user_id,
+			'postId'             => $post_id,
+			'draftKey'           => 'easymde:draft:' . $site_key . ':' . $user_id . ':' . $post_key,
+			'draftSchemaVersion' => 1,
+			'draftMaxBytes'      => 1048576,
+			'locale'             => get_user_locale( $user_id ),
+			'timeZone'           => wp_timezone_string(),
+			'layoutKey'          => 'easymde:immersive-layout:' . $site_key . ':' . $user_id,
 		);
 	}
 
@@ -660,6 +664,10 @@ final class AdminAssets {
 			'discardDraft'                  => __( 'Discard draft', 'easymde' ),
 			'draftRestored'                 => __( 'Draft restored.', 'easymde' ),
 			'draftDiscarded'                => __( 'Draft discarded.', 'easymde' ),
+			'draftReadFailed'               => __( 'Local draft could not be read.', 'easymde' ),
+			'draftSaveFailed'               => __( 'Local draft could not be saved.', 'easymde' ),
+			'draftDiscardFailed'            => __( 'Local draft could not be discarded.', 'easymde' ),
+			'draftConflict'                 => __( 'A different local draft was saved in another tab.', 'easymde' ),
 			'save'                          => __( 'Save', 'easymde' ),
 			'renderingFailed'               => __( 'Rendering failed.', 'easymde' ),
 			'featuredImageLookupFailed'     => __( 'The first local image could not be verified.', 'easymde' ),

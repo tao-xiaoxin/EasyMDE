@@ -11,6 +11,8 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	private $category_load_error;
 	private $get_react_editor_asset;
 	private $get_static_asset_version;
+	private $get_storage_config;
+	private $get_strings;
 
 	public function set_up() {
 		parent::set_up();
@@ -22,12 +24,40 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->category_load_error = $reflection->getProperty( 'category_load_error' );
 		$this->get_react_editor_asset = $reflection->getMethod( 'get_react_editor_asset' );
 		$this->get_static_asset_version = $reflection->getMethod( 'get_static_asset_version' );
+		$this->get_storage_config = $reflection->getMethod( 'get_storage_config' );
+		$this->get_strings = $reflection->getMethod( 'get_strings' );
 		$this->get_category_options->setAccessible( true );
 		$this->get_category_options_cache_key->setAccessible( true );
 		$this->category_load_error->setAccessible( true );
 		$this->get_react_editor_asset->setAccessible( true );
 		$this->get_static_asset_version->setAccessible( true );
+		$this->get_storage_config->setAccessible( true );
+		$this->get_strings->setAccessible( true );
 		wp_cache_flush();
+	}
+
+	public function test_local_draft_bootstrap_exposes_a_versioned_bounded_locale_contract() {
+		$user_id = self::factory()->user->create( array( 'role' => 'author' ) );
+		wp_set_current_user( $user_id );
+		update_option( 'timezone_string', 'Asia/Shanghai' );
+
+		$storage = $this->get_storage_config->invoke( $this->admin_assets, 41 );
+
+		$this->assertSame( 1, $storage['draftSchemaVersion'] );
+		$this->assertSame( 1048576, $storage['draftMaxBytes'] );
+		$this->assertSame( get_user_locale( $user_id ), $storage['locale'] );
+		$this->assertSame( 'Asia/Shanghai', $storage['timeZone'] );
+		$this->assertSame( 41, $storage['postId'] );
+		$this->assertSame( $user_id, $storage['userId'] );
+	}
+
+	public function test_local_draft_failures_and_conflicts_have_php_gettext_messages() {
+		$strings = $this->get_strings->invoke( $this->admin_assets );
+
+		$this->assertSame( 'Local draft could not be read.', $strings['draftReadFailed'] );
+		$this->assertSame( 'Local draft could not be saved.', $strings['draftSaveFailed'] );
+		$this->assertSame( 'Local draft could not be discarded.', $strings['draftDiscardFailed'] );
+		$this->assertSame( 'A different local draft was saved in another tab.', $strings['draftConflict'] );
 	}
 
 	public function test_toolbar_stylesheet_uses_a_content_version_for_atomic_owner_handoff() {

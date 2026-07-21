@@ -33,6 +33,10 @@ msgstr "已存在同名自定义 CSS 样式。"
 msgid "A newer local draft is available."
 msgstr "检测到更新的本地草稿。"
 
+#: src/Admin/AdminAssets.php:670
+msgid "A different local draft was saved in another tab."
+msgstr "另一个标签页保存了不同的本地草稿。"
+
 #: src/Admin/AdminAssets.php:321
 msgid "AI Assistant"
 msgstr "AI 助手"
@@ -727,6 +731,18 @@ msgstr "正在加载修订版本..."
 #: src/Admin/AdminAssets.php:511
 msgid "Local draft saved"
 msgstr "本地草稿已保存"
+
+#: src/Admin/AdminAssets.php:669
+msgid "Local draft could not be discarded."
+msgstr "无法丢弃本地草稿。"
+
+#: src/Admin/AdminAssets.php:667
+msgid "Local draft could not be read."
+msgstr "无法读取本地草稿。"
+
+#: src/Admin/AdminAssets.php:668
+msgid "Local draft could not be saved."
+msgstr "无法保存本地草稿。"
 
 #: src/Admin/AdminAssets.php:466
 msgid "Local drafts enabled"

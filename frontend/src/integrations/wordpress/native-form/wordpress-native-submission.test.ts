@@ -46,4 +46,21 @@ describe('createWordPressNativeSubmissionPort', () => {
     expect(second).toHaveBeenCalledTimes(1);
     unsubscribeSecond();
   });
+
+  it('blocks native serialization during capture when the session rejects submission', () => {
+    const parent = document.createElement('div');
+    const form = document.createElement('form');
+    parent.append(form);
+    const bubbleListener = vi.fn();
+    form.addEventListener('submit', bubbleListener);
+    const port = createWordPressNativeSubmissionPort(form);
+    port.subscribeBeforeSubmit(() => 'blocked');
+    const event = new SubmitEvent('submit', { bubbles: true, cancelable: true });
+
+    const accepted = form.dispatchEvent(event);
+
+    expect(accepted).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
+    expect(bubbleListener).toHaveBeenCalledTimes(1);
+  });
 });

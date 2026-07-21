@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SafePreviewHtml } from '../../contracts/ports/preview-request';
 import type { ImageUploadResult } from '../../contracts/ports/image-upload-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
+import type {
+  EditorSessionPort,
+  EditorSessionStatus
+} from '../../contracts/ports/editor-session-port';
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
 import { editorLayoutBootstrapFixture } from '../../test/editor-layout-bootstrap-fixture';
 import { publishingBootstrapFixture } from '../../test/publishing-bootstrap-fixture';
@@ -25,6 +29,7 @@ function fixture(): EditorRootProps & Readonly<{
   nativeForm: HTMLFormElement;
   scrollSyncBinding: Readonly<{ activate: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }>;
   shortcutBinding: PreparedToolbarShortcutBinding;
+  sessionEmit: (status: EditorSessionStatus) => void;
 }> {
   const submissionField = document.createElement('textarea');
   const titleField = document.createElement('input');
@@ -59,6 +64,15 @@ function fixture(): EditorRootProps & Readonly<{
     write: vi.fn(() => ({ status: 'saved' as const, updatedAt: 1234 }))
   };
   const scrollSyncBinding = { activate: vi.fn(), dispose: vi.fn() };
+  const sessionListeners = new Set<() => void>();
+  let sessionSnapshot = { status: 'ready' as EditorSessionStatus };
+  const sessionPort: EditorSessionPort = {
+    getSnapshot: () => sessionSnapshot,
+    subscribe: vi.fn((listener) => {
+      sessionListeners.add(listener);
+      return () => sessionListeners.delete(listener);
+    })
+  };
 
   return {
     appearance: {
@@ -229,6 +243,11 @@ function fixture(): EditorRootProps & Readonly<{
     scrollSyncPort: {
       prepareBinding: vi.fn(() => scrollSyncBinding)
     },
+    sessionEmit: (status) => {
+      sessionSnapshot = { status };
+      for (const listener of sessionListeners) listener();
+    },
+    sessionPort,
     shortcutBinding,
     submissionField,
     titleField,
@@ -345,6 +364,51 @@ describe('EditorRoot', () => {
     props.submissionField.value = 'after teardown';
     props.nativeForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
     expect(props.submissionField.value).toBe('after teardown');
+  });
+
+  it('tracks the WordPress session and blocks new protected native and React operations', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const input = view.container.querySelector<HTMLElement>('.cm-content');
+    const editor = input ? EditorView.findFromDOM(input) : null;
+    editor?.dispatch({
+      changes: { from: 0, to: editor.state.doc.length, insert: 'unsaved session value' }
+    });
+    props.submissionField.value = 'preserved unsaved value';
+
+    act(() => props.sessionEmit('locked'));
+
+    expect(view.container.querySelector('[data-easymde-editor-owner="react"]')
+      ?.getAttribute('data-easymde-session-status')).toBe('locked');
+    const nativeEvent = new SubmitEvent('submit', { bubbles: true, cancelable: true });
+    expect(props.nativeForm.dispatchEvent(nativeEvent)).toBe(false);
+    expect(props.submissionField.value).toBe('preserved unsaved value');
+
+    const publishActions = view.getAllByRole('button', { name: 'Publish' });
+    fireEvent.click(publishActions[publishActions.length - 1] as HTMLButtonElement);
+    const openPublishActions = view.getAllByRole('button', { name: 'Publish' });
+    fireEvent.click(openPublishActions[openPublishActions.length - 1] as HTMLButtonElement);
+    expect(props.publishingPort.requestSubmit).not.toHaveBeenCalled();
+    expect(props.onFailure).toHaveBeenCalledWith('editor-session-locked');
+
+    act(() => props.sessionEmit('authentication-required'));
+    fireEvent.click(view.getByRole('button', { name: 'Image' }));
+    await waitFor(() => expect(props.mediaPickerFrame?.open).not.toHaveBeenCalled());
+    expect(props.submissionField.value).toBe('preserved unsaved value');
+  });
+
+  it('keeps the dirty baseline and recovery data until WordPress confirms persistence on the next bootstrap', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const input = view.container.querySelector<HTMLElement>('.cm-content');
+    const editor = input ? EditorView.findFromDOM(input) : null;
+    editor?.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'not persisted' } });
+    await waitFor(() => expect(view.getByText('Unsaved')).not.toBeNull());
+
+    props.nativeForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
+
+    expect(view.getByText('Unsaved')).not.toBeNull();
+    expect(props.localDraftStorage.discard).not.toHaveBeenCalled();
   });
 
   it('composes publishing as a temporary draft over the WordPress submission port', () => {

@@ -29,6 +29,11 @@ import type { WechatExportBootstrap } from '../../contracts/bootstrap/wechat-exp
 import type { AppearancePort } from '../../contracts/ports/appearance-port';
 import type { FontControlsPort } from '../../contracts/ports/font-controls-port';
 import type { ImageUploadPort } from '../../contracts/ports/image-upload-port';
+import {
+  protectedEditorOperationError,
+  type EditorSessionOperation,
+  type EditorSessionPort
+} from '../../contracts/ports/editor-session-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type { NativeSubmissionPort } from '../../contracts/ports/native-submission-port';
 import type { PublishingPort } from '../../contracts/ports/publishing-port';
@@ -58,6 +63,7 @@ import {
   EditorWorkspace,
   type EditorViewMode
 } from '../../features/editor-layout/ui/EditorWorkspace';
+import { useEditorSession } from '../../features/editor-session/use-editor-session';
 import type { PreviewEnhancementPort } from '../../features/live-preview/ports/preview-enhancement-port';
 import type { PreviewScrollPort } from '../../features/live-preview/ports/preview-scroll-port';
 import { PreviewSurfaceOwner, type PreviewSurfaceRuntime } from '../../features/live-preview/ui/PreviewSurfaceOwner';
@@ -118,6 +124,7 @@ export type EditorRootProps = Readonly<{
   revisionsPort: RevisionsPort;
   scrollPort: PreviewScrollPort;
   scrollSyncPort: ScrollSyncPort;
+  sessionPort: EditorSessionPort;
   submissionField: HTMLTextAreaElement;
   titleField: HTMLInputElement;
   toolbar: ToolbarBootstrap;
@@ -329,6 +336,12 @@ export function EditorRoot(props: EditorRootProps) {
   const [previewRuntimeReady, setPreviewRuntimeReady] = useState(false);
   const [revisionCodeTheme, setRevisionCodeTheme] = useState(props.appearance.state.codeTheme);
   const [viewMode, setViewMode] = useState<EditorViewMode>('split');
+  const sessionSnapshot = useEditorSession(props.sessionPort);
+  const protectedOperationError = useCallback((operation: EditorSessionOperation) => {
+    const error = protectedEditorOperationError(props.sessionPort.getSnapshot(), operation);
+    if (error) props.onFailure(error.message);
+    return error;
+  }, [props.onFailure, props.sessionPort]);
   const wechatSession = useMemo(() => createWechatExportSession({
     clipboard: props.wechatClipboard,
     enabled: props.wechatExport.enabled,
@@ -385,6 +398,8 @@ export function EditorRoot(props: EditorRootProps) {
       props.appearancePort.closeOtherPopovers();
     },
     saveCustomCss: async (input) => {
+      const sessionError = protectedOperationError('authenticated');
+      if (sessionError) throw sessionError;
       const result = await props.appearancePort.saveCustomCss(input);
       if ('saved' === result.status) {
         submissionStateRef.current = {
@@ -398,7 +413,7 @@ export function EditorRoot(props: EditorRootProps) {
       }
       return result;
     }
-  }), [documentSession, props.appearancePort, schedulePreview]);
+  }), [documentSession, props.appearancePort, protectedOperationError, schedulePreview]);
   const fontControlsPort = useMemo<FontControlsPort>(() => ({
     applyState: (state) => {
       props.fontControlsPort.applyState(state);
@@ -444,11 +459,14 @@ export function EditorRoot(props: EditorRootProps) {
     if (mediaOperationRef.current) {
       return mediaOperationRef.current;
     }
-    const operation = openMediaPickerSession({
-      document: documentPort(session, () => rootActiveRef.current),
-      frame: props.mediaPickerFrame,
-      strings: props.mediaPicker
-    });
+    const sessionError = protectedOperationError('authenticated');
+    const operation = sessionError
+      ? Promise.reject(sessionError)
+      : openMediaPickerSession({
+          document: documentPort(session, () => rootActiveRef.current),
+          frame: props.mediaPickerFrame,
+          strings: props.mediaPicker
+        });
     mediaOperationRef.current = operation;
     void operation.catch((error: unknown) => {
       if (!rootActiveRef.current) {
@@ -462,7 +480,57 @@ export function EditorRoot(props: EditorRootProps) {
       }
     });
     return operation;
-  }, [props.mediaPicker, props.mediaPickerFailureMessage, props.mediaPickerFrame, props.onFailure]);
+  }, [props.mediaPicker, props.mediaPickerFailureMessage, props.mediaPickerFrame, props.onFailure, protectedOperationError]);
+  const imageUploadPort = useMemo<ImageUploadPort>(() => ({
+    upload: (request) => {
+      const sessionError = protectedOperationError('post-write');
+      return sessionError
+        ? Promise.resolve({ code: sessionError.message, status: 'failed' })
+        : props.imageUploadPort.upload(request);
+    }
+  }), [props.imageUploadPort, protectedOperationError]);
+  const previewPort = useMemo<PreviewRequestPort>(() => ({
+    render: (request, signal) => {
+      const sessionError = protectedOperationError('post-read');
+      return sessionError
+        ? Promise.reject(sessionError)
+        : props.previewPort.render(request, signal);
+    }
+  }), [props.previewPort, protectedOperationError]);
+  const publishingPort = useMemo<PublishingPort>(() => ({
+    read: props.publishingPort.read,
+    requestSubmit: (draft, action) => {
+      const sessionError = protectedOperationError('post-write');
+      if (sessionError) throw sessionError;
+      return props.publishingPort.requestSubmit(draft, action);
+    },
+    selectFeaturedImage: () => {
+      const sessionError = protectedOperationError('authenticated');
+      return sessionError
+        ? Promise.reject(sessionError)
+        : props.publishingPort.selectFeaturedImage();
+    }
+  }), [props.publishingPort, protectedOperationError]);
+  const revisionsPort = useMemo<RevisionsPort>(() => ({
+    confirmNavigation: props.revisionsPort.confirmNavigation,
+    getRevision: (revisionId, signal) => {
+      const sessionError = protectedOperationError('post-read');
+      return sessionError
+        ? Promise.reject(sessionError)
+        : props.revisionsPort.getRevision(revisionId, signal);
+    },
+    listRevisions: (signal) => {
+      const sessionError = protectedOperationError('post-read');
+      return sessionError
+        ? Promise.reject(sessionError)
+        : props.revisionsPort.listRevisions(signal);
+    },
+    openRevision: (revisionId) => {
+      const sessionError = protectedOperationError('post-read');
+      if (sessionError) throw sessionError;
+      props.revisionsPort.openRevision(revisionId);
+    }
+  }), [props.revisionsPort, protectedOperationError]);
   const executeRootExternalCommand = useCallback((
     commandId: string,
     session: EditorDocumentSession
@@ -492,9 +560,12 @@ export function EditorRoot(props: EditorRootProps) {
       return;
     }
     return props.nativeSubmissionPort.subscribeBeforeSubmit(() => {
+      const sessionError = protectedOperationError('post-write');
+      if (sessionError) return 'blocked';
       documentSession.document.flush();
+      return 'continue';
     });
-  }, [documentSession, props.nativeSubmissionPort]);
+  }, [documentSession, props.nativeSubmissionPort, protectedOperationError]);
 
   useEffect(() => {
     if (!documentSession) {
@@ -509,9 +580,9 @@ export function EditorRoot(props: EditorRootProps) {
       postId: props.imageUpload.postId,
       strings: props.imageUpload.strings,
       target: documentSession.document.getInputElement(),
-      upload: props.imageUploadPort
+      upload: imageUploadPort
     });
-  }, [documentSession, props.imageUpload, props.imageUploadPort, props.onFailure]);
+  }, [documentSession, props.imageUpload, imageUploadPort, props.onFailure]);
 
   useEffect(() => {
     if (!documentSession) {
@@ -573,6 +644,7 @@ export function EditorRoot(props: EditorRootProps) {
       ref={rootRef}
       className="easymde-editor"
       data-easymde-editor-owner="react"
+      data-easymde-session-status={sessionSnapshot.status}
     >
       <div className="easymde-toolbar" role="toolbar" aria-label={props.labels.toolbar}>
         <div className="easymde-toolbar-section easymde-toolbar-section-main">
@@ -617,14 +689,14 @@ export function EditorRoot(props: EditorRootProps) {
             onDiagnostic={props.onFailure}
             onOpen={handleRevisionsOpen}
             onReady={handleRevisionsReady}
-            port={props.revisionsPort}
+            port={revisionsPort}
           />
           <PublishingControls
             bootstrap={props.publishing}
             onDiagnostic={props.onFailure}
             onOpen={handlePublishingOpen}
             onReady={handlePublishingReady}
-            port={props.publishingPort}
+            port={publishingPort}
           />
         </div>
       </div>
@@ -689,7 +761,7 @@ export function EditorRoot(props: EditorRootProps) {
               messages={props.preview.messages}
               onDiagnostic={props.onFailure}
               onReady={handlePreviewReady}
-              port={props.previewPort}
+              port={previewPort}
               scrollPort={props.scrollPort}
             />
           </section>

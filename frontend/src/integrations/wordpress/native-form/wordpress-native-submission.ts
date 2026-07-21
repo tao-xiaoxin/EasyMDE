@@ -8,16 +8,19 @@ export function createWordPressNativeSubmissionPort(
   }
 
   return {
-    subscribeBeforeSubmit(listener: () => void) {
+    subscribeBeforeSubmit(listener) {
       let active = true;
-      form.addEventListener('submit', listener);
+      const beforeSubmit = (event: SubmitEvent) => {
+        if ('blocked' === listener()) event.preventDefault();
+      };
+      form.addEventListener('submit', beforeSubmit, { capture: true });
 
       return () => {
         if (!active) {
           return;
         }
         active = false;
-        form.removeEventListener('submit', listener);
+        form.removeEventListener('submit', beforeSubmit, { capture: true });
       };
     }
   };

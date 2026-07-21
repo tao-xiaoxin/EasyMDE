@@ -1,3 +1,3 @@
 export interface NativeSubmissionPort {
-  subscribeBeforeSubmit(listener: () => void): () => void;
+  subscribeBeforeSubmit(listener: () => 'blocked' | 'continue' | undefined): () => void;
 }

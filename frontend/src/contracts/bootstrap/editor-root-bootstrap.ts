@@ -16,6 +16,14 @@ import {
   type FontControlsBootstrap
 } from './font-controls-bootstrap';
 import {
+  parseImageUploadBootstrap,
+  type ImageUploadBootstrap
+} from './image-upload-bootstrap';
+import {
+  parseMediaPickerBootstrap,
+  type MediaPickerBootstrap
+} from './media-picker-bootstrap';
+import {
   parseToolbarBootstrap,
   type ToolbarBootstrap
 } from './toolbar-bootstrap';
@@ -37,12 +45,14 @@ export type EditorRootBootstrap = Readonly<{
   schemaVersion: 1;
   document: DocumentSourceBootstrap;
   fonts: FontControlsBootstrap;
+  imageUpload: ImageUploadBootstrap;
   labels: Readonly<{
     preview: string;
     source: string;
     toolbar: string;
   }>;
   preview: EditorRootPreviewBootstrap;
+  mediaPicker: MediaPickerBootstrap;
   toolbar: ToolbarBootstrap;
 }>;
 
@@ -135,6 +145,8 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   let document: DocumentSourceBootstrap;
   let appearance: AppearanceBootstrap;
   let fonts: FontControlsBootstrap;
+  let imageUpload: ImageUploadBootstrap;
+  let mediaPicker: MediaPickerBootstrap;
   let toolbar: ToolbarBootstrap;
 
   try {
@@ -153,6 +165,16 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     throw new EditorRootBootstrapError('editor-root-fonts-invalid');
   }
   try {
+    imageUpload = parseImageUploadBootstrap(bootstrap.imageUpload);
+  } catch {
+    throw new EditorRootBootstrapError('editor-root-image-upload-invalid');
+  }
+  try {
+    mediaPicker = parseMediaPickerBootstrap(bootstrap.mediaPicker);
+  } catch {
+    throw new EditorRootBootstrapError('editor-root-media-picker-invalid');
+  }
+  try {
     toolbar = parseToolbarBootstrap(bootstrap.toolbar);
   } catch {
     throw new EditorRootBootstrapError('editor-root-toolbar-invalid');
@@ -163,12 +185,14 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     schemaVersion: 1,
     document,
     fonts,
+    imageUpload,
     labels: {
       preview: boundedString(labels.preview, 'editor-root-label-invalid'),
       source: boundedString(labels.source, 'editor-root-label-invalid'),
       toolbar: boundedString(labels.toolbar, 'editor-root-label-invalid')
     },
     preview: parsePreview(bootstrap.preview),
+    mediaPicker,
     toolbar
   };
 }

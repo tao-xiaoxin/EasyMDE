@@ -1,4 +1,14 @@
-import type { ImageUploadStrings } from '../../features/image-upload/image-upload-session';
+export type ImageUploadStrings = Readonly<{
+  defaultAlt: string;
+  dropFailed: string;
+  dropTooLarge: string;
+  dropUploaded: string;
+  dropUploading: string;
+  pasteFailed: string;
+  pasteTooLarge: string;
+  pasteUploaded: string;
+  pasteUploading: string;
+}>;
 
 export type ImageUploadBootstrap = Readonly<{
   enabled: boolean;

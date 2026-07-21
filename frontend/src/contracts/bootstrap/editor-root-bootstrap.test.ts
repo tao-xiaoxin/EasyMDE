@@ -49,6 +49,29 @@ function validBootstrap() {
         windowsFont: 'Windows font'
       }
     },
+    imageUpload: {
+      enabled: true,
+      endpoint: 'https://example.test/wp-json/easymde/v1/media',
+      maxBytes: 1024,
+      nonce: 'synthetic-nonce',
+      postId: 7,
+      strings: {
+        defaultAlt: 'image',
+        dropFailed: 'Drop failed',
+        dropTooLarge: 'Drop too large',
+        dropUploaded: 'Drop uploaded',
+        dropUploading: 'Drop uploading',
+        pasteFailed: 'Paste failed',
+        pasteTooLarge: 'Paste too large',
+        pasteUploaded: 'Paste uploaded',
+        pasteUploading: 'Paste uploading'
+      }
+    },
+    mediaPicker: {
+      defaultAlt: 'image',
+      insertMedia: 'Insert Media',
+      placeholderAlt: 'alt text'
+    },
     preview: {
       features: { highlight: true, mermaid: false },
       html: '<p>Sanitized preview</p>',
@@ -85,6 +108,7 @@ describe('parseEditorRootBootstrap', () => {
       schemaVersion: 1,
       document: { editorLabel: 'Markdown source' },
       fonts: validBootstrap().fonts,
+      imageUpload: validBootstrap().imageUpload,
       labels: {
         preview: 'Preview',
         source: 'Markdown',
@@ -97,6 +121,7 @@ describe('parseEditorRootBootstrap', () => {
         postId: 7,
         signature: 'stored-signature'
       },
+      mediaPicker: validBootstrap().mediaPicker,
       toolbar: expect.objectContaining({
         headingsLabel: 'Headings',
         linkText: 'link text'
@@ -110,6 +135,8 @@ describe('parseEditorRootBootstrap', () => {
     [{ ...validBootstrap(), document: null }, 'editor-root-document-invalid'],
     [{ ...validBootstrap(), appearance: null }, 'editor-root-appearance-invalid'],
     [{ ...validBootstrap(), fonts: null }, 'editor-root-fonts-invalid'],
+    [{ ...validBootstrap(), imageUpload: null }, 'editor-root-image-upload-invalid'],
+    [{ ...validBootstrap(), mediaPicker: null }, 'editor-root-media-picker-invalid'],
     [{ ...validBootstrap(), toolbar: null }, 'editor-root-toolbar-invalid'],
     [{ ...validBootstrap(), strings: { ...validBootstrap().strings, source: '' } }, 'editor-root-label-invalid'],
     [{ ...validBootstrap(), preview: { ...validBootstrap().preview, postId: -1 } }, 'editor-root-preview-invalid'],

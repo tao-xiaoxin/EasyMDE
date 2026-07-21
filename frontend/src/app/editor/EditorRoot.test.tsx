@@ -3,6 +3,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SafePreviewHtml } from '../../contracts/ports/preview-request';
+import type { ImageUploadResult } from '../../contracts/ports/image-upload-port';
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
 import { EditorRoot, type EditorRootProps } from './EditorRoot';
 import { EditorRootErrorBoundary } from './EditorRootErrorBoundary';
@@ -28,6 +29,15 @@ function fixture(): EditorRootProps & Readonly<{
     activate: vi.fn(),
     dispose: vi.fn()
   };
+  const mediaFrame = {
+    close: () => undefined,
+    open: vi.fn(),
+    select: (_attachment: unknown) => undefined
+  };
+  mediaFrame.open.mockImplementation((options) => {
+    mediaFrame.close = options.onClose;
+    mediaFrame.select = options.onSelect;
+  });
 
   return {
     appearance: {
@@ -82,6 +92,36 @@ function fixture(): EditorRootProps & Readonly<{
       }
     },
     labels: { preview: 'Preview', source: 'Markdown', toolbar: 'Markdown toolbar' },
+    imageUpload: {
+      enabled: true,
+      maxBytes: 1024,
+      postId: 7,
+      strings: {
+        defaultAlt: 'image',
+        dropFailed: 'Drop failed',
+        dropTooLarge: 'Drop too large',
+        dropUploaded: 'Drop uploaded',
+        dropUploading: 'Drop uploading',
+        pasteFailed: 'Paste failed',
+        pasteTooLarge: 'Paste too large',
+        pasteUploaded: 'Paste uploaded',
+        pasteUploading: 'Paste uploading'
+      }
+    },
+    imageUploadPort: {
+      upload: vi.fn().mockResolvedValue({
+        alt: 'uploaded image',
+        status: 'uploaded',
+        url: 'https://example.test/upload.png'
+      } satisfies ImageUploadResult)
+    },
+    mediaPicker: {
+      defaultAlt: 'image',
+      insertMedia: 'Insert Media',
+      placeholderAlt: 'alt text'
+    },
+    mediaPickerFailureMessage: 'The media library could not be opened.',
+    mediaPickerFrame: mediaFrame,
     onFailure: vi.fn(),
     platform: 'win',
     prepareToolbarShortcuts: vi.fn(() => ({
@@ -133,6 +173,18 @@ function fixture(): EditorRootProps & Readonly<{
   };
 }
 
+function imageTransferEvent(type: 'drop' | 'paste', file: File): Event {
+  const transfer = {
+    dropEffect: 'move',
+    files: [file],
+    items: [{ getAsFile: () => file, kind: 'file', type: file.type }]
+  };
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', { value: 'paste' === type ? transfer : null });
+  Object.defineProperty(event, 'dataTransfer', { value: 'drop' === type ? transfer : null });
+  return event;
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   for (const field of mountedFields.splice(0)) {
@@ -163,11 +215,10 @@ describe('EditorRoot', () => {
 
     const image = view.container.querySelector<HTMLButtonElement>('[data-easymde-command="image"]');
     expect(image).not.toBeNull();
-    vi.mocked(props.executeExternalCommand).mockReturnValue(false);
     await act(async () => {
       fireEvent.click(image as HTMLButtonElement);
     });
-    expect(props.executeExternalCommand).toHaveBeenCalledTimes(1);
+    expect(props.mediaPickerFrame?.open).toHaveBeenCalledTimes(1);
 
     view.unmount();
     expect(props.shortcutBinding.dispose).toHaveBeenCalledTimes(1);
@@ -241,5 +292,77 @@ describe('EditorRoot', () => {
         expect.any(AbortSignal)
       );
     });
+  });
+
+  it('opens WordPress Media from the Image command and inserts the selected attachment', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(view.getByRole('button', { name: 'Image' }));
+    fireEvent.click(view.getByRole('button', { name: 'Image' }));
+    const frame = props.mediaPickerFrame;
+    expect(frame).not.toBeNull();
+    if (!frame) {
+      throw new Error('missing synthetic media frame');
+    }
+    expect(frame.open).toHaveBeenCalledTimes(1);
+    vi.mocked(frame.open).mock.calls[0]?.[0].onSelect({
+      alt: 'Selected image',
+      url: 'https://example.test/selected.png'
+    });
+    vi.mocked(frame.open).mock.calls[0]?.[0].onClose();
+
+    await waitFor(() => {
+      expect(props.submissionField.value)
+        .toBe('![Selected image](https://example.test/selected.png)');
+    });
+    expect(props.executeExternalCommand).not.toHaveBeenCalled();
+  });
+
+  it('reports a stable visible Media failure without mutating Markdown', async () => {
+    const props = fixture();
+    const frame = props.mediaPickerFrame;
+    if (!frame) {
+      throw new Error('missing synthetic media frame');
+    }
+    vi.mocked(frame.open).mockImplementation(() => {
+      throw new Error('private WordPress frame failure');
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(view.getByRole('button', { name: 'Image' }));
+
+    await waitFor(() => {
+      expect(view.getByText('The media library could not be opened.')).not.toBeNull();
+      expect(props.onFailure).toHaveBeenCalledWith('media-picker-operation-failed');
+    });
+    expect(props.submissionField.value).toBe('selected');
+  });
+
+  it('owns image Paste upload status and releases the Source listener on teardown', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const source = view.container.querySelector('.cm-content');
+    expect(source).not.toBeNull();
+    const paste = imageTransferEvent(
+      'paste',
+      new File(['image'], 'screen-shot.png', { type: 'image/png' })
+    );
+
+    source?.dispatchEvent(paste);
+    expect(paste.defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(view.getByText('Paste uploaded')).not.toBeNull();
+      expect(props.submissionField.value)
+        .toBe('![uploaded image](https://example.test/upload.png)');
+    });
+
+    view.unmount();
+    const afterUnmount = imageTransferEvent(
+      'paste',
+      new File(['image'], 'ignored.png', { type: 'image/png' })
+    );
+    source?.dispatchEvent(afterUnmount);
+    expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(1);
   });
 });

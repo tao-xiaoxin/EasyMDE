@@ -4,20 +4,9 @@ import type {
   ImageUploadPort,
   ImageUploadSelection
 } from '../../contracts/ports/image-upload-port';
+import type { ImageUploadStrings } from '../../contracts/bootstrap/image-upload-bootstrap';
 
 export type ImageUploadSource = 'drop' | 'paste';
-
-export type ImageUploadStrings = Readonly<{
-  defaultAlt: string;
-  dropFailed: string;
-  dropTooLarge: string;
-  dropUploaded: string;
-  dropUploading: string;
-  pasteFailed: string;
-  pasteTooLarge: string;
-  pasteUploaded: string;
-  pasteUploading: string;
-}>;
 
 export type ImageUploadStatus = Readonly<{
   message: string;

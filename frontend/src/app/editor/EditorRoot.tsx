@@ -15,9 +15,16 @@ import type {
   AppearanceState
 } from '../../contracts/bootstrap/appearance-bootstrap';
 import type { FontControlsBootstrap } from '../../contracts/bootstrap/font-controls-bootstrap';
+import type { ImageUploadBootstrap } from '../../contracts/bootstrap/image-upload-bootstrap';
+import type { MediaPickerBootstrap } from '../../contracts/bootstrap/media-picker-bootstrap';
 import type { ToolbarBootstrap } from '../../contracts/bootstrap/toolbar-bootstrap';
 import type { AppearancePort } from '../../contracts/ports/appearance-port';
 import type { FontControlsPort } from '../../contracts/ports/font-controls-port';
+import type { ImageUploadPort } from '../../contracts/ports/image-upload-port';
+import type {
+  MediaPickerDocumentPort,
+  MediaPickerFramePort
+} from '../../contracts/ports/media-picker-port';
 import type { PreviewRequest, PreviewRequestPort } from '../../contracts/ports/preview-request';
 import type { ToolbarShortcutsPort } from '../../contracts/ports/toolbar-shortcuts-port';
 import {
@@ -29,9 +36,14 @@ import {
   FontControls,
   type FontControlsSession
 } from '../../features/font-controls/ui/FontControls';
+import {
+  createImageUploadSession,
+  type ImageUploadStatus
+} from '../../features/image-upload/image-upload-session';
 import type { PreviewEnhancementPort } from '../../features/live-preview/ports/preview-enhancement-port';
 import type { PreviewScrollPort } from '../../features/live-preview/ports/preview-scroll-port';
 import { PreviewSurfaceOwner, type PreviewSurfaceRuntime } from '../../features/live-preview/ui/PreviewSurfaceOwner';
+import { openMediaPickerSession } from '../../features/media-picker/media-picker-session';
 import { createToolbarCommandSession } from '../../features/toolbar/toolbar-command-session';
 import {
   EditorToolbar,
@@ -47,11 +59,16 @@ export type EditorRootProps = Readonly<{
   executeExternalCommand: (commandId: string, session: EditorDocumentSession) => unknown;
   fontControlsPort: FontControlsPort;
   fonts: FontControlsBootstrap;
+  imageUpload: Pick<ImageUploadBootstrap, 'enabled' | 'maxBytes' | 'postId' | 'strings'>;
+  imageUploadPort: ImageUploadPort;
   labels: Readonly<{
     preview: string;
     source: string;
     toolbar: string;
   }>;
+  mediaPicker: MediaPickerBootstrap;
+  mediaPickerFailureMessage: string;
+  mediaPickerFrame: MediaPickerFramePort | null;
   onFailure: (code: string) => void;
   platform: ToolbarPlatform;
   prepareToolbarShortcuts: (surfaces: Readonly<{
@@ -151,6 +168,40 @@ function previewRequest(
   };
 }
 
+function documentPort(
+  session: EditorDocumentSession,
+  isActive: () => boolean
+): MediaPickerDocumentPort {
+  return {
+    applyTextChange: (change) => {
+      if (!isActive()) {
+        throw new Error('editor-root-document-session-inactive');
+      }
+      session.document.applyTextChange(change);
+    },
+    focus: () => {
+      if (isActive()) {
+        session.document.focus();
+      }
+    },
+    getSnapshot: () => {
+      if (!isActive()) {
+        throw new Error('editor-root-document-session-inactive');
+      }
+      return {
+        selection: session.document.getSelection(),
+        value: session.document.getValue()
+      };
+    }
+  };
+}
+
+function mediaPickerFailureCode(error: unknown): string {
+  return error instanceof Error && /^media-picker-[a-z0-9-]+$/.test(error.message)
+    ? error.message
+    : 'media-picker-operation-failed';
+}
+
 export function EditorRoot(props: EditorRootProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const appearanceSessionRef = useRef<AppearanceControlsSession | null>(null);
@@ -159,7 +210,10 @@ export function EditorRoot(props: EditorRootProps) {
   const previewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
   const previewRevisionRef = useRef(0);
   const previewAppearanceRef = useRef(props.appearance.state);
+  const mediaOperationRef = useRef<Promise<unknown> | null>(null);
+  const rootActiveRef = useRef(true);
   const [documentSession, setDocumentSession] = useState<EditorDocumentSession | null>(null);
+  const [editorStatus, setEditorStatus] = useState<ImageUploadStatus | null>(null);
   const [, setPreviewRuntimeReady] = useState(false);
 
   const handleDocumentReady = useCallback((session: EditorDocumentSession) => {
@@ -226,6 +280,63 @@ export function EditorRoot(props: EditorRootProps) {
   const handleToolbarReady = useCallback((session: EditorToolbarSession) => {
     toolbarSessionRef.current = session;
   }, []);
+  const openMediaPicker = useCallback((session: EditorDocumentSession) => {
+    if (mediaOperationRef.current) {
+      return mediaOperationRef.current;
+    }
+    const operation = openMediaPickerSession({
+      document: documentPort(session, () => rootActiveRef.current),
+      frame: props.mediaPickerFrame,
+      strings: props.mediaPicker
+    });
+    mediaOperationRef.current = operation;
+    void operation.catch((error: unknown) => {
+      if (!rootActiveRef.current) {
+        return;
+      }
+      props.onFailure(mediaPickerFailureCode(error));
+      setEditorStatus({ message: props.mediaPickerFailureMessage, type: 'error' });
+    }).finally(() => {
+      if (mediaOperationRef.current === operation) {
+        mediaOperationRef.current = null;
+      }
+    });
+    return operation;
+  }, [props.mediaPicker, props.mediaPickerFailureMessage, props.mediaPickerFrame, props.onFailure]);
+  const executeRootExternalCommand = useCallback((
+    commandId: string,
+    session: EditorDocumentSession
+  ) => {
+    if ('image' === props.toolbar.commands.find((command) => command.id === commandId)?.action) {
+      void openMediaPicker(session);
+      return true;
+    }
+    return props.executeExternalCommand(commandId, session);
+  }, [openMediaPicker, props.executeExternalCommand, props.toolbar.commands]);
+
+  useEffect(() => {
+    rootActiveRef.current = true;
+    return () => {
+      rootActiveRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!documentSession) {
+      return;
+    }
+    return createImageUploadSession({
+      document: documentPort(documentSession, () => rootActiveRef.current),
+      enabled: props.imageUpload.enabled,
+      maxBytes: props.imageUpload.maxBytes,
+      onDiagnostic: props.onFailure,
+      onStatus: setEditorStatus,
+      postId: props.imageUpload.postId,
+      strings: props.imageUpload.strings,
+      target: documentSession.document.getInputElement(),
+      upload: props.imageUploadPort
+    });
+  }, [documentSession, props.imageUpload, props.imageUploadPort, props.onFailure]);
 
   useLayoutEffect(() => {
     if (!previewRuntimeRef.current) return;
@@ -247,7 +358,7 @@ export function EditorRoot(props: EditorRootProps) {
           {documentSession && rootRef.current ? (
             <ActiveToolbar
               editorRoot={rootRef.current}
-              executeExternalCommand={props.executeExternalCommand}
+              executeExternalCommand={executeRootExternalCommand}
               platform={props.platform}
               prepareToolbarShortcuts={props.prepareToolbarShortcuts}
               onPopoverOpen={closeForToolbar}
@@ -272,6 +383,14 @@ export function EditorRoot(props: EditorRootProps) {
           />
         </div>
       </div>
+      {editorStatus ? (
+        <div
+          className={`easymde-editor-flash is-${editorStatus.type}`}
+          aria-live="polite"
+        >
+          {editorStatus.message}
+        </div>
+      ) : null}
       <div className="easymde-workspace">
         <section className="easymde-pane easymde-pane-source" data-easymde-document-owner="react">
           <header className="easymde-pane-header">{props.labels.source}</header>

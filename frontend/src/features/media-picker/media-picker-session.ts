@@ -4,19 +4,14 @@ import type {
   MediaPickerFramePort,
   MediaPickerSelection
 } from '../../contracts/ports/media-picker-port';
-
-export type MediaPickerStrings = Readonly<{
-  defaultAlt: string;
-  insertMedia: string;
-  placeholderAlt: string;
-}>;
+import type { MediaPickerBootstrap } from '../../contracts/bootstrap/media-picker-bootstrap';
 
 export type MediaPickerResult = 'cancelled' | 'inserted' | 'placeholder';
 
 type OpenMediaPickerSessionOptions = Readonly<{
   document: MediaPickerDocumentPort;
   frame: MediaPickerFramePort | null;
-  strings: MediaPickerStrings;
+  strings: MediaPickerBootstrap;
 }>;
 
 function validSelection(selection: MediaPickerSelection, value: string): boolean {

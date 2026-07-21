@@ -16,10 +16,11 @@ presentation-owner handoff. Startup failure leaves the legacy main Toolbar
 usable, and teardown unmounts React before legacy code may clear or reuse its
 container.
 
-The secondary Toolbar and immersive workspace remain legacy-owned. This unit
-does not transfer Preview, appearance, draft storage, WeChat export, immersive
+The secondary Toolbar was legacy-owned when this unit completed. Later focused
+units may transfer one secondary capability independently; this unit did not
+transfer Preview, appearance, fonts, draft storage, WeChat export, immersive
 writing, native submission, Save, Publish, or WordPress authority, and it
-removes no legacy implementation.
+removed no legacy implementation.
 
 ## Normal Editor Document Session Ownership
 
@@ -80,6 +81,31 @@ sanitized HTML without reporting export readiness.
 Immersive Preview remains fully legacy-owned and keeps an independent request
 revision, timer, abort, DOM, and enhancement lifecycle. No persistence, Save,
 Publish, public rendering, or immersive-writing authority moves to React.
+
+## Normal Editor Font Controls Ownership
+
+The normal editor's Font button, Popover, and Custom, Windows, Apple, and Serif
+selects are a focused React migration unit. React owns their presentation,
+interaction, and browser-session selection after a validated readiness
+handoff. PHP `ThemeStateRepository` continues to own the option descriptors,
+theme defaults, validation, and persisted state. PHP
+`AdminAssets::get_strings()` remains the translation owner, so React consumes
+already translated Bootstrap strings and does not create a second catalog.
+
+The focused WordPress Font Port applies the current Preview font class and CSS
+variable and synchronizes the existing four hidden fields. Those fields remain
+the native WordPress submission bridge; updating them is not proof of a Save.
+Article Theme defaults and explicit changes made by the retained immersive Font
+UI enter the active React Font session through its replacement method. Returning
+to the normal editor therefore cannot expose or reapply stale Font state, and
+the retained controls do not become a second normal-editor Font-state owner.
+
+The legacy Font menu remains active and visible until the React contract,
+container, Preview surface, native fields, Port, and session validate.
+Readiness disables and hides the legacy control before exposing React. Startup
+failure retains the legacy control. Failure after handoff marks the Font owner
+reload-required and never re-enables a competing writer. Appearance, Custom
+CSS, and every immersive Font surface remain legacy-owned.
 
 ## Editor Enablement
 

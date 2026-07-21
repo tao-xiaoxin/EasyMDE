@@ -48,6 +48,8 @@
     var isMac = null;
     var openPopovers = [];
     var fontControls = null;
+    var reactFontControlsSession = null;
+    var reactFontPreviewNode = null;
     var revisionPreviewRevision = 0;
     var scrollSyncBindingId = 0;
 
@@ -764,6 +766,9 @@
             popover.panel.prop('hidden', true);
             popover.button.removeClass('is-active');
         });
+        if (reactFontControlsSession && typeof reactFontControlsSession.close === 'function') {
+            reactFontControlsSession.close();
+        }
     }
 
     function createMenuAnchor(extraClass) {
@@ -935,15 +940,35 @@
     function applyThemeFontDefaults(themeId) {
         var theme = getMarkdownTheme(themeId);
         var defaults = theme && theme.fontDefaults ? theme.fontDefaults : null;
+        var nextState;
 
         if (!defaults) {
             return;
         }
 
-        renderState.customFont = defaults.customFont || renderState.customFont;
-        renderState.windowsFont = defaults.windowsFont || renderState.windowsFont;
-        renderState.appleFont = defaults.appleFont || renderState.appleFont;
-        renderState.serifFont = defaults.serifFont || renderState.serifFont;
+        nextState = {
+            customFont: defaults.customFont || renderState.customFont,
+            windowsFont: defaults.windowsFont || renderState.windowsFont,
+            appleFont: defaults.appleFont || renderState.appleFont,
+            serifFont: defaults.serifFont || renderState.serifFont
+        };
+
+        replaceFontState(nextState);
+    }
+
+    function replaceFontState(nextState) {
+        if (reactFontControlsSession) {
+            return reactFontControlsSession.replaceState(nextState);
+        }
+        if (reactFontPreviewNode) {
+            return false;
+        }
+
+        renderState.customFont = nextState.customFont;
+        renderState.windowsFont = nextState.windowsFont;
+        renderState.appleFont = nextState.appleFont;
+        renderState.serifFont = nextState.serifFont;
+        return true;
     }
 
     function syncFontControls() {
@@ -961,10 +986,43 @@
         $('#easymde-markdown-theme-field').val(renderState.markdownTheme || 'default');
         $('#easymde-code-theme-field').val(renderState.codeTheme || 'atom-one-dark');
         $('#easymde-custom-css-id-field').val(renderState.markdownTheme === 'custom' ? renderState.customCssId : '');
-        $('#easymde-custom-font-field').val(renderState.customFont || 'optima');
-        $('#easymde-windows-font-field').val(renderState.windowsFont || 'microsoft-yahei');
-        $('#easymde-apple-font-field').val(renderState.appleFont || 'pingfang-sc-light');
-        $('#easymde-serif-font-field').val(renderState.serifFont || 'yes');
+    }
+
+    function getFontFields() {
+        return {
+            customFont: document.getElementById('easymde-custom-font-field'),
+            windowsFont: document.getElementById('easymde-windows-font-field'),
+            appleFont: document.getElementById('easymde-apple-font-field'),
+            serifFont: document.getElementById('easymde-serif-font-field')
+        };
+    }
+
+    function hasUsableFontFields(fields) {
+        return !!(
+            fields
+            && fields.customFont
+            && 'value' in fields.customFont
+            && fields.windowsFont
+            && 'value' in fields.windowsFont
+            && fields.appleFont
+            && 'value' in fields.appleFont
+            && fields.serifFont
+            && 'value' in fields.serifFont
+        );
+    }
+
+    function syncFontFields(fields) {
+        fields = fields || getFontFields();
+
+        if (!hasUsableFontFields(fields)) {
+            return false;
+        }
+
+        fields.customFont.value = renderState.customFont || 'optima';
+        fields.windowsFont.value = renderState.windowsFont || 'microsoft-yahei';
+        fields.appleFont.value = renderState.appleFont || 'pingfang-sc-light';
+        fields.serifFont.value = renderState.serifFont || 'yes';
+        return true;
     }
 
     function replaceClassPrefix(element, prefix, className) {
@@ -993,12 +1051,11 @@
         themeManager.applyArticleThemeLink(themeOptions, renderState, findById, document);
     }
 
-    function applyRenderState($preview, options) {
-        var preview = $preview[0];
+    function applyRenderState($targetPreview, options) {
+        var preview = $targetPreview[0];
         var markdownClass = renderState.markdownTheme === 'custom'
             ? 'easymde-markdown-theme-custom'
             : 'easymde-markdown-theme-' + renderState.markdownTheme;
-        var fontStack = buildFontStack();
 
         options = options || {};
 
@@ -1008,22 +1065,50 @@
 
         replaceClassPrefix(preview, 'easymde-markdown-theme-', markdownClass);
         replaceClassPrefix(preview, 'easymde-code-theme-', 'easymde-code-theme-' + renderState.codeTheme);
-        $preview.addClass('easymde-rendered-content easymde-code-mac');
-        $preview.toggleClass('easymde-custom-css-active', renderState.markdownTheme === 'custom');
-        $preview.toggleClass('easymde-font-overrides', !!fontStack);
+        $targetPreview.addClass('easymde-rendered-content easymde-code-mac');
+        $targetPreview.toggleClass('easymde-custom-css-active', renderState.markdownTheme === 'custom');
+        if (preview !== reactFontPreviewNode) {
+            applyFontState($targetPreview, {
+                syncFields: options.syncFields !== false && !reactFontPreviewNode
+            });
+        }
 
+        if (options.syncFields !== false) {
+            syncThemeFields();
+        }
+        applyArticleThemeLink();
+        setCustomCssStyle(renderState.markdownTheme === 'custom' ? selectedCustomCss() : '');
+    }
+
+    function applyFontState($preview, options) {
+        var preview = $preview && $preview[0];
+        var fontStack;
+
+        options = options || {};
+        if (
+            !preview
+            || !preview.style
+            || typeof preview.style.setProperty !== 'function'
+            || typeof preview.style.removeProperty !== 'function'
+            || !$preview
+            || typeof $preview.toggleClass !== 'function'
+        ) {
+            return false;
+        }
+
+        fontStack = buildFontStack();
+        $preview.toggleClass('easymde-font-overrides', !!fontStack);
         if (fontStack) {
             preview.style.setProperty('--easymde-content-font-family', fontStack);
         } else {
             preview.style.removeProperty('--easymde-content-font-family');
         }
 
-        if (options.syncFields !== false) {
-            syncThemeFields();
+        if (options.syncFields !== false && !syncFontFields(options.fields)) {
+            return false;
         }
         syncFontControls();
-        applyArticleThemeLink();
-        setCustomCssStyle(renderState.markdownTheme === 'custom' ? selectedCustomCss() : '');
+        return true;
     }
 
     function fillCustomPanel($panel) {
@@ -1153,7 +1238,7 @@
         var panelReady = false;
 
         if (!getFontGroup('customFonts').length) {
-            return;
+            return null;
         }
 
         $button.attr('title', getString('font'));
@@ -1215,6 +1300,7 @@
         registerPopover($button, $panel, { beforeOpen: populatePanel });
         $anchor.append($button, $panel);
         $container.append($anchor);
+        return $anchor;
     }
 
     function createFlash($toolbar) {
@@ -1809,6 +1895,9 @@
                     });
                 },
                 updateAppearance: function (changes, workspaceContext) {
+                    var nextFontState;
+                    var fontStateChanged = false;
+
                     if (Object.prototype.hasOwnProperty.call(changes, 'markdownTheme')) {
                         var selectedTheme = String(changes.markdownTheme || 'default');
                         if (selectedTheme.indexOf('custom:') === 0) {
@@ -1827,11 +1916,25 @@
                             applyThemeFontDefaults(renderState.markdownTheme);
                         }
                     }
+                    nextFontState = {
+                        customFont: renderState.customFont,
+                        windowsFont: renderState.windowsFont,
+                        appleFont: renderState.appleFont,
+                        serifFont: renderState.serifFont
+                    };
                     ['codeTheme', 'customFont', 'windowsFont', 'appleFont', 'serifFont'].forEach(function (key) {
                         if (Object.prototype.hasOwnProperty.call(changes, key)) {
-                            renderState[key] = String(changes[key] || '');
+                            if (key === 'codeTheme') {
+                                renderState.codeTheme = String(changes[key] || '');
+                            } else {
+                                nextFontState[key] = String(changes[key] || '');
+                                fontStateChanged = true;
+                            }
                         }
                     });
+                    if (fontStateChanged && !replaceFontState(nextFontState)) {
+                        throw new Error('font-state-replacement-failed');
+                    }
                     themeOptions.state = renderState;
                     applyRenderState(context.preview);
                     applyRenderState($(workspaceContext.preview));
@@ -3461,6 +3564,12 @@
         }
     }
 
+    function reportReactFontControlsFailure(code) {
+        if (window.console && typeof window.console.error === 'function') {
+            window.console.error('[EasyMDE] ' + code);
+        }
+    }
+
     function isReactDocumentSession(session) {
         var documentSession = session && session.document;
         var titleSession = session && session.title;
@@ -3775,10 +3884,284 @@
         return dispose;
     }
 
+    function activateReactFontControls(owner, reactRoot, legacyRoot, context) {
+        var reactFontControls = window.EasyMDEReactFontControls;
+        var fields = getFontFields();
+        var disposed = false;
+        var failed = false;
+        var failedAfterHandoff = false;
+        var ready = false;
+        var cleanup;
+        var cleanupScheduled = false;
+        var mountComplete = false;
+        var pagehideRegistered = false;
+        var pendingReadySession = null;
+        var session = null;
+
+        function setLegacyEnabled(enabled) {
+            var controls;
+
+            if (!legacyRoot || typeof legacyRoot.querySelectorAll !== 'function') {
+                return;
+            }
+            controls = legacyRoot.querySelectorAll('select, button');
+            Array.prototype.forEach.call(controls, function (control) {
+                control.disabled = !enabled;
+            });
+        }
+
+        function restoreLegacyOwner() {
+            if (reactFontPreviewNode === context.preview[0]) {
+                reactFontPreviewNode = null;
+            }
+            reactRoot.hidden = true;
+            legacyRoot.hidden = false;
+            setLegacyEnabled(true);
+            syncFontControls();
+            owner.setAttribute('data-easymde-font-controls-owner', 'legacy');
+        }
+
+        function abortUnownedMount(code) {
+            failed = true;
+            disposed = true;
+            if (reactFontControlsSession === session) {
+                reactFontControlsSession = null;
+            }
+            session = null;
+            ready = false;
+            restoreLegacyOwner();
+            reportReactFontControlsFailure(code);
+        }
+
+        function dispose() {
+            if (disposed) {
+                return;
+            }
+
+            disposed = true;
+            if (pagehideRegistered && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('pagehide', dispose);
+                pagehideRegistered = false;
+            }
+            if (reactFontControlsSession === session) {
+                reactFontControlsSession = null;
+            }
+            session = null;
+            if (typeof cleanup === 'function') {
+                cleanup();
+            }
+            reactRoot.hidden = true;
+            if (!failedAfterHandoff) {
+                restoreLegacyOwner();
+            }
+        }
+
+        function scheduleCleanup() {
+            if (cleanupScheduled) {
+                return;
+            }
+
+            cleanupScheduled = true;
+            if (typeof window.queueMicrotask === 'function') {
+                window.queueMicrotask(dispose);
+                return;
+            }
+            Promise.resolve().then(dispose);
+        }
+
+        function preflightPort() {
+            var preview = context && context.preview && context.preview[0];
+
+            return !!(
+                hasUsableFontFields(fields)
+                && preview
+                && preview.style
+                && typeof preview.style.setProperty === 'function'
+                && typeof preview.style.removeProperty === 'function'
+                && context.preview
+                && typeof context.preview.toggleClass === 'function'
+            );
+        }
+
+        function completeHandoff(nextSession) {
+            var latestState;
+
+            if (
+                disposed
+                || failed
+                || ready
+                || !nextSession
+                || typeof nextSession.replaceState !== 'function'
+                || typeof nextSession.close !== 'function'
+                || !preflightPort()
+            ) {
+                if (!disposed && !failed && !ready) {
+                    failed = true;
+                    reportReactFontControlsFailure('react-font-controls-session-invalid');
+                    scheduleCleanup();
+                }
+                return;
+            }
+
+            latestState = {
+                customFont: renderState.customFont,
+                windowsFont: renderState.windowsFont,
+                appleFont: renderState.appleFont,
+                serifFont: renderState.serifFont
+            };
+            if (nextSession.replaceState(latestState) !== true || disposed || failed) {
+                if (!disposed && !failed) {
+                    failed = true;
+                    reportReactFontControlsFailure('react-font-controls-state-reconcile-failed');
+                    scheduleCleanup();
+                }
+                return;
+            }
+
+            ready = true;
+            session = nextSession;
+            reactFontControlsSession = session;
+            reactFontPreviewNode = context.preview[0];
+            setLegacyEnabled(false);
+            legacyRoot.hidden = true;
+            reactRoot.hidden = false;
+            owner.setAttribute('data-easymde-font-controls-owner', 'react');
+        }
+
+        if (
+            !owner
+            || typeof owner.setAttribute !== 'function'
+            || !reactRoot
+            || !legacyRoot
+            || !preflightPort()
+        ) {
+            reportReactFontControlsFailure('react-font-controls-surface-invalid');
+            return null;
+        }
+
+        owner.setAttribute('data-easymde-font-controls-owner', 'legacy');
+        reactRoot.hidden = true;
+        legacyRoot.hidden = false;
+
+        if (!reactFontControls || typeof reactFontControls.prepare !== 'function') {
+            reportReactFontControlsFailure('react-font-controls-entry-unavailable');
+            return null;
+        }
+
+        try {
+            reactFontControls = reactFontControls.prepare({
+                options: fontOptions,
+                state: {
+                    customFont: renderState.customFont,
+                    windowsFont: renderState.windowsFont,
+                    appleFont: renderState.appleFont,
+                    serifFont: renderState.serifFont
+                },
+                strings: {
+                    font: getString('font'),
+                    customFont: getString('customFont'),
+                    windowsFont: getString('windowsFont'),
+                    appleFont: getString('appleFont'),
+                    serifFont: getString('serifFont'),
+                    fontStackHelp: getString('fontStackHelp')
+                }
+            });
+        } catch (error) {
+            reportReactFontControlsFailure('react-font-controls-prepare-failed');
+            return null;
+        }
+
+        if (!reactFontControls || typeof reactFontControls.mount !== 'function') {
+            reportReactFontControlsFailure('react-font-controls-contract-invalid');
+            return null;
+        }
+
+        try {
+            cleanup = reactFontControls.mount({
+                container: reactRoot,
+                port: {
+                    applyState: function (nextState) {
+                        if (
+                            !nextState
+                            || !getFontOption('customFonts', nextState.customFont)
+                            || !getFontOption('windowsFonts', nextState.windowsFont)
+                            || !getFontOption('appleFonts', nextState.appleFont)
+                            || !getFontOption('serifOptions', nextState.serifFont)
+                            || !preflightPort()
+                        ) {
+                            throw new Error('react-font-controls-state-invalid');
+                        }
+
+                        renderState.customFont = nextState.customFont;
+                        renderState.windowsFont = nextState.windowsFont;
+                        renderState.appleFont = nextState.appleFont;
+                        renderState.serifFont = nextState.serifFont;
+                        if (!applyFontState(context.preview, { fields: fields })) {
+                            throw new Error('react-font-controls-apply-failed');
+                        }
+                    },
+                    closeOtherPopovers: closePopovers
+                },
+                onFailure: function () {
+                    if (disposed || failed) {
+                        return;
+                    }
+
+                    failed = true;
+                    if (ready) {
+                        failedAfterHandoff = true;
+                        reactFontControlsSession = null;
+                        session = null;
+                        legacyRoot.hidden = true;
+                        setLegacyEnabled(false);
+                        owner.setAttribute('data-easymde-font-controls-owner', 'react-reload-required');
+                        reportReactFontControlsFailure('react-font-controls-failed-after-handoff');
+                    } else {
+                        reactRoot.hidden = true;
+                        legacyRoot.hidden = false;
+                        setLegacyEnabled(true);
+                        owner.setAttribute('data-easymde-font-controls-owner', 'legacy');
+                        reportReactFontControlsFailure('react-font-controls-render-failed');
+                    }
+                    scheduleCleanup();
+                },
+                onReady: function (nextSession) {
+                    if (!mountComplete) {
+                        pendingReadySession = nextSession;
+                        return;
+                    }
+                    completeHandoff(nextSession);
+                }
+            });
+        } catch (error) {
+            abortUnownedMount('react-font-controls-mount-failed');
+            return null;
+        }
+
+        mountComplete = true;
+        if (typeof cleanup !== 'function') {
+            abortUnownedMount('react-font-controls-cleanup-invalid');
+            return null;
+        }
+        if (pendingReadySession) {
+            completeHandoff(pendingReadySession);
+            pendingReadySession = null;
+        }
+
+        if (typeof window.addEventListener === 'function') {
+            window.addEventListener('pagehide', dispose, { once: true });
+            pagehideRegistered = true;
+        }
+
+        return dispose;
+    }
+
     function createToolbar($toolbar, context) {
         var $reactMain = $('#easymde-toolbar-react-main');
         var $main = $('#easymde-toolbar-legacy-main');
         var $secondary = $('#easymde-toolbar-legacy-secondary');
+        var $reactFont;
+        var $legacyFont;
         var formatCommands = getGroupCommands('main', 'format');
         var blockCommands = getGroupCommands('main', 'block');
         var insertCommands = getGroupCommands('main', 'insert');
@@ -3787,6 +4170,10 @@
         if (context.reactToolbarCleanup) {
             context.reactToolbarCleanup();
             context.reactToolbarCleanup = null;
+        }
+        if (context.reactFontControlsCleanup) {
+            context.reactFontControlsCleanup();
+            context.reactFontControlsCleanup = null;
         }
 
         if (!$reactMain.length || !$main.length || !$secondary.length) {
@@ -3834,7 +4221,19 @@
         }
 
         createImmersiveToggleButton($secondary, context);
-        createFontMenu($secondary, context);
+        $reactFont = $('<div id="easymde-toolbar-react-font" class="easymde-toolbar-popover-anchor easymde-toolbar-popover-font" hidden></div>');
+        $secondary.append($reactFont);
+        $legacyFont = createFontMenu($secondary, context);
+        if ($legacyFont) {
+            context.reactFontControlsCleanup = activateReactFontControls(
+                $secondary[0],
+                $reactFont[0],
+                $legacyFont[0],
+                context
+            );
+        } else {
+            $reactFont.remove();
+        }
         createAppearanceMenu($secondary, context);
         context.draftStatus = createDraftStatus($secondary);
 
@@ -4170,6 +4569,10 @@
         window.EasyMDETestHooks.activateReactDocumentSource = activateReactDocumentSource;
         window.EasyMDETestHooks.activateReactPreviewSession = activateReactPreviewSession;
         window.EasyMDETestHooks.activateReactToolbar = activateReactToolbar;
+        window.EasyMDETestHooks.activateReactFontControls = activateReactFontControls;
+        window.EasyMDETestHooks.applyThemeFontDefaults = applyThemeFontDefaults;
+        window.EasyMDETestHooks.replaceFontState = replaceFontState;
+        window.EasyMDETestHooks.applyRenderState = applyRenderState;
         window.EasyMDETestHooks.getLocalDraftsEnabled = getLocalDraftsEnabled;
         window.EasyMDETestHooks.setLocalDraftsEnabled = setLocalDraftsEnabled;
         window.EasyMDETestHooks.scheduleLocalDraft = scheduleLocalDraft;

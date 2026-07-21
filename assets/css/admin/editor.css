@@ -460,6 +460,7 @@ body.easymde-immersive-active .media-modal-backdrop {
 
 @media (max-width: 782px) {
     .easymde-toolbar {
+        position: relative;
         align-items: flex-start;
         flex-direction: column;
     }
@@ -487,8 +488,13 @@ body.easymde-immersive-active .media-modal-backdrop {
     }
 
     .easymde-toolbar-popover-font-panel {
+        box-sizing: border-box;
         width: calc(100vw - 32px);
         padding: 18px;
+    }
+
+    .easymde-toolbar-popover-font {
+        position: static;
     }
 
     .easymde-toolbar-popover-font-panel .easymde-toolbar-control {

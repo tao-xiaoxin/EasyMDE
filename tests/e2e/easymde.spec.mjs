@@ -2680,6 +2680,77 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('[data-action="exit"]').click();
   });
 
+  test('uses one React font owner in the normal editor and persists its native submission bridge', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `React font controls ${testSlug(testInfo)}`;
+    const errors = collectUnexpectedPageErrors(page);
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('#title').fill(title);
+    await fillMarkdownAndWaitForPreview(page, `# ${title}\n\nFont selection through the normal editor.`, 'Font selection');
+
+    const secondary = page.locator('#easymde-toolbar-legacy-secondary');
+    await expect(secondary).toHaveAttribute('data-easymde-font-controls-owner', 'react');
+    await expect(secondary.getByRole('button', { name: 'Font', exact: true })).toHaveCount(1);
+    await expect(page.locator('#easymde-toolbar-react-font')).toBeVisible();
+    await expect(page.locator('.easymde-toolbar-popover-font:visible')).toHaveCount(1);
+
+    const fontButton = secondary.getByRole('button', { name: 'Font', exact: true });
+    await fontButton.click();
+    const fontDialog = page.getByRole('dialog', { name: 'Font' });
+    await expect(fontDialog).toBeVisible();
+    await expect(fontDialog.getByLabel('Custom font')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(fontButton).toBeFocused();
+
+    await page.getByRole('button', { name: 'Appearance' }).click();
+    await page.getByLabel('Article theme').selectOption('theme:orange-heart');
+    await expect(page.locator('#easymde-custom-font-field')).toHaveValue('orange-heart-inter');
+
+    await fontButton.click();
+    const customFont = fontDialog.getByLabel('Custom font');
+    await expect(customFont).toHaveValue('orange-heart-inter');
+    await customFont.selectOption('georgia');
+    await expect(page.locator('#easymde-custom-font-field')).toHaveValue('georgia');
+    await expect(page.locator('#easymde-preview')).toHaveClass(/\beasymde-font-overrides\b/);
+    await expect.poll(() => page.locator('#easymde-preview').evaluate((preview) => (
+      preview.style.getPropertyValue('--easymde-content-font-family')
+    ))).toContain('"Georgia"');
+
+    await publishOrUpdate(page);
+    const postId = await currentPostId(page);
+    expect(postMetaValue(postId, '_easymde_custom_font')).toBe('georgia');
+    await expect(secondary).toHaveAttribute('data-easymde-font-controls-owner', 'react');
+    await fontButton.click();
+    await expect(fontDialog.getByLabel('Custom font')).toHaveValue('georgia');
+    await fontButton.click();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await fontButton.click();
+    const narrowFontDialog = await fontDialog.boundingBox();
+    expect(narrowFontDialog).not.toBeNull();
+    expect(narrowFontDialog.x).toBeGreaterThanOrEqual(0);
+    expect(narrowFontDialog.x + narrowFontDialog.width).toBeLessThanOrEqual(390);
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.locator('.easymde-immersive-workspace')).toBeVisible();
+    await page.locator('[data-action="font"]').click();
+    const immersiveFontTrigger = page.locator('[data-appearance-key="customFont"]');
+    await immersiveFontTrigger.click();
+    const immersiveFontOption = page.locator('.easymde-immersive-workspace__font-option[aria-selected="false"]').first();
+    const immersiveFontValue = await immersiveFontOption.getAttribute('data-appearance-value');
+    expect(immersiveFontValue).toBeTruthy();
+    await immersiveFontOption.click();
+    await page.locator('[data-action="exit"]').click();
+    await fontButton.click();
+    await expect(fontDialog.getByLabel('Custom font')).toHaveValue(immersiveFontValue);
+    await page.keyboard.press('Escape');
+    expect(errors).toEqual([]);
+  });
+
   test('removes the Mac-frame controls and request state from normal and immersive editors', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const errors = collectUnexpectedPageErrors(page);

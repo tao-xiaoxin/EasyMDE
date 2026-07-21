@@ -152,6 +152,27 @@ test('document source ownership styles keep the inactive surface out of layout',
   );
 });
 
+test('narrow font controls stay positioned within the full toolbar width', () => {
+  const stylesheet = readFileSync(join(repoRoot, 'assets/css/admin/editor.css'), 'utf8');
+  const narrowStyles = stylesheet.slice(stylesheet.indexOf('@media (max-width: 782px)'));
+
+  assert.match(
+    narrowStyles,
+    /\.easymde-toolbar\s*\{[^}]*position:\s*relative;/s,
+    'the narrow toolbar should establish the font panel positioning context'
+  );
+  assert.match(
+    narrowStyles,
+    /\.easymde-toolbar-popover-font\s*\{[^}]*position:\s*static;/s,
+    'the narrow font anchor should not constrain the panel to the trigger width'
+  );
+  assert.match(
+    narrowStyles,
+    /\.easymde-toolbar-popover-font-panel\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*calc\(100vw - 32px\);/s,
+    'the narrow font panel width should include its padding and border'
+  );
+});
+
 test('toolbar reconstruction unmounts React before clearing its owned container', () => {
   const bootstrap = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
   const createToolbarStart = bootstrap.indexOf('function createToolbar($toolbar, context)');
@@ -735,6 +756,9 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.executeCommand, 'function', 'bootstrap harness should expose toolbar command execution');
   assert.equal(typeof context.window.EasyMDETestHooks.bindScrollSync, 'function', 'bootstrap harness should expose isolated scroll synchronization');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactToolbar, 'function', 'bootstrap harness should expose the toolbar ownership handoff');
+  assert.equal(typeof context.window.EasyMDETestHooks.activateReactFontControls, 'function', 'bootstrap harness should expose the font controls ownership handoff');
+  assert.equal(typeof context.window.EasyMDETestHooks.replaceFontState, 'function', 'bootstrap harness should expose cross-surface font state replacement');
+  assert.equal(typeof context.window.EasyMDETestHooks.applyRenderState, 'function', 'bootstrap harness should expose render ownership checks');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactDocumentSource, 'function', 'bootstrap harness should expose the document source ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactPreviewSession, 'function', 'bootstrap harness should expose the preview request ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.enhancePreviewSurface, 'function', 'bootstrap harness should expose detached preview enhancement');
@@ -753,6 +777,437 @@ function createToolbarOwnerElement() {
 
   return element;
 }
+
+function createFontHandoffFixture() {
+  const fields = {
+    'easymde-custom-font-field': { value: 'optima' },
+    'easymde-windows-font-field': { value: 'microsoft-yahei' },
+    'easymde-apple-font-field': { value: 'pingfang-sc-light' },
+    'easymde-serif-font-field': { value: 'yes' }
+  };
+  const preview = createPreviewWrapper();
+  const properties = new Map();
+  preview[0].style = {
+    removeProperty(name) {
+      properties.delete(name);
+    },
+    setProperty(name, value) {
+      properties.set(name, value);
+    }
+  };
+
+  return { fields, preview, properties };
+}
+
+test('React font controls stay hidden until readiness and exclusively apply the submission bridge', () => {
+  let mountOptions;
+  const replacementStates = [];
+  const fixture = createFontHandoffFixture();
+  const owner = createToolbarOwnerElement();
+  const reactRoot = createToolbarOwnerElement();
+  const legacyRoot = createToolbarOwnerElement();
+  legacyRoot.querySelectorAll = () => [];
+  const loaded = loadBootstrap({
+    EasyMDEReactFontControls: {
+      prepare(value) {
+        assert.deepEqual(
+          Array.from(value.options.customFonts, (option) => option.id),
+          ['none', 'optima']
+        );
+        assert.equal(value.strings.font, 'Font');
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      features: {},
+      strings: {
+        font: 'Font',
+        customFont: 'Custom font',
+        windowsFont: 'Windows font',
+        appleFont: 'Apple font',
+        serifFont: 'Serif font',
+        fontStackHelp: 'Font help',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        markdownThemes: [],
+        fontOptions: {
+          customFonts: [
+            { id: 'none', label: 'None', fontFamily: '' },
+            { id: 'optima', label: 'Optima', fontFamily: '"Optima", Arial' }
+          ],
+          windowsFonts: [
+            { id: 'microsoft-yahei', label: 'Microsoft YaHei', fontFamily: 'arial, "Microsoft YaHei"' }
+          ],
+          appleFonts: [
+            { id: 'pingfang-sc-light', label: 'PingFang', fontFamily: '"PingFang SC", "Optima"' }
+          ],
+          serifOptions: [
+            { id: 'yes', label: 'Yes', fontFamily: 'Georgia, serif' }
+          ]
+        },
+        state: {
+          customFont: 'optima',
+          windowsFont: 'microsoft-yahei',
+          appleFont: 'pingfang-sc-light',
+          serifFont: 'yes'
+        }
+      }
+    }
+  }, { documentElements: fixture.fields });
+
+  const cleanup = loaded.hooks.activateReactFontControls(
+    owner,
+    reactRoot,
+    legacyRoot,
+    { preview: fixture.preview }
+  );
+
+  assert.equal(typeof cleanup, 'function');
+  assert.equal(owner.getAttribute('data-easymde-font-controls-owner'), 'legacy');
+  assert.equal(reactRoot.hidden, true);
+  assert.equal(legacyRoot.hidden, false);
+
+  loaded.hooks.replaceFontState({
+    customFont: 'none',
+    windowsFont: 'microsoft-yahei',
+    appleFont: 'pingfang-sc-light',
+    serifFont: 'yes'
+  });
+
+  const session = {
+    close() {},
+    replaceState(nextState) {
+      replacementStates.push({ ...nextState });
+      return true;
+    }
+  };
+  mountOptions.onReady(session);
+  assert.deepEqual(replacementStates, [{
+    customFont: 'none',
+    windowsFont: 'microsoft-yahei',
+    appleFont: 'pingfang-sc-light',
+    serifFont: 'yes'
+  }], 'React must reconcile the latest Legacy state before taking ownership');
+  assert.equal(owner.getAttribute('data-easymde-font-controls-owner'), 'react');
+  assert.equal(reactRoot.hidden, false);
+  assert.equal(legacyRoot.hidden, true);
+
+  mountOptions.port.applyState({
+    customFont: 'none',
+    windowsFont: 'microsoft-yahei',
+    appleFont: 'pingfang-sc-light',
+    serifFont: 'yes'
+  });
+  assert.equal(fixture.fields['easymde-custom-font-field'].value, 'none');
+  assert.equal(fixture.fields['easymde-windows-font-field'].value, 'microsoft-yahei');
+  assert.equal(fixture.fields['easymde-apple-font-field'].value, 'pingfang-sc-light');
+  assert.equal(fixture.fields['easymde-serif-font-field'].value, 'yes');
+  assert.equal(
+    fixture.properties.get('--easymde-content-font-family'),
+    'arial, "Microsoft YaHei", "PingFang SC", "Optima", Georgia, serif'
+  );
+  assert.match(fixture.preview[0].className, /\beasymde-font-overrides\b/);
+
+  fixture.preview[0].style.setProperty('--easymde-content-font-family', 'React owner sentinel');
+  fixture.fields['easymde-custom-font-field'].value = 'React bridge sentinel';
+  loaded.hooks.applyRenderState(fixture.preview);
+  assert.equal(
+    fixture.properties.get('--easymde-content-font-family'),
+    'React owner sentinel',
+    'legacy render updates must not write the normal preview font after handoff'
+  );
+  assert.equal(
+    fixture.fields['easymde-custom-font-field'].value,
+    'React bridge sentinel',
+    'legacy render updates must not write the font submission bridge after handoff'
+  );
+
+  cleanup();
+  cleanup();
+  assert.equal(owner.getAttribute('data-easymde-font-controls-owner'), 'legacy');
+  assert.equal(loaded.hooks.replaceFontState({
+    customFont: 'optima',
+    windowsFont: 'microsoft-yahei',
+    appleFont: 'pingfang-sc-light',
+    serifFont: 'yes'
+  }), true, 'normal teardown must return Font state mutation to the Legacy owner');
+  loaded.hooks.applyRenderState(fixture.preview);
+  assert.equal(fixture.fields['easymde-custom-font-field'].value, 'optima');
+});
+
+test('React font controls keep Legacy active before handoff failure and require reload after handoff failure', async () => {
+  let mountOptions;
+  let cleanupCalls = 0;
+  const fixture = createFontHandoffFixture();
+  const owner = createToolbarOwnerElement();
+  const reactRoot = createToolbarOwnerElement();
+  const legacyRoot = createToolbarOwnerElement();
+  legacyRoot.querySelectorAll = () => [];
+  const loaded = loadBootstrap({
+    EasyMDEReactFontControls: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {
+              cleanupCalls += 1;
+            };
+          }
+        };
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      features: {},
+      strings: {
+        font: 'Font',
+        customFont: 'Custom font',
+        windowsFont: 'Windows font',
+        appleFont: 'Apple font',
+        serifFont: 'Serif font',
+        fontStackHelp: 'Font help',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {
+          customFonts: [{ id: 'optima', label: 'Optima', fontFamily: 'Optima' }],
+          windowsFonts: [{ id: 'microsoft-yahei', label: 'Microsoft YaHei', fontFamily: 'Arial' }],
+          appleFonts: [{ id: 'pingfang-sc-light', label: 'PingFang', fontFamily: 'PingFang' }],
+          serifOptions: [{ id: 'yes', label: 'Yes', fontFamily: 'serif' }]
+        },
+        state: {}
+      }
+    }
+  }, { documentElements: fixture.fields });
+
+  loaded.hooks.activateReactFontControls(owner, reactRoot, legacyRoot, { preview: fixture.preview });
+  mountOptions.onFailure();
+  assert.equal(owner.getAttribute('data-easymde-font-controls-owner'), 'legacy');
+  assert.equal(legacyRoot.hidden, false);
+  await flushMicrotasks();
+  assert.equal(cleanupCalls, 1);
+
+  cleanupCalls = 0;
+  loaded.hooks.activateReactFontControls(owner, reactRoot, legacyRoot, { preview: fixture.preview });
+  mountOptions.onReady({ close() {}, replaceState() { return false; } });
+  assert.equal(owner.getAttribute('data-easymde-font-controls-owner'), 'legacy');
+  assert.equal(legacyRoot.hidden, false, 'a failed state reconciliation must preserve the Legacy owner');
+  await flushMicrotasks();
+  assert.equal(cleanupCalls, 1);
+
+  cleanupCalls = 0;
+  loaded.hooks.activateReactFontControls(owner, reactRoot, legacyRoot, { preview: fixture.preview });
+  mountOptions.onReady({ close() {}, replaceState() { return true; } });
+  mountOptions.onFailure();
+  assert.equal(owner.getAttribute('data-easymde-font-controls-owner'), 'react-reload-required');
+  assert.equal(legacyRoot.hidden, true, 'a failed React owner must not reactivate the Legacy writer');
+  await flushMicrotasks();
+  assert.equal(cleanupCalls, 1);
+  assert.equal(owner.getAttribute('data-easymde-font-controls-owner'), 'react-reload-required');
+  assert.equal(legacyRoot.hidden, true);
+  assert.equal(loaded.hooks.replaceFontState({
+    customFont: 'optima',
+    windowsFont: 'microsoft-yahei',
+    appleFont: 'pingfang-sc-light',
+    serifFont: 'yes'
+  }), false, 'post-handoff failure must reject Legacy Font state mutation until reload');
+  fixture.preview[0].style.setProperty('--easymde-content-font-family', 'Failed React owner sentinel');
+  fixture.fields['easymde-custom-font-field'].value = 'Failed React bridge sentinel';
+  loaded.hooks.applyRenderState(fixture.preview);
+  assert.equal(
+    fixture.properties.get('--easymde-content-font-family'),
+    'Failed React owner sentinel',
+    'post-handoff failure must not reactivate the legacy preview font writer'
+  );
+  assert.equal(
+    fixture.fields['easymde-custom-font-field'].value,
+    'Failed React bridge sentinel',
+    'post-handoff failure must not reactivate the legacy submission bridge writer'
+  );
+});
+
+test('React font controls reject a synchronously ready mount without a cleanup contract', () => {
+  let replacementCalls = 0;
+  const fixture = createFontHandoffFixture();
+  const owner = createToolbarOwnerElement();
+  const reactRoot = createToolbarOwnerElement();
+  const legacyRoot = createToolbarOwnerElement();
+  legacyRoot.querySelectorAll = () => [];
+  const loaded = loadBootstrap({
+    EasyMDEReactFontControls: {
+      prepare() {
+        return {
+          mount(options) {
+            options.onReady({
+              close() {},
+              replaceState() {
+                replacementCalls += 1;
+                return true;
+              }
+            });
+            return null;
+          }
+        };
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      features: {},
+      strings: {
+        font: 'Font',
+        customFont: 'Custom font',
+        windowsFont: 'Windows font',
+        appleFont: 'Apple font',
+        serifFont: 'Serif font',
+        fontStackHelp: 'Font help',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions: {
+          customFonts: [{ id: 'optima', label: 'Optima', fontFamily: 'Optima' }],
+          windowsFonts: [{ id: 'microsoft-yahei', label: 'Microsoft YaHei', fontFamily: 'Arial' }],
+          appleFonts: [{ id: 'pingfang-sc-light', label: 'PingFang', fontFamily: 'PingFang' }],
+          serifOptions: [{ id: 'yes', label: 'Yes', fontFamily: 'serif' }]
+        },
+        markdownThemes: [{
+          id: 'theme',
+          fontDefaults: {
+            customFont: 'optima',
+            windowsFont: 'microsoft-yahei',
+            appleFont: 'pingfang-sc-light',
+            serifFont: 'yes'
+          }
+        }],
+        state: {}
+      }
+    }
+  }, { documentElements: fixture.fields });
+
+  const cleanup = loaded.hooks.activateReactFontControls(
+    owner,
+    reactRoot,
+    legacyRoot,
+    { preview: fixture.preview }
+  );
+
+  assert.equal(cleanup, null);
+  assert.equal(owner.getAttribute('data-easymde-font-controls-owner'), 'legacy');
+  assert.equal(reactRoot.hidden, true);
+  assert.equal(legacyRoot.hidden, false);
+  loaded.hooks.applyThemeFontDefaults('theme');
+  assert.equal(replacementCalls, 0, 'an invalid mount session must not remain the font state owner');
+});
+
+test('theme font defaults update the active React font session', () => {
+  let mountOptions;
+  const replacements = [];
+  const fixture = createFontHandoffFixture();
+  const owner = createToolbarOwnerElement();
+  const reactRoot = createToolbarOwnerElement();
+  const legacyRoot = createToolbarOwnerElement();
+  legacyRoot.querySelectorAll = () => [];
+  const fontOptions = {
+    customFonts: [{ id: 'optima', label: 'Optima', fontFamily: 'Optima' }, { id: 'theme-font', label: 'Theme', fontFamily: 'Inter' }],
+    windowsFonts: [{ id: 'microsoft-yahei', label: 'Microsoft YaHei', fontFamily: 'Arial' }],
+    appleFonts: [{ id: 'pingfang-sc-light', label: 'PingFang', fontFamily: 'PingFang' }],
+    serifOptions: [{ id: 'yes', label: 'Yes', fontFamily: 'serif' }]
+  };
+  const loaded = loadBootstrap({
+    EasyMDEReactFontControls: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      features: {},
+      strings: {
+        font: 'Font',
+        customFont: 'Custom font',
+        windowsFont: 'Windows font',
+        appleFont: 'Apple font',
+        serifFont: 'Serif font',
+        fontStackHelp: 'Font help',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        codeThemes: [],
+        fontOptions,
+        markdownThemes: [{
+          id: 'theme',
+          fontDefaults: {
+            customFont: 'theme-font',
+            windowsFont: 'microsoft-yahei',
+            appleFont: 'pingfang-sc-light',
+            serifFont: 'yes'
+          }
+        }],
+        state: {}
+      }
+    }
+  }, { documentElements: fixture.fields });
+
+  loaded.hooks.activateReactFontControls(owner, reactRoot, legacyRoot, { preview: fixture.preview });
+  mountOptions.onReady({
+    close() {},
+    replaceState(state) {
+      replacements.push(state);
+      return true;
+    }
+  });
+  loaded.hooks.applyThemeFontDefaults('theme');
+
+  assert.deepEqual(JSON.parse(JSON.stringify(replacements)), [
+    {
+      customFont: 'optima',
+      windowsFont: 'microsoft-yahei',
+      appleFont: 'pingfang-sc-light',
+      serifFont: 'yes'
+    },
+    {
+      customFont: 'theme-font',
+      windowsFont: 'microsoft-yahei',
+      appleFont: 'pingfang-sc-light',
+      serifFont: 'yes'
+    }
+  ]);
+
+  loaded.hooks.replaceFontState({
+    customFont: 'optima',
+    windowsFont: 'microsoft-yahei',
+    appleFont: 'pingfang-sc-light',
+    serifFont: 'yes'
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(replacements.at(-1))), {
+    customFont: 'optima',
+    windowsFont: 'microsoft-yahei',
+    appleFont: 'pingfang-sc-light',
+    serifFont: 'yes'
+  });
+});
 
 test('React toolbar stays hidden until readiness and then becomes the only visible main owner', async () => {
   let mountOptions;
@@ -2203,7 +2658,7 @@ test('Mac code frame is fixed without editor state, request, signature, or hidde
 
   assert.doesNotMatch(source, /codeMacStyle|code_mac_style|easymde-code-mac-style/);
   assert.doesNotMatch(template, /easymde_code_mac_style|easymde-code-mac-style/);
-  assert.match(source, /\$preview\.addClass\('easymde-rendered-content easymde-code-mac'\)/);
+  assert.match(source, /\$targetPreview\.addClass\('easymde-rendered-content easymde-code-mac'\)/);
 });
 
 test('immersive custom CSS adapter separates zero-write preview from explicit persistence', () => {

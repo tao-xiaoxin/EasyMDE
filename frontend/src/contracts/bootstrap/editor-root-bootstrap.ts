@@ -28,6 +28,10 @@ import {
   type LocalDraftsBootstrap
 } from './local-drafts-bootstrap';
 import {
+  parsePreviewEnhancementBootstrap,
+  type PreviewEnhancementBootstrap
+} from './preview-enhancement-bootstrap';
+import {
   parseToolbarBootstrap,
   type ToolbarBootstrap
 } from './toolbar-bootstrap';
@@ -65,6 +69,7 @@ export type EditorRootBootstrap = Readonly<{
     toolbar: string;
   }>;
   preview: EditorRootPreviewBootstrap;
+  previewEnhancement: PreviewEnhancementBootstrap;
   mediaPicker: MediaPickerBootstrap;
   toolbar: ToolbarBootstrap;
   wechatExport: WechatExportBootstrap;
@@ -175,6 +180,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   let imageUpload: ImageUploadBootstrap;
   let localDrafts: EditorRootLocalDraftsBootstrap;
   let mediaPicker: MediaPickerBootstrap;
+  let previewEnhancement: PreviewEnhancementBootstrap;
   let toolbar: ToolbarBootstrap;
   let wechatExport: WechatExportBootstrap;
 
@@ -209,6 +215,11 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     throw new EditorRootBootstrapError('editor-root-media-picker-invalid');
   }
   try {
+    previewEnhancement = parsePreviewEnhancementBootstrap(bootstrap.previewEnhancement);
+  } catch {
+    throw new EditorRootBootstrapError('editor-root-preview-enhancement-invalid');
+  }
+  try {
     toolbar = parseToolbarBootstrap(bootstrap.toolbar);
   } catch {
     throw new EditorRootBootstrapError('editor-root-toolbar-invalid');
@@ -232,6 +243,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
       toolbar: boundedString(labels.toolbar, 'editor-root-label-invalid')
     },
     preview: parsePreview(bootstrap.preview),
+    previewEnhancement,
     mediaPicker,
     toolbar,
     wechatExport

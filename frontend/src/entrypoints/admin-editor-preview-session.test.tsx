@@ -1,3 +1,4 @@
+import { act } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAdminEditorPreviewSessionBridge } from './admin-editor-preview-session';
@@ -35,4 +36,38 @@ describe('admin editor preview session bridge', () => {
       })).toThrowError('preview-mount-options-invalid');
     }
   );
+
+  it('keeps a retryable enhancement failure separate from fatal session failure', async () => {
+    const onFailure = vi.fn();
+    const bridge = createAdminEditorPreviewSessionBridge(
+      { nonce: 'synthetic-nonce', restUrl: '/wp-json/easymde/v1/preview' },
+      vi.fn()
+    );
+
+    let cleanup: () => void = () => undefined;
+    await act(async () => {
+      cleanup = bridge.mount({
+        container: document.createElement('div'),
+        enhancementPort: {
+          enhance: vi.fn().mockRejectedValue(
+            new Error('preview-enhancement-resource-load-failed')
+          )
+        },
+        initial: {
+          features: { mermaid: true },
+          html: '<pre class="mermaid">graph TD; A--&gt;B;</pre>',
+          signature: 'signature'
+        },
+        initialRevision: 0,
+        messages: { empty: 'Empty', error: 'Failed', rendering: 'Rendering' },
+        onFailure,
+        onReady: vi.fn(),
+        scrollPort: { capture: vi.fn(), restore: vi.fn() }
+      });
+      await Promise.resolve();
+    });
+
+    expect(onFailure).not.toHaveBeenCalled();
+    cleanup();
+  });
 });

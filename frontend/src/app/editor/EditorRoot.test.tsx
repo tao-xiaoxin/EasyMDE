@@ -62,7 +62,10 @@ function fixture(): EditorRootProps & Readonly<{
         { id: 'default', label: 'Default' },
         { id: 'newsprint', label: 'Newsprint' }
       ],
-      codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
+      codeThemes: [
+        { id: 'atom-one-dark', label: 'Atom One Dark' },
+        { id: 'github', label: 'GitHub' }
+      ],
       customCss: [],
       state: { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'default' },
       strings: {
@@ -376,6 +379,27 @@ describe('EditorRoot', () => {
         expect.objectContaining({ markdownTheme: 'newsprint' }),
         expect.any(AbortSignal)
       );
+    });
+
+    fireEvent.change(view.getByLabelText('Code theme'), {
+      target: { value: 'github' }
+    });
+    await waitFor(() => {
+      expect(vi.mocked(props.enhancementPort.enhance).mock.calls.at(-1)?.[3])
+        .toEqual(expect.objectContaining({ codeTheme: 'github' }));
+    });
+  });
+
+  it('routes Preview enhancement diagnostics through the Root failure owner', async () => {
+    const props = fixture();
+    vi.mocked(props.enhancementPort.enhance)
+      .mockRejectedValue(new Error('preview-enhancement-resource-load-failed'));
+
+    render(<EditorRoot {...props} />);
+
+    await waitFor(() => {
+      expect(props.onFailure)
+        .toHaveBeenCalledWith('preview-enhancement-resource-load-failed');
     });
   });
 

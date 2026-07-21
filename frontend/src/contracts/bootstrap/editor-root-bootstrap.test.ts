@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { previewEnhancementBootstrapFixture } from '../../test/preview-enhancement-bootstrap-fixture';
 import { parseEditorRootBootstrap } from './editor-root-bootstrap';
 
 function validBootstrap() {
@@ -102,6 +103,7 @@ function validBootstrap() {
       postId: 7,
       signature: 'stored-signature'
     },
+    previewEnhancement: previewEnhancementBootstrapFixture,
     strings: {
       preview: 'Preview',
       source: 'Markdown',
@@ -153,6 +155,7 @@ describe('parseEditorRootBootstrap', () => {
         postId: 7,
         signature: 'stored-signature'
       },
+      previewEnhancement: previewEnhancementBootstrapFixture,
       mediaPicker: validBootstrap().mediaPicker,
       toolbar: expect.objectContaining({
         headingsLabel: 'Headings',
@@ -171,6 +174,7 @@ describe('parseEditorRootBootstrap', () => {
     [{ ...validBootstrap(), imageUpload: null }, 'editor-root-image-upload-invalid'],
     [{ ...validBootstrap(), localDrafts: null }, 'editor-root-local-drafts-invalid'],
     [{ ...validBootstrap(), mediaPicker: null }, 'editor-root-media-picker-invalid'],
+    [{ ...validBootstrap(), previewEnhancement: null }, 'editor-root-preview-enhancement-invalid'],
     [{ ...validBootstrap(), toolbar: null }, 'editor-root-toolbar-invalid'],
     [{ ...validBootstrap(), wechatExport: null }, 'editor-root-wechat-export-invalid'],
     [{ ...validBootstrap(), strings: { ...validBootstrap().strings, source: '' } }, 'editor-root-label-invalid'],

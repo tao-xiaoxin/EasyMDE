@@ -1,4 +1,10 @@
-import { createElement, useLayoutEffect, useRef, useState } from '@wordpress/element';
+import {
+  createElement,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState
+} from '@wordpress/element';
 
 import type {
   PreviewFeatures,
@@ -10,7 +16,10 @@ import {
   createPreviewRequestSession,
   type PreviewRequestSession
 } from '../model/create-preview-request-session';
-import type { PreviewEnhancementPort } from '../ports/preview-enhancement-port';
+import {
+  previewEnhancementFailureCode,
+  type PreviewEnhancementPort
+} from '../ports/preview-enhancement-port';
 import type { PreviewScrollPort, PreviewScrollSnapshot } from '../ports/preview-scroll-port';
 
 type PreviewMessages = Readonly<{
@@ -20,6 +29,7 @@ type PreviewMessages = Readonly<{
 }>;
 
 type PreviewHtmlState = Readonly<{
+  codeTheme: string;
   features: PreviewFeatures;
   generation: number;
   html: SafePreviewHtml;
@@ -43,12 +53,14 @@ export type PreviewSurfaceRuntime = Readonly<{
 type PreviewSurfaceOwnerProps = Readonly<{
   enhancementPort: PreviewEnhancementPort;
   initial: Readonly<{
+    codeTheme?: string;
     features: PreviewFeatures;
     html: SafePreviewHtml;
     signature: string;
   }>;
   initialRevision: number;
   messages: PreviewMessages;
+  onDiagnostic?: (code: string) => void;
   onReady: (runtime: PreviewSurfaceRuntime) => void;
   port: PreviewRequestPort;
   scrollPort: PreviewScrollPort;
@@ -59,6 +71,7 @@ function initialState(props: PreviewSurfaceOwnerProps): PreviewSurfaceState {
     return { generation: 0, kind: 'loading' };
   }
   return {
+    codeTheme: props.initial.codeTheme ?? '',
     features: props.initial.features,
     generation: 0,
     html: props.initial.html,
@@ -97,6 +110,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       return;
     }
     setState({
+      codeTheme: requestState.request.codeTheme,
       features: requestState.response.features,
       generation,
       html: requestState.response.html,
@@ -142,13 +156,15 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     const surface = surfaceRef.current;
     if (!surface || 'html' !== state.kind || 'enhancing' !== state.phase) return;
     const generation = state.generation;
+    const controller = new AbortController();
     let active = true;
 
     if (generationRef.current !== generation) return;
     void props.enhancementPort.enhance(
       surface,
       state.features,
-      () => active && generationRef.current === generation
+      () => active && generationRef.current === generation,
+      { codeTheme: state.codeTheme, signal: controller.signal }
     ).then(
       () => {
         if (!active || generationRef.current !== generation) return;
@@ -158,8 +174,9 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
             : current
         );
       },
-      () => {
+      (error) => {
         if (!active || generationRef.current !== generation) return;
+        props.onDiagnostic?.(previewEnhancementFailureCode(error));
         setState((current) =>
           'html' === current.kind && current.generation === generation
             ? { ...current, phase: 'failed', signature: '' }
@@ -169,8 +186,11 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     );
     return () => {
       active = false;
+      controller.abort();
     };
   }, [state, props.enhancementPort]);
+
+  useEffect(() => () => props.enhancementPort.dispose?.(), [props.enhancementPort]);
 
   const busy = 'loading' === state.kind || ('html' === state.kind && ('enhancing' === state.phase || 'loading' === state.phase));
   const failed = 'html' === state.kind && 'failed' === state.phase;

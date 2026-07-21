@@ -586,12 +586,14 @@ export function EditorRoot(props: EditorRootProps) {
           <PreviewSurfaceOwner
             enhancementPort={props.enhancementPort}
             initial={{
+              codeTheme: props.appearance.state.codeTheme,
               features: props.preview.features,
               html: props.preview.html,
               signature: props.preview.signature
             }}
             initialRevision={0}
             messages={props.preview.messages}
+            onDiagnostic={props.onFailure}
             onReady={handlePreviewReady}
             port={props.previewPort}
             scrollPort={props.scrollPort}

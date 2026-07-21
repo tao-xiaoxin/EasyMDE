@@ -6,12 +6,13 @@ export type NativeTitleSnapshot = Readonly<{
 export type NativeTitleSession = Readonly<{
   destroy: () => void;
   getSnapshot: () => NativeTitleSnapshot;
+  replaceSavedValue: (value: string) => void;
   subscribe: (listener: () => void) => () => void;
 }>;
 
 export function createNativeTitleSession(field: HTMLInputElement): NativeTitleSession {
   const listeners = new Set<() => void>();
-  const savedValue = field.defaultValue;
+  let savedValue = field.defaultValue;
   let destroyed = false;
   let snapshot: NativeTitleSnapshot = {
     savedValue,
@@ -46,6 +47,12 @@ export function createNativeTitleSession(field: HTMLInputElement): NativeTitleSe
       field.removeEventListener('change', publish);
     },
     getSnapshot: () => snapshot,
+    replaceSavedValue(value: string) {
+      if (destroyed || value === savedValue) return;
+      savedValue = value;
+      snapshot = { savedValue, value: snapshot.value };
+      for (const listener of listeners) listener();
+    },
     subscribe(listener: () => void) {
       if (destroyed) {
         return () => {};

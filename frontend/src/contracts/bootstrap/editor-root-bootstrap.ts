@@ -20,6 +20,10 @@ import {
   type ImageUploadBootstrap
 } from './image-upload-bootstrap';
 import {
+  parseEditorLayoutBootstrap,
+  type EditorLayoutBootstrap
+} from './editor-layout-bootstrap';
+import {
   parseMediaPickerBootstrap,
   type MediaPickerBootstrap
 } from './media-picker-bootstrap';
@@ -62,6 +66,7 @@ export type EditorRootBootstrap = Readonly<{
   document: DocumentSourceBootstrap;
   fonts: FontControlsBootstrap;
   imageUpload: ImageUploadBootstrap;
+  layout: EditorLayoutBootstrap;
   localDrafts: EditorRootLocalDraftsBootstrap;
   labels: Readonly<{
     preview: string;
@@ -178,6 +183,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   let appearance: AppearanceBootstrap;
   let fonts: FontControlsBootstrap;
   let imageUpload: ImageUploadBootstrap;
+  let layout: EditorLayoutBootstrap;
   let localDrafts: EditorRootLocalDraftsBootstrap;
   let mediaPicker: MediaPickerBootstrap;
   let previewEnhancement: PreviewEnhancementBootstrap;
@@ -203,6 +209,11 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     imageUpload = parseImageUploadBootstrap(bootstrap.imageUpload);
   } catch {
     throw new EditorRootBootstrapError('editor-root-image-upload-invalid');
+  }
+  try {
+    layout = parseEditorLayoutBootstrap(bootstrap.layout);
+  } catch {
+    throw new EditorRootBootstrapError('editor-root-layout-invalid');
   }
   try {
     localDrafts = parseLocalDrafts(bootstrap.localDrafts);
@@ -236,6 +247,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     document,
     fonts,
     imageUpload,
+    layout,
     localDrafts,
     labels: {
       preview: boundedString(labels.preview, 'editor-root-label-invalid'),

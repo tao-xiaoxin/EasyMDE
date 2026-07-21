@@ -39,8 +39,15 @@ describe('createNativeTitleSession', () => {
     });
     expect(session.getSnapshot()).toBe(session.getSnapshot());
 
+    session.replaceSavedValue('Edited title');
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(session.getSnapshot()).toEqual({
+      savedValue: 'Edited title',
+      value: 'Edited title'
+    });
+
     field.dispatchEvent(new Event('change', { bubbles: true }));
-    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledTimes(2);
 
     unsubscribe();
     session.destroy();

@@ -99,6 +99,10 @@ describe('createCodeMirrorDocumentSession', () => {
     });
     expect(session.getSnapshot()).toBe(session.getSnapshot());
 
+    session.replaceSavedValue('edited');
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(session.getSnapshot()).toEqual({ savedValue: 'edited', value: 'edited' });
+
     unsubscribe();
     session.destroy();
   });
@@ -168,6 +172,57 @@ describe('createCodeMirrorDocumentSession', () => {
     expect(valueWrites).toBe(0);
     expect(submissionField.selectionStart).toBe(2);
 
+    session.destroy();
+  });
+
+  it('reveals an outline position and publishes cursor changes without editing Markdown', () => {
+    const { container, submissionField } = createFixture('# First\n\n## Second');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const selectionListener = vi.fn();
+    const unsubscribe = session.subscribeSelection(selectionListener);
+
+    session.revealPosition(11);
+
+    expect(session.getSelection()).toEqual({
+      direction: 'none',
+      end: 11,
+      start: 11
+    });
+    expect(session.getValue()).toBe('# First\n\n## Second');
+    expect(submissionField.value).toBe('# First\n\n## Second');
+    expect(selectionListener).toHaveBeenCalledTimes(1);
+    expect(session.getCursorPosition()).toEqual({ column: 3, line: 3 });
+
+    unsubscribe();
+    session.revealPosition(999);
+    expect(session.getSelection().start).toBe(session.getValue().length);
+    expect(selectionListener).toHaveBeenCalledTimes(1);
+    session.destroy();
+  });
+
+  it('derives cursor coordinates from the active selection endpoint without scanning text', () => {
+    const { container, submissionField } = createFixture('abc\ndef');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+
+    session.applyTextChange({
+      selection: { direction: 'forward', end: 5, start: 0 },
+      value: 'abc\ndef'
+    });
+    expect(session.getCursorPosition()).toEqual({ column: 2, line: 2 });
+
+    session.applyTextChange({
+      selection: { direction: 'backward', end: 5, start: 0 },
+      value: 'abc\ndef'
+    });
+    expect(session.getCursorPosition()).toEqual({ column: 1, line: 1 });
     session.destroy();
   });
 

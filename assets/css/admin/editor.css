@@ -51,6 +51,145 @@
     color: #1d2327;
 }
 
+.easymde-layout-owner {
+    position: relative;
+}
+
+.easymde-editor-context-bar {
+    position: relative;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+    padding: 0 12px;
+    border-bottom: 1px solid #dcdcde;
+    background: #f8fafc;
+}
+
+.easymde-context-button,
+.easymde-view-switch button,
+.easymde-outline-close {
+    min-height: 30px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: #334155;
+    cursor: pointer;
+}
+
+.easymde-context-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+}
+
+.easymde-context-button:hover,
+.easymde-context-button:focus-visible,
+.easymde-view-switch button:hover,
+.easymde-view-switch button:focus-visible,
+.easymde-outline-close:hover,
+.easymde-outline-close:focus-visible {
+    border-color: #8c8f94;
+    background: #fff;
+    color: #1d2327;
+    outline: 2px solid transparent;
+}
+
+.easymde-statistics-summary {
+    gap: 10px;
+    margin-inline-start: auto;
+    font-size: 12px;
+}
+
+.easymde-statistics-summary span + span {
+    padding-inline-start: 10px;
+    border-inline-start: 1px solid #cbd5e1;
+}
+
+.easymde-view-switch {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #fff;
+}
+
+fieldset.easymde-view-switch {
+    margin: 0;
+}
+
+.easymde-view-switch button {
+    padding: 3px 10px;
+}
+
+.easymde-view-switch button.is-active {
+    border-color: #2271b1;
+    background: #2271b1;
+    color: #fff;
+}
+
+.easymde-view-switch button:focus-visible {
+    outline: 2px solid #2271b1;
+    outline-offset: 2px;
+}
+
+.easymde-view-switch button.is-active:focus-visible {
+    outline-color: #fff;
+    outline-offset: -4px;
+}
+
+.easymde-statistics-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    inset-inline-end: 12px;
+    z-index: 20;
+    width: min(360px, calc(100vw - 64px));
+    box-sizing: border-box;
+    padding: 16px;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 14px 32px rgba(15, 23, 42, 0.16);
+}
+
+.easymde-statistics-panel dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 12px 0;
+}
+
+.easymde-statistics-panel dl > div {
+    padding: 8px;
+    border-radius: 6px;
+    background: #f8fafc;
+}
+
+.easymde-statistics-panel dt,
+.easymde-statistics-panel dd {
+    margin: 0;
+}
+
+.easymde-statistics-panel dt,
+.easymde-statistics-panel p {
+    color: #64748b;
+    font-size: 12px;
+}
+
+.easymde-statistics-panel dd {
+    margin-top: 3px;
+    color: #0f172a;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.easymde-statistics-panel p {
+    margin: 0;
+}
+
 html.easymde-immersive-active,
 body.easymde-immersive-active {
     overflow: hidden;
@@ -64,6 +203,167 @@ body.easymde-immersive-active {
     height: max(720px, calc(100vh - 250px));
     min-height: 640px;
     overflow: hidden;
+}
+
+.easymde-react-workspace {
+    display: grid;
+    grid-template-columns: 230px minmax(0, 1fr);
+    height: max(720px, calc(100vh - 250px));
+    min-height: 640px;
+    overflow: hidden;
+}
+
+.easymde-react-workspace:not(.has-outline) {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.easymde-outline-panel {
+    min-width: 0;
+    overflow: auto;
+    border-inline-end: 1px solid #dcdcde;
+    background: #fbfcfd;
+}
+
+.easymde-outline-panel > header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 38px;
+    padding-block: 0;
+    padding-inline: 14px 8px;
+    border-bottom: 1px solid #dcdcde;
+    background: #fff;
+}
+
+.easymde-outline-close {
+    width: 30px;
+    padding: 0;
+}
+
+.easymde-outline-panel ol {
+    margin: 8px 0;
+    padding: 0;
+    list-style: none;
+}
+
+.easymde-outline-panel li {
+    margin: 0;
+    padding-inline-start: calc(var(--easymde-outline-depth, 0) * 14px);
+}
+
+.easymde-outline-panel li button {
+    width: 100%;
+    padding: 7px 12px;
+    overflow: hidden;
+    border: 0;
+    border-inline-start: 3px solid transparent;
+    background: transparent;
+    color: #475569;
+    cursor: pointer;
+    text-align: start;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.easymde-outline-panel li button:hover,
+.easymde-outline-panel li button:focus-visible {
+    border-inline-start-color: #2271b1;
+    background: #eef6ff;
+    color: #0a4b78;
+    outline: 0;
+}
+
+.easymde-outline-empty {
+    margin: 0;
+    padding: 18px 14px;
+    color: #64748b;
+}
+
+.easymde-editor-panes {
+    display: grid;
+    grid-template-columns: minmax(0, var(--easymde-source-percent)) 8px minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+}
+
+.easymde-editor-panes[data-view="edit"],
+.easymde-editor-panes[data-view="preview"] {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.easymde-editor-source-slot,
+.easymde-editor-preview-slot {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+}
+
+.easymde-editor-source-slot[hidden],
+.easymde-editor-preview-slot[hidden],
+.easymde-pane-divider[hidden] {
+    display: none;
+}
+
+.easymde-editor-source-slot > .easymde-pane,
+.easymde-editor-preview-slot > .easymde-pane {
+    width: 100%;
+}
+
+.easymde-pane-divider {
+    position: relative;
+    z-index: 2;
+    width: 8px;
+    border: 0;
+    border-right: 1px solid #dcdcde;
+    border-left: 1px solid #dcdcde;
+    background: #f1f5f9;
+    cursor: col-resize;
+    touch-action: none;
+}
+
+.easymde-pane-divider:hover,
+.easymde-pane-divider:focus-visible {
+    border-color: #2271b1;
+    background: #dbeafe;
+    outline: 2px solid #2271b1;
+    outline-offset: -2px;
+}
+
+.easymde-editor-status-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 34px;
+    padding: 0 14px;
+    border-top: 1px solid #dcdcde;
+    background: #f8fafc;
+    color: #475569;
+    font-size: 12px;
+}
+
+.easymde-editor-status-bar span:last-child {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+}
+
+.easymde-editor-status-bar i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.easymde-editor-status-bar .is-saved {
+    color: #0f6b32;
+}
+
+.easymde-editor-status-bar .is-dirty {
+    color: #996800;
 }
 
 .easymde-editor-immersive {
@@ -114,8 +414,18 @@ body.easymde-immersive-active .media-modal-backdrop {
     border-right: 1px solid #dcdcde;
 }
 
+.easymde-layout-owner .easymde-pane-source {
+    grid-area: auto;
+    border-right: 0;
+    border-inline-end: 1px solid #dcdcde;
+}
+
 .easymde-pane-preview {
     grid-area: preview;
+}
+
+.easymde-layout-owner .easymde-pane-preview {
+    grid-area: auto;
 }
 
 .easymde-pane-header {
@@ -401,9 +711,35 @@ body.easymde-immersive-active .media-modal-backdrop {
         min-height: 0;
     }
 
+    .easymde-react-workspace {
+        display: block;
+        height: auto;
+        min-height: 0;
+    }
+
+    .easymde-outline-panel {
+        max-height: 240px;
+        border-inline-end: 0;
+        border-bottom: 1px solid #dcdcde;
+    }
+
+    .easymde-editor-panes[data-view="split"] {
+        display: grid;
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto;
+    }
+
+    .easymde-editor-panes[data-view="split"] .easymde-pane-divider {
+        display: none;
+    }
+
     .easymde-pane-source {
         border-right: 0;
         border-bottom: 1px solid #dcdcde;
+    }
+
+    .easymde-layout-owner .easymde-pane-source {
+        border-inline-end: 0;
     }
 
     .easymde-side-actions {
@@ -447,6 +783,13 @@ body.easymde-immersive-active .media-modal-backdrop {
         max-height: 58vh;
     }
 
+    .easymde-preview-react-root {
+        flex: 0 1 auto;
+        height: 420px;
+        min-height: 360px;
+        max-height: 58vh;
+    }
+
     .easymde-editor-immersive .easymde-workspace {
         overflow: auto;
     }
@@ -474,6 +817,28 @@ body.easymde-immersive-active .media-modal-backdrop {
     .easymde-draft-status {
         width: 100%;
         margin-left: 0;
+    }
+
+    .easymde-editor-context-bar {
+        align-items: stretch;
+        flex-wrap: wrap;
+        padding: 8px;
+    }
+
+    .easymde-statistics-summary {
+        order: 3;
+        width: 100%;
+        justify-content: space-between;
+        margin-inline-start: 0;
+    }
+
+    .easymde-view-switch {
+        margin-inline-start: auto;
+    }
+
+    .easymde-statistics-panel {
+        inset-inline: 8px;
+        width: auto;
     }
 
     .easymde-toolbar-popover {

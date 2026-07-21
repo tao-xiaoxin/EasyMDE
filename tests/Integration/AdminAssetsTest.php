@@ -60,6 +60,15 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( 'A different local draft was saved in another tab.', $strings['draftConflict'] );
 	}
 
+	public function test_editor_layout_has_php_gettext_status_and_resizer_messages() {
+		$strings = $this->get_strings->invoke( $this->admin_assets );
+
+		$this->assertSame( 'Unsaved', $strings['unsaved'] );
+		$this->assertSame( 'Resize source and preview', $strings['resizePanes'] );
+		$this->assertSame( 'Line %1$s, Column %2$s', $strings['cursorPosition'] );
+		$this->assertSame( 'Show more headings', $strings['showMoreHeadings'] );
+	}
+
 	public function test_toolbar_stylesheet_uses_a_content_version_for_atomic_owner_handoff() {
 		$asset_path = 'assets/css/admin/toolbar.css';
 		$version    = $this->get_static_asset_version->invoke( $this->admin_assets, $asset_path );

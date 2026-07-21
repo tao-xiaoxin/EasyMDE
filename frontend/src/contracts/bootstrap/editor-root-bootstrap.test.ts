@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { editorLayoutBootstrapFixture } from '../../test/editor-layout-bootstrap-fixture';
 import { previewEnhancementBootstrapFixture } from '../../test/preview-enhancement-bootstrap-fixture';
 import { parseEditorRootBootstrap } from './editor-root-bootstrap';
 
@@ -68,6 +69,7 @@ function validBootstrap() {
         pasteUploading: 'Paste uploading'
       }
     },
+    layout: editorLayoutBootstrapFixture,
     localDrafts: {
       enabled: true,
       locale: 'en_US',
@@ -142,6 +144,7 @@ describe('parseEditorRootBootstrap', () => {
       document: { editorLabel: 'Markdown source' },
       fonts: validBootstrap().fonts,
       imageUpload: validBootstrap().imageUpload,
+      layout: editorLayoutBootstrapFixture,
       localDrafts: validBootstrap().localDrafts,
       labels: {
         preview: 'Preview',
@@ -172,6 +175,7 @@ describe('parseEditorRootBootstrap', () => {
     [{ ...validBootstrap(), appearance: null }, 'editor-root-appearance-invalid'],
     [{ ...validBootstrap(), fonts: null }, 'editor-root-fonts-invalid'],
     [{ ...validBootstrap(), imageUpload: null }, 'editor-root-image-upload-invalid'],
+    [{ ...validBootstrap(), layout: null }, 'editor-root-layout-invalid'],
     [{ ...validBootstrap(), localDrafts: null }, 'editor-root-local-drafts-invalid'],
     [{ ...validBootstrap(), mediaPicker: null }, 'editor-root-media-picker-invalid'],
     [{ ...validBootstrap(), previewEnhancement: null }, 'editor-root-preview-enhancement-invalid'],

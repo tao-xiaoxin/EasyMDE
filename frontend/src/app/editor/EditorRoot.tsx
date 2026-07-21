@@ -20,6 +20,7 @@ import type {
 } from '../../contracts/bootstrap/appearance-bootstrap';
 import type { FontControlsBootstrap } from '../../contracts/bootstrap/font-controls-bootstrap';
 import type { ImageUploadBootstrap } from '../../contracts/bootstrap/image-upload-bootstrap';
+import type { EditorLayoutBootstrap } from '../../contracts/bootstrap/editor-layout-bootstrap';
 import type { MediaPickerBootstrap } from '../../contracts/bootstrap/media-picker-bootstrap';
 import type { ToolbarBootstrap } from '../../contracts/bootstrap/toolbar-bootstrap';
 import type { WechatExportBootstrap } from '../../contracts/bootstrap/wechat-export-bootstrap';
@@ -49,6 +50,10 @@ import {
   createImageUploadSession,
   type ImageUploadStatus
 } from '../../features/image-upload/image-upload-session';
+import {
+  EditorWorkspace,
+  type EditorViewMode
+} from '../../features/editor-layout/ui/EditorWorkspace';
 import type { PreviewEnhancementPort } from '../../features/live-preview/ports/preview-enhancement-port';
 import type { PreviewScrollPort } from '../../features/live-preview/ports/preview-scroll-port';
 import { PreviewSurfaceOwner, type PreviewSurfaceRuntime } from '../../features/live-preview/ui/PreviewSurfaceOwner';
@@ -75,6 +80,7 @@ export type EditorRootProps = Readonly<{
   fonts: FontControlsBootstrap;
   imageUpload: Pick<ImageUploadBootstrap, 'enabled' | 'maxBytes' | 'postId' | 'strings'>;
   imageUploadPort: ImageUploadPort;
+  layout: EditorLayoutBootstrap;
   localDrafts: EditorRootLocalDraftsBootstrap;
   localDraftStorage: LocalDraftStoragePort;
   labels: Readonly<{
@@ -294,10 +300,16 @@ export function EditorRoot(props: EditorRootProps) {
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
   const rootActiveRef = useRef(true);
+  const initialSubmissionStateRef = useRef({
+    ...props.appearance.state,
+    ...props.fonts.state
+  });
+  const submissionStateRef = useRef(initialSubmissionStateRef.current);
   const [documentSession, setDocumentSession] = useState<EditorDocumentSession | null>(null);
   const [draftCandidate, setDraftCandidate] = useState(false);
   const [editorStatus, setEditorStatus] = useState<ImageUploadStatus | null>(null);
   const [previewRuntimeReady, setPreviewRuntimeReady] = useState(false);
+  const [viewMode, setViewMode] = useState<EditorViewMode>('split');
   const wechatSession = useMemo(() => createWechatExportSession({
     clipboard: props.wechatClipboard,
     enabled: props.wechatExport.enabled,
@@ -308,6 +320,7 @@ export function EditorRoot(props: EditorRootProps) {
   }), [props.onFailure, props.wechatClipboard, props.wechatExport]);
 
   const handleDocumentReady = useCallback((session: EditorDocumentSession) => {
+    session.registerSubmissionState(initialSubmissionStateRef.current);
     setDocumentSession(session);
   }, []);
   const handlePreviewReady = useCallback((runtime: PreviewSurfaceRuntime) => {
@@ -337,6 +350,8 @@ export function EditorRoot(props: EditorRootProps) {
   const appearancePort = useMemo<AppearancePort>(() => ({
     applyState: (state) => {
       props.appearancePort.applyState(state);
+      submissionStateRef.current = { ...submissionStateRef.current, ...state };
+      documentSession?.replaceSubmissionState(submissionStateRef.current);
       previewAppearanceRef.current = state;
       schedulePreview(true);
     },
@@ -348,20 +363,29 @@ export function EditorRoot(props: EditorRootProps) {
     saveCustomCss: async (input) => {
       const result = await props.appearancePort.saveCustomCss(input);
       if ('saved' === result.status) {
+        submissionStateRef.current = {
+          ...submissionStateRef.current,
+          ...result.snapshot.state
+        };
+        documentSession?.replaceSubmissionState(submissionStateRef.current);
         previewAppearanceRef.current = result.snapshot.state;
         schedulePreview(true);
       }
       return result;
     }
-  }), [props.appearancePort, schedulePreview]);
+  }), [documentSession, props.appearancePort, schedulePreview]);
   const fontControlsPort = useMemo<FontControlsPort>(() => ({
-    applyState: (state) => props.fontControlsPort.applyState(state),
+    applyState: (state) => {
+      props.fontControlsPort.applyState(state);
+      submissionStateRef.current = { ...submissionStateRef.current, ...state };
+      documentSession?.replaceSubmissionState(submissionStateRef.current);
+    },
     closeOtherPopovers: () => {
       toolbarSessionRef.current?.closePopovers();
       appearanceSessionRef.current?.close();
       props.fontControlsPort.closeOtherPopovers();
     }
-  }), [props.fontControlsPort]);
+  }), [documentSession, props.fontControlsPort]);
   const handleAppearanceReady = useCallback((session: AppearanceControlsSession) => {
     appearanceSessionRef.current = session;
   }, []);
@@ -479,7 +503,7 @@ export function EditorRoot(props: EditorRootProps) {
 
   useEffect(() => {
     const previewRuntime = previewRuntimeRef.current;
-    if (!documentSession || !previewRuntime) {
+    if (!documentSession || !previewRuntime || 'split' !== viewMode) {
       return;
     }
     const binding = props.scrollSyncPort.prepareBinding({
@@ -488,7 +512,7 @@ export function EditorRoot(props: EditorRootProps) {
     });
     binding.activate();
     return () => binding.dispose();
-  }, [documentSession, previewRuntimeReady, props.scrollSyncPort]);
+  }, [documentSession, previewRuntimeReady, props.scrollSyncPort, viewMode]);
 
   useLayoutEffect(() => {
     if (!previewRuntimeRef.current) return;
@@ -569,37 +593,46 @@ export function EditorRoot(props: EditorRootProps) {
           </button>
         </div>
       ) : null}
-      <div className="easymde-workspace">
-        <section className="easymde-pane easymde-pane-source" data-easymde-document-owner="react">
-          <header className="easymde-pane-header">{props.labels.source}</header>
-          <div className="easymde-source easymde-source-react">
-            <EditorDocumentSource
-              editorLabel={props.document.editorLabel}
-              onReady={handleDocumentReady}
-              submissionField={props.submissionField}
-              titleField={props.titleField}
+      <EditorWorkspace
+        direction={props.layout.direction}
+        documentSession={documentSession}
+        locale={props.layout.locale}
+        onViewModeChange={setViewMode}
+        strings={props.layout.strings}
+        source={(
+          <section className="easymde-pane easymde-pane-source" data-easymde-document-owner="react">
+            <header className="easymde-pane-header">{props.labels.source}</header>
+            <div className="easymde-source easymde-source-react">
+              <EditorDocumentSource
+                editorLabel={props.document.editorLabel}
+                onReady={handleDocumentReady}
+                submissionField={props.submissionField}
+                titleField={props.titleField}
+              />
+            </div>
+          </section>
+        )}
+        preview={(
+          <section className="easymde-pane easymde-pane-preview">
+            <header className="easymde-pane-header">{props.labels.preview}</header>
+            <PreviewSurfaceOwner
+              enhancementPort={props.enhancementPort}
+              initial={{
+                codeTheme: props.appearance.state.codeTheme,
+                features: props.preview.features,
+                html: props.preview.html,
+                signature: props.preview.signature
+              }}
+              initialRevision={0}
+              messages={props.preview.messages}
+              onDiagnostic={props.onFailure}
+              onReady={handlePreviewReady}
+              port={props.previewPort}
+              scrollPort={props.scrollPort}
             />
-          </div>
-        </section>
-        <section className="easymde-pane easymde-pane-preview">
-          <header className="easymde-pane-header">{props.labels.preview}</header>
-          <PreviewSurfaceOwner
-            enhancementPort={props.enhancementPort}
-            initial={{
-              codeTheme: props.appearance.state.codeTheme,
-              features: props.preview.features,
-              html: props.preview.html,
-              signature: props.preview.signature
-            }}
-            initialRevision={0}
-            messages={props.preview.messages}
-            onDiagnostic={props.onFailure}
-            onReady={handlePreviewReady}
-            port={props.previewPort}
-            scrollPort={props.scrollPort}
-          />
-        </section>
-      </div>
+          </section>
+        )}
+      />
     </div>
   );
 }

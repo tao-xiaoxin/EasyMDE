@@ -25,17 +25,26 @@ export type CodeMirrorDocumentSnapshot = Readonly<{
   value: string;
 }>;
 
+export type DocumentCursorPosition = Readonly<{
+  column: number;
+  line: number;
+}>;
+
 export type CodeMirrorDocumentSession = Readonly<{
   applyTextChange: (change: DocumentTextChange) => void;
   destroy: () => void;
   flush: () => void;
   focus: () => void;
+  getCursorPosition: () => DocumentCursorPosition;
   getInputElement: () => HTMLElement;
   getScrollElement: () => HTMLElement;
   getSelection: () => DocumentSelection;
   getSnapshot: () => CodeMirrorDocumentSnapshot;
   getValue: () => string;
+  replaceSavedValue: (value: string) => void;
+  revealPosition: (position: number) => void;
   subscribe: (listener: () => void) => () => void;
+  subscribeSelection: (listener: () => void) => () => void;
   syncFromSubmissionField: () => void;
 }>;
 
@@ -113,9 +122,10 @@ export function createCodeMirrorDocumentSession({
   let syncingFromNative = false;
   let destroyed = false;
   const initialValue = submissionField.value;
-  const savedValue = submissionField.defaultValue;
+  let savedValue = submissionField.defaultValue;
   const initialSelection = nativeSelection(submissionField);
   const listeners = new Set<() => void>();
+  const selectionListeners = new Set<() => void>();
   let snapshot: CodeMirrorDocumentSnapshot = {
     savedValue,
     value: initialValue
@@ -175,6 +185,11 @@ export function createCodeMirrorDocumentSession({
           if (update.docChanged) {
             submissionField.dispatchEvent(new Event('input', { bubbles: true }));
             publishValue(update.state.doc.toString());
+          }
+          if (update.selectionSet) {
+            for (const listener of selectionListeners) {
+              listener();
+            }
           }
         })
       ],
@@ -262,6 +277,7 @@ export function createCodeMirrorDocumentSession({
       }
       destroyed = true;
       listeners.clear();
+      selectionListeners.clear();
       mutationObserver.disconnect();
       submissionField.removeEventListener('input', syncFromNative);
       view.destroy();
@@ -284,17 +300,46 @@ export function createCodeMirrorDocumentSession({
         view.focus();
       }
     },
+    getCursorPosition() {
+      const selection = sessionSelection(view);
+      const offset = 'backward' === selection.direction ? selection.start : selection.end;
+      const line = view.state.doc.lineAt(offset);
+      return {
+        column: offset - line.from + 1,
+        line: line.number
+      };
+    },
     getInputElement: () => view.contentDOM,
     getScrollElement: () => view.scrollDOM,
     getSelection: () => sessionSelection(view),
     getSnapshot: () => snapshot,
     getValue: () => view.state.doc.toString(),
+    replaceSavedValue(value: string) {
+      if (destroyed || value === savedValue) return;
+      savedValue = value;
+      snapshot = { savedValue, value: snapshot.value };
+      for (const listener of listeners) listener();
+    },
+    revealPosition(position: number) {
+      if (destroyed) return;
+      const bounded = clampPosition(position, view.state.doc.length);
+      view.dispatch({
+        effects: EditorView.scrollIntoView(bounded, { y: 'center' }),
+        selection: EditorSelection.cursor(bounded)
+      });
+      view.focus();
+    },
     subscribe(listener: () => void) {
       if (destroyed) {
         return () => {};
       }
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    subscribeSelection(listener: () => void) {
+      if (destroyed) return () => {};
+      selectionListeners.add(listener);
+      return () => selectionListeners.delete(listener);
     },
     syncFromSubmissionField: syncFromNative
   };

@@ -141,6 +141,33 @@ Appearance surface remains Legacy-owned. The legacy implementation and hidden
 rollback DOM are retained until the final consumer, failure, browser, and
 release removal gates are satisfied.
 
+## Normal Editor Media Picker Ownership
+
+The normal editor's Media Library opening, selected-attachment validation,
+Markdown image insertion, and Selection, Scroll, and Focus restoration are a
+focused React-application migration unit. The TypeScript Feature receives the
+active normal document owner through a narrow Port and delegates the native
+modal and attachment selection to a WordPress `wp.media` Adapter. WordPress
+continues to own capabilities, attachments, the Media Library, and modal
+behavior; this unit creates no upload or persistence authority.
+
+Activation validates the production bridge and translated Bootstrap strings
+before marking the normal Media-picker owner as React. If the production entry
+is unavailable or invalid, the existing lazy Legacy wrapper remains the normal
+startup fallback. After handoff, one Media frame operation is allowed at a
+time. Selection applies only when the captured Markdown snapshot is still
+current; cancellation, an invalid attachment, a stale result, or a frame
+failure never mutates Markdown and restores Focus. If `wp.media` is genuinely
+unavailable, the established Markdown image placeholder remains the explicit
+fallback rather than a reported native-media success.
+
+The retained `assets/js/admin/media-picker.js` wrapper remains the active owner
+for the intentionally excluded immersive workspace. It is not removed by this
+unit, and immersive Media behavior is not transferred to React. Final Legacy
+removal therefore requires a separate consumer inventory proving that both the
+normal startup fallback and every immersive consumer have an approved
+replacement or retention decision.
+
 ## Editor Enablement
 
 EasyMDE opens new and existing content for post types explicitly supported by `easymde_supported_post_types` in EasyMDE through normal WordPress editing when the current user can edit or create that content. The default supported post types are `post` and `page`.

@@ -1776,6 +1776,7 @@ test('React document source stays hidden until a complete session is ready', asy
   const legacySource = createToolbarOwnerElement();
   const titleField = { tagName: 'INPUT' };
   const documentSession = {
+    applyTextChange() {},
     flush() {},
     focus() {},
     getInputElement() {
@@ -5241,6 +5242,92 @@ test('hydrateInitialPreview leaves empty shells on the normal preview path', () 
   preview.attr('data-easymde-initial-preview', '1');
 
   assert.equal(hooks.hydrateInitialPreview(preview, '# Empty shell'), false);
+});
+
+test('React media picker atomically owns normal-editor operations and returns to Legacy on teardown', async () => {
+  let preparedBootstrap;
+  let openOptions;
+  const root = createToolbarOwnerElement();
+  const session = {
+    open(options) {
+      openOptions = options;
+      return Promise.resolve('cancelled');
+    }
+  };
+  const documentSession = {
+    applyTextChange() {},
+    focus() {},
+    getScrollElement() {
+      return { scrollLeft: 0, scrollTop: 0 };
+    },
+    getSelection() {
+      return { direction: 'backward', end: 4, start: 1 };
+    },
+    getValue() {
+      return 'Intro';
+    }
+  };
+  const media = function () {};
+  const context = { documentSession };
+  const textarea = { value: 'Stale native bridge' };
+  const loaded = loadBootstrap({
+    wp: { media },
+    EasyMDEReactMediaPicker: {
+      prepare(value) {
+        preparedBootstrap = value;
+        return session;
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      features: {},
+      strings: {
+        insertMedia: 'Insert Media',
+        mediaAltText: 'alt text',
+        mediaDefaultAlt: 'image',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: { codeThemes: [], fontOptions: {}, state: {} }
+    }
+  });
+
+  const cleanup = loaded.hooks.activateReactMediaPicker(root, context);
+
+  assert.equal(preparedBootstrap.defaultAlt, 'image');
+  assert.equal(preparedBootstrap.insertMedia, 'Insert Media');
+  assert.equal(preparedBootstrap.placeholderAlt, 'alt text');
+  assert.equal(root.getAttribute('data-easymde-media-picker-owner'), 'react');
+  assert.equal(await loaded.hooks.openMediaPicker(textarea, context), 'cancelled');
+  assert.equal(typeof openOptions.media, 'function');
+  const snapshot = openOptions.document.getSnapshot();
+  assert.equal(snapshot.value, 'Intro');
+  assert.equal(snapshot.selection.direction, 'backward');
+  assert.equal(snapshot.selection.end, 4);
+  assert.equal(snapshot.selection.start, 1);
+
+  cleanup();
+  assert.equal(context.mediaPickerSession, null);
+  assert.equal(root.getAttribute('data-easymde-media-picker-owner'), 'legacy');
+});
+
+test('React media picker keeps the Legacy normal-editor owner when its entry is unavailable', () => {
+  const root = createToolbarOwnerElement();
+  const context = {};
+  const loaded = loadBootstrap({
+    console: { error() {} },
+    EasyMDEConfig: {
+      testHooks: true,
+      features: {},
+      strings: {},
+      themeOptions: { codeThemes: [], fontOptions: {}, state: {} }
+    }
+  });
+
+  assert.equal(loaded.hooks.activateReactMediaPicker(root, context), null);
+  assert.equal(context.mediaPickerSession, undefined);
+  assert.equal(root.getAttribute('data-easymde-media-picker-owner'), 'legacy');
 });
 
 test('openMediaPicker lazy-loads the media wrapper on first image insertion', async () => {

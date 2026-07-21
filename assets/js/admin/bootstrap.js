@@ -2868,6 +2868,128 @@
         };
     }
 
+    function createReactMediaPickerDocumentPort(textarea, context) {
+        var capturedScroll = null;
+
+        function activeSession() {
+            var session = context && context.documentSession;
+
+            if (
+                session
+                && typeof session.applyTextChange === 'function'
+                && typeof session.focus === 'function'
+                && typeof session.getScrollElement === 'function'
+                && typeof session.getSelection === 'function'
+                && typeof session.getValue === 'function'
+            ) {
+                return session;
+            }
+
+            return null;
+        }
+
+        function scrollElement(session) {
+            return session ? session.getScrollElement() : textarea;
+        }
+
+        function captureScroll(session) {
+            var element;
+
+            if (capturedScroll) {
+                return;
+            }
+            element = scrollElement(session);
+            capturedScroll = {
+                left: element && typeof element.scrollLeft === 'number' ? element.scrollLeft : 0,
+                top: element && typeof element.scrollTop === 'number' ? element.scrollTop : 0
+            };
+        }
+
+        function restoreScroll(session) {
+            var element = scrollElement(session);
+
+            if (!capturedScroll || !element) {
+                return;
+            }
+            element.scrollLeft = capturedScroll.left;
+            element.scrollTop = capturedScroll.top;
+        }
+
+        return {
+            applyTextChange: function (change) {
+                var session = activeSession();
+
+                if (session) {
+                    session.applyTextChange(change);
+                } else {
+                    applyTextChange(
+                        textarea,
+                        change.value,
+                        change.selection.start,
+                        change.selection.end
+                    );
+                }
+                restoreScroll(session);
+            },
+            focus: function () {
+                var session = activeSession();
+
+                if (session) {
+                    session.focus();
+                } else {
+                    focusWithoutScrolling(textarea);
+                }
+                restoreScroll(session);
+            },
+            getSnapshot: function () {
+                var session = activeSession();
+                var selection;
+                var value;
+
+                if (session) {
+                    selection = session.getSelection();
+                    value = session.getValue();
+                } else {
+                    selection = {
+                        direction: textarea.selectionDirection || 'none',
+                        end: textarea.selectionEnd,
+                        start: textarea.selectionStart
+                    };
+                    value = textarea.value;
+                }
+                captureScroll(session);
+
+                return {
+                    selection: selection,
+                    value: value
+                };
+            }
+        };
+    }
+
+    function openReactMediaPicker(textarea, context) {
+        var media = window.wp && typeof window.wp.media === 'function'
+            ? window.wp.media.bind(window.wp)
+            : null;
+
+        return context.mediaPickerSession.open({
+            document: createReactMediaPickerDocumentPort(textarea, context),
+            media: media
+        }).catch(function (error) {
+            var code = error && /^media-picker-[a-z0-9-]+$/.test(error.message || '')
+                ? error.message
+                : 'media-picker-operation-failed';
+
+            reportReactMediaPickerFailure(code);
+            showFlash(
+                context && context.flash ? context.flash : null,
+                'error',
+                getString('mediaPickerFailed') || 'The WordPress media library could not be opened.'
+            );
+            return false;
+        });
+    }
+
     function insertMediaPlaceholder(textarea) {
         insertAround(textarea, '![' + getString('mediaAltText') + '](', ')', '');
     }
@@ -2900,6 +3022,9 @@
 
     function openMediaPicker(textarea, context) {
         context = context || {};
+        if (context.mediaPickerSession && typeof context.mediaPickerSession.open === 'function') {
+            return openReactMediaPicker(textarea, context);
+        }
         try {
             if (openLoadedMediaPicker(textarea, context)) {
                 return Promise.resolve(true);
@@ -3719,12 +3844,19 @@
         }
     }
 
+    function reportReactMediaPickerFailure(code) {
+        if (window.console && typeof window.console.error === 'function') {
+            window.console.error('[EasyMDE] ' + code);
+        }
+    }
+
     function isReactDocumentSession(session) {
         var documentSession = session && session.document;
         var titleSession = session && session.title;
 
         return !!(
             documentSession
+            && typeof documentSession.applyTextChange === 'function'
             && typeof documentSession.flush === 'function'
             && typeof documentSession.focus === 'function'
             && typeof documentSession.getInputElement === 'function'
@@ -3888,6 +4020,61 @@
             return null;
         }
 
+        if (typeof window.addEventListener === 'function') {
+            window.addEventListener('pagehide', dispose, { once: true });
+            pagehideRegistered = true;
+        }
+
+        return dispose;
+    }
+
+    function activateReactMediaPicker(root, context) {
+        var bridgeApi = window.EasyMDEReactMediaPicker;
+        var pagehideRegistered = false;
+        var disposed = false;
+        var session;
+
+        function dispose() {
+            if (disposed) {
+                return;
+            }
+            disposed = true;
+            if (pagehideRegistered && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('pagehide', dispose);
+                pagehideRegistered = false;
+            }
+            if (context.mediaPickerSession === session) {
+                context.mediaPickerSession = null;
+            }
+            root.setAttribute('data-easymde-media-picker-owner', 'legacy');
+        }
+
+        if (!root || typeof root.setAttribute !== 'function' || !context) {
+            reportReactMediaPickerFailure('react-media-picker-surface-invalid');
+            return null;
+        }
+        root.setAttribute('data-easymde-media-picker-owner', 'legacy');
+        if (!bridgeApi || typeof bridgeApi.prepare !== 'function') {
+            reportReactMediaPickerFailure('react-media-picker-entry-unavailable');
+            return null;
+        }
+        try {
+            session = bridgeApi.prepare({
+                defaultAlt: getString('mediaDefaultAlt'),
+                insertMedia: getString('insertMedia'),
+                placeholderAlt: getString('mediaAltText')
+            });
+        } catch (error) {
+            reportReactMediaPickerFailure('react-media-picker-prepare-failed');
+            return null;
+        }
+        if (!session || typeof session.open !== 'function') {
+            reportReactMediaPickerFailure('react-media-picker-contract-invalid');
+            return null;
+        }
+
+        context.mediaPickerSession = session;
+        root.setAttribute('data-easymde-media-picker-owner', 'react');
         if (typeof window.addEventListener === 'function') {
             window.addEventListener('pagehide', dispose, { once: true });
             pagehideRegistered = true;
@@ -4826,6 +5013,7 @@
             $flash = createFlash($toolbar);
             context.flash = $flash;
             reportStartupConfigErrors($flash);
+            context.reactMediaPickerCleanup = activateReactMediaPicker($root[0], context);
             $draftStatus = createToolbar($toolbar, context);
             createSideActions($sideActions, context);
             context.scrollSyncCleanup = bindScrollSync($source[0], $preview[0]);
@@ -4986,6 +5174,8 @@
         window.EasyMDETestHooks.activateReactToolbar = activateReactToolbar;
         window.EasyMDETestHooks.activateReactFontControls = activateReactFontControls;
         window.EasyMDETestHooks.activateReactAppearance = activateReactAppearance;
+        window.EasyMDETestHooks.activateReactMediaPicker = activateReactMediaPicker;
+        window.EasyMDETestHooks.createReactMediaPickerDocumentPort = createReactMediaPickerDocumentPort;
         window.EasyMDETestHooks.applyThemeFontDefaults = applyThemeFontDefaults;
         window.EasyMDETestHooks.replaceFontState = replaceFontState;
         window.EasyMDETestHooks.applyRenderState = applyRenderState;

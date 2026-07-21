@@ -845,14 +845,24 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
+    await expect(page.locator('#easymde-editor')).toHaveAttribute('data-easymde-media-picker-owner', 'react');
+    expect(await page.evaluate(() => typeof window.EasyMDEMediaPicker)).toBe('undefined');
     const media = await uploadTestImage(page, `${slug}-react-source.png`, 'React source image');
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
     const nativeSource = page.locator('#easymde-source');
 
     await sourceEditor.fill('before IMAGE after');
-    await nativeSource.evaluate((field) => {
-      field.setSelectionRange(7, 12, 'backward');
-    });
+    await sourceEditor.press('Home');
+    for (let index = 0; index < 7; index += 1) {
+      await sourceEditor.press('ArrowRight');
+    }
+    for (let index = 0; index < 5; index += 1) {
+      await sourceEditor.press('Shift+ArrowRight');
+    }
+    await expect.poll(() => nativeSource.evaluate((field) => [
+      field.selectionStart,
+      field.selectionEnd
+    ])).toEqual([7, 12]);
     await page.locator('#easymde-toolbar-react-main [data-easymde-command="image"]').click();
 
     const mediaModal = page.locator('.media-modal:visible');
@@ -863,6 +873,7 @@ test.describe('EasyMDE editor workflows', () => {
     await attachment.click();
     await mediaModal.locator('.media-button-select').click();
     await expect(mediaModal).toBeHidden();
+    expect(await page.evaluate(() => typeof window.EasyMDEMediaPicker)).toBe('undefined');
 
     const expected = `before ![React source image](${media.source_url}) after`;
     await expect(nativeSource).toHaveValue(expected);

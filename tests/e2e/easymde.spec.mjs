@@ -442,7 +442,14 @@ function canonicalMarkdownForSite(pluginAssetUrl) {
 
 function collectUnexpectedPageErrors(page) {
   const errors = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('pageerror', (error) => {
+    // WordPress cross-document view transitions reject when the native
+    // save navigation deliberately skips its animation.
+    if ('AbortError' === error.name && 'Transition was skipped' === error.message) {
+      return;
+    }
+    errors.push(error.message);
+  });
   return errors;
 }
 
@@ -2751,6 +2758,123 @@ test.describe('EasyMDE editor workflows', () => {
     expect(errors).toEqual([]);
   });
 
+  test('uses one React appearance owner and persists theme and custom CSS submission bridges', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const slug = testSlug(testInfo);
+    const title = `React appearance ${slug}`;
+    const errors = collectUnexpectedPageErrors(page);
+    const consoleErrors = [];
+    page.on('console', (message) => {
+      if ('error' === message.type()) {
+        consoleErrors.push(message.text());
+      }
+    });
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('#title').fill(title);
+    await fillMarkdownAndWaitForPreview(
+      page,
+      `# ${title}\n\nAppearance selection through the normal editor.`,
+      'Appearance selection'
+    );
+
+    const labels = await page.evaluate(() => ({
+      appearance: window.EasyMDEConfig.strings.appearance,
+      articleTheme: window.EasyMDEConfig.strings.articleTheme,
+      codeTheme: window.EasyMDEConfig.strings.codeTheme,
+      customCss: window.EasyMDEConfig.strings.customCss,
+      cssName: window.EasyMDEConfig.strings.cssName,
+      saveCss: window.EasyMDEConfig.strings.saveCss,
+      cssSaved: window.EasyMDEConfig.strings.cssSaved
+    }));
+    const secondary = page.locator('#easymde-toolbar-legacy-secondary');
+    const appearanceButton = secondary.getByRole('button', { name: labels.appearance, exact: true });
+    await expect(secondary).toHaveAttribute('data-easymde-appearance-owner', 'react');
+    await expect(appearanceButton).toHaveCount(1);
+    await expect(page.locator('#easymde-toolbar-react-appearance')).toBeVisible();
+
+    await appearanceButton.click();
+    const appearanceDialog = page.getByRole('dialog', { name: labels.appearance });
+    const articleTheme = appearanceDialog.getByLabel(labels.articleTheme);
+    const codeTheme = appearanceDialog.getByLabel(labels.codeTheme);
+    const customCssButton = appearanceDialog.getByRole('button', { name: labels.customCss, exact: true });
+    await expect(appearanceDialog).toBeVisible();
+    await expect(articleTheme).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(customCssButton).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(articleTheme).toBeFocused();
+
+    const articleThemeValue = await articleTheme.locator('option').evaluateAll((options, currentValue) => (
+      options.map((option) => option.value).find((value) => value.startsWith('theme:') && value !== currentValue)
+    ), await articleTheme.inputValue());
+    const codeThemeValue = await codeTheme.locator('option').evaluateAll((options, currentValue) => (
+      options.map((option) => option.value).find((value) => value !== currentValue)
+    ), await codeTheme.inputValue());
+    expect(articleThemeValue).toBeTruthy();
+    expect(codeThemeValue).toBeTruthy();
+    await articleTheme.selectOption(articleThemeValue);
+    await codeTheme.selectOption(codeThemeValue);
+    await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue(articleThemeValue.slice(6));
+    await expect(page.locator('#easymde-code-theme-field')).toHaveValue(codeThemeValue);
+    await expect(page.locator('#easymde-preview')).toHaveClass(
+      new RegExp(`(?:^|\\s)easymde-markdown-theme-${articleThemeValue.slice(6)}(?:\\s|$)`)
+    );
+    await expect(page.locator('#easymde-preview')).toHaveClass(
+      new RegExp(`(?:^|\\s)easymde-code-theme-${codeThemeValue}(?:\\s|$)`)
+    );
+
+    await customCssButton.click();
+    await appearanceDialog.getByRole('textbox', { name: labels.cssName }).fill(`Synthetic ${slug}`);
+    await appearanceDialog.getByRole('textbox', { name: labels.customCss, exact: true }).fill(
+      '.synthetic-appearance { color: rgb(18, 52, 86); }'
+    );
+    await appearanceDialog.getByRole('button', { name: labels.saveCss, exact: true }).click();
+    await expect(appearanceDialog.locator('.easymde-custom-css-status')).toHaveText(labels.cssSaved);
+    await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('custom');
+    const customCssId = await page.locator('#easymde-custom-css-id-field').inputValue();
+    expect(customCssId).toMatch(/^[a-z0-9_-]+$/);
+    await expect(page.locator('#easymde-preview')).toHaveClass(/\beasymde-custom-css-active\b/);
+
+    await page.keyboard.press('Escape');
+    await expect(appearanceButton).toBeFocused();
+    await publishOrUpdate(page);
+    const postId = await currentPostId(page);
+    expect(postMetaValue(postId, '_easymde_markdown_theme')).toBe('custom');
+    expect(postMetaValue(postId, '_easymde_code_theme')).toBe(codeThemeValue);
+    expect(postMetaValue(postId, '_easymde_custom_css_id')).toBe(customCssId);
+    expect(postMetaValue(postId, '_easymde_custom_css_snapshot')).toContain('synthetic-appearance');
+
+    await expect(secondary).toHaveAttribute('data-easymde-appearance-owner', 'react');
+    await appearanceButton.click();
+    await expect(articleTheme).toHaveValue(`custom:${customCssId}`);
+    await expect(codeTheme).toHaveValue(codeThemeValue);
+    await page.keyboard.press('Escape');
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await appearanceButton.click();
+    const narrowAppearanceDialog = await appearanceDialog.boundingBox();
+    expect(narrowAppearanceDialog).not.toBeNull();
+    expect(narrowAppearanceDialog.x).toBeGreaterThanOrEqual(0);
+    expect(narrowAppearanceDialog.x + narrowAppearanceDialog.width).toBeLessThanOrEqual(390);
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    await enterImmersiveWithKeyboard(page);
+    await page.locator('[data-action="theme"]').click();
+    const immersiveAppearance = page.locator('[data-popover="appearance"]');
+    await expect(immersiveAppearance).toBeVisible();
+    await expect(immersiveAppearance.locator('[data-appearance-key="markdownTheme"]')).toBeVisible();
+    await expect(immersiveAppearance.locator('[data-appearance-key="codeTheme"]')).toBeVisible();
+    await page.locator('[data-action="exit"]').click();
+    await expect(secondary).toHaveAttribute('data-easymde-appearance-owner', 'react');
+    await expect(appearanceButton).toHaveCount(1);
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+
   test('removes the Mac-frame controls and request state from normal and immersive editors', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const errors = collectUnexpectedPageErrors(page);
@@ -2766,7 +2890,7 @@ test.describe('EasyMDE editor workflows', () => {
     await openEasyMdeNewPost(page);
     await expect(page.locator('[name="easymde_code_mac_style"], #easymde-code-mac-style-field')).toHaveCount(0);
     await page.getByRole('button', { name: 'Appearance' }).click();
-    const normalAppearance = page.locator('.easymde-toolbar-popover-appearance-panel');
+    const normalAppearance = page.getByRole('dialog', { name: 'Appearance' });
     await expect(normalAppearance).toBeVisible();
     await expect(normalAppearance.locator('input[type="checkbox"]')).toHaveCount(0);
     await expect(normalAppearance.locator('.easymde-theme-select')).toBeVisible();

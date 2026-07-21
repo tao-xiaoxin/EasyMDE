@@ -497,6 +497,10 @@ body.easymde-immersive-active .media-modal-backdrop {
         position: static;
     }
 
+    .easymde-toolbar-popover-appearance {
+        position: static;
+    }
+
     .easymde-toolbar-popover-font-panel .easymde-toolbar-control {
         grid-template-columns: 1fr;
         gap: 8px;

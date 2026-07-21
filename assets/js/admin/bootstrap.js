@@ -50,6 +50,8 @@
     var fontControls = null;
     var reactFontControlsSession = null;
     var reactFontPreviewNode = null;
+    var reactAppearanceSession = null;
+    var reactAppearancePreviewNode = null;
     var revisionPreviewRevision = 0;
     var scrollSyncBindingId = 0;
 
@@ -374,6 +376,30 @@
                 css: String(input.css || '')
             }
         }).then(function (response) {
+            var library = response && response.customCss;
+            var item = response && response.item;
+            var validItem = item
+                && typeof item.id === 'string'
+                && /^[a-z0-9_-]+$/.test(item.id)
+                && typeof item.name === 'string'
+                && typeof item.css === 'string'
+                && item.css.length <= 30000
+                && typeof item.scopedCss === 'string'
+                && item.scopedCss.length <= 250000;
+            var validLibrary = Array.isArray(library) && library.every(function (entry) {
+                return entry
+                    && typeof entry.id === 'string'
+                    && /^[a-z0-9_-]+$/.test(entry.id)
+                    && typeof entry.name === 'string'
+                    && typeof entry.css === 'string'
+                    && entry.css.length <= 30000
+                    && typeof entry.scopedCss === 'string'
+                    && entry.scopedCss.length <= 250000;
+            });
+
+            if (!validItem || !validLibrary) {
+                throw new Error('custom-css-response-invalid');
+            }
             customCssLibrary = response.customCss || customCssLibrary;
             renderState.markdownTheme = 'custom';
             renderState.customCssId = response.item.id;
@@ -769,6 +795,9 @@
         if (reactFontControlsSession && typeof reactFontControlsSession.close === 'function') {
             reactFontControlsSession.close();
         }
+        if (reactAppearanceSession && typeof reactAppearanceSession.close === 'function') {
+            reactAppearanceSession.close();
+        }
     }
 
     function createMenuAnchor(extraClass) {
@@ -986,6 +1015,113 @@
         $('#easymde-markdown-theme-field').val(renderState.markdownTheme || 'default');
         $('#easymde-code-theme-field').val(renderState.codeTheme || 'atom-one-dark');
         $('#easymde-custom-css-id-field').val(renderState.markdownTheme === 'custom' ? renderState.customCssId : '');
+    }
+
+    function getAppearanceFields() {
+        return {
+            markdownTheme: document.getElementById('easymde-markdown-theme-field'),
+            codeTheme: document.getElementById('easymde-code-theme-field'),
+            customCssId: document.getElementById('easymde-custom-css-id-field')
+        };
+    }
+
+    function hasUsableAppearanceFields(fields) {
+        return !!(
+            fields
+            && fields.markdownTheme
+            && 'value' in fields.markdownTheme
+            && fields.codeTheme
+            && 'value' in fields.codeTheme
+            && fields.customCssId
+            && 'value' in fields.customCssId
+        );
+    }
+
+    function syncAppearanceFields(fields) {
+        fields = fields || getAppearanceFields();
+        if (!hasUsableAppearanceFields(fields)) {
+            return false;
+        }
+
+        fields.markdownTheme.value = renderState.markdownTheme || 'default';
+        fields.codeTheme.value = renderState.codeTheme || 'atom-one-dark';
+        fields.customCssId.value = renderState.markdownTheme === 'custom' ? renderState.customCssId : '';
+        return true;
+    }
+
+    function getAppearanceSnapshot() {
+        return {
+            customCss: customCssLibrary.slice(),
+            state: {
+                markdownTheme: renderState.markdownTheme,
+                codeTheme: renderState.codeTheme,
+                customCssId: renderState.markdownTheme === 'custom' ? renderState.customCssId : ''
+            }
+        };
+    }
+
+    function syncReactAppearanceSnapshot() {
+        if (!reactAppearanceSession || typeof reactAppearanceSession.replaceSnapshot !== 'function') {
+            return true;
+        }
+
+        return reactAppearanceSession.replaceSnapshot(getAppearanceSnapshot());
+    }
+
+    function applyAppearanceState(nextState, context, options) {
+        var articleTheme;
+        var codeTheme;
+        var customItem;
+        var fields;
+
+        options = options || {};
+        fields = options.fields || getAppearanceFields();
+        if (!nextState || !context || !context.preview || !hasUsableAppearanceFields(fields)) {
+            return false;
+        }
+        codeTheme = findById(themeOptions.codeThemes || [], String(nextState.codeTheme || ''));
+        if (!codeTheme) {
+            return false;
+        }
+        if (String(nextState.markdownTheme || '') === 'custom') {
+            customItem = findById(customCssLibrary, String(nextState.customCssId || ''));
+            if (
+                !customItem
+                && !(
+                    renderState.markdownTheme === 'custom'
+                    && renderState.customCssId === String(nextState.customCssId || '')
+                    && renderState.scopedCustomCss
+                )
+            ) {
+                return false;
+            }
+            renderState.markdownTheme = 'custom';
+            if (customItem) {
+                renderState.customCssId = customItem.id;
+                renderState.customCss = customItem.css || '';
+                renderState.scopedCustomCss = customItem.scopedCss || '';
+            }
+        } else {
+            articleTheme = findById(themeOptions.markdownThemes || [], String(nextState.markdownTheme || ''));
+            if (!articleTheme || nextState.customCssId) {
+                return false;
+            }
+            renderState.markdownTheme = articleTheme.id;
+            renderState.customCssId = '';
+            renderState.customCss = '';
+            renderState.scopedCustomCss = '';
+            applyThemeFontDefaults(articleTheme.id);
+        }
+        renderState.codeTheme = codeTheme.id;
+        themeOptions.state = renderState;
+        if (!syncAppearanceFields(fields)) {
+            return false;
+        }
+        applyRenderState(context.preview, { syncFields: false });
+        if (typeof context.refreshPreview === 'function') {
+            context.refreshPreview({ immediate: true });
+        }
+        return true;
     }
 
     function getFontFields() {
@@ -1229,6 +1365,7 @@
         registerPopover($button, $panel, { beforeOpen: populatePanel });
         $anchor.append($button, $panel);
         $container.append($anchor);
+        return $anchor;
     }
 
     function createFontMenu($container, context) {
@@ -1890,6 +2027,9 @@
                         applyRenderState($(workspaceContext.preview));
                         context.refreshPreview({ immediate: true });
                         updatePreview($(workspaceContext.preview), workspaceContext.markdown, { immediate: true });
+                        if (!syncReactAppearanceSnapshot()) {
+                            throw new Error('react-appearance-state-reconcile-failed');
+                        }
 
                         return response.item;
                     });
@@ -1941,6 +2081,9 @@
                     syncFontControls();
                     context.refreshPreview({ immediate: true });
                     updatePreview($(workspaceContext.preview), workspaceContext.markdown, { immediate: true });
+                    if (!syncReactAppearanceSnapshot()) {
+                        throw new Error('react-appearance-state-reconcile-failed');
+                    }
                 },
                 executeCommand: function (commandId, textarea, commandContext) {
                     if (!getCommand(commandId)) {
@@ -3570,6 +3713,12 @@
         }
     }
 
+    function reportReactAppearanceFailure(code) {
+        if (window.console && typeof window.console.error === 'function') {
+            window.console.error('[EasyMDE] ' + code);
+        }
+    }
+
     function isReactDocumentSession(session) {
         var documentSession = session && session.document;
         var titleSession = session && session.title;
@@ -4156,12 +4305,266 @@
         return dispose;
     }
 
+    function activateReactAppearance(owner, reactRoot, legacyRoot, context) {
+        var reactAppearance = window.EasyMDEReactAppearance;
+        var fields = getAppearanceFields();
+        var disposed = false;
+        var failed = false;
+        var failedAfterHandoff = false;
+        var ready = false;
+        var cleanup;
+        var cleanupScheduled = false;
+        var legacyControlStates = null;
+        var mountComplete = false;
+        var pagehideRegistered = false;
+        var pendingReadySession = null;
+        var session = null;
+
+        function disableLegacyOwner() {
+            var controls;
+            if (!legacyRoot || typeof legacyRoot.querySelectorAll !== 'function') {
+                return;
+            }
+            controls = legacyRoot.querySelectorAll('select, input, textarea, button');
+            legacyControlStates = Array.prototype.map.call(controls, function (control) {
+                return {
+                    control: control,
+                    disabled: !!control.disabled
+                };
+            });
+            Array.prototype.forEach.call(controls, function (control) {
+                control.disabled = true;
+            });
+        }
+
+        function restoreLegacyControls() {
+            if (!legacyControlStates) {
+                return;
+            }
+            legacyControlStates.forEach(function (state) {
+                state.control.disabled = state.disabled;
+            });
+            legacyControlStates = null;
+        }
+
+        function restoreLegacyOwner() {
+            if (reactAppearancePreviewNode === context.preview[0]) {
+                reactAppearancePreviewNode = null;
+            }
+            reactRoot.hidden = true;
+            legacyRoot.hidden = false;
+            restoreLegacyControls();
+            owner.setAttribute('data-easymde-appearance-owner', 'legacy');
+        }
+
+        function dispose() {
+            if (disposed) {
+                return;
+            }
+            disposed = true;
+            if (pagehideRegistered && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('pagehide', dispose);
+                pagehideRegistered = false;
+            }
+            if (reactAppearanceSession === session) {
+                reactAppearanceSession = null;
+            }
+            session = null;
+            if (typeof cleanup === 'function') {
+                cleanup();
+            }
+            reactRoot.hidden = true;
+            if (!failedAfterHandoff) {
+                restoreLegacyOwner();
+            }
+        }
+
+        function scheduleCleanup() {
+            if (cleanupScheduled) {
+                return;
+            }
+            cleanupScheduled = true;
+            if (typeof window.queueMicrotask === 'function') {
+                window.queueMicrotask(dispose);
+                return;
+            }
+            Promise.resolve().then(dispose);
+        }
+
+        function failBeforeHandoff(code) {
+            if (disposed || failed || ready) {
+                return;
+            }
+            failed = true;
+            restoreLegacyOwner();
+            reportReactAppearanceFailure(code);
+            scheduleCleanup();
+        }
+
+        function completeHandoff(nextSession) {
+            var reconciled;
+
+            if (
+                disposed
+                || failed
+                || ready
+                || !nextSession
+                || typeof nextSession.close !== 'function'
+                || typeof nextSession.replaceSnapshot !== 'function'
+                || !hasUsableAppearanceFields(fields)
+            ) {
+                failBeforeHandoff('react-appearance-state-reconcile-failed');
+                return;
+            }
+            try {
+                reconciled = nextSession.replaceSnapshot(getAppearanceSnapshot());
+            } catch (error) {
+                failBeforeHandoff('react-appearance-state-reconcile-failed');
+                return;
+            }
+            if (reconciled !== true || disposed || failed) {
+                failBeforeHandoff('react-appearance-state-reconcile-failed');
+                return;
+            }
+
+            ready = true;
+            session = nextSession;
+            reactAppearanceSession = session;
+            reactAppearancePreviewNode = context.preview[0];
+            disableLegacyOwner();
+            legacyRoot.hidden = true;
+            reactRoot.hidden = false;
+            owner.setAttribute('data-easymde-appearance-owner', 'react');
+        }
+
+        if (
+            !owner
+            || typeof owner.setAttribute !== 'function'
+            || !reactRoot
+            || !legacyRoot
+            || !context
+            || !context.preview
+            || !context.preview[0]
+            || !hasUsableAppearanceFields(fields)
+        ) {
+            reportReactAppearanceFailure('react-appearance-surface-invalid');
+            return null;
+        }
+
+        restoreLegacyOwner();
+        if (!reactAppearance || typeof reactAppearance.prepare !== 'function') {
+            reportReactAppearanceFailure('react-appearance-entry-unavailable');
+            return null;
+        }
+        try {
+            reactAppearance = reactAppearance.prepare({
+                articleThemes: themeOptions.markdownThemes || [],
+                codeThemes: themeOptions.codeThemes || [],
+                customCss: customCssLibrary,
+                state: getAppearanceSnapshot().state,
+                strings: {
+                    appearance: getString('appearance'),
+                    articleTheme: getString('articleTheme'),
+                    codeTheme: getString('codeTheme'),
+                    customCss: getString('customCss'),
+                    cssName: getString('cssName'),
+                    saveCss: getString('saveCss'),
+                    cssSaved: getString('cssSaved'),
+                    cssSaveFailed: getString('cssSaveFailed'),
+                    namedCustomCss: getString('namedCustomCss')
+                }
+            });
+        } catch (error) {
+            reportReactAppearanceFailure('react-appearance-prepare-failed');
+            return null;
+        }
+        if (!reactAppearance || typeof reactAppearance.mount !== 'function') {
+            reportReactAppearanceFailure('react-appearance-contract-invalid');
+            return null;
+        }
+
+        try {
+            cleanup = reactAppearance.mount({
+                container: reactRoot,
+                port: {
+                    applyState: function (nextState) {
+                        if (!ready || !applyAppearanceState(nextState, context, { fields: fields })) {
+                            throw new Error('react-appearance-state-invalid');
+                        }
+                    },
+                    closeOtherPopovers: closePopovers,
+                    saveCustomCss: function (input) {
+                        return persistCustomCss(input).then(function () {
+                            applyRenderState(context.preview, { syncFields: false });
+                            syncAppearanceFields(fields);
+                            context.refreshPreview({ immediate: true });
+                            return {
+                                status: 'saved',
+                                snapshot: getAppearanceSnapshot()
+                            };
+                        }).catch(function (error) {
+                            if (error && error.message === 'custom-css-response-invalid') {
+                                reportReactAppearanceFailure('custom-css-response-invalid');
+                                throw error;
+                            }
+                            return { status: 'failed', code: 'custom-css-save-failed' };
+                        });
+                    }
+                },
+                onFailure: function () {
+                    if (disposed || failed) {
+                        return;
+                    }
+                    failed = true;
+                    if (ready) {
+                        failedAfterHandoff = true;
+                        reactAppearanceSession = null;
+                        session = null;
+                        legacyRoot.hidden = true;
+                        owner.setAttribute('data-easymde-appearance-owner', 'react-reload-required');
+                        reportReactAppearanceFailure('react-appearance-failed-after-handoff');
+                    } else {
+                        restoreLegacyOwner();
+                        reportReactAppearanceFailure('react-appearance-render-failed');
+                    }
+                    scheduleCleanup();
+                },
+                onReady: function (nextSession) {
+                    if (!mountComplete) {
+                        pendingReadySession = nextSession;
+                        return;
+                    }
+                    completeHandoff(nextSession);
+                }
+            });
+        } catch (error) {
+            failBeforeHandoff('react-appearance-mount-failed');
+            return null;
+        }
+        mountComplete = true;
+        if (typeof cleanup !== 'function') {
+            failBeforeHandoff('react-appearance-cleanup-invalid');
+            return null;
+        }
+        if (pendingReadySession) {
+            completeHandoff(pendingReadySession);
+            pendingReadySession = null;
+        }
+        if (typeof window.addEventListener === 'function') {
+            window.addEventListener('pagehide', dispose, { once: true });
+            pagehideRegistered = true;
+        }
+        return dispose;
+    }
+
     function createToolbar($toolbar, context) {
         var $reactMain = $('#easymde-toolbar-react-main');
         var $main = $('#easymde-toolbar-legacy-main');
         var $secondary = $('#easymde-toolbar-legacy-secondary');
         var $reactFont;
         var $legacyFont;
+        var $reactAppearance;
+        var $legacyAppearance;
         var formatCommands = getGroupCommands('main', 'format');
         var blockCommands = getGroupCommands('main', 'block');
         var insertCommands = getGroupCommands('main', 'insert');
@@ -4174,6 +4577,10 @@
         if (context.reactFontControlsCleanup) {
             context.reactFontControlsCleanup();
             context.reactFontControlsCleanup = null;
+        }
+        if (context.reactAppearanceCleanup) {
+            context.reactAppearanceCleanup();
+            context.reactAppearanceCleanup = null;
         }
 
         if (!$reactMain.length || !$main.length || !$secondary.length) {
@@ -4234,7 +4641,15 @@
         } else {
             $reactFont.remove();
         }
-        createAppearanceMenu($secondary, context);
+        $reactAppearance = $('<div id="easymde-toolbar-react-appearance" class="easymde-toolbar-popover-anchor easymde-toolbar-popover-appearance" hidden></div>');
+        $secondary.append($reactAppearance);
+        $legacyAppearance = createAppearanceMenu($secondary, context);
+        context.reactAppearanceCleanup = activateReactAppearance(
+            $secondary[0],
+            $reactAppearance[0],
+            $legacyAppearance[0],
+            context
+        );
         context.draftStatus = createDraftStatus($secondary);
 
         context.reactToolbarCleanup = activateReactToolbar(
@@ -4570,6 +4985,7 @@
         window.EasyMDETestHooks.activateReactPreviewSession = activateReactPreviewSession;
         window.EasyMDETestHooks.activateReactToolbar = activateReactToolbar;
         window.EasyMDETestHooks.activateReactFontControls = activateReactFontControls;
+        window.EasyMDETestHooks.activateReactAppearance = activateReactAppearance;
         window.EasyMDETestHooks.applyThemeFontDefaults = applyThemeFontDefaults;
         window.EasyMDETestHooks.replaceFontState = replaceFontState;
         window.EasyMDETestHooks.applyRenderState = applyRenderState;

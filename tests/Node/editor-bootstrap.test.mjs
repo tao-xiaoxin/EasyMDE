@@ -173,6 +173,17 @@ test('narrow font controls stay positioned within the full toolbar width', () =>
   );
 });
 
+test('narrow appearance controls stay positioned within the full toolbar width', () => {
+  const stylesheet = readFileSync(join(repoRoot, 'assets/css/admin/editor.css'), 'utf8');
+  const narrowStyles = stylesheet.slice(stylesheet.indexOf('@media (max-width: 782px)'));
+
+  assert.match(
+    narrowStyles,
+    /\.easymde-toolbar-popover-appearance\s*\{[^}]*position:\s*static;/s,
+    'the narrow appearance anchor should use the full toolbar positioning context'
+  );
+});
+
 test('toolbar reconstruction unmounts React before clearing its owned container', () => {
   const bootstrap = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
   const createToolbarStart = bootstrap.indexOf('function createToolbar($toolbar, context)');
@@ -757,6 +768,7 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.bindScrollSync, 'function', 'bootstrap harness should expose isolated scroll synchronization');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactToolbar, 'function', 'bootstrap harness should expose the toolbar ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactFontControls, 'function', 'bootstrap harness should expose the font controls ownership handoff');
+  assert.equal(typeof context.window.EasyMDETestHooks.activateReactAppearance, 'function', 'bootstrap harness should expose the appearance ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.replaceFontState, 'function', 'bootstrap harness should expose cross-surface font state replacement');
   assert.equal(typeof context.window.EasyMDETestHooks.applyRenderState, 'function', 'bootstrap harness should expose render ownership checks');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactDocumentSource, 'function', 'bootstrap harness should expose the document source ownership handoff');
@@ -770,6 +782,402 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
     window: context.window
   };
 }
+
+function createAppearanceHandoffFixture() {
+  const fields = {
+    'easymde-markdown-theme-field': { value: 'default' },
+    'easymde-code-theme-field': { value: 'atom-one-dark' },
+    'easymde-custom-css-id-field': { value: '' }
+  };
+  const preview = createPreviewWrapper();
+  preview[0].style = {
+    removeProperty() {},
+    setProperty() {}
+  };
+
+  return { fields, preview };
+}
+
+function createAppearanceBootstrapConfig(overrides = {}) {
+  return {
+    testHooks: true,
+    features: {},
+    strings: {
+      appearance: 'Appearance',
+      articleTheme: 'Article theme',
+      codeTheme: 'Code theme',
+      customCss: 'Custom CSS',
+      cssName: 'CSS name',
+      saveCss: 'Save CSS',
+      cssSaved: 'CSS saved.',
+      cssSaveFailed: 'CSS save failed.',
+      namedCustomCss: 'Named custom CSS',
+      previewEmpty: 'Empty',
+      previewError: 'Preview failed',
+      previewRendering: 'Rendering preview'
+    },
+    themeOptions: {
+      markdownThemes: [{ id: 'default', label: 'Default' }],
+      codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
+      customCss: [],
+      fontOptions: {},
+      state: { markdownTheme: 'default', codeTheme: 'atom-one-dark' }
+    },
+    ...overrides
+  };
+}
+
+test('React appearance stays hidden until readiness and owns normal theme submission after handoff', () => {
+  let mountOptions;
+  const replacements = [];
+  const fixture = createAppearanceHandoffFixture();
+  const owner = createToolbarOwnerElement();
+  const reactRoot = createToolbarOwnerElement();
+  const legacyRoot = createToolbarOwnerElement();
+  legacyRoot.querySelectorAll = () => [];
+  const loaded = loadBootstrap({
+    EasyMDEReactAppearance: {
+      prepare(value) {
+        assert.deepEqual(Array.from(value.articleThemes, ({ id }) => id), ['default', 'newsprint']);
+        assert.equal(value.strings.appearance, 'Appearance');
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      features: {},
+      strings: {
+        appearance: 'Appearance',
+        articleTheme: 'Article theme',
+        codeTheme: 'Code theme',
+        customCss: 'Custom CSS',
+        cssName: 'CSS name',
+        saveCss: 'Save CSS',
+        cssSaved: 'CSS saved.',
+        cssSaveFailed: 'CSS save failed.',
+        namedCustomCss: 'Named custom CSS',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        markdownThemes: [{ id: 'default', label: 'Default' }, { id: 'newsprint', label: 'Newsprint' }],
+        codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }, { id: 'github', label: 'GitHub' }],
+        customCss: [],
+        fontOptions: {},
+        state: { markdownTheme: 'default', codeTheme: 'atom-one-dark' }
+      }
+    }
+  }, { documentElements: fixture.fields });
+  const context = { preview: fixture.preview, refreshPreview() {} };
+
+  const cleanup = loaded.hooks.activateReactAppearance(owner, reactRoot, legacyRoot, context);
+  assert.equal(owner.getAttribute('data-easymde-appearance-owner'), 'legacy');
+  assert.equal(reactRoot.hidden, true);
+
+  const session = {
+    close() {},
+    replaceSnapshot(snapshot) {
+      replacements.push(JSON.parse(JSON.stringify(snapshot)));
+      return true;
+    }
+  };
+  mountOptions.onReady(session);
+  assert.deepEqual(replacements, [{
+    customCss: [],
+    state: { markdownTheme: 'default', codeTheme: 'atom-one-dark', customCssId: '' }
+  }]);
+  assert.equal(owner.getAttribute('data-easymde-appearance-owner'), 'react');
+  assert.equal(legacyRoot.hidden, true);
+
+  mountOptions.port.applyState({
+    markdownTheme: 'newsprint',
+    codeTheme: 'github',
+    customCssId: ''
+  });
+  assert.equal(fixture.fields['easymde-markdown-theme-field'].value, 'newsprint');
+  assert.equal(fixture.fields['easymde-code-theme-field'].value, 'github');
+  assert.equal(fixture.fields['easymde-custom-css-id-field'].value, '');
+
+  cleanup();
+  cleanup();
+  assert.equal(owner.getAttribute('data-easymde-appearance-owner'), 'legacy');
+});
+
+test('React appearance preserves the exact legacy disabled state when readiness fails', async () => {
+  let mountOptions;
+  const fixture = createAppearanceHandoffFixture();
+  const owner = createToolbarOwnerElement();
+  const reactRoot = createToolbarOwnerElement();
+  const legacyRoot = createToolbarOwnerElement();
+  const enabledControl = { disabled: false };
+  const disabledControl = { disabled: true };
+  legacyRoot.querySelectorAll = () => [enabledControl, disabledControl];
+  const loaded = loadBootstrap({
+    console: { error() {} },
+    EasyMDEReactAppearance: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      features: {},
+      strings: {
+        appearance: 'Appearance',
+        articleTheme: 'Article theme',
+        codeTheme: 'Code theme',
+        customCss: 'Custom CSS',
+        cssName: 'CSS name',
+        saveCss: 'Save CSS',
+        cssSaved: 'CSS saved.',
+        cssSaveFailed: 'CSS save failed.',
+        namedCustomCss: 'Named custom CSS',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        markdownThemes: [{ id: 'default', label: 'Default' }],
+        codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
+        customCss: [],
+        fontOptions: {},
+        state: { markdownTheme: 'default', codeTheme: 'atom-one-dark' }
+      }
+    }
+  }, { documentElements: fixture.fields });
+
+  loaded.hooks.activateReactAppearance(
+    owner,
+    reactRoot,
+    legacyRoot,
+    { preview: fixture.preview, refreshPreview() {} }
+  );
+  mountOptions.onFailure();
+  await Promise.resolve();
+
+  assert.equal(owner.getAttribute('data-easymde-appearance-owner'), 'legacy');
+  assert.equal(legacyRoot.hidden, false);
+  assert.equal(enabledControl.disabled, false);
+  assert.equal(disabledControl.disabled, true);
+});
+
+test('React appearance treats a throwing latest-snapshot reconciliation as pre-handoff failure', async () => {
+  let mountOptions;
+  const fixture = createAppearanceHandoffFixture();
+  const owner = createToolbarOwnerElement();
+  const reactRoot = createToolbarOwnerElement();
+  const legacyRoot = createToolbarOwnerElement();
+  legacyRoot.querySelectorAll = () => [];
+  const loaded = loadBootstrap({
+    console: { error() {} },
+    EasyMDEReactAppearance: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    },
+    EasyMDEConfig: {
+      testHooks: true,
+      features: {},
+      strings: {
+        appearance: 'Appearance',
+        articleTheme: 'Article theme',
+        codeTheme: 'Code theme',
+        customCss: 'Custom CSS',
+        cssName: 'CSS name',
+        saveCss: 'Save CSS',
+        cssSaved: 'CSS saved.',
+        cssSaveFailed: 'CSS save failed.',
+        namedCustomCss: 'Named custom CSS',
+        previewEmpty: 'Empty',
+        previewError: 'Preview failed',
+        previewRendering: 'Rendering preview'
+      },
+      themeOptions: {
+        markdownThemes: [{ id: 'default', label: 'Default' }],
+        codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
+        customCss: [],
+        fontOptions: {},
+        state: { markdownTheme: 'default', codeTheme: 'atom-one-dark' }
+      }
+    }
+  }, { documentElements: fixture.fields });
+
+  loaded.hooks.activateReactAppearance(
+    owner,
+    reactRoot,
+    legacyRoot,
+    { preview: fixture.preview, refreshPreview() {} }
+  );
+
+  assert.doesNotThrow(() => {
+    mountOptions.onReady({
+      close() {},
+      replaceSnapshot() {
+        throw new Error('synthetic-reconcile-failure');
+      }
+    });
+  });
+  await Promise.resolve();
+
+  assert.equal(owner.getAttribute('data-easymde-appearance-owner'), 'legacy');
+  assert.equal(legacyRoot.hidden, false);
+  assert.equal(reactRoot.hidden, true);
+});
+
+test('React appearance refuses a synchronous ready signal without a cleanup contract', async () => {
+  const fixture = createAppearanceHandoffFixture();
+  const owner = createToolbarOwnerElement();
+  const reactRoot = createToolbarOwnerElement();
+  const legacyRoot = createToolbarOwnerElement();
+  legacyRoot.querySelectorAll = () => [];
+  const session = {
+    close() {},
+    replaceSnapshot() {
+      return true;
+    }
+  };
+  const loaded = loadBootstrap({
+    console: { error() {} },
+    EasyMDEReactAppearance: {
+      prepare() {
+        return {
+          mount(options) {
+            options.onReady(session);
+            return null;
+          }
+        };
+      }
+    },
+    EasyMDEConfig: createAppearanceBootstrapConfig()
+  }, { documentElements: fixture.fields });
+
+  const cleanup = loaded.hooks.activateReactAppearance(
+    owner,
+    reactRoot,
+    legacyRoot,
+    { preview: fixture.preview, refreshPreview() {} }
+  );
+  await Promise.resolve();
+
+  assert.equal(cleanup, null);
+  assert.equal(owner.getAttribute('data-easymde-appearance-owner'), 'legacy');
+  assert.equal(legacyRoot.hidden, false);
+  assert.equal(reactRoot.hidden, true);
+});
+
+test('React appearance never reactivates the legacy writer after a post-handoff failure', async () => {
+  let mountOptions;
+  const fixture = createAppearanceHandoffFixture();
+  const owner = createToolbarOwnerElement();
+  const reactRoot = createToolbarOwnerElement();
+  const legacyRoot = createToolbarOwnerElement();
+  const legacyControl = { disabled: false };
+  legacyRoot.querySelectorAll = () => [legacyControl];
+  const loaded = loadBootstrap({
+    console: { error() {} },
+    EasyMDEReactAppearance: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    },
+    EasyMDEConfig: createAppearanceBootstrapConfig()
+  }, { documentElements: fixture.fields });
+
+  loaded.hooks.activateReactAppearance(
+    owner,
+    reactRoot,
+    legacyRoot,
+    { preview: fixture.preview, refreshPreview() {} }
+  );
+  mountOptions.onReady({
+    close() {},
+    replaceSnapshot() {
+      return true;
+    }
+  });
+  assert.equal(owner.getAttribute('data-easymde-appearance-owner'), 'react');
+  assert.equal(legacyControl.disabled, true);
+
+  mountOptions.onFailure();
+  await Promise.resolve();
+
+  assert.equal(owner.getAttribute('data-easymde-appearance-owner'), 'react-reload-required');
+  assert.equal(legacyRoot.hidden, true);
+  assert.equal(reactRoot.hidden, true);
+  assert.equal(legacyControl.disabled, true);
+});
+
+test('React appearance rejects an invalid custom CSS response before mutating browser state', async () => {
+  let mountOptions;
+  const fixture = createAppearanceHandoffFixture();
+  const owner = createToolbarOwnerElement();
+  const reactRoot = createToolbarOwnerElement();
+  const legacyRoot = createToolbarOwnerElement();
+  legacyRoot.querySelectorAll = () => [];
+  const loaded = loadBootstrap({
+    console: { error() {} },
+    wp: {
+      apiFetch() {
+        return Promise.resolve({ customCss: [], item: null });
+      }
+    },
+    EasyMDEReactAppearance: {
+      prepare() {
+        return {
+          mount(options) {
+            mountOptions = options;
+            return () => {};
+          }
+        };
+      }
+    },
+    EasyMDEConfig: createAppearanceBootstrapConfig({
+      customCssUrl: '/wp-json/easymde/v1/custom-css'
+    })
+  }, { documentElements: fixture.fields });
+
+  loaded.hooks.activateReactAppearance(
+    owner,
+    reactRoot,
+    legacyRoot,
+    { preview: fixture.preview, refreshPreview() {} }
+  );
+  mountOptions.onReady({
+    close() {},
+    replaceSnapshot() {
+      return true;
+    }
+  });
+
+  await assert.rejects(
+    mountOptions.port.saveCustomCss({ id: '', name: 'Synthetic', css: '.synthetic {}' }),
+    /custom-css-response-invalid/
+  );
+  assert.equal(fixture.fields['easymde-markdown-theme-field'].value, 'default');
+  assert.equal(fixture.fields['easymde-code-theme-field'].value, 'atom-one-dark');
+  assert.equal(fixture.fields['easymde-custom-css-id-field'].value, '');
+});
 
 function createToolbarOwnerElement() {
   const element = createElement('div');

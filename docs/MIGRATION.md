@@ -104,8 +104,42 @@ The legacy Font menu remains active and visible until the React contract,
 container, Preview surface, native fields, Port, and session validate.
 Readiness disables and hides the legacy control before exposing React. Startup
 failure retains the legacy control. Failure after handoff marks the Font owner
-reload-required and never re-enables a competing writer. Appearance, Custom
-CSS, and every immersive Font surface remain legacy-owned.
+reload-required and never re-enables a competing writer. Every immersive Font
+surface remains legacy-owned.
+
+## Normal Editor Appearance Controls Ownership
+
+The normal editor's Appearance button and Dialog, Article Theme and Code Theme
+selectors, Custom CSS library selection, and explicit Custom CSS editor/save
+session are one focused React migration unit. React owns their presentation,
+interaction, and browser-session state after a validated readiness handoff.
+PHP Article and Code Theme registries, `ThemeStateRepository`,
+`CustomCssPolicy`, REST permissions and Nonces, the current-user Custom CSS
+library, native form serialization, and persisted post state remain
+authoritative. PHP `AdminAssets::get_strings()` remains the translation owner,
+so React consumes already translated Bootstrap strings and does not create a
+second catalog.
+
+The focused Appearance Port applies the existing Preview theme classes and
+server-scoped Custom CSS, and synchronizes the existing hidden Article Theme,
+Code Theme, Custom CSS ID, and Custom CSS snapshot fields. Those fields remain
+the native WordPress submission bridge; changing them is not proof of a Save.
+Custom CSS writes are single-flight, are never retried automatically, and
+replace the React snapshot only after the complete server result validates.
+A detached post Custom CSS snapshot remains representable even when the
+corresponding current-user library item is absent.
+
+The legacy normal-editor Appearance control remains active until the React
+contract, container, required native fields, Preview surface, Port, and session
+validate. The handoff preserves each legacy control's original disabled state,
+then disables and hides the legacy writer before exposing React. Startup or
+snapshot-reconciliation failure before handoff restores that exact state and
+keeps Legacy active. Failure after handoff marks the owner reload-required and
+never re-enables a competing writer. Explicit changes made by the retained
+immersive Appearance UI replace the active React snapshot, but every immersive
+Appearance surface remains Legacy-owned. The legacy implementation and hidden
+rollback DOM are retained until the final consumer, failure, browser, and
+release removal gates are satisfied.
 
 ## Editor Enablement
 

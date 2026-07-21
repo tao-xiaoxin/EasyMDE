@@ -2989,6 +2989,86 @@
         };
     }
 
+    function createReactToolbarDocumentPort(context) {
+        var textarea = context && context.textarea;
+
+        if (!textarea || typeof textarea.setSelectionRange !== 'function') {
+            return null;
+        }
+
+        function activeSession() {
+            return context && context.documentSession
+                && typeof context.documentSession.getValue === 'function'
+                && typeof context.documentSession.getSelection === 'function'
+                && typeof context.documentSession.applyTextChange === 'function'
+                && typeof context.documentSession.focus === 'function'
+                ? context.documentSession
+                : null;
+        }
+
+        return {
+            getSnapshot: function () {
+                var session = activeSession();
+
+                return session ? {
+                    value: session.getValue(),
+                    selection: session.getSelection()
+                } : {
+                    value: String(textarea.value || ''),
+                    selection: {
+                        direction: textarea.selectionDirection || 'none',
+                        end: textarea.selectionEnd,
+                        start: textarea.selectionStart
+                    }
+                };
+            },
+            applyTextChange: function (change) {
+                var session = activeSession();
+                var scrollLeft;
+                var scrollTop;
+                var windowScrollX;
+                var windowScrollY;
+
+                if (session) {
+                    session.applyTextChange(change);
+                    return;
+                }
+
+                scrollTop = textarea.scrollTop;
+                scrollLeft = textarea.scrollLeft;
+                windowScrollX = window.pageXOffset;
+                windowScrollY = window.pageYOffset;
+                textarea.value = change.value;
+                focusWithoutScrolling(textarea);
+                textarea.setSelectionRange(
+                    change.selection.start,
+                    change.selection.end,
+                    change.selection.direction
+                );
+                restoreScrollPosition(textarea, scrollTop, scrollLeft);
+                if (typeof window.scrollTo === 'function') {
+                    window.scrollTo(windowScrollX, windowScrollY);
+                }
+                dispatchNativeInput(textarea);
+                window.setTimeout(function () {
+                    restoreScrollPosition(textarea, scrollTop, scrollLeft);
+                    if (typeof window.scrollTo === 'function') {
+                        window.scrollTo(windowScrollX, windowScrollY);
+                    }
+                }, 0);
+            },
+            focus: function () {
+                var session = activeSession();
+
+                if (session) {
+                    session.focus();
+                    return;
+                }
+                focusWithoutScrolling(textarea);
+            }
+        };
+    }
+
     function activateReactImageUpload(root, textarea, documentSession, context) {
         var bridgeApi = window.EasyMDEReactImageUpload;
         var bridge;
@@ -3862,7 +3942,7 @@
         });
     }
 
-    function executeCommand(commandId, context) {
+    function executeLegacyCommand(commandId, context) {
         var command = getCommand(commandId);
         var textarea = context && context.textarea ? context.textarea : document.getElementById('easymde-source');
 
@@ -3918,6 +3998,20 @@
                 applyLinePrefix(textarea, command.linePrefix);
             }
         }
+    }
+
+    function executeCommand(commandId, context) {
+        if (
+            context
+            && context.reactToolbarCommandSession
+            && typeof context.reactToolbarCommandSession.owns === 'function'
+            && typeof context.reactToolbarCommandSession.execute === 'function'
+            && context.reactToolbarCommandSession.owns(commandId)
+        ) {
+            return context.reactToolbarCommandSession.execute(commandId);
+        }
+
+        return executeLegacyCommand(commandId, context);
     }
 
     function reportReactToolbarFailure(code) {
@@ -4203,6 +4297,18 @@
         var cleanup;
         var cleanupScheduled = false;
         var pagehideRegistered = false;
+        var commandSession = null;
+        var documentPort;
+
+        function restoreLegacyOwner() {
+            if (context && context.reactToolbarCommandSession === commandSession) {
+                context.reactToolbarCommandSession = null;
+            }
+            reactMain.hidden = true;
+            legacyMain.hidden = false;
+            toolbar.setAttribute('data-easymde-main-toolbar-owner', 'legacy');
+            toolbar.setAttribute('data-easymde-toolbar-command-owner', 'legacy');
+        }
 
         function dispose() {
             if (disposed) {
@@ -4217,9 +4323,7 @@
             if (typeof cleanup === 'function') {
                 cleanup();
             }
-            reactMain.hidden = true;
-            legacyMain.hidden = false;
-            toolbar.setAttribute('data-easymde-main-toolbar-owner', 'legacy');
+            restoreLegacyOwner();
         }
 
         function scheduleCleanup() {
@@ -4245,9 +4349,13 @@
             return null;
         }
 
-        toolbar.setAttribute('data-easymde-main-toolbar-owner', 'legacy');
-        reactMain.hidden = true;
-        legacyMain.hidden = false;
+        restoreLegacyOwner();
+
+        documentPort = createReactToolbarDocumentPort(context);
+        if (!documentPort) {
+            reportReactToolbarFailure('react-toolbar-document-port-invalid');
+            return null;
+        }
 
         if (!reactToolbar || typeof reactToolbar.prepare !== 'function') {
             reportReactToolbarFailure('react-toolbar-entry-unavailable');
@@ -4259,7 +4367,8 @@
                 commands: config.commands || [],
                 shortcuts: config.shortcuts || {},
                 strings: {
-                    headings: getString('headings')
+                    headings: getString('headings'),
+                    linkText: getString('linkText')
                 }
             });
         } catch (error) {
@@ -4275,20 +4384,9 @@
         try {
             cleanup = reactToolbar.mount({
                 container: reactMain,
-                executeCommand: function (commandId) {
-                    var command = getCommand(commandId);
-                    var result = executeCommand(commandId, context);
-
-                    if (
-                        context
-                        && context.documentSession
-                        && (!command || 'image' !== command.action)
-                        && typeof context.documentSession.focus === 'function'
-                    ) {
-                        context.documentSession.focus();
-                    }
-
-                    return result;
+                document: documentPort,
+                executeExternalCommand: function (commandId) {
+                    return executeLegacyCommand(commandId, context);
                 },
                 onFailure: function () {
                     if (disposed || failed) {
@@ -4296,21 +4394,34 @@
                     }
 
                     failed = true;
-                    reactMain.hidden = true;
-                    legacyMain.hidden = false;
-                    toolbar.setAttribute('data-easymde-main-toolbar-owner', 'legacy');
+                    restoreLegacyOwner();
                     reportReactToolbarFailure('react-toolbar-render-failed');
                     scheduleCleanup();
                 },
-                onReady: function () {
+                onReady: function (nextSession) {
                     if (disposed || failed || ready) {
                         return;
                     }
 
+                    if (
+                        !nextSession
+                        || typeof nextSession.execute !== 'function'
+                        || typeof nextSession.owns !== 'function'
+                    ) {
+                        failed = true;
+                        restoreLegacyOwner();
+                        reportReactToolbarFailure('react-toolbar-command-session-invalid');
+                        scheduleCleanup();
+                        return;
+                    }
+
+                    commandSession = nextSession;
+                    context.reactToolbarCommandSession = commandSession;
                     ready = true;
                     legacyMain.hidden = true;
                     reactMain.hidden = false;
                     toolbar.setAttribute('data-easymde-main-toolbar-owner', 'react');
+                    toolbar.setAttribute('data-easymde-toolbar-command-owner', 'react');
                 },
                 platform: getIsMac() ? 'mac' : 'win'
             });
@@ -5312,6 +5423,7 @@
         window.EasyMDETestHooks.activateReactMediaPicker = activateReactMediaPicker;
         window.EasyMDETestHooks.activateReactImageUpload = activateReactImageUpload;
         window.EasyMDETestHooks.createReactMediaPickerDocumentPort = createReactMediaPickerDocumentPort;
+        window.EasyMDETestHooks.createReactToolbarDocumentPort = createReactToolbarDocumentPort;
         window.EasyMDETestHooks.applyThemeFontDefaults = applyThemeFontDefaults;
         window.EasyMDETestHooks.replaceFontState = replaceFontState;
         window.EasyMDETestHooks.applyRenderState = applyRenderState;

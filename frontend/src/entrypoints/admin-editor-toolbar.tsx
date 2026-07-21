@@ -2,6 +2,11 @@ import { createElement, createRoot } from '@wordpress/element';
 
 import { ToolbarErrorBoundary } from '../app/editor/ToolbarErrorBoundary';
 import { parseToolbarBootstrap } from '../contracts/bootstrap/toolbar-bootstrap';
+import type { ToolbarCommandDocumentPort } from '../contracts/ports/toolbar-command-port';
+import {
+  createToolbarCommandSession,
+  type ToolbarCommandSession
+} from '../features/toolbar/toolbar-command-session';
 import {
   EditorToolbar,
   type ToolbarPlatform
@@ -9,9 +14,10 @@ import {
 
 export type ToolbarMountOptions = Readonly<{
   container: HTMLElement;
-  executeCommand: (commandId: string) => void;
+  document: ToolbarCommandDocumentPort;
+  executeExternalCommand: (commandId: string) => unknown;
   onFailure: () => void;
-  onReady: () => void;
+  onReady: (session: ToolbarCommandSession) => void;
   platform: ToolbarPlatform;
 }>;
 
@@ -25,21 +31,28 @@ export function createAdminEditorToolbarBridge(value: unknown): AdminEditorToolb
   return {
     mount({
       container,
-      executeCommand,
+      document,
+      executeExternalCommand,
       onFailure,
       onReady,
       platform
     }: ToolbarMountOptions): () => void {
       const root = createRoot(container);
       let active = true;
+      const commandSession = createToolbarCommandSession({
+        commands: bootstrap.commands,
+        document,
+        executeExternalCommand,
+        linkText: bootstrap.linkText
+      });
 
       root.render(
         <ToolbarErrorBoundary onFailure={onFailure}>
           <EditorToolbar
             bootstrap={bootstrap}
             platform={platform}
-            executeCommand={executeCommand}
-            onReady={onReady}
+            executeCommand={commandSession.execute}
+            onReady={() => onReady(commandSession)}
           />
         </ToolbarErrorBoundary>
       );
@@ -49,6 +62,7 @@ export function createAdminEditorToolbarBridge(value: unknown): AdminEditorToolb
           return;
         }
         active = false;
+        commandSession.dispose();
         root.unmount();
       };
     }

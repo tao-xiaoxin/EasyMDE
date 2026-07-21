@@ -315,6 +315,20 @@ test('frontend validator rejects remote URLs in generated text resources', () =>
   }
 });
 
+test('frontend validator permits an unfetchable Markdown URL placeholder', () => {
+  const root = copyBuildOutput();
+
+  try {
+    const manifest = readJson(join(root, 'manifest.json'));
+    const script = manifest['frontend/test/build-contract/entry.tsx'].file;
+    appendFileSync(join(root, script), '\nconst markdownLink = "](https://)";\n');
+
+    assert.doesNotThrow(() => validateFrontendBuild(root));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('frontend validator does not treat an XML namespace prefix as a remote URL exemption', () => {
   const root = copyBuildOutput();
 

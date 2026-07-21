@@ -5,6 +5,11 @@ export type ToolbarCommand = Readonly<{
   surface: string;
   action: string;
   group: string;
+  level?: number;
+  linePrefix?: string;
+  placeholder?: string;
+  prefix?: string;
+  suffix?: string;
 }>;
 
 export type ToolbarShortcut = Readonly<{
@@ -16,6 +21,7 @@ export type ToolbarBootstrap = Readonly<{
   commands: ReadonlyArray<ToolbarCommand>;
   shortcuts: Readonly<Record<string, ToolbarShortcut>>;
   headingsLabel: string;
+  linkText: string;
 }>;
 
 export class ToolbarBootstrapError extends Error {
@@ -44,8 +50,33 @@ function requiredString(value: unknown, code: string): string {
   return value;
 }
 
+function optionalString(value: unknown, code: string): string | undefined {
+  if (undefined === value) {
+    return undefined;
+  }
+  if ('string' !== typeof value) {
+    throw new ToolbarBootstrapError(code);
+  }
+  return value;
+}
+
+function optionalLevel(value: unknown): number | undefined {
+  if (undefined === value) {
+    return undefined;
+  }
+  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 6) {
+    throw new ToolbarBootstrapError('invalid-command-level');
+  }
+  return value as number;
+}
+
 function parseCommand(value: unknown): ToolbarCommand {
   const command = objectValue(value, 'invalid-command');
+  const level = optionalLevel(command.level);
+  const linePrefix = optionalString(command.linePrefix, 'invalid-command-line-prefix');
+  const placeholder = optionalString(command.placeholder, 'invalid-command-placeholder');
+  const prefix = optionalString(command.prefix, 'invalid-command-prefix');
+  const suffix = optionalString(command.suffix, 'invalid-command-suffix');
 
   return {
     id: requiredString(command.id, 'invalid-command-id'),
@@ -53,7 +84,12 @@ function parseCommand(value: unknown): ToolbarCommand {
     icon: requiredString(command.icon, 'invalid-command-icon'),
     surface: requiredString(command.surface, 'invalid-command-surface'),
     action: requiredString(command.action, 'invalid-command-action'),
-    group: requiredString(command.group, 'invalid-command-group')
+    group: requiredString(command.group, 'invalid-command-group'),
+    ...(undefined === level ? {} : { level }),
+    ...(undefined === linePrefix ? {} : { linePrefix }),
+    ...(undefined === placeholder ? {} : { placeholder }),
+    ...(undefined === prefix ? {} : { prefix }),
+    ...(undefined === suffix ? {} : { suffix })
   };
 }
 
@@ -102,6 +138,7 @@ export function parseToolbarBootstrap(value: unknown): ToolbarBootstrap {
   return {
     commands,
     shortcuts,
-    headingsLabel: requiredString(strings.headings, 'invalid-headings-label')
+    headingsLabel: requiredString(strings.headings, 'invalid-headings-label'),
+    linkText: requiredString(strings.linkText, 'invalid-link-text')
   };
 }

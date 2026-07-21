@@ -10,7 +10,9 @@ const validBootstrap = {
       icon: 'editor-bold',
       surface: 'main',
       action: 'wrap',
-      group: 'format'
+      group: 'format',
+      prefix: '**',
+      suffix: '**'
     },
     {
       id: 'extension-command',
@@ -25,7 +27,7 @@ const validBootstrap = {
     bold: { win: 'Ctrl+B', mac: 'Cmd+B' },
     'extension-command': { win: '', mac: '' }
   },
-  strings: { headings: '标题' }
+  strings: { headings: '标题', linkText: '链接文本' }
 };
 
 describe('parseToolbarBootstrap', () => {
@@ -34,7 +36,9 @@ describe('parseToolbarBootstrap', () => {
 
     expect(parsed.commands.map((command) => command.id)).toEqual(['bold', 'extension-command']);
     expect(parsed.commands.map((command) => command.label)).toEqual(['粗体', '扩展命令']);
+    expect(parsed.commands[0]).toEqual(expect.objectContaining({ prefix: '**', suffix: '**' }));
     expect(parsed.headingsLabel).toBe('标题');
+    expect(parsed.linkText).toBe('链接文本');
   });
 
   it('rejects duplicate command identities at the external boundary', () => {
@@ -70,7 +74,16 @@ describe('parseToolbarBootstrap', () => {
         }
       }
     ],
-    ['invalid-headings-label', { ...validBootstrap, strings: { headings: '' } }]
+    ['invalid-headings-label', { ...validBootstrap, strings: { ...validBootstrap.strings, headings: '' } }],
+    ['invalid-link-text', { ...validBootstrap, strings: { ...validBootstrap.strings, linkText: '' } }],
+    [
+      'invalid-command-prefix',
+      { ...validBootstrap, commands: [{ ...validBootstrap.commands[0], prefix: 42 }] }
+    ],
+    [
+      'invalid-command-level',
+      { ...validBootstrap, commands: [{ ...validBootstrap.commands[0], level: 7 }] }
+    ]
   ])('reports the stable %s boundary error', (code, input) => {
     expect(() => parseToolbarBootstrap(input)).toThrowError(new ToolbarBootstrapError(code));
   });

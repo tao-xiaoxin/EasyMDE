@@ -1634,6 +1634,16 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
   const toolbar = createToolbarOwnerElement();
   const reactMain = createToolbarOwnerElement();
   const legacyMain = createToolbarOwnerElement();
+  const executed = [];
+  const commandSession = {
+    execute(commandId) {
+      executed.push(commandId);
+      return true;
+    },
+    owns(commandId) {
+      return 'bold' === commandId;
+    }
+  };
   const textarea = {
     value: 'Toolbar parity',
     selectionStart: 0,
@@ -1668,6 +1678,7 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
     EasyMDEReactToolbar: {
       prepare(value) {
         assert.equal(value.strings.headings, 'Headings');
+        assert.equal(value.strings.linkText, 'Link text');
 
         return {
           mount(options) {
@@ -1696,6 +1707,7 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
       shortcuts: {},
       strings: {
         headings: 'Headings',
+        linkText: 'Link text',
         previewEmpty: 'Empty',
         previewError: 'Preview failed',
         previewRendering: 'Rendering preview'
@@ -1709,35 +1721,43 @@ test('React toolbar stays hidden until readiness and then becomes the only visib
     }
   });
 
-  const cleanup = loaded.hooks.activateReactToolbar(toolbar, reactMain, legacyMain, { textarea });
+  const context = { textarea };
+  const cleanup = loaded.hooks.activateReactToolbar(toolbar, reactMain, legacyMain, context);
 
   assert.equal(toolbar.getAttribute('data-easymde-main-toolbar-owner'), 'legacy');
+  assert.equal(toolbar.getAttribute('data-easymde-toolbar-command-owner'), 'legacy');
   assert.equal(reactMain.hidden, true);
   assert.equal(legacyMain.hidden, false);
   assert.equal(typeof cleanup, 'function');
   assert.equal(pagehideListeners.size, 1);
 
-  mountOptions.onReady();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(mountOptions.document.getSnapshot())),
+    {
+      selection: { direction: 'backward', end: 7, start: 0 },
+      value: 'Toolbar parity'
+    }
+  );
+  mountOptions.onReady(commandSession);
 
   assert.equal(toolbar.getAttribute('data-easymde-main-toolbar-owner'), 'react');
+  assert.equal(toolbar.getAttribute('data-easymde-toolbar-command-owner'), 'react');
   assert.equal(reactMain.hidden, false);
   assert.equal(legacyMain.hidden, true);
 
-  mountOptions.executeCommand('bold');
-  assert.equal(textarea.value, '**Toolbar** parity');
-  assert.equal(textarea.selectionStart, 2);
-  assert.equal(textarea.selectionEnd, 9);
-  assert.equal(textarea.selectionDirection, 'backward');
+  assert.equal(loaded.hooks.executeCommand('bold', context), true);
+  assert.deepEqual(executed, ['bold']);
 
   mountOptions.onFailure();
   assert.equal(toolbar.getAttribute('data-easymde-main-toolbar-owner'), 'legacy');
+  assert.equal(toolbar.getAttribute('data-easymde-toolbar-command-owner'), 'legacy');
   assert.equal(reactMain.hidden, true);
   assert.equal(legacyMain.hidden, false);
   await flushMicrotasks();
   assert.equal(cleanupCalls, 1, 'the failed React root should be unmounted');
   assert.equal(pagehideListeners.size, 0, 'failed activation should release its pagehide listener');
 
-  mountOptions.onReady();
+  mountOptions.onReady(commandSession);
   assert.equal(
     toolbar.getAttribute('data-easymde-main-toolbar-owner'),
     'legacy',
@@ -1767,7 +1787,13 @@ test('React toolbar startup failure keeps the legacy owner usable and reports a 
     }
   });
 
-  const cleanup = loaded.hooks.activateReactToolbar(toolbar, reactMain, legacyMain, { textarea: {} });
+  const textarea = createSourceWrapper('Toolbar fallback')[0];
+  textarea.setSelectionRange = function (start, end, direction) {
+    this.selectionStart = start;
+    this.selectionEnd = end;
+    this.selectionDirection = direction;
+  };
+  const cleanup = loaded.hooks.activateReactToolbar(toolbar, reactMain, legacyMain, { textarea });
 
   assert.equal(cleanup, null);
   assert.equal(toolbar.getAttribute('data-easymde-main-toolbar-owner'), 'legacy');
@@ -1775,6 +1801,88 @@ test('React toolbar startup failure keeps the legacy owner usable and reports a 
   assert.equal(legacyMain.hidden, false);
   assert.deepEqual(messages, ['[EasyMDE] react-toolbar-prepare-failed']);
   assert.equal(messages.some((message) => message.includes('Synthetic private detail')), false);
+});
+
+test('React toolbar rejects an unusable document port before preparing the owner', () => {
+  const messages = [];
+  let prepareCalls = 0;
+  const toolbar = createToolbarOwnerElement();
+  const loaded = loadBootstrap({
+    console: { error: (message) => messages.push(message) },
+    EasyMDEReactToolbar: {
+      prepare() {
+        prepareCalls += 1;
+      }
+    }
+  });
+
+  assert.equal(loaded.hooks.activateReactToolbar(
+    toolbar,
+    createToolbarOwnerElement(),
+    createToolbarOwnerElement(),
+    { textarea: {} }
+  ), null);
+  assert.equal(prepareCalls, 0);
+  assert.equal(toolbar.getAttribute('data-easymde-toolbar-command-owner'), 'legacy');
+  assert.deepEqual(messages, ['[EasyMDE] react-toolbar-document-port-invalid']);
+});
+
+test('React toolbar document port follows the active normal document owner', () => {
+  const legacySource = createSourceWrapper('Legacy source')[0];
+  legacySource.focus = function () {};
+  legacySource.setSelectionRange = function (start, end, direction) {
+    this.selectionStart = start;
+    this.selectionEnd = end;
+    this.selectionDirection = direction;
+  };
+  legacySource.selectionStart = 0;
+  legacySource.selectionEnd = 6;
+  legacySource.selectionDirection = 'forward';
+  const context = { textarea: legacySource };
+  const { hooks } = loadBootstrap({ pageXOffset: 0, pageYOffset: 0, scrollTo() {} });
+  const port = hooks.createReactToolbarDocumentPort(context);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(port.getSnapshot())), {
+    selection: { direction: 'forward', end: 6, start: 0 },
+    value: 'Legacy source'
+  });
+  port.applyTextChange({
+    selection: { direction: 'backward', end: 8, start: 2 },
+    value: '**Legacy** source'
+  });
+  assert.equal(legacySource.value, '**Legacy** source');
+  assert.equal(legacySource.selectionDirection, 'backward');
+
+  const applied = [];
+  let focused = 0;
+  context.documentSession = {
+    applyTextChange(change) {
+      applied.push(change);
+    },
+    focus() {
+      focused += 1;
+    },
+    getSelection() {
+      return { direction: 'none', end: 12, start: 12 };
+    },
+    getValue() {
+      return 'React source';
+    }
+  };
+  assert.deepEqual(JSON.parse(JSON.stringify(port.getSnapshot())), {
+    selection: { direction: 'none', end: 12, start: 12 },
+    value: 'React source'
+  });
+  port.applyTextChange({
+    selection: { direction: 'none', end: 13, start: 13 },
+    value: 'React source!'
+  });
+  port.focus();
+  assert.deepEqual(applied, [{
+    selection: { direction: 'none', end: 13, start: 13 },
+    value: 'React source!'
+  }]);
+  assert.equal(focused, 1);
 });
 
 test('React document source stays hidden until a complete session is ready', async () => {
@@ -6165,6 +6273,7 @@ test('copyWechat reports the existing copy failure when lazy exporter loading fa
 
 test('legacy toolbar consumes visible WeChat copy failures at the UI event boundary', async () => {
   const flash = createFlashWrapper();
+  const reactExecutions = [];
   const { hooks } = loadBootstrap({
     EasyMDEConfig: {
       testHooks: true,
@@ -6184,10 +6293,20 @@ test('legacy toolbar consumes visible WeChat copy failures at the UI event bound
   const result = await hooks.executeCommand('copywechat', {
     flash,
     preview: {},
+    reactToolbarCommandSession: {
+      execute(commandId) {
+        reactExecutions.push(commandId);
+        return true;
+      },
+      owns(commandId) {
+        return 'bold' === commandId;
+      }
+    },
     textarea: {}
   });
 
   assert.equal(result, false);
+  assert.deepEqual(reactExecutions, [], 'the React text-mutation owner must not intercept secondary commands');
   assert.equal(flash.state.hidden, false);
   assert.equal(flash.state.classes.has('is-error'), true);
 });

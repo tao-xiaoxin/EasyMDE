@@ -607,6 +607,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(toolbarStylesheetUrl.searchParams.get('ver')).toMatch(/^[a-f0-9]{16}$/);
     expect(editorBootstrapUrl.searchParams.get('ver')).toMatch(/^[a-f0-9]{16}$/);
     await expect(toolbar).toHaveAttribute('data-easymde-main-toolbar-owner', 'react');
+    await expect(toolbar).toHaveAttribute('data-easymde-toolbar-command-owner', 'react');
     await expect(reactMain).toBeVisible();
     await expect(reactMain.locator('[data-easymde-react-toolbar="ready"]')).toHaveCount(1);
     await expect(legacyMain).toBeHidden();
@@ -618,9 +619,16 @@ test.describe('EasyMDE editor workflows', () => {
     const source = page.locator('#easymde-source');
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
     await sourceEditor.fill('Toolbar parity');
-    await source.evaluate((field) => {
-      field.setSelectionRange(0, 7, 'backward');
-    });
+    await sourceEditor.focus();
+    await sourceEditor.press('Home');
+    for (let index = 0; index < 'Toolbar'.length; index += 1) {
+      await sourceEditor.press('ArrowRight');
+    }
+    await page.keyboard.down('Shift');
+    for (let index = 0; index < 'Toolbar'.length; index += 1) {
+      await page.keyboard.press('ArrowLeft');
+    }
+    await page.keyboard.up('Shift');
     await reactMain.locator('[data-easymde-command="bold"]').click();
     await expect(source).toHaveValue('**Toolbar** parity');
     await expect(sourceEditor).toHaveText('**Toolbar** parity');
@@ -849,9 +857,12 @@ test.describe('EasyMDE editor workflows', () => {
 
     await sourceEditor.fill('shortcut target');
     await sourceEditor.focus();
-    await nativeSource.evaluate((field) => {
-      field.setSelectionRange(0, field.value.length, 'backward');
-    });
+    await sourceEditor.press('Home');
+    await page.keyboard.down('Shift');
+    for (let index = 0; index < 'shortcut target'.length; index += 1) {
+      await page.keyboard.press('ArrowRight');
+    }
+    await page.keyboard.up('Shift');
     await sourceEditor.press(usesCommandKey ? 'Meta+b' : 'Control+b');
     await expect(sourceEditor).toHaveText('**shortcut target**');
     await expect(nativeSource).toHaveValue('**shortcut target**');

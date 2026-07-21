@@ -6,8 +6,13 @@ The normal editor's main Markdown Toolbar is the first production React
 migration unit. PHP `ToolbarRegistry` descriptors, command IDs, ordering,
 translated labels, and shortcut configuration remain authoritative. React owns
 the main Toolbar presentation, heading-menu interaction, and command intent
-dispatch; the existing browser command engine continues to own the actual
-Markdown selection transformations.
+dispatch. A focused React command session owns the normal editor's Markdown
+selection transformations after readiness, including formatting, headings,
+lists, blocks, links, extension-provided prefix/suffix or line-prefix commands,
+Selection direction, and Focus restoration. Its document Port follows the
+active normal document owner: the native textarea before the document-session
+handoff and the React document session afterward. Image intents delegate to the
+separate Media Picker owner rather than creating another media authority.
 
 The PHP editor shell renders separate React, legacy-main, and legacy-secondary
 containers. The legacy main Toolbar remains active while the React entry
@@ -16,11 +21,14 @@ presentation-owner handoff. Startup failure leaves the legacy main Toolbar
 usable, and teardown unmounts React before legacy code may clear or reuse its
 container.
 
-The secondary Toolbar was legacy-owned when this unit completed. Later focused
-units may transfer one secondary capability independently; this unit did not
-transfer Preview, appearance, fonts, draft storage, WeChat export, immersive
+The legacy command engine remains the startup fallback and continues to serve
+the secondary Toolbar, Save, WeChat export, and the immersive Toolbar. The
+handoff publishes an explicit command owner only after the React session is
+ready; startup failure or teardown clears that session before restoring the
+legacy owner, so the two engines cannot mutate the normal document at the same
+time. This unit did not transfer draft storage, WeChat export, immersive
 writing, native submission, Save, Publish, or WordPress authority, and it
-removed no legacy implementation.
+removed no shared legacy implementation while those consumers remain.
 
 ## Normal Editor Document Session Ownership
 
@@ -28,8 +36,8 @@ The normal editor Markdown source and title session are the next React
 migration unit. CodeMirror 6 owns the in-browser Markdown value, selection,
 focus, undo history, and source scrolling after its readiness contract passes.
 The native `#easymde-source` textarea stays in the WordPress form as a hidden,
-synchronously updated submission bridge and as the compatibility boundary for
-legacy Markdown commands. The native title input remains visible and
+synchronously updated submission bridge and as the pre-handoff command fallback
+boundary. The native title input remains visible and
 WordPress-owned; React observes it through a focused title session adapter
 without creating another persisted title.
 

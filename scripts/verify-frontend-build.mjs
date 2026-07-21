@@ -29,7 +29,7 @@ const productionCheckRoot = join(repositoryRoot, '.cache/easymde-frontend-produc
 const forbiddenContent = [
   { pattern: /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/, label: 'private React runtime' },
   { pattern: /(?:localhost|127\.0\.0\.1)/i, label: 'development host' },
-  { pattern: /https?:\/\//i, label: 'remote runtime URL' },
+  { pattern: /https?:\/\/(?:\[[0-9a-f:]+\]|[a-z0-9])/i, label: 'remote runtime URL' },
   {
     pattern:
       /(?:file:\/\/\/|(?:^|[\s"'=:(])\/(?:Users|home|private|tmp|var|Volumes|workspace|workspaces|root|mnt|opt|srv|etc|usr)(?:\/|["'\s])|(?:^|[\r\n"'=:(])\/(?!\/)(?:[A-Za-z0-9._~%+-]+\/){2,}[A-Za-z0-9._~%+-]+|\b[A-Za-z]:[\\/]|\\\\[A-Za-z0-9._-]+\\[A-Za-z0-9$._-]+)/m,

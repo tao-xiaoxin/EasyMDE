@@ -8,8 +8,9 @@ import {
 } from '@wordpress/element';
 
 import type { DocumentSourceBootstrap } from '../../contracts/bootstrap/document-source-bootstrap';
+import type { EditorRootPreviewBootstrap } from '../../contracts/bootstrap/editor-root-bootstrap';
 import type { ToolbarBootstrap } from '../../contracts/bootstrap/toolbar-bootstrap';
-import type { PreviewRequest, PreviewRequestPort, SafePreviewHtml } from '../../contracts/ports/preview-request';
+import type { PreviewRequest, PreviewRequestPort } from '../../contracts/ports/preview-request';
 import type { ToolbarShortcutsPort } from '../../contracts/ports/toolbar-shortcuts-port';
 import { EditorDocumentSource, type EditorDocumentSession } from '../../features/document-source/ui/EditorDocumentSource';
 import type { PreviewEnhancementPort } from '../../features/live-preview/ports/preview-enhancement-port';
@@ -17,21 +18,6 @@ import type { PreviewScrollPort } from '../../features/live-preview/ports/previe
 import { PreviewSurfaceOwner, type PreviewSurfaceRuntime } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { createToolbarCommandSession } from '../../features/toolbar/toolbar-command-session';
 import { EditorToolbar, type ToolbarPlatform } from '../../features/toolbar/ui/EditorToolbar';
-
-export type EditorRootPreviewBootstrap = Readonly<{
-  codeTheme: string;
-  customCssId: string;
-  features: Readonly<Record<string, boolean>>;
-  html: SafePreviewHtml;
-  markdownTheme: string;
-  messages: Readonly<{
-    empty: string;
-    error: string;
-    rendering: string;
-  }>;
-  postId: number;
-  signature: string;
-}>;
 
 export type EditorRootProps = Readonly<{
   document: DocumentSourceBootstrap;

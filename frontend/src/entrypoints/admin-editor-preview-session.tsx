@@ -5,6 +5,7 @@ import type {
   PreviewFeatures,
   SafePreviewHtml
 } from '../contracts/ports/preview-request';
+import { isPreviewFeatureKey } from '../contracts/ports/preview-request';
 import type { PreviewEnhancementPort } from '../features/live-preview/ports/preview-enhancement-port';
 import type { PreviewScrollPort } from '../features/live-preview/ports/preview-scroll-port';
 import {
@@ -44,7 +45,9 @@ function parseFeatures(value: unknown): PreviewFeatures {
   if (!isRecord(value)) throw new Error('preview-mount-options-invalid');
   const features: Record<string, boolean> = {};
   for (const [key, enabled] of Object.entries(value)) {
-    if ('boolean' !== typeof enabled) throw new Error('preview-mount-options-invalid');
+    if (!isPreviewFeatureKey(key) || 'boolean' !== typeof enabled) {
+      throw new Error('preview-mount-options-invalid');
+    }
     features[key] = enabled;
   }
   return features;

@@ -51,4 +51,20 @@ describe('createWordPressPreviewPort', () => {
       name: 'PreviewResponseError'
     });
   });
+
+  it.each(['__proto__', 'prototype', 'constructor'])(
+    'rejects the prototype-reserved response feature key %s',
+    async (key) => {
+      const features = JSON.parse(`{"${key}":true}`) as Record<string, boolean>;
+      const port = createWordPressPreviewPort(
+        vi.fn().mockResolvedValue({ html: '<p>x</p>', features }),
+        '/wp-json/easymde/v1/preview',
+        'nonce'
+      );
+
+      await expect(port.render(request, new AbortController().signal)).rejects.toMatchObject({
+        name: 'PreviewResponseError'
+      });
+    }
+  );
 });

@@ -1,5 +1,15 @@
 export type PreviewFeatures = Readonly<Record<string, boolean>>;
 
+const PROTOTYPE_RESERVED_FEATURE_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype'
+]);
+
+export function isPreviewFeatureKey(key: string): boolean {
+  return !PROTOTYPE_RESERVED_FEATURE_KEYS.has(key);
+}
+
 declare const safePreviewHtmlBrand: unique symbol;
 
 export type SafePreviewHtml = string & Readonly<{ [safePreviewHtmlBrand]: true }>;

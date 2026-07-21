@@ -4,6 +4,7 @@ import type {
   PreviewResponse,
   SafePreviewHtml
 } from '../../../contracts/ports/preview-request';
+import { isPreviewFeatureKey } from '../../../contracts/ports/preview-request';
 
 export type WordPressApiFetch = (options: Readonly<Record<string, unknown>>) => Promise<unknown>;
 
@@ -26,7 +27,7 @@ function parseResponse(value: unknown): PreviewResponse {
 
   const features: Record<string, boolean> = {};
   for (const [key, enabled] of Object.entries(response.features)) {
-    if ('boolean' !== typeof enabled) {
+    if (!isPreviewFeatureKey(key) || 'boolean' !== typeof enabled) {
       throw new PreviewResponseError();
     }
     features[key] = enabled;

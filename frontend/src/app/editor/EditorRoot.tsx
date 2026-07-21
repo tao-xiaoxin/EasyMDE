@@ -27,6 +27,7 @@ import type { AppearancePort } from '../../contracts/ports/appearance-port';
 import type { FontControlsPort } from '../../contracts/ports/font-controls-port';
 import type { ImageUploadPort } from '../../contracts/ports/image-upload-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
+import type { NativeSubmissionPort } from '../../contracts/ports/native-submission-port';
 import type {
   MediaPickerDocumentPort,
   MediaPickerFramePort
@@ -84,6 +85,7 @@ export type EditorRootProps = Readonly<{
   mediaPicker: MediaPickerBootstrap;
   mediaPickerFailureMessage: string;
   mediaPickerFrame: MediaPickerFramePort | null;
+  nativeSubmissionPort: NativeSubmissionPort;
   onFailure: (code: string) => void;
   platform: ToolbarPlatform;
   prepareToolbarShortcuts: (surfaces: Readonly<{
@@ -415,6 +417,15 @@ export function EditorRoot(props: EditorRootProps) {
   }, []);
 
   useEffect(() => () => wechatSession.dispose(), [wechatSession]);
+
+  useEffect(() => {
+    if (!documentSession) {
+      return;
+    }
+    return props.nativeSubmissionPort.subscribeBeforeSubmit(() => {
+      documentSession.document.flush();
+    });
+  }, [documentSession, props.nativeSubmissionPort]);
 
   useEffect(() => {
     if (!documentSession) {

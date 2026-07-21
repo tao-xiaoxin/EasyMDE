@@ -70,6 +70,39 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
   });
 
+  it('publishes stable document snapshots against the native saved baseline', () => {
+    const { container, submissionField } = createFixture('saved document');
+    submissionField.defaultValue = 'saved document';
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const listener = vi.fn();
+    const unsubscribe = session.subscribe(listener);
+
+    expect(session.getSnapshot()).toEqual({
+      savedValue: 'saved document',
+      value: 'saved document'
+    });
+    expect(session.getSnapshot()).toBe(session.getSnapshot());
+
+    session.applyTextChange({
+      selection: { direction: 'none', end: 6, start: 6 },
+      value: 'edited'
+    });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(session.getSnapshot()).toEqual({
+      savedValue: 'saved document',
+      value: 'edited'
+    });
+    expect(session.getSnapshot()).toBe(session.getSnapshot());
+
+    unsubscribe();
+    session.destroy();
+  });
+
   it('accepts an external native bridge update without echoing a second input event', () => {
     const { container, submissionField } = createFixture();
     const handleInput = vi.fn();

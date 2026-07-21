@@ -13,6 +13,7 @@ function createFixture() {
   const submissionField = document.createElement('textarea');
   const titleField = document.createElement('input');
   submissionField.value = '# Initial';
+  submissionField.defaultValue = '# Initial';
   titleField.defaultValue = 'Saved title';
   titleField.value = 'Current title';
   document.body.append(container, submissionField, titleField);
@@ -50,6 +51,12 @@ describe('createAdminEditorDocumentSourceBridge', () => {
       savedValue: 'Saved title',
       value: 'Current title'
     });
+    expect(session.getSnapshot()).toEqual({ dirty: true });
+    titleField.value = 'Saved title';
+    titleField.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    submissionField.value = '# Initial';
+    submissionField.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    expect(session.getSnapshot()).toEqual({ dirty: false });
     expect(container.querySelector('[data-easymde-react-document-source]')).not.toBeNull();
 
     expect(() => {

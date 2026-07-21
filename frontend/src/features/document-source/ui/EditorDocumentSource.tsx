@@ -1,18 +1,18 @@
 import { createElement, useLayoutEffect, useRef } from '@wordpress/element';
 
 import {
-  createCodeMirrorDocumentSession,
-  type CodeMirrorDocumentSession
+  createCodeMirrorDocumentSession
 } from '../adapters/code-mirror-document-session';
 import {
   createNativeTitleSession,
   type NativeTitleSession
 } from '../adapters/native-title-session';
+import {
+  createEditorDocumentSession,
+  type EditorDocumentSession
+} from '../editor-document-session';
 
-export type EditorDocumentSession = Readonly<{
-  document: CodeMirrorDocumentSession;
-  title: NativeTitleSession;
-}>;
+export type { EditorDocumentSession } from '../editor-document-session';
 
 type EditorDocumentSourceProps = Readonly<{
   editorLabel: string;
@@ -39,17 +39,28 @@ export function EditorDocumentSource({
       label: editorLabel,
       submissionField
     });
-    let titleSession: NativeTitleSession | null = null;
+    let titleSession: NativeTitleSession;
+    let editorSession: EditorDocumentSession;
 
     try {
       titleSession = createNativeTitleSession(titleField);
-      onReady({
-        document: documentSession,
-        title: titleSession
-      });
     } catch (error) {
-      titleSession?.destroy();
       documentSession.destroy();
+      throw error;
+    }
+
+    try {
+      editorSession = createEditorDocumentSession(documentSession, titleSession);
+    } catch (error) {
+      titleSession.destroy();
+      documentSession.destroy();
+      throw error;
+    }
+
+    try {
+      onReady(editorSession);
+    } catch (error) {
+      editorSession.destroy();
       throw error;
     }
 
@@ -57,8 +68,7 @@ export function EditorDocumentSource({
       try {
         documentSession.flush();
       } finally {
-        titleSession.destroy();
-        documentSession.destroy();
+        editorSession.destroy();
       }
     };
   }, [editorLabel, onReady, submissionField, titleField]);

@@ -1,11 +1,13 @@
 import { createElement } from '@wordpress/element';
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SafePreviewHtml } from '../../contracts/ports/preview-request';
 import type { ImageUploadResult } from '../../contracts/ports/image-upload-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
+import { createWordPressNativeSubmissionPort } from '../../integrations/wordpress/native-form/wordpress-native-submission';
 import { EditorRoot, type EditorRootProps } from './EditorRoot';
 import { EditorRootErrorBoundary } from './EditorRootErrorBoundary';
 
@@ -17,17 +19,20 @@ function BrokenEditorRoot(): never {
 
 function fixture(): EditorRootProps & Readonly<{
   localDraftStorage: LocalDraftStoragePort;
+  nativeForm: HTMLFormElement;
   scrollSyncBinding: Readonly<{ activate: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }>;
   shortcutBinding: PreparedToolbarShortcutBinding;
 }> {
   const submissionField = document.createElement('textarea');
   const titleField = document.createElement('input');
+  const nativeForm = document.createElement('form');
   submissionField.value = 'selected';
   submissionField.defaultValue = 'selected';
   submissionField.setSelectionRange(0, 8);
   titleField.value = 'Synthetic title';
-  document.body.append(submissionField, titleField);
-  mountedFields.push(submissionField, titleField);
+  nativeForm.append(submissionField, titleField);
+  document.body.append(nativeForm);
+  mountedFields.push(nativeForm);
   const shortcutBinding = {
     activate: vi.fn(),
     dispose: vi.fn()
@@ -158,6 +163,8 @@ function fixture(): EditorRootProps & Readonly<{
     },
     mediaPickerFailureMessage: 'The media library could not be opened.',
     mediaPickerFrame: mediaFrame,
+    nativeForm,
+    nativeSubmissionPort: createWordPressNativeSubmissionPort(nativeForm),
     onFailure: vi.fn(),
     platform: 'win',
     prepareToolbarShortcuts: vi.fn(() => ({
@@ -280,6 +287,26 @@ describe('EditorRoot', () => {
 
     view.unmount();
     expect(props.shortcutBinding.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('flushes the React document before native form serialization and releases the bridge', () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const input = view.container.querySelector<HTMLElement>('.cm-content');
+    const editor = input ? EditorView.findFromDOM(input) : null;
+    expect(editor).not.toBeNull();
+
+    editor?.dispatch({
+      changes: { from: 0, to: editor.state.doc.length, insert: 'current editor value' }
+    });
+    props.submissionField.value = 'stale native value';
+    props.nativeForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
+    expect(props.submissionField.value).toBe('current editor value');
+
+    view.unmount();
+    props.submissionField.value = 'after teardown';
+    props.nativeForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
+    expect(props.submissionField.value).toBe('after teardown');
   });
 
   it('reports a render failure without leaving a partial editor owner', () => {

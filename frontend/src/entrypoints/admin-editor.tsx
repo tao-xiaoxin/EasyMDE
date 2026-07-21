@@ -6,3 +6,4 @@ import './admin-editor-local-drafts';
 import './admin-editor-media-picker';
 import './admin-editor-preview-session';
 import './admin-editor-toolbar';
+import './admin-editor-wechat-export';

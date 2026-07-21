@@ -41,6 +41,7 @@
     var localDraftsEnabled = !(config.features && config.features.localDrafts === false);
     var reactLocalDraftsHandoffCommitted = false;
     var reactLocalDraftSession = null;
+    var reactWechatExportHandoffCommitted = false;
     var syncLock = false;
     var flashTimer = null;
     var commandMap = null;
@@ -2194,6 +2195,14 @@
                         executeSourceCommand(matchedCommand);
                         return true;
                     }
+                    if (command && command.action === 'copyWechat') {
+                        executeLegacyCommand(matchedCommand, {
+                            textarea: textarea,
+                            preview: $(context.preview),
+                            flash: context.flash
+                        });
+                        return true;
+                    }
                     executeCommand(matchedCommand, { textarea: textarea, preview: $(context.preview), flash: context.flash });
                     return true;
                 },
@@ -3284,6 +3293,114 @@
         return dispose;
     }
 
+    function prepareReactWechatExport(root) {
+        var bridgeApi = window.EasyMDEReactWechatExport;
+        var bridge;
+
+        if (!root || typeof root.setAttribute !== 'function') {
+            reportReactWechatExportFailure('react-wechat-export-surface-invalid');
+            return null;
+        }
+        root.setAttribute('data-easymde-wechat-export-owner', 'legacy');
+        if (!bridgeApi || typeof bridgeApi.prepare !== 'function') {
+            reportReactWechatExportFailure('react-wechat-export-entry-unavailable');
+            return null;
+        }
+        try {
+            bridge = bridgeApi.prepare({
+                enabled: !(config.features && config.features.wechatCopy === false),
+                strings: {
+                    failed: getString('copyWechatFailed'),
+                    success: getString('copyWechatSuccess'),
+                    unsupported: getString('copyWechatUnsupported')
+                }
+            });
+        } catch (error) {
+            reportReactWechatExportFailure('react-wechat-export-prepare-failed');
+            return null;
+        }
+        if (!bridge || typeof bridge.activate !== 'function') {
+            reportReactWechatExportFailure('react-wechat-export-contract-invalid');
+            return null;
+        }
+        return bridge;
+    }
+
+    function activateReactWechatExport(root, bridge, context) {
+        var disposed = false;
+        var pagehideRegistered = false;
+        var session = null;
+
+        function dispose() {
+            if (disposed) {
+                return;
+            }
+            disposed = true;
+            if (pagehideRegistered && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('pagehide', dispose);
+                pagehideRegistered = false;
+            }
+            if (session && typeof session.dispose === 'function') {
+                session.dispose();
+            }
+            if (context.reactWechatExportSession === session) {
+                context.reactWechatExportSession = null;
+            }
+            root.setAttribute('data-easymde-wechat-export-owner', 'react-reload-required');
+        }
+
+        if (!root || !bridge || !context || !context.preview) {
+            reportReactWechatExportFailure('react-wechat-export-activation-invalid');
+            return null;
+        }
+        try {
+            session = bridge.activate({
+                getPreview: function () {
+                    var preview = context.preview && context.preview[0] ? context.preview[0] : null;
+                    var markdown = context.documentSession
+                        && typeof context.documentSession.getValue === 'function'
+                        ? context.documentSession.getValue()
+                        : context.textarea && typeof context.textarea.value === 'string'
+                            ? context.textarea.value
+                            : '';
+
+                    return isPreviewReady(preview, markdown) ? preview : null;
+                },
+                onDiagnostic: reportReactWechatExportFailure,
+                onStatus: function (status) {
+                    if (
+                        !status
+                        || typeof status.message !== 'string'
+                        || ['error', 'success'].indexOf(status.type) === -1
+                    ) {
+                        reportReactWechatExportFailure('react-wechat-export-status-invalid');
+                        return;
+                    }
+                    showFlash(context.flash, status.type, status.message);
+                }
+            });
+        } catch (error) {
+            reportReactWechatExportFailure('react-wechat-export-activation-failed');
+            return null;
+        }
+        if (!session || typeof session.copy !== 'function' || typeof session.dispose !== 'function') {
+            if (session && typeof session.dispose === 'function') {
+                session.dispose();
+            }
+            reportReactWechatExportFailure('react-wechat-export-session-invalid');
+            return null;
+        }
+
+        reactWechatExportHandoffCommitted = true;
+        context.reactWechatExportSession = session;
+        root.setAttribute('data-easymde-wechat-export-owner', 'react');
+        if (typeof window.addEventListener === 'function') {
+            window.addEventListener('pagehide', dispose, { once: true });
+            pagehideRegistered = true;
+        }
+        return dispose;
+    }
+
     function activateReactImageUpload(root, textarea, documentSession, context) {
         var bridgeApi = window.EasyMDEReactImageUpload;
         var bridge;
@@ -4216,6 +4333,22 @@
     }
 
     function executeCommand(commandId, context) {
+        var command = getCommand(commandId);
+
+        if (command && command.action === 'copyWechat') {
+            if (
+                context
+                && context.reactWechatExportSession
+                && typeof context.reactWechatExportSession.copy === 'function'
+            ) {
+                return context.reactWechatExportSession.copy();
+            }
+            if (reactWechatExportHandoffCommitted) {
+                reportReactWechatExportFailure('react-wechat-export-session-unavailable');
+                showFlash(context && context.flash ? context.flash : null, 'error', getString('copyWechatFailed'));
+                return Promise.resolve(false);
+            }
+        }
         if (
             context
             && context.reactToolbarCommandSession
@@ -4272,6 +4405,12 @@
     }
 
     function reportReactLocalDraftFailure(code) {
+        if (window.console && typeof window.console.error === 'function') {
+            window.console.error('[EasyMDE] ' + code);
+        }
+    }
+
+    function reportReactWechatExportFailure(code) {
         if (window.console && typeof window.console.error === 'function') {
             window.console.error('[EasyMDE] ' + code);
         }
@@ -5389,6 +5528,7 @@
         var initialPreviewHydrated = false;
         var initialPreviewEnhancement = null;
         var preparedReactLocalDrafts = null;
+        var preparedReactWechatExport = null;
         var editorChromeReady = false;
         var sourceChangedBeforeShell = false;
         var deferWechatPreload = false;
@@ -5404,6 +5544,7 @@
         }
 
         preparedReactLocalDrafts = prepareReactLocalDrafts($root[0], storage, savedMarkdownFingerprint);
+        preparedReactWechatExport = prepareReactWechatExport($root[0]);
 
         normalPreviewNode = $preview[0];
 
@@ -5466,6 +5607,13 @@
             reportStartupConfigErrors($flash);
             context.reactMediaPickerCleanup = activateReactMediaPicker($root[0], context);
             $draftStatus = createToolbar($toolbar, context);
+            if (preparedReactWechatExport) {
+                context.reactWechatExportCleanup = activateReactWechatExport(
+                    $root[0],
+                    preparedReactWechatExport,
+                    context
+                );
+            }
             if (preparedReactLocalDrafts) {
                 context.reactLocalDraftsCleanup = activateReactLocalDrafts(
                     $root[0],
@@ -5664,6 +5812,8 @@
         window.EasyMDETestHooks.activateReactImageUpload = activateReactImageUpload;
         window.EasyMDETestHooks.prepareReactLocalDrafts = prepareReactLocalDrafts;
         window.EasyMDETestHooks.activateReactLocalDrafts = activateReactLocalDrafts;
+        window.EasyMDETestHooks.prepareReactWechatExport = prepareReactWechatExport;
+        window.EasyMDETestHooks.activateReactWechatExport = activateReactWechatExport;
         window.EasyMDETestHooks.createReactMediaPickerDocumentPort = createReactMediaPickerDocumentPort;
         window.EasyMDETestHooks.createReactToolbarDocumentPort = createReactToolbarDocumentPort;
         window.EasyMDETestHooks.applyThemeFontDefaults = applyThemeFontDefaults;

@@ -375,6 +375,9 @@ function createElement(tagName) {
 
       return attributes.has(name) ? attributes.get(name) : null;
     },
+    hasAttribute(name) {
+      return attributes.has(name);
+    },
     setAttribute(name, value) {
       if (name === 'id') {
         this.id = String(value);
@@ -781,6 +784,8 @@ function loadBootstrap(windowOverrides = {}, contextOverrides = {}) {
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactAppearance, 'function', 'bootstrap harness should expose the appearance ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.prepareReactLocalDrafts, 'function', 'bootstrap harness should expose local draft read-only preflight');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactLocalDrafts, 'function', 'bootstrap harness should expose the local draft ownership handoff');
+  assert.equal(typeof context.window.EasyMDETestHooks.prepareReactWechatExport, 'function', 'bootstrap harness should expose WeChat export preflight');
+  assert.equal(typeof context.window.EasyMDETestHooks.activateReactWechatExport, 'function', 'bootstrap harness should expose the WeChat export ownership handoff');
   assert.equal(typeof context.window.EasyMDETestHooks.replaceFontState, 'function', 'bootstrap harness should expose cross-surface font state replacement');
   assert.equal(typeof context.window.EasyMDETestHooks.applyRenderState, 'function', 'bootstrap harness should expose render ownership checks');
   assert.equal(typeof context.window.EasyMDETestHooks.activateReactDocumentSource, 'function', 'bootstrap harness should expose the document source ownership handoff');
@@ -3391,6 +3396,9 @@ test('immersive custom CSS adapter separates zero-write preview from explicit pe
 
 test('immersive adapter inserts sized tables and returns the real WeChat copy promise', () => {
   const source = readFileSync(join(repoRoot, 'assets/js/admin/bootstrap.js'), 'utf8');
+  const shortcutStart = source.indexOf('handleShortcut: function (event, textarea, executeSourceCommand)');
+  const actionStart = source.indexOf('performAction: function (action, workspaceContext)', shortcutStart);
+  const shortcutAdapter = source.slice(shortcutStart, actionStart);
 
   assert.match(source, /insertTable:\s*function \(rows, columns, textarea\)/);
   assert.match(source, /workspaceApi\.createTableMarkdown\(rows, columns, \{/);
@@ -3401,6 +3409,16 @@ test('immersive adapter inserts sized tables and returns the real WeChat copy pr
   assert.match(source, /var wechatIcon = createWechatIcon\(\)/);
   assert.match(source, /wechatTarget\.replaceWith\(wechatNode\)/);
   assert.doesNotMatch(source, /context\.root\.find\('\[data-easymde-command="copywechat"\]/);
+  assert.match(
+    shortcutAdapter,
+    /command\.action === 'copyWechat'[\s\S]*executeLegacyCommand\(matchedCommand, \{[\s\S]*preview: \$\(context\.preview\)/,
+    'the Focus Mode shortcut must keep the Focus Mode Legacy exporter after the normal editor React handoff'
+  );
+  assert.match(
+    shortcutAdapter,
+    /command\.action === 'copyWechat'[\s\S]*executeLegacyCommand\(matchedCommand,[\s\S]*return true;[\s\S]*executeCommand\(matchedCommand/,
+    'the Focus Mode shortcut must return after Legacy export before the normal editor React session selector'
+  );
   assert.match(
     source,
     /onActivate:\s*function \(workspaceContext\) \{\s*bindLazyImagePasteUpload\(workspaceContext\.source, context\.root, context\.flash\);/
@@ -6498,6 +6516,114 @@ test('legacy toolbar consumes visible WeChat copy failures at the UI event bound
   assert.deepEqual(reactExecutions, [], 'the React text-mutation owner must not intercept secondary commands');
   assert.equal(flash.state.hidden, false);
   assert.equal(flash.state.classes.has('is-error'), true);
+});
+
+test('React WeChat export atomically owns only the normal editor copy operation', async () => {
+  const calls = [];
+  const root = createElement('div');
+  const preview = createElement('article');
+  const session = {
+    copy() {
+      calls.push('react-copy');
+      return Promise.resolve({ method: 'clipboard', status: 'copied' });
+    },
+    dispose() {
+      calls.push('dispose');
+    }
+  };
+  const loaded = loadBootstrap({
+    EasyMDEConfig: {
+      testHooks: true,
+      commands: [{ id: 'copywechat', action: 'copyWechat' }],
+      features: { wechatCopy: true },
+      strings: {
+        copyWechatFailed: 'Copy failed',
+        copyWechatSuccess: 'Copied',
+        copyWechatUnsupported: 'Unsupported'
+      },
+      themeOptions: { codeThemes: [], fontOptions: {}, state: {} }
+    },
+    EasyMDEReactWechatExport: {
+      prepare(value) {
+        calls.push(['prepare', value]);
+        return {
+          activate(options) {
+            calls.push(['activate', options]);
+            return session;
+          }
+        };
+      }
+    },
+    EasyMDEWechatExporter: {
+      copy() {
+        calls.push('legacy-copy');
+        return Promise.resolve({ method: 'legacy' });
+      }
+    },
+    addEventListener() {},
+    removeEventListener() {}
+  });
+  const bridge = loaded.hooks.prepareReactWechatExport(root);
+  const context = {
+    flash: createFlashWrapper(),
+    preview: { 0: preview },
+    textarea: { value: 'Current Markdown' }
+  };
+  preview.easymdePreviewSignature = loaded.hooks.currentPreviewSignature(context.textarea.value);
+  const cleanup = loaded.hooks.activateReactWechatExport(root, bridge, context);
+
+  assert.equal(root.getAttribute('data-easymde-wechat-export-owner'), 'react');
+  assert.equal(typeof cleanup, 'function');
+  await loaded.hooks.executeCommand('copywechat', context);
+  assert.deepEqual(calls.filter((call) => typeof call === 'string'), ['react-copy']);
+  assert.equal(calls.some((call) => call === 'legacy-copy'), false);
+  assert.equal(calls[0][0], 'prepare');
+  assert.equal(calls[0][1].enabled, true);
+  assert.equal(calls[1][0], 'activate');
+  assert.equal(calls[1][1].getPreview(), preview);
+  preview.easymdePreviewSignature = null;
+  assert.equal(
+    calls[1][1].getPreview(),
+    null,
+    'a Preview whose current-Markdown signature was cleared after failure must not be exported'
+  );
+
+  cleanup();
+  cleanup();
+  assert.equal(root.getAttribute('data-easymde-wechat-export-owner'), 'react-reload-required');
+  assert.equal(calls.filter((call) => call === 'dispose').length, 1);
+  assert.equal(await loaded.hooks.executeCommand('copywechat', context), false);
+  assert.equal(calls.some((call) => call === 'legacy-copy'), false, 'post-handoff teardown must not restore Legacy');
+});
+
+test('React WeChat export startup failure keeps the normal Legacy exporter available', async () => {
+  let legacyCopies = 0;
+  const root = createElement('div');
+  const loaded = loadBootstrap({
+    EasyMDEConfig: {
+      testHooks: true,
+      commands: [{ id: 'copywechat', action: 'copyWechat' }],
+      features: { wechatCopy: true },
+      strings: { copyWechatFailed: 'Copy failed' },
+      themeOptions: { codeThemes: [], fontOptions: {}, state: {} }
+    },
+    EasyMDEReactWechatExport: {
+      prepare() {
+        throw new Error('private startup failure');
+      }
+    },
+    EasyMDEWechatExporter: {
+      copy() {
+        legacyCopies += 1;
+        return Promise.resolve({ method: 'legacy' });
+      }
+    }
+  });
+
+  assert.equal(loaded.hooks.prepareReactWechatExport(root), null);
+  assert.equal(root.getAttribute('data-easymde-wechat-export-owner'), 'legacy');
+  await loaded.hooks.executeCommand('copywechat', { flash: null, preview: {}, textarea: {} });
+  assert.equal(legacyCopies, 1);
 });
 
 test('category loading failures remain visible and observable without aborting editor startup', () => {

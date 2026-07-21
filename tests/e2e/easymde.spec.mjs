@@ -1985,9 +1985,17 @@ test.describe('EasyMDE editor workflows', () => {
 
   test('repairs immersive AI focus, outline resizing, table insertion, and WeChat feedback', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
+    const wechatOwnerErrors = [];
+
+    page.on('console', (message) => {
+      if ('error' === message.type() && message.text().includes('react-wechat-export-session-unavailable')) {
+        wechatOwnerErrors.push(message.text());
+      }
+    });
 
     await login(page, user);
     await openEasyMdeNewPost(page);
+    await expect(page.locator('#easymde-editor')).toHaveAttribute('data-easymde-wechat-export-owner', 'react');
     await page.locator('.easymde-source-react .cm-content').fill('# Verification\n\nBefore table');
     const legacyStyleBefore = await page.locator('#easymde-editor').evaluate((node) => {
       const style = window.getComputedStyle(node);
@@ -2095,6 +2103,19 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(wechat).toHaveClass(/is-success/);
     await expect(wechat.locator('[data-wechat-label]')).toHaveText(await page.evaluate(() => window.EasyMDEConfig.strings.copied));
     expect(await page.evaluate(() => window.__easymdeClipboardWrites)).toBe(1);
+    await page.waitForTimeout(1900);
+    const wechatShortcut = await page.evaluate(() => {
+      const runtimePlatform = window.navigator.userAgentData?.platform || window.navigator.platform;
+      const platform = /Mac/i.test(runtimePlatform) ? 'mac' : 'win';
+      return window.EasyMDEConfig.shortcuts.copywechat[platform]
+        .replace(/Cmd/g, 'Meta')
+        .replace(/Ctrl/g, 'Control')
+        .replace(/Option/g, 'Alt');
+    });
+    await source.focus();
+    await page.keyboard.press(wechatShortcut);
+    await expect.poll(() => page.evaluate(() => window.__easymdeClipboardWrites)).toBe(2);
+    expect(wechatOwnerErrors).toEqual([]);
     await page.waitForTimeout(1900);
     await page.evaluate(() => {
       window.navigator.clipboard.write = () => Promise.reject(new Error('Clipboard denied for E2E'));
@@ -3846,6 +3867,16 @@ test.describe('EasyMDE editor workflows', () => {
     const user = testInfo.easymdeUser;
     const title = `EasyMDE Copy ${testSlug(testInfo)}`;
     const markdown = `# ${title}\n\n<script>alert('x')</script>\n\n<img src=x onerror=alert(1)>\n\nCurrent preview body.\n\n\`\`\`js\nconst copiedFrame = true;\n\`\`\``;
+    const consoleErrors = [];
+    const copyRequests = [];
+    let copyStarted = false;
+
+    page.on('console', (message) => {
+      if ('error' === message.type()) consoleErrors.push(message.text());
+    });
+    page.on('request', (request) => {
+      if (copyStarted) copyRequests.push(request.url());
+    });
 
     await page.addInitScript(() => {
       window.__easymdeClipboardWrites = [];
@@ -3868,8 +3899,10 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
+    await expect(page.locator('#easymde-editor')).toHaveAttribute('data-easymde-wechat-export-owner', 'react');
     await page.locator('#title').fill(title);
     await fillMarkdownAndWaitForPreview(page, markdown, 'Current preview body.');
+    copyStarted = true;
     await page.locator('[data-easymde-command="copywechat"]').click();
 
     const copied = await page.waitForFunction(async () => {
@@ -3896,6 +3929,49 @@ test.describe('EasyMDE editor workflows', () => {
     expect(html).not.toContain('onerror');
     expect(html).not.toContain('easymde-preview-error');
     expect(html).not.toContain('REST');
+    expect(copyRequests).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test('rejects stale preview HTML after the current preview signature is cleared', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `EasyMDE Stale Copy ${testSlug(testInfo)}`;
+    const diagnostics = [];
+
+    page.on('console', (message) => {
+      if ('error' === message.type()) diagnostics.push(message.text());
+    });
+    await page.addInitScript(() => {
+      window.__easymdeClipboardWrites = 0;
+      class TestClipboardItem {
+        constructor(items) {
+          this.items = items;
+        }
+      }
+      Object.defineProperty(window, 'ClipboardItem', { value: TestClipboardItem, configurable: true });
+      Object.defineProperty(window.navigator, 'clipboard', {
+        value: {
+          write() {
+            window.__easymdeClipboardWrites += 1;
+            return Promise.resolve();
+          }
+        },
+        configurable: true
+      });
+    });
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('#title').fill(title);
+    await fillMarkdownAndWaitForPreview(page, `# ${title}\n\nCurrent preview before failure.`, 'Current preview before failure.');
+    await page.locator('#easymde-preview').evaluate((preview) => {
+      preview.easymdePreviewSignature = null;
+    });
+    await page.locator('[data-easymde-command="copywechat"]').click();
+
+    await expect(page.locator('.easymde-editor-flash.is-error')).toContainText('Copy for WeChat failed');
+    expect(await page.evaluate(() => window.__easymdeClipboardWrites)).toBe(0);
+    expect(diagnostics.some((message) => message.includes('wechat-preview-unavailable'))).toBe(true);
   });
 
   test('shows a translatable failure message when WeChat clipboard write is rejected', async ({ page }, testInfo) => {
@@ -3922,6 +3998,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
+    await expect(page.locator('#easymde-editor')).toHaveAttribute('data-easymde-wechat-export-owner', 'react');
     await page.locator('#title').fill(title);
     await fillMarkdownAndWaitForPreview(page, `# ${title}\n\nClipboard rejection body.`, 'Clipboard rejection body.');
     await page.locator('[data-easymde-command="copywechat"]').click();

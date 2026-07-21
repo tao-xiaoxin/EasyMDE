@@ -248,6 +248,32 @@ its document and interaction ownership. Final removal of `assets/js/admin/draft-
 therefore requires a separate consumer inventory and explicit Focus Mode
 decision.
 
+## Normal Editor WeChat Export Ownership
+
+The normal editor's stable-Preview export operation is a focused TypeScript
+migration unit. The existing secondary Toolbar button and PHP Gettext strings
+remain the presentation and copy authority; the operation resolves the current
+active Preview Surface at invocation time so a later React Preview handoff
+cannot leave it bound to a hidden Legacy node.
+
+Preparation validates only the Feature flag and translated messages while the
+Legacy exporter remains active. Activation creates one single-flight Clipboard
+session and commits the normal-editor command handoff. The session rejects an
+Empty, Loading, failed, refreshing, or enhancement-pending Preview before any
+Clipboard mutation. It copies both styled HTML and plain text, reports success
+only after the browser Clipboard API or synchronous compatibility copy returns
+success, and returns an explicit failure when neither path succeeds. Completion
+after teardown cannot update visible status and emits only a privacy-safe code.
+
+`assets/js/admin/wechat-exporter.js` remains the pre-handoff normal-editor
+fallback and the intentionally retained immersive-workspace Clipboard owner.
+After the normal-editor handoff, the secondary command delegates only to the
+TypeScript session; teardown is reload-required and never reactivates the
+Legacy normal-editor mutation path. Focus Mode keeps its existing action,
+feedback timer, Preview dependency, and Clipboard behavior. Removing the Legacy
+exporter therefore requires a separate consumer inventory and an explicit
+Focus Mode decision.
+
 ## Editor Enablement
 
 EasyMDE opens new and existing content for post types explicitly supported by `easymde_supported_post_types` in EasyMDE through normal WordPress editing when the current user can edit or create that content. The default supported post types are `post` and `page`.

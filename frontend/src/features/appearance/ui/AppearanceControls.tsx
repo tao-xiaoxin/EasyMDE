@@ -1,4 +1,5 @@
 import {
+  Fragment,
   createElement,
   useEffect,
   useLayoutEffect,
@@ -13,6 +14,12 @@ import type {
   CustomCssItem
 } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type { AppearancePort } from '../../../contracts/ports/appearance-port';
+import {
+  Check,
+  ChevronDown,
+  Palette,
+  PenLine
+} from '../../../generated/lucide-icons';
 
 export type AppearanceControlsSession = Readonly<{
   close: () => void;
@@ -24,8 +31,162 @@ type AppearanceControlsProps = Readonly<{
   port: AppearancePort;
   onFailure: () => void;
   onReady: (session: AppearanceControlsSession) => void;
+  immersiveLabel?: string;
+  immersiveTitle?: string;
   variant?: 'default' | 'immersive';
 }>;
+
+type ImmersiveThemeOption = Readonly<{
+  id: string;
+  label: string;
+  swatch: string | readonly [string, string];
+}>;
+
+const ARTICLE_THEME_ACCENTS: Readonly<Record<string, string>> = {
+  default: '#333333',
+  'orange-heart': '#FF6200',
+  'chazi-purple': '#8E44AD',
+  'nenqing-green': '#00B4A6',
+  'green-vitality': '#27AE60',
+  'red-crimson': '#E74C3C',
+  'blue-ying': '#1E90FF',
+  lanqing: '#4A90E2',
+  yamabuki: '#D4AC0D',
+  'grid-black': '#6C63FF',
+  'geek-black': '#00E676',
+  'rose-purple': '#E91E8C',
+  'ningye-purple': '#B39DDB',
+  'tech-blue': '#29B6F6',
+  'qingbi-liujin': '#009688',
+  'qinghe-zhusha': '#C0392B',
+  'cute-green': '#4CAF50',
+  'fullstack-blue': '#1565C0',
+  'minimal-black': '#212121',
+  'orange-blue': '#FF6B35',
+  'frontend-peak': '#4A90D9',
+  'cupid-busy': '#FF4081'
+};
+
+const CODE_THEME_SWATCHES: Readonly<Record<string, readonly [string, string]>> = {
+  github: ['#F6F8FA', '#24292E'],
+  'github-dark': ['#0D1117', '#C9D1D9'],
+  'atom-one-dark': ['#282C34', '#ABB2BF'],
+  'atom-one-light': ['#FAFAFA', '#383A42'],
+  monokai: ['#272822', '#F8F8F2'],
+  vs2015: ['#1E1E1E', '#DCDCDC'],
+  xcode: ['#FFFFFF', '#1D1D1F'],
+  'wechat-inspired': ['#F4F4F4', '#333333']
+};
+
+function articleThemeAccent(id: string): string {
+  return ARTICLE_THEME_ACCENTS[id] ?? '#DC2626';
+}
+
+function ThemeSettingsIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+    >
+      <path
+        d="M11.45 14.15C9.35 11.75 6.8 10.65 4.45 10.55C4.55 15.35 6.85 18.65 10.55 19.45C12.15 17.95 12.55 16.15 11.45 14.15Z"
+        stroke="#2CCB72"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12.15 13.45C12.05 9.05 14.8 5.75 19.8 4.75C20 9.55 17.2 13.1 12.15 13.45Z"
+        stroke="#2CCB72"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ImmersiveThemeSwatch({
+  swatch
+}: Readonly<{ swatch: ImmersiveThemeOption['swatch'] }>) {
+  return Array.isArray(swatch) ? (
+    <span className="easymde-immersive-theme-swatch is-split" aria-hidden="true">
+      <span style={{ background: swatch[0] }} />
+      <span style={{ background: swatch[1] }} />
+    </span>
+  ) : (
+    <span
+      className="easymde-immersive-theme-swatch"
+      aria-hidden="true"
+      style={{ background: swatch as string }}
+    />
+  );
+}
+
+function ImmersiveThemeSelect({
+  label,
+  onChange,
+  options,
+  value
+}: Readonly<{
+  label: string;
+  onChange: (id: string) => void;
+  options: ReadonlyArray<ImmersiveThemeOption>;
+  value: string;
+}>) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((option) => option.id === value);
+
+  return (
+    <div className="easymde-immersive-theme-field">
+      <span className="easymde-immersive-theme-field-label">{label}</span>
+      <div className="easymde-immersive-theme-select">
+        <button
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-label={label}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <span>
+            {selected ? <ImmersiveThemeSwatch swatch={selected.swatch} /> : null}
+            <span>{selected?.label ?? ''}</span>
+          </span>
+          <ChevronDown size={13} strokeWidth={2.3} aria-hidden="true" />
+        </button>
+        {open ? (
+          <div className="easymde-immersive-theme-options" role="listbox" aria-label={label}>
+            {options.map((option) => {
+              const active = option.id === value;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  className={active ? 'is-active' : ''}
+                  onClick={() => {
+                    onChange(option.id);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="easymde-immersive-theme-option-check">
+                    {active ? <Check size={9} aria-hidden="true" /> : null}
+                  </span>
+                  <ImmersiveThemeSwatch swatch={option.swatch} />
+                  <span>{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function selectedCustomCss(
   snapshot: AppearanceSnapshot
@@ -52,8 +213,18 @@ export function AppearanceControls({
   port,
   onFailure,
   onReady,
+  immersiveLabel,
+  immersiveTitle,
   variant = 'default'
 }: AppearanceControlsProps) {
+  const controlLabel =
+    'immersive' === variant
+      ? (immersiveLabel ?? bootstrap.strings.appearance)
+      : bootstrap.strings.appearance;
+  const panelLabel =
+    'immersive' === variant
+      ? (immersiveTitle ?? controlLabel)
+      : bootstrap.strings.appearance;
   const [snapshot, setSnapshot] = useState<AppearanceSnapshot>({
     customCss: bootstrap.customCss,
     state: bootstrap.state
@@ -124,15 +295,17 @@ export function AppearanceControls({
         return;
       }
       event.preventDefault();
+      event.stopPropagation();
       setIsOpen(false);
       triggerRef.current?.focus();
     };
 
+    const windowRef = triggerRef.current?.ownerDocument.defaultView;
     document.addEventListener('click', closeForPointer);
-    document.addEventListener('keydown', closeForEscape);
+    windowRef?.addEventListener('keydown', closeForEscape, true);
     return () => {
       document.removeEventListener('click', closeForPointer);
-      document.removeEventListener('keydown', closeForEscape);
+      windowRef?.removeEventListener('keydown', closeForEscape, true);
     };
   }, [isOpen]);
 
@@ -199,6 +372,25 @@ export function AppearanceControls({
       }
     }
   };
+  const articleOptions: ReadonlyArray<ImmersiveThemeOption> = [
+    ...bootstrap.articleThemes.map((theme) => ({
+      id: `theme:${theme.id}`,
+      label: theme.label,
+      swatch: articleThemeAccent(theme.id)
+    })),
+    ...snapshot.customCss.map((item) => ({
+      id: `custom:${item.id}`,
+      label: item.name,
+      swatch: '#DC2626'
+    }))
+  ];
+  const codeOptions: ReadonlyArray<ImmersiveThemeOption> = bootstrap.codeThemes.map(
+    (theme) => ({
+      id: theme.id,
+      label: theme.label,
+      swatch: CODE_THEME_SWATCHES[theme.id] ?? ['#F4F4F4', '#333333']
+    })
+  );
 
   return (
     <div
@@ -208,8 +400,8 @@ export function AppearanceControls({
         ref={triggerRef}
         type="button"
         className={`easymde-toolbar-button easymde-toolbar-button-menu easymde-toolbar-button-compact${isOpen ? ' is-active' : ''}`}
-        title={bootstrap.strings.appearance}
-        aria-label={bootstrap.strings.appearance}
+        title={controlLabel}
+        aria-label={controlLabel}
         aria-haspopup="dialog"
         aria-expanded={isOpen}
         onMouseDown={(event) => event.preventDefault()}
@@ -226,25 +418,36 @@ export function AppearanceControls({
           triggerRef.current?.focus();
         }}
       >
-        <span
-          className="dashicons dashicons-admin-customizer"
-          aria-hidden="true"
-        />
         {'immersive' === variant ? (
-          <span className="easymde-immersive-control-label">
-            {bootstrap.strings.appearance}
-          </span>
-        ) : null}
-        <span
-          className="dashicons dashicons-arrow-down-alt2"
-          aria-hidden="true"
-        />
+          <Fragment>
+            <Palette size={13} strokeWidth={2} aria-hidden="true" />
+            <span className="easymde-immersive-control-label">
+              {controlLabel}
+            </span>
+            <span
+              className="easymde-immersive-theme-accent"
+              data-theme={snapshot.state.markdownTheme}
+              aria-hidden="true"
+            />
+          </Fragment>
+        ) : (
+          <Fragment>
+            <span
+              className="dashicons dashicons-admin-customizer"
+              aria-hidden="true"
+            />
+            <span
+              className="dashicons dashicons-arrow-down-alt2"
+              aria-hidden="true"
+            />
+          </Fragment>
+        )}
       </button>
       <div
         ref={panelRef}
-        className="easymde-toolbar-popover easymde-toolbar-popover-appearance-panel"
+        className={`easymde-toolbar-popover easymde-toolbar-popover-appearance-panel${'immersive' === variant ? ' is-immersive-panel' : ''}`}
         role="dialog"
-        aria-label={bootstrap.strings.appearance}
+        aria-label={panelLabel}
         hidden={!isOpen}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
@@ -274,6 +477,56 @@ export function AppearanceControls({
           }
         }}
       >
+        {'immersive' === variant ? (
+          <Fragment>
+            <div className="easymde-immersive-theme-panel-header">
+              <span>
+                <ThemeSettingsIcon />
+                <strong>{immersiveTitle ?? bootstrap.strings.appearance}</strong>
+              </span>
+            </div>
+            <div className="easymde-immersive-theme-panel-body">
+              <ImmersiveThemeSelect
+                label={bootstrap.strings.articleTheme}
+                value={selectedArticleValue(snapshot)}
+                options={articleOptions}
+                onChange={(value) => {
+                  if (value.startsWith('custom:')) {
+                    applyState({
+                      ...snapshotRef.current.state,
+                      markdownTheme: 'custom',
+                      customCssId: value.slice(7)
+                    });
+                  } else {
+                    applyState({
+                      ...snapshotRef.current.state,
+                      markdownTheme: value.slice(6),
+                      customCssId: ''
+                    });
+                  }
+                }}
+              />
+              <ImmersiveThemeSelect
+                label={bootstrap.strings.codeTheme}
+                value={snapshot.state.codeTheme}
+                options={codeOptions}
+                onChange={(codeTheme) =>
+                  applyState({ ...snapshotRef.current.state, codeTheme })
+                }
+              />
+              <button
+                type="button"
+                className="easymde-immersive-custom-css-trigger"
+                aria-expanded={isCustomOpen}
+                onClick={openCustomPanel}
+              >
+                <PenLine size={17} strokeWidth={2.1} aria-hidden="true" />
+                {bootstrap.strings.customCss}
+              </button>
+            </div>
+          </Fragment>
+        ) : (
+          <Fragment>
         <label className="easymde-toolbar-control">
           <span className="easymde-toolbar-control-label">
             {bootstrap.strings.articleTheme}
@@ -345,6 +598,8 @@ export function AppearanceControls({
             {bootstrap.strings.customCss}
           </button>
         </div>
+          </Fragment>
+        )}
         <div className="easymde-custom-css-panel" hidden={!isCustomOpen}>
           <div className="easymde-custom-css-row">
             <input

@@ -25,6 +25,7 @@ import { createWordPressFontControlsPort } from '../integrations/wordpress/appea
 import { createWordPressImageUploadPort } from '../integrations/wordpress/media/wordpress-image-upload';
 import { createWordPressMediaFramePort } from '../integrations/wordpress/media/wordpress-media-frame';
 import { createWordPressNativeSubmissionPort } from '../integrations/wordpress/native-form/wordpress-native-submission';
+import { createWordPressNativePublishPort } from '../integrations/wordpress/native-form/create-wordpress-native-publish-port';
 import { createWordPressPreviewPort } from '../integrations/wordpress/preview/create-wordpress-preview-port';
 import { createWordPressRevisionPort } from '../integrations/wordpress/revisions/create-wordpress-revision-port';
 import { createWordPressEditorSessionPort } from '../integrations/wordpress/session/create-wordpress-editor-session-port';
@@ -283,6 +284,7 @@ export function mountAdminEditor(
     mediaPicker: bootstrap.mediaPicker,
     mediaPickerFailureMessage: bootstrap.labels.mediaPickerFailure,
     mediaPickerFrame: createWordPressMediaFramePort(runtime.wordpress.media),
+    nativePublishPort: createWordPressNativePublishPort(documentRef),
     nativeSubmissionPort: createWordPressNativeSubmissionPort(form),
     onDocumentOwnerChange: (owned) => {
       nativeEditor?.classList.toggle('easymde-native-editor-hidden', owned);

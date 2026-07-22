@@ -60,7 +60,7 @@ body:has(.easymde-editor.is-immersive) {
     z-index: 100100;
     inset: 0;
     display: grid;
-    grid-template-columns: 252px minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr);
     grid-template-rows: 60px 56px minmax(0, 1fr);
     margin: 0;
     border: 0;
@@ -76,11 +76,12 @@ body:has(.easymde-editor.is-immersive) {
 }
 
 .easymde-immersive-header {
+    position: relative;
     grid-column: 1 / -1;
     grid-row: 1;
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: 16px;
     min-width: 0;
     padding: 0 24px;
     border-bottom: 1px solid #e2e8f0;
@@ -104,24 +105,45 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-traffic-light.is-yellow { background: #ffbd44; }
 .easymde-traffic-light.is-green { background: #00ca4e; }
 .easymde-immersive-brand-name { color: #334155; font-size: 13px; font-weight: 600; }
-.easymde-immersive-brand-divider { width: 1px; height: 20px; margin-left: 7px; background: #e2e8f0; }
-.easymde-immersive-title-wrap { min-width: 0; gap: 18px; flex: 1; }
-.easymde-immersive-title-wrap input {
-    width: min(320px, 32vw);
+.easymde-immersive-brand-divider { height: 20px; margin-left: 7px; color: #e2e8f0; font-size: 18px; line-height: 20px; }
+.easymde-immersive-title-wrap { min-width: 0; gap: 12px; flex: 0 1 auto; }
+.easymde-immersive-title-field { display: flex; min-width: 72px; max-width: 320px; align-items: center; gap: 6px; }
+.easymde-immersive-title-field > svg { flex: 0 0 auto; color: #94a3b8; }
+.easymde-immersive-title-measure { display: grid; min-width: 72px; max-width: 296px; overflow: hidden; }
+.easymde-immersive-title-measure > span,
+.easymde-immersive-title-measure > textarea {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    max-width: 296px;
+    color: #1e293b;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
+    white-space: pre;
+}
+.easymde-immersive-title-measure > span { visibility: hidden; overflow: hidden; }
+.easymde-immersive-title-measure > textarea {
+    box-sizing: border-box;
+    width: 100%;
+    height: 20px;
     min-width: 100px;
     padding: 0;
     border: 0;
     outline: 0;
+    resize: none;
+    overflow: hidden;
     background: transparent;
-    color: #1e293b;
-    font-size: 14px;
-    font-weight: 500;
 }
 .easymde-immersive-save-state { display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 12px; white-space: nowrap; }
 .easymde-immersive-save-state svg { color: #10b981; }
 .easymde-immersive-save-state.is-dirty svg { color: #f59e0b; }
-.easymde-immersive-stats { color: #64748b; font-family: "EasyMDE JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: nowrap; }
-.easymde-immersive-header-actions { gap: 12px; margin-left: auto; }
+.easymde-immersive-stats { display: flex; gap: 16px; color: #64748b; font-family: "EasyMDE JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: nowrap; }
+.easymde-immersive-header-spacer { min-width: 0; }
+.easymde-immersive-header-spacer.is-primary { flex: 1 1 0; }
+.easymde-immersive-header-spacer.is-secondary { flex: 3 1 0; }
+.easymde-immersive-header-actions { gap: 12px; flex: 0 0 auto; }
+.easymde-immersive-ai-omission-spacer { width: 82px; height: 1px; flex: 0 0 82px; }
 .easymde-immersive-view-switch { gap: 4px; margin: 0; padding: 2px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
 .easymde-immersive-view-switch button {
     display: flex;
@@ -137,6 +159,7 @@ body:has(.easymde-editor.is-immersive) {
     cursor: pointer;
 }
 .easymde-immersive-view-switch button.is-active { border-color: #c7d2fe; background: #fff; color: #4c6ef5; box-shadow: 0 0 0 3px #eef2ff; }
+.easymde-immersive-header-divider { width: 1px; height: 20px; margin: 0 8px; background: #e2e8f0; }
 .easymde-immersive-publish {
     display: inline-flex;
     align-items: center;
@@ -152,8 +175,14 @@ body:has(.easymde-editor.is-immersive) {
     font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
+    position: relative;
+    min-width: 116px;
+    overflow: hidden;
+    transition: background-color 150ms, box-shadow 150ms, transform 150ms;
 }
-.easymde-immersive-exit { display: grid; width: 34px; height: 34px; padding: 0; place-items: center; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; color: #64748b; cursor: pointer; }
+.easymde-immersive-publish:hover { background: #1d4ed8; box-shadow: 0 5px 13px rgba(37, 99, 235, .38); transform: translateY(-1px); }
+.easymde-immersive-publish-shine { position: absolute; top: 0; right: 0; left: 0; height: 1px; background: rgba(255, 255, 255, .2); }
+.easymde-immersive-publish-icon { position: relative; display: grid; width: 18px; height: 18px; place-items: center; border: 1px solid rgba(255, 255, 255, .15); border-radius: 5px; background: rgba(255, 255, 255, .1); }
 .easymde-immersive-toolbar-row {
     grid-column: 1 / -1;
     grid-row: 2;
@@ -194,10 +223,29 @@ body:has(.easymde-editor.is-immersive) {
     color: #475569;
     cursor: pointer;
 }
+.easymde-immersive-mode-button {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    place-items: center;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: transparent;
+    color: #64748b;
+    cursor: pointer;
+    transition: background-color 100ms, border-color 100ms, color 100ms, transform 100ms;
+}
+.easymde-immersive-mode-button:hover { background: rgba(0, 0, 0, .045); color: #1e293b; }
+.easymde-immersive-mode-button:active { transform: scale(.95); }
+.easymde-immersive-mode-button.is-active { border-color: #0f172a; background: #0f172a; color: #fff; }
 .easymde-immersive-secondary-actions { gap: 10px; }
-.easymde-immersive-secondary-actions button { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid #e2e8f0; border-radius: 9px; background: #fff; color: #475569; font-size: 12.5px; cursor: pointer; }
+.easymde-immersive-secondary-actions button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: transparent; color: #475569; font-size: 12.5px; cursor: pointer; }
 .easymde-immersive-secondary-actions button:disabled { opacity: .5; cursor: not-allowed; }
-.easymde-immersive-secondary-actions .easymde-immersive-wechat { border-color: rgba(7, 192, 96, 0.36); background: linear-gradient(180deg, #f7fffa 0%, #edf9f1 100%); color: #0f7d3b; font-weight: 600; }
+.easymde-immersive-secondary-actions .easymde-immersive-wechat { height: 36px; padding: 0 12px; border-color: rgba(7, 192, 96, 0.36); border-radius: 12px; background: linear-gradient(180deg, #f7fffa 0%, #edf9f1 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85); color: #0f7d3b; font-size: 13px; font-weight: 600; }
+.easymde-immersive-secondary-actions .easymde-immersive-wechat:hover { border-color: #07c060; background: linear-gradient(180deg, #f2fff7 0%, #e5f8eb 100%); box-shadow: 0 8px 18px rgba(7, 192, 96, .16); color: #075f2c; transform: translateY(-1px); }
+.easymde-immersive-wechat-glyph { display: inline-flex; width: 22px; height: 22px; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: 50%; background: #fff; box-shadow: inset 0 0 0 1px rgba(7, 192, 96, .18); color: #07c060; }
+.easymde-immersive-wechat-glyph svg { width: 18px; height: 18px; }
 .easymde-immersive-secondary-actions .easymde-toolbar-popover-anchor { display: block; }
 .easymde-immersive-secondary-actions .easymde-toolbar-popover-anchor > .easymde-toolbar-button {
     width: auto;
@@ -213,34 +261,139 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-immersive-secondary-actions .easymde-toolbar-popover-anchor > .easymde-toolbar-button:hover,
 .easymde-immersive-secondary-actions .easymde-toolbar-popover-anchor > .easymde-toolbar-button:focus { border-color: #e2e8f0; background: rgba(0, 0, 0, .045); color: #0f172a; box-shadow: none; transform: none; }
 .easymde-immersive-control-label { font-size: 12.5px; font-weight: 400; line-height: 1; }
+.easymde-immersive-theme-accent { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #dc2626; }
+.easymde-immersive-theme-accent[data-theme="default"] { background: #333; }
+.easymde-immersive-theme-accent[data-theme="orange-heart"] { background: #ff6200; }
+.easymde-immersive-theme-accent[data-theme="chazi-purple"] { background: #8e44ad; }
+.easymde-immersive-theme-accent[data-theme="nenqing-green"] { background: #00b4a6; }
+.easymde-immersive-theme-accent[data-theme="green-vitality"] { background: #27ae60; }
+.easymde-immersive-theme-accent[data-theme="red-crimson"] { background: #e74c3c; }
+.easymde-immersive-theme-accent[data-theme="blue-ying"] { background: #1e90ff; }
+.easymde-immersive-theme-accent[data-theme="lanqing"] { background: #4a90e2; }
+.easymde-immersive-theme-accent[data-theme="yamabuki"] { background: #d4ac0d; }
+.easymde-immersive-theme-accent[data-theme="grid-black"] { background: #6c63ff; }
+.easymde-immersive-theme-accent[data-theme="geek-black"] { background: #00e676; }
+.easymde-immersive-theme-accent[data-theme="rose-purple"] { background: #e91e8c; }
+.easymde-immersive-theme-accent[data-theme="ningye-purple"] { background: #b39ddb; }
+.easymde-immersive-theme-accent[data-theme="tech-blue"] { background: #29b6f6; }
+.easymde-immersive-theme-accent[data-theme="qingbi-liujin"] { background: #009688; }
+.easymde-immersive-theme-accent[data-theme="qinghe-zhusha"] { background: #c0392b; }
+.easymde-immersive-theme-accent[data-theme="cute-green"] { background: #4caf50; }
+.easymde-immersive-theme-accent[data-theme="fullstack-blue"] { background: #1565c0; }
+.easymde-immersive-theme-accent[data-theme="minimal-black"] { background: #212121; }
+.easymde-immersive-theme-accent[data-theme="orange-blue"] { background: #ff6b35; }
+.easymde-immersive-theme-accent[data-theme="frontend-peak"] { background: #4a90d9; }
+.easymde-immersive-theme-accent[data-theme="cupid-busy"] { background: #ff4081; }
+.easymde-toolbar-popover.is-immersive-panel { top: calc(100% + 8px); border-color: #e4e9f0; background: #fff; color: #172236; box-shadow: 0 18px 44px rgba(37, 49, 72, .17), 0 2px 8px rgba(37, 49, 72, .06); }
+.easymde-toolbar-popover-appearance-panel.is-immersive-panel { width: 248px; padding: 0; overflow: visible; border-radius: 20px; }
+.easymde-toolbar-popover-font-panel.is-immersive-panel { width: min(360px, calc(100vw - 24px)); padding: 20px; border-color: #e5e7eb; border-radius: 16px; box-shadow: 0 24px 48px rgba(15, 23, 42, .2); }
+.easymde-toolbar-popover.is-immersive-panel .easymde-toolbar-control { color: #202b40; font-size: 13px; }
+.easymde-toolbar-popover.is-immersive-panel .easymde-toolbar-control-label { font-weight: 600; }
+.easymde-toolbar-popover.is-immersive-panel select { min-height: 41px; border-color: #d7dee8; border-radius: 8px; background-color: #fff; box-shadow: 0 3px 8px rgba(28, 52, 92, .09); color: #2f72ed; font-size: 13px; font-weight: 600; }
+.easymde-toolbar-popover-font-panel.is-immersive-panel::before { display: none; }
+.easymde-toolbar-popover-font-panel.is-immersive-panel .easymde-toolbar-control { grid-template-columns: 80px minmax(0, 1fr); gap: 12px; margin-bottom: 12px; font-size: 13px; }
+.easymde-toolbar-popover-font-panel.is-immersive-panel .easymde-toolbar-control select { min-height: 32px; color: #56637a; font-size: 13px; font-weight: 400; }
+.easymde-toolbar-popover-font-panel.is-immersive-panel .easymde-toolbar-help { margin-top: 12px; color: #94a3b8; font-size: 11.5px; line-height: 1.6; }
+.easymde-immersive-theme-panel-header { position: relative; display: flex; height: 64px; align-items: center; padding: 0 24px; }
+.easymde-immersive-theme-panel-header::after { position: absolute; right: 0; bottom: 5px; left: 0; height: 1px; background: #e6ebf1; content: ""; }
+.easymde-immersive-theme-panel-header > span { display: flex; align-items: center; gap: 12px; transform: translateY(-4px); }
+.easymde-immersive-theme-panel-header strong { color: #172236; font-size: 14px; font-weight: 600; line-height: 20px; transform: translateX(-3px); }
+.easymde-immersive-theme-panel-body { padding: 8px 22px 9px; transform: translateY(-11px); }
+.easymde-immersive-theme-field + .easymde-immersive-theme-field { margin-top: 21px; }
+.easymde-immersive-theme-field-label { display: block; margin-bottom: 7px; color: #202b40; font-size: 13px; font-weight: 600; line-height: 18px; }
+.easymde-immersive-theme-select { position: relative; display: flex; width: calc(100% - 20px); height: 45px; margin: 0 auto; align-items: center; }
+.easymde-immersive-secondary-actions .easymde-immersive-theme-select > button {
+    display: flex;
+    width: 100%;
+    height: 41px;
+    padding: 0 16px;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid #d7dee8;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 3px 8px rgba(28, 52, 92, .09);
+    color: #2f72ed;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 16px;
+}
+.easymde-immersive-secondary-actions .easymde-immersive-theme-select > button:hover { border-color: #bfcde2; background: #fdfeff; }
+.easymde-immersive-theme-select > button > span { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.easymde-immersive-theme-select > button > span > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.easymde-immersive-theme-swatch { display: inline-block; width: 11px; height: 11px; flex: 0 0 auto; overflow: hidden; border: 1px solid rgba(0, 0, 0, .1); border-radius: 50%; box-shadow: 0 1px 2px rgba(15, 23, 42, .12); }
+.easymde-immersive-theme-swatch.is-split { display: inline-flex; }
+.easymde-immersive-theme-swatch.is-split > span { height: 100%; flex: 1; }
+.easymde-immersive-theme-options { position: absolute; z-index: 70; top: 100%; right: 0; left: 0; max-height: 224px; margin-top: 6px; padding: 4px 0; overflow-y: auto; border: 1px solid #dce2eb; border-radius: 8px; background: #fff; box-shadow: 0 12px 26px rgba(32, 48, 76, .16); }
+.easymde-immersive-secondary-actions .easymde-immersive-theme-options > button { display: flex; width: 100%; height: auto; min-height: 32px; align-items: center; gap: 9px; padding: 8px 11px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: #526078; font-size: 13px; line-height: 16px; text-align: left; }
+.easymde-immersive-secondary-actions .easymde-immersive-theme-options > button:hover,
+.easymde-immersive-secondary-actions .easymde-immersive-theme-options > button:focus { background: #f4f7fb; }
+.easymde-immersive-secondary-actions .easymde-immersive-theme-options > button.is-active { background: #f7f9fc; color: #2f72ed; font-weight: 600; }
+.easymde-immersive-theme-option-check { display: flex; width: 10px; flex: 0 0 auto; justify-content: center; color: #7d8aa4; }
+.easymde-immersive-secondary-actions .easymde-immersive-custom-css-trigger { display: flex; width: calc(100% - 20px); height: 42px; margin: 22px auto 0; align-items: center; justify-content: center; gap: 10px; border: 1px solid #c8d7ff; border-radius: 8px; background: #fafbff; box-shadow: inset 0 0 0 1px rgba(52, 120, 245, .04); color: #3478f5; font-size: 13px; font-weight: 600; line-height: 16px; }
+.easymde-immersive-secondary-actions .easymde-immersive-custom-css-trigger:hover { border-color: #afc5ff; background: #f5f8ff; }
+.easymde-toolbar-popover-appearance-panel.is-immersive-panel > .easymde-custom-css-panel { margin: 0 12px 12px; }
+.easymde-immersive-font-field { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.easymde-immersive-font-field > span { width: 80px; flex: 0 0 auto; color: #334155; font-size: 13px; font-weight: 600; }
+.easymde-immersive-font-select { position: relative; min-width: 0; flex: 1; }
+.easymde-immersive-secondary-actions .easymde-immersive-font-select > button { display: flex; width: 100%; height: 32px; padding: 0 12px; align-items: center; justify-content: space-between; border: 1px solid #e3e7ee; border-radius: 4px; background: #fff; color: #56637a; font-size: 13px; font-weight: 400; }
+.easymde-immersive-secondary-actions .easymde-immersive-font-select > button:hover { border-color: #cbd3df; }
+.easymde-immersive-font-select > button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.easymde-immersive-font-options { position: absolute; z-index: 70; top: 100%; right: 0; left: 0; min-width: 220px; max-height: 280px; margin-top: 4px; padding: 4px 0; overflow-y: auto; border: 1px solid #e3e7ee; border-radius: 8px; background: #fff; box-shadow: 0 10px 30px rgba(50, 65, 90, .14); }
+.easymde-immersive-secondary-actions .easymde-immersive-font-options > button { display: flex; width: 100%; height: auto; min-height: 34px; align-items: center; gap: 10px; padding: 9px 16px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: #56637a; font-size: 13px; font-weight: 400; text-align: left; }
+.easymde-immersive-secondary-actions .easymde-immersive-font-options > button:hover,
+.easymde-immersive-secondary-actions .easymde-immersive-font-options > button:focus { background: #f2f5f9; }
+.easymde-immersive-secondary-actions .easymde-immersive-font-options > button.is-active { background: #f7f9fc; color: #46546b; }
+.easymde-immersive-font-options > button > span:first-child { display: flex; width: 12px; flex: 0 0 auto; justify-content: center; color: #7d8aa4; }
 .easymde-immersive-outline {
     grid-column: 1;
     grid-row: 3;
     min-width: 0;
     margin: 12px 0 12px 12px;
-    overflow: auto;
+    display: flex;
+    min-width: 190px;
+    max-width: 360px;
+    flex-direction: column;
+    overflow: hidden;
     border: 1px solid #e8ebef;
     border-radius: 16px;
     background: linear-gradient(180deg, #fdfdff 0%, #fafbfe 100%);
     box-shadow: 0 1px 2px rgba(15, 23, 42, .03);
 }
-.easymde-immersive-outline-title { display: flex; align-items: center; gap: 7px; height: 44px; padding: 0 12px 0 16px; border-bottom: 1px solid #e8ebef; color: #64748b; font-size: 13px; font-weight: 500; }
-.easymde-immersive-outline-title .easymde-immersive-outline-close { display: grid; width: 26px; min-height: 26px; margin-left: auto; padding: 0; place-items: center; color: #94a3b8; }
-.easymde-immersive-outline button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding-right: 12px; border: 0; background: transparent; color: #475569; text-align: left; font-size: 12.5px; cursor: pointer; }
-.easymde-immersive-outline button:hover { background: #f8f9fb; color: #1e293b; }
+.easymde-immersive-outline-title { display: flex; height: 44px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 0 12px 0 16px; border-bottom: 1px solid #e8ebef; color: #64748b; font-size: 13px; font-weight: 500; }
+.easymde-immersive-outline-title .easymde-immersive-outline-close { display: grid; width: 26px; min-height: 26px; margin-left: auto; padding: 0; border: 0; border-radius: 6px; background: transparent; box-shadow: none; place-items: center; color: #94a3b8; }
+.easymde-immersive-outline-tree { flex: 1 1 auto; overflow: auto; padding: 14px 16px; }
+.easymde-immersive-outline-level { position: relative; }
+.easymde-immersive-outline-level:not(.is-depth-0) { margin-left: 10px; padding-left: 16px; border-left: 1.5px solid #ecedf0; }
+.easymde-immersive-outline-level button { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 0; overflow: visible; border: 0; background: transparent; color: #475569; text-align: left; cursor: pointer; transition: color 100ms, background-color 100ms; }
+.easymde-immersive-outline-level button.is-top-level { gap: 9px; padding: 9px 10px; border-radius: 9px; }
+.easymde-immersive-outline-level button > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: 1.375; white-space: nowrap; }
+.easymde-immersive-outline button:hover { background: #fafbfc; color: #1e293b; }
 .easymde-immersive-outline button.is-active { position: relative; background: #eef2ff; color: #4c6ef5; font-weight: 700; }
-.easymde-immersive-outline button.is-active::before { position: absolute; top: 3px; bottom: 3px; left: 0; width: 3px; border-radius: 2px; background: #4c6ef5; content: ""; }
-.easymde-immersive-outline button.is-level-1 { color: #1f2430; font-size: 14.5px; font-weight: 700; }
-.easymde-immersive-outline button.is-level-2 { color: #3d4350; font-size: 13.5px; font-weight: 500; }
-.easymde-immersive-outline button.is-level-3 { color: #5b616d; font-size: 13px; font-weight: 600; }
-.easymde-immersive-outline button.is-level-4 { color: #868c97; font-size: 12.5px; font-weight: 500; }
-.easymde-immersive-outline button.is-level-5 { color: #aeb2bb; font-size: 12px; font-weight: 500; }
-.easymde-immersive-outline button.is-level-6 { color: #c4c8d0; font-size: 11.5px; font-weight: 500; }
-.easymde-immersive-outline-dot { flex: 0 0 auto; color: #d3d6dc; font-size: 12px; font-weight: 500; }
-.easymde-immersive-outline-dot.is-section { color: #b0b4bc; }
+.easymde-immersive-outline button.is-active::before { position: absolute; top: 2px; bottom: 2px; left: -17px; width: 3px; border-radius: 2px; background: #4c6ef5; content: ""; }
+.easymde-immersive-outline button.is-top-level.is-active::before { left: -16px; }
+.easymde-immersive-outline button.is-top-level { color: #3d4350; font-size: 14.5px; font-weight: 400; }
+.easymde-immersive-outline button.is-top-level.is-active { color: #4c6ef5; font-size: 15px; font-weight: 700; }
+.easymde-immersive-outline button.is-level-1:not(.is-top-level) { color: #1f2430; font-size: 15px; font-weight: 700; }
+.easymde-immersive-outline button.is-level-2:not(.is-top-level) { color: #3d4350; font-size: 14.5px; font-weight: 600; }
+.easymde-immersive-outline button.is-level-3 { color: #5b616d; font-size: 14px; font-weight: 600; }
+.easymde-immersive-outline button.is-level-4 { color: #868c97; font-size: 13.5px; font-weight: 500; }
+.easymde-immersive-outline button.is-level-5 { color: #aeb2bb; font-size: 13px; font-weight: 500; }
+.easymde-immersive-outline button.is-level-6 { color: #cdd0d6; font-size: 12.5px; font-weight: 500; }
+.easymde-immersive-outline-icon { flex: 0 0 auto; color: #b0b4bc; }
+.easymde-immersive-outline button.is-active .easymde-immersive-outline-icon { color: #4c6ef5; }
+.easymde-immersive-outline-elbow { position: absolute; top: 50%; left: -16px; width: 12px; height: 1.5px; background: #ecedf0; transform: translateY(-50%); }
+.easymde-immersive-outline-dash { flex: 0 0 auto; color: #d3d6dc; font-size: 12px; user-select: none; }
+.easymde-immersive-outline button b { color: #171a20; font: inherit; }
 .easymde-immersive-outline-empty { padding: 0 16px; color: #94a3b8; font-size: 12px; }
-.easymde-immersive-outline-collapse { position: sticky; bottom: 0; justify-content: flex-start; height: 40px; margin-top: auto; padding: 0 16px !important; border-top: 1px solid #e8ebef !important; background: #fbfcfe !important; color: #64748b !important; font-size: 11.5px !important; }
+.easymde-immersive-outline-footer { height: 44px; flex: 0 0 auto; border-top: 1px solid #e8ebef; background: #fbfcfe; }
+.easymde-immersive-outline-footer button { display: flex; width: 100%; height: 100%; align-items: center; gap: 6px; padding: 0 16px; border: 0; background: transparent; color: #64748b; font-size: 12.5px; cursor: pointer; }
 .easymde-immersive-outline-show { position: fixed; z-index: 100110; bottom: 18px; left: 18px; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; color: #475569; box-shadow: 0 2px 8px rgba(15, 23, 42, .08); cursor: pointer; }
+.easymde-immersive-outline-show svg { transform: rotate(180deg); }
+.easymde-immersive-outline-resizer { z-index: 2; grid-column: 1; grid-row: 3; display: flex; width: 14px; height: calc(100% - 24px); margin: 0; padding: 0; align-self: center; justify-self: end; align-items: center; justify-content: center; border: 0; cursor: col-resize; transform: translateX(7px); }
+.easymde-immersive-outline-resizer { background: linear-gradient(90deg, transparent 6px, transparent 6px); transition: background-color 100ms; }
+.easymde-immersive-outline-resizer:hover,
+.easymde-immersive-outline-resizer:focus { background: linear-gradient(90deg, transparent 6px, #dde1e8 6px, #dde1e8 7px, transparent 7px); }
 .easymde-editor.is-immersive > .easymde-workspace { grid-column: 2; grid-row: 3; height: auto; min-height: 0; gap: 12px; padding: 12px; border: 0; background: #f6f6f8; }
 .easymde-editor.is-immersive:not(:has(.easymde-immersive-outline)) { grid-template-columns: 1fr; }
 .easymde-editor.is-immersive:not(:has(.easymde-immersive-outline)) > .easymde-workspace { grid-column: 1; }
@@ -248,17 +401,43 @@ body:has(.easymde-editor.is-immersive) {
 [dir="rtl"] .easymde-immersive-outline-show { right: 18px; left: auto; }
 .easymde-editor.is-immersive .easymde-pane { border: 1px solid #e8ebef; border-radius: 16px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .03); }
 .easymde-editor.is-immersive .easymde-pane-source { border-right: 1px solid #e8ebef; }
-.easymde-editor.is-immersive .easymde-pane-header { height: 44px; background: #fbfcfe; line-height: 44px; }
-.easymde-editor.is-immersive .easymde-source-react .cm-content { padding: 14px 14px 60px 0; counter-reset: easymde-line; }
-.easymde-editor.is-immersive .easymde-source-react .cm-line { position: relative; min-height: 28px; padding-left: 50px; counter-increment: easymde-line; }
-.easymde-editor.is-immersive .easymde-source-react .cm-line::before { position: absolute; left: 0; width: 32px; color: #c6ccd6; content: counter(easymde-line); text-align: right; font-size: 12px; font-style: normal; font-weight: 400; }
-.easymde-editor.is-immersive .easymde-source-react .cm-editor { background: #f2f2f2; font-size: 14.5px; line-height: 28px; }
-.easymde-editor.is-immersive .easymde-source-react .cm-editor { font-family: "EasyMDE JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+.easymde-editor.is-immersive .easymde-pane-header { display: flex; height: 44px; align-items: center; justify-content: space-between; padding: 0 16px; background: #fafbfc; color: #3d4350; font-size: 13px; font-weight: 600; letter-spacing: .3px; line-height: 44px; }
+.easymde-immersive-more-actions { display: grid; width: 20px; height: 20px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #b0b4bc; cursor: pointer; }
+.easymde-immersive-more-actions:hover { background: #ecedf0; color: #666; }
+.easymde-editor.is-immersive .easymde-source-react .cm-content { padding: 14px 14px 60px 0; caret-color: #1f2430; counter-reset: easymde-line; }
+.easymde-editor.is-immersive .easymde-source-react .cm-line { position: relative; min-height: 28px; padding-left: 37px; counter-increment: easymde-line; }
+.easymde-editor.is-immersive .easymde-source-react .cm-line::before { position: absolute; left: 0; width: 26px; color: #c7cbd3; content: counter(easymde-line); text-align: right; font-size: 13.5px; font-style: normal; font-weight: 400; }
+.easymde-editor.is-immersive .easymde-source-react { min-height: 0; flex: 1 1 auto; }
+.easymde-editor.is-immersive .easymde-source-react .cm-editor { color: #3d4350; background: #f2f2f2; font-size: 14.5px; line-height: 28px; }
+.easymde-editor.is-immersive .easymde-source-react .cm-editor { font-family: SFMono-Regular, Menlo, Consolas, monospace; font-feature-settings: "calt" 0; }
+.easymde-editor.is-immersive .easymde-source-react .cm-focused { outline: 0; }
+.easymde-immersive-statusbar { display: flex; min-height: 36px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 0 16px; border-top: 1px solid #e8ebef; background: #fff; color: #b0b4bc; font-size: 12px; }
+.easymde-immersive-statusbar > span:last-child,
+.easymde-immersive-autosave-state { display: flex; align-items: center; gap: 5px; }
+.easymde-immersive-autosave-state > span { width: 6px; height: 6px; border-radius: 50%; background: #10b981; }
 .easymde-editor.is-immersive .easymde-preview { padding: 34px 48px 60px; background: #fff; }
 .easymde-editor.is-immersive-source .easymde-workspace { grid-template-columns: 1fr; grid-template-areas: "source"; }
 .easymde-editor.is-immersive-source .easymde-pane-preview { display: none; }
 .easymde-editor.is-immersive-preview .easymde-workspace { grid-template-columns: 1fr; grid-template-areas: "preview"; }
 .easymde-editor.is-immersive-preview .easymde-pane-source { display: none; }
+
+.easymde-immersive-settings-catcher { position: fixed; z-index: 100180; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; }
+.easymde-immersive-settings-popover { position: fixed; z-index: 100190; width: 300px; max-width: 88vw; max-height: 70vh; overflow-y: auto; border: 1px solid #ecedf0; border-radius: 14px; background: #fff; box-shadow: 0 16px 40px rgba(20, 20, 40, .18); color: #171a20; font-family: "EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.easymde-immersive-settings-tail { position: absolute; top: -6px; width: 12px; height: 12px; border-top: 1px solid #ecedf0; border-left: 1px solid #ecedf0; border-radius: 2px 0 0; background: #fff; transform: rotate(45deg); }
+.easymde-immersive-settings-popover > header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 10px; border-bottom: 1px solid #ecedf0; }
+.easymde-immersive-settings-popover > header strong { font-size: 15px; font-weight: 800; }
+.easymde-immersive-settings-popover > header button { display: grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #9ca0a8; cursor: pointer; }
+.easymde-immersive-settings-popover > header button:hover { background: #f3f4f6; color: #4b5160; }
+.easymde-immersive-settings-list { padding: 4px 14px 10px; }
+.easymde-immersive-settings-list > label { position: relative; display: flex; width: 100%; min-height: 62px; align-items: center; gap: 8px; padding: 10px 3px; border-bottom: 1px solid #ecedf0; background: transparent; color: #171a20; text-align: left; cursor: pointer; }
+.easymde-immersive-settings-list > label:last-child { border-bottom: 0; }
+.easymde-immersive-settings-list > label:hover { background: #f8f9fb; }
+.easymde-immersive-settings-list > label:focus-within { outline: 2px solid #bfdbfe; outline-offset: -2px; }
+.easymde-immersive-settings-list input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.easymde-immersive-settings-check { display: grid; width: 22px; height: 22px; flex: 0 0 auto; place-items: center; color: #0b6cff; }
+.easymde-immersive-settings-list > label > span:last-child { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+.easymde-immersive-settings-list strong { font-size: 13.5px; font-weight: 700; }
+.easymde-immersive-settings-list small { color: #9ca0a8; font-size: 11.5px; line-height: 1.4; }
 
 .easymde-immersive-modal-backdrop {
     position: fixed;
@@ -341,11 +520,143 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-immersive-history-body .easymde-preview-react-root { min-height: 100%; }
 .easymde-immersive-modal:has(.easymde-immersive-history-body) { width: min(1024px, 100%); }
 
+.easymde-history-backdrop { position: fixed; z-index: 100210; inset: 0; display: flex; align-items: stretch; padding: 30px; background: rgba(17, 24, 39, .35); backdrop-filter: blur(2px); }
+.easymde-history-backdrop-dismiss { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; }
+.easymde-history-dialog { position: relative; z-index: 1; display: flex; box-sizing: border-box; width: min(960px, calc(100vw - 60px)); max-height: calc(100vh - 60px); margin: 0 auto; overflow: hidden; border: 1px solid #e3e7ee; border-radius: 12px; background: #fff; box-shadow: 0 24px 70px rgba(31, 45, 70, .24); color: #172033; }
+.easymde-history-sidebar { display: flex; box-sizing: border-box; width: 240px; flex: 0 0 240px; flex-direction: column; border-right: 1px solid #e3e7ee; background: #f7f9fc; }
+.easymde-history-sidebar > header { display: flex; align-items: center; justify-content: space-between; padding: 20px 20px 12px; }
+.easymde-history-sidebar > header > span { display: flex; align-items: center; gap: 8px; color: #172033; font-size: 13px; font-weight: 600; letter-spacing: 0; }
+.easymde-history-sidebar > header svg { color: #7d8aa4; }
+.easymde-history-sidebar > header button { display: grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 0; border-radius: 4px; background: transparent; color: #7d8aa4; cursor: pointer; }
+.easymde-history-sidebar > header button:hover { background: #edf1f6; color: #172033; }
+.easymde-history-filter { display: flex; align-items: center; justify-content: space-between; padding: 0 20px 12px; }
+.easymde-history-filter > span { color: #7d8aa4; font-size: 11px; }
+.easymde-history-filter label { position: relative; }
+.easymde-history-filter select { box-sizing: border-box; height: 28px; min-width: 68px; padding: 0 24px 0 10px; appearance: none; border: 1px solid #e3e7ee; border-radius: 4px; outline: 0; background: #fff; box-shadow: none; color: #56637a; font-size: 11px; line-height: 28px; cursor: pointer; }
+.easymde-history-filter label svg { position: absolute; top: 9px; right: 7px; color: #56637a; pointer-events: none; }
+.easymde-history-rule { width: 100%; height: 1px; flex: 0 0 auto; margin-bottom: 4px; background: #e7ebf1; }
+.easymde-history-list { flex: 1; overflow-y: auto; }
+.easymde-history-list > p { padding: 12px 20px; color: #7d8aa4; font-size: 12px; }
+.easymde-history-list > button { display: flex; box-sizing: border-box; width: 100%; min-height: 62px; flex-direction: column; gap: 4px; padding: 12px 20px; border: 0; border-bottom: 1px solid #e7ebf1; border-left: 2px solid transparent; background: transparent; color: #28364a; text-align: left; cursor: pointer; transition: background-color 120ms; }
+.easymde-history-list > button:hover { background: #f1f4f8; }
+.easymde-history-list > button.is-selected { border-left-color: #e11d2e; background: #fdf1f0; }
+.easymde-history-list > button > span { display: flex; width: 100%; align-items: center; gap: 8px; }
+.easymde-history-list > button svg { flex: 0 0 auto; color: #71809a; }
+.easymde-history-list > button.is-selected svg, .easymde-history-list > button.is-selected strong { color: #e11d2e; }
+.easymde-history-list strong { color: #28364a; font-size: 12px; font-weight: 500; }
+.easymde-history-list time { padding-left: 19px; color: #71809a; font-family: "EasyMDE JetBrains Mono", ui-monospace, monospace; font-size: 11px; }
+.easymde-history-content { display: flex; min-width: 0; flex: 1; flex-direction: column; background: #fff; }
+.easymde-history-content > header { display: flex; box-sizing: border-box; height: 70.375px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 0 26.25px; border-bottom: 1px solid #e3e7ee; }
+.easymde-history-content > header > div { display: flex; flex-direction: column; gap: 2px; }
+.easymde-history-content > header strong { color: #172033; font-size: 13px; font-weight: 600; }
+.easymde-history-content > header time { color: #7d8aa4; font-family: "EasyMDE JetBrains Mono", ui-monospace, monospace; font-size: 12px; }
+.easymde-history-content > header button { display: inline-flex; height: 32px; align-items: center; gap: 8px; padding: 0 16px; border: 0; border-radius: 8px; background: #e11d2e; box-shadow: 0 3px 10px rgba(225, 29, 46, .22); color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; }
+.easymde-history-content > header button:hover { background: #c91525; }
+.easymde-history-content > header button:disabled { opacity: .45; cursor: not-allowed; }
+.easymde-history-confirm { margin: 0; padding: 8px 28px; border-bottom: 1px solid #fecdd3; background: #fff1f2; color: #be123c; font-size: 12px; }
+.easymde-history-content .easymde-immersive-history-preview { flex: 1; padding: 32px 40px; overflow-y: auto; }
+
+.easymde-publish-backdrop {
+    position: fixed;
+    z-index: 100220;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px 12px;
+    background: rgba(15, 23, 42, .42);
+    backdrop-filter: blur(4px);
+}
+.easymde-publish-backdrop-dismiss { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; }
+.easymde-publish-dialog { position: relative; display: flex; box-sizing: border-box; width: min(1120px, calc(100vw - 24px)); height: min(728.25px, calc(100vh - 32px)); max-height: calc(100vh - 32px); flex-direction: column; overflow: hidden; border: 1px solid #eef0f4; border-radius: 20px; background: #fff; box-shadow: 0 2px 6px rgba(15, 23, 42, .04), 0 24px 60px -20px rgba(15, 23, 42, .18); color: #0f172a; font-size: 15px; }
+.easymde-publish-dialog-header { position: relative; display: flex; box-sizing: border-box; height: 84.5px; flex: 0 0 auto; align-items: flex-start; gap: 12px; padding: 21px 26.25px 16px; overflow: hidden; border-color: rgba(15, 23, 42, .07); background: linear-gradient(105deg, #fff 0%, #fff 46%, #f7f9fd 100%); }
+.easymde-publish-dialog-header::after { position: absolute; right: 0; bottom: 0; width: 64%; height: 52px; background: linear-gradient(175deg, transparent 0 47%, rgba(203, 217, 238, .26) 48% 100%); content: ""; pointer-events: none; }
+.easymde-publish-heading-icon { position: relative; z-index: 1; display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; border-radius: 14px; background: linear-gradient(160deg, #dbeafe 0%, #eaf1ff 60%, #f3f7ff 100%); box-shadow: inset 0 0 0 1px rgba(59, 130, 246, .12); color: #2f6bef; }
+.easymde-publish-heading-icon::after { position: absolute; top: -8px; right: -7px; color: #ffb020; content: "✦"; font-size: 15px; filter: drop-shadow(0 1px 2px rgba(255, 176, 32, .45)); }
+.easymde-publish-dialog-header > div:last-child { position: relative; z-index: 1; min-width: 0; flex: 1; padding-right: 40px; }
+.easymde-publish-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 4px; }
+.easymde-publish-title-row h2 { margin: 0; color: #0f172a; font-size: 20px; font-weight: 700; letter-spacing: .2px; line-height: 1.25; }
+.easymde-publish-title-row > span { padding: 2px 10px; border: 1px solid #dbeafe; border-radius: 999px; background: #eff6ff; color: #2563eb; font-size: 11.5px; font-weight: 500; }
+.easymde-publish-dialog-header p { margin: 0; color: #64748b; font-size: 12.5px; }
+.easymde-publish-dialog-close { position: absolute; z-index: 3; top: 20px; right: 22.5px; display: grid; width: 30px; height: 30px; padding: 0; place-items: center; border: 1px solid #e6e9ef; border-radius: 9px; background: #fff; color: #64748b; cursor: pointer; transition: border-color 120ms, color 120ms; }
+.easymde-publish-dialog-close:hover { border-color: #cbd5e1; color: #0f172a; }
+.easymde-publish-dialog-divider { height: 1px; flex: 0 0 auto; background: #edf0f5; }
+.easymde-publish-dialog-body { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1.62fr) minmax(320px, 1fr); gap: 26.25px; padding: 25px 26.25px 8px; overflow-y: auto; border-color: rgba(15, 23, 42, .07); }
+.easymde-publish-dialog-primary { min-width: 0; }
+.easymde-publish-field { margin: 0 0 22px; }
+.easymde-publish-field h3, .easymde-publish-dialog-aside > h3 { display: flex; align-items: center; gap: 8px; margin: 0; color: #0f172a; font-size: 14.5px; font-weight: 700; line-height: 20px; }
+.easymde-publish-field:first-child h3 svg { color: #2563eb; }
+.easymde-publish-field:nth-child(2) h3 svg { color: #7c3aed; }
+.easymde-publish-field:nth-child(3) h3 svg { color: #0f9f6e; }
+.easymde-publish-field > p { margin: 2px 0 8px; color: #94a3b8; font-size: 12.5px; }
+.easymde-publish-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.easymde-publish-field-heading > span { color: #94a3b8; font-size: 12px; font-variant-numeric: tabular-nums; }
+.easymde-publish-field-heading > span.is-count { padding: 2px 10px; border: 1px solid #dbeafe; border-radius: 999px; background: #eff6ff; color: #2563eb; font-size: 11.5px; }
+.easymde-publish-tags-input { display: flex; box-sizing: border-box; min-height: 47px; flex-wrap: wrap; align-items: center; gap: 7.5px; padding: 9.375px 11.25px; border: 1px solid #e6e9ef; border-radius: 12px; background: #fbfcfe; transition: border-color 120ms, box-shadow 120ms; }
+.easymde-publish-tags-input:focus-within { border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
+.easymde-publish-tags-input > span { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 12px; border-radius: 999px; background: #f1f5f9; color: #334155; font-size: 12.5px; font-weight: 500; }
+.easymde-publish-tags-input > span button { display: grid; width: 14px; height: 14px; padding: 0; place-items: center; border: 0; border-radius: 50%; background: transparent; color: #94a3b8; cursor: pointer; }
+.easymde-publish-tags-input > span button:hover { background: #e2e8f0; color: #334155; }
+.easymde-publish-tags-input input { min-width: 130px; height: 24px; flex: 1; padding: 0; border: 0; outline: 0; background: transparent; box-shadow: none; color: #0f172a; font-size: 12.5px; }
+.easymde-publish-field > textarea { box-sizing: border-box; width: 100%; min-height: 92px; padding: 12px 14px; resize: none; border: 1px solid #e6e9ef; border-radius: 12px; outline: 0; background: #fbfcfe; box-shadow: none; color: #334155; font-size: 13px; line-height: 1.7; }
+.easymde-publish-field > textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
+.easymde-publish-category-box { max-height: 210px; padding: 8px 12px; overflow-y: auto; border: 1px solid #e6e9ef; border-radius: 12px; background: #fbfcfe; }
+.easymde-publish-categories, .easymde-publish-categories ul { margin: 0; padding: 0; list-style: none; }
+.easymde-publish-categories ul { margin-left: 15px; border-left: 1px solid #e2e8f0; }
+.easymde-publish-categories label { display: flex; min-height: 31px; align-items: center; gap: 8px; padding-left: calc(var(--easymde-category-depth) * 3px); color: #334155; font-size: 12.5px; cursor: pointer; }
+.easymde-publish-categories input, .easymde-publish-visibility input, .easymde-publish-sticky input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.easymde-publish-checkbox, .easymde-publish-sticky > span { display: grid; box-sizing: border-box; width: 17px; height: 17px; flex: 0 0 auto; place-items: center; border: 1.5px solid #c7cedb; border-radius: 4px; background: #fff; color: #fff; }
+.easymde-publish-categories input:checked + .easymde-publish-checkbox, .easymde-publish-sticky input:checked + span { border-color: #2563eb; background: #2563eb; }
+.easymde-publish-dialog-aside { min-width: 0; width: 100%; }
+.easymde-publish-dialog-aside > h3 { margin-bottom: 12px; }
+.easymde-publish-featured-empty { display: flex; box-sizing: border-box; width: 100%; min-height: 254px; flex-direction: column; align-items: center; padding: 18px 16px 16px; border: 1.5px dashed #c9d7f6; border-radius: 14px; background: #fbfdff; color: #0f172a; text-align: center; cursor: pointer; transition: transform 120ms; }
+.easymde-publish-featured-empty:hover { transform: translateY(-1px); }
+.easymde-publish-featured-empty strong { margin: 4px 0; font-size: 16px; }
+.easymde-publish-featured-empty > span:not(.easymde-publish-featured-placeholder) { color: #64748b; font-size: 13px; font-weight: 500; }
+.easymde-publish-featured-empty small { margin-top: 4px; color: #64748b; font-size: 12.5px; }
+.easymde-publish-featured-placeholder { position: relative; display: block; width: 200px; height: 133px; }
+.easymde-publish-featured-placeholder > span { position: absolute; top: 23px; left: 52px; display: grid; box-sizing: border-box; width: 112px; height: 104px; place-items: center; border: 1.5px solid #a9c2f1; border-radius: 12px; background: #f8fbff; color: #2f6bef; }
+.easymde-publish-featured-placeholder .is-back { transform: rotate(-8deg) translate(-10px, 9px); opacity: .65; }
+.easymde-publish-featured-placeholder .is-middle { transform: rotate(6deg) translate(9px, -6px); }
+.easymde-publish-featured-placeholder .is-front { border: 2px solid #2f6bef; background: linear-gradient(150deg, #fff 0 42%, #d5e3fc 43% 62%, #739eeb 63%); box-shadow: 0 5px 9px rgba(37, 99, 235, .18); transform: rotate(12deg); }
+.easymde-publish-featured-selected { overflow: hidden; border: 1px solid #e6e9ef; border-radius: 14px; background: #fff; }
+.easymde-publish-featured-selected > div { aspect-ratio: 16 / 9; overflow: hidden; background: #f1f5f9; }
+.easymde-publish-featured-selected img { width: 100%; height: 100%; object-fit: cover; }
+.easymde-publish-featured-selected footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; }
+.easymde-publish-featured-selected button { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border: 0; border-radius: 8px; background: transparent; color: #334155; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.easymde-publish-featured-selected button:last-child { color: #e11d48; }
+.easymde-publish-visibility { margin-top: 14px; padding: 14px 16px; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; }
+.easymde-publish-visibility > h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #0f172a; font-size: 13.5px; font-weight: 700; }
+.easymde-publish-visibility > h3 svg { color: #0f9f6e; }
+.easymde-publish-visibility > div[role="radiogroup"] { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.easymde-publish-visibility > div[role="radiogroup"] label { display: flex; min-height: 34px; align-items: center; justify-content: center; gap: 6px; padding: 0 8px; border: 1px solid #e2e8f0; border-radius: 9px; background: #fff; color: #475569; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.easymde-publish-visibility > div[role="radiogroup"] label.is-active { border-color: #bfdbfe; background: #eff6ff; color: #2563eb; }
+.easymde-publish-visibility > div[role="radiogroup"] label > span { display: grid; width: 14px; height: 14px; place-items: center; border: 1px solid #cbd5e1; border-radius: 50%; background: #fff; }
+.easymde-publish-visibility > div[role="radiogroup"] label.is-active > span { border-color: #2563eb; }
+.easymde-publish-visibility > div[role="radiogroup"] label.is-active i { width: 6px; height: 6px; border-radius: 50%; background: #2563eb; }
+.easymde-publish-sticky { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: #334155; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.easymde-publish-password { margin-top: 12px; }
+.easymde-publish-password label { display: block; margin-bottom: 6px; color: #334155; font-size: 12px; font-weight: 600; }
+.easymde-publish-password input { box-sizing: border-box; width: 100%; height: 38px; padding: 0 12px; border: 1px solid #e2e8f0; border-radius: 9px; outline: 0; background: #fbfcfe; box-shadow: none; color: #0f172a; font-size: 12.5px; }
+.easymde-publish-password input:focus { border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
+.easymde-publish-password input[aria-invalid="true"] { border-color: #f43f5e; }
+.easymde-publish-password p { margin: 6px 0 0; color: #e11d48; font-size: 11.5px; font-weight: 500; }
+.easymde-publish-private-note { margin: 12px 0 0; color: #64748b; font-size: 11.5px; line-height: 1.5; }
+.easymde-publish-dialog-footer { display: flex; box-sizing: border-box; height: 71.375px; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; padding: 13.125px 26.25px 18.75px; border-color: rgba(15, 23, 42, .07); }
+.easymde-publish-dialog-footer > p { display: flex; min-width: 0; align-items: center; gap: 8px; margin: 0; color: #64748b; font-size: 12px; }
+.easymde-publish-dialog-footer > p > span { display: grid; width: 20px; height: 20px; flex: 0 0 auto; place-items: center; border-radius: 6px; background: #eff6ff; color: #2563eb; }
+.easymde-publish-dialog-footer > div { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.easymde-publish-dialog-footer button { min-height: 36px; padding: 0 16px; border: 1px solid #e6e9ef; border-radius: 10px; background: #fff; color: #0f172a; font-size: 13px; font-weight: 600; cursor: pointer; }
+.easymde-publish-dialog-footer button.is-primary { display: inline-flex; width: 120px; min-height: 37.5px; align-items: center; justify-content: center; gap: 6px; border: 0; border-color: rgba(15, 23, 42, .07); background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%); box-shadow: 0 5px 14px rgba(37, 99, 235, .32); color: #fff; transition: transform 120ms; }
+.easymde-publish-dialog-footer button.is-primary:hover { transform: translateY(-1px); }
+.easymde-publish-dialog button:disabled, .easymde-publish-dialog input:disabled, .easymde-publish-dialog textarea:disabled { cursor: not-allowed; opacity: .65; }
+
 @media (max-width: 900px) {
     .easymde-editor.is-immersive { grid-template-columns: 1fr; }
     .easymde-immersive-outline { display: none; }
     .easymde-editor.is-immersive > .easymde-workspace { grid-column: 1; }
     .easymde-immersive-stats, .easymde-immersive-brand-name { display: none; }
+    .easymde-publish-dialog-body { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 640px) {
@@ -362,6 +673,10 @@ body:has(.easymde-editor.is-immersive) {
     .easymde-immersive-modal-backdrop { padding: 12px; }
     .easymde-immersive-history-body { grid-template-columns: 1fr; height: calc(100vh - 160px); }
     .easymde-immersive-history-list { max-height: 180px; border-right: 0; border-bottom: 1px solid #e3e7ee; }
+    .easymde-publish-dialog-header { padding-right: 20px; padding-left: 20px; }
+    .easymde-publish-dialog-body { padding: 18px 20px 8px; }
+    .easymde-publish-dialog-footer { align-items: stretch; flex-direction: column; padding: 14px 20px; }
+    .easymde-publish-dialog-footer > div { width: 100%; }
 }
 
 .easymde-editor-flash {

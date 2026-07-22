@@ -56,6 +56,27 @@ function createPort(overrides: Partial<AppearancePort> = {}): AppearancePort {
 }
 
 describe('AppearanceControls', () => {
+  it('renders the reference palette trigger and live theme accent in immersive mode', () => {
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    const trigger = screen.getByRole('button', { name: 'Appearance' });
+    expect(trigger.querySelector('svg')).not.toBeNull();
+    expect(
+      trigger.querySelector('.easymde-immersive-theme-accent')?.getAttribute(
+        'data-theme'
+      )
+    ).toBe('default');
+    expect(trigger.querySelector('.dashicons')).toBeNull();
+  });
+
   it('anchors the panel to the appearance trigger instead of the page', async () => {
     const user = userEvent.setup();
     render(

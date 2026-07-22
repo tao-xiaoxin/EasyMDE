@@ -76,36 +76,97 @@ export type EditorRootBootstrap = Readonly<{
   fonts: FontControlsBootstrap;
   imageUpload: ImageUploadBootstrap;
   immersiveStrings: Readonly<{
+    autoSave: string;
+    autoSaveDescription: string;
+    autoSaveEnabled: string;
     cancel: string;
     characters: string;
+    close: string;
+    column: string;
     edit: string;
+    editMode: string;
+    editorSettings: string;
+    enter: string;
     exit: string;
     hideOutline: string;
     history: string;
     historyEmpty: string;
     historyError: string;
     historyLoading: string;
+    historyAll: string;
+    historyCount: string;
+    historyVersions: string;
     immersive: string;
     insert: string;
+    insertTable: string;
+    line: string;
     minutes: string;
+    manualSave: string;
+    moreActions: string;
+    markdown: string;
     noHeadings: string;
     outline: string;
+    outlineDescription: string;
     preview: string;
+    previewMode: string;
     publish: string;
     readingTime: string;
     restore: string;
     restoreConfirm: string;
+    restoreThisVersion: string;
+    resizeOutline: string;
     saved: string;
+    settings: string;
     showOutline: string;
     split: string;
+    splitMode: string;
+    splitPreview: string;
+    splitPreviewDescription: string;
+    syncScroll: string;
+    syncScrollDescription: string;
     table: string;
     tableColumns: string;
     tableRows: string;
+    theme: string;
+    themeSettings: string;
     title: string;
     unsaved: string;
     viewModes: string;
     wechat: string;
+    wordCount: string;
+    wordCountDescription: string;
     words: string;
+    addTags: string;
+    categories: string;
+    categoriesDescription: string;
+    categoriesSelected: string;
+    closePublish: string;
+    continueAddingTags: string;
+    excerpt: string;
+    excerptPlaceholder: string;
+    featuredImage: string;
+    imageRecommendation: string;
+    imageRequirements: string;
+    noWriteBeforeSubmit: string;
+    password: string;
+    passwordPlaceholder: string;
+    passwordRequired: string;
+    preparingPublish: string;
+    private: string;
+    privateDescription: string;
+    public: string;
+    publishDescription: string;
+    remove: string;
+    removeTag: string;
+    replace: string;
+    selectFeaturedImage: string;
+    sticky: string;
+    tags: string;
+    tagsDescription: string;
+    updateArticle: string;
+    updateDescription: string;
+    updateExisting: string;
+    visibility: string;
   }>;
   layout: EditorLayoutBootstrap;
   localDrafts: EditorRootLocalDraftsBootstrap;
@@ -346,36 +407,97 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     imageUpload,
     immersiveStrings: Object.fromEntries(
       [
+        'autoSave',
+        'autoSaveDescription',
+        'autoSaveEnabled',
         'cancel',
         'characters',
+        'close',
+        'column',
         'edit',
+        'editMode',
+        'editorSettings',
+        'enter',
         'exit',
         'hideOutline',
         'history',
         'historyEmpty',
         'historyError',
         'historyLoading',
+        'historyAll',
+        'historyCount',
+        'historyVersions',
         'immersive',
         'insert',
+        'insertTable',
+        'line',
         'minutes',
+        'manualSave',
+        'moreActions',
+        'markdown',
         'noHeadings',
         'outline',
+        'outlineDescription',
         'preview',
+        'previewMode',
         'publish',
         'readingTime',
         'restore',
         'restoreConfirm',
+        'restoreThisVersion',
+        'resizeOutline',
         'saved',
+        'settings',
         'showOutline',
         'split',
+        'splitMode',
+        'splitPreview',
+        'splitPreviewDescription',
+        'syncScroll',
+        'syncScrollDescription',
         'table',
         'tableColumns',
         'tableRows',
+        'theme',
+        'themeSettings',
         'title',
         'unsaved',
         'viewModes',
         'wechat',
-        'words'
+        'wordCount',
+        'wordCountDescription',
+        'words',
+        'addTags',
+        'categories',
+        'categoriesDescription',
+        'categoriesSelected',
+        'closePublish',
+        'continueAddingTags',
+        'excerpt',
+        'excerptPlaceholder',
+        'featuredImage',
+        'imageRecommendation',
+        'imageRequirements',
+        'noWriteBeforeSubmit',
+        'password',
+        'passwordPlaceholder',
+        'passwordRequired',
+        'preparingPublish',
+        'private',
+        'privateDescription',
+        'public',
+        'publishDescription',
+        'remove',
+        'removeTag',
+        'replace',
+        'selectFeaturedImage',
+        'sticky',
+        'tags',
+        'tagsDescription',
+        'updateArticle',
+        'updateDescription',
+        'updateExisting',
+        'visibility'
       ].map((key) => [
         key,
         boundedString(immersive[key], 'editor-root-immersive-label-invalid')

@@ -6,16 +6,17 @@ import {
   useState
 } from '@wordpress/element';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
+import type {
+  NativeFeaturedImage,
+  NativePublishDraft,
+  NativePublishSnapshot
+} from '../../../contracts/ports/native-publish-port';
 import {
-  Check,
-  Clock3,
-  Columns2,
-  Eye,
-  History,
-  ListTree,
-  Maximize,
-  PenLine,
-  Send,
+  ChevronDown,
+  Clock,
+  Info,
+  RotateCcw,
+  Save,
   Table2,
   X
 } from '../../../generated/lucide-icons';
@@ -33,39 +34,16 @@ import {
   tableMarkdown,
   type ImmersiveViewMode
 } from '../immersive-editor';
+import { ImmersiveHeader } from './ImmersiveHeader';
+import { ImmersiveOutline } from './ImmersiveOutline';
+import { ImmersivePublishDialog } from './ImmersivePublishDialog';
+import { ImmersiveToolbar } from './ImmersiveToolbar';
+import type {
+  ImmersiveSettings,
+  ImmersiveStrings
+} from './immersive-editor-ui-types';
 
-export type ImmersiveStrings = Readonly<{
-  cancel: string;
-  characters: string;
-  edit: string;
-  exit: string;
-  hideOutline: string;
-  history: string;
-  historyEmpty: string;
-  historyError: string;
-  historyLoading: string;
-  immersive: string;
-  insert: string;
-  minutes: string;
-  noHeadings: string;
-  outline: string;
-  preview: string;
-  publish: string;
-  readingTime: string;
-  restore: string;
-  restoreConfirm: string;
-  saved: string;
-  showOutline: string;
-  split: string;
-  table: string;
-  tableColumns: string;
-  tableRows: string;
-  title: string;
-  unsaved: string;
-  viewModes: string;
-  wechat: string;
-  words: string;
-}>;
+export type { ImmersiveStrings } from './immersive-editor-ui-types';
 
 type Props = Readonly<{
   documentSession: EditorDocumentSession;
@@ -77,7 +55,16 @@ type Props = Readonly<{
   onCopyWechat: () => void;
   onExit: () => void;
   onFailure: (code: string) => void;
-  onPublish: () => void;
+  localDraftsEnabled: boolean;
+  scrollSyncEnabled: boolean;
+  onLocalDraftsEnabledChange: (enabled: boolean) => void;
+  readPublishSnapshot: () => NativePublishSnapshot;
+  onConfirmPublish: (
+    draft: NativePublishDraft,
+    original: NativePublishSnapshot
+  ) => boolean;
+  onSelectFeaturedImage: () => Promise<NativeFeaturedImage | null>;
+  onScrollSyncEnabledChange: (enabled: boolean) => void;
   onViewModeChange: (mode: ImmersiveViewMode) => void;
   strings: ImmersiveStrings;
 }>;
@@ -172,12 +159,12 @@ function TableDialog({
     <Modal
       closeLabel={strings.cancel}
       environment={environment}
-      label={strings.table}
+      label={strings.insertTable}
       onClose={onClose}
     >
       <h2>
         <Table2 size={18} />
-        {strings.table}
+        {strings.insertTable}
       </h2>
       <p className="easymde-immersive-table-size">
         {activeRows} × {activeColumns}
@@ -225,11 +212,11 @@ function TableDialog({
           <input
             type="number"
             min="1"
-            max="12"
+            max="20"
             value={columns}
             onChange={(event) =>
               setColumns(
-                Math.max(1, Math.min(12, Number(event.target.value) || 1))
+                Math.max(1, Math.min(20, Number(event.target.value) || 1))
               )
             }
           />
@@ -244,7 +231,7 @@ function TableDialog({
           className="is-primary"
           onClick={() => onInsert(rows, columns)}
         >
-          {strings.insert}
+          {strings.insertTable}
         </button>
       </div>
     </Modal>
@@ -275,7 +262,15 @@ function HistoryDialog({
   const [preview, setPreview] = useState<RevisionPreview | null>(null);
   const [failed, setFailed] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'auto' | 'manual'>('all');
   const surfaceRef = useRef<HTMLElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const previous = environment.activeElement();
+    dialogRef.current?.querySelector<HTMLElement>('button')?.focus();
+    return () => previous?.focus();
+  }, [environment]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -323,61 +318,74 @@ function HistoryDialog({
     restoreRevision(selected.restoreUrl);
   };
 
+  const filteredItems = items?.filter(
+    (item) => 'all' === filter || item.type === filter
+  );
+  const selectedLabel =
+    'manual' === selected?.type ? strings.manualSave : strings.autoSave;
+
   return (
-    <Modal
-      closeLabel={strings.cancel}
-      environment={environment}
-      label={strings.history}
-      onClose={onClose}
-    >
-      <h2>
-        <History size={18} />
-        {strings.history}
-      </h2>
-      <div className="easymde-immersive-history-body">
-        <div className="easymde-immersive-history-list">
-          {failed ? <p role="alert">{strings.historyError}</p> : null}
-          {!failed && null === items ? (
-            <p role="status">{strings.historyLoading}</p>
-          ) : null}
-          {items && !items.length ? <p>{strings.historyEmpty}</p> : null}
-          {items?.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={selected?.id === item.id ? 'is-selected' : ''}
-              onClick={() => setSelected(item)}
-            >
-              <Clock3 size={14} />
-              <span>{item.dateLabel}</span>
-            </button>
-          ))}
-        </div>
-        <div className="easymde-immersive-history-preview">
-          {preview ? (
-            <SafePreviewHtmlSink
-              className="easymde-preview easymde-immersive-revision-preview"
-              html={preview.html}
-              surfaceRef={surfaceRef}
-            />
-          ) : null}
-        </div>
+    <div className="easymde-history-backdrop">
+      <button type="button" className="easymde-history-backdrop-dismiss" tabIndex={-1} aria-label={strings.cancel} onClick={onClose} />
+      <div
+        ref={dialogRef}
+        className="easymde-history-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={strings.historyVersions}
+        onKeyDown={(event) => {
+          trapFocus(event);
+          if ('Escape' === event.key) {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+      >
+        <aside className="easymde-history-sidebar">
+          <header>
+            <span>{strings.historyVersions}<Info size={13} strokeWidth={2} /></span>
+            <button type="button" aria-label={strings.cancel} onClick={onClose}><X size={14} /></button>
+          </header>
+          <div className="easymde-history-filter">
+            <span>{strings.historyCount.replace('%s', String(filteredItems?.length ?? 0))}</span>
+            <label>
+              <select value={filter} aria-label={strings.historyAll} onChange={(event) => setFilter(event.currentTarget.value as typeof filter)}>
+                <option value="all">{strings.historyAll}</option>
+                <option value="auto">{strings.autoSave}</option>
+                <option value="manual">{strings.manualSave}</option>
+              </select>
+              <ChevronDown size={10} strokeWidth={2.5} />
+            </label>
+          </div>
+          <div className="easymde-history-rule" />
+          <div className="easymde-history-list">
+            {failed ? <p role="alert">{strings.historyError}</p> : null}
+            {!failed && null === items ? <p role="status">{strings.historyLoading}</p> : null}
+            {items && !items.length ? <p>{strings.historyEmpty}</p> : null}
+            {filteredItems?.map((item) => {
+              const manual = 'manual' === item.type;
+              return (
+                <button key={item.id} type="button" className={selected?.id === item.id ? 'is-selected' : ''} onClick={() => setSelected(item)}>
+                  <span>{manual ? <Save size={11} strokeWidth={2.5} /> : <Clock size={11} strokeWidth={2} />}<strong>{manual ? strings.manualSave : strings.autoSave}</strong></span>
+                  <time dateTime={item.date}>{item.dateLabel}</time>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+        <section className="easymde-history-content">
+          <header>
+            <div><strong>{selectedLabel}</strong><time dateTime={selected?.date}>{selected?.dateLabel}</time></div>
+            <button type="button" disabled={!selected} onClick={restore}><RotateCcw size={12} strokeWidth={2.5} />{strings.restoreThisVersion}</button>
+          </header>
+          {confirming ? <p className="easymde-history-confirm" role="alert">{strings.restoreConfirm}</p> : null}
+          <div className="easymde-immersive-history-preview">
+            {preview ? <SafePreviewHtmlSink className="easymde-preview easymde-immersive-revision-preview" html={preview.html} surfaceRef={surfaceRef} /> : null}
+          </div>
+        </section>
       </div>
-      <div className="easymde-immersive-modal-actions">
-        {confirming ? <p role="alert">{strings.restoreConfirm}</p> : null}
-        <button type="button" onClick={onClose}>
-          {strings.cancel}
-        </button>
-        <button
-          type="button"
-          className="is-primary"
-          disabled={!selected}
-          onClick={restore}
-        >
-          {strings.restore}
-        </button>
-      </div>
-    </Modal>
+    </div>
   );
 }
 
@@ -388,10 +396,16 @@ export function ImmersiveEditor({
   restoreRevision,
   styleControls,
   toolbar,
+  localDraftsEnabled,
+  scrollSyncEnabled,
   onCopyWechat,
   onExit,
   onFailure,
-  onPublish,
+  onLocalDraftsEnabledChange,
+  readPublishSnapshot,
+  onConfirmPublish,
+  onSelectFeaturedImage,
+  onScrollSyncEnabledChange,
   onViewModeChange,
   strings
 }: Props) {
@@ -404,9 +418,18 @@ export function ImmersiveEditor({
   const [dirty, setDirty] = useState(() => documentSession.getSnapshot().dirty);
   const [mode, setMode] = useState<ImmersiveViewMode>('source');
   const [outlineOpen, setOutlineOpen] = useState(true);
-  const [activeOutline, setActiveOutline] = useState(0);
+  const [activeOutline, setActiveOutline] = useState<number | null>(null);
   const [tableOpen, setTableOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [publishSnapshot, setPublishSnapshot] =
+    useState<NativePublishSnapshot | null>(null);
+  const [settings, setSettings] = useState<ImmersiveSettings>({
+    autoSave: localDraftsEnabled,
+    outline: true,
+    splitPreview: true,
+    syncScroll: scrollSyncEnabled,
+    wordCount: true
+  });
 
   useEffect(
     () =>
@@ -436,16 +459,29 @@ export function ImmersiveEditor({
       event.preventDefault();
       if (tableOpen) setTableOpen(false);
       else if (historyOpen) setHistoryOpen(false);
+      else if (publishSnapshot) setPublishSnapshot(null);
       else onExit();
     };
     return environment.subscribeKeydown(handleKeyDown);
-  }, [environment, historyOpen, onExit, tableOpen]);
+  }, [environment, historyOpen, onExit, publishSnapshot, tableOpen]);
 
   const stats = useMemo(() => getDocumentStats(markdown), [markdown]);
   const outline = useMemo(() => extractOutline(markdown), [markdown]);
   const changeMode = (next: ImmersiveViewMode) => {
     setMode(next);
     onViewModeChange(next);
+  };
+  const changeSettings = (next: ImmersiveSettings) => {
+    setSettings(next);
+    if (next.autoSave !== settings.autoSave) {
+      onLocalDraftsEnabledChange(next.autoSave);
+    }
+    if (next.syncScroll !== settings.syncScroll) {
+      onScrollSyncEnabledChange(next.syncScroll);
+    }
+    if (!next.splitPreview && 'split' === mode) {
+      changeMode('source');
+    }
   };
   const changeTitle = (value: string) => {
     setTitle(value);
@@ -496,183 +532,63 @@ export function ImmersiveEditor({
           onClose={() => setHistoryOpen(false)}
         />
       ) : null}
-      <header className="easymde-immersive-header">
-        <div className="easymde-immersive-brand">
-          <span className="easymde-traffic-light is-red" />
-          <span className="easymde-traffic-light is-yellow" />
-          <span className="easymde-traffic-light is-green" />
-          <PenLine size={15} strokeWidth={2.5} />
-          <span className="easymde-immersive-brand-name">EasyMDE</span>
-          <span
-            className="easymde-immersive-brand-divider"
-            aria-hidden="true"
-          />
-        </div>
-        <div className="easymde-immersive-title-wrap">
-          <input
-            value={title}
-            onChange={(event) => changeTitle(event.target.value)}
-            aria-label={strings.title}
-            placeholder={`${strings.title}…`}
-          />
-          <span
-          className={`easymde-immersive-save-state${dirty ? ' is-dirty' : ''}`}
-        >
-          <Check size={13} />
-          <span>{dirty ? strings.unsaved : strings.saved}</span>
-          </span>
-          <span className="easymde-immersive-stats">
-            {stats.words} {strings.words}&nbsp;&nbsp; {stats.characters}{' '}
-            {strings.characters}&nbsp;&nbsp; {strings.readingTime}{' '}
-            {stats.minutes} {strings.minutes}
-          </span>
-        </div>
-        <div className="easymde-immersive-header-actions">
-          <fieldset className="easymde-immersive-view-switch">
-            <legend className="screen-reader-text">{strings.viewModes}</legend>
-            {(
-              [
-                ['source', strings.edit, PenLine],
-                ['split', strings.split, Columns2],
-                ['preview', strings.preview, Eye]
-              ] as const
-            ).map(([value, label, ModeIcon]) => (
-              <button
-                key={value}
-                type="button"
-                className={mode === value ? 'is-active' : ''}
-                aria-pressed={mode === value}
-                onClick={() => changeMode(value)}
-                >
-                  <ModeIcon size={13} />
-                  <span>{label}</span>
-              </button>
-            ))}
-          </fieldset>
-          <button
-            type="button"
-            className="easymde-immersive-publish"
-            onClick={onPublish}
-            >
-              <Send size={16} />
-              <span>{strings.publish}</span>
-          </button>
-          <button
-            type="button"
-            className="easymde-immersive-exit"
-            onClick={onExit}
-            aria-label={strings.exit}
-            title={strings.exit}
-          >
-            <X size={18} />
-          </button>
-        </div>
-      </header>
-      <div className="easymde-immersive-toolbar-row">
-        <div className="easymde-immersive-formatting">
-          {toolbar}
-          <span
-            className="easymde-immersive-toolbar-divider"
-            aria-hidden="true"
-          />
-          <button
-            type="button"
-            className="easymde-immersive-table-trigger"
-            onClick={() => setTableOpen(true)}
-            aria-label={strings.table}
-            title={strings.table}
-          >
-            <Table2 size={14} />
-          </button>
-        </div>
-        <div className="easymde-immersive-secondary-actions">
-          <button
-            type="button"
-            onClick={onCopyWechat}
-            className="easymde-immersive-wechat"
-          >
-            <span className="easymde-immersive-wechat-dot" />
-            {strings.wechat}
-          </button>
-          <button
-            type="button"
-            disabled={!revisionPort}
-            onClick={() => setHistoryOpen(true)}
-          >
-            <History size={14} />
-            {strings.history}
-          </button>
-          {styleControls}
-        </div>
-      </div>
-      {outlineOpen ? (
-        <aside
-          className="easymde-immersive-outline"
-          aria-label={strings.outline}
-        >
-          <div className="easymde-immersive-outline-title">
-            <ListTree size={14} />
-            {strings.outline}
-            <button
-              type="button"
-              className="easymde-immersive-outline-close"
-              onClick={() => setOutlineOpen(false)}
-              aria-label={strings.hideOutline}
-              title={strings.hideOutline}
-            >
-              <X size={14} />
-            </button>
-          </div>
-          {outline.length ? (
-            outline.map((item) => (
-              <button
-                key={`${item.position}-${item.index}`}
-                type="button"
-                className={`${activeOutline === item.index ? 'is-active ' : ''}is-level-${item.level}`}
-                style={{
-                  paddingInlineStart: `${12 + (item.level - 1) * 14}px`
-                }}
-                onClick={() => {
-                  setActiveOutline(item.index);
-                  documentSession.document.revealPosition(item.position);
-                }}
-              >
-                <span
-                  className={`easymde-immersive-outline-dot${item.level <= 2 ? ' is-section' : ''}`}
-                >
-                  {item.level <= 2 ? <ListTree size={13} /> : '—'}
-                </span>
-                {item.text}
-              </button>
-            ))
-          ) : (
-            <p className="easymde-immersive-outline-empty">
-              {strings.noHeadings}
-            </p>
-          )}
-          <button
-            type="button"
-            className="easymde-immersive-outline-collapse"
-            onClick={() => setOutlineOpen(false)}
-          >
-            <span aria-hidden="true">«</span>
-            {strings.hideOutline}
-          </button>
-        </aside>
-      ) : (
-        <button
-          type="button"
-          className="easymde-immersive-outline-show"
-          onClick={() => setOutlineOpen(true)}
-        >
-          <ListTree size={14} />
-          {strings.showOutline}
-        </button>
-      )}
+      {publishSnapshot ? (
+        <ImmersivePublishDialog
+          environment={environment}
+          snapshot={publishSnapshot}
+          strings={strings}
+          onClose={() => setPublishSnapshot(null)}
+          onConfirm={onConfirmPublish}
+          onSelectFeaturedImage={onSelectFeaturedImage}
+        />
+      ) : null}
+      <ImmersiveHeader
+        dirty={dirty}
+        mode={mode}
+        showStats={settings.wordCount}
+        stats={stats}
+        strings={strings}
+        title={title}
+        onModeChange={changeMode}
+        onPublish={() => setPublishSnapshot(readPublishSnapshot())}
+        onTitleChange={changeTitle}
+      />
+      <ImmersiveToolbar
+        historyAvailable={null !== revisionPort}
+        mode={mode}
+        settings={settings}
+        strings={strings}
+        styleControls={styleControls}
+        toolbar={toolbar}
+        onCopyWechat={onCopyWechat}
+        onExit={onExit}
+        onHistory={() => setHistoryOpen(true)}
+        onModeChange={changeMode}
+        onSettingsChange={changeSettings}
+        onTable={() => setTableOpen(true)}
+      />
+      {settings.outline ? (
+        <ImmersiveOutline
+          activeIndex={activeOutline}
+          items={outline}
+          open={outlineOpen}
+          strings={strings}
+          onOpenChange={setOutlineOpen}
+          onSelect={(item) => {
+            setActiveOutline(item.index);
+            documentSession.document.revealPosition(item.position);
+          }}
+        />
+      ) : null}
     </section>
   );
 }
 
 export function ImmersiveToggleIcon() {
-  return <Maximize size={14} strokeWidth={2} aria-hidden="true" />;
+  return (
+    <span
+      className="dashicons dashicons-fullscreen-alt"
+      aria-hidden="true"
+    />
+  );
 }

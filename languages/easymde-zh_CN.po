@@ -1020,6 +1020,9 @@ msgstr "默认：%s"
 msgid "characters"
 msgstr "字符"
 
+msgid "Enter immersive writing"
+msgstr "进入沉浸写作"
+
 msgid "Exit immersive writing"
 msgstr "退出沉浸写作"
 
@@ -1079,3 +1082,132 @@ msgstr "列数"
 
 msgid "Rows"
 msgstr "行数"
+
+msgid "Theme"
+msgstr "主题"
+
+msgid "Theme settings"
+msgstr "主题设置"
+
+msgid "Automatically save a local draft"
+msgstr "自动保存本地草稿"
+
+msgid "Auto save is enabled"
+msgstr "自动保存已开启"
+
+msgid "Column"
+msgstr "列"
+
+msgid "Edit mode"
+msgstr "编辑模式"
+
+msgid "Editor settings"
+msgstr "编辑器设置"
+
+msgid "Line"
+msgstr "行"
+
+msgid "More actions"
+msgstr "更多操作"
+
+msgid "Show heading navigation on the left"
+msgstr "左侧显示标题层级导航"
+
+msgid "Preview mode"
+msgstr "预览模式"
+
+msgid "Resize article outline"
+msgstr "调整大纲宽度"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Split mode"
+msgstr "分屏模式"
+
+msgid "Split preview"
+msgstr "分屏预览"
+
+msgid "Show live preview by default"
+msgstr "默认显示实时预览区域"
+
+msgid "Synchronized scrolling"
+msgstr "同步滚动"
+
+msgid "Keep the editor and preview in sync"
+msgstr "编辑区和预览区联动"
+
+msgid "Show words, characters, and reading time beside the title"
+msgstr "在文章标题旁显示词数、字符数与阅读时长"
+
+msgid "Add tags"
+msgstr "添加标签"
+
+msgid "Choose the sections this article belongs to."
+msgstr "选择文章归属的栏目。"
+
+msgid "Selected: %s"
+msgstr "已选 %s 项"
+
+msgid "Continue adding..."
+msgstr "继续添加..."
+
+msgid "Excerpt"
+msgstr "摘要"
+
+msgid "Write a short excerpt for search results, article lists, and sharing previews..."
+msgstr "为搜索结果、文章列表和分享预览写一段简短摘要..."
+
+msgid "Landscape images are recommended"
+msgstr "建议使用横向图片"
+
+msgid "Supports JPG, PNG, and WebP"
+msgstr "支持 JPG、PNG、WebP 格式"
+
+msgid "Nothing is written to WordPress before submission."
+msgstr "提交前不会写入 WordPress。"
+
+msgid "Enter access password"
+msgstr "输入访问密码"
+
+msgid "Ready to publish"
+msgstr "准备发布"
+
+msgid "Only site administrators and editors can view this article."
+msgstr "仅站点管理员和编辑可查看此文章。"
+
+msgid "Confirm the article details to publish it to the current WordPress site."
+msgstr "确认文章信息后，将发布到当前 WordPress 站点。"
+
+msgid "Remove tag: %s"
+msgstr "移除标签 %s"
+
+msgid "Replace"
+msgstr "替换"
+
+msgid "Stick to the top of the blog"
+msgstr "置于首页顶端"
+
+msgid "Press Enter or comma to add a tag."
+msgstr "输入后按 Enter 或逗号添加。"
+
+msgid "Update article"
+msgstr "更新文章"
+
+msgid "Confirm these changes to update the current WordPress article."
+msgstr "确认本次修改后，将更新当前 WordPress 文章。"
+
+msgid "Update existing article"
+msgstr "更新已有文章"
+
+msgid "%s revisions"
+msgstr "共 %s 条历史版本"
+
+msgid "Revision history"
+msgstr "历史版本"
+
+msgid "Restore this revision"
+msgstr "恢复到这个版本"
+
+msgid "Insert table"
+msgstr "插入表格"

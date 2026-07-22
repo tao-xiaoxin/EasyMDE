@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildOutlineTree,
   extractOutline,
   getDocumentStats,
   tableMarkdown
@@ -21,6 +22,21 @@ describe('immersive editor model', () => {
     ]);
   });
 
+  it('groups numbered sections as reference-level roots', () => {
+    const items = extractOutline(
+      '# Document\n## 1. Section\n# Heading 1\n## Heading 2\n## 2. Next'
+    );
+
+    const tree = buildOutlineTree(items);
+    expect(tree.map((node) => node.item.text)).toEqual([
+      'Document',
+      '1. Section',
+      '2. Next'
+    ]);
+    expect(tree[1]?.children[0]?.item.text).toBe('Heading 1');
+    expect(tree[1]?.children[0]?.children[0]?.item.text).toBe('Heading 2');
+  });
+
   it('creates a valid markdown table', () => {
     expect(tableMarkdown(2, 2)).toBe(
       '\n|  |  |\n| --- | --- |\n|  |  |\n'
@@ -30,6 +46,9 @@ describe('immersive editor model', () => {
       'immersive-table-dimensions-invalid'
     );
     expect(() => tableMarkdown(21, 2)).toThrow(
+      'immersive-table-dimensions-invalid'
+    );
+    expect(() => tableMarkdown(2, 21)).toThrow(
       'immersive-table-dimensions-invalid'
     );
   });

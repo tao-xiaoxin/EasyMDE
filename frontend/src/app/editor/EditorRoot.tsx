@@ -9,6 +9,7 @@ import {
   useState
 } from '@wordpress/element';
 import type { CSSProperties } from 'react';
+import { MoreHorizontal } from '../../generated/lucide-icons';
 
 import type { DocumentSourceBootstrap } from '../../contracts/bootstrap/document-source-bootstrap';
 import type {
@@ -36,6 +37,12 @@ import {
 } from '../../contracts/ports/editor-session-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type { NativeSubmissionPort } from '../../contracts/ports/native-submission-port';
+import type {
+  NativeFeaturedImage,
+  NativePublishDraft,
+  NativePublishPort,
+  NativePublishSnapshot
+} from '../../contracts/ports/native-publish-port';
 import type {
   MediaPickerDocumentPort,
   MediaPickerFramePort
@@ -89,6 +96,7 @@ import {
   ImmersiveToggleIcon
 } from '../../features/immersive-editor/ui/ImmersiveEditor';
 import type { ImmersiveViewMode } from '../../features/immersive-editor/immersive-editor';
+import { openFeaturedImagePicker } from '../../features/immersive-editor/open-featured-image-picker';
 
 export type EditorRootProps = Readonly<{
   appearance: AppearanceBootstrap;
@@ -120,6 +128,7 @@ export type EditorRootProps = Readonly<{
   mediaPickerFailureMessage: string;
   mediaPickerFrame: MediaPickerFramePort | null;
   nativeSubmissionPort: NativeSubmissionPort;
+  nativePublishPort: NativePublishPort;
   onDocumentOwnerChange: (owned: boolean) => void;
   onFailure: (code: string) => void;
   platform: ToolbarPlatform;
@@ -383,6 +392,7 @@ export function EditorRoot(props: EditorRootProps) {
   const previewAppearanceRef = useRef(props.appearance.state);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
+  const featuredImageOperationRef = useRef<Promise<NativeFeaturedImage | null> | null>(null);
   const rootActiveRef = useRef(true);
   const initialSubmissionStateRef = useRef({
     ...props.appearance.state,
@@ -404,6 +414,11 @@ export function EditorRoot(props: EditorRootProps) {
   const [immersive, setImmersive] = useState(false);
   const [immersiveMode, setImmersiveMode] =
     useState<ImmersiveViewMode>('source');
+  const [localDraftsEnabled, setLocalDraftsEnabled] = useState(
+    props.localDrafts.enabled
+  );
+  const [scrollSyncEnabled, setScrollSyncEnabled] = useState(true);
+  const [cursorPosition, setCursorPosition] = useState({ column: 1, line: 1 });
   const sessionSnapshot = useEditorSession(props.sessionPort);
   const protectedOperationError = useCallback(
     (operation: EditorSessionOperation) => {
@@ -666,18 +681,58 @@ export function EditorRoot(props: EditorRootProps) {
       wechatSession
     ]
   );
-  const publish = useCallback(() => {
+  const publish = useCallback((
+    draft: NativePublishDraft,
+    original: NativePublishSnapshot
+  ): boolean => {
     if (!documentSession)
       throw new Error('immersive-publish-session-unavailable');
     const sessionError = protectedOperationError('post-write');
-    if (sessionError) return;
+    if (sessionError) return false;
+    props.nativePublishPort.apply(draft);
     if (true !== props.publishPost(documentSession)) {
+      props.nativePublishPort.apply(original);
       props.onFailure('immersive-publish-command-unavailable');
+      return false;
     }
+    return true;
   }, [
     documentSession,
+    props.nativePublishPort,
     props.onFailure,
     props.publishPost,
+    protectedOperationError
+  ]);
+  const selectFeaturedImage = useCallback(() => {
+    if (featuredImageOperationRef.current) {
+      return featuredImageOperationRef.current;
+    }
+    const sessionError = protectedOperationError('authenticated');
+    const operation = sessionError
+      ? Promise.reject(sessionError)
+      : openFeaturedImagePicker(
+          props.mediaPickerFrame,
+          props.immersiveStrings.selectFeaturedImage
+        );
+    const reported = operation.catch((error: unknown) => {
+      props.onFailure(
+        error instanceof Error && /^featured-image-[a-z0-9-]+$/.test(error.message)
+          ? error.message
+          : 'featured-image-picker-failed'
+      );
+      return null;
+    });
+    featuredImageOperationRef.current = reported;
+    void reported.finally(() => {
+      if (featuredImageOperationRef.current === reported) {
+        featuredImageOperationRef.current = null;
+      }
+    });
+    return reported;
+  }, [
+    props.immersiveStrings.selectFeaturedImage,
+    props.mediaPickerFrame,
+    props.onFailure,
     protectedOperationError
   ]);
   const enterImmersive = useCallback(() => {
@@ -802,8 +857,20 @@ export function EditorRoot(props: EditorRootProps) {
   ]);
 
   useEffect(() => {
+    localDraftSessionRef.current?.setEnabled(localDraftsEnabled);
+  }, [localDraftsEnabled]);
+
+  useEffect(() => {
+    if (!documentSession) return undefined;
+    const update = () =>
+      setCursorPosition(documentSession.document.getCursorPosition());
+    update();
+    return documentSession.document.subscribe(update);
+  }, [documentSession]);
+
+  useEffect(() => {
     const previewRuntime = previewRuntimeRef.current;
-    if (!documentSession || !previewRuntime) {
+    if (!documentSession || !previewRuntime || !scrollSyncEnabled) {
       return;
     }
     const binding = props.scrollSyncPort.prepareBinding({
@@ -812,7 +879,12 @@ export function EditorRoot(props: EditorRootProps) {
     });
     binding.activate();
     return () => binding.dispose();
-  }, [documentSession, previewRuntimeReady, props.scrollSyncPort]);
+  }, [
+    documentSession,
+    previewRuntimeReady,
+    props.scrollSyncPort,
+    scrollSyncEnabled
+  ]);
 
   useLayoutEffect(() => {
     if (!previewRuntimeRef.current) return;
@@ -835,13 +907,19 @@ export function EditorRoot(props: EditorRootProps) {
         <ImmersiveEditor
           documentSession={documentSession}
           environment={props.immersiveEnvironment}
+          localDraftsEnabled={localDraftsEnabled}
           onCopyWechat={() => void wechatSession.copy()}
           onExit={exitImmersive}
           onFailure={props.onFailure}
-          onPublish={publish}
+          onLocalDraftsEnabledChange={setLocalDraftsEnabled}
+          onConfirmPublish={publish}
+          onSelectFeaturedImage={selectFeaturedImage}
+          readPublishSnapshot={props.nativePublishPort.read}
+          onScrollSyncEnabledChange={setScrollSyncEnabled}
           onViewModeChange={setImmersiveMode}
           revisionPort={revisionPort}
           restoreRevision={restoreRevision}
+          scrollSyncEnabled={scrollSyncEnabled}
           styleControls={
             <Fragment>
               <AppearanceControls
@@ -851,6 +929,8 @@ export function EditorRoot(props: EditorRootProps) {
                 }
                 onReady={handleAppearanceReady}
                 port={appearancePort}
+                immersiveLabel={props.immersiveStrings.theme}
+                immersiveTitle={props.immersiveStrings.themeSettings}
                 variant="immersive"
               />
               <FontControls
@@ -918,6 +998,18 @@ export function EditorRoot(props: EditorRootProps) {
                 toolbar={props.toolbar}
               />
             ) : null}
+            <button
+              ref={immersiveToggleRef}
+              type="button"
+              className="easymde-toolbar-button easymde-toolbar-button-compact easymde-toolbar-immersive-toggle"
+              aria-label={props.immersiveStrings.enter}
+              aria-pressed="false"
+              title={props.immersiveStrings.enter}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={enterImmersive}
+            >
+              <ImmersiveToggleIcon />
+            </button>
             <FontControls
               bootstrap={props.fonts}
               onFailure={() => props.onFailure('react-editor-fonts-failed')}
@@ -932,16 +1024,6 @@ export function EditorRoot(props: EditorRootProps) {
               onReady={handleAppearanceReady}
               port={appearancePort}
             />
-            <button
-              ref={immersiveToggleRef}
-              type="button"
-              className="easymde-toolbar-button easymde-toolbar-button-compact easymde-immersive-toggle"
-              aria-label={props.immersiveStrings.immersive}
-              title={props.immersiveStrings.immersive}
-              onClick={enterImmersive}
-            >
-              <ImmersiveToggleIcon />
-            </button>
           </div>
         </div>
       ) : null}
@@ -991,7 +1073,17 @@ export function EditorRoot(props: EditorRootProps) {
             data-easymde-document-owner="react"
           >
             <header className="easymde-pane-header">
-              {props.labels.source}
+              <span>{immersive ? props.immersiveStrings.markdown.toUpperCase() : props.labels.source}</span>
+              {immersive ? (
+                <button
+                  type="button"
+                  className="easymde-immersive-more-actions"
+                  aria-label={props.immersiveStrings.moreActions}
+                  title={props.immersiveStrings.moreActions}
+                >
+                  <MoreHorizontal size={14} strokeWidth={2} />
+                </button>
+              ) : null}
             </header>
             <div className="easymde-source easymde-source-react">
               <EditorDocumentSource
@@ -1001,6 +1093,22 @@ export function EditorRoot(props: EditorRootProps) {
                 titleField={props.titleField}
               />
             </div>
+            {immersive ? (
+              <footer className="easymde-immersive-statusbar">
+                <span>
+                  {`${props.immersiveStrings.line} ${cursorPosition.line}, ${props.immersiveStrings.column} ${cursorPosition.column}`}
+                </span>
+                <span>
+                  {props.immersiveStrings.markdown}
+                  {localDraftsEnabled ? (
+                    <span className="easymde-immersive-autosave-state">
+                      <span aria-hidden="true" />
+                      {props.immersiveStrings.autoSaveEnabled}
+                    </span>
+                  ) : null}
+                </span>
+              </footer>
+            ) : null}
           </section>
         }
         preview={

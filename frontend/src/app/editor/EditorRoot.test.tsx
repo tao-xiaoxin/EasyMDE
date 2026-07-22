@@ -137,35 +137,96 @@ function fixture(): EditorRootProps &
       }
     },
     immersiveStrings: {
+      autoSave: '自动保存',
+      autoSaveDescription: '自动保存本地草稿',
+      autoSaveEnabled: '自动保存已开启',
       cancel: '取消',
       characters: '字符',
+      close: '关闭',
+      column: '列',
       edit: '编辑',
+      editMode: '编辑模式',
+      editorSettings: '编辑器设置',
+      enter: '进入沉浸写作',
       exit: '退出沉浸写作',
       hideOutline: '隐藏大纲',
       history: '历史记录',
       historyEmpty: '暂无修订版本',
       historyError: '无法加载修订版本',
       historyLoading: '正在加载修订版本',
+      historyAll: '全部',
+      historyCount: '共 %s 条历史版本',
+      historyVersions: '历史版本',
       immersive: '沉浸写作',
       insert: '插入',
+      insertTable: '插入表格',
+      line: '行',
       minutes: '分钟',
+      manualSave: '手动保存',
+      moreActions: '更多操作',
+      markdown: 'Markdown',
       noHeadings: '暂无标题',
       outline: '文章大纲',
+      outlineDescription: '左侧显示标题层级导航',
       preview: '预览',
+      previewMode: '预览模式',
       publish: '发布文章',
       readingTime: '约',
       restore: '恢复修订版本',
       restoreConfirm: '未保存的更改将会丢失',
+      restoreThisVersion: '恢复到这个版本',
+      resizeOutline: '调整大纲宽度',
       saved: '已保存',
+      settings: '设置',
       showOutline: '显示大纲',
       split: '分屏',
+      splitMode: '分屏模式',
+      splitPreview: '分屏预览',
+      splitPreviewDescription: '默认显示实时预览区域',
+      syncScroll: '同步滚动',
+      syncScrollDescription: '编辑区和预览区联动',
       table: '表格',
       tableColumns: '列数',
       tableRows: '行数',
+      theme: '主题',
+      themeSettings: '主题设置',
+      addTags: '添加标签',
+      categories: '分类目录',
+      categoriesDescription: '选择文章归属的栏目。',
+      categoriesSelected: '已选 %s 项',
+      closePublish: '关闭发布弹窗',
+      continueAddingTags: '继续添加...',
+      excerpt: '摘要',
+      excerptPlaceholder: '撰写摘要...',
+      featuredImage: '特色图片',
+      imageRecommendation: '建议使用横向图片',
+      imageRequirements: '支持 JPG、PNG、WebP',
+      noWriteBeforeSubmit: '提交前不会写入 WordPress。',
+      password: '密码',
+      passwordPlaceholder: '输入访问密码',
+      passwordRequired: '请输入访问密码后再提交。',
+      preparingPublish: '准备发布',
+      private: '私密',
+      privateDescription: '仅站点管理员和编辑可查看此文章。',
+      public: '公开',
+      publishDescription: '确认文章信息后，将发布到当前 WordPress 站点。',
+      remove: '移除',
+      removeTag: '移除标签 %s',
+      replace: '替换',
+      selectFeaturedImage: '选择特色图片',
+      sticky: '置于首页顶端',
+      tags: '标签',
+      tagsDescription: '输入后按 Enter 或逗号添加。',
+      updateArticle: '更新文章',
+      updateDescription: '确认本次修改后，将更新当前 WordPress 文章。',
+      updateExisting: '更新已有文章',
+      visibility: '可见性',
       title: '文章标题',
       unsaved: '未保存',
       viewModes: '视图模式',
       wechat: '复制到公众号',
+      wordCount: '字数统计',
+      wordCountDescription: '在文章标题旁显示词数、字符数与阅读时长',
       words: '词'
     },
     immersiveEnvironment: {
@@ -241,6 +302,20 @@ function fixture(): EditorRootProps &
     mediaPickerFailureMessage: 'The media library could not be opened.',
     mediaPickerFrame: mediaFrame,
     nativeForm,
+    nativePublishPort: {
+      apply: vi.fn(),
+      read: vi.fn(() => ({
+        categories: [],
+        categoryIds: [],
+        excerpt: '',
+        featuredImage: null,
+        password: '',
+        published: true,
+        sticky: false,
+        tags: [],
+        visibility: 'public' as const
+      }))
+    },
     nativeSubmissionPort: createWordPressNativeSubmissionPort(nativeForm),
     onDocumentOwnerChange: vi.fn(),
     onFailure: vi.fn(),
@@ -430,9 +505,9 @@ describe('EditorRoot', () => {
       'Bold',
       'Image',
       'Copy to WeChat',
+      '进入沉浸写作',
       'Font',
-      'Appearance',
-      '沉浸写作'
+      'Appearance'
     ]);
     expect(
       toolbar.querySelectorAll(
@@ -441,17 +516,26 @@ describe('EditorRoot', () => {
     ).toHaveLength(1);
     expect(view.queryByRole('button', { name: 'History' })).toBeNull();
     expect(view.queryByRole('button', { name: 'Publish' })).toBeNull();
-    expect(view.getByRole('button', { name: '沉浸写作' })).not.toBeNull();
+    const immersiveEntry = view.getByRole('button', {
+      name: '进入沉浸写作'
+    });
+    expect(immersiveEntry.getAttribute('aria-pressed')).toBe('false');
+    expect(
+      immersiveEntry.classList.contains('easymde-toolbar-immersive-toggle')
+    ).toBe(true);
+    expect(immersiveEntry.firstElementChild?.className).toBe(
+      'dashicons dashicons-fullscreen-alt'
+    );
   });
 
   it('recomposes the existing source and preview owners in immersive mode', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
     await waitFor(() =>
-      expect(view.getByRole('button', { name: '沉浸写作' })).not.toBeNull()
+      expect(view.getByRole('button', { name: '进入沉浸写作' })).not.toBeNull()
     );
 
-    fireEvent.click(view.getByRole('button', { name: '沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
     expect(view.getByRole('region', { name: '沉浸写作' })).not.toBeNull();
     expect(
       view.container
@@ -475,13 +559,24 @@ describe('EditorRoot', () => {
     expect(view.queryByRole('region', { name: '沉浸写作' })).toBeNull();
   });
 
-  it('delegates the immersive publish action to the native publisher', async () => {
+  it('keeps publish editing local until confirmation then delegates to the native publisher', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
-    fireEvent.click(await view.findByRole('button', { name: '沉浸写作' }));
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
 
     fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+    expect(view.getByRole('dialog', { name: '更新文章' })).not.toBeNull();
+    expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
+    expect(props.publishPost).not.toHaveBeenCalled();
 
+    fireEvent.click(view.getByRole('button', { name: '取消' }));
+    expect(view.queryByRole('dialog', { name: '更新文章' })).toBeNull();
+    expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    expect(props.nativePublishPort.apply).toHaveBeenCalledOnce();
     expect(props.publishPost).toHaveBeenCalledOnce();
     expect(props.executeExternalCommand).not.toHaveBeenCalledWith(
       'savepost',
@@ -489,10 +584,27 @@ describe('EditorRoot', () => {
     );
   });
 
+  it('restores the native publish fields when the WordPress submit command is unavailable', async () => {
+    const props = fixture();
+    vi.mocked(props.publishPost).mockReturnValue(false);
+    const original = props.nativePublishPort.read();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    expect(props.nativePublishPort.apply).toHaveBeenCalledTimes(2);
+    expect(props.nativePublishPort.apply).toHaveBeenLastCalledWith(original);
+    expect(props.onFailure).toHaveBeenCalledWith(
+      'immersive-publish-command-unavailable'
+    );
+    expect(view.getByRole('dialog', { name: '更新文章' })).not.toBeNull();
+  });
+
   it('uses the existing title and document owners for immersive edits and table insertion', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
-    fireEvent.click(await view.findByRole('button', { name: '沉浸写作' }));
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
 
     fireEvent.change(view.getByRole('textbox', { name: '文章标题' }), {
       target: { value: '沉浸标题' }
@@ -514,7 +626,7 @@ describe('EditorRoot', () => {
   it('loads WordPress revisions, confirms dirty restoration and reports through the native handoff', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
-    fireEvent.click(await view.findByRole('button', { name: '沉浸写作' }));
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
     fireEvent.change(view.getByRole('textbox', { name: '文章标题' }), {
       target: { value: 'Changed title' }
     });
@@ -529,12 +641,12 @@ describe('EditorRoot', () => {
         expect.any(AbortSignal)
       )
     );
-    fireEvent.click(view.getByRole('button', { name: '恢复修订版本' }));
+    fireEvent.click(view.getByRole('button', { name: '恢复到这个版本' }));
     expect(props.restoreRevision).not.toHaveBeenCalled();
     expect(view.getByRole('alert').textContent).toContain(
       '未保存的更改将会丢失'
     );
-    fireEvent.click(view.getByRole('button', { name: '恢复修订版本' }));
+    fireEvent.click(view.getByRole('button', { name: '恢复到这个版本' }));
     expect(props.restoreRevision).toHaveBeenCalledWith(
       'https://example.test/wp-admin/revision.php?revision=12'
     );
@@ -543,7 +655,7 @@ describe('EditorRoot', () => {
   it('layers Escape handling and restores focus to the immersive entry after exit', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
-    const entry = await view.findByRole('button', { name: '沉浸写作' });
+    const entry = await view.findByRole('button', { name: '进入沉浸写作' });
     entry.focus();
     fireEvent.click(entry);
     expect(props.immersiveEnvironment.activateFocusBoundary).toHaveBeenCalledWith(
@@ -557,14 +669,62 @@ describe('EditorRoot', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(view.queryByRole('dialog', { name: '表格' })).toBeNull();
     expect(view.getByRole('region', { name: '沉浸写作' })).not.toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(view.queryByRole('dialog', { name: '编辑器设置' })).toBeNull();
+    expect(view.getByRole('region', { name: '沉浸写作' })).not.toBeNull();
+    expect(document.activeElement).toBe(
+      view.getByRole('button', { name: '编辑器设置' })
+    );
+
     fireEvent.keyDown(document, { key: 'Escape' });
 
     await waitFor(() =>
       expect(document.activeElement).toBe(
-        view.getByRole('button', { name: '沉浸写作' })
+        view.getByRole('button', { name: '进入沉浸写作' })
       )
     );
     expect(view.queryByRole('region', { name: '沉浸写作' })).toBeNull();
+  });
+
+  it('matches the reference immersive control inventory without AI controls', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    expect(view.getByRole('button', { name: '编辑模式' })).not.toBeNull();
+    expect(view.getByRole('button', { name: '分屏模式' })).not.toBeNull();
+    expect(view.getByRole('button', { name: '预览模式' })).not.toBeNull();
+    expect(view.getAllByRole('button', { name: '退出沉浸写作' })).toHaveLength(1);
+    expect(
+      view.container.querySelector('.easymde-immersive-header .easymde-immersive-exit')
+    ).toBeNull();
+    expect(view.queryByRole('button', { name: /AI/u })).toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    expect(view.getByRole('dialog', { name: '编辑器设置' })).not.toBeNull();
+    for (const name of ['文章大纲', '字数统计', '分屏预览', '自动保存', '同步滚动']) {
+      expect((view.getByRole('checkbox', { name }) as HTMLInputElement).checked).toBe(true);
+    }
+    expect(view.queryByText(/AI/u)).toBeNull();
+  });
+
+  it('applies immersive settings to the real outline, statistics, draft and scroll owners', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+
+    fireEvent.click(view.getByRole('checkbox', { name: '文章大纲' }));
+    fireEvent.click(view.getByRole('checkbox', { name: '字数统计' }));
+    fireEvent.click(view.getByRole('checkbox', { name: '自动保存' }));
+    fireEvent.click(view.getByRole('checkbox', { name: '同步滚动' }));
+
+    expect(view.queryByRole('complementary', { name: '文章大纲' })).toBeNull();
+    expect(view.container.querySelector('.easymde-immersive-stats')).toBeNull();
+    expect(view.queryByText('自动保存已开启')).toBeNull();
+    expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledOnce();
   });
 
   it('lets the user discard an unreadable local draft and unblock storage ownership', async () => {

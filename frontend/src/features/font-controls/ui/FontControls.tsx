@@ -1,4 +1,5 @@
 import {
+  Fragment,
   createElement,
   useEffect,
   useLayoutEffect,
@@ -12,6 +13,11 @@ import type {
   FontOption
 } from '../../../contracts/bootstrap/font-controls-bootstrap';
 import type { FontControlsPort } from '../../../contracts/ports/font-controls-port';
+import {
+  Check,
+  ChevronDown,
+  Type
+} from '../../../generated/lucide-icons';
 
 export type FontControlsSession = Readonly<{
   close: () => void;
@@ -56,6 +62,59 @@ function FontSelect({
         ))}
       </select>
     </label>
+  );
+}
+
+function ImmersiveFontSelect({
+  label,
+  onChange,
+  options,
+  selected
+}: Omit<FontSelectProps, 'className'>) {
+  const [open, setOpen] = useState(false);
+  const selectedOption = options.find((option) => option.id === selected);
+
+  return (
+    <div className="easymde-immersive-font-field">
+      <span>{label}</span>
+      <div className="easymde-immersive-font-select">
+        <button
+          type="button"
+          aria-label={label}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          style={{ fontFamily: selectedOption?.fontFamily || undefined }}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <span>{selectedOption?.label ?? ''}</span>
+          <ChevronDown size={12} aria-hidden="true" />
+        </button>
+        {open ? (
+          <div role="listbox" aria-label={label} className="easymde-immersive-font-options">
+            {options.map((option) => {
+              const active = option.id === selected;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  className={active ? 'is-active' : ''}
+                  style={{ fontFamily: option.fontFamily || undefined }}
+                  onClick={() => {
+                    onChange(option.id);
+                    setOpen(false);
+                  }}
+                >
+                  <span>{active ? <Check size={11} aria-hidden="true" /> : null}</span>
+                  <span>{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -130,15 +189,17 @@ export function FontControls({
         return;
       }
       event.preventDefault();
+      event.stopPropagation();
       setIsOpen(false);
       triggerRef.current?.focus();
     };
 
+    const windowRef = triggerRef.current?.ownerDocument.defaultView;
     document.addEventListener('click', closeForPointer);
-    document.addEventListener('keydown', closeForEscape);
+    windowRef?.addEventListener('keydown', closeForEscape, true);
     return () => {
       document.removeEventListener('click', closeForPointer);
-      document.removeEventListener('keydown', closeForEscape);
+      windowRef?.removeEventListener('keydown', closeForEscape, true);
     };
   }, [isOpen]);
 
@@ -172,25 +233,31 @@ export function FontControls({
           triggerRef.current?.focus();
         }}
       >
-        <span
-          className="easymde-toolbar-text-icon easymde-font-glyph"
-          aria-hidden="true"
-        >
-          A
-        </span>
         {'immersive' === variant ? (
-          <span className="easymde-immersive-control-label">
-            {bootstrap.strings.font}
-          </span>
-        ) : null}
-        <span
-          className="dashicons dashicons-arrow-down-alt2"
-          aria-hidden="true"
-        />
+          <Fragment>
+            <Type size={13} strokeWidth={2} aria-hidden="true" />
+            <span className="easymde-immersive-control-label">
+              {bootstrap.strings.font}
+            </span>
+          </Fragment>
+        ) : (
+          <Fragment>
+            <span
+              className="easymde-toolbar-text-icon easymde-font-glyph"
+              aria-hidden="true"
+            >
+              A
+            </span>
+            <span
+              className="dashicons dashicons-arrow-down-alt2"
+              aria-hidden="true"
+            />
+          </Fragment>
+        )}
       </button>
       <div
         ref={panelRef}
-        className="easymde-toolbar-popover easymde-toolbar-popover-font-panel"
+        className={`easymde-toolbar-popover easymde-toolbar-popover-font-panel${'immersive' === variant ? ' is-immersive-panel' : ''}`}
         role="dialog"
         aria-label={bootstrap.strings.font}
         hidden={!isOpen}
@@ -205,34 +272,65 @@ export function FontControls({
           }
         }}
       >
-        <FontSelect
-          className="easymde-custom-font-select"
-          label={bootstrap.strings.customFont}
-          options={bootstrap.options.customFonts}
-          selected={state.customFont}
-          onChange={(selected) => select('customFont', selected)}
-        />
-        <FontSelect
-          className="easymde-windows-font-select"
-          label={bootstrap.strings.windowsFont}
-          options={bootstrap.options.windowsFonts}
-          selected={state.windowsFont}
-          onChange={(selected) => select('windowsFont', selected)}
-        />
-        <FontSelect
-          className="easymde-apple-font-select"
-          label={bootstrap.strings.appleFont}
-          options={bootstrap.options.appleFonts}
-          selected={state.appleFont}
-          onChange={(selected) => select('appleFont', selected)}
-        />
-        <FontSelect
-          className="easymde-serif-font-select"
-          label={bootstrap.strings.serifFont}
-          options={bootstrap.options.serifOptions}
-          selected={state.serifFont}
-          onChange={(selected) => select('serifFont', selected)}
-        />
+        {'immersive' === variant ? (
+          <Fragment>
+            <ImmersiveFontSelect
+              label={bootstrap.strings.customFont}
+              options={bootstrap.options.customFonts}
+              selected={state.customFont}
+              onChange={(selected) => select('customFont', selected)}
+            />
+            <ImmersiveFontSelect
+              label={bootstrap.strings.windowsFont}
+              options={bootstrap.options.windowsFonts}
+              selected={state.windowsFont}
+              onChange={(selected) => select('windowsFont', selected)}
+            />
+            <ImmersiveFontSelect
+              label={bootstrap.strings.appleFont}
+              options={bootstrap.options.appleFonts}
+              selected={state.appleFont}
+              onChange={(selected) => select('appleFont', selected)}
+            />
+            <ImmersiveFontSelect
+              label={bootstrap.strings.serifFont}
+              options={bootstrap.options.serifOptions}
+              selected={state.serifFont}
+              onChange={(selected) => select('serifFont', selected)}
+            />
+          </Fragment>
+        ) : (
+          <Fragment>
+            <FontSelect
+              className="easymde-custom-font-select"
+              label={bootstrap.strings.customFont}
+              options={bootstrap.options.customFonts}
+              selected={state.customFont}
+              onChange={(selected) => select('customFont', selected)}
+            />
+            <FontSelect
+              className="easymde-windows-font-select"
+              label={bootstrap.strings.windowsFont}
+              options={bootstrap.options.windowsFonts}
+              selected={state.windowsFont}
+              onChange={(selected) => select('windowsFont', selected)}
+            />
+            <FontSelect
+              className="easymde-apple-font-select"
+              label={bootstrap.strings.appleFont}
+              options={bootstrap.options.appleFonts}
+              selected={state.appleFont}
+              onChange={(selected) => select('appleFont', selected)}
+            />
+            <FontSelect
+              className="easymde-serif-font-select"
+              label={bootstrap.strings.serifFont}
+              options={bootstrap.options.serifOptions}
+              selected={state.serifFont}
+              onChange={(selected) => select('serifFont', selected)}
+            />
+          </Fragment>
+        )}
         <p className="easymde-toolbar-help">
           {bootstrap.strings.fontStackHelp}
         </p>

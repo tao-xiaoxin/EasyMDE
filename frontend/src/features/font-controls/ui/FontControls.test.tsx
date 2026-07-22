@@ -44,6 +44,22 @@ function createPort(applyState = vi.fn()): FontControlsPort {
 }
 
 describe('FontControls', () => {
+  it('renders the reference type icon instead of a Dashicon in immersive mode', () => {
+    render(
+      <FontControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    const trigger = screen.getByRole('button', { name: 'Font' });
+    expect(trigger.querySelector('svg')).not.toBeNull();
+    expect(trigger.querySelector('.dashicons')).toBeNull();
+  });
+
   it('anchors the panel to the font trigger instead of the page', async () => {
     const user = userEvent.setup();
     render(

@@ -904,9 +904,9 @@ test.describe('EasyMDE editor workflows', () => {
       return [
         ...commandLabels,
         ...exportLabels,
+        bootstrap.strings.immersive.enter,
         bootstrap.fonts.strings.font,
-        bootstrap.appearance.strings.appearance,
-        bootstrap.strings.immersive.immersive
+        bootstrap.appearance.strings.appearance
       ];
     });
     const toolbarLabels = await page.locator('.easymde-toolbar').evaluate((toolbar) => (
@@ -917,6 +917,26 @@ test.describe('EasyMDE editor workflows', () => {
       )).map((button) => button.getAttribute('aria-label'))
     ));
     expect(toolbarLabels).toEqual(expectedToolbarLabels);
+
+    const immersiveEntry = page.locator('.easymde-toolbar-immersive-toggle');
+    await expect(immersiveEntry).toHaveAttribute('aria-pressed', 'false');
+    await expect(immersiveEntry).toHaveAttribute(
+      'aria-label',
+      await page.evaluate(() => window.EasyMDEEditorRootBootstrap.strings.immersive.enter)
+    );
+    await expect(immersiveEntry.locator('.dashicons-fullscreen-alt')).toHaveCount(1);
+    const immersiveGeometry = await immersiveEntry.evaluate((button) => {
+      const buttonBounds = button.getBoundingClientRect();
+      const iconBounds = button.firstElementChild?.getBoundingClientRect();
+      return {
+        button: { height: buttonBounds.height, width: buttonBounds.width },
+        icon: iconBounds ? { height: iconBounds.height, width: iconBounds.width } : null
+      };
+    });
+    expect(immersiveGeometry).toEqual({
+      button: { height: 36, width: 38 },
+      icon: { height: 18, width: 18 }
+    });
 
     const visibleCommands = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.commands
       .filter(({ surface }) => 'main' === surface)
@@ -973,12 +993,17 @@ test.describe('EasyMDE editor workflows', () => {
     expect(desktopGeometry.sameRow).toBe(true);
     expect(desktopGeometry.delta).toBeLessThanOrEqual(1);
     const secondaryToolbarEndGap = await page.locator('.easymde-toolbar').evaluate((toolbar) => {
-      const immersive = toolbar.querySelector('.easymde-immersive-toggle');
-      if (!(immersive instanceof HTMLElement)) {
-        throw new Error('immersive-toolbar-trigger-unavailable');
+      const secondary = toolbar.querySelector('.easymde-toolbar-section-secondary');
+      if (!(secondary instanceof HTMLElement)) {
+        throw new Error('secondary-toolbar-unavailable');
       }
 
-      return toolbar.getBoundingClientRect().right - immersive.getBoundingClientRect().right;
+      const finalControl = Array.from(secondary.children).at(-1);
+      if (!(finalControl instanceof HTMLElement)) {
+        throw new Error('secondary-toolbar-final-control-unavailable');
+      }
+
+      return toolbar.getBoundingClientRect().right - finalControl.getBoundingClientRect().right;
     });
     expect(Math.abs(secondaryToolbarEndGap - 24)).toBeLessThanOrEqual(1);
     await expect(page.locator('[data-easymde-layout-owner="react"]')).toHaveAttribute('dir', 'rtl');
@@ -1172,11 +1197,11 @@ test.describe('EasyMDE editor workflows', () => {
     const historyTrigger = page.getByRole('button', { name: immersiveLabels.history });
     await historyTrigger.focus();
     await historyTrigger.press('Enter');
-    const historyDialog = page.getByRole('dialog', { name: immersiveLabels.history });
+    const historyDialog = page.getByRole('dialog', { name: immersiveLabels.historyVersions });
     await expect(historyDialog).toBeVisible();
     await expect(historyDialog.locator('.easymde-immersive-revision-preview')).toContainText('Second revision');
     navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-    const restoreRevision = historyDialog.getByRole('button', { name: immersiveLabels.restore });
+    const restoreRevision = historyDialog.getByRole('button', { name: immersiveLabels.restoreThisVersion });
     await restoreRevision.focus();
     await restoreRevision.press('Enter');
     await navigation;

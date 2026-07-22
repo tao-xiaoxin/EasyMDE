@@ -61,7 +61,7 @@ body:has(.easymde-editor.is-immersive) {
     inset: 0;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: 60px 56px minmax(0, 1fr);
+    grid-template-rows: 60px 52.5px minmax(0, 1fr);
     margin: 0;
     border: 0;
     border-radius: 0;
@@ -81,11 +81,13 @@ body:has(.easymde-editor.is-immersive) {
     grid-row: 1;
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 15px;
     min-width: 0;
-    padding: 0 24px;
+    padding: 9.375px 22.5px;
     border-bottom: 1px solid #e2e8f0;
     background: #fff;
+    font-size: 15px;
+    line-height: 22.5px;
 }
 
 .easymde-immersive-brand,
@@ -98,7 +100,7 @@ body:has(.easymde-editor.is-immersive) {
     align-items: center;
 }
 
-.easymde-immersive-brand { gap: 5px; flex: 0 0 auto; }
+.easymde-immersive-brand { width: 153.39px; height: 26.25px; gap: 5px; flex: 0 0 153.39px; }
 .easymde-immersive-brand > svg { margin-left: 7px; color: #3b82f6; }
 .easymde-traffic-light { width: 12px; height: 12px; border-radius: 50%; }
 .easymde-traffic-light.is-red { background: #ff605c; }
@@ -106,7 +108,8 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-traffic-light.is-green { background: #00ca4e; }
 .easymde-immersive-brand-name { color: #334155; font-size: 13px; font-weight: 600; }
 .easymde-immersive-brand-divider { height: 20px; margin-left: 7px; color: #e2e8f0; font-size: 18px; line-height: 20px; }
-.easymde-immersive-title-wrap { min-width: 0; gap: 12px; flex: 0 1 auto; }
+.easymde-immersive-title-wrap { min-width: 0; flex: 0 1 auto; }
+.easymde-immersive-header-spacer.is-title-gap { width: 11.25px; flex: 0 0 auto; }
 .easymde-immersive-title-field { display: flex; min-width: 72px; max-width: 320px; align-items: center; gap: 6px; }
 .easymde-immersive-title-field > svg { flex: 0 0 auto; color: #94a3b8; }
 .easymde-immersive-title-measure { display: grid; min-width: 72px; max-width: 296px; overflow: hidden; }
@@ -117,16 +120,16 @@ body:has(.easymde-editor.is-immersive) {
     min-width: 0;
     max-width: 296px;
     color: #1e293b;
-    font-size: 14px;
+    font-size: 13.125px;
     font-weight: 500;
-    line-height: 20px;
+    line-height: 18.75px;
     white-space: pre;
 }
 .easymde-immersive-title-measure > span { visibility: hidden; overflow: hidden; }
 .easymde-immersive-title-measure > textarea {
     box-sizing: border-box;
     width: 100%;
-    height: 20px;
+    height: 18.75px;
     min-width: 100px;
     padding: 0;
     border: 0;
@@ -135,27 +138,29 @@ body:has(.easymde-editor.is-immersive) {
     overflow: hidden;
     background: transparent;
 }
-.easymde-immersive-save-state { display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 12px; white-space: nowrap; }
+.easymde-immersive-save-state { display: flex; height: 26.25px; align-items: center; gap: 5.625px; padding: 0 3.75px; color: #64748b; font-size: 11.25px; white-space: nowrap; }
 .easymde-immersive-save-state svg { color: #10b981; }
 .easymde-immersive-save-state.is-dirty svg { color: #f59e0b; }
-.easymde-immersive-stats { display: flex; gap: 16px; color: #64748b; font-family: "EasyMDE JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: nowrap; }
+.easymde-immersive-stats { display: flex; height: 15px; gap: 15px; color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11.25px; line-height: 15px; white-space: nowrap; }
 .easymde-immersive-header-spacer { min-width: 0; }
 .easymde-immersive-header-spacer.is-primary { flex: 1 1 0; }
 .easymde-immersive-header-spacer.is-secondary { flex: 3 1 0; }
-.easymde-immersive-header-actions { gap: 12px; flex: 0 0 auto; }
-.easymde-immersive-ai-omission-spacer { width: 82px; height: 1px; flex: 0 0 82px; }
-.easymde-immersive-view-switch { gap: 4px; margin: 0; padding: 2px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
+.easymde-immersive-header-actions { gap: 11.25px; flex: 0 0 auto; }
+.easymde-immersive-view-switch { gap: 3.75px; margin: 0; padding: 1.875px; border: 1px solid #e2e8f0; border-radius: 5.625px; background: #fff; }
 .easymde-immersive-view-switch button {
     display: flex;
     align-items: center;
-    gap: 6px;
-    height: 26px;
-    padding: 0 10px;
+    gap: 5.625px;
+    width: 64.375px;
+    min-width: 64.375px;
+    height: 22.5px;
+    padding: 0 9.375px;
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: 3.625px;
     background: transparent;
     color: #6b7280;
     font-size: 12.5px;
+    font-weight: 500;
     cursor: pointer;
 }
 .easymde-immersive-view-switch button.is-active { border-color: #c7d2fe; background: #fff; color: #4c6ef5; box-shadow: 0 0 0 3px #eef2ff; }
@@ -188,29 +193,34 @@ body:has(.easymde-editor.is-immersive) {
     grid-row: 2;
     justify-content: space-between;
     min-width: 0;
-    padding: 0 20px;
+    overflow-x: auto;
+    overflow-y: visible;
+    scrollbar-width: none;
+    padding: 0 18.75px;
     border-bottom: 1px solid #e2e8f0;
     background: #fff;
 }
+.easymde-immersive-toolbar-row::-webkit-scrollbar { display: none; }
 .easymde-immersive-formatting { display: flex; align-items: center; min-width: 0; }
 .easymde-immersive-formatting > .easymde-toolbar { border: 0; padding: 0; background: transparent; }
-.easymde-immersive-formatting .easymde-toolbar-section { flex-wrap: nowrap; gap: 6px; }
+.easymde-immersive-formatting .easymde-toolbar-section { flex-wrap: nowrap; gap: 3.75px; }
 .easymde-immersive-formatting .easymde-toolbar-button {
     width: 30px;
     min-width: 30px;
     min-height: 30px;
     padding: 0;
     border-color: #e2e8f0;
-    border-radius: 8px;
+    border-radius: 5.625px;
     background: transparent;
     color: #475569;
     box-shadow: none;
 }
 .easymde-immersive-formatting .easymde-toolbar-button:hover,
 .easymde-immersive-formatting .easymde-toolbar-button:focus { border-color: #e2e8f0; background: rgba(0, 0, 0, .045); color: #0f172a; box-shadow: none; transform: none; }
-.easymde-immersive-formatting .easymde-toolbar-button-menu { width: auto; min-width: 46px; padding: 0 8px; }
-.easymde-immersive-formatting .easymde-toolbar-divider { height: 16px; margin: 0 6px; background: #e2e8f0; }
-.easymde-immersive-toolbar-divider { width: 1px; height: 16px; margin: 0 10px; background: #e2e8f0; }
+.easymde-immersive-formatting .easymde-toolbar-button-menu { width: 48px; min-width: 48px; padding: 0 8px; }
+.easymde-immersive-formatting .easymde-toolbar-divider { height: 16px; margin: 0 7.5px; background: #e2e8f0; }
+.easymde-immersive-formatting .easymde-toolbar-divider.is-after-heading { margin: 0 5.625px; }
+.easymde-immersive-toolbar-divider { width: 1px; height: 16px; margin: 0 11.25px; background: #e2e8f0; }
 .easymde-immersive-table-trigger {
     display: grid;
     width: 30px;
@@ -218,7 +228,8 @@ body:has(.easymde-editor.is-immersive) {
     padding: 0;
     place-items: center;
     border: 1px solid #e2e8f0;
-    border-radius: 8px;
+    margin-left: 3.75px;
+    border-radius: 5.625px;
     background: transparent;
     color: #475569;
     cursor: pointer;
@@ -230,7 +241,7 @@ body:has(.easymde-editor.is-immersive) {
     padding: 0;
     place-items: center;
     border: 1px solid #e2e8f0;
-    border-radius: 8px;
+    border-radius: 5.625px;
     background: transparent;
     color: #64748b;
     cursor: pointer;
@@ -239,6 +250,8 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-immersive-mode-button:hover { background: rgba(0, 0, 0, .045); color: #1e293b; }
 .easymde-immersive-mode-button:active { transform: scale(.95); }
 .easymde-immersive-mode-button.is-active { border-color: #0f172a; background: #0f172a; color: #fff; }
+.easymde-immersive-mode-button + .easymde-immersive-mode-button { margin-left: 3.75px; }
+.easymde-immersive-mode-button:last-child { margin-left: 5.625px; }
 .easymde-immersive-secondary-actions { gap: 10px; }
 .easymde-immersive-secondary-actions button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: transparent; color: #475569; font-size: 12.5px; cursor: pointer; }
 .easymde-immersive-secondary-actions button:disabled { opacity: .5; cursor: not-allowed; }

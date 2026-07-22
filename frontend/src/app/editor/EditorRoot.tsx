@@ -30,6 +30,7 @@ import type { AppearancePort } from '../../contracts/ports/appearance-port';
 import type { FontControlsPort } from '../../contracts/ports/font-controls-port';
 import type { ImageUploadPort } from '../../contracts/ports/image-upload-port';
 import type { ImmersiveEnvironmentPort } from '../../contracts/ports/immersive-environment-port';
+import type { ImmersivePreferencesPort } from '../../contracts/ports/immersive-preferences-port';
 import {
   protectedEditorOperationError,
   type EditorSessionOperation,
@@ -115,6 +116,7 @@ export type EditorRootProps = Readonly<{
   >;
   imageUploadPort: ImageUploadPort;
   immersiveEnvironment: ImmersiveEnvironmentPort;
+  immersivePreferencesPort: ImmersivePreferencesPort;
   immersiveStrings: Parameters<typeof ImmersiveEditor>[0]['strings'];
   layout: EditorLayoutBootstrap;
   localDrafts: EditorRootLocalDraftsBootstrap;
@@ -907,6 +909,7 @@ export function EditorRoot(props: EditorRootProps) {
         <ImmersiveEditor
           documentSession={documentSession}
           environment={props.immersiveEnvironment}
+          immersivePreferencesPort={props.immersivePreferencesPort}
           localDraftsEnabled={localDraftsEnabled}
           onCopyWechat={() => void wechatSession.copy()}
           onExit={exitImmersive}

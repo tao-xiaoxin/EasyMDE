@@ -26,6 +26,7 @@ import type {
   RevisionSummary
 } from '../../../contracts/ports/revision-port';
 import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
+import type { ImmersivePreferencesPort } from '../../../contracts/ports/immersive-preferences-port';
 import { SafePreviewHtmlSink } from '../../live-preview/ui/SafePreviewHtmlSink';
 import type { EditorDocumentSession } from '../../document-source/editor-document-session';
 import {
@@ -48,6 +49,7 @@ export type { ImmersiveStrings } from './immersive-editor-ui-types';
 type Props = Readonly<{
   documentSession: EditorDocumentSession;
   environment: ImmersiveEnvironmentPort;
+  immersivePreferencesPort: ImmersivePreferencesPort;
   revisionPort: RevisionPort | null;
   restoreRevision: (restoreUrl: string) => void;
   styleControls: ReactNode;
@@ -392,6 +394,7 @@ function HistoryDialog({
 export function ImmersiveEditor({
   documentSession,
   environment,
+  immersivePreferencesPort,
   revisionPort,
   restoreRevision,
   styleControls,
@@ -423,13 +426,33 @@ export function ImmersiveEditor({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [publishSnapshot, setPublishSnapshot] =
     useState<NativePublishSnapshot | null>(null);
-  const [settings, setSettings] = useState<ImmersiveSettings>({
+  const [initialSettings] = useState<ImmersiveSettings>(() => ({
     autoSave: localDraftsEnabled,
     outline: true,
     splitPreview: true,
     syncScroll: scrollSyncEnabled,
-    wordCount: true
-  });
+    wordCount: true,
+    ...immersivePreferencesPort.read()
+  }));
+  const [settings, setSettings] = useState(initialSettings);
+  const restoredOwnerSettingsRef = useRef(false);
+
+  useEffect(() => {
+    if (restoredOwnerSettingsRef.current) return;
+    restoredOwnerSettingsRef.current = true;
+    if (initialSettings.autoSave !== localDraftsEnabled) {
+      onLocalDraftsEnabledChange(initialSettings.autoSave);
+    }
+    if (initialSettings.syncScroll !== scrollSyncEnabled) {
+      onScrollSyncEnabledChange(initialSettings.syncScroll);
+    }
+  }, [
+    initialSettings,
+    localDraftsEnabled,
+    onLocalDraftsEnabledChange,
+    onScrollSyncEnabledChange,
+    scrollSyncEnabled
+  ]);
 
   useEffect(
     () =>
@@ -473,6 +496,8 @@ export function ImmersiveEditor({
   };
   const changeSettings = (next: ImmersiveSettings) => {
     setSettings(next);
+    const result = immersivePreferencesPort.write(next);
+    if ('unavailable' === result.status) onFailure(result.code);
     if (next.autoSave !== settings.autoSave) {
       onLocalDraftsEnabledChange(next.autoSave);
     }

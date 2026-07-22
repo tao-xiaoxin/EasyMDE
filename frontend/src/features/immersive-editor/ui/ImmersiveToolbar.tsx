@@ -64,7 +64,6 @@ export function ImmersiveToolbar({
     <div className="easymde-immersive-toolbar-row">
       <div className="easymde-immersive-formatting">
         {toolbar}
-        <span className="easymde-immersive-toolbar-divider" aria-hidden="true" />
         <button
           type="button"
           className="easymde-immersive-table-trigger"

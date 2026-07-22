@@ -10,6 +10,7 @@ import type { WordPressApiFetch } from '../integrations/wordpress/preview/create
 import { createBrowserScrollSync } from '../integrations/browser/editor-layout/create-browser-scroll-sync';
 import { createBrowserToolbarShortcuts } from '../integrations/browser/keyboard/create-browser-toolbar-shortcuts';
 import { createBrowserLocalDraftStorage } from '../integrations/browser/local-drafts/browser-local-draft-storage';
+import { createBrowserImmersivePreferencesPort } from '../integrations/browser/immersive-preferences/browser-immersive-preferences';
 import { createBrowserImmersiveEnvironment } from '../integrations/browser/immersive/create-browser-immersive-environment';
 import { createBrowserPreviewScroll } from '../integrations/browser/preview/create-browser-preview-scroll';
 import {
@@ -269,6 +270,11 @@ export function mountAdminEditor(
       siteUrl: windowRef.location.href
     }),
     immersiveEnvironment: createBrowserImmersiveEnvironment(documentRef),
+    immersivePreferencesPort: createBrowserImmersivePreferencesPort({
+      siteKey: bootstrap.localDrafts.siteKey,
+      storage: localStorage(windowRef),
+      userId: bootstrap.localDrafts.userId
+    }),
     immersiveStrings: bootstrap.immersiveStrings,
     layout: bootstrap.layout,
     localDrafts: {

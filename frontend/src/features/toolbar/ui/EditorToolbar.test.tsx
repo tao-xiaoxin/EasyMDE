@@ -46,6 +46,22 @@ describe('EditorToolbar', () => {
     expect(container.querySelectorAll('.easymde-toolbar-divider')).toHaveLength(2);
   });
 
+  it('renders each immersive command-group boundary once', () => {
+    const { container } = render(
+      <EditorToolbar
+        bootstrap={bootstrap}
+        platform="win"
+        executeCommand={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    expect(container.querySelectorAll('.easymde-toolbar-divider')).toHaveLength(3);
+    expect(
+      container.querySelector('.easymde-toolbar-divider + .easymde-toolbar-divider')
+    ).toBeNull();
+  });
+
   it('preserves the source selection on pointer activation and dispatches the command intent', async () => {
     const executeCommand = vi.fn();
     const user = userEvent.setup();

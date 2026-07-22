@@ -241,6 +241,10 @@ function fixture(): EditorRootProps &
         return () => document.removeEventListener('keydown', listener);
       }
     },
+    immersivePreferencesPort: {
+      read: vi.fn(() => null),
+      write: vi.fn(() => ({ status: 'saved' as const }))
+    },
     labels: {
       preview: 'Preview',
       source: 'Markdown',
@@ -725,6 +729,38 @@ describe('EditorRoot', () => {
     expect(view.container.querySelector('.easymde-immersive-stats')).toBeNull();
     expect(view.queryByText('自动保存已开启')).toBeNull();
     expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledOnce();
+  });
+
+  it('applies restored immersive preferences to the existing draft and scroll owners', async () => {
+    const props = fixture();
+    vi.mocked(props.immersivePreferencesPort.read).mockReturnValue({
+      autoSave: false,
+      outline: true,
+      splitPreview: true,
+      syncScroll: false,
+      wordCount: true
+    });
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    expect(
+      (view.getByRole('checkbox', { name: '自动保存' }) as HTMLInputElement)
+        .checked
+    ).toBe(false);
+    expect(
+      (view.getByRole('checkbox', { name: '同步滚动' }) as HTMLInputElement)
+        .checked
+    ).toBe(false);
+    await waitFor(() =>
+      expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(1)
+    );
+
+    fireEvent.click(view.getByRole('button', { name: 'Bold' }));
+    await act(
+      () => new Promise((resolve) => globalThis.setTimeout(resolve, 600))
+    );
+    expect(props.localDraftStorage.write).not.toHaveBeenCalled();
   });
 
   it('lets the user discard an unreadable local draft and unblock storage ownership', async () => {

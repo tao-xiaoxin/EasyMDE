@@ -9,6 +9,7 @@ import {
   Bold,
   Braces,
   Code2,
+  ChevronDown,
   Image,
   Italic,
   Link2,
@@ -244,10 +245,7 @@ function HeadingMenu({
         <span className="easymde-toolbar-text-icon" aria-hidden="true">
           H
         </span>
-        <span
-          className="dashicons dashicons-arrow-down-alt2"
-          aria-hidden="true"
-        />
+        <ChevronDown size={9} strokeWidth={2.5} aria-hidden="true" />
       </button>
       <div
         className="easymde-toolbar-popover"
@@ -316,7 +314,12 @@ export function EditorToolbar({
     (command) => 'heading-menu' === command.surface
   );
   const blockCommands = commandsFor('main', 'block');
-  const insertCommands = commandsFor('main', 'insert');
+  const codeCommands = commandsFor('main', 'insert').filter(
+    (command) => 'inlinecode' === command.id || 'codefence' === command.id
+  );
+  const insertCommands = commandsFor('main', 'insert').filter(
+    (command) => 'inlinecode' !== command.id && 'codefence' !== command.id
+  );
 
   useLayoutEffect(() => {
     activeRef.current = true;
@@ -340,6 +343,9 @@ export function EditorToolbar({
           variant={variant}
         />
       ))}
+      {'immersive' === variant && headingCommands.length && blockCommands.length ? (
+        <span className="easymde-toolbar-divider" aria-hidden="true" />
+      ) : null}
       <HeadingMenu
         commands={headingCommands}
         label={bootstrap.headingsLabel}
@@ -349,10 +355,25 @@ export function EditorToolbar({
         onOpen={() => onPopoverOpen?.()}
         setIsOpen={setIsHeadingOpen}
       />
-      {blockCommands.length ? (
+      {'immersive' === variant && blockCommands.length ? (
+        <span className="easymde-toolbar-divider is-after-heading" aria-hidden="true" />
+      ) : null}
+      {'immersive' !== variant && blockCommands.length ? (
         <span className="easymde-toolbar-divider" aria-hidden="true" />
       ) : null}
       {blockCommands.map((command) => (
+        <CommandButton
+          key={command.id}
+          command={command}
+          shortcut={shortcuts[command.id] ?? ''}
+          executeCommand={executeCommand}
+          variant={variant}
+        />
+      ))}
+      {codeCommands.length ? (
+        <span className="easymde-toolbar-divider" aria-hidden="true" />
+      ) : null}
+      {codeCommands.map((command) => (
         <CommandButton
           key={command.id}
           command={command}

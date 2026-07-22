@@ -91,18 +91,19 @@ export function ImmersiveHeader({
           </div>
           <ChevronDown size={14} strokeWidth={2} />
         </div>
-        <span className={`easymde-immersive-save-state${dirty ? ' is-dirty' : ''}`}>
-          <Check size={13} strokeWidth={2.5} />
-          <span>{dirty ? strings.unsaved : strings.saved}</span>
-        </span>
-        {showStats ? (
-          <span className="easymde-immersive-stats">
-            <span>{stats.words} {strings.words}</span>
-            <span>{stats.characters} {strings.characters}</span>
-            <span>{strings.readingTime} {stats.minutes} {strings.minutes}</span>
-          </span>
-        ) : null}
       </div>
+      <span className="easymde-immersive-header-spacer is-title-gap" aria-hidden="true" />
+      <span className={`easymde-immersive-save-state${dirty ? ' is-dirty' : ''}`}>
+        <Check size={13} strokeWidth={2.5} />
+        <span>{dirty ? strings.unsaved : strings.saved}</span>
+      </span>
+      {showStats ? (
+        <span className="easymde-immersive-stats">
+          <span>{stats.words} {strings.words}</span>
+          <span>{stats.characters} {strings.characters}</span>
+          <span>{strings.readingTime} {stats.minutes} {strings.minutes}</span>
+        </span>
+      ) : null}
       <span className="easymde-immersive-header-spacer is-primary" />
       <fieldset className="easymde-immersive-view-switch">
         <legend className="screen-reader-text">{strings.viewModes}</legend>
@@ -125,7 +126,6 @@ export function ImmersiveHeader({
       </fieldset>
       <span className="easymde-immersive-header-spacer is-secondary" />
       <div className="easymde-immersive-header-actions">
-        <span className="easymde-immersive-ai-omission-spacer" aria-hidden="true" />
         <span className="easymde-immersive-header-divider" aria-hidden="true" />
         <button
           type="button"

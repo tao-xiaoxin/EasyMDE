@@ -95,6 +95,29 @@ function expectRuntimeAssetRequests(requests, expectedKeys, origin) {
   }
 }
 
+async function readStableScrollTop(scroller) {
+  return scroller.evaluate(async (element) => {
+    let previous = element.scrollTop;
+    let stableFrames = 0;
+
+    for (let frame = 0; frame < 30; frame += 1) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const current = element.scrollTop;
+      if (current === previous) {
+        stableFrames += 1;
+      } else {
+        previous = current;
+        stableFrames = 0;
+      }
+      if (stableFrames >= 2) {
+        return current;
+      }
+    }
+
+    throw new Error('scroll-position-did-not-stabilize');
+  });
+}
+
 function runWp(args, options = {}) {
   if (!wpPath) {
     throw new Error('EASYMDE_E2E_WP_PATH must point to the WordPress install under test.');
@@ -440,7 +463,7 @@ test.describe('EasyMDE editor workflows', () => {
     await sourceScroller.evaluate((scroller) => {
       scroller.scrollTop = Math.max(1, (scroller.scrollHeight - scroller.clientHeight) / 2);
     });
-    const sourceScrollTop = await sourceScroller.evaluate((scroller) => scroller.scrollTop);
+    const sourceScrollTop = await readStableScrollTop(sourceScroller);
     expect(sourceScrollTop).toBeGreaterThan(0);
     for (let cycle = 0; cycle < 5; cycle += 1) {
       await entry.click();
@@ -449,8 +472,8 @@ test.describe('EasyMDE editor workflows', () => {
       await expect(page.getByRole('dialog', { name: strings.enter })).toHaveCount(0);
     }
     await expect(sourceScroller).toBeVisible();
-    await expect.poll(() => sourceScroller.evaluate((scroller) => scroller.scrollTop))
-      .toBe(sourceScrollTop);
+    const restoredScrollTop = await readStableScrollTop(sourceScroller);
+    expect(restoredScrollTop).toBe(sourceScrollTop);
     expect(mutationRequests).toEqual([]);
     await expect(page.locator('script[src*="immersive"], link[href*="immersive"]')).toHaveCount(0);
   });

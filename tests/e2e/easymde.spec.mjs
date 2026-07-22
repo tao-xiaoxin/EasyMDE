@@ -797,7 +797,7 @@ test.describe('EasyMDE editor workflows', () => {
       await expect(button.locator(iconSelector)).toHaveCount(1);
     }
 
-    const headingLabel = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.headingsLabel);
+    const headingLabel = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.strings.headings);
     const headingTrigger = page.getByRole('button', { name: headingLabel });
     await headingTrigger.click();
     const headingCommands = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.commands

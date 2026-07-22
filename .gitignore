@@ -13,3 +13,6 @@ playwright-report/
 *.zip
 *.log
 recon/
+tasks/plan.md
+tasks/todo.md
+tasks/pr-body.md

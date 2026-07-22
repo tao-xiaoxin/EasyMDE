@@ -479,7 +479,7 @@ describe('EditorRoot', () => {
     fireEvent.click(appearance);
     expect(fonts.getAttribute('aria-expanded')).toBe('false');
     expect(appearance.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(view.getByLabelText('Article theme'));
+    expect(document.activeElement).toBe(appearance);
   });
 
   it('renders Preview from the current Appearance state', async () => {

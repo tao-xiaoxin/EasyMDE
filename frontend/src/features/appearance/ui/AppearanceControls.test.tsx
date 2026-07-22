@@ -78,7 +78,7 @@ describe('AppearanceControls', () => {
     expect(anchor?.contains(panel)).toBe(true);
   });
 
-  it('opens an accessible popover, focuses the first field, and returns focus on Escape', async () => {
+  it('opens an accessible popover without moving focus and returns focus on Escape', async () => {
     const user = userEvent.setup();
     render(
       <AppearanceControls
@@ -93,9 +93,7 @@ describe('AppearanceControls', () => {
     await user.click(trigger);
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByRole('dialog', { name: 'Appearance' }).hidden).toBe(false);
-    expect(document.activeElement).toBe(
-      screen.getByRole('combobox', { name: 'Article theme' })
-    );
+    expect(document.activeElement).toBe(trigger);
 
     await user.keyboard('{Escape}');
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
@@ -116,6 +114,9 @@ describe('AppearanceControls', () => {
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     const articleTheme = screen.getByRole('combobox', { name: 'Article theme' });
     const customCss = screen.getByRole('button', { name: 'Custom CSS' });
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Appearance' }));
+
+    await user.keyboard('{Tab}');
     expect(document.activeElement).toBe(articleTheme);
 
     await user.keyboard('{Shift>}{Tab}{/Shift}');

@@ -664,6 +664,7 @@ test.describe('EasyMDE editor workflows', () => {
       .getByRole('button', { name: labels.appearance, exact: true });
     await appearanceTrigger.click();
     const appearanceDialog = page.getByRole('dialog', { name: labels.appearance });
+    await expect(appearanceTrigger).toBeFocused();
     expect(await appearanceDialog.evaluate((panel, trigger) => (
       panel.parentElement === trigger.parentElement
       && panel.parentElement?.classList.contains('easymde-toolbar-popover-anchor')
@@ -708,6 +709,7 @@ test.describe('EasyMDE editor workflows', () => {
     const fontTrigger = page.getByRole('button', { name: labels.font, exact: true });
     await fontTrigger.click();
     const fontDialog = page.getByRole('dialog', { name: labels.font });
+    await expect(fontTrigger).toBeFocused();
     expect(await fontDialog.evaluate((panel, trigger) => (
       panel.parentElement === trigger.parentElement
       && panel.parentElement?.classList.contains('easymde-toolbar-popover-anchor')

@@ -67,7 +67,6 @@ export function AppearanceControls({
   const snapshotRef = useRef(snapshot);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const firstSelectRef = useRef<HTMLSelectElement>(null);
 
   const replaceSnapshot = (nextSnapshot: AppearanceSnapshot): boolean => {
     if (!activeRef.current) {
@@ -101,12 +100,6 @@ export function AppearanceControls({
       activeRef.current = false;
     };
   }, [onReady]);
-
-  useLayoutEffect(() => {
-    if (isOpen) {
-      firstSelectRef.current?.focus();
-    }
-  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -224,6 +217,7 @@ export function AppearanceControls({
           }
           port.closeOtherPopovers();
           setIsOpen(true);
+          triggerRef.current?.focus();
         }}
       >
         <span className="dashicons dashicons-admin-customizer" aria-hidden="true" />
@@ -260,7 +254,6 @@ export function AppearanceControls({
         <label className="easymde-toolbar-control">
           <span className="easymde-toolbar-control-label">{bootstrap.strings.articleTheme}</span>
           <select
-            ref={firstSelectRef}
             className="easymde-theme-select"
             value={selectedArticleValue(snapshot)}
             onChange={(event) => {

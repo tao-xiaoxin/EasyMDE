@@ -31,7 +31,6 @@ type FontSelectProps = Readonly<{
   options: ReadonlyArray<FontOption>;
   selected: string;
   onChange: (selected: string) => void;
-  selectRef?: React.RefObject<HTMLSelectElement>;
 }>;
 
 function FontSelect({
@@ -39,14 +38,12 @@ function FontSelect({
   label,
   options,
   selected,
-  onChange,
-  selectRef
+  onChange
 }: FontSelectProps) {
   return (
     <label className="easymde-toolbar-control">
       <span className="easymde-toolbar-control-label">{label}</span>
       <select
-        ref={selectRef}
         className={className}
         value={selected}
         onChange={(event) => onChange(event.currentTarget.value)}
@@ -71,7 +68,6 @@ export function FontControls({
   const stateRef = useRef(state);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const firstSelectRef = useRef<HTMLSelectElement>(null);
 
   const replaceState = (nextState: FontControlsState): boolean => {
     if (!activeRef.current) {
@@ -108,12 +104,6 @@ export function FontControls({
       activeRef.current = false;
     };
   }, [onReady]);
-
-  useLayoutEffect(() => {
-    if (isOpen) {
-      firstSelectRef.current?.focus();
-    }
-  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -172,6 +162,7 @@ export function FontControls({
           }
           port.closeOtherPopovers();
           setIsOpen(true);
+          triggerRef.current?.focus();
         }}
       >
         <span className="easymde-toolbar-text-icon easymde-font-glyph" aria-hidden="true">A</span>
@@ -195,7 +186,6 @@ export function FontControls({
         }}
       >
         <FontSelect
-          selectRef={firstSelectRef}
           className="easymde-custom-font-select"
           label={bootstrap.strings.customFont}
           options={bootstrap.options.customFonts}

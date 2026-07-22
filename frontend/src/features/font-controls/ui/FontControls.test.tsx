@@ -66,7 +66,7 @@ describe('FontControls', () => {
     expect(anchor?.contains(panel)).toBe(true);
   });
 
-  it('opens an accessible popover, focuses the first field, closes on Escape, and returns focus', async () => {
+  it('opens an accessible popover without moving focus, closes on Escape, and returns focus', async () => {
     const user = userEvent.setup();
     render(
       <FontControls
@@ -81,9 +81,7 @@ describe('FontControls', () => {
     await user.click(trigger);
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByRole('dialog', { name: 'Font' }).hidden).toBe(false);
-    expect(document.activeElement).toBe(
-      screen.getByRole('combobox', { name: 'Custom font' })
-    );
+    expect(document.activeElement).toBe(trigger);
 
     await user.keyboard('{Escape}');
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
@@ -103,9 +101,7 @@ describe('FontControls', () => {
     const trigger = screen.getByRole('button', { name: 'Font' });
 
     await user.click(trigger);
-    expect(document.activeElement).toBe(
-      screen.getByRole('combobox', { name: 'Custom font' })
-    );
+    expect(document.activeElement).toBe(trigger);
     await user.click(trigger);
 
     expect(trigger.getAttribute('aria-expanded')).toBe('false');

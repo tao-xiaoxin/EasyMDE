@@ -73,6 +73,18 @@ test('Plugin Check and E2E validate the release job ZIP artifact', () => {
   });
 });
 
+test('Plugin Check and E2E generate masked credentials inside each isolated job', () => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+
+  for (const jobName of ['plugin-check', 'e2e']) {
+    const job = workflowJobBlock(workflow, jobName);
+    assert.match(job, /name:\s+Generate temporary WordPress test credentials/);
+    assert.match(job, /echo "::add-mask::\$password"/);
+    assert.match(job, /EASYMDE_E2E_USER_PASSWORD=\$password/);
+    assert.match(job, /EASYMDE_WP_ADMIN_PASSWORD=\$password/);
+  }
+});
+
 test('Node and release jobs validate committed runtime assets without refreshing them', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
   const nodeJob = workflowJobBlock(workflow, 'node');

@@ -366,6 +366,7 @@ export function createCodeMirrorDocumentSession({
             }
             view.requestMeasure();
             restoreScroll();
+            view.scrollDOM.ownerDocument.defaultView?.requestAnimationFrame(restoreScroll);
           }
           if (activeSurfaceTransfer === transfer) {
             activeSurfaceTransfer = null;

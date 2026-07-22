@@ -411,6 +411,7 @@ jobs:
       - name: Generate temporary WordPress test credentials
         run: |
           password="$(openssl rand -hex 24)"
+          echo "::add-mask::$password"
           echo "EASYMDE_E2E_USER_PASSWORD=$password" >> "$GITHUB_ENV"
           echo "EASYMDE_WP_ADMIN_PASSWORD=$password" >> "$GITHUB_ENV"
 
@@ -481,6 +482,7 @@ jobs:
       - name: Generate temporary WordPress test credentials
         run: |
           password="$(openssl rand -hex 24)"
+          echo "::add-mask::$password"
           echo "EASYMDE_E2E_USER_PASSWORD=$password" >> "$GITHUB_ENV"
           echo "EASYMDE_WP_ADMIN_PASSWORD=$password" >> "$GITHUB_ENV"
 

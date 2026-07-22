@@ -22,6 +22,7 @@ test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () =
 test('withdrawn ordinary editor surfaces have no retained CSS runtime', () => {
   for (const className of [
     'easymde-editor-context-bar',
+    'easymde-draft-status',
     'easymde-editor-panes',
     'easymde-editor-status-bar',
     'easymde-outline-panel',

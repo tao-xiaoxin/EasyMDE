@@ -100,7 +100,7 @@ describe('AppearanceControls', () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it('keeps keyboard focus inside the open appearance dialog', async () => {
+  it('allows keyboard focus to follow the legacy non-modal popover order', async () => {
     const user = userEvent.setup();
     render(
       <AppearanceControls
@@ -113,17 +113,13 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     const articleTheme = screen.getByRole('combobox', { name: 'Article theme' });
-    const customCss = screen.getByRole('button', { name: 'Custom CSS' });
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Appearance' }));
 
     await user.keyboard('{Tab}');
     expect(document.activeElement).toBe(articleTheme);
 
     await user.keyboard('{Shift>}{Tab}{/Shift}');
-    expect(document.activeElement).toBe(customCss);
-
-    await user.keyboard('{Tab}');
-    expect(document.activeElement).toBe(articleTheme);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Appearance' }));
   });
 
   it('keeps internal actions open while the retained legacy document listener closes outside clicks', async () => {

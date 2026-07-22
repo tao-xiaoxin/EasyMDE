@@ -135,10 +135,10 @@ function HeadingMenu({
 }: HeadingMenuProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const initialFocus = useRef<'first' | 'last'>('first');
+  const initialFocus = useRef<'first' | 'last' | 'preserve'>('preserve');
 
   useLayoutEffect(() => {
-    if (!isOpen) {
+    if (!isOpen || 'preserve' === initialFocus.current) {
       return;
     }
 
@@ -226,7 +226,7 @@ function HeadingMenu({
           const nextIsOpen = !isOpen;
           if (nextIsOpen) {
             onOpen();
-            initialFocus.current = 'first';
+            initialFocus.current = 0 === event.detail ? 'first' : 'preserve';
           }
           setIsOpen(nextIsOpen);
         }}

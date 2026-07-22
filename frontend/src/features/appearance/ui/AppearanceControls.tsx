@@ -248,7 +248,11 @@ export function AppearanceControls({
         hidden={!isOpen}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
-          if ('Tab' !== event.key) {
+          if ('Escape' === event.key) {
+            return;
+          }
+          event.stopPropagation();
+          if ('immersive' !== variant || 'Tab' !== event.key) {
             return;
           }
           const focusable = Array.from(

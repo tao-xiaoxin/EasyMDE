@@ -1016,3 +1016,66 @@ msgstr "命令"
 #, php-format
 msgid "Default: %s"
 msgstr "默认：%s"
+
+msgid "characters"
+msgstr "字符"
+
+msgid "Exit immersive writing"
+msgstr "退出沉浸写作"
+
+msgid "Hide outline"
+msgstr "隐藏大纲"
+
+msgid "Immersive writing"
+msgstr "沉浸写作"
+
+msgid "minutes"
+msgstr "分钟"
+
+msgid "No headings"
+msgstr "暂无标题"
+
+msgid "Article outline"
+msgstr "文章大纲"
+
+msgid "About"
+msgstr "约"
+
+msgid "Show outline"
+msgstr "显示大纲"
+
+msgid "Article title"
+msgstr "文章标题"
+
+msgid "View modes"
+msgstr "视图模式"
+
+msgid "words"
+msgstr "词"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "No revisions are available."
+msgstr "暂无可用的修订版本。"
+
+msgid "Revisions could not be loaded."
+msgstr "无法加载修订版本。"
+
+msgid "Insert"
+msgstr "插入"
+
+msgid "Restore revision"
+msgstr "恢复修订版本"
+
+msgid "Unsaved changes will be lost when WordPress restores this revision. Continue?"
+msgstr "WordPress 恢复此修订版本时将丢失未保存的更改。是否继续？"
+
+msgid "Table"
+msgstr "表格"
+
+msgid "Columns"
+msgstr "列数"
+
+msgid "Rows"
+msgstr "行数"

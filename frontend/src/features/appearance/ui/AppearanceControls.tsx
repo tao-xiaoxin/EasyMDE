@@ -24,6 +24,7 @@ type AppearanceControlsProps = Readonly<{
   port: AppearancePort;
   onFailure: () => void;
   onReady: (session: AppearanceControlsSession) => void;
+  variant?: 'default' | 'immersive';
 }>;
 
 function selectedCustomCss(
@@ -50,7 +51,8 @@ export function AppearanceControls({
   bootstrap,
   port,
   onFailure,
-  onReady
+  onReady,
+  variant = 'default'
 }: AppearanceControlsProps) {
   const [snapshot, setSnapshot] = useState<AppearanceSnapshot>({
     customCss: bootstrap.customCss,
@@ -110,7 +112,8 @@ export function AppearanceControls({
       const target = event.target;
       if (
         target instanceof Node &&
-        (panelRef.current?.contains(target) || triggerRef.current?.contains(target))
+        (panelRef.current?.contains(target) ||
+          triggerRef.current?.contains(target))
       ) {
         return;
       }
@@ -168,9 +171,10 @@ export function AppearanceControls({
 
     try {
       const result = await port.saveCustomCss({
-        id: 'custom' === snapshotRef.current.state.markdownTheme
-          ? snapshotRef.current.state.customCssId
-          : '',
+        id:
+          'custom' === snapshotRef.current.state.markdownTheme
+            ? snapshotRef.current.state.customCssId
+            : '',
         name: customName,
         css: customCode
       });
@@ -197,7 +201,9 @@ export function AppearanceControls({
   };
 
   return (
-    <div className="easymde-toolbar-popover-anchor easymde-toolbar-popover-appearance">
+    <div
+      className={`easymde-toolbar-popover-anchor easymde-toolbar-popover-appearance${'immersive' === variant ? ' is-immersive' : ''}`}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -220,8 +226,19 @@ export function AppearanceControls({
           triggerRef.current?.focus();
         }}
       >
-        <span className="dashicons dashicons-admin-customizer" aria-hidden="true" />
-        <span className="dashicons dashicons-arrow-down-alt2" aria-hidden="true" />
+        <span
+          className="dashicons dashicons-admin-customizer"
+          aria-hidden="true"
+        />
+        {'immersive' === variant ? (
+          <span className="easymde-immersive-control-label">
+            {bootstrap.strings.appearance}
+          </span>
+        ) : null}
+        <span
+          className="dashicons dashicons-arrow-down-alt2"
+          aria-hidden="true"
+        />
       </button>
       <div
         ref={panelRef}
@@ -234,9 +251,11 @@ export function AppearanceControls({
           if ('Tab' !== event.key) {
             return;
           }
-          const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
-            'button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-          )).filter((element) => !element.closest('[hidden]'));
+          const focusable = Array.from(
+            event.currentTarget.querySelectorAll<HTMLElement>(
+              'button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+            )
+          ).filter((element) => !element.closest('[hidden]'));
           const first = focusable[0];
           const last = focusable[focusable.length - 1];
           if (!first || !last) {
@@ -252,7 +271,9 @@ export function AppearanceControls({
         }}
       >
         <label className="easymde-toolbar-control">
-          <span className="easymde-toolbar-control-label">{bootstrap.strings.articleTheme}</span>
+          <span className="easymde-toolbar-control-label">
+            {bootstrap.strings.articleTheme}
+          </span>
           <select
             className="easymde-theme-select"
             value={selectedArticleValue(snapshot)}
@@ -274,29 +295,39 @@ export function AppearanceControls({
             }}
           >
             {bootstrap.articleThemes.map((theme) => (
-              <option key={theme.id} value={`theme:${theme.id}`}>{theme.label}</option>
+              <option key={theme.id} value={`theme:${theme.id}`}>
+                {theme.label}
+              </option>
             ))}
             {snapshot.customCss.length > 0 ? (
               <optgroup label={bootstrap.strings.namedCustomCss}>
                 {snapshot.customCss.map((item) => (
-                  <option key={item.id} value={`custom:${item.id}`}>{item.name}</option>
+                  <option key={item.id} value={`custom:${item.id}`}>
+                    {item.name}
+                  </option>
                 ))}
               </optgroup>
             ) : null}
           </select>
         </label>
         <label className="easymde-toolbar-control">
-          <span className="easymde-toolbar-control-label">{bootstrap.strings.codeTheme}</span>
+          <span className="easymde-toolbar-control-label">
+            {bootstrap.strings.codeTheme}
+          </span>
           <select
             className="easymde-code-theme-select"
             value={snapshot.state.codeTheme}
-            onChange={(event) => applyState({
-              ...snapshotRef.current.state,
-              codeTheme: event.currentTarget.value
-            })}
+            onChange={(event) =>
+              applyState({
+                ...snapshotRef.current.state,
+                codeTheme: event.currentTarget.value
+              })
+            }
           >
             {bootstrap.codeThemes.map((theme) => (
-              <option key={theme.id} value={theme.id}>{theme.label}</option>
+              <option key={theme.id} value={theme.id}>
+                {theme.label}
+              </option>
             ))}
           </select>
         </label>
@@ -328,7 +359,9 @@ export function AppearanceControls({
             >
               {bootstrap.strings.saveCss}
             </button>
-            <span className="easymde-custom-css-status" aria-live="polite">{status}</span>
+            <span className="easymde-custom-css-status" aria-live="polite">
+              {status}
+            </span>
           </div>
           <textarea
             className="easymde-custom-css-code"

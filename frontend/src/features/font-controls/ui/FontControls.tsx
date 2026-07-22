@@ -23,6 +23,7 @@ type FontControlsProps = Readonly<{
   port: FontControlsPort;
   onFailure: () => void;
   onReady: (session: FontControlsSession) => void;
+  variant?: 'default' | 'immersive';
 }>;
 
 type FontSelectProps = Readonly<{
@@ -49,7 +50,9 @@ function FontSelect({
         onChange={(event) => onChange(event.currentTarget.value)}
       >
         {options.map((option) => (
-          <option key={option.id} value={option.id}>{option.label}</option>
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
         ))}
       </select>
     </label>
@@ -60,7 +63,8 @@ export function FontControls({
   bootstrap,
   port,
   onFailure,
-  onReady
+  onReady,
+  variant = 'default'
 }: FontControlsProps) {
   const [state, setState] = useState<FontControlsState>(bootstrap.state);
   const [isOpen, setIsOpen] = useState(false);
@@ -114,7 +118,8 @@ export function FontControls({
       const target = event.target;
       if (
         target instanceof Node &&
-        (panelRef.current?.contains(target) || triggerRef.current?.contains(target))
+        (panelRef.current?.contains(target) ||
+          triggerRef.current?.contains(target))
       ) {
         return;
       }
@@ -142,7 +147,9 @@ export function FontControls({
   };
 
   return (
-    <div className="easymde-toolbar-popover-anchor easymde-toolbar-popover-font">
+    <div
+      className={`easymde-toolbar-popover-anchor easymde-toolbar-popover-font${'immersive' === variant ? ' is-immersive' : ''}`}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -165,8 +172,21 @@ export function FontControls({
           triggerRef.current?.focus();
         }}
       >
-        <span className="easymde-toolbar-text-icon easymde-font-glyph" aria-hidden="true">A</span>
-        <span className="dashicons dashicons-arrow-down-alt2" aria-hidden="true" />
+        <span
+          className="easymde-toolbar-text-icon easymde-font-glyph"
+          aria-hidden="true"
+        >
+          A
+        </span>
+        {'immersive' === variant ? (
+          <span className="easymde-immersive-control-label">
+            {bootstrap.strings.font}
+          </span>
+        ) : null}
+        <span
+          className="dashicons dashicons-arrow-down-alt2"
+          aria-hidden="true"
+        />
       </button>
       <div
         ref={panelRef}
@@ -213,7 +233,9 @@ export function FontControls({
           selected={state.serifFont}
           onChange={(selected) => select('serifFont', selected)}
         />
-        <p className="easymde-toolbar-help">{bootstrap.strings.fontStackHelp}</p>
+        <p className="easymde-toolbar-help">
+          {bootstrap.strings.fontStackHelp}
+        </p>
       </div>
     </div>
   );

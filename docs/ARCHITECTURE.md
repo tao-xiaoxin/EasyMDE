@@ -31,9 +31,11 @@ revisions:
 PHP and WordPress retain their existing data, authorization, rendering, native
 form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown`
 remains canonical Markdown and `post_content` remains compatibility HTML.
-Focus Mode is not implemented, connected, enqueued, or loaded by the ordinary
-Editor. Outline, statistics/status, view switching, draggable resizing, and
-duplicate React Publish/Revision surfaces are also absent by product decision.
+Focus Mode is not part of the default ordinary-editor surface. Issue #126
+provides a same-root immersive presentation that reuses the ordinary
+CodeMirror, Preview, native form, and WordPress capability owners. Outline,
+statistics/status, and view switching are scoped to that presentation;
+Publish and Revision controls delegate to the existing WordPress owners.
 
 The ordinary Editor now follows this single-Root boundary in the live branch.
 Legacy admin Browser Runtime files and Focus Mode assets have no ordinary

@@ -16,208 +16,325 @@ msgid ""
 msgstr ""
 
 #: src/Admin/AdminAssets.php:286
-msgid "Preview"
+msgid "Cancel"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:287
+msgid "characters"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:288
+msgid "Edit"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:289
+msgid "Exit immersive writing"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:290
+msgid "Hide outline"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:291
+msgid "History"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:292
+msgid "No revisions are available."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:293
+msgid "Revisions could not be loaded."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:294
+msgid "Loading revisions..."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:295
+msgid "Immersive writing"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:296
+msgid "Insert"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:297
+msgid "minutes"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:298
+msgid "No headings"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:299
+msgid "Article outline"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:300 src/Admin/AdminAssets.php:318
+msgid "Preview"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:301
+msgid "Publish article"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:302
+msgid "About"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:303
+msgid "Restore revision"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:304
+msgid ""
+"Unsaved changes will be lost when WordPress restores this revision. Continue?"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:305
+msgid "Saved"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:306
+msgid "Show outline"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:307
+msgid "Split"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:308
+msgid "Table"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:309
+msgid "Columns"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:310
+msgid "Rows"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:311
+msgid "Article title"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:312
+msgid "Unsaved"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:313
+msgid "View modes"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:314 src/Support/ToolbarRegistry.php:290
+msgid "Copy to WeChat"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:315
+msgid "words"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:319
 msgid "Markdown"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:393
+#: src/Admin/AdminAssets.php:426
 msgid "Markdown source"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:394
+#: src/Admin/AdminAssets.php:427
 msgid "Start writing Markdown to preview the article."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:395
+#: src/Admin/AdminAssets.php:428
 msgid "Rendering preview..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:396
+#: src/Admin/AdminAssets.php:429
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:397
+#: src/Admin/AdminAssets.php:430
 msgid "Insert Media"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:398
+#: src/Admin/AdminAssets.php:431
 msgid "Markdown toolbar"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:399
+#: src/Admin/AdminAssets.php:432
 msgid "Appearance"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:400
+#: src/Admin/AdminAssets.php:433
 msgid "Font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:401
+#: src/Admin/AdminAssets.php:434
 msgid "Headings"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:402
+#: src/Admin/AdminAssets.php:435
 msgid "Article theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:403
+#: src/Admin/AdminAssets.php:436
 msgid "Code theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:404
+#: src/Admin/AdminAssets.php:437
 msgid "Custom CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:405
+#: src/Admin/AdminAssets.php:438
 msgid "Custom CSS theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:406
+#: src/Admin/AdminAssets.php:439
 msgid "Named custom CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:407
+#: src/Admin/AdminAssets.php:440
 msgid "CSS name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:408
+#: src/Admin/AdminAssets.php:441
 msgid "Save CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:409
+#: src/Admin/AdminAssets.php:442
 msgid "Saved CSS."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:410
+#: src/Admin/AdminAssets.php:443
 msgid "CSS save failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:411
+#: src/Admin/AdminAssets.php:444
 msgid "Custom font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:412
+#: src/Admin/AdminAssets.php:445
 msgid "Windows font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:413
+#: src/Admin/AdminAssets.php:446
 msgid "Apple font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:414
+#: src/Admin/AdminAssets.php:447
 msgid "Serif font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:415
+#: src/Admin/AdminAssets.php:448
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:416
+#: src/Admin/AdminAssets.php:449
 msgid "Local draft saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:417
+#: src/Admin/AdminAssets.php:450
 msgid "A newer local draft is available."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:418
+#: src/Admin/AdminAssets.php:451
 msgid "Restore draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:419
+#: src/Admin/AdminAssets.php:452
 msgid "Discard draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:420
+#: src/Admin/AdminAssets.php:453
 msgid "Draft restored."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:421
+#: src/Admin/AdminAssets.php:454
 msgid "Draft discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:422
+#: src/Admin/AdminAssets.php:455
 msgid "Local draft could not be read."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:423
+#: src/Admin/AdminAssets.php:456
 msgid "Local draft could not be saved."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:424
+#: src/Admin/AdminAssets.php:457
 msgid "Local draft could not be discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:425
+#: src/Admin/AdminAssets.php:458
 msgid "A different local draft was saved in another tab."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:426 src/Frontend/FrontendAssets.php:70
+#: src/Admin/AdminAssets.php:459 src/Frontend/FrontendAssets.php:70
 msgid "Rendering failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:427
+#: src/Admin/AdminAssets.php:460
 msgid "Copied preview for WeChat."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:428
+#: src/Admin/AdminAssets.php:461
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:429
+#: src/Admin/AdminAssets.php:462
 msgid "Clipboard access is not available in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:430
+#: src/Admin/AdminAssets.php:463
 msgid "Uploading pasted image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:431
+#: src/Admin/AdminAssets.php:464
 msgid "Pasted image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:432
+#: src/Admin/AdminAssets.php:465
 msgid "Pasted image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:433
+#: src/Admin/AdminAssets.php:466
 msgid "Pasted image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:434
+#: src/Admin/AdminAssets.php:467
 msgid "Uploading dropped image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:435
+#: src/Admin/AdminAssets.php:468
 msgid "Dropped image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:436
+#: src/Admin/AdminAssets.php:469
 msgid "Dropped image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:437
+#: src/Admin/AdminAssets.php:470
 msgid "Dropped image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:438
+#: src/Admin/AdminAssets.php:471
 msgid "alt text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:439
+#: src/Admin/AdminAssets.php:472
 msgid "image"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:440
+#: src/Admin/AdminAssets.php:473
 msgid "The WordPress media library could not be opened."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:441
+#: src/Admin/AdminAssets.php:474
 msgid "link text"
 msgstr ""
 
@@ -322,7 +439,7 @@ msgstr ""
 msgid "The selected revision is too large to preview."
 msgstr ""
 
-#: src/Rest/RevisionController.php:183
+#: src/Rest/RevisionController.php:189
 msgid "The requested revision could not be found."
 msgstr ""
 
@@ -400,10 +517,6 @@ msgstr ""
 
 #: src/Support/ToolbarRegistry.php:277
 msgid "Image"
-msgstr ""
-
-#: src/Support/ToolbarRegistry.php:290
-msgid "Copy to WeChat"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:15

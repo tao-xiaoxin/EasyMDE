@@ -169,11 +169,17 @@ final class RevisionController {
 			: '';
 
 		return array(
-			'id'         => (int) $revision->ID,
-			'title'      => get_the_title( $revision ),
-			'date'       => $date,
-			'date_label' => $date_label,
-			'type'       => wp_is_post_autosave( $revision ) ? 'auto' : 'manual',
+			'id'          => (int) $revision->ID,
+			'title'       => get_the_title( $revision ),
+			'date'        => $date,
+			'date_label'  => $date_label,
+			'type'        => wp_is_post_autosave( $revision ) ? 'auto' : 'manual',
+			'restore_url' => esc_url_raw(
+				wp_nonce_url(
+					admin_url( 'revision.php?revision=' . (int) $revision->ID . '&action=restore' ),
+					'restore-post_' . (int) $revision->ID
+				)
+			),
 		);
 	}
 

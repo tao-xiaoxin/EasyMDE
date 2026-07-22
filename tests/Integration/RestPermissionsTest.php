@@ -314,6 +314,8 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $this->assertSame('manual', $list->get_data()['revisions'][0]['type']);
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/', $list->get_data()['revisions'][0]['date']);
         $this->assertNotSame('', $list->get_data()['revisions'][0]['date_label']);
+        $this->assertStringStartsWith(admin_url('revision.php'), $list->get_data()['revisions'][0]['restore_url']);
+        $this->assertStringContainsString('_wpnonce=', $list->get_data()['revisions'][0]['restore_url']);
         $this->assertSame(200, $detail->get_status());
         $this->assertStringContainsString('<h1', $detail->get_data()['html']);
         $this->assertStringContainsString('Revision source', $detail->get_data()['html']);

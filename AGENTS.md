@@ -96,8 +96,10 @@ Non-negotiable product and authority rules:
   states, responsive behavior, RTL, and accessibility. Publishing, taxonomies,
   featured media, and revisions remain available through WordPress-native
   screens and Meta Boxes rather than duplicate React surfaces.
-- Focus Mode / immersive writing is intentionally excluded: do not implement,
-  connect, enqueue, or load it as part of the ordinary Editor.
+- Focus Mode / immersive writing is excluded from the ordinary editor's default
+  surface. Issue #126 is an approved same-root exception: it may be opened from
+  React while reusing the existing document, Preview, native form, and
+  WordPress capability owners without a second root or persistence path.
 - React integration uses focused Ports and Adapters rather than scattering
   WordPress DOM, browser globals, or REST access through Components. Async
   owners handle cancellation where meaningful, stale results, authoritative

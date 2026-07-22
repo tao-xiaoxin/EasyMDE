@@ -5,6 +5,19 @@ import {
   useRef,
   useState
 } from '@wordpress/element';
+import {
+  Bold,
+  Braces,
+  Code2,
+  Image,
+  Italic,
+  Link2,
+  List,
+  ListOrdered,
+  Quote,
+  Strikethrough,
+  type LucideIcon
+} from '../../../generated/lucide-icons';
 
 import type {
   ToolbarBootstrap,
@@ -19,6 +32,7 @@ type EditorToolbarProps = Readonly<{
   executeCommand: (commandId: string) => void;
   onPopoverOpen?: () => void;
   onReady?: (session: EditorToolbarSession) => void;
+  variant?: 'default' | 'immersive';
 }>;
 
 export type EditorToolbarSession = Readonly<{
@@ -29,21 +43,60 @@ type CommandButtonProps = Readonly<{
   command: ToolbarCommand;
   shortcut: string;
   executeCommand: (commandId: string) => void;
+  variant: 'default' | 'immersive';
 }>;
 
-function commandIcon(command: ToolbarCommand) {
+const IMMERSIVE_ICONS: Readonly<Record<string, LucideIcon>> = {
+  bold: Bold,
+  codefence: Braces,
+  image: Image,
+  inlinecode: Code2,
+  italic: Italic,
+  link: Link2,
+  orderedlist: ListOrdered,
+  quote: Quote,
+  strike: Strikethrough,
+  unorderedlist: List
+};
+
+function commandIcon(
+  command: ToolbarCommand,
+  variant: 'default' | 'immersive'
+) {
+  const ImmersiveIcon = IMMERSIVE_ICONS[command.id];
+  if ('immersive' === variant && ImmersiveIcon) {
+    return <ImmersiveIcon size={14} strokeWidth={2} aria-hidden="true" />;
+  }
   if ('media-code' === command.icon || 'mediacode' === command.icon) {
-    return <span className="easymde-toolbar-text-icon" aria-hidden="true">{'</>'}</span>;
+    return (
+      <span className="easymde-toolbar-text-icon" aria-hidden="true">
+        {'</>'}
+      </span>
+    );
   }
 
   if ('heading' === command.icon) {
-    return <span className="easymde-toolbar-text-icon" aria-hidden="true">H</span>;
+    return (
+      <span className="easymde-toolbar-text-icon" aria-hidden="true">
+        H
+      </span>
+    );
   }
 
-  return <span className={`dashicons dashicons-${command.icon}`} aria-hidden="true" />;
+  return (
+    <span
+      className={`dashicons dashicons-${command.icon}`}
+      aria-hidden="true"
+    />
+  );
 }
 
-function CommandButton({ command, shortcut, executeCommand }: CommandButtonProps) {
+function CommandButton({
+  command,
+  shortcut,
+  executeCommand,
+  variant
+}: CommandButtonProps) {
   const title = shortcut ? `${command.label} (${shortcut})` : command.label;
 
   return (
@@ -56,7 +109,7 @@ function CommandButton({ command, shortcut, executeCommand }: CommandButtonProps
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => executeCommand(command.id)}
     >
-      {commandIcon(command)}
+      {commandIcon(command, variant)}
     </button>
   );
 }
@@ -124,13 +177,18 @@ function HeadingMenu({
     const items = itemRefs.current.filter(
       (item): item is HTMLButtonElement => null !== item
     );
-    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    const currentIndex = items.indexOf(
+      document.activeElement as HTMLButtonElement
+    );
     let nextIndex: number | null = null;
 
     if ('ArrowDown' === event.key) {
       nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
     } else if ('ArrowUp' === event.key) {
-      nextIndex = currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length;
+      nextIndex =
+        currentIndex < 0
+          ? items.length - 1
+          : (currentIndex - 1 + items.length) % items.length;
     } else if ('Home' === event.key) {
       nextIndex = 0;
     } else if ('End' === event.key) {
@@ -183,8 +241,13 @@ function HeadingMenu({
           setIsOpen(true);
         }}
       >
-        <span className="easymde-toolbar-text-icon" aria-hidden="true">H</span>
-        <span className="dashicons dashicons-arrow-down-alt2" aria-hidden="true" />
+        <span className="easymde-toolbar-text-icon" aria-hidden="true">
+          H
+        </span>
+        <span
+          className="dashicons dashicons-arrow-down-alt2"
+          aria-hidden="true"
+        />
       </button>
       <div
         className="easymde-toolbar-popover"
@@ -212,7 +275,9 @@ function HeadingMenu({
             }}
           >
             <span className="easymde-popover-item-label">{command.label}</span>
-            <span className="easymde-popover-item-shortcut">{shortcuts[command.id]}</span>
+            <span className="easymde-popover-item-shortcut">
+              {shortcuts[command.id]}
+            </span>
           </button>
         ))}
       </div>
@@ -225,7 +290,8 @@ export function EditorToolbar({
   platform,
   executeCommand,
   onPopoverOpen,
-  onReady
+  onReady,
+  variant = 'default'
 }: EditorToolbarProps) {
   const [isHeadingOpen, setIsHeadingOpen] = useState(false);
   const activeRef = useRef(false);
@@ -261,13 +327,17 @@ export function EditorToolbar({
   }, [onReady]);
 
   return (
-    <div className="easymde-react-toolbar-contents" data-easymde-react-toolbar="ready">
+    <div
+      className={`easymde-react-toolbar-contents is-${variant}`}
+      data-easymde-react-toolbar="ready"
+    >
       {formatCommands.map((command) => (
         <CommandButton
           key={command.id}
           command={command}
           shortcut={shortcuts[command.id] ?? ''}
           executeCommand={executeCommand}
+          variant={variant}
         />
       ))}
       <HeadingMenu
@@ -279,22 +349,28 @@ export function EditorToolbar({
         onOpen={() => onPopoverOpen?.()}
         setIsOpen={setIsHeadingOpen}
       />
-      {blockCommands.length ? <span className="easymde-toolbar-divider" aria-hidden="true" /> : null}
+      {blockCommands.length ? (
+        <span className="easymde-toolbar-divider" aria-hidden="true" />
+      ) : null}
       {blockCommands.map((command) => (
         <CommandButton
           key={command.id}
           command={command}
           shortcut={shortcuts[command.id] ?? ''}
           executeCommand={executeCommand}
+          variant={variant}
         />
       ))}
-      {insertCommands.length ? <span className="easymde-toolbar-divider" aria-hidden="true" /> : null}
+      {insertCommands.length ? (
+        <span className="easymde-toolbar-divider" aria-hidden="true" />
+      ) : null}
       {insertCommands.map((command) => (
         <CommandButton
           key={command.id}
           command={command}
           shortcut={shortcuts[command.id] ?? ''}
           executeCommand={executeCommand}
+          variant={variant}
         />
       ))}
     </div>

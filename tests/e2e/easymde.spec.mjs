@@ -314,13 +314,14 @@ test.describe('EasyMDE editor workflows', () => {
     }
   });
 
-  test('uses one React toolbar without Legacy or Focus Mode owners', async ({ page }, testInfo) => {
+  test('uses one React owner for ordinary and immersive editing', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
 
     await login(page, user);
     await openEasyMdeNewPost(page);
 
     const editorRoot = page.locator('#easymde-editor-root');
+    const editorOwner = editorRoot.locator('[data-easymde-editor-owner="react"]');
     const toolbar = editorRoot.getByRole('toolbar', { name: 'Markdown toolbar' });
     const reactMain = toolbar.locator('.easymde-toolbar-section-main');
     const toolbarStylesheet = page.locator('#easymde-admin-toolbar-css');
@@ -329,11 +330,31 @@ test.describe('EasyMDE editor workflows', () => {
     const editorScriptUrl = new URL(await editorScript.getAttribute('src'));
     expect(toolbarStylesheetUrl.searchParams.get('ver')).toMatch(/^[a-f0-9]{16}$/);
     expect(editorScriptUrl.searchParams.get('ver')).toMatch(/^[a-f0-9]{16}$/);
-    await expect(editorRoot.locator('[data-easymde-editor-owner="react"]')).toHaveCount(1);
+    await expect(editorOwner).toHaveCount(1);
     await expect(reactMain).toBeVisible();
     await expect(reactMain.locator('[data-easymde-react-toolbar="ready"]')).toHaveCount(1);
     await expect(page.locator('#easymde-toolbar-legacy-main, #easymde-toolbar-legacy-secondary')).toHaveCount(0);
-    await expect(page.locator('.easymde-toolbar-immersive-toggle, .easymde-immersive-workspace')).toHaveCount(0);
+    const immersiveLabels = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.strings.immersive);
+    const immersiveToggle = page.getByRole('button', { name: immersiveLabels.immersive });
+    await expect(immersiveToggle).toBeVisible();
+    await immersiveToggle.click();
+    await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
+    await expect(editorOwner).toHaveClass(/is-immersive-source/);
+    await expect(editorRoot.locator('[data-easymde-document-owner="react"]')).toHaveCount(1);
+    await expect(editorRoot.locator('.easymde-pane-preview')).toHaveCount(1);
+    await page.getByRole('button', { name: immersiveLabels.split, exact: true }).click();
+    await expect(editorOwner).toHaveClass(/is-immersive-split/);
+    await page.getByRole('button', { name: immersiveLabels.preview, exact: true }).click();
+    await expect(editorOwner).toHaveClass(/is-immersive-preview/);
+    await page.getByRole('button', { name: immersiveLabels.edit, exact: true }).click();
+    await page.getByRole('button', { name: immersiveLabels.table }).click();
+    await expect(page.getByRole('dialog', { name: immersiveLabels.table })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: immersiveLabels.table })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toHaveCount(0);
+    await expect(immersiveToggle).toBeFocused();
     await expect(page.locator('script[src*="/assets/js/admin/bootstrap.js"]')).toHaveCount(0);
     await expect(toolbar.locator('[data-easymde-command="bold"]:visible')).toHaveCount(1);
 

@@ -106,22 +106,56 @@ function validBootstrap() {
     },
     previewEnhancement: previewEnhancementBootstrapFixture,
     strings: {
+      immersive: {
+        cancel: 'Cancel',
+        characters: 'characters',
+        edit: 'Edit',
+        exit: 'Exit immersive writing',
+        hideOutline: 'Hide outline',
+        history: 'History',
+        historyEmpty: 'No revisions',
+        historyError: 'Revision error',
+        historyLoading: 'Loading revisions',
+        immersive: 'Immersive writing',
+        insert: 'Insert',
+        minutes: 'minutes',
+        noHeadings: 'No headings',
+        outline: 'Article outline',
+        preview: 'Preview',
+        publish: 'Publish article',
+        readingTime: 'About',
+        restore: 'Restore revision',
+        restoreConfirm: 'Unsaved changes will be lost',
+        saved: 'Saved',
+        showOutline: 'Show outline',
+        split: 'Split',
+        table: 'Table',
+        tableColumns: 'Columns',
+        tableRows: 'Rows',
+        title: 'Article title',
+        unsaved: 'Unsaved',
+        viewModes: 'View modes',
+        wechat: 'Copy to WeChat',
+        words: 'words'
+      },
       mediaPickerFailure: 'The media library could not open.',
       preview: 'Preview',
       source: 'Markdown',
       toolbar: 'Markdown toolbar'
     },
     toolbar: {
-      commands: [{
-        action: 'wrap',
-        group: 'format',
-        icon: 'editor-bold',
-        id: 'bold',
-        label: 'Bold',
-        prefix: '**',
-        suffix: '**',
-        surface: 'main'
-      }],
+      commands: [
+        {
+          action: 'wrap',
+          group: 'format',
+          icon: 'editor-bold',
+          id: 'bold',
+          label: 'Bold',
+          prefix: '**',
+          suffix: '**',
+          surface: 'main'
+        }
+      ],
       shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } },
       strings: { headings: 'Headings', linkText: 'link text' }
     },
@@ -136,7 +170,8 @@ function validBootstrap() {
     wordpress: {
       customCssUrl: 'https://example.test/wp-json/easymde/v1/custom-css',
       nonce: 'synthetic-nonce',
-      previewUrl: 'https://example.test/wp-json/easymde/v1/preview'
+      previewUrl: 'https://example.test/wp-json/easymde/v1/preview',
+      revisionsUrl: 'https://example.test/wp-json/easymde/v1/posts/'
     }
   };
 }
@@ -149,6 +184,7 @@ describe('parseEditorRootBootstrap', () => {
       document: { editorLabel: 'Markdown source' },
       fonts: validBootstrap().fonts,
       imageUpload: validBootstrap().imageUpload,
+      immersiveStrings: validBootstrap().strings.immersive,
       layout: { direction: 'ltr' },
       localDrafts: validBootstrap().localDrafts,
       labels: {
@@ -177,33 +213,87 @@ describe('parseEditorRootBootstrap', () => {
 
   it.each([
     [null, 'editor-root-bootstrap-invalid'],
-    [{ ...validBootstrap(), schemaVersion: 1 }, 'editor-root-schema-unsupported'],
+    [
+      { ...validBootstrap(), schemaVersion: 1 },
+      'editor-root-schema-unsupported'
+    ],
     [{ ...validBootstrap(), document: null }, 'editor-root-document-invalid'],
-    [{ ...validBootstrap(), appearance: null }, 'editor-root-appearance-invalid'],
-    [{
-      ...validBootstrap(),
-      appearance: {
-        ...validBootstrap().appearance,
-        articleThemes: [{
-          fontDefaults: {
-            appleFont: 'missing', customFont: 'none', serifFont: 'off', windowsFont: 'system'
-          },
-          id: 'default', label: 'Default'
-        }]
-      }
-    }, 'editor-root-appearance-invalid'],
+    [
+      { ...validBootstrap(), appearance: null },
+      'editor-root-appearance-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        appearance: {
+          ...validBootstrap().appearance,
+          articleThemes: [
+            {
+              fontDefaults: {
+                appleFont: 'missing',
+                customFont: 'none',
+                serifFont: 'off',
+                windowsFont: 'system'
+              },
+              id: 'default',
+              label: 'Default'
+            }
+          ]
+        }
+      },
+      'editor-root-appearance-invalid'
+    ],
     [{ ...validBootstrap(), fonts: null }, 'editor-root-fonts-invalid'],
-    [{ ...validBootstrap(), imageUpload: null }, 'editor-root-image-upload-invalid'],
+    [
+      { ...validBootstrap(), imageUpload: null },
+      'editor-root-image-upload-invalid'
+    ],
     [{ ...validBootstrap(), layout: null }, 'editor-root-layout-invalid'],
-    [{ ...validBootstrap(), localDrafts: null }, 'editor-root-local-drafts-invalid'],
-    [{ ...validBootstrap(), mediaPicker: null }, 'editor-root-media-picker-invalid'],
-    [{ ...validBootstrap(), previewEnhancement: null }, 'editor-root-preview-enhancement-invalid'],
+    [
+      { ...validBootstrap(), localDrafts: null },
+      'editor-root-local-drafts-invalid'
+    ],
+    [
+      { ...validBootstrap(), mediaPicker: null },
+      'editor-root-media-picker-invalid'
+    ],
+    [
+      { ...validBootstrap(), previewEnhancement: null },
+      'editor-root-preview-enhancement-invalid'
+    ],
     [{ ...validBootstrap(), toolbar: null }, 'editor-root-toolbar-invalid'],
-    [{ ...validBootstrap(), wechatExport: null }, 'editor-root-wechat-export-invalid'],
-    [{ ...validBootstrap(), strings: { ...validBootstrap().strings, source: '' } }, 'editor-root-label-invalid'],
-    [{ ...validBootstrap(), preview: { ...validBootstrap().preview, postId: -1 } }, 'editor-root-preview-invalid'],
-    [{ ...validBootstrap(), preview: { ...validBootstrap().preview, features: { mermaid: 'yes' } } }, 'editor-root-preview-invalid'],
-    [{ ...validBootstrap(), preview: { ...validBootstrap().preview, html: null } }, 'editor-root-preview-invalid']
+    [
+      { ...validBootstrap(), wechatExport: null },
+      'editor-root-wechat-export-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        strings: { ...validBootstrap().strings, source: '' }
+      },
+      'editor-root-label-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        preview: { ...validBootstrap().preview, postId: -1 }
+      },
+      'editor-root-preview-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        preview: { ...validBootstrap().preview, features: { mermaid: 'yes' } }
+      },
+      'editor-root-preview-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        preview: { ...validBootstrap().preview, html: null }
+      },
+      'editor-root-preview-invalid'
+    ]
   ])('rejects an invalid external contract with stable code', (value, code) => {
     expect(() => parseEditorRootBootstrap(value)).toThrowError(
       expect.objectContaining({ code })
@@ -216,10 +306,14 @@ describe('parseEditorRootBootstrap', () => {
       const features = JSON.parse(`{"${key}":true}`) as Record<string, boolean>;
       const bootstrap = validBootstrap();
 
-      expect(() => parseEditorRootBootstrap({
-        ...bootstrap,
-        preview: { ...bootstrap.preview, features }
-      })).toThrowError(expect.objectContaining({ code: 'editor-root-preview-invalid' }));
+      expect(() =>
+        parseEditorRootBootstrap({
+          ...bootstrap,
+          preview: { ...bootstrap.preview, features }
+        })
+      ).toThrowError(
+        expect.objectContaining({ code: 'editor-root-preview-invalid' })
+      );
     }
   );
 });

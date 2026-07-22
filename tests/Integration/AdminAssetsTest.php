@@ -68,6 +68,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertArrayHasKey( 'layout', $bootstrap );
 		$this->assertArrayHasKey( 'mediaPicker', $bootstrap );
 		$this->assertArrayHasKey( 'previewEnhancement', $bootstrap );
+		$this->assertArrayHasKey( 'immersive', $bootstrap['strings'] );
 		$this->assertArrayNotHasKey( 'publishing', $bootstrap );
 		$this->assertArrayNotHasKey( 'revisions', $bootstrap );
 		$this->assertArrayHasKey( 'toolbar', $bootstrap );
@@ -75,7 +76,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertArrayHasKey( 'wordpress', $bootstrap );
 		$this->assertSame( rest_url( 'easymde/v1/preview' ), $bootstrap['wordpress']['previewUrl'] );
 		$this->assertArrayNotHasKey( 'revisionAdminUrl', $bootstrap['wordpress'] );
-		$this->assertArrayNotHasKey( 'revisionsUrl', $bootstrap['wordpress'] );
+		$this->assertSame( rest_url( 'easymde/v1/posts/' ), $bootstrap['wordpress']['revisionsUrl'] );
 		$this->assertSame( rest_url( 'easymde/v1/media' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );

@@ -16,6 +16,35 @@ const defaultRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 export const frontendRuntimeAssets = [
   {
+    id: 'inter-font',
+    displayName: 'Inter font',
+    packageName: '@fontsource/inter',
+    bundledPaths: 'assets/vendor/fonts/inter/',
+    purpose: 'Local immersive-editor interface font.',
+    noticeLocation: 'assets/vendor/fonts/inter/LICENSE',
+    managedRoot: 'assets/vendor/fonts/inter',
+    copies: [
+      ['node_modules/@fontsource/inter/files/inter-latin-400-normal.woff2', 'assets/vendor/fonts/inter/inter-latin-400-normal.woff2', 'file'],
+      ['node_modules/@fontsource/inter/files/inter-latin-500-normal.woff2', 'assets/vendor/fonts/inter/inter-latin-500-normal.woff2', 'file'],
+      ['node_modules/@fontsource/inter/files/inter-latin-600-normal.woff2', 'assets/vendor/fonts/inter/inter-latin-600-normal.woff2', 'file'],
+      ['node_modules/@fontsource/inter/LICENSE', 'assets/vendor/fonts/inter/LICENSE', 'file']
+    ].map(([source, destination, type]) => ({ source, destination, type }))
+  },
+  {
+    id: 'jetbrains-mono-font',
+    displayName: 'JetBrains Mono font',
+    packageName: '@fontsource/jetbrains-mono',
+    bundledPaths: 'assets/vendor/fonts/jetbrains-mono/',
+    purpose: 'Local immersive-editor source and statistics font.',
+    noticeLocation: 'assets/vendor/fonts/jetbrains-mono/LICENSE',
+    managedRoot: 'assets/vendor/fonts/jetbrains-mono',
+    copies: [
+      ['node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2', 'assets/vendor/fonts/jetbrains-mono/jetbrains-mono-latin-400-normal.woff2', 'file'],
+      ['node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2', 'assets/vendor/fonts/jetbrains-mono/jetbrains-mono-latin-500-normal.woff2', 'file'],
+      ['node_modules/@fontsource/jetbrains-mono/LICENSE', 'assets/vendor/fonts/jetbrains-mono/LICENSE', 'file']
+    ].map(([source, destination, type]) => ({ source, destination, type }))
+  },
+  {
     id: 'highlight',
     displayName: 'Highlight.js CDN assets',
     packageName: '@highlightjs/cdn-assets',

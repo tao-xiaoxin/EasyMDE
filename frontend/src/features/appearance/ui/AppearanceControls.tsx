@@ -231,23 +231,8 @@ export function AppearanceControls({
         hidden={!isOpen}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
-          if ('Tab' !== event.key) {
-            return;
-          }
-          const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
-            'button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-          )).filter((element) => !element.closest('[hidden]'));
-          const first = focusable[0];
-          const last = focusable[focusable.length - 1];
-          if (!first || !last) {
-            return;
-          }
-          if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault();
-            last.focus();
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault();
-            first.focus();
+          if ('Escape' !== event.key) {
+            event.stopPropagation();
           }
         }}
       >

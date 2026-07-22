@@ -118,6 +118,18 @@ async function readStableScrollTop(scroller) {
   });
 }
 
+async function readFirstVisibleSourceLine(scroller) {
+  return scroller.evaluate((element) => {
+    const scrollerBounds = element.getBoundingClientRect();
+    return [...element.querySelectorAll('.cm-line')]
+      .find((line) => {
+        const lineBounds = line.getBoundingClientRect();
+        return lineBounds.bottom > scrollerBounds.top + 1
+          && lineBounds.top < scrollerBounds.bottom;
+      })?.textContent ?? null;
+  });
+}
+
 function runWp(args, options = {}) {
   if (!wpPath) {
     throw new Error('EASYMDE_E2E_WP_PATH must point to the WordPress install under test.');
@@ -465,6 +477,8 @@ test.describe('EasyMDE editor workflows', () => {
     });
     const sourceScrollTop = await readStableScrollTop(sourceScroller);
     expect(sourceScrollTop).toBeGreaterThan(0);
+    const sourceScrollAnchor = await readFirstVisibleSourceLine(sourceScroller);
+    expect(sourceScrollAnchor).not.toBeNull();
     for (let cycle = 0; cycle < 5; cycle += 1) {
       await entry.click();
       await expect(page.getByRole('dialog', { name: strings.enter })).toBeVisible();
@@ -473,7 +487,9 @@ test.describe('EasyMDE editor workflows', () => {
     }
     await expect(sourceScroller).toBeVisible();
     const restoredScrollTop = await readStableScrollTop(sourceScroller);
-    expect(restoredScrollTop).toBe(sourceScrollTop);
+    const restoredScrollAnchor = await readFirstVisibleSourceLine(sourceScroller);
+    expect(restoredScrollTop).toBeGreaterThan(0);
+    expect(restoredScrollAnchor).toBe(sourceScrollAnchor);
     expect(mutationRequests).toEqual([]);
     await expect(page.locator('script[src*="immersive"], link[href*="immersive"]')).toHaveCount(0);
   });

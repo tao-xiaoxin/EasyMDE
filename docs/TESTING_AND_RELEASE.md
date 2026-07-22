@@ -159,10 +159,12 @@ Use the exact canonical WordPress origin configured for the test site; changing
 The suite covers the complete ordinary Editor Root: absence of Legacy/Focus
 assets, CodeMirror/IME/Undo/synchronized scrolling/uploads, Preview stale
 results and enhancements, Local Draft recovery and native Save, Appearance and
-Custom CSS, Outline/statistics/responsive/RTL/keyboard layout, Publishing with
-unknown extension fields, Revision Preview and native revision navigation, and
-WeChat Clipboard success/failure. It also verifies ordinary supported posts
-remain zero-write on open.
+Custom CSS, the fixed 50/50 desktop split and historical responsive/RTL/keyboard
+layout, WordPress-native Publishing with unknown extension fields, native
+revision navigation, and WeChat Clipboard success/failure. It also verifies
+withdrawn Outline/statistics/view/resizer/status/React Publish/React Revision
+surfaces and Focus assets are absent, and ordinary supported posts remain
+zero-write on open.
 
 ## Release Script Safety Guards
 

@@ -1,6 +1,5 @@
 import {
   createElement,
-  Fragment,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -68,7 +67,6 @@ export function AppearanceControls({
   const snapshotRef = useRef(snapshot);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const firstSelectRef = useRef<HTMLSelectElement>(null);
 
   const replaceSnapshot = (nextSnapshot: AppearanceSnapshot): boolean => {
     if (!activeRef.current) {
@@ -102,12 +100,6 @@ export function AppearanceControls({
       activeRef.current = false;
     };
   }, [onReady]);
-
-  useLayoutEffect(() => {
-    if (isOpen) {
-      firstSelectRef.current?.focus();
-    }
-  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -205,7 +197,7 @@ export function AppearanceControls({
   };
 
   return (
-    <Fragment>
+    <div className="easymde-toolbar-popover-anchor easymde-toolbar-popover-appearance">
       <button
         ref={triggerRef}
         type="button"
@@ -225,6 +217,7 @@ export function AppearanceControls({
           }
           port.closeOtherPopovers();
           setIsOpen(true);
+          triggerRef.current?.focus();
         }}
       >
         <span className="dashicons dashicons-admin-customizer" aria-hidden="true" />
@@ -238,30 +231,14 @@ export function AppearanceControls({
         hidden={!isOpen}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
-          if ('Tab' !== event.key) {
-            return;
-          }
-          const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
-            'button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-          )).filter((element) => !element.closest('[hidden]'));
-          const first = focusable[0];
-          const last = focusable[focusable.length - 1];
-          if (!first || !last) {
-            return;
-          }
-          if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault();
-            last.focus();
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault();
-            first.focus();
+          if ('Escape' !== event.key) {
+            event.stopPropagation();
           }
         }}
       >
         <label className="easymde-toolbar-control">
           <span className="easymde-toolbar-control-label">{bootstrap.strings.articleTheme}</span>
           <select
-            ref={firstSelectRef}
             className="easymde-theme-select"
             value={selectedArticleValue(snapshot)}
             onChange={(event) => {
@@ -347,6 +324,6 @@ export function AppearanceControls({
           />
         </div>
       </div>
-    </Fragment>
+    </div>
   );
 }

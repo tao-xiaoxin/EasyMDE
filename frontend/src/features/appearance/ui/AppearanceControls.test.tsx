@@ -56,7 +56,29 @@ function createPort(overrides: Partial<AppearancePort> = {}): AppearancePort {
 }
 
 describe('AppearanceControls', () => {
-  it('opens an accessible popover, focuses the first field, and returns focus on Escape', async () => {
+  it('anchors the panel to the appearance trigger instead of the page', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+      />
+    );
+    const trigger = screen.getByRole('button', { name: 'Appearance' });
+
+    await user.click(trigger);
+    const panel = screen.getByRole('dialog', { name: 'Appearance' });
+    const anchor = trigger.closest(
+      '.easymde-toolbar-popover-anchor.easymde-toolbar-popover-appearance'
+    );
+
+    expect(anchor).not.toBeNull();
+    expect(anchor?.contains(panel)).toBe(true);
+  });
+
+  it('opens an accessible popover without moving focus and returns focus on Escape', async () => {
     const user = userEvent.setup();
     render(
       <AppearanceControls
@@ -71,16 +93,14 @@ describe('AppearanceControls', () => {
     await user.click(trigger);
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByRole('dialog', { name: 'Appearance' }).hidden).toBe(false);
-    expect(document.activeElement).toBe(
-      screen.getByRole('combobox', { name: 'Article theme' })
-    );
+    expect(document.activeElement).toBe(trigger);
 
     await user.keyboard('{Escape}');
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(trigger);
   });
 
-  it('keeps keyboard focus inside the open appearance dialog', async () => {
+  it('allows keyboard focus to follow the legacy non-modal popover order', async () => {
     const user = userEvent.setup();
     render(
       <AppearanceControls
@@ -93,14 +113,13 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     const articleTheme = screen.getByRole('combobox', { name: 'Article theme' });
-    const customCss = screen.getByRole('button', { name: 'Custom CSS' });
-    expect(document.activeElement).toBe(articleTheme);
-
-    await user.keyboard('{Shift>}{Tab}{/Shift}');
-    expect(document.activeElement).toBe(customCss);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Appearance' }));
 
     await user.keyboard('{Tab}');
     expect(document.activeElement).toBe(articleTheme);
+
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Appearance' }));
   });
 
   it('keeps internal actions open while the retained legacy document listener closes outside clicks', async () => {

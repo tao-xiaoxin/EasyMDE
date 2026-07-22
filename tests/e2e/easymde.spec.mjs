@@ -177,6 +177,26 @@ async function openEasyMdeNewPost(page) {
   await expect(page.locator('#easymde-editor')).toBeVisible();
 }
 
+async function revealNativeMetaBox(page, boxId) {
+  const box = page.locator(`#${boxId}`);
+  await expect(box).toHaveCount(1);
+
+  if (!await box.isVisible()) {
+    const option = page.locator(`#${boxId}-hide`);
+    await expect(option).toHaveCount(1);
+    await expect(option).toBeEnabled();
+    if (!await option.isChecked()) {
+      await option.evaluate((input) => input.click());
+    }
+  }
+
+  await expect(box).toBeVisible();
+  if ((await box.getAttribute('class'))?.split(/\s+/).includes('closed')) {
+    await box.locator('button.handlediv').click();
+  }
+  await expect(box.locator('.inside')).toBeVisible();
+}
+
 async function currentPostId(page) {
   const value = await page.locator('#post_ID').inputValue();
   return Number.parseInt(value, 10);
@@ -319,9 +339,24 @@ test.describe('EasyMDE editor workflows', () => {
 
     const source = page.locator('#easymde-source');
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
+    const headingTrigger = reactMain.locator('.easymde-toolbar-popover-headings > button');
     await expect(page.locator('#postdivrich')).toBeHidden();
     await expect(source).toBeHidden();
     await expect(sourceEditor).toBeVisible();
+    await sourceEditor.focus();
+    await headingTrigger.click();
+    await expect(headingTrigger).toHaveAttribute('aria-expanded', 'true');
+    await expect(sourceEditor).toBeFocused();
+    await headingTrigger.click();
+    await expect(headingTrigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(sourceEditor).toBeFocused();
+    await headingTrigger.focus();
+    await headingTrigger.press('Enter');
+    await expect(reactMain.locator('[data-easymde-command="paragraph"]')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await headingTrigger.press('Space');
+    await expect(reactMain.locator('[data-easymde-command="paragraph"]')).toBeFocused();
+    await page.keyboard.press('Escape');
     await sourceEditor.fill('Toolbar parity');
     await sourceEditor.focus();
     await sourceEditor.press('Home');
@@ -343,7 +378,6 @@ test.describe('EasyMDE editor workflows', () => {
     await source.evaluate((field) => {
       field.setSelectionRange(0, 0);
     });
-    const headingTrigger = reactMain.locator('.easymde-toolbar-popover-headings > button');
     await headingTrigger.focus();
     await headingTrigger.press('ArrowDown');
     await expect(headingTrigger).toHaveAttribute('aria-expanded', 'true');
@@ -354,6 +388,70 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(source).toHaveValue('###### Heading parity');
     await expect(sourceEditor).toHaveText('###### Heading parity');
     await expect(sourceEditor).toBeFocused();
+  });
+
+  test('executes every ordinary Markdown toolbar command through its React control', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+
+    const source = page.locator('#easymde-source');
+    const sourceEditor = page.locator('.easymde-source-react .cm-content');
+    const toolbar = page.getByRole('toolbar', { name: 'Markdown toolbar' });
+    const main = toolbar.locator('.easymde-toolbar-section-main');
+    const headingTrigger = main.locator('.easymde-toolbar-popover-headings > button');
+    const selectAll = async (value) => {
+      await sourceEditor.fill(value);
+      await sourceEditor.focus();
+      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
+    };
+    const executeMain = async ({ expected, id, input }) => {
+      await selectAll(input);
+      await main.locator(`[data-easymde-command="${id}"]`).click();
+      await expect(source).toHaveValue(expected);
+      await expect(sourceEditor.locator('.cm-line')).toHaveText(expected.split('\n'));
+      await expect(sourceEditor).toBeFocused();
+    };
+
+    for (const command of [
+      { expected: '**Alpha**', id: 'bold', input: 'Alpha' },
+      { expected: '*Alpha*', id: 'italic', input: 'Alpha' },
+      { expected: '~~Alpha~~', id: 'strike', input: 'Alpha' },
+      { expected: '> Alpha\n> Beta', id: 'quote', input: 'Alpha\nBeta' },
+      { expected: '- Alpha\n- Beta', id: 'unorderedlist', input: 'Alpha\nBeta' },
+      { expected: '1. Alpha\n2. Beta', id: 'orderedlist', input: 'Alpha\nBeta' },
+      { expected: '`Alpha`', id: 'inlinecode', input: 'Alpha' },
+      { expected: '```\nAlpha\n```', id: 'codefence', input: 'Alpha' },
+      { expected: '[Alpha](https://)', id: 'link', input: 'Alpha' }
+    ]) {
+      await executeMain(command);
+    }
+
+    for (const command of [
+      { expected: 'Alpha', id: 'paragraph', input: '### Alpha' },
+      { expected: '# Alpha', id: 'heading1', input: 'Alpha' },
+      { expected: '## Alpha', id: 'heading2', input: 'Alpha' },
+      { expected: '### Alpha', id: 'heading3', input: 'Alpha' },
+      { expected: '#### Alpha', id: 'heading4', input: 'Alpha' },
+      { expected: '##### Alpha', id: 'heading5', input: 'Alpha' },
+      { expected: '###### Alpha', id: 'heading6', input: 'Alpha' }
+    ]) {
+      await selectAll(command.input);
+      await headingTrigger.click();
+      await main.locator(`[data-easymde-command="${command.id}"]`).click();
+      await expect(source).toHaveValue(command.expected);
+      await expect(sourceEditor.locator('.cm-line')).toHaveText(command.expected.split('\n'));
+      await expect(sourceEditor).toBeFocused();
+    }
+
+    await sourceEditor.fill('Alpha');
+    await main.locator('[data-easymde-command="image"]').click();
+    const mediaModal = page.locator('.media-modal:visible');
+    await expect(mediaModal).toBeVisible();
+    await mediaModal.locator('.media-modal-close').click();
+    await expect(mediaModal).toBeHidden();
+    await expect(source).toHaveValue('Alpha');
   });
 
   test('hands the normal document session to React with one visible source and a fresh native bridge', async ({ page }, testInfo) => {
@@ -637,12 +735,50 @@ test.describe('EasyMDE editor workflows', () => {
     const catalog = await page.evaluate(() => ({
       articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes.map(({ id }) => id),
       codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes.map(({ id }) => id),
-      customFonts: window.EasyMDEEditorRootBootstrap.fonts.options.customFonts.map(({ id }) => id)
+      fontGroups: [
+        {
+          field: '#easymde-custom-font-field',
+          ids: window.EasyMDEEditorRootBootstrap.fonts.options.customFonts.map(({ id }) => id),
+          select: '.easymde-custom-font-select'
+        },
+        {
+          field: '#easymde-windows-font-field',
+          ids: window.EasyMDEEditorRootBootstrap.fonts.options.windowsFonts.map(({ id }) => id),
+          select: '.easymde-windows-font-select'
+        },
+        {
+          field: '#easymde-apple-font-field',
+          ids: window.EasyMDEEditorRootBootstrap.fonts.options.appleFonts.map(({ id }) => id),
+          select: '.easymde-apple-font-select'
+        },
+        {
+          field: '#easymde-serif-font-field',
+          ids: window.EasyMDEEditorRootBootstrap.fonts.options.serifOptions.map(({ id }) => id),
+          select: '.easymde-serif-font-select'
+        }
+      ]
     }));
 
-    await page.locator('.easymde-toolbar-section-secondary')
-      .getByRole('button', { name: labels.appearance, exact: true }).click();
+    const appearanceTrigger = page.locator('.easymde-toolbar-section-secondary')
+      .getByRole('button', { name: labels.appearance, exact: true });
+    await appearanceTrigger.click();
     const appearanceDialog = page.getByRole('dialog', { name: labels.appearance });
+    await expect(appearanceTrigger).toBeFocused();
+    expect(await appearanceDialog.evaluate((panel, trigger) => (
+      panel.parentElement === trigger.parentElement
+      && panel.parentElement?.classList.contains('easymde-toolbar-popover-anchor')
+      && panel.parentElement?.classList.contains('easymde-toolbar-popover-appearance')
+    ), await appearanceTrigger.elementHandle())).toBe(true);
+    const appearanceGeometry = await appearanceDialog.evaluate((panel, trigger) => {
+      const panelBox = panel.getBoundingClientRect();
+      const triggerBox = trigger.getBoundingClientRect();
+      return {
+        rightDelta: Math.abs(panelBox.right - triggerBox.right),
+        topDelta: Math.abs(panelBox.top - triggerBox.bottom - 8)
+      };
+    }, await appearanceTrigger.elementHandle());
+    expect(appearanceGeometry.rightDelta).toBeLessThanOrEqual(1);
+    expect(appearanceGeometry.topDelta).toBeLessThanOrEqual(1);
     const articleSelect = appearanceDialog.getByLabel(labels.articleTheme);
     const codeSelect = appearanceDialog.getByLabel(labels.codeTheme);
     for (const id of catalog.articleThemes) {
@@ -669,17 +805,35 @@ test.describe('EasyMDE editor workflows', () => {
     await expect.poll(() => page.locator('#easymde-custom-css-preview').textContent())
       .toContain('.easymde-rendered-content.easymde-custom-css-active p');
 
-    await page.getByRole('button', { name: labels.font, exact: true }).click();
+    const fontTrigger = page.getByRole('button', { name: labels.font, exact: true });
+    await fontTrigger.click();
     const fontDialog = page.getByRole('dialog', { name: labels.font });
-    if (catalog.customFonts.length > 1) {
-      const selected = catalog.customFonts.at(-1);
-      await fontDialog.locator('.easymde-custom-font-select').selectOption(selected);
-      await expect(page.locator('#easymde-custom-font-field')).toHaveValue(selected);
+    await expect(fontTrigger).toBeFocused();
+    expect(await fontDialog.evaluate((panel, trigger) => (
+      panel.parentElement === trigger.parentElement
+      && panel.parentElement?.classList.contains('easymde-toolbar-popover-anchor')
+      && panel.parentElement?.classList.contains('easymde-toolbar-popover-font')
+    ), await fontTrigger.elementHandle())).toBe(true);
+    const fontGeometry = await fontDialog.evaluate((panel, trigger) => {
+      const panelBox = panel.getBoundingClientRect();
+      const triggerBox = trigger.getBoundingClientRect();
+      return {
+        rightDelta: Math.abs(panelBox.right - triggerBox.right),
+        topDelta: Math.abs(panelBox.top - triggerBox.bottom - 8)
+      };
+    }, await fontTrigger.elementHandle());
+    expect(fontGeometry.rightDelta).toBeLessThanOrEqual(1);
+    expect(fontGeometry.topDelta).toBeLessThanOrEqual(1);
+    for (const group of catalog.fontGroups) {
+      for (const id of group.ids) {
+        await fontDialog.locator(group.select).selectOption(id);
+        await expect(page.locator(group.field)).toHaveValue(id);
+        await expect(page.locator('.easymde-pane-preview > article')).toHaveCSS('font-family', /.+/);
+      }
     }
-    await expect(page.locator('.easymde-pane-preview > article')).toHaveCSS('font-family', /.+/);
   });
 
-  test('keeps outline, statistics, responsive modes, keyboard resizing, and RTL geometry usable', async ({ page }, testInfo) => {
+  test('restores the fixed ordinary toolbar and 50/50 workspace without withdrawn surfaces', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
 
     await login(page, user);
@@ -696,45 +850,211 @@ test.describe('EasyMDE editor workflows', () => {
       });
     });
     await openEasyMdeNewPost(page);
-    const strings = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.layout.strings);
     const markdown = Array.from(
       { length: 14 },
       (_, index) => '## Heading ' + (index + 1) + '\n\nParagraph ' + (index + 1) + '.'
     ).join('\n\n');
     await fillMarkdownAndWaitForPreview(page, markdown, 'Paragraph 14.');
 
-    await page.getByRole('button', { name: strings.statistics }).click();
-    await expect(page.getByRole('region', { name: strings.statistics })).toBeVisible();
-    const outline = page.getByRole('navigation', { name: strings.outline });
-    await expect(outline).toBeVisible();
-    await outline.getByRole('button', { name: 'Heading 1', exact: true }).click();
-    await expect(page.locator('.easymde-source-react .cm-content')).toBeFocused();
+    const expectedToolbarLabels = await page.evaluate(() => {
+      const bootstrap = window.EasyMDEEditorRootBootstrap;
+      const commandLabels = bootstrap.toolbar.commands
+        .filter(({ group, surface }) => 'main' === surface && 'export' !== group)
+        .map(({ label }) => label);
+      const exportLabels = bootstrap.toolbar.commands
+        .filter(({ group, surface }) => 'main' === surface && 'export' === group)
+        .map(({ label }) => label);
+      return [
+        ...commandLabels,
+        ...exportLabels,
+        bootstrap.fonts.strings.font,
+        bootstrap.appearance.strings.appearance
+      ];
+    });
+    const toolbarLabels = await page.locator('.easymde-toolbar').evaluate((toolbar) => (
+      Array.from(toolbar.querySelectorAll(
+        'button[data-easymde-command]:not([role="menuitem"]), '
+        + '.easymde-toolbar-section-secondary > button, '
+        + '.easymde-toolbar-section-secondary > .easymde-toolbar-popover-anchor > button'
+      )).map((button) => button.getAttribute('aria-label'))
+    ));
+    expect(toolbarLabels).toEqual(expectedToolbarLabels);
 
-    const divider = page.getByRole('separator', { name: strings.resizePanes });
-    const before = Number(await divider.getAttribute('aria-valuenow'));
-    await divider.focus();
-    await divider.press('ArrowLeft');
-    expect(Number(await divider.getAttribute('aria-valuenow'))).toBeGreaterThan(before);
+    const visibleCommands = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.commands
+      .filter(({ surface }) => 'main' === surface)
+      .map(({ id, label, icon, action }) => ({ id, label, icon, action })));
+    for (const command of visibleCommands) {
+      const button = page.locator(`button[data-easymde-command="${command.id}"]:not([role="menuitem"])`);
+      await expect(button).toHaveCount(1);
+      await expect(button).toHaveAttribute('aria-label', command.label);
+      const title = await button.getAttribute('title');
+      expect(title?.startsWith(command.label)).toBe(true);
+      const iconSelector = 'copyWechat' === command.action
+        ? '.easymde-wechat-glyph'
+        : 'media-code' === command.icon || 'mediacode' === command.icon
+        ? '.easymde-toolbar-text-icon'
+        : `.dashicons-${command.icon}`;
+      await expect(button.locator(iconSelector)).toHaveCount(1);
+    }
 
-    await page.getByRole('button', { name: strings.previewMode }).click();
-    await expect(page.locator('.easymde-editor-panes')).toHaveAttribute('data-view', 'preview');
-    await page.setViewportSize({ width: 700, height: 900 });
-    await expect.poll(() => page.locator('#easymde-editor').evaluate((editor) => {
-      const rect = editor.getBoundingClientRect();
-      return {
-        internalOverflow: editor.scrollWidth - editor.clientWidth,
-        viewportOverflow: Math.max(0, rect.right - document.documentElement.clientWidth)
-      };
-    })).toEqual({ internalOverflow: 0, viewportOverflow: 0 });
+    const headingLabel = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.strings.headings);
+    const headingTrigger = page.getByRole('button', { name: headingLabel });
+    await headingTrigger.click();
+    const headingCommands = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.commands
+      .filter(({ surface }) => 'heading-menu' === surface)
+      .map(({ id, label }) => ({ id, label })));
+    const headingMenu = page.getByRole('menu', { name: headingLabel });
+    for (const command of headingCommands) {
+      const item = headingMenu.locator(`button[data-easymde-command="${command.id}"]`);
+      await expect(item).toHaveCount(1);
+      await expect(item).toHaveAttribute('role', 'menuitem');
+      await expect(item.locator('.easymde-popover-item-label')).toHaveText(command.label);
+    }
+    await page.keyboard.press('Escape');
+    await expect(headingTrigger).toBeFocused();
 
-    await expect(page.locator('[data-easymde-layout-owner="react"]')).toHaveAttribute('dir', 'rtl');
+    for (const selector of [
+      '.easymde-editor-context-bar',
+      '.easymde-editor-panes',
+      '.easymde-editor-status-bar',
+      '.easymde-outline-panel',
+      '.easymde-pane-divider',
+      '.easymde-publishing-owner',
+      '.easymde-revisions-owner',
+      '[data-easymde-command="immersive"]'
+    ]) {
+      await expect(page.locator(selector)).toHaveCount(0);
+    }
+
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.getByRole('button', { name: strings.splitMode }).click();
-    await expect(divider).toBeVisible();
-    await divider.focus();
-    const rtlBefore = Number(await divider.getAttribute('aria-valuenow'));
-    await divider.press('ArrowRight');
-    expect(Number(await divider.getAttribute('aria-valuenow'))).toBeLessThan(rtlBefore);
+    const desktopGeometry = await page.locator('.easymde-workspace').evaluate((workspace) => {
+      const source = workspace.querySelector('.easymde-pane-source').getBoundingClientRect();
+      const preview = workspace.querySelector('.easymde-pane-preview').getBoundingClientRect();
+      return { delta: Math.abs(source.width - preview.width), sameRow: source.top === preview.top };
+    });
+    expect(desktopGeometry.sameRow).toBe(true);
+    expect(desktopGeometry.delta).toBeLessThanOrEqual(1);
+    const secondaryToolbarEndGap = await page.locator('.easymde-toolbar').evaluate((toolbar) => {
+      const appearance = toolbar.querySelector('.easymde-toolbar-popover-appearance > button');
+      if (!(appearance instanceof HTMLElement)) {
+        throw new Error('appearance-toolbar-trigger-unavailable');
+      }
+
+      return toolbar.getBoundingClientRect().right - appearance.getBoundingClientRect().right;
+    });
+    expect(Math.abs(secondaryToolbarEndGap - 24)).toBeLessThanOrEqual(1);
+    await expect(page.locator('[data-easymde-layout-owner="react"]')).toHaveAttribute('dir', 'rtl');
+    const rtlDivider = await page.locator('.easymde-workspace').evaluate((workspace) => {
+      const source = workspace.querySelector('.easymde-pane-source');
+      const preview = workspace.querySelector('.easymde-pane-preview');
+      if (!(source instanceof HTMLElement) || !(preview instanceof HTMLElement)) {
+        throw new Error('editor-workspace-panes-unavailable');
+      }
+      const sourceBounds = source.getBoundingClientRect();
+      const previewBounds = preview.getBoundingClientRect();
+      const sourceStyle = getComputedStyle(source);
+
+      return {
+        borderLeftWidth: sourceStyle.borderLeftWidth,
+        borderRightWidth: sourceStyle.borderRightWidth,
+        sourceFollowsPreview: Math.abs(sourceBounds.left - previewBounds.right) <= 1
+      };
+    });
+    expect(rtlDivider).toEqual({
+      borderLeftWidth: '1px',
+      borderRightWidth: '0px',
+      sourceFollowsPreview: true
+    });
+
+    for (const width of [1080, 1079]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect.poll(() => page.locator('.easymde-workspace').evaluate((workspace) => {
+        const sourcePane = workspace.querySelector('.easymde-pane-source');
+        const previewPane = workspace.querySelector('.easymde-pane-preview');
+        if (!(sourcePane instanceof HTMLElement) || !(previewPane instanceof HTMLElement)) {
+          throw new Error('editor-workspace-panes-unavailable');
+        }
+        const source = sourcePane.getBoundingClientRect();
+        const preview = previewPane.getBoundingClientRect();
+        const sourceStyle = getComputedStyle(sourcePane);
+
+        return {
+          borderBottomWidth: sourceStyle.borderBottomWidth,
+          borderLeftWidth: sourceStyle.borderLeftWidth,
+          borderRightWidth: sourceStyle.borderRightWidth,
+          stacked: preview.top > source.top
+        };
+      })).toEqual({
+        borderBottomWidth: '1px',
+        borderLeftWidth: '0px',
+        borderRightWidth: '0px',
+        stacked: true
+      });
+    }
+    await page.setViewportSize({ width: 1081, height: 1000 });
+    await expect.poll(() => page.locator('.easymde-workspace').evaluate((workspace) => {
+      const source = workspace.querySelector('.easymde-pane-source').getBoundingClientRect();
+      const preview = workspace.querySelector('.easymde-pane-preview').getBoundingClientRect();
+      return source.top === preview.top && Math.abs(source.width - preview.width) <= 1;
+    })).toBe(true);
+
+    for (const [width, direction] of [[781, 'column'], [782, 'column'], [783, 'row']]) {
+      await page.setViewportSize({ width, height: 900 });
+      const responsiveToolbar = page.locator('.easymde-toolbar');
+      await expect(responsiveToolbar).toHaveCSS('flex-direction', direction);
+      await expect.poll(() => page.locator('#easymde-editor').evaluate((editor) => ({
+        internalOverflow: editor.scrollWidth - editor.clientWidth,
+        viewportOverflow: Math.max(
+          0,
+          editor.getBoundingClientRect().right - document.documentElement.clientWidth
+        )
+      }))).toEqual({ internalOverflow: 0, viewportOverflow: 0 });
+
+      for (const [anchorSelector, panelSelector] of [
+        ['.easymde-toolbar-popover-font', '.easymde-toolbar-popover-font-panel'],
+        ['.easymde-toolbar-popover-appearance', '.easymde-toolbar-popover-appearance-panel']
+      ]) {
+        const trigger = page.locator(`${anchorSelector} > button`);
+        const panel = page.locator(panelSelector);
+        await trigger.scrollIntoViewIfNeeded();
+        const scrollBeforeOpen = await page.evaluate(() => scrollY);
+        await trigger.click();
+        await expect(panel).toBeVisible();
+        const placement = await panel.evaluate((element, { anchorSelector, mobile }) => {
+          const triggerElement = element.parentElement?.querySelector(':scope > button');
+          const toolbar = element.closest('.easymde-toolbar');
+          if (!(triggerElement instanceof HTMLElement) || !(toolbar instanceof HTMLElement)) {
+            throw new Error('toolbar-popover-owner-unavailable');
+          }
+          const panelBox = element.getBoundingClientRect();
+          const triggerBox = triggerElement.getBoundingClientRect();
+          const toolbarBox = toolbar.getBoundingClientRect();
+          return {
+            withinViewport: panelBox.left >= -1 && panelBox.right <= innerWidth + 1,
+            parentIsAnchor: element.parentElement?.matches(anchorSelector) ?? false,
+            offsetOwnerMatches: mobile
+              ? element.offsetParent === toolbar
+              : element.offsetParent === element.parentElement,
+            verticalGap: mobile
+              ? panelBox.top - toolbarBox.bottom
+              : panelBox.top - triggerBox.bottom,
+            horizontalAnchorDelta: mobile
+              ? panelBox.left - toolbarBox.left
+              : panelBox.right - triggerBox.right,
+            scrollY
+          };
+        }, { anchorSelector, mobile: width <= 782 });
+        expect(placement.parentIsAnchor).toBe(true);
+        expect(placement.offsetOwnerMatches).toBe(true);
+        expect(placement.withinViewport).toBe(true);
+        expect(Math.abs(placement.verticalGap - 8)).toBeLessThanOrEqual(1);
+        expect(Math.abs(placement.horizontalAnchorDelta)).toBeLessThanOrEqual(1);
+        expect(placement.scrollY).toBe(scrollBeforeOpen);
+        await page.keyboard.press('Escape');
+        await expect(panel).toBeHidden();
+        await expect(trigger).toBeFocused();
+      }
+    }
   });
 
   test('publishes through the open native form without dropping unknown extension fields', async ({ page }, testInfo) => {
@@ -760,14 +1080,13 @@ test.describe('EasyMDE editor workflows', () => {
       form.append(extensionField);
     });
 
-    const strings = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.publishing.strings);
-    await page.getByRole('button', { name: strings.open, exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: strings.title });
-    await dialog.getByLabel(strings.excerpt).fill('Synthetic excerpt');
-    await dialog.getByLabel(strings.tags).fill('react-e2e, native-form');
+    await revealNativeMetaBox(page, 'postexcerpt');
+    await page.locator('#excerpt').fill('Synthetic excerpt');
+    await page.locator('#new-tag-post_tag').fill('react-e2e, native-form');
+    await page.locator('#post_tag .tagadd').click();
 
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-    await dialog.locator('footer .button-primary').click();
+    await page.locator('#publish').click();
     await navigation;
     await expect(page.locator('#message, .notice-success')).toBeVisible();
 
@@ -778,7 +1097,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(postTagNames(postId).split(/\r?\n/).sort()).toEqual(['native-form', 'react-e2e']);
   });
 
-  test('lists and previews WordPress revisions before navigating to the native restore screen', async ({ page }, testInfo) => {
+  test('keeps revision navigation and restore on the native WordPress screen', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = 'React revisions ' + testSlug(testInfo);
 
@@ -796,25 +1115,14 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('#save-post').press('Enter');
     await navigation;
 
-    const strings = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.revisions.strings);
-    const open = page.getByRole('button', { name: strings.open, exact: true });
-    await expect(open).toBeEnabled();
-    await open.focus();
-    await open.press('Enter');
-    const dialog = page.getByRole('dialog', { name: strings.title });
-    const revisions = dialog.getByRole('listbox', { name: strings.title }).getByRole('option');
-    await expect(revisions.first()).toBeVisible();
-    await revisions.last().focus();
-    await revisions.last().press('Enter');
-    await expect(dialog.locator('[data-easymde-preview-html-sink="1"]')).toBeVisible();
-
-    const restore = dialog.getByRole('button', { name: strings.restore, exact: true });
-    await expect(restore).toBeEnabled();
-    await restore.focus();
-    await Promise.all([
-      page.waitForURL(/\/wp-admin\/revision\.php\?/),
-      restore.press('Enter')
-    ]);
+    await expect(page.locator('.easymde-revisions-owner')).toHaveCount(0);
+    await revealNativeMetaBox(page, 'revisionsdiv');
+    const revisionLink = page.locator('a[href*="/wp-admin/revision.php?revision="]').last();
+    await expect(revisionLink).toBeVisible();
+    const revisionUrl = new URL(await revisionLink.getAttribute('href'));
+    expect(revisionUrl.pathname).toBe('/wp-admin/revision.php');
+    expect(revisionUrl.searchParams.get('revision')).toMatch(/^\d+$/);
+    await page.goto(revisionUrl.href);
     expect(new URL(page.url()).searchParams.get('revision')).toMatch(/^\d+$/);
     await expect(page.getByRole('button', { name: 'Restore This Revision' })).toBeVisible();
   });

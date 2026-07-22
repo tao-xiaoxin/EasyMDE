@@ -68,12 +68,34 @@ describe('EditorToolbar', () => {
       </div>
     );
     const trigger = screen.getByRole('button', { name: '标题' });
+    const outsideControl = screen.getByRole('button', { name: '外部控件' });
 
+    await user.click(outsideControl);
     await user.click(trigger);
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     const menu = screen.getByRole('menu', { name: '标题' });
     const paragraph = within(menu).getByRole('menuitem', { name: /\u6bb5\u843d/ });
     const heading = within(menu).getByRole('menuitem', { name: /\u6807\u9898 1/ });
+    expect(document.activeElement).toBe(outsideControl);
+
+    await user.click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(outsideControl);
+
+    trigger.focus();
+    await user.keyboard('{Enter}');
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(paragraph);
+    await user.keyboard('{Escape}');
+
+    await user.keyboard(' ');
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(paragraph);
+    await user.keyboard('{Escape}');
+
+    trigger.focus();
+    await user.keyboard('{ArrowDown}');
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
     expect(document.activeElement).toBe(paragraph);
 
     await user.keyboard('{End}');
@@ -93,7 +115,6 @@ describe('EditorToolbar', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     expect(document.activeElement).toBe(heading);
 
-    const outsideControl = screen.getByRole('button', { name: '外部控件' });
     await user.click(outsideControl);
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(outsideControl);

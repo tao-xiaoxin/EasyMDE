@@ -23,8 +23,6 @@ import type { FontControlsBootstrap } from '../../contracts/bootstrap/font-contr
 import type { ImageUploadBootstrap } from '../../contracts/bootstrap/image-upload-bootstrap';
 import type { EditorLayoutBootstrap } from '../../contracts/bootstrap/editor-layout-bootstrap';
 import type { MediaPickerBootstrap } from '../../contracts/bootstrap/media-picker-bootstrap';
-import type { PublishingBootstrap } from '../../contracts/bootstrap/publishing-bootstrap';
-import type { RevisionsBootstrap } from '../../contracts/bootstrap/revisions-bootstrap';
 import type { ToolbarBootstrap } from '../../contracts/bootstrap/toolbar-bootstrap';
 import type { WechatExportBootstrap } from '../../contracts/bootstrap/wechat-export-bootstrap';
 import type { AppearancePort } from '../../contracts/ports/appearance-port';
@@ -37,8 +35,6 @@ import {
 } from '../../contracts/ports/editor-session-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type { NativeSubmissionPort } from '../../contracts/ports/native-submission-port';
-import type { PublishingPort } from '../../contracts/ports/publishing-port';
-import type { RevisionsPort } from '../../contracts/ports/revisions-port';
 import type {
   MediaPickerDocumentPort,
   MediaPickerFramePort
@@ -60,23 +56,12 @@ import {
   createImageUploadSession,
   type ImageUploadStatus
 } from '../../features/image-upload/image-upload-session';
-import {
-  EditorWorkspace,
-  type EditorViewMode
-} from '../../features/editor-layout/ui/EditorWorkspace';
+import { EditorWorkspace } from '../../features/editor-layout/ui/EditorWorkspace';
 import { useEditorSession } from '../../features/editor-session/use-editor-session';
 import type { PreviewEnhancementPort } from '../../features/live-preview/ports/preview-enhancement-port';
 import type { PreviewScrollPort } from '../../features/live-preview/ports/preview-scroll-port';
 import { PreviewSurfaceOwner, type PreviewSurfaceRuntime } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { openMediaPickerSession } from '../../features/media-picker/media-picker-session';
-import {
-  PublishingControls,
-  type PublishingControlsSession
-} from '../../features/publishing/ui/PublishingControls';
-import {
-  RevisionsControls,
-  type RevisionsControlsSession
-} from '../../features/revisions/ui/RevisionsControls';
 import {
   createLocalDraftSession,
   type LocalDraftSession
@@ -120,10 +105,6 @@ export type EditorRootProps = Readonly<{
   }>) => ToolbarShortcutsPort;
   preview: EditorRootPreviewBootstrap;
   previewPort: PreviewRequestPort;
-  publishing: PublishingBootstrap;
-  publishingPort: PublishingPort;
-  revisions: RevisionsBootstrap;
-  revisionsPort: RevisionsPort;
   scrollPort: PreviewScrollPort;
   scrollSyncPort: ScrollSyncPort;
   sessionPort: EditorSessionPort;
@@ -181,7 +162,6 @@ function RootExportCommands({
 
   return (
     <Fragment>
-      <span className="easymde-toolbar-divider" aria-hidden="true" />
       {commands.map((command) => {
         const shortcut = toolbar.shortcuts[command.id]?.[platform] ?? '';
         const title = shortcut ? `${command.label} (${shortcut})` : command.label;
@@ -202,6 +182,7 @@ function RootExportCommands({
           </button>
         );
       })}
+      <span className="easymde-toolbar-divider" aria-hidden="true" />
     </Fragment>
   );
 }
@@ -345,8 +326,6 @@ export function EditorRoot(props: EditorRootProps) {
   const fontControlsSessionRef = useRef<FontControlsSession | null>(null);
   const toolbarSessionRef = useRef<EditorToolbarSession | null>(null);
   const previewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
-  const publishingSessionRef = useRef<PublishingControlsSession | null>(null);
-  const revisionsSessionRef = useRef<RevisionsControlsSession | null>(null);
   const previewRevisionRef = useRef(0);
   const previewAppearanceRef = useRef(props.appearance.state);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
@@ -362,10 +341,8 @@ export function EditorRoot(props: EditorRootProps) {
   const [draftUnreadable, setDraftUnreadable] = useState(false);
   const [editorStatus, setEditorStatus] = useState<ImageUploadStatus | null>(null);
   const [previewRuntimeReady, setPreviewRuntimeReady] = useState(false);
-  const [revisionCodeTheme, setRevisionCodeTheme] = useState(props.appearance.state.codeTheme);
   const [appearanceState, setAppearanceState] = useState(props.appearance.state);
   const [fontState, setFontState] = useState(props.fonts.state);
-  const [viewMode, setViewMode] = useState<EditorViewMode>('split');
   const sessionSnapshot = useEditorSession(props.sessionPort);
   const protectedOperationError = useCallback((operation: EditorSessionOperation) => {
     const error = protectedEditorOperationError(props.sessionPort.getSnapshot(), operation);
@@ -398,8 +375,6 @@ export function EditorRoot(props: EditorRootProps) {
   const closeForToolbar = useCallback(() => {
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
-    publishingSessionRef.current?.close(false);
-    revisionsSessionRef.current?.close(false);
   }, []);
   const schedulePreview = useCallback((immediate = false) => {
     const runtime = previewRuntimeRef.current;
@@ -424,7 +399,6 @@ export function EditorRoot(props: EditorRootProps) {
       submissionStateRef.current = { ...submissionStateRef.current, ...state };
       documentSession?.replaceSubmissionState(submissionStateRef.current);
       previewAppearanceRef.current = state;
-      setRevisionCodeTheme(state.codeTheme);
       const defaults = props.appearance.articleThemes.find(
         ({ id }) => id === state.markdownTheme
       )?.fontDefaults;
@@ -436,8 +410,6 @@ export function EditorRoot(props: EditorRootProps) {
     closeOtherPopovers: () => {
       toolbarSessionRef.current?.closePopovers();
       fontControlsSessionRef.current?.close();
-      publishingSessionRef.current?.close(false);
-      revisionsSessionRef.current?.close(false);
       props.appearancePort.closeOtherPopovers();
     },
     saveCustomCss: async (input) => {
@@ -453,7 +425,6 @@ export function EditorRoot(props: EditorRootProps) {
         };
         documentSession?.replaceSubmissionState(submissionStateRef.current);
         previewAppearanceRef.current = result.snapshot.state;
-        setRevisionCodeTheme(result.snapshot.state.codeTheme);
         schedulePreview(true);
       }
       return result;
@@ -475,8 +446,6 @@ export function EditorRoot(props: EditorRootProps) {
     closeOtherPopovers: () => {
       toolbarSessionRef.current?.closePopovers();
       appearanceSessionRef.current?.close();
-      publishingSessionRef.current?.close(false);
-      revisionsSessionRef.current?.close(false);
       props.fontControlsPort.closeOtherPopovers();
     }
   }), [documentSession, props.fontControlsPort]);
@@ -488,24 +457,6 @@ export function EditorRoot(props: EditorRootProps) {
   }, []);
   const handleToolbarReady = useCallback((session: EditorToolbarSession) => {
     toolbarSessionRef.current = session;
-  }, []);
-  const handlePublishingReady = useCallback((session: PublishingControlsSession) => {
-    publishingSessionRef.current = session;
-  }, []);
-  const handlePublishingOpen = useCallback(() => {
-    toolbarSessionRef.current?.closePopovers();
-    appearanceSessionRef.current?.close();
-    fontControlsSessionRef.current?.close();
-    revisionsSessionRef.current?.close(false);
-  }, []);
-  const handleRevisionsReady = useCallback((session: RevisionsControlsSession) => {
-    revisionsSessionRef.current = session;
-  }, []);
-  const handleRevisionsOpen = useCallback(() => {
-    toolbarSessionRef.current?.closePopovers();
-    appearanceSessionRef.current?.close();
-    fontControlsSessionRef.current?.close();
-    publishingSessionRef.current?.close(false);
   }, []);
   const openMediaPicker = useCallback((session: EditorDocumentSession) => {
     if (mediaOperationRef.current) {
@@ -549,40 +500,6 @@ export function EditorRoot(props: EditorRootProps) {
         : props.previewPort.render(request, signal);
     }
   }), [props.previewPort, protectedOperationError]);
-  const publishingPort = useMemo<PublishingPort>(() => ({
-    read: props.publishingPort.read,
-    requestSubmit: (draft, action) => {
-      const sessionError = protectedOperationError('post-write');
-      if (sessionError) throw sessionError;
-      return props.publishingPort.requestSubmit(draft, action);
-    },
-    selectFeaturedImage: () => {
-      const sessionError = protectedOperationError('authenticated');
-      return sessionError
-        ? Promise.reject(sessionError)
-        : props.publishingPort.selectFeaturedImage();
-    }
-  }), [props.publishingPort, protectedOperationError]);
-  const revisionsPort = useMemo<RevisionsPort>(() => ({
-    confirmNavigation: props.revisionsPort.confirmNavigation,
-    getRevision: (revisionId, signal) => {
-      const sessionError = protectedOperationError('post-read');
-      return sessionError
-        ? Promise.reject(sessionError)
-        : props.revisionsPort.getRevision(revisionId, signal);
-    },
-    listRevisions: (signal) => {
-      const sessionError = protectedOperationError('post-read');
-      return sessionError
-        ? Promise.reject(sessionError)
-        : props.revisionsPort.listRevisions(signal);
-    },
-    openRevision: (revisionId) => {
-      const sessionError = protectedOperationError('post-read');
-      if (sessionError) throw sessionError;
-      props.revisionsPort.openRevision(revisionId);
-    }
-  }), [props.revisionsPort, protectedOperationError]);
   const executeRootExternalCommand = useCallback((
     commandId: string,
     session: EditorDocumentSession
@@ -685,7 +602,7 @@ export function EditorRoot(props: EditorRootProps) {
 
   useEffect(() => {
     const previewRuntime = previewRuntimeRef.current;
-    if (!documentSession || !previewRuntime || 'split' !== viewMode) {
+    if (!documentSession || !previewRuntime) {
       return;
     }
     const binding = props.scrollSyncPort.prepareBinding({
@@ -694,7 +611,7 @@ export function EditorRoot(props: EditorRootProps) {
     });
     binding.activate();
     return () => binding.dispose();
-  }, [documentSession, previewRuntimeReady, props.scrollSyncPort, viewMode]);
+  }, [documentSession, previewRuntimeReady, props.scrollSyncPort]);
 
   useLayoutEffect(() => {
     if (!previewRuntimeRef.current) return;
@@ -726,43 +643,28 @@ export function EditorRoot(props: EditorRootProps) {
                 session={documentSession}
                 toolbar={props.toolbar}
               />
-              <RootExportCommands
-                executeCommand={(commandId) => executeRootExternalCommand(commandId, documentSession)}
-                platform={props.platform}
-                toolbar={props.toolbar}
-              />
             </Fragment>
           ) : null}
         </div>
         <div className="easymde-toolbar-section easymde-toolbar-section-secondary">
-          <AppearanceControls
-            bootstrap={props.appearance}
-            onFailure={() => props.onFailure('react-editor-appearance-failed')}
-            onReady={handleAppearanceReady}
-            port={appearancePort}
-          />
+          {documentSession ? (
+            <RootExportCommands
+              executeCommand={(commandId) => executeRootExternalCommand(commandId, documentSession)}
+              platform={props.platform}
+              toolbar={props.toolbar}
+            />
+          ) : null}
           <FontControls
             bootstrap={props.fonts}
             onFailure={() => props.onFailure('react-editor-fonts-failed')}
             onReady={handleFontControlsReady}
             port={fontControlsPort}
           />
-          <RevisionsControls
-            bootstrap={props.revisions}
-            codeTheme={revisionCodeTheme}
-            enhancementPort={props.enhancementPort}
-            isDirty={() => documentSession?.getSnapshot().dirty ?? false}
-            onDiagnostic={props.onFailure}
-            onOpen={handleRevisionsOpen}
-            onReady={handleRevisionsReady}
-            port={revisionsPort}
-          />
-          <PublishingControls
-            bootstrap={props.publishing}
-            onDiagnostic={props.onFailure}
-            onOpen={handlePublishingOpen}
-            onReady={handlePublishingReady}
-            port={publishingPort}
+          <AppearanceControls
+            bootstrap={props.appearance}
+            onFailure={() => props.onFailure('react-editor-appearance-failed')}
+            onReady={handleAppearanceReady}
+            port={appearancePort}
           />
         </div>
       </div>
@@ -806,10 +708,6 @@ export function EditorRoot(props: EditorRootProps) {
       ) : null}
       <EditorWorkspace
         direction={props.layout.direction}
-        documentSession={documentSession}
-        locale={props.layout.locale}
-        onViewModeChange={setViewMode}
-        strings={props.layout.strings}
         source={(
           <section className="easymde-pane easymde-pane-source" data-easymde-document-owner="react">
             <header className="easymde-pane-header">{props.labels.source}</header>

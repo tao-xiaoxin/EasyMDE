@@ -25,8 +25,6 @@ import { createWordPressImageUploadPort } from '../integrations/wordpress/media/
 import { createWordPressMediaFramePort } from '../integrations/wordpress/media/wordpress-media-frame';
 import { createWordPressNativeSubmissionPort } from '../integrations/wordpress/native-form/wordpress-native-submission';
 import { createWordPressPreviewPort } from '../integrations/wordpress/preview/create-wordpress-preview-port';
-import { createWordPressPublishingPort } from '../integrations/wordpress/publishing/create-wordpress-publishing-port';
-import { createWordPressRevisionsPort } from '../integrations/wordpress/revisions/create-wordpress-revisions-port';
 import { createWordPressEditorSessionPort } from '../integrations/wordpress/session/create-wordpress-editor-session-port';
 
 type WordPressHooks = Readonly<{
@@ -237,23 +235,6 @@ export function mountAdminEditor(
       bootstrap.wordpress.nonce,
       windowRef.location.href
     ),
-    publishing: bootstrap.publishing,
-    publishingPort: createWordPressPublishingPort({
-      document: documentRef,
-      media: runtime.wordpress.media,
-      selectFeaturedImage: bootstrap.publishing.strings.selectFeaturedImage,
-      useFeaturedImage: bootstrap.publishing.strings.useFeaturedImage
-    }),
-    revisions: bootstrap.revisions,
-    revisionsPort: createWordPressRevisionsPort({
-      apiFetch,
-      confirmNavigation: () => windowRef.confirm(bootstrap.revisions.strings.confirmNavigation),
-      listUrl: bootstrap.wordpress.revisionsUrl,
-      navigate: (url) => windowRef.location.assign(url),
-      nonce: bootstrap.wordpress.nonce,
-      revisionAdminUrl: bootstrap.wordpress.revisionAdminUrl,
-      siteUrl: windowRef.location.href
-    }),
     scrollPort: createBrowserPreviewScroll(),
     scrollSyncPort: createBrowserScrollSync(windowRef),
     sessionPort: createWordPressEditorSessionPort({

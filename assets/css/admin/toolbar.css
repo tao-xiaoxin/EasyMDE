@@ -23,7 +23,9 @@
 }
 
 .easymde-toolbar-section-secondary {
+    box-sizing: border-box;
     margin-left: auto;
+    padding-right: 12px;
 }
 
 .easymde-react-toolbar-contents {

@@ -11,17 +11,23 @@ This Skill is the executable development contract. The durable rationale lives i
 
 Do not introduce a pattern, dependency, abstraction, directory, service, or framework merely because it is common in another React project.
 
-## Issue #91 Direct-Cutover Contract
+## Issue #91 Direct-Cutover and Ordinary-Editor Parity Contract
 
 The current maintainer decision for Issue #91 supersedes this Skill's generic
 incremental-handoff default. Build one complete ordinary WordPress Editor Root
 and remove the ordinary Editor's `bootstrap.js`, jQuery, Legacy DOM, dual-owner
 handoff, and fallback runtime. Do not add another bridge or handoff state.
 Focus Mode / immersive writing is excluded and must not be implemented,
-connected, enqueued, or loaded. Every other ordinary Editor capability in
-Issues #91 and #86 remains required; direct cutover is not feature reduction.
-Use the migration Skill only for Legacy inventory and deletion evidence where
-it does not conflict with this explicit decision.
+connected, enqueued, or loaded. The approved ordinary-editor parity baseline
+also has no Outline, writing statistics/status, Context Bar, view-mode switch,
+draggable split, React Publish, React Revision, or React History surface. Their
+absence does not remove WordPress capability: WordPress-native Publish,
+categories, tags, excerpts, featured media, and Revision Meta Boxes remain the
+owners of those workflows. The React Root retains the historical ordinary
+toolbar and fixed Source/Preview workspace together with editing, Preview,
+Appearance, Fonts, Custom CSS, Media, Local Draft, and WeChat behavior. Use the
+migration Skill only for Legacy inventory and deletion evidence where it does
+not conflict with this explicit decision.
 
 ## Rule Priority and Evidence
 
@@ -437,12 +443,9 @@ Group code by user capability, not technical type:
 ```text
 markdown-editor
 live-preview
-outline
 toolbar
 appearance
 custom-css
-publishing
-revisions
 media
 local-drafts
 wechat-export
@@ -452,19 +455,19 @@ ai-assistant
 A complex Feature may use:
 
 ```text
-features/publishing/
+features/media-picker/
 ├── ui/
-│   ├── PublishingDialog.tsx
-│   └── PublishingActions.tsx
+│   ├── MediaPickerDialog.tsx
+│   └── MediaPickerActions.tsx
 ├── controller/
-│   └── usePublishingController.ts
+│   └── useMediaPickerController.ts
 ├── model/
-│   ├── publishing-reducer.ts
-│   ├── publishing-selectors.ts
-│   └── publishing-state.ts
+│   ├── media-picker-reducer.ts
+│   ├── media-picker-selectors.ts
+│   └── media-picker-state.ts
 ├── styles/
-│   └── publishing.css
-├── publishing.types.ts
+│   └── media-picker.css
+├── media-picker.types.ts
 └── index.ts
 ```
 
@@ -829,8 +832,7 @@ Preserve the live public contracts unless a focused Issue supplies a compatibili
 - `EasyMDE_Plugin::register_shortcode_helper()`;
 - the `easymde_supported_post_types` editor-admission Filter;
 - the `easymde_article_themes` and `easymde_code_themes` Filters;
-- the `easymde_category_options_cache_context` category-cache extension Filter;
-- the `easymde_category_options_load_failed` and `easymde_revision_restore_failed` diagnostic Actions;
+- the `easymde_revision_restore_failed` diagnostic Action;
 - the fixed `easymde/v1` REST namespace;
 - documented metadata, Theme and Command IDs, Script Handles, ordering, collision, and failure behavior relied on by extensions.
 
@@ -1504,15 +1506,17 @@ Script build contract, a read-only source-to-committed production comparison,
 and one production React entry for the complete ordinary Editor. That entry
 mounts one Editor Root and owns Toolbar/commands, CodeMirror document and title
 sessions, Preview and local enhancements, synchronized scrolling, Appearance,
-Custom CSS, Fonts, Media and uploads, Local Drafts, WeChat export,
-Outline/statistics/layout, Publishing, Revisions, and WordPress session-state
-presentation through focused Ports and Adapters. Native title, Markdown,
-appearance, publishing, and extension fields remain WordPress submission
-surfaces; PHP descriptors and translated Bootstrap strings remain the current
-configuration and message authority. The ordinary Editor has no Legacy startup
-fallback, secondary Toolbar, Focus Mode runtime, dual DOM, or reload-required
-handoff state. Changes to this production layout must update the live release
-owners, package predicates, and tests. The installable ZIP must reject
+Custom CSS, Fonts, Media and uploads, Local Drafts, WeChat export, the fixed
+Source/Preview layout, and WordPress session-state presentation through focused
+Ports and Adapters. Native title, Markdown, appearance, publishing, revisions,
+taxonomies, featured media, and extension fields remain WordPress submission or
+Meta Box surfaces; PHP descriptors and translated Bootstrap strings remain the
+current configuration and message authority. The ordinary Editor has no
+Outline, writing statistics/status, Context Bar, view-mode switch, draggable
+split, React Publish, React Revision, React History, Legacy startup fallback,
+secondary Toolbar, Focus Mode runtime, dual DOM, or reload-required handoff
+state. Changes to this production layout must update the live release owners,
+package predicates, and tests. The installable ZIP must reject
 TypeScript and React source, tests, source maps, Vite caches, and
 development-server metadata; source archives may include intentionally tracked
 `frontend/` source. Exact current inclusion, exclusion, build, and validation

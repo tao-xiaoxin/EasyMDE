@@ -11,9 +11,6 @@ import type {
   EditorSessionStatus
 } from '../../contracts/ports/editor-session-port';
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
-import { editorLayoutBootstrapFixture } from '../../test/editor-layout-bootstrap-fixture';
-import { publishingBootstrapFixture } from '../../test/publishing-bootstrap-fixture';
-import { revisionsBootstrapFixture } from '../../test/revisions-bootstrap-fixture';
 import { createWordPressNativeSubmissionPort } from '../../integrations/wordpress/native-form/wordpress-native-submission';
 import { EditorRoot, type EditorRootProps } from './EditorRoot';
 import { EditorRootErrorBoundary } from './EditorRootErrorBoundary';
@@ -153,7 +150,7 @@ function fixture(): EditorRootProps & Readonly<{
         url: 'https://example.test/upload.png'
       } satisfies ImageUploadResult)
     },
-    layout: editorLayoutBootstrapFixture,
+    layout: { direction: 'ltr' },
     localDraftStorage,
     localDrafts: {
       enabled: true,
@@ -205,36 +202,6 @@ function fixture(): EditorRootProps & Readonly<{
         features: {},
         html: '<p>Rendered</p>' as SafePreviewHtml
       })
-    },
-    publishing: publishingBootstrapFixture,
-    publishingPort: {
-      read: vi.fn(() => ({
-        draft: {
-          capabilities: {
-            categories: false,
-            excerpt: false,
-            featuredImage: false,
-            schedule: false,
-            sticky: false,
-            tags: false,
-            visibility: false
-          },
-          categories: [], excerpt: '', featuredImage: null, password: '', schedule: null,
-          status: 'draft', sticky: false, tags: [], visibility: 'public' as const
-        },
-        primaryActionLabel: 'Publish',
-        saveDraftActionLabel: 'Save Draft',
-        statusOptions: [{ disabled: false, id: 'draft', label: 'Draft' }]
-      })),
-      requestSubmit: vi.fn(() => ({ status: 'requested' as const })),
-      selectFeaturedImage: vi.fn().mockResolvedValue(null)
-    },
-    revisions: revisionsBootstrapFixture,
-    revisionsPort: {
-      confirmNavigation: vi.fn(() => true),
-      getRevision: vi.fn().mockResolvedValue({ features: {}, html: '<p>Revision</p>', id: 11 }),
-      listRevisions: vi.fn().mockResolvedValue([]),
-      openRevision: vi.fn()
     },
     scrollPort: {
       capture: () => ({ left: 0, ratio: 0, top: 0 }),
@@ -351,6 +318,34 @@ describe('EditorRoot', () => {
     expect(props.shortcutBinding.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it('matches the ordinary toolbar order without immersive, React Publish or History', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() => expect(view.getByRole('button', { name: 'Bold' })).not.toBeNull());
+    const toolbar = view.getByRole('toolbar', { name: 'Markdown toolbar' });
+    const labels = Array.from(toolbar.querySelectorAll(
+      'button[data-easymde-command], .easymde-toolbar-section-secondary > button, '
+      + '.easymde-toolbar-section-secondary > .easymde-toolbar-popover-anchor > button'
+    )).map(
+      (button) => button.getAttribute('aria-label')
+    );
+
+    expect(labels).toEqual([
+      'Bold',
+      'Image',
+      'Copy to WeChat',
+      'Font',
+      'Appearance'
+    ]);
+    expect(
+      toolbar.querySelectorAll('.easymde-toolbar-section-secondary > .easymde-toolbar-divider')
+    ).toHaveLength(1);
+    expect(view.queryByRole('button', { name: 'History' })).toBeNull();
+    expect(view.queryByRole('button', { name: 'Publish' })).toBeNull();
+    expect(view.container.querySelector('[data-easymde-command="immersive"]')).toBeNull();
+  });
+
   it('lets the user discard an unreadable local draft and unblock storage ownership', async () => {
     const props = fixture();
     vi.mocked(props.localDraftStorage.read).mockReturnValue({
@@ -406,11 +401,6 @@ describe('EditorRoot', () => {
     expect(props.nativeForm.dispatchEvent(nativeEvent)).toBe(false);
     expect(props.submissionField.value).toBe('preserved unsaved value');
 
-    const publishActions = view.getAllByRole('button', { name: 'Publish' });
-    fireEvent.click(publishActions[publishActions.length - 1] as HTMLButtonElement);
-    const openPublishActions = view.getAllByRole('button', { name: 'Publish' });
-    fireEvent.click(openPublishActions[openPublishActions.length - 1] as HTMLButtonElement);
-    expect(props.publishingPort.requestSubmit).not.toHaveBeenCalled();
     expect(props.onFailure).toHaveBeenCalledWith('editor-session-locked');
 
     act(() => props.sessionEmit('authentication-required'));
@@ -425,42 +415,11 @@ describe('EditorRoot', () => {
     const input = view.container.querySelector<HTMLElement>('.cm-content');
     const editor = input ? EditorView.findFromDOM(input) : null;
     editor?.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'not persisted' } });
-    await waitFor(() => expect(view.getByText('Unsaved')).not.toBeNull());
+    await waitFor(() => expect(props.localDraftStorage.write).toHaveBeenCalledWith('not persisted'));
 
     props.nativeForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
 
-    expect(view.getByText('Unsaved')).not.toBeNull();
     expect(props.localDraftStorage.discard).not.toHaveBeenCalled();
-  });
-
-  it('composes publishing as a temporary draft over the WordPress submission port', () => {
-    const props = fixture();
-    const view = render(<EditorRoot {...props} />);
-
-    const publishActions = view.getAllByRole('button', { name: 'Publish' });
-    fireEvent.click(publishActions[publishActions.length - 1] as HTMLButtonElement);
-    expect(props.publishingPort.read).toHaveBeenCalledTimes(1);
-    expect(view.getByRole('dialog', { name: 'Publishing' })).not.toBeNull();
-    const openPublishActions = view.getAllByRole('button', { name: 'Publish' });
-    fireEvent.click(openPublishActions[openPublishActions.length - 1] as HTMLButtonElement);
-    expect(props.publishingPort.requestSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'draft' }),
-      'primary'
-    );
-  });
-
-  it('composes revision history without turning navigation into a browser-side restore', async () => {
-    const props = fixture();
-    vi.mocked(props.revisionsPort.listRevisions).mockResolvedValue([
-      { date: '2026-07-21T12:34:56+08:00', dateLabel: '2026年7月21日 12:34', id: 11, title: 'Saved version', type: 'manual' }
-    ]);
-    const view = render(<EditorRoot {...props} />);
-
-    fireEvent.click(view.getByRole('button', { name: 'History' }));
-    await waitFor(() => expect(props.revisionsPort.getRevision).toHaveBeenCalledWith(11, expect.any(AbortSignal)));
-    await waitFor(() => expect((view.getByRole('button', { name: 'Restore this version' }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(view.getByRole('button', { name: 'Restore this version' }));
-    expect(props.revisionsPort.openRevision).toHaveBeenCalledWith(11);
   });
 
   it('reports a render failure without leaving a partial editor owner', () => {
@@ -517,13 +476,10 @@ describe('EditorRoot', () => {
     expect(appearance.getAttribute('aria-expanded')).toBe('false');
     expect(fonts.getAttribute('aria-expanded')).toBe('true');
 
-    fireEvent.click(view.getByRole('button', { name: 'Publish' }));
-    expect(view.getByRole('dialog', { name: 'Publishing' })).not.toBeNull();
-    appearance.focus();
     fireEvent.click(appearance);
-    expect(view.queryByRole('dialog', { name: 'Publishing' })).toBeNull();
+    expect(fonts.getAttribute('aria-expanded')).toBe('false');
     expect(appearance.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(view.getByLabelText('Article theme'));
+    expect(document.activeElement).toBe(appearance);
   });
 
   it('renders Preview from the current Appearance state', async () => {
@@ -603,39 +559,6 @@ describe('EditorRoot', () => {
     expect(sink?.classList.contains('easymde-code-theme-atom-one-dark')).toBe(true);
     expect(sink?.style.getPropertyValue('--easymde-content-font-family'))
       .toBe('Inter, sans-serif, "Segoe UI", "New York", Georgia, serif');
-  });
-
-  it('marks appearance-only and font-only submission changes as unsaved', async () => {
-    const props = fixture();
-    const fonts = {
-      ...props.fonts,
-      options: {
-        ...props.fonts.options,
-        customFonts: [
-          ...props.fonts.options.customFonts,
-          { fontFamily: 'Optima', id: 'optima', label: 'Optima' }
-        ]
-      }
-    };
-    const view = render(<EditorRoot {...props} fonts={fonts} />);
-    await waitFor(() => expect(view.getByText('Saved')).not.toBeNull());
-
-    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
-    fireEvent.change(view.getByLabelText('Article theme'), {
-      target: { value: 'theme:newsprint' }
-    });
-    expect(view.getByText('Unsaved')).not.toBeNull();
-
-    fireEvent.change(view.getByLabelText('Article theme'), {
-      target: { value: 'theme:default' }
-    });
-    expect(view.getByText('Saved')).not.toBeNull();
-
-    fireEvent.click(view.getByRole('button', { name: 'Font' }));
-    fireEvent.change(view.getByLabelText('Custom font'), {
-      target: { value: 'optima' }
-    });
-    expect(view.getByText('Unsaved')).not.toBeNull();
   });
 
   it('routes Preview enhancement diagnostics through the Root failure owner', async () => {
@@ -783,32 +706,6 @@ describe('EditorRoot', () => {
     expect(props.executeExternalCommand).not.toHaveBeenCalledWith('copywechat', expect.anything());
   });
 
-  it('composes outline, statistics, cursor, dirty status and view modes in the Root', async () => {
-    const props = fixture();
-    props.submissionField.value = '# First\n\n## Second';
-    props.submissionField.defaultValue = '# First\n\n## Second';
-    const view = render(<EditorRoot {...props} />);
-
-    fireEvent.click(view.getByRole('button', { name: 'Second' }));
-    const input = view.container.querySelector<HTMLElement>('.cm-content');
-    const editor = input ? EditorView.findFromDOM(input) : null;
-    expect(editor?.state.selection.main.from).toBe(9);
-    expect(view.getByText('Line 3, Column 1')).not.toBeNull();
-    expect(view.getByText('Saved')).not.toBeNull();
-
-    editor?.dispatch({ changes: { from: editor.state.doc.length, insert: '\nText' } });
-    await waitFor(() => expect(view.getByText('Unsaved')).not.toBeNull());
-
-    fireEvent.click(view.getByRole('button', { name: 'Writing statistics' }));
-    expect(view.getByRole('region', { name: 'Writing statistics' })).not.toBeNull();
-
-    fireEvent.click(view.getByRole('button', { name: 'Preview' }));
-    expect(view.container.querySelector('.easymde-editor-source-slot')?.hasAttribute('hidden'))
-      .toBe(true);
-    expect(view.container.querySelector('.easymde-editor-preview-slot')?.hasAttribute('hidden'))
-      .toBe(false);
-  });
-
   it('activates synchronized scrolling once and disposes it with the Root', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
@@ -819,12 +716,8 @@ describe('EditorRoot', () => {
       source: view.container.querySelector('.cm-scroller')
     });
 
-    fireEvent.click(view.getByRole('button', { name: 'Preview' }));
-    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(1);
-    fireEvent.click(view.getByRole('button', { name: 'Split' }));
-    expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(2);
-
     view.unmount();
-    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(2);
+    expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(1);
+    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(1);
   });
 });

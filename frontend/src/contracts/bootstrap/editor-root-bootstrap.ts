@@ -37,14 +37,6 @@ import {
   type PreviewEnhancementBootstrap
 } from './preview-enhancement-bootstrap';
 import {
-  parsePublishingBootstrap,
-  type PublishingBootstrap
-} from './publishing-bootstrap';
-import {
-  parseRevisionsBootstrap,
-  type RevisionsBootstrap
-} from './revisions-bootstrap';
-import {
   parseToolbarBootstrap,
   type ToolbarBootstrap
 } from './toolbar-bootstrap';
@@ -73,13 +65,11 @@ export type EditorRootWordPressBootstrap = Readonly<{
   customCssUrl: string;
   nonce: string;
   previewUrl: string;
-  revisionAdminUrl: string;
-  revisionsUrl: string;
 }>;
 
 export type EditorRootBootstrap = Readonly<{
   appearance: AppearanceBootstrap;
-  schemaVersion: 1;
+  schemaVersion: 2;
   document: DocumentSourceBootstrap;
   fonts: FontControlsBootstrap;
   imageUpload: ImageUploadBootstrap;
@@ -93,8 +83,6 @@ export type EditorRootBootstrap = Readonly<{
   }>;
   preview: EditorRootPreviewBootstrap;
   previewEnhancement: PreviewEnhancementBootstrap;
-  publishing: PublishingBootstrap;
-  revisions: RevisionsBootstrap;
   mediaPicker: MediaPickerBootstrap;
   toolbar: ToolbarBootstrap;
   wechatExport: WechatExportBootstrap;
@@ -204,20 +192,12 @@ function parseWordPress(value: unknown): EditorRootWordPressBootstrap {
     previewUrl: boundedString(wordpress.previewUrl, 'editor-root-wordpress-invalid', {
       maxLength: 4096
     }),
-    revisionAdminUrl: boundedString(
-      wordpress.revisionAdminUrl,
-      'editor-root-wordpress-invalid',
-      { maxLength: 4096 }
-    ),
-    revisionsUrl: boundedString(wordpress.revisionsUrl, 'editor-root-wordpress-invalid', {
-      maxLength: 4096
-    })
   };
 }
 
 export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   const bootstrap = objectValue(value, 'editor-root-bootstrap-invalid');
-  if (1 !== bootstrap.schemaVersion) {
+  if (2 !== bootstrap.schemaVersion) {
     throw new EditorRootBootstrapError('editor-root-schema-unsupported');
   }
   const labels = objectValue(bootstrap.strings, 'editor-root-label-invalid');
@@ -229,8 +209,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   let localDrafts: EditorRootLocalDraftsBootstrap;
   let mediaPicker: MediaPickerBootstrap;
   let previewEnhancement: PreviewEnhancementBootstrap;
-  let publishing: PublishingBootstrap;
-  let revisions: RevisionsBootstrap;
   let toolbar: ToolbarBootstrap;
   let wechatExport: WechatExportBootstrap;
 
@@ -284,16 +262,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     throw new EditorRootBootstrapError('editor-root-preview-enhancement-invalid');
   }
   try {
-    publishing = parsePublishingBootstrap(bootstrap.publishing);
-  } catch {
-    throw new EditorRootBootstrapError('editor-root-publishing-invalid');
-  }
-  try {
-    revisions = parseRevisionsBootstrap(bootstrap.revisions);
-  } catch {
-    throw new EditorRootBootstrapError('editor-root-revisions-invalid');
-  }
-  try {
     toolbar = parseToolbarBootstrap(bootstrap.toolbar);
   } catch {
     throw new EditorRootBootstrapError('editor-root-toolbar-invalid');
@@ -306,7 +274,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
 
   return {
     appearance,
-    schemaVersion: 1,
+    schemaVersion: 2,
     document,
     fonts,
     imageUpload,
@@ -323,8 +291,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     },
     preview: parsePreview(bootstrap.preview),
     previewEnhancement,
-    publishing,
-    revisions,
     mediaPicker,
     toolbar,
     wechatExport,

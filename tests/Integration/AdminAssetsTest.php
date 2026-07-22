@@ -16,9 +16,6 @@ use EasyMDE\Theme\ThemeStateRepository;
 final class AdminAssetsTest extends WP_UnitTestCase {
 
 	private $admin_assets;
-	private $get_category_options;
-	private $get_category_options_cache_key;
-	private $category_load_error;
 	private $get_react_editor_asset;
 	private $get_static_asset_version;
 	private $get_storage_config;
@@ -39,17 +36,11 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			new SettingsPage( $toolbar_registry, new Options() )
 		);
 		$reflection                = new ReflectionClass( AdminAssets::class );
-		$this->get_category_options = $reflection->getMethod( 'get_category_options' );
-		$this->get_category_options_cache_key = $reflection->getMethod( 'get_category_options_cache_key' );
-		$this->category_load_error = $reflection->getProperty( 'category_load_error' );
 		$this->get_react_editor_asset = $reflection->getMethod( 'get_react_editor_asset' );
 		$this->get_static_asset_version = $reflection->getMethod( 'get_static_asset_version' );
 		$this->get_storage_config = $reflection->getMethod( 'get_storage_config' );
 		$this->get_strings = $reflection->getMethod( 'get_strings' );
 		$this->get_editor_root_bootstrap = $reflection->getMethod( 'get_editor_root_bootstrap' );
-		$this->get_category_options->setAccessible( true );
-		$this->get_category_options_cache_key->setAccessible( true );
-		$this->category_load_error->setAccessible( true );
 		$this->get_react_editor_asset->setAccessible( true );
 		$this->get_static_asset_version->setAccessible( true );
 		$this->get_storage_config->setAccessible( true );
@@ -63,9 +54,9 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
 		wp_set_current_user( $user_id );
 
-		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id, array() );
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
 
-		$this->assertSame( 1, $bootstrap['schemaVersion'] );
+		$this->assertSame( 2, $bootstrap['schemaVersion'] );
 		$this->assertArrayHasKey( 'shortcodeHelpers', $bootstrap );
 		$this->assertSame( $post_id, $bootstrap['preview']['postId'] );
 		$this->assertIsObject( $bootstrap['preview']['features'] );
@@ -77,12 +68,14 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertArrayHasKey( 'layout', $bootstrap );
 		$this->assertArrayHasKey( 'mediaPicker', $bootstrap );
 		$this->assertArrayHasKey( 'previewEnhancement', $bootstrap );
-		$this->assertArrayHasKey( 'publishing', $bootstrap );
-		$this->assertArrayHasKey( 'revisions', $bootstrap );
+		$this->assertArrayNotHasKey( 'publishing', $bootstrap );
+		$this->assertArrayNotHasKey( 'revisions', $bootstrap );
 		$this->assertArrayHasKey( 'toolbar', $bootstrap );
 		$this->assertArrayHasKey( 'wechatExport', $bootstrap );
 		$this->assertArrayHasKey( 'wordpress', $bootstrap );
 		$this->assertSame( rest_url( 'easymde/v1/preview' ), $bootstrap['wordpress']['previewUrl'] );
+		$this->assertArrayNotHasKey( 'revisionAdminUrl', $bootstrap['wordpress'] );
+		$this->assertArrayNotHasKey( 'revisionsUrl', $bootstrap['wordpress'] );
 		$this->assertSame( rest_url( 'easymde/v1/media' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
@@ -112,16 +105,15 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( 'A different local draft was saved in another tab.', $strings['draftConflict'] );
 	}
 
-	public function test_editor_layout_has_php_gettext_status_and_resizer_messages() {
+	public function test_editor_layout_omits_withdrawn_ui_strings_and_keeps_native_direction() {
 		$strings = $this->get_strings->invoke( $this->admin_assets );
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0 );
 
-		$this->assertSame( 'Unsaved', $strings['unsaved'] );
-		$this->assertSame( 'Resize source and preview', $strings['resizePanes'] );
-		$this->assertSame( 'Line %1$s, Column %2$s', $strings['cursorPosition'] );
-		$this->assertSame( 'Publishing', $strings['publishingTitle'] );
-		$this->assertSame( 'Schedule', $strings['publishSchedule'] );
-		$this->assertSame( 'WordPress could not start the requested action.', $strings['publishRequestFailed'] );
-		$this->assertSame( 'Show more headings', $strings['showMoreHeadings'] );
+		$this->assertArrayNotHasKey( 'outline', $strings );
+		$this->assertArrayNotHasKey( 'resizePanes', $strings );
+		$this->assertArrayNotHasKey( 'publishingTitle', $strings );
+		$this->assertArrayNotHasKey( 'historyVersions', $strings );
+		$this->assertTrue( in_array( $bootstrap['layout']['direction'], array( 'ltr', 'rtl' ), true ) );
 	}
 
 	public function test_toolbar_stylesheet_uses_a_content_version_for_the_react_owner() {
@@ -253,11 +245,6 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	}
 
 	public function tear_down() {
-		remove_all_filters( 'get_terms_args' );
-		remove_all_filters( 'get_terms' );
-		remove_all_filters( 'terms_pre_query' );
-		remove_all_filters( 'easymde_category_options_cache_context' );
-		remove_all_actions( 'easymde_category_options_load_failed' );
 		remove_all_actions( 'admin_enqueue_scripts' );
 		remove_all_actions( 'admin_notices' );
 		wp_cache_flush();
@@ -265,183 +252,4 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		parent::tear_down();
 	}
 
-	public function test_reuses_normalized_options_until_term_state_changes() {
-		$parent = self::factory()->term->create_and_get(
-			array(
-				'taxonomy' => 'category',
-				'name'     => 'Parent category',
-			)
-		);
-		$child  = self::factory()->term->create_and_get(
-			array(
-				'taxonomy' => 'category',
-				'name'     => 'Child category',
-				'parent'   => $parent->term_id,
-			)
-		);
-		$first     = $this->invoke_get_category_options( 'post', 41 );
-		$cache_key = $this->invoke_get_category_options_cache_key( 'post', 41 );
-		$sentinel  = array(
-			array(
-				'id'          => '999',
-				'label'       => 'Cached sentinel',
-				'parentId'    => '',
-				'hasChildren' => false,
-			),
-		);
-
-		wp_cache_set( $cache_key, $sentinel, 'easymde' );
-		$this->assertSame( $sentinel, $this->invoke_get_category_options( 'post', 41 ) );
-		$this->assertContains(
-			array(
-				'id'          => (string) $parent->term_id,
-				'label'       => 'Parent category',
-				'parentId'    => '',
-				'hasChildren' => true,
-			),
-			$first
-		);
-		$this->assertContains(
-			array(
-				'id'          => (string) $child->term_id,
-				'label'       => 'Child category',
-				'parentId'    => (string) $parent->term_id,
-				'hasChildren' => false,
-			),
-			$first
-		);
-
-		$new_term = self::factory()->term->create_and_get(
-			array(
-				'taxonomy' => 'category',
-				'name'     => 'New category',
-			)
-		);
-		$updated = $this->invoke_get_category_options( 'post', 41 );
-
-		$this->assertNotSame( $cache_key, $this->invoke_get_category_options_cache_key( 'post', 41 ) );
-		$this->assertContains(
-			array(
-				'id'          => (string) $new_term->term_id,
-				'label'       => 'New category',
-				'parentId'    => '',
-				'hasChildren' => false,
-			),
-			$updated
-		);
-	}
-
-	public function test_cache_context_separates_users_posts_and_capabilities() {
-		$first_user_id  = self::factory()->user->create( array( 'role' => 'author' ) );
-		$second_user_id = self::factory()->user->create( array( 'role' => 'editor' ) );
-
-		wp_set_current_user( $first_user_id );
-		$first_post_key  = $this->invoke_get_category_options_cache_key( 'post', 101 );
-		$second_post_key = $this->invoke_get_category_options_cache_key( 'post', 102 );
-
-		wp_set_current_user( $second_user_id );
-		$second_user_key = $this->invoke_get_category_options_cache_key( 'post', 101 );
-
-		$this->assertNotSame( $first_post_key, $second_post_key );
-		$this->assertNotSame( $first_post_key, $second_user_key );
-	}
-
-	public function test_dynamic_term_filters_can_disable_category_option_caching() {
-		self::factory()->term->create(
-			array(
-				'taxonomy' => 'category',
-				'name'     => 'Filtered category',
-			)
-		);
-		$filter_calls = 0;
-
-		add_filter( 'easymde_category_options_cache_context', '__return_false' );
-		add_filter(
-			'get_terms',
-			static function ( $terms, $taxonomies ) use ( &$filter_calls ) {
-				if ( in_array( 'category', $taxonomies, true ) ) {
-					++$filter_calls;
-				}
-
-				return $terms;
-			},
-			10,
-			2
-		);
-
-		$this->assertSame( '', $this->invoke_get_category_options_cache_key( 'post', 41 ) );
-		$this->invoke_get_category_options( 'post', 41 );
-		$this->invoke_get_category_options( 'post', 41 );
-		$this->assertSame( 2, $filter_calls );
-	}
-
-	public function test_term_query_errors_remain_observable_and_are_not_cached() {
-		$error         = new WP_Error( 'category_query_failed', 'Synthetic category failure.' );
-		$action_calls  = 0;
-		$query_attempts = 0;
-
-		add_filter(
-			'terms_pre_query',
-			static function ( $terms, $query ) use ( $error, &$query_attempts ) {
-				if ( in_array( 'category', $query->query_vars['taxonomy'], true ) ) {
-					++$query_attempts;
-
-					return $error;
-				}
-
-				return $terms;
-			},
-			10,
-			2
-		);
-		add_action(
-			'easymde_category_options_load_failed',
-			function ( $post_type, $received_error ) use ( $error, &$action_calls ) {
-				++$action_calls;
-				$this->assertSame( 'post', $post_type );
-				$this->assertSame( $error, $received_error );
-			},
-			10,
-			2
-		);
-
-		$this->assertSame( array(), $this->invoke_get_category_options( 'post', 41 ) );
-		$this->assertSame( array(), $this->invoke_get_category_options( 'post', 41 ) );
-		$this->assertSame( 2, $query_attempts );
-		$this->assertSame( 2, $action_calls );
-		$this->assertStringContainsString(
-			'EasyMDE could not load WordPress categories.',
-			$this->category_load_error->getValue( $this->admin_assets )
-		);
-
-		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 41, array() );
-		$this->assertSame(
-			'EasyMDE could not load WordPress categories.',
-			$bootstrap['publishing']['categoryLoadError']
-		);
-	}
-
-	public function test_post_types_without_categories_return_empty_without_querying_terms() {
-		$queries = 0;
-
-		add_filter(
-			'get_terms_args',
-			static function ( $args ) use ( &$queries ) {
-				++$queries;
-
-				return $args;
-			}
-		);
-
-		$this->assertSame( array(), $this->invoke_get_category_options( 'page', 41 ) );
-		$this->assertSame( 0, $queries );
-	}
-
-	private function invoke_get_category_options( $post_type, $post_id ) {
-		return $this->get_category_options->invoke( $this->admin_assets, $post_type, $post_id );
-	}
-
-	private function invoke_get_category_options_cache_key( $post_type, $post_id ) {
-		return $this->get_category_options_cache_key->invoke( $this->admin_assets, $post_type, $post_id );
-	}
 }

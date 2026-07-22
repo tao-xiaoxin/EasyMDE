@@ -13,24 +13,27 @@ Editor does not enqueue or execute `assets/js/admin/bootstrap.js`, jQuery, the
 Legacy Toolbar, Preview, Theme, Draft, Media runtimes, Legacy fallback DOM, or
 Focus Mode / immersive-writing assets.
 
-Direct cutover does not authorize feature removal. The React Root must preserve
-the complete ordinary Editor capability matrix from Issues #91 and #86:
+The React Root preserves the ordinary editing capability matrix from Issues
+#91 and #86 while WordPress-native surfaces continue to own publishing and
+revisions:
 
 - title and Markdown editing, Selection, IME, Undo/Redo, shortcuts, and every
   registered Toolbar command;
 - live server Preview, GFM tables and task lists, Mermaid, KaTeX, Highlight.js,
   TOC, synchronized scrolling, themes, fonts, and Custom CSS;
 - WordPress Media selection, Paste/Drop upload, Local Draft recovery, WeChat
-  export, Outline, statistics, and status feedback;
-- publishing fields and flows, revisions, the native WordPress form and unknown
-  extension fields, permissions, Nonces, locks, failure states, responsive
-  layouts, RTL, and accessibility.
+  export, and the fixed Source/Preview workspace;
+- the native WordPress form and unknown extension fields, permissions, Nonces,
+  locks, failure states, responsive layouts, RTL, and accessibility;
+- WordPress-native Publish, category, tag, excerpt, featured-image, and Revision
+  Meta Boxes and screens outside the React Root.
 
 PHP and WordPress retain their existing data, authorization, rendering, native
 form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown`
 remains canonical Markdown and `post_content` remains compatibility HTML.
-Focus Mode is the only explicit product exclusion: it is not implemented,
-connected, enqueued, or loaded by the ordinary Editor.
+Focus Mode is not implemented, connected, enqueued, or loaded by the ordinary
+Editor. Outline, statistics/status, view switching, draggable resizing, and
+duplicate React Publish/Revision surfaces are also absent by product decision.
 
 The ordinary Editor now follows this single-Root boundary in the live branch.
 Legacy admin Browser Runtime files and Focus Mode assets have no ordinary
@@ -77,7 +80,7 @@ WordPress and browser Adapters, mounts one `EditorRoot`, and owns idempotent
 teardown. The Root composes Toolbar/commands, CodeMirror document and title
 sessions, server Preview and local post-response enhancements, Appearance and
 Custom CSS, Fonts, Media and image upload, Local Drafts, WeChat export,
-Outline/statistics/layout, Publishing, Revisions, and WordPress session state.
+the fixed Source/Preview layout, and WordPress session state.
 Components depend on typed Ports; WordPress DOM, `wp.media`, REST, Storage, and
 Clipboard access remain in focused Integration Adapters.
 
@@ -237,8 +240,6 @@ Current routes:
 - `GET /easymde/v1/posts/{post_id}/revisions/{revision_id}`
 
 Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Pasted-image media uploads require `upload_files`; when a `post_id` is present they also require `current_user_can( 'edit_post', $post_id )`, and without a `post_id` they require `edit_posts`. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
-
-Publishing category options use a short-lived object-cache entry scoped by site, user, capabilities, locale, post type, post ID, and the WordPress term `last_changed` value. Extensions whose term-query filters depend on additional request state can extend `easymde_category_options_cache_context`, or return `false` from that filter to bypass this cache without bypassing WordPress's native term filters.
 
 Preview Markdown payloads are capped at 1 MiB. EasyMDE media uploads accept local JPEG, PNG, GIF, and WebP image files only; remote image-provider uploads are not part of the REST surface.
 

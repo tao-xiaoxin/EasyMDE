@@ -45,6 +45,7 @@ function setup(options?: {
   enhance?: PreviewEnhancementPort['enhance'];
   initialHtml?: string;
   initialSignature?: string;
+  onDiagnostic?: (code: string) => void;
 }) {
   let session!: PreviewRequestSession;
   const responses: Array<ReturnType<typeof deferred<PreviewResponse>>> = [];
@@ -56,6 +57,7 @@ function setup(options?: {
   const enhancementPort: PreviewEnhancementPort = {
     enhance: options?.enhance ?? vi.fn().mockResolvedValue(undefined)
   };
+  const onDiagnostic = options?.onDiagnostic ?? vi.fn();
   const scrollPort: PreviewScrollPort = {
     capture: (surface) => ({
       left: surface.scrollLeft,
@@ -71,12 +73,14 @@ function setup(options?: {
     <PreviewSurfaceOwner
       enhancementPort={enhancementPort}
       initial={{
+        codeTheme: 'github',
         features: {},
         html: safeHtml(options?.initialHtml ?? '<p>Initial preview</p>'),
         signature: options?.initialSignature ?? 'initial'
       }}
       initialRevision={0}
       messages={messages}
+      onDiagnostic={onDiagnostic}
       onReady={(readySession) => {
         session = readySession.session;
       }}
@@ -86,7 +90,7 @@ function setup(options?: {
   );
   const surface = result.container.querySelector('article');
   if (!(surface instanceof HTMLElement)) throw new Error('surface missing');
-  return { enhancementPort, renderPreview, responses, session, surface, ...result };
+  return { enhancementPort, onDiagnostic, renderPreview, responses, session, surface, ...result };
 }
 
 describe('PreviewSurfaceOwner', () => {
@@ -137,7 +141,7 @@ describe('PreviewSurfaceOwner', () => {
 
   it('marks a successful response ready only after enhancement completes', async () => {
     const enhancement = deferred<void>();
-    const enhance = vi.fn(() => enhancement.promise);
+    const enhance = vi.fn<PreviewEnhancementPort['enhance']>(() => enhancement.promise);
     const current = setup({ enhance, initialHtml: '' });
 
     act(() => {
@@ -152,6 +156,8 @@ describe('PreviewSurfaceOwner', () => {
     });
 
     expect(enhance).toHaveBeenCalledTimes(1);
+    expect(enhance.mock.calls[0]?.[3])
+      .toEqual(expect.objectContaining({ codeTheme: 'atom-one-dark' }));
     expect(current.surface.getAttribute('aria-busy')).toBe('true');
     expect(current.surface.easymdePreviewSignature).toBe('');
 
@@ -243,6 +249,58 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface.querySelector('.mermaid')).not.toBeNull();
     expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
     expect(current.surface.easymdePreviewSignature).toBe('');
+    expect(current.onDiagnostic).toHaveBeenCalledWith('preview-enhancement-failed');
+  });
+
+  it('reports only sanitized current enhancement failures', async () => {
+    const firstEnhancement = deferred<void>();
+    const secondEnhancement = deferred<void>();
+    const enhance = vi
+      .fn<PreviewEnhancementPort['enhance']>()
+      .mockImplementationOnce(() => firstEnhancement.promise)
+      .mockImplementationOnce(() => secondEnhancement.promise);
+    const current = setup({ enhance, initialHtml: '' });
+
+    act(() => current.session.schedule(request('# First', 'first'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({ html: safeHtml('<p>First</p>'), features: { math: true } });
+      await Promise.resolve();
+    });
+    act(() => current.session.schedule(request('# Second', 'second'), true));
+    await act(async () => {
+      current.responses[1]?.resolve({ html: safeHtml('<p>Second</p>'), features: { mermaid: true } });
+      await Promise.resolve();
+      firstEnhancement.reject(new Error('preview-enhancement-resource-stale'));
+      await Promise.resolve();
+    });
+    expect(current.onDiagnostic).not.toHaveBeenCalled();
+
+    await act(async () => {
+      secondEnhancement.reject(new Error('preview-enhancement-runtime-unavailable'));
+      await Promise.resolve();
+    });
+    expect(current.onDiagnostic).toHaveBeenCalledWith('preview-enhancement-runtime-unavailable');
+  });
+
+  it('does not report a late enhancement failure after teardown', async () => {
+    const enhancement = deferred<void>();
+    const current = setup({
+      enhance: () => enhancement.promise,
+      initialHtml: ''
+    });
+    act(() => current.session.schedule(request('# Pending'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({ html: safeHtml('<p>Pending</p>'), features: { math: true } });
+      await Promise.resolve();
+    });
+
+    current.unmount();
+    await act(async () => {
+      enhancement.reject(new Error('preview-enhancement-resource-load-failed'));
+      await Promise.resolve();
+    });
+
+    expect(current.onDiagnostic).not.toHaveBeenCalled();
   });
 });
 

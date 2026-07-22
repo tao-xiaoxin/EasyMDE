@@ -11,6 +11,18 @@ This Skill is the executable development contract. The durable rationale lives i
 
 Do not introduce a pattern, dependency, abstraction, directory, service, or framework merely because it is common in another React project.
 
+## Issue #91 Direct-Cutover Contract
+
+The current maintainer decision for Issue #91 supersedes this Skill's generic
+incremental-handoff default. Build one complete ordinary WordPress Editor Root
+and remove the ordinary Editor's `bootstrap.js`, jQuery, Legacy DOM, dual-owner
+handoff, and fallback runtime. Do not add another bridge or handoff state.
+Focus Mode / immersive writing is excluded and must not be implemented,
+connected, enqueued, or loaded. Every other ordinary Editor capability in
+Issues #91 and #86 remains required; direct cutover is not feature reduction.
+Use the migration Skill only for Legacy inventory and deletion evidence where
+it does not conflict with this explicit decision.
+
 ## Rule Priority and Evidence
 
 Apply rules in this order:
@@ -332,7 +344,7 @@ Rules:
 - keep the root object and call `root.unmount()` during teardown;
 - mount into a dedicated, initially empty container that PHP delegates exclusively to that React Root;
 - keep WordPress-, extension-, and legacy-owned children that must survive outside the container; the first `root.render()` replaces any existing child HTML and is not a preservation mechanism;
-- do not let legacy code remove, replace, or write inside an active React container; ownership changes only at the declared handoff and returns only after `root.unmount()` and cleanup;
+- do not let another runtime remove, replace, or write inside an active React container; the owning Root releases it only after `root.unmount()` and cleanup;
 - do not hydrate admin roots;
 - do not bundle another React or ReactDOM implementation;
 - do not pass elements, contexts, hooks, portals, or refs between different React runtimes;
@@ -1489,16 +1501,18 @@ Enforce when tooling exists:
 The live root `package.json` provides Biome frontend linting, strict TypeScript,
 an independent `tsc --noEmit` gate, Vitest, Vite, a test-only WordPress Classic
 Script build contract, a read-only source-to-committed production comparison,
-and one production React entry for the normal editor's main Toolbar and
-document session. That entry owns Toolbar presentation, heading-menu
-interaction, command-intent dispatch, and the normal browser-session Markdown
-value, selection, focus, undo history, and source scrolling. The native title
-field remains WordPress-owned and is exposed through a focused React session
-Adapter. PHP descriptors and translations, legacy Markdown command mutation,
-the secondary Toolbar, immersive writing, and persistence retain their current
-owners. A focused migration creates or expands production paths only for a real
-consumer and must update the live release owners, package predicates, and tests
-for that layout. The installable ZIP must reject
+and one production React entry for the complete ordinary Editor. That entry
+mounts one Editor Root and owns Toolbar/commands, CodeMirror document and title
+sessions, Preview and local enhancements, synchronized scrolling, Appearance,
+Custom CSS, Fonts, Media and uploads, Local Drafts, WeChat export,
+Outline/statistics/layout, Publishing, Revisions, and WordPress session-state
+presentation through focused Ports and Adapters. Native title, Markdown,
+appearance, publishing, and extension fields remain WordPress submission
+surfaces; PHP descriptors and translated Bootstrap strings remain the current
+configuration and message authority. The ordinary Editor has no Legacy startup
+fallback, secondary Toolbar, Focus Mode runtime, dual DOM, or reload-required
+handoff state. Changes to this production layout must update the live release
+owners, package predicates, and tests. The installable ZIP must reject
 TypeScript and React source, tests, source maps, Vite caches, and
 development-server metadata; source archives may include intentionally tracked
 `frontend/` source. Exact current inclusion, exclusion, build, and validation

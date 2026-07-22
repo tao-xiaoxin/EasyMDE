@@ -17,7 +17,12 @@ type EditorToolbarProps = Readonly<{
   bootstrap: ToolbarBootstrap;
   platform: ToolbarPlatform;
   executeCommand: (commandId: string) => void;
-  onReady?: () => void;
+  onPopoverOpen?: () => void;
+  onReady?: (session: EditorToolbarSession) => void;
+}>;
+
+export type EditorToolbarSession = Readonly<{
+  closePopovers: () => void;
 }>;
 
 type CommandButtonProps = Readonly<{
@@ -61,10 +66,20 @@ type HeadingMenuProps = Readonly<{
   label: string;
   shortcuts: Readonly<Record<string, string>>;
   executeCommand: (commandId: string) => void;
+  isOpen: boolean;
+  onOpen: () => void;
+  setIsOpen: (isOpen: boolean) => void;
 }>;
 
-function HeadingMenu({ commands, label, shortcuts, executeCommand }: HeadingMenuProps) {
-  const [isOpen, setIsOpen] = useState(false);
+function HeadingMenu({
+  commands,
+  label,
+  shortcuts,
+  executeCommand,
+  isOpen,
+  onOpen,
+  setIsOpen
+}: HeadingMenuProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const initialFocus = useRef<'first' | 'last'>('first');
@@ -152,6 +167,7 @@ function HeadingMenu({ commands, label, shortcuts, executeCommand }: HeadingMenu
           event.stopPropagation();
           const nextIsOpen = !isOpen;
           if (nextIsOpen) {
+            onOpen();
             initialFocus.current = 'first';
           }
           setIsOpen(nextIsOpen);
@@ -162,6 +178,7 @@ function HeadingMenu({ commands, label, shortcuts, executeCommand }: HeadingMenu
           }
 
           event.preventDefault();
+          onOpen();
           initialFocus.current = 'ArrowUp' === event.key ? 'last' : 'first';
           setIsOpen(true);
         }}
@@ -203,7 +220,22 @@ function HeadingMenu({ commands, label, shortcuts, executeCommand }: HeadingMenu
   );
 }
 
-export function EditorToolbar({ bootstrap, platform, executeCommand, onReady }: EditorToolbarProps) {
+export function EditorToolbar({
+  bootstrap,
+  platform,
+  executeCommand,
+  onPopoverOpen,
+  onReady
+}: EditorToolbarProps) {
+  const [isHeadingOpen, setIsHeadingOpen] = useState(false);
+  const activeRef = useRef(false);
+  const sessionRef = useRef<EditorToolbarSession>({
+    closePopovers: () => {
+      if (activeRef.current) {
+        setIsHeadingOpen(false);
+      }
+    }
+  });
   const shortcuts: Record<string, string> = {};
   for (const command of bootstrap.commands) {
     shortcuts[command.id] = bootstrap.shortcuts[command.id]?.[platform] ?? '';
@@ -221,7 +253,11 @@ export function EditorToolbar({ bootstrap, platform, executeCommand, onReady }: 
   const insertCommands = commandsFor('main', 'insert');
 
   useLayoutEffect(() => {
-    onReady?.();
+    activeRef.current = true;
+    onReady?.(sessionRef.current);
+    return () => {
+      activeRef.current = false;
+    };
   }, [onReady]);
 
   return (
@@ -239,6 +275,9 @@ export function EditorToolbar({ bootstrap, platform, executeCommand, onReady }: 
         label={bootstrap.headingsLabel}
         shortcuts={shortcuts}
         executeCommand={executeCommand}
+        isOpen={isHeadingOpen}
+        onOpen={() => onPopoverOpen?.()}
+        setIsOpen={setIsHeadingOpen}
       />
       {blockCommands.length ? <span className="easymde-toolbar-divider" aria-hidden="true" /> : null}
       {blockCommands.map((command) => (

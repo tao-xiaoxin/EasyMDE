@@ -16,7 +16,7 @@ Those entries open the WordPress post editor screen with EasyMDE for supported p
 
 The EasyMDE editor shows Markdown source on the left and a live preview on the right. The source and preview panes synchronize their scroll position so long articles remain easier to review while writing.
 
-The preview normally uses the EasyMDE REST preview endpoint, which renders through the same server-side Markdown renderer used for saves. If the browser cannot use the REST preview path, the editor shows an escaped fallback preview instead of silently inserting unsafe HTML.
+The preview uses the EasyMDE REST preview endpoint, which renders through the same server-side Markdown renderer used for saves. Loading, empty, and failure states remain visible; EasyMDE does not replace a failed formal Preview with a browser Markdown renderer.
 
 Saving and publishing still use WordPress. EasyMDE mirrors the Markdown source into hidden post fields and, during a valid WordPress save, stores Markdown in `_easymde_markdown`, marks the post with `_easymde_enabled = 1`, and writes rendered compatibility HTML to `post_content`. Opening an ordinary existing post without saving does not create EasyMDE metadata, rewrite content, or create a revision.
 
@@ -37,12 +37,6 @@ If the WordPress media frame is unavailable, the command falls back to inserting
 EasyMDE stores editor drafts in the browser's `localStorage`, keyed by site, user, and post. If a newer local draft exists when the editor opens, EasyMDE shows restore and discard actions.
 
 Local draft recovery is browser-local. Clearing browser storage, switching browsers, switching users, or editing from another device can make those local drafts unavailable. WordPress saves, revisions, autosaves, and publishing remain separate WordPress behavior.
-
-## Immersive Writing
-
-The normal WordPress edit screen remains unchanged until the author selects **Enter immersive writing**. That action opens an isolated full-screen article workspace with title editing, edit/split/preview modes, outline navigation, local statistics, responsive panes, themes, fonts, media, revision history, and native WordPress save and publish controls. Outline navigation and the compact statistics panel are off by default; the statistics panel computes line, Western-word, CJK-character, total-character, and deterministic reading-time values locally without sending or storing article content.
-
-The workspace keeps the existing WordPress title and EasyMDE Markdown fields as the source of truth. Closing it with the visible exit action or Escape returns to the original edit screen with the current title and Markdown intact. Opening and cancelling the publish dialog does not write post fields; confirmed publishing continues through the native WordPress form, nonce, capability, taxonomy, media, and revision paths.
 
 ## Themes, Code Themes, And Fonts
 

@@ -166,7 +166,7 @@ export function renderNotices(root = defaultRoot) {
     '',
     table(frontendRows(root)),
     '',
-    'Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, Mermaid, Inter, JetBrains Mono, Lora, and the embedded Lucide icon paths retain license files under `assets/vendor/`.',
+    'Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, and Mermaid retain license files under `assets/vendor/`.',
     '',
     '## Compiled Frontend Runtime Packages',
     '',

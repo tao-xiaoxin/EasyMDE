@@ -5,6 +5,21 @@ description: Use this temporary skill when planning, implementing, reviewing, or
 
 # EasyMDE Browser Migration Guide
 
+## Issue #91 Direct-Cutover Override
+
+The maintainer has explicitly replaced the ordinary Editor's staged runtime
+handoff strategy with a direct cutover to one React Editor Root. For Issue #91,
+use this Skill only to inventory Legacy consumers, preserve verified ordinary
+Editor behavior, and prove deprecation/removal. Do not add a Legacy fallback,
+parallel DOM, dual Owner, `react-ready` handoff, live rollback, or
+`reload-required` path. Focus Mode is excluded and must not be implemented,
+connected, enqueued, or loaded. All other ordinary Editor capabilities remain
+required and must be proven through the final feature matrix.
+
+The handoff procedure below remains applicable only to a different focused
+task whose current maintainer decision explicitly selects incremental runtime
+handoff. It is not authority to reintroduce that architecture into Issue #91.
+
 This is a temporary execution Skill for transferring existing browser-side EasyMDE behavior. Closed Issue #74 is the historical umbrella plan and acceptance inventory; it is not an active ownership ledger or proof that any migration unit is complete. The active React migration ownership index is maintained by Issue #86. Every future unit uses its current focused Issue and pull request. Use the long-term .agents/skills/easymde/SKILL.md for normal React development and docs/REACT_DESIGN_PHILOSOPHY.md for stable architecture decisions.
 
 Delete this Skill after the full migration and its removal gate are complete. Do not preserve migration ceremony as permanent project architecture.

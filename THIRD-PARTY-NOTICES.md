@@ -25,14 +25,10 @@ Composer packages are bundled under `vendor/` in the release ZIP after `composer
 | Name | Version | Source | License | Purpose | Bundled in ZIP | Notice location |
 | --- | --- | --- | --- | --- | --- | --- |
 | Highlight.js CDN assets | 11.11.1 | https://registry.npmjs.org/@highlightjs/cdn-assets/-/cdn-assets-11.11.1.tgz | BSD-3-Clause | Local syntax highlighting script and bundled Highlight.js code themes. | Yes, copied to assets/vendor/highlight/highlight.min.js, assets/vendor/highlight/styles/*.css | assets/vendor/highlight/LICENSE |
-| Inter Latin variable font | 4.1 | https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7W0Q5nw.woff2 | OFL-1.1 | Theme-isolated typography for the immersive writing workspace. | Yes, copied to assets/vendor/inter/inter-latin-variable.woff2 | assets/vendor/inter/LICENSE |
-| JetBrains Mono Latin variable font | 2.304 | https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPxDcwgknk-4.woff2 | OFL-1.1 | Theme-isolated source and statistics typography for the immersive writing workspace. | Yes, copied to assets/vendor/jetbrains-mono/jetbrains-mono-latin-variable.woff2 | assets/vendor/jetbrains-mono/LICENSE |
-| Lora Latin variable font | Google Fonts v37 | https://fonts.gstatic.com/s/lora/v37/ | OFL-1.1 | Local serif typography for the immersive revision preview. | Yes, copied to assets/vendor/lora/lora-latin-variable.woff2, assets/vendor/lora/lora-latin-italic-variable.woff2 | assets/vendor/lora/LICENSE |
 | KaTeX | 0.16.47 | https://registry.npmjs.org/katex/-/katex-0.16.47.tgz | MIT | Local math rendering script, stylesheet, and fonts. | Yes, copied to assets/vendor/katex/katex.min.js, assets/vendor/katex/katex.min.css, assets/vendor/katex/fonts/ | assets/vendor/katex/LICENSE |
 | Mermaid | 10.9.6 | https://registry.npmjs.org/mermaid/-/mermaid-10.9.6.tgz | MIT | Local diagram rendering script. | Yes, copied to assets/vendor/mermaid/mermaid.min.js | assets/vendor/mermaid/LICENSE |
-| Lucide icon paths | 0.487.0 | https://registry.npmjs.org/lucide-static/-/lucide-static-0.487.0.tgz | ISC | Locally embedded SVG path data for the isolated immersive workspace controls. | Yes, copied to assets/js/admin/immersive-workspace.js | assets/vendor/lucide/LICENSE |
 
-Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, Mermaid, Inter, JetBrains Mono, Lora, and the embedded Lucide icon paths retain license files under `assets/vendor/`.
+Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, and Mermaid retain license files under `assets/vendor/`.
 
 ## Compiled Frontend Runtime Packages
 

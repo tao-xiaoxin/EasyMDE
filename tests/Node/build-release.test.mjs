@@ -89,17 +89,7 @@ function createAssetSourceFiles(root) {
       '<?php',
       "Asset::url( 'assets/css/admin/toolbar.css' );",
       "Asset::url( 'assets/css/admin/popover.css' );",
-      "Asset::url( 'assets/css/admin/editor.css' );",
-      "Asset::url( 'assets/js/admin/editor-state.js' );",
-      "Asset::url( 'assets/js/admin/commands.js' );",
-      "Asset::url( 'assets/js/admin/preview-client.js' );",
-      "Asset::url( 'assets/js/admin/theme-manager.js' );",
-      "Asset::url( 'assets/js/admin/toolbar.js' );",
-      "Asset::url( 'assets/js/admin/draft-storage.js' );",
-      "Asset::url( 'assets/js/admin/media-picker.js' );",
-      "Asset::url( 'assets/js/admin/image-paste.js' );",
-      "Asset::url( 'assets/js/admin/wechat-exporter.js' );",
-      "Asset::url( 'assets/js/admin/bootstrap.js' );"
+      "Asset::url( 'assets/css/admin/editor.css' );"
     ].join('\n')
   );
   writeText(
@@ -287,17 +277,17 @@ function createCompleteFixture(root) {
           handle: 'easymde-admin-editor-toolbar',
           file: frontendScript,
           asset: frontendMetadata,
-          dependencies: ['wp-element'],
+          dependencies: ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks'],
           resources: []
         }
       }
     })
   );
-  writeText(root, `assets/build/${frontendScript}`, 'window.EasyMDEReactToolbar = {};\n');
+  writeText(root, `assets/build/${frontendScript}`, 'window.EasyMDEEditorRootBootstrap = {};\n');
   writeText(
     root,
     `assets/build/${frontendMetadata}`,
-    "<?php return array( 'dependencies' => array( 'wp-element' ), 'version' => '0123456789abcdef' );\n"
+    "<?php return array( 'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks' ), 'version' => '0123456789abcdef' );\n"
   );
 
   for (const requirement of collectReleaseRequirements(root)) {
@@ -351,6 +341,9 @@ test('release build succeeds for a complete runtime fixture', () => {
     writeText(root, 'frontend/test/build-contract/entry.tsx', 'export const fixture = true;\n');
     writeText(root, 'frontend/test/build-contract/fixture.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>\n');
     writeText(root, '.cache/easymde-frontend-contract/manifest.json', '{}\n');
+    mkdirSync(join(root, 'assets/vendor/inter'), { recursive: true });
+    mkdirSync(join(root, 'assets/vendor/lora'), { recursive: true });
+    mkdirSync(join(root, 'assets/vendor/lucide'), { recursive: true });
     const legacyZipPath = join(root, 'dist/easymde.zip');
     const canDistinguishLegacyZip = isCaseSensitiveFilesystem(root);
 
@@ -375,14 +368,11 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/languages/easymde.pot'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.po'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.mo'));
-    assert.ok(entries.includes('easymde/assets/js/admin/media-picker.js'));
-    assert.ok(entries.includes('easymde/assets/js/admin/image-paste.js'));
     assert.ok(entries.includes('easymde/assets/build/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/js/frontend/bootstrap.js'));
     assert.ok(entries.includes('easymde/assets/vendor/mermaid/LICENSE'));
-    assert.ok(entries.includes('easymde/assets/vendor/lucide/LICENSE'));
     assert.ok(entries.includes('easymde/vendor/league/commonmark/runtime/Parser.php'));
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/tests/bootstrap.php')), false);
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/.github/workflows/ci.yml')), false);
@@ -396,6 +386,10 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.equal(entries.some((entry) => entry.includes('/tests/')), false);
     assert.equal(entries.some((entry) => entry.startsWith('easymde/frontend/')), false);
     assert.equal(entries.some((entry) => entry.includes('/.cache/')), false);
+    assert.equal(entries.some((entry) => /\/assets\/vendor\/(?:inter|lora|lucide)\/?$/.test(entry)), false);
+    assert.equal(existsSync(join(packageRoot, 'assets/vendor/inter')), false);
+    assert.equal(existsSync(join(packageRoot, 'assets/vendor/lora')), false);
+    assert.equal(existsSync(join(packageRoot, 'assets/vendor/lucide')), false);
     assert.deepEqual(findMissingReleaseRequirements(root), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -560,8 +554,6 @@ test('release build fails when required runtime assets or templates are missing'
     rmSync(join(root, 'assets/vendor/katex/fonts'), { recursive: true, force: true });
     rmSync(join(root, 'assets/vendor/highlight/styles/github.min.css'), { force: true });
     rmSync(join(root, 'assets/vendor/mermaid/LICENSE'), { force: true });
-    rmSync(join(root, 'assets/js/admin/media-picker.js'), { force: true });
-    rmSync(join(root, 'assets/js/admin/image-paste.js'), { force: true });
     rmSync(join(root, 'assets/js/frontend/bootstrap.js'), { force: true });
     rmSync(join(root, 'assets/build/assets/admin-editor-fixture.js'), { force: true });
     rmSync(join(root, 'assets/images/tech-blue-code-window.svg'), { force: true });
@@ -574,8 +566,6 @@ test('release build fails when required runtime assets or templates are missing'
     assert.ok(missing.includes('assets/vendor/katex/fonts'));
     assert.ok(missing.includes('assets/vendor/highlight/styles/github.min.css'));
     assert.ok(missing.includes('assets/vendor/mermaid/LICENSE'));
-    assert.ok(missing.includes('assets/js/admin/media-picker.js'));
-    assert.ok(missing.includes('assets/js/admin/image-paste.js'));
     assert.ok(missing.includes('assets/js/frontend/bootstrap.js'));
     assert.ok(missing.includes('assets/build/assets/admin-editor-fixture.js'));
     assert.ok(missing.includes('assets/images/tech-blue-code-window.svg'));
@@ -603,22 +593,6 @@ test('release build fails when a prepared frontend runtime asset differs from it
     assert.throws(
       () => buildRelease({ root }),
       /assets\/vendor\/mermaid\/mermaid\.min\.js/
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('release build fails when the Lucide license differs from its verified source', () => {
-  const root = makeTempRoot();
-
-  try {
-    createCompleteFixture(root);
-    writeText(root, 'assets/vendor/lucide/LICENSE', 'truncated');
-
-    assert.throws(
-      () => buildRelease({ root }),
-      /assets\/vendor\/lucide\/LICENSE/
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -680,12 +654,6 @@ test('release requirements include the Qinghe Zhusha article theme stylesheet', 
   const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
 
   assert.ok(requirements.includes('assets/themes/article/qinghe-zhusha.css'));
-});
-
-test('release requirements include the embedded Lucide icon license', () => {
-  const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
-
-  assert.ok(requirements.includes('assets/vendor/lucide/LICENSE'));
 });
 
 test('release requirements do not include the removed md2html-normal article theme stylesheet', () => {

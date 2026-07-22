@@ -1,123 +1,53 @@
-# EasyMDE Migration Notes
+# EasyMDE Data And Compatibility Migration
 
-## Normal Editor Toolbar Ownership
-
-The normal editor's main Markdown Toolbar is the first production React
-migration unit. PHP `ToolbarRegistry` descriptors, command IDs, ordering,
-translated labels, and shortcut configuration remain authoritative. React owns
-the main Toolbar presentation, heading-menu interaction, and command intent
-dispatch; the existing browser command engine continues to own the actual
-Markdown selection transformations.
-
-The PHP editor shell renders separate React, legacy-main, and legacy-secondary
-containers. The legacy main Toolbar remains active while the React entry
-validates bootstrap data and mounts. Readiness performs one visibility and
-presentation-owner handoff. Startup failure leaves the legacy main Toolbar
-usable, and teardown unmounts React before legacy code may clear or reuse its
-container.
-
-The secondary Toolbar and immersive workspace remain legacy-owned. This unit
-does not transfer Preview, appearance, draft storage, WeChat export, immersive
-writing, native submission, Save, Publish, or WordPress authority, and it
-removes no legacy implementation.
-
-## Normal Editor Document Session Ownership
-
-The normal editor Markdown source and title session are the next React
-migration unit. CodeMirror 6 owns the in-browser Markdown value, selection,
-focus, undo history, and source scrolling after its readiness contract passes.
-The native `#easymde-source` textarea stays in the WordPress form as a hidden,
-synchronously updated submission bridge and as the compatibility boundary for
-legacy Markdown commands. The native title input remains visible and
-WordPress-owned; React observes it through a focused title session adapter
-without creating another persisted title.
-
-The PHP editor shell renders separate React and legacy source containers.
-Startup keeps the textarea visible until the CodeMirror document session, title
-session, native fields, and legacy consumers validate. Readiness switches one
-explicit document owner, rebinds source scroll and paste/drop surfaces, and
-hides the textarea. Startup failure keeps the legacy textarea usable. A failure
-after handoff requires reload rather than switching two live document writers.
-Native form submission flushes CodeMirror to the textarea before WordPress
-serializes the open form.
-
-PHP and WordPress continue to own Markdown and title persistence, rendering,
-save, publish, permissions, nonces, revisions, autosave, and post locks. The
-secondary Toolbar and immersive workspace remain legacy-owned, and this unit
-does not migrate immersive writing.
-
-## Normal Editor Preview Surface Ownership
-
-The normal editor's Preview request scheduler, visible state, DOM output, and
-scroll preservation are React browser-session responsibilities after
-readiness. A focused Preview Port uses the existing WordPress REST contract,
-while PHP remains authoritative for capabilities, Nonces, Markdown rendering,
-sanitization, and response data. React applies the existing 180 millisecond
-debounce, aborts superseded browser requests, and binds every completion to the
-active request revision and Markdown signature so stale responses cannot
-replace newer Preview output.
-
-The PHP shell provides a dedicated empty React container beside the rendered
-legacy article and declares legacy request and Surface ownership initially.
-The legacy article remains visible while React validates the Bootstrap
-contract, transport, Ports, Root, session, and committed article. Readiness
-invalidates legacy work, copies the existing Theme classes and inline Font
-style, preserves scroll, hides the legacy article, exposes the React article,
-rebinds synchronized scrolling, and switches request and Surface ownership in
-one handoff. Startup failure before that point keeps the legacy Preview usable
-and emits only a stable privacy-safe diagnostic. Failure or teardown after
-handoff requires a clean reload and never switches two live DOM writers.
-
-The React article is the single normal-editor Safe Preview HTML sink. It keeps
-existing sanitized HTML visible while a replacement request is loading,
-renders mutually exclusive Loading, Empty, Error, Enhancing, and Ready states,
-and restores the latest scroll snapshot. PHP Bootstrap remains the translation
-owner for those messages. The existing local Preview feature loader remains a
-focused Adapter for Mermaid, KaTeX, Highlight.js, TOC, and code-frame
-enhancement; stale completion is rejected and failed enhancement preserves the
-sanitized HTML without reporting export readiness.
-
-Immersive Preview remains fully legacy-owned and keeps an independent request
-revision, timer, abort, DOM, and enhancement lifecycle. No persistence, Save,
-Publish, public rendering, or immersive-writing authority moves to React.
+This document records implemented data-model and compatibility transitions.
+Browser ownership for the ordinary WordPress Editor is no longer a staged
+migration: Issue #91 uses one React Editor Root with no Legacy handoff,
+fallback, parallel DOM, or Focus Mode runtime. The temporary browser-removal
+procedure remains in `.agents/skills/easymde-migration/SKILL.md` until its
+separate deletion gate is approved.
 
 ## Editor Enablement
 
-EasyMDE opens new and existing content for post types explicitly supported by `easymde_supported_post_types` in EasyMDE through normal WordPress editing when the current user can edit or create that content. The default supported post types are `post` and `page`.
+EasyMDE opens new and existing content for post types explicitly supported by
+`easymde_supported_post_types` through normal WordPress editing when the current
+user can edit or create that content. The defaults are `post` and `page`.
 
-EasyMDE metadata describes document state and compatibility output; it no longer decides editor admission. Existing EasyMDE posts remain compatible:
+EasyMDE metadata describes document state and compatibility output; it does not
+decide editor admission:
 
-- `_easymde_enabled = 1` marks a post as having EasyMDE document state.
-- If `_easymde_enabled` is missing but `_easymde_markdown` exists, the post is treated as a legacy EasyMDE document-state post.
-- The legacy check uses `metadata_exists()` so an empty Markdown value still counts.
+- `_easymde_enabled = 1` marks established EasyMDE document state.
+- A post without `_easymde_enabled` but with an existing
+  `_easymde_markdown` record is a legacy EasyMDE document-state post.
+- Detection uses `metadata_exists()` so an existing empty Markdown record is
+  distinct from an absent record.
 
-Opening an ordinary existing supported post without EasyMDE metadata imports
-current `post_content` into Markdown in memory for the editor. It does not write
-metadata, rewrite `post_content`, or create revisions. Legacy posts and ordinary
-supported posts are migrated lazily. On the next valid EasyMDE save, the plugin
-writes `_easymde_enabled = 1`, stores Markdown state, and writes rendered
-compatibility HTML. It does not scan or update every post during upgrade.
+Opening an ordinary supported post imports current `post_content` into Markdown
+in memory. It does not write metadata, rewrite content, or create a revision.
+On the next valid EasyMDE save, the plugin writes `_easymde_enabled = 1`, stores
+the Markdown state, and writes rendered compatibility HTML. There is no bulk
+upgrade migration.
 
-## Markdown And HTML
+## Markdown And Compatibility HTML
 
-`_easymde_markdown` remains the authoritative source. `post_content` remains the
-rendered HTML compatibility output.
+`_easymde_markdown` remains authoritative. `post_content` remains sanitized
+rendered HTML for themes, feeds, search, plugins, visitors, and deactivation
+compatibility.
 
-Valid EasyMDE saves also write `_easymde_render_signature`, an internal
-consistency marker tying the current Markdown, article theme, and stored
-compatibility HTML together. The marker lets the editor reuse stored HTML for a
-fast initial preview only when it still matches the authoritative Markdown
-state.
+Valid saves write `_easymde_render_signature`, an internal consistency marker
+covering Markdown, article theme, and compatibility HTML. Stored HTML is reused
+for initial Preview only when the marker still matches those inputs.
 
-The fallback Markdown renderer has been removed. `league/commonmark` is required
-for rendering. A development checkout without Composer dependencies shows an
-admin notice and avoids writing newly rendered HTML.
-
-Production release packages must include Composer dependencies in `vendor/`.
+There is no fallback Markdown renderer. `league/commonmark`, through
+`EasyMDE\Content\MarkdownRenderer`, is required. A development checkout without
+Composer runtime dependencies shows a clear administrator notice and does not
+generate inconsistent replacement HTML. Installable packages include the
+required Composer runtime under `vendor/`.
 
 ## Revision Behavior
 
-The following meta keys are copied to new revisions and restored from revisions:
+The following current metadata is copied to revisions and restored as one
+consistent state:
 
 ```text
 _easymde_enabled
@@ -133,46 +63,49 @@ _easymde_serif_font
 _easymde_render_signature
 ```
 
-When a revision containing EasyMDE meta is restored, the restored Markdown and
-theme state are copied back to the post. EasyMDE regenerates `post_content` and
-stores a new render signature only when Markdown rendering succeeds. If the
-renderer is unavailable or rendering fails, the restore path uses the
-revision's stored `post_content` without generating a new signature. Any render
-signature stored on that revision is restored with the other revisioned
-metadata and remains subject to normal consistency validation.
+For an EasyMDE revision, Markdown and appearance metadata are restored and
+`post_content` is regenerated only when formal rendering succeeds. If the
+renderer is unavailable or rendering fails, the revision's stored
+`post_content` is restored without creating a new signature. A signature stored
+on that revision is restored with the other metadata and remains subject to
+normal consistency validation.
 
 The restore path updates `post_content` directly and clears the post cache to
-avoid recursive save hooks or extra revision loops.
-
-When a revision predates EasyMDE document state and contains none of the
-revisioned EasyMDE metadata, restoring it removes the current revisioned
-EasyMDE metadata and restores that revision's historical `post_content`. The
-post then no longer has EasyMDE document state.
+avoid recursive saves or duplicate revision loops. Restoring a pre-EasyMDE
+revision removes current revisioned EasyMDE document-state metadata and restores
+that revision's historical HTML; the browser does not fabricate Markdown for
+that state.
 
 ## Fixed Mac Code Frame
 
-The Mac-style source-code frame is now a fixed rendering default rather than saved appearance state. New post saves, user defaults, preview requests, and revisions no longer create or update Mac-frame state.
+The Mac-style source-code frame is a fixed rendering default, not saved
+appearance state. New saves, defaults, Preview requests, and revisions do not
+create or update Mac-frame state.
 
-Existing `_easymde_code_mac_style` post/revision meta and `codeMacStyle` entries in user defaults are retained byte-for-byte. EasyMDE does not migrate, delete, normalize, copy, restore, or consult those historical values. Saving other supported appearance defaults preserves unknown historical user-default fields while updating only the active fields.
+Existing `_easymde_code_mac_style` post/revision metadata and `codeMacStyle`
+user-default entries are inactive historical data. EasyMDE preserves them
+byte-for-byte without reading, writing, migrating, normalizing, copying, or
+restoring them as active state.
 
 ## Custom CSS
 
 Existing custom CSS library data remains readable from the current user's
-`easymde_custom_css_library` user meta.
+`easymde_custom_css_library` user meta. Creating, updating, or deleting full
+Custom CSS requires `unfiltered_html`.
 
-New, updated, and deleted full custom CSS requires `unfiltered_html`. CSS is parsed with
-`sabberworm/php-css-parser` before storage or scoping. Unsafe features such as
-`@import`, `@charset`, `@font-face`, `url(...)`, `expression(...)`,
-`behavior`, `-moz-binding`, and `javascript:` are rejected.
-
-If legacy CSS cannot be parsed safely, the stored value is retained but scoped
-frontend output is omitted.
+`sabberworm/php-css-parser` owns parsing, normalization, selector scoping, and
+safe output. The policy rejects `@import`, `@charset`, `@font-face`, `url(...)`,
+`expression(...)`, `behavior`, `-moz-binding`, and `javascript:` while retaining
+supported nested rules. If a legacy value cannot be parsed safely, its stored
+value is retained but unsafe scoped output is omitted.
 
 ## Theme Assets
 
-Article themes moved from the previous all-in-one stylesheet into
-`assets/themes/article/`. Highlight.js vendor styles moved to
-`assets/vendor/highlight/styles/`. The owned `wechat-inspired` code theme moved
-to `assets/themes/code/wechat-inspired.css`.
+Article themes live under `assets/themes/article/`. Highlight.js vendor styles
+live under `assets/vendor/highlight/styles/`. The EasyMDE-owned
+`wechat-inspired` code theme lives at
+`assets/themes/code/wechat-inspired.css`.
 
-Old active theme meta IDs are unchanged, so existing posts continue to resolve their selected article theme, code theme, and custom CSS snapshot. Historical Mac-frame values remain stored but no longer affect rendering.
+Existing active theme IDs are unchanged, so stored article theme, code theme,
+and Custom CSS snapshot selections continue to resolve. Historical Mac-frame
+values remain stored but do not affect rendering.

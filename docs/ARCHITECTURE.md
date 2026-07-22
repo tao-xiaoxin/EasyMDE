@@ -4,6 +4,39 @@ EasyMDE is a standalone WordPress plugin wired from `easymde.php` into `EasyMDE\
 
 This document describes the current implementation boundaries. Approved target decisions for the React, TypeScript, and Vite admin applications live in [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md); that document does not claim that target paths already exist. Development setup lives in [Development](DEVELOPMENT.md), and release validation lives in [Testing and Release](TESTING_AND_RELEASE.md).
 
+## Issue #91 Direct React Cutover
+
+The maintainer-approved target for the ordinary WordPress Editor is one Vite
+production entry mounting one React 18 Editor Root. This is a direct cutover,
+not another sequence of Legacy-to-React runtime handoffs. The final ordinary
+Editor does not enqueue or execute `assets/js/admin/bootstrap.js`, jQuery, the
+Legacy Toolbar, Preview, Theme, Draft, Media runtimes, Legacy fallback DOM, or
+Focus Mode / immersive-writing assets.
+
+Direct cutover does not authorize feature removal. The React Root must preserve
+the complete ordinary Editor capability matrix from Issues #91 and #86:
+
+- title and Markdown editing, Selection, IME, Undo/Redo, shortcuts, and every
+  registered Toolbar command;
+- live server Preview, GFM tables and task lists, Mermaid, KaTeX, Highlight.js,
+  TOC, synchronized scrolling, themes, fonts, and Custom CSS;
+- WordPress Media selection, Paste/Drop upload, Local Draft recovery, WeChat
+  export, Outline, statistics, and status feedback;
+- publishing fields and flows, revisions, the native WordPress form and unknown
+  extension fields, permissions, Nonces, locks, failure states, responsive
+  layouts, RTL, and accessibility.
+
+PHP and WordPress retain their existing data, authorization, rendering, native
+form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown`
+remains canonical Markdown and `post_content` remains compatibility HTML.
+Focus Mode is the only explicit product exclusion: it is not implemented,
+connected, enqueued, or loaded by the ordinary Editor.
+
+The ordinary Editor now follows this single-Root boundary in the live branch.
+Legacy admin Browser Runtime files and Focus Mode assets have no ordinary
+Editor consumer and are excluded from the release package. Historical data and
+public PHP compatibility contracts remain preserved as described below.
+
 ## Directory Boundaries
 
 - `src/Admin/`: editor screen rendering, per-post editor gating, admin settings, admin assets, and save handling.
@@ -16,7 +49,7 @@ This document describes the current implementation boundaries. Approved target d
 - `assets/themes/article/`: EasyMDE-owned article themes.
 - `assets/themes/code/`: EasyMDE-owned code themes.
 - `assets/vendor/`: committed third-party runtime assets prepared from locked npm packages or verified upstream repository sources.
-- `frontend/`: strict TypeScript, React, CodeMirror, and Vite source for the production normal-editor Toolbar, document session, and Preview Surface, plus the test-only WordPress React build-contract fixture.
+- `frontend/`: strict TypeScript, React, CodeMirror, and Vite source for the production normal-editor Toolbar, document session, Preview Surface, synchronized scrolling, Font controls, Appearance controls, Media-picker session, pasted/dropped image upload session, Local Draft session, and WeChat export, plus the test-only WordPress React build-contract fixture.
 - `scripts/`: local asset preparation, i18n/notices, test setup, Plugin Check, clean WordPress install, and release package assembly scripts.
 - `tests/Unit/` and `tests/Integration/`: PHPUnit coverage for rendering, CSS policy, frontend assets, REST permissions, revisions, migration, editor gating, and compatibility facade behavior.
 - `tests/Node/`: Node tests for release packaging, CI invariants, i18n/notices, Plugin Check parsing, and destructive-script safety.
@@ -28,15 +61,56 @@ The root npm project owns Vite, TypeScript, Biome linting, React 18 development 
 
 The Vite entry under `frontend/test/build-contract/` remains test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
 
-`frontend/src/entrypoints/admin-editor.tsx` is the production React Editor entry. It exposes focused Toolbar, document-source, and normal Preview Surface bridges from one WordPress-loaded script. The Toolbar bridge mounts the normal editor's main Markdown Toolbar into a PHP-delegated container and renders `features/toolbar/ui/EditorToolbar.tsx`. PHP `ToolbarRegistry` descriptors and translated labels remain the bootstrap authority, and `assets/js/admin/commands.js` remains the Markdown command-mutation owner through the focused `executeCommand` bridge. The legacy secondary Toolbar, including appearance, draft status, WeChat export, and the immersive-workspace entry, remains outside the React Root.
+`frontend/src/entrypoints/admin-editor.tsx` is the sole production browser
+entry for the ordinary Editor. `AdminAssets` validates
+`assets/build/wordpress-manifest.json` and its dependency metadata, enqueues the
+stable `easymde-admin-editor-toolbar` handle, serializes the versioned Root
+Bootstrap contract, and does not enqueue an admin Legacy bootstrap, jQuery, or
+Focus Mode assets. `templates/admin/editor-shell.php` provides one empty
+`#easymde-editor-root` mount and native WordPress submission fields. The
+Markdown field remains visible until CodeMirror owns a working document session;
+React then hides both that bridge field and `#postdivrich`, restoring them on
+teardown or failure; there is no parallel Legacy editor container.
 
-The document-source bridge mounts CodeMirror 6 into a dedicated source container. CodeMirror owns the normal editor's browser-session Markdown value, selection, focus, undo history, and source scrolling after readiness. The hidden native `#easymde-source` textarea remains the synchronous WordPress submission bridge and legacy command boundary; every accepted CodeMirror transaction updates it immediately, and native command mutations are synchronized back into CodeMirror. The native WordPress title input remains both the title session adapter and submission field. PHP and WordPress remain authoritative for persistence, rendering, saving, publishing, revisions, permissions, and native form serialization.
+The entrypoint parses external data before mounting, constructs focused
+WordPress and browser Adapters, mounts one `EditorRoot`, and owns idempotent
+teardown. The Root composes Toolbar/commands, CodeMirror document and title
+sessions, server Preview and local post-response enhancements, Appearance and
+Custom CSS, Fonts, Media and image upload, Local Drafts, WeChat export,
+Outline/statistics/layout, Publishing, Revisions, and WordPress session state.
+Components depend on typed Ports; WordPress DOM, `wp.media`, REST, Storage, and
+Clipboard access remain in focused Integration Adapters.
 
-The Preview Surface bridge owns normal-editor Preview scheduling, visible state, DOM output, and scroll preservation after readiness. It preserves the 180 millisecond debounce, aborts superseded browser requests, assigns request revisions, and publishes only the latest response whose revision and Markdown signature still match the active session. Its WordPress Adapter calls the existing protected `easymde/v1` Preview Route with the current bootstrap Nonce; PHP remains the rendering, permission, sanitization, and response authority. The React article is the single normal-editor sink for branded server-sanitized Preview HTML. PHP-translated Bootstrap strings remain the Loading, Empty, and Error message authority.
+CodeMirror owns the in-page Markdown value, Selection, Focus, Undo history, and
+source scrolling. The native title and React-owned hidden Markdown fields are
+synchronous submission bridges and are flushed before WordPress serializes the
+open form.
+React neither submits a closed field allowlist nor treats synchronization as a
+successful Save, so unknown WordPress and extension fields remain intact.
 
-The existing `assets/js/admin/preview-feature-loader.js` and local Mermaid, KaTeX, Highlight.js, TOC, and code-frame runtimes remain a focused post-response enhancement Adapter. React rejects stale enhancement completion before it can mark newer HTML ready, and enhancement failure preserves the sanitized HTML while withholding export readiness. Startup failure before handoff leaves the legacy Preview usable. After handoff, teardown or failure marks Preview ownership as reload-required rather than switching live DOM writers. Immersive Preview remains fully legacy-owned with an independent request revision, timer, abort, DOM, and enhancement lifecycle.
+The Preview session debounces Reads, aborts superseded requests, rejects stale
+revisions and Markdown signatures, and renders branded server-sanitized HTML
+through one React Safe HTML sink. `easymde/v1/preview` and PHP
+`MarkdownRenderer` remain the formal rendering authority. Focused TypeScript
+Adapters enhance only the accepted response with local Highlight.js, KaTeX,
+Mermaid, TOC, Code Theme, and the fixed Mac frame; enhancement failure preserves
+sanitized HTML and is reported without inventing a renderer fallback.
 
-`AdminAssets` reads `assets/build/wordpress-manifest.json` and the matching dependency metadata before enqueueing the stable `easymde-admin-editor-toolbar` handle ahead of `easymde-admin`. Legacy Toolbar, source, and Preview owners stay visible during React preparation and mount. Only validated readiness callbacks switch each explicit owner and visibility. A missing, invalid, or failed production entry before handoff leaves the corresponding legacy owner usable and reports a stable privacy-safe diagnostic. Document teardown flushes the submission bridge before unmounting; a Preview failure or teardown after its handoff requires a clean page reload and never reactivates the hidden legacy Surface in the same session.
+The WordPress session Adapter observes Heartbeat authentication, REST Nonce,
+Post Lock, capability, and connection state through `wp.hooks`. It blocks new
+protected operations at the owning boundary while preserving unsaved content,
+the Dirty baseline, Local Draft recovery, and the complete native form. Save,
+Publish, Media, Custom CSS, and Revision operations report only authoritative
+results and never retry protected mutations automatically.
+
+Local Draft recovery uses the versioned
+`easymde:draft:v1:<site>:<user>:<post-or-new>` identity, a 1 MiB limit, a
+500-millisecond latest-write scheduler, explicit read/write/discard failures,
+and cross-tab conflict handling. New-post identity comes from the stable PHP
+Bootstrap contract rather than WordPress's temporary auto-draft ID. WeChat
+export accepts only the current stable sanitized and enhanced Preview; Clipboard
+failure remains visible and temporary fallback DOM, Selection, Focus, and Scroll
+are cleaned up.
 
 ## Service Wiring
 
@@ -53,14 +127,6 @@ EasyMDE editor mode is scoped to supported post types, `post` and `page` by defa
 Editor admission does not depend on `_easymde_enabled`, `_easymde_markdown`, or other EasyMDE metadata. Unsupported post types keep the normal WordPress editor unless a site explicitly adds them through `easymde_supported_post_types`.
 
 Opening an ordinary existing supported post imports the current `post_content` into Markdown in memory for the editor. It does not write metadata, rewrite content, create revisions, or migrate the post on open.
-
-## Immersive Workspace Boundary
-
-The normal WordPress edit screen and the immersive workspace are separate visual surfaces. The normal editor keeps its existing template and styles. Selecting **Enter immersive writing** creates the fixed white workspace from `assets/js/admin/immersive-workspace.js` and `assets/css/admin/immersive-workspace.css`; closing it removes that DOM and restores focus, scroll, and WordPress interactivity.
-
-The workspace owns presentation and transient UI state only. It synchronizes with the existing WordPress title field, EasyMDE Markdown source, preview renderer, theme/font fields, local draft service, media frame, revision REST API, and native save/publish form. Opening or cancelling its publish dialog writes nothing. Confirming maps the dialog draft back to the existing WordPress fields and triggers the native publish action so nonce, capability, taxonomy, visibility, scheduling, autosave, revision, and media behavior remain WordPress-owned.
-
-The workspace may persist only layout preferences in browser storage: the source/preview split ratio and outline width. Its AI panel is a local interface demonstration and must not read article content, make network requests, or persist AI input or output.
 
 ## Data Model
 
@@ -153,6 +219,8 @@ Custom CSS library entries are stored in the current user's user meta. Creating,
 
 When a post uses custom CSS, EasyMDE stores a post-level snapshot so published content can retain the selected appearance if the user later edits or removes the saved library entry.
 
+The normal-editor React Appearance owner edits only a browser-session draft and sends an explicit save through the existing protected REST boundary. It does not validate or scope CSS as a security authority, retry a mutation, or report success before the server response has been validated. The existing hidden Custom CSS ID and snapshot fields remain the WordPress submission bridge. The post-level snapshot also remains usable when its library entry is later detached.
+
 ## REST Boundaries
 
 All EasyMDE REST routes use namespace `easymde/v1`.
@@ -170,7 +238,7 @@ Current routes:
 
 Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Pasted-image media uploads require `upload_files`; when a `post_id` is present they also require `current_user_can( 'edit_post', $post_id )`, and without a `post_id` they require `edit_posts`. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
 
-Immersive category options use a short-lived object-cache entry scoped by site, user, capabilities, locale, post type, post ID, and the WordPress term `last_changed` value. Extensions whose term-query filters depend on additional request state can extend `easymde_category_options_cache_context`, or return `false` from that filter to bypass this cache without bypassing WordPress's native term filters.
+Publishing category options use a short-lived object-cache entry scoped by site, user, capabilities, locale, post type, post ID, and the WordPress term `last_changed` value. Extensions whose term-query filters depend on additional request state can extend `easymde_category_options_cache_context`, or return `false` from that filter to bypass this cache without bypassing WordPress's native term filters.
 
 Preview Markdown payloads are capped at 1 MiB. EasyMDE media uploads accept local JPEG, PNG, GIF, and WebP image files only; remote image-provider uploads are not part of the REST surface.
 

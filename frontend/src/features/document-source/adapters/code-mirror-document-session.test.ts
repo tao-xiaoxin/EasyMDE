@@ -70,6 +70,43 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
   });
 
+  it('publishes stable document snapshots against the native saved baseline', () => {
+    const { container, submissionField } = createFixture('saved document');
+    submissionField.defaultValue = 'saved document';
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const listener = vi.fn();
+    const unsubscribe = session.subscribe(listener);
+
+    expect(session.getSnapshot()).toEqual({
+      savedValue: 'saved document',
+      value: 'saved document'
+    });
+    expect(session.getSnapshot()).toBe(session.getSnapshot());
+
+    session.applyTextChange({
+      selection: { direction: 'none', end: 6, start: 6 },
+      value: 'edited'
+    });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(session.getSnapshot()).toEqual({
+      savedValue: 'saved document',
+      value: 'edited'
+    });
+    expect(session.getSnapshot()).toBe(session.getSnapshot());
+
+    session.replaceSavedValue('edited');
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(session.getSnapshot()).toEqual({ savedValue: 'edited', value: 'edited' });
+
+    unsubscribe();
+    session.destroy();
+  });
+
   it('accepts an external native bridge update without echoing a second input event', () => {
     const { container, submissionField } = createFixture();
     const handleInput = vi.fn();
@@ -135,6 +172,57 @@ describe('createCodeMirrorDocumentSession', () => {
     expect(valueWrites).toBe(0);
     expect(submissionField.selectionStart).toBe(2);
 
+    session.destroy();
+  });
+
+  it('reveals an outline position and publishes cursor changes without editing Markdown', () => {
+    const { container, submissionField } = createFixture('# First\n\n## Second');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const selectionListener = vi.fn();
+    const unsubscribe = session.subscribeSelection(selectionListener);
+
+    session.revealPosition(11);
+
+    expect(session.getSelection()).toEqual({
+      direction: 'none',
+      end: 11,
+      start: 11
+    });
+    expect(session.getValue()).toBe('# First\n\n## Second');
+    expect(submissionField.value).toBe('# First\n\n## Second');
+    expect(selectionListener).toHaveBeenCalledTimes(1);
+    expect(session.getCursorPosition()).toEqual({ column: 3, line: 3 });
+
+    unsubscribe();
+    session.revealPosition(999);
+    expect(session.getSelection().start).toBe(session.getValue().length);
+    expect(selectionListener).toHaveBeenCalledTimes(1);
+    session.destroy();
+  });
+
+  it('derives cursor coordinates from the active selection endpoint without scanning text', () => {
+    const { container, submissionField } = createFixture('abc\ndef');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+
+    session.applyTextChange({
+      selection: { direction: 'forward', end: 5, start: 0 },
+      value: 'abc\ndef'
+    });
+    expect(session.getCursorPosition()).toEqual({ column: 2, line: 2 });
+
+    session.applyTextChange({
+      selection: { direction: 'backward', end: 5, start: 0 },
+      value: 'abc\ndef'
+    });
+    expect(session.getCursorPosition()).toEqual({ column: 1, line: 1 });
     session.destroy();
   });
 

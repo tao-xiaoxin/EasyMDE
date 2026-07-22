@@ -28,8 +28,7 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 * WordPress media library insertion, plus local image paste and drag-and-drop upload.
 * REST-powered server preview.
 * Browser local draft autosave and recovery.
-* An isolated full-screen article workspace that opens only after the immersive writing action is selected.
-* The normal WordPress editor layout remains unchanged while the immersive workspace is closed.
+* Outline navigation, writing statistics, responsive edit/split/preview layouts, publishing controls, and revision navigation in the ordinary editor.
 * Local Highlight.js code highlighting.
 * Local Mermaid diagram rendering.
 * Local KaTeX math rendering.

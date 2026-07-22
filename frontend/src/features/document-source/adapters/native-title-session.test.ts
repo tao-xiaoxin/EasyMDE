@@ -3,6 +3,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { createNativeTitleSession } from './native-title-session';
 
 describe('createNativeTitleSession', () => {
+  it('provides an inert title session when the supported post type has no title field', () => {
+    const session = createNativeTitleSession(null);
+    const listener = vi.fn();
+
+    expect(session.getSnapshot()).toEqual({ savedValue: '', value: '' });
+    session.subscribe(listener);
+    session.replaceSavedValue('Ignored without a native owner');
+    expect(listener).not.toHaveBeenCalled();
+    expect(session.getSnapshot()).toEqual({ savedValue: '', value: '' });
+    expect(() => {
+      session.destroy();
+      session.destroy();
+    }).not.toThrow();
+  });
+
   it('exposes the WordPress title value and saved baseline without writing either value', () => {
     const field = document.createElement('input');
     field.defaultValue = 'Saved title';
@@ -39,8 +54,15 @@ describe('createNativeTitleSession', () => {
     });
     expect(session.getSnapshot()).toBe(session.getSnapshot());
 
+    session.replaceSavedValue('Edited title');
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(session.getSnapshot()).toEqual({
+      savedValue: 'Edited title',
+      value: 'Edited title'
+    });
+
     field.dispatchEvent(new Event('change', { bubbles: true }));
-    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledTimes(2);
 
     unsubscribe();
     session.destroy();

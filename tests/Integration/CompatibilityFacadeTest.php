@@ -49,7 +49,8 @@ final class CompatibilityFacadeTest extends WP_UnitTestCase
             set_current_screen('post');
             do_action('admin_enqueue_scripts', 'post.php');
 
-            $data = wp_scripts()->get_data('easymde-admin', 'data');
+            $before = wp_scripts()->get_data('easymde-admin-editor-toolbar', 'before');
+            $data = is_array($before) ? implode("\n", $before) : $before;
 
             $this->assertIsString($data);
             $this->assertStringContainsString('fixture_button', $data);

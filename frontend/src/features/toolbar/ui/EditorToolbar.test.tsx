@@ -21,7 +21,8 @@ const bootstrap: ToolbarBootstrap = {
     quote: { win: 'Ctrl+Shift+Q', mac: 'Cmd+Option+Q' },
     codefence: { win: 'Ctrl+Shift+K', mac: 'Cmd+Option+C' }
   },
-  headingsLabel: '标题'
+  headingsLabel: '标题',
+  linkText: '链接文本'
 };
 
 describe('EditorToolbar', () => {

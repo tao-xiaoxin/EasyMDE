@@ -158,11 +158,22 @@ final class RevisionController {
 	}
 
 	public function format_revision( $revision ) {
+		$datetime   = get_post_datetime( $revision );
+		$date       = $datetime ? $datetime->format( DATE_RFC3339 ) : '';
+		$date_label = $datetime
+			? wp_date(
+				get_option( 'date_format' ) . ' ' . get_option( 'time_format' ),
+				$datetime->getTimestamp(),
+				wp_timezone()
+			)
+			: '';
+
 		return array(
-			'id'    => (int) $revision->ID,
-			'title' => get_the_title( $revision ),
-			'date'  => mysql_to_rfc3339( $revision->post_date ),
-			'type'  => wp_is_post_autosave( $revision ) ? 'auto' : 'manual',
+			'id'         => (int) $revision->ID,
+			'title'      => get_the_title( $revision ),
+			'date'       => $date,
+			'date_label' => $date_label,
+			'type'       => wp_is_post_autosave( $revision ) ? 'auto' : 'manual',
 		);
 	}
 

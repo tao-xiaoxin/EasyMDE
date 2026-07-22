@@ -88,4 +88,5 @@ final class CustomCssPolicyTest extends WP_UnitTestCase
             $preview['scopedCss']
         );
     }
+
 }

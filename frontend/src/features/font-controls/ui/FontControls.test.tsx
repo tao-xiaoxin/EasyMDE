@@ -44,6 +44,28 @@ function createPort(applyState = vi.fn()): FontControlsPort {
 }
 
 describe('FontControls', () => {
+  it('anchors the panel to the font trigger instead of the page', async () => {
+    const user = userEvent.setup();
+    render(
+      <FontControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+      />
+    );
+    const trigger = screen.getByRole('button', { name: 'Font' });
+
+    await user.click(trigger);
+    const panel = screen.getByRole('dialog', { name: 'Font' });
+    const anchor = trigger.closest(
+      '.easymde-toolbar-popover-anchor.easymde-toolbar-popover-font'
+    );
+
+    expect(anchor).not.toBeNull();
+    expect(anchor?.contains(panel)).toBe(true);
+  });
+
   it('opens an accessible popover, focuses the first field, closes on Escape, and returns focus', async () => {
     const user = userEvent.setup();
     render(

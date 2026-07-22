@@ -1,6 +1,5 @@
 import {
   createElement,
-  Fragment,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -205,7 +204,7 @@ export function AppearanceControls({
   };
 
   return (
-    <Fragment>
+    <div className="easymde-toolbar-popover-anchor easymde-toolbar-popover-appearance">
       <button
         ref={triggerRef}
         type="button"
@@ -347,6 +346,6 @@ export function AppearanceControls({
           />
         </div>
       </div>
-    </Fragment>
+    </div>
   );
 }

@@ -56,6 +56,28 @@ function createPort(overrides: Partial<AppearancePort> = {}): AppearancePort {
 }
 
 describe('AppearanceControls', () => {
+  it('anchors the panel to the appearance trigger instead of the page', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+      />
+    );
+    const trigger = screen.getByRole('button', { name: 'Appearance' });
+
+    await user.click(trigger);
+    const panel = screen.getByRole('dialog', { name: 'Appearance' });
+    const anchor = trigger.closest(
+      '.easymde-toolbar-popover-anchor.easymde-toolbar-popover-appearance'
+    );
+
+    expect(anchor).not.toBeNull();
+    expect(anchor?.contains(panel)).toBe(true);
+  });
+
   it('opens an accessible popover, focuses the first field, and returns focus on Escape', async () => {
     const user = userEvent.setup();
     render(

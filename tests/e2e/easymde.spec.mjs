@@ -660,9 +660,25 @@ test.describe('EasyMDE editor workflows', () => {
       customFonts: window.EasyMDEEditorRootBootstrap.fonts.options.customFonts.map(({ id }) => id)
     }));
 
-    await page.locator('.easymde-toolbar-section-secondary')
-      .getByRole('button', { name: labels.appearance, exact: true }).click();
+    const appearanceTrigger = page.locator('.easymde-toolbar-section-secondary')
+      .getByRole('button', { name: labels.appearance, exact: true });
+    await appearanceTrigger.click();
     const appearanceDialog = page.getByRole('dialog', { name: labels.appearance });
+    expect(await appearanceDialog.evaluate((panel, trigger) => (
+      panel.parentElement === trigger.parentElement
+      && panel.parentElement?.classList.contains('easymde-toolbar-popover-anchor')
+      && panel.parentElement?.classList.contains('easymde-toolbar-popover-appearance')
+    ), await appearanceTrigger.elementHandle())).toBe(true);
+    const appearanceGeometry = await appearanceDialog.evaluate((panel, trigger) => {
+      const panelBox = panel.getBoundingClientRect();
+      const triggerBox = trigger.getBoundingClientRect();
+      return {
+        rightDelta: Math.abs(panelBox.right - triggerBox.right),
+        topDelta: Math.abs(panelBox.top - triggerBox.bottom - 8)
+      };
+    }, await appearanceTrigger.elementHandle());
+    expect(appearanceGeometry.rightDelta).toBeLessThanOrEqual(1);
+    expect(appearanceGeometry.topDelta).toBeLessThanOrEqual(1);
     const articleSelect = appearanceDialog.getByLabel(labels.articleTheme);
     const codeSelect = appearanceDialog.getByLabel(labels.codeTheme);
     for (const id of catalog.articleThemes) {
@@ -689,8 +705,24 @@ test.describe('EasyMDE editor workflows', () => {
     await expect.poll(() => page.locator('#easymde-custom-css-preview').textContent())
       .toContain('.easymde-rendered-content.easymde-custom-css-active p');
 
-    await page.getByRole('button', { name: labels.font, exact: true }).click();
+    const fontTrigger = page.getByRole('button', { name: labels.font, exact: true });
+    await fontTrigger.click();
     const fontDialog = page.getByRole('dialog', { name: labels.font });
+    expect(await fontDialog.evaluate((panel, trigger) => (
+      panel.parentElement === trigger.parentElement
+      && panel.parentElement?.classList.contains('easymde-toolbar-popover-anchor')
+      && panel.parentElement?.classList.contains('easymde-toolbar-popover-font')
+    ), await fontTrigger.elementHandle())).toBe(true);
+    const fontGeometry = await fontDialog.evaluate((panel, trigger) => {
+      const panelBox = panel.getBoundingClientRect();
+      const triggerBox = trigger.getBoundingClientRect();
+      return {
+        rightDelta: Math.abs(panelBox.right - triggerBox.right),
+        topDelta: Math.abs(panelBox.top - triggerBox.bottom - 8)
+      };
+    }, await fontTrigger.elementHandle());
+    expect(fontGeometry.rightDelta).toBeLessThanOrEqual(1);
+    expect(fontGeometry.topDelta).toBeLessThanOrEqual(1);
     if (catalog.customFonts.length > 1) {
       const selected = catalog.customFonts.at(-1);
       await fontDialog.locator('.easymde-custom-font-select').selectOption(selected);
@@ -739,7 +771,9 @@ test.describe('EasyMDE editor workflows', () => {
     });
     const toolbarLabels = await page.locator('.easymde-toolbar').evaluate((toolbar) => (
       Array.from(toolbar.querySelectorAll(
-        'button[data-easymde-command]:not([role="menuitem"]), .easymde-toolbar-section-secondary > button'
+        'button[data-easymde-command]:not([role="menuitem"]), '
+        + '.easymde-toolbar-section-secondary > button, '
+        + '.easymde-toolbar-section-secondary > .easymde-toolbar-popover-anchor > button'
       )).map((button) => button.getAttribute('aria-label'))
     ));
     expect(toolbarLabels).toEqual(expectedToolbarLabels);
@@ -784,7 +818,8 @@ test.describe('EasyMDE editor workflows', () => {
 
     for (const [width, direction] of [[781, 'column'], [782, 'column'], [783, 'row']]) {
       await page.setViewportSize({ width, height: 900 });
-      await expect(page.locator('.easymde-toolbar')).toHaveCSS('flex-direction', direction);
+      const responsiveToolbar = page.locator('.easymde-toolbar');
+      await expect(responsiveToolbar).toHaveCSS('flex-direction', direction);
       await expect.poll(() => page.locator('#easymde-editor').evaluate((editor) => ({
         internalOverflow: editor.scrollWidth - editor.clientWidth,
         viewportOverflow: Math.max(
@@ -792,6 +827,51 @@ test.describe('EasyMDE editor workflows', () => {
           editor.getBoundingClientRect().right - document.documentElement.clientWidth
         )
       }))).toEqual({ internalOverflow: 0, viewportOverflow: 0 });
+
+      for (const [anchorSelector, panelSelector] of [
+        ['.easymde-toolbar-popover-font', '.easymde-toolbar-popover-font-panel'],
+        ['.easymde-toolbar-popover-appearance', '.easymde-toolbar-popover-appearance-panel']
+      ]) {
+        const trigger = page.locator(`${anchorSelector} > button`);
+        const panel = page.locator(panelSelector);
+        await trigger.scrollIntoViewIfNeeded();
+        const scrollBeforeOpen = await page.evaluate(() => scrollY);
+        await trigger.click();
+        await expect(panel).toBeVisible();
+        const placement = await panel.evaluate((element, { anchorSelector, mobile }) => {
+          const triggerElement = element.parentElement?.querySelector(':scope > button');
+          const toolbar = element.closest('.easymde-toolbar');
+          if (!(triggerElement instanceof HTMLElement) || !(toolbar instanceof HTMLElement)) {
+            throw new Error('toolbar-popover-owner-unavailable');
+          }
+          const panelBox = element.getBoundingClientRect();
+          const triggerBox = triggerElement.getBoundingClientRect();
+          const toolbarBox = toolbar.getBoundingClientRect();
+          return {
+            withinViewport: panelBox.left >= -1 && panelBox.right <= innerWidth + 1,
+            parentIsAnchor: element.parentElement?.matches(anchorSelector) ?? false,
+            offsetOwnerMatches: mobile
+              ? element.offsetParent === toolbar
+              : element.offsetParent === element.parentElement,
+            verticalGap: mobile
+              ? panelBox.top - toolbarBox.bottom
+              : panelBox.top - triggerBox.bottom,
+            horizontalAnchorDelta: mobile
+              ? panelBox.left - toolbarBox.left
+              : panelBox.right - triggerBox.right,
+            scrollY
+          };
+        }, { anchorSelector, mobile: width <= 782 });
+        expect(placement.parentIsAnchor).toBe(true);
+        expect(placement.offsetOwnerMatches).toBe(true);
+        expect(placement.withinViewport).toBe(true);
+        expect(Math.abs(placement.verticalGap - 8)).toBeLessThanOrEqual(1);
+        expect(Math.abs(placement.horizontalAnchorDelta)).toBeLessThanOrEqual(1);
+        expect(placement.scrollY).toBe(scrollBeforeOpen);
+        await page.keyboard.press('Escape');
+        await expect(panel).toBeHidden();
+        await expect(trigger).toBeFocused();
+      }
     }
   });
 

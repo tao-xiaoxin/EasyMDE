@@ -325,7 +325,8 @@ describe('EditorRoot', () => {
     await waitFor(() => expect(view.getByRole('button', { name: 'Bold' })).not.toBeNull());
     const toolbar = view.getByRole('toolbar', { name: 'Markdown toolbar' });
     const labels = Array.from(toolbar.querySelectorAll(
-      'button[data-easymde-command], .easymde-toolbar-section-secondary > button'
+      'button[data-easymde-command], .easymde-toolbar-section-secondary > button, '
+      + '.easymde-toolbar-section-secondary > .easymde-toolbar-popover-anchor > button'
     )).map(
       (button) => button.getAttribute('aria-label')
     );

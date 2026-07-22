@@ -350,10 +350,7 @@
         padding: 18px;
     }
 
-    .easymde-toolbar-popover-font {
-        position: static;
-    }
-
+    .easymde-toolbar-popover-font,
     .easymde-toolbar-popover-appearance {
         position: static;
     }

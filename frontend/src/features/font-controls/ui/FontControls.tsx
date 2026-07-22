@@ -1,6 +1,5 @@
 import {
   createElement,
-  Fragment,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -153,7 +152,7 @@ export function FontControls({
   };
 
   return (
-    <Fragment>
+    <div className="easymde-toolbar-popover-anchor easymde-toolbar-popover-font">
       <button
         ref={triggerRef}
         type="button"
@@ -226,6 +225,6 @@ export function FontControls({
         />
         <p className="easymde-toolbar-help">{bootstrap.strings.fontStackHelp}</p>
       </div>
-    </Fragment>
+    </div>
   );
 }

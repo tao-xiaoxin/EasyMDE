@@ -550,7 +550,9 @@ test.describe('EasyMDE editor workflows', () => {
     await cdp.send('Input.imeSetComposition', {
       text: '中文组合',
       selectionStart: 4,
-      selectionEnd: 4
+      selectionEnd: 4,
+      replacementStart: 7,
+      replacementEnd: 7
     });
     await expect(nativeSource).toHaveValue('# IME\n\n中文组合');
     await cdp.send('Input.insertText', { text: '中文组合' });

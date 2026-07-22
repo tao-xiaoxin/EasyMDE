@@ -33,8 +33,6 @@ vi.mock('../integrations/wordpress/media/wordpress-image-upload', () => ({ creat
 vi.mock('../integrations/wordpress/media/wordpress-media-frame', () => ({ createWordPressMediaFramePort: vi.fn(() => ({})) }));
 vi.mock('../integrations/wordpress/native-form/wordpress-native-submission', () => ({ createWordPressNativeSubmissionPort: vi.fn(() => ({})) }));
 vi.mock('../integrations/wordpress/preview/create-wordpress-preview-port', () => ({ createWordPressPreviewPort: vi.fn(() => ({})) }));
-vi.mock('../integrations/wordpress/publishing/create-wordpress-publishing-port', () => ({ createWordPressPublishingPort: vi.fn(() => ({})) }));
-vi.mock('../integrations/wordpress/revisions/create-wordpress-revisions-port', () => ({ createWordPressRevisionsPort: vi.fn(() => ({})) }));
 vi.mock('../integrations/wordpress/session/create-wordpress-editor-session-port', () => ({ createWordPressEditorSessionPort: vi.fn(() => ({})) }));
 
 const bootstrap = {
@@ -48,13 +46,10 @@ const bootstrap = {
   mediaPicker: {},
   preview: { postId: 7 },
   previewEnhancement: { assetBaseUrl: 'https://example.test/plugin/' },
-  publishing: { strings: { selectFeaturedImage: 'Select', useFeaturedImage: 'Use' } },
-  revisions: { strings: { confirmNavigation: 'Continue?' } },
   toolbar: { commands: [], shortcuts: [] },
   wechatExport: {},
   wordpress: {
-    customCssUrl: '/custom-css', nonce: 'nonce', previewUrl: '/preview',
-    revisionAdminUrl: '/wp-admin/revision.php', revisionsUrl: '/revisions'
+    customCssUrl: '/custom-css', nonce: 'nonce', previewUrl: '/preview'
   }
 };
 

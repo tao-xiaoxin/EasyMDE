@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { editorLayoutBootstrapFixture } from '../../test/editor-layout-bootstrap-fixture';
 import { previewEnhancementBootstrapFixture } from '../../test/preview-enhancement-bootstrap-fixture';
-import { publishingBootstrapFixture } from '../../test/publishing-bootstrap-fixture';
-import { revisionsBootstrapFixture } from '../../test/revisions-bootstrap-fixture';
 import { parseEditorRootBootstrap } from './editor-root-bootstrap';
 
 function validBootstrap() {
@@ -29,7 +26,7 @@ function validBootstrap() {
         saveCss: 'Save CSS'
       }
     },
-    schemaVersion: 1,
+    schemaVersion: 2,
     document: { strings: { editorLabel: 'Markdown source' } },
     fonts: {
       options: {
@@ -71,7 +68,7 @@ function validBootstrap() {
         pasteUploading: 'Paste uploading'
       }
     },
-    layout: editorLayoutBootstrapFixture,
+    layout: { direction: 'ltr' as const },
     localDrafts: {
       enabled: true,
       locale: 'en_US',
@@ -108,8 +105,6 @@ function validBootstrap() {
       signature: 'stored-signature'
     },
     previewEnhancement: previewEnhancementBootstrapFixture,
-    publishing: publishingBootstrapFixture,
-    revisions: revisionsBootstrapFixture,
     strings: {
       mediaPickerFailure: 'The media library could not open.',
       preview: 'Preview',
@@ -141,9 +136,7 @@ function validBootstrap() {
     wordpress: {
       customCssUrl: 'https://example.test/wp-json/easymde/v1/custom-css',
       nonce: 'synthetic-nonce',
-      previewUrl: 'https://example.test/wp-json/easymde/v1/preview',
-      revisionAdminUrl: 'https://example.test/wp-admin/revision.php',
-      revisionsUrl: 'https://example.test/wp-json/easymde/v1/revisions'
+      previewUrl: 'https://example.test/wp-json/easymde/v1/preview'
     }
   };
 }
@@ -152,11 +145,11 @@ describe('parseEditorRootBootstrap', () => {
   it('validates the complete single-root bootstrap contract', () => {
     expect(parseEditorRootBootstrap(validBootstrap())).toEqual({
       appearance: validBootstrap().appearance,
-      schemaVersion: 1,
+      schemaVersion: 2,
       document: { editorLabel: 'Markdown source' },
       fonts: validBootstrap().fonts,
       imageUpload: validBootstrap().imageUpload,
-      layout: editorLayoutBootstrapFixture,
+      layout: { direction: 'ltr' },
       localDrafts: validBootstrap().localDrafts,
       labels: {
         mediaPickerFailure: 'The media library could not open.',
@@ -172,8 +165,6 @@ describe('parseEditorRootBootstrap', () => {
         signature: 'stored-signature'
       },
       previewEnhancement: previewEnhancementBootstrapFixture,
-      publishing: publishingBootstrapFixture,
-      revisions: revisionsBootstrapFixture,
       mediaPicker: validBootstrap().mediaPicker,
       toolbar: expect.objectContaining({
         headingsLabel: 'Headings',
@@ -186,7 +177,7 @@ describe('parseEditorRootBootstrap', () => {
 
   it.each([
     [null, 'editor-root-bootstrap-invalid'],
-    [{ ...validBootstrap(), schemaVersion: 2 }, 'editor-root-schema-unsupported'],
+    [{ ...validBootstrap(), schemaVersion: 1 }, 'editor-root-schema-unsupported'],
     [{ ...validBootstrap(), document: null }, 'editor-root-document-invalid'],
     [{ ...validBootstrap(), appearance: null }, 'editor-root-appearance-invalid'],
     [{
@@ -207,8 +198,6 @@ describe('parseEditorRootBootstrap', () => {
     [{ ...validBootstrap(), localDrafts: null }, 'editor-root-local-drafts-invalid'],
     [{ ...validBootstrap(), mediaPicker: null }, 'editor-root-media-picker-invalid'],
     [{ ...validBootstrap(), previewEnhancement: null }, 'editor-root-preview-enhancement-invalid'],
-    [{ ...validBootstrap(), publishing: null }, 'editor-root-publishing-invalid'],
-    [{ ...validBootstrap(), revisions: null }, 'editor-root-revisions-invalid'],
     [{ ...validBootstrap(), toolbar: null }, 'editor-root-toolbar-invalid'],
     [{ ...validBootstrap(), wechatExport: null }, 'editor-root-wechat-export-invalid'],
     [{ ...validBootstrap(), strings: { ...validBootstrap().strings, source: '' } }, 'editor-root-label-invalid'],

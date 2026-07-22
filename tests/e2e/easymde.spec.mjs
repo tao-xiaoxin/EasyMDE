@@ -780,6 +780,39 @@ test.describe('EasyMDE editor workflows', () => {
     ));
     expect(toolbarLabels).toEqual(expectedToolbarLabels);
 
+    const visibleCommands = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.commands
+      .filter(({ surface }) => 'main' === surface)
+      .map(({ id, label, icon, action }) => ({ id, label, icon, action })));
+    for (const command of visibleCommands) {
+      const button = page.locator(`button[data-easymde-command="${command.id}"]:not([role="menuitem"])`);
+      await expect(button).toHaveCount(1);
+      await expect(button).toHaveAttribute('aria-label', command.label);
+      const title = await button.getAttribute('title');
+      expect(title?.startsWith(command.label)).toBe(true);
+      const iconSelector = 'copyWechat' === command.action
+        ? '.easymde-wechat-glyph'
+        : 'media-code' === command.icon || 'mediacode' === command.icon
+        ? '.easymde-toolbar-text-icon'
+        : `.dashicons-${command.icon}`;
+      await expect(button.locator(iconSelector)).toHaveCount(1);
+    }
+
+    const headingLabel = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.headingsLabel);
+    const headingTrigger = page.getByRole('button', { name: headingLabel });
+    await headingTrigger.click();
+    const headingCommands = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.commands
+      .filter(({ surface }) => 'heading-menu' === surface)
+      .map(({ id, label }) => ({ id, label })));
+    const headingMenu = page.getByRole('menu', { name: headingLabel });
+    for (const command of headingCommands) {
+      const item = headingMenu.locator(`button[data-easymde-command="${command.id}"]`);
+      await expect(item).toHaveCount(1);
+      await expect(item).toHaveAttribute('aria-label', command.label);
+      await expect(item).toContainText(command.label);
+    }
+    await page.keyboard.press('Escape');
+    await expect(headingTrigger).toBeFocused();
+
     for (const selector of [
       '.easymde-editor-context-bar',
       '.easymde-editor-panes',

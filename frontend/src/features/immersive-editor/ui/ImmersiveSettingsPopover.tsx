@@ -57,6 +57,12 @@ export function ImmersiveSettingsPopover({
   }, [open]);
 
   useEffect(() => {
+    if (open && position) {
+      panelRef.current?.querySelector<HTMLInputElement>('input')?.focus();
+    }
+  }, [open, position]);
+
+  useEffect(() => {
     if (!open) return undefined;
     const trigger = triggerRef.current;
     const windowRef = trigger?.ownerDocument.defaultView;
@@ -89,7 +95,9 @@ export function ImmersiveSettingsPopover({
     { key: 'autoSave', label: strings.autoSave, description: strings.autoSaveDescription },
     { key: 'syncScroll', label: strings.syncScroll, description: strings.syncScrollDescription }
   ];
-  const portalRoot = triggerRef.current?.ownerDocument.body;
+  const portalRoot = triggerRef.current?.closest<HTMLElement>(
+    '[data-easymde-editor-owner="react"]'
+  );
 
   return (
     <Fragment>

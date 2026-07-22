@@ -101,13 +101,13 @@ body:has(.easymde-editor.is-immersive) {
 }
 
 .easymde-immersive-brand { width: 153.39px; height: 26.25px; gap: 5px; flex: 0 0 153.39px; }
-.easymde-immersive-brand > svg { margin-left: 7px; color: #3b82f6; }
+.easymde-immersive-brand > svg { margin-inline-start: 7px; color: #3b82f6; }
 .easymde-traffic-light { width: 12px; height: 12px; border-radius: 50%; }
 .easymde-traffic-light.is-red { background: #ff605c; }
 .easymde-traffic-light.is-yellow { background: #ffbd44; }
 .easymde-traffic-light.is-green { background: #00ca4e; }
 .easymde-immersive-brand-name { color: #334155; font-size: 13px; font-weight: 600; }
-.easymde-immersive-brand-divider { height: 20px; margin-left: 7px; color: #e2e8f0; font-size: 18px; line-height: 20px; }
+.easymde-immersive-brand-divider { height: 20px; margin-inline-start: 7px; color: #e2e8f0; font-size: 18px; line-height: 20px; }
 .easymde-immersive-title-wrap { min-width: 0; flex: 0 1 auto; }
 .easymde-immersive-header-spacer.is-title-gap { width: 11.25px; flex: 0 0 auto; }
 .easymde-immersive-title-field { display: flex; min-width: 72px; max-width: 320px; align-items: center; gap: 6px; }
@@ -145,7 +145,7 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-immersive-header-spacer { min-width: 0; }
 .easymde-immersive-header-spacer.is-primary { flex: 1 1 0; }
 .easymde-immersive-header-spacer.is-secondary { flex: 3 1 0; }
-.easymde-immersive-header-actions { gap: 11.25px; flex: 0 0 auto; }
+.easymde-immersive-header-actions { width: 230.42px; gap: 11.25px; flex: 0 0 230.42px; justify-content: flex-end; }
 .easymde-immersive-view-switch { gap: 3.75px; margin: 0; padding: 1.875px; border: 1px solid #e2e8f0; border-radius: 5.625px; background: #fff; }
 .easymde-immersive-view-switch button {
     display: flex;
@@ -169,10 +169,10 @@ body:has(.easymde-editor.is-immersive) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 7.5px;
     height: 34px;
-    padding: 0 12px;
-    border: 1px solid #1d4ed8;
+    padding: 0 11.25px;
+    border: 1px solid rgba(29, 78, 216, .8);
     border-radius: 8px;
     background: #2563eb;
     box-shadow: 0 2px 5px rgba(37, 99, 235, 0.32);
@@ -186,7 +186,7 @@ body:has(.easymde-editor.is-immersive) {
     transition: background-color 150ms, box-shadow 150ms, transform 150ms;
 }
 .easymde-immersive-publish:hover { background: #1d4ed8; box-shadow: 0 5px 13px rgba(37, 99, 235, .38); transform: translateY(-1px); }
-.easymde-immersive-publish-shine { position: absolute; top: 0; right: 0; left: 0; height: 1px; background: rgba(255, 255, 255, .2); }
+.easymde-immersive-publish-shine { position: absolute; top: 0; inset-inline: 0; height: 1px; background: rgba(255, 255, 255, .2); }
 .easymde-immersive-publish-icon { position: relative; display: grid; width: 18px; height: 18px; place-items: center; border: 1px solid rgba(255, 255, 255, .15); border-radius: 5px; background: rgba(255, 255, 255, .1); }
 .easymde-immersive-toolbar-row {
     grid-column: 1 / -1;
@@ -217,7 +217,8 @@ body:has(.easymde-editor.is-immersive) {
 }
 .easymde-immersive-formatting .easymde-toolbar-button:hover,
 .easymde-immersive-formatting .easymde-toolbar-button:focus { border-color: #e2e8f0; background: rgba(0, 0, 0, .045); color: #0f172a; box-shadow: none; transform: none; }
-.easymde-immersive-formatting .easymde-toolbar-button-menu { width: 48px; min-width: 48px; padding: 0 8px; }
+.easymde-immersive-formatting .easymde-toolbar-button-menu { width: 48px; min-width: 48px; padding: 0 7.5px; }
+.easymde-immersive-formatting .easymde-toolbar-popover-headings .easymde-toolbar-text-icon { width: 18px; min-width: 18px; border-radius: 0; background: transparent; font-weight: 600; }
 .easymde-immersive-formatting .easymde-toolbar-divider { height: 16px; margin: 0 7.5px; background: #e2e8f0; }
 .easymde-immersive-formatting .easymde-toolbar-divider.is-after-heading { margin: 0 5.625px; }
 .easymde-immersive-toolbar-divider { width: 1px; height: 16px; margin: 0 11.25px; background: #e2e8f0; }
@@ -250,12 +251,12 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-immersive-mode-button:hover { background: rgba(0, 0, 0, .045); color: #1e293b; }
 .easymde-immersive-mode-button:active { transform: scale(.95); }
 .easymde-immersive-mode-button.is-active { border-color: #0f172a; background: #0f172a; color: #fff; }
-.easymde-immersive-mode-button + .easymde-immersive-mode-button { margin-left: 3.75px; }
-.easymde-immersive-mode-button:last-child { margin-left: 5.625px; }
-.easymde-immersive-secondary-actions { gap: 10px; }
-.easymde-immersive-secondary-actions button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: transparent; color: #475569; font-size: 12.5px; cursor: pointer; }
+.easymde-immersive-mode-button + .easymde-immersive-mode-button { margin-inline-start: 3.75px; }
+.easymde-immersive-mode-button:last-child { margin-inline-start: 5.625px; }
+.easymde-immersive-secondary-actions { gap: 9.375px; }
+.easymde-immersive-secondary-actions button { display: inline-flex; align-items: center; gap: 5.625px; height: 30px; padding: 0 9.375px; border: 1px solid #e2e8f0; border-radius: 5.625px; background: transparent; color: #475569; font-size: 12.5px; font-weight: 500; cursor: pointer; }
 .easymde-immersive-secondary-actions button:disabled { opacity: .5; cursor: not-allowed; }
-.easymde-immersive-secondary-actions .easymde-immersive-wechat { height: 36px; padding: 0 12px; border-color: rgba(7, 192, 96, 0.36); border-radius: 12px; background: linear-gradient(180deg, #f7fffa 0%, #edf9f1 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85); color: #0f7d3b; font-size: 13px; font-weight: 600; }
+.easymde-immersive-secondary-actions .easymde-immersive-wechat { gap: 7.5px; height: 36px; padding: 0 11.25px; border-color: rgba(7, 192, 96, 0.36); border-radius: 12px; background: linear-gradient(180deg, #f7fffa 0%, #edf9f1 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85); color: #0f7d3b; font-size: 13px; font-weight: 600; }
 .easymde-immersive-secondary-actions .easymde-immersive-wechat:hover { border-color: #07c060; background: linear-gradient(180deg, #f2fff7 0%, #e5f8eb 100%); box-shadow: 0 8px 18px rgba(7, 192, 96, .16); color: #075f2c; transform: translateY(-1px); }
 .easymde-immersive-wechat-glyph { display: inline-flex; width: 22px; height: 22px; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: 50%; background: #fff; box-shadow: inset 0 0 0 1px rgba(7, 192, 96, .18); color: #07c060; }
 .easymde-immersive-wechat-glyph svg { width: 18px; height: 18px; }
@@ -265,15 +266,18 @@ body:has(.easymde-editor.is-immersive) {
     min-width: 0;
     height: 30px;
     min-height: 30px;
-    padding: 0 9px;
+    padding: 0 9.375px;
     border-color: #e2e8f0;
-    border-radius: 8px;
+    border-radius: 5.625px;
     background: transparent;
     color: #475569;
 }
+.easymde-immersive-secondary-actions .easymde-toolbar-popover-appearance.is-immersive > .easymde-toolbar-button { width: 77.5px; }
+.easymde-immersive-secondary-actions .easymde-toolbar-popover-font.is-immersive > .easymde-toolbar-button { gap: 3.75px; }
+.easymde-immersive-secondary-actions .easymde-immersive-settings-trigger { gap: 3.75px; padding: 0 7.5px; }
 .easymde-immersive-secondary-actions .easymde-toolbar-popover-anchor > .easymde-toolbar-button:hover,
 .easymde-immersive-secondary-actions .easymde-toolbar-popover-anchor > .easymde-toolbar-button:focus { border-color: #e2e8f0; background: rgba(0, 0, 0, .045); color: #0f172a; box-shadow: none; transform: none; }
-.easymde-immersive-control-label { font-size: 12.5px; font-weight: 400; line-height: 1; }
+.easymde-immersive-control-label { font-size: 12.5px; font-weight: 500; line-height: 1; }
 .easymde-immersive-theme-accent { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #dc2626; }
 .easymde-immersive-theme-accent[data-theme="default"] { background: #333; }
 .easymde-immersive-theme-accent[data-theme="orange-heart"] { background: #ff6200; }
@@ -308,7 +312,7 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-toolbar-popover-font-panel.is-immersive-panel .easymde-toolbar-control select { min-height: 32px; color: #56637a; font-size: 13px; font-weight: 400; }
 .easymde-toolbar-popover-font-panel.is-immersive-panel .easymde-toolbar-help { margin-top: 12px; color: #94a3b8; font-size: 11.5px; line-height: 1.6; }
 .easymde-immersive-theme-panel-header { position: relative; display: flex; height: 64px; align-items: center; padding: 0 24px; }
-.easymde-immersive-theme-panel-header::after { position: absolute; right: 0; bottom: 5px; left: 0; height: 1px; background: #e6ebf1; content: ""; }
+.easymde-immersive-theme-panel-header::after { position: absolute; inset-inline: 0; bottom: 5px; height: 1px; background: #e6ebf1; content: ""; }
 .easymde-immersive-theme-panel-header > span { display: flex; align-items: center; gap: 12px; transform: translateY(-4px); }
 .easymde-immersive-theme-panel-header strong { color: #172236; font-size: 14px; font-weight: 600; line-height: 20px; transform: translateX(-3px); }
 .easymde-immersive-theme-panel-body { padding: 8px 22px 9px; transform: translateY(-11px); }
@@ -337,8 +341,8 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-immersive-theme-swatch { display: inline-block; width: 11px; height: 11px; flex: 0 0 auto; overflow: hidden; border: 1px solid rgba(0, 0, 0, .1); border-radius: 50%; box-shadow: 0 1px 2px rgba(15, 23, 42, .12); }
 .easymde-immersive-theme-swatch.is-split { display: inline-flex; }
 .easymde-immersive-theme-swatch.is-split > span { height: 100%; flex: 1; }
-.easymde-immersive-theme-options { position: absolute; z-index: 70; top: 100%; right: 0; left: 0; max-height: 224px; margin-top: 6px; padding: 4px 0; overflow-y: auto; border: 1px solid #dce2eb; border-radius: 8px; background: #fff; box-shadow: 0 12px 26px rgba(32, 48, 76, .16); }
-.easymde-immersive-secondary-actions .easymde-immersive-theme-options > button { display: flex; width: 100%; height: auto; min-height: 32px; align-items: center; gap: 9px; padding: 8px 11px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: #526078; font-size: 13px; line-height: 16px; text-align: left; }
+.easymde-immersive-theme-options { position: absolute; z-index: 70; top: 100%; inset-inline: 0; max-height: 224px; margin-top: 6px; padding: 4px 0; overflow-y: auto; border: 1px solid #dce2eb; border-radius: 8px; background: #fff; box-shadow: 0 12px 26px rgba(32, 48, 76, .16); }
+.easymde-immersive-secondary-actions .easymde-immersive-theme-options > button { display: flex; width: 100%; height: auto; min-height: 32px; align-items: center; gap: 9px; padding: 8px 11px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: #526078; font-size: 13px; line-height: 16px; text-align: start; }
 .easymde-immersive-secondary-actions .easymde-immersive-theme-options > button:hover,
 .easymde-immersive-secondary-actions .easymde-immersive-theme-options > button:focus { background: #f4f7fb; }
 .easymde-immersive-secondary-actions .easymde-immersive-theme-options > button.is-active { background: #f7f9fc; color: #2f72ed; font-weight: 600; }
@@ -352,8 +356,8 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-immersive-secondary-actions .easymde-immersive-font-select > button { display: flex; width: 100%; height: 32px; padding: 0 12px; align-items: center; justify-content: space-between; border: 1px solid #e3e7ee; border-radius: 4px; background: #fff; color: #56637a; font-size: 13px; font-weight: 400; }
 .easymde-immersive-secondary-actions .easymde-immersive-font-select > button:hover { border-color: #cbd3df; }
 .easymde-immersive-font-select > button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.easymde-immersive-font-options { position: absolute; z-index: 70; top: 100%; right: 0; left: 0; min-width: 220px; max-height: 280px; margin-top: 4px; padding: 4px 0; overflow-y: auto; border: 1px solid #e3e7ee; border-radius: 8px; background: #fff; box-shadow: 0 10px 30px rgba(50, 65, 90, .14); }
-.easymde-immersive-secondary-actions .easymde-immersive-font-options > button { display: flex; width: 100%; height: auto; min-height: 34px; align-items: center; gap: 10px; padding: 9px 16px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: #56637a; font-size: 13px; font-weight: 400; text-align: left; }
+.easymde-immersive-font-options { position: absolute; z-index: 70; top: 100%; inset-inline: 0; min-width: 220px; max-height: 280px; margin-top: 4px; padding: 4px 0; overflow-y: auto; border: 1px solid #e3e7ee; border-radius: 8px; background: #fff; box-shadow: 0 10px 30px rgba(50, 65, 90, .14); }
+.easymde-immersive-secondary-actions .easymde-immersive-font-options > button { display: flex; width: 100%; height: auto; min-height: 34px; align-items: center; gap: 10px; padding: 9px 16px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: #56637a; font-size: 13px; font-weight: 400; text-align: start; }
 .easymde-immersive-secondary-actions .easymde-immersive-font-options > button:hover,
 .easymde-immersive-secondary-actions .easymde-immersive-font-options > button:focus { background: #f2f5f9; }
 .easymde-immersive-secondary-actions .easymde-immersive-font-options > button.is-active { background: #f7f9fc; color: #46546b; }
@@ -362,29 +366,30 @@ body:has(.easymde-editor.is-immersive) {
     grid-column: 1;
     grid-row: 3;
     min-width: 0;
-    margin: 12px 0 12px 12px;
+    box-sizing: border-box;
+    margin: 11.25px 2.75px 11.25px 11.25px;
     display: flex;
     min-width: 190px;
     max-width: 360px;
     flex-direction: column;
     overflow: hidden;
     border: 1px solid #e8ebef;
-    border-radius: 16px;
+    border-radius: 15px;
     background: linear-gradient(180deg, #fdfdff 0%, #fafbfe 100%);
     box-shadow: 0 1px 2px rgba(15, 23, 42, .03);
 }
-.easymde-immersive-outline-title { display: flex; height: 44px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 0 12px 0 16px; border-bottom: 1px solid #e8ebef; color: #64748b; font-size: 13px; font-weight: 500; }
-.easymde-immersive-outline-title .easymde-immersive-outline-close { display: grid; width: 26px; min-height: 26px; margin-left: auto; padding: 0; border: 0; border-radius: 6px; background: transparent; box-shadow: none; place-items: center; color: #94a3b8; }
-.easymde-immersive-outline-tree { flex: 1 1 auto; overflow: auto; padding: 14px 16px; }
+.easymde-immersive-outline-title { display: flex; box-sizing: border-box; height: 41.25px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 0 15px; border-bottom: 1px solid #e8ebef; color: #64748b; font-size: 13px; font-weight: 500; }
+.easymde-immersive-outline-title .easymde-immersive-outline-close { display: grid; width: 26px; min-height: 26px; margin-inline-start: auto; padding: 0; border: 0; border-radius: 6px; background: transparent; box-shadow: none; place-items: center; color: #94a3b8; }
+.easymde-immersive-outline-tree { flex: 1 1 auto; overflow: auto; padding: 14px 15px; }
 .easymde-immersive-outline-level { position: relative; }
-.easymde-immersive-outline-level:not(.is-depth-0) { margin-left: 10px; padding-left: 16px; border-left: 1.5px solid #ecedf0; }
-.easymde-immersive-outline-level button { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 0; overflow: visible; border: 0; background: transparent; color: #475569; text-align: left; cursor: pointer; transition: color 100ms, background-color 100ms; }
+.easymde-immersive-outline-level:not(.is-depth-0) { margin-inline-start: 10px; padding-inline-start: 16px; border-inline-start: 1.5px solid #ecedf0; }
+.easymde-immersive-outline-level button { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 0; overflow: visible; border: 0; background: transparent; color: #475569; text-align: start; cursor: pointer; transition: color 100ms, background-color 100ms; }
 .easymde-immersive-outline-level button.is-top-level { gap: 9px; padding: 9px 10px; border-radius: 9px; }
 .easymde-immersive-outline-level button > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: 1.375; white-space: nowrap; }
 .easymde-immersive-outline button:hover { background: #fafbfc; color: #1e293b; }
 .easymde-immersive-outline button.is-active { position: relative; background: #eef2ff; color: #4c6ef5; font-weight: 700; }
-.easymde-immersive-outline button.is-active::before { position: absolute; top: 2px; bottom: 2px; left: -17px; width: 3px; border-radius: 2px; background: #4c6ef5; content: ""; }
-.easymde-immersive-outline button.is-top-level.is-active::before { left: -16px; }
+.easymde-immersive-outline button.is-active::before { position: absolute; top: 2px; bottom: 2px; inset-inline-start: -17px; width: 3px; border-radius: 2px; background: #4c6ef5; content: ""; }
+.easymde-immersive-outline button.is-top-level.is-active::before { inset-inline-start: -16px; }
 .easymde-immersive-outline button.is-top-level { color: #3d4350; font-size: 14.5px; font-weight: 400; }
 .easymde-immersive-outline button.is-top-level.is-active { color: #4c6ef5; font-size: 15px; font-weight: 700; }
 .easymde-immersive-outline button.is-level-1:not(.is-top-level) { color: #1f2430; font-size: 15px; font-weight: 700; }
@@ -395,36 +400,36 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-immersive-outline button.is-level-6 { color: #cdd0d6; font-size: 12.5px; font-weight: 500; }
 .easymde-immersive-outline-icon { flex: 0 0 auto; color: #b0b4bc; }
 .easymde-immersive-outline button.is-active .easymde-immersive-outline-icon { color: #4c6ef5; }
-.easymde-immersive-outline-elbow { position: absolute; top: 50%; left: -16px; width: 12px; height: 1.5px; background: #ecedf0; transform: translateY(-50%); }
+.easymde-immersive-outline-elbow { position: absolute; top: 50%; inset-inline-start: -16px; width: 12px; height: 1.5px; background: #ecedf0; transform: translateY(-50%); }
 .easymde-immersive-outline-dash { flex: 0 0 auto; color: #d3d6dc; font-size: 12px; user-select: none; }
 .easymde-immersive-outline button b { color: #171a20; font: inherit; }
 .easymde-immersive-outline-empty { padding: 0 16px; color: #94a3b8; font-size: 12px; }
-.easymde-immersive-outline-footer { height: 44px; flex: 0 0 auto; border-top: 1px solid #e8ebef; background: #fbfcfe; }
+.easymde-immersive-outline-footer { box-sizing: border-box; height: 41.25px; flex: 0 0 auto; border-top: 1px solid #e8ebef; background: #fbfcfe; }
 .easymde-immersive-outline-footer button { display: flex; width: 100%; height: 100%; align-items: center; gap: 6px; padding: 0 16px; border: 0; background: transparent; color: #64748b; font-size: 12.5px; cursor: pointer; }
-.easymde-immersive-outline-show { position: fixed; z-index: 100110; bottom: 18px; left: 18px; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; color: #475569; box-shadow: 0 2px 8px rgba(15, 23, 42, .08); cursor: pointer; }
+.easymde-immersive-outline-show { position: fixed; z-index: 100110; bottom: 18px; inset-inline-start: 18px; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; color: #475569; box-shadow: 0 2px 8px rgba(15, 23, 42, .08); cursor: pointer; }
 .easymde-immersive-outline-show svg { transform: rotate(180deg); }
 .easymde-immersive-outline-resizer { z-index: 2; grid-column: 1; grid-row: 3; display: flex; width: 14px; height: calc(100% - 24px); margin: 0; padding: 0; align-self: center; justify-self: end; align-items: center; justify-content: center; border: 0; cursor: col-resize; transform: translateX(7px); }
 .easymde-immersive-outline-resizer { background: linear-gradient(90deg, transparent 6px, transparent 6px); transition: background-color 100ms; }
 .easymde-immersive-outline-resizer:hover,
 .easymde-immersive-outline-resizer:focus { background: linear-gradient(90deg, transparent 6px, #dde1e8 6px, #dde1e8 7px, transparent 7px); }
-.easymde-editor.is-immersive > .easymde-workspace { grid-column: 2; grid-row: 3; height: auto; min-height: 0; gap: 12px; padding: 12px; border: 0; background: #f6f6f8; }
+.easymde-editor.is-immersive > .easymde-workspace { grid-column: 2; grid-row: 3; height: auto; min-height: 0; gap: 11.25px; padding: 11.25px; border: 0; background: #f6f6f8; }
 .easymde-editor.is-immersive:not(:has(.easymde-immersive-outline)) { grid-template-columns: 1fr; }
 .easymde-editor.is-immersive:not(:has(.easymde-immersive-outline)) > .easymde-workspace { grid-column: 1; }
-[dir="rtl"] .easymde-immersive-outline { margin: 12px 12px 12px 0; }
-[dir="rtl"] .easymde-immersive-outline-show { right: 18px; left: auto; }
-.easymde-editor.is-immersive .easymde-pane { border: 1px solid #e8ebef; border-radius: 16px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .03); }
-.easymde-editor.is-immersive .easymde-pane-source { border-right: 1px solid #e8ebef; }
-.easymde-editor.is-immersive .easymde-pane-header { display: flex; height: 44px; align-items: center; justify-content: space-between; padding: 0 16px; background: #fafbfc; color: #3d4350; font-size: 13px; font-weight: 600; letter-spacing: .3px; line-height: 44px; }
+[dir="rtl"] .easymde-immersive-outline { margin: 11.25px 11.25px 11.25px 2.75px; }
+[dir="rtl"] .easymde-immersive-outline-show { right: auto; }
+.easymde-editor.is-immersive .easymde-pane { border: 1px solid #e8ebef; border-radius: 15px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .03); }
+.easymde-editor.is-immersive .easymde-pane-source { border-inline-end: 1px solid #e8ebef; }
+.easymde-editor.is-immersive .easymde-pane-header { display: flex; box-sizing: border-box; height: 40.5px; align-items: center; justify-content: space-between; padding: 0 15px; background: #fafbfc; color: #3d4350; font-size: 13px; font-weight: 600; letter-spacing: .3px; line-height: 40.5px; }
 .easymde-immersive-more-actions { display: grid; width: 20px; height: 20px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #b0b4bc; cursor: pointer; }
 .easymde-immersive-more-actions:hover { background: #ecedf0; color: #666; }
-.easymde-editor.is-immersive .easymde-source-react .cm-content { padding: 14px 14px 60px 0; caret-color: #1f2430; counter-reset: easymde-line; }
-.easymde-editor.is-immersive .easymde-source-react .cm-line { position: relative; min-height: 28px; padding-left: 37px; counter-increment: easymde-line; }
-.easymde-editor.is-immersive .easymde-source-react .cm-line::before { position: absolute; left: 0; width: 26px; color: #c7cbd3; content: counter(easymde-line); text-align: right; font-size: 13.5px; font-style: normal; font-weight: 400; }
+.easymde-editor.is-immersive .easymde-source-react .cm-content { padding: 18px 14px 60px 0; caret-color: #1f2430; counter-reset: easymde-line; }
+.easymde-editor.is-immersive .easymde-source-react .cm-line { position: relative; min-height: 28px; padding-inline-start: 36px; counter-increment: easymde-line; }
+.easymde-editor.is-immersive .easymde-source-react .cm-line::before { position: absolute; inset-inline-start: 0; width: 26px; color: #c7cbd3; content: counter(easymde-line); text-align: end; font-size: 13.5px; font-style: normal; font-weight: 400; }
 .easymde-editor.is-immersive .easymde-source-react { min-height: 0; flex: 1 1 auto; }
 .easymde-editor.is-immersive .easymde-source-react .cm-editor { color: #3d4350; background: #f2f2f2; font-size: 14.5px; line-height: 28px; }
 .easymde-editor.is-immersive .easymde-source-react .cm-editor { font-family: SFMono-Regular, Menlo, Consolas, monospace; font-feature-settings: "calt" 0; }
 .easymde-editor.is-immersive .easymde-source-react .cm-focused { outline: 0; }
-.easymde-immersive-statusbar { display: flex; min-height: 36px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 0 16px; border-top: 1px solid #e8ebef; background: #fff; color: #b0b4bc; font-size: 12px; }
+.easymde-immersive-statusbar { display: flex; box-sizing: border-box; min-height: 34px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 0 15px; border-top: 1px solid #e8ebef; background: #fff; color: #b0b4bc; font-size: 12px; }
 .easymde-immersive-statusbar > span:last-child,
 .easymde-immersive-autosave-state { display: flex; align-items: center; gap: 5px; }
 .easymde-immersive-autosave-state > span { width: 6px; height: 6px; border-radius: 50%; background: #10b981; }
@@ -436,13 +441,13 @@ body:has(.easymde-editor.is-immersive) {
 
 .easymde-immersive-settings-catcher { position: fixed; z-index: 100180; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; }
 .easymde-immersive-settings-popover { position: fixed; z-index: 100190; width: 300px; max-width: 88vw; max-height: 70vh; overflow-y: auto; border: 1px solid #ecedf0; border-radius: 14px; background: #fff; box-shadow: 0 16px 40px rgba(20, 20, 40, .18); color: #171a20; font-family: "EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-.easymde-immersive-settings-tail { position: absolute; top: -6px; width: 12px; height: 12px; border-top: 1px solid #ecedf0; border-left: 1px solid #ecedf0; border-radius: 2px 0 0; background: #fff; transform: rotate(45deg); }
+.easymde-immersive-settings-tail { position: absolute; top: -6px; width: 12px; height: 12px; border-top: 1px solid #ecedf0; border-inline-start: 1px solid #ecedf0; border-radius: 2px 0 0; background: #fff; transform: rotate(45deg); }
 .easymde-immersive-settings-popover > header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 10px; border-bottom: 1px solid #ecedf0; }
 .easymde-immersive-settings-popover > header strong { font-size: 15px; font-weight: 800; }
 .easymde-immersive-settings-popover > header button { display: grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #9ca0a8; cursor: pointer; }
 .easymde-immersive-settings-popover > header button:hover { background: #f3f4f6; color: #4b5160; }
 .easymde-immersive-settings-list { padding: 4px 14px 10px; }
-.easymde-immersive-settings-list > label { position: relative; display: flex; width: 100%; min-height: 62px; align-items: center; gap: 8px; padding: 10px 3px; border-bottom: 1px solid #ecedf0; background: transparent; color: #171a20; text-align: left; cursor: pointer; }
+.easymde-immersive-settings-list > label { position: relative; display: flex; width: 100%; min-height: 62px; align-items: center; gap: 8px; padding: 10px 3px; border-bottom: 1px solid #ecedf0; background: transparent; color: #171a20; text-align: start; cursor: pointer; }
 .easymde-immersive-settings-list > label:last-child { border-bottom: 0; }
 .easymde-immersive-settings-list > label:hover { background: #f8f9fb; }
 .easymde-immersive-settings-list > label:focus-within { outline: 2px solid #bfdbfe; outline-offset: -2px; }
@@ -524,10 +529,10 @@ body:has(.easymde-editor.is-immersive) {
 
 .easymde-immersive-history-body { display: grid; grid-template-columns: 240px minmax(0, 1fr); height: min(650px, calc(100vh - 176px)); }
 .easymde-immersive-history-body + .easymde-immersive-modal-actions { border-top-color: #e3e7ee; }
-.easymde-immersive-history-list { overflow-y: auto; border-right: 1px solid #e3e7ee; background: #f7f9fc; }
+.easymde-immersive-history-list { overflow-y: auto; border-inline-end: 1px solid #e3e7ee; background: #f7f9fc; }
 .easymde-immersive-history-list p { padding: 12px 20px; color: #7d8aa4; font-size: 12px; }
-.easymde-immersive-history-list button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 52px; padding: 10px 20px; border: 0; border-bottom: 1px solid #e7ebf1; border-left: 2px solid transparent; background: transparent; color: #28364a; text-align: left; cursor: pointer; }
-.easymde-immersive-history-list button.is-selected { border-left-color: #e11d2e; background: #fdf1f0; color: #e11d2e; }
+.easymde-immersive-history-list button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 52px; padding: 10px 20px; border: 0; border-bottom: 1px solid #e7ebf1; border-inline-start: 2px solid transparent; background: transparent; color: #28364a; text-align: start; cursor: pointer; }
+.easymde-immersive-history-list button.is-selected { border-inline-start-color: #e11d2e; background: #fdf1f0; color: #e11d2e; }
 .easymde-immersive-history-preview { min-width: 0; overflow: auto; padding: 28px 40px; background: #fff; }
 .easymde-immersive-revision-preview { max-width: 640px; padding: 0; background: #fff; }
 .easymde-immersive-history-body .easymde-preview-react-root { min-height: 100%; }
@@ -536,7 +541,7 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-history-backdrop { position: fixed; z-index: 100210; inset: 0; display: flex; align-items: stretch; padding: 30px; background: rgba(17, 24, 39, .35); backdrop-filter: blur(2px); }
 .easymde-history-backdrop-dismiss { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; }
 .easymde-history-dialog { position: relative; z-index: 1; display: flex; box-sizing: border-box; width: min(960px, calc(100vw - 60px)); max-height: calc(100vh - 60px); margin: 0 auto; overflow: hidden; border: 1px solid #e3e7ee; border-radius: 12px; background: #fff; box-shadow: 0 24px 70px rgba(31, 45, 70, .24); color: #172033; }
-.easymde-history-sidebar { display: flex; box-sizing: border-box; width: 240px; flex: 0 0 240px; flex-direction: column; border-right: 1px solid #e3e7ee; background: #f7f9fc; }
+.easymde-history-sidebar { display: flex; box-sizing: border-box; width: 240px; flex: 0 0 240px; flex-direction: column; border-inline-end: 1px solid #e3e7ee; background: #f7f9fc; }
 .easymde-history-sidebar > header { display: flex; align-items: center; justify-content: space-between; padding: 20px 20px 12px; }
 .easymde-history-sidebar > header > span { display: flex; align-items: center; gap: 8px; color: #172033; font-size: 13px; font-weight: 600; letter-spacing: 0; }
 .easymde-history-sidebar > header svg { color: #7d8aa4; }
@@ -546,18 +551,18 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-history-filter > span { color: #7d8aa4; font-size: 11px; }
 .easymde-history-filter label { position: relative; }
 .easymde-history-filter select { box-sizing: border-box; height: 28px; min-width: 68px; padding: 0 24px 0 10px; appearance: none; border: 1px solid #e3e7ee; border-radius: 4px; outline: 0; background: #fff; box-shadow: none; color: #56637a; font-size: 11px; line-height: 28px; cursor: pointer; }
-.easymde-history-filter label svg { position: absolute; top: 9px; right: 7px; color: #56637a; pointer-events: none; }
+.easymde-history-filter label svg { position: absolute; top: 9px; inset-inline-end: 7px; color: #56637a; pointer-events: none; }
 .easymde-history-rule { width: 100%; height: 1px; flex: 0 0 auto; margin-bottom: 4px; background: #e7ebf1; }
 .easymde-history-list { flex: 1; overflow-y: auto; }
 .easymde-history-list > p { padding: 12px 20px; color: #7d8aa4; font-size: 12px; }
-.easymde-history-list > button { display: flex; box-sizing: border-box; width: 100%; min-height: 62px; flex-direction: column; gap: 4px; padding: 12px 20px; border: 0; border-bottom: 1px solid #e7ebf1; border-left: 2px solid transparent; background: transparent; color: #28364a; text-align: left; cursor: pointer; transition: background-color 120ms; }
+.easymde-history-list > button { display: flex; box-sizing: border-box; width: 100%; min-height: 62px; flex-direction: column; gap: 4px; padding: 12px 20px; border: 0; border-bottom: 1px solid #e7ebf1; border-inline-start: 2px solid transparent; background: transparent; color: #28364a; text-align: start; cursor: pointer; transition: background-color 120ms; }
 .easymde-history-list > button:hover { background: #f1f4f8; }
-.easymde-history-list > button.is-selected { border-left-color: #e11d2e; background: #fdf1f0; }
+.easymde-history-list > button.is-selected { border-inline-start-color: #e11d2e; background: #fdf1f0; }
 .easymde-history-list > button > span { display: flex; width: 100%; align-items: center; gap: 8px; }
 .easymde-history-list > button svg { flex: 0 0 auto; color: #71809a; }
 .easymde-history-list > button.is-selected svg, .easymde-history-list > button.is-selected strong { color: #e11d2e; }
 .easymde-history-list strong { color: #28364a; font-size: 12px; font-weight: 500; }
-.easymde-history-list time { padding-left: 19px; color: #71809a; font-family: "EasyMDE JetBrains Mono", ui-monospace, monospace; font-size: 11px; }
+.easymde-history-list time { padding-inline-start: 19px; color: #71809a; font-family: "EasyMDE JetBrains Mono", ui-monospace, monospace; font-size: 11px; }
 .easymde-history-content { display: flex; min-width: 0; flex: 1; flex-direction: column; background: #fff; }
 .easymde-history-content > header { display: flex; box-sizing: border-box; height: 70.375px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 0 26.25px; border-bottom: 1px solid #e3e7ee; }
 .easymde-history-content > header > div { display: flex; flex-direction: column; gap: 2px; }
@@ -583,15 +588,15 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-publish-backdrop-dismiss { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; }
 .easymde-publish-dialog { position: relative; display: flex; box-sizing: border-box; width: min(1120px, calc(100vw - 24px)); height: min(728.25px, calc(100vh - 32px)); max-height: calc(100vh - 32px); flex-direction: column; overflow: hidden; border: 1px solid #eef0f4; border-radius: 20px; background: #fff; box-shadow: 0 2px 6px rgba(15, 23, 42, .04), 0 24px 60px -20px rgba(15, 23, 42, .18); color: #0f172a; font-size: 15px; }
 .easymde-publish-dialog-header { position: relative; display: flex; box-sizing: border-box; height: 84.5px; flex: 0 0 auto; align-items: flex-start; gap: 12px; padding: 21px 26.25px 16px; overflow: hidden; border-color: rgba(15, 23, 42, .07); background: linear-gradient(105deg, #fff 0%, #fff 46%, #f7f9fd 100%); }
-.easymde-publish-dialog-header::after { position: absolute; right: 0; bottom: 0; width: 64%; height: 52px; background: linear-gradient(175deg, transparent 0 47%, rgba(203, 217, 238, .26) 48% 100%); content: ""; pointer-events: none; }
+.easymde-publish-dialog-header::after { position: absolute; inset-inline-end: 0; bottom: 0; width: 64%; height: 52px; background: linear-gradient(175deg, transparent 0 47%, rgba(203, 217, 238, .26) 48% 100%); content: ""; pointer-events: none; }
 .easymde-publish-heading-icon { position: relative; z-index: 1; display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; border-radius: 14px; background: linear-gradient(160deg, #dbeafe 0%, #eaf1ff 60%, #f3f7ff 100%); box-shadow: inset 0 0 0 1px rgba(59, 130, 246, .12); color: #2f6bef; }
-.easymde-publish-heading-icon::after { position: absolute; top: -8px; right: -7px; color: #ffb020; content: "✦"; font-size: 15px; filter: drop-shadow(0 1px 2px rgba(255, 176, 32, .45)); }
-.easymde-publish-dialog-header > div:last-child { position: relative; z-index: 1; min-width: 0; flex: 1; padding-right: 40px; }
+.easymde-publish-heading-icon::after { position: absolute; top: -8px; inset-inline-end: -7px; color: #ffb020; content: "✦"; font-size: 15px; filter: drop-shadow(0 1px 2px rgba(255, 176, 32, .45)); }
+.easymde-publish-dialog-header > div:last-child { position: relative; z-index: 1; min-width: 0; flex: 1; padding-inline-end: 40px; }
 .easymde-publish-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 4px; }
 .easymde-publish-title-row h2 { margin: 0; color: #0f172a; font-size: 20px; font-weight: 700; letter-spacing: .2px; line-height: 1.25; }
 .easymde-publish-title-row > span { padding: 2px 10px; border: 1px solid #dbeafe; border-radius: 999px; background: #eff6ff; color: #2563eb; font-size: 11.5px; font-weight: 500; }
 .easymde-publish-dialog-header p { margin: 0; color: #64748b; font-size: 12.5px; }
-.easymde-publish-dialog-close { position: absolute; z-index: 3; top: 20px; right: 22.5px; display: grid; width: 30px; height: 30px; padding: 0; place-items: center; border: 1px solid #e6e9ef; border-radius: 9px; background: #fff; color: #64748b; cursor: pointer; transition: border-color 120ms, color 120ms; }
+.easymde-publish-dialog-close { position: absolute; z-index: 3; top: 20px; inset-inline-end: 22.5px; display: grid; width: 30px; height: 30px; padding: 0; place-items: center; border: 1px solid #e6e9ef; border-radius: 9px; background: #fff; color: #64748b; cursor: pointer; transition: border-color 120ms, color 120ms; }
 .easymde-publish-dialog-close:hover { border-color: #cbd5e1; color: #0f172a; }
 .easymde-publish-dialog-divider { height: 1px; flex: 0 0 auto; background: #edf0f5; }
 .easymde-publish-dialog-body { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1.62fr) minmax(320px, 1fr); gap: 26.25px; padding: 25px 26.25px 8px; overflow-y: auto; border-color: rgba(15, 23, 42, .07); }
@@ -615,8 +620,8 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-publish-field > textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
 .easymde-publish-category-box { max-height: 210px; padding: 8px 12px; overflow-y: auto; border: 1px solid #e6e9ef; border-radius: 12px; background: #fbfcfe; }
 .easymde-publish-categories, .easymde-publish-categories ul { margin: 0; padding: 0; list-style: none; }
-.easymde-publish-categories ul { margin-left: 15px; border-left: 1px solid #e2e8f0; }
-.easymde-publish-categories label { display: flex; min-height: 31px; align-items: center; gap: 8px; padding-left: calc(var(--easymde-category-depth) * 3px); color: #334155; font-size: 12.5px; cursor: pointer; }
+.easymde-publish-categories ul { margin-inline-start: 15px; border-inline-start: 1px solid #e2e8f0; }
+.easymde-publish-categories label { display: flex; min-height: 31px; align-items: center; gap: 8px; padding-inline-start: calc(var(--easymde-category-depth) * 3px); color: #334155; font-size: 12.5px; cursor: pointer; }
 .easymde-publish-categories input, .easymde-publish-visibility input, .easymde-publish-sticky input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
 .easymde-publish-checkbox, .easymde-publish-sticky > span { display: grid; box-sizing: border-box; width: 17px; height: 17px; flex: 0 0 auto; place-items: center; border: 1.5px solid #c7cedb; border-radius: 4px; background: #fff; color: #fff; }
 .easymde-publish-categories input:checked + .easymde-publish-checkbox, .easymde-publish-sticky input:checked + span { border-color: #2563eb; background: #2563eb; }
@@ -628,7 +633,7 @@ body:has(.easymde-editor.is-immersive) {
 .easymde-publish-featured-empty > span:not(.easymde-publish-featured-placeholder) { color: #64748b; font-size: 13px; font-weight: 500; }
 .easymde-publish-featured-empty small { margin-top: 4px; color: #64748b; font-size: 12.5px; }
 .easymde-publish-featured-placeholder { position: relative; display: block; width: 200px; height: 133px; }
-.easymde-publish-featured-placeholder > span { position: absolute; top: 23px; left: 52px; display: grid; box-sizing: border-box; width: 112px; height: 104px; place-items: center; border: 1.5px solid #a9c2f1; border-radius: 12px; background: #f8fbff; color: #2f6bef; }
+.easymde-publish-featured-placeholder > span { position: absolute; top: 23px; inset-inline-start: 52px; display: grid; box-sizing: border-box; width: 112px; height: 104px; place-items: center; border: 1.5px solid #a9c2f1; border-radius: 12px; background: #f8fbff; color: #2f6bef; }
 .easymde-publish-featured-placeholder .is-back { transform: rotate(-8deg) translate(-10px, 9px); opacity: .65; }
 .easymde-publish-featured-placeholder .is-middle { transform: rotate(6deg) translate(9px, -6px); }
 .easymde-publish-featured-placeholder .is-front { border: 2px solid #2f6bef; background: linear-gradient(150deg, #fff 0 42%, #d5e3fc 43% 62%, #739eeb 63%); box-shadow: 0 5px 9px rgba(37, 99, 235, .18); transform: rotate(12deg); }
@@ -667,6 +672,7 @@ body:has(.easymde-editor.is-immersive) {
 @media (max-width: 900px) {
     .easymde-editor.is-immersive { grid-template-columns: 1fr; }
     .easymde-immersive-outline { display: none; }
+    .easymde-immersive-outline-resizer { display: none; }
     .easymde-editor.is-immersive > .easymde-workspace { grid-column: 1; }
     .easymde-immersive-stats, .easymde-immersive-brand-name { display: none; }
     .easymde-publish-dialog-body { grid-template-columns: 1fr; }
@@ -685,8 +691,8 @@ body:has(.easymde-editor.is-immersive) {
     .easymde-immersive-secondary-actions .easymde-toolbar-popover-anchor { flex: 0 0 auto; }
     .easymde-immersive-modal-backdrop { padding: 12px; }
     .easymde-immersive-history-body { grid-template-columns: 1fr; height: calc(100vh - 160px); }
-    .easymde-immersive-history-list { max-height: 180px; border-right: 0; border-bottom: 1px solid #e3e7ee; }
-    .easymde-publish-dialog-header { padding-right: 20px; padding-left: 20px; }
+    .easymde-immersive-history-list { max-height: 180px; border-inline-end: 0; border-bottom: 1px solid #e3e7ee; }
+    .easymde-publish-dialog-header { padding-inline: 20px; }
     .easymde-publish-dialog-body { padding: 18px 20px 8px; }
     .easymde-publish-dialog-footer { align-items: stretch; flex-direction: column; padding: 14px 20px; }
     .easymde-publish-dialog-footer > div { width: 100%; }

@@ -56,6 +56,7 @@ export type ImmersiveStrings = Readonly<{
   unsaved: string;
   viewModes: string;
   wechat: string;
+  wechatCopied: string;
   wordCount: string;
   wordCountDescription: string;
   words: string;

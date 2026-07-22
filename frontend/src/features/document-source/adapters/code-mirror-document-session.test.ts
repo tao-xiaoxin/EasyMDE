@@ -56,6 +56,21 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
   });
 
+  it('keeps heading markers regular and colors quote content as one block', () => {
+    const { container, submissionField } = createFixture('# Title\n> Quote');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const heading = container.querySelector('.cm-line');
+    const quote = container.querySelectorAll('.cm-line')[1];
+    if (!heading || !quote) throw new Error('test-fixture-invalid');
+    expect(heading.querySelector('span')?.textContent).toBe('#');
+    expect(quote.querySelectorAll('span')).toHaveLength(3);
+    session.destroy();
+  });
+
   it('commits one document change to CodeMirror and emits one native input notification', () => {
     const { container, submissionField } = createFixture();
     const handleInput = vi.fn();

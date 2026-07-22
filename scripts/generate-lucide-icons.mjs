@@ -13,6 +13,7 @@ const icons = {
   ChevronsLeft: 'chevrons-left',
   Clock: 'clock',
   Clock3: 'clock-3',
+  Code: 'code',
   Code2: 'code-xml',
   Columns2: 'columns-2',
   Database: 'database',

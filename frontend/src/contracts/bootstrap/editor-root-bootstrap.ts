@@ -133,6 +133,7 @@ export type EditorRootBootstrap = Readonly<{
     unsaved: string;
     viewModes: string;
     wechat: string;
+    wechatCopied: string;
     wordCount: string;
     wordCountDescription: string;
     words: string;
@@ -464,6 +465,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'unsaved',
         'viewModes',
         'wechat',
+        'wechatCopied',
         'wordCount',
         'wordCountDescription',
         'words',

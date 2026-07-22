@@ -73,8 +73,7 @@ const markdownHighlightStyle = HighlightStyle.define([
     color: '#1F2430',
     fontWeight: '700'
   },
-  { tag: tags.processingInstruction, color: '#4C6EF5' },
-  { tag: tags.quote, color: '#8A8F98' },
+  { tag: tags.processingInstruction, color: '#4C6EF5', fontWeight: '400' },
   { tag: tags.contentSeparator, color: '#C7CBD3' },
   { tag: tags.list, color: '#3D4350' },
   { tag: tags.strong, color: '#1F2430', fontWeight: '600' },
@@ -92,7 +91,8 @@ const markdownHighlightStyle = HighlightStyle.define([
   { tag: tags.link, color: '#4C6EF5' },
   { tag: tags.url, color: '#0EA5A5' },
   { tag: tags.labelName, color: '#9B5DE0', fontWeight: '600' },
-  { tag: tags.content, color: '#3D4350' }
+  { tag: tags.content, color: '#3D4350' },
+  { tag: tags.quote, color: '#8A8F98' }
 ]);
 
 function clampPosition(value: number, documentLength: number): number {

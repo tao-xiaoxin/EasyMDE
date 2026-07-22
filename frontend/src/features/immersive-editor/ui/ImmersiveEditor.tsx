@@ -26,7 +26,10 @@ import type {
   RevisionSummary
 } from '../../../contracts/ports/revision-port';
 import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
-import type { ImmersivePreferencesPort } from '../../../contracts/ports/immersive-preferences-port';
+import type {
+  ImmersivePreferences,
+  ImmersivePreferencesPort
+} from '../../../contracts/ports/immersive-preferences-port';
 import { SafePreviewHtmlSink } from '../../live-preview/ui/SafePreviewHtmlSink';
 import type { EditorDocumentSession } from '../../document-source/editor-document-session';
 import {
@@ -50,14 +53,16 @@ type Props = Readonly<{
   documentSession: EditorDocumentSession;
   environment: ImmersiveEnvironmentPort;
   immersivePreferencesPort: ImmersivePreferencesPort;
+  initialPreferences?: ImmersivePreferences | null;
   revisionPort: RevisionPort | null;
   restoreRevision: (restoreUrl: string) => void;
   styleControls: ReactNode;
   toolbar: ReactNode;
-  onCopyWechat: () => void;
+  onCopyWechat: () => Promise<boolean>;
   onExit: () => void;
   onFailure: (code: string) => void;
   localDraftsEnabled: boolean;
+  mode: ImmersiveViewMode;
   scrollSyncEnabled: boolean;
   onLocalDraftsEnabledChange: (enabled: boolean) => void;
   readPublishSnapshot: () => NativePublishSnapshot;
@@ -264,6 +269,7 @@ function HistoryDialog({
   const [preview, setPreview] = useState<RevisionPreview | null>(null);
   const [failed, setFailed] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [restoreFailed, setRestoreFailed] = useState(false);
   const [filter, setFilter] = useState<'all' | 'auto' | 'manual'>('all');
   const surfaceRef = useRef<HTMLElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -317,7 +323,13 @@ function HistoryDialog({
       setConfirming(true);
       return;
     }
-    restoreRevision(selected.restoreUrl);
+    try {
+      setRestoreFailed(false);
+      restoreRevision(selected.restoreUrl);
+    } catch {
+      onFailure('revision-restore-failed');
+      setRestoreFailed(true);
+    }
   };
 
   const filteredItems = items?.filter(
@@ -382,6 +394,7 @@ function HistoryDialog({
             <button type="button" disabled={!selected} onClick={restore}><RotateCcw size={12} strokeWidth={2.5} />{strings.restoreThisVersion}</button>
           </header>
           {confirming ? <p className="easymde-history-confirm" role="alert">{strings.restoreConfirm}</p> : null}
+          {restoreFailed ? <p className="easymde-history-confirm" role="alert">{strings.historyError}</p> : null}
           <div className="easymde-immersive-history-preview">
             {preview ? <SafePreviewHtmlSink className="easymde-preview easymde-immersive-revision-preview" html={preview.html} surfaceRef={surfaceRef} /> : null}
           </div>
@@ -395,11 +408,13 @@ export function ImmersiveEditor({
   documentSession,
   environment,
   immersivePreferencesPort,
+  initialPreferences = null,
   revisionPort,
   restoreRevision,
   styleControls,
   toolbar,
   localDraftsEnabled,
+  mode,
   scrollSyncEnabled,
   onCopyWechat,
   onExit,
@@ -419,11 +434,11 @@ export function ImmersiveEditor({
     () => documentSession.title.getSnapshot().value
   );
   const [dirty, setDirty] = useState(() => documentSession.getSnapshot().dirty);
-  const [mode, setMode] = useState<ImmersiveViewMode>('source');
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [activeOutline, setActiveOutline] = useState<number | null>(null);
   const [tableOpen, setTableOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [wechatCopied, setWechatCopied] = useState(false);
   const [publishSnapshot, setPublishSnapshot] =
     useState<NativePublishSnapshot | null>(null);
   const [initialSettings] = useState<ImmersiveSettings>(() => ({
@@ -432,10 +447,15 @@ export function ImmersiveEditor({
     splitPreview: true,
     syncScroll: scrollSyncEnabled,
     wordCount: true,
-    ...immersivePreferencesPort.read()
+    ...(initialPreferences ?? {})
   }));
   const [settings, setSettings] = useState(initialSettings);
   const restoredOwnerSettingsRef = useRef(false);
+
+  useEffect(() => {
+    if (!wechatCopied) return undefined;
+    return environment.schedule(() => setWechatCopied(false), 2000);
+  }, [environment, wechatCopied]);
 
   useEffect(() => {
     if (restoredOwnerSettingsRef.current) return;
@@ -491,7 +511,6 @@ export function ImmersiveEditor({
   const stats = useMemo(() => getDocumentStats(markdown), [markdown]);
   const outline = useMemo(() => extractOutline(markdown), [markdown]);
   const changeMode = (next: ImmersiveViewMode) => {
-    setMode(next);
     onViewModeChange(next);
   };
   const changeSettings = (next: ImmersiveSettings) => {
@@ -531,6 +550,11 @@ export function ImmersiveEditor({
     });
     setTableOpen(false);
     documentSession.document.focus();
+  };
+  const copyWechat = () => {
+    void onCopyWechat().then((success) => {
+      if (success) setWechatCopied(true);
+    });
   };
 
   return (
@@ -585,7 +609,8 @@ export function ImmersiveEditor({
         strings={strings}
         styleControls={styleControls}
         toolbar={toolbar}
-        onCopyWechat={onCopyWechat}
+        wechatCopied={wechatCopied}
+        onCopyWechat={copyWechat}
         onExit={onExit}
         onHistory={() => setHistoryOpen(true)}
         onModeChange={changeMode}

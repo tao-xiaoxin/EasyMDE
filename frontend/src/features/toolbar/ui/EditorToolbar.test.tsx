@@ -12,6 +12,7 @@ const bootstrap: ToolbarBootstrap = {
     { id: 'paragraph', label: '段落', icon: 'heading', surface: 'heading-menu', action: 'paragraph', group: 'heading' },
     { id: 'heading1', label: '标题 1', icon: 'heading', surface: 'heading-menu', action: 'heading', group: 'heading' },
     { id: 'quote', label: '引用', icon: 'format-quote', surface: 'main', action: 'quote', group: 'block' },
+    { id: 'inlinecode', label: '行内代码', icon: 'code', surface: 'main', action: 'wrap', group: 'insert' },
     { id: 'codefence', label: '代码块', icon: 'media-code', surface: 'main', action: 'codeFence', group: 'insert' }
   ],
   shortcuts: {
@@ -19,6 +20,7 @@ const bootstrap: ToolbarBootstrap = {
     paragraph: { win: 'Ctrl+0', mac: 'Cmd+0' },
     heading1: { win: 'Ctrl+1', mac: 'Cmd+1' },
     quote: { win: 'Ctrl+Shift+Q', mac: 'Cmd+Option+Q' },
+    inlinecode: { win: 'Ctrl+`', mac: 'Cmd+`' },
     codefence: { win: 'Ctrl+Shift+K', mac: 'Cmd+Option+C' }
   },
   headingsLabel: '标题',
@@ -38,6 +40,7 @@ describe('EditorToolbar', () => {
       '粗体',
       '标题',
       '引用',
+      '行内代码',
       '代码块'
     ]);
     expect(screen.getByRole('button', { name: '粗体' }).title).toBe('粗体 (Ctrl+B)');
@@ -46,20 +49,37 @@ describe('EditorToolbar', () => {
     expect(container.querySelectorAll('.easymde-toolbar-divider')).toHaveLength(2);
   });
 
-  it('renders each immersive command-group boundary once', () => {
+  it('renders the reference immersive group boundaries and distinct code icons', () => {
+    const immersiveBootstrap: ToolbarBootstrap = {
+      ...bootstrap,
+      commands: [
+        ...bootstrap.commands,
+        {
+          id: 'image',
+          label: '图片',
+          icon: 'format-image',
+          surface: 'main',
+          action: 'image',
+          group: 'insert'
+        }
+      ]
+    };
     const { container } = render(
       <EditorToolbar
-        bootstrap={bootstrap}
+        bootstrap={immersiveBootstrap}
         platform="win"
         executeCommand={vi.fn()}
         variant="immersive"
       />
     );
 
-    expect(container.querySelectorAll('.easymde-toolbar-divider')).toHaveLength(3);
+    expect(container.querySelectorAll('.easymde-toolbar-divider')).toHaveLength(5);
     expect(
       container.querySelector('.easymde-toolbar-divider + .easymde-toolbar-divider')
-    ).toBeNull();
+    ).not.toBeNull();
+    expect(container.querySelector('[data-easymde-command="codefence"] svg')).not.toEqual(
+      container.querySelector('[data-easymde-command="inlinecode"] svg')
+    );
   });
 
   it('preserves the source selection on pointer activation and dispatches the command intent', async () => {

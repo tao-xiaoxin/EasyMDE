@@ -34,6 +34,7 @@ export function ImmersiveToolbar({
   strings,
   styleControls,
   toolbar,
+  wechatCopied,
   onCopyWechat,
   onExit,
   onHistory,
@@ -47,6 +48,7 @@ export function ImmersiveToolbar({
   strings: ImmersiveStrings;
   styleControls: ReactNode;
   toolbar: ReactNode;
+  wechatCopied: boolean;
   onCopyWechat: () => void;
   onExit: () => void;
   onHistory: () => void;
@@ -104,7 +106,7 @@ export function ImmersiveToolbar({
           className="easymde-immersive-wechat"
         >
           <WeChatGlyph />
-          <span>{strings.wechat}</span>
+          <span>{wechatCopied ? strings.wechatCopied : strings.wechat}</span>
         </button>
         <button
           type="button"

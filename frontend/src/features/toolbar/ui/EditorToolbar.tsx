@@ -1,4 +1,5 @@
 import {
+  Fragment,
   createElement,
   useEffect,
   useLayoutEffect,
@@ -7,7 +8,7 @@ import {
 } from '@wordpress/element';
 import {
   Bold,
-  Braces,
+  Code,
   Code2,
   ChevronDown,
   Image,
@@ -49,9 +50,9 @@ type CommandButtonProps = Readonly<{
 
 const IMMERSIVE_ICONS: Readonly<Record<string, LucideIcon>> = {
   bold: Bold,
-  codefence: Braces,
+  codefence: Code2,
   image: Image,
-  inlinecode: Code2,
+  inlinecode: Code,
   italic: Italic,
   link: Link2,
   orderedlist: ListOrdered,
@@ -66,7 +67,15 @@ function commandIcon(
 ) {
   const ImmersiveIcon = IMMERSIVE_ICONS[command.id];
   if ('immersive' === variant && ImmersiveIcon) {
-    return <ImmersiveIcon size={14} strokeWidth={2} aria-hidden="true" />;
+    const strokeWidth =
+      'bold' === command.id || 'italic' === command.id ? 2.5 : 2;
+    return (
+      <ImmersiveIcon
+        size={14}
+        strokeWidth={strokeWidth}
+        aria-hidden="true"
+      />
+    );
   }
   if ('media-code' === command.icon || 'mediacode' === command.icon) {
     return (
@@ -344,7 +353,10 @@ export function EditorToolbar({
         />
       ))}
       {'immersive' === variant && headingCommands.length && blockCommands.length ? (
-        <span className="easymde-toolbar-divider" aria-hidden="true" />
+        <Fragment>
+          <span className="easymde-toolbar-divider" aria-hidden="true" />
+          <span className="easymde-toolbar-divider" aria-hidden="true" />
+        </Fragment>
       ) : null}
       <HeadingMenu
         commands={headingCommands}

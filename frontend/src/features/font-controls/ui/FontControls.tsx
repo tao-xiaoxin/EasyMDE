@@ -72,19 +72,44 @@ function ImmersiveFontSelect({
   selected
 }: Omit<FontSelectProps, 'className'>) {
   const [open, setOpen] = useState(false);
+  const [activeId, setActiveId] = useState(selected);
+  const optionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const selectedOption = options.find((option) => option.id === selected);
+  useEffect(() => {
+    if (open) setActiveId(selected);
+  }, [open, selected]);
+  useEffect(() => {
+    if (open) optionRefs.current[activeId]?.focus();
+  }, [activeId, open]);
+  const moveActive = (delta: number) => {
+    const index = Math.max(0, options.findIndex((option) => option.id === activeId));
+    const next = Math.min(options.length - 1, Math.max(0, index + delta));
+    setActiveId(options[next]?.id ?? selected);
+  };
 
   return (
     <div className="easymde-immersive-font-field">
       <span>{label}</span>
       <div className="easymde-immersive-font-select">
         <button
+          ref={triggerRef}
           type="button"
           aria-label={label}
           aria-haspopup="listbox"
           aria-expanded={open}
           style={{ fontFamily: selectedOption?.fontFamily || undefined }}
           onClick={() => setOpen((current) => !current)}
+          onKeyDown={(event) => {
+            if ('ArrowDown' === event.key || 'Enter' === event.key || ' ' === event.key) {
+              event.preventDefault();
+              setOpen(true);
+            } else if ('ArrowUp' === event.key) {
+              event.preventDefault();
+              setOpen(true);
+              moveActive(-1);
+            }
+          }}
         >
           <span>{selectedOption?.label ?? ''}</span>
           <ChevronDown size={12} aria-hidden="true" />
@@ -98,9 +123,37 @@ function ImmersiveFontSelect({
                   key={option.id}
                   type="button"
                   role="option"
+                  id={`easymde-font-option-${option.id}`}
+                  ref={(element) => { optionRefs.current[option.id] = element; }}
+                  tabIndex={activeId === option.id ? 0 : -1}
                   aria-selected={active}
                   className={active ? 'is-active' : ''}
                   style={{ fontFamily: option.fontFamily || undefined }}
+                  onKeyDown={(event) => {
+                    if ('ArrowDown' === event.key) {
+                      event.preventDefault();
+                      moveActive(1);
+                    } else if ('ArrowUp' === event.key) {
+                      event.preventDefault();
+                      moveActive(-1);
+                    } else if ('Home' === event.key) {
+                      event.preventDefault();
+                      setActiveId(options[0]?.id ?? selected);
+                    } else if ('End' === event.key) {
+                      event.preventDefault();
+                      setActiveId(options[options.length - 1]?.id ?? selected);
+                    } else if ('Escape' === event.key) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setOpen(false);
+                      triggerRef.current?.focus();
+                    } else if ('Enter' === event.key || ' ' === event.key) {
+                      event.preventDefault();
+                      onChange(option.id);
+                      setOpen(false);
+                      triggerRef.current?.focus();
+                    }
+                  }}
                   onClick={() => {
                     onChange(option.id);
                     setOpen(false);
@@ -188,6 +241,7 @@ export function FontControls({
       if ('Escape' !== event.key) {
         return;
       }
+      if (panelRef.current?.querySelector('[role="listbox"]')) return;
       event.preventDefault();
       event.stopPropagation();
       setIsOpen(false);

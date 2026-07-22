@@ -67,7 +67,7 @@ msgstr "分屏"
 
 #: src/Admin/AdminAssets.php:567
 msgid "History"
-msgstr "历史记录"
+msgstr "历史"
 
 #: src/Admin/AdminAssets.php:568
 msgid "Version history"
@@ -655,6 +655,9 @@ msgstr "图片"
 #: src/Support/ToolbarRegistry.php:290
 msgid "Copy to WeChat"
 msgstr "复制到公众号"
+
+msgid "Copied"
+msgstr "已复制"
 
 #: src/Theme/ArticleThemeRegistry.php:15
 msgid "Default theme"

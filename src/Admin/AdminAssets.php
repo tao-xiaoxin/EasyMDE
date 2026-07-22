@@ -374,6 +374,7 @@ final class AdminAssets {
 					'unsaved'                 => __( 'Unsaved', 'easymde' ),
 					'viewModes'               => __( 'View modes', 'easymde' ),
 					'wechat'                  => __( 'Copy to WeChat', 'easymde' ),
+					'wechatCopied'            => __( 'Copied', 'easymde' ),
 					'wordCount'               => __( 'Writing statistics', 'easymde' ),
 					'wordCountDescription'    => __( 'Show words, characters, and reading time beside the title', 'easymde' ),
 					'words'                   => __( 'words', 'easymde' ),

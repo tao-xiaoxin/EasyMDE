@@ -138,18 +138,43 @@ function ImmersiveThemeSelect({
   value: string;
 }>) {
   const [open, setOpen] = useState(false);
+  const [activeId, setActiveId] = useState(value);
+  const optionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const selected = options.find((option) => option.id === value);
+  useEffect(() => {
+    if (open) setActiveId(value);
+  }, [open, value]);
+  useEffect(() => {
+    if (open) optionRefs.current[activeId]?.focus();
+  }, [activeId, open]);
+  const moveActive = (delta: number) => {
+    const index = Math.max(0, options.findIndex((option) => option.id === activeId));
+    const next = Math.min(options.length - 1, Math.max(0, index + delta));
+    setActiveId(options[next]?.id ?? value);
+  };
 
   return (
     <div className="easymde-immersive-theme-field">
       <span className="easymde-immersive-theme-field-label">{label}</span>
       <div className="easymde-immersive-theme-select">
         <button
+          ref={triggerRef}
           type="button"
           aria-haspopup="listbox"
           aria-expanded={open}
           aria-label={label}
           onClick={() => setOpen((current) => !current)}
+          onKeyDown={(event) => {
+            if ('ArrowDown' === event.key || 'Enter' === event.key || ' ' === event.key) {
+              event.preventDefault();
+              setOpen(true);
+            } else if ('ArrowUp' === event.key) {
+              event.preventDefault();
+              setOpen(true);
+              moveActive(-1);
+            }
+          }}
         >
           <span>
             {selected ? <ImmersiveThemeSwatch swatch={selected.swatch} /> : null}
@@ -166,8 +191,36 @@ function ImmersiveThemeSelect({
                   key={option.id}
                   type="button"
                   role="option"
+                  id={`easymde-theme-option-${option.id}`}
+                  ref={(element) => { optionRefs.current[option.id] = element; }}
+                  tabIndex={activeId === option.id ? 0 : -1}
                   aria-selected={active}
                   className={active ? 'is-active' : ''}
+                  onKeyDown={(event) => {
+                    if ('ArrowDown' === event.key) {
+                      event.preventDefault();
+                      moveActive(1);
+                    } else if ('ArrowUp' === event.key) {
+                      event.preventDefault();
+                      moveActive(-1);
+                    } else if ('Home' === event.key) {
+                      event.preventDefault();
+                      setActiveId(options[0]?.id ?? value);
+                    } else if ('End' === event.key) {
+                      event.preventDefault();
+                      setActiveId(options[options.length - 1]?.id ?? value);
+                    } else if ('Escape' === event.key) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setOpen(false);
+                      triggerRef.current?.focus();
+                    } else if ('Enter' === event.key || ' ' === event.key) {
+                      event.preventDefault();
+                      onChange(option.id);
+                      setOpen(false);
+                      triggerRef.current?.focus();
+                    }
+                  }}
                   onClick={() => {
                     onChange(option.id);
                     setOpen(false);
@@ -294,6 +347,7 @@ export function AppearanceControls({
       if ('Escape' !== event.key) {
         return;
       }
+      if (panelRef.current?.querySelector('[role="listbox"]')) return;
       event.preventDefault();
       event.stopPropagation();
       setIsOpen(false);

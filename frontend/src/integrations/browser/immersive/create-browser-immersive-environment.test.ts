@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createBrowserImmersiveEnvironment } from './create-browser-immersive-environment';
 
 describe('createBrowserImmersiveEnvironment', () => {
+  afterEach(() => vi.useRealTimers());
+
   it('isolates the host, cycles focus, and restores the previous inert state', () => {
     document.body.innerHTML = `
       <header id="existing" inert></header>
@@ -63,5 +65,18 @@ describe('createBrowserImmersiveEnvironment', () => {
 
     document.querySelector('.easymde-toolbar-popover')?.removeAttribute('hidden');
     expect(environment.hasOpenToolbarPopover()).toBe(true);
+  });
+
+  it('schedules and cancels browser-owned callbacks', () => {
+    vi.useFakeTimers();
+    const environment = createBrowserImmersiveEnvironment(document);
+    const callback = vi.fn();
+
+    const cancel = environment.schedule(callback, 2000);
+    vi.advanceTimersByTime(1999);
+    expect(callback).not.toHaveBeenCalled();
+    cancel();
+    vi.advanceTimersByTime(1);
+    expect(callback).not.toHaveBeenCalled();
   });
 });

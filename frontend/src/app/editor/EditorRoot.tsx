@@ -30,7 +30,10 @@ import type { AppearancePort } from '../../contracts/ports/appearance-port';
 import type { FontControlsPort } from '../../contracts/ports/font-controls-port';
 import type { ImageUploadPort } from '../../contracts/ports/image-upload-port';
 import type { ImmersiveEnvironmentPort } from '../../contracts/ports/immersive-environment-port';
-import type { ImmersivePreferencesPort } from '../../contracts/ports/immersive-preferences-port';
+import type {
+  ImmersivePreferencesPort,
+  ImmersivePreferencesReadResult
+} from '../../contracts/ports/immersive-preferences-port';
 import {
   protectedEditorOperationError,
   type EditorSessionOperation,
@@ -403,6 +406,10 @@ export function EditorRoot(props: EditorRootProps) {
   const submissionStateRef = useRef(initialSubmissionStateRef.current);
   const [documentSession, setDocumentSession] =
     useState<EditorDocumentSession | null>(null);
+  const [immersivePreferences, setImmersivePreferences] =
+    useState<ImmersivePreferencesReadResult>(() =>
+      props.immersivePreferencesPort.read()
+    );
   const [draftCandidate, setDraftCandidate] = useState(false);
   const [draftUnreadable, setDraftUnreadable] = useState(false);
   const [editorStatus, setEditorStatus] = useState<ImageUploadStatus | null>(
@@ -415,11 +422,29 @@ export function EditorRoot(props: EditorRootProps) {
   const [fontState, setFontState] = useState(props.fonts.state);
   const [immersive, setImmersive] = useState(false);
   const [immersiveMode, setImmersiveMode] =
-    useState<ImmersiveViewMode>('source');
-  const [localDraftsEnabled, setLocalDraftsEnabled] = useState(
-    props.localDrafts.enabled
+    useState<ImmersiveViewMode>(() =>
+      'loaded' === immersivePreferences.status &&
+      immersivePreferences.preferences.splitPreview
+        ? 'split'
+        : 'source'
+    );
+  const [localDraftsEnabled, setLocalDraftsEnabled] = useState(() =>
+    'loaded' === immersivePreferences.status
+      ? immersivePreferences.preferences.autoSave
+      : props.localDrafts.enabled
   );
-  const [scrollSyncEnabled, setScrollSyncEnabled] = useState(true);
+  const localDraftsEnabledRef = useRef(localDraftsEnabled);
+  localDraftsEnabledRef.current = localDraftsEnabled;
+  const [scrollSyncEnabled, setScrollSyncEnabled] = useState(() =>
+    'loaded' === immersivePreferences.status
+      ? immersivePreferences.preferences.syncScroll
+      : true
+  );
+  useEffect(() => {
+    if ('failed' === immersivePreferences.status) {
+      props.onFailure(immersivePreferences.code);
+    }
+  }, [immersivePreferences, props.onFailure]);
   const [cursorPosition, setCursorPosition] = useState({ column: 1, line: 1 });
   const sessionSnapshot = useEditorSession(props.sessionPort);
   const protectedOperationError = useCallback(
@@ -741,9 +766,17 @@ export function EditorRoot(props: EditorRootProps) {
     closeForToolbar();
     toolbarSessionRef.current?.closePopovers();
     restoreImmersiveFocusRef.current = true;
-    setImmersiveMode('source');
+    const preferences = props.immersivePreferencesPort.read();
+    setImmersivePreferences(preferences);
+    if ('loaded' === preferences.status) {
+      setImmersiveMode(preferences.preferences.splitPreview ? 'split' : 'source');
+      setLocalDraftsEnabled(preferences.preferences.autoSave);
+      setScrollSyncEnabled(preferences.preferences.syncScroll);
+    } else if ('missing' === preferences.status) {
+      setImmersiveMode('source');
+    }
     setImmersive(true);
-  }, [closeForToolbar]);
+  }, [closeForToolbar, props.immersivePreferencesPort]);
   const exitImmersive = useCallback(() => setImmersive(false), []);
 
   useEffect(() => {
@@ -830,7 +863,7 @@ export function EditorRoot(props: EditorRootProps) {
         focus: documentSession.document.focus,
         getValue: documentSession.document.getValue
       },
-      enabled: props.localDrafts.enabled,
+      enabled: localDraftsEnabledRef.current,
       onCandidate: setDraftCandidate,
       onDiagnostic: props.onFailure,
       onUnreadable: setDraftUnreadable,
@@ -910,8 +943,16 @@ export function EditorRoot(props: EditorRootProps) {
           documentSession={documentSession}
           environment={props.immersiveEnvironment}
           immersivePreferencesPort={props.immersivePreferencesPort}
+          initialPreferences={
+            'loaded' === immersivePreferences.status
+              ? immersivePreferences.preferences
+              : null
+          }
           localDraftsEnabled={localDraftsEnabled}
-          onCopyWechat={() => void wechatSession.copy()}
+          mode={immersiveMode}
+          onCopyWechat={async () =>
+            'copied' === (await wechatSession.copy()).status
+          }
           onExit={exitImmersive}
           onFailure={props.onFailure}
           onLocalDraftsEnabledChange={setLocalDraftsEnabled}
@@ -1083,6 +1124,7 @@ export function EditorRoot(props: EditorRootProps) {
                   className="easymde-immersive-more-actions"
                   aria-label={props.immersiveStrings.moreActions}
                   title={props.immersiveStrings.moreActions}
+                  onClick={() => documentSession?.document.focus()}
                 >
                   <MoreHorizontal size={14} strokeWidth={2} />
                 </button>

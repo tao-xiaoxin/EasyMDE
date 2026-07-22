@@ -195,8 +195,10 @@ function validBootstrap() {
         unsaved: 'Unsaved',
         viewModes: 'View modes',
         wechat: 'Copy to WeChat',
+        wechatCopied: 'Copied',
         wordCount: 'Writing statistics',
-        wordCountDescription: 'Show words, characters, and reading time beside the title',
+        wordCountDescription:
+          'Show words, characters, and reading time beside the title',
         words: 'words'
       },
       mediaPickerFailure: 'The media library could not open.',

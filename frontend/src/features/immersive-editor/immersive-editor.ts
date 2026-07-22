@@ -20,8 +20,13 @@ export type ImmersiveOutlineNode = Readonly<{
 }>;
 
 export function getDocumentStats(markdown: string): DocumentStats {
-  const words = markdown.trim() ? markdown.trim().split(/\s+/u).length : 0;
-  const characters = Array.from(markdown).length;
+  const text = markdown
+    .replace(/```[\s\S]*?```/gu, '')
+    .replace(/[#*_~`>|()]/g, '')
+    .replaceAll('[', '')
+    .replaceAll(']', '');
+  const words = text.trim() ? text.trim().split(/\s+/u).length : 0;
+  const characters = Array.from(text.replace(/\s/gu, '')).length;
   return { words, characters, minutes: Math.max(1, Math.ceil(words / 200)) };
 }
 

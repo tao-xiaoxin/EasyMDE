@@ -37,6 +37,7 @@ export const ChevronDown = icon([["path",{"d":"m6 9 6 6 6-6","key":"qrunsl"}]]);
 export const ChevronsLeft = icon([["path",{"d":"m11 17-5-5 5-5","key":"13zhaf"}],["path",{"d":"m18 17-5-5 5-5","key":"h8a8et"}]]);
 export const Clock = icon([["circle",{"cx":"12","cy":"12","r":"10","key":"1mglay"}],["polyline",{"points":"12 6 12 12 16 14","key":"68esgv"}]]);
 export const Clock3 = icon([["circle",{"cx":"12","cy":"12","r":"10","key":"1mglay"}],["polyline",{"points":"12 6 12 12 16.5 12","key":"1aq6pp"}]]);
+export const Code = icon([["polyline",{"points":"16 18 22 12 16 6","key":"z7tu5w"}],["polyline",{"points":"8 6 2 12 8 18","key":"1eg1df"}]]);
 export const Code2 = icon([["path",{"d":"m18 16 4-4-4-4","key":"1inbqp"}],["path",{"d":"m6 8-4 4 4 4","key":"15zrgr"}],["path",{"d":"m14.5 4-5 16","key":"e7oirm"}]]);
 export const Columns2 = icon([["rect",{"width":"18","height":"18","x":"3","y":"3","rx":"2","key":"afitv7"}],["path",{"d":"M12 3v18","key":"108xh3"}]]);
 export const Database = icon([["ellipse",{"cx":"12","cy":"5","rx":"9","ry":"3","key":"msslwz"}],["path",{"d":"M3 5V19A9 3 0 0 0 21 19V5","key":"1wlel7"}],["path",{"d":"M3 12A9 3 0 0 0 21 12","key":"mv7ke4"}]]);

@@ -77,6 +77,29 @@ describe('AppearanceControls', () => {
     expect(trigger.querySelector('.dashicons')).toBeNull();
   });
 
+  it('moves focus through immersive theme options with the keyboard', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    const select = screen.getByRole('button', { name: 'Article theme' });
+    select.focus();
+    await user.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /Default/u }));
+    await user.keyboard('{End}');
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /Writer CSS/u }));
+    await user.keyboard('{Escape}');
+    expect(document.activeElement).toBe(select);
+  });
+
   it('anchors the panel to the appearance trigger instead of the page', async () => {
     const user = userEvent.setup();
     render(

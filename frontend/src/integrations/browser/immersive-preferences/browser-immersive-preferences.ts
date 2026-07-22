@@ -1,5 +1,6 @@
 import type {
   ImmersivePreferences,
+  ImmersivePreferencesReadResult,
   ImmersivePreferencesPort,
   ImmersivePreferencesWriteResult
 } from '../../../contracts/ports/immersive-preferences-port';
@@ -31,14 +32,17 @@ export function createBrowserImmersivePreferencesPort({
 
   return {
     read() {
-      if (!storage) return null;
+      if (!storage) return { code: 'immersive-preferences-storage-unavailable', status: 'failed' } satisfies ImmersivePreferencesReadResult;
       try {
         const value = storage.getItem(key);
-        if (null === value) return null;
+        if (null === value) return { status: 'missing' };
         const parsed: unknown = JSON.parse(value);
-        return isPreferences(parsed) ? parsed : null;
+        if (!isPreferences(parsed)) {
+          return { code: 'immersive-preferences-invalid', status: 'failed' };
+        }
+        return { preferences: parsed, status: 'loaded' };
       } catch {
-        return null;
+        return { code: 'immersive-preferences-read-failed', status: 'failed' };
       }
     },
     write(preferences): ImmersivePreferencesWriteResult {

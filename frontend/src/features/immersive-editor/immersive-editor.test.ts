@@ -8,9 +8,11 @@ import {
 
 describe('immersive editor model', () => {
   it('computes stable document statistics', () => {
-    expect(getDocumentStats('one two\n中文')).toEqual({
+    expect(
+      getDocumentStats('one **two**\n中文\n```ts\nignored code\n```')
+    ).toEqual({
       words: 3,
-      characters: 10,
+      characters: 8,
       minutes: 1
     });
   });
@@ -38,9 +40,7 @@ describe('immersive editor model', () => {
   });
 
   it('creates a valid markdown table', () => {
-    expect(tableMarkdown(2, 2)).toBe(
-      '\n|  |  |\n| --- | --- |\n|  |  |\n'
-    );
+    expect(tableMarkdown(2, 2)).toBe('\n|  |  |\n| --- | --- |\n|  |  |\n');
     expect(tableMarkdown(2, 2)).not.toMatch(/[一-鿿]/u);
     expect(() => tableMarkdown(0, 2)).toThrow(
       'immersive-table-dimensions-invalid'

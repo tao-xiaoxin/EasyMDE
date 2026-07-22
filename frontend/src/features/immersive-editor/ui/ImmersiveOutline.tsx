@@ -1,4 +1,5 @@
 import { Fragment, createElement, useRef, useState } from '@wordpress/element';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import {
   BarChart3,
   ChevronsLeft,
@@ -144,6 +145,8 @@ export function ImmersiveOutline({
 }>) {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const outlineRef = useRef<HTMLElement>(null);
+  const resizerRef = useRef<HTMLHRElement>(null);
+  const resizeStateRef = useRef<Readonly<{ startWidth: number; startX: number }> | null>(null);
 
   if (!open) {
     return (
@@ -159,20 +162,26 @@ export function ImmersiveOutline({
     );
   }
 
-  const startResize = (startX: number) => {
-    const outline = outlineRef.current;
-    const documentRef = outline?.ownerDocument;
-    if (!outline || !documentRef) return;
-    const startWidth = width;
+  const startResize = (event: ReactPointerEvent<HTMLHRElement>) => {
+    const resizer = resizerRef.current;
+    const documentRef = outlineRef.current?.ownerDocument;
+    if (!resizer || !documentRef) return;
+    resizeStateRef.current = { startWidth: width, startX: event.clientX };
+    resizer.setPointerCapture?.(event.pointerId);
+  };
+  const moveResize = (event: ReactPointerEvent<HTMLHRElement>) => {
+    const state = resizeStateRef.current;
+    const documentRef = outlineRef.current?.ownerDocument;
+    if (!state || !documentRef) return;
     const direction = documentRef.documentElement.dir === 'rtl' ? -1 : 1;
-    const move = (event: MouseEvent) =>
-      setWidth(boundedWidth(startWidth + (event.clientX - startX) * direction));
-    const finish = () => {
-      documentRef.removeEventListener('mousemove', move);
-      documentRef.removeEventListener('mouseup', finish);
-    };
-    documentRef.addEventListener('mousemove', move);
-    documentRef.addEventListener('mouseup', finish);
+    setWidth(boundedWidth(state.startWidth + (event.clientX - state.startX) * direction));
+  };
+  const finishResize = (event: ReactPointerEvent<HTMLHRElement>) => {
+    const resizer = resizerRef.current;
+    resizeStateRef.current = null;
+    if (resizer?.hasPointerCapture?.(event.pointerId)) {
+      resizer.releasePointerCapture(event.pointerId);
+    }
   };
 
   return (
@@ -215,6 +224,7 @@ export function ImmersiveOutline({
         </div>
       </aside>
       <hr
+        ref={resizerRef}
         tabIndex={0}
         aria-orientation="vertical"
         aria-label={strings.resizeOutline}
@@ -222,7 +232,10 @@ export function ImmersiveOutline({
         aria-valuemax={MAX_WIDTH}
         aria-valuenow={width}
         className="easymde-immersive-outline-resizer"
-        onMouseDown={(event) => startResize(event.clientX)}
+        onPointerDown={startResize}
+        onPointerMove={moveResize}
+        onPointerUp={finishResize}
+        onPointerCancel={finishResize}
         onDoubleClick={() => setWidth(DEFAULT_WIDTH)}
         onKeyDown={(event) => {
           if ('ArrowLeft' !== event.key && 'ArrowRight' !== event.key) return;

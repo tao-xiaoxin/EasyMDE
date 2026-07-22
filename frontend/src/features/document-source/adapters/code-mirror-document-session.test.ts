@@ -299,6 +299,8 @@ describe('createCodeMirrorDocumentSession', () => {
     });
     const editor = container.querySelector<HTMLElement>('.cm-editor');
     container.append(trailingNode);
+    session.getScrollElement().scrollTop = 37;
+    session.getScrollElement().scrollLeft = 11;
 
     const transfer = session.prepareSurfaceTransfer(immersiveHost);
     transfer.activate();
@@ -312,6 +314,8 @@ describe('createCodeMirrorDocumentSession', () => {
 
     expect(container.firstElementChild).toBe(editor);
     expect(editor?.nextSibling).toBe(trailingNode);
+    expect(session.getScrollElement().scrollTop).toBe(37);
+    expect(session.getScrollElement().scrollLeft).toBe(11);
     expect(() => transfer.activate()).toThrow('code-mirror-surface-transfer-disposed');
     session.destroy();
     immersiveHost.remove();

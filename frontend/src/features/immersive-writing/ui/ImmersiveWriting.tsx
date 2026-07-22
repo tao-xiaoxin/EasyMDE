@@ -220,11 +220,14 @@ export function ImmersiveWriting({
   useLayoutEffect(() => {
     const body = document.body;
     const previousOverflow = body.style.overflow;
+    const hadOpenClass = body.classList.contains('easymde-immersive-writing-open');
     body.style.overflow = 'hidden';
     body.classList.add('easymde-immersive-writing-open');
     return () => {
       body.style.overflow = previousOverflow;
-      body.classList.remove('easymde-immersive-writing-open');
+      if (!hadOpenClass) {
+        body.classList.remove('easymde-immersive-writing-open');
+      }
     };
   }, []);
 

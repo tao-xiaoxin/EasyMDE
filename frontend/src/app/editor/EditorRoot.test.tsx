@@ -398,6 +398,8 @@ describe('EditorRoot', () => {
   it('opens immersive writing after WeChat export with the same document and title owners', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
+    document.body.style.overflow = 'scroll';
+    document.body.classList.add('easymde-immersive-writing-open');
     const entry = view.getByRole('button', { name: 'Enter immersive writing' });
     const wechat = view.getByRole('button', { name: 'Copy to WeChat' });
     const appearance = view.getByRole('button', { name: 'Appearance' });
@@ -473,7 +475,10 @@ describe('EditorRoot', () => {
 
     expect(view.queryByRole('dialog', { name: 'Enter immersive writing' })).toBeNull();
     expect(originalEditor?.parentElement).toBe(originalParent);
-    expect(document.body.style.overflow).toBe('');
+    expect(document.body.style.overflow).toBe('scroll');
+    expect(document.body.classList.contains('easymde-immersive-writing-open')).toBe(true);
+    document.body.classList.remove('easymde-immersive-writing-open');
+    document.body.style.overflow = '';
     await waitFor(() => {
       expect(props.previewPort.render).toHaveBeenCalledTimes(previewCalls + 1);
     });

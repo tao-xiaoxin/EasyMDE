@@ -408,6 +408,12 @@ test.describe('EasyMDE editor workflows', () => {
     const immersive = page.getByRole('dialog', { name: strings.enter });
     await expect(immersive).toBeVisible();
     await expect(immersive.locator('[data-easymde-immersive-command]')).toHaveCount(11);
+    const immersiveToolbar = immersive.locator('.easymde-immersive-toolbar');
+    await page.waitForTimeout(2600);
+    await expect(immersive).toHaveAttribute('data-toolbar-visible', 'false');
+    await immersive.getByRole('button', { name: strings.exit }).focus();
+    await expect(immersive).toHaveAttribute('data-toolbar-visible', 'true');
+    await expect(immersiveToolbar).toBeVisible();
     expect(await immersive.locator('.cm-editor').evaluate((editor) => (
       editor === window.__easymdeImmersiveEditorView
     ))).toBe(true);
@@ -425,6 +431,26 @@ test.describe('EasyMDE editor workflows', () => {
     expect(await sourceEditor.evaluate((element) => (
       element.closest('.cm-editor') === window.__easymdeImmersiveEditorView
     ))).toBe(true);
+    const scrollingMarkdown = Array.from(
+      { length: 160 },
+      (_, index) => `## Immersive section ${index + 1}\n\nImmersive transfer content ${index + 1}.`
+    ).join('\n\n');
+    await sourceEditor.fill(scrollingMarkdown);
+    const sourceScroller = page.locator('.easymde-source-react .cm-scroller');
+    await sourceScroller.evaluate((scroller) => {
+      scroller.scrollTop = Math.max(1, (scroller.scrollHeight - scroller.clientHeight) / 2);
+    });
+    const sourceScrollTop = await sourceScroller.evaluate((scroller) => scroller.scrollTop);
+    expect(sourceScrollTop).toBeGreaterThan(0);
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      await entry.click();
+      await expect(page.getByRole('dialog', { name: strings.enter })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('dialog', { name: strings.enter })).toHaveCount(0);
+    }
+    await expect(sourceScroller).toBeVisible();
+    await expect.poll(() => sourceScroller.evaluate((scroller) => scroller.scrollTop))
+      .toBe(sourceScrollTop);
     expect(mutationRequests).toEqual([]);
     await expect(page.locator('script[src*="immersive"], link[href*="immersive"]')).toHaveCount(0);
   });

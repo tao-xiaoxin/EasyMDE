@@ -332,6 +332,12 @@ export function createCodeMirrorDocumentSession({
       if (!home) {
         throw new Error('code-mirror-surface-home-unavailable');
       }
+      const scrollTop = view.scrollDOM.scrollTop;
+      const scrollLeft = view.scrollDOM.scrollLeft;
+      const restoreScroll = () => {
+        view.scrollDOM.scrollTop = scrollTop;
+        view.scrollDOM.scrollLeft = scrollLeft;
+      };
       let activated = false;
       let disposed = false;
       const transfer = {
@@ -345,6 +351,7 @@ export function createCodeMirrorDocumentSession({
           activated = true;
           host.append(view.dom);
           view.requestMeasure();
+          restoreScroll();
         },
         dispose() {
           if (disposed) {
@@ -358,6 +365,7 @@ export function createCodeMirrorDocumentSession({
               home.appendChild(view.dom);
             }
             view.requestMeasure();
+            restoreScroll();
           }
           if (activeSurfaceTransfer === transfer) {
             activeSurfaceTransfer = null;

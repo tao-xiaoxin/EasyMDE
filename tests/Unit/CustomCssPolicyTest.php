@@ -67,4 +67,26 @@ final class CustomCssPolicyTest extends WP_UnitTestCase
         $this->assertStringNotContainsString(CustomCssPolicy::SCOPE . ' :root', $css);
     }
 
+    public function test_preview_css_is_scoped_to_the_immersive_modal_only()
+    {
+        $policy = new CustomCssPolicy();
+        $preview = $policy->prepare_preview('h2 { color: red; }');
+
+        $this->assertIsArray($preview);
+        $this->assertStringContainsString(CustomCssPolicy::PREVIEW_SCOPE . ' h2', $preview['scopedCss']);
+    }
+
+    public function test_scope_prefix_collision_is_prefixed_inside_the_preview_container()
+    {
+        $policy = new CustomCssPolicy();
+        $lookalike = CustomCssPolicy::PREVIEW_SCOPE . '--outside';
+        $preview = $policy->prepare_preview($lookalike . ' { color: red; }');
+
+        $this->assertIsArray($preview);
+        $this->assertStringContainsString(
+            CustomCssPolicy::PREVIEW_SCOPE . ' ' . $lookalike,
+            $preview['scopedCss']
+        );
+    }
+
 }

@@ -111,6 +111,36 @@ function dispatchChange(field: HTMLInputElement | HTMLSelectElement | HTMLTextAr
   field.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+type NativeFieldState = Readonly<{
+  checked: boolean | null;
+  field: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+  value: string;
+}>;
+
+function captureNativeFields(
+  fields: ReadonlyArray<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+): ReadonlyArray<NativeFieldState> {
+  return Array.from(new Set(fields), (field) => ({
+    checked: field instanceof HTMLInputElement ? field.checked : null,
+    field,
+    value: field.value
+  }));
+}
+
+function restoreNativeFields(states: ReadonlyArray<NativeFieldState>): void {
+  for (const state of states) {
+    state.field.value = state.value;
+    if (state.field instanceof HTMLInputElement && null !== state.checked) {
+      state.field.checked = state.checked;
+    }
+  }
+  for (const { field } of states) dispatchChange(field);
+}
+
+function actionControl(node: Element | null): HTMLButtonElement | HTMLInputElement | null {
+  return node instanceof HTMLButtonElement || node instanceof HTMLInputElement ? node : null;
+}
+
 function assertCapabilities(expected: PublishingCapabilities, current: PublishingCapabilities): void {
   for (const name of Object.keys(expected) as Array<keyof PublishingCapabilities>) {
     if (expected[name] && !current[name]) {
@@ -217,7 +247,7 @@ export function createWordPressPublishingPort(options: PublishingPortOptions): P
     requestSubmit(draft, action) {
       const currentCapabilities = capabilities(doc);
       const status = select(doc, '#post_status');
-      const button = doc.querySelector<HTMLElement>('save-draft' === action ? '#save-post' : '#publish');
+      const button = actionControl(doc.querySelector('save-draft' === action ? '#save-post' : '#publish'));
       assertCapabilities(draft.capabilities, currentCapabilities);
       if (!isWritable(status) || !Array.from(status.options).some(
         (option) => option.value === draft.status && !option.disabled
@@ -230,6 +260,18 @@ export function createWordPressPublishingPort(options: PublishingPortOptions): P
       if (draft.capabilities.schedule && !draft.schedule) {
         throw new Error('publishing-native-schedule-unavailable');
       }
+
+      const form = button.form;
+      if (!form) throw new Error('publishing-native-form-unavailable');
+
+      const delegatedFields = [
+        status,
+        ...Array.from(doc.querySelectorAll<HTMLInputElement>(
+          '#visibility-radio-public, #visibility-radio-password, #visibility-radio-private, #post_password, #sticky, #categorychecklist input[type="checkbox"], #categorychecklist-pop input[type="checkbox"], #tax-input-post_tag, #_thumbnail_id'
+        )),
+        ...Array.from(doc.querySelectorAll<HTMLSelectElement | HTMLTextAreaElement>('#excerpt, #aa, #mm, #jj, #hh, #mn'))
+      ];
+      const originalFields = captureNativeFields(delegatedFields);
 
       const changedFields: Array<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement> = [];
       if (draft.capabilities.visibility) changedFields.push(applyVisibility(doc, draft));
@@ -272,11 +314,28 @@ export function createWordPressPublishingPort(options: PublishingPortOptions): P
         changedFields.push(featured);
       }
 
-      for (const field of changedFields) dispatchChange(field);
-      if (!button.isConnected || button.matches(':disabled, [aria-disabled="true"]')) {
-        throw new Error('publishing-native-action-unavailable');
+      const submission: { event: SubmitEvent | null } = { event: null };
+      const observeSubmit = (event: SubmitEvent) => {
+        if (event.submitter === button) {
+          submission.event = event;
+        }
+      };
+      form.addEventListener('submit', observeSubmit);
+      try {
+        for (const field of changedFields) dispatchChange(field);
+        if (!button.isConnected || button.matches(':disabled, [aria-disabled="true"]')) {
+          throw new Error('publishing-native-action-unavailable');
+        }
+        button.click();
+        if (!submission.event || submission.event.defaultPrevented) {
+          throw new Error('publishing-native-submit-cancelled');
+        }
+      } catch (error) {
+        restoreNativeFields(originalFields);
+        throw error;
+      } finally {
+        form.removeEventListener('submit', observeSubmit);
       }
-      button.click();
       return { status: 'requested' };
     },
 

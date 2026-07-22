@@ -231,6 +231,7 @@ Current routes:
 - `POST /easymde/v1/media`
 - `GET /easymde/v1/theme-options`
 - `POST /easymde/v1/custom-css`
+- `POST /easymde/v1/custom-css/preview`
 - `DELETE /easymde/v1/custom-css/{id}`
 - `GET /easymde/v1/posts/{post_id}/revisions`
 - `GET /easymde/v1/posts/{post_id}/revisions/{revision_id}`

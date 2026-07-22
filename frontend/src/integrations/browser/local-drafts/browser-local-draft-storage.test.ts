@@ -149,8 +149,36 @@ describe('createBrowserLocalDraftStorage', () => {
   });
 
   it('formats WordPress fixed-offset time zones without treating them as IANA names', () => {
-    const drafts = createBrowserLocalDraftStorage({
+    const positiveOffsetDrafts = createBrowserLocalDraftStorage({
       config: { ...config, timeZone: '+08:00' },
+      eventTarget: window,
+      now: () => 1,
+      storage: createStorage()
+    });
+    const negativeOffsetDrafts = createBrowserLocalDraftStorage({
+      config: { ...config, timeZone: '-03:30' },
+      eventTarget: window,
+      now: () => 1,
+      storage: createStorage()
+    });
+
+    expect(positiveOffsetDrafts.formatTime(Date.UTC(2026, 0, 1, 0, 30))).toEqual({
+      status: 'formatted',
+      value: '08:30 AM'
+    });
+    expect(negativeOffsetDrafts.formatTime(Date.UTC(2026, 0, 1, 0, 30))).toEqual({
+      status: 'formatted',
+      value: '09:00 PM'
+    });
+  });
+
+  it.each([
+    ['de_DE_formal', '08:30'],
+    ['pt_PT_ao90', '08:30'],
+    ['sr_RS_latin', '08:30']
+  ])('normalizes the WordPress locale variant %s before formatting draft times', (locale, expected) => {
+    const drafts = createBrowserLocalDraftStorage({
+      config: { ...config, locale, timeZone: '+08:00' },
       eventTarget: window,
       now: () => 1,
       storage: createStorage()
@@ -158,7 +186,7 @@ describe('createBrowserLocalDraftStorage', () => {
 
     expect(drafts.formatTime(Date.UTC(2026, 0, 1, 0, 30))).toEqual({
       status: 'formatted',
-      value: '08:30 AM'
+      value: expected
     });
   });
 

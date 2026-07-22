@@ -5,6 +5,7 @@ import type {
   LocalDraftWriteResult
 } from '../../../contracts/ports/local-drafts-port';
 import type { LocalDraftsBootstrap } from '../../../contracts/bootstrap/local-drafts-bootstrap';
+import { resolveEditorNumberLocale } from '../../../contracts/bootstrap/editor-layout-bootstrap';
 
 type BrowserLocalDraftStorageOptions = Readonly<{
   config: Omit<LocalDraftsBootstrap, 'enabled' | 'strings'>;
@@ -53,6 +54,20 @@ function fingerprintContent(content: string): Readonly<{ bytes: number; value: s
     ({ bytes, hash } = updateCodePoint(hash, codePoint, bytes));
   }
   return { bytes, value: `${bytes}:${hash.toString(16).padStart(8, '0')}` };
+}
+
+function parseFixedOffsetMinutes(timeZone: string): number | null {
+  const match = /^([+-])(\d{2}):([0-5]\d)$/.exec(timeZone);
+  const sign = match?.[1];
+  const hours = match?.[2];
+  const minutes = match?.[3];
+  if (!sign || !hours || !minutes) return null;
+
+  const hourValue = Number(hours);
+  if (hourValue > 23) return null;
+
+  const offset = (hourValue * 60) + Number(minutes);
+  return '-' === sign ? -offset : offset;
 }
 
 function parseDraft(value: string, source: 'current' | 'legacy', maxBytes: number): LocalDraftReadResult {
@@ -154,11 +169,13 @@ export function createBrowserLocalDraftStorage({
     },
     formatTime(timestamp) {
       try {
-        const value = new Intl.DateTimeFormat(config.locale.replace('_', '-'), {
+        const fixedOffset = parseFixedOffsetMinutes(config.timeZone);
+        const date = new Date(timestamp + (null === fixedOffset ? 0 : fixedOffset * 60_000));
+        const value = new Intl.DateTimeFormat(resolveEditorNumberLocale(config.locale), {
           hour: '2-digit',
           minute: '2-digit',
-          timeZone: config.timeZone
-        }).format(new Date(timestamp));
+          timeZone: null === fixedOffset ? config.timeZone : 'UTC'
+        }).format(date);
         return { status: 'formatted', value };
       } catch {
         return { code: 'local-draft-time-format-failed', status: 'failed' };

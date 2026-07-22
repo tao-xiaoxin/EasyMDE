@@ -16,7 +16,7 @@ function mountNativeEditor(): HTMLFormElement {
       <input id="tax-input-post_tag" value="Alpha, beta"><textarea id="excerpt">Old summary</textarea>
       <input id="_thumbnail_id" value="31"><div id="postimagediv"><div class="inside"><img src="https://example.test/old.jpg" alt="Old cover"></div></div>
       <input name="extension_field" value="preserve me">
-      <button id="save-post" type="button">Save Draft</button><button id="publish" type="button">Schedule</button>
+      <button id="save-post" type="submit">Save Draft</button><button id="publish" type="submit">Schedule</button>
     </form>`;
   return document.querySelector<HTMLFormElement>('#post') as HTMLFormElement;
 }
@@ -131,7 +131,11 @@ describe('createWordPressPublishingPort', () => {
     const current = port();
     const snapshot = current.read();
     const publish = document.querySelector<HTMLButtonElement>('#publish') as HTMLButtonElement;
-    vi.spyOn(publish, 'click').mockImplementation(() => undefined);
+    vi.spyOn(publish, 'click').mockImplementation(() => {
+      publish.form?.dispatchEvent(new SubmitEvent('submit', {
+        bubbles: true, cancelable: true, submitter: publish
+      }));
+    });
 
     current.requestSubmit({ ...snapshot.draft, visibility: 'private' }, 'primary');
 
@@ -164,7 +168,11 @@ describe('createWordPressPublishingPort', () => {
     const current = port();
     const snapshot = current.read();
     const publish = document.querySelector<HTMLButtonElement>('#publish') as HTMLButtonElement;
-    const click = vi.spyOn(publish, 'click').mockImplementation(() => undefined);
+    const click = vi.spyOn(publish, 'click').mockImplementation(() => {
+      publish.form?.dispatchEvent(new SubmitEvent('submit', {
+        bubbles: true, cancelable: true, submitter: publish
+      }));
+    });
     const result = current.requestSubmit({
       ...snapshot.draft,
       categories: ['12'],
@@ -195,11 +203,50 @@ describe('createWordPressPublishingPort', () => {
     const current = port();
     const snapshot = current.read();
     const save = document.querySelector<HTMLButtonElement>('#save-post') as HTMLButtonElement;
-    const click = vi.spyOn(save, 'click').mockImplementation(() => undefined);
+    const click = vi.spyOn(save, 'click').mockImplementation(() => {
+      save.form?.dispatchEvent(new SubmitEvent('submit', {
+        bubbles: true, cancelable: true, submitter: save
+      }));
+    });
 
     expect(current.requestSubmit(snapshot.draft, 'save-draft')).toEqual({ status: 'requested' });
     expect(document.querySelector<HTMLSelectElement>('#post_status')?.value).toBe('future');
     expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back delegated fields when an extension cancels native submission', () => {
+    const current = port();
+    const snapshot = current.read();
+    const form = document.querySelector<HTMLFormElement>('#post') as HTMLFormElement;
+    form.addEventListener('submit', (event) => event.preventDefault());
+
+    expect(() => current.requestSubmit({
+      ...snapshot.draft,
+      excerpt: 'Changed',
+      tags: ['Changed'],
+      visibility: 'private'
+    }, 'primary')).toThrowError('publishing-native-submit-cancelled');
+    expect(document.querySelector<HTMLInputElement>('#visibility-radio-password')?.checked).toBe(true);
+    expect(document.querySelector<HTMLInputElement>('#tax-input-post_tag')?.value).toBe('Alpha, beta');
+    expect(document.querySelector<HTMLTextAreaElement>('#excerpt')?.value).toBe('Old summary');
+  });
+
+  it('rolls back delegated fields when a change listener disables the native action', () => {
+    const current = port();
+    const snapshot = current.read();
+    const publish = document.querySelector<HTMLButtonElement>('#publish') as HTMLButtonElement;
+    const tags = document.querySelector<HTMLInputElement>('#tax-input-post_tag') as HTMLInputElement;
+    tags.addEventListener('change', () => {
+      publish.disabled = true;
+    }, { once: true });
+
+    expect(() => current.requestSubmit({
+      ...snapshot.draft,
+      excerpt: 'Changed',
+      tags: ['Changed']
+    }, 'primary')).toThrowError('publishing-native-action-unavailable');
+    expect(tags.value).toBe('Alpha, beta');
+    expect(document.querySelector<HTMLTextAreaElement>('#excerpt')?.value).toBe('Old summary');
   });
 
   it('selects a featured image through WordPress media without writing native state', async () => {

@@ -505,15 +505,15 @@ msgstr ""
 msgid "Windows / Linux"
 msgstr ""
 
-#: src/Rest/CustomCssController.php:91
+#: src/Rest/CustomCssController.php:114
 msgid "CSS name and CSS content are required."
 msgstr ""
 
-#: src/Rest/CustomCssController.php:105
+#: src/Rest/CustomCssController.php:128
 msgid "A custom CSS style with this name already exists."
 msgstr ""
 
-#: src/Rest/CustomCssController.php:136
+#: src/Rest/CustomCssController.php:159
 msgid "Custom CSS style not found."
 msgstr ""
 
@@ -762,24 +762,24 @@ msgstr ""
 msgid "Wechat inspired"
 msgstr ""
 
-#: src/Theme/CustomCssPolicy.php:46
+#: src/Theme/CustomCssPolicy.php:64
 msgid "Custom CSS is too large."
 msgstr ""
 
-#: src/Theme/CustomCssPolicy.php:59
+#: src/Theme/CustomCssPolicy.php:77
 msgid ""
 "The CSS parser dependency is unavailable. Custom CSS cannot be rendered "
 "safely."
 msgstr ""
 
 #. translators: %s: CSS parser error message.
-#: src/Theme/CustomCssPolicy.php:84
+#: src/Theme/CustomCssPolicy.php:102
 #, php-format
 msgid "Custom CSS could not be parsed safely: %s"
 msgstr ""
 
 #. translators: %s: blocked CSS feature.
-#: src/Theme/CustomCssPolicy.php:218
+#: src/Theme/CustomCssPolicy.php:236
 #, php-format
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr ""

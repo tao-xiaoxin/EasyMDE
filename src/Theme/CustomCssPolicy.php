@@ -19,8 +19,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class CustomCssPolicy {
 
-	const MAX_BYTES = 30000;
-	const SCOPE     = '.easymde-rendered-content.easymde-custom-css-active';
+	const MAX_BYTES     = 30000;
+	const SCOPE         = '.easymde-rendered-content.easymde-custom-css-active';
+	const PREVIEW_SCOPE = '.easymde-immersive-workspace__custom-css-preview-content';
 
 	public function normalize_for_storage( $css ) {
 		return $this->render_css( (string) $css, '' );
@@ -30,6 +31,23 @@ final class CustomCssPolicy {
 		$scoped = $this->render_css( (string) $css, self::SCOPE );
 
 		return is_wp_error( $scoped ) ? '' : $scoped;
+	}
+
+	public function prepare_preview( $css ) {
+		$normalized = $this->normalize_for_storage( $css );
+		if ( is_wp_error( $normalized ) ) {
+			return $normalized;
+		}
+
+		$scoped = $this->render_css( $normalized, self::PREVIEW_SCOPE );
+		if ( is_wp_error( $scoped ) ) {
+			return $scoped;
+		}
+
+		return array(
+			'css'       => $normalized,
+			'scopedCss' => $scoped,
+		);
 	}
 
 	public function validate( $css ) {

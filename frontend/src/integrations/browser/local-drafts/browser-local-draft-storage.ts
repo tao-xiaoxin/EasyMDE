@@ -4,8 +4,10 @@ import type {
   LocalDraftStoragePort,
   LocalDraftWriteResult
 } from '../../../contracts/ports/local-drafts-port';
-import type { LocalDraftsBootstrap } from '../../../contracts/bootstrap/local-drafts-bootstrap';
-import { resolveEditorNumberLocale } from '../../../contracts/bootstrap/editor-layout-bootstrap';
+import {
+  resolveLocalDraftLocale,
+  type LocalDraftsBootstrap
+} from '../../../contracts/bootstrap/local-drafts-bootstrap';
 
 type BrowserLocalDraftStorageOptions = Readonly<{
   config: Omit<LocalDraftsBootstrap, 'enabled' | 'strings'>;
@@ -171,7 +173,7 @@ export function createBrowserLocalDraftStorage({
       try {
         const fixedOffset = parseFixedOffsetMinutes(config.timeZone);
         const date = new Date(timestamp + (null === fixedOffset ? 0 : fixedOffset * 60_000));
-        const value = new Intl.DateTimeFormat(resolveEditorNumberLocale(config.locale), {
+        const value = new Intl.DateTimeFormat(resolveLocalDraftLocale(config.locale), {
           hour: '2-digit',
           minute: '2-digit',
           timeZone: null === fixedOffset ? config.timeZone : 'UTC'

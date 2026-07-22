@@ -23,6 +23,46 @@ export type LocalDraftsBootstrap = Readonly<{
   userId: number;
 }>;
 
+const WORDPRESS_SCRIPT_ALIASES: Readonly<Record<string, string>> = {
+  latin: 'Latn'
+};
+
+export function resolveLocalDraftLocale(locale: string): string {
+  const parts = locale.split(/[_-]/);
+  const language = parts[0]?.toLowerCase();
+  if (!language) return 'en-US';
+
+  const fullLocale = parts.join('-');
+  const scriptPart = parts.slice(1).find((part) => (
+    /^[A-Za-z]{4}$/.test(part) || undefined !== WORDPRESS_SCRIPT_ALIASES[part.toLowerCase()]
+  ));
+  const regionPart = parts.slice(1).find((part) => /^(?:[A-Za-z]{2}|\d{3})$/.test(part));
+  const script = scriptPart
+    ? WORDPRESS_SCRIPT_ALIASES[scriptPart.toLowerCase()]
+      ?? `${scriptPart[0]?.toUpperCase()}${scriptPart.slice(1).toLowerCase()}`
+    : undefined;
+  const region = regionPart?.toUpperCase();
+  const structuredLocale = [language, script, region].filter(Boolean).join('-');
+  const candidates = [
+    scriptPart && WORDPRESS_SCRIPT_ALIASES[scriptPart.toLowerCase()]
+      ? structuredLocale
+      : fullLocale,
+    structuredLocale,
+    [language, region].filter(Boolean).join('-'),
+    language
+  ];
+
+  for (const candidate of new Set(candidates)) {
+    try {
+      if (Intl.NumberFormat.supportedLocalesOf(candidate).length > 0) return candidate;
+    } catch {
+      // WordPress locale variants are not always valid BCP 47 tags; try the reduced candidate.
+    }
+  }
+
+  return 'en-US';
+}
+
 function requiredString(value: unknown, code: string): string {
   if ('string' !== typeof value || '' === value.trim() || value.length > 512) {
     throw new Error(code);

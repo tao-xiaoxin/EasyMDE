@@ -8,11 +8,8 @@ const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
 const productionPaths = [
   'assets/css/admin/editor.css',
-  'assets/css/admin/immersive-workspace.css',
-  'assets/js/admin/bootstrap.js',
-  'assets/js/admin/immersive-workspace.js',
-  'assets/js/admin/preview-feature-loader.js',
   'assets/js/frontend/code-highlight.js',
+  'frontend/src/app/editor/EditorRoot.tsx',
   'src/Admin/AdminAssets.php',
   'src/Content/MarkdownFeatureDetector.php',
   'templates/admin/editor-shell.php'
@@ -40,8 +37,7 @@ test('production editor paths contain no obsolete editor dark-mode control or st
 
 test('active editor copy and gettext sources do not advertise the removed control', () => {
   const copyPaths = [
-    'assets/js/admin/bootstrap.js',
-    'assets/js/admin/immersive-workspace.js',
+    'frontend/src/app/editor/EditorRoot.tsx',
     'src/Admin/AdminAssets.php',
     'templates/admin/editor-shell.php',
     'README.md',

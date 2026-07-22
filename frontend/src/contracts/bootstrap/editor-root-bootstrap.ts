@@ -13,6 +13,7 @@ import {
 } from './document-source-bootstrap';
 import {
   parseFontControlsBootstrap,
+  parseFontControlsState,
   type FontControlsBootstrap
 } from './font-controls-bootstrap';
 import {
@@ -68,6 +69,14 @@ export type EditorRootPreviewBootstrap = Readonly<{
   signature: string;
 }>;
 
+export type EditorRootWordPressBootstrap = Readonly<{
+  customCssUrl: string;
+  nonce: string;
+  previewUrl: string;
+  revisionAdminUrl: string;
+  revisionsUrl: string;
+}>;
+
 export type EditorRootBootstrap = Readonly<{
   appearance: AppearanceBootstrap;
   schemaVersion: 1;
@@ -77,6 +86,7 @@ export type EditorRootBootstrap = Readonly<{
   layout: EditorLayoutBootstrap;
   localDrafts: EditorRootLocalDraftsBootstrap;
   labels: Readonly<{
+    mediaPickerFailure: string;
     preview: string;
     source: string;
     toolbar: string;
@@ -88,6 +98,7 @@ export type EditorRootBootstrap = Readonly<{
   mediaPicker: MediaPickerBootstrap;
   toolbar: ToolbarBootstrap;
   wechatExport: WechatExportBootstrap;
+  wordpress: EditorRootWordPressBootstrap;
 }>;
 
 export class EditorRootBootstrapError extends Error {
@@ -183,6 +194,27 @@ function parseLocalDrafts(value: unknown): EditorRootLocalDraftsBootstrap {
   };
 }
 
+function parseWordPress(value: unknown): EditorRootWordPressBootstrap {
+  const wordpress = objectValue(value, 'editor-root-wordpress-invalid');
+  return {
+    customCssUrl: boundedString(wordpress.customCssUrl, 'editor-root-wordpress-invalid', {
+      maxLength: 4096
+    }),
+    nonce: boundedString(wordpress.nonce, 'editor-root-wordpress-invalid'),
+    previewUrl: boundedString(wordpress.previewUrl, 'editor-root-wordpress-invalid', {
+      maxLength: 4096
+    }),
+    revisionAdminUrl: boundedString(
+      wordpress.revisionAdminUrl,
+      'editor-root-wordpress-invalid',
+      { maxLength: 4096 }
+    ),
+    revisionsUrl: boundedString(wordpress.revisionsUrl, 'editor-root-wordpress-invalid', {
+      maxLength: 4096
+    })
+  };
+}
+
 export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   const bootstrap = objectValue(value, 'editor-root-bootstrap-invalid');
   if (1 !== bootstrap.schemaVersion) {
@@ -216,6 +248,15 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     fonts = parseFontControlsBootstrap(bootstrap.fonts);
   } catch {
     throw new EditorRootBootstrapError('editor-root-fonts-invalid');
+  }
+  try {
+    for (const theme of appearance.articleThemes) {
+      if (theme.fontDefaults) {
+        parseFontControlsState(theme.fontDefaults, fonts.options);
+      }
+    }
+  } catch {
+    throw new EditorRootBootstrapError('editor-root-appearance-invalid');
   }
   try {
     imageUpload = parseImageUploadBootstrap(bootstrap.imageUpload);
@@ -272,6 +313,10 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     layout,
     localDrafts,
     labels: {
+      mediaPickerFailure: boundedString(
+        labels.mediaPickerFailure,
+        'editor-root-label-invalid'
+      ),
       preview: boundedString(labels.preview, 'editor-root-label-invalid'),
       source: boundedString(labels.source, 'editor-root-label-invalid'),
       toolbar: boundedString(labels.toolbar, 'editor-root-label-invalid')
@@ -282,6 +327,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     revisions,
     mediaPicker,
     toolbar,
-    wechatExport
+    wechatExport,
+    wordpress: parseWordPress(bootstrap.wordpress)
   };
 }

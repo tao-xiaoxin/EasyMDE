@@ -3,6 +3,7 @@ export type RevisionsBootstrap = Readonly<{
   strings: Readonly<{
     autoSave: string;
     close: string;
+    confirmNavigation: string;
     count: string;
     failed: string;
     filterAll: string;
@@ -20,7 +21,7 @@ export type RevisionsBootstrap = Readonly<{
 }>;
 
 const STRING_KEYS = [
-  'autoSave', 'close', 'count', 'failed', 'filterAll', 'help', 'loading',
+  'autoSave', 'close', 'confirmNavigation', 'count', 'failed', 'filterAll', 'help', 'loading',
   'loadingPreview', 'manualSave', 'noRevisions', 'open', 'previewFailed',
   'restore', 'title', 'untitled'
 ] as const;

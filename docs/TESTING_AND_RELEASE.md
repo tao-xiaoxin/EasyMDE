@@ -54,7 +54,7 @@ npm test
 
 `npm run frontend:check` runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and a read-only production normal-editor comparison. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, and CodeMirror 6 on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
-The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds into `.cache/easymde-frontend-production-check/`, validates that output, and compares its complete file set and bytes with the committed `assets/build/` runtime without rewriting it. `npm run build:frontend` is the explicit maintainer command that regenerates the committed Vite Manifest, WordPress Manifest, hashed Editor script, and matching `.asset.php` dependency metadata. Both validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The production entry must retain the stable `easymde-admin-editor-toolbar` handle and depend only on `wp-element`.
+The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds into `.cache/easymde-frontend-production-check/`, validates that output, and compares its complete file set and bytes with the committed `assets/build/` runtime without rewriting it. `npm run build:frontend` is the explicit maintainer command that regenerates the committed Vite Manifest, WordPress Manifest, hashed Editor script, and matching `.asset.php` dependency metadata. Both validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The production entry retains the stable `easymde-admin-editor-toolbar` handle and declares the WordPress-owned `media-editor`, `wp-api-fetch`, `wp-element`, and `wp-hooks` runtimes it consumes.
 
 Translation maintenance commands are:
 
@@ -148,10 +148,21 @@ The Playwright suite is Chromium-only in the current configuration. CI runs it a
 Local E2E requires a clean WordPress install with the release ZIP active and a running WordPress server. Then run:
 
 ```bash
-EASYMDE_E2E_BASE_URL=<wordpress_test_url> EASYMDE_E2E_WP_PATH=<wordpress_test_path> npm run test:e2e
+EASYMDE_E2E_BASE_URL=<wordpress_test_url> \
+EASYMDE_E2E_WP_PATH=<wordpress_test_path> \
+EASYMDE_E2E_WP_CLI=<wp_cli_path> \
+npm run test:e2e
 ```
 
-The suite covers current author workflows including default EasyMDE new-post creation, save/reopen/frontend rendering, existing ordinary supported posts opening in EasyMDE without write-on-open side effects, first-save state creation, revision restore consistency, and Copy to WeChat clipboard behavior.
+Use the exact canonical WordPress origin configured for the test site; changing
+`localhost` to `127.0.0.1` or vice versa can invalidate WordPress login cookies.
+The suite covers the complete ordinary Editor Root: absence of Legacy/Focus
+assets, CodeMirror/IME/Undo/synchronized scrolling/uploads, Preview stale
+results and enhancements, Local Draft recovery and native Save, Appearance and
+Custom CSS, Outline/statistics/responsive/RTL/keyboard layout, Publishing with
+unknown extension fields, Revision Preview and native revision navigation, and
+WeChat Clipboard success/failure. It also verifies ordinary supported posts
+remain zero-write on open.
 
 ## Release Script Safety Guards
 

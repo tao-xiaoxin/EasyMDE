@@ -134,7 +134,7 @@ export function PublishingControls({
     ) ?? []);
     if (!focusable.length) return;
     const first = focusable[0];
-    const last = focusable.at(-1);
+    const last = focusable[focusable.length - 1];
     if (!first || !last) return;
     if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
@@ -308,7 +308,11 @@ export function PublishingControls({
                   />
                 </fieldset>
               ) : null}
-              {draft.capabilities.categories && bootstrap.categoryOptions.length ? (
+              {draft.capabilities.categories && bootstrap.categoryLoadError ? (
+                <p className="easymde-publishing-error" role="alert">
+                  {bootstrap.categoryLoadError}
+                </p>
+              ) : draft.capabilities.categories && bootstrap.categoryOptions.length ? (
                 <fieldset className="easymde-publishing-categories">
                   <legend>{bootstrap.strings.categories}</legend>
                   {categories.map(({ depth, option }) => (

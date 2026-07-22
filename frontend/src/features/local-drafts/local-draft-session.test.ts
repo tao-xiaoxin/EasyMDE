@@ -68,6 +68,7 @@ describe('createLocalDraftSession', () => {
       enabled: true,
       onCandidate: vi.fn(),
       onDiagnostic: vi.fn(),
+      onUnreadable: vi.fn(),
       onStatus,
       storage: storage.port,
       strings
@@ -102,16 +103,17 @@ describe('createLocalDraftSession', () => {
       enabled: true,
       onCandidate: vi.fn(),
       onDiagnostic: vi.fn(),
+      onUnreadable: vi.fn(),
       onStatus: vi.fn(),
       storage: storage.port,
       strings
     });
 
-    session.schedule('latest Focus Mode value');
+    session.schedule('latest editor value');
     vi.advanceTimersByTime(500);
 
     expect(storage.port.write).toHaveBeenCalledOnce();
-    expect(storage.port.write).toHaveBeenCalledWith('latest Focus Mode value');
+    expect(storage.port.write).toHaveBeenCalledWith('latest editor value');
     session.dispose();
     vi.useRealTimers();
   });
@@ -128,6 +130,7 @@ describe('createLocalDraftSession', () => {
       enabled: true,
       onCandidate: vi.fn(),
       onDiagnostic,
+      onUnreadable: vi.fn(),
       onStatus,
       storage: storage.port,
       strings
@@ -156,6 +159,7 @@ describe('createLocalDraftSession', () => {
       enabled: true,
       onCandidate,
       onDiagnostic: vi.fn(),
+      onUnreadable: vi.fn(),
       onStatus,
       storage: storage.port,
       strings
@@ -189,6 +193,7 @@ describe('createLocalDraftSession', () => {
       enabled: true,
       onCandidate,
       onDiagnostic: vi.fn(),
+      onUnreadable: vi.fn(),
       onStatus,
       storage: storage.port,
       strings
@@ -210,12 +215,14 @@ describe('createLocalDraftSession', () => {
     const storage = createStorage({ code: 'local-draft-payload-invalid', status: 'failed' });
     const onDiagnostic = vi.fn();
     const onStatus = vi.fn();
+    const onUnreadable = vi.fn();
     const session = createLocalDraftSession({
       delayMs: 500,
       document: { applyTextChange: vi.fn(), focus: vi.fn(), getValue: () => 'Local edit' },
       enabled: true,
       onCandidate: vi.fn(),
       onDiagnostic,
+      onUnreadable,
       onStatus,
       storage: storage.port,
       strings
@@ -227,10 +234,18 @@ describe('createLocalDraftSession', () => {
     expect(onDiagnostic).toHaveBeenCalledWith('local-draft-payload-invalid');
     expect(onStatus).toHaveBeenCalledWith({ code: 'read-failed', message: strings.readFailed, type: 'error' });
 
-    storage.emit({ status: 'missing' });
+    expect(onUnreadable).toHaveBeenCalledWith(true);
+    expect(session.discard()).toBe(true);
+    expect(storage.port.discard).toHaveBeenCalledOnce();
+    expect(onUnreadable).toHaveBeenLastCalledWith(false);
     expect(session.schedule()).toBe(true);
     vi.advanceTimersByTime(500);
     expect(storage.port.write).toHaveBeenCalledOnce();
+
+    storage.emit({ status: 'missing' });
+    expect(session.schedule()).toBe(true);
+    vi.advanceTimersByTime(500);
+    expect(storage.port.write).toHaveBeenCalledTimes(2);
     session.dispose();
     vi.useRealTimers();
   });
@@ -244,6 +259,7 @@ describe('createLocalDraftSession', () => {
       enabled: true,
       onCandidate: vi.fn(),
       onDiagnostic: vi.fn(),
+      onUnreadable: vi.fn(),
       onStatus: vi.fn(),
       storage: storage.port,
       strings
@@ -273,6 +289,7 @@ describe('createLocalDraftSession', () => {
       enabled: true,
       onCandidate: vi.fn(),
       onDiagnostic: vi.fn(),
+      onUnreadable: vi.fn(),
       onStatus: vi.fn(),
       savedFingerprint: matching.contentHash,
       storage: storage.port,

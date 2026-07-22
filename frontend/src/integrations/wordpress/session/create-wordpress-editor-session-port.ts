@@ -115,7 +115,7 @@ export function createWordPressEditorSessionPort({
       nonceFresh = false;
     }
 
-    if (Object.hasOwn(data, 'wp-refresh-post-lock')) {
+    if (Object.getOwnPropertyDescriptor(data, 'wp-refresh-post-lock')) {
       capable = true;
       const lock = record(data['wp-refresh-post-lock']);
       locked = Boolean(lock?.lock_error);

@@ -2,6 +2,7 @@ import type {
   ImageUploadPort,
   ImageUploadResult
 } from '../../../contracts/ports/image-upload-port';
+import { wordpressEndpoint } from '../shared/wordpress-endpoint';
 
 type ApiFetch = (options: Readonly<{
   body: FormData;
@@ -15,6 +16,7 @@ type CreateWordPressImageUploadPortOptions = Readonly<{
   endpoint: string;
   formData: unknown;
   nonce: string;
+  siteUrl: string;
 }>;
 
 function uploadFileName(file: File): string {
@@ -51,13 +53,15 @@ export function createWordPressImageUploadPort({
   apiFetch,
   endpoint,
   formData,
-  nonce
+  nonce,
+  siteUrl
 }: CreateWordPressImageUploadPortOptions): ImageUploadPort {
   if ('function' !== typeof apiFetch || 'function' !== typeof formData) {
     throw new Error('image-upload-wordpress-runtime-unavailable');
   }
   const request = apiFetch as ApiFetch;
   const FormDataConstructor = formData as typeof FormData;
+  const uploadUrl = wordpressEndpoint(endpoint, siteUrl, 'image-upload-url-invalid').toString();
 
   return {
     async upload({ altText, file, postId }): Promise<ImageUploadResult> {
@@ -70,7 +74,7 @@ export function createWordPressImageUploadPort({
           body,
           headers: { 'X-WP-Nonce': nonce },
           method: 'POST',
-          url: endpoint
+          url: uploadUrl
         }));
       } catch (error) {
         if (error instanceof Error && 'image-upload-response-invalid' === error.message) {

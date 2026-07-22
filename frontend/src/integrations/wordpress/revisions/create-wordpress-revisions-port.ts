@@ -2,6 +2,7 @@ import type { RevisionsPort, RevisionSummary } from '../../../contracts/ports/re
 import type { PreviewFeatures, SafePreviewHtml } from '../../../contracts/ports/preview-request';
 import { isPreviewFeatureKey } from '../../../contracts/ports/preview-request';
 import type { WordPressApiFetch } from '../preview/create-wordpress-preview-port';
+import { wordpressEndpoint } from '../shared/wordpress-endpoint';
 
 type RevisionsPortOptions = Readonly<{
   apiFetch: WordPressApiFetch;
@@ -25,27 +26,6 @@ function positiveId(value: unknown): number {
     throw new Error('revisions-response-invalid');
   }
   return Number(value);
-}
-
-function endpoint(value: string, siteUrl: string, code: string): URL {
-  let parsed: URL;
-  let site: URL;
-  try {
-    parsed = new URL(value, siteUrl);
-    site = new URL(siteUrl);
-  } catch {
-    throw new Error(code);
-  }
-  if (
-    parsed.origin !== site.origin
-    || parsed.username
-    || parsed.password
-    || parsed.hash
-    || !/^https?:$/.test(parsed.protocol)
-  ) {
-    throw new Error(code);
-  }
-  return parsed;
 }
 
 function revisionDetailUrl(listUrl: URL, revisionId: number): string {
@@ -99,8 +79,8 @@ export function createWordPressRevisionsPort(options: RevisionsPortOptions): Rev
   if ('function' !== typeof options.apiFetch || 'function' !== typeof options.confirmNavigation || 'function' !== typeof options.navigate || !options.nonce) {
     throw new Error('revisions-transport-unavailable');
   }
-  const listUrl = endpoint(options.listUrl, options.siteUrl, 'revisions-list-url-invalid');
-  const revisionAdminUrl = endpoint(options.revisionAdminUrl, options.siteUrl, 'revisions-admin-url-invalid');
+  const listUrl = wordpressEndpoint(options.listUrl, options.siteUrl, 'revisions-list-url-invalid');
+  const revisionAdminUrl = wordpressEndpoint(options.revisionAdminUrl, options.siteUrl, 'revisions-admin-url-invalid');
 
   return {
     confirmNavigation: options.confirmNavigation,

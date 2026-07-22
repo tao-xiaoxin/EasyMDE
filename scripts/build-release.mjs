@@ -428,8 +428,7 @@ function productionFrontendRequirements(root) {
     || 'easymde-admin-editor-toolbar' !== wordpressEntry.handle
     || viteEntry.file !== wordpressEntry.file
     || !Array.isArray(wordpressEntry.dependencies)
-    || 'wp-element' !== wordpressEntry.dependencies[0]
-    || 1 !== wordpressEntry.dependencies.length
+    || JSON.stringify(['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks']) !== JSON.stringify(wordpressEntry.dependencies)
     || !Array.isArray(wordpressEntry.resources)
     || 0 !== wordpressEntry.resources.length
     || 'string' !== typeof wordpressEntry.file
@@ -595,8 +594,6 @@ function removeComposerDevPackages(root, packageRoot) {
   for (const packagePath of composerDevPackagePaths(root)) {
     rmSync(join(packageRoot, packagePath), { recursive: true, force: true });
   }
-
-  pruneEmptyDirectories(join(packageRoot, 'vendor'));
 }
 
 export function buildRelease(options = {}) {
@@ -628,6 +625,7 @@ export function buildRelease(options = {}) {
   }
 
   removeComposerDevPackages(root, packageRoot);
+  pruneEmptyDirectories(packageRoot);
   buildReleaseZip(root, releaseRoot, packageRoot);
 
   return packageRoot;

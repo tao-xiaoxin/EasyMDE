@@ -11,6 +11,7 @@ describe('parsePublishingBootstrap', () => {
   it.each([
     null,
     { ...publishingBootstrapFixture, strings: { ...publishingBootstrapFixture.strings, title: '' } },
+    { ...publishingBootstrapFixture, categoryLoadError: null },
     { ...publishingBootstrapFixture, categoryOptions: [{ id: 'not-an-id', label: 'Bad', parentId: '' }] },
     { ...publishingBootstrapFixture, categoryOptions: [
       { id: '7', label: 'First', parentId: '' }, { id: '7', label: 'Duplicate', parentId: '' }

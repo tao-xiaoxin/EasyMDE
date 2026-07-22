@@ -368,10 +368,12 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $output = ob_get_clean();
 
         $this->assertStringContainsString('id="easymde-editor"', $output);
-        $this->assertStringContainsString('spellcheck="false"', $output);
-        $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
-        $this->assertStringContainsString('<div class="legacy-shell">', $output);
-        $this->assertStringContainsString('Existing <strong>HTML</strong> content.', $output);
+        $this->assertStringContainsString('id="easymde-editor-root"', $output);
+        $this->assertStringContainsString('id="easymde-source" name="easymde_markdown"', $output);
+        $this->assertStringNotContainsString('id="easymde-source" name="easymde_markdown" hidden', $output);
+        $this->assertStringContainsString('Existing **HTML** content.', $output);
+        $this->assertStringNotContainsString('id="easymde-preview"', $output);
+        $this->assertStringNotContainsString('<div class="legacy-shell">', $output);
         $this->assertStringNotContainsString('<script>', $output);
         $this->assertSame($before_content, get_post($post_id)->post_content);
         $this->assertSame($before_meta, get_post_meta($post_id));
@@ -435,15 +437,15 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $screen->render_editor_shell(get_post($post_id));
         $output = ob_get_clean();
 
-        $this->assertStringContainsString('easymde-markdown-theme-default', $output);
-        $this->assertStringNotContainsString('easymde-markdown-theme-md2html-normal', $output);
+        $this->assertStringContainsString('id="easymde-markdown-theme-field" name="easymde_markdown_theme" value="default"', $output);
+        $this->assertStringNotContainsString('value="md2html-normal"', $output);
         $this->assertSame($before_content, get_post($post_id)->post_content);
         $this->assertSame($before_meta, get_post_meta($post_id));
         $this->assertSame($before_user_meta, get_user_meta($user_id));
         $this->assertSame($before_revision_count, count(wp_get_post_revisions($post_id)));
     }
 
-    public function test_editor_shell_uses_pending_initial_preview_when_stored_markdown_cannot_reuse_html()
+    public function test_editor_shell_defers_formal_preview_to_the_react_root()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -476,17 +478,15 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $screen->render_editor_shell(get_post($post_id));
         $output = ob_get_clean();
 
-        $this->assertStringContainsString('id="easymde-preview"', $output);
-        $this->assertStringContainsString('data-easymde-initial-preview="0"', $output);
-        $this->assertStringContainsString('data-easymde-preview-refreshing="1"', $output);
-        $this->assertStringContainsString('aria-busy="true"', $output);
-        $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
+        $this->assertStringContainsString('id="easymde-editor-root"', $output);
+        $this->assertStringContainsString('## Initial preview', $output);
+        $this->assertStringNotContainsString('id="easymde-preview"', $output);
         $this->assertStringNotContainsString('<h2 id="initial-preview">Initial preview</h2>', $output);
         $this->assertStringNotContainsString('<strong>Ready before JavaScript refresh.</strong>', $output);
         $this->assertStringNotContainsString('<script>', $output);
     }
 
-    public function test_editor_shell_keeps_source_before_pending_preview_for_large_payload()
+    public function test_editor_shell_keeps_large_source_before_the_react_root()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -519,19 +519,18 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $screen->render_editor_shell(get_post($post_id));
         $output = ob_get_clean();
 
-        $preview_position = strpos($output, 'id="easymde-preview"');
+        $root_position = strpos($output, 'id="easymde-editor-root"');
         $source_position = strpos($output, 'id="easymde-source"');
 
-        $this->assertNotFalse($preview_position);
+        $this->assertNotFalse($root_position);
         $this->assertNotFalse($source_position);
-        $this->assertLessThan($preview_position, $source_position);
-        $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
+        $this->assertLessThan($root_position, $source_position);
         $this->assertStringNotContainsString('<h1>Fast preview</h1>', $output);
         $this->assertStringContainsString('id="easymde-source" name="easymde_markdown"', $output);
         $this->assertStringNotContainsString('id="easymde-markdown-field"', $output);
     }
 
-    public function test_editor_shell_markdown_fingerprint_matches_textarea_newline_normalization()
+    public function test_editor_shell_does_not_emit_the_removed_legacy_markdown_fingerprint()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $markdown = "Windows line one\r\nWindows line two\rClassic line three";
@@ -561,13 +560,12 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $screen->render_editor_shell(get_post($post_id));
         $output = ob_get_clean();
 
-        $normalized = str_replace(array("\r\n", "\r"), "\n", $markdown);
-        $expected = strlen($normalized) . ':' . hash('fnv1a32', $normalized);
-
-        $this->assertStringContainsString('data-easymde-markdown-fingerprint="' . esc_attr($expected) . '"', $output);
+        $this->assertStringContainsString('id="easymde-source" name="easymde_markdown"', $output);
+        $this->assertStringNotContainsString('id="easymde-source" name="easymde_markdown" hidden', $output);
+        $this->assertStringNotContainsString('data-easymde-markdown-fingerprint=', $output);
     }
 
-    public function test_editor_shell_reuses_stored_compatibility_html_for_initial_preview()
+    public function test_editor_shell_does_not_render_stored_compatibility_html_into_parallel_preview_dom()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $markdown = "Stored compatible HTML.\n\n**Already rendered.**";
@@ -605,12 +603,13 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $screen->render_editor_shell(get_post($post_id));
         $output = ob_get_clean();
 
-        $this->assertStringContainsString('data-easymde-initial-preview="1"', $output);
-        $this->assertStringContainsString('<p>Stored compatible HTML.</p>', $output);
-        $this->assertStringContainsString('<strong>Already rendered.</strong>', $output);
+        $this->assertStringContainsString('id="easymde-editor-root"', $output);
+        $this->assertStringNotContainsString('id="easymde-preview"', $output);
+        $this->assertStringNotContainsString('<p>Stored compatible HTML.</p>', $output);
+        $this->assertStringNotContainsString('<strong>Already rendered.</strong>', $output);
     }
 
-    public function test_editor_shell_shows_provisional_preview_when_stored_preview_signature_is_missing()
+    public function test_editor_shell_does_not_emit_stale_compatibility_html_when_signature_is_missing()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -645,18 +644,15 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $screen->render_editor_shell(get_post($post_id));
         $output = ob_get_clean();
 
-        $this->assertStringContainsString('data-easymde-initial-preview="0"', $output);
-        $this->assertStringContainsString('data-easymde-initial-preview-provisional="1"', $output);
-        $this->assertStringContainsString('data-easymde-preview-refreshing="1"', $output);
-        $this->assertStringContainsString('aria-busy="true"', $output);
-        $this->assertStringContainsString('<p>Stale compatibility HTML.</p>', $output);
-        $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
+        $this->assertStringContainsString('# Current enabled Markdown', $output);
+        $this->assertStringNotContainsString('id="easymde-preview"', $output);
+        $this->assertStringNotContainsString('<p>Stale compatibility HTML.</p>', $output);
         $this->assertStringNotContainsString('<h1>Current enabled Markdown</h1>', $output);
         $this->assertStringNotContainsString('<strong>Authoritative source.</strong>', $output);
         $this->assertStringNotContainsString('<script>', $output);
     }
 
-    public function test_editor_shell_shows_provisional_preview_when_stored_preview_signature_is_stale()
+    public function test_editor_shell_does_not_emit_stale_compatibility_html_when_signature_is_stale()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -693,12 +689,9 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $screen->render_editor_shell(get_post($post_id));
         $output = ob_get_clean();
 
-        $this->assertStringContainsString('data-easymde-initial-preview="0"', $output);
-        $this->assertStringContainsString('data-easymde-initial-preview-provisional="1"', $output);
-        $this->assertStringContainsString('data-easymde-preview-refreshing="1"', $output);
-        $this->assertStringContainsString('aria-busy="true"', $output);
-        $this->assertStringContainsString('<p>Stale compatibility HTML.</p>', $output);
-        $this->assertStringContainsString('<p class="easymde-preview-pending" role="status">Rendering preview...</p>', $output);
+        $this->assertStringContainsString('# Current signed Markdown', $output);
+        $this->assertStringNotContainsString('id="easymde-preview"', $output);
+        $this->assertStringNotContainsString('<p>Stale compatibility HTML.</p>', $output);
         $this->assertStringNotContainsString('<h1>Current signed Markdown</h1>', $output);
         $this->assertStringNotContainsString('<strong>Still authoritative.</strong>', $output);
         $this->assertStringNotContainsString('<script>', $output);
@@ -736,7 +729,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $screen->render_editor_shell(get_post($post_id));
         $output = ob_get_clean();
 
-        $this->assertStringContainsString('spellcheck="false"', $output);
+        $this->assertStringNotContainsString('spellcheck="false"', $output);
         $this->assertStringNotContainsString('spellcheck="true"', $output);
         $this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
     }

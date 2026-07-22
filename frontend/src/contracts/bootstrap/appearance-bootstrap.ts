@@ -1,6 +1,15 @@
 export type AppearanceOption = Readonly<{
+  cssUrl?: string;
+  fontDefaults?: FontDefaults;
   id: string;
   label: string;
+}>;
+
+export type FontDefaults = Readonly<{
+  appleFont: string;
+  customFont: string;
+  serifFont: string;
+  windowsFont: string;
 }>;
 
 export type CustomCssItem = Readonly<{
@@ -102,9 +111,24 @@ function parseOptions(value: unknown): ReadonlyArray<AppearanceOption> {
     }
     ids.add(id);
 
+    const cssUrl = undefined === option.cssUrl
+      ? undefined
+      : requiredString(option.cssUrl, 'invalid-appearance-option-css-url', 4096);
+    const defaults = undefined === option.fontDefaults
+      ? undefined
+      : objectValue(option.fontDefaults, 'invalid-appearance-font-defaults');
+    const fontDefaults = defaults ? {
+      appleFont: identifier(defaults.appleFont, 'invalid-appearance-font-defaults'),
+      customFont: identifier(defaults.customFont, 'invalid-appearance-font-defaults'),
+      serifFont: identifier(defaults.serifFont, 'invalid-appearance-font-defaults'),
+      windowsFont: identifier(defaults.windowsFont, 'invalid-appearance-font-defaults')
+    } : undefined;
+
     return {
       id,
-      label: requiredString(option.label, 'invalid-appearance-option-label')
+      label: requiredString(option.label, 'invalid-appearance-option-label'),
+      ...(cssUrl ? { cssUrl } : {}),
+      ...(fontDefaults ? { fontDefaults } : {})
     };
   });
 }

@@ -193,6 +193,7 @@ export function AppearanceControls({
       }
     } catch {
       if (activeRef.current) {
+        setStatus(bootstrap.strings.cssSaveFailed);
         onFailure();
       }
     } finally {

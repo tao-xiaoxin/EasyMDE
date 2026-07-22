@@ -111,6 +111,7 @@ function validBootstrap() {
     publishing: publishingBootstrapFixture,
     revisions: revisionsBootstrapFixture,
     strings: {
+      mediaPickerFailure: 'The media library could not open.',
       preview: 'Preview',
       source: 'Markdown',
       toolbar: 'Markdown toolbar'
@@ -136,6 +137,13 @@ function validBootstrap() {
         success: 'Copied',
         unsupported: 'Clipboard unsupported'
       }
+    },
+    wordpress: {
+      customCssUrl: 'https://example.test/wp-json/easymde/v1/custom-css',
+      nonce: 'synthetic-nonce',
+      previewUrl: 'https://example.test/wp-json/easymde/v1/preview',
+      revisionAdminUrl: 'https://example.test/wp-admin/revision.php',
+      revisionsUrl: 'https://example.test/wp-json/easymde/v1/revisions'
     }
   };
 }
@@ -151,6 +159,7 @@ describe('parseEditorRootBootstrap', () => {
       layout: editorLayoutBootstrapFixture,
       localDrafts: validBootstrap().localDrafts,
       labels: {
+        mediaPickerFailure: 'The media library could not open.',
         preview: 'Preview',
         source: 'Markdown',
         toolbar: 'Markdown toolbar'
@@ -170,7 +179,8 @@ describe('parseEditorRootBootstrap', () => {
         headingsLabel: 'Headings',
         linkText: 'link text'
       }),
-      wechatExport: validBootstrap().wechatExport
+      wechatExport: validBootstrap().wechatExport,
+      wordpress: validBootstrap().wordpress
     });
   });
 
@@ -179,6 +189,18 @@ describe('parseEditorRootBootstrap', () => {
     [{ ...validBootstrap(), schemaVersion: 2 }, 'editor-root-schema-unsupported'],
     [{ ...validBootstrap(), document: null }, 'editor-root-document-invalid'],
     [{ ...validBootstrap(), appearance: null }, 'editor-root-appearance-invalid'],
+    [{
+      ...validBootstrap(),
+      appearance: {
+        ...validBootstrap().appearance,
+        articleThemes: [{
+          fontDefaults: {
+            appleFont: 'missing', customFont: 'none', serifFont: 'off', windowsFont: 'system'
+          },
+          id: 'default', label: 'Default'
+        }]
+      }
+    }, 'editor-root-appearance-invalid'],
     [{ ...validBootstrap(), fonts: null }, 'editor-root-fonts-invalid'],
     [{ ...validBootstrap(), imageUpload: null }, 'editor-root-image-upload-invalid'],
     [{ ...validBootstrap(), layout: null }, 'editor-root-layout-invalid'],

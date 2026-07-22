@@ -175,7 +175,7 @@ export function cursorPosition(markdown: string, offset: number): CursorPosition
   const boundedOffset = Math.max(0, Math.min(markdown.length, offset));
   const lines = normalizeLineEndings(markdown.slice(0, boundedOffset)).split('\n');
   return {
-    column: (lines.at(-1)?.length ?? 0) + 1,
+    column: (lines[lines.length - 1]?.length ?? 0) + 1,
     line: lines.length
   };
 }
@@ -250,7 +250,7 @@ export function parseEditorOutline(markdown: string): ReadonlyArray<EditorOutlin
     if (sectionHierarchy) {
       while (
         sectionHierarchy.length > 1
-        && (sectionHierarchy.at(-1) ?? 0) >= entry.level
+        && (sectionHierarchy[sectionHierarchy.length - 1] ?? 0) >= entry.level
       ) {
         sectionHierarchy.pop();
       }
@@ -258,7 +258,7 @@ export function parseEditorOutline(markdown: string): ReadonlyArray<EditorOutlin
       sectionHierarchy.push(entry.level);
       return { ...entry, depth };
     }
-    while (hierarchy.length && (hierarchy.at(-1) ?? 0) >= entry.level) {
+    while (hierarchy.length && (hierarchy[hierarchy.length - 1] ?? 0) >= entry.level) {
       hierarchy.pop();
     }
     const depth = hierarchy.length;

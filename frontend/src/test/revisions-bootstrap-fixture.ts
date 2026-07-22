@@ -5,6 +5,7 @@ export const revisionsBootstrapFixture: RevisionsBootstrap = {
   strings: {
     autoSave: 'Auto save',
     close: 'Close',
+    confirmNavigation: 'Leave unsaved changes and open this revision?',
     count: '%d revisions',
     failed: 'Revision history could not be loaded.',
     filterAll: 'All',

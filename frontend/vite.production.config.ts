@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => {
         repositoryRoot,
         sourceEntry,
         scriptHandle: 'easymde-admin-editor-toolbar',
-        dependencies: ['wp-element'],
+        dependencies: ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks'],
         manifestResourceField: null
       })
     ],

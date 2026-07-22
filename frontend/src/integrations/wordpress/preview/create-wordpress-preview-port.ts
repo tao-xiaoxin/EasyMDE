@@ -5,6 +5,7 @@ import type {
   SafePreviewHtml
 } from '../../../contracts/ports/preview-request';
 import { isPreviewFeatureKey } from '../../../contracts/ports/preview-request';
+import { wordpressEndpoint } from '../shared/wordpress-endpoint';
 
 export type WordPressApiFetch = (options: Readonly<Record<string, unknown>>) => Promise<unknown>;
 
@@ -40,16 +41,18 @@ function parseResponse(value: unknown): PreviewResponse {
 export function createWordPressPreviewPort(
   apiFetch: WordPressApiFetch,
   restUrl: string,
-  nonce: string
+  nonce: string,
+  siteUrl: string
 ): PreviewRequestPort {
   if ('function' !== typeof apiFetch || !restUrl || !nonce) {
     throw new Error('preview-transport-unavailable');
   }
+  const endpoint = wordpressEndpoint(restUrl, siteUrl, 'preview-url-invalid').toString();
 
   return {
     async render(request: PreviewRequest, signal: AbortSignal): Promise<PreviewResponse> {
       const response = await apiFetch({
-        url: restUrl,
+        url: endpoint,
         method: 'POST',
         headers: { 'X-WP-Nonce': nonce },
         data: {

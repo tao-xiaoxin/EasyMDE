@@ -239,7 +239,7 @@ export function RevisionsControls({
       'button:not(:disabled), select:not(:disabled), [href]'
     ) ?? []);
     const first = focusable[0];
-    const last = focusable.at(-1);
+    const last = focusable[focusable.length - 1];
     if (!first || !last) return;
     if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();

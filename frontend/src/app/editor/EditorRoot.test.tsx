@@ -187,6 +187,7 @@ function fixture(): EditorRootProps & Readonly<{
     mediaPickerFrame: mediaFrame,
     nativeForm,
     nativeSubmissionPort: createWordPressNativeSubmissionPort(nativeForm),
+    onDocumentOwnerChange: vi.fn(),
     onFailure: vi.fn(),
     platform: 'win',
     prepareToolbarShortcuts: vi.fn(() => ({
@@ -320,6 +321,8 @@ describe('EditorRoot', () => {
     const view = render(<EditorRoot {...props} />);
 
     expect(view.container.querySelectorAll('[data-easymde-editor-owner="react"]')).toHaveLength(1);
+    expect(props.submissionField.hidden).toBe(true);
+    expect(props.onDocumentOwnerChange).toHaveBeenCalledWith(true);
     expect(view.container.querySelector('.cm-editor')).not.toBeNull();
     expect(props.previewPort.render).toHaveBeenCalledTimes(1);
     await waitFor(() => {
@@ -343,7 +346,26 @@ describe('EditorRoot', () => {
     expect(props.mediaPickerFrame?.open).toHaveBeenCalledTimes(1);
 
     view.unmount();
+    expect(props.submissionField.hidden).toBe(false);
+    expect(props.onDocumentOwnerChange).toHaveBeenLastCalledWith(false);
     expect(props.shortcutBinding.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the user discard an unreadable local draft and unblock storage ownership', async () => {
+    const props = fixture();
+    vi.mocked(props.localDraftStorage.read).mockReturnValue({
+      code: 'local-draft-payload-invalid',
+      status: 'failed'
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    expect(view.getByText('Draft read failed')).not.toBeNull();
+    await act(async () => {
+      fireEvent.click(view.getByRole('button', { name: 'Discard draft' }));
+    });
+
+    expect(props.localDraftStorage.discard).toHaveBeenCalledOnce();
+    expect(view.queryByRole('button', { name: 'Discard draft' })).toBeNull();
   });
 
   it('flushes the React document before native form serialization and releases the bridge', () => {
@@ -449,13 +471,16 @@ describe('EditorRoot', () => {
 
     try {
       const view = render(
-        <EditorRootErrorBoundary onFailure={props.onFailure}>
+        <EditorRootErrorBoundary
+          failureMessage="The editor could not start."
+          onFailure={props.onFailure}
+        >
           <BrokenEditorRoot />
         </EditorRootErrorBoundary>
       );
 
       expect(props.onFailure).toHaveBeenCalledWith('react-editor-render-failed');
-      expect(view.container.childElementCount).toBe(0);
+      expect(view.getByRole('alert').textContent).toBe('The editor could not start.');
     } finally {
       window.removeEventListener('error', preventSyntheticError);
       consoleError.mockRestore();
@@ -525,6 +550,59 @@ describe('EditorRoot', () => {
       expect(vi.mocked(props.enhancementPort.enhance).mock.calls.at(-1)?.[3])
         .toEqual(expect.objectContaining({ codeTheme: 'github' }));
     });
+  });
+
+  it('applies theme classes and theme font defaults to the single Preview sink', async () => {
+    const props = fixture();
+    const appearance = {
+      ...props.appearance,
+      articleThemes: props.appearance.articleThemes.map((theme) =>
+        'newsprint' === theme.id ? {
+          fontDefaults: {
+            appleFont: 'new-york',
+            customFont: 'inter',
+            serifFont: 'on',
+            windowsFont: 'segoe-ui'
+          },
+          id: 'newsprint',
+          label: 'Newsprint'
+        } : theme
+      )
+    };
+    const fonts = {
+      ...props.fonts,
+      options: {
+        appleFonts: [...props.fonts.options.appleFonts, {
+          fontFamily: '"New York"', id: 'new-york', label: 'New York'
+        }],
+        customFonts: [...props.fonts.options.customFonts, {
+          fontFamily: 'Inter, sans-serif', id: 'inter', label: 'Inter'
+        }],
+        serifOptions: [...props.fonts.options.serifOptions, {
+          fontFamily: 'Georgia, serif', id: 'on', label: 'On'
+        }],
+        windowsFonts: [...props.fonts.options.windowsFonts, {
+          fontFamily: '"Segoe UI"', id: 'segoe-ui', label: 'Segoe UI'
+        }]
+      }
+    };
+    const view = render(<EditorRoot {...props} appearance={appearance} fonts={fonts} />);
+
+    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
+    fireEvent.change(view.getByLabelText('Article theme'), {
+      target: { value: 'theme:newsprint' }
+    });
+
+    await waitFor(() => {
+      expect(props.fontControlsPort.applyState).toHaveBeenCalledWith(
+        appearance.articleThemes[1]?.fontDefaults
+      );
+    });
+    const sink = view.container.querySelector<HTMLElement>('[data-easymde-preview-html-sink="1"]');
+    expect(sink?.classList.contains('easymde-markdown-theme-newsprint')).toBe(true);
+    expect(sink?.classList.contains('easymde-code-theme-atom-one-dark')).toBe(true);
+    expect(sink?.style.getPropertyValue('--easymde-content-font-family'))
+      .toBe('Inter, sans-serif, "Segoe UI", "New York", Georgia, serif');
   });
 
   it('marks appearance-only and font-only submission changes as unsaved', async () => {
@@ -668,6 +746,20 @@ describe('EditorRoot', () => {
     expect(view.getByText('Draft restored')).not.toBeNull();
     view.unmount();
     expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('schedules local drafts from the document owner without depending on native bridge events', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() => expect(view.getByRole('button', { name: 'Bold' })).not.toBeNull());
+    vi.spyOn(props.submissionField, 'dispatchEvent').mockReturnValue(true);
+    fireEvent.click(view.getByRole('button', { name: 'Bold' }));
+
+    await waitFor(
+      () => expect(props.localDraftStorage.write).toHaveBeenCalledWith('**selected**'),
+      { timeout: 1_000 }
+    );
   });
 
   it('copies the stable Preview through the React WeChat session', async () => {

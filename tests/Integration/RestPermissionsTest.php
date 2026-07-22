@@ -2,7 +2,6 @@
 
 use EasyMDE\Support\Capabilities;
 use EasyMDE\Content\PostDocument;
-use EasyMDE\Theme\CustomCssPolicy;
 
 final class RestPermissionsTest extends WP_UnitTestCase
 {
@@ -151,36 +150,6 @@ final class RestPermissionsTest extends WP_UnitTestCase
 
         $this->assertWPError($result);
         $this->assertSame(403, $result->get_error_data()['status']);
-    }
-
-    public function test_custom_css_preview_requires_unfiltered_html()
-    {
-        $user_id = self::factory()->user->create(array('role' => 'author'));
-        wp_set_current_user($user_id);
-
-        $request = new WP_REST_Request('POST', '/easymde/v1/custom-css/preview');
-        $request->set_body_params(array('css' => 'h2 { color: red; }'));
-
-        $this->assertSame(403, rest_do_request($request)->get_status());
-    }
-
-    public function test_custom_css_preview_scopes_css_without_writing_the_user_library()
-    {
-        $user_id = self::factory()->user->create(array('role' => 'administrator'));
-        wp_set_current_user($user_id);
-
-        $options = new WP_REST_Request('GET', '/easymde/v1/theme-options');
-        $before = rest_do_request($options)->get_data()['customCss'];
-
-        $request = new WP_REST_Request('POST', '/easymde/v1/custom-css/preview');
-        $request->set_body_params(array('css' => 'h2 { color: red; }'));
-        $response = rest_do_request($request);
-        $data = $response->get_data();
-
-        $this->assertSame(200, $response->get_status());
-        $this->assertSame('h2 {color: red;}', $data['css']);
-        $this->assertStringContainsString(CustomCssPolicy::PREVIEW_SCOPE . ' h2', $data['scopedCss']);
-        $this->assertSame($before, rest_do_request($options)->get_data()['customCss']);
     }
 
     public function test_custom_css_create_update_and_delete_require_unfiltered_html()

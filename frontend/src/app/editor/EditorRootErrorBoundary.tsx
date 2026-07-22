@@ -3,6 +3,7 @@ import type { ErrorInfo, ReactNode } from 'react';
 
 type EditorRootErrorBoundaryProps = Readonly<{
   children: ReactNode;
+  failureMessage: string;
   onFailure: (code: string) => void;
 }>;
 
@@ -23,6 +24,10 @@ export class EditorRootErrorBoundary extends Component<
   }
 
   public override render(): ReactNode {
-    return this.state.failed ? null : this.props.children;
+    return this.state.failed ? (
+      <div className="notice notice-error easymde-editor-startup-error" role="alert">
+        <p>{this.props.failureMessage}</p>
+      </div>
+    ) : this.props.children;
   }
 }

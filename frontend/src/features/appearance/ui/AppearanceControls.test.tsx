@@ -195,4 +195,24 @@ describe('AppearanceControls', () => {
     await screen.findByText('CSS save failed.');
     expect((save as HTMLButtonElement).disabled).toBe(false);
   });
+
+  it('shows an authoritative failure when custom CSS saving throws', async () => {
+    const onFailure = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort({ saveCustomCss: vi.fn().mockRejectedValue(new Error('session-expired')) })}
+        onFailure={onFailure}
+        onReady={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS' }));
+    await user.click(screen.getByRole('button', { name: 'Save CSS' }));
+
+    await screen.findByText('CSS save failed.');
+    expect(onFailure).toHaveBeenCalledOnce();
+  });
 });

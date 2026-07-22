@@ -59,23 +59,6 @@ final class CustomCssController {
 
 		register_rest_route(
 			'easymde/v1',
-			'/custom-css/preview',
-			array(
-				'methods'             => WP_REST_Server::CREATABLE,
-				'callback'            => array( $this, 'handle_preview_request' ),
-				'permission_callback' => array( $this->capabilities, 'can_manage_custom_css' ),
-				'args'                => array(
-					'css' => array(
-						'type'              => 'string',
-						'required'          => true,
-						'sanitize_callback' => array( $this, 'sanitize_css_input' ),
-					),
-				),
-			)
-		);
-
-		register_rest_route(
-			'easymde/v1',
 			'/custom-css/(?P<id>[a-z0-9_-]+)',
 			array(
 				'methods'             => WP_REST_Server::DELETABLE,
@@ -90,12 +73,6 @@ final class CustomCssController {
 				),
 			)
 		);
-	}
-
-	public function handle_preview_request( WP_REST_Request $request ) {
-		$preview = $this->custom_css_policy->prepare_preview( (string) $request->get_param( 'css' ) );
-
-		return is_wp_error( $preview ) ? $preview : rest_ensure_response( $preview );
 	}
 
 	public function handle_save_request( WP_REST_Request $request ) {

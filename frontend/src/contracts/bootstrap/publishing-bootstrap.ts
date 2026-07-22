@@ -1,6 +1,7 @@
 import type { PublishingCategory } from '../ports/publishing-port';
 
 export type PublishingBootstrap = Readonly<{
+  categoryLoadError: string;
   categoryOptions: ReadonlyArray<PublishingCategory>;
   strings: Readonly<{
     categories: string;
@@ -69,6 +70,7 @@ export function parsePublishingBootstrap(value: unknown): PublishingBootstrap {
     STRING_KEYS.map((key) => [key, text(strings[key])])
   ) as PublishingBootstrap['strings'];
   return {
+    categoryLoadError: text(source.categoryLoadError, true),
     categoryOptions,
     strings: parsedStrings,
     timeZone: text(source.timeZone)

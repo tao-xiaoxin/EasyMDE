@@ -18,7 +18,7 @@ type EditorDocumentSourceProps = Readonly<{
   editorLabel: string;
   onReady: (session: EditorDocumentSession) => void;
   submissionField: HTMLTextAreaElement;
-  titleField: HTMLInputElement;
+  titleField: HTMLInputElement | null;
 }>;
 
 export function EditorDocumentSource({
@@ -64,11 +64,17 @@ export function EditorDocumentSource({
       throw error;
     }
 
+    submissionField.hidden = true;
+
     return () => {
       try {
         documentSession.flush();
       } finally {
-        editorSession.destroy();
+        try {
+          editorSession.destroy();
+        } finally {
+          submissionField.hidden = false;
+        }
       }
     };
   }, [editorLabel, onReady, submissionField, titleField]);

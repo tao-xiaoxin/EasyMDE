@@ -132,6 +132,28 @@ describe('PublishingControls', () => {
     expect(labels[1]?.style.getPropertyValue('--easymde-category-depth')).toBe('1');
   });
 
+  it('announces a PHP-owned category load failure instead of presenting an empty category state', () => {
+    const current = fixture();
+    const view = render(
+      <PublishingControls
+        bootstrap={{
+          ...publishingBootstrapFixture,
+          categoryLoadError: 'EasyMDE could not load WordPress categories.',
+          categoryOptions: []
+        }}
+        onDiagnostic={current.onDiagnostic}
+        onOpen={current.onOpen}
+        port={current.port}
+      />
+    );
+    fireEvent.click(view.getByRole('button', { name: 'Publish' }));
+
+    expect(view.getByRole('alert').textContent).toBe(
+      'EasyMDE could not load WordPress categories.'
+    );
+    expect(view.queryByRole('group', { name: 'Categories' })).toBeNull();
+  });
+
   it('blocks an empty password before the native adapter is called', () => {
     const current = fixture();
     const view = render(

@@ -5,6 +5,7 @@ import {
   useRef,
   useState
 } from '@wordpress/element';
+import type { CSSProperties } from 'react';
 
 import type {
   PreviewFeatures,
@@ -52,6 +53,7 @@ export type PreviewSurfaceRuntime = Readonly<{
 }>;
 
 type PreviewSurfaceOwnerProps = Readonly<{
+  className?: string;
   enhancementPort: PreviewEnhancementPort;
   initial: Readonly<{
     codeTheme?: string;
@@ -65,6 +67,7 @@ type PreviewSurfaceOwnerProps = Readonly<{
   onReady: (runtime: PreviewSurfaceRuntime) => void;
   port: PreviewRequestPort;
   scrollPort: PreviewScrollPort;
+  style?: CSSProperties;
 }>;
 
 function initialState(props: PreviewSurfaceOwnerProps): PreviewSurfaceState {
@@ -203,6 +206,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       html={'html' === state.kind ? state.html : null}
       refreshing={busy}
       surfaceRef={surfaceRef}
+      {...(props.className ? { className: props.className } : {})}
+      {...(props.style ? { style: props.style } : {})}
     >
       {'html' !== state.kind && 'empty' === state.kind ? (
         <p className="easymde-preview-empty">{props.messages.empty}</p>

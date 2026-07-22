@@ -8,7 +8,14 @@ import {
 
 const bootstrap = {
   articleThemes: [
-    { id: 'default', label: 'Default' },
+    {
+      cssUrl: 'https://example.test/wp-content/plugins/easymde/assets/themes/article/default.css',
+      fontDefaults: {
+        appleFont: 'system', customFont: 'none', serifFont: 'off', windowsFont: 'system'
+      },
+      id: 'default',
+      label: 'Default'
+    },
     { id: 'newsprint', label: 'Newsprint' }
   ],
   codeThemes: [

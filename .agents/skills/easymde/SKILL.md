@@ -344,7 +344,7 @@ Rules:
 - keep the root object and call `root.unmount()` during teardown;
 - mount into a dedicated, initially empty container that PHP delegates exclusively to that React Root;
 - keep WordPress-, extension-, and legacy-owned children that must survive outside the container; the first `root.render()` replaces any existing child HTML and is not a preservation mechanism;
-- do not let legacy code remove, replace, or write inside an active React container; ownership changes only at the declared handoff and returns only after `root.unmount()` and cleanup;
+- do not let another runtime remove, replace, or write inside an active React container; the owning Root releases it only after `root.unmount()` and cleanup;
 - do not hydrate admin roots;
 - do not bundle another React or ReactDOM implementation;
 - do not pass elements, contexts, hooks, portals, or refs between different React runtimes;
@@ -1501,30 +1501,18 @@ Enforce when tooling exists:
 The live root `package.json` provides Biome frontend linting, strict TypeScript,
 an independent `tsc --noEmit` gate, Vitest, Vite, a test-only WordPress Classic
 Script build contract, a read-only source-to-committed production comparison,
-and one production React entry for the normal editor's main Toolbar, document
-session, Preview Surface, Font controls, Appearance controls, Media Picker,
-image Paste/Drop upload, Local Draft session, normal-editor WeChat export, and
-normal-editor Source/Preview synchronized scrolling and command shortcuts.
-That entry owns Toolbar
-presentation, heading-menu interaction, command-intent dispatch, the
-normal-editor command-shortcut listener lifecycle, normal-editor
-Markdown command rules and transactions, the normal browser-session Markdown
-value, selection, focus, undo history and source
-scrolling, the normal Preview request/surface lifecycle, normal Source/Preview
-synchronized-scroll listener and timer lifecycle, normal Font and
-Appearance browser-session controls, normal Media selection and image-upload
-coordination, the normal Local Draft recovery scheduler, and stable Preview
-export to the browser Clipboard. Native title,
-Font, Appearance, and Markdown fields remain WordPress-owned submission
-bridges exposed through focused React session Adapters. PHP
-descriptors and translations, the remaining secondary Toolbar, immersive
-writing, and persistence retain their current owners. The legacy Markdown
-command and shortcut, scroll-sync, Media, image-upload, Draft, and WeChat export
-implementations remain required for normal-editor startup fallback, retained
-secondary and compatibility consumers, and immersive writing. A focused
-migration creates or expands production paths only for a real
-consumer and must update the live release owners, package predicates, and tests
-for that layout. The installable ZIP must reject
+and one production React entry for the complete ordinary Editor. That entry
+mounts one Editor Root and owns Toolbar/commands, CodeMirror document and title
+sessions, Preview and local enhancements, synchronized scrolling, Appearance,
+Custom CSS, Fonts, Media and uploads, Local Drafts, WeChat export,
+Outline/statistics/layout, Publishing, Revisions, and WordPress session-state
+presentation through focused Ports and Adapters. Native title, Markdown,
+appearance, publishing, and extension fields remain WordPress submission
+surfaces; PHP descriptors and translated Bootstrap strings remain the current
+configuration and message authority. The ordinary Editor has no Legacy startup
+fallback, secondary Toolbar, Focus Mode runtime, dual DOM, or reload-required
+handoff state. Changes to this production layout must update the live release
+owners, package predicates, and tests. The installable ZIP must reject
 TypeScript and React source, tests, source maps, Vite caches, and
 development-server metadata; source archives may include intentionally tracked
 `frontend/` source. Exact current inclusion, exclusion, build, and validation

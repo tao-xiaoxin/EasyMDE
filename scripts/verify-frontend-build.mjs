@@ -18,7 +18,7 @@ const productionSpec = {
   outputRoot: join(repositoryRoot, 'assets/build'),
   sourceEntry: 'frontend/src/entrypoints/admin-editor.tsx',
   expectedHandle: 'easymde-admin-editor-toolbar',
-  expectedDependencies: ['wp-element'],
+  expectedDependencies: ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks'],
   resourceField: null,
   expectedResourceCount: 0,
   resourceHasManifestRecord: false,
@@ -198,7 +198,7 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
     !Array.isArray(wordpressEntry.dependencies) ||
     JSON.stringify(spec.expectedDependencies) !== JSON.stringify(wordpressEntry.dependencies)
   ) {
-    throw new Error('WordPress entry must depend only on wp-element.');
+    throw new Error(`WordPress entry dependencies do not match the configured ${spec.label} contract.`);
   }
 
   const viteResources = spec.resourceField
@@ -247,8 +247,10 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
   if (!/\bwp\.element\b/.test(script)) {
     throw new Error('Built script does not reference the WordPress element runtime.');
   }
-  if (!/'dependencies'\s*=>\s*array\(\s*'wp-element'\s*\)/.test(assetMetadata)) {
-    throw new Error('WordPress dependency metadata does not declare wp-element.');
+  const metadataDependencies = assetMetadata.match(/'dependencies'\s*=>\s*array\(([^)]*)\)/)?.[1]
+    ?.match(/'[^']+'/g)?.map((value) => value.slice(1, -1)) ?? [];
+  if (JSON.stringify(spec.expectedDependencies) !== JSON.stringify(metadataDependencies)) {
+    throw new Error('WordPress dependency metadata does not match the manifest dependencies.');
   }
   if (!/'version'\s*=>\s*'[a-f0-9]{16}'/.test(assetMetadata)) {
     throw new Error('WordPress dependency metadata does not contain a deterministic build version.');

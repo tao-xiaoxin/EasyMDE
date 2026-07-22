@@ -10,7 +10,17 @@ export type NativeTitleSession = Readonly<{
   subscribe: (listener: () => void) => () => void;
 }>;
 
-export function createNativeTitleSession(field: HTMLInputElement): NativeTitleSession {
+export function createNativeTitleSession(field: HTMLInputElement | null): NativeTitleSession {
+  if (!field) {
+    const snapshot: NativeTitleSnapshot = { savedValue: '', value: '' };
+    return {
+      destroy() {},
+      getSnapshot: () => snapshot,
+      replaceSavedValue() {},
+      subscribe: () => () => {}
+    };
+  }
+
   const listeners = new Set<() => void>();
   let savedValue = field.defaultValue;
   let destroyed = false;

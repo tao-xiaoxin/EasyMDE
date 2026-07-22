@@ -1,4 +1,5 @@
 export const publishingBootstrapFixture = {
+  categoryLoadError: '',
   categoryOptions: [
     { id: '7', label: 'Guides', parentId: '' },
     { id: '12', label: 'Advanced', parentId: '7' }

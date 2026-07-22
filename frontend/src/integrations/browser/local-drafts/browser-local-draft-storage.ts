@@ -10,7 +10,7 @@ type BrowserLocalDraftStorageOptions = Readonly<{
   config: Omit<LocalDraftsBootstrap, 'enabled' | 'strings'>;
   eventTarget: Pick<Window, 'addEventListener' | 'removeEventListener'>;
   now: () => number;
-  storage: Storage;
+  storage: Storage | null;
 }>;
 
 function updateFnv1a(hash: number, byte: number): number {
@@ -110,6 +110,7 @@ export function createBrowserLocalDraftStorage({
   const legacyHashKey = `${legacyKey}:hash`;
 
   const read = (): LocalDraftReadResult => {
+    if (!storage) return { code: 'local-draft-storage-unavailable', status: 'failed' };
     try {
       const current = storage.getItem(currentKey);
       const legacy = storage.getItem(legacyKey);
@@ -137,6 +138,7 @@ export function createBrowserLocalDraftStorage({
 
   return {
     discard() {
+      if (!storage) return { code: 'local-draft-storage-unavailable', status: 'failed' };
       try {
         storage.removeItem(currentKey);
         storage.removeItem(currentHashKey);
@@ -164,6 +166,7 @@ export function createBrowserLocalDraftStorage({
     },
     read,
     subscribe(listener) {
+      if (!storage) return () => undefined;
       let active = true;
       const handleStorage = (event: Event) => {
         const key = (event as StorageEvent).key;
@@ -188,6 +191,7 @@ export function createBrowserLocalDraftStorage({
         schemaVersion: 1,
         updatedAt
       };
+      if (!storage) return { code: 'local-draft-storage-unavailable', status: 'failed' };
       try {
         storage.setItem(currentKey, JSON.stringify(draft));
       } catch {

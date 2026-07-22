@@ -26,6 +26,7 @@ type CreateLocalDraftSessionOptions = Readonly<{
   enabled: boolean;
   onCandidate: (available: boolean) => void;
   onDiagnostic: (code: string) => void;
+  onUnreadable: (available: boolean) => void;
   onStatus: (status: LocalDraftSessionStatus) => void;
   savedFingerprint?: string;
   storage: LocalDraftStoragePort;
@@ -48,6 +49,7 @@ export function createLocalDraftSession({
   enabled: initialEnabled,
   onCandidate,
   onDiagnostic,
+  onUnreadable,
   onStatus,
   savedFingerprint = '',
   storage,
@@ -74,16 +76,25 @@ export function createLocalDraftSession({
     onCandidate(false);
   };
 
+  const clearUnreadable = () => {
+    blockedByReadFailure = false;
+    onUnreadable(false);
+  };
+
   const readCandidate = (external: boolean) => {
     const result = storage.read();
     if ('failed' === result.status) {
       blockedByReadFailure = true;
+      candidate = null;
+      conflicted = false;
+      onCandidate(false);
+      onUnreadable(true);
       cancelTimer();
       onDiagnostic(result.code);
       onStatus({ code: 'read-failed', message: strings.readFailed, type: 'error' });
       return;
     }
-    blockedByReadFailure = false;
+    clearUnreadable();
     if ('missing' === result.status) {
       clearCandidate();
       return;
@@ -110,13 +121,14 @@ export function createLocalDraftSession({
 
   return {
     discard() {
-      if (!active || !candidate) return false;
+      if (!active || (!candidate && !blockedByReadFailure)) return false;
       const result = storage.discard();
       if ('failed' === result.status) {
         onDiagnostic(result.code);
         onStatus({ code: 'discard-failed', message: strings.discardFailed, type: 'error' });
         return false;
       }
+      clearUnreadable();
       clearCandidate();
       onStatus({ code: 'discarded', message: strings.discarded, type: 'info' });
       return true;

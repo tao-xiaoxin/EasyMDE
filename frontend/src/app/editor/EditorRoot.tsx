@@ -8,6 +8,7 @@ import {
   useRef,
   useState
 } from '@wordpress/element';
+import type { CSSProperties } from 'react';
 
 import type { DocumentSourceBootstrap } from '../../contracts/bootstrap/document-source-bootstrap';
 import type {
@@ -110,6 +111,7 @@ export type EditorRootProps = Readonly<{
   mediaPickerFailureMessage: string;
   mediaPickerFrame: MediaPickerFramePort | null;
   nativeSubmissionPort: NativeSubmissionPort;
+  onDocumentOwnerChange: (owned: boolean) => void;
   onFailure: (code: string) => void;
   platform: ToolbarPlatform;
   prepareToolbarShortcuts: (surfaces: Readonly<{
@@ -126,7 +128,7 @@ export type EditorRootProps = Readonly<{
   scrollSyncPort: ScrollSyncPort;
   sessionPort: EditorSessionPort;
   submissionField: HTMLTextAreaElement;
-  titleField: HTMLInputElement;
+  titleField: HTMLInputElement | null;
   toolbar: ToolbarBootstrap;
   wechatClipboard: WechatClipboardPort;
   wechatExport: WechatExportBootstrap;
@@ -312,6 +314,31 @@ function mediaPickerFailureCode(error: unknown): string {
     : 'media-picker-operation-failed';
 }
 
+function fontStack(
+  bootstrap: FontControlsBootstrap,
+  state: FontControlsBootstrap['state']
+): string {
+  const selections = [
+    [bootstrap.options.customFonts, state.customFont],
+    [bootstrap.options.windowsFonts, state.windowsFont],
+    [bootstrap.options.appleFonts, state.appleFont],
+    [bootstrap.options.serifOptions, state.serifFont]
+  ] as const;
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const [options, selected] of selections) {
+    const family = options.find(({ id }) => id === selected)?.fontFamily ?? '';
+    for (const part of family.split(',').map((value) => value.trim()).filter(Boolean)) {
+      const key = part.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        parts.push(part);
+      }
+    }
+  }
+  return parts.join(', ');
+}
+
 export function EditorRoot(props: EditorRootProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const appearanceSessionRef = useRef<AppearanceControlsSession | null>(null);
@@ -332,9 +359,12 @@ export function EditorRoot(props: EditorRootProps) {
   const submissionStateRef = useRef(initialSubmissionStateRef.current);
   const [documentSession, setDocumentSession] = useState<EditorDocumentSession | null>(null);
   const [draftCandidate, setDraftCandidate] = useState(false);
+  const [draftUnreadable, setDraftUnreadable] = useState(false);
   const [editorStatus, setEditorStatus] = useState<ImageUploadStatus | null>(null);
   const [previewRuntimeReady, setPreviewRuntimeReady] = useState(false);
   const [revisionCodeTheme, setRevisionCodeTheme] = useState(props.appearance.state.codeTheme);
+  const [appearanceState, setAppearanceState] = useState(props.appearance.state);
+  const [fontState, setFontState] = useState(props.fonts.state);
   const [viewMode, setViewMode] = useState<EditorViewMode>('split');
   const sessionSnapshot = useEditorSession(props.sessionPort);
   const protectedOperationError = useCallback((operation: EditorSessionOperation) => {
@@ -355,6 +385,12 @@ export function EditorRoot(props: EditorRootProps) {
     session.registerSubmissionState(initialSubmissionStateRef.current);
     setDocumentSession(session);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!documentSession) return;
+    props.onDocumentOwnerChange(true);
+    return () => props.onDocumentOwnerChange(false);
+  }, [documentSession, props.onDocumentOwnerChange]);
   const handlePreviewReady = useCallback((runtime: PreviewSurfaceRuntime) => {
     previewRuntimeRef.current = runtime;
     setPreviewRuntimeReady(true);
@@ -384,10 +420,17 @@ export function EditorRoot(props: EditorRootProps) {
   const appearancePort = useMemo<AppearancePort>(() => ({
     applyState: (state) => {
       props.appearancePort.applyState(state);
+      setAppearanceState(state);
       submissionStateRef.current = { ...submissionStateRef.current, ...state };
       documentSession?.replaceSubmissionState(submissionStateRef.current);
       previewAppearanceRef.current = state;
       setRevisionCodeTheme(state.codeTheme);
+      const defaults = props.appearance.articleThemes.find(
+        ({ id }) => id === state.markdownTheme
+      )?.fontDefaults;
+      if (defaults) {
+        fontControlsSessionRef.current?.replaceState(defaults);
+      }
       schedulePreview(true);
     },
     closeOtherPopovers: () => {
@@ -402,6 +445,8 @@ export function EditorRoot(props: EditorRootProps) {
       if (sessionError) throw sessionError;
       const result = await props.appearancePort.saveCustomCss(input);
       if ('saved' === result.status) {
+        props.appearancePort.applyState(result.snapshot.state);
+        setAppearanceState(result.snapshot.state);
         submissionStateRef.current = {
           ...submissionStateRef.current,
           ...result.snapshot.state
@@ -413,10 +458,17 @@ export function EditorRoot(props: EditorRootProps) {
       }
       return result;
     }
-  }), [documentSession, props.appearancePort, protectedOperationError, schedulePreview]);
+  }), [
+    documentSession,
+    props.appearance.articleThemes,
+    props.appearancePort,
+    protectedOperationError,
+    schedulePreview
+  ]);
   const fontControlsPort = useMemo<FontControlsPort>(() => ({
     applyState: (state) => {
       props.fontControlsPort.applyState(state);
+      setFontState(state);
       submissionStateRef.current = { ...submissionStateRef.current, ...state };
       documentSession?.replaceSubmissionState(submissionStateRef.current);
     },
@@ -545,6 +597,19 @@ export function EditorRoot(props: EditorRootProps) {
     }
     return props.executeExternalCommand(commandId, session);
   }, [openMediaPicker, props.executeExternalCommand, props.toolbar.commands, wechatSession]);
+  const previewFontStack = fontStack(props.fonts, fontState);
+  const previewClassName = [
+    'easymde-preview',
+    'easymde-rendered-content',
+    'easymde-code-mac',
+    `easymde-markdown-theme-${appearanceState.markdownTheme}`,
+    `easymde-code-theme-${appearanceState.codeTheme}`,
+    'custom' === appearanceState.markdownTheme ? 'easymde-custom-css-active' : '',
+    previewFontStack ? 'easymde-font-overrides' : ''
+  ].filter(Boolean).join(' ');
+  const previewStyle = (previewFontStack ? {
+    '--easymde-content-font-family': previewFontStack
+  } : {}) as CSSProperties;
 
   useEffect(() => {
     rootActiveRef.current = true;
@@ -598,6 +663,7 @@ export function EditorRoot(props: EditorRootProps) {
       enabled: props.localDrafts.enabled,
       onCandidate: setDraftCandidate,
       onDiagnostic: props.onFailure,
+      onUnreadable: setDraftUnreadable,
       onStatus: setEditorStatus,
       savedFingerprint: props.localDrafts.savedFingerprint,
       storage: props.localDraftStorage,
@@ -605,17 +671,17 @@ export function EditorRoot(props: EditorRootProps) {
     });
     localDraftSessionRef.current = session;
     const schedule = () => session.schedule();
-    props.submissionField.addEventListener('input', schedule);
+    const unsubscribeDocument = documentSession.document.subscribe(schedule);
     session.reconcileSavedDraft();
 
     return () => {
-      props.submissionField.removeEventListener('input', schedule);
+      unsubscribeDocument();
       if (localDraftSessionRef.current === session) {
         localDraftSessionRef.current = null;
       }
       session.dispose();
     };
-  }, [documentSession, props.localDraftStorage, props.localDrafts, props.onFailure, props.submissionField]);
+  }, [documentSession, props.localDraftStorage, props.localDrafts, props.onFailure]);
 
   useEffect(() => {
     const previewRuntime = previewRuntimeRef.current;
@@ -727,6 +793,17 @@ export function EditorRoot(props: EditorRootProps) {
           </button>
         </div>
       ) : null}
+      {draftUnreadable ? (
+        <div className="easymde-draft-notice">
+          <button
+            type="button"
+            className="button button-small"
+            onClick={() => localDraftSessionRef.current?.discard()}
+          >
+            {props.localDrafts.strings.discard}
+          </button>
+        </div>
+      ) : null}
       <EditorWorkspace
         direction={props.layout.direction}
         documentSession={documentSession}
@@ -750,6 +827,7 @@ export function EditorRoot(props: EditorRootProps) {
           <section className="easymde-pane easymde-pane-preview">
             <header className="easymde-pane-header">{props.labels.preview}</header>
             <PreviewSurfaceOwner
+              className={previewClassName}
               enhancementPort={props.enhancementPort}
               initial={{
                 codeTheme: props.appearance.state.codeTheme,
@@ -763,6 +841,7 @@ export function EditorRoot(props: EditorRootProps) {
               onReady={handlePreviewReady}
               port={previewPort}
               scrollPort={props.scrollPort}
+              style={previewStyle}
             />
           </section>
         )}

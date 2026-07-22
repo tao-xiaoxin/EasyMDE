@@ -14,7 +14,8 @@ describe('createWordPressImageUploadPort', () => {
       apiFetch,
       endpoint: '/wp-json/easymde/v1/media',
       formData: FormData,
-      nonce: 'synthetic-nonce'
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php'
     });
     const file = new File(['image'], 'screen-shot', { type: 'image/png' });
 
@@ -24,7 +25,7 @@ describe('createWordPressImageUploadPort', () => {
       url: 'https://example.test/uploads/screen-shot.png'
     });
     const request = apiFetch.mock.calls[0]?.[0];
-    expect(request.url).toBe('/wp-json/easymde/v1/media');
+    expect(request.url).toBe('https://example.test/wp-json/easymde/v1/media');
     expect(request.method).toBe('POST');
     expect(request.headers).toEqual({ 'X-WP-Nonce': 'synthetic-nonce' });
     expect(request.body.get('post_id')).toBe('17');
@@ -37,7 +38,8 @@ describe('createWordPressImageUploadPort', () => {
       apiFetch: vi.fn().mockRejectedValue(new Error('synthetic network failure')),
       endpoint: '/media',
       formData: FormData,
-      nonce: 'synthetic-nonce'
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php'
     });
     await expect(rejected.upload({
       altText: 'image',
@@ -49,12 +51,23 @@ describe('createWordPressImageUploadPort', () => {
       apiFetch: vi.fn().mockResolvedValue({ alt: '', url: '' }),
       endpoint: '/media',
       formData: FormData,
-      nonce: 'synthetic-nonce'
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php'
     });
     await expect(invalid.upload({
       altText: 'image',
       file: new File(['image'], 'image.png', { type: 'image/png' }),
       postId: 0
     })).rejects.toThrow('image-upload-response-invalid');
+  });
+
+  it('rejects a cross-origin upload endpoint before a request', () => {
+    expect(() => createWordPressImageUploadPort({
+      apiFetch: vi.fn(),
+      endpoint: 'https://remote.example/wp-json/easymde/v1/media',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php'
+    })).toThrow('image-upload-url-invalid');
   });
 });

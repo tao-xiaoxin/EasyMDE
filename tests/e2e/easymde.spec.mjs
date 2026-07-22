@@ -555,6 +555,13 @@ test.describe('EasyMDE editor workflows', () => {
       replacementEnd: 7
     });
     await expect(nativeSource).toHaveValue('# IME\n\n中文组合');
+    // CDP exposes the candidate and non-keyboard insertion separately; its documented empty text cancels the candidate.
+    await cdp.send('Input.imeSetComposition', {
+      text: '',
+      selectionStart: 0,
+      selectionEnd: 0
+    });
+    await expect(nativeSource).toHaveValue('# IME\n\n');
     await cdp.send('Input.insertText', { text: '中文组合' });
     await expect(nativeSource).toHaveValue('# IME\n\n中文组合');
     await expect(sourceEditor).toBeFocused();

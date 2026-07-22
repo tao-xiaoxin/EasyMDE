@@ -287,6 +287,36 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
   });
 
+  it('transfers the same EditorView to one immersive host and restores its exact home position', () => {
+    const { container, submissionField } = createFixture();
+    const trailingNode = document.createElement('span');
+    const immersiveHost = document.createElement('div');
+    document.body.append(immersiveHost);
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const editor = container.querySelector<HTMLElement>('.cm-editor');
+    container.append(trailingNode);
+
+    const transfer = session.prepareSurfaceTransfer(immersiveHost);
+    transfer.activate();
+
+    expect(immersiveHost.firstElementChild).toBe(editor);
+    expect(EditorView.findFromDOM(session.getInputElement())?.dom).toBe(editor);
+    expect(() => session.prepareSurfaceTransfer(document.createElement('div')))
+      .toThrow('code-mirror-surface-transfer-active');
+
+    transfer.dispose();
+
+    expect(container.firstElementChild).toBe(editor);
+    expect(editor?.nextSibling).toBe(trailingNode);
+    expect(() => transfer.activate()).toThrow('code-mirror-surface-transfer-disposed');
+    session.destroy();
+    immersiveHost.remove();
+  });
+
   it('inherits native read-only and disabled state changes', async () => {
     const { container, submissionField } = createFixture();
     submissionField.readOnly = true;

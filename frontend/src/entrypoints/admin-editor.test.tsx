@@ -42,6 +42,16 @@ const bootstrap = {
   document: {},
   fonts: {},
   imageUpload: { endpoint: '/media', nonce: 'nonce', postId: 7 },
+  immersive: {
+    strings: {
+      cancel: 'Cancel', characters: 'characters', columns: 'Columns', content: 'Content',
+      enter: 'Enter immersive writing', escapeExit: 'Esc to exit', exit: 'Exit',
+      exitHint: 'Exit immersive writing (Esc)', insertTable: 'Insert table',
+      minutes: 'About %s minutes', rows: 'Rows', startWriting: 'Start writing…',
+      table: 'Table', tableSize: '%1$s rows × %2$s columns', untitled: 'Untitled',
+      words: 'words'
+    }
+  },
   labels: { mediaPickerFailure: 'Media failed', preview: 'Preview', source: 'Markdown', toolbar: 'Toolbar' },
   layout: {},
   localDrafts: { postId: 7 },

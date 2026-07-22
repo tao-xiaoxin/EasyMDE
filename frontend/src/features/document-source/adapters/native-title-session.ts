@@ -7,6 +7,7 @@ export type NativeTitleSession = Readonly<{
   destroy: () => void;
   getSnapshot: () => NativeTitleSnapshot;
   replaceSavedValue: (value: string) => void;
+  setValue: (value: string) => void;
   subscribe: (listener: () => void) => () => void;
 }>;
 
@@ -17,6 +18,7 @@ export function createNativeTitleSession(field: HTMLInputElement | null): Native
       destroy() {},
       getSnapshot: () => snapshot,
       replaceSavedValue() {},
+      setValue() {},
       subscribe: () => () => {}
     };
   }
@@ -62,6 +64,11 @@ export function createNativeTitleSession(field: HTMLInputElement | null): Native
       savedValue = value;
       snapshot = { savedValue, value: snapshot.value };
       for (const listener of listeners) listener();
+    },
+    setValue(value: string) {
+      if (destroyed || value === field.value) return;
+      field.value = value;
+      field.dispatchEvent(new Event('input', { bubbles: true }));
     },
     subscribe(listener: () => void) {
       if (destroyed) {

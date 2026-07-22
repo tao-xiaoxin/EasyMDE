@@ -21,6 +21,7 @@ import type {
 } from '../../contracts/bootstrap/appearance-bootstrap';
 import type { FontControlsBootstrap } from '../../contracts/bootstrap/font-controls-bootstrap';
 import type { ImageUploadBootstrap } from '../../contracts/bootstrap/image-upload-bootstrap';
+import type { ImmersiveWritingBootstrap } from '../../contracts/bootstrap/immersive-writing-bootstrap';
 import type { EditorLayoutBootstrap } from '../../contracts/bootstrap/editor-layout-bootstrap';
 import type { MediaPickerBootstrap } from '../../contracts/bootstrap/media-picker-bootstrap';
 import type { PublishingBootstrap } from '../../contracts/bootstrap/publishing-bootstrap';
@@ -82,12 +83,14 @@ import {
   type LocalDraftSession
 } from '../../features/local-drafts/local-draft-session';
 import { createToolbarCommandSession } from '../../features/toolbar/toolbar-command-session';
+import { ImmersiveWriting } from '../../features/immersive-writing/ui/ImmersiveWriting';
 import {
   EditorToolbar,
   type EditorToolbarSession,
   type ToolbarPlatform
 } from '../../features/toolbar/ui/EditorToolbar';
 import { createWechatExportSession } from '../../features/wechat-export/wechat-export-session';
+import { Maximize2 } from 'lucide-react';
 
 export type EditorRootProps = Readonly<{
   appearance: AppearanceBootstrap;
@@ -99,6 +102,7 @@ export type EditorRootProps = Readonly<{
   fonts: FontControlsBootstrap;
   imageUpload: Pick<ImageUploadBootstrap, 'enabled' | 'maxBytes' | 'postId' | 'strings'>;
   imageUploadPort: ImageUploadPort;
+  immersive: ImmersiveWritingBootstrap;
   layout: EditorLayoutBootstrap;
   localDrafts: EditorRootLocalDraftsBootstrap;
   localDraftStorage: LocalDraftStoragePort;
@@ -140,6 +144,7 @@ type ActiveToolbarProps = Readonly<{
   platform: ToolbarPlatform;
   prepareToolbarShortcuts: EditorRootProps['prepareToolbarShortcuts'];
   onPopoverOpen: () => void;
+  onCommandReady: (executeCommand: ((commandId: string) => void) | null) => void;
   onReady: (session: EditorToolbarSession) => void;
   session: EditorDocumentSession;
   toolbar: ToolbarBootstrap;
@@ -212,6 +217,7 @@ function ActiveToolbar({
   platform,
   prepareToolbarShortcuts,
   onPopoverOpen,
+  onCommandReady,
   onReady,
   session,
   toolbar
@@ -252,6 +258,11 @@ function ActiveToolbar({
   }, [executeCommand, editorRoot, prepareToolbarShortcuts]);
 
   useEffect(() => () => commandSession.dispose(), [commandSession]);
+
+  useLayoutEffect(() => {
+    onCommandReady(executeCommand);
+    return () => onCommandReady(null);
+  }, [executeCommand, onCommandReady]);
 
   return (
     <EditorToolbar
@@ -351,6 +362,7 @@ export function EditorRoot(props: EditorRootProps) {
   const previewAppearanceRef = useRef(props.appearance.state);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
+  const executeToolbarCommandRef = useRef<((commandId: string) => void) | null>(null);
   const rootActiveRef = useRef(true);
   const initialSubmissionStateRef = useRef({
     ...props.appearance.state,
@@ -365,6 +377,7 @@ export function EditorRoot(props: EditorRootProps) {
   const [revisionCodeTheme, setRevisionCodeTheme] = useState(props.appearance.state.codeTheme);
   const [appearanceState, setAppearanceState] = useState(props.appearance.state);
   const [fontState, setFontState] = useState(props.fonts.state);
+  const [immersiveOpen, setImmersiveOpen] = useState(false);
   const [viewMode, setViewMode] = useState<EditorViewMode>('split');
   const sessionSnapshot = useEditorSession(props.sessionPort);
   const protectedOperationError = useCallback((operation: EditorSessionOperation) => {
@@ -489,6 +502,16 @@ export function EditorRoot(props: EditorRootProps) {
   const handleToolbarReady = useCallback((session: EditorToolbarSession) => {
     toolbarSessionRef.current = session;
   }, []);
+  const handleToolbarCommandReady = useCallback((executeCommand: ((commandId: string) => void) | null) => {
+    executeToolbarCommandRef.current = executeCommand;
+  }, []);
+  const openImmersiveWriting = useCallback(() => {
+    if (!documentSession || !executeToolbarCommandRef.current) {
+      throw new Error('immersive-writing-session-unavailable');
+    }
+    closeForToolbar();
+    setImmersiveOpen(true);
+  }, [closeForToolbar, documentSession]);
   const handlePublishingReady = useCallback((session: PublishingControlsSession) => {
     publishingSessionRef.current = session;
   }, []);
@@ -722,6 +745,7 @@ export function EditorRoot(props: EditorRootProps) {
                 platform={props.platform}
                 prepareToolbarShortcuts={props.prepareToolbarShortcuts}
                 onPopoverOpen={closeForToolbar}
+                onCommandReady={handleToolbarCommandReady}
                 onReady={handleToolbarReady}
                 session={documentSession}
                 toolbar={props.toolbar}
@@ -731,6 +755,18 @@ export function EditorRoot(props: EditorRootProps) {
                 platform={props.platform}
                 toolbar={props.toolbar}
               />
+              <span className="easymde-toolbar-divider" aria-hidden="true" />
+              <button
+                type="button"
+                className="easymde-toolbar-button easymde-toolbar-button-compact easymde-toolbar-immersive-entry"
+                aria-label={props.immersive.strings.enter}
+                title={props.immersive.strings.enter}
+                data-easymde-immersive-entry="true"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={openImmersiveWriting}
+              >
+                <Maximize2 size={16} strokeWidth={2} aria-hidden="true" />
+              </button>
             </Fragment>
           ) : null}
         </div>
@@ -766,6 +802,15 @@ export function EditorRoot(props: EditorRootProps) {
           />
         </div>
       </div>
+      {immersiveOpen && documentSession && executeToolbarCommandRef.current ? (
+        <ImmersiveWriting
+          bootstrap={props.immersive}
+          documentSession={documentSession}
+          executeCommand={executeToolbarCommandRef.current}
+          onExit={() => setImmersiveOpen(false)}
+          toolbar={props.toolbar}
+        />
+      ) : null}
       {editorStatus ? (
         <div
           className={`easymde-editor-flash is-${editorStatus.type}`}

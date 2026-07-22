@@ -360,6 +360,23 @@ test('frontend validator does not treat an XML namespace prefix as a remote URL 
   }
 });
 
+test('frontend validator permits the exact non-fetching SVG namespace used by React icon props', () => {
+  const root = copyBuildOutput();
+
+  try {
+    const manifest = readJson(join(root, 'manifest.json'));
+    const script = manifest['frontend/test/build-contract/entry.tsx'].file;
+    appendFileSync(
+      join(root, script),
+      '\nconst iconProps = { xmlns: "http://www.w3.org/2000/svg" };\n'
+    );
+
+    assert.doesNotThrow(() => validateFrontendBuild(root));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('frontend validator rejects cross-platform absolute local paths', () => {
   for (const absolutePath of [
     '/private/tmp/easymde-build/source.tsx',

@@ -21,6 +21,10 @@ import {
   type ImageUploadBootstrap
 } from './image-upload-bootstrap';
 import {
+  parseImmersiveWritingBootstrap,
+  type ImmersiveWritingBootstrap
+} from './immersive-writing-bootstrap';
+import {
   parseEditorLayoutBootstrap,
   type EditorLayoutBootstrap
 } from './editor-layout-bootstrap';
@@ -83,6 +87,7 @@ export type EditorRootBootstrap = Readonly<{
   document: DocumentSourceBootstrap;
   fonts: FontControlsBootstrap;
   imageUpload: ImageUploadBootstrap;
+  immersive: ImmersiveWritingBootstrap;
   layout: EditorLayoutBootstrap;
   localDrafts: EditorRootLocalDraftsBootstrap;
   labels: Readonly<{
@@ -225,6 +230,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   let appearance: AppearanceBootstrap;
   let fonts: FontControlsBootstrap;
   let imageUpload: ImageUploadBootstrap;
+  let immersive: ImmersiveWritingBootstrap;
   let layout: EditorLayoutBootstrap;
   let localDrafts: EditorRootLocalDraftsBootstrap;
   let mediaPicker: MediaPickerBootstrap;
@@ -262,6 +268,11 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     imageUpload = parseImageUploadBootstrap(bootstrap.imageUpload);
   } catch {
     throw new EditorRootBootstrapError('editor-root-image-upload-invalid');
+  }
+  try {
+    immersive = parseImmersiveWritingBootstrap(bootstrap.immersive);
+  } catch {
+    throw new EditorRootBootstrapError('editor-root-immersive-invalid');
   }
   try {
     layout = parseEditorLayoutBootstrap(bootstrap.layout);
@@ -310,6 +321,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     document,
     fonts,
     imageUpload,
+    immersive,
     layout,
     localDrafts,
     labels: {

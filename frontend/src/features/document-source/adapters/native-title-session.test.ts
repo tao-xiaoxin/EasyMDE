@@ -68,6 +68,27 @@ describe('createNativeTitleSession', () => {
     session.destroy();
   });
 
+  it('updates the native WordPress title owner and emits its existing input path', () => {
+    const field = document.createElement('input');
+    field.value = 'Before';
+    const handleInput = vi.fn();
+    field.addEventListener('input', handleInput);
+    const session = createNativeTitleSession(field);
+    const listener = vi.fn();
+    session.subscribe(listener);
+
+    session.setValue('After');
+
+    expect(field.value).toBe('After');
+    expect(handleInput).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(session.getSnapshot().value).toBe('After');
+
+    session.setValue('After');
+    expect(handleInput).toHaveBeenCalledTimes(1);
+    session.destroy();
+  });
+
   it('stops publishing after unsubscribe and destroy', () => {
     const field = document.createElement('input');
     const session = createNativeTitleSession(field);

@@ -71,6 +71,16 @@ function validBootstrap() {
         pasteUploading: 'Paste uploading'
       }
     },
+    immersive: {
+      strings: {
+        cancel: 'Cancel', characters: 'characters', columns: 'Columns', content: 'Content',
+        enter: 'Enter immersive writing', escapeExit: 'Esc to exit', exit: 'Exit',
+        exitHint: 'Exit immersive writing (Esc)', insertTable: 'Insert table',
+        minutes: 'About %s minutes', rows: 'Rows', startWriting: 'Start writing…',
+        table: 'Table', tableSize: '%1$s rows × %2$s columns', untitled: 'Untitled',
+        words: 'words'
+      }
+    },
     layout: editorLayoutBootstrapFixture,
     localDrafts: {
       enabled: true,
@@ -156,6 +166,7 @@ describe('parseEditorRootBootstrap', () => {
       document: { editorLabel: 'Markdown source' },
       fonts: validBootstrap().fonts,
       imageUpload: validBootstrap().imageUpload,
+      immersive: validBootstrap().immersive,
       layout: editorLayoutBootstrapFixture,
       localDrafts: validBootstrap().localDrafts,
       labels: {
@@ -203,6 +214,7 @@ describe('parseEditorRootBootstrap', () => {
     }, 'editor-root-appearance-invalid'],
     [{ ...validBootstrap(), fonts: null }, 'editor-root-fonts-invalid'],
     [{ ...validBootstrap(), imageUpload: null }, 'editor-root-image-upload-invalid'],
+    [{ ...validBootstrap(), immersive: null }, 'editor-root-immersive-invalid'],
     [{ ...validBootstrap(), layout: null }, 'editor-root-layout-invalid'],
     [{ ...validBootstrap(), localDrafts: null }, 'editor-root-local-drafts-invalid'],
     [{ ...validBootstrap(), mediaPicker: null }, 'editor-root-media-picker-invalid'],

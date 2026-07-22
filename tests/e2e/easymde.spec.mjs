@@ -1,11 +1,20 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { loadEnvFile } from 'node:process';
 import { expect, test } from '@playwright/test';
 
 const wpPath = process.env.EASYMDE_E2E_WP_PATH;
 const wpCli = process.env.EASYMDE_E2E_WP_CLI || 'wp';
-const adminPassword = 'EasyMDE-e2e-pass-1!';
+const envFile = process.env.EASYMDE_ENV_FILE || '.env';
+if (existsSync(envFile)) {
+  loadEnvFile(envFile);
+}
+const isolatedUserPassword = process.env.EASYMDE_E2E_USER_PASSWORD
+  || process.env.WORDPRESS_ADMIN_PASSWORD;
+if (!isolatedUserPassword) {
+  throw new Error('EASYMDE_E2E_USER_PASSWORD or WORDPRESS_ADMIN_PASSWORD is required.');
+}
 const fullCapabilityMarkdown = readFileSync(
   new URL('../../docs/examples/markdown-full-capability-test.md', import.meta.url),
   'utf8'
@@ -105,7 +114,10 @@ function runWp(args, options = {}) {
   );
 
   if (result.status !== 0) {
-    throw new Error(`wp ${args.join(' ')} failed\n${result.stdout}\n${result.stderr}`);
+    const redactedArgs = args.map((argument) => (
+      argument.startsWith('--user_pass=') ? '--user_pass=[redacted]' : argument
+    ));
+    throw new Error(`wp ${redactedArgs.join(' ')} failed\n${result.stdout}\n${result.stderr}`);
   }
 
   return result.stdout.trim();
@@ -124,14 +136,14 @@ function createUser(slug, role = 'administrator') {
     username,
     email,
     `--role=${role}`,
-    `--user_pass=${adminPassword}`,
+    `--user_pass=${isolatedUserPassword}`,
     '--porcelain'
   ]);
 
   return {
     id: userId,
     username,
-    password: adminPassword
+    password: isolatedUserPassword
   };
 }
 
@@ -294,14 +306,15 @@ test.describe('EasyMDE editor workflows', () => {
     }
   });
 
-  test('uses one React toolbar without Legacy or Focus Mode owners', async ({ page }, testInfo) => {
+  test('uses one React toolbar with immersive writing and no Legacy Focus Mode owner', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
 
     await login(page, user);
     await openEasyMdeNewPost(page);
 
     const editorRoot = page.locator('#easymde-editor-root');
-    const toolbar = editorRoot.getByRole('toolbar', { name: 'Markdown toolbar' });
+    const toolbarLabel = await editorRoot.locator('[role="toolbar"]').getAttribute('aria-label');
+    const toolbar = editorRoot.getByRole('toolbar', { name: toolbarLabel });
     const reactMain = toolbar.locator('.easymde-toolbar-section-main');
     const toolbarStylesheet = page.locator('#easymde-admin-toolbar-css');
     const editorScript = page.locator('#easymde-admin-editor-toolbar-js');
@@ -314,6 +327,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(reactMain.locator('[data-easymde-react-toolbar="ready"]')).toHaveCount(1);
     await expect(page.locator('#easymde-toolbar-legacy-main, #easymde-toolbar-legacy-secondary')).toHaveCount(0);
     await expect(page.locator('.easymde-toolbar-immersive-toggle, .easymde-immersive-workspace')).toHaveCount(0);
+    await expect(reactMain.locator('[data-easymde-immersive-entry="true"]')).toHaveCount(1);
     await expect(page.locator('script[src*="/assets/js/admin/bootstrap.js"]')).toHaveCount(0);
     await expect(toolbar.locator('[data-easymde-command="bold"]:visible')).toHaveCount(1);
 
@@ -354,6 +368,65 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(source).toHaveValue('###### Heading parity');
     await expect(sourceEditor).toHaveText('###### Heading parity');
     await expect(sourceEditor).toBeFocused();
+  });
+
+  test('transfers the ordinary editor session into immersive writing without a server write', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+
+    const strings = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.immersive.strings);
+    const entry = page.locator('[data-easymde-immersive-entry="true"]');
+    const sourceEditor = page.locator('.easymde-source-react .cm-content');
+    await sourceEditor.fill('selected text');
+    await sourceEditor.evaluate((element) => {
+      const view = element.closest('.cm-editor');
+      window.__easymdeImmersiveEditorView = view;
+    });
+    const mutationRequests = [];
+    page.on('request', (request) => {
+      const pathname = new URL(request.url()).pathname;
+      if ('GET' !== request.method()
+        && (/\/wp-admin\/post\.php/.test(pathname)
+          || (/\/wp-json\/easymde\/v1\//.test(pathname) && !pathname.endsWith('/preview')))) {
+        mutationRequests.push({ method: request.method(), url: pathname });
+      }
+    });
+
+    expect(await entry.evaluate((button) => {
+      const copy = button.parentElement?.querySelector('.easymde-toolbar-copy-action');
+      const secondary = button.closest('.easymde-toolbar')?.querySelector('.easymde-toolbar-section-secondary');
+      return Boolean(
+        copy
+        && secondary
+        && (copy.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING)
+        && (button.compareDocumentPosition(secondary) & Node.DOCUMENT_POSITION_FOLLOWING)
+      );
+    })).toBe(true);
+
+    await entry.click();
+    const immersive = page.getByRole('dialog', { name: strings.enter });
+    await expect(immersive).toBeVisible();
+    await expect(immersive.locator('[data-easymde-immersive-command]')).toHaveCount(11);
+    expect(await immersive.locator('.cm-editor').evaluate((editor) => (
+      editor === window.__easymdeImmersiveEditorView
+    ))).toBe(true);
+
+    await immersive.getByRole('textbox', { name: strings.untitled }).fill('Immersive title');
+    await expect(page.locator('#title')).toHaveValue('Immersive title');
+    await immersive.locator('[data-easymde-immersive-command="table"]').click();
+    await expect(page.getByRole('dialog', { name: strings.insertTable })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: strings.insertTable })).toHaveCount(0);
+    await expect(immersive).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(immersive).toHaveCount(0);
+    expect(await sourceEditor.evaluate((element) => (
+      element.closest('.cm-editor') === window.__easymdeImmersiveEditorView
+    ))).toBe(true);
+    expect(mutationRequests).toEqual([]);
+    await expect(page.locator('script[src*="immersive"], link[href*="immersive"]')).toHaveCount(0);
   });
 
   test('hands the normal document session to React with one visible source and a fresh native bridge', async ({ page }, testInfo) => {

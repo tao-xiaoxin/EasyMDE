@@ -21,251 +21,319 @@ msgid ""
 "your site administrator."
 msgstr "EasyMDE 无法加载编辑器应用。请重新安装 EasyMDE，或联系您的站点管理员。"
 
-#: src/Admin/AdminAssets.php:350 src/Admin/AdminAssets.php:566
+#: src/Admin/AdminAssets.php:384 src/Admin/AdminAssets.php:622
 msgid "Preview"
 msgstr "预览"
 
-#: src/Admin/AdminAssets.php:351
+#: src/Admin/AdminAssets.php:385
 msgid "Markdown"
 msgstr "Markdown"
 
-#: src/Admin/AdminAssets.php:503
+#: src/Admin/AdminAssets.php:523
 msgid "EasyMDE could not load WordPress categories."
 msgstr "EasyMDE 无法加载 WordPress 分类。"
 
-#: src/Admin/AdminAssets.php:558
+#: src/Admin/AdminAssets.php:596
 msgid "Markdown source"
 msgstr "Markdown 源文"
 
-#: src/Admin/AdminAssets.php:559
+#: src/Admin/AdminAssets.php:597
 msgid "Start writing Markdown to preview the article."
 msgstr "开始编写 Markdown 后将在此处预览文章。"
 
-#: src/Admin/AdminAssets.php:560
+#: src/Admin/AdminAssets.php:598
 msgid "Rendering preview..."
 msgstr "正在渲染预览..."
 
-#: src/Admin/AdminAssets.php:561
+#: src/Admin/AdminAssets.php:599
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr "预览失败。可以继续编写，保存不受影响。"
 
-#: src/Admin/AdminAssets.php:562
+#: src/Admin/AdminAssets.php:600
 msgid "Insert Media"
 msgstr "插入媒体"
 
-#: src/Admin/AdminAssets.php:563
+#: src/Admin/AdminAssets.php:601
+msgid "Enter immersive writing"
+msgstr "进入沉浸写作"
+
+#: src/Admin/AdminAssets.php:602
+msgid "Exit"
+msgstr "退出"
+
+#: src/Admin/AdminAssets.php:603
+msgid "Exit immersive writing (Esc)"
+msgstr "退出沉浸写作 (Esc)"
+
+#: src/Admin/AdminAssets.php:604
+msgid "Esc to exit"
+msgstr "Esc 退出"
+
+#: src/Admin/AdminAssets.php:605
+msgid "words"
+msgstr "词"
+
+#: src/Admin/AdminAssets.php:606
+msgid "characters"
+msgstr "字符"
+
+#. translators: %s is the estimated reading time in minutes.
+#: src/Admin/AdminAssets.php:608
+#, php-format
+msgid "About %s minutes"
+msgstr "约 %s 分钟"
+
+#: src/Admin/AdminAssets.php:609
+msgid "Untitled"
+msgstr "无标题"
+
+#: src/Admin/AdminAssets.php:610
+msgid "Start writing…"
+msgstr "开始写作…"
+
+#: src/Admin/AdminAssets.php:611
+msgid "Table"
+msgstr "表格"
+
+#: src/Admin/AdminAssets.php:612
+msgid "Insert table"
+msgstr "插入表格"
+
+#: src/Admin/AdminAssets.php:613
+msgid "Rows"
+msgstr "行数"
+
+#: src/Admin/AdminAssets.php:614
+msgid "Columns"
+msgstr "列数"
+
+#: src/Admin/AdminAssets.php:615
+msgid "Content"
+msgstr "内容"
+
+#. translators: 1: number of rows, 2: number of columns.
+#: src/Admin/AdminAssets.php:617
+#, php-format
+msgid "%1$s rows × %2$s columns"
+msgstr "%1$s 行 × %2$s 列"
+
+#: src/Admin/AdminAssets.php:618
+msgid "Cancel"
+msgstr "取消"
+
+#: src/Admin/AdminAssets.php:619
 msgid "View mode"
 msgstr "视图模式"
 
-#: src/Admin/AdminAssets.php:564
+#: src/Admin/AdminAssets.php:620
 msgid "Edit"
 msgstr "编辑"
 
-#: src/Admin/AdminAssets.php:565
+#: src/Admin/AdminAssets.php:621
 msgid "Split"
 msgstr "分屏"
 
-#: src/Admin/AdminAssets.php:567
+#: src/Admin/AdminAssets.php:623
 msgid "History"
 msgstr "历史记录"
 
-#: src/Admin/AdminAssets.php:568
+#: src/Admin/AdminAssets.php:624
 msgid "Version history"
 msgstr "历史版本"
 
 #. translators: %d is the number of available WordPress revisions.
-#: src/Admin/AdminAssets.php:570
+#: src/Admin/AdminAssets.php:626
 #, php-format
 msgid "%d revisions"
 msgstr "%d 条历史版本"
 
-#: src/Admin/AdminAssets.php:571
+#: src/Admin/AdminAssets.php:627
 msgid "All"
 msgstr "全部"
 
-#: src/Admin/AdminAssets.php:572
+#: src/Admin/AdminAssets.php:628
 msgid "Auto save"
 msgstr "自动保存"
 
-#: src/Admin/AdminAssets.php:573
+#: src/Admin/AdminAssets.php:629
 msgid "Manual save"
 msgstr "手动保存"
 
-#: src/Admin/AdminAssets.php:574
+#: src/Admin/AdminAssets.php:630
 msgid "Restore this version"
 msgstr "恢复到这个版本"
 
-#: src/Admin/AdminAssets.php:575
+#: src/Admin/AdminAssets.php:631
 msgid "Loading revision preview..."
 msgstr "正在加载修订版本..."
 
-#: src/Admin/AdminAssets.php:576
+#: src/Admin/AdminAssets.php:632
 msgid "Revision preview could not be loaded."
 msgstr "无法加载修订版本预览。"
 
-#: src/Admin/AdminAssets.php:577
+#: src/Admin/AdminAssets.php:633
 msgid "WordPress revisions for this article"
 msgstr "当前文章的 WordPress 修订版本"
 
-#: src/Admin/AdminAssets.php:578
+#: src/Admin/AdminAssets.php:634
 msgid "Loading revisions..."
 msgstr "正在加载修订版本..."
 
-#: src/Admin/AdminAssets.php:579
+#: src/Admin/AdminAssets.php:635
 msgid "No revisions are available yet."
 msgstr "暂无可用修订版本。"
 
-#: src/Admin/AdminAssets.php:580
+#: src/Admin/AdminAssets.php:636
 msgid "Untitled revision"
 msgstr "无标题修订版本"
 
-#: src/Admin/AdminAssets.php:581
+#: src/Admin/AdminAssets.php:637
 msgid "Revision history could not be loaded."
 msgstr "无法加载修订历史。"
 
-#: src/Admin/AdminAssets.php:582
+#: src/Admin/AdminAssets.php:638
 msgid "Publish article"
 msgstr "发布文章"
 
-#: src/Admin/AdminAssets.php:583
+#: src/Admin/AdminAssets.php:639
 msgid "Publishing"
 msgstr "发布设置"
 
-#: src/Admin/AdminAssets.php:584
+#: src/Admin/AdminAssets.php:640
 msgid "Status"
 msgstr "状态"
 
-#: src/Admin/AdminAssets.php:585
+#: src/Admin/AdminAssets.php:641
 msgid "Schedule"
 msgstr "定时发布"
 
-#: src/Admin/AdminAssets.php:586
+#: src/Admin/AdminAssets.php:642
 msgid "Submitting..."
 msgstr "正在提交..."
 
-#: src/Admin/AdminAssets.php:587
+#: src/Admin/AdminAssets.php:643
 msgid "WordPress could not start the requested action."
 msgstr "WordPress 无法启动请求的操作。"
 
-#: src/Admin/AdminAssets.php:588
+#: src/Admin/AdminAssets.php:644
 msgid "Close publish dialog"
 msgstr "关闭发布弹窗"
 
-#: src/Admin/AdminAssets.php:589
+#: src/Admin/AdminAssets.php:645
 msgid "Tags"
 msgstr "标签"
 
-#: src/Admin/AdminAssets.php:590
+#: src/Admin/AdminAssets.php:646
 msgid "Featured image"
 msgstr "特色图片"
 
-#: src/Admin/AdminAssets.php:591
+#: src/Admin/AdminAssets.php:647
 msgid "Visibility"
 msgstr "可见性"
 
-#: src/Admin/AdminAssets.php:592
+#: src/Admin/AdminAssets.php:648
 msgid "Public"
 msgstr "公开"
 
-#: src/Admin/AdminAssets.php:593
+#: src/Admin/AdminAssets.php:649
 msgid "Password"
 msgstr "密码"
 
-#: src/Admin/AdminAssets.php:594
+#: src/Admin/AdminAssets.php:650
 msgid "Private"
 msgstr "私密"
 
-#: src/Admin/AdminAssets.php:595
+#: src/Admin/AdminAssets.php:651
 msgid "Stick to the top of the front page"
 msgstr "置于首页顶端"
 
-#: src/Admin/AdminAssets.php:596
+#: src/Admin/AdminAssets.php:652
 msgid "Access password"
 msgstr "访问密码"
 
-#: src/Admin/AdminAssets.php:597
+#: src/Admin/AdminAssets.php:653
 msgid "Enter an access password before submitting."
 msgstr "请输入访问密码后再提交。"
 
-#: src/Admin/AdminAssets.php:598
+#: src/Admin/AdminAssets.php:654
 msgid "Summary"
 msgstr "摘要"
 
-#: src/Admin/AdminAssets.php:599
+#: src/Admin/AdminAssets.php:655
 msgid "Categories"
 msgstr "分类目录"
 
-#: src/Admin/AdminAssets.php:600
+#: src/Admin/AdminAssets.php:656
 msgid "Select featured image"
 msgstr "选择特色图片"
 
-#: src/Admin/AdminAssets.php:601
+#: src/Admin/AdminAssets.php:657
 msgid "Use featured image"
 msgstr "使用此特色图片"
 
-#: src/Admin/AdminAssets.php:602
+#: src/Admin/AdminAssets.php:658
 msgid "Remove"
 msgstr "移除"
 
-#: src/Admin/AdminAssets.php:603
+#: src/Admin/AdminAssets.php:659
 msgid "Close"
 msgstr "关闭"
 
-#: src/Admin/AdminAssets.php:604
+#: src/Admin/AdminAssets.php:660
 msgid "Markdown toolbar"
 msgstr "Markdown 工具栏"
 
-#: src/Admin/AdminAssets.php:605
+#: src/Admin/AdminAssets.php:661
 msgid "Outline"
 msgstr "大纲"
 
-#: src/Admin/AdminAssets.php:606
+#: src/Admin/AdminAssets.php:662
 msgid "Close outline"
 msgstr "收起大纲"
 
-#: src/Admin/AdminAssets.php:607
+#: src/Admin/AdminAssets.php:663
 msgid "Open outline"
 msgstr "展开大纲"
 
-#: src/Admin/AdminAssets.php:608
+#: src/Admin/AdminAssets.php:664
 msgid "No headings yet"
 msgstr "暂无标题"
 
-#: src/Admin/AdminAssets.php:609
+#: src/Admin/AdminAssets.php:665
 msgid "Show more headings"
 msgstr "显示更多标题"
 
 #. translators: 1: line number, 2: column number.
-#: src/Admin/AdminAssets.php:611
+#: src/Admin/AdminAssets.php:667
 #, php-format
 msgid "Line %1$s, Column %2$s"
 msgstr "第 %1$s 行，第 %2$s 列"
 
-#: src/Admin/AdminAssets.php:612
+#: src/Admin/AdminAssets.php:668
 msgid "Writing statistics"
 msgstr "写作统计"
 
-#: src/Admin/AdminAssets.php:613
+#: src/Admin/AdminAssets.php:669
 msgid "Reading time (minutes)"
 msgstr "阅读时长（分钟）"
 
-#: src/Admin/AdminAssets.php:614
+#: src/Admin/AdminAssets.php:670
 msgid "Lines"
 msgstr "行数"
 
-#: src/Admin/AdminAssets.php:615
+#: src/Admin/AdminAssets.php:671
 msgid "Western words"
 msgstr "西文词数"
 
-#: src/Admin/AdminAssets.php:616
+#: src/Admin/AdminAssets.php:672
 msgid "CJK characters"
 msgstr "中日韩字符"
 
-#: src/Admin/AdminAssets.php:617
+#: src/Admin/AdminAssets.php:673
 msgid "Total characters"
 msgstr "总字符数"
 
-#: src/Admin/AdminAssets.php:618
+#: src/Admin/AdminAssets.php:674
 msgid ""
 "Reading time is estimated locally at 300 reading units per minute; each "
 "Western word and CJK character counts as one unit."
@@ -273,196 +341,196 @@ msgstr ""
 "阅读时长按每分钟 300 个阅读单位在本地估算；每个西文单词和中日韩字符分别计为一"
 "个单位。"
 
-#: src/Admin/AdminAssets.php:619
+#: src/Admin/AdminAssets.php:675
 msgid "Appearance"
 msgstr "外观"
 
-#: src/Admin/AdminAssets.php:620
+#: src/Admin/AdminAssets.php:676
 msgid "Font"
 msgstr "字体"
 
-#: src/Admin/AdminAssets.php:621
+#: src/Admin/AdminAssets.php:677
 msgid "Headings"
 msgstr "标题"
 
-#: src/Admin/AdminAssets.php:622
+#: src/Admin/AdminAssets.php:678
 msgid "Article theme"
 msgstr "文章主题"
 
-#: src/Admin/AdminAssets.php:623
+#: src/Admin/AdminAssets.php:679
 msgid "Code theme"
 msgstr "代码主题"
 
-#: src/Admin/AdminAssets.php:624
+#: src/Admin/AdminAssets.php:680
 msgid "Custom CSS"
 msgstr "自定义 CSS"
 
-#: src/Admin/AdminAssets.php:625
+#: src/Admin/AdminAssets.php:681
 msgid "Custom CSS theme"
 msgstr "自定义 CSS 主题"
 
-#: src/Admin/AdminAssets.php:626
+#: src/Admin/AdminAssets.php:682
 msgid "Saved"
 msgstr "已保存"
 
-#: src/Admin/AdminAssets.php:627
+#: src/Admin/AdminAssets.php:683
 msgid "Unsaved"
 msgstr "未保存"
 
-#: src/Admin/AdminAssets.php:628
+#: src/Admin/AdminAssets.php:684
 msgid "Named custom CSS"
 msgstr "命名自定义 CSS"
 
-#: src/Admin/AdminAssets.php:629
+#: src/Admin/AdminAssets.php:685
 msgid "CSS name"
 msgstr "CSS 名称"
 
-#: src/Admin/AdminAssets.php:630
+#: src/Admin/AdminAssets.php:686
 msgid "Save CSS"
 msgstr "保存 CSS"
 
-#: src/Admin/AdminAssets.php:631
+#: src/Admin/AdminAssets.php:687
 msgid "Saved CSS."
 msgstr "CSS 已保存。"
 
-#: src/Admin/AdminAssets.php:632
+#: src/Admin/AdminAssets.php:688
 msgid "CSS save failed."
 msgstr "CSS 保存失败。"
 
-#: src/Admin/AdminAssets.php:633
+#: src/Admin/AdminAssets.php:689
 msgid "Custom font"
 msgstr "自定义字体"
 
-#: src/Admin/AdminAssets.php:634
+#: src/Admin/AdminAssets.php:690
 msgid "Windows font"
 msgstr "Windows 字体"
 
-#: src/Admin/AdminAssets.php:635
+#: src/Admin/AdminAssets.php:691
 msgid "Apple font"
 msgstr "苹果字体"
 
-#: src/Admin/AdminAssets.php:636
+#: src/Admin/AdminAssets.php:692
 msgid "Serif font"
 msgstr "衬线字体"
 
-#: src/Admin/AdminAssets.php:637
+#: src/Admin/AdminAssets.php:693
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
 msgstr "字体会在当前系统支持时按自定义、Windows、苹果和衬线后备的顺序应用。"
 
-#: src/Admin/AdminAssets.php:638
+#: src/Admin/AdminAssets.php:694
 msgid "Local draft saved"
 msgstr "本地草稿已保存"
 
-#: src/Admin/AdminAssets.php:639
+#: src/Admin/AdminAssets.php:695
 msgid "A newer local draft is available."
 msgstr "检测到更新的本地草稿。"
 
-#: src/Admin/AdminAssets.php:640
+#: src/Admin/AdminAssets.php:696
 msgid "Restore draft"
 msgstr "恢复草稿"
 
-#: src/Admin/AdminAssets.php:641
+#: src/Admin/AdminAssets.php:697
 msgid "Discard draft"
 msgstr "丢弃草稿"
 
-#: src/Admin/AdminAssets.php:642
+#: src/Admin/AdminAssets.php:698
 msgid "Draft restored."
 msgstr "草稿已恢复。"
 
-#: src/Admin/AdminAssets.php:643
+#: src/Admin/AdminAssets.php:699
 msgid "Draft discarded."
 msgstr "草稿已丢弃。"
 
-#: src/Admin/AdminAssets.php:644
+#: src/Admin/AdminAssets.php:700
 msgid "Local draft could not be read."
 msgstr "无法读取本地草稿。"
 
-#: src/Admin/AdminAssets.php:645
+#: src/Admin/AdminAssets.php:701
 msgid "Local draft could not be saved."
 msgstr "无法保存本地草稿。"
 
-#: src/Admin/AdminAssets.php:646
+#: src/Admin/AdminAssets.php:702
 msgid "Local draft could not be discarded."
 msgstr "无法丢弃本地草稿。"
 
-#: src/Admin/AdminAssets.php:647
+#: src/Admin/AdminAssets.php:703
 msgid "A different local draft was saved in another tab."
 msgstr "另一个标签页保存了不同的本地草稿。"
 
-#: src/Admin/AdminAssets.php:648 src/Frontend/FrontendAssets.php:70
+#: src/Admin/AdminAssets.php:704 src/Frontend/FrontendAssets.php:70
 msgid "Rendering failed."
 msgstr "渲染失败。"
 
-#: src/Admin/AdminAssets.php:649
+#: src/Admin/AdminAssets.php:705
 msgid ""
 "You have unsaved title or Markdown changes. Continue to revision history and "
 "leave these changes behind?"
 msgstr ""
 "标题或 Markdown 正文仍有未保存的更改。是否继续进入修订历史并放弃这些更改？"
 
-#: src/Admin/AdminAssets.php:650
+#: src/Admin/AdminAssets.php:706
 msgid "Copied preview for WeChat."
 msgstr "已复制当前预览，可直接粘贴到公众号编辑器。"
 
-#: src/Admin/AdminAssets.php:651
+#: src/Admin/AdminAssets.php:707
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr "复制到公众号失败，请在当前浏览器中重试。"
 
-#: src/Admin/AdminAssets.php:652
+#: src/Admin/AdminAssets.php:708
 msgid "Clipboard access is not available in this browser."
 msgstr "当前浏览器不支持剪贴板富文本复制。"
 
-#: src/Admin/AdminAssets.php:653
+#: src/Admin/AdminAssets.php:709
 msgid "Resize source and preview"
 msgstr "调整源码与预览窗格宽度"
 
-#: src/Admin/AdminAssets.php:654
+#: src/Admin/AdminAssets.php:710
 msgid "Uploading pasted image..."
 msgstr "正在上传粘贴的图片..."
 
-#: src/Admin/AdminAssets.php:655
+#: src/Admin/AdminAssets.php:711
 msgid "Pasted image uploaded."
 msgstr "粘贴图片已上传。"
 
-#: src/Admin/AdminAssets.php:656
+#: src/Admin/AdminAssets.php:712
 msgid "Pasted image upload failed. Please use the media library instead."
 msgstr "粘贴图片上传失败。请改用媒体库。"
 
-#: src/Admin/AdminAssets.php:657
+#: src/Admin/AdminAssets.php:713
 msgid "Pasted image is too large for this site."
 msgstr "粘贴的图片超过了本站允许的大小。"
 
-#: src/Admin/AdminAssets.php:658
+#: src/Admin/AdminAssets.php:714
 msgid "Uploading dropped image..."
 msgstr "正在上传拖放的图片..."
 
-#: src/Admin/AdminAssets.php:659
+#: src/Admin/AdminAssets.php:715
 msgid "Dropped image uploaded."
 msgstr "拖放图片已上传。"
 
-#: src/Admin/AdminAssets.php:660
+#: src/Admin/AdminAssets.php:716
 msgid "Dropped image upload failed. Please use the media library instead."
 msgstr "拖放图片上传失败。请改用媒体库。"
 
-#: src/Admin/AdminAssets.php:661
+#: src/Admin/AdminAssets.php:717
 msgid "Dropped image is too large for this site."
 msgstr "拖放的图片超过了本站允许的大小。"
 
-#: src/Admin/AdminAssets.php:662
+#: src/Admin/AdminAssets.php:718
 msgid "alt text"
 msgstr "替代文本"
 
-#: src/Admin/AdminAssets.php:663
+#: src/Admin/AdminAssets.php:719
 msgid "image"
 msgstr "图片"
 
-#: src/Admin/AdminAssets.php:664
+#: src/Admin/AdminAssets.php:720
 msgid "The WordPress media library could not be opened."
 msgstr "无法打开 WordPress 媒体库。"
 
-#: src/Admin/AdminAssets.php:665
+#: src/Admin/AdminAssets.php:721
 msgid "link text"
 msgstr "链接文本"
 
@@ -519,15 +587,15 @@ msgstr "macOS"
 msgid "Windows / Linux"
 msgstr "Windows / Linux"
 
-#: src/Rest/CustomCssController.php:91
+#: src/Rest/CustomCssController.php:114
 msgid "CSS name and CSS content are required."
 msgstr "CSS 名称和 CSS 内容为必填项。"
 
-#: src/Rest/CustomCssController.php:105
+#: src/Rest/CustomCssController.php:128
 msgid "A custom CSS style with this name already exists."
 msgstr "已存在同名自定义 CSS 样式。"
 
-#: src/Rest/CustomCssController.php:136
+#: src/Rest/CustomCssController.php:159
 msgid "Custom CSS style not found."
 msgstr "未找到自定义 CSS 样式。"
 
@@ -776,24 +844,24 @@ msgstr "Xcode"
 msgid "Wechat inspired"
 msgstr "公众号风格"
 
-#: src/Theme/CustomCssPolicy.php:46
+#: src/Theme/CustomCssPolicy.php:64
 msgid "Custom CSS is too large."
 msgstr "自定义 CSS 过大。"
 
-#: src/Theme/CustomCssPolicy.php:59
+#: src/Theme/CustomCssPolicy.php:77
 msgid ""
 "The CSS parser dependency is unavailable. Custom CSS cannot be rendered "
 "safely."
 msgstr "CSS 解析器依赖不可用，无法安全渲染自定义 CSS。"
 
 #. translators: %s: CSS parser error message.
-#: src/Theme/CustomCssPolicy.php:84
+#: src/Theme/CustomCssPolicy.php:102
 #, php-format
 msgid "Custom CSS could not be parsed safely: %s"
 msgstr "无法安全解析自定义 CSS：%s"
 
 #. translators: %s: blocked CSS feature.
-#: src/Theme/CustomCssPolicy.php:218
+#: src/Theme/CustomCssPolicy.php:236
 #, php-format
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr "自定义 CSS 包含被阻止的特性：%s"

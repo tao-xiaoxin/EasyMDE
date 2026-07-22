@@ -11,7 +11,7 @@ production entry mounting one React 18 Editor Root. This is a direct cutover,
 not another sequence of Legacy-to-React runtime handoffs. The final ordinary
 Editor does not enqueue or execute `assets/js/admin/bootstrap.js`, jQuery, the
 Legacy Toolbar, Preview, Theme, Draft, Media runtimes, Legacy fallback DOM, or
-Focus Mode / immersive-writing assets.
+Legacy Focus Mode assets.
 
 Direct cutover does not authorize feature removal. The React Root must preserve
 the complete ordinary Editor capability matrix from Issues #91 and #86:
@@ -24,16 +24,19 @@ the complete ordinary Editor capability matrix from Issues #91 and #86:
   export, Outline, statistics, and status feedback;
 - publishing fields and flows, revisions, the native WordPress form and unknown
   extension fields, permissions, Nonces, locks, failure states, responsive
-  layouts, RTL, and accessibility.
+  layouts, RTL, accessibility, and the React immersive-writing presentation.
 
 PHP and WordPress retain their existing data, authorization, rendering, native
 form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown`
 remains canonical Markdown and `post_content` remains compatibility HTML.
-Focus Mode is the only explicit product exclusion: it is not implemented,
-connected, enqueued, or loaded by the ordinary Editor.
+Issue #123 adds immersive writing inside the same React Root. Its toolbar entry
+follows WeChat export and precedes appearance controls; opening it transfers the
+same CodeMirror `EditorView`, reads and writes the existing native title
+session, and reuses the existing command and media owners. It introduces no
+route, server mutation, persistent state, second document, or save path.
 
 The ordinary Editor now follows this single-Root boundary in the live branch.
-Legacy admin Browser Runtime files and Focus Mode assets have no ordinary
+Legacy admin Browser Runtime files and Legacy Focus Mode assets have no ordinary
 Editor consumer and are excluded from the release package. Historical data and
 public PHP compatibility contracts remain preserved as described below.
 
@@ -66,7 +69,7 @@ entry for the ordinary Editor. `AdminAssets` validates
 `assets/build/wordpress-manifest.json` and its dependency metadata, enqueues the
 stable `easymde-admin-editor-toolbar` handle, serializes the versioned Root
 Bootstrap contract, and does not enqueue an admin Legacy bootstrap, jQuery, or
-Focus Mode assets. `templates/admin/editor-shell.php` provides one empty
+Legacy Focus Mode assets. `templates/admin/editor-shell.php` provides one empty
 `#easymde-editor-root` mount and native WordPress submission fields. The
 Markdown field remains visible until CodeMirror owns a working document session;
 React then hides both that bridge field and `#postdivrich`, restoring them on
@@ -77,7 +80,7 @@ WordPress and browser Adapters, mounts one `EditorRoot`, and owns idempotent
 teardown. The Root composes Toolbar/commands, CodeMirror document and title
 sessions, server Preview and local post-response enhancements, Appearance and
 Custom CSS, Fonts, Media and image upload, Local Drafts, WeChat export,
-Outline/statistics/layout, Publishing, Revisions, and WordPress session state.
+Outline/statistics/layout, immersive writing, Publishing, Revisions, and WordPress session state.
 Components depend on typed Ports; WordPress DOM, `wp.media`, REST, Storage, and
 Clipboard access remain in focused Integration Adapters.
 

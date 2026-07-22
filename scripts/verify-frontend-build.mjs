@@ -50,7 +50,8 @@ const textOutputExtensions = new Set([
 ]);
 const nonFetchingXmlNamespaceDeclarations = [
   /\s+xmlns\s*=\s*(["'])http:\/\/www\.w3\.org\/2000\/svg\1/g,
-  /\s+xmlns:xlink\s*=\s*(["'])http:\/\/www\.w3\.org\/1999\/xlink\1/g
+  /\s+xmlns:xlink\s*=\s*(["'])http:\/\/www\.w3\.org\/1999\/xlink\1/g,
+  /\bxmlns\s*:\s*(["'`])http:\/\/www\.w3\.org\/2000\/svg\1/g
 ];
 const nonFetchingMarkdownUrlPlaceholders = /\]\(https?:\/\/\)/gi;
 

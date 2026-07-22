@@ -408,6 +408,12 @@ jobs:
           name: easymde-plugin-zip
           path: dist
 
+      - name: Generate temporary WordPress test credentials
+        run: |
+          password="$(openssl rand -hex 24)"
+          echo "EASYMDE_E2E_USER_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "EASYMDE_WP_ADMIN_PASSWORD=$password" >> "$GITHUB_ENV"
+
       - name: Install release ZIP and run Plugin Check
         env:
           EASYMDE_DB_NAME: easymde_plugin_check
@@ -486,7 +492,6 @@ jobs:
           EASYMDE_DB_HOST: 127.0.0.1:3306
           EASYMDE_WP_PATH: /tmp/easymde-e2e-wp
           EASYMDE_WP_URL: http://127.0.0.1:8089
-          EASYMDE_WP_ADMIN_PASSWORD: password
         run: scripts/setup-wordpress-release.sh dist/EasyMDE.zip
 
       - name: Start WordPress server

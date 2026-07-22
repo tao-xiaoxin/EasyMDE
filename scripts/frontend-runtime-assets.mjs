@@ -36,6 +36,50 @@ export const frontendRuntimeAssets = [
     ].map(([source, destination, type]) => ({ source, destination, type }))
   },
   {
+    id: 'immersive-inter',
+    displayName: 'Inter',
+    packageName: '@fontsource/inter',
+    bundledPaths: 'assets/vendor/immersive-writing/inter/*.woff2',
+    purpose: 'Local interface font for the React immersive writing workspace.',
+    noticeLocation: 'assets/vendor/immersive-writing/inter/LICENSE',
+    managedRoot: 'assets/vendor/immersive-writing/inter',
+    copies: [
+      [400, 'inter-latin-400-normal.woff2'],
+      [500, 'inter-latin-500-normal.woff2'],
+      [600, 'inter-latin-600-normal.woff2'],
+      [700, 'inter-latin-700-normal.woff2']
+    ].map(([weight, filename]) => ({
+      source: `node_modules/@fontsource/inter/files/inter-latin-${weight}-normal.woff2`,
+      destination: `assets/vendor/immersive-writing/inter/${filename}`,
+      type: 'file'
+    })).concat({
+      source: 'node_modules/@fontsource/inter/LICENSE',
+      destination: 'assets/vendor/immersive-writing/inter/LICENSE',
+      type: 'file'
+    })
+  },
+  {
+    id: 'immersive-jetbrains-mono',
+    displayName: 'JetBrains Mono',
+    packageName: '@fontsource/jetbrains-mono',
+    bundledPaths: 'assets/vendor/immersive-writing/jetbrains-mono/*.woff2',
+    purpose: 'Local source-writing font for the React immersive writing workspace.',
+    noticeLocation: 'assets/vendor/immersive-writing/jetbrains-mono/LICENSE',
+    managedRoot: 'assets/vendor/immersive-writing/jetbrains-mono',
+    copies: [
+      [400, 'jetbrains-mono-latin-400-normal.woff2'],
+      [500, 'jetbrains-mono-latin-500-normal.woff2']
+    ].map(([weight, filename]) => ({
+      source: `node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-${weight}-normal.woff2`,
+      destination: `assets/vendor/immersive-writing/jetbrains-mono/${filename}`,
+      type: 'file'
+    })).concat({
+      source: 'node_modules/@fontsource/jetbrains-mono/LICENSE',
+      destination: 'assets/vendor/immersive-writing/jetbrains-mono/LICENSE',
+      type: 'file'
+    })
+  },
+  {
     id: 'katex',
     displayName: 'KaTeX',
     packageName: 'katex',

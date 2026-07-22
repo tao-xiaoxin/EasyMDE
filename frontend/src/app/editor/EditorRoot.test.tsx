@@ -153,6 +153,26 @@ function fixture(): EditorRootProps & Readonly<{
         url: 'https://example.test/upload.png'
       } satisfies ImageUploadResult)
     },
+    immersive: {
+      strings: {
+        cancel: 'Cancel',
+        characters: 'characters',
+        columns: 'Columns',
+        content: 'Content',
+        enter: 'Enter immersive writing',
+        escapeExit: 'Esc to exit',
+        exit: 'Exit',
+        exitHint: 'Exit immersive writing (Esc)',
+        insertTable: 'Insert table',
+        minutes: 'About %s minutes',
+        rows: 'Rows',
+        startWriting: 'Start writing…',
+        table: 'Table',
+        tableSize: '%1$s rows × %2$s columns',
+        untitled: 'Untitled',
+        words: 'words'
+      }
+    },
     layout: editorLayoutBootstrapFixture,
     localDraftStorage,
     localDrafts: {
@@ -264,6 +284,30 @@ function fixture(): EditorRootProps & Readonly<{
         suffix: '**',
         surface: 'main'
       }, {
+        action: 'wrap', group: 'format', icon: 'editor-italic', id: 'italic',
+        label: 'Italic', prefix: '*', suffix: '*', surface: 'main'
+      }, {
+        action: 'wrap', group: 'format', icon: 'editor-strikethrough', id: 'strike',
+        label: 'Strikethrough', prefix: '~~', suffix: '~~', surface: 'main'
+      }, {
+        action: 'quote', group: 'block', icon: 'format-quote', id: 'quote',
+        label: 'Quote', linePrefix: '> ', surface: 'main'
+      }, {
+        action: 'unorderedList', group: 'block', icon: 'editor-ul', id: 'unorderedlist',
+        label: 'Unordered list', linePrefix: '- ', surface: 'main'
+      }, {
+        action: 'orderedList', group: 'block', icon: 'editor-ol', id: 'orderedlist',
+        label: 'Ordered list', linePrefix: '1. ', surface: 'main'
+      }, {
+        action: 'wrap', group: 'insert', icon: 'editor-code', id: 'inlinecode',
+        label: 'Inline code', prefix: '`', suffix: '`', surface: 'main'
+      }, {
+        action: 'codeFence', group: 'insert', icon: 'media-code', id: 'codefence',
+        label: 'Code fence', surface: 'main'
+      }, {
+        action: 'link', group: 'insert', icon: 'admin-links', id: 'link',
+        label: 'Link', surface: 'main'
+      }, {
         action: 'image',
         group: 'insert',
         icon: 'format-image',
@@ -349,6 +393,90 @@ describe('EditorRoot', () => {
     expect(props.submissionField.hidden).toBe(false);
     expect(props.onDocumentOwnerChange).toHaveBeenLastCalledWith(false);
     expect(props.shortcutBinding.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens immersive writing after WeChat export with the same document and title owners', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const entry = view.getByRole('button', { name: 'Enter immersive writing' });
+    const wechat = view.getByRole('button', { name: 'Copy to WeChat' });
+    const appearance = view.getByRole('button', { name: 'Appearance' });
+    const originalEditor = view.container.querySelector<HTMLElement>('.cm-editor');
+    const originalParent = originalEditor?.parentElement;
+    const previewCalls = vi.mocked(props.previewPort.render).mock.calls.length;
+
+    expect(wechat.compareDocumentPosition(entry) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(entry.compareDocumentPosition(appearance) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+
+    fireEvent.click(entry);
+
+    const immersive = view.getByRole('dialog', { name: 'Enter immersive writing' });
+    expect(immersive.querySelector('.cm-editor')).toBe(originalEditor);
+    expect(immersive.querySelectorAll('.cm-editor')).toHaveLength(1);
+    expect(document.body.style.overflow).toBe('hidden');
+    expect(immersive.querySelectorAll('[data-easymde-immersive-command]')).toHaveLength(11);
+
+    const immersiveEditor = immersive.querySelector<HTMLElement>('.cm-content');
+    const immersiveView = immersiveEditor ? EditorView.findFromDOM(immersiveEditor) : null;
+    expect(immersiveView).not.toBeNull();
+    const expectedCommands: ReadonlyArray<readonly [string, string]> = [
+      ['bold', '**seed**'],
+      ['italic', '*seed*'],
+      ['strike', '~~seed~~'],
+      ['quote', '> seed'],
+      ['unorderedlist', '- seed'],
+      ['orderedlist', '1. seed'],
+      ['inlinecode', '`seed`'],
+      ['codefence', '```\nseed\n```'],
+      ['link', '[seed](https://)']
+    ];
+    for (const [commandId, expected] of expectedCommands) {
+      immersiveView?.dispatch({
+        changes: { from: 0, to: immersiveView.state.doc.length, insert: 'seed' },
+        selection: { anchor: 0, head: 4 }
+      });
+      fireEvent.click(immersive.querySelector<HTMLButtonElement>(
+        `[data-easymde-immersive-command="${commandId}"]`
+      ) as HTMLButtonElement);
+      expect(props.submissionField.value).toBe(expected);
+    }
+
+    fireEvent.change(view.getByRole('textbox', { name: 'Untitled' }), {
+      target: { value: 'Immersive title' }
+    });
+    expect(props.titleField?.value).toBe('Immersive title');
+
+    fireEvent.click(immersive.querySelector<HTMLButtonElement>('[data-easymde-immersive-command="image"]') as HTMLButtonElement);
+    expect(props.mediaPickerFrame?.open).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(immersive.querySelector<HTMLButtonElement>('[data-easymde-immersive-command="table"]') as HTMLButtonElement);
+    const tableDialog = view.getByRole('dialog', { name: 'Insert table' });
+    const tableButtons = tableDialog.querySelectorAll<HTMLButtonElement>('button');
+    for (const button of tableButtons) {
+      Object.defineProperty(button, 'offsetParent', { configurable: true, value: tableDialog });
+    }
+    expect(document.activeElement).toBe(tableButtons[0]);
+    tableButtons[tableButtons.length - 1]?.focus();
+    fireEvent.keyDown(tableDialog, { key: 'Tab' });
+    expect(document.activeElement).toBe(tableButtons[0]);
+    fireEvent.keyDown(tableDialog, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(tableButtons[tableButtons.length - 1]);
+    fireEvent.click(tableDialog.parentElement?.querySelector<HTMLButtonElement>('.easymde-immersive-table-dismiss') as HTMLButtonElement);
+    expect(view.queryByRole('dialog', { name: 'Insert table' })).toBeNull();
+    fireEvent.click(immersive.querySelector<HTMLButtonElement>('[data-easymde-immersive-command="table"]') as HTMLButtonElement);
+    expect(view.getByRole('dialog', { name: 'Insert table' })).not.toBeNull();
+    fireEvent.keyDown(immersive, { key: 'Escape' });
+    expect(view.queryByRole('dialog', { name: 'Insert table' })).toBeNull();
+    expect(view.getByRole('dialog', { name: 'Enter immersive writing' })).not.toBeNull();
+
+    fireEvent.keyDown(immersive, { key: 'Escape' });
+
+    expect(view.queryByRole('dialog', { name: 'Enter immersive writing' })).toBeNull();
+    expect(originalEditor?.parentElement).toBe(originalParent);
+    expect(document.body.style.overflow).toBe('');
+    await waitFor(() => {
+      expect(props.previewPort.render).toHaveBeenCalledTimes(previewCalls + 1);
+    });
   });
 
   it('lets the user discard an unreadable local draft and unblock storage ownership', async () => {

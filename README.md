@@ -51,6 +51,7 @@ EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_con
 - Split Markdown source editor and live preview.
 - Scroll synchronization between source and preview panes.
 - Compact icon toolbar for common Markdown actions.
+- Immersive writing from the ordinary editor toolbar, using the same title and Markdown session without a separate save path.
 - Typora-inspired keyboard shortcuts with site-wide Windows/Linux and macOS overrides.
 - WordPress media library image insertion, plus local clipboard paste and drag-and-drop image upload.
 - Browser local draft recovery with explicit restore, discard, and cross-tab conflict handling.

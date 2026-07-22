@@ -17,9 +17,13 @@ The current maintainer decision for Issue #91 supersedes this Skill's generic
 incremental-handoff default. Build one complete ordinary WordPress Editor Root
 and remove the ordinary Editor's `bootstrap.js`, jQuery, Legacy DOM, dual-owner
 handoff, and fallback runtime. Do not add another bridge or handoff state.
-Focus Mode / immersive writing is excluded and must not be implemented,
-connected, enqueued, or loaded. Every other ordinary Editor capability in
-Issues #91 and #86 remains required; direct cutover is not feature reduction.
+Issue #123 adds immersive writing as a focused React presentation inside the
+ordinary Editor. It transfers the existing CodeMirror surface and native title
+session, reuses existing command and media owners, remains zero-write on
+open/close/focus/cancel, and never restores Legacy Focus Mode JavaScript, CSS,
+jQuery, dual DOM, routes, fallback runtime, or a second document owner. Every
+other ordinary Editor capability in Issues #91 and #86 remains required;
+direct cutover is not feature reduction.
 Use the migration Skill only for Legacy inventory and deletion evidence where
 it does not conflict with this explicit decision.
 
@@ -1510,8 +1514,9 @@ presentation through focused Ports and Adapters. Native title, Markdown,
 appearance, publishing, and extension fields remain WordPress submission
 surfaces; PHP descriptors and translated Bootstrap strings remain the current
 configuration and message authority. The ordinary Editor has no Legacy startup
-fallback, secondary Toolbar, Focus Mode runtime, dual DOM, or reload-required
-handoff state. Changes to this production layout must update the live release
+fallback, secondary Toolbar, Legacy Focus Mode runtime, dual DOM, or
+reload-required handoff state. Its immersive-writing Feature is part of the
+same React Root and temporarily presents the same document session. Changes to this production layout must update the live release
 owners, package predicates, and tests. The installable ZIP must reject
 TypeScript and React source, tests, source maps, Vite caches, and
 development-server metadata; source archives may include intentionally tracked

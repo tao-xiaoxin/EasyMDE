@@ -41,6 +41,10 @@ export type CodeMirrorDocumentSession = Readonly<{
   getSelection: () => DocumentSelection;
   getSnapshot: () => CodeMirrorDocumentSnapshot;
   getValue: () => string;
+  prepareSurfaceTransfer: (host: HTMLElement) => Readonly<{
+    activate: () => void;
+    dispose: () => void;
+  }>;
   replaceSavedValue: (value: string) => void;
   revealPosition: (position: number) => void;
   subscribe: (listener: () => void) => () => void;
@@ -121,6 +125,7 @@ export function createCodeMirrorDocumentSession({
 }: CreateCodeMirrorDocumentSessionOptions): CodeMirrorDocumentSession {
   let syncingFromNative = false;
   let destroyed = false;
+  let activeSurfaceTransfer: Readonly<{ dispose: () => void }> | null = null;
   const initialValue = submissionField.value;
   let savedValue = submissionField.defaultValue;
   const initialSelection = nativeSelection(submissionField);
@@ -275,6 +280,7 @@ export function createCodeMirrorDocumentSession({
       if (destroyed) {
         return;
       }
+      activeSurfaceTransfer?.dispose();
       destroyed = true;
       listeners.clear();
       selectionListeners.clear();
@@ -314,6 +320,53 @@ export function createCodeMirrorDocumentSession({
     getSelection: () => sessionSelection(view),
     getSnapshot: () => snapshot,
     getValue: () => view.state.doc.toString(),
+    prepareSurfaceTransfer(host: HTMLElement) {
+      if (destroyed) {
+        throw new Error('code-mirror-session-destroyed');
+      }
+      if (activeSurfaceTransfer) {
+        throw new Error('code-mirror-surface-transfer-active');
+      }
+      const home = view.dom.parentNode;
+      const homeNextSibling = view.dom.nextSibling;
+      if (!home) {
+        throw new Error('code-mirror-surface-home-unavailable');
+      }
+      let activated = false;
+      let disposed = false;
+      const transfer = {
+        activate() {
+          if (disposed) {
+            throw new Error('code-mirror-surface-transfer-disposed');
+          }
+          if (activated) {
+            return;
+          }
+          activated = true;
+          host.append(view.dom);
+          view.requestMeasure();
+        },
+        dispose() {
+          if (disposed) {
+            return;
+          }
+          disposed = true;
+          if (activated) {
+            if (homeNextSibling?.parentNode === home) {
+              home.insertBefore(view.dom, homeNextSibling);
+            } else {
+              home.appendChild(view.dom);
+            }
+            view.requestMeasure();
+          }
+          if (activeSurfaceTransfer === transfer) {
+            activeSurfaceTransfer = null;
+          }
+        }
+      };
+      activeSurfaceTransfer = transfer;
+      return transfer;
+    },
     replaceSavedValue(value: string) {
       if (destroyed || value === savedValue) return;
       savedValue = value;

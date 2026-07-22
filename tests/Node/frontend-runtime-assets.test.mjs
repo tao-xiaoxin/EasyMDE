@@ -102,11 +102,34 @@ test('repository frontend runtime assets match their locked local sources', () =
   assert.deepEqual(findFrontendAssetMismatches(repoRoot), []);
 });
 
-test('frontend runtime preparation is explicit and uses only the Highlight.js prebuilt package', () => {
+test('frontend runtime preparation is explicit and owns the immersive writing fonts', () => {
   const highlight = frontendRuntimeAssets.find((component) => component.id === 'highlight');
+  const inter = frontendRuntimeAssets.find((component) => component.id === 'immersive-inter');
+  const jetbrainsMono = frontendRuntimeAssets.find(
+    (component) => component.id === 'immersive-jetbrains-mono'
+  );
   const packageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
 
   assert.equal(highlight?.packageName, '@highlightjs/cdn-assets');
+  assert.equal(inter?.packageName, '@fontsource/inter');
+  assert.equal(jetbrainsMono?.packageName, '@fontsource/jetbrains-mono');
+  assert.deepEqual(
+    inter?.copies
+      .filter((copy) => copy.destination.endsWith('.woff2'))
+      .map((copy) => copy.destination),
+    [400, 500, 600, 700].map(
+      (weight) => `assets/vendor/immersive-writing/inter/inter-latin-${weight}-normal.woff2`
+    )
+  );
+  assert.deepEqual(
+    jetbrainsMono?.copies
+      .filter((copy) => copy.destination.endsWith('.woff2'))
+      .map((copy) => copy.destination),
+    [400, 500].map(
+      (weight) =>
+        `assets/vendor/immersive-writing/jetbrains-mono/jetbrains-mono-latin-${weight}-normal.woff2`
+    )
+  );
   assert.equal(Object.hasOwn(packageJson.dependencies, 'highlight.js'), false);
   assert.equal(Object.hasOwn(packageJson.scripts, 'postinstall'), false);
   assert.equal(packageJson.scripts['prepare:assets'], 'node scripts/copy-vendor-assets.mjs');
@@ -118,6 +141,20 @@ test('frontend runtime release requirements come from local manifest destination
 
   assert.ok(requirements.some((requirement) => requirement.path === 'assets/vendor/highlight/highlight.min.js'));
   assert.ok(requirements.some((requirement) => requirement.path === 'assets/vendor/katex/fonts' && requirement.type === 'non-empty-dir'));
+  assert.ok(
+    requirements.some(
+      (requirement) =>
+        requirement.path ===
+        'assets/vendor/immersive-writing/inter/inter-latin-700-normal.woff2'
+    )
+  );
+  assert.ok(
+    requirements.some(
+      (requirement) =>
+        requirement.path ===
+        'assets/vendor/immersive-writing/jetbrains-mono/jetbrains-mono-latin-500-normal.woff2'
+    )
+  );
   assert.equal(requirements.some((requirement) => /^https?:\/\//.test(requirement.path)), false);
 });
 

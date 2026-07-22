@@ -73,6 +73,12 @@ npm run notices:check
 
 The WordPress i18n runtime job installs WordPress, activates EasyMDE with runtime Composer dependencies, and runs `scripts/verify-wordpress-i18n.php`.
 
+Local Playwright login configuration is read from the repository-root `.env`.
+The isolated E2E user password uses `EASYMDE_E2E_USER_PASSWORD` when provided
+and otherwise uses `WORDPRESS_ADMIN_PASSWORD`; a missing password fails before
+the suite starts. CI generates a temporary password at runtime. Credentials are
+never committed or included in test errors, screenshots, or public artifacts.
+
 ## Release ZIP Build
 
 The release job builds the installable plugin ZIP from runtime files:

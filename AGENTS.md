@@ -88,15 +88,20 @@ Non-negotiable product and authority rules:
 - The ordinary WordPress Editor is delivered by one React Editor Root composed
   from focused Features, Ports, and Adapters. Its final runtime does not load
   `assets/js/admin/bootstrap.js`, jQuery, Legacy Toolbar, Preview, Theme, Draft,
-  Media, Focus Mode, dual-DOM handoff, or Legacy fallback implementations.
+  Media, Legacy Focus Mode, dual-DOM handoff, or Legacy fallback implementations.
 - Direct React cutover removes Legacy runtime ownership, not ordinary Editor
   capability. The React Root must retain the full Issue #91/#86 ordinary Editor
   feature matrix, including editing semantics, Preview enhancements,
   appearance, media, recovery, export, Outline, statistics/status, publishing,
   revisions, native-form compatibility, failure states, responsive behavior,
-  RTL, and accessibility.
-- Focus Mode / immersive writing is intentionally excluded: do not implement,
-  connect, enqueue, or load it as part of the ordinary Editor.
+  RTL, accessibility, and the focused React immersive-writing workspace.
+- Immersive writing is a React-owned presentation inside the ordinary Editor:
+  its entry follows WeChat export and precedes appearance controls, it transfers
+  the existing CodeMirror surface and native title session without creating a
+  second document or persistence path, and opening, closing, focusing, or
+  cancelling it performs no server write. Legacy Focus Mode JavaScript, CSS,
+  jQuery ownership, dual DOM, routes, and fallback implementations remain
+  prohibited.
 - React integration uses focused Ports and Adapters rather than scattering
   WordPress DOM, browser globals, or REST access through Components. Async
   owners handle cancellation where meaningful, stale results, authoritative

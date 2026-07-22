@@ -202,6 +202,7 @@ export function mountAdminEditor(
       nonce: bootstrap.imageUpload.nonce,
       siteUrl: windowRef.location.href
     }),
+    immersive: bootstrap.immersive,
     layout: bootstrap.layout,
     localDrafts: {
       ...bootstrap.localDrafts,

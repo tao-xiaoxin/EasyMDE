@@ -36,6 +36,7 @@ function sessionFixture() {
       getSelection: () => selection,
       getSnapshot: () => ({ savedValue: '# First', value: markdown }),
       getValue: () => markdown,
+      prepareSurfaceTransfer: vi.fn(() => ({ activate: vi.fn(), dispose: vi.fn() })),
       replaceSavedValue: vi.fn(),
       revealPosition,
       subscribe: (listener: () => void) => {
@@ -60,6 +61,7 @@ function sessionFixture() {
       destroy,
       getSnapshot: () => ({ savedValue: 'Title', value: 'Title' }),
       replaceSavedValue: vi.fn(),
+      setValue: vi.fn(),
       subscribe: vi.fn(() => () => {})
     }
   } satisfies EditorDocumentSession;

@@ -694,6 +694,14 @@ export function EditorRoot(props: EditorRootProps) {
     restoreImmersiveFocusRef.current = false;
     immersiveToggleRef.current?.focus();
   }, [immersive]);
+
+  useLayoutEffect(() => {
+    if (!immersive || !documentSession || !rootRef.current) return;
+    const releaseFocusBoundary =
+      props.immersiveEnvironment.activateFocusBoundary(rootRef.current);
+    documentSession.document.focus();
+    return releaseFocusBoundary;
+  }, [documentSession, immersive, props.immersiveEnvironment]);
   const previewFontStack = fontStack(props.fonts, fontState);
   const previewClassName = [
     'easymde-preview',

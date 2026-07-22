@@ -314,8 +314,14 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $this->assertSame('manual', $list->get_data()['revisions'][0]['type']);
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/', $list->get_data()['revisions'][0]['date']);
         $this->assertNotSame('', $list->get_data()['revisions'][0]['date_label']);
-        $this->assertStringStartsWith(admin_url('revision.php'), $list->get_data()['revisions'][0]['restore_url']);
-        $this->assertStringContainsString('_wpnonce=', $list->get_data()['revisions'][0]['restore_url']);
+        $restore_url = $list->get_data()['revisions'][0]['restore_url'];
+        $restore_query = array();
+        wp_parse_str((string) wp_parse_url($restore_url, PHP_URL_QUERY), $restore_query);
+        $this->assertStringStartsWith(admin_url('revision.php'), $restore_url);
+        $this->assertStringNotContainsString('&amp;', $restore_url);
+        $this->assertSame('restore', $restore_query['action']);
+        $this->assertSame((string) $revision_id, $restore_query['revision']);
+        $this->assertSame(1, wp_verify_nonce($restore_query['_wpnonce'], 'restore-post_' . $revision_id));
         $this->assertSame(200, $detail->get_status());
         $this->assertStringContainsString('<h1', $detail->get_data()['html']);
         $this->assertStringContainsString('Revision source', $detail->get_data()['html']);

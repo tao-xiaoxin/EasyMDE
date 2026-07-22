@@ -173,6 +173,7 @@ function fixture(): EditorRootProps &
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null,
+      activateFocusBoundary: vi.fn(() => vi.fn()),
       hasOpenToolbarPopover: () => false,
       subscribeKeydown: (listener) => {
         document.addEventListener('keydown', listener);
@@ -545,6 +546,12 @@ describe('EditorRoot', () => {
     const entry = await view.findByRole('button', { name: '沉浸写作' });
     entry.focus();
     fireEvent.click(entry);
+    expect(props.immersiveEnvironment.activateFocusBoundary).toHaveBeenCalledWith(
+      view.container.querySelector('.easymde-editor')
+    );
+    expect(document.activeElement).toBe(
+      view.container.querySelector('.cm-content')
+    );
     fireEvent.click(view.getByRole('button', { name: '表格' }));
 
     fireEvent.keyDown(document, { key: 'Escape' });

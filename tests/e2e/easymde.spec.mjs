@@ -336,9 +336,26 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('#easymde-toolbar-legacy-main, #easymde-toolbar-legacy-secondary')).toHaveCount(0);
     const immersiveLabels = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.strings.immersive);
     const immersiveToggle = page.getByRole('button', { name: immersiveLabels.immersive });
+    const sourceEditor = page.locator('.easymde-source-react .cm-content');
     await expect(immersiveToggle).toBeVisible();
     await immersiveToggle.click();
     await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
+    await expect(sourceEditor).toBeFocused();
+    expect(await page.locator('#title').evaluate((element) => Boolean(element.closest('[inert]')))).toBe(true);
+    await editorOwner.evaluate((boundary) => {
+      const controls = Array.from(boundary.querySelectorAll(
+        'a[href], button:not([disabled]), [contenteditable="true"], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )).filter((element) => !element.closest('[hidden], [inert]'));
+      if (!(controls[0] instanceof HTMLElement)) throw new Error('immersive-focus-boundary-empty');
+      controls[0].focus();
+    });
+    await page.keyboard.press('Shift+Tab');
+    expect(await editorOwner.evaluate((boundary) => {
+      const controls = Array.from(boundary.querySelectorAll(
+        'a[href], button:not([disabled]), [contenteditable="true"], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )).filter((element) => !element.closest('[hidden], [inert]'));
+      return document.activeElement === controls[controls.length - 1];
+    })).toBe(true);
     await expect(editorOwner).toHaveClass(/is-immersive-source/);
     await expect(editorRoot.locator('[data-easymde-document-owner="react"]')).toHaveCount(1);
     await expect(editorRoot.locator('.easymde-pane-preview')).toHaveCount(1);
@@ -359,7 +376,6 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(toolbar.locator('[data-easymde-command="bold"]:visible')).toHaveCount(1);
 
     const source = page.locator('#easymde-source');
-    const sourceEditor = page.locator('.easymde-source-react .cm-content');
     const headingTrigger = reactMain.locator('.easymde-toolbar-popover-headings > button');
     await expect(page.locator('#postdivrich')).toBeHidden();
     await expect(source).toBeHidden();
@@ -1148,6 +1164,24 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('#save-post').focus();
     await page.locator('#save-post').press('Enter');
     await navigation;
+
+    const immersiveLabels = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.strings.immersive);
+    const immersiveToggle = page.getByRole('button', { name: immersiveLabels.immersive });
+    await immersiveToggle.focus();
+    await immersiveToggle.press('Enter');
+    const historyTrigger = page.getByRole('button', { name: immersiveLabels.history });
+    await historyTrigger.focus();
+    await historyTrigger.press('Enter');
+    const historyDialog = page.getByRole('dialog', { name: immersiveLabels.history });
+    await expect(historyDialog).toBeVisible();
+    await expect(historyDialog.locator('.easymde-immersive-revision-preview')).toContainText('Second revision');
+    navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    const restoreRevision = historyDialog.getByRole('button', { name: immersiveLabels.restore });
+    await restoreRevision.focus();
+    await restoreRevision.press('Enter');
+    await navigation;
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe('/wp-admin/post.php');
 
     await expect(page.locator('.easymde-revisions-owner')).toHaveCount(0);
     await revealNativeMetaBox(page, 'revisionsdiv');

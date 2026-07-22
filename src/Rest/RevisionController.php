@@ -175,9 +175,13 @@ final class RevisionController {
 			'date_label'  => $date_label,
 			'type'        => wp_is_post_autosave( $revision ) ? 'auto' : 'manual',
 			'restore_url' => esc_url_raw(
-				wp_nonce_url(
-					admin_url( 'revision.php?revision=' . (int) $revision->ID . '&action=restore' ),
-					'restore-post_' . (int) $revision->ID
+				add_query_arg(
+					array(
+						'revision' => (int) $revision->ID,
+						'action'   => 'restore',
+						'_wpnonce' => wp_create_nonce( 'restore-post_' . (int) $revision->ID ),
+					),
+					admin_url( 'revision.php' )
 				)
 			),
 		);

@@ -92,9 +92,10 @@ Non-negotiable product and authority rules:
 - Direct React cutover removes Legacy runtime ownership, not ordinary Editor
   capability. The React Root must retain the full Issue #91/#86 ordinary Editor
   feature matrix, including editing semantics, Preview enhancements,
-  appearance, media, recovery, export, Outline, statistics/status, publishing,
-  revisions, native-form compatibility, failure states, responsive behavior,
-  RTL, and accessibility.
+  appearance, media, recovery, export, native-form compatibility, failure
+  states, responsive behavior, RTL, and accessibility. Publishing, taxonomies,
+  featured media, and revisions remain available through WordPress-native
+  screens and Meta Boxes rather than duplicate React surfaces.
 - Focus Mode / immersive writing is intentionally excluded: do not implement,
   connect, enqueue, or load it as part of the ordinary Editor.
 - React integration uses focused Ports and Adapters rather than scattering
@@ -251,8 +252,6 @@ includes:
 easymde_supported_post_types
 easymde_article_themes
 easymde_code_themes
-easymde_category_options_cache_context
-easymde_category_options_load_failed
 easymde_revision_restore_failed
 easymde/v1
 ```

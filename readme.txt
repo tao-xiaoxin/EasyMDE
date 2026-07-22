@@ -28,7 +28,8 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 * WordPress media library insertion, plus local image paste and drag-and-drop upload.
 * REST-powered server preview.
 * Browser local draft autosave and recovery.
-* Outline navigation, writing statistics, responsive edit/split/preview layouts, publishing controls, and revision navigation in the ordinary editor.
+* Fixed 50/50 desktop source/preview workspace with the historical responsive stack at narrow widths.
+* WordPress-native publishing, categories, tags, excerpts, featured images, and revisions remain available in their existing Meta Boxes.
 * Local Highlight.js code highlighting.
 * Local Mermaid diagram rendering.
 * Local KaTeX math rendering.
@@ -147,11 +148,10 @@ See `SECURITY.md`, `UPGRADING.md`, and `THIRD-PARTY-NOTICES.md` in the release p
 
 = 0.1.8 =
 
-* Replace the temporary immersive overlay with an isolated white article workspace that leaves the normal WordPress editor unchanged until explicitly opened.
-* Add synchronized title editing, source line numbers, outline navigation, local writing statistics, responsive edit/preview views, and an accessible draggable split divider.
-* Add a native publish panel for tags, categories, excerpts, featured media, and optional post-publish preview while preserving WordPress nonce, capability, revision, visibility, and scheduling behavior.
-* Reuse the existing Markdown commands, WordPress media library, revisions, themes, fonts, local drafts, save, publish, clipboard, and WeChat export capabilities inside the workspace.
-* Keep the AI assistant as a local-only interface demonstration that reads no article data, sends no requests, and persists no AI state.
+* Deliver the ordinary editor as one React 18, strict TypeScript, and Vite Root while preserving the historical toolbar and fixed source/preview workspace.
+* Keep synchronized title editing, CodeMirror, Preview enhancements, themes, fonts, local drafts, media, clipboard, and WeChat export in focused React components.
+* Keep publishing, categories, tags, excerpts, featured media, and revisions on WordPress-native screens and Meta Boxes without duplicate React dialogs.
+* Remove Outline, writing statistics, view-mode switching, draggable resizing, React publishing/revision dialogs, and all Focus Mode assets from the ordinary runtime.
 * Remove the editor-surface dark mode without changing article themes, code themes, custom CSS, or frontend rendering.
 
 = 0.1.7 =

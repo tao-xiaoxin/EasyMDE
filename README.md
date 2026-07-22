@@ -54,7 +54,8 @@ EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_con
 - Typora-inspired keyboard shortcuts with site-wide Windows/Linux and macOS overrides.
 - WordPress media library image insertion, plus local clipboard paste and drag-and-drop image upload.
 - Browser local draft recovery with explicit restore, discard, and cross-tab conflict handling.
-- Outline navigation, writing statistics, responsive edit/split/preview layouts, publishing controls, and revision navigation in the ordinary editor.
+- Fixed 50/50 desktop source/preview workspace with the historical responsive stack at narrow widths.
+- WordPress-native publishing, categories, tags, excerpts, featured images, and revisions remain available in their existing Meta Boxes.
 
 **Rendering**
 

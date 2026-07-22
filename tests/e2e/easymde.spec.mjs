@@ -339,9 +339,24 @@ test.describe('EasyMDE editor workflows', () => {
 
     const source = page.locator('#easymde-source');
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
+    const headingTrigger = reactMain.locator('.easymde-toolbar-popover-headings > button');
     await expect(page.locator('#postdivrich')).toBeHidden();
     await expect(source).toBeHidden();
     await expect(sourceEditor).toBeVisible();
+    await sourceEditor.focus();
+    await headingTrigger.click();
+    await expect(headingTrigger).toHaveAttribute('aria-expanded', 'true');
+    await expect(sourceEditor).toBeFocused();
+    await headingTrigger.click();
+    await expect(headingTrigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(sourceEditor).toBeFocused();
+    await headingTrigger.focus();
+    await headingTrigger.press('Enter');
+    await expect(reactMain.locator('[data-easymde-command="paragraph"]')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await headingTrigger.press('Space');
+    await expect(reactMain.locator('[data-easymde-command="paragraph"]')).toBeFocused();
+    await page.keyboard.press('Escape');
     await sourceEditor.fill('Toolbar parity');
     await sourceEditor.focus();
     await sourceEditor.press('Home');
@@ -363,7 +378,6 @@ test.describe('EasyMDE editor workflows', () => {
     await source.evaluate((field) => {
       field.setSelectionRange(0, 0);
     });
-    const headingTrigger = reactMain.locator('.easymde-toolbar-popover-headings > button');
     await headingTrigger.focus();
     await headingTrigger.press('ArrowDown');
     await expect(headingTrigger).toHaveAttribute('aria-expanded', 'true');
@@ -374,6 +388,70 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(source).toHaveValue('###### Heading parity');
     await expect(sourceEditor).toHaveText('###### Heading parity');
     await expect(sourceEditor).toBeFocused();
+  });
+
+  test('executes every ordinary Markdown toolbar command through its React control', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+
+    const source = page.locator('#easymde-source');
+    const sourceEditor = page.locator('.easymde-source-react .cm-content');
+    const toolbar = page.getByRole('toolbar', { name: 'Markdown toolbar' });
+    const main = toolbar.locator('.easymde-toolbar-section-main');
+    const headingTrigger = main.locator('.easymde-toolbar-popover-headings > button');
+    const selectAll = async (value) => {
+      await sourceEditor.fill(value);
+      await sourceEditor.focus();
+      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
+    };
+    const executeMain = async ({ expected, id, input }) => {
+      await selectAll(input);
+      await main.locator(`[data-easymde-command="${id}"]`).click();
+      await expect(source).toHaveValue(expected);
+      await expect(sourceEditor.locator('.cm-line')).toHaveText(expected.split('\n'));
+      await expect(sourceEditor).toBeFocused();
+    };
+
+    for (const command of [
+      { expected: '**Alpha**', id: 'bold', input: 'Alpha' },
+      { expected: '*Alpha*', id: 'italic', input: 'Alpha' },
+      { expected: '~~Alpha~~', id: 'strike', input: 'Alpha' },
+      { expected: '> Alpha\n> Beta', id: 'quote', input: 'Alpha\nBeta' },
+      { expected: '- Alpha\n- Beta', id: 'unorderedlist', input: 'Alpha\nBeta' },
+      { expected: '1. Alpha\n2. Beta', id: 'orderedlist', input: 'Alpha\nBeta' },
+      { expected: '`Alpha`', id: 'inlinecode', input: 'Alpha' },
+      { expected: '```\nAlpha\n```', id: 'codefence', input: 'Alpha' },
+      { expected: '[Alpha](https://)', id: 'link', input: 'Alpha' }
+    ]) {
+      await executeMain(command);
+    }
+
+    for (const command of [
+      { expected: 'Alpha', id: 'paragraph', input: '### Alpha' },
+      { expected: '# Alpha', id: 'heading1', input: 'Alpha' },
+      { expected: '## Alpha', id: 'heading2', input: 'Alpha' },
+      { expected: '### Alpha', id: 'heading3', input: 'Alpha' },
+      { expected: '#### Alpha', id: 'heading4', input: 'Alpha' },
+      { expected: '##### Alpha', id: 'heading5', input: 'Alpha' },
+      { expected: '###### Alpha', id: 'heading6', input: 'Alpha' }
+    ]) {
+      await selectAll(command.input);
+      await headingTrigger.click();
+      await main.locator(`[data-easymde-command="${command.id}"]`).click();
+      await expect(source).toHaveValue(command.expected);
+      await expect(sourceEditor.locator('.cm-line')).toHaveText(command.expected.split('\n'));
+      await expect(sourceEditor).toBeFocused();
+    }
+
+    await sourceEditor.fill('Alpha');
+    await main.locator('[data-easymde-command="image"]').click();
+    const mediaModal = page.locator('.media-modal:visible');
+    await expect(mediaModal).toBeVisible();
+    await mediaModal.locator('.media-modal-close').click();
+    await expect(mediaModal).toBeHidden();
+    await expect(source).toHaveValue('Alpha');
   });
 
   test('hands the normal document session to React with one visible source and a fresh native bridge', async ({ page }, testInfo) => {
@@ -657,7 +735,28 @@ test.describe('EasyMDE editor workflows', () => {
     const catalog = await page.evaluate(() => ({
       articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes.map(({ id }) => id),
       codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes.map(({ id }) => id),
-      customFonts: window.EasyMDEEditorRootBootstrap.fonts.options.customFonts.map(({ id }) => id)
+      fontGroups: [
+        {
+          field: '#easymde-custom-font-field',
+          ids: window.EasyMDEEditorRootBootstrap.fonts.options.customFonts.map(({ id }) => id),
+          select: '.easymde-custom-font-select'
+        },
+        {
+          field: '#easymde-windows-font-field',
+          ids: window.EasyMDEEditorRootBootstrap.fonts.options.windowsFonts.map(({ id }) => id),
+          select: '.easymde-windows-font-select'
+        },
+        {
+          field: '#easymde-apple-font-field',
+          ids: window.EasyMDEEditorRootBootstrap.fonts.options.appleFonts.map(({ id }) => id),
+          select: '.easymde-apple-font-select'
+        },
+        {
+          field: '#easymde-serif-font-field',
+          ids: window.EasyMDEEditorRootBootstrap.fonts.options.serifOptions.map(({ id }) => id),
+          select: '.easymde-serif-font-select'
+        }
+      ]
     }));
 
     const appearanceTrigger = page.locator('.easymde-toolbar-section-secondary')
@@ -725,12 +824,13 @@ test.describe('EasyMDE editor workflows', () => {
     }, await fontTrigger.elementHandle());
     expect(fontGeometry.rightDelta).toBeLessThanOrEqual(1);
     expect(fontGeometry.topDelta).toBeLessThanOrEqual(1);
-    if (catalog.customFonts.length > 1) {
-      const selected = catalog.customFonts.at(-1);
-      await fontDialog.locator('.easymde-custom-font-select').selectOption(selected);
-      await expect(page.locator('#easymde-custom-font-field')).toHaveValue(selected);
+    for (const group of catalog.fontGroups) {
+      for (const id of group.ids) {
+        await fontDialog.locator(group.select).selectOption(id);
+        await expect(page.locator(group.field)).toHaveValue(id);
+        await expect(page.locator('.easymde-pane-preview > article')).toHaveCSS('font-family', /.+/);
+      }
     }
-    await expect(page.locator('.easymde-pane-preview > article')).toHaveCSS('font-family', /.+/);
   });
 
   test('restores the fixed ordinary toolbar and 50/50 workspace without withdrawn surfaces', async ({ page }, testInfo) => {
@@ -834,15 +934,62 @@ test.describe('EasyMDE editor workflows', () => {
     });
     expect(desktopGeometry.sameRow).toBe(true);
     expect(desktopGeometry.delta).toBeLessThanOrEqual(1);
+    const secondaryToolbarEndGap = await page.locator('.easymde-toolbar').evaluate((toolbar) => {
+      const appearance = toolbar.querySelector('.easymde-toolbar-popover-appearance > button');
+      if (!(appearance instanceof HTMLElement)) {
+        throw new Error('appearance-toolbar-trigger-unavailable');
+      }
+
+      return toolbar.getBoundingClientRect().right - appearance.getBoundingClientRect().right;
+    });
+    expect(Math.abs(secondaryToolbarEndGap - 24)).toBeLessThanOrEqual(1);
     await expect(page.locator('[data-easymde-layout-owner="react"]')).toHaveAttribute('dir', 'rtl');
+    const rtlDivider = await page.locator('.easymde-workspace').evaluate((workspace) => {
+      const source = workspace.querySelector('.easymde-pane-source');
+      const preview = workspace.querySelector('.easymde-pane-preview');
+      if (!(source instanceof HTMLElement) || !(preview instanceof HTMLElement)) {
+        throw new Error('editor-workspace-panes-unavailable');
+      }
+      const sourceBounds = source.getBoundingClientRect();
+      const previewBounds = preview.getBoundingClientRect();
+      const sourceStyle = getComputedStyle(source);
+
+      return {
+        borderLeftWidth: sourceStyle.borderLeftWidth,
+        borderRightWidth: sourceStyle.borderRightWidth,
+        sourceFollowsPreview: Math.abs(sourceBounds.left - previewBounds.right) <= 1
+      };
+    });
+    expect(rtlDivider).toEqual({
+      borderLeftWidth: '1px',
+      borderRightWidth: '0px',
+      sourceFollowsPreview: true
+    });
 
     for (const width of [1080, 1079]) {
       await page.setViewportSize({ width, height: 1000 });
       await expect.poll(() => page.locator('.easymde-workspace').evaluate((workspace) => {
-        const source = workspace.querySelector('.easymde-pane-source').getBoundingClientRect();
-        const preview = workspace.querySelector('.easymde-pane-preview').getBoundingClientRect();
-        return preview.top > source.top;
-      })).toBe(true);
+        const sourcePane = workspace.querySelector('.easymde-pane-source');
+        const previewPane = workspace.querySelector('.easymde-pane-preview');
+        if (!(sourcePane instanceof HTMLElement) || !(previewPane instanceof HTMLElement)) {
+          throw new Error('editor-workspace-panes-unavailable');
+        }
+        const source = sourcePane.getBoundingClientRect();
+        const preview = previewPane.getBoundingClientRect();
+        const sourceStyle = getComputedStyle(sourcePane);
+
+        return {
+          borderBottomWidth: sourceStyle.borderBottomWidth,
+          borderLeftWidth: sourceStyle.borderLeftWidth,
+          borderRightWidth: sourceStyle.borderRightWidth,
+          stacked: preview.top > source.top
+        };
+      })).toEqual({
+        borderBottomWidth: '1px',
+        borderLeftWidth: '0px',
+        borderRightWidth: '0px',
+        stacked: true
+      });
     }
     await page.setViewportSize({ width: 1081, height: 1000 });
     await expect.poll(() => page.locator('.easymde-workspace').evaluate((workspace) => {

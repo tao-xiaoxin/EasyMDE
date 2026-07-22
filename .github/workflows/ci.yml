@@ -478,6 +478,12 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Generate temporary WordPress test credentials
+        run: |
+          password="$(openssl rand -hex 24)"
+          echo "EASYMDE_E2E_USER_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "EASYMDE_WP_ADMIN_PASSWORD=$password" >> "$GITHUB_ENV"
+
       - name: Download release ZIP
         uses: actions/download-artifact@v4
         with:

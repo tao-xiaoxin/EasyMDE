@@ -889,7 +889,8 @@ test.describe('EasyMDE editor workflows', () => {
         ...commandLabels,
         ...exportLabels,
         bootstrap.fonts.strings.font,
-        bootstrap.appearance.strings.appearance
+        bootstrap.appearance.strings.appearance,
+        bootstrap.strings.immersive.immersive
       ];
     });
     const toolbarLabels = await page.locator('.easymde-toolbar').evaluate((toolbar) => (
@@ -956,12 +957,12 @@ test.describe('EasyMDE editor workflows', () => {
     expect(desktopGeometry.sameRow).toBe(true);
     expect(desktopGeometry.delta).toBeLessThanOrEqual(1);
     const secondaryToolbarEndGap = await page.locator('.easymde-toolbar').evaluate((toolbar) => {
-      const appearance = toolbar.querySelector('.easymde-toolbar-popover-appearance > button');
-      if (!(appearance instanceof HTMLElement)) {
-        throw new Error('appearance-toolbar-trigger-unavailable');
+      const immersive = toolbar.querySelector('.easymde-immersive-toggle');
+      if (!(immersive instanceof HTMLElement)) {
+        throw new Error('immersive-toolbar-trigger-unavailable');
       }
 
-      return toolbar.getBoundingClientRect().right - appearance.getBoundingClientRect().right;
+      return toolbar.getBoundingClientRect().right - immersive.getBoundingClientRect().right;
     });
     expect(Math.abs(secondaryToolbarEndGap - 24)).toBeLessThanOrEqual(1);
     await expect(page.locator('[data-easymde-layout-owner="react"]')).toHaveAttribute('dir', 'rtl');
@@ -1051,6 +1052,15 @@ test.describe('EasyMDE editor workflows', () => {
           const triggerBox = triggerElement.getBoundingClientRect();
           const toolbarBox = toolbar.getBoundingClientRect();
           return {
+            geometry: {
+              innerWidth,
+              panelLeft: panelBox.left,
+              panelRight: panelBox.right,
+              toolbarLeft: toolbarBox.left,
+              toolbarRight: toolbarBox.right,
+              triggerLeft: triggerBox.left,
+              triggerRight: triggerBox.right
+            },
             withinViewport: panelBox.left >= -1 && panelBox.right <= innerWidth + 1,
             parentIsAnchor: element.parentElement?.matches(anchorSelector) ?? false,
             offsetOwnerMatches: mobile
@@ -1067,7 +1077,10 @@ test.describe('EasyMDE editor workflows', () => {
         }, { anchorSelector, mobile: width <= 782 });
         expect(placement.parentIsAnchor).toBe(true);
         expect(placement.offsetOwnerMatches).toBe(true);
-        expect(placement.withinViewport).toBe(true);
+        expect(
+          placement.withinViewport,
+          JSON.stringify({ anchorSelector, placement, width })
+        ).toBe(true);
         expect(Math.abs(placement.verticalGap - 8)).toBeLessThanOrEqual(1);
         expect(Math.abs(placement.horizontalAnchorDelta)).toBeLessThanOrEqual(1);
         expect(placement.scrollY).toBe(scrollBeforeOpen);

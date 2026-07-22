@@ -805,10 +805,10 @@ test.describe('EasyMDE editor workflows', () => {
       .map(({ id, label }) => ({ id, label })));
     const headingMenu = page.getByRole('menu', { name: headingLabel });
     for (const command of headingCommands) {
-      const item = headingMenu.getByRole('menuitem', { name: command.label, exact: true });
+      const item = headingMenu.locator(`button[data-easymde-command="${command.id}"]`);
       await expect(item).toHaveCount(1);
-      await expect(item).toHaveAttribute('data-easymde-command', command.id);
-      await expect(item).toContainText(command.label);
+      await expect(item).toHaveAttribute('role', 'menuitem');
+      await expect(item.locator('.easymde-popover-item-label')).toHaveText(command.label);
     }
     await page.keyboard.press('Escape');
     await expect(headingTrigger).toBeFocused();

@@ -139,11 +139,25 @@ describe('EditorToolbar', () => {
       />
     );
 
-    await user.click(screen.getByRole('button', { name: '标题' }));
+    const trigger = screen.getByRole('button', { name: '标题' });
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+      bottom: 100.75,
+      height: 30,
+      left: 159.5,
+      right: 207.5,
+      top: 70.75,
+      width: 48,
+      x: 159.5,
+      y: 70.75,
+      toJSON: () => ({})
+    });
+    await user.click(trigger);
 
     const menu = screen.getByRole('menu', { name: '标题' });
+    expect(menu.style.left).toBe('159.5px');
+    expect(menu.style.top).toBe('106.75px');
     expect(within(menu).getByText('标题级别')).toBeTruthy();
-    expect(within(menu).getByRole('menuitem', { name: /段落/ })).toBeTruthy();
+    expect(within(menu).queryByRole('menuitem', { name: /段落/ })).toBeNull();
     expect(
       within(menu).getByRole('menuitem', { name: /扩展标题命令/ })
     ).toBeTruthy();
@@ -159,7 +173,6 @@ describe('EditorToolbar', () => {
       'H1标题 1',
       'H2专题标题',
       'H0零级扩展标题',
-      '段落Ctrl+0',
       '扩展标题命令'
     ]);
     expect(container.querySelector('.is-immersive-heading-menu')).toBe(menu);

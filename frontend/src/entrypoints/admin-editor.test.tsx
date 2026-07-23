@@ -89,6 +89,7 @@ const bootstrap = {
     editMode: 'Edit mode',
     editorSettings: 'Editor settings',
     enter: 'Enter immersive writing',
+    expand: 'Expand',
     exit: 'Exit immersive writing',
     hideOutline: 'Hide outline',
     history: 'History',
@@ -137,12 +138,13 @@ const bootstrap = {
     categoriesDescription: 'Choose categories.',
     categoriesSelected: 'Selected: %s',
     closePublish: 'Close publish dialog',
+    collapse: 'Collapse',
     continueAddingTags: 'Continue adding...',
     excerpt: 'Excerpt',
     excerptPlaceholder: 'Write an excerpt...',
     featuredImage: 'Featured image',
     imageRecommendation: 'Landscape images are recommended',
-    imageRequirements: 'Supports JPG, PNG, and WebP',
+    imageRequirements: 'Supports JPG, PNG, and WebP, max %s',
     noWriteBeforeSubmit: 'Nothing is written before submission.',
     password: 'Password',
     passwordPlaceholder: 'Enter access password',
@@ -152,6 +154,7 @@ const bootstrap = {
     privateDescription: 'Only editors can view this article.',
     public: 'Public',
     publishDescription: 'Confirm article details.',
+    publishFailed: 'WordPress did not accept the publish request. Check the page state and try again.',
     remove: 'Remove',
     removeTag: 'Remove tag: %s',
     replace: 'Replace',
@@ -188,6 +191,7 @@ const bootstrap = {
   wordpress: {
     customCssUrl: '/custom-css',
     nonce: 'nonce',
+    publishCategories: [],
     previewUrl: '/preview',
     revisionsUrl: '/posts/'
   }

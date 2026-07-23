@@ -4,6 +4,7 @@ import { createWordPressNativePublishPort } from './create-wordpress-native-publ
 
 function fixture(): void {
   document.body.innerHTML = `
+    <form id="post">
     <input id="original_post_status" value="publish">
     <input id="tax-input-post_tag" value="EasyMDE, Markdown">
     <textarea id="excerpt">Synthetic excerpt</textarea>
@@ -19,6 +20,7 @@ function fixture(): void {
     <input id="visibility-radio-private" name="visibility" type="radio">
     <input id="post_password" value="">
     <input id="sticky" type="checkbox">
+    </form>
   `;
 }
 
@@ -45,6 +47,7 @@ describe('createWordPressNativePublishPort', () => {
         url: 'https://example.test/image.png'
       },
       password: '',
+      openPreview: false,
       published: true,
       sticky: false,
       tags: ['EasyMDE', 'Markdown'],
@@ -60,6 +63,7 @@ describe('createWordPressNativePublishPort', () => {
       excerpt: 'Changed excerpt',
       featuredImage: null,
       password: 'secret',
+      openPreview: true,
       sticky: true,
       tags: ['WordPress', 'React'],
       visibility: 'password'
@@ -90,6 +94,16 @@ describe('createWordPressNativePublishPort', () => {
       'secret'
     );
     expect(document.querySelector<HTMLInputElement>('#sticky')?.checked).toBe(false);
+    expect(
+      document.querySelector<HTMLInputElement>(
+        'input[name="easymde_open_published_post"]'
+      )?.value
+    ).toBe('1');
+
+    port.apply({ ...port.read(), openPreview: false });
+    expect(
+      document.querySelector('input[name="easymde_open_published_post"]')
+    ).toBeNull();
   });
 
   it('preserves the localized WordPress tag delimiter', () => {
@@ -106,5 +120,66 @@ describe('createWordPressNativePublishPort', () => {
     expect(
       document.querySelector<HTMLInputElement>('#tax-input-post_tag')?.value
     ).toBe('EasyMDE、Markdown、WordPress、UI');
+  });
+
+  it('uses the PHP hierarchy only for categories owned by native WordPress inputs', () => {
+    const authoritativeCategories = [
+      {
+        children: [
+          {
+            children: [{ children: [], id: '3', label: 'Child' }],
+            id: '2',
+            label: 'Parent'
+          }
+        ],
+        id: '1',
+        label: 'Root'
+      }
+    ];
+    const port = createWordPressNativePublishPort(
+      document,
+      authoritativeCategories
+    );
+
+    expect(port.read().categories).toEqual([
+      {
+        children: [{ children: [], id: '3', label: 'Child' }],
+        id: '2',
+        label: 'Parent'
+      }
+    ]);
+    expect(port.read().categoryIds).toEqual(['2']);
+  });
+
+  it('removes projected categories that the native form cannot submit', () => {
+    const port = createWordPressNativePublishPort(document, [
+      {
+        children: [
+          { children: [], id: '3', label: 'Available child' },
+          { children: [], id: '4', label: 'Unavailable child' }
+        ],
+        id: '2',
+        label: 'Available parent'
+      },
+      { children: [], id: '5', label: 'Unavailable root' }
+    ]);
+
+    expect(port.read().categories).toEqual([
+      {
+        children: [{ children: [], id: '3', label: 'Available child' }],
+        id: '2',
+        label: 'Available parent'
+      }
+    ]);
+  });
+
+  it('does not expose projected categories when WordPress has no category form owner', () => {
+    document.querySelector('#categorychecklist')?.remove();
+    const port = createWordPressNativePublishPort(document, [
+      { children: [], id: '2', label: 'Unavailable category' }
+    ]);
+
+    expect(port.read().categories).toEqual([]);
+    expect(port.read().categoryIds).toEqual([]);
   });
 });

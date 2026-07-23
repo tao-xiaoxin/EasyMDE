@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SafePreviewHtml } from '../../contracts/ports/preview-request';
 import type { ImageUploadResult } from '../../contracts/ports/image-upload-port';
+import type { ImmersivePreferences } from '../../contracts/ports/immersive-preferences-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type {
   EditorSessionPort,
@@ -150,6 +151,7 @@ function fixture(): EditorRootProps &
       editMode: '编辑模式',
       editorSettings: '编辑器设置',
       enter: '进入沉浸写作',
+      expand: '展开',
       exit: '退出沉浸写作',
       hideOutline: '收起大纲',
       history: '历史记录',
@@ -179,6 +181,7 @@ function fixture(): EditorRootProps &
       restoreConfirm: '未保存的更改将会丢失',
       restoreThisVersion: '恢复到这个版本',
       resizeOutline: '调整大纲宽度',
+      resizeSplit: '调整编辑区和预览区宽度',
       saved: '已保存',
       settings: '设置',
       showOutline: '展开大纲',
@@ -198,13 +201,17 @@ function fixture(): EditorRootProps &
       categoriesDescription: '选择文章归属的栏目。',
       categoriesSelected: '已选 %s 项',
       closePublish: '关闭发布弹窗',
+      collapse: '收起',
       continueAddingTags: '继续添加...',
       excerpt: '摘要',
       excerptPlaceholder: '撰写摘要...',
       featuredImage: '特色图片',
       imageRecommendation: '建议使用横向图片',
-      imageRequirements: '支持 JPG、PNG、WebP',
+      imageRequirements: '支持 JPG、PNG、WebP 格式，最大 %s',
       noWriteBeforeSubmit: '提交前不会写入 WordPress。',
+      openAfterPublish: '发布后打开文章页面',
+      openAfterPublishDescription: '提交完成后跳转到文章页面，正文样式与当前预览一致。',
+      openAfterUpdate: '更新后打开文章页面',
       password: '密码',
       passwordPlaceholder: '输入访问密码',
       passwordRequired: '请输入访问密码后再提交。',
@@ -213,6 +220,8 @@ function fixture(): EditorRootProps &
       privateDescription: '仅站点管理员和编辑可查看此文章。',
       public: '公开',
       publishDescription: '确认文章信息后，将发布到当前 WordPress 站点。',
+      publishFailed: 'WordPress 未接受发布请求，请检查页面状态后重试。',
+      publishOptions: '发布选项',
       remove: '移除',
       removeTag: '移除标签 %s',
       replace: '替换',
@@ -321,6 +330,7 @@ function fixture(): EditorRootProps &
         categoryIds: [],
         excerpt: '',
         featuredImage: null,
+        openPreview: false,
         password: '',
         published: true,
         sticky: false,
@@ -580,6 +590,11 @@ describe('EditorRoot', () => {
 
     fireEvent.click(view.getByRole('button', { name: '发布文章' }));
     expect(view.getByRole('dialog', { name: '更新文章' })).not.toBeNull();
+    expect(
+      (view.getByRole('switch', {
+        name: '更新后打开文章页面'
+      }) as HTMLInputElement).checked
+    ).toBe(true);
     expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
     expect(props.publishPost).not.toHaveBeenCalled();
 
@@ -600,9 +615,15 @@ describe('EditorRoot', () => {
     expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
 
     fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+    fireEvent.click(
+      view.getByRole('switch', { name: '更新后打开文章页面' })
+    );
     fireEvent.click(view.getByRole('button', { name: '更新文章' }));
 
     expect(props.nativePublishPort.apply).toHaveBeenCalledOnce();
+    expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
+      expect.objectContaining({ openPreview: false })
+    );
     expect(props.publishPost).toHaveBeenCalledOnce();
     expect(props.executeExternalCommand).not.toHaveBeenCalledWith(
       'savepost',
@@ -626,9 +647,10 @@ describe('EditorRoot', () => {
           label: '父分类'
         }
       ],
-      categoryIds: ['parent'],
+      categoryIds: ['child'],
       excerpt: '',
       featuredImage: null,
+      openPreview: false,
       password: '',
       published: true,
       sticky: false,
@@ -645,11 +667,14 @@ describe('EditorRoot', () => {
     const child = view.getByRole('checkbox', {
       name: '子分类'
     }) as HTMLInputElement;
-    expect(parent.checked).toBe(true);
-    expect(parent.indeterminate).toBe(false);
-    expect(child.checked).toBe(false);
+    expect(parent.checked).toBe(false);
+    expect(parent.indeterminate).toBe(true);
+    expect(child.checked).toBe(true);
 
-    fireEvent.click(parent);
+    fireEvent.click(view.getByRole('button', { name: '收起 父分类' }));
+    expect(view.queryByRole('checkbox', { name: '子分类' })).toBeNull();
+    fireEvent.click(view.getByRole('button', { name: '展开 父分类' }));
+    fireEvent.click(view.getByRole('checkbox', { name: '子分类' }));
     fireEvent.click(view.getByRole('button', { name: '更新文章' }));
 
     expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
@@ -671,6 +696,9 @@ describe('EditorRoot', () => {
     expect(props.onFailure).toHaveBeenCalledWith(
       'immersive-publish-command-unavailable'
     );
+    expect(
+      view.getByText('WordPress 未接受发布请求，请检查页面状态后重试。')
+    ).not.toBeNull();
     expect(view.getByRole('dialog', { name: '更新文章' })).not.toBeNull();
   });
 
@@ -780,6 +808,7 @@ describe('EditorRoot', () => {
       view.container.querySelector('.easymde-immersive-header .easymde-immersive-exit')
     ).toBeNull();
     expect(view.queryByRole('button', { name: /AI/u })).toBeNull();
+    expect(view.getByRole('button', { name: '编辑器设置' })).not.toBeNull();
 
     const tableIcon = view
       .getByRole('button', { name: '表格' })
@@ -816,16 +845,12 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(view.getByRole('button', { name: '已复制' })).not.toBeNull()
     );
-
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     expect(view.getByRole('dialog', { name: '编辑器设置' })).not.toBeNull();
-    await waitFor(() =>
-      expect(document.activeElement).toBe(
-        view.getByRole('checkbox', { name: '文章大纲' })
-      )
-    );
     for (const name of ['文章大纲', '字数统计', '分屏预览', '自动保存', '同步滚动']) {
-      expect((view.getByRole('checkbox', { name }) as HTMLInputElement).checked).toBe(true);
+      expect(
+        (view.getByRole('checkbox', { name }) as HTMLInputElement).checked
+      ).toBe(true);
     }
     expect(view.queryByText(/AI/u)).toBeNull();
   });
@@ -845,6 +870,7 @@ describe('EditorRoot', () => {
     expect(view.container.querySelector('.easymde-immersive-stats')).toBeNull();
     expect(view.queryByText('自动保存已开启')).toBeNull();
     expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledOnce();
+    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(4);
   });
 
   it('applies restored immersive preferences to the existing draft and scroll owners', async () => {
@@ -871,6 +897,11 @@ describe('EditorRoot', () => {
       (view.getByRole('checkbox', { name: '同步滚动' }) as HTMLInputElement)
         .checked
     ).toBe(false);
+    expect(
+      view.container
+        .querySelector('.easymde-editor')
+        ?.classList.contains('is-immersive-split')
+    ).toBe(true);
     expect(props.scrollSyncPort.prepareBinding).not.toHaveBeenCalled();
 
     fireEvent.click(view.getByRole('button', { name: 'Bold' }));
@@ -882,9 +913,7 @@ describe('EditorRoot', () => {
 
   it('reads the latest immersive preferences again on every entry', async () => {
     const props = fixture();
-    let savedPreferences: Parameters<
-      typeof props.immersivePreferencesPort.write
-    >[0] | null = null;
+    let savedPreferences: ImmersivePreferences | null = null;
     vi.mocked(props.immersivePreferencesPort.read).mockImplementation(() =>
       savedPreferences
         ? { preferences: savedPreferences, status: 'loaded' }
@@ -912,6 +941,7 @@ describe('EditorRoot', () => {
         ?.classList.contains('is-immersive-split')
     ).toBe(true);
     expect(props.immersivePreferencesPort.read).toHaveBeenCalledTimes(3);
+    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(2);
   });
 
   it('lets the user discard an unreadable local draft and unblock storage ownership', async () => {
@@ -1322,6 +1352,53 @@ describe('EditorRoot', () => {
     expect(view.getByText('Draft restored')).not.toBeNull();
     view.unmount();
     expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps local draft recovery notices out of the immersive surface', async () => {
+    const props = fixture();
+    vi.mocked(props.localDraftStorage.read).mockReturnValue({
+      draft: {
+        content: 'Recovered draft',
+        contentHash: 'hash:Recovered draft',
+        schemaVersion: 1,
+        updatedAt: 2000
+      },
+      source: 'current',
+      status: 'available'
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    expect(view.getByText('A newer local draft is available.')).not.toBeNull();
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    expect(view.queryByText('A newer local draft is available.')).toBeNull();
+    expect(view.queryByRole('button', { name: 'Restore draft' })).toBeNull();
+    expect(view.queryByRole('button', { name: 'Discard draft' })).toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    expect(view.getByText('A newer local draft is available.')).not.toBeNull();
+    expect(view.getByRole('button', { name: 'Restore draft' })).not.toBeNull();
+    expect(view.getByRole('button', { name: 'Discard draft' })).not.toBeNull();
+  });
+
+  it('keeps local draft save flashes out of the immersive surface', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: 'Bold' }));
+    await waitFor(() =>
+      expect(view.getByText('Local draft saved 12:34')).not.toBeNull()
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.queryByText('Local draft saved 12:34')).toBeNull();
+    expect(view.getByText('自动保存已开启')).not.toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: 'Bold' }));
+    await waitFor(() =>
+      expect(props.localDraftStorage.write).toHaveBeenCalledTimes(2)
+    );
+    expect(view.queryByText('Local draft saved 12:34')).toBeNull();
   });
 
   it('schedules local drafts from the document owner without depending on native bridge events', async () => {

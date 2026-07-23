@@ -7,6 +7,7 @@ const outputPath = path.join(root, 'frontend/src/generated/lucide-icons.tsx');
 const icons = {
   Bold: 'bold',
   BarChart3: 'chart-column',
+  CalendarCheck: 'calendar-check',
   Braces: 'braces',
   Check: 'check',
   ChevronDown: 'chevron-down',

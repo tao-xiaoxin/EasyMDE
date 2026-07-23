@@ -1175,8 +1175,8 @@ msgstr "为搜索结果、文章列表和分享预览写一段简短摘要..."
 msgid "Landscape images are recommended"
 msgstr "建议使用横向图片"
 
-msgid "Supports JPG, PNG, and WebP"
-msgstr "支持 JPG、PNG、WebP 格式"
+msgid "Supports JPG, PNG, and WebP, max %s"
+msgstr "支持 JPG、PNG、WebP 格式，最大 %s"
 
 msgid "Nothing is written to WordPress before submission."
 msgstr "提交前不会写入 WordPress。"
@@ -1228,3 +1228,27 @@ msgstr "恢复到这个版本"
 
 msgid "Insert table"
 msgstr "插入表格"
+
+msgid "Expand"
+msgstr "展开"
+
+msgid "Collapse"
+msgstr "收起"
+
+msgid "Resize editor and Preview"
+msgstr "调整编辑区和预览区宽度"
+
+msgid "Open the article page after publishing"
+msgstr "发布后打开文章页面"
+
+msgid "After submission, open the article page with the same article styling as the current Preview."
+msgstr "提交完成后跳转到文章页面，正文样式与当前预览一致。"
+
+msgid "Open the article page after updating"
+msgstr "更新后打开文章页面"
+
+msgid "Publish options"
+msgstr "发布选项"
+
+msgid "WordPress did not accept the publish request. Check the page state and try again."
+msgstr "WordPress 未接受发布请求，请检查页面状态后重试。"

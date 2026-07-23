@@ -30,6 +30,36 @@ final class EditorSaveHandler {
 	public function register_hooks() {
 		add_action( 'save_post', array( $this, 'save_post_meta' ), 10, 3 );
 		add_filter( 'wp_insert_post_data', array( $this, 'render_markdown_post_content' ), 10, 2 );
+		add_filter( 'redirect_post_location', array( $this, 'redirect_after_native_publish' ), 10, 2 );
+	}
+
+	public function redirect_after_native_publish( $location, $post_id ) {
+		if ( ! $this->has_valid_save_request() || ! current_user_can( 'edit_post', $post_id ) ) {
+			return $location;
+		}
+
+		$open_published_post = '';
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- has_valid_save_request() verifies the action-specific EasyMDE nonce.
+		if ( isset( $_POST['easymde_open_published_post'] ) ) {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- has_valid_save_request() verifies the action-specific EasyMDE nonce.
+			$open_published_post = sanitize_text_field( wp_unslash( $_POST['easymde_open_published_post'] ) );
+		}
+		if ( '1' !== $open_published_post ) {
+			return $location;
+		}
+
+		$post = get_post( $post_id );
+		if (
+			! $post
+			|| ! in_array( $post->post_status, array( 'publish', 'private' ), true )
+			|| ! $this->post_document->is_supported_post_type( $post->post_type )
+		) {
+			return $location;
+		}
+
+		$permalink = get_permalink( $post_id );
+
+		return $permalink ? $permalink : $location;
 	}
 
 	public function save_post_meta( $post_id, $post, $update ) {

@@ -85,7 +85,7 @@ final class AdminAssets {
 			wp_add_inline_script(
 				'easymde-admin-editor-toolbar',
 				'window.EasyMDEEditorRootBootstrap = ' . wp_json_encode(
-					$this->get_editor_root_bootstrap( $post_id ),
+					$this->get_editor_root_bootstrap( $post_id, $screen->post_type ),
 					JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
 				) . ';',
 				'before'
@@ -118,13 +118,14 @@ final class AdminAssets {
 		return true;
 	}
 
-	private function get_editor_root_bootstrap( $post_id ) {
+	private function get_editor_root_bootstrap( $post_id, $post_type = '' ) {
 		$nonce         = wp_create_nonce( 'wp_rest' );
 		$strings       = $this->get_strings();
 		$storage       = $this->get_storage_config( $post_id );
 		$theme_options = $this->theme_state_repository->get_theme_options_for_script( $post_id );
 		$theme_state   = $theme_options['state'];
 		$custom_css    = $theme_options['customCss'];
+		$post_type     = $post_type ? sanitize_key( $post_type ) : get_post_type( $post_id );
 
 		if ( 'custom' === $theme_state['markdownTheme'] && '' !== $theme_state['customCssId'] ) {
 			$has_selected_item = false;
@@ -286,103 +287,112 @@ final class AdminAssets {
 			),
 			'strings'            => array(
 				'immersive'          => array(
-					'autoSave'                => __( 'Auto save', 'easymde' ),
-					'autoSaveDescription'     => __( 'Automatically save a local draft', 'easymde' ),
-					'autoSaveEnabled'         => __( 'Auto save is enabled', 'easymde' ),
-					'articleOutline'          => __( 'Article outline', 'easymde' ),
-					'cancel'                  => __( 'Cancel', 'easymde' ),
-					'characters'              => __( 'characters', 'easymde' ),
-					'close'                   => __( 'Close', 'easymde' ),
-					'column'                  => __( 'Column', 'easymde' ),
-					'edit'                    => __( 'Edit', 'easymde' ),
-					'editMode'                => __( 'Edit mode', 'easymde' ),
-					'editorSettings'          => __( 'Editor settings', 'easymde' ),
-					'enter'                   => __( 'Enter immersive writing', 'easymde' ),
-					'exit'                    => __( 'Exit immersive writing', 'easymde' ),
-					'hideOutline'             => __( 'Close outline', 'easymde' ),
-					'history'                 => __( 'History', 'easymde' ),
-					'historyEmpty'            => __( 'No revisions are available.', 'easymde' ),
-					'historyError'            => __( 'Revisions could not be loaded.', 'easymde' ),
-					'historyLoading'          => __( 'Loading revisions...', 'easymde' ),
-					'historyAll'              => __( 'All', 'easymde' ),
+					'autoSave'                    => __( 'Auto save', 'easymde' ),
+					'autoSaveDescription'         => __( 'Automatically save a local draft', 'easymde' ),
+					'autoSaveEnabled'             => __( 'Auto save is enabled', 'easymde' ),
+					'articleOutline'              => __( 'Article outline', 'easymde' ),
+					'cancel'                      => __( 'Cancel', 'easymde' ),
+					'characters'                  => __( 'characters', 'easymde' ),
+					'close'                       => __( 'Close', 'easymde' ),
+					'column'                      => __( 'Column', 'easymde' ),
+					'edit'                        => __( 'Edit', 'easymde' ),
+					'editMode'                    => __( 'Edit mode', 'easymde' ),
+					'editorSettings'              => __( 'Editor settings', 'easymde' ),
+					'enter'                       => __( 'Enter immersive writing', 'easymde' ),
+					'expand'                      => __( 'Expand', 'easymde' ),
+					'exit'                        => __( 'Exit immersive writing', 'easymde' ),
+					'hideOutline'                 => __( 'Close outline', 'easymde' ),
+					'history'                     => __( 'History', 'easymde' ),
+					'historyEmpty'                => __( 'No revisions are available.', 'easymde' ),
+					'historyError'                => __( 'Revisions could not be loaded.', 'easymde' ),
+					'historyLoading'              => __( 'Loading revisions...', 'easymde' ),
+					'historyAll'                  => __( 'All', 'easymde' ),
 					/* translators: %s: Number of available revisions. */
-					'historyCount'            => __( '%s revisions', 'easymde' ),
-					'historyCountSingular'    => __( '1 revision', 'easymde' ),
-					'historyVersions'         => __( 'Revision history', 'easymde' ),
-					'immersive'               => __( 'Immersive writing', 'easymde' ),
-					'insert'                  => __( 'Insert', 'easymde' ),
-					'insertTable'             => __( 'Insert table', 'easymde' ),
-					'line'                    => __( 'Line', 'easymde' ),
-					'minutes'                 => __( 'minutes', 'easymde' ),
-					'manualSave'              => __( 'Manual save', 'easymde' ),
-					'moreActions'             => __( 'More actions', 'easymde' ),
-					'markdown'                => __( 'Markdown', 'easymde' ),
-					'noHeadings'              => __( 'No headings', 'easymde' ),
-					'outline'                 => __( 'Outline', 'easymde' ),
-					'outlineDescription'      => __( 'Show heading navigation on the left', 'easymde' ),
-					'preview'                 => __( 'Preview', 'easymde' ),
-					'previewMode'             => __( 'Preview mode', 'easymde' ),
-					'publish'                 => __( 'Publish article', 'easymde' ),
-					'readingTime'             => __( 'About', 'easymde' ),
-					'restore'                 => __( 'Restore revision', 'easymde' ),
-					'restoreConfirm'          => __( 'Unsaved changes will be lost when WordPress restores this revision. Continue?', 'easymde' ),
-					'restoreThisVersion'      => __( 'Restore this revision', 'easymde' ),
-					'resizeOutline'           => __( 'Resize article outline', 'easymde' ),
-					'saved'                   => __( 'Saved', 'easymde' ),
-					'settings'                => __( 'Settings', 'easymde' ),
-					'showOutline'             => __( 'Open outline', 'easymde' ),
-					'split'                   => __( 'Split', 'easymde' ),
-					'splitMode'               => __( 'Split mode', 'easymde' ),
-					'splitPreview'            => __( 'Split preview', 'easymde' ),
-					'splitPreviewDescription' => __( 'Show live preview by default', 'easymde' ),
-					'syncScroll'              => __( 'Synchronized scrolling', 'easymde' ),
-					'syncScrollDescription'   => __( 'Keep the editor and preview in sync', 'easymde' ),
-					'table'                   => __( 'Table', 'easymde' ),
-					'tableColumns'            => __( 'Columns', 'easymde' ),
-					'tableRows'               => __( 'Rows', 'easymde' ),
-					'theme'                   => __( 'Theme', 'easymde' ),
-					'themeSettings'           => __( 'Theme settings', 'easymde' ),
-					'addTags'                 => __( 'Add tags', 'easymde' ),
-					'categories'              => __( 'Categories', 'easymde' ),
-					'categoriesDescription'   => __( 'Choose the sections this article belongs to.', 'easymde' ),
+					'historyCount'                => __( '%s revisions', 'easymde' ),
+					'historyCountSingular'        => __( '1 revision', 'easymde' ),
+					'historyVersions'             => __( 'Revision history', 'easymde' ),
+					'immersive'                   => __( 'Immersive writing', 'easymde' ),
+					'insert'                      => __( 'Insert', 'easymde' ),
+					'insertTable'                 => __( 'Insert table', 'easymde' ),
+					'line'                        => __( 'Line', 'easymde' ),
+					'minutes'                     => __( 'minutes', 'easymde' ),
+					'manualSave'                  => __( 'Manual save', 'easymde' ),
+					'moreActions'                 => __( 'More actions', 'easymde' ),
+					'markdown'                    => __( 'Markdown', 'easymde' ),
+					'noHeadings'                  => __( 'No headings', 'easymde' ),
+					'outline'                     => __( 'Outline', 'easymde' ),
+					'outlineDescription'          => __( 'Show heading navigation on the left', 'easymde' ),
+					'preview'                     => __( 'Preview', 'easymde' ),
+					'previewMode'                 => __( 'Preview mode', 'easymde' ),
+					'publish'                     => __( 'Publish article', 'easymde' ),
+					'readingTime'                 => __( 'About', 'easymde' ),
+					'restore'                     => __( 'Restore revision', 'easymde' ),
+					'restoreConfirm'              => __( 'Unsaved changes will be lost when WordPress restores this revision. Continue?', 'easymde' ),
+					'restoreThisVersion'          => __( 'Restore this revision', 'easymde' ),
+					'resizeOutline'               => __( 'Resize article outline', 'easymde' ),
+					'resizeSplit'                 => __( 'Resize editor and Preview', 'easymde' ),
+					'saved'                       => __( 'Saved', 'easymde' ),
+					'settings'                    => __( 'Settings', 'easymde' ),
+					'showOutline'                 => __( 'Open outline', 'easymde' ),
+					'split'                       => __( 'Split', 'easymde' ),
+					'splitMode'                   => __( 'Split mode', 'easymde' ),
+					'splitPreview'                => __( 'Split preview', 'easymde' ),
+					'splitPreviewDescription'     => __( 'Show live preview by default', 'easymde' ),
+					'syncScroll'                  => __( 'Synchronized scrolling', 'easymde' ),
+					'syncScrollDescription'       => __( 'Keep the editor and preview in sync', 'easymde' ),
+					'table'                       => __( 'Table', 'easymde' ),
+					'tableColumns'                => __( 'Columns', 'easymde' ),
+					'tableRows'                   => __( 'Rows', 'easymde' ),
+					'theme'                       => __( 'Theme', 'easymde' ),
+					'themeSettings'               => __( 'Theme settings', 'easymde' ),
+					'addTags'                     => __( 'Add tags', 'easymde' ),
+					'categories'                  => __( 'Categories', 'easymde' ),
+					'categoriesDescription'       => __( 'Choose the sections this article belongs to.', 'easymde' ),
 					/* translators: %s: Number of selected categories. */
-					'categoriesSelected'      => __( 'Selected: %s', 'easymde' ),
-					'closePublish'            => __( 'Close publish dialog', 'easymde' ),
-					'continueAddingTags'      => __( 'Continue adding...', 'easymde' ),
-					'excerpt'                 => __( 'Excerpt', 'easymde' ),
-					'excerptPlaceholder'      => __( 'Write a short excerpt for search results, article lists, and sharing previews...', 'easymde' ),
-					'featuredImage'           => __( 'Featured image', 'easymde' ),
-					'imageRecommendation'     => __( 'Landscape images are recommended', 'easymde' ),
-					'imageRequirements'       => __( 'Supports JPG, PNG, and WebP', 'easymde' ),
-					'noWriteBeforeSubmit'     => __( 'Nothing is written to WordPress before submission.', 'easymde' ),
-					'password'                => __( 'Password', 'easymde' ),
-					'passwordPlaceholder'     => __( 'Enter access password', 'easymde' ),
-					'passwordRequired'        => __( 'Enter an access password before submitting.', 'easymde' ),
-					'preparingPublish'        => __( 'Ready to publish', 'easymde' ),
-					'private'                 => __( 'Private', 'easymde' ),
-					'privateDescription'      => __( 'Only site administrators and editors can view this article.', 'easymde' ),
-					'public'                  => __( 'Public', 'easymde' ),
-					'publishDescription'      => __( 'Confirm the article details to publish it to the current WordPress site.', 'easymde' ),
-					'remove'                  => __( 'Remove', 'easymde' ),
+					'categoriesSelected'          => __( 'Selected: %s', 'easymde' ),
+					'closePublish'                => __( 'Close publish dialog', 'easymde' ),
+					'collapse'                    => __( 'Collapse', 'easymde' ),
+					'continueAddingTags'          => __( 'Continue adding...', 'easymde' ),
+					'excerpt'                     => __( 'Excerpt', 'easymde' ),
+					'excerptPlaceholder'          => __( 'Write a short excerpt for search results, article lists, and sharing previews...', 'easymde' ),
+					'featuredImage'               => __( 'Featured image', 'easymde' ),
+					'imageRecommendation'         => __( 'Landscape images are recommended', 'easymde' ),
+					/* translators: %s: WordPress upload-size limit. */
+					'imageRequirements'           => __( 'Supports JPG, PNG, and WebP, max %s', 'easymde' ),
+					'noWriteBeforeSubmit'         => __( 'Nothing is written to WordPress before submission.', 'easymde' ),
+					'openAfterPublish'            => __( 'Open the article page after publishing', 'easymde' ),
+					'openAfterPublishDescription' => __( 'After submission, open the article page with the same article styling as the current Preview.', 'easymde' ),
+					'openAfterUpdate'             => __( 'Open the article page after updating', 'easymde' ),
+					'password'                    => __( 'Password', 'easymde' ),
+					'passwordPlaceholder'         => __( 'Enter access password', 'easymde' ),
+					'passwordRequired'            => __( 'Enter an access password before submitting.', 'easymde' ),
+					'preparingPublish'            => __( 'Ready to publish', 'easymde' ),
+					'private'                     => __( 'Private', 'easymde' ),
+					'privateDescription'          => __( 'Only site administrators and editors can view this article.', 'easymde' ),
+					'public'                      => __( 'Public', 'easymde' ),
+					'publishDescription'          => __( 'Confirm the article details to publish it to the current WordPress site.', 'easymde' ),
+					'publishFailed'               => __( 'WordPress did not accept the publish request. Check the page state and try again.', 'easymde' ),
+					'publishOptions'              => __( 'Publish options', 'easymde' ),
+					'remove'                      => __( 'Remove', 'easymde' ),
 					/* translators: %s: Tag name. */
-					'removeTag'               => __( 'Remove tag: %s', 'easymde' ),
-					'replace'                 => __( 'Replace', 'easymde' ),
-					'selectFeaturedImage'     => __( 'Select featured image', 'easymde' ),
-					'sticky'                  => __( 'Stick to the top of the blog', 'easymde' ),
-					'tags'                    => __( 'Tags', 'easymde' ),
-					'tagsDescription'         => __( 'Press Enter or comma to add a tag.', 'easymde' ),
-					'updateArticle'           => __( 'Update article', 'easymde' ),
-					'updateDescription'       => __( 'Confirm these changes to update the current WordPress article.', 'easymde' ),
-					'updateExisting'          => __( 'Update existing article', 'easymde' ),
-					'visibility'              => __( 'Visibility', 'easymde' ),
-					'title'                   => __( 'Article title', 'easymde' ),
-					'unsaved'                 => __( 'Unsaved', 'easymde' ),
-					'viewModes'               => __( 'View modes', 'easymde' ),
-					'wechat'                  => __( 'Copy to WeChat', 'easymde' ),
-					'wechatCopied'            => __( 'Copied', 'easymde' ),
-					'wordCount'               => __( 'Word count', 'easymde' ),
-					'wordCountDescription'    => __( 'Show words, characters, and reading time beside the title', 'easymde' ),
-					'words'                   => __( 'words', 'easymde' ),
+					'removeTag'                   => __( 'Remove tag: %s', 'easymde' ),
+					'replace'                     => __( 'Replace', 'easymde' ),
+					'selectFeaturedImage'         => __( 'Select featured image', 'easymde' ),
+					'sticky'                      => __( 'Stick to the top of the blog', 'easymde' ),
+					'tags'                        => __( 'Tags', 'easymde' ),
+					'tagsDescription'             => __( 'Press Enter or comma to add a tag.', 'easymde' ),
+					'updateArticle'               => __( 'Update article', 'easymde' ),
+					'updateDescription'           => __( 'Confirm these changes to update the current WordPress article.', 'easymde' ),
+					'updateExisting'              => __( 'Update existing article', 'easymde' ),
+					'visibility'                  => __( 'Visibility', 'easymde' ),
+					'title'                       => __( 'Article title', 'easymde' ),
+					'unsaved'                     => __( 'Unsaved', 'easymde' ),
+					'viewModes'                   => __( 'View modes', 'easymde' ),
+					'wechat'                      => __( 'Copy to WeChat', 'easymde' ),
+					'wechatCopied'                => __( 'Copied', 'easymde' ),
+					'wordCount'                   => __( 'Word count', 'easymde' ),
+					'wordCountDescription'        => __( 'Show words, characters, and reading time beside the title', 'easymde' ),
+					'words'                       => __( 'words', 'easymde' ),
 				),
 				'mediaPickerFailure' => $strings['mediaPickerFailed'],
 				'preview'            => __( 'Preview', 'easymde' ),
@@ -390,12 +400,69 @@ final class AdminAssets {
 				'toolbar'            => $strings['markdownToolbar'],
 			),
 			'wordpress'          => array(
-				'customCssUrl' => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
-				'nonce'        => $nonce,
-				'previewUrl'   => esc_url_raw( rest_url( 'easymde/v1/preview' ) ),
-				'revisionsUrl' => esc_url_raw( rest_url( 'easymde/v1/posts/' ) ),
+				'customCssUrl'      => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
+				'nonce'             => $nonce,
+				'previewUrl'        => esc_url_raw( rest_url( 'easymde/v1/preview' ) ),
+				'publishCategories' => $this->get_publish_categories( $post_type ),
+				'revisionsUrl'      => esc_url_raw( rest_url( 'easymde/v1/posts/' ) ),
 			),
 		);
+	}
+
+	private function get_publish_categories( $post_type ) {
+		if ( ! $post_type || ! is_object_in_taxonomy( $post_type, 'category' ) ) {
+			return array();
+		}
+
+		$taxonomy = get_taxonomy( 'category' );
+		if (
+			! $taxonomy
+			|| empty( $taxonomy->cap->assign_terms )
+			|| ! current_user_can( $taxonomy->cap->assign_terms )
+		) {
+			return array();
+		}
+
+		$terms = get_terms(
+			array(
+				'hide_empty' => false,
+				'number'     => 5000,
+				'orderby'    => 'term_id',
+				'order'      => 'ASC',
+				'taxonomy'   => 'category',
+			)
+		);
+		if ( is_wp_error( $terms ) ) {
+			throw new \RuntimeException( 'easymde-publish-categories-unavailable' );
+		}
+
+		$terms_by_parent = array();
+		foreach ( $terms as $term ) {
+			$parent_id = (int) $term->parent;
+			if ( ! isset( $terms_by_parent[ $parent_id ] ) ) {
+				$terms_by_parent[ $parent_id ] = array();
+			}
+			$terms_by_parent[ $parent_id ][] = $term;
+		}
+
+		$build = static function ( $parent_id, $depth = 0 ) use ( &$build, $terms_by_parent ) {
+			if ( $depth >= 32 ) {
+				return array();
+			}
+
+			$categories = array();
+			foreach ( $terms_by_parent[ $parent_id ] ?? array() as $term ) {
+				$categories[] = array(
+					'children' => $build( (int) $term->term_id, $depth + 1 ),
+					'id'       => (string) $term->term_id,
+					'label'    => $term->name,
+				);
+			}
+
+			return $categories;
+		};
+
+		return $build( 0 );
 	}
 
 	private function get_react_editor_asset( $build_dir = '' ) {

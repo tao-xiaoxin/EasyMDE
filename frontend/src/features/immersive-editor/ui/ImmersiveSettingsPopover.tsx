@@ -33,6 +33,7 @@ export function ImmersiveSettingsPopover({
   const [position, setPosition] = useState<Position | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLElement>(null);
+  const focusFirstItemRef = useRef(false);
 
   const close = () => {
     setOpen(false);
@@ -41,12 +42,16 @@ export function ImmersiveSettingsPopover({
 
   const updatePosition = () => {
     const trigger = triggerRef.current;
-    if (!trigger) return;
+    if (!trigger) {
+      throw new Error('immersive-settings-trigger-unavailable');
+    }
     const rect = trigger.getBoundingClientRect();
+    const windowRef = trigger.ownerDocument.defaultView;
+    if (!windowRef) {
+      throw new Error('immersive-settings-window-unavailable');
+    }
     setPosition({
-      right: trigger.ownerDocument.defaultView
-        ? trigger.ownerDocument.defaultView.innerWidth - rect.right
-        : 0,
+      right: windowRef.innerWidth - rect.right,
       tailRight: Math.max(14, Math.min(22, rect.width / 2 - 6)),
       top: rect.bottom + 10
     });
@@ -57,8 +62,11 @@ export function ImmersiveSettingsPopover({
   }, [open]);
 
   useEffect(() => {
-    if (open && position) {
-      panelRef.current?.querySelector<HTMLInputElement>('input')?.focus();
+    if (open && position && focusFirstItemRef.current) {
+      panelRef.current
+        ?.querySelector<HTMLInputElement>('input[type="checkbox"]')
+        ?.focus();
+      focusFirstItemRef.current = false;
     }
   }, [open, position]);
 
@@ -66,7 +74,9 @@ export function ImmersiveSettingsPopover({
     if (!open) return undefined;
     const trigger = triggerRef.current;
     const windowRef = trigger?.ownerDocument.defaultView;
-    if (!windowRef) return undefined;
+    if (!windowRef) {
+      throw new Error('immersive-settings-window-unavailable');
+    }
     const reposition = () => updatePosition();
     const closeForEscape = (event: KeyboardEvent) => {
       if ('Escape' !== event.key) return;
@@ -109,7 +119,10 @@ export function ImmersiveSettingsPopover({
         aria-label={strings.editorSettings}
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
+        onClick={(event) => {
+          focusFirstItemRef.current = 0 === event.detail;
+          setOpen((current) => !current);
+        }}
       >
         <Settings size={14} strokeWidth={2} />
         <ChevronDown size={10} strokeWidth={2.5} />

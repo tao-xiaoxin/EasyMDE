@@ -9,6 +9,106 @@ use EasyMDE\Theme\ThemeStateRepository;
 
 final class EditorSaveHandlerTest extends WP_UnitTestCase
 {
+    public function test_valid_immersive_publish_request_redirects_to_the_real_article()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_status' => 'publish',
+                'post_author' => $user_id,
+            )
+        );
+        wp_set_current_user($user_id);
+        $previous_post = $_POST;
+        $_POST = array(
+            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+            'easymde_enabled' => '1',
+            'easymde_markdown' => '# Published',
+            'easymde_open_published_post' => '1',
+        );
+
+        try {
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $this->theme_state_repository(),
+                function () {
+                    return true;
+                }
+            );
+            $this->assertSame(
+                get_permalink($post_id),
+                $handler->redirect_after_native_publish(
+                    admin_url('post.php?post=' . $post_id . '&action=edit'),
+                    $post_id
+                )
+            );
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
+    public function test_publish_redirect_option_is_inert_without_a_valid_easymde_save_request()
+    {
+        $post_id = self::factory()->post->create(array('post_status' => 'publish'));
+        $location = admin_url('post.php?post=' . $post_id . '&action=edit');
+        $previous_post = $_POST;
+        $_POST = array('easymde_open_published_post' => '1');
+
+        try {
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $this->theme_state_repository(),
+                function () {
+                    return true;
+                }
+            );
+            $this->assertSame(
+                $location,
+                $handler->redirect_after_native_publish($location, $post_id)
+            );
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
+    public function test_publish_redirect_option_preserves_the_admin_location_for_a_pending_post()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_status' => 'pending',
+                'post_author' => $user_id,
+            )
+        );
+        wp_set_current_user($user_id);
+        $location = admin_url('post.php?post=' . $post_id . '&action=edit');
+        $previous_post = $_POST;
+        $_POST = array(
+            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+            'easymde_enabled' => '1',
+            'easymde_markdown' => '# Pending',
+            'easymde_open_published_post' => '1',
+        );
+
+        try {
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $this->theme_state_repository(),
+                function () {
+                    return true;
+                }
+            );
+            $this->assertSame(
+                $location,
+                $handler->redirect_after_native_publish($location, $post_id)
+            );
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
     public function test_invalid_save_nonce_does_not_mark_existing_ordinary_post_enabled()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));

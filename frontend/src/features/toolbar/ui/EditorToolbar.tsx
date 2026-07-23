@@ -137,6 +137,11 @@ type HeadingMenuProps = Readonly<{
   variant: 'default' | 'immersive';
 }>;
 
+type ImmersiveMenuPosition = Readonly<{
+  left: number;
+  top: number;
+}>;
+
 function HeadingMenu({
   commands,
   headingLabelFormat,
@@ -152,6 +157,23 @@ function HeadingMenu({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const initialFocus = useRef<'first' | 'last' | 'preserve'>('preserve');
+  const [immersivePosition, setImmersivePosition] =
+    useState<ImmersiveMenuPosition | null>(null);
+
+  const positionImmersiveMenu = () => {
+    if ('immersive' !== variant) {
+      return;
+    }
+    const trigger = triggerRef.current;
+    if (!trigger) {
+      throw new Error('immersive-heading-trigger-unavailable');
+    }
+    const rect = trigger.getBoundingClientRect();
+    setImmersivePosition({
+      left: rect.left,
+      top: rect.bottom + 6
+    });
+  };
 
   useLayoutEffect(() => {
     if (!isOpen || 'preserve' === initialFocus.current) {
@@ -161,6 +183,25 @@ function HeadingMenu({
     const index = 'last' === initialFocus.current ? commands.length - 1 : 0;
     itemRefs.current[index]?.focus();
   }, [commands.length, isOpen]);
+
+  useLayoutEffect(() => {
+    if (!isOpen || 'immersive' !== variant) {
+      return undefined;
+    }
+
+    positionImmersiveMenu();
+    const windowRef = triggerRef.current?.ownerDocument.defaultView;
+    if (!windowRef) {
+      throw new Error('immersive-heading-window-unavailable');
+    }
+    const updatePosition = () => positionImmersiveMenu();
+    windowRef.addEventListener('resize', updatePosition);
+    windowRef.addEventListener('scroll', updatePosition, true);
+    return () => {
+      windowRef.removeEventListener('resize', updatePosition);
+      windowRef.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [isOpen, variant]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -241,6 +282,7 @@ function HeadingMenu({
           event.stopPropagation();
           const nextIsOpen = !isOpen;
           if (nextIsOpen) {
+            positionImmersiveMenu();
             onOpen();
             initialFocus.current = 0 === event.detail ? 'first' : 'preserve';
           }
@@ -252,6 +294,7 @@ function HeadingMenu({
           }
 
           event.preventDefault();
+          positionImmersiveMenu();
           onOpen();
           initialFocus.current = 'ArrowUp' === event.key ? 'last' : 'first';
           setIsOpen(true);
@@ -267,6 +310,14 @@ function HeadingMenu({
         role="menu"
         aria-label={label}
         hidden={!isOpen}
+        style={
+          'immersive' === variant && immersivePosition
+            ? {
+                left: `${immersivePosition.left}px`,
+                top: `${immersivePosition.top}px`
+              }
+            : undefined
+        }
         onClick={(event) => event.stopPropagation()}
         onKeyDown={handleMenuKeyDown}
       >
@@ -367,10 +418,7 @@ export function EditorToolbar({
   );
   const displayedHeadingCommands =
     'immersive' === variant
-      ? [
-          ...headingCommands.filter((command) => 'heading' === command.action),
-          ...headingCommands.filter((command) => 'heading' !== command.action)
-        ]
+      ? headingCommands.filter((command) => 'paragraph' !== command.id)
       : headingCommands;
   const blockCommands = commandsFor('main', 'block');
   const codeCommands = commandsFor('main', 'insert').filter(

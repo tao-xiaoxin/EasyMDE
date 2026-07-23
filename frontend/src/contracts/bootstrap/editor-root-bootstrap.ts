@@ -3,6 +3,7 @@ import {
   type PreviewFeatures,
   type SafePreviewHtml
 } from '../ports/preview-request';
+import type { NativePublishCategory } from '../ports/native-publish-port';
 import {
   parseAppearanceBootstrap,
   type AppearanceBootstrap
@@ -66,6 +67,7 @@ export type EditorRootWordPressBootstrap = Readonly<{
   customCssUrl: string;
   nonce: string;
   previewUrl: string;
+  publishCategories: ReadonlyArray<NativePublishCategory>;
   revisionsUrl: string;
 }>;
 
@@ -88,6 +90,7 @@ export type EditorRootBootstrap = Readonly<{
     editMode: string;
     editorSettings: string;
     enter: string;
+    expand: string;
     exit: string;
     hideOutline: string;
     history: string;
@@ -117,6 +120,7 @@ export type EditorRootBootstrap = Readonly<{
     restoreConfirm: string;
     restoreThisVersion: string;
     resizeOutline: string;
+    resizeSplit: string;
     saved: string;
     settings: string;
     showOutline: string;
@@ -144,6 +148,7 @@ export type EditorRootBootstrap = Readonly<{
     categoriesDescription: string;
     categoriesSelected: string;
     closePublish: string;
+    collapse: string;
     continueAddingTags: string;
     excerpt: string;
     excerptPlaceholder: string;
@@ -151,6 +156,9 @@ export type EditorRootBootstrap = Readonly<{
     imageRecommendation: string;
     imageRequirements: string;
     noWriteBeforeSubmit: string;
+    openAfterPublish: string;
+    openAfterPublishDescription: string;
+    openAfterUpdate: string;
     password: string;
     passwordPlaceholder: string;
     passwordRequired: string;
@@ -159,6 +167,8 @@ export type EditorRootBootstrap = Readonly<{
     privateDescription: string;
     public: string;
     publishDescription: string;
+    publishFailed: string;
+    publishOptions: string;
     remove: string;
     removeTag: string;
     replace: string;
@@ -302,6 +312,7 @@ function parseWordPress(value: unknown): EditorRootWordPressBootstrap {
       }
     ),
     nonce: boundedString(wordpress.nonce, 'editor-root-wordpress-invalid'),
+    publishCategories: parsePublishCategories(wordpress.publishCategories),
     previewUrl: boundedString(
       wordpress.previewUrl,
       'editor-root-wordpress-invalid',
@@ -315,6 +326,27 @@ function parseWordPress(value: unknown): EditorRootWordPressBootstrap {
       { maxLength: 4096 }
     )
   };
+}
+
+function parsePublishCategories(
+  value: unknown,
+  depth = 0
+): ReadonlyArray<NativePublishCategory> {
+  if (!Array.isArray(value) || value.length > 5000 || depth > 32) {
+    throw new EditorRootBootstrapError('editor-root-wordpress-invalid');
+  }
+  return value.map((candidate) => {
+    const category = objectValue(candidate, 'editor-root-wordpress-invalid');
+    return {
+      children: parsePublishCategories(category.children, depth + 1),
+      id: boundedString(category.id, 'editor-root-wordpress-invalid', {
+        maxLength: 32
+      }),
+      label: boundedString(category.label, 'editor-root-wordpress-invalid', {
+        maxLength: 256
+      })
+    };
+  });
 }
 
 export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
@@ -422,6 +454,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'editMode',
         'editorSettings',
         'enter',
+        'expand',
         'exit',
         'hideOutline',
         'history',
@@ -451,6 +484,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'restoreConfirm',
         'restoreThisVersion',
         'resizeOutline',
+        'resizeSplit',
         'saved',
         'settings',
         'showOutline',
@@ -478,6 +512,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'categoriesDescription',
         'categoriesSelected',
         'closePublish',
+        'collapse',
         'continueAddingTags',
         'excerpt',
         'excerptPlaceholder',
@@ -485,6 +520,9 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'imageRecommendation',
         'imageRequirements',
         'noWriteBeforeSubmit',
+        'openAfterPublish',
+        'openAfterPublishDescription',
+        'openAfterUpdate',
         'password',
         'passwordPlaceholder',
         'passwordRequired',
@@ -493,6 +531,8 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'privateDescription',
         'public',
         'publishDescription',
+        'publishFailed',
+        'publishOptions',
         'remove',
         'removeTag',
         'replace',

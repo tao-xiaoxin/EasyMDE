@@ -120,6 +120,7 @@ function validBootstrap() {
         editMode: 'Edit mode',
         editorSettings: 'Editor settings',
         enter: 'Enter immersive writing',
+        expand: 'Expand',
         exit: 'Exit immersive writing',
         hideOutline: 'Hide outline',
         history: 'History',
@@ -149,6 +150,7 @@ function validBootstrap() {
         restoreConfirm: 'Unsaved changes will be lost',
         restoreThisVersion: 'Restore this revision',
         resizeOutline: 'Resize article outline',
+        resizeSplit: 'Resize editor and Preview',
         saved: 'Saved',
         settings: 'Settings',
         showOutline: 'Show outline',
@@ -168,13 +170,17 @@ function validBootstrap() {
         categoriesDescription: 'Choose categories.',
         categoriesSelected: 'Selected: %s',
         closePublish: 'Close publish dialog',
+        collapse: 'Collapse',
         continueAddingTags: 'Continue adding...',
         excerpt: 'Excerpt',
         excerptPlaceholder: 'Write an excerpt...',
         featuredImage: 'Featured image',
         imageRecommendation: 'Landscape images are recommended',
-        imageRequirements: 'Supports JPG, PNG, and WebP',
+        imageRequirements: 'Supports JPG, PNG, and WebP, max %s',
         noWriteBeforeSubmit: 'Nothing is written before submission.',
+        openAfterPublish: 'Open after publishing',
+        openAfterPublishDescription: 'Open the article after submission.',
+        openAfterUpdate: 'Open after updating',
         password: 'Password',
         passwordPlaceholder: 'Enter access password',
         passwordRequired: 'Enter an access password.',
@@ -183,6 +189,8 @@ function validBootstrap() {
         privateDescription: 'Only editors can view this article.',
         public: 'Public',
         publishDescription: 'Confirm article details.',
+        publishFailed: 'WordPress did not accept the publish request. Check the page state and try again.',
+        publishOptions: 'Publish options',
         remove: 'Remove',
         removeTag: 'Remove tag: %s',
         replace: 'Replace',
@@ -241,6 +249,13 @@ function validBootstrap() {
     wordpress: {
       customCssUrl: 'https://example.test/wp-json/easymde/v1/custom-css',
       nonce: 'synthetic-nonce',
+      publishCategories: [
+        {
+          children: [{ children: [], id: '3', label: 'Child' }],
+          id: '2',
+          label: 'Parent'
+        }
+      ],
       previewUrl: 'https://example.test/wp-json/easymde/v1/preview',
       revisionsUrl: 'https://example.test/wp-json/easymde/v1/posts/'
     }

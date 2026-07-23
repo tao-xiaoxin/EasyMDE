@@ -16,6 +16,7 @@ export type NativePublishDraft = Readonly<{
   categoryIds: ReadonlyArray<string>;
   excerpt: string;
   featuredImage: NativeFeaturedImage | null;
+  openPreview: boolean;
   password: string;
   sticky: boolean;
   tags: ReadonlyArray<string>;

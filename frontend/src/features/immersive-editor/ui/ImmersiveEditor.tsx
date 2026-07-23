@@ -52,6 +52,7 @@ export type { ImmersiveStrings } from './immersive-editor-ui-types';
 type Props = Readonly<{
   documentSession: EditorDocumentSession;
   environment: ImmersiveEnvironmentPort;
+  imageUploadMaxBytes: number;
   immersivePreferencesPort: ImmersivePreferencesPort;
   initialPreferences?: ImmersivePreferences | null;
   revisionPort: RevisionPort | null;
@@ -414,6 +415,7 @@ function HistoryDialog({
 export function ImmersiveEditor({
   documentSession,
   environment,
+  imageUploadMaxBytes,
   immersivePreferencesPort,
   initialPreferences = null,
   revisionPort,
@@ -591,6 +593,7 @@ export function ImmersiveEditor({
       {publishSnapshot ? (
         <ImmersivePublishDialog
           environment={environment}
+          imageUploadMaxBytes={imageUploadMaxBytes}
           snapshot={publishSnapshot}
           strings={strings}
           onClose={() => setPublishSnapshot(null)}

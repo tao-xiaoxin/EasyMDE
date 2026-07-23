@@ -7,6 +7,8 @@ import type {
   NativePublishVisibility
 } from '../../../contracts/ports/native-publish-port';
 
+const OPEN_PUBLISHED_POST_FIELD = 'easymde_open_published_post';
+
 function inputs(documentRef: Document): ReadonlyArray<HTMLInputElement> {
   return Array.from(
     documentRef.querySelectorAll<HTMLInputElement>(
@@ -57,6 +59,17 @@ function categories(documentRef: Document): ReadonlyArray<NativePublishCategory>
     if (!(child instanceof HTMLLIElement)) return [];
     const node = categoryNode(child);
     return node ? [node] : [];
+  });
+}
+
+function availableCategories(
+  projected: ReadonlyArray<NativePublishCategory>,
+  availableIds: ReadonlySet<string>
+): ReadonlyArray<NativePublishCategory> {
+  return projected.flatMap((category) => {
+    const children = availableCategories(category.children, availableIds);
+    if (!availableIds.has(category.id)) return children;
+    return [{ ...category, children }];
   });
 }
 
@@ -119,8 +132,30 @@ function setChecked(element: HTMLInputElement | null, checked: boolean): void {
   element.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+function setOpenPreview(documentRef: Document, enabled: boolean): void {
+  const existing = documentRef.querySelector<HTMLInputElement>(
+    `input[name="${OPEN_PUBLISHED_POST_FIELD}"]`
+  );
+  if (!enabled) {
+    existing?.remove();
+    return;
+  }
+  if (existing) {
+    existing.value = '1';
+    return;
+  }
+  const form = documentRef.querySelector<HTMLFormElement>('#post');
+  if (!form) throw new Error('native-publish-form-unavailable');
+  const field = documentRef.createElement('input');
+  field.type = 'hidden';
+  field.name = OPEN_PUBLISHED_POST_FIELD;
+  field.value = '1';
+  form.append(field);
+}
+
 export function createWordPressNativePublishPort(
-  documentRef: Document
+  documentRef: Document,
+  publishCategories?: ReadonlyArray<NativePublishCategory>
 ): NativePublishPort {
   let tagDelimiter = ',';
   return {
@@ -135,14 +170,26 @@ export function createWordPressNativePublishPort(
           ?.value ??
         documentRef.querySelector<HTMLInputElement>('#post_status')?.value ??
         '';
+      const categoryInputs = inputs(documentRef);
+      const nativeCategories = categories(documentRef);
       return {
-        categories: categories(documentRef),
-        categoryIds: inputs(documentRef)
+        categories: categoryInputs.length
+          ? availableCategories(
+              publishCategories ?? nativeCategories,
+              new Set(categoryInputs.map((input) => input.value))
+            )
+          : [],
+        categoryIds: categoryInputs
           .filter((input) => input.checked)
           .map((input) => input.value),
         excerpt:
           documentRef.querySelector<HTMLTextAreaElement>('#excerpt')?.value ?? '',
         featuredImage: featuredImage(documentRef),
+        openPreview:
+          '1' ===
+          documentRef.querySelector<HTMLInputElement>(
+            `input[name="${OPEN_PUBLISHED_POST_FIELD}"]`
+          )?.value,
         password:
           documentRef.querySelector<HTMLInputElement>('#post_password')?.value ??
           '',
@@ -190,6 +237,7 @@ export function createWordPressNativePublishPort(
         documentRef.querySelector<HTMLInputElement>('#sticky'),
         'public' === draft.visibility && draft.sticky
       );
+      setOpenPreview(documentRef, draft.openPreview);
     }
   };
 }

@@ -31,6 +31,7 @@ function icon(node: ReadonlyArray<readonly [string, Readonly<Record<string, stri
 
 export const Bold = icon([["path",{"d":"M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8","key":"mg9rjx"}]]);
 export const BarChart3 = icon([["path",{"d":"M3 3v16a2 2 0 0 0 2 2h16","key":"c24i48"}],["path",{"d":"M18 17V9","key":"2bz60n"}],["path",{"d":"M13 17V5","key":"1frdt8"}],["path",{"d":"M8 17v-3","key":"17ska0"}]]);
+export const CalendarCheck = icon([["path",{"d":"M8 2v4","key":"1cmpym"}],["path",{"d":"M16 2v4","key":"4m81vk"}],["rect",{"width":"18","height":"18","x":"3","y":"4","rx":"2","key":"1hopcy"}],["path",{"d":"M3 10h18","key":"8toen8"}],["path",{"d":"m9 16 2 2 4-4","key":"19s6y9"}]]);
 export const Braces = icon([["path",{"d":"M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1","key":"ezmyqa"}],["path",{"d":"M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1","key":"e1hn23"}]]);
 export const Check = icon([["path",{"d":"M20 6 9 17l-5-5","key":"1gmf2c"}]]);
 export const ChevronDown = icon([["path",{"d":"m6 9 6 6 6-6","key":"qrunsl"}]]);

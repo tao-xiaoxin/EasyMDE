@@ -86,7 +86,8 @@ import {
 import { openMediaPickerSession } from '../../features/media-picker/media-picker-session';
 import {
   createLocalDraftSession,
-  type LocalDraftSession
+  type LocalDraftSession,
+  type LocalDraftSessionStatus
 } from '../../features/local-drafts/local-draft-session';
 import { createToolbarCommandSession } from '../../features/toolbar/toolbar-command-session';
 import {
@@ -101,6 +102,12 @@ import {
 } from '../../features/immersive-editor/ui/ImmersiveEditor';
 import type { ImmersiveViewMode } from '../../features/immersive-editor/immersive-editor';
 import { openFeaturedImagePicker } from '../../features/immersive-editor/open-featured-image-picker';
+
+type EditorStatus = Readonly<
+  ImageUploadStatus & {
+    owner: 'editor' | 'local-draft';
+  }
+>;
 
 export type EditorRootProps = Readonly<{
   appearance: AppearanceBootstrap;
@@ -412,9 +419,7 @@ export function EditorRoot(props: EditorRootProps) {
     );
   const [draftCandidate, setDraftCandidate] = useState(false);
   const [draftUnreadable, setDraftUnreadable] = useState(false);
-  const [editorStatus, setEditorStatus] = useState<ImageUploadStatus | null>(
-    null
-  );
+  const [editorStatus, setEditorStatus] = useState<EditorStatus | null>(null);
   const [previewRuntimeReady, setPreviewRuntimeReady] = useState(false);
   const [appearanceState, setAppearanceState] = useState(
     props.appearance.state
@@ -447,6 +452,16 @@ export function EditorRoot(props: EditorRootProps) {
   }, [immersivePreferences, props.onFailure]);
   const [cursorPosition, setCursorPosition] = useState({ column: 1, line: 1 });
   const sessionSnapshot = useEditorSession(props.sessionPort);
+  const setOwnedEditorStatus = useCallback(
+    (status: ImageUploadStatus) =>
+      setEditorStatus({ ...status, owner: 'editor' }),
+    []
+  );
+  const setLocalDraftStatus = useCallback(
+    (status: LocalDraftSessionStatus) =>
+      setEditorStatus({ ...status, owner: 'local-draft' }),
+    []
+  );
   const protectedOperationError = useCallback(
     (operation: EditorSessionOperation) => {
       const error = protectedEditorOperationError(
@@ -465,10 +480,15 @@ export function EditorRoot(props: EditorRootProps) {
         enabled: props.wechatExport.enabled,
         getPreview: () => previewRuntimeRef.current?.surface ?? null,
         onDiagnostic: props.onFailure,
-        onStatus: setEditorStatus,
+        onStatus: setOwnedEditorStatus,
         strings: props.wechatExport.strings
       }),
-    [props.onFailure, props.wechatClipboard, props.wechatExport]
+    [
+      props.onFailure,
+      props.wechatClipboard,
+      props.wechatExport,
+      setOwnedEditorStatus
+    ]
   );
 
   const handleDocumentReady = useCallback((session: EditorDocumentSession) => {
@@ -614,6 +634,7 @@ export function EditorRoot(props: EditorRootProps) {
           props.onFailure(mediaPickerFailureCode(error));
           setEditorStatus({
             message: props.mediaPickerFailureMessage,
+            owner: 'editor',
             type: 'error'
           });
         })
@@ -720,12 +741,18 @@ export function EditorRoot(props: EditorRootProps) {
     if (true !== props.publishPost(documentSession)) {
       props.nativePublishPort.apply(original);
       props.onFailure('immersive-publish-command-unavailable');
+      setEditorStatus({
+        message: props.immersiveStrings.publishFailed,
+        owner: 'editor',
+        type: 'error'
+      });
       return false;
     }
     return true;
   }, [
     documentSession,
     props.nativePublishPort,
+    props.immersiveStrings.publishFailed,
     props.onFailure,
     props.publishPost,
     protectedOperationError
@@ -844,13 +871,19 @@ export function EditorRoot(props: EditorRootProps) {
       enabled: props.imageUpload.enabled,
       maxBytes: props.imageUpload.maxBytes,
       onDiagnostic: props.onFailure,
-      onStatus: setEditorStatus,
+      onStatus: setOwnedEditorStatus,
       postId: props.imageUpload.postId,
       strings: props.imageUpload.strings,
       target: documentSession.document.getInputElement(),
       upload: imageUploadPort
     });
-  }, [documentSession, props.imageUpload, imageUploadPort, props.onFailure]);
+  }, [
+    documentSession,
+    props.imageUpload,
+    imageUploadPort,
+    props.onFailure,
+    setOwnedEditorStatus
+  ]);
 
   useEffect(() => {
     if (!documentSession) {
@@ -867,7 +900,7 @@ export function EditorRoot(props: EditorRootProps) {
       onCandidate: setDraftCandidate,
       onDiagnostic: props.onFailure,
       onUnreadable: setDraftUnreadable,
-      onStatus: setEditorStatus,
+      onStatus: setLocalDraftStatus,
       savedFingerprint: props.localDrafts.savedFingerprint,
       storage: props.localDraftStorage,
       strings: props.localDrafts.strings
@@ -888,7 +921,8 @@ export function EditorRoot(props: EditorRootProps) {
     documentSession,
     props.localDraftStorage,
     props.localDrafts,
-    props.onFailure
+    props.onFailure,
+    setLocalDraftStatus
   ]);
 
   useEffect(() => {
@@ -942,6 +976,7 @@ export function EditorRoot(props: EditorRootProps) {
         <ImmersiveEditor
           documentSession={documentSession}
           environment={props.immersiveEnvironment}
+          imageUploadMaxBytes={props.imageUpload.maxBytes}
           immersivePreferencesPort={props.immersivePreferencesPort}
           initialPreferences={
             'loaded' === immersivePreferences.status
@@ -1071,7 +1106,10 @@ export function EditorRoot(props: EditorRootProps) {
           </div>
         </div>
       ) : null}
-      {editorStatus ? (
+      {editorStatus &&
+      (!immersive ||
+        'local-draft' !== editorStatus.owner ||
+        'error' === editorStatus.type) ? (
         <div
           className={`easymde-editor-flash is-${editorStatus.type}`}
           aria-live="polite"
@@ -1079,7 +1117,7 @@ export function EditorRoot(props: EditorRootProps) {
           {editorStatus.message}
         </div>
       ) : null}
-      {draftCandidate ? (
+      {!immersive && draftCandidate ? (
         <div className="easymde-draft-notice">
           <span>{props.localDrafts.strings.available}</span>
           <button
@@ -1098,7 +1136,7 @@ export function EditorRoot(props: EditorRootProps) {
           </button>
         </div>
       ) : null}
-      {draftUnreadable ? (
+      {!immersive && draftUnreadable ? (
         <div className="easymde-draft-notice">
           <button
             type="button"
@@ -1111,6 +1149,8 @@ export function EditorRoot(props: EditorRootProps) {
       ) : null}
       <EditorWorkspace
         direction={props.layout.direction}
+        splitResizable={immersive && 'split' === immersiveMode}
+        splitResizeLabel={props.immersiveStrings.resizeSplit}
         source={
           <section
             className="easymde-pane easymde-pane-source"

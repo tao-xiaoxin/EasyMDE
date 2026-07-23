@@ -11,6 +11,7 @@ export type ImmersiveStrings = Readonly<{
   editMode: string;
   editorSettings: string;
   enter: string;
+  expand: string;
   exit: string;
   hideOutline: string;
   history: string;
@@ -37,6 +38,7 @@ export type ImmersiveStrings = Readonly<{
   publish: string;
   readingTime: string;
   resizeOutline: string;
+  resizeSplit: string;
   restore: string;
   restoreConfirm: string;
   restoreThisVersion: string;
@@ -67,6 +69,7 @@ export type ImmersiveStrings = Readonly<{
   categoriesDescription: string;
   categoriesSelected: string;
   closePublish: string;
+  collapse: string;
   continueAddingTags: string;
   excerpt: string;
   excerptPlaceholder: string;
@@ -74,6 +77,9 @@ export type ImmersiveStrings = Readonly<{
   imageRecommendation: string;
   imageRequirements: string;
   noWriteBeforeSubmit: string;
+  openAfterPublish: string;
+  openAfterPublishDescription: string;
+  openAfterUpdate: string;
   password: string;
   passwordPlaceholder: string;
   passwordRequired: string;
@@ -82,6 +88,8 @@ export type ImmersiveStrings = Readonly<{
   privateDescription: string;
   public: string;
   publishDescription: string;
+  publishFailed: string;
+  publishOptions: string;
   remove: string;
   removeTag: string;
   replace: string;

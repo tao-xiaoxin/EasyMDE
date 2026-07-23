@@ -11,8 +11,9 @@ Issue #91 的普通 WordPress Editor 目标是一个完整的 React Editor Root�
 Focus Mode / 沉浸式写作不属于普通编辑器默认表面；Issue #126 允许在同一
 React Root 中打开沉浸式呈现，但必须复用现有文档、Preview、原生表单和
 WordPress 能力所有者，不得创建第二个根、编辑器、渲染器或保存链路。
-沉浸界面也不得复制 WordPress 已拥有的 Publish、Revision、分类、标签、
-摘要和特色图片界面。
+沉浸界面可以投影 Publish、Revision、分类、标签、摘要和特色图片交互，
+但只能读取和更新现有 WordPress 原生字段、调用现有媒体与修订能力，并把
+最终提交或恢复交回 WordPress；它不得成为第二套权限、持久化或修订所有者。
 Outline、写作统计/状态、Context Bar、视图切换和可拖动分栏不属于批准的普通
 Editor 视觉基线。删除这些 React 表面不等于删除能力：对应发布与修订流程继续
 由 WordPress 原生 Meta Box 和页面负责。
@@ -962,7 +963,7 @@ accepted editor transaction
 
 编译期 Package 与类型声明不能暴露高于最低运行时的 API。React / ReactDOM 的测试依赖、`@types/react`、`@types/react-dom`、`@wordpress/element` 与 JSX Runtime Type 必须和 WordPress 6.7 已核验的 React 18 能力对齐；针对 React 19 或更新 Gutenberg Package 的 Type Check 通过，不代表 WordPress 6.7 运行兼容。
 
-实时根 `package.json` 已提供 Biome Frontend Lint、严格 TypeScript、独立 `tsc --noEmit`、Vitest、Vite、Frontend Build Contract Gate 和完整普通 Editor 的 Production Build。`frontend/src/entrypoints/admin-editor.tsx` 挂载一个 React Editor Root，并通过聚焦 Feature、Port 与 Adapter 组合 Toolbar/Command、文档、Preview、Appearance、Media、Draft、Export、固定 Source/Preview Layout 与 WordPress Session Integration。PHP Toolbar Registry、正式 Markdown Renderer、权限、Nonce、Native Form、Save、Publish、Revision、Media 和持久化权威保持不变；Publish、Revision、分类、标签、摘要和特色图片继续由 WordPress 原生界面拥有。普通 Editor 不拥有 Outline、写作统计/状态、Context Bar、视图切换、可拖动 Divider、React Publish、React Revision、React History、Secondary Toolbar、Legacy Startup Fallback 或 Focus Mode Runtime。后续聚焦任务只在出现真实消费者时创建对应目录和 Production Output，并继续更新实时 Release Owner、Package Predicate 与测试，使 Frontend Layout 同时遵守安装版 ZIP 与 Source Archive 的既有产品边界；聚焦 Frontend Package Impact 的执行合同属于 `.agents/skills/easymde/SKILL.md`，准确的当前 Include / Exclude、构建和验证行为属于 `docs/TESTING_AND_RELEASE.md`、`scripts/build-release.mjs` 与 `scripts/build-source-archives.mjs`。
+实时根 `package.json` 已提供 Biome Frontend Lint、严格 TypeScript、独立 `tsc --noEmit`、Vitest、Vite、Frontend Build Contract Gate 和完整普通 Editor 的 Production Build。`frontend/src/entrypoints/admin-editor.tsx` 挂载一个 React Editor Root，并通过聚焦 Feature、Port 与 Adapter 组合 Toolbar/Command、文档、Preview、Appearance、Media、Draft、Export、固定 Source/Preview Layout 与 WordPress Session Integration。PHP Toolbar Registry、正式 Markdown Renderer、权限、Nonce、Native Form、Save、Publish、Revision、Media 和持久化权威保持不变；Issue #126 沉浸界面的 Publish 面板只是原生字段投影，History 只读取现有 Revision REST 并把恢复交回原生 WordPress 路径。普通 Editor 的默认表面不显示 Outline、写作统计/状态、Context Bar、沉浸视图切换、React Publish 投影、React History 或 Secondary Toolbar，也不加载 Legacy Startup Fallback 或历史 Focus Mode Runtime。后续聚焦任务只在出现真实消费者时创建对应目录和 Production Output，并继续更新实时 Release Owner、Package Predicate 与测试，使 Frontend Layout 同时遵守安装版 ZIP 与 Source Archive 的既有产品边界；聚焦 Frontend Package Impact 的执行合同属于 `.agents/skills/easymde/SKILL.md`，准确的当前 Include / Exclude、构建和验证行为属于 `docs/TESTING_AND_RELEASE.md`、`scripts/build-release.mjs` 与 `scripts/build-source-archives.mjs`。
 
 首个 Build Implementation 必须选择并验证一个一致策略：
 

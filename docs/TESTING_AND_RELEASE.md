@@ -165,8 +165,9 @@ Outline/statistics/view modes/table/history/Escape behavior,
 WordPress-native Publishing with unknown extension fields, native revision
 navigation, and WeChat Clipboard success/failure. It also verifies that the
 immersive surface reuses the single React document and Preview owners, keeps
-AI and Settings absent, loads no Legacy Focus assets, and remains zero-write
-until the user invokes a legitimate WordPress mutation.
+AI controls absent, exposes only the five real non-AI Settings preferences,
+loads no Legacy Focus assets, and remains zero-write until the user invokes a
+legitimate WordPress mutation.
 
 ## Release Script Safety Guards
 

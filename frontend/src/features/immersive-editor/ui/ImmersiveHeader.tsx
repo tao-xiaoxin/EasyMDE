@@ -67,11 +67,15 @@ export function ImmersiveHeader({
   return (
     <header className="easymde-immersive-header">
       <div className="easymde-immersive-brand">
-        <span className="easymde-traffic-light is-red" />
-        <span className="easymde-traffic-light is-yellow" />
-        <span className="easymde-traffic-light is-green" />
-        <PenLine size={15} strokeWidth={2.5} />
-        <span className="easymde-immersive-brand-name">EasyMDE</span>
+        <span className="easymde-traffic-lights" aria-hidden="true">
+          <span className="easymde-traffic-light is-red" />
+          <span className="easymde-traffic-light is-yellow" />
+          <span className="easymde-traffic-light is-green" />
+        </span>
+        <span className="easymde-immersive-brand-mark">
+          <PenLine size={15} strokeWidth={2.5} aria-hidden="true" />
+          <span className="easymde-immersive-brand-name">EasyMDE</span>
+        </span>
         <span className="easymde-immersive-brand-divider" aria-hidden="true">|</span>
       </div>
       <div className="easymde-immersive-title-wrap">

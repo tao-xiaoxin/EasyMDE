@@ -311,7 +311,10 @@ export function mountAdminEditor(
     mediaPicker: bootstrap.mediaPicker,
     mediaPickerFailureMessage: bootstrap.labels.mediaPickerFailure,
     mediaPickerFrame: createWordPressMediaFramePort(runtime.wordpress.media),
-    nativePublishPort: createWordPressNativePublishPort(documentRef),
+    nativePublishPort: createWordPressNativePublishPort(
+      documentRef,
+      bootstrap.wordpress.publishCategories
+    ),
     nativeSubmissionPort: createWordPressNativeSubmissionPort(form),
     onDocumentOwnerChange: (owned) => {
       nativeEditor?.classList.toggle('easymde-native-editor-hidden', owned);

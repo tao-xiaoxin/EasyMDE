@@ -39,13 +39,25 @@ function isolateBoundary(boundary: HTMLElement): () => void {
 }
 
 export function createBrowserImmersiveEnvironment(
-  documentRef: Document
+  documentRef: Document,
+  faviconHref: string
 ): ImmersiveEnvironmentPort {
+  const faviconUrl = new URL(faviconHref, documentRef.baseURI).toString();
+
   return {
     activeElement() {
       return documentRef.activeElement instanceof HTMLElement
         ? documentRef.activeElement
         : null;
+    },
+    activateFavicon() {
+      const favicon = documentRef.createElement('link');
+      favicon.dataset.easymdeImmersiveFavicon = 'true';
+      favicon.href = faviconUrl;
+      favicon.rel = 'icon';
+      favicon.type = 'image/png';
+      documentRef.head.append(favicon);
+      return () => favicon.remove();
     },
     activateFocusBoundary(boundary) {
       if (!boundary.isConnected || boundary.ownerDocument !== documentRef) {

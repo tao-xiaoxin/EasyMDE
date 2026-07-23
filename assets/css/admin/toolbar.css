@@ -94,13 +94,6 @@
     font-size: 18px;
 }
 
-.easymde-immersive-entry-icon {
-    width: 18px;
-    height: 18px;
-    flex: 0 0 18px;
-    background: url("../../images/easymde-editor-icon.png") center / contain no-repeat;
-}
-
 .easymde-toolbar-label {
     white-space: nowrap;
 }

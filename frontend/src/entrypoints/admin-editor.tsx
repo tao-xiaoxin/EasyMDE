@@ -290,7 +290,13 @@ export function mountAdminEditor(
       nonce: bootstrap.imageUpload.nonce,
       siteUrl: windowRef.location.href
     }),
-    immersiveEnvironment: createBrowserImmersiveEnvironment(documentRef),
+    immersiveEnvironment: createBrowserImmersiveEnvironment(
+      documentRef,
+      new URL(
+        'assets/images/easymde-editor-icon.png',
+        bootstrap.previewEnhancement.assetBaseUrl
+      ).toString()
+    ),
     immersivePreferencesPort: createBrowserImmersivePreferencesPort({
       siteKey: bootstrap.localDrafts.siteKey,
       storage: localStorage(windowRef),

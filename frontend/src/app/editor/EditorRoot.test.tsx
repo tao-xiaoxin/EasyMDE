@@ -256,6 +256,7 @@ function fixture(): EditorRootProps &
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null,
+      activateFavicon: vi.fn(() => vi.fn()),
       activateFocusBoundary: vi.fn(() => vi.fn()),
       hasOpenToolbarPopover: () => false,
       schedule: (callback, delay) => {
@@ -557,7 +558,7 @@ describe('EditorRoot', () => {
       immersiveEntry.classList.contains('easymde-toolbar-immersive-toggle')
     ).toBe(true);
     expect(immersiveEntry.firstElementChild?.className).toBe(
-      'easymde-immersive-entry-icon'
+      'dashicons dashicons-fullscreen-alt'
     );
   });
 
@@ -871,10 +872,15 @@ describe('EditorRoot', () => {
 
   it('layers Escape handling and restores focus to the immersive entry after exit', async () => {
     const props = fixture();
+    const restoreFavicon = vi.fn();
+    vi.mocked(props.immersiveEnvironment.activateFavicon).mockReturnValue(
+      restoreFavicon
+    );
     const view = render(<EditorRoot {...props} />);
     const entry = await view.findByRole('button', { name: '进入沉浸写作' });
     entry.focus();
     fireEvent.click(entry);
+    expect(props.immersiveEnvironment.activateFavicon).toHaveBeenCalledOnce();
     expect(props.immersiveEnvironment.activateFocusBoundary).toHaveBeenCalledWith(
       view.container.querySelector('.easymde-editor')
     );
@@ -903,6 +909,7 @@ describe('EditorRoot', () => {
       )
     );
     expect(view.queryByRole('region', { name: '沉浸写作' })).toBeNull();
+    expect(restoreFavicon).toHaveBeenCalledOnce();
   });
 
   it('matches the reference immersive control inventory without AI controls', async () => {

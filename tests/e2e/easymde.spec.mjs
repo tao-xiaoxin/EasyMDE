@@ -1225,7 +1225,7 @@ test.describe('EasyMDE editor workflows', () => {
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.strings.immersive.enter)
     );
     await expect(
-      immersiveEntry.locator('.easymde-immersive-entry-icon')
+      immersiveEntry.locator('.dashicons-fullscreen-alt')
     ).toHaveCount(1);
     const immersiveGeometry = await immersiveEntry.evaluate((button) => {
       const buttonBounds = button.getBoundingClientRect();
@@ -1700,7 +1700,18 @@ test.describe('EasyMDE editor workflows', () => {
     const immersiveLabels = await page.evaluate(
       () => window.EasyMDEEditorRootBootstrap.strings.immersive
     );
+    const wordpressFavicons = await page
+      .locator('head link[rel~="icon"]')
+      .evaluateAll((icons) => icons.map((icon) => icon.href));
     await page.locator('.easymde-toolbar-immersive-toggle').click();
+    const immersiveFavicon = page.locator(
+      'head link[data-easymde-immersive-favicon="true"]'
+    );
+    await expect(immersiveFavicon).toHaveCount(1);
+    await expect(immersiveFavicon).toHaveAttribute(
+      'href',
+      /\/assets\/images\/easymde-editor-icon\.png$/u
+    );
     await page.getByRole('button', {
       name: immersiveLabels.wechat
     }).click();
@@ -1710,6 +1721,12 @@ test.describe('EasyMDE editor workflows', () => {
     })).toBeVisible();
     await expect(page.locator('.easymde-editor-flash')).toHaveCount(0);
     await page.getByRole('button', { name: immersiveLabels.exit }).click();
+    await expect(immersiveFavicon).toHaveCount(0);
+    expect(
+      await page
+        .locator('head link[rel~="icon"]')
+        .evaluateAll((icons) => icons.map((icon) => icon.href))
+    ).toEqual(wordpressFavicons);
     await expect(page.locator('.easymde-editor-flash')).toHaveCount(0);
 
     const origin = new URL(page.url()).origin;

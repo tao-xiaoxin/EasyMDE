@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createBrowserImmersiveEnvironment } from './create-browser-immersive-environment';
 
+const faviconUrl =
+  'https://example.test/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png';
+
 describe('createBrowserImmersiveEnvironment', () => {
   afterEach(() => vi.useRealTimers());
 
@@ -17,7 +20,7 @@ describe('createBrowserImmersiveEnvironment', () => {
       </main>
       <footer id="footer"></footer>
     `;
-    const environment = createBrowserImmersiveEnvironment(document);
+    const environment = createBrowserImmersiveEnvironment(document, faviconUrl);
     const boundary = document.querySelector<HTMLElement>('#boundary');
     const first = document.querySelector<HTMLButtonElement>('#first');
     const last = document.querySelector<HTMLButtonElement>('#last');
@@ -59,7 +62,7 @@ describe('createBrowserImmersiveEnvironment', () => {
       <div class="easymde-toolbar-popover" hidden></div>
       <div class="easymde-immersive-modal"></div>
     `;
-    const environment = createBrowserImmersiveEnvironment(document);
+    const environment = createBrowserImmersiveEnvironment(document, faviconUrl);
 
     expect(environment.hasOpenToolbarPopover()).toBe(false);
 
@@ -67,9 +70,39 @@ describe('createBrowserImmersiveEnvironment', () => {
     expect(environment.hasOpenToolbarPopover()).toBe(true);
   });
 
+  it('overrides the tab favicon only while immersive writing is active', () => {
+    document.head.innerHTML = `
+      <link id="wordpress-icon" rel="icon" href="https://example.test/wp-icon.png">
+    `;
+    const environment = createBrowserImmersiveEnvironment(
+      document,
+      faviconUrl
+    );
+
+    const restore = environment.activateFavicon();
+    const icons = document.head.querySelectorAll<HTMLLinkElement>(
+      'link[rel~="icon"]'
+    );
+    expect(icons).toHaveLength(2);
+    expect(icons[0]?.id).toBe('wordpress-icon');
+    expect(icons[1]?.href).toBe(
+      'https://example.test/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png'
+    );
+    expect(icons[1]?.type).toBe('image/png');
+
+    restore();
+
+    expect(
+      document.head.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]')
+    ).toHaveLength(1);
+    expect(document.querySelector<HTMLLinkElement>('#wordpress-icon')?.href).toBe(
+      'https://example.test/wp-icon.png'
+    );
+  });
+
   it('schedules and cancels browser-owned callbacks', () => {
     vi.useFakeTimers();
-    const environment = createBrowserImmersiveEnvironment(document);
+    const environment = createBrowserImmersiveEnvironment(document, faviconUrl);
     const callback = vi.fn();
 
     const cancel = environment.schedule(callback, 2000);

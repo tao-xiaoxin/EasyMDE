@@ -476,6 +476,8 @@ export function ImmersiveEditor({
   const [settings, setSettings] = useState(initialSettings);
   const restoredOwnerSettingsRef = useRef(false);
 
+  useEffect(() => environment.activateFavicon(), [environment]);
+
   useEffect(() => {
     if (!wechatCopied) return undefined;
     return environment.schedule(() => setWechatCopied(false), 1800);
@@ -668,7 +670,7 @@ export function ImmersiveEditor({
 export function ImmersiveToggleIcon() {
   return (
     <span
-      className="easymde-immersive-entry-icon"
+      className="dashicons dashicons-fullscreen-alt"
       aria-hidden="true"
     />
   );

@@ -394,7 +394,7 @@ export function ImmersivePublishDialog({
       setSubmitting(false);
     }
   };
-  const submitLabel = snapshot.published ? strings.updateArticle : strings.publish;
+  const submitLabel = snapshot.existing ? strings.updateArticle : strings.publish;
 
   return (
     <div className="easymde-publish-backdrop">
@@ -428,9 +428,9 @@ export function ImmersivePublishDialog({
           <div>
             <div className="easymde-publish-title-row">
               <h2 id="easymde-publish-dialog-title">{submitLabel}</h2>
-              <span>{snapshot.published ? strings.updateExisting : strings.preparingPublish}</span>
+              <span>{snapshot.existing ? strings.updateExisting : strings.preparingPublish}</span>
             </div>
-            <p>{snapshot.published ? strings.updateDescription : strings.publishDescription}</p>
+            <p>{snapshot.existing ? strings.updateDescription : strings.publishDescription}</p>
           </div>
         </header>
 
@@ -544,7 +544,7 @@ export function ImmersivePublishDialog({
               <h3><CalendarCheck size={16} strokeWidth={2} />{strings.publishOptions}</h3>
               <label>
                 <span>
-                  <strong>{snapshot.published ? strings.openAfterUpdate : strings.openAfterPublish}</strong>
+                  <strong>{snapshot.existing ? strings.openAfterUpdate : strings.openAfterPublish}</strong>
                   <small>{strings.openAfterPublishDescription}</small>
                 </span>
                 <input
@@ -553,7 +553,7 @@ export function ImmersivePublishDialog({
                   checked={draft.openPreview}
                   disabled={submitting}
                   aria-checked={draft.openPreview}
-                  aria-label={snapshot.published ? strings.openAfterUpdate : strings.openAfterPublish}
+                  aria-label={snapshot.existing ? strings.openAfterUpdate : strings.openAfterPublish}
                   onChange={(event) => update({ openPreview: event.currentTarget.checked })}
                 />
                 <span className="easymde-publish-switch" aria-hidden="true">

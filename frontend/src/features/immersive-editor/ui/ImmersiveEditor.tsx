@@ -452,6 +452,7 @@ export function ImmersiveEditor({
   const [wechatCopied, setWechatCopied] = useState(false);
   const [publishSnapshot, setPublishSnapshot] =
     useState<NativePublishSnapshot | null>(null);
+  const [initialPublishSnapshot] = useState(readPublishSnapshot);
   const [initialSettings] = useState<ImmersiveSettings>(() => ({
     autoSave: localDraftsEnabled,
     outline: true,
@@ -465,7 +466,7 @@ export function ImmersiveEditor({
 
   useEffect(() => {
     if (!wechatCopied) return undefined;
-    return environment.schedule(() => setWechatCopied(false), 2000);
+    return environment.schedule(() => setWechatCopied(false), 1800);
   }, [environment, wechatCopied]);
 
   useEffect(() => {
@@ -534,8 +535,8 @@ export function ImmersiveEditor({
     if (next.syncScroll !== settings.syncScroll) {
       onScrollSyncEnabledChange(next.syncScroll);
     }
-    if (!next.splitPreview && 'split' === mode) {
-      changeMode('source');
+    if (next.splitPreview !== settings.splitPreview) {
+      changeMode(next.splitPreview ? 'split' : 'source');
     }
   };
   const changeTitle = (value: string) => {
@@ -606,6 +607,11 @@ export function ImmersiveEditor({
       <ImmersiveHeader
         dirty={dirty}
         mode={mode}
+        publishLabel={
+          initialPublishSnapshot.existing
+            ? strings.updateArticle
+            : strings.publish
+        }
         showStats={settings.wordCount}
         stats={stats}
         strings={strings}

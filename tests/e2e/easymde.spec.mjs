@@ -400,6 +400,21 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(settingsDialog).toBeVisible();
     await expect(settingsDialog.getByRole('checkbox')).toHaveCount(5);
     await expect(settingsDialog.getByText(/AI/u)).toHaveCount(0);
+    const splitPreviewSetting = settingsDialog.getByRole('checkbox', {
+      name: immersiveLabels.splitPreview
+    });
+    await expect(splitPreviewSetting).toBeChecked();
+    await expect(editorOwner).toHaveClass(/is-immersive-split/);
+    await splitPreviewSetting.click();
+    await expect(editorOwner).toHaveClass(/is-immersive-source/);
+    await expect(
+      page.getByRole('separator', { name: immersiveLabels.resizeSplit })
+    ).toHaveCount(0);
+    await splitPreviewSetting.click();
+    await expect(editorOwner).toHaveClass(/is-immersive-split/);
+    await expect(
+      page.getByRole('separator', { name: immersiveLabels.resizeSplit })
+    ).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(settingsDialog).toHaveCount(0);
     await expect(settingsTrigger).toBeFocused();
@@ -452,6 +467,26 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(outlineDivider).toHaveAttribute('aria-valuenow', '240');
     const outlineDividerBox = await outlineDivider.boundingBox();
     if (!outlineDividerBox) throw new Error('immersive-outline-divider-unavailable');
+    const outlineBox = await page
+      .locator('.easymde-immersive-outline')
+      .boundingBox();
+    const sourcePaneBox = await page
+      .locator('.easymde-pane-source')
+      .boundingBox();
+    if (!outlineBox || !sourcePaneBox) {
+      throw new Error('immersive-outline-adjacent-region-unavailable');
+    }
+    expect(Math.abs(outlineDividerBox.x - (outlineBox.x + outlineBox.width)))
+      .toBeLessThanOrEqual(0.01);
+    expect(
+      Math.abs(
+        outlineDividerBox.x + outlineDividerBox.width - sourcePaneBox.x
+      )
+    ).toBeLessThanOrEqual(0.01);
+    expect(Math.abs(outlineDividerBox.y - outlineBox.y))
+      .toBeLessThanOrEqual(0.01);
+    expect(Math.abs(outlineDividerBox.height - outlineBox.height))
+      .toBeLessThanOrEqual(0.01);
     await page.mouse.move(
       outlineDividerBox.x + outlineDividerBox.width / 2,
       outlineDividerBox.y + outlineDividerBox.height / 2
@@ -476,11 +511,9 @@ test.describe('EasyMDE editor workflows', () => {
     }))).toEqual({ cursor: '', userSelect: '' });
     await outlineDivider.dblclick();
     await expect(outlineDivider).toHaveAttribute('aria-valuenow', '240');
-    await expect(editorOwner).toHaveClass(/is-immersive-source/);
+    await expect(editorOwner).toHaveClass(/is-immersive-split/);
     await expect(editorRoot.locator('[data-easymde-document-owner="react"]')).toHaveCount(1);
     await expect(editorRoot.locator('.easymde-pane-preview')).toHaveCount(1);
-    await page.getByRole('button', { name: immersiveLabels.split, exact: true }).click();
-    await expect(editorOwner).toHaveClass(/is-immersive-split/);
     const splitDivider = page.getByRole('separator', {
       name: immersiveLabels.resizeSplit
     });
@@ -1555,8 +1588,10 @@ test.describe('EasyMDE editor workflows', () => {
       page.getByRole('dialog', { name: labels.historyVersions })
     ).toBeVisible();
     await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: labels.publish, exact: true }).click();
-    await expect(page.getByRole('dialog', { name: labels.publish })).toBeVisible();
+    await page.getByRole('button', { name: labels.updateArticle, exact: true }).click();
+    await expect(
+      page.getByRole('dialog', { name: labels.updateArticle })
+    ).toBeVisible();
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: labels.exit }).click();
     await expect(page.getByRole('region', { name: labels.immersive })).toHaveCount(0);

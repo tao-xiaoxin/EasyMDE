@@ -435,9 +435,9 @@ export function EditorRoot(props: EditorRootProps) {
   const [immersiveMode, setImmersiveMode] =
     useState<ImmersiveViewMode>(() =>
       'loaded' === immersivePreferences.status &&
-      immersivePreferences.preferences.splitPreview
-        ? 'split'
-        : 'source'
+      !immersivePreferences.preferences.splitPreview
+        ? 'source'
+        : 'split'
     );
   const [localDraftsEnabled, setLocalDraftsEnabled] = useState(() =>
     'loaded' === immersivePreferences.status
@@ -494,6 +494,15 @@ export function EditorRoot(props: EditorRootProps) {
       }),
     []
   );
+  useEffect(() => {
+    if ('ordinary' !== editorStatus?.surface) return undefined;
+    const scheduledStatus = editorStatus;
+    return props.immersiveEnvironment.schedule(() => {
+      setEditorStatus((currentStatus) =>
+        currentStatus === scheduledStatus ? null : currentStatus
+      );
+    }, 3200);
+  }, [editorStatus, props.immersiveEnvironment]);
   const protectedOperationError = useCallback(
     (operation: EditorSessionOperation) => {
       const error = protectedEditorOperationError(
@@ -827,7 +836,7 @@ export function EditorRoot(props: EditorRootProps) {
       setLocalDraftsEnabled(preferences.preferences.autoSave);
       setScrollSyncEnabled(preferences.preferences.syncScroll);
     } else if ('missing' === preferences.status) {
-      setImmersiveMode('source');
+      setImmersiveMode('split');
     }
     setEditorStatus(null);
     immersiveRef.current = true;

@@ -332,7 +332,7 @@ function fixture(): EditorRootProps &
         featuredImage: null,
         openPreview: false,
         password: '',
-        published: true,
+        existing: true,
         sticky: false,
         tags: [],
         visibility: 'public' as const
@@ -564,7 +564,7 @@ describe('EditorRoot', () => {
     expect(
       view.container
         .querySelector('.easymde-editor')
-        ?.classList.contains('is-immersive-source')
+        ?.classList.contains('is-immersive-split')
     ).toBe(true);
     expect(
       view.container.querySelectorAll('[data-easymde-document-owner="react"]')
@@ -588,7 +588,7 @@ describe('EditorRoot', () => {
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
 
-    fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
     expect(view.getByRole('dialog', { name: '更新文章' })).not.toBeNull();
     expect(
       (view.getByRole('switch', {
@@ -614,11 +614,16 @@ describe('EditorRoot', () => {
     expect(view.queryByRole('dialog', { name: '更新文章' })).toBeNull();
     expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
 
-    fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
     fireEvent.click(
       view.getByRole('switch', { name: '更新后打开文章页面' })
     );
-    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+    fireEvent.click(
+      within(view.getByRole('dialog', { name: '更新文章' })).getByRole(
+        'button',
+        { name: '更新文章' }
+      )
+    );
 
     expect(props.nativePublishPort.apply).toHaveBeenCalledOnce();
     expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
@@ -629,6 +634,29 @@ describe('EditorRoot', () => {
       'savepost',
       expect.anything()
     );
+  });
+
+  it('labels the existing WordPress Post action as update throughout immersive mode', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    expect(view.getByRole('button', { name: '更新文章' })).not.toBeNull();
+    expect(view.queryByRole('button', { name: '发布文章' })).toBeNull();
+  });
+
+  it('labels a new WordPress Post action as publish throughout immersive mode', async () => {
+    const props = fixture();
+    vi.mocked(props.nativePublishPort.read).mockReturnValue({
+      ...props.nativePublishPort.read(),
+      existing: false
+    });
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+    expect(view.getByRole('dialog', { name: '发布文章' })).not.toBeNull();
+    expect(view.queryByRole('button', { name: '更新文章' })).toBeNull();
   });
 
   it('keeps hierarchical WordPress category selections independent', async () => {
@@ -652,14 +680,14 @@ describe('EditorRoot', () => {
       featuredImage: null,
       openPreview: false,
       password: '',
-      published: true,
+      existing: true,
       sticky: false,
       tags: [],
       visibility: 'public'
     });
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
-    fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
 
     const parent = view.getByRole('checkbox', {
       name: '父分类'
@@ -675,7 +703,12 @@ describe('EditorRoot', () => {
     expect(view.queryByRole('checkbox', { name: '子分类' })).toBeNull();
     fireEvent.click(view.getByRole('button', { name: '展开 父分类' }));
     fireEvent.click(view.getByRole('checkbox', { name: '子分类' }));
-    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+    fireEvent.click(
+      within(view.getByRole('dialog', { name: '更新文章' })).getByRole(
+        'button',
+        { name: '更新文章' }
+      )
+    );
 
     expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
       expect.objectContaining({ categoryIds: [] })
@@ -688,8 +721,13 @@ describe('EditorRoot', () => {
     const original = props.nativePublishPort.read();
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
-    fireEvent.click(view.getByRole('button', { name: '发布文章' }));
     fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+    fireEvent.click(
+      within(view.getByRole('dialog', { name: '更新文章' })).getByRole(
+        'button',
+        { name: '更新文章' }
+      )
+    );
 
     expect(props.nativePublishPort.apply).toHaveBeenCalledTimes(2);
     expect(props.nativePublishPort.apply).toHaveBeenLastCalledWith(original);
@@ -927,6 +965,71 @@ describe('EditorRoot', () => {
     expect(view.queryByText('Copy failed')).toBeNull();
   });
 
+  it('expires ordinary feedback after 3200ms without letting a stale timer clear newer feedback', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    await view.findByRole('button', { name: 'Copy to WeChat' });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(view.getByRole('button', { name: 'Copy to WeChat' }));
+        await Promise.resolve();
+      });
+      expect(view.getByText('Copied')).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(3199);
+      });
+      expect(view.getByText('Copied')).not.toBeNull();
+
+      await act(async () => {
+        fireEvent.click(view.getByRole('button', { name: 'Copy to WeChat' }));
+        await Promise.resolve();
+      });
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(view.getByText('Copied')).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(3199);
+      });
+      expect(view.queryByText('Copied')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('matches the reference 1800ms immersive copy-feedback duration', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+        await Promise.resolve();
+      });
+      expect(view.getByRole('button', { name: '已复制' })).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(1799);
+      });
+      expect(view.getByRole('button', { name: '已复制' })).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(
+        view.getByRole('button', { name: '复制到公众号' })
+      ).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('matches the reference outline drag bounds, reset and cleanup lifecycle', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
@@ -974,6 +1077,18 @@ describe('EditorRoot', () => {
 
     fireEvent.click(view.getByRole('checkbox', { name: '文章大纲' }));
     fireEvent.click(view.getByRole('checkbox', { name: '字数统计' }));
+    fireEvent.click(view.getByRole('checkbox', { name: '分屏预览' }));
+    expect(
+      view.container
+        .querySelector('.easymde-editor')
+        ?.classList.contains('is-immersive-source')
+    ).toBe(true);
+    fireEvent.click(view.getByRole('checkbox', { name: '分屏预览' }));
+    expect(
+      view.container
+        .querySelector('.easymde-editor')
+        ?.classList.contains('is-immersive-split')
+    ).toBe(true);
     fireEvent.click(view.getByRole('checkbox', { name: '自动保存' }));
     fireEvent.click(view.getByRole('checkbox', { name: '同步滚动' }));
 
@@ -981,7 +1096,7 @@ describe('EditorRoot', () => {
     expect(view.container.querySelector('.easymde-immersive-stats')).toBeNull();
     expect(view.queryByText('自动保存已开启')).toBeNull();
     expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledOnce();
-    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(4);
+    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(6);
   });
 
   it('applies restored immersive preferences to the existing draft and scroll owners', async () => {

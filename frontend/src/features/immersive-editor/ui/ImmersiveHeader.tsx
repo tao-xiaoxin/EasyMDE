@@ -46,6 +46,7 @@ function PublishArticleIcon() {
 export function ImmersiveHeader({
   dirty,
   mode,
+  publishLabel,
   showStats,
   stats,
   strings,
@@ -56,6 +57,7 @@ export function ImmersiveHeader({
 }: Readonly<{
   dirty: boolean;
   mode: ImmersiveViewMode;
+  publishLabel: string;
   showStats: boolean;
   stats: DocumentStats;
   strings: ImmersiveStrings;
@@ -135,12 +137,12 @@ export function ImmersiveHeader({
           type="button"
           className="easymde-immersive-publish"
           onClick={onPublish}
-          aria-label={strings.publish}
-          title={strings.publish}
+          aria-label={publishLabel}
+          title={publishLabel}
         >
           <span className="easymde-immersive-publish-shine" aria-hidden="true" />
           <span className="easymde-immersive-publish-icon"><PublishArticleIcon /></span>
-          <span>{strings.publish}</span>
+          <span>{publishLabel}</span>
         </button>
       </div>
     </header>

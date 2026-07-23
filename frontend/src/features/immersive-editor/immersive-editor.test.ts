@@ -17,6 +17,14 @@ describe('immersive editor model', () => {
     });
   });
 
+  it('matches the reference UTF-16 character count for emoji', () => {
+    expect(getDocumentStats('😀')).toEqual({
+      words: 1,
+      characters: 2,
+      minutes: 1
+    });
+  });
+
   it('extracts headings while ignoring fenced code', () => {
     expect(extractOutline('# A\n```\n# ignored\n```\n## B')).toEqual([
       { level: 1, text: 'A', line: 0, position: 0, index: 0 },

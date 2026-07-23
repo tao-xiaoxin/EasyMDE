@@ -193,7 +193,7 @@ export function createWordPressNativePublishPort(
         password:
           documentRef.querySelector<HTMLInputElement>('#post_password')?.value ??
           '',
-        published: 'publish' === status,
+        existing: '' !== status && 'auto-draft' !== status,
         sticky:
           documentRef.querySelector<HTMLInputElement>('#sticky')?.checked ?? false,
         tags: tags(documentRef),

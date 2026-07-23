@@ -48,12 +48,29 @@ describe('createWordPressNativePublishPort', () => {
       },
       password: '',
       openPreview: false,
-      published: true,
+      existing: true,
       sticky: false,
       tags: ['EasyMDE', 'Markdown'],
       visibility: 'public'
     });
     expect(document.body.innerHTML).toBe(before);
+  });
+
+  it('distinguishes a new auto-draft from every existing WordPress Post status', () => {
+    const status = document.querySelector<HTMLInputElement>(
+      '#original_post_status'
+    );
+    if (!status) throw new Error('synthetic-post-status-unavailable');
+    const port = createWordPressNativePublishPort(document);
+
+    status.value = 'auto-draft';
+    expect(port.read().existing).toBe(false);
+
+    status.value = 'draft';
+    expect(port.read().existing).toBe(true);
+
+    status.value = 'publish';
+    expect(port.read().existing).toBe(true);
   });
 
   it('projects a confirmed draft into the existing WordPress form fields', () => {

@@ -25,7 +25,7 @@ export type NativePublishDraft = Readonly<{
 
 export type NativePublishSnapshot = NativePublishDraft & Readonly<{
   categories: ReadonlyArray<NativePublishCategory>;
-  published: boolean;
+  existing: boolean;
 }>;
 
 export interface NativePublishPort {

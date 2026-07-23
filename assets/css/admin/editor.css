@@ -112,7 +112,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     align-items: center;
 }
 
-.easymde-immersive-brand { width: 153.39px; height: 26.25px; gap: 9.375px; flex: 0 0 153.39px; }
+.easymde-immersive-brand { width: auto; height: 26.25px; gap: 9.375px; flex: 0 0 auto; }
 .easymde-traffic-lights,
 .easymde-immersive-brand-mark { display: flex; flex: 0 0 auto; align-items: center; }
 .easymde-traffic-lights { gap: 5px; }
@@ -163,7 +163,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-header-spacer { min-width: 0; }
 .easymde-immersive-header-spacer.is-primary { flex: 1 1 0; }
 .easymde-immersive-header-spacer.is-secondary { flex: 3 1 0; }
-.easymde-immersive-header-actions { width: 230.42px; gap: 11.25px; flex: 0 0 230.42px; justify-content: flex-end; }
+.easymde-immersive-header-actions { width: 230.421875px; gap: 11.25px; flex: 0 0 230.421875px; justify-content: flex-end; }
 .easymde-immersive-view-switch { gap: 3.75px; margin: 0; padding: 1.875px; border: 1px solid #e2e8f0; border-radius: 5.625px; background: #fff; }
 .easymde-immersive-view-switch button {
     display: flex;
@@ -179,6 +179,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     color: #6b7280;
     font-size: 12.5px;
     font-weight: 500;
+    line-height: 18.75px;
     cursor: pointer;
 }
 .easymde-immersive-view-switch button.is-active { border-color: #c7d2fe; background: #fff; color: #4c6ef5; box-shadow: 0 0 0 3px #eef2ff; }
@@ -742,7 +743,13 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-publish-category-root-toggle > i { position: absolute; width: 1px; height: 7px; background: currentColor; }
 .easymde-publish-categories input,
 .easymde-publish-visibility > div[role="radiogroup"] input,
-.easymde-publish-sticky input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.easymde-publish-sticky input { position: absolute; width: 1px; height: 1px; min-width: 0; min-height: 0; padding: 0; margin: -1px; overflow: hidden; border: 0; background: transparent; box-shadow: none; clip-path: inset(50%); white-space: nowrap; appearance: auto; }
+.easymde-publish-visibility > div[role="radiogroup"] input:focus,
+.easymde-publish-visibility > div[role="radiogroup"] input:focus-visible,
+.easymde-publish-sticky input:focus,
+.easymde-publish-sticky input:focus-visible { box-shadow: none; outline: 0; }
+.easymde-publish-visibility > div[role="radiogroup"] input:focus-visible + span,
+.easymde-publish-sticky input:focus-visible + span { box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18); }
 .easymde-publish-checkbox { display: grid; box-sizing: border-box; width: 18px; height: 18px; flex: 0 0 18px; place-items: center; border: 1.5px solid #c7cedb; border-radius: 4px; background: #fff; color: #fff; }
 .easymde-publish-categories input:checked + .easymde-publish-checkbox,
 .easymde-publish-categories input:indeterminate + .easymde-publish-checkbox,
@@ -774,8 +781,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-publish-sticky > span { display: grid; box-sizing: border-box; width: 17px; height: 17px; flex: 0 0 17px; place-items: center; border: 1.5px solid #c7cedb; border-radius: 4px; background: #fff; color: #fff; }
 .easymde-publish-password { margin-top: 11.25px; }
 .easymde-publish-password label { display: block; margin-bottom: 5.625px; color: #334155; font-size: 12px; font-weight: 600; line-height: 18px; }
-.easymde-publish-password input { box-sizing: border-box; width: 100%; height: 38px; margin: 0; padding: 0 11.25px; border: 1px solid #e2e8f0; border-radius: 9px; outline: 0; background: #fbfcfe; box-shadow: none; color: #0f172a; font-size: 12.5px; line-height: 18.75px; }
-.easymde-publish-password input:focus { border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
+.easymde-publish-password input { box-sizing: border-box; width: 100%; height: 38px; min-height: 0; margin: 0; padding: 0 11.25px; border: 1px solid #e2e8f0; border-radius: 9px; outline: 0; background: #fbfcfe; box-shadow: none; color: #0f172a; font-size: 12.5px; line-height: 18.75px; }
+.easymde-publish-password input:focus { border-color: #e2e8f0; box-shadow: 0 0 0 2px #dbeafe; outline: 0; }
 .easymde-publish-password input[aria-invalid="true"] { border-color: #f43f5e; }
 .easymde-publish-password p { margin: 5.625px 0 0; color: #e11d48; font-size: 11.5px; font-weight: 500; line-height: 17.25px; }
 .easymde-publish-private-note { margin: 11.25px 0 0; color: #64748b; font-size: 11.5px; line-height: 17.25px; }

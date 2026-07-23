@@ -647,6 +647,43 @@ describe('EditorRoot', () => {
     );
   });
 
+  it('restores the legacy protected-post password field contract', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    const dialog = view.getByRole('dialog', { name: '更新文章' });
+    fireEvent.click(within(dialog).getByRole('radio', { name: '密码' }));
+
+    const password = within(dialog).getByPlaceholderText(
+      '输入访问密码'
+    ) as HTMLInputElement;
+    expect(password.type).toBe('password');
+    expect(password.maxLength).toBe(255);
+
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '更新文章' })
+    );
+    expect(
+      within(dialog).getByRole('alert').textContent
+    ).toBe('请输入访问密码后再提交。');
+    expect(document.activeElement).toBe(password);
+    expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
+    expect(props.publishPost).not.toHaveBeenCalled();
+
+    fireEvent.change(password, { target: { value: 'temporary-password' } });
+    fireEvent.click(within(dialog).getByRole('radio', { name: '私密' }));
+    expect(
+      within(dialog).queryByPlaceholderText('输入访问密码')
+    ).toBeNull();
+    fireEvent.click(within(dialog).getByRole('radio', { name: '密码' }));
+    expect(
+      (within(dialog).getByPlaceholderText('输入访问密码') as HTMLInputElement)
+        .value
+    ).toBe('');
+  });
+
   it('renders the source-accurate publish decorations and submitting progress owner', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);

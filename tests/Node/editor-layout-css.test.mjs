@@ -53,7 +53,7 @@ test('immersive publish CSS preserves reference geometry without hiding the pass
   );
   assert.match(
     css,
-    /\.easymde-publish-visibility > div\[role="radiogroup"\] input[\s\S]*?position:\s*absolute;[^}]*width:\s*1px;[^}]*height:\s*1px;/s
+    /\.easymde-publish-visibility > div\[role="radiogroup"\] input,[\s\S]*?\.easymde-publish-sticky input\s*\{[^}]*position:\s*absolute;[^}]*width:\s*1px;[^}]*height:\s*1px;[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*padding:\s*0;[^}]*margin:\s*-1px;[^}]*overflow:\s*hidden;[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;[^}]*clip-path:\s*inset\(50%\);[^}]*white-space:\s*nowrap;[^}]*appearance:\s*auto;/s
   );
   assert.doesNotMatch(
     css,
@@ -61,7 +61,15 @@ test('immersive publish CSS preserves reference geometry without hiding the pass
   );
   assert.match(
     css,
-    /\.easymde-publish-password input\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*height:\s*38px;[^}]*margin:\s*0;/s
+    /\.easymde-publish-password input\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*height:\s*38px;[^}]*min-height:\s*0;[^}]*margin:\s*0;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-publish-password input:focus\s*\{[^}]*border-color:\s*#e2e8f0;[^}]*box-shadow:\s*0 0 0 2px #dbeafe;[^}]*outline:\s*0;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-publish-visibility > div\[role="radiogroup"\] input:focus-visible \+ span,[\s\S]*?\.easymde-publish-sticky input:focus-visible \+ span\s*\{[^}]*box-shadow:\s*0 0 0 3px rgba\(37, 99, 235, 0\.18\);/s
   );
   assert.match(
     css,
@@ -70,5 +78,23 @@ test('immersive publish CSS preserves reference geometry without hiding the pass
   assert.match(
     css,
     /\.easymde-publish-sticky > span\s*\{[^}]*width:\s*17px;[^}]*height:\s*17px;[^}]*flex:\s*0 0 17px;/s
+  );
+});
+
+test('immersive header view controls preserve the reference text baseline', () => {
+  assert.match(
+    css,
+    /\.easymde-immersive-view-switch button\s*\{[^}]*font-size:\s*12\.5px;[^}]*font-weight:\s*500;[^}]*line-height:\s*18\.75px;/s
+  );
+});
+
+test('immersive header preserves the reference flex geometry without decimal truncation', () => {
+  assert.match(
+    css,
+    /\.easymde-immersive-brand\s*\{[^}]*width:\s*auto;[^}]*flex:\s*0 0 auto;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-header-actions\s*\{[^}]*width:\s*230\.421875px;[^}]*flex:\s*0 0 230\.421875px;/s
   );
 });

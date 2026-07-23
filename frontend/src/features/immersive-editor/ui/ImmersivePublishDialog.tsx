@@ -556,7 +556,7 @@ export function ImmersivePublishDialog({
               {'password' === draft.visibility ? (
                 <div className="easymde-publish-password">
                   <label htmlFor="easymde-publish-password">{strings.password}</label>
-                  <input ref={passwordRef} id="easymde-publish-password" type="password" value={draft.password} aria-invalid={passwordError || undefined} aria-describedby={passwordError ? 'easymde-publish-password-error' : undefined} disabled={submitting} placeholder={strings.passwordPlaceholder} onChange={(event) => { update({ password: event.currentTarget.value }); if (event.currentTarget.value.trim()) setPasswordError(false); }} />
+                  <input ref={passwordRef} id="easymde-publish-password" type="password" value={draft.password} maxLength={255} aria-invalid={passwordError || undefined} aria-describedby={passwordError ? 'easymde-publish-password-error' : undefined} disabled={submitting} placeholder={strings.passwordPlaceholder} onChange={(event) => { update({ password: event.currentTarget.value }); if (event.currentTarget.value.trim()) setPasswordError(false); }} />
                   {passwordError ? <p id="easymde-publish-password-error" role="alert">{strings.passwordRequired}</p> : null}
                 </div>
               ) : null}

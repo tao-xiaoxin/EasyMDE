@@ -479,10 +479,11 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-outline-footer button { display: flex; width: 100%; height: 100%; align-items: center; gap: 6px; padding: 0 16px; border: 0; background: transparent; color: oklch(0.554 0.046 257.417); font-size: 12.5px; cursor: pointer; }
 .easymde-immersive-outline-show { position: fixed; z-index: 100110; bottom: 18px; inset-inline-start: 18px; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; color: #475569; box-shadow: 0 2px 8px rgba(15, 23, 42, .08); cursor: pointer; }
 .easymde-immersive-outline-show svg { transform: rotate(180deg); }
-.easymde-immersive-outline-resizer { z-index: 2; grid-column: 1; grid-row: 3; display: flex; width: 14px; height: calc(100% - 24px); margin: 0; padding: 0; align-self: center; justify-self: end; align-items: center; justify-content: center; border: 0; cursor: col-resize; transform: translateX(7px); }
+.easymde-immersive-outline-resizer { z-index: 2; grid-column: 1; grid-row: 3; display: flex; width: 14px; height: calc(100% - 24px); margin: 0; padding: 0; align-self: center; justify-self: end; align-items: center; justify-content: center; border: 0; cursor: col-resize; touch-action: none; transform: translateX(7px); }
 .easymde-immersive-outline-resizer { background: linear-gradient(90deg, transparent 6px, transparent 6px); transition: background-color 100ms; }
 .easymde-immersive-outline-resizer:hover,
 .easymde-immersive-outline-resizer:focus { background: linear-gradient(90deg, transparent 6px, #dde1e8 6px, #dde1e8 7px, transparent 7px); }
+.easymde-immersive-outline-resizer:active { background: linear-gradient(90deg, transparent 6px, #c8ced8 6px, #c8ced8 7px, transparent 7px); }
 .easymde-editor.is-immersive > .easymde-workspace { grid-column: 2; grid-row: 3; height: auto; min-height: 0; gap: 11.25px; padding: 11.25px; border: 0; background: #f6f6f8; }
 .easymde-editor.is-immersive:not(:has(.easymde-immersive-outline)) { grid-template-columns: 1fr; }
 .easymde-editor.is-immersive:not(:has(.easymde-immersive-outline)) > .easymde-workspace { grid-column: 1; }
@@ -510,6 +511,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-statusbar { display: flex; box-sizing: border-box; min-height: 34px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 0 15px; border-top: 1px solid #e8ebef; background: #fff; color: #b0b4bc; font-size: 12px; }
 .easymde-immersive-statusbar > span:last-child,
 .easymde-immersive-autosave-state { display: flex; align-items: center; gap: 5px; }
+.easymde-immersive-statusbar .easymde-immersive-status-error { min-width: 0; overflow: hidden; color: #b32d2e; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .easymde-immersive-autosave-state > span { width: 6px; height: 6px; border-radius: 50%; background: #10b981; }
 .easymde-editor.is-immersive .easymde-preview { padding: 34px 48px 60px; background: #fff; }
 .easymde-editor.is-immersive-source .easymde-workspace { grid-template-columns: 1fr; grid-template-areas: "source"; }
@@ -778,6 +780,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-publish-options input:focus-visible + .easymde-publish-switch { outline: 2px solid #2563eb; outline-offset: 2px; }
 .easymde-publish-dialog-footer { display: flex; box-sizing: border-box; height: 71.375px; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; padding: 13.125px 26.25px 18.75px; border-color: rgba(15, 23, 42, .07); }
 .easymde-publish-dialog-footer > p { display: flex; min-width: 0; align-items: center; gap: 8px; margin: 0; color: #64748b; font-size: 12px; }
+.easymde-publish-dialog-footer > p.is-error { max-width: 520px; color: #b32d2e; font-weight: 500; }
 .easymde-publish-dialog-footer > p > span { display: grid; width: 20px; height: 20px; flex: 0 0 auto; place-items: center; border-radius: 6px; background: #eff6ff; color: #2563eb; }
 .easymde-publish-dialog-footer > div { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .easymde-publish-dialog-footer button { min-height: 36px; padding: 0 16px; border: 1px solid #e6e9ef; border-radius: 10px; background: #fff; color: #0f172a; font-size: 13px; font-weight: 600; cursor: pointer; }

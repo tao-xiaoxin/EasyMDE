@@ -1,5 +1,14 @@
-import { Fragment, createElement, useRef, useState } from '@wordpress/element';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import {
+  Fragment,
+  createElement,
+  useEffect,
+  useRef,
+  useState
+} from '@wordpress/element';
+import type {
+  KeyboardEvent,
+  PointerEvent as ReactPointerEvent
+} from 'react';
 import {
   BarChart3,
   ChevronsLeft,
@@ -130,6 +139,7 @@ function OutlineNodes({
 
 export function ImmersiveOutline({
   activeIndex,
+  direction,
   items,
   open,
   strings,
@@ -137,6 +147,7 @@ export function ImmersiveOutline({
   onSelect
 }: Readonly<{
   activeIndex: number | null;
+  direction: 'ltr' | 'rtl';
   items: ReadonlyArray<ImmersiveOutlineItem>;
   open: boolean;
   strings: ImmersiveStrings;
@@ -145,8 +156,18 @@ export function ImmersiveOutline({
 }>) {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const outlineRef = useRef<HTMLElement>(null);
-  const resizerRef = useRef<HTMLHRElement>(null);
-  const resizeStateRef = useRef<Readonly<{ startWidth: number; startX: number }> | null>(null);
+  const releaseDragRef = useRef<(() => void) | null>(null);
+
+  useEffect(
+    () => () => {
+      releaseDragRef.current?.();
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!open) releaseDragRef.current?.();
+  }, [open]);
 
   if (!open) {
     return (
@@ -163,24 +184,52 @@ export function ImmersiveOutline({
   }
 
   const startResize = (event: ReactPointerEvent<HTMLHRElement>) => {
-    const resizer = resizerRef.current;
+    event.preventDefault();
+    releaseDragRef.current?.();
     const documentRef = outlineRef.current?.ownerDocument;
-    if (!resizer || !documentRef) return;
-    resizeStateRef.current = { startWidth: width, startX: event.clientX };
-    resizer.setPointerCapture?.(event.pointerId);
+    if (!documentRef) throw new Error('immersive-outline-document-unavailable');
+    const resizer = event.currentTarget;
+    const pointerId = event.pointerId;
+    const startWidth = width;
+    const startX = event.clientX;
+    const previousCursor = documentRef.body.style.cursor;
+    const previousSelection = documentRef.body.style.userSelect;
+    const onMove = (moveEvent: globalThis.PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      const physicalDelta = moveEvent.clientX - startX;
+      const logicalDelta = 'rtl' === direction ? -physicalDelta : physicalDelta;
+      setWidth(boundedWidth(startWidth + logicalDelta));
+    };
+    const release = (releaseEvent?: globalThis.PointerEvent) => {
+      if (releaseEvent && releaseEvent.pointerId !== pointerId) return;
+      documentRef.removeEventListener('pointermove', onMove);
+      documentRef.removeEventListener('pointerup', release);
+      documentRef.removeEventListener('pointercancel', release);
+      if (resizer.hasPointerCapture?.(pointerId)) {
+        resizer.releasePointerCapture(pointerId);
+      }
+      documentRef.body.style.cursor = previousCursor;
+      documentRef.body.style.userSelect = previousSelection;
+      releaseDragRef.current = null;
+    };
+    releaseDragRef.current = release;
+    documentRef.body.style.cursor = 'col-resize';
+    documentRef.body.style.userSelect = 'none';
+    resizer.setPointerCapture?.(pointerId);
+    documentRef.addEventListener('pointermove', onMove);
+    documentRef.addEventListener('pointerup', release);
+    documentRef.addEventListener('pointercancel', release);
   };
-  const moveResize = (event: ReactPointerEvent<HTMLHRElement>) => {
-    const state = resizeStateRef.current;
-    const documentRef = outlineRef.current?.ownerDocument;
-    if (!state || !documentRef) return;
-    const direction = documentRef.documentElement.dir === 'rtl' ? -1 : 1;
-    setWidth(boundedWidth(state.startWidth + (event.clientX - state.startX) * direction));
-  };
-  const finishResize = (event: ReactPointerEvent<HTMLHRElement>) => {
-    const resizer = resizerRef.current;
-    resizeStateRef.current = null;
-    if (resizer?.hasPointerCapture?.(event.pointerId)) {
-      resizer.releasePointerCapture(event.pointerId);
+  const resizeWithKeyboard = (event: KeyboardEvent<HTMLHRElement>) => {
+    const physicalStep =
+      'ArrowLeft' === event.key ? -10 : 'ArrowRight' === event.key ? 10 : 0;
+    if (physicalStep) {
+      event.preventDefault();
+      const logicalStep = 'rtl' === direction ? -physicalStep : physicalStep;
+      setWidth((current) => boundedWidth(current + logicalStep));
+    } else if ('Home' === event.key) {
+      event.preventDefault();
+      setWidth(DEFAULT_WIDTH);
     }
   };
 
@@ -224,7 +273,6 @@ export function ImmersiveOutline({
         </div>
       </aside>
       <hr
-        ref={resizerRef}
         tabIndex={0}
         aria-orientation="vertical"
         aria-label={strings.resizeOutline}
@@ -233,16 +281,8 @@ export function ImmersiveOutline({
         aria-valuenow={width}
         className="easymde-immersive-outline-resizer"
         onPointerDown={startResize}
-        onPointerMove={moveResize}
-        onPointerUp={finishResize}
-        onPointerCancel={finishResize}
         onDoubleClick={() => setWidth(DEFAULT_WIDTH)}
-        onKeyDown={(event) => {
-          if ('ArrowLeft' !== event.key && 'ArrowRight' !== event.key) return;
-          event.preventDefault();
-          const delta = 'ArrowRight' === event.key ? 10 : -10;
-          setWidth((current) => boundedWidth(current + delta));
-        }}
+        onKeyDown={resizeWithKeyboard}
       />
     </Fragment>
   );

@@ -1,5 +1,5 @@
 import { createElement } from '@wordpress/element';
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -696,10 +696,13 @@ describe('EditorRoot', () => {
     expect(props.onFailure).toHaveBeenCalledWith(
       'immersive-publish-command-unavailable'
     );
+    const dialog = view.getByRole('dialog', { name: '更新文章' });
     expect(
-      view.getByText('WordPress 未接受发布请求，请检查页面状态后重试。')
-    ).not.toBeNull();
-    expect(view.getByRole('dialog', { name: '更新文章' })).not.toBeNull();
+      within(dialog).getByRole('alert').textContent
+    ).toBe('WordPress 未接受发布请求，请检查页面状态后重试。');
+    expect(
+      view.container.querySelector('.easymde-editor-flash')
+    ).toBeNull();
   });
 
   it('uses the existing title and document owners for immersive edits and table insertion', async () => {
@@ -845,6 +848,10 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(view.getByRole('button', { name: '已复制' })).not.toBeNull()
     );
+    expect(
+      view.container.querySelector('.easymde-editor-flash')
+    ).toBeNull();
+    expect(view.queryByText('Copied')).toBeNull();
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     expect(view.getByRole('dialog', { name: '编辑器设置' })).not.toBeNull();
     for (const name of ['文章大纲', '字数统计', '分屏预览', '自动保存', '同步滚动']) {
@@ -853,6 +860,110 @@ describe('EditorRoot', () => {
       ).toBe(true);
     }
     expect(view.queryByText(/AI/u)).toBeNull();
+  });
+
+  it('does not resurrect immersive-only feedback after leaving the reference surface', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+    await waitFor(() =>
+      expect(view.getByRole('button', { name: '已复制' })).not.toBeNull()
+    );
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+
+    expect(view.queryByText('Copied')).toBeNull();
+    expect(
+      view.container.querySelector('.easymde-editor-flash')
+    ).toBeNull();
+  });
+
+  it('keeps a late immersive clipboard failure visible after returning to the ordinary editor', async () => {
+    const props = fixture();
+    type ClipboardResult = Awaited<
+      ReturnType<typeof props.wechatClipboard.copy>
+    >;
+    let finishCopy: ((result: ClipboardResult) => void) | null = null;
+    vi.mocked(props.wechatClipboard.copy).mockImplementation(
+      () =>
+        new Promise<ClipboardResult>((resolve) => {
+          finishCopy = resolve;
+        })
+    );
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    await act(async () => {
+      finishCopy?.({ code: 'wechat-copy-failed', status: 'failed' });
+    });
+
+    expect(view.getByText('Copy failed')).not.toBeNull();
+    expect(
+      view.container.querySelector('.easymde-editor-flash')
+    ).not.toBeNull();
+  });
+
+  it('keeps immersive operation failures in the existing status bar without a floating message', async () => {
+    const props = fixture();
+    vi.mocked(props.wechatClipboard.copy).mockResolvedValue({
+      code: 'wechat-copy-failed',
+      status: 'failed'
+    });
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+    await waitFor(() =>
+      expect(view.getByRole('alert').textContent).toBe('Copy failed')
+    );
+    expect(
+      view.container.querySelector('.easymde-editor-flash')
+    ).toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    expect(view.queryByText('Copy failed')).toBeNull();
+  });
+
+  it('matches the reference outline drag bounds, reset and cleanup lifecycle', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    const separator = view.getByRole('separator', {
+      name: '调整大纲宽度'
+    });
+
+    expect(separator.getAttribute('aria-valuenow')).toBe('240');
+    fireEvent.pointerDown(separator, {
+      clientX: 240,
+      pointerId: 1,
+      pointerType: 'touch'
+    });
+    expect(document.body.style.cursor).toBe('col-resize');
+    expect(document.body.style.userSelect).toBe('none');
+    fireEvent.pointerMove(document, { clientX: 500, pointerId: 1 });
+    expect(separator.getAttribute('aria-valuenow')).toBe('360');
+    fireEvent.pointerMove(document, { clientX: -100, pointerId: 1 });
+    expect(separator.getAttribute('aria-valuenow')).toBe('190');
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(document.body.style.cursor).toBe('');
+    expect(document.body.style.userSelect).toBe('');
+
+    fireEvent.doubleClick(separator);
+    expect(separator.getAttribute('aria-valuenow')).toBe('240');
+
+    fireEvent.pointerDown(separator, { clientX: 240, pointerId: 2 });
+    const [hideOutline] = view.getAllByRole('button', {
+      name: '收起大纲'
+    });
+    if (!hideOutline) throw new Error('hide-outline-control-unavailable');
+    fireEvent.click(hideOutline);
+    expect(document.body.style.cursor).toBe('');
+    expect(document.body.style.userSelect).toBe('');
+    fireEvent.mouseMove(document, { clientX: 320 });
+    fireEvent.mouseUp(document);
   });
 
   it('applies immersive settings to the real outline, statistics, draft and scroll owners', async () => {

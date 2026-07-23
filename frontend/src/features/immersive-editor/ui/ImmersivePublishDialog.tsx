@@ -334,6 +334,7 @@ export function ImmersivePublishDialog({
   const [draft, setDraft] = useState(() => cloneDraft(snapshot));
   const [tagInput, setTagInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [submitFailed, setSubmitFailed] = useState(false);
   const [passwordError, setPasswordError] = useState(false);
   const [mediaPending, setMediaPending] = useState(false);
   const dialogRef = useRef<HTMLElement>(null);
@@ -386,8 +387,12 @@ export function ImmersivePublishDialog({
       passwordRef.current?.focus();
       return;
     }
+    setSubmitFailed(false);
     setSubmitting(true);
-    if (!onConfirm(draft, snapshot)) setSubmitting(false);
+    if (!onConfirm(draft, snapshot)) {
+      setSubmitFailed(true);
+      setSubmitting(false);
+    }
   };
   const submitLabel = snapshot.published ? strings.updateArticle : strings.publish;
 
@@ -562,7 +567,11 @@ export function ImmersivePublishDialog({
         <div className="easymde-publish-dialog-divider" aria-hidden="true" />
 
         <footer className="easymde-publish-dialog-footer">
-          <p><span><ShieldCheck size={12} strokeWidth={2.2} /></span>{strings.noWriteBeforeSubmit}</p>
+          {submitFailed ? (
+            <p className="is-error" role="alert">{strings.publishFailed}</p>
+          ) : (
+            <p><span><ShieldCheck size={12} strokeWidth={2.2} /></span>{strings.noWriteBeforeSubmit}</p>
+          )}
           <div>
             <button type="button" disabled={submitting} onClick={onClose}>{strings.cancel}</button>
             <button type="button" className="is-primary" disabled={submitting || mediaPending} onClick={submit}>{submitLabel}<span aria-hidden="true">✦</span></button>

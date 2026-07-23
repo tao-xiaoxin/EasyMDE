@@ -50,6 +50,7 @@ import type {
 export type { ImmersiveStrings } from './immersive-editor-ui-types';
 
 type Props = Readonly<{
+  direction: 'ltr' | 'rtl';
   documentSession: EditorDocumentSession;
   environment: ImmersiveEnvironmentPort;
   imageUploadMaxBytes: number;
@@ -413,6 +414,7 @@ function HistoryDialog({
 }
 
 export function ImmersiveEditor({
+  direction,
   documentSession,
   environment,
   imageUploadMaxBytes,
@@ -630,6 +632,7 @@ export function ImmersiveEditor({
       {settings.outline ? (
         <ImmersiveOutline
           activeIndex={activeOutline}
+          direction={direction}
           items={outline}
           open={outlineOpen}
           strings={strings}

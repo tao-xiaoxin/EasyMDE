@@ -444,6 +444,38 @@ test.describe('EasyMDE editor workflows', () => {
       )).filter((element) => !element.closest('[hidden], [inert]'));
       return document.activeElement === controls[controls.length - 1];
     })).toBe(true);
+    const outlineDivider = page.getByRole('separator', {
+      name: immersiveLabels.resizeOutline
+    });
+    await expect(outlineDivider).toHaveAttribute('aria-valuemin', '190');
+    await expect(outlineDivider).toHaveAttribute('aria-valuemax', '360');
+    await expect(outlineDivider).toHaveAttribute('aria-valuenow', '240');
+    const outlineDividerBox = await outlineDivider.boundingBox();
+    if (!outlineDividerBox) throw new Error('immersive-outline-divider-unavailable');
+    await page.mouse.move(
+      outlineDividerBox.x + outlineDividerBox.width / 2,
+      outlineDividerBox.y + outlineDividerBox.height / 2
+    );
+    await page.mouse.down();
+    expect(await page.evaluate(() => ({
+      cursor: document.body.style.cursor,
+      userSelect: document.body.style.userSelect
+    }))).toEqual({ cursor: 'col-resize', userSelect: 'none' });
+    await page.mouse.move(
+      outlineDividerBox.x + outlineDividerBox.width / 2 + 90,
+      outlineDividerBox.y + outlineDividerBox.height / 2,
+      { steps: 4 }
+    );
+    await page.mouse.up();
+    await expect.poll(async () => Number(
+      await outlineDivider.getAttribute('aria-valuenow')
+    )).toBeGreaterThan(240);
+    expect(await page.evaluate(() => ({
+      cursor: document.body.style.cursor,
+      userSelect: document.body.style.userSelect
+    }))).toEqual({ cursor: '', userSelect: '' });
+    await outlineDivider.dblclick();
+    await expect(outlineDivider).toHaveAttribute('aria-valuenow', '240');
     await expect(editorOwner).toHaveClass(/is-immersive-source/);
     await expect(editorRoot.locator('[data-easymde-document-owner="react"]')).toHaveCount(1);
     await expect(editorRoot.locator('.easymde-pane-preview')).toHaveCount(1);
@@ -1411,9 +1443,10 @@ test.describe('EasyMDE editor workflows', () => {
       .getByRole('button', { name: labels.publish, exact: true })
       .click();
     await expect(publishDialog).toBeVisible();
-    await expect(page.locator('.easymde-editor-flash')).toContainText(
+    await expect(publishDialog.getByRole('alert')).toContainText(
       labels.publishFailed
     );
+    await expect(page.locator('.easymde-editor-flash')).toHaveCount(0);
     await expect(page.locator('#excerpt')).toHaveValue('');
     await expect(page.locator('#tax-input-post_tag')).toHaveValue('');
     await expect(
@@ -1617,6 +1650,20 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('.easymde-editor-flash')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.wechatExport.strings.success)
     );
+    const immersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.getByRole('button', {
+      name: immersiveLabels.wechat
+    }).click();
+    await expect.poll(() => page.evaluate(() => window.__easymdeClipboardWrites.length)).toBe(2);
+    await expect(page.getByRole('button', {
+      name: immersiveLabels.wechatCopied
+    })).toBeVisible();
+    await expect(page.locator('.easymde-editor-flash')).toHaveCount(0);
+    await page.getByRole('button', { name: immersiveLabels.exit }).click();
+    await expect(page.locator('.easymde-editor-flash')).toHaveCount(0);
 
     const origin = new URL(page.url()).origin;
     expectRuntimeAssetRequests(

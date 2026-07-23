@@ -80,6 +80,7 @@ const bootstrap = {
     autoSave: 'Auto save',
     autoSaveDescription: 'Automatically save a local draft',
     autoSaveEnabled: 'Auto save is enabled',
+    articleOutline: 'Article outline',
     cancel: 'Cancel',
     characters: 'characters',
     close: 'Close',
@@ -96,6 +97,7 @@ const bootstrap = {
     historyLoading: 'Loading revisions',
     historyAll: 'All',
     historyCount: '%s revisions',
+    historyCountSingular: '1 revision',
     historyVersions: 'Revision history',
     immersive: 'Immersive writing',
     insert: 'Insert',
@@ -166,7 +168,7 @@ const bootstrap = {
     viewModes: 'View modes',
     wechat: 'Copy to WeChat',
     wechatCopied: 'Copied',
-    wordCount: 'Writing statistics',
+    wordCount: 'Word count',
     wordCountDescription: 'Show words, characters, and reading time beside the title',
     words: 'words'
   },
@@ -221,7 +223,16 @@ describe('mountAdminEditor', () => {
     const saveDraft = document.querySelector<HTMLButtonElement>('#save-post');
     const publish = document.querySelector<HTMLButtonElement>('#publish');
     const saveDraftClick = vi.spyOn(saveDraft as HTMLButtonElement, 'click');
-    const publishClick = vi.spyOn(publish as HTMLButtonElement, 'click');
+    const publishClick = vi
+      .spyOn(publish as HTMLButtonElement, 'click')
+      .mockImplementation(() => {
+        publish?.dispatchEvent(
+          new MouseEvent('click', { bubbles: true, cancelable: true })
+        );
+        publish?.closest('form')?.dispatchEvent(
+          new SubmitEvent('submit', { bubbles: true, cancelable: true })
+        );
+      });
     vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
 
     const teardown = mountAdminEditor(bootstrap, {
@@ -274,6 +285,48 @@ describe('mountAdminEditor', () => {
     expect(
       nativeEditor?.classList.contains('easymde-native-editor-hidden')
     ).toBe(false);
+  });
+
+  it('reports a prevented native publish as unsuccessful', () => {
+    const render = vi.fn();
+    vi.mocked(createRoot).mockReturnValue({
+      render,
+      unmount: vi.fn()
+    } as never);
+    const form = document.querySelector<HTMLFormElement>('#post');
+    const publish = document.querySelector<HTMLButtonElement>('#publish');
+    form?.addEventListener('submit', (event) => {
+      event.preventDefault();
+    });
+    vi.spyOn(publish as HTMLButtonElement, 'click').mockImplementation(() => {
+      publish?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true })
+      );
+      form?.dispatchEvent(
+        new SubmitEvent('submit', { bubbles: true, cancelable: true })
+      );
+    });
+
+    mountAdminEditor(bootstrap, {
+      document,
+      failureMessage: 'Editor failed',
+      window,
+      wordpress: {
+        apiFetch: Object.assign(vi.fn(), {
+          nonceMiddleware: { nonce: 'nonce' }
+        }),
+        hooks: { addAction: vi.fn(), removeAction: vi.fn() }
+      }
+    });
+
+    const rendered = render.mock.calls[0]?.[0] as {
+      props: {
+        children: {
+          props: { publishPost: (session: never) => boolean };
+        };
+      };
+    };
+    expect(rendered.props.children.props.publishPost({} as never)).toBe(false);
   });
 
   it.each([

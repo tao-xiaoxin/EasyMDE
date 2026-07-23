@@ -126,12 +126,33 @@ function createExternalCommandExecutor(
 function createNativePublisher(
   documentRef: Document
 ): EditorRootProps['publishPost'] {
+  const completed = (event: Event | null): boolean =>
+    null !== event && !event.defaultPrevented;
+
   return () => {
     const candidate = documentRef.querySelector<HTMLElement>('#publish');
     if (!candidate || candidate.matches(':disabled, [aria-disabled="true"]'))
       return false;
-    candidate.click();
-    return true;
+    const form = candidate.closest('form');
+    if (!(form instanceof HTMLFormElement)) return false;
+
+    let clickEvent: MouseEvent | null = null;
+    let submitEvent: SubmitEvent | null = null;
+    const captureClick = (event: MouseEvent) => {
+      clickEvent = event;
+    };
+    const captureSubmit = (event: SubmitEvent) => {
+      submitEvent = event;
+    };
+    candidate.addEventListener('click', captureClick, { once: true });
+    form.addEventListener('submit', captureSubmit, { once: true });
+    try {
+      candidate.click();
+    } finally {
+      candidate.removeEventListener('click', captureClick);
+      form.removeEventListener('submit', captureSubmit);
+    }
+    return completed(clickEvent) && completed(submitEvent);
   };
 }
 

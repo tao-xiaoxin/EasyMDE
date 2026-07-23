@@ -48,6 +48,7 @@ const icons = {
   SquarePen: 'square-pen',
   Sigma: 'sigma',
   Strikethrough: 'strikethrough',
+  Table: 'table',
   Table2: 'table-2',
   Trash2: 'trash-2',
   Type: 'type',

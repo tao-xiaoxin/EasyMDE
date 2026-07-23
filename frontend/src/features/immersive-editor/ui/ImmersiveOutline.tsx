@@ -16,7 +16,7 @@ import {
   PieChart,
   Quote,
   Sigma,
-  Table2,
+  Table,
   Workflow,
   X
 } from '../../../generated/lucide-icons';
@@ -50,7 +50,7 @@ const OUTLINE_ICON_RULES: ReadonlyArray<readonly [RegExp, LucideIcon]> = [
   [/引用块|blockquote/u, Quote],
   [/无序|有序|任务列表/u, ListChecks],
   [/分隔线|\bhr\b|rule/u, Minus],
-  [/表格|table/u, Table2],
+  [/表格|table/u, Table],
   [/行内代码|代码块|html|标签/u, Code2],
   [/数学|公式|矩阵|方程|统计|softmax|前向传播/u, Sigma],
   [/折叠内容|折叠/u, ListCollapse],

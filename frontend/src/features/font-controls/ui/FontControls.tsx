@@ -40,6 +40,12 @@ type FontSelectProps = Readonly<{
   onChange: (selected: string) => void;
 }>;
 
+type ImmersivePanelPosition = Readonly<{
+  left: number;
+  top: number;
+  width: number;
+}>;
+
 function FontSelect({
   className,
   label,
@@ -180,10 +186,33 @@ export function FontControls({
 }: FontControlsProps) {
   const [state, setState] = useState<FontControlsState>(bootstrap.state);
   const [isOpen, setIsOpen] = useState(false);
+  const [panelPosition, setPanelPosition] =
+    useState<ImmersivePanelPosition | null>(null);
   const activeRef = useRef(true);
   const stateRef = useRef(state);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  const updateImmersivePanelPosition = () => {
+    if ('immersive' !== variant) return;
+    const trigger = triggerRef.current;
+    const panel = panelRef.current;
+    const windowRef = trigger?.ownerDocument.defaultView;
+    if (!trigger || !panel || !windowRef) return;
+    const viewportPadding = 12;
+    const rect = trigger.getBoundingClientRect();
+    const width = Math.min(360, windowRef.innerWidth - viewportPadding * 2);
+    const left = Math.min(
+      Math.max(viewportPadding, rect.right - width),
+      windowRef.innerWidth - width - viewportPadding
+    );
+    const below = rect.bottom + 8;
+    const top =
+      below + panel.offsetHeight > windowRef.innerHeight - viewportPadding
+        ? Math.max(viewportPadding, rect.top - panel.offsetHeight - 8)
+        : below;
+    setPanelPosition({ left, top, width });
+  };
 
   const replaceState = (nextState: FontControlsState): boolean => {
     if (!activeRef.current) {
@@ -221,6 +250,10 @@ export function FontControls({
     };
   }, [onReady]);
 
+  useLayoutEffect(() => {
+    if (isOpen) updateImmersivePanelPosition();
+  }, [isOpen, variant]);
+
   useEffect(() => {
     if (!isOpen) {
       return undefined;
@@ -249,10 +282,15 @@ export function FontControls({
     };
 
     const windowRef = triggerRef.current?.ownerDocument.defaultView;
+    const reposition = () => updateImmersivePanelPosition();
     document.addEventListener('click', closeForPointer);
+    windowRef?.addEventListener('resize', reposition);
+    windowRef?.addEventListener('scroll', reposition, true);
     windowRef?.addEventListener('keydown', closeForEscape, true);
     return () => {
       document.removeEventListener('click', closeForPointer);
+      windowRef?.removeEventListener('resize', reposition);
+      windowRef?.removeEventListener('scroll', reposition, true);
       windowRef?.removeEventListener('keydown', closeForEscape, true);
     };
   }, [isOpen]);
@@ -312,6 +350,16 @@ export function FontControls({
       <div
         ref={panelRef}
         className={`easymde-toolbar-popover easymde-toolbar-popover-font-panel${'immersive' === variant ? ' is-immersive-panel' : ''}`}
+        style={
+          'immersive' === variant
+            ? {
+                left: panelPosition?.left ?? -9999,
+                top: panelPosition?.top ?? -9999,
+                visibility: panelPosition ? 'visible' : 'hidden',
+                width: panelPosition?.width ?? 360
+              }
+            : undefined
+        }
         role="dialog"
         aria-label={bootstrap.strings.font}
         hidden={!isOpen}

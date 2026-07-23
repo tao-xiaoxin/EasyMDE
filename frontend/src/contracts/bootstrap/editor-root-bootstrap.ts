@@ -79,6 +79,7 @@ export type EditorRootBootstrap = Readonly<{
     autoSave: string;
     autoSaveDescription: string;
     autoSaveEnabled: string;
+    articleOutline: string;
     cancel: string;
     characters: string;
     close: string;
@@ -95,6 +96,7 @@ export type EditorRootBootstrap = Readonly<{
     historyLoading: string;
     historyAll: string;
     historyCount: string;
+    historyCountSingular: string;
     historyVersions: string;
     immersive: string;
     insert: string;
@@ -411,6 +413,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'autoSave',
         'autoSaveDescription',
         'autoSaveEnabled',
+        'articleOutline',
         'cancel',
         'characters',
         'close',
@@ -427,6 +430,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'historyLoading',
         'historyAll',
         'historyCount',
+        'historyCountSingular',
         'historyVersions',
         'immersive',
         'insert',

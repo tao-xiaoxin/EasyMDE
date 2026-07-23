@@ -322,7 +322,10 @@ test.describe('EasyMDE editor workflows', () => {
 
     const editorRoot = page.locator('#easymde-editor-root');
     const editorOwner = editorRoot.locator('[data-easymde-editor-owner="react"]');
-    const toolbar = editorRoot.getByRole('toolbar', { name: 'Markdown toolbar' });
+    const toolbarLabel = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.toolbar
+    );
+    const toolbar = editorRoot.getByRole('toolbar', { name: toolbarLabel });
     const reactMain = toolbar.locator('.easymde-toolbar-section-main');
     const toolbarStylesheet = page.locator('#easymde-admin-toolbar-css');
     const editorScript = page.locator('#easymde-admin-editor-toolbar-js');
@@ -341,6 +344,30 @@ test.describe('EasyMDE editor workflows', () => {
     await immersiveToggle.click();
     await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
     await expect(sourceEditor).toBeFocused();
+    const wrappedImmersiveControlLabels = await page
+      .locator('.easymde-immersive-control-label:visible')
+      .evaluateAll((labels) => labels
+        .filter((label) => label.getClientRects().length !== 1)
+        .map((label) => label.textContent?.trim() ?? ''));
+    expect(wrappedImmersiveControlLabels).toEqual([]);
+    expect(await page.locator('.easymde-immersive-outline-close').evaluate((control) => {
+      const rect = control.getBoundingClientRect();
+      const style = getComputedStyle(control);
+      return {
+        borderRadius: style.borderRadius,
+        color: style.color,
+        height: rect.height,
+        width: rect.width
+      };
+    })).toEqual({
+      borderRadius: '3.625px',
+      color: 'oklch(0.704 0.04 256.788)',
+      height: 22.5,
+      width: 22.5
+    });
+    expect(await page.locator('.easymde-immersive-formatting .easymde-toolbar-button').first().evaluate(
+      (control) => getComputedStyle(control).color
+    )).toBe('oklch(0.446 0.043 257.281)');
     expect(await page.locator('#title').evaluate((element) => Boolean(element.closest('[inert]')))).toBe(true);
     await editorOwner.evaluate((boundary) => {
       const controls = Array.from(boundary.querySelectorAll(
@@ -364,10 +391,96 @@ test.describe('EasyMDE editor workflows', () => {
     await page.getByRole('button', { name: immersiveLabels.preview, exact: true }).click();
     await expect(editorOwner).toHaveClass(/is-immersive-preview/);
     await page.getByRole('button', { name: immersiveLabels.edit, exact: true }).click();
+    const immersiveHeadingTrigger = page.locator(
+      '.easymde-immersive-formatting .easymde-toolbar-popover-headings > button'
+    );
+    await immersiveHeadingTrigger.click();
+    const immersiveHeadingMenu = page.locator('.is-immersive-heading-menu');
+    const immersiveToolbarLabels = await page.evaluate(() => ({
+      headingLevelLabel: window.EasyMDEEditorRootBootstrap.toolbar.strings.headingLevel,
+      headingLabels: window.EasyMDEEditorRootBootstrap.toolbar.commands
+        .filter(({ surface, level }) => 'heading-menu' === surface && Number.isInteger(level) && level > 0)
+        .map(({ level }) => window.EasyMDEEditorRootBootstrap.toolbar.strings.headingLabelFormat.replace('%s', String(level))),
+      paragraphLabel: window.EasyMDEEditorRootBootstrap.toolbar.commands
+        .find(({ surface, action }) => 'heading-menu' === surface && 'paragraph' === action)
+        ?.label
+    }));
+    await expect(
+      immersiveHeadingMenu.locator('.easymde-immersive-heading-menu-title')
+    ).toHaveText(immersiveToolbarLabels.headingLevelLabel);
+    await expect(immersiveHeadingMenu.getByRole('menuitem')).toHaveCount(7);
+    expect(immersiveToolbarLabels.paragraphLabel).toBeTruthy();
+    await expect(
+      immersiveHeadingMenu.locator('.easymde-popover-item-label')
+    ).toHaveText([
+      ...immersiveToolbarLabels.headingLabels,
+      immersiveToolbarLabels.paragraphLabel
+    ]);
+    await expect(
+      immersiveHeadingMenu.getByRole('menuitem', {
+        name: immersiveToolbarLabels.paragraphLabel
+      })
+    ).toBeVisible();
+    expect(await immersiveHeadingMenu.evaluate((menu) => {
+      const rect = menu.getBoundingClientRect();
+      const style = getComputedStyle(menu);
+      return {
+        borderRadius: style.borderRadius,
+        boxShadow: style.boxShadow,
+        height: rect.height,
+        width: rect.width
+      };
+    })).toEqual({
+      borderRadius: '5.625px',
+      boxShadow: 'rgba(38, 52, 85, 0.1) 0px 8px 22px 0px',
+      height: 301.625,
+      width: 176
+    });
+    await page.keyboard.press('Escape');
     await page.getByRole('button', { name: immersiveLabels.table }).click();
-    await expect(page.getByRole('dialog', { name: immersiveLabels.table })).toBeVisible();
+    const tableDialog = page.getByRole('dialog', { name: immersiveLabels.table });
+    await expect(tableDialog).toBeVisible();
+    await expect(tableDialog.locator('.easymde-immersive-table-size')).toHaveText(
+      `3 ${immersiveLabels.line} × 3 ${immersiveLabels.column}`
+    );
+    expect(await tableDialog.evaluate((dialog) => {
+      const rect = dialog.getBoundingClientRect();
+      const sectionHeight = (selector) => {
+        const element = dialog.querySelector(selector);
+        if (!(element instanceof HTMLElement)) throw new Error('immersive-table-section-missing');
+        return element.getBoundingClientRect().height;
+      };
+      return {
+        dialog: { height: rect.height, width: rect.width },
+        title: sectionHeight('.easymde-immersive-table-title'),
+        picker: sectionHeight('.easymde-immersive-table-picker'),
+        inputs: sectionHeight('.easymde-immersive-table-inputs'),
+        actions: sectionHeight('.easymde-immersive-modal-actions')
+      };
+    })).toEqual({
+      dialog: { height: 500.5, width: 360 },
+      title: 57.25,
+      picker: 316.75,
+      inputs: 71,
+      actions: 53.5
+    });
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog', { name: immersiveLabels.table })).toHaveCount(0);
+    const initialViewport = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(() => editorOwner.evaluate((owner) => ({
+      clientWidth: owner.clientWidth,
+      scrollWidth: owner.scrollWidth
+    }))).toEqual({ clientWidth: 390, scrollWidth: 390 });
+    await expect(page.locator('.easymde-immersive-header')).toBeInViewport();
+    await expect(page.locator('.easymde-immersive-publish')).toBeInViewport();
+    await expect(page.locator('.easymde-immersive-toolbar-row')).toHaveCSS(
+      'overflow-x',
+      'auto'
+    );
+    if (initialViewport) {
+      await page.setViewportSize(initialViewport);
+    }
     await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toHaveCount(0);
@@ -435,7 +548,10 @@ test.describe('EasyMDE editor workflows', () => {
 
     const source = page.locator('#easymde-source');
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
-    const toolbar = page.getByRole('toolbar', { name: 'Markdown toolbar' });
+    const toolbarLabel = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.toolbar
+    );
+    const toolbar = page.getByRole('toolbar', { name: toolbarLabel });
     const main = toolbar.locator('.easymde-toolbar-section-main');
     const headingTrigger = main.locator('.easymde-toolbar-popover-headings > button');
     const selectAll = async (value) => {
@@ -1228,7 +1344,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(revisionUrl.searchParams.get('revision')).toMatch(/^\d+$/);
     await page.goto(revisionUrl.href);
     expect(new URL(page.url()).searchParams.get('revision')).toMatch(/^\d+$/);
-    await expect(page.getByRole('button', { name: 'Restore This Revision' })).toBeVisible();
+    await expect(page.locator('.restore-revision')).toBeVisible();
   });
 
   test('loads local preview enhancements and exports only the stable server preview', async ({ page }, testInfo) => {

@@ -2,6 +2,7 @@ export type ImmersiveStrings = Readonly<{
   autoSave: string;
   autoSaveDescription: string;
   autoSaveEnabled: string;
+  articleOutline: string;
   cancel: string;
   characters: string;
   close: string;
@@ -18,6 +19,7 @@ export type ImmersiveStrings = Readonly<{
   historyLoading: string;
   historyAll: string;
   historyCount: string;
+  historyCountSingular: string;
   historyVersions: string;
   immersive: string;
   insert: string;

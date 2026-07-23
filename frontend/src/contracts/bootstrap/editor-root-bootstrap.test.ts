@@ -22,6 +22,7 @@ function validBootstrap() {
         cssSaveFailed: 'CSS save failed',
         cssSaved: 'CSS saved',
         customCss: 'Custom CSS',
+        customCssTheme: 'Custom CSS theme',
         namedCustomCss: 'Named CSS',
         saveCss: 'Save CSS'
       }
@@ -110,6 +111,7 @@ function validBootstrap() {
         autoSave: 'Auto save',
         autoSaveDescription: 'Automatically save a local draft',
         autoSaveEnabled: 'Auto save is enabled',
+        articleOutline: 'Article outline',
         cancel: 'Cancel',
         characters: 'characters',
         close: 'Close',
@@ -126,6 +128,7 @@ function validBootstrap() {
         historyLoading: 'Loading revisions',
         historyAll: 'All',
         historyCount: '%s revisions',
+        historyCountSingular: '1 revision',
         historyVersions: 'Revision history',
         immersive: 'Immersive writing',
         insert: 'Insert',
@@ -196,7 +199,7 @@ function validBootstrap() {
         viewModes: 'View modes',
         wechat: 'Copy to WeChat',
         wechatCopied: 'Copied',
-        wordCount: 'Writing statistics',
+        wordCount: 'Word count',
         wordCountDescription:
           'Show words, characters, and reading time beside the title',
         words: 'words'
@@ -220,7 +223,12 @@ function validBootstrap() {
         }
       ],
       shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } },
-      strings: { headings: 'Headings', linkText: 'link text' }
+      strings: {
+        headingLabelFormat: 'Heading %s',
+        headingLevel: 'Heading level',
+        headings: 'Headings',
+        linkText: 'link text'
+      }
     },
     wechatExport: {
       enabled: true,
@@ -266,6 +274,8 @@ describe('parseEditorRootBootstrap', () => {
       previewEnhancement: previewEnhancementBootstrapFixture,
       mediaPicker: validBootstrap().mediaPicker,
       toolbar: expect.objectContaining({
+        headingLabelFormat: 'Heading %s',
+        headingLevelLabel: 'Heading level',
         headingsLabel: 'Headings',
         linkText: 'link text'
       }),

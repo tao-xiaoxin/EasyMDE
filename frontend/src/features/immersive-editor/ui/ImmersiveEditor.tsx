@@ -17,7 +17,7 @@ import {
   Info,
   RotateCcw,
   Save,
-  Table2,
+  Table,
   X
 } from '../../../generated/lucide-icons';
 import type {
@@ -169,34 +169,36 @@ function TableDialog({
       label={strings.insertTable}
       onClose={onClose}
     >
-      <h2>
-        <Table2 size={18} />
-        {strings.insertTable}
-      </h2>
-      <p className="easymde-immersive-table-size">
-        {activeRows} × {activeColumns}
-      </p>
-      <fieldset
-        className="easymde-immersive-table-grid"
-        aria-label={strings.table}
-        onMouseLeave={() => setHovered(null)}
-      >
-        {TABLE_DIMENSIONS.map((row) =>
-          TABLE_DIMENSIONS.map((column) => (
-            <button
-              key={`${row}-${column}`}
-              type="button"
-              className={
-                row <= activeRows && column <= activeColumns ? 'is-active' : ''
-              }
-              aria-label={`${row} × ${column}`}
-              onFocus={() => setHovered({ rows: row, columns: column })}
-              onMouseEnter={() => setHovered({ rows: row, columns: column })}
-              onClick={() => onInsert(row, column)}
-            />
-          ))
-        )}
-      </fieldset>
+      <div className="easymde-immersive-table-title">
+        <Table size={15} />
+        <strong>{strings.insertTable}</strong>
+      </div>
+      <div className="easymde-immersive-table-picker">
+        <p className="easymde-immersive-table-size">
+          {activeRows} {strings.line} × {activeColumns} {strings.column}
+        </p>
+        <fieldset
+          className="easymde-immersive-table-grid"
+          aria-label={strings.table}
+          onMouseLeave={() => setHovered(null)}
+        >
+          {TABLE_DIMENSIONS.map((row) =>
+            TABLE_DIMENSIONS.map((column) => (
+              <button
+                key={`${row}-${column}`}
+                type="button"
+                className={
+                  row <= activeRows && column <= activeColumns ? 'is-active' : ''
+                }
+                aria-label={`${row} × ${column}`}
+                onFocus={() => setHovered({ rows: row, columns: column })}
+                onMouseEnter={() => setHovered({ rows: row, columns: column })}
+                onClick={() => onInsert(row, column)}
+              />
+            ))
+          )}
+        </fieldset>
+      </div>
       <div className="easymde-immersive-table-inputs">
         <label>
           {strings.tableRows}
@@ -337,6 +339,11 @@ function HistoryDialog({
   );
   const selectedLabel =
     'manual' === selected?.type ? strings.manualSave : strings.autoSave;
+  const filteredCount = filteredItems?.length ?? 0;
+  const historyCount =
+    1 === filteredCount
+      ? strings.historyCountSingular
+      : strings.historyCount.replace('%s', String(filteredCount));
 
   return (
     <div className="easymde-history-backdrop">
@@ -362,7 +369,7 @@ function HistoryDialog({
             <button type="button" aria-label={strings.cancel} onClick={onClose}><X size={14} /></button>
           </header>
           <div className="easymde-history-filter">
-            <span>{strings.historyCount.replace('%s', String(filteredItems?.length ?? 0))}</span>
+            <span>{historyCount}</span>
             <label>
               <select value={filter} aria-label={strings.historyAll} onChange={(event) => setFilter(event.currentTarget.value as typeof filter)}>
                 <option value="all">{strings.historyAll}</option>

@@ -65,10 +65,6 @@ function trapFocus(event: ReactKeyboardEvent<HTMLElement>): void {
   }
 }
 
-function categoryIds(category: NativePublishCategory): ReadonlyArray<string> {
-  return [category.id, ...category.children.flatMap(categoryIds)];
-}
-
 function CategoryTree({
   categories,
   disabled,
@@ -81,10 +77,7 @@ function CategoryTree({
   onToggle: (ids: ReadonlyArray<string>, checked: boolean) => void;
 }>) {
   const render = (category: NativePublishCategory, depth: number) => {
-    const ids = categoryIds(category);
-    const checkedCount = ids.filter((id) => selected.has(id)).length;
-    const checked = checkedCount === ids.length;
-    const partial = checkedCount > 0 && !checked;
+    const checked = selected.has(category.id);
     return (
       <li key={category.id}>
         <label style={{ '--easymde-category-depth': depth } as React.CSSProperties}>
@@ -92,10 +85,7 @@ function CategoryTree({
             type="checkbox"
             checked={checked}
             disabled={disabled}
-            ref={(input) => {
-              if (input) input.indeterminate = partial;
-            }}
-            onChange={() => onToggle(ids, !checked)}
+            onChange={() => onToggle([category.id], !checked)}
           />
           <span className="easymde-publish-checkbox" aria-hidden="true">
             {checked ? <Check size={10} strokeWidth={3.2} /> : null}
@@ -198,14 +188,6 @@ export function ImmersivePublishDialog({
 
   return (
     <div className="easymde-publish-backdrop">
-      <button
-        type="button"
-        className="easymde-publish-backdrop-dismiss"
-        aria-label={strings.closePublish}
-        tabIndex={-1}
-        disabled={submitting}
-        onClick={onClose}
-      />
       <section
         ref={dialogRef}
         className="easymde-publish-dialog"

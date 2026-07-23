@@ -99,6 +99,7 @@ function fixture(): EditorRootProps &
         cssSaveFailed: 'CSS save failed',
         cssSaved: 'CSS saved',
         customCss: 'Custom CSS',
+        customCssTheme: 'Custom CSS theme',
         namedCustomCss: 'Named CSS',
         saveCss: 'Save CSS'
       }
@@ -140,6 +141,7 @@ function fixture(): EditorRootProps &
       autoSave: '自动保存',
       autoSaveDescription: '自动保存本地草稿',
       autoSaveEnabled: '自动保存已开启',
+      articleOutline: '文章大纲',
       cancel: '取消',
       characters: '字符',
       close: '关闭',
@@ -149,13 +151,14 @@ function fixture(): EditorRootProps &
       editorSettings: '编辑器设置',
       enter: '进入沉浸写作',
       exit: '退出沉浸写作',
-      hideOutline: '隐藏大纲',
+      hideOutline: '收起大纲',
       history: '历史记录',
       historyEmpty: '暂无修订版本',
       historyError: '无法加载修订版本',
       historyLoading: '正在加载修订版本',
       historyAll: '全部',
       historyCount: '共 %s 条历史版本',
+      historyCountSingular: '共 1 条历史版本',
       historyVersions: '历史版本',
       immersive: '沉浸写作',
       insert: '插入',
@@ -178,7 +181,7 @@ function fixture(): EditorRootProps &
       resizeOutline: '调整大纲宽度',
       saved: '已保存',
       settings: '设置',
-      showOutline: '显示大纲',
+      showOutline: '展开大纲',
       split: '分屏',
       splitMode: '分屏模式',
       splitPreview: '分屏预览',
@@ -410,6 +413,8 @@ function fixture(): EditorRootProps &
           surface: 'main'
         }
       ],
+      headingLabelFormat: 'Heading %s',
+      headingLevelLabel: 'Heading level',
       headingsLabel: 'Headings',
       linkText: 'link text',
       shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } }
@@ -578,6 +583,18 @@ describe('EditorRoot', () => {
     expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
     expect(props.publishPost).not.toHaveBeenCalled();
 
+    const excerpt = view.getByPlaceholderText(
+      '撰写摘要...'
+    ) as HTMLTextAreaElement;
+    fireEvent.change(excerpt, { target: { value: '尚未提交的摘要' } });
+    const backdrop = view.container.querySelector('.easymde-publish-backdrop');
+    if (!(backdrop instanceof HTMLElement)) {
+      throw new Error('publish-backdrop-unavailable');
+    }
+    fireEvent.click(backdrop);
+    expect(view.getByRole('dialog', { name: '更新文章' })).not.toBeNull();
+    expect(excerpt.value).toBe('尚未提交的摘要');
+
     fireEvent.click(view.getByRole('button', { name: '取消' }));
     expect(view.queryByRole('dialog', { name: '更新文章' })).toBeNull();
     expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
@@ -590,6 +607,53 @@ describe('EditorRoot', () => {
     expect(props.executeExternalCommand).not.toHaveBeenCalledWith(
       'savepost',
       expect.anything()
+    );
+  });
+
+  it('keeps hierarchical WordPress category selections independent', async () => {
+    const props = fixture();
+    vi.mocked(props.nativePublishPort.read).mockReturnValue({
+      categories: [
+        {
+          children: [
+            {
+              children: [],
+              id: 'child',
+              label: '子分类'
+            }
+          ],
+          id: 'parent',
+          label: '父分类'
+        }
+      ],
+      categoryIds: ['parent'],
+      excerpt: '',
+      featuredImage: null,
+      password: '',
+      published: true,
+      sticky: false,
+      tags: [],
+      visibility: 'public'
+    });
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+
+    const parent = view.getByRole('checkbox', {
+      name: '父分类'
+    }) as HTMLInputElement;
+    const child = view.getByRole('checkbox', {
+      name: '子分类'
+    }) as HTMLInputElement;
+    expect(parent.checked).toBe(true);
+    expect(parent.indeterminate).toBe(false);
+    expect(child.checked).toBe(false);
+
+    fireEvent.click(parent);
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryIds: [] })
     );
   });
 
@@ -650,6 +714,7 @@ describe('EditorRoot', () => {
         expect.any(AbortSignal)
       )
     );
+    expect(view.getByText('共 1 条历史版本')).not.toBeNull();
     fireEvent.click(view.getByRole('button', { name: '恢复到这个版本' }));
     expect(props.restoreRevision).not.toHaveBeenCalled();
     expect(view.getByRole('alert').textContent).toContain(
@@ -715,6 +780,37 @@ describe('EditorRoot', () => {
       view.container.querySelector('.easymde-immersive-header .easymde-immersive-exit')
     ).toBeNull();
     expect(view.queryByRole('button', { name: /AI/u })).toBeNull();
+
+    const tableIcon = view
+      .getByRole('button', { name: '表格' })
+      .querySelector('svg');
+    expect(
+      Array.from(tableIcon?.children ?? []).map((node) => ({
+        d: node.getAttribute('d'),
+        height: node.getAttribute('height'),
+        tag: node.tagName.toLowerCase(),
+        width: node.getAttribute('width'),
+        x: node.getAttribute('x'),
+        y: node.getAttribute('y')
+      }))
+    ).toEqual([
+      { d: 'M12 3v18', height: null, tag: 'path', width: null, x: null, y: null },
+      { d: null, height: '18', tag: 'rect', width: '18', x: '3', y: '3' },
+      { d: 'M3 9h18', height: null, tag: 'path', width: null, x: null, y: null },
+      { d: 'M3 15h18', height: null, tag: 'path', width: null, x: null, y: null }
+    ]);
+
+    expect(
+      Array.from(
+        view.container.querySelectorAll(
+          '.easymde-immersive-wechat-glyph path'
+        )
+      ).map((path) => path.getAttribute('d'))
+    ).toEqual([
+      'M38.7,15.3c-3.7-4.9-10.2-6.2-16.1-4.1c0.2,0.1,0.4,0.1,0.6,0.2c8.7,2.9,13.3,12.3,10.4,21 c-0.8,2.3-2,4.3-3.5,6c1.9-0.5,3.8-1.3,5.4-2.5C42.1,30.8,43.4,21.4,38.7,15.3z',
+      'M17,10.4L17,10.4C17,10.4,17,10.4,17,10.4c0.4-0.3,0.7-0.5,1.1-0.8c0,0,0,0,0.1,0c0.4-0.2,0.8-0.4,1.1-0.7 c0,0,0.1,0,0.1-0.1c0.8-0.4,1.6-0.7,2.4-1c0.1,0,0.1,0,0.2-0.1c0.4-0.1,0.8-0.3,1.2-0.4c0,0,0.1,0,0.1,0c0.4-0.1,0.8-0.2,1.2-0.2 c0.1,0,0.1,0,0.2,0C25.3,7,25.7,7,26.1,7c0.1,0,0.2,0,0.3,0c0.4,0,0.9-0.1,1.3-0.1c0.5,0,1,0,1.5,0.1c0.1,0,0.1,0,0.2,0 c0.5,0,0.9,0.1,1.4,0.2c0.1,0,0.2,0,0.2,0c0.5,0.1,0.9,0.2,1.3,0.3c0.1,0,0.1,0,0.2,0.1C33,7.7,33.5,7.8,33.9,8 c-0.2-0.4-0.4-0.7-0.4-0.7C30.6,2.7,25.8,0,20.6,0c-3.1,0-7.9,1.1-11.5,5.4c-2.4,2.9-3.2,6.3-2.7,9.7c0.3,2.3,1.6,5.4,3.5,7.3 C10.6,17.5,13.2,13.2,17,10.4z',
+      'M20.6,30.9c-1.3,0-2.6-0.2-3.8-0.4c-0.1,0-0.3,0-0.5,0c-0.4,0-0.7,0.1-1,0.3l-4,2.6 c-0.1,0.1-0.2,0.1-0.4,0.1c-0.3,0-0.6-0.3-0.7-0.6c0-0.2,0-0.3,0.1-0.5c0-0.1,0.4-2,0.7-3.2c0-0.1,0.1-0.3,0-0.4 c0-0.4-0.2-0.8-0.6-1c-4.3-2.9-7.2-7.5-7.8-12.2c-1.1,1.7-1.6,3-2.2,5c-2.1,7.3,2.5,16,9.9,18.4c8.6,2.8,16.7-0.3,19.5-7.6 c0.3-0.9,0.7-2.4,0.8-3.6C27.7,29.9,24.6,30.9,20.6,30.9z'
+    ]);
 
     fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
     await waitFor(() =>

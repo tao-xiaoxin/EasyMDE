@@ -42,6 +42,12 @@ type ImmersiveThemeOption = Readonly<{
   swatch: string | readonly [string, string];
 }>;
 
+type ImmersivePanelPosition = Readonly<{
+  left: number;
+  top: number;
+  width: number;
+}>;
+
 const ARTICLE_THEME_ACCENTS: Readonly<Record<string, string>> = {
   default: '#333333',
   'orange-heart': '#FF6200',
@@ -283,6 +289,8 @@ export function AppearanceControls({
     state: bootstrap.state
   });
   const [isOpen, setIsOpen] = useState(false);
+  const [panelPosition, setPanelPosition] =
+    useState<ImmersivePanelPosition | null>(null);
   const [isCustomOpen, setIsCustomOpen] = useState(false);
   const [customName, setCustomName] = useState('');
   const [customCode, setCustomCode] = useState('');
@@ -293,6 +301,27 @@ export function AppearanceControls({
   const snapshotRef = useRef(snapshot);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  const updateImmersivePanelPosition = () => {
+    if ('immersive' !== variant) return;
+    const trigger = triggerRef.current;
+    const panel = panelRef.current;
+    const windowRef = trigger?.ownerDocument.defaultView;
+    if (!trigger || !panel || !windowRef) return;
+    const viewportPadding = 12;
+    const rect = trigger.getBoundingClientRect();
+    const width = Math.min(248, windowRef.innerWidth - viewportPadding * 2);
+    const left = Math.min(
+      Math.max(viewportPadding, rect.right - width - 12),
+      windowRef.innerWidth - width - viewportPadding
+    );
+    const below = rect.bottom + 8;
+    const top =
+      below + panel.offsetHeight > windowRef.innerHeight - viewportPadding
+        ? Math.max(viewportPadding, rect.top - panel.offsetHeight - 8)
+        : below;
+    setPanelPosition({ left, top, width });
+  };
 
   const replaceSnapshot = (nextSnapshot: AppearanceSnapshot): boolean => {
     if (!activeRef.current) {
@@ -327,6 +356,10 @@ export function AppearanceControls({
     };
   }, [onReady]);
 
+  useLayoutEffect(() => {
+    if (isOpen) updateImmersivePanelPosition();
+  }, [isOpen, variant]);
+
   useEffect(() => {
     if (!isOpen) {
       return undefined;
@@ -355,10 +388,15 @@ export function AppearanceControls({
     };
 
     const windowRef = triggerRef.current?.ownerDocument.defaultView;
+    const reposition = () => updateImmersivePanelPosition();
     document.addEventListener('click', closeForPointer);
+    windowRef?.addEventListener('resize', reposition);
+    windowRef?.addEventListener('scroll', reposition, true);
     windowRef?.addEventListener('keydown', closeForEscape, true);
     return () => {
       document.removeEventListener('click', closeForPointer);
+      windowRef?.removeEventListener('resize', reposition);
+      windowRef?.removeEventListener('scroll', reposition, true);
       windowRef?.removeEventListener('keydown', closeForEscape, true);
     };
   }, [isOpen]);
@@ -500,6 +538,16 @@ export function AppearanceControls({
       <div
         ref={panelRef}
         className={`easymde-toolbar-popover easymde-toolbar-popover-appearance-panel${'immersive' === variant ? ' is-immersive-panel' : ''}`}
+        style={
+          'immersive' === variant
+            ? {
+                left: panelPosition?.left ?? -9999,
+                top: panelPosition?.top ?? -9999,
+                visibility: panelPosition ? 'visible' : 'hidden',
+                width: panelPosition?.width ?? 248
+              }
+            : undefined
+        }
         role="dialog"
         aria-label={panelLabel}
         hidden={!isOpen}
@@ -568,15 +616,17 @@ export function AppearanceControls({
                   applyState({ ...snapshotRef.current.state, codeTheme })
                 }
               />
-              <button
-                type="button"
-                className="easymde-immersive-custom-css-trigger"
-                aria-expanded={isCustomOpen}
-                onClick={openCustomPanel}
-              >
-                <PenLine size={17} strokeWidth={2.1} aria-hidden="true" />
-                {bootstrap.strings.customCss}
-              </button>
+              <div className="easymde-immersive-custom-css-action">
+                <button
+                  type="button"
+                  className="easymde-immersive-custom-css-trigger"
+                  aria-expanded={isCustomOpen}
+                  onClick={openCustomPanel}
+                >
+                  <PenLine size={17} strokeWidth={2.1} aria-hidden="true" />
+                  {bootstrap.strings.customCssTheme}
+                </button>
+              </div>
             </div>
           </Fragment>
         ) : (

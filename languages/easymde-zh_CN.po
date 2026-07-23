@@ -245,6 +245,9 @@ msgstr "第 %1$s 行，第 %2$s 列"
 msgid "Writing statistics"
 msgstr "写作统计"
 
+msgid "Word count"
+msgstr "字数统计"
+
 #: src/Admin/AdminAssets.php:613
 msgid "Reading time (minutes)"
 msgstr "阅读时长（分钟）"
@@ -284,6 +287,14 @@ msgstr "字体"
 #: src/Admin/AdminAssets.php:621
 msgid "Headings"
 msgstr "标题"
+
+#: src/Admin/AdminAssets.php:501
+msgid "Heading level"
+msgstr "标题级别"
+
+#. translators: %s: Heading level from 1 through 6.
+msgid "Heading %s"
+msgstr "标题 %s"
 
 #: src/Admin/AdminAssets.php:622
 msgid "Article theme"
@@ -1205,6 +1216,9 @@ msgstr "更新已有文章"
 
 msgid "%s revisions"
 msgstr "共 %s 条历史版本"
+
+msgid "1 revision"
+msgstr "共 1 条历史版本"
 
 msgid "Revision history"
 msgstr "历史版本"

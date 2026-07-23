@@ -35,6 +35,7 @@ const bootstrap: AppearanceBootstrap = {
     articleTheme: 'Article theme',
     codeTheme: 'Code theme',
     customCss: 'Custom CSS',
+    customCssTheme: 'Custom CSS theme',
     cssName: 'CSS name',
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
@@ -75,6 +76,25 @@ describe('AppearanceControls', () => {
       )
     ).toBe('default');
     expect(trigger.querySelector('.dashicons')).toBeNull();
+  });
+
+  it('renders the translated custom CSS theme action in immersive mode', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+
+    expect(
+      screen.getByRole('button', { name: 'Custom CSS theme' }).textContent
+    ).toContain('Custom CSS theme');
   });
 
   it('moves focus through immersive theme options with the keyboard', async () => {

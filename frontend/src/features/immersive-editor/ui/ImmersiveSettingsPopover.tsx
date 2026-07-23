@@ -89,7 +89,7 @@ export function ImmersiveSettingsPopover({
     key: keyof ImmersiveSettings;
     label: string;
   }>> = [
-    { key: 'outline', label: strings.outline, description: strings.outlineDescription },
+    { key: 'outline', label: strings.articleOutline, description: strings.outlineDescription },
     { key: 'wordCount', label: strings.wordCount, description: strings.wordCountDescription },
     { key: 'splitPreview', label: strings.splitPreview, description: strings.splitPreviewDescription },
     { key: 'autoSave', label: strings.autoSave, description: strings.autoSaveDescription },

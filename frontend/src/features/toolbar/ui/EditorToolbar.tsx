@@ -126,22 +126,28 @@ function CommandButton({
 
 type HeadingMenuProps = Readonly<{
   commands: ReadonlyArray<ToolbarCommand>;
+  headingLabelFormat: string;
+  headingLevelLabel: string;
   label: string;
   shortcuts: Readonly<Record<string, string>>;
   executeCommand: (commandId: string) => void;
   isOpen: boolean;
   onOpen: () => void;
   setIsOpen: (isOpen: boolean) => void;
+  variant: 'default' | 'immersive';
 }>;
 
 function HeadingMenu({
   commands,
+  headingLabelFormat,
+  headingLevelLabel,
   label,
   shortcuts,
   executeCommand,
   isOpen,
   onOpen,
-  setIsOpen
+  setIsOpen,
+  variant
 }: HeadingMenuProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -257,13 +263,18 @@ function HeadingMenu({
         <ChevronDown size={9} strokeWidth={2.5} aria-hidden="true" />
       </button>
       <div
-        className="easymde-toolbar-popover"
+        className={`easymde-toolbar-popover${'immersive' === variant ? ' is-immersive-heading-menu' : ''}`}
         role="menu"
         aria-label={label}
         hidden={!isOpen}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={handleMenuKeyDown}
       >
+        {'immersive' === variant ? (
+          <div className="easymde-immersive-heading-menu-title">
+            {headingLevelLabel}
+          </div>
+        ) : null}
         {commands.map((command, index) => (
           <button
             key={command.id}
@@ -271,7 +282,7 @@ function HeadingMenu({
               itemRefs.current[index] = node;
             }}
             type="button"
-            className="easymde-popover-item"
+            className={`easymde-popover-item${'immersive' === variant ? ' is-immersive-heading-item' : ''}`}
             role="menuitem"
             tabIndex={-1}
             data-easymde-command={command.id}
@@ -281,10 +292,42 @@ function HeadingMenu({
               executeCommand(command.id);
             }}
           >
-            <span className="easymde-popover-item-label">{command.label}</span>
-            <span className="easymde-popover-item-shortcut">
-              {shortcuts[command.id]}
-            </span>
+            {'immersive' === variant &&
+            'heading' === command.action &&
+            'number' === typeof command.level ? (
+              <Fragment>
+                <span
+                  className="easymde-immersive-heading-badge"
+                  data-heading-level={command.level}
+                  aria-hidden="true"
+                >
+                  H{command.level}
+                </span>
+                <span className="easymde-popover-item-label">
+                  {command.usesLevelLabel
+                    ? headingLabelFormat.replace('%s', String(command.level))
+                    : command.label}
+                </span>
+                <span aria-hidden="true" />
+              </Fragment>
+            ) : (
+              <Fragment>
+                {'immersive' === variant ? (
+                  <span
+                    className="easymde-immersive-heading-badge is-command"
+                    aria-hidden="true"
+                  >
+                    <span
+                      className={`dashicons dashicons-${command.icon}`}
+                    />
+                  </span>
+                ) : null}
+                <span className="easymde-popover-item-label">{command.label}</span>
+                <span className="easymde-popover-item-shortcut">
+                  {shortcuts[command.id]}
+                </span>
+              </Fragment>
+            )}
           </button>
         ))}
       </div>
@@ -322,6 +365,13 @@ export function EditorToolbar({
   const headingCommands = bootstrap.commands.filter(
     (command) => 'heading-menu' === command.surface
   );
+  const displayedHeadingCommands =
+    'immersive' === variant
+      ? [
+          ...headingCommands.filter((command) => 'heading' === command.action),
+          ...headingCommands.filter((command) => 'heading' !== command.action)
+        ]
+      : headingCommands;
   const blockCommands = commandsFor('main', 'block');
   const codeCommands = commandsFor('main', 'insert').filter(
     (command) => 'inlinecode' === command.id || 'codefence' === command.id
@@ -359,13 +409,16 @@ export function EditorToolbar({
         </Fragment>
       ) : null}
       <HeadingMenu
-        commands={headingCommands}
+        commands={displayedHeadingCommands}
+        headingLabelFormat={bootstrap.headingLabelFormat}
+        headingLevelLabel={bootstrap.headingLevelLabel}
         label={bootstrap.headingsLabel}
         shortcuts={shortcuts}
         executeCommand={executeCommand}
         isOpen={isHeadingOpen}
         onOpen={() => onPopoverOpen?.()}
         setIsOpen={setIsHeadingOpen}
+        variant={variant}
       />
       {'immersive' === variant && blockCommands.length ? (
         <span className="easymde-toolbar-divider is-after-heading" aria-hidden="true" />

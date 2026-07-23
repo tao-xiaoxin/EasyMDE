@@ -89,6 +89,7 @@ export type ImmersiveStrings = Readonly<{
   public: string;
   publishDescription: string;
   publishFailed: string;
+  publishLoadingPreview: string;
   publishOptions: string;
   remove: string;
   removeTag: string;

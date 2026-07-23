@@ -168,6 +168,7 @@ export type EditorRootBootstrap = Readonly<{
     public: string;
     publishDescription: string;
     publishFailed: string;
+    publishLoadingPreview: string;
     publishOptions: string;
     remove: string;
     removeTag: string;
@@ -532,6 +533,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'public',
         'publishDescription',
         'publishFailed',
+        'publishLoadingPreview',
         'publishOptions',
         'remove',
         'removeTag',

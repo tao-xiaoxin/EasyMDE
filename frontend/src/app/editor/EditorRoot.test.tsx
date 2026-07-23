@@ -230,6 +230,7 @@ function fixture(): EditorRootProps &
       public: '公开',
       publishDescription: '确认文章信息后，将发布到当前 WordPress 站点。',
       publishFailed: 'WordPress 未接受发布请求，请检查页面状态后重试。',
+      publishLoadingPreview: '加载预览中...',
       publishOptions: '发布选项',
       remove: '移除',
       removeTag: '移除标签 %s',
@@ -644,6 +645,31 @@ describe('EditorRoot', () => {
       'savepost',
       expect.anything()
     );
+  });
+
+  it('renders the source-accurate publish decorations and submitting progress owner', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    const dialog = view.getByRole('dialog', { name: '更新文章' });
+    expect(
+      dialog.querySelectorAll('.easymde-publish-heading-sparkle')
+    ).toHaveLength(1);
+    expect(
+      dialog.querySelectorAll('.easymde-publish-button-sparkles svg')
+    ).toHaveLength(2);
+    const progress = dialog.querySelector('.easymde-publish-progress');
+    expect(progress?.getAttribute('aria-live')).toBe('polite');
+    expect(progress?.textContent).toBe('');
+
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '更新文章' })
+    );
+
+    expect(progress?.textContent).toBe('加载预览中...');
+    expect(dialog.getAttribute('aria-busy')).toBe('true');
   });
 
   it('labels the existing WordPress Post action as update throughout immersive mode', async () => {

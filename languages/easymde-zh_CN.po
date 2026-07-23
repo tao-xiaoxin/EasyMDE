@@ -1250,5 +1250,8 @@ msgstr "更新后打开文章页面"
 msgid "Publish options"
 msgstr "发布选项"
 
+msgid "Loading preview..."
+msgstr "加载预览中..."
+
 msgid "WordPress did not accept the publish request. Check the page state and try again."
 msgstr "WordPress 未接受发布请求，请检查页面状态后重试。"

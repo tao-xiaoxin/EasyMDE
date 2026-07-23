@@ -37,3 +37,38 @@ test('withdrawn ordinary editor surfaces have no retained CSS runtime', () => {
     assert.doesNotMatch(css, new RegExp(`\\.${className}(?:[^a-z0-9_-]|$)`, 'i'));
   }
 });
+
+test('immersive publish CSS preserves reference geometry without hiding the password field', () => {
+  assert.match(
+    css,
+    /\.easymde-publish-dialog\s*\{[^}]*max-height:\s*calc\(100vh - 32px\);[^}]*flex-direction:\s*column;/s
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-publish-dialog\s*\{[^}]*\bheight:\s*min\(728\.25px,/s
+  );
+  assert.match(
+    css,
+    /\.easymde-publish-field\s*\{[^}]*margin:\s*0;[^}]*\}\s*\.easymde-publish-field \+ \.easymde-publish-field\s*\{[^}]*margin-top:\s*22px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-publish-visibility > div\[role="radiogroup"\] input[\s\S]*?position:\s*absolute;[^}]*width:\s*1px;[^}]*height:\s*1px;/s
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-publish-visibility input(?:\s*,|\s*\{)/
+  );
+  assert.match(
+    css,
+    /\.easymde-publish-password input\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*height:\s*38px;[^}]*margin:\s*0;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-publish-checkbox\s*\{[^}]*width:\s*18px;[^}]*height:\s*18px;[^}]*flex:\s*0 0 18px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-publish-sticky > span\s*\{[^}]*width:\s*17px;[^}]*height:\s*17px;[^}]*flex:\s*0 0 17px;/s
+  );
+});

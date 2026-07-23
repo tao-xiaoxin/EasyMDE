@@ -372,6 +372,7 @@ final class AdminAssets {
 					'public'                      => __( 'Public', 'easymde' ),
 					'publishDescription'          => __( 'Confirm the article details to publish it to the current WordPress site.', 'easymde' ),
 					'publishFailed'               => __( 'WordPress did not accept the publish request. Check the page state and try again.', 'easymde' ),
+					'publishLoadingPreview'       => __( 'Loading preview...', 'easymde' ),
 					'publishOptions'              => __( 'Publish options', 'easymde' ),
 					'remove'                      => __( 'Remove', 'easymde' ),
 					/* translators: %s: Tag name. */

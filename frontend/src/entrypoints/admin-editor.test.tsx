@@ -155,6 +155,7 @@ const bootstrap = {
     public: 'Public',
     publishDescription: 'Confirm article details.',
     publishFailed: 'WordPress did not accept the publish request. Check the page state and try again.',
+    publishLoadingPreview: 'Loading preview...',
     remove: 'Remove',
     removeTag: 'Remove tag: %s',
     replace: 'Replace',

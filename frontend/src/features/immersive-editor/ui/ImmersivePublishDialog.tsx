@@ -314,6 +314,19 @@ function PublishHeaderDecoration() {
   );
 }
 
+function PublishButtonSparkles() {
+  return (
+    <span className="easymde-publish-button-sparkles" aria-hidden="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 1.5c0 6.351 4.65 11.5 11.5 11.5-6.85 0-11.5 5.149-11.5 11.5 0-6.351-4.65-11.5-11.5-11.5C7.35 13 12 7.851 12 1.5z" />
+      </svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 1.5c0 6.351 4.65 11.5 11.5 11.5-6.85 0-11.5 5.149-11.5 11.5 0-6.351-4.65-11.5-11.5-11.5C7.35 13 12 7.851 12 1.5z" />
+      </svg>
+    </span>
+  );
+}
+
 export function ImmersivePublishDialog({
   environment,
   imageUploadMaxBytes,
@@ -404,6 +417,7 @@ export function ImmersivePublishDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="easymde-publish-dialog-title"
+        aria-busy={submitting}
         onKeyDown={(event) => {
           trapFocus(event);
           if ('Escape' === event.key && !submitting) {
@@ -424,7 +438,16 @@ export function ImmersivePublishDialog({
             disabled={submitting}
             onClick={onClose}
           ><X size={14} strokeWidth={2.2} /></button>
-          <div className="easymde-publish-heading-icon"><SquarePen size={20} strokeWidth={2} /></div>
+          <div className="easymde-publish-heading-icon">
+            <SquarePen size={20} strokeWidth={2} />
+            <svg
+              className="easymde-publish-heading-sparkle"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="M12 1.5c0 6.351 4.65 11.5 11.5 11.5-6.85 0-11.5 5.149-11.5 11.5 0-6.351-4.65-11.5-11.5-11.5C7.35 13 12 7.851 12 1.5z" />
+            </svg>
+          </div>
           <div>
             <div className="easymde-publish-title-row">
               <h2 id="easymde-publish-dialog-title">{submitLabel}</h2>
@@ -572,9 +595,20 @@ export function ImmersivePublishDialog({
           ) : (
             <p><span><ShieldCheck size={12} strokeWidth={2.2} /></span>{strings.noWriteBeforeSubmit}</p>
           )}
-          <div>
+          <div className="easymde-publish-progress" aria-live="polite">
+            {submitting ? (
+              <span>
+                <span className="easymde-publish-progress-spinner" aria-hidden="true" />
+                {strings.publishLoadingPreview}
+              </span>
+            ) : null}
+          </div>
+          <div className="easymde-publish-footer-actions">
             <button type="button" disabled={submitting} onClick={onClose}>{strings.cancel}</button>
-            <button type="button" className="is-primary" disabled={submitting || mediaPending} onClick={submit}>{submitLabel}<span aria-hidden="true">✦</span></button>
+            <button type="button" className="is-primary" disabled={submitting || mediaPending} onClick={submit}>
+              {submitLabel}
+              <PublishButtonSparkles />
+            </button>
           </div>
         </footer>
       </section>

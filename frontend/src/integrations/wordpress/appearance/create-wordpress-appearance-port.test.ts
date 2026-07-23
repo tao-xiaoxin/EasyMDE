@@ -25,7 +25,8 @@ function fixture() {
     strings: {
       appearance: 'Appearance', articleTheme: 'Article theme', codeTheme: 'Code theme',
       cssName: 'CSS name', cssSaveFailed: 'CSS save failed', cssSaved: 'CSS saved',
-      customCss: 'Custom CSS', namedCustomCss: 'Named CSS', saveCss: 'Save CSS'
+      customCss: 'Custom CSS', customCssTheme: 'Custom CSS theme',
+      namedCustomCss: 'Named CSS', saveCss: 'Save CSS'
     }
   };
   return {

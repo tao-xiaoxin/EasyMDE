@@ -32,6 +32,7 @@ export const bundledFrontendPackages = {
   '@lezer/lr': 'LR parser infrastructure required by CodeMirror language support.',
   '@marijn/find-cluster-break': 'Unicode grapheme boundary handling used by CodeMirror state.',
   crelt: 'DOM element construction used by CodeMirror view.',
+  'lucide-react': 'Locked build-time icon nodes used by the immersive editor interface.',
   'style-mod': 'Scoped runtime style modules used by CodeMirror view.',
   'w3c-keyname': 'Cross-browser keyboard key normalization used by CodeMirror view.'
 };

@@ -67,7 +67,7 @@ msgstr "分屏"
 
 #: src/Admin/AdminAssets.php:567
 msgid "History"
-msgstr "历史记录"
+msgstr "历史"
 
 #: src/Admin/AdminAssets.php:568
 msgid "Version history"
@@ -245,6 +245,9 @@ msgstr "第 %1$s 行，第 %2$s 列"
 msgid "Writing statistics"
 msgstr "写作统计"
 
+msgid "Word count"
+msgstr "字数统计"
+
 #: src/Admin/AdminAssets.php:613
 msgid "Reading time (minutes)"
 msgstr "阅读时长（分钟）"
@@ -284,6 +287,14 @@ msgstr "字体"
 #: src/Admin/AdminAssets.php:621
 msgid "Headings"
 msgstr "标题"
+
+#: src/Admin/AdminAssets.php:501
+msgid "Heading level"
+msgstr "标题级别"
+
+#. translators: %s: Heading level from 1 through 6.
+msgid "Heading %s"
+msgstr "标题 %s"
 
 #: src/Admin/AdminAssets.php:622
 msgid "Article theme"
@@ -656,6 +667,9 @@ msgstr "图片"
 msgid "Copy to WeChat"
 msgstr "复制到公众号"
 
+msgid "Copied"
+msgstr "已复制"
+
 #: src/Theme/ArticleThemeRegistry.php:15
 msgid "Default theme"
 msgstr "默认主题"
@@ -1016,3 +1030,201 @@ msgstr "命令"
 #, php-format
 msgid "Default: %s"
 msgstr "默认：%s"
+
+msgid "characters"
+msgstr "字符"
+
+msgid "Enter immersive writing"
+msgstr "进入沉浸写作"
+
+msgid "Exit immersive writing"
+msgstr "退出沉浸写作"
+
+msgid "Hide outline"
+msgstr "隐藏大纲"
+
+msgid "Immersive writing"
+msgstr "沉浸写作"
+
+msgid "minutes"
+msgstr "分钟"
+
+msgid "No headings"
+msgstr "暂无标题"
+
+msgid "Article outline"
+msgstr "文章大纲"
+
+msgid "About"
+msgstr "约"
+
+msgid "Show outline"
+msgstr "显示大纲"
+
+msgid "Article title"
+msgstr "文章标题"
+
+msgid "View modes"
+msgstr "视图模式"
+
+msgid "words"
+msgstr "词"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "No revisions are available."
+msgstr "暂无可用的修订版本。"
+
+msgid "Revisions could not be loaded."
+msgstr "无法加载修订版本。"
+
+msgid "Insert"
+msgstr "插入"
+
+msgid "Restore revision"
+msgstr "恢复修订版本"
+
+msgid "Unsaved changes will be lost when WordPress restores this revision. Continue?"
+msgstr "WordPress 恢复此修订版本时将丢失未保存的更改。是否继续？"
+
+msgid "Table"
+msgstr "表格"
+
+msgid "Columns"
+msgstr "列数"
+
+msgid "Rows"
+msgstr "行数"
+
+msgid "Theme"
+msgstr "主题"
+
+msgid "Theme settings"
+msgstr "主题设置"
+
+msgid "Automatically save a local draft"
+msgstr "自动保存本地草稿"
+
+msgid "Auto save is enabled"
+msgstr "自动保存已开启"
+
+msgid "Column"
+msgstr "列"
+
+msgid "Edit mode"
+msgstr "编辑模式"
+
+msgid "Editor settings"
+msgstr "编辑器设置"
+
+msgid "Line"
+msgstr "行"
+
+msgid "More actions"
+msgstr "更多操作"
+
+msgid "Show heading navigation on the left"
+msgstr "左侧显示标题层级导航"
+
+msgid "Preview mode"
+msgstr "预览模式"
+
+msgid "Resize article outline"
+msgstr "调整大纲宽度"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Split mode"
+msgstr "分屏模式"
+
+msgid "Split preview"
+msgstr "分屏预览"
+
+msgid "Show live preview by default"
+msgstr "默认显示实时预览区域"
+
+msgid "Synchronized scrolling"
+msgstr "同步滚动"
+
+msgid "Keep the editor and preview in sync"
+msgstr "编辑区和预览区联动"
+
+msgid "Show words, characters, and reading time beside the title"
+msgstr "在文章标题旁显示词数、字符数与阅读时长"
+
+msgid "Add tags"
+msgstr "添加标签"
+
+msgid "Choose the sections this article belongs to."
+msgstr "选择文章归属的栏目。"
+
+msgid "Selected: %s"
+msgstr "已选 %s 项"
+
+msgid "Continue adding..."
+msgstr "继续添加..."
+
+msgid "Excerpt"
+msgstr "摘要"
+
+msgid "Write a short excerpt for search results, article lists, and sharing previews..."
+msgstr "为搜索结果、文章列表和分享预览写一段简短摘要..."
+
+msgid "Landscape images are recommended"
+msgstr "建议使用横向图片"
+
+msgid "Supports JPG, PNG, and WebP"
+msgstr "支持 JPG、PNG、WebP 格式"
+
+msgid "Nothing is written to WordPress before submission."
+msgstr "提交前不会写入 WordPress。"
+
+msgid "Enter access password"
+msgstr "输入访问密码"
+
+msgid "Ready to publish"
+msgstr "准备发布"
+
+msgid "Only site administrators and editors can view this article."
+msgstr "仅站点管理员和编辑可查看此文章。"
+
+msgid "Confirm the article details to publish it to the current WordPress site."
+msgstr "确认文章信息后，将发布到当前 WordPress 站点。"
+
+msgid "Remove tag: %s"
+msgstr "移除标签 %s"
+
+msgid "Replace"
+msgstr "替换"
+
+msgid "Stick to the top of the blog"
+msgstr "置于首页顶端"
+
+msgid "Press Enter or comma to add a tag."
+msgstr "输入后按 Enter 或逗号添加。"
+
+msgid "Update article"
+msgstr "更新文章"
+
+msgid "Confirm these changes to update the current WordPress article."
+msgstr "确认本次修改后，将更新当前 WordPress 文章。"
+
+msgid "Update existing article"
+msgstr "更新已有文章"
+
+msgid "%s revisions"
+msgstr "共 %s 条历史版本"
+
+msgid "1 revision"
+msgstr "共 1 条历史版本"
+
+msgid "Revision history"
+msgstr "历史版本"
+
+msgid "Restore this revision"
+msgstr "恢复到这个版本"
+
+msgid "Insert table"
+msgstr "插入表格"

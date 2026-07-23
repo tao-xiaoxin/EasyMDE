@@ -37,6 +37,7 @@
 }
 
 .easymde-toolbar-popover-font-panel {
+    box-sizing: border-box;
     width: min(620px, calc(100vw - 48px));
     padding: 24px 32px 28px;
 }

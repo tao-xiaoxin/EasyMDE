@@ -34,6 +34,43 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
   });
 
+  it('parses Markdown syntax inside the existing CodeMirror owner', () => {
+    const { container, submissionField } = createFixture(
+      '# Heading\n\n> Quote with **strong** and `code`'
+    );
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+
+    const markedText = Array.from(
+      container.querySelectorAll<HTMLElement>('.cm-line span')
+    ).map((element) => element.textContent?.trim());
+
+    expect(markedText).toContain('#');
+    expect(markedText).toContain('Heading');
+    expect(markedText).toContain('**');
+    expect(markedText).toContain('`');
+
+    session.destroy();
+  });
+
+  it('keeps heading markers regular and colors quote content as one block', () => {
+    const { container, submissionField } = createFixture('# Title\n> Quote');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const heading = container.querySelector('.cm-line');
+    const quote = container.querySelectorAll('.cm-line')[1];
+    if (!heading || !quote) throw new Error('test-fixture-invalid');
+    expect(heading.querySelector('span')?.textContent).toBe('#');
+    expect(quote.querySelectorAll('span')).toHaveLength(3);
+    session.destroy();
+  });
+
   it('commits one document change to CodeMirror and emits one native input notification', () => {
     const { container, submissionField } = createFixture();
     const handleInput = vi.fn();

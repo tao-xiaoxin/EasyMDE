@@ -6,6 +6,7 @@ export type ToolbarCommand = Readonly<{
   action: string;
   group: string;
   level?: number;
+  usesLevelLabel?: boolean;
   linePrefix?: string;
   placeholder?: string;
   prefix?: string;
@@ -20,6 +21,8 @@ export type ToolbarShortcut = Readonly<{
 export type ToolbarBootstrap = Readonly<{
   commands: ReadonlyArray<ToolbarCommand>;
   shortcuts: Readonly<Record<string, ToolbarShortcut>>;
+  headingLabelFormat: string;
+  headingLevelLabel: string;
   headingsLabel: string;
   linkText: string;
 }>;
@@ -70,9 +73,23 @@ function optionalLevel(value: unknown): number | undefined {
   return value as number;
 }
 
+function optionalBoolean(value: unknown, code: string): boolean | undefined {
+  if (undefined === value) {
+    return undefined;
+  }
+  if ('boolean' !== typeof value) {
+    throw new ToolbarBootstrapError(code);
+  }
+  return value;
+}
+
 function parseCommand(value: unknown): ToolbarCommand {
   const command = objectValue(value, 'invalid-command');
   const level = optionalLevel(command.level);
+  const usesLevelLabel = optionalBoolean(
+    command.usesLevelLabel,
+    'invalid-command-uses-level-label'
+  );
   const linePrefix = optionalString(command.linePrefix, 'invalid-command-line-prefix');
   const placeholder = optionalString(command.placeholder, 'invalid-command-placeholder');
   const prefix = optionalString(command.prefix, 'invalid-command-prefix');
@@ -86,6 +103,7 @@ function parseCommand(value: unknown): ToolbarCommand {
     action: requiredString(command.action, 'invalid-command-action'),
     group: requiredString(command.group, 'invalid-command-group'),
     ...(undefined === level ? {} : { level }),
+    ...(undefined === usesLevelLabel ? {} : { usesLevelLabel }),
     ...(undefined === linePrefix ? {} : { linePrefix }),
     ...(undefined === placeholder ? {} : { placeholder }),
     ...(undefined === prefix ? {} : { prefix }),
@@ -138,6 +156,14 @@ export function parseToolbarBootstrap(value: unknown): ToolbarBootstrap {
   return {
     commands,
     shortcuts,
+    headingLabelFormat: requiredString(
+      strings.headingLabelFormat,
+      'invalid-heading-label-format'
+    ),
+    headingLevelLabel: requiredString(
+      strings.headingLevel,
+      'invalid-heading-level-label'
+    ),
     headingsLabel: requiredString(strings.headings, 'invalid-headings-label'),
     linkText: requiredString(strings.linkText, 'invalid-link-text')
   };

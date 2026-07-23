@@ -12,7 +12,8 @@ const validBootstrap = {
       action: 'wrap',
       group: 'format',
       prefix: '**',
-      suffix: '**'
+      suffix: '**',
+      usesLevelLabel: true
     },
     {
       id: 'extension-command',
@@ -27,7 +28,12 @@ const validBootstrap = {
     bold: { win: 'Ctrl+B', mac: 'Cmd+B' },
     'extension-command': { win: '', mac: '' }
   },
-  strings: { headings: '标题', linkText: '链接文本' }
+  strings: {
+    headingLabelFormat: '标题 %s',
+    headingLevel: '标题级别',
+    headings: '标题',
+    linkText: '链接文本'
+  }
 };
 
 describe('parseToolbarBootstrap', () => {
@@ -37,6 +43,9 @@ describe('parseToolbarBootstrap', () => {
     expect(parsed.commands.map((command) => command.id)).toEqual(['bold', 'extension-command']);
     expect(parsed.commands.map((command) => command.label)).toEqual(['粗体', '扩展命令']);
     expect(parsed.commands[0]).toEqual(expect.objectContaining({ prefix: '**', suffix: '**' }));
+    expect(parsed.commands[0]?.usesLevelLabel).toBe(true);
+    expect(parsed.headingLabelFormat).toBe('标题 %s');
+    expect(parsed.headingLevelLabel).toBe('标题级别');
     expect(parsed.headingsLabel).toBe('标题');
     expect(parsed.linkText).toBe('链接文本');
   });
@@ -83,6 +92,13 @@ describe('parseToolbarBootstrap', () => {
     [
       'invalid-command-level',
       { ...validBootstrap, commands: [{ ...validBootstrap.commands[0], level: 7 }] }
+    ],
+    [
+      'invalid-command-uses-level-label',
+      {
+        ...validBootstrap,
+        commands: [{ ...validBootstrap.commands[0], usesLevelLabel: 'yes' }]
+      }
     ]
   ])('reports the stable %s boundary error', (code, input) => {
     expect(() => parseToolbarBootstrap(input)).toThrowError(new ToolbarBootstrapError(code));

@@ -10,37 +10,174 @@ vi.hoisted(() => {
 });
 
 vi.mock('@wordpress/element', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@wordpress/element')>(),
+  ...(await importOriginal<typeof import('@wordpress/element')>()),
   createRoot: vi.fn()
 }));
 vi.mock('../contracts/bootstrap/editor-root-bootstrap', () => ({
   parseEditorRootBootstrap: vi.fn()
 }));
-vi.mock('../integrations/browser/editor-layout/create-browser-scroll-sync', () => ({ createBrowserScrollSync: vi.fn(() => ({})) }));
-vi.mock('../integrations/browser/keyboard/create-browser-toolbar-shortcuts', () => ({ createBrowserToolbarShortcuts: vi.fn(() => ({})) }));
-vi.mock('../integrations/browser/local-drafts/browser-local-draft-storage', () => ({
-  createBrowserLocalDraftStorage: vi.fn(() => ({ fingerprint: vi.fn(() => 'saved-fingerprint') }))
-}));
-vi.mock('../integrations/browser/preview/create-browser-preview-scroll', () => ({ createBrowserPreviewScroll: vi.fn(() => ({})) }));
-vi.mock('../integrations/browser/wechat/create-browser-wechat-clipboard', () => ({ createBrowserWechatClipboard: vi.fn(() => ({})) }));
+vi.mock(
+  '../integrations/browser/editor-layout/create-browser-scroll-sync',
+  () => ({ createBrowserScrollSync: vi.fn(() => ({})) })
+);
+vi.mock(
+  '../integrations/browser/keyboard/create-browser-toolbar-shortcuts',
+  () => ({ createBrowserToolbarShortcuts: vi.fn(() => ({})) })
+);
+vi.mock(
+  '../integrations/browser/local-drafts/browser-local-draft-storage',
+  () => ({
+    createBrowserLocalDraftStorage: vi.fn(() => ({
+      fingerprint: vi.fn(() => 'saved-fingerprint')
+    }))
+  })
+);
+vi.mock(
+  '../integrations/browser/preview/create-browser-preview-scroll',
+  () => ({ createBrowserPreviewScroll: vi.fn(() => ({})) })
+);
+vi.mock(
+  '../integrations/browser/wechat/create-browser-wechat-clipboard',
+  () => ({ createBrowserWechatClipboard: vi.fn(() => ({})) })
+);
 vi.mock('../integrations/preview-runtime/browser-preview-enhancement', () => ({
   createBrowserPreviewEnhancementPort: vi.fn(() => ({})),
   createWindowPreviewEnhancementRuntime: vi.fn(() => ({}))
 }));
-vi.mock('../integrations/wordpress/appearance/create-wordpress-appearance-port', () => ({ createWordPressAppearancePort: vi.fn(() => ({})) }));
-vi.mock('../integrations/wordpress/appearance/create-wordpress-font-controls-port', () => ({ createWordPressFontControlsPort: vi.fn(() => ({})) }));
-vi.mock('../integrations/wordpress/media/wordpress-image-upload', () => ({ createWordPressImageUploadPort: vi.fn(() => ({})) }));
-vi.mock('../integrations/wordpress/media/wordpress-media-frame', () => ({ createWordPressMediaFramePort: vi.fn(() => ({})) }));
-vi.mock('../integrations/wordpress/native-form/wordpress-native-submission', () => ({ createWordPressNativeSubmissionPort: vi.fn(() => ({})) }));
-vi.mock('../integrations/wordpress/preview/create-wordpress-preview-port', () => ({ createWordPressPreviewPort: vi.fn(() => ({})) }));
-vi.mock('../integrations/wordpress/session/create-wordpress-editor-session-port', () => ({ createWordPressEditorSessionPort: vi.fn(() => ({})) }));
+vi.mock(
+  '../integrations/wordpress/appearance/create-wordpress-appearance-port',
+  () => ({ createWordPressAppearancePort: vi.fn(() => ({})) })
+);
+vi.mock(
+  '../integrations/wordpress/appearance/create-wordpress-font-controls-port',
+  () => ({ createWordPressFontControlsPort: vi.fn(() => ({})) })
+);
+vi.mock('../integrations/wordpress/media/wordpress-image-upload', () => ({
+  createWordPressImageUploadPort: vi.fn(() => ({}))
+}));
+vi.mock('../integrations/wordpress/media/wordpress-media-frame', () => ({
+  createWordPressMediaFramePort: vi.fn(() => ({}))
+}));
+vi.mock(
+  '../integrations/wordpress/native-form/wordpress-native-submission',
+  () => ({ createWordPressNativeSubmissionPort: vi.fn(() => ({})) })
+);
+vi.mock(
+  '../integrations/wordpress/preview/create-wordpress-preview-port',
+  () => ({ createWordPressPreviewPort: vi.fn(() => ({})) })
+);
+vi.mock(
+  '../integrations/wordpress/session/create-wordpress-editor-session-port',
+  () => ({ createWordPressEditorSessionPort: vi.fn(() => ({})) })
+);
 
 const bootstrap = {
   appearance: {},
   document: {},
   fonts: {},
   imageUpload: { endpoint: '/media', nonce: 'nonce', postId: 7 },
-  labels: { mediaPickerFailure: 'Media failed', preview: 'Preview', source: 'Markdown', toolbar: 'Toolbar' },
+  immersiveStrings: {
+    autoSave: 'Auto save',
+    autoSaveDescription: 'Automatically save a local draft',
+    autoSaveEnabled: 'Auto save is enabled',
+    articleOutline: 'Article outline',
+    cancel: 'Cancel',
+    characters: 'characters',
+    close: 'Close',
+    column: 'Column',
+    edit: 'Edit',
+    editMode: 'Edit mode',
+    editorSettings: 'Editor settings',
+    enter: 'Enter immersive writing',
+    exit: 'Exit immersive writing',
+    hideOutline: 'Hide outline',
+    history: 'History',
+    historyEmpty: 'No revisions',
+    historyError: 'Revision error',
+    historyLoading: 'Loading revisions',
+    historyAll: 'All',
+    historyCount: '%s revisions',
+    historyCountSingular: '1 revision',
+    historyVersions: 'Revision history',
+    immersive: 'Immersive writing',
+    insert: 'Insert',
+    insertTable: 'Insert table',
+    line: 'Line',
+    minutes: 'minutes',
+    manualSave: 'Manual save',
+    moreActions: 'More actions',
+    markdown: 'Markdown',
+    noHeadings: 'No headings',
+    outline: 'Article outline',
+    outlineDescription: 'Show heading navigation on the left',
+    preview: 'Preview',
+    previewMode: 'Preview mode',
+    publish: 'Publish article',
+    readingTime: 'About',
+    restore: 'Restore revision',
+    restoreConfirm: 'Unsaved changes will be lost',
+    restoreThisVersion: 'Restore this revision',
+    resizeOutline: 'Resize article outline',
+    saved: 'Saved',
+    settings: 'Settings',
+    showOutline: 'Show outline',
+    split: 'Split',
+    splitMode: 'Split mode',
+    splitPreview: 'Split preview',
+    splitPreviewDescription: 'Show live preview by default',
+    syncScroll: 'Synchronized scrolling',
+    syncScrollDescription: 'Keep the editor and preview in sync',
+    table: 'Table',
+    tableColumns: 'Columns',
+    tableRows: 'Rows',
+    theme: 'Theme',
+    themeSettings: 'Theme settings',
+    addTags: 'Add tags',
+    categories: 'Categories',
+    categoriesDescription: 'Choose categories.',
+    categoriesSelected: 'Selected: %s',
+    closePublish: 'Close publish dialog',
+    continueAddingTags: 'Continue adding...',
+    excerpt: 'Excerpt',
+    excerptPlaceholder: 'Write an excerpt...',
+    featuredImage: 'Featured image',
+    imageRecommendation: 'Landscape images are recommended',
+    imageRequirements: 'Supports JPG, PNG, and WebP',
+    noWriteBeforeSubmit: 'Nothing is written before submission.',
+    password: 'Password',
+    passwordPlaceholder: 'Enter access password',
+    passwordRequired: 'Enter an access password.',
+    preparingPublish: 'Ready to publish',
+    private: 'Private',
+    privateDescription: 'Only editors can view this article.',
+    public: 'Public',
+    publishDescription: 'Confirm article details.',
+    remove: 'Remove',
+    removeTag: 'Remove tag: %s',
+    replace: 'Replace',
+    selectFeaturedImage: 'Select featured image',
+    sticky: 'Stick to the top',
+    tags: 'Tags',
+    tagsDescription: 'Press Enter or comma.',
+    updateArticle: 'Update article',
+    updateDescription: 'Confirm article changes.',
+    updateExisting: 'Update existing article',
+    visibility: 'Visibility',
+    title: 'Article title',
+    unsaved: 'Unsaved',
+    viewModes: 'View modes',
+    wechat: 'Copy to WeChat',
+    wechatCopied: 'Copied',
+    wordCount: 'Word count',
+    wordCountDescription: 'Show words, characters, and reading time beside the title',
+    words: 'words'
+  },
+  labels: {
+    mediaPickerFailure: 'Media failed',
+    preview: 'Preview',
+    source: 'Markdown',
+    toolbar: 'Toolbar'
+  },
   layout: {},
   localDrafts: { postId: 7 },
   mediaPicker: {},
@@ -49,7 +186,10 @@ const bootstrap = {
   toolbar: { commands: [], shortcuts: [] },
   wechatExport: {},
   wordpress: {
-    customCssUrl: '/custom-css', nonce: 'nonce', previewUrl: '/preview'
+    customCssUrl: '/custom-css',
+    nonce: 'nonce',
+    previewUrl: '/preview',
+    revisionsUrl: '/posts/'
   }
 };
 
@@ -68,6 +208,8 @@ describe('mountAdminEditor', () => {
         <input id="easymde-custom-font-field">
         <input id="easymde-serif-font-field">
         <input id="easymde-windows-font-field">
+        <button id="save-post" type="button">Save Draft</button>
+        <button id="publish" type="button">Publish</button>
       </form>
       <div id="postdivrich"><textarea id="content"></textarea></div>
       <div id="easymde-editor-root"></div>
@@ -78,6 +220,19 @@ describe('mountAdminEditor', () => {
   it('mounts the production root once and returns idempotent teardown', () => {
     const render = vi.fn();
     const unmount = vi.fn();
+    const saveDraft = document.querySelector<HTMLButtonElement>('#save-post');
+    const publish = document.querySelector<HTMLButtonElement>('#publish');
+    const saveDraftClick = vi.spyOn(saveDraft as HTMLButtonElement, 'click');
+    const publishClick = vi
+      .spyOn(publish as HTMLButtonElement, 'click')
+      .mockImplementation(() => {
+        publish?.dispatchEvent(
+          new MouseEvent('click', { bubbles: true, cancelable: true })
+        );
+        publish?.closest('form')?.dispatchEvent(
+          new SubmitEvent('submit', { bubbles: true, cancelable: true })
+        );
+      });
     vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
 
     const teardown = mountAdminEditor(bootstrap, {
@@ -85,67 +240,149 @@ describe('mountAdminEditor', () => {
       failureMessage: 'Editor failed',
       window,
       wordpress: {
-        apiFetch: Object.assign(vi.fn(), { nonceMiddleware: { nonce: 'nonce' } }),
+        apiFetch: Object.assign(vi.fn(), {
+          nonceMiddleware: { nonce: 'nonce' }
+        }),
         hooks: { addAction: vi.fn(), removeAction: vi.fn() }
       }
     });
 
-    expect(createRoot).toHaveBeenCalledWith(document.querySelector('#easymde-editor-root'));
-    expect(createBrowserLocalDraftStorage).toHaveBeenCalledWith(expect.objectContaining({
-      config: { ...bootstrap.localDrafts, postId: 11 }
-    }));
+    expect(createRoot).toHaveBeenCalledWith(
+      document.querySelector('#easymde-editor-root')
+    );
+    expect(createBrowserLocalDraftStorage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: { ...bootstrap.localDrafts, postId: 11 }
+      })
+    );
     expect(render).toHaveBeenCalledTimes(1);
     const rendered = render.mock.calls[0]?.[0] as {
-      props: { children: { props: { onDocumentOwnerChange: (owned: boolean) => void } } };
+      props: {
+        children: {
+          props: {
+            onDocumentOwnerChange: (owned: boolean) => void;
+            publishPost: (session: never) => boolean;
+          };
+        };
+      };
     };
+    expect(rendered.props.children.props.publishPost({} as never)).toBe(true);
+    expect(publishClick).toHaveBeenCalledOnce();
+    expect(saveDraftClick).not.toHaveBeenCalled();
     const nativeEditor = document.querySelector<HTMLElement>('#postdivrich');
-    expect(nativeEditor?.classList.contains('easymde-native-editor-hidden')).toBe(false);
+    expect(
+      nativeEditor?.classList.contains('easymde-native-editor-hidden')
+    ).toBe(false);
     rendered.props.children.props.onDocumentOwnerChange(true);
-    expect(nativeEditor?.classList.contains('easymde-native-editor-hidden')).toBe(true);
+    expect(
+      nativeEditor?.classList.contains('easymde-native-editor-hidden')
+    ).toBe(true);
     expect(() => {
       teardown();
       teardown();
     }).not.toThrow();
     expect(unmount).toHaveBeenCalledTimes(1);
-    expect(nativeEditor?.classList.contains('easymde-native-editor-hidden')).toBe(false);
+    expect(
+      nativeEditor?.classList.contains('easymde-native-editor-hidden')
+    ).toBe(false);
+  });
+
+  it('reports a prevented native publish as unsuccessful', () => {
+    const render = vi.fn();
+    vi.mocked(createRoot).mockReturnValue({
+      render,
+      unmount: vi.fn()
+    } as never);
+    const form = document.querySelector<HTMLFormElement>('#post');
+    const publish = document.querySelector<HTMLButtonElement>('#publish');
+    form?.addEventListener('submit', (event) => {
+      event.preventDefault();
+    });
+    vi.spyOn(publish as HTMLButtonElement, 'click').mockImplementation(() => {
+      publish?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true })
+      );
+      form?.dispatchEvent(
+        new SubmitEvent('submit', { bubbles: true, cancelable: true })
+      );
+    });
+
+    mountAdminEditor(bootstrap, {
+      document,
+      failureMessage: 'Editor failed',
+      window,
+      wordpress: {
+        apiFetch: Object.assign(vi.fn(), {
+          nonceMiddleware: { nonce: 'nonce' }
+        }),
+        hooks: { addAction: vi.fn(), removeAction: vi.fn() }
+      }
+    });
+
+    const rendered = render.mock.calls[0]?.[0] as {
+      props: {
+        children: {
+          props: { publishPost: (session: never) => boolean };
+        };
+      };
+    };
+    expect(rendered.props.children.props.publishPost({} as never)).toBe(false);
   });
 
   it.each([
     ['title', '#title'],
     ['native editor', '#postdivrich']
-  ])('mounts when a supported post type has no optional %s field', (_label, selector) => {
-    document.querySelector(selector)?.remove();
-    const render = vi.fn();
-    vi.mocked(createRoot).mockReturnValue({ render, unmount: vi.fn() } as never);
+  ])(
+    'mounts when a supported post type has no optional %s field',
+    (_label, selector) => {
+      document.querySelector(selector)?.remove();
+      const render = vi.fn();
+      vi.mocked(createRoot).mockReturnValue({
+        render,
+        unmount: vi.fn()
+      } as never);
 
-    expect(() => mountAdminEditor(bootstrap, {
-      document,
-      failureMessage: 'Editor failed',
-      window,
-      wordpress: {
-        apiFetch: Object.assign(vi.fn(), { nonceMiddleware: { nonce: 'nonce' } }),
-        hooks: { addAction: vi.fn(), removeAction: vi.fn() }
-      }
-    })).not.toThrow();
+      expect(() =>
+        mountAdminEditor(bootstrap, {
+          document,
+          failureMessage: 'Editor failed',
+          window,
+          wordpress: {
+            apiFetch: Object.assign(vi.fn(), {
+              nonceMiddleware: { nonce: 'nonce' }
+            }),
+            hooks: { addAction: vi.fn(), removeAction: vi.fn() }
+          }
+        })
+      ).not.toThrow();
 
-    expect(render).toHaveBeenCalledOnce();
-    const rendered = render.mock.calls[0]?.[0] as {
-      props: { children: { props: { titleField: HTMLInputElement | null } } };
-    };
-    expect(rendered.props.children.props.titleField).toBe('title' === _label ? null : document.querySelector('#title'));
-  });
+      expect(render).toHaveBeenCalledOnce();
+      const rendered = render.mock.calls[0]?.[0] as {
+        props: { children: { props: { titleField: HTMLInputElement | null } } };
+      };
+      expect(rendered.props.children.props.titleField).toBe(
+        'title' === _label ? null : document.querySelector('#title')
+      );
+    }
+  );
 
   it('fails before mounting when the delegated root is not empty', () => {
-    document.querySelector('#easymde-editor-root')?.append(document.createElement('span'));
-    expect(() => mountAdminEditor(bootstrap, {
-      document,
-      failureMessage: 'Editor failed',
-      window,
-      wordpress: {
-        apiFetch: Object.assign(vi.fn(), { nonceMiddleware: { nonce: 'nonce' } }),
-        hooks: { addAction: vi.fn(), removeAction: vi.fn() }
-      }
-    })).toThrow('react-editor-root-not-empty');
+    document
+      .querySelector('#easymde-editor-root')
+      ?.append(document.createElement('span'));
+    expect(() =>
+      mountAdminEditor(bootstrap, {
+        document,
+        failureMessage: 'Editor failed',
+        window,
+        wordpress: {
+          apiFetch: Object.assign(vi.fn(), {
+            nonceMiddleware: { nonce: 'nonce' }
+          }),
+          hooks: { addAction: vi.fn(), removeAction: vi.fn() }
+        }
+      })
+    ).toThrow('react-editor-root-not-empty');
     expect(createRoot).not.toHaveBeenCalled();
   });
 });

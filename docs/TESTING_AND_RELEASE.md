@@ -156,15 +156,17 @@ npm run test:e2e
 
 Use the exact canonical WordPress origin configured for the test site; changing
 `localhost` to `127.0.0.1` or vice versa can invalidate WordPress login cookies.
-The suite covers the complete ordinary Editor Root: absence of Legacy/Focus
-assets, CodeMirror/IME/Undo/synchronized scrolling/uploads, Preview stale
-results and enhancements, Local Draft recovery and native Save, Appearance and
-Custom CSS, the fixed 50/50 desktop split and historical responsive/RTL/keyboard
-layout, WordPress-native Publishing with unknown extension fields, native
-revision navigation, and WeChat Clipboard success/failure. It also verifies
-withdrawn Outline/statistics/view/resizer/status/React Publish/React Revision
-surfaces and Focus assets are absent, and ordinary supported posts remain
-zero-write on open.
+The suite covers the complete ordinary Editor Root and the Issue #126 immersive
+composition: absence of Legacy Focus assets, CodeMirror/IME/Undo/synchronized
+scrolling/uploads, Preview stale results and enhancements, Local Draft recovery
+and native Save, Appearance and Custom CSS, the fixed 50/50 desktop split and
+historical responsive/RTL/keyboard layout, immersive
+Outline/statistics/view modes/table/history/Escape behavior,
+WordPress-native Publishing with unknown extension fields, native revision
+navigation, and WeChat Clipboard success/failure. It also verifies that the
+immersive surface reuses the single React document and Preview owners, keeps
+AI and Settings absent, loads no Legacy Focus assets, and remains zero-write
+until the user invokes a legitimate WordPress mutation.
 
 ## Release Script Safety Guards
 

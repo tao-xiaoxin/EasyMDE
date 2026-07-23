@@ -7,6 +7,8 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
+    "prepare:icons": "node scripts/generate-lucide-icons.mjs",
+    "icons:check": "node scripts/generate-lucide-icons.mjs --check",
     "prepare:assets": "node scripts/copy-vendor-assets.mjs",
     "assets:check": "node scripts/copy-vendor-assets.mjs --check",
     "lint:frontend": "biome lint frontend/src frontend/vite.config.ts frontend/vite.production.config.ts frontend/vitest.config.ts frontend/wordpress-classic-metadata.ts",
@@ -28,10 +30,16 @@
   },
   "dependencies": {
     "@codemirror/commands": "6.10.4",
+    "@codemirror/lang-markdown": "6.5.1",
+    "@codemirror/language": "6.12.4",
     "@codemirror/state": "6.7.1",
     "@codemirror/view": "6.43.6",
+    "@fontsource/inter": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0",
     "@highlightjs/cdn-assets": "^11.11.1",
+    "@lezer/highlight": "1.2.3",
     "katex": "^0.16.22",
+    "lucide-react": "0.487.0",
     "mermaid": "^10.9.3"
   },
   "devDependencies": {

@@ -17,8 +17,11 @@ The current maintainer decision for Issue #91 supersedes this Skill's generic
 incremental-handoff default. Build one complete ordinary WordPress Editor Root
 and remove the ordinary Editor's `bootstrap.js`, jQuery, Legacy DOM, dual-owner
 handoff, and fallback runtime. Do not add another bridge or handoff state.
-Focus Mode / immersive writing is excluded and must not be implemented,
-connected, enqueued, or loaded. The approved ordinary-editor parity baseline
+Focus Mode / immersive writing is excluded from the default ordinary-editor
+surface. Issue #126 is an approved same-root exception: it may be opened from
+React while reusing the existing document, Preview, native form, and
+WordPress capability owners; no second root, editor, renderer, or save path is
+permitted. The approved ordinary-editor parity baseline
 also has no Outline, writing statistics/status, Context Bar, view-mode switch,
 draggable split, React Publish, React Revision, or React History surface. Their
 absence does not remove WordPress capability: WordPress-native Publish,

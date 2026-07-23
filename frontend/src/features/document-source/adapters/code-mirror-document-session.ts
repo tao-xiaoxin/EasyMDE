@@ -1,11 +1,17 @@
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import {
+  HighlightStyle,
+  syntaxHighlighting
+} from '@codemirror/language';
+import { markdownLanguage } from '@codemirror/lang-markdown';
+import {
   Compartment,
   EditorSelection,
   EditorState,
   Transaction
 } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
+import { tags } from '@lezer/highlight';
 
 export type DocumentSelectionDirection = 'backward' | 'forward' | 'none';
 
@@ -53,6 +59,41 @@ type CreateCodeMirrorDocumentSessionOptions = Readonly<{
   label: string;
   submissionField: HTMLTextAreaElement;
 }>;
+
+const markdownHighlightStyle = HighlightStyle.define([
+  {
+    tag: [
+      tags.heading1,
+      tags.heading2,
+      tags.heading3,
+      tags.heading4,
+      tags.heading5,
+      tags.heading6
+    ],
+    color: '#1F2430',
+    fontWeight: '700'
+  },
+  { tag: tags.processingInstruction, color: '#4C6EF5', fontWeight: '400' },
+  { tag: tags.contentSeparator, color: '#C7CBD3' },
+  { tag: tags.list, color: '#3D4350' },
+  { tag: tags.strong, color: '#1F2430', fontWeight: '600' },
+  { tag: tags.emphasis, color: '#3D4350', fontStyle: 'italic' },
+  {
+    tag: tags.strikethrough,
+    color: '#9CA0A8',
+    textDecoration: 'line-through'
+  },
+  {
+    tag: tags.monospace,
+    color: '#E8594F',
+    backgroundColor: '#F7F2F0'
+  },
+  { tag: tags.link, color: '#4C6EF5' },
+  { tag: tags.url, color: '#0EA5A5' },
+  { tag: tags.labelName, color: '#9B5DE0', fontWeight: '600' },
+  { tag: tags.content, color: '#3D4350' },
+  { tag: tags.quote, color: '#8A8F98' }
+]);
 
 function clampPosition(value: number, documentLength: number): number {
   return Math.max(0, Math.min(documentLength, value));
@@ -146,6 +187,8 @@ export function createCodeMirrorDocumentSession({
       doc: initialValue,
       extensions: [
         history(),
+        markdownLanguage,
+        syntaxHighlighting(markdownHighlightStyle),
         EditorView.domEventHandlers({
           drop(event) {
             return hasImageFileTransfer(event.dataTransfer);

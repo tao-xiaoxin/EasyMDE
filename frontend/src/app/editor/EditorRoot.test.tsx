@@ -21,13 +21,17 @@ function BrokenEditorRoot(): never {
   throw new Error('synthetic editor-root render failure');
 }
 
-function fixture(): EditorRootProps & Readonly<{
-  localDraftStorage: LocalDraftStoragePort;
-  nativeForm: HTMLFormElement;
-  scrollSyncBinding: Readonly<{ activate: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }>;
-  shortcutBinding: PreparedToolbarShortcutBinding;
-  sessionEmit: (status: EditorSessionStatus) => void;
-}> {
+function fixture(): EditorRootProps &
+  Readonly<{
+    localDraftStorage: LocalDraftStoragePort;
+    nativeForm: HTMLFormElement;
+    scrollSyncBinding: Readonly<{
+      activate: ReturnType<typeof vi.fn>;
+      dispose: ReturnType<typeof vi.fn>;
+    }>;
+    shortcutBinding: PreparedToolbarShortcutBinding;
+    sessionEmit: (status: EditorSessionStatus) => void;
+  }> {
   const submissionField = document.createElement('textarea');
   const titleField = document.createElement('input');
   const nativeForm = document.createElement('form');
@@ -82,7 +86,11 @@ function fixture(): EditorRootProps & Readonly<{
         { id: 'github', label: 'GitHub' }
       ],
       customCss: [],
-      state: { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'default' },
+      state: {
+        codeTheme: 'atom-one-dark',
+        customCssId: '',
+        markdownTheme: 'default'
+      },
       strings: {
         appearance: 'Appearance',
         articleTheme: 'Article theme',
@@ -91,6 +99,7 @@ function fixture(): EditorRootProps & Readonly<{
         cssSaveFailed: 'CSS save failed',
         cssSaved: 'CSS saved',
         customCss: 'Custom CSS',
+        customCssTheme: 'Custom CSS theme',
         namedCustomCss: 'Named CSS',
         saveCss: 'Save CSS'
       }
@@ -98,7 +107,9 @@ function fixture(): EditorRootProps & Readonly<{
     appearancePort: {
       applyState: vi.fn(),
       closeOtherPopovers: vi.fn(),
-      saveCustomCss: vi.fn().mockResolvedValue({ status: 'failed', code: 'synthetic' })
+      saveCustomCss: vi
+        .fn()
+        .mockResolvedValue({ status: 'failed', code: 'synthetic' })
     },
     document: { editorLabel: 'Markdown source' },
     enhancementPort: { enhance: vi.fn().mockResolvedValue(undefined) },
@@ -126,7 +137,127 @@ function fixture(): EditorRootProps & Readonly<{
         windowsFont: 'Windows font'
       }
     },
-    labels: { preview: 'Preview', source: 'Markdown', toolbar: 'Markdown toolbar' },
+    immersiveStrings: {
+      autoSave: '自动保存',
+      autoSaveDescription: '自动保存本地草稿',
+      autoSaveEnabled: '自动保存已开启',
+      articleOutline: '文章大纲',
+      cancel: '取消',
+      characters: '字符',
+      close: '关闭',
+      column: '列',
+      edit: '编辑',
+      editMode: '编辑模式',
+      editorSettings: '编辑器设置',
+      enter: '进入沉浸写作',
+      exit: '退出沉浸写作',
+      hideOutline: '收起大纲',
+      history: '历史记录',
+      historyEmpty: '暂无修订版本',
+      historyError: '无法加载修订版本',
+      historyLoading: '正在加载修订版本',
+      historyAll: '全部',
+      historyCount: '共 %s 条历史版本',
+      historyCountSingular: '共 1 条历史版本',
+      historyVersions: '历史版本',
+      immersive: '沉浸写作',
+      insert: '插入',
+      insertTable: '插入表格',
+      line: '行',
+      minutes: '分钟',
+      manualSave: '手动保存',
+      moreActions: '更多操作',
+      markdown: 'Markdown',
+      noHeadings: '暂无标题',
+      outline: '文章大纲',
+      outlineDescription: '左侧显示标题层级导航',
+      preview: '预览',
+      previewMode: '预览模式',
+      publish: '发布文章',
+      readingTime: '约',
+      restore: '恢复修订版本',
+      restoreConfirm: '未保存的更改将会丢失',
+      restoreThisVersion: '恢复到这个版本',
+      resizeOutline: '调整大纲宽度',
+      saved: '已保存',
+      settings: '设置',
+      showOutline: '展开大纲',
+      split: '分屏',
+      splitMode: '分屏模式',
+      splitPreview: '分屏预览',
+      splitPreviewDescription: '默认显示实时预览区域',
+      syncScroll: '同步滚动',
+      syncScrollDescription: '编辑区和预览区联动',
+      table: '表格',
+      tableColumns: '列数',
+      tableRows: '行数',
+      theme: '主题',
+      themeSettings: '主题设置',
+      addTags: '添加标签',
+      categories: '分类目录',
+      categoriesDescription: '选择文章归属的栏目。',
+      categoriesSelected: '已选 %s 项',
+      closePublish: '关闭发布弹窗',
+      continueAddingTags: '继续添加...',
+      excerpt: '摘要',
+      excerptPlaceholder: '撰写摘要...',
+      featuredImage: '特色图片',
+      imageRecommendation: '建议使用横向图片',
+      imageRequirements: '支持 JPG、PNG、WebP',
+      noWriteBeforeSubmit: '提交前不会写入 WordPress。',
+      password: '密码',
+      passwordPlaceholder: '输入访问密码',
+      passwordRequired: '请输入访问密码后再提交。',
+      preparingPublish: '准备发布',
+      private: '私密',
+      privateDescription: '仅站点管理员和编辑可查看此文章。',
+      public: '公开',
+      publishDescription: '确认文章信息后，将发布到当前 WordPress 站点。',
+      remove: '移除',
+      removeTag: '移除标签 %s',
+      replace: '替换',
+      selectFeaturedImage: '选择特色图片',
+      sticky: '置于首页顶端',
+      tags: '标签',
+      tagsDescription: '输入后按 Enter 或逗号添加。',
+      updateArticle: '更新文章',
+      updateDescription: '确认本次修改后，将更新当前 WordPress 文章。',
+      updateExisting: '更新已有文章',
+      visibility: '可见性',
+      title: '文章标题',
+      unsaved: '未保存',
+      viewModes: '视图模式',
+      wechat: '复制到公众号',
+      wechatCopied: '已复制',
+      wordCount: '字数统计',
+      wordCountDescription: '在文章标题旁显示词数、字符数与阅读时长',
+      words: '词'
+    },
+    immersiveEnvironment: {
+      activeElement: () =>
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null,
+      activateFocusBoundary: vi.fn(() => vi.fn()),
+      hasOpenToolbarPopover: () => false,
+      schedule: (callback, delay) => {
+        const timer = window.setTimeout(callback, delay);
+        return () => window.clearTimeout(timer);
+      },
+      subscribeKeydown: (listener) => {
+        document.addEventListener('keydown', listener);
+        return () => document.removeEventListener('keydown', listener);
+      }
+    },
+    immersivePreferencesPort: {
+      read: vi.fn(() => ({ status: 'missing' as const })),
+      write: vi.fn(() => ({ status: 'saved' as const }))
+    },
+    labels: {
+      preview: 'Preview',
+      source: 'Markdown',
+      toolbar: 'Markdown toolbar'
+    },
     imageUpload: {
       enabled: true,
       maxBytes: 1024,
@@ -183,10 +314,25 @@ function fixture(): EditorRootProps & Readonly<{
     mediaPickerFailureMessage: 'The media library could not be opened.',
     mediaPickerFrame: mediaFrame,
     nativeForm,
+    nativePublishPort: {
+      apply: vi.fn(),
+      read: vi.fn(() => ({
+        categories: [],
+        categoryIds: [],
+        excerpt: '',
+        featuredImage: null,
+        password: '',
+        published: true,
+        sticky: false,
+        tags: [],
+        visibility: 'public' as const
+      }))
+    },
     nativeSubmissionPort: createWordPressNativeSubmissionPort(nativeForm),
     onDocumentOwnerChange: vi.fn(),
     onFailure: vi.fn(),
     platform: 'win',
+    publishPost: vi.fn(() => true),
     prepareToolbarShortcuts: vi.fn(() => ({
       prepareBinding: vi.fn(() => shortcutBinding)
     })),
@@ -203,6 +349,24 @@ function fixture(): EditorRootProps & Readonly<{
         html: '<p>Rendered</p>' as SafePreviewHtml
       })
     },
+    revisionPort: {
+      get: vi.fn().mockResolvedValue({
+        author: 'Editor',
+        dateLabel: 'Today',
+        html: '<p>Revision</p>' as SafePreviewHtml,
+        id: 12,
+        restoreUrl: 'https://example.test/wp-admin/revision.php?revision=12'
+      }),
+      list: vi.fn().mockResolvedValue([
+        {
+          author: 'Editor',
+          dateLabel: 'Today',
+          id: 12,
+          restoreUrl: 'https://example.test/wp-admin/revision.php?revision=12'
+        }
+      ])
+    },
+    restoreRevision: vi.fn(),
     scrollPort: {
       capture: () => ({ left: 0, ratio: 0, top: 0 }),
       restore: vi.fn()
@@ -220,31 +384,37 @@ function fixture(): EditorRootProps & Readonly<{
     submissionField,
     titleField,
     toolbar: {
-      commands: [{
-        action: 'wrap',
-        group: 'format',
-        icon: 'editor-bold',
-        id: 'bold',
-        label: 'Bold',
-        placeholder: 'bold text',
-        prefix: '**',
-        suffix: '**',
-        surface: 'main'
-      }, {
-        action: 'image',
-        group: 'insert',
-        icon: 'format-image',
-        id: 'image',
-        label: 'Image',
-        surface: 'main'
-      }, {
-        action: 'copyWechat',
-        group: 'export',
-        icon: 'clipboard',
-        id: 'copywechat',
-        label: 'Copy to WeChat',
-        surface: 'main'
-      }],
+      commands: [
+        {
+          action: 'wrap',
+          group: 'format',
+          icon: 'editor-bold',
+          id: 'bold',
+          label: 'Bold',
+          placeholder: 'bold text',
+          prefix: '**',
+          suffix: '**',
+          surface: 'main'
+        },
+        {
+          action: 'image',
+          group: 'insert',
+          icon: 'format-image',
+          id: 'image',
+          label: 'Image',
+          surface: 'main'
+        },
+        {
+          action: 'copyWechat',
+          group: 'export',
+          icon: 'clipboard',
+          id: 'copywechat',
+          label: 'Copy to WeChat',
+          surface: 'main'
+        }
+      ],
+      headingLabelFormat: 'Heading %s',
+      headingLevelLabel: 'Heading level',
       headingsLabel: 'Headings',
       linkText: 'link text',
       shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } }
@@ -270,8 +440,12 @@ function imageTransferEvent(type: 'drop' | 'paste', file: File): Event {
     items: [{ getAsFile: () => file, kind: 'file', type: file.type }]
   };
   const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperty(event, 'clipboardData', { value: 'paste' === type ? transfer : null });
-  Object.defineProperty(event, 'dataTransfer', { value: 'drop' === type ? transfer : null });
+  Object.defineProperty(event, 'clipboardData', {
+    value: 'paste' === type ? transfer : null
+  });
+  Object.defineProperty(event, 'dataTransfer', {
+    value: 'drop' === type ? transfer : null
+  });
   return event;
 }
 
@@ -287,25 +461,33 @@ describe('EditorRoot', () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
 
-    expect(view.container.querySelectorAll('[data-easymde-editor-owner="react"]')).toHaveLength(1);
+    expect(
+      view.container.querySelectorAll('[data-easymde-editor-owner="react"]')
+    ).toHaveLength(1);
     expect(props.submissionField.hidden).toBe(true);
     expect(props.onDocumentOwnerChange).toHaveBeenCalledWith(true);
     expect(view.container.querySelector('.cm-editor')).not.toBeNull();
     expect(props.previewPort.render).toHaveBeenCalledTimes(1);
     await waitFor(() => {
-      expect(view.container.querySelector('[data-easymde-preview-html-sink="1"]')?.innerHTML)
-        .toBe('<p>Rendered</p>');
+      expect(
+        view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+          ?.innerHTML
+      ).toBe('<p>Rendered</p>');
     });
     expect(props.shortcutBinding.activate).toHaveBeenCalledTimes(1);
 
-    const bold = view.container.querySelector<HTMLButtonElement>('[data-easymde-command="bold"]');
+    const bold = view.container.querySelector<HTMLButtonElement>(
+      '[data-easymde-command="bold"]'
+    );
     expect(bold).not.toBeNull();
     await act(async () => {
       fireEvent.click(bold as HTMLButtonElement);
     });
     expect(props.submissionField.value).toBe('**selected**');
 
-    const image = view.container.querySelector<HTMLButtonElement>('[data-easymde-command="image"]');
+    const image = view.container.querySelector<HTMLButtonElement>(
+      '[data-easymde-command="image"]'
+    );
     expect(image).not.toBeNull();
     await act(async () => {
       fireEvent.click(image as HTMLButtonElement);
@@ -318,32 +500,418 @@ describe('EditorRoot', () => {
     expect(props.shortcutBinding.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it('matches the ordinary toolbar order without immersive, React Publish or History', async () => {
+  it('adds the immersive entry while leaving publish and revisions with WordPress', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
 
-    await waitFor(() => expect(view.getByRole('button', { name: 'Bold' })).not.toBeNull());
-    const toolbar = view.getByRole('toolbar', { name: 'Markdown toolbar' });
-    const labels = Array.from(toolbar.querySelectorAll(
-      'button[data-easymde-command], .easymde-toolbar-section-secondary > button, '
-      + '.easymde-toolbar-section-secondary > .easymde-toolbar-popover-anchor > button'
-    )).map(
-      (button) => button.getAttribute('aria-label')
+    await waitFor(() =>
+      expect(view.getByRole('button', { name: 'Bold' })).not.toBeNull()
     );
+    const toolbar = view.getByRole('toolbar', { name: 'Markdown toolbar' });
+    const labels = Array.from(
+      toolbar.querySelectorAll(
+        'button[data-easymde-command], .easymde-toolbar-section-secondary > button, ' +
+          '.easymde-toolbar-section-secondary > .easymde-toolbar-popover-anchor > button'
+      )
+    ).map((button) => button.getAttribute('aria-label'));
 
     expect(labels).toEqual([
       'Bold',
       'Image',
       'Copy to WeChat',
+      '进入沉浸写作',
       'Font',
       'Appearance'
     ]);
     expect(
-      toolbar.querySelectorAll('.easymde-toolbar-section-secondary > .easymde-toolbar-divider')
+      toolbar.querySelectorAll(
+        '.easymde-toolbar-section-secondary > .easymde-toolbar-divider'
+      )
     ).toHaveLength(1);
     expect(view.queryByRole('button', { name: 'History' })).toBeNull();
     expect(view.queryByRole('button', { name: 'Publish' })).toBeNull();
-    expect(view.container.querySelector('[data-easymde-command="immersive"]')).toBeNull();
+    const immersiveEntry = view.getByRole('button', {
+      name: '进入沉浸写作'
+    });
+    expect(immersiveEntry.getAttribute('aria-pressed')).toBe('false');
+    expect(
+      immersiveEntry.classList.contains('easymde-toolbar-immersive-toggle')
+    ).toBe(true);
+    expect(immersiveEntry.firstElementChild?.className).toBe(
+      'dashicons dashicons-fullscreen-alt'
+    );
+  });
+
+  it('recomposes the existing source and preview owners in immersive mode', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(view.getByRole('button', { name: '进入沉浸写作' })).not.toBeNull()
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.getByRole('region', { name: '沉浸写作' })).not.toBeNull();
+    expect(
+      view.container
+        .querySelector('.easymde-editor')
+        ?.classList.contains('is-immersive-source')
+    ).toBe(true);
+    expect(
+      view.container.querySelectorAll('[data-easymde-document-owner="react"]')
+    ).toHaveLength(1);
+    expect(
+      view.container.querySelectorAll('.easymde-pane-preview')
+    ).toHaveLength(1);
+
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    expect(
+      view.container
+        .querySelector('.easymde-editor')
+        ?.classList.contains('is-immersive-preview')
+    ).toBe(true);
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    expect(view.queryByRole('region', { name: '沉浸写作' })).toBeNull();
+  });
+
+  it('keeps publish editing local until confirmation then delegates to the native publisher', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+    expect(view.getByRole('dialog', { name: '更新文章' })).not.toBeNull();
+    expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
+    expect(props.publishPost).not.toHaveBeenCalled();
+
+    const excerpt = view.getByPlaceholderText(
+      '撰写摘要...'
+    ) as HTMLTextAreaElement;
+    fireEvent.change(excerpt, { target: { value: '尚未提交的摘要' } });
+    const backdrop = view.container.querySelector('.easymde-publish-backdrop');
+    if (!(backdrop instanceof HTMLElement)) {
+      throw new Error('publish-backdrop-unavailable');
+    }
+    fireEvent.click(backdrop);
+    expect(view.getByRole('dialog', { name: '更新文章' })).not.toBeNull();
+    expect(excerpt.value).toBe('尚未提交的摘要');
+
+    fireEvent.click(view.getByRole('button', { name: '取消' }));
+    expect(view.queryByRole('dialog', { name: '更新文章' })).toBeNull();
+    expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    expect(props.nativePublishPort.apply).toHaveBeenCalledOnce();
+    expect(props.publishPost).toHaveBeenCalledOnce();
+    expect(props.executeExternalCommand).not.toHaveBeenCalledWith(
+      'savepost',
+      expect.anything()
+    );
+  });
+
+  it('keeps hierarchical WordPress category selections independent', async () => {
+    const props = fixture();
+    vi.mocked(props.nativePublishPort.read).mockReturnValue({
+      categories: [
+        {
+          children: [
+            {
+              children: [],
+              id: 'child',
+              label: '子分类'
+            }
+          ],
+          id: 'parent',
+          label: '父分类'
+        }
+      ],
+      categoryIds: ['parent'],
+      excerpt: '',
+      featuredImage: null,
+      password: '',
+      published: true,
+      sticky: false,
+      tags: [],
+      visibility: 'public'
+    });
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+
+    const parent = view.getByRole('checkbox', {
+      name: '父分类'
+    }) as HTMLInputElement;
+    const child = view.getByRole('checkbox', {
+      name: '子分类'
+    }) as HTMLInputElement;
+    expect(parent.checked).toBe(true);
+    expect(parent.indeterminate).toBe(false);
+    expect(child.checked).toBe(false);
+
+    fireEvent.click(parent);
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryIds: [] })
+    );
+  });
+
+  it('restores the native publish fields when the WordPress submit command is unavailable', async () => {
+    const props = fixture();
+    vi.mocked(props.publishPost).mockReturnValue(false);
+    const original = props.nativePublishPort.read();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '发布文章' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    expect(props.nativePublishPort.apply).toHaveBeenCalledTimes(2);
+    expect(props.nativePublishPort.apply).toHaveBeenLastCalledWith(original);
+    expect(props.onFailure).toHaveBeenCalledWith(
+      'immersive-publish-command-unavailable'
+    );
+    expect(view.getByRole('dialog', { name: '更新文章' })).not.toBeNull();
+  });
+
+  it('uses the existing title and document owners for immersive edits and table insertion', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    fireEvent.change(view.getByRole('textbox', { name: '文章标题' }), {
+      target: { value: '沉浸标题' }
+    });
+    expect(props.titleField?.value).toBe('沉浸标题');
+    expect(view.getByText('未保存')).not.toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '表格' }));
+    fireEvent.click(view.getByRole('button', { name: '2 × 2' }));
+    expect(props.submissionField.value).toContain(
+      '|  |  |\n| --- | --- |\n|  |  |'
+    );
+    expect(props.submissionField.value).not.toMatch(/[一-鿿]/u);
+    expect(
+      view.container.querySelectorAll('[data-easymde-document-owner="react"]')
+    ).toHaveLength(1);
+  });
+
+  it('loads WordPress revisions, confirms dirty restoration and reports through the native handoff', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.change(view.getByRole('textbox', { name: '文章标题' }), {
+      target: { value: 'Changed title' }
+    });
+
+    fireEvent.click(view.getByRole('button', { name: '历史记录' }));
+    await waitFor(() =>
+      expect(props.revisionPort?.list).toHaveBeenCalledOnce()
+    );
+    await waitFor(() =>
+      expect(props.revisionPort?.get).toHaveBeenCalledWith(
+        12,
+        expect.any(AbortSignal)
+      )
+    );
+    expect(view.getByText('共 1 条历史版本')).not.toBeNull();
+    fireEvent.click(view.getByRole('button', { name: '恢复到这个版本' }));
+    expect(props.restoreRevision).not.toHaveBeenCalled();
+    expect(view.getByRole('alert').textContent).toContain(
+      '未保存的更改将会丢失'
+    );
+    fireEvent.click(view.getByRole('button', { name: '恢复到这个版本' }));
+    expect(props.restoreRevision).toHaveBeenCalledWith(
+      'https://example.test/wp-admin/revision.php?revision=12'
+    );
+  });
+
+  it('layers Escape handling and restores focus to the immersive entry after exit', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const entry = await view.findByRole('button', { name: '进入沉浸写作' });
+    entry.focus();
+    fireEvent.click(entry);
+    expect(props.immersiveEnvironment.activateFocusBoundary).toHaveBeenCalledWith(
+      view.container.querySelector('.easymde-editor')
+    );
+    expect(document.activeElement).toBe(
+      view.container.querySelector('.cm-content')
+    );
+    fireEvent.click(view.getByRole('button', { name: '表格' }));
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(view.queryByRole('dialog', { name: '表格' })).toBeNull();
+    expect(view.getByRole('region', { name: '沉浸写作' })).not.toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(view.queryByRole('dialog', { name: '编辑器设置' })).toBeNull();
+    expect(view.getByRole('region', { name: '沉浸写作' })).not.toBeNull();
+    expect(document.activeElement).toBe(
+      view.getByRole('button', { name: '编辑器设置' })
+    );
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        view.getByRole('button', { name: '进入沉浸写作' })
+      )
+    );
+    expect(view.queryByRole('region', { name: '沉浸写作' })).toBeNull();
+  });
+
+  it('matches the reference immersive control inventory without AI controls', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    expect(view.getByRole('button', { name: '编辑模式' })).not.toBeNull();
+    expect(view.getByRole('button', { name: '分屏模式' })).not.toBeNull();
+    expect(view.getByRole('button', { name: '预览模式' })).not.toBeNull();
+    expect(view.getAllByRole('button', { name: '退出沉浸写作' })).toHaveLength(1);
+    expect(
+      view.container.querySelectorAll(
+        '.easymde-immersive-formatting .easymde-toolbar-divider'
+      )
+    ).toHaveLength(1);
+    expect(
+      view.container.querySelector('.easymde-immersive-header .easymde-immersive-exit')
+    ).toBeNull();
+    expect(view.queryByRole('button', { name: /AI/u })).toBeNull();
+
+    const tableIcon = view
+      .getByRole('button', { name: '表格' })
+      .querySelector('svg');
+    expect(
+      Array.from(tableIcon?.children ?? []).map((node) => ({
+        d: node.getAttribute('d'),
+        height: node.getAttribute('height'),
+        tag: node.tagName.toLowerCase(),
+        width: node.getAttribute('width'),
+        x: node.getAttribute('x'),
+        y: node.getAttribute('y')
+      }))
+    ).toEqual([
+      { d: 'M12 3v18', height: null, tag: 'path', width: null, x: null, y: null },
+      { d: null, height: '18', tag: 'rect', width: '18', x: '3', y: '3' },
+      { d: 'M3 9h18', height: null, tag: 'path', width: null, x: null, y: null },
+      { d: 'M3 15h18', height: null, tag: 'path', width: null, x: null, y: null }
+    ]);
+
+    expect(
+      Array.from(
+        view.container.querySelectorAll(
+          '.easymde-immersive-wechat-glyph path'
+        )
+      ).map((path) => path.getAttribute('d'))
+    ).toEqual([
+      'M38.7,15.3c-3.7-4.9-10.2-6.2-16.1-4.1c0.2,0.1,0.4,0.1,0.6,0.2c8.7,2.9,13.3,12.3,10.4,21 c-0.8,2.3-2,4.3-3.5,6c1.9-0.5,3.8-1.3,5.4-2.5C42.1,30.8,43.4,21.4,38.7,15.3z',
+      'M17,10.4L17,10.4C17,10.4,17,10.4,17,10.4c0.4-0.3,0.7-0.5,1.1-0.8c0,0,0,0,0.1,0c0.4-0.2,0.8-0.4,1.1-0.7 c0,0,0.1,0,0.1-0.1c0.8-0.4,1.6-0.7,2.4-1c0.1,0,0.1,0,0.2-0.1c0.4-0.1,0.8-0.3,1.2-0.4c0,0,0.1,0,0.1,0c0.4-0.1,0.8-0.2,1.2-0.2 c0.1,0,0.1,0,0.2,0C25.3,7,25.7,7,26.1,7c0.1,0,0.2,0,0.3,0c0.4,0,0.9-0.1,1.3-0.1c0.5,0,1,0,1.5,0.1c0.1,0,0.1,0,0.2,0 c0.5,0,0.9,0.1,1.4,0.2c0.1,0,0.2,0,0.2,0c0.5,0.1,0.9,0.2,1.3,0.3c0.1,0,0.1,0,0.2,0.1C33,7.7,33.5,7.8,33.9,8 c-0.2-0.4-0.4-0.7-0.4-0.7C30.6,2.7,25.8,0,20.6,0c-3.1,0-7.9,1.1-11.5,5.4c-2.4,2.9-3.2,6.3-2.7,9.7c0.3,2.3,1.6,5.4,3.5,7.3 C10.6,17.5,13.2,13.2,17,10.4z',
+      'M20.6,30.9c-1.3,0-2.6-0.2-3.8-0.4c-0.1,0-0.3,0-0.5,0c-0.4,0-0.7,0.1-1,0.3l-4,2.6 c-0.1,0.1-0.2,0.1-0.4,0.1c-0.3,0-0.6-0.3-0.7-0.6c0-0.2,0-0.3,0.1-0.5c0-0.1,0.4-2,0.7-3.2c0-0.1,0.1-0.3,0-0.4 c0-0.4-0.2-0.8-0.6-1c-4.3-2.9-7.2-7.5-7.8-12.2c-1.1,1.7-1.6,3-2.2,5c-2.1,7.3,2.5,16,9.9,18.4c8.6,2.8,16.7-0.3,19.5-7.6 c0.3-0.9,0.7-2.4,0.8-3.6C27.7,29.9,24.6,30.9,20.6,30.9z'
+    ]);
+
+    fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+    await waitFor(() =>
+      expect(view.getByRole('button', { name: '已复制' })).not.toBeNull()
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    expect(view.getByRole('dialog', { name: '编辑器设置' })).not.toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        view.getByRole('checkbox', { name: '文章大纲' })
+      )
+    );
+    for (const name of ['文章大纲', '字数统计', '分屏预览', '自动保存', '同步滚动']) {
+      expect((view.getByRole('checkbox', { name }) as HTMLInputElement).checked).toBe(true);
+    }
+    expect(view.queryByText(/AI/u)).toBeNull();
+  });
+
+  it('applies immersive settings to the real outline, statistics, draft and scroll owners', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+
+    fireEvent.click(view.getByRole('checkbox', { name: '文章大纲' }));
+    fireEvent.click(view.getByRole('checkbox', { name: '字数统计' }));
+    fireEvent.click(view.getByRole('checkbox', { name: '自动保存' }));
+    fireEvent.click(view.getByRole('checkbox', { name: '同步滚动' }));
+
+    expect(view.queryByRole('complementary', { name: '文章大纲' })).toBeNull();
+    expect(view.container.querySelector('.easymde-immersive-stats')).toBeNull();
+    expect(view.queryByText('自动保存已开启')).toBeNull();
+    expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledOnce();
+  });
+
+  it('applies restored immersive preferences to the existing draft and scroll owners', async () => {
+    const props = fixture();
+    vi.mocked(props.immersivePreferencesPort.read).mockReturnValue({
+      preferences: {
+        autoSave: false,
+        outline: true,
+        splitPreview: true,
+        syncScroll: false,
+        wordCount: true
+      },
+      status: 'loaded'
+    });
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    expect(
+      (view.getByRole('checkbox', { name: '自动保存' }) as HTMLInputElement)
+        .checked
+    ).toBe(false);
+    expect(
+      (view.getByRole('checkbox', { name: '同步滚动' }) as HTMLInputElement)
+        .checked
+    ).toBe(false);
+    expect(props.scrollSyncPort.prepareBinding).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByRole('button', { name: 'Bold' }));
+    await act(
+      () => new Promise((resolve) => globalThis.setTimeout(resolve, 600))
+    );
+    expect(props.localDraftStorage.write).not.toHaveBeenCalled();
+  });
+
+  it('reads the latest immersive preferences again on every entry', async () => {
+    const props = fixture();
+    let savedPreferences: Parameters<
+      typeof props.immersivePreferencesPort.write
+    >[0] | null = null;
+    vi.mocked(props.immersivePreferencesPort.read).mockImplementation(() =>
+      savedPreferences
+        ? { preferences: savedPreferences, status: 'loaded' }
+        : { status: 'missing' }
+    );
+    vi.mocked(props.immersivePreferencesPort.write).mockImplementation(
+      (preferences) => {
+        savedPreferences = preferences;
+        return { status: 'saved' };
+      }
+    );
+
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('checkbox', { name: '分屏预览' }));
+    fireEvent.click(view.getByRole('checkbox', { name: '分屏预览' }));
+    fireEvent.click(view.getByRole('button', { name: '分屏模式' }));
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(
+      view.container
+        .querySelector('.easymde-editor')
+        ?.classList.contains('is-immersive-split')
+    ).toBe(true);
+    expect(props.immersivePreferencesPort.read).toHaveBeenCalledTimes(3);
   });
 
   it('lets the user discard an unreadable local draft and unblock storage ownership', async () => {
@@ -371,15 +939,23 @@ describe('EditorRoot', () => {
     expect(editor).not.toBeNull();
 
     editor?.dispatch({
-      changes: { from: 0, to: editor.state.doc.length, insert: 'current editor value' }
+      changes: {
+        from: 0,
+        to: editor.state.doc.length,
+        insert: 'current editor value'
+      }
     });
     props.submissionField.value = 'stale native value';
-    props.nativeForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
+    props.nativeForm.dispatchEvent(
+      new SubmitEvent('submit', { bubbles: true, cancelable: true })
+    );
     expect(props.submissionField.value).toBe('current editor value');
 
     view.unmount();
     props.submissionField.value = 'after teardown';
-    props.nativeForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
+    props.nativeForm.dispatchEvent(
+      new SubmitEvent('submit', { bubbles: true, cancelable: true })
+    );
     expect(props.submissionField.value).toBe('after teardown');
   });
 
@@ -389,15 +965,25 @@ describe('EditorRoot', () => {
     const input = view.container.querySelector<HTMLElement>('.cm-content');
     const editor = input ? EditorView.findFromDOM(input) : null;
     editor?.dispatch({
-      changes: { from: 0, to: editor.state.doc.length, insert: 'unsaved session value' }
+      changes: {
+        from: 0,
+        to: editor.state.doc.length,
+        insert: 'unsaved session value'
+      }
     });
     props.submissionField.value = 'preserved unsaved value';
 
     act(() => props.sessionEmit('locked'));
 
-    expect(view.container.querySelector('[data-easymde-editor-owner="react"]')
-      ?.getAttribute('data-easymde-session-status')).toBe('locked');
-    const nativeEvent = new SubmitEvent('submit', { bubbles: true, cancelable: true });
+    expect(
+      view.container
+        .querySelector('[data-easymde-editor-owner="react"]')
+        ?.getAttribute('data-easymde-session-status')
+    ).toBe('locked');
+    const nativeEvent = new SubmitEvent('submit', {
+      bubbles: true,
+      cancelable: true
+    });
     expect(props.nativeForm.dispatchEvent(nativeEvent)).toBe(false);
     expect(props.submissionField.value).toBe('preserved unsaved value');
 
@@ -405,7 +991,9 @@ describe('EditorRoot', () => {
 
     act(() => props.sessionEmit('authentication-required'));
     fireEvent.click(view.getByRole('button', { name: 'Image' }));
-    await waitFor(() => expect(props.mediaPickerFrame?.open).not.toHaveBeenCalled());
+    await waitFor(() =>
+      expect(props.mediaPickerFrame?.open).not.toHaveBeenCalled()
+    );
     expect(props.submissionField.value).toBe('preserved unsaved value');
   });
 
@@ -414,17 +1002,31 @@ describe('EditorRoot', () => {
     const view = render(<EditorRoot {...props} />);
     const input = view.container.querySelector<HTMLElement>('.cm-content');
     const editor = input ? EditorView.findFromDOM(input) : null;
-    editor?.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'not persisted' } });
-    await waitFor(() => expect(props.localDraftStorage.write).toHaveBeenCalledWith('not persisted'));
+    editor?.dispatch({
+      changes: {
+        from: 0,
+        to: editor.state.doc.length,
+        insert: 'not persisted'
+      }
+    });
+    await waitFor(() =>
+      expect(props.localDraftStorage.write).toHaveBeenCalledWith(
+        'not persisted'
+      )
+    );
 
-    props.nativeForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
+    props.nativeForm.dispatchEvent(
+      new SubmitEvent('submit', { bubbles: true, cancelable: true })
+    );
 
     expect(props.localDraftStorage.discard).not.toHaveBeenCalled();
   });
 
   it('reports a render failure without leaving a partial editor owner', () => {
     const props = fixture();
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
     const preventSyntheticError = (event: ErrorEvent) => event.preventDefault();
     window.addEventListener('error', preventSyntheticError);
 
@@ -438,8 +1040,12 @@ describe('EditorRoot', () => {
         </EditorRootErrorBoundary>
       );
 
-      expect(props.onFailure).toHaveBeenCalledWith('react-editor-render-failed');
-      expect(view.getByRole('alert').textContent).toBe('The editor could not start.');
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'react-editor-render-failed'
+      );
+      expect(view.getByRole('alert').textContent).toBe(
+        'The editor could not start.'
+      );
     } finally {
       window.removeEventListener('error', preventSyntheticError);
       consoleError.mockRestore();
@@ -450,15 +1056,18 @@ describe('EditorRoot', () => {
     const props = fixture();
     const toolbar = {
       ...props.toolbar,
-      commands: [...props.toolbar.commands, {
-        action: 'heading',
-        group: 'heading',
-        icon: 'heading',
-        id: 'heading1',
-        label: 'Heading 1',
-        level: 1,
-        surface: 'heading-menu'
-      }]
+      commands: [
+        ...props.toolbar.commands,
+        {
+          action: 'heading',
+          group: 'heading',
+          icon: 'heading',
+          id: 'heading1',
+          label: 'Heading 1',
+          level: 1,
+          surface: 'heading-menu'
+        }
+      ]
     } as const;
     const view = render(<EditorRoot {...props} toolbar={toolbar} />);
     const heading = view.getByRole('button', { name: 'Headings' });
@@ -485,7 +1094,9 @@ describe('EditorRoot', () => {
   it('renders Preview from the current Appearance state', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
-    await waitFor(() => expect(props.previewPort.render).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
 
     fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
     fireEvent.change(view.getByLabelText('Article theme'), {
@@ -503,8 +1114,9 @@ describe('EditorRoot', () => {
       target: { value: 'github' }
     });
     await waitFor(() => {
-      expect(vi.mocked(props.enhancementPort.enhance).mock.calls.at(-1)?.[3])
-        .toEqual(expect.objectContaining({ codeTheme: 'github' }));
+      expect(
+        vi.mocked(props.enhancementPort.enhance).mock.calls.at(-1)?.[3]
+      ).toEqual(expect.objectContaining({ codeTheme: 'github' }));
     });
   });
 
@@ -513,36 +1125,60 @@ describe('EditorRoot', () => {
     const appearance = {
       ...props.appearance,
       articleThemes: props.appearance.articleThemes.map((theme) =>
-        'newsprint' === theme.id ? {
-          fontDefaults: {
-            appleFont: 'new-york',
-            customFont: 'inter',
-            serifFont: 'on',
-            windowsFont: 'segoe-ui'
-          },
-          id: 'newsprint',
-          label: 'Newsprint'
-        } : theme
+        'newsprint' === theme.id
+          ? {
+              fontDefaults: {
+                appleFont: 'new-york',
+                customFont: 'inter',
+                serifFont: 'on',
+                windowsFont: 'segoe-ui'
+              },
+              id: 'newsprint',
+              label: 'Newsprint'
+            }
+          : theme
       )
     };
     const fonts = {
       ...props.fonts,
       options: {
-        appleFonts: [...props.fonts.options.appleFonts, {
-          fontFamily: '"New York"', id: 'new-york', label: 'New York'
-        }],
-        customFonts: [...props.fonts.options.customFonts, {
-          fontFamily: 'Inter, sans-serif', id: 'inter', label: 'Inter'
-        }],
-        serifOptions: [...props.fonts.options.serifOptions, {
-          fontFamily: 'Georgia, serif', id: 'on', label: 'On'
-        }],
-        windowsFonts: [...props.fonts.options.windowsFonts, {
-          fontFamily: '"Segoe UI"', id: 'segoe-ui', label: 'Segoe UI'
-        }]
+        appleFonts: [
+          ...props.fonts.options.appleFonts,
+          {
+            fontFamily: '"New York"',
+            id: 'new-york',
+            label: 'New York'
+          }
+        ],
+        customFonts: [
+          ...props.fonts.options.customFonts,
+          {
+            fontFamily: 'Inter, sans-serif',
+            id: 'inter',
+            label: 'Inter'
+          }
+        ],
+        serifOptions: [
+          ...props.fonts.options.serifOptions,
+          {
+            fontFamily: 'Georgia, serif',
+            id: 'on',
+            label: 'On'
+          }
+        ],
+        windowsFonts: [
+          ...props.fonts.options.windowsFonts,
+          {
+            fontFamily: '"Segoe UI"',
+            id: 'segoe-ui',
+            label: 'Segoe UI'
+          }
+        ]
       }
     };
-    const view = render(<EditorRoot {...props} appearance={appearance} fonts={fonts} />);
+    const view = render(
+      <EditorRoot {...props} appearance={appearance} fonts={fonts} />
+    );
 
     fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
     fireEvent.change(view.getByLabelText('Article theme'), {
@@ -554,23 +1190,32 @@ describe('EditorRoot', () => {
         appearance.articleThemes[1]?.fontDefaults
       );
     });
-    const sink = view.container.querySelector<HTMLElement>('[data-easymde-preview-html-sink="1"]');
-    expect(sink?.classList.contains('easymde-markdown-theme-newsprint')).toBe(true);
-    expect(sink?.classList.contains('easymde-code-theme-atom-one-dark')).toBe(true);
-    expect(sink?.style.getPropertyValue('--easymde-content-font-family'))
-      .toBe('Inter, sans-serif, "Segoe UI", "New York", Georgia, serif');
+    const sink = view.container.querySelector<HTMLElement>(
+      '[data-easymde-preview-html-sink="1"]'
+    );
+    expect(sink?.classList.contains('easymde-markdown-theme-newsprint')).toBe(
+      true
+    );
+    expect(sink?.classList.contains('easymde-code-theme-atom-one-dark')).toBe(
+      true
+    );
+    expect(sink?.style.getPropertyValue('--easymde-content-font-family')).toBe(
+      'Inter, sans-serif, "Segoe UI", "New York", Georgia, serif'
+    );
   });
 
   it('routes Preview enhancement diagnostics through the Root failure owner', async () => {
     const props = fixture();
-    vi.mocked(props.enhancementPort.enhance)
-      .mockRejectedValue(new Error('preview-enhancement-resource-load-failed'));
+    vi.mocked(props.enhancementPort.enhance).mockRejectedValue(
+      new Error('preview-enhancement-resource-load-failed')
+    );
 
     render(<EditorRoot {...props} />);
 
     await waitFor(() => {
-      expect(props.onFailure)
-        .toHaveBeenCalledWith('preview-enhancement-resource-load-failed');
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'preview-enhancement-resource-load-failed'
+      );
     });
   });
 
@@ -593,8 +1238,9 @@ describe('EditorRoot', () => {
     vi.mocked(frame.open).mock.calls[0]?.[0].onClose();
 
     await waitFor(() => {
-      expect(props.submissionField.value)
-        .toBe('![Selected image](https://example.test/selected.png)');
+      expect(props.submissionField.value).toBe(
+        '![Selected image](https://example.test/selected.png)'
+      );
     });
     expect(props.executeExternalCommand).not.toHaveBeenCalled();
   });
@@ -613,8 +1259,12 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: 'Image' }));
 
     await waitFor(() => {
-      expect(view.getByText('The media library could not be opened.')).not.toBeNull();
-      expect(props.onFailure).toHaveBeenCalledWith('media-picker-operation-failed');
+      expect(
+        view.getByText('The media library could not be opened.')
+      ).not.toBeNull();
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'media-picker-operation-failed'
+      );
     });
     expect(props.submissionField.value).toBe('selected');
   });
@@ -633,8 +1283,9 @@ describe('EditorRoot', () => {
     expect(paste.defaultPrevented).toBe(true);
     await waitFor(() => {
       expect(view.getByText('Paste uploaded')).not.toBeNull();
-      expect(props.submissionField.value)
-        .toBe('![uploaded image](https://example.test/upload.png)');
+      expect(props.submissionField.value).toBe(
+        '![uploaded image](https://example.test/upload.png)'
+      );
     });
 
     view.unmount();
@@ -665,7 +1316,9 @@ describe('EditorRoot', () => {
     expect(view.getByText('A newer local draft is available.')).not.toBeNull();
     fireEvent.click(view.getByRole('button', { name: 'Restore draft' }));
 
-    await waitFor(() => expect(props.submissionField.value).toBe('Recovered draft'));
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('Recovered draft')
+    );
     expect(view.getByText('Draft restored')).not.toBeNull();
     view.unmount();
     expect(unsubscribe).toHaveBeenCalledTimes(1);
@@ -675,12 +1328,17 @@ describe('EditorRoot', () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
 
-    await waitFor(() => expect(view.getByRole('button', { name: 'Bold' })).not.toBeNull());
+    await waitFor(() =>
+      expect(view.getByRole('button', { name: 'Bold' })).not.toBeNull()
+    );
     vi.spyOn(props.submissionField, 'dispatchEvent').mockReturnValue(true);
     fireEvent.click(view.getByRole('button', { name: 'Bold' }));
 
     await waitFor(
-      () => expect(props.localDraftStorage.write).toHaveBeenCalledWith('**selected**'),
+      () =>
+        expect(props.localDraftStorage.write).toHaveBeenCalledWith(
+          '**selected**'
+        ),
       { timeout: 1_000 }
     );
   });
@@ -690,29 +1348,41 @@ describe('EditorRoot', () => {
     const view = render(<EditorRoot {...props} />);
 
     await waitFor(() => {
-      expect(view.container.querySelector('[data-easymde-preview-html-sink="1"]')).not.toBeNull();
+      expect(
+        view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+      ).not.toBeNull();
     });
     fireEvent.click(view.getByRole('button', { name: 'Copy to WeChat' }));
 
-    await waitFor(() => expect(props.wechatClipboard.copy).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(props.wechatClipboard.copy).toHaveBeenCalledTimes(1)
+    );
     expect(
-      view.getByRole('button', { name: 'Copy to WeChat' })
+      view
+        .getByRole('button', { name: 'Copy to WeChat' })
         .querySelectorAll('.easymde-wechat-glyph path')
     ).toHaveLength(3);
     expect(props.wechatClipboard.copy).toHaveBeenCalledWith(
       view.container.querySelector('[data-easymde-preview-html-sink="1"]')
     );
     expect(view.getByText('Copied')).not.toBeNull();
-    expect(props.executeExternalCommand).not.toHaveBeenCalledWith('copywechat', expect.anything());
+    expect(props.executeExternalCommand).not.toHaveBeenCalledWith(
+      'copywechat',
+      expect.anything()
+    );
   });
 
   it('activates synchronized scrolling once and disposes it with the Root', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
 
-    await waitFor(() => expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(1)
+    );
     expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledWith({
-      preview: view.container.querySelector('[data-easymde-preview-html-sink="1"]'),
+      preview: view.container.querySelector(
+        '[data-easymde-preview-html-sink="1"]'
+      ),
       source: view.container.querySelector('.cm-scroller')
     });
 

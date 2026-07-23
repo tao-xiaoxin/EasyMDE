@@ -556,6 +556,7 @@ test('release build fails when required runtime assets or templates are missing'
     rmSync(join(root, 'assets/vendor/mermaid/LICENSE'), { force: true });
     rmSync(join(root, 'assets/js/frontend/bootstrap.js'), { force: true });
     rmSync(join(root, 'assets/build/assets/admin-editor-fixture.js'), { force: true });
+    rmSync(join(root, 'assets/images/easymde-editor-icon.png'), { force: true });
     rmSync(join(root, 'assets/images/tech-blue-code-window.svg'), { force: true });
     rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
 
@@ -568,6 +569,7 @@ test('release build fails when required runtime assets or templates are missing'
     assert.ok(missing.includes('assets/vendor/mermaid/LICENSE'));
     assert.ok(missing.includes('assets/js/frontend/bootstrap.js'));
     assert.ok(missing.includes('assets/build/assets/admin-editor-fixture.js'));
+    assert.ok(missing.includes('assets/images/easymde-editor-icon.png'));
     assert.ok(missing.includes('assets/images/tech-blue-code-window.svg'));
     assert.ok(missing.includes('THIRD-PARTY-NOTICES.md'));
 

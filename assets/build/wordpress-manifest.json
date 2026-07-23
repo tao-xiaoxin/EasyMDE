@@ -3,8 +3,8 @@
   "entries": {
     "frontend/src/entrypoints/admin-editor.tsx": {
       "handle": "easymde-admin-editor-toolbar",
-      "file": "assets/admin-editor-M157XPE8.js",
-      "asset": "assets/admin-editor-M157XPE8.asset.php",
+      "file": "assets/admin-editor-B-iFmv7h.js",
+      "asset": "assets/admin-editor-B-iFmv7h.asset.php",
       "dependencies": [
         "media-editor",
         "wp-api-fetch",

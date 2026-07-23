@@ -527,6 +527,16 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(splitDivider).toHaveAttribute('aria-valuenow', '50');
     const dividerBox = await splitDivider.boundingBox();
     if (!dividerBox) throw new Error('immersive-split-divider-unavailable');
+    const splitSourceBox = await page.locator('.easymde-pane-source').boundingBox();
+    const splitPreviewBox = await page.locator('.easymde-pane-preview').boundingBox();
+    if (!splitSourceBox || !splitPreviewBox) {
+      throw new Error('immersive-split-adjacent-region-unavailable');
+    }
+    expect(Math.abs(dividerBox.x - (splitSourceBox.x + splitSourceBox.width)))
+      .toBeLessThanOrEqual(0.01);
+    expect(Math.abs(
+      dividerBox.x + dividerBox.width - splitPreviewBox.x
+    )).toBeLessThanOrEqual(0.01);
     await page.mouse.move(
       dividerBox.x + dividerBox.width / 2,
       dividerBox.y + dividerBox.height / 2
@@ -1214,7 +1224,9 @@ test.describe('EasyMDE editor workflows', () => {
       'aria-label',
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.strings.immersive.enter)
     );
-    await expect(immersiveEntry.locator('.dashicons-fullscreen-alt')).toHaveCount(1);
+    await expect(
+      immersiveEntry.locator('.easymde-immersive-entry-icon')
+    ).toHaveCount(1);
     const immersiveGeometry = await immersiveEntry.evaluate((button) => {
       const buttonBounds = button.getBoundingClientRect();
       const iconBounds = button.firstElementChild?.getBoundingClientRect();

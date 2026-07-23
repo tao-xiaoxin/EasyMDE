@@ -493,7 +493,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-editor.is-immersive > .easymde-workspace.is-split-resizable { display: flex; }
 .easymde-editor.is-immersive > .easymde-workspace.is-split-resizable .easymde-pane-source { flex: var(--easymde-split-start, 50) 1 0%; }
 .easymde-editor.is-immersive > .easymde-workspace.is-split-resizable .easymde-pane-preview { flex: var(--easymde-split-end, 50) 1 0%; }
-.easymde-editor.is-immersive .easymde-immersive-pane-divider { position: relative; z-index: 2; display: flex; width: 14px; min-width: 14px; height: auto; margin: 0 -11.25px; padding: 0; align-self: stretch; align-items: center; justify-content: center; border: 0; background: linear-gradient(90deg, transparent 6.5px, #e8ebef 6.5px, #e8ebef 7.5px, transparent 7.5px); cursor: col-resize; }
+.easymde-editor.is-immersive .easymde-immersive-pane-divider { position: relative; z-index: 2; display: flex; width: 14px; min-width: 14px; height: auto; margin: 0 -14px; padding: 0; align-self: stretch; align-items: center; justify-content: center; border: 0; background: linear-gradient(90deg, transparent 6.5px, #e8ebef 6.5px, #e8ebef 7.5px, transparent 7.5px); cursor: col-resize; }
 .easymde-editor.is-immersive .easymde-immersive-pane-divider:hover,
 .easymde-editor.is-immersive .easymde-immersive-pane-divider:focus-visible { outline: 0; background: linear-gradient(90deg, transparent 6.5px, #dde1e8 6.5px, #dde1e8 7.5px, transparent 7.5px); }
 .easymde-editor.is-immersive .easymde-immersive-pane-divider:active { background: linear-gradient(90deg, transparent 6.5px, #c8ced8 6.5px, #c8ced8 7.5px, transparent 7.5px); }

@@ -7,6 +7,7 @@ import type { SafePreviewHtml } from '../../contracts/ports/preview-request';
 import type { ImageUploadResult } from '../../contracts/ports/image-upload-port';
 import type { ImmersivePreferences } from '../../contracts/ports/immersive-preferences-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
+import type { RevisionPreview } from '../../contracts/ports/revision-port';
 import type {
   EditorSessionPort,
   EditorSessionStatus
@@ -17,6 +18,14 @@ import { EditorRoot, type EditorRootProps } from './EditorRoot';
 import { EditorRootErrorBoundary } from './EditorRootErrorBoundary';
 
 const mountedFields: Array<HTMLElement> = [];
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
 
 function BrokenEditorRoot(): never {
   throw new Error('synthetic editor-root render failure');
@@ -548,7 +557,7 @@ describe('EditorRoot', () => {
       immersiveEntry.classList.contains('easymde-toolbar-immersive-toggle')
     ).toBe(true);
     expect(immersiveEntry.firstElementChild?.className).toBe(
-      'dashicons dashicons-fullscreen-alt'
+      'easymde-immersive-entry-icon'
     );
   });
 
@@ -793,6 +802,71 @@ describe('EditorRoot', () => {
     expect(props.restoreRevision).toHaveBeenCalledWith(
       'https://example.test/wp-admin/revision.php?revision=12'
     );
+  });
+
+  it('ignores a stale revision preview that resolves after the current selection', async () => {
+    const firstPreview = deferred<RevisionPreview>();
+    const secondPreview = deferred<RevisionPreview>();
+    const props = fixture();
+    const revisionPort = {
+      get: vi.fn((id: number) =>
+        12 === id ? firstPreview.promise : secondPreview.promise
+      ),
+      list: vi.fn().mockResolvedValue([
+        {
+          date: '2026-07-23T10:00:00Z',
+          dateLabel: '10:00',
+          id: 12,
+          restoreUrl: 'https://example.test/wp-admin/revision.php?revision=12',
+          title: 'First',
+          type: 'manual'
+        },
+        {
+          date: '2026-07-23T11:00:00Z',
+          dateLabel: '11:00',
+          id: 13,
+          restoreUrl: 'https://example.test/wp-admin/revision.php?revision=13',
+          title: 'Second',
+          type: 'manual'
+        }
+      ])
+    };
+    const view = render(<EditorRoot {...props} revisionPort={revisionPort} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '历史记录' }));
+
+    await waitFor(() =>
+      expect(revisionPort.get).toHaveBeenCalledWith(
+        12,
+        expect.any(AbortSignal)
+      )
+    );
+    fireEvent.click(view.getByRole('button', { name: '手动保存11:00' }));
+    await waitFor(() =>
+      expect(revisionPort.get).toHaveBeenCalledWith(
+        13,
+        expect.any(AbortSignal)
+      )
+    );
+
+    await act(async () => {
+      secondPreview.resolve({
+        features: {},
+        html: '<p>Current revision</p>' as SafePreviewHtml,
+        id: 13
+      });
+    });
+    expect(view.getByText('Current revision')).not.toBeNull();
+
+    await act(async () => {
+      firstPreview.resolve({
+        features: {},
+        html: '<p>Stale revision</p>' as SafePreviewHtml,
+        id: 12
+      });
+    });
+    expect(view.getByText('Current revision')).not.toBeNull();
+    expect(view.queryByText('Stale revision')).toBeNull();
   });
 
   it('layers Escape handling and restores focus to the immersive entry after exit', async () => {

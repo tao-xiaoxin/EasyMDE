@@ -277,6 +277,7 @@ function HistoryDialog({
   const [filter, setFilter] = useState<'all' | 'auto' | 'manual'>('all');
   const surfaceRef = useRef<HTMLElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const previewRequestRef = useRef(0);
 
   useEffect(() => {
     const previous = environment.activeElement();
@@ -302,6 +303,7 @@ function HistoryDialog({
   }, [onFailure, port]);
 
   useEffect(() => {
+    const requestId = ++previewRequestRef.current;
     if (!selected) {
       setPreview(null);
       return;
@@ -311,9 +313,19 @@ function HistoryDialog({
     setConfirming(false);
     void port
       .get(selected.id, controller.signal)
-      .then(setPreview)
+      .then((result) => {
+        if (
+          !controller.signal.aborted &&
+          requestId === previewRequestRef.current
+        ) {
+          setPreview(result);
+        }
+      })
       .catch(() => {
-        if (!controller.signal.aborted) {
+        if (
+          !controller.signal.aborted &&
+          requestId === previewRequestRef.current
+        ) {
           onFailure('revision-preview-failed');
           setFailed(true);
         }
@@ -656,7 +668,7 @@ export function ImmersiveEditor({
 export function ImmersiveToggleIcon() {
   return (
     <span
-      className="dashicons dashicons-fullscreen-alt"
+      className="easymde-immersive-entry-icon"
       aria-hidden="true"
     />
   );

@@ -113,6 +113,9 @@ export type EditorRootBootstrap = Readonly<{
     outline: string;
     outlineDescription: string;
     preview: string;
+    previewContentLoaded: string;
+    previewReadOnly: string;
+    previewUnlockEdit: string;
     previewMode: string;
     publish: string;
     readingTime: string;
@@ -478,6 +481,9 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'outline',
         'outlineDescription',
         'preview',
+        'previewContentLoaded',
+        'previewReadOnly',
+        'previewUnlockEdit',
         'previewMode',
         'publish',
         'readingTime',

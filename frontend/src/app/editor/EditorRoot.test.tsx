@@ -4,7 +4,10 @@ import { EditorSelection } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { SafePreviewHtml } from '../../contracts/ports/preview-request';
+import type {
+  PreviewResponse,
+  SafePreviewHtml
+} from '../../contracts/ports/preview-request';
 import type { ImageUploadResult } from '../../contracts/ports/image-upload-port';
 import type { ImmersivePreferences } from '../../contracts/ports/immersive-preferences-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
@@ -123,7 +126,10 @@ function fixture(): EditorRootProps &
         .mockResolvedValue({ status: 'failed', code: 'synthetic' })
     },
     document: { editorLabel: 'Markdown source' },
-    enhancementPort: { enhance: vi.fn().mockResolvedValue(undefined) },
+    enhancementPort: {
+      dispose: vi.fn(),
+      enhance: vi.fn().mockResolvedValue(undefined)
+    },
     executeExternalCommand: vi.fn(),
     fontControlsPort: { applyState: vi.fn(), closeOtherPopovers: vi.fn() },
     fonts: {
@@ -184,6 +190,9 @@ function fixture(): EditorRootProps &
       outline: '文章大纲',
       outlineDescription: '左侧显示标题层级导航',
       preview: '预览',
+      previewContentLoaded: '内容已载入',
+      previewReadOnly: '只读',
+      previewUnlockEdit: '解除锁定并编辑',
       previewMode: '预览模式',
       publish: '发布文章',
       readingTime: '约',
@@ -520,6 +529,7 @@ describe('EditorRoot', () => {
     expect(props.submissionField.hidden).toBe(false);
     expect(props.onDocumentOwnerChange).toHaveBeenLastCalledWith(false);
     expect(props.shortcutBinding.dispose).toHaveBeenCalledTimes(1);
+    expect(props.enhancementPort.dispose).toHaveBeenCalledTimes(1);
   });
 
   it('adds the immersive entry while leaving publish and revisions with WordPress', async () => {
@@ -584,6 +594,11 @@ describe('EditorRoot', () => {
     expect(
       view.container.querySelectorAll('.easymde-pane-preview')
     ).toHaveLength(1);
+    expect(
+      view.container.querySelector(
+        '.easymde-pane-preview > [data-easymde-preview-html-sink]'
+      )
+    ).not.toBeNull();
 
     fireEvent.click(view.getByRole('button', { name: '预览' }));
     expect(
@@ -591,8 +606,164 @@ describe('EditorRoot', () => {
         .querySelector('.easymde-editor')
         ?.classList.contains('is-immersive-preview')
     ).toBe(true);
+    const previewPane = view.container.querySelector('.easymde-pane-preview');
+    expect(
+      previewPane?.classList.contains('easymde-immersive-preview-surface')
+    ).toBe(true);
+    expect(
+      previewPane?.querySelector('.easymde-immersive-preview-canvas')
+    ).not.toBeNull();
+    expect(
+      previewPane?.querySelector(
+        '.easymde-immersive-preview-page > [data-easymde-preview-html-sink]'
+      )
+    ).not.toBeNull();
+    const previewSink = previewPane?.querySelector<HTMLElement>(
+      '[data-easymde-preview-html-sink]'
+    );
+    expect(
+      previewSink?.classList.contains('easymde-immersive-reference-prose')
+    ).toBe(true);
+    expect(
+      previewSink?.classList.contains('easymde-markdown-theme-default')
+    ).toBe(false);
+    expect(
+      previewSink?.classList.contains('easymde-font-overrides')
+    ).toBe(false);
+    expect(previewSink?.style.getPropertyValue('--accent')).toBe('#333333');
+    expect(previewSink?.style.getPropertyValue('--accent-light')).toBe(
+      '#AAAAAA'
+    );
+    expect(previewSink?.style.getPropertyValue('--accent-bg')).toBe('#F5F5F5');
+    expect(
+      previewPane?.querySelector('.easymde-immersive-preview-status')
+    ).not.toBeNull();
+    expect(
+      view.queryByRole('separator', {
+        name: '调整编辑区和预览区宽度'
+      })
+    ).toBeNull();
+    expect(
+      view.queryByRole('complementary', { name: '文章大纲' })
+    ).toBeNull();
+    expect(view.queryByRole('button', { name: '收起大纲' })).toBeNull();
+    expect(view.queryByRole('button', { name: '展开大纲' })).toBeNull();
+    expect(
+      view.queryByRole('separator', { name: '调整大纲宽度' })
+    ).toBeNull();
+    expect(
+      view.container.querySelectorAll('[data-easymde-preview-html-sink]')
+    ).toHaveLength(1);
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    expect(
+      view.container
+        .querySelector('.easymde-editor')
+        ?.classList.contains('is-immersive-source')
+    ).toBe(true);
+    expect(
+      view.container.querySelectorAll('[data-easymde-document-owner="react"]')
+    ).toHaveLength(1);
+    expect(
+      view.container.querySelectorAll('[data-easymde-preview-html-sink]')
+    ).toHaveLength(1);
+    expect(
+      view.getByRole('complementary', { name: '文章大纲' })
+    ).not.toBeNull();
+    expect(props.enhancementPort.dispose).not.toHaveBeenCalled();
     fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
     expect(view.queryByRole('region', { name: '沉浸写作' })).toBeNull();
+    expect(
+      view.container.querySelector(
+        '.easymde-pane-preview > [data-easymde-preview-html-sink]'
+      )
+    ).not.toBeNull();
+  });
+
+  it('reschedules the real Preview owner when Preview mode remounts during an initial request', async () => {
+    const firstPreview = deferred<PreviewResponse>();
+    const remountedPreview = deferred<PreviewResponse>();
+    const props = fixture();
+    vi.mocked(props.previewPort.render)
+      .mockImplementationOnce(() => firstPreview.promise)
+      .mockImplementationOnce(() => remountedPreview.promise);
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(2)
+    );
+    await act(async () => {
+      remountedPreview.resolve({
+        features: {},
+        html: '<p>Remounted Preview</p>' as SafePreviewHtml
+      });
+    });
+    await waitFor(() => {
+      expect(view.getByText('Remounted Preview')).not.toBeNull();
+      expect(view.getByText('内容已载入')).not.toBeNull();
+    });
+
+    await act(async () => {
+      firstPreview.resolve({
+        features: {},
+        html: '<p>Stale initial Preview</p>' as SafePreviewHtml
+      });
+    });
+    expect(view.queryByText('Stale initial Preview')).toBeNull();
+    expect(view.getByText('Remounted Preview')).not.toBeNull();
+  });
+
+  it('requests neutral server markup only for the immersive Preview presentation', async () => {
+    const baseProps = fixture();
+    const props = {
+      ...baseProps,
+      appearance: {
+        ...baseProps.appearance,
+        state: {
+          ...baseProps.appearance.state,
+          markdownTheme: 'newsprint'
+        }
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        expect.any(AbortSignal)
+      )
+    );
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownTheme: 'default' }),
+        expect.any(AbortSignal)
+      )
+    );
+
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        expect.any(AbortSignal)
+      )
+    );
   });
 
   it('keeps publish editing local until confirmation then delegates to the native publisher', async () => {

@@ -45,6 +45,19 @@ export const frontendRuntimeAssets = [
     ].map(([source, destination, type]) => ({ source, destination, type }))
   },
   {
+    id: 'lora-font',
+    displayName: 'Lora font',
+    packageName: '@fontsource/lora',
+    bundledPaths: 'assets/vendor/fonts/lora/',
+    purpose: 'Local immersive Preview heading font.',
+    noticeLocation: 'assets/vendor/fonts/lora/LICENSE',
+    managedRoot: 'assets/vendor/fonts/lora',
+    copies: [
+      ['node_modules/@fontsource/lora/files/lora-latin-600-normal.woff2', 'assets/vendor/fonts/lora/lora-latin-600-normal.woff2', 'file'],
+      ['node_modules/@fontsource/lora/LICENSE', 'assets/vendor/fonts/lora/LICENSE', 'file']
+    ].map(([source, destination, type]) => ({ source, destination, type }))
+  },
+  {
     id: 'highlight',
     displayName: 'Highlight.js CDN assets',
     packageName: '@highlightjs/cdn-assets',

@@ -1,6 +1,5 @@
 import {
   createElement,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState
@@ -47,6 +46,8 @@ type PreviewStatusState = Readonly<{
 
 type PreviewSurfaceState = PreviewHtmlState | PreviewStatusState;
 
+export type PreviewSurfaceStatus = 'empty' | 'error' | 'loading' | 'ready';
+
 export type PreviewSurfaceRuntime = Readonly<{
   session: PreviewRequestSession;
   surface: HTMLElement;
@@ -65,6 +66,7 @@ type PreviewSurfaceOwnerProps = Readonly<{
   messages: PreviewMessages;
   onDiagnostic?: (code: string) => void;
   onReady: (runtime: PreviewSurfaceRuntime) => void;
+  onStatusChange?: (status: PreviewSurfaceStatus) => void;
   port: PreviewRequestPort;
   scrollPort: PreviewScrollPort;
   style?: CSSProperties;
@@ -83,6 +85,13 @@ function initialState(props: PreviewSurfaceOwnerProps): PreviewSurfaceState {
     phase: 'enhancing',
     signature: props.initial.signature
   };
+}
+
+function surfaceStatus(state: PreviewSurfaceState): PreviewSurfaceStatus {
+  if ('html' !== state.kind) {
+    return state.kind;
+  }
+  return 'ready' === state.phase ? 'ready' : 'failed' === state.phase ? 'error' : 'loading';
 }
 
 export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
@@ -157,6 +166,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   }, [state]);
 
   useLayoutEffect(() => {
+    props.onStatusChange?.(surfaceStatus(state));
+  }, [state, props.onStatusChange]);
+
+  useLayoutEffect(() => {
     const surface = surfaceRef.current;
     if (!surface || 'html' !== state.kind || 'enhancing' !== state.phase) return;
     const generation = state.generation;
@@ -193,8 +206,6 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       controller.abort();
     };
   }, [state, props.enhancementPort]);
-
-  useEffect(() => () => props.enhancementPort.dispose?.(), [props.enhancementPort]);
 
   const busy = 'loading' === state.kind || ('html' === state.kind && ('enhancing' === state.phase || 'loading' === state.phase));
   const failed = 'html' === state.kind && 'failed' === state.phase;

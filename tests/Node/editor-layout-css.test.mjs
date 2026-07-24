@@ -179,3 +179,99 @@ test('collapsed immersive outline preserves the reference full-height rail', () 
     'the workspace should collapse to one column only when both outline surfaces are absent',
   );
 });
+
+test('immersive Preview mode owns the reference canvas and article page geometry', () => {
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-canvas\s*\{[^}]*display:\s*block;[^}]*overflow-y:\s*auto;[^}]*padding:\s*28px 20px;[^}]*border:\s*0 solid rgba\(15, 23, 42, \.07\);[^}]*background:\s*#f4f5f7;[^}]*color:\s*#0f172a;[^}]*font-size:\s*15px;[^}]*font-weight:\s*400;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page\s*\{[^}]*box-sizing:\s*border-box;[^}]*max-width:\s*760px;[^}]*min-height:\s*100%;[^}]*margin:\s*0 auto;[^}]*padding:\s*36px 40px;[^}]*border:\s*1px solid #e1e5eb;[^}]*background:\s*#fff;[^}]*box-shadow:\s*0 8px 28px rgba\(15, 23, 42, \.06\);[^}]*color:\s*#0f172a;[^}]*font-size:\s*15px;[^}]*font-weight:\s*400;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page > \.easymde-preview\s*\{[^}]*min-height:\s*680px;[^}]*padding:\s*0;[^}]*overflow:\s*visible;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-preview-status > \.easymde-immersive-preview-lock\s*\{[^}]*display:\s*grid;[^}]*width:\s*26\.25px;[^}]*height:\s*26\.25px;[^}]*border:\s*1px solid #d8dee8;[^}]*border-radius:\s*3\.625px;[^}]*background:\s*#fff;[^}]*color:\s*#64748b;[^}]*font-size:\s*15px;[^}]*font-weight:\s*500;/s
+  );
+  assert.match(
+    css,
+    /@media \(min-width:\s*640px\)\s*\{[^}]*\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-canvas\s*\{[^}]*padding:\s*26\.25px 37\.5px;/s
+  );
+  assert.match(
+    css,
+    /@media \(min-width:\s*640px\)\s*\{[\s\S]*?\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page\s*\{[^}]*padding:\s*45px 52\.5px;/s
+  );
+});
+
+test('immersive Preview uses the local reference heading font', () => {
+  assert.match(
+    css,
+    /@font-face\s*\{[^}]*font-family:\s*"EasyMDE Lora";[^}]*font-style:\s*normal;[^}]*font-weight:\s*600;[^}]*src:\s*url\("\.\.\/\.\.\/vendor\/fonts\/lora\/lora-latin-600-normal\.woff2"\) format\("woff2"\);/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose h1\s*\{[^}]*margin:\s*24px 0 12px;[^}]*font-family:\s*"EasyMDE Lora", Georgia, "Times New Roman", serif;[^}]*font-size:\s*30px;[^}]*font-weight:\s*600;/s
+  );
+  assert.match(
+    css,
+    /#wpbody-content \.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose h2\s*\{[^}]*margin:\s*30px 0 9px;[^}]*padding:\s*0 0 7\.5px;[^}]*border-bottom:\s*2px solid var\(--accent, #dc2626\);[^}]*font-size:\s*16\.875px;[^}]*line-height:\s*1\.3;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose h3\s*\{[^}]*font-size:\s*15px;[^}]*font-weight:\s*600;[^}]*line-height:\s*1\.5;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose h4,[\s\S]*?\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose h6\s*\{[^}]*font-size:\s*13\.5px;[^}]*font-weight:\s*600;[^}]*line-height:\s*1\.5;/s
+  );
+});
+
+test('immersive Preview neutral server blockquotes match the reference spacing', () => {
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose blockquote\s*\{[^}]*margin:\s*18\.75px 0;[^}]*padding:\s*15px 18\.75px;[^}]*border-inline-start:\s*3px solid var\(--accent, #dc2626\);/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose blockquote p\s*\{\s*margin:\s*0;\s*color:\s*inherit;\s*\}/u
+  );
+});
+
+test('immersive Preview header owns the reference typography and divider', () => {
+  assert.match(
+    css,
+    /\.easymde-immersive-preview-heading \{ gap: 7\.5px; \}/u
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-surface > \.easymde-pane-header\s*\{[^}]*border-bottom:\s*1px solid #e8ebef;[^}]*font-family:\s*"EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;[^}]*font-size:\s*15px;[^}]*font-weight:\s*400;[^}]*letter-spacing:\s*0;[^}]*line-height:\s*22\.5px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-preview-heading > span:first-child\s*\{[^}]*font-size:\s*13px;[^}]*font-weight:\s*600;[^}]*letter-spacing:\s*0;[^}]*line-height:\s*19\.5px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-preview-heading > span:nth-child\(2\)\s*\{[^}]*width:\s*1px;[^}]*height:\s*11\.25px;[^}]*background:\s*#dde2e9;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-preview-heading > span:last-child\s*\{[^}]*font-size:\s*12px;[^}]*font-weight:\s*400;[^}]*letter-spacing:\s*0;[^}]*line-height:\s*18px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-preview-status \{ gap: 9\.375px; \}/u
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-preview-status > span:first-child\s*\{[^}]*gap:\s*5\.625px;[^}]*font-size:\s*12px;[^}]*font-weight:\s*400;[^}]*letter-spacing:\s*0;[^}]*line-height:\s*18px;/s
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-canvas\s*\{[^}]*scrollbar-width:/s
+  );
+});

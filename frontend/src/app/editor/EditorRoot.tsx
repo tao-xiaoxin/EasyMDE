@@ -63,6 +63,7 @@ import {
   AppearanceControls,
   type AppearanceControlsSession
 } from '../../features/appearance/ui/AppearanceControls';
+import { referenceArticleTheme } from '../../features/appearance/reference-article-theme';
 import {
   EditorDocumentSource,
   type EditorDocumentSession
@@ -81,7 +82,8 @@ import type { PreviewEnhancementPort } from '../../features/live-preview/ports/p
 import type { PreviewScrollPort } from '../../features/live-preview/ports/preview-scroll-port';
 import {
   PreviewSurfaceOwner,
-  type PreviewSurfaceRuntime
+  type PreviewSurfaceRuntime,
+  type PreviewSurfaceStatus
 } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { openMediaPickerSession } from '../../features/media-picker/media-picker-session';
 import {
@@ -103,6 +105,7 @@ import {
   ImmersiveEditor,
   ImmersiveToggleIcon
 } from '../../features/immersive-editor/ui/ImmersiveEditor';
+import { ImmersivePreviewSurface } from '../../features/immersive-editor/ui/ImmersivePreviewSurface';
 import type { ImmersiveViewMode } from '../../features/immersive-editor/immersive-editor';
 import { openFeaturedImagePicker } from '../../features/immersive-editor/open-featured-image-picker';
 
@@ -342,12 +345,13 @@ function previewRequest(
   markdown: string,
   preview: EditorRootPreviewBootstrap,
   appearance: AppearanceState,
-  revision: number
+  revision: number,
+  referenceStructure = false
 ): PreviewRequest {
   return {
     markdown,
     postId: preview.postId,
-    markdownTheme: appearance.markdownTheme,
+    markdownTheme: referenceStructure ? 'default' : appearance.markdownTheme,
     codeTheme: appearance.codeTheme,
     customCssId: appearance.customCssId,
     signature: `${revision}:${markdown.length}`
@@ -425,6 +429,7 @@ export function EditorRoot(props: EditorRootProps) {
   const fontControlsSessionRef = useRef<FontControlsSession | null>(null);
   const toolbarSessionRef = useRef<EditorToolbarSession | null>(null);
   const previewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
+  const scheduledPreviewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
   const previewRevisionRef = useRef(0);
   const previewAppearanceRef = useRef(props.appearance.state);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
@@ -445,7 +450,9 @@ export function EditorRoot(props: EditorRootProps) {
   const [draftCandidate, setDraftCandidate] = useState(false);
   const [draftUnreadable, setDraftUnreadable] = useState(false);
   const [editorStatus, setEditorStatus] = useState<EditorStatus | null>(null);
-  const [previewRuntimeReady, setPreviewRuntimeReady] = useState(false);
+  const [previewRuntimeGeneration, setPreviewRuntimeGeneration] = useState(0);
+  const [previewSurfaceStatus, setPreviewSurfaceStatus] =
+    useState<PreviewSurfaceStatus>('loading');
   const [appearanceState, setAppearanceState] = useState(
     props.appearance.state
   );
@@ -463,6 +470,8 @@ export function EditorRoot(props: EditorRootProps) {
         ? 'source'
         : 'split'
     );
+  const immersiveModeRef = useRef(immersiveMode);
+  immersiveModeRef.current = immersiveMode;
   const [localDraftsEnabled, setLocalDraftsEnabled] = useState(() =>
     'loaded' === immersivePreferences.status
       ? immersivePreferences.preferences.autoSave
@@ -566,9 +575,13 @@ export function EditorRoot(props: EditorRootProps) {
     props.onDocumentOwnerChange(true);
     return () => props.onDocumentOwnerChange(false);
   }, [documentSession, props.onDocumentOwnerChange]);
+  useEffect(
+    () => () => props.enhancementPort.dispose?.(),
+    [props.enhancementPort]
+  );
   const handlePreviewReady = useCallback((runtime: PreviewSurfaceRuntime) => {
     previewRuntimeRef.current = runtime;
-    setPreviewRuntimeReady(true);
+    setPreviewRuntimeGeneration((generation) => generation + 1);
   }, []);
   const closeForToolbar = useCallback(() => {
     appearanceSessionRef.current?.close();
@@ -586,7 +599,8 @@ export function EditorRoot(props: EditorRootProps) {
           props.submissionField.value,
           props.preview,
           previewAppearanceRef.current,
-          revision
+          revision,
+          immersiveRef.current && 'preview' === immersiveModeRef.current
         ),
         immediate
       );
@@ -894,26 +908,46 @@ export function EditorRoot(props: EditorRootProps) {
     return releaseFocusBoundary;
   }, [documentSession, immersive, props.immersiveEnvironment]);
   const previewFontStack = fontStack(props.fonts, fontState);
+  const referencePreviewActive = immersive && 'preview' === immersiveMode;
+  const referencePreviewTheme = referenceArticleTheme(
+    appearanceState.markdownTheme
+  );
   const previewClassName = [
     'easymde-preview',
     'easymde-rendered-content',
     'easymde-code-mac',
-    `easymde-markdown-theme-${appearanceState.markdownTheme}`,
+    referencePreviewActive
+      ? 'easymde-immersive-reference-prose'
+      : `easymde-markdown-theme-${appearanceState.markdownTheme}`,
     `easymde-code-theme-${appearanceState.codeTheme}`,
     'custom' === appearanceState.markdownTheme
       ? 'easymde-custom-css-active'
       : '',
-    previewFontStack ? 'easymde-font-overrides' : ''
+    previewFontStack && !referencePreviewActive
+      ? 'easymde-font-overrides'
+      : ''
   ]
     .filter(Boolean)
     .join(' ');
-  const previewStyle = (
-    previewFontStack
+  const previewStyle = {
+    ...(previewFontStack
       ? {
           '--easymde-content-font-family': previewFontStack
         }
-      : {}
-  ) as CSSProperties;
+      : {}),
+    ...(referencePreviewActive
+      ? {
+          '--accent': referencePreviewTheme.accent,
+          '--accent-bg': referencePreviewTheme.accentBackground,
+          '--accent-light': referencePreviewTheme.accentLight,
+          '--prose-bg': referencePreviewTheme.dark
+            ? (referencePreviewTheme.proseBackground ??
+              referencePreviewTheme.accentBackground)
+            : '#FFFFFF',
+          '--prose-text': referencePreviewTheme.proseText ?? '#0F172A'
+        }
+      : {})
+  } as CSSProperties;
 
   useEffect(() => {
     rootActiveRef.current = true;
@@ -1030,20 +1064,24 @@ export function EditorRoot(props: EditorRootProps) {
     return () => binding.dispose();
   }, [
     documentSession,
-    previewRuntimeReady,
+    previewRuntimeGeneration,
     props.scrollSyncPort,
     scrollSyncEnabled
   ]);
 
   useLayoutEffect(() => {
-    if (!previewRuntimeRef.current) return;
+    const runtime = previewRuntimeRef.current;
+    if (!runtime) return;
     const handleInput = () => schedulePreview(false);
     props.submissionField.addEventListener('input', handleInput);
-    schedulePreview(true);
+    if (scheduledPreviewRuntimeRef.current !== runtime) {
+      scheduledPreviewRuntimeRef.current = runtime;
+      schedulePreview(true);
+    }
 
     return () =>
       props.submissionField.removeEventListener('input', handleInput);
-  }, [props.submissionField, schedulePreview]);
+  }, [previewRuntimeGeneration, props.submissionField, schedulePreview]);
 
   return (
     <div
@@ -1285,10 +1323,18 @@ export function EditorRoot(props: EditorRootProps) {
           </section>
         }
         preview={
-          <section className="easymde-pane easymde-pane-preview">
-            <header className="easymde-pane-header">
-              {props.labels.preview}
-            </header>
+          <ImmersivePreviewSurface
+            active={immersive && 'preview' === immersiveMode}
+            ordinaryLabel={props.labels.preview}
+            onRequestEdit={() => setImmersiveMode('source')}
+            status={previewSurfaceStatus}
+            statusMessages={{
+              empty: props.preview.messages.empty,
+              error: props.preview.messages.error,
+              loading: props.preview.messages.rendering
+            }}
+            strings={props.immersiveStrings}
+          >
             <PreviewSurfaceOwner
               className={previewClassName}
               enhancementPort={props.enhancementPort}
@@ -1302,11 +1348,12 @@ export function EditorRoot(props: EditorRootProps) {
               messages={props.preview.messages}
               onDiagnostic={props.onFailure}
               onReady={handlePreviewReady}
+              onStatusChange={setPreviewSurfaceStatus}
               port={previewPort}
               scrollPort={props.scrollPort}
               style={previewStyle}
             />
-          </section>
+          </ImmersivePreviewSurface>
         }
       />
     </div>

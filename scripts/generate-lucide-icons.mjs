@@ -32,6 +32,7 @@ const icons = {
   ListCollapse: 'list-collapse',
   ListOrdered: 'list-ordered',
   ListTree: 'list-tree',
+  Lock: 'lock',
   LockKeyhole: 'lock-keyhole',
   LayoutGrid: 'layout-grid',
   Maximize: 'maximize',

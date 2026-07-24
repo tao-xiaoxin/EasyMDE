@@ -14,6 +14,7 @@ import type {
   CustomCssItem
 } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type { AppearancePort } from '../../../contracts/ports/appearance-port';
+import { referenceArticleTheme } from '../reference-article-theme';
 import {
   Check,
   ChevronDown,
@@ -48,31 +49,6 @@ type ImmersivePanelPosition = Readonly<{
   width: number;
 }>;
 
-const ARTICLE_THEME_ACCENTS: Readonly<Record<string, string>> = {
-  default: '#333333',
-  'orange-heart': '#FF6200',
-  'chazi-purple': '#8E44AD',
-  'nenqing-green': '#00B4A6',
-  'green-vitality': '#27AE60',
-  'red-crimson': '#E74C3C',
-  'blue-ying': '#1E90FF',
-  lanqing: '#4A90E2',
-  yamabuki: '#D4AC0D',
-  'grid-black': '#6C63FF',
-  'geek-black': '#00E676',
-  'rose-purple': '#E91E8C',
-  'ningye-purple': '#B39DDB',
-  'tech-blue': '#29B6F6',
-  'qingbi-liujin': '#009688',
-  'qinghe-zhusha': '#C0392B',
-  'cute-green': '#4CAF50',
-  'fullstack-blue': '#1565C0',
-  'minimal-black': '#212121',
-  'orange-blue': '#FF6B35',
-  'frontend-peak': '#4A90D9',
-  'cupid-busy': '#FF4081'
-};
-
 const CODE_THEME_SWATCHES: Readonly<Record<string, readonly [string, string]>> = {
   github: ['#F6F8FA', '#24292E'],
   'github-dark': ['#0D1117', '#C9D1D9'],
@@ -85,7 +61,7 @@ const CODE_THEME_SWATCHES: Readonly<Record<string, readonly [string, string]>> =
 };
 
 function articleThemeAccent(id: string): string {
-  return ARTICLE_THEME_ACCENTS[id] ?? '#DC2626';
+  return referenceArticleTheme(id).accent;
 }
 
 function ThemeSettingsIcon() {

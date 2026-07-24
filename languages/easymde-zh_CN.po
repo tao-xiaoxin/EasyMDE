@@ -1130,6 +1130,15 @@ msgstr "左侧显示标题层级导航"
 msgid "Preview mode"
 msgstr "预览模式"
 
+msgid "Content loaded"
+msgstr "内容已载入"
+
+msgid "Read only"
+msgstr "只读"
+
+msgid "Unlock and edit"
+msgstr "解除锁定并编辑"
+
 msgid "Resize article outline"
 msgstr "调整大纲宽度"
 

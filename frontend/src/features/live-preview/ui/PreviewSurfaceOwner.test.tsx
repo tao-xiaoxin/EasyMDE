@@ -10,7 +10,10 @@ import type {
 import type { PreviewEnhancementPort } from '../ports/preview-enhancement-port';
 import type { PreviewScrollPort } from '../ports/preview-scroll-port';
 import type { PreviewRequestSession } from '../model/create-preview-request-session';
-import { PreviewSurfaceOwner } from './PreviewSurfaceOwner';
+import {
+  PreviewSurfaceOwner,
+  type PreviewSurfaceStatus
+} from './PreviewSurfaceOwner';
 
 const messages = {
   empty: 'Start writing Markdown to preview the article.',
@@ -46,6 +49,7 @@ function setup(options?: {
   initialHtml?: string;
   initialSignature?: string;
   onDiagnostic?: (code: string) => void;
+  onStatusChange?: (status: PreviewSurfaceStatus) => void;
 }) {
   let session!: PreviewRequestSession;
   const responses: Array<ReturnType<typeof deferred<PreviewResponse>>> = [];
@@ -81,6 +85,9 @@ function setup(options?: {
       initialRevision={0}
       messages={messages}
       onDiagnostic={onDiagnostic}
+      {...(options?.onStatusChange
+        ? { onStatusChange: options.onStatusChange }
+        : {})}
       onReady={(readySession) => {
         session = readySession.session;
       }}
@@ -142,11 +149,17 @@ describe('PreviewSurfaceOwner', () => {
   it('marks a successful response ready only after enhancement completes', async () => {
     const enhancement = deferred<void>();
     const enhance = vi.fn<PreviewEnhancementPort['enhance']>(() => enhancement.promise);
-    const current = setup({ enhance, initialHtml: '' });
+    const statuses: PreviewSurfaceStatus[] = [];
+    const current = setup({
+      enhance,
+      initialHtml: '',
+      onStatusChange: (status) => statuses.push(status)
+    });
 
     act(() => {
       current.session.schedule(request('# Current', 'current-signature'), true);
     });
+    expect(statuses.at(-1)).toBe('loading');
     await act(async () => {
       current.responses[0]?.resolve({
         html: safeHtml('<pre><code>const current = true;</code></pre>'),
@@ -160,6 +173,7 @@ describe('PreviewSurfaceOwner', () => {
       .toEqual(expect.objectContaining({ codeTheme: 'atom-one-dark' }));
     expect(current.surface.getAttribute('aria-busy')).toBe('true');
     expect(current.surface.easymdePreviewSignature).toBe('');
+    expect(statuses.at(-1)).toBe('loading');
 
     await act(async () => {
       enhancement.resolve();
@@ -167,6 +181,27 @@ describe('PreviewSurfaceOwner', () => {
     });
     expect(current.surface.getAttribute('aria-busy')).toBe('false');
     expect(current.surface.easymdePreviewSignature).toBe('current-signature');
+    expect(statuses.at(-1)).toBe('ready');
+  });
+
+  it('reports empty and failed states instead of retaining a stale ready status', async () => {
+    const statuses: PreviewSurfaceStatus[] = [];
+    const current = setup({
+      onStatusChange: (status) => statuses.push(status)
+    });
+    await act(async () => {});
+    expect(statuses.at(-1)).toBe('ready');
+
+    act(() => current.session.schedule(request(''), true));
+    expect(statuses.at(-1)).toBe('empty');
+
+    act(() => current.session.schedule(request('# Failure'), true));
+    expect(statuses.at(-1)).toBe('loading');
+    await act(async () => {
+      current.responses[0]?.reject(new Error('private response detail'));
+      await Promise.resolve();
+    });
+    expect(statuses.at(-1)).toBe('error');
   });
 
   it('does not let stale enhancement completion mark a newer response ready', async () => {

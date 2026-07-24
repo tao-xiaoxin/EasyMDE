@@ -1,15 +1,18 @@
 import { Fragment, createElement } from '@wordpress/element';
 import type { ReactNode } from 'react';
 
-import { Check, Lock } from '../../../generated/lucide-icons';
+import { Check, Lock, Unlock } from '../../../generated/lucide-icons';
 import type { PreviewSurfaceStatus } from '../../live-preview/ui/PreviewSurfaceOwner';
 import type { ImmersiveStrings } from './immersive-editor-ui-types';
 
 type Props = Readonly<{
   active: boolean;
+  canEdit: boolean;
   children: ReactNode;
+  changed: boolean;
+  editable: boolean;
   ordinaryLabel: string;
-  onRequestEdit: () => void;
+  onToggleEditable: () => void;
   status: PreviewSurfaceStatus;
   statusMessages: Readonly<{
     empty: string;
@@ -21,20 +24,26 @@ type Props = Readonly<{
 
 /**
  * Presents the existing server Preview owner in the reference Preview-mode
- * frame. The content stays read-only because Markdown remains authoritative.
+ * frame. Editable content still synchronizes into the authoritative Markdown
+ * document session owned by the Editor Root.
  */
 export function ImmersivePreviewSurface({
   active,
+  canEdit,
   children,
+  changed,
+  editable,
   ordinaryLabel,
-  onRequestEdit,
+  onToggleEditable,
   status,
   statusMessages,
   strings
 }: Props) {
   const statusLabel =
     'ready' === status
-      ? strings.previewContentLoaded
+      ? changed
+        ? strings.previewChangesRecorded
+        : strings.previewContentLoaded
       : statusMessages[status];
 
   if (!active) {
@@ -53,7 +62,9 @@ export function ImmersivePreviewSurface({
           <div className="easymde-immersive-preview-heading">
             <span>{strings.preview}</span>
             <span aria-hidden="true" />
-            <span>{strings.previewReadOnly}</span>
+            <span>
+              {editable ? strings.previewEditable : strings.previewReadOnly}
+            </span>
           </div>
           <div className="easymde-immersive-preview-status">
             <span
@@ -67,12 +78,29 @@ export function ImmersivePreviewSurface({
             </span>
             <button
               type="button"
-              className="easymde-immersive-preview-lock"
-              aria-label={strings.previewUnlockEdit}
-              title={strings.previewUnlockEdit}
-              onClick={onRequestEdit}
+              className={`easymde-immersive-preview-lock${editable ? ' is-editable' : ''}`}
+              aria-label={
+                editable
+                  ? strings.previewLockReadOnly
+                  : strings.previewUnlockEdit
+              }
+              aria-pressed={!editable}
+              disabled={!editable && !canEdit}
+              title={
+                editable
+                  ? strings.previewLockReadOnly
+                  : strings.previewUnlockEdit
+              }
+              onMouseDown={(event) => {
+                if (editable) event.preventDefault();
+              }}
+              onClick={onToggleEditable}
             >
-              <Lock aria-hidden="true" size={13} />
+              {editable ? (
+                <Unlock aria-hidden="true" size={13} />
+              ) : (
+                <Lock aria-hidden="true" size={13} />
+              )}
             </button>
           </div>
         </Fragment>

@@ -1,3 +1,4 @@
+import { undo } from '@codemirror/commands';
 import { describe, expect, it, vi } from 'vitest';
 import { EditorSelection } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
@@ -103,6 +104,32 @@ describe('createCodeMirrorDocumentSession', () => {
       submissionField.selectionDirection
     ]).toEqual([2, 9, 'forward']);
     expect(handleInput).toHaveBeenCalledTimes(1);
+
+    session.destroy();
+  });
+
+  it('keeps an externally applied visual edit in its own undo history group', () => {
+    const { container, submissionField } = createFixture('# Original');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+
+    view.dispatch({
+      changes: { from: 2, to: 10, insert: 'Source edit' },
+      userEvent: 'input.type'
+    });
+    session.applyTextChange({
+      selection: { direction: 'none', end: 21, start: 21 },
+      value: '# Source edit visual'
+    });
+
+    expect(session.getValue()).toBe('# Source edit visual');
+    expect(undo(view)).toBe(true);
+    expect(session.getValue()).toBe('# Source edit');
 
     session.destroy();
   });

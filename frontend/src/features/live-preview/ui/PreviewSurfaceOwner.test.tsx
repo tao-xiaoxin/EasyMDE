@@ -49,6 +49,7 @@ function setup(options?: {
   initialHtml?: string;
   initialSignature?: string;
   onDiagnostic?: (code: string) => void;
+  onHtmlChange?: (html: SafePreviewHtml) => void;
   onStatusChange?: (status: PreviewSurfaceStatus) => void;
 }) {
   let session!: PreviewRequestSession;
@@ -85,6 +86,9 @@ function setup(options?: {
       initialRevision={0}
       messages={messages}
       onDiagnostic={onDiagnostic}
+      {...(options?.onHtmlChange
+        ? { onHtmlChange: options.onHtmlChange }
+        : {})}
       {...(options?.onStatusChange
         ? { onStatusChange: options.onStatusChange }
         : {})}
@@ -182,6 +186,58 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface.getAttribute('aria-busy')).toBe('false');
     expect(current.surface.easymdePreviewSignature).toBe('current-signature');
     expect(statuses.at(-1)).toBe('ready');
+  });
+
+  it('hands enhanced Preview markup to visual editing with Markdown sources attached', async () => {
+    const onHtmlChange = vi.fn();
+    const current = setup({
+      initialHtml: '',
+      onHtmlChange,
+      enhance: async (surface) => {
+        const math = surface.querySelector<HTMLElement>('.easymde-math');
+        if (math) {
+          math.innerHTML = '<span class="katex">rendered math</span>';
+          math.dataset.easymdeRendered = '1';
+        }
+        const mermaid = surface.querySelector('pre:has(> code.language-mermaid)');
+        mermaid?.replaceWith(
+          Object.assign(document.createElement('div'), {
+            className: 'easymde-mermaid',
+            innerHTML: '<svg><text>rendered diagram</text></svg>'
+          })
+        );
+      }
+    });
+
+    act(() => {
+      current.session.schedule(request('# Enhanced', 'enhanced'), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        features: { math: true, mermaid: true },
+        html: safeHtml([
+          '<div class="easymde-math easymde-math-block">$$x^2$$</div>',
+          '<pre><code class="language-mermaid">flowchart TD\nA--&gt;B</code></pre>'
+        ].join(''))
+      });
+      await Promise.resolve();
+    });
+
+    expect(onHtmlChange).toHaveBeenCalledOnce();
+    const enhanced = document.createElement('article');
+    enhanced.innerHTML = onHtmlChange.mock.calls[0]?.[0] ?? '';
+    expect(enhanced.querySelector('.katex')).not.toBeNull();
+    expect(
+      enhanced
+        .querySelector('.easymde-math')
+        ?.getAttribute('data-easymde-visual-markdown-source')
+    ).toBe('$$x^2$$');
+    expect(enhanced.querySelector('.easymde-mermaid svg')).not.toBeNull();
+    expect(
+      enhanced
+        .querySelector('.easymde-mermaid')
+        ?.getAttribute('data-easymde-visual-markdown-source')
+    ).toBe('flowchart TD\nA-->B');
   });
 
   it('reports empty and failed states instead of retaining a stale ready status', async () => {

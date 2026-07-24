@@ -160,7 +160,7 @@ test('immersive outline footer keeps the reference content-sized action', () => 
 test('collapsed immersive outline preserves the reference full-height rail', () => {
   assert.match(
     css,
-    /\.easymde-immersive-outline-show\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*3;[^}]*width:\s*33\.75px;[^}]*margin-block:\s*11\.25px;[^}]*margin-inline:\s*11\.25px 0;[^}]*border:\s*1px solid #e8ebef;[^}]*border-radius:\s*15px;[^}]*background:\s*#fff;[^}]*color:\s*#94a3b8;[^}]*box-shadow:\s*none;/s,
+    /\.easymde-immersive-outline-show\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*3;[^}]*width:\s*33\.75px;[^}]*margin-block:\s*11\.25px;[^}]*margin-inline:\s*11\.25px 0;[^}]*border:\s*1px solid #e8ebef;[^}]*border-radius:\s*16px;[^}]*background:\s*#fff;[^}]*color:\s*#94a3b8;[^}]*box-shadow:\s*none;/s,
     'the collapsed outline control should be the full-height reference rail',
   );
   assert.doesNotMatch(
@@ -180,6 +180,17 @@ test('collapsed immersive outline preserves the reference full-height rail', () 
   );
 });
 
+test('immersive outline and editor panes use the reference 16px card radius', () => {
+  assert.match(
+    css,
+    /\.easymde-immersive-outline\s*\{[^}]*border-radius:\s*16px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive \.easymde-pane\s*\{[^}]*border-radius:\s*16px;/s
+  );
+});
+
 test('immersive Preview mode owns the reference canvas and article page geometry', () => {
   assert.match(
     css,
@@ -187,15 +198,23 @@ test('immersive Preview mode owns the reference canvas and article page geometry
   );
   assert.match(
     css,
-    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page\s*\{[^}]*box-sizing:\s*border-box;[^}]*max-width:\s*760px;[^}]*min-height:\s*100%;[^}]*margin:\s*0 auto;[^}]*padding:\s*36px 40px;[^}]*border:\s*1px solid #e1e5eb;[^}]*background:\s*#fff;[^}]*box-shadow:\s*0 8px 28px rgba\(15, 23, 42, \.06\);[^}]*color:\s*#0f172a;[^}]*font-size:\s*15px;[^}]*font-weight:\s*400;/s
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page\s*\{[^}]*box-sizing:\s*border-box;[^}]*max-width:\s*760px;[^}]*min-height:\s*680px;[^}]*margin:\s*0 auto;[^}]*padding:\s*36px 40px;[^}]*border:\s*1px solid #e1e5eb;[^}]*background:\s*#fff;[^}]*box-shadow:\s*0 8px 28px rgba\(15, 23, 42, \.06\);[^}]*color:\s*#0f172a;[^}]*font-size:\s*15px;[^}]*font-weight:\s*400;/s
   );
-  assert.match(
+  assert.doesNotMatch(
     css,
-    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page > \.easymde-preview\s*\{[^}]*min-height:\s*680px;[^}]*padding:\s*0;[^}]*overflow:\s*visible;/s
+    /\.easymde-editor\.is-immersive-preview[^{]*\.easymde-immersive-preview-page\s*>\s*\.easymde-preview(?:\s|[.:#>+~\[])[^{]*\{/s
   );
   assert.match(
     css,
     /\.easymde-immersive-preview-status > \.easymde-immersive-preview-lock\s*\{[^}]*display:\s*grid;[^}]*width:\s*26\.25px;[^}]*height:\s*26\.25px;[^}]*border:\s*1px solid #d8dee8;[^}]*border-radius:\s*3\.625px;[^}]*background:\s*#fff;[^}]*color:\s*#64748b;[^}]*font-size:\s*15px;[^}]*font-weight:\s*500;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-preview-status > \.easymde-immersive-preview-lock\.is-editable\s*\{[^}]*border-color:\s*#c9d7fa;[^}]*background:\s*#f4f7ff;[^}]*color:\s*#356ae6;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-visual-editor\s*\{[^}]*outline:\s*0;[^}]*cursor:\s*text;[^}]*caret-color:\s*var\(--accent, #4c6ef5\);/s
   );
   assert.match(
     css,
@@ -205,39 +224,20 @@ test('immersive Preview mode owns the reference canvas and article page geometry
     css,
     /@media \(min-width:\s*640px\)\s*\{[\s\S]*?\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page\s*\{[^}]*padding:\s*45px 52\.5px;/s
   );
+  assert.match(
+    css,
+    /@media \(max-width:\s*760px\)\s*\{[\s\S]*?\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page\s*\{[^}]*padding:\s*28px 24px;[^}]*min-height:\s*520px;/s
+  );
 });
 
-test('immersive Preview uses the local reference heading font', () => {
+test('immersive Preview leaves article typography to the selected theme', () => {
   assert.match(
     css,
     /@font-face\s*\{[^}]*font-family:\s*"EasyMDE Lora";[^}]*font-style:\s*normal;[^}]*font-weight:\s*600;[^}]*src:\s*url\("\.\.\/\.\.\/vendor\/fonts\/lora\/lora-latin-600-normal\.woff2"\) format\("woff2"\);/s
   );
-  assert.match(
+  assert.doesNotMatch(
     css,
-    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose h1\s*\{[^}]*margin:\s*24px 0 12px;[^}]*font-family:\s*"EasyMDE Lora", Georgia, "Times New Roman", serif;[^}]*font-size:\s*30px;[^}]*font-weight:\s*600;/s
-  );
-  assert.match(
-    css,
-    /#wpbody-content \.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose h2\s*\{[^}]*margin:\s*30px 0 9px;[^}]*padding:\s*0 0 7\.5px;[^}]*border-bottom:\s*2px solid var\(--accent, #dc2626\);[^}]*font-size:\s*16\.875px;[^}]*line-height:\s*1\.3;/s
-  );
-  assert.match(
-    css,
-    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose h3\s*\{[^}]*font-size:\s*15px;[^}]*font-weight:\s*600;[^}]*line-height:\s*1\.5;/s
-  );
-  assert.match(
-    css,
-    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose h4,[\s\S]*?\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose h6\s*\{[^}]*font-size:\s*13\.5px;[^}]*font-weight:\s*600;[^}]*line-height:\s*1\.5;/s
-  );
-});
-
-test('immersive Preview neutral server blockquotes match the reference spacing', () => {
-  assert.match(
-    css,
-    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose blockquote\s*\{[^}]*margin:\s*18\.75px 0;[^}]*padding:\s*15px 18\.75px;[^}]*border-inline-start:\s*3px solid var\(--accent, #dc2626\);/s
-  );
-  assert.match(
-    css,
-    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose blockquote p\s*\{\s*margin:\s*0;\s*color:\s*inherit;\s*\}/u
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose/
   );
 });
 

@@ -34,7 +34,11 @@ export type ImmersiveStrings = Readonly<{
   outline: string;
   outlineDescription: string;
   preview: string;
+  previewChangesRecorded: string;
   previewContentLoaded: string;
+  previewEditable: string;
+  previewEditorLabel: string;
+  previewLockReadOnly: string;
   previewReadOnly: string;
   previewUnlockEdit: string;
   previewMode: string;

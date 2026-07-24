@@ -300,17 +300,22 @@ export function createCodeMirrorDocumentSession({
       if (destroyed) {
         return;
       }
-
+      const currentValue = view.state.doc.toString();
+      const valueChanged = value !== currentValue;
       view.dispatch({
         annotations: [
-          Transaction.addToHistory.of(true),
+          Transaction.addToHistory.of(valueChanged),
           Transaction.userEvent.of('input')
         ],
-        changes: {
-          from: 0,
-          to: view.state.doc.length,
-          insert: value
-        },
+        ...(valueChanged
+          ? {
+              changes: {
+                from: 0,
+                to: view.state.doc.length,
+                insert: value
+              }
+            }
+          : {}),
         selection: editorSelection(selection, value.length)
       });
     },

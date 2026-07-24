@@ -46,8 +46,11 @@ Copied frontend assets are committed locally so the editor, preview, and fronten
 | @lezer/lr | 1.4.10 | https://registry.npmjs.org/@lezer/lr/-/lr-1.4.10.tgz | MIT | LR parser infrastructure required by CodeMirror language support. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | @marijn/find-cluster-break | 1.0.3 | https://registry.npmjs.org/@marijn/find-cluster-break/-/find-cluster-break-1.0.3.tgz | MIT | Unicode grapheme boundary handling used by CodeMirror state. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | crelt | 1.0.7 | https://registry.npmjs.org/crelt/-/crelt-1.0.7.tgz | MIT | DOM element construction used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| diff | 5.2.2 | https://registry.npmjs.org/diff/-/diff-5.2.2.tgz | BSD-3-Clause | Character-level change mapping used to preserve canonical Markdown during visual editing. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | lucide-react | 0.487.0 | https://registry.npmjs.org/lucide-react/-/lucide-react-0.487.0.tgz | ISC | Locked build-time icon nodes used by the immersive editor interface. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | style-mod | 4.1.3 | https://registry.npmjs.org/style-mod/-/style-mod-4.1.3.tgz | MIT | Scoped runtime style modules used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| turndown | 7.2.4 | https://registry.npmjs.org/turndown/-/turndown-7.2.4.tgz | MIT | Converts the editable Preview DOM into a visual Markdown change model. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| turndown-plugin-gfm | 1.0.2 | https://registry.npmjs.org/turndown-plugin-gfm/-/turndown-plugin-gfm-1.0.2.tgz | MIT | GFM table and task-list conversion for visual Markdown editing. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | w3c-keyname | 2.2.8 | https://registry.npmjs.org/w3c-keyname/-/w3c-keyname-2.2.8.tgz | MIT | Cross-browser keyboard key normalization used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 
 These packages are compiled into the production WordPress Editor entry. Their required license notices follow.
@@ -284,6 +287,40 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
+### diff
+
+```text
+BSD 3-Clause License
+
+Copyright (c) 2009-2015, Kevin Decker <kpdecker@gmail.com>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ### lucide-react
 
 ```text
@@ -326,6 +363,58 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+### turndown
+
+```text
+MIT License
+
+Copyright (c) 2017 Dom Christie
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### turndown-plugin-gfm
+
+```text
+MIT License
+
+Copyright (c) 2017 Dom Christie
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ### w3c-keyname

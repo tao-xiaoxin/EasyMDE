@@ -34,6 +34,7 @@ const icons = {
   ListTree: 'list-tree',
   Lock: 'lock',
   LockKeyhole: 'lock-keyhole',
+  Unlock: 'lock-open',
   LayoutGrid: 'layout-grid',
   Maximize: 'maximize',
   Minus: 'minus',

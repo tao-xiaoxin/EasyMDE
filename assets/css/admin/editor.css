@@ -458,7 +458,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     flex-direction: column;
     overflow: hidden;
     border: 1px solid #e8ebef;
-    border-radius: 15px;
+    border-radius: 16px;
     background: linear-gradient(180deg, #fdfdff 0%, #fafbfe 100%);
     box-shadow: 0 1px 2px rgba(15, 23, 42, .03);
 }
@@ -491,7 +491,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-outline-empty { padding: 0 16px; color: #94a3b8; font-size: 12px; }
 .easymde-immersive-outline-footer { display: flex; box-sizing: border-box; height: 41.25px; flex: 0 0 auto; align-items: center; padding: 0 15px; border-top: 1px solid #e8ebef; }
 .easymde-immersive-outline-footer button { display: flex; width: auto; height: auto; align-items: center; gap: 5.625px; padding: 0; border: 0; background: transparent; color: oklch(0.554 0.046 257.417); font-size: 12.5px; font-weight: 500; line-height: 18.75px; cursor: pointer; }
-.easymde-immersive-outline-show { grid-column: 1; grid-row: 3; box-sizing: border-box; display: flex; width: 33.75px; min-width: 33.75px; min-height: 0; align-self: stretch; align-items: center; justify-content: center; margin-block: 11.25px; margin-inline: 11.25px 0; padding: 0; border: 1px solid #e8ebef; border-radius: 15px; background: #fff; color: #94a3b8; box-shadow: none; cursor: pointer; transition: color 100ms, background-color 100ms; }
+.easymde-immersive-outline-show { grid-column: 1; grid-row: 3; box-sizing: border-box; display: flex; width: 33.75px; min-width: 33.75px; min-height: 0; align-self: stretch; align-items: center; justify-content: center; margin-block: 11.25px; margin-inline: 11.25px 0; padding: 0; border: 1px solid #e8ebef; border-radius: 16px; background: #fff; color: #94a3b8; box-shadow: none; cursor: pointer; transition: color 100ms, background-color 100ms; }
 .easymde-immersive-outline-show:hover { background: #f8fafc; color: #334155; }
 .easymde-immersive-outline-show svg { transform: rotate(180deg); }
 .easymde-immersive-outline-resizer { z-index: 2; grid-column: 1; grid-row: 3; display: flex; width: 14px; height: calc(100% - 22.5px); margin: 0; padding: 0; align-self: center; justify-self: end; align-items: center; justify-content: center; border: 0; cursor: col-resize; touch-action: none; transform: translateX(11.25px); }
@@ -510,7 +510,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-editor.is-immersive .easymde-immersive-pane-divider:focus-visible { outline: 0; background: linear-gradient(90deg, transparent 6.5px, #dde1e8 6.5px, #dde1e8 7.5px, transparent 7.5px); }
 .easymde-editor.is-immersive .easymde-immersive-pane-divider:active { background: linear-gradient(90deg, transparent 6.5px, #c8ced8 6.5px, #c8ced8 7.5px, transparent 7.5px); }
 [dir="rtl"] .easymde-immersive-outline { margin: 11.25px 11.25px 11.25px 2.75px; }
-.easymde-editor.is-immersive .easymde-pane { border: 1px solid #e8ebef; border-radius: 15px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .03); }
+.easymde-editor.is-immersive .easymde-pane { border: 1px solid #e8ebef; border-radius: 16px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .03); }
 .easymde-editor.is-immersive .easymde-pane-source { border-inline-end: 1px solid #e8ebef; }
 .easymde-editor.is-immersive .easymde-pane-header { display: flex; box-sizing: border-box; height: 40.5px; align-items: center; justify-content: space-between; padding: 0 15px; background: #fafbfc; color: #3d4350; font-size: 13px; font-weight: 600; letter-spacing: .3px; line-height: 40.5px; }
 .easymde-immersive-more-actions { display: grid; width: 20px; height: 20px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #b0b4bc; cursor: pointer; }
@@ -604,6 +604,12 @@ body:has(.easymde-editor.is-immersive) .wrap {
     cursor: pointer;
 }
 .easymde-immersive-preview-status > .easymde-immersive-preview-lock:hover { background: #f4f6f9; }
+.easymde-immersive-preview-status > .easymde-immersive-preview-lock.is-editable {
+    border-color: #c9d7fa;
+    background: #f4f7ff;
+    color: #356ae6;
+}
+.easymde-immersive-preview-status > .easymde-immersive-preview-lock.is-editable:hover { background: #eaf0ff; }
 .easymde-immersive-preview-status > .easymde-immersive-preview-lock:focus-visible {
     outline: 2px solid #93b4ff;
     outline-offset: 2px;
@@ -630,7 +636,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     box-sizing: border-box;
     width: 100%;
     max-width: 760px;
-    min-height: 100%;
+    min-height: 680px;
     margin: 0 auto;
     padding: 36px 40px;
     border: 1px solid #e1e5eb;
@@ -640,194 +646,35 @@ body:has(.easymde-editor.is-immersive) .wrap {
     font-size: 15px;
     font-weight: 400;
 }
-.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview {
-    width: 100%;
-    min-height: 680px;
-    padding: 0;
-    overflow: visible;
-    background: #fff;
-    cursor: default;
-    user-select: text;
+.easymde-editor.is-immersive-preview .easymde-immersive-visual-editor {
+    outline: 0;
+    cursor: text;
+    caret-color: var(--accent, #4c6ef5);
 }
-.easymde-editor.is-immersive-preview .easymde-preview.easymde-immersive-reference-prose {
-    max-width: 680px;
-    margin: 0 auto;
-    background: var(--prose-bg, #fff);
-    color: var(--prose-text, #0f172a);
-    font-family: var(--easymde-content-font-family, Georgia, "Times New Roman", serif);
-    font-size: 15px;
-    line-height: 1.85;
-    text-rendering: optimizeLegibility;
+.easymde-editor.is-immersive-preview .easymde-immersive-visual-editor::selection,
+.easymde-editor.is-immersive-preview .easymde-immersive-visual-editor ::selection {
+    background: rgba(76, 110, 245, .16);
 }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose h1,
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose h2,
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose h3,
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose h4,
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose h5,
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose h6 {
-    padding: 0;
-    border: 0;
-    background: transparent;
-    box-shadow: none;
-    color: var(--prose-text, #0f172a);
-    text-align: start;
-    text-transform: none;
-    scroll-margin-top: 28px;
+.easymde-editor.is-immersive-preview .easymde-immersive-visual-editor:focus-visible { outline: 0; }
+.easymde-editor.is-immersive-preview .easymde-immersive-visual-editor .markdown-block-applied {
+    animation: easymde-markdown-block-applied 140ms ease-out;
 }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose h1 {
-    margin: 24px 0 12px;
-    font-family: "EasyMDE Lora", Georgia, "Times New Roman", serif;
-    font-size: 30px;
-    font-weight: 600;
-    letter-spacing: 0;
-    line-height: 1.2;
+.easymde-editor.is-immersive-preview .easymde-immersive-visual-editor .markdown-inline-applied {
+    animation: easymde-markdown-inline-applied 120ms ease-out;
 }
-#wpbody-content .easymde-editor.is-immersive-preview .easymde-immersive-reference-prose h2 {
-    display: inline-block;
-    margin: 30px 0 9px;
-    padding: 0 0 7.5px;
-    border-bottom: 2px solid var(--accent, #dc2626);
-    font-family: "EasyMDE Inter", system-ui, sans-serif;
-    font-size: 16.875px;
-    font-weight: 600;
-    letter-spacing: .06em;
-    line-height: 1.3;
-    text-transform: uppercase;
+@keyframes easymde-markdown-block-applied {
+    from { opacity: .72; transform: translateY(-1px); }
+    to { opacity: 1; transform: translateY(0); }
 }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose h3 {
-    margin: 22.5px 0 6px;
-    font-family: "EasyMDE Inter", system-ui, sans-serif;
-    font-size: 15px;
-    font-weight: 600;
-    line-height: 1.5;
+@keyframes easymde-markdown-inline-applied {
+    from { background-color: rgba(76, 110, 245, .12); }
+    to { background-color: transparent; }
 }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose h4,
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose h5,
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose h6 {
-    margin: 18px 0 4.5px;
-    color: var(--prose-text, #334155);
-    font-family: "EasyMDE Inter", system-ui, sans-serif;
-    font-size: 13.5px;
-    font-weight: 600;
-    line-height: 1.5;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose p { margin: 11.25px 0; padding: 0; color: inherit; font: inherit; }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose strong { color: var(--prose-text, #0f172a); font-weight: 600; }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose em { color: inherit; font-style: italic; }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose del { color: #94a3b8; text-decoration: line-through; }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose a {
-    border-bottom: 1px solid var(--accent-light, #fca5a5);
-    color: var(--accent, #dc2626);
-    font-weight: inherit;
-    text-decoration: none;
-    transition: border-color 150ms;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose a:hover { border-bottom-color: var(--accent, #dc2626); }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose code:not(pre code) {
-    margin: 0;
-    padding: .15em .4em;
-    border-radius: 3px;
-    background: var(--accent-bg, #fef2f2);
-    color: var(--accent, #dc2626);
-    font-family: "EasyMDE JetBrains Mono", monospace;
-    font-size: .82em;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose pre {
-    margin: 18.75px 0;
-    padding: 0;
-    overflow: hidden;
-    border-radius: 6px;
-    background: var(--easymde-code-background, #0f172a);
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose pre code {
-    display: block;
-    padding: 18.75px 22.5px;
-    overflow-x: auto;
-    border-radius: 6px;
-    background: var(--easymde-code-background, #0f172a);
-    color: var(--easymde-code-color, #e2e8f0);
-    font-family: "EasyMDE JetBrains Mono", monospace;
-    font-size: 12.3px;
-    line-height: 1.7;
-    white-space: pre;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose blockquote {
-    margin: 18.75px 0;
-    padding: 15px 18.75px;
-    border: 0;
-    border-inline-start: 3px solid var(--accent, #dc2626);
-    border-radius: 0 4px 4px 0;
-    background: var(--accent-bg, #fef2f2);
-    color: #475569;
-    font-style: italic;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose blockquote p { margin: 0; color: inherit; }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose ul {
-    margin: 11.25px 0;
-    padding-inline-start: 22.5px;
-    list-style: none;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose ul li::before {
-    margin-inline-end: 9px;
-    color: var(--accent, #dc2626);
-    content: "—";
-    font-weight: 600;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose ol {
-    margin: 11.25px 0;
-    padding-inline-start: 22.5px;
-    list-style: decimal;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose li { margin: 3.75px 0; color: inherit; font-weight: inherit; line-height: inherit; }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose .task-list { padding-inline-start: 3.75px; list-style: none; }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose .task-list-item { display: flex; align-items: baseline; gap: 7.5px; }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose .task-list-item::before { content: none; }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose .task-list-item input[type="checkbox"] {
-    width: 13px;
-    height: 13px;
-    flex-shrink: 0;
-    margin-top: 3px;
-    accent-color: var(--accent, #dc2626);
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose hr {
-    height: 0;
-    margin: 30px 0;
-    border: 0;
-    border-top: 1px solid rgba(15, 23, 42, .1);
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose table {
-    width: 100%;
-    margin: 18.75px 0;
-    border: 0;
-    border-collapse: collapse;
-    font-family: "EasyMDE Inter", sans-serif;
-    font-size: 13.125px;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose th {
-    padding: 9px 13.125px;
-    border: 0;
-    background: var(--accent, #0f172a);
-    color: #f8fafc;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: .04em;
-    text-align: start;
-    text-transform: uppercase;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose td {
-    padding: 8.25px 13.125px;
-    border: 0;
-    border-bottom: 1px solid rgba(15, 23, 42, .07);
-    color: #334155;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose tr:last-child td { border-bottom: 0; }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose tr:nth-child(even) td { background: #f8fafc; }
-.easymde-editor.is-immersive-preview .easymde-immersive-reference-prose img {
-    display: block;
-    max-width: 100%;
-    height: auto;
-    margin: 11.25px 0;
-    border-radius: 4px;
+@media (prefers-reduced-motion: reduce) {
+    .easymde-editor.is-immersive-preview .easymde-immersive-visual-editor .markdown-block-applied,
+    .easymde-editor.is-immersive-preview .easymde-immersive-visual-editor .markdown-inline-applied {
+        animation: none;
+    }
 }
 @media (min-width: 640px) {
     .easymde-editor.is-immersive-preview .easymde-immersive-preview-canvas {
@@ -841,18 +688,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
 @media (max-width: 760px) {
     .easymde-editor.is-immersive-preview .easymde-immersive-preview-page {
         padding: 28px 24px;
-    }
-
-    .easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview {
         min-height: 520px;
     }
 
-    .easymde-editor.is-immersive-preview .easymde-immersive-reference-prose table {
-        display: block;
-        max-width: 100%;
-        overflow-x: auto;
-        white-space: nowrap;
-    }
 }
 .easymde-editor.is-immersive:not(.is-immersive-source):not(.is-immersive-preview) > .easymde-workspace { gap: 14px; }
 

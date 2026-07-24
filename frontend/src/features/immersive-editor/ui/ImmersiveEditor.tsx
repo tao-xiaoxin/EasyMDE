@@ -60,6 +60,7 @@ type Props = Readonly<{
   styleControls: ReactNode;
   toolbar: ReactNode;
   onCopyWechat: () => Promise<boolean>;
+  onBeforeSourceMutation: () => boolean;
   onExit: () => void;
   onFailure: (code: string) => void;
   localDraftsEnabled: boolean;
@@ -445,6 +446,7 @@ export function ImmersiveEditor({
   mode,
   scrollSyncEnabled,
   onCopyWechat,
+  onBeforeSourceMutation,
   onExit,
   onFailure,
   onLocalDraftsEnabledChange,
@@ -651,7 +653,10 @@ export function ImmersiveEditor({
         onHistory={() => setHistoryOpen(true)}
         onModeChange={changeMode}
         onSettingsChange={changeSettings}
-        onTable={() => setTableOpen(true)}
+        onTable={() => {
+          if (!onBeforeSourceMutation()) return;
+          setTableOpen(true);
+        }}
       />
       {settings.outline && 'preview' !== mode ? (
         <ImmersiveOutline

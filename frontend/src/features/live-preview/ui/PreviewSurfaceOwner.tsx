@@ -48,6 +48,9 @@ type PreviewSurfaceState = PreviewHtmlState | PreviewStatusState;
 
 export type PreviewSurfaceStatus = 'empty' | 'error' | 'loading' | 'ready';
 
+const VISUAL_MARKDOWN_SOURCE_ATTRIBUTE =
+  'data-easymde-visual-markdown-source';
+
 export type PreviewSurfaceRuntime = Readonly<{
   session: PreviewRequestSession;
   surface: HTMLElement;
@@ -65,6 +68,8 @@ type PreviewSurfaceOwnerProps = Readonly<{
   initialRevision: number;
   messages: PreviewMessages;
   onDiagnostic?: (code: string) => void;
+  onHtmlChange?: (html: SafePreviewHtml) => void;
+  onDispose?: (runtime: PreviewSurfaceRuntime) => void;
   onReady: (runtime: PreviewSurfaceRuntime) => void;
   onStatusChange?: (status: PreviewSurfaceStatus) => void;
   port: PreviewRequestPort;
@@ -92,6 +97,40 @@ function surfaceStatus(state: PreviewSurfaceState): PreviewSurfaceStatus {
     return state.kind;
   }
   return 'ready' === state.phase ? 'ready' : 'failed' === state.phase ? 'error' : 'loading';
+}
+
+function captureVisualMarkdownSources(surface: HTMLElement): Readonly<{
+  math: ReadonlyArray<string>;
+  mermaid: ReadonlyArray<string>;
+}> {
+  return {
+    math: Array.from(
+      surface.querySelectorAll<HTMLElement>('.easymde-math')
+    ).map((node) => node.textContent ?? ''),
+    mermaid: Array.from(
+      surface.querySelectorAll<HTMLElement>('pre > code.language-mermaid')
+    ).map((node) => node.textContent ?? '')
+  };
+}
+
+function annotateEnhancedVisualSources(
+  surface: HTMLElement,
+  sources: ReturnType<typeof captureVisualMarkdownSources>
+): void {
+  const mathNodes = surface.querySelectorAll<HTMLElement>('.easymde-math');
+  for (const [index, source] of sources.math.entries()) {
+    mathNodes[index]?.setAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE, source);
+  }
+
+  const mermaidNodes = surface.querySelectorAll<HTMLElement>(
+    '.easymde-mermaid, pre > code.language-mermaid'
+  );
+  for (const [index, source] of sources.mermaid.entries()) {
+    mermaidNodes[index]?.setAttribute(
+      VISUAL_MARKDOWN_SOURCE_ATTRIBUTE,
+      source
+    );
+  }
 }
 
 export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
@@ -141,14 +180,30 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       onState: publishRequestState,
       port: props.port
     });
+    const runtime = { session, surface };
     try {
-      props.onReady({ session, surface });
+      props.onReady(runtime);
     } catch (error) {
       session.destroy();
       throw error;
     }
-    return () => session.destroy();
+    return () => {
+      props.onDispose?.(runtime);
+      session.destroy();
+    };
   }, []);
+
+  useLayoutEffect(() => {
+    if (
+      'html' === state.kind
+      && state.generation > 0
+      && 'ready' === state.phase
+    ) {
+      const surface = surfaceRef.current;
+      if (!surface) throw new Error('preview-surface-missing');
+      props.onHtmlChange?.(surface.innerHTML as SafePreviewHtml);
+    }
+  }, [state, props.onHtmlChange]);
 
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
@@ -175,6 +230,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     const generation = state.generation;
     const controller = new AbortController();
     let active = true;
+    const visualSources = captureVisualMarkdownSources(surface);
 
     if (generationRef.current !== generation) return;
     void props.enhancementPort.enhance(
@@ -185,6 +241,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     ).then(
       () => {
         if (!active || generationRef.current !== generation) return;
+        annotateEnhancedVisualSources(surface, visualSources);
         setState((current) =>
           'html' === current.kind && current.generation === generation
             ? { ...current, phase: 'ready' }

@@ -65,6 +65,14 @@ test('immersive publish CSS preserves reference geometry without hiding the pass
   );
   assert.match(
     css,
+    /\.easymde-publish-visibility > div\[role="radiogroup"\]\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/s
+  );
+  assert.match(
+    css,
+    /\.easymde-publish-visibility > div\[role="radiogroup"\] label > span\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*flex:\s*0 0 14px;/s
+  );
+  assert.match(
+    css,
     /\.easymde-publish-password input:focus\s*\{[^}]*border-color:\s*#e2e8f0;[^}]*box-shadow:\s*0 0 0 2px #dbeafe;[^}]*outline:\s*0;/s
   );
   assert.match(
@@ -146,5 +154,28 @@ test('immersive outline footer keeps the reference content-sized action', () => 
   assert.match(
     css,
     /\.easymde-immersive-outline-footer button\s*\{[^}]*width:\s*auto;[^}]*height:\s*auto;[^}]*gap:\s*5\.625px;[^}]*padding:\s*0;[^}]*font-size:\s*12\.5px;[^}]*font-weight:\s*500;[^}]*line-height:\s*18\.75px;/s
+  );
+});
+
+test('collapsed immersive outline preserves the reference full-height rail', () => {
+  assert.match(
+    css,
+    /\.easymde-immersive-outline-show\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*3;[^}]*width:\s*33\.75px;[^}]*margin-block:\s*11\.25px;[^}]*margin-inline:\s*11\.25px 0;[^}]*border:\s*1px solid #e8ebef;[^}]*border-radius:\s*15px;[^}]*background:\s*#fff;[^}]*color:\s*#94a3b8;[^}]*box-shadow:\s*none;/s,
+    'the collapsed outline control should be the full-height reference rail',
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-immersive-outline-show\s*\{[^}]*position:\s*fixed;/s,
+    'the collapsed outline rail must remain in the immersive workspace grid',
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-outline-show:hover\s*\{[^}]*background:\s*#f8fafc;[^}]*color:\s*#334155;/s,
+    'the collapsed outline rail should preserve the reference hover treatment',
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive:not\(:has\(\.easymde-immersive-outline\)\):not\(:has\(\.easymde-immersive-outline-show\)\)\s*\{\s*grid-template-columns:\s*1fr;\s*\}/,
+    'the workspace should collapse to one column only when both outline surfaces are absent',
   );
 });

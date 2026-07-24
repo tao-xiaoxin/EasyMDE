@@ -217,7 +217,7 @@ function fixture(): EditorRootProps &
       excerptPlaceholder: '撰写摘要...',
       featuredImage: '特色图片',
       imageRecommendation: '建议使用横向图片',
-      imageRequirements: '支持 JPG、PNG、WebP 格式，最大 %s',
+      imageRequirements: '支持 JPG、PNG、WebP 格式，最大 5MB',
       noWriteBeforeSubmit: '提交前不会写入 WordPress。',
       openAfterPublish: '发布后打开文章页面',
       openAfterPublishDescription: '提交完成后跳转到文章页面，正文样式与当前预览一致。',
@@ -708,6 +708,19 @@ describe('EditorRoot', () => {
 
     expect(progress?.textContent).toBe('加载预览中...');
     expect(dialog.getAttribute('aria-busy')).toBe('true');
+  });
+
+  it('keeps the reference featured-image guidance independent from the direct-upload limit', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    expect(
+      within(view.getByRole('dialog', { name: '更新文章' })).getByText(
+        '支持 JPG、PNG、WebP 格式，最大 5MB'
+      )
+    ).not.toBeNull();
   });
 
   it('labels the existing WordPress Post action as update throughout immersive mode', async () => {

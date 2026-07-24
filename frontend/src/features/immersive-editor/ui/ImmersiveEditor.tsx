@@ -53,7 +53,6 @@ type Props = Readonly<{
   direction: 'ltr' | 'rtl';
   documentSession: EditorDocumentSession;
   environment: ImmersiveEnvironmentPort;
-  imageUploadMaxBytes: number;
   immersivePreferencesPort: ImmersivePreferencesPort;
   initialPreferences?: ImmersivePreferences | null;
   revisionPort: RevisionPort | null;
@@ -436,7 +435,6 @@ export function ImmersiveEditor({
   direction,
   documentSession,
   environment,
-  imageUploadMaxBytes,
   immersivePreferencesPort,
   initialPreferences = null,
   revisionPort,
@@ -617,7 +615,6 @@ export function ImmersiveEditor({
       {publishSnapshot ? (
         <ImmersivePublishDialog
           environment={environment}
-          imageUploadMaxBytes={imageUploadMaxBytes}
           snapshot={publishSnapshot}
           strings={strings}
           onClose={() => setPublishSnapshot(null)}

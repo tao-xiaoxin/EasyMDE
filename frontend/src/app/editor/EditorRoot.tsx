@@ -1056,7 +1056,6 @@ export function EditorRoot(props: EditorRootProps) {
         <ImmersiveEditor
           documentSession={documentSession}
           environment={props.immersiveEnvironment}
-          imageUploadMaxBytes={props.imageUpload.maxBytes}
           immersivePreferencesPort={props.immersivePreferencesPort}
           initialPreferences={
             'loaded' === immersivePreferences.status

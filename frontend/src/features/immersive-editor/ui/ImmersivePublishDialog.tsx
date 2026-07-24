@@ -27,11 +27,6 @@ function format(template: string, value: string | number): string {
   return template.replace('%s', String(value)).replace('%d', String(value));
 }
 
-function uploadLimit(bytes: number): string {
-  const megabytes = bytes / 1024 / 1024;
-  return `${Number.isInteger(megabytes) ? megabytes : megabytes.toFixed(1)} MB`;
-}
-
 function normalizeTag(value: string): string {
   return value.replace(/\s+/gu, ' ').trim();
 }
@@ -329,7 +324,6 @@ function PublishButtonSparkles() {
 
 export function ImmersivePublishDialog({
   environment,
-  imageUploadMaxBytes,
   onClose,
   onConfirm,
   onSelectFeaturedImage,
@@ -337,7 +331,6 @@ export function ImmersivePublishDialog({
   strings
 }: Readonly<{
   environment: ImmersiveEnvironmentPort;
-  imageUploadMaxBytes: number;
   onClose: () => void;
   onConfirm: (draft: NativePublishDraft, original: NativePublishSnapshot) => boolean;
   onSelectFeaturedImage: () => Promise<NativeFeaturedImage | null>;
@@ -524,12 +517,7 @@ export function ImmersivePublishDialog({
                 <FeaturedPlaceholder />
                 <strong>{strings.selectFeaturedImage}</strong>
                 <span>{strings.imageRecommendation}</span>
-                <small>
-                  {format(
-                    strings.imageRequirements,
-                    uploadLimit(imageUploadMaxBytes)
-                  )}
-                </small>
+                <small>{strings.imageRequirements}</small>
               </button>
             )}
 

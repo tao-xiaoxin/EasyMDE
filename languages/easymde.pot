@@ -294,10 +294,8 @@ msgstr ""
 msgid "Landscape images are recommended"
 msgstr ""
 
-#. translators: %s: WordPress upload-size limit.
 #: src/Admin/AdminAssets.php:361
-#, php-format
-msgid "Supports JPG, PNG, and WebP, max %s"
+msgid "Supports JPG, PNG, and WebP, max 5MB"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:362

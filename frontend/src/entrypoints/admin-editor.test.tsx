@@ -144,7 +144,7 @@ const bootstrap = {
     excerptPlaceholder: 'Write an excerpt...',
     featuredImage: 'Featured image',
     imageRecommendation: 'Landscape images are recommended',
-    imageRequirements: 'Supports JPG, PNG, and WebP, max %s',
+    imageRequirements: 'Supports JPG, PNG, and WebP, max 5MB',
     noWriteBeforeSubmit: 'Nothing is written before submission.',
     password: 'Password',
     passwordPlaceholder: 'Enter access password',

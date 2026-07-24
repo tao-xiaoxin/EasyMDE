@@ -357,8 +357,8 @@ final class AdminAssets {
 					'excerptPlaceholder'          => __( 'Write a short excerpt for search results, article lists, and sharing previews...', 'easymde' ),
 					'featuredImage'               => __( 'Featured image', 'easymde' ),
 					'imageRecommendation'         => __( 'Landscape images are recommended', 'easymde' ),
-					/* translators: %s: WordPress upload-size limit. */
-					'imageRequirements'           => __( 'Supports JPG, PNG, and WebP, max %s', 'easymde' ),
+					// TODO: Configure this limit with matching WordPress-side validation.
+					'imageRequirements'           => __( 'Supports JPG, PNG, and WebP, max 5MB', 'easymde' ),
 					'noWriteBeforeSubmit'         => __( 'Nothing is written to WordPress before submission.', 'easymde' ),
 					'openAfterPublish'            => __( 'Open the article page after publishing', 'easymde' ),
 					'openAfterPublishDescription' => __( 'After submission, open the article page with the same article styling as the current Preview.', 'easymde' ),

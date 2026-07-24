@@ -1175,8 +1175,8 @@ msgstr "为搜索结果、文章列表和分享预览写一段简短摘要..."
 msgid "Landscape images are recommended"
 msgstr "建议使用横向图片"
 
-msgid "Supports JPG, PNG, and WebP, max %s"
-msgstr "支持 JPG、PNG、WebP 格式，最大 %s"
+msgid "Supports JPG, PNG, and WebP, max 5MB"
+msgstr "支持 JPG、PNG、WebP 格式，最大 5MB"
 
 msgid "Nothing is written to WordPress before submission."
 msgstr "提交前不会写入 WordPress。"

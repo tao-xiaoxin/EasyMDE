@@ -15,8 +15,22 @@ type ApiFetchRuntime = Readonly<{
   nonceMiddleware?: { nonce?: unknown };
 }>;
 
+type WordPressAutosaveFields = Readonly<{
+  appleFont: HTMLInputElement;
+  codeTheme: HTMLInputElement;
+  content: HTMLTextAreaElement | null;
+  customCssId: HTMLInputElement;
+  customFont: HTMLInputElement;
+  enabled: HTMLInputElement;
+  markdown: HTMLTextAreaElement;
+  markdownTheme: HTMLInputElement;
+  serifFont: HTMLInputElement;
+  windowsFont: HTMLInputElement;
+}>;
+
 type CreateWordPressEditorSessionPortOptions = Readonly<{
   apiFetch: ApiFetchRuntime;
+  autosaveFields: WordPressAutosaveFields;
   document: Document;
   hooks: WordPressHooks;
   namespace: string;
@@ -47,11 +61,22 @@ function record(value: unknown): Record<string, unknown> | null {
 
 export function createWordPressEditorSessionPort({
   apiFetch,
+  autosaveFields,
   document,
   hooks,
   namespace
 }: CreateWordPressEditorSessionPortOptions): EditorSessionPort {
   const nonceMiddleware = apiFetch.nonceMiddleware;
+  const autosaveInputs = [
+    autosaveFields.appleFont,
+    autosaveFields.codeTheme,
+    autosaveFields.customCssId,
+    autosaveFields.customFont,
+    autosaveFields.enabled,
+    autosaveFields.markdownTheme,
+    autosaveFields.serifFont,
+    autosaveFields.windowsFont
+  ];
   if (
     !nonceMiddleware
     || 'string' !== typeof nonceMiddleware.nonce
@@ -61,6 +86,14 @@ export function createWordPressEditorSessionPort({
     || !namespace
   ) {
     throw new Error('editor-session-wordpress-runtime-unavailable');
+  }
+  if (
+    (null !== autosaveFields.content
+      && !(autosaveFields.content instanceof HTMLTextAreaElement))
+    || !(autosaveFields.markdown instanceof HTMLTextAreaElement)
+    || autosaveInputs.some((field) => !(field instanceof HTMLInputElement))
+  ) {
+    throw new Error('editor-session-autosave-fields-unavailable');
   }
 
   const postIdField = document.querySelector<HTMLInputElement>('#post_ID');
@@ -78,6 +111,24 @@ export function createWordPressEditorSessionPort({
   let sentLockRequest = false;
   let snapshot = SNAPSHOTS.ready;
   let attached = false;
+  const syncAutosaveContent = () => {
+    if (autosaveFields.content) {
+      autosaveFields.content.value = autosaveFields.markdown.value;
+    }
+  };
+  const appendAutosaveMetadata = (data: Record<string, unknown>) => {
+    const autosave = record(data.wp_autosave);
+    if (!autosave) return;
+    autosave._easymde_enabled = autosaveFields.enabled.value;
+    autosave._easymde_markdown = autosaveFields.markdown.value;
+    autosave._easymde_markdown_theme = autosaveFields.markdownTheme.value;
+    autosave._easymde_code_theme = autosaveFields.codeTheme.value;
+    autosave._easymde_custom_css_id = autosaveFields.customCssId.value;
+    autosave._easymde_custom_font = autosaveFields.customFont.value;
+    autosave._easymde_windows_font = autosaveFields.windowsFont.value;
+    autosave._easymde_apple_font = autosaveFields.appleFont.value;
+    autosave._easymde_serif_font = autosaveFields.serifFont.value;
+  };
 
   const nextStatus = (): EditorSessionStatus => {
     if (!connected) return 'connection-lost';
@@ -95,7 +146,9 @@ export function createWordPressEditorSessionPort({
   };
   const send = (value: unknown) => {
     const data = record(value);
-    if (!data || !monitorsLock || !postIdField?.value) return;
+    if (!data) return;
+    appendAutosaveMetadata(data);
+    if (!monitorsLock || !postIdField?.value) return;
     const request: Record<string, string> = { post_id: postIdField.value };
     if (lockField?.value) request.lock = lockField.value;
     data['wp-refresh-post-lock'] = request;
@@ -151,12 +204,14 @@ export function createWordPressEditorSessionPort({
   const attach = () => {
     if (attached) return;
     attached = true;
+    autosaveFields.markdown.addEventListener('input', syncAutosaveContent);
     for (const hook of HOOKS) hooks.addAction(hook, namespace, callbacks[hook]);
   };
   const detach = () => {
     if (!attached) return;
     attached = false;
     sentLockRequest = false;
+    autosaveFields.markdown.removeEventListener('input', syncAutosaveContent);
     for (const hook of HOOKS) hooks.removeAction(hook, namespace);
   };
 

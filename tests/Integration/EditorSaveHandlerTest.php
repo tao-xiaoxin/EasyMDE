@@ -267,6 +267,137 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_native_draft_autosave_keeps_markdown_and_compatibility_html_consistent()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_status' => 'draft',
+                'post_author' => $user_id,
+                'post_content' => '<p>Before autosave.</p>',
+            )
+        );
+        wp_set_current_user($user_id);
+
+        $markdown = "# Native autosave\n\nSaved through **WordPress**.";
+        $previous_post = $_POST;
+        $_POST = array(
+            'data' => array(
+                'wp_autosave' => array(
+                    'post_id' => (string) $post_id,
+                    'post_type' => 'post',
+                    '_wpnonce' => wp_create_nonce('update-post_' . $post_id),
+                    '_easymde_enabled' => '1',
+                    '_easymde_markdown' => $markdown,
+                    '_easymde_markdown_theme' => 'default',
+                    '_easymde_code_theme' => 'github',
+                    '_easymde_custom_css_id' => '',
+                    '_easymde_custom_font' => 'optima',
+                    '_easymde_windows_font' => 'microsoft-yahei',
+                    '_easymde_apple_font' => 'pingfang-sc-light',
+                    '_easymde_serif_font' => 'yes',
+                ),
+            ),
+        );
+
+        try {
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $this->theme_state_repository(),
+                function () {
+                    return true;
+                }
+            );
+            $rendered = $handler->render_markdown_post_content(
+                array(
+                    'post_type' => 'post',
+                    'post_content' => $markdown,
+                ),
+                array(
+                    'ID' => $post_id,
+                    'post_type' => 'post',
+                )
+            );
+
+            $this->assertNotSame($markdown, $rendered['post_content']);
+            $this->assertStringContainsString('<strong>WordPress</strong>', $rendered['post_content']);
+
+            wp_update_post(
+                array(
+                    'ID' => $post_id,
+                    'post_content' => $rendered['post_content'],
+                )
+            );
+            $handler->save_post_meta($post_id, get_post($post_id), true);
+
+            $this->assertSame($markdown, get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+            $this->assertSame($rendered['post_content'], get_post($post_id)->post_content);
+            $this->assertSame(
+                (new PostDocument())->render_signature($markdown, 'default', $rendered['post_content']),
+                get_post_meta($post_id, PostDocument::META_RENDER_SIGNATURE, true)
+            );
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
+    public function test_native_autosave_with_invalid_nonce_cannot_change_content_or_metadata()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_status' => 'draft',
+                'post_author' => $user_id,
+                'post_content' => '<p>Authoritative HTML.</p>',
+            )
+        );
+        wp_set_current_user($user_id);
+
+        $previous_post = $_POST;
+        $_POST = array(
+            'data' => array(
+                'wp_autosave' => array(
+                    'post_id' => (string) $post_id,
+                    'post_type' => 'post',
+                    '_wpnonce' => wp_create_nonce('wrong-autosave-action'),
+                    '_easymde_enabled' => '1',
+                    '_easymde_markdown' => '# Unauthorized',
+                ),
+            ),
+        );
+
+        try {
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $this->theme_state_repository(),
+                function () {
+                    return true;
+                }
+            );
+            $data = array(
+                'post_type' => 'post',
+                'post_content' => '<p>Authoritative HTML.</p>',
+            );
+
+            $this->assertSame(
+                $data,
+                $handler->render_markdown_post_content(
+                    $data,
+                    array(
+                        'ID' => $post_id,
+                        'post_type' => 'post',
+                    )
+                )
+            );
+            $handler->save_post_meta($post_id, get_post($post_id), true);
+            $this->assertFalse(metadata_exists('post', $post_id, PostDocument::META_MARKDOWN));
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
     public function test_removed_builtin_theme_request_is_saved_as_default_theme_state()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));

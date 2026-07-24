@@ -91,10 +91,60 @@ test('immersive header view controls preserve the reference text baseline', () =
 test('immersive header preserves the reference flex geometry without decimal truncation', () => {
   assert.match(
     css,
+    /\.easymde-immersive-header\s*\{[^}]*flex:\s*0 0 auto;/s
+  );
+  assert.match(
+    css,
     /\.easymde-immersive-brand\s*\{[^}]*width:\s*auto;[^}]*flex:\s*0 0 auto;/s
   );
   assert.match(
     css,
-    /\.easymde-immersive-header-actions\s*\{[^}]*width:\s*230\.421875px;[^}]*flex:\s*0 0 230\.421875px;/s
+    /\.easymde-immersive-title-wrap\s*\{[^}]*gap:\s*5\.625px;[^}]*flex:\s*0 1 auto;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-save-state\s*\{[^}]*flex:\s*0 0 auto;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-stats\s*\{[^}]*flex:\s*0 0 auto;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-view-switch\s*\{[^}]*flex:\s*0 0 auto;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-header-spacer\.is-primary\s*\{[^}]*flex:\s*1 1 0%;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-header-spacer\.is-secondary\s*\{[^}]*flex:\s*3 1 0%;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-header-actions\s*\{[^}]*width:\s*230\.421875px;[^}]*flex:\s*0 0 auto;/s
+  );
+});
+
+test('immersive heading trigger preserves the reference text box and weight', () => {
+  assert.match(
+    css,
+    /\.easymde-immersive-formatting \.easymde-toolbar-popover-headings \.easymde-toolbar-text-icon\s*\{[^}]*height:\s*12px;[^}]*font-size:\s*12px;[^}]*font-weight:\s*600;[^}]*line-height:\s*1;/s
+  );
+});
+
+test('immersive outline footer keeps the reference content-sized action', () => {
+  assert.match(
+    css,
+    /\.easymde-immersive-outline-footer\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*padding:\s*0 15px;/s
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-immersive-outline-footer\s*\{[^}]*background:/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-outline-footer button\s*\{[^}]*width:\s*auto;[^}]*height:\s*auto;[^}]*gap:\s*5\.625px;[^}]*padding:\s*0;[^}]*font-size:\s*12\.5px;[^}]*font-weight:\s*500;[^}]*line-height:\s*18\.75px;/s
   );
 });

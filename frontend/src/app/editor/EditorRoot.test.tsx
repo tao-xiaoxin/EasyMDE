@@ -1,5 +1,6 @@
 import { createElement } from '@wordpress/element';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
+import { EditorSelection } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -933,6 +934,68 @@ describe('EditorRoot', () => {
     expect(view.queryByText('Stale revision')).toBeNull();
   });
 
+  it('moves History selection into the active filter and aborts the hidden preview', async () => {
+    const props = fixture();
+    const revisionPort = {
+      get: vi.fn().mockImplementation(
+        (id: number) => new Promise<RevisionPreview>((resolve) => {
+          if (13 === id) {
+            resolve({
+              features: {},
+              html: '<p>Automatic revision</p>' as SafePreviewHtml,
+              id: 13
+            });
+          }
+        })
+      ),
+      list: vi.fn().mockResolvedValue([
+        {
+          date: '2026-07-23T10:00:00Z',
+          dateLabel: '10:00',
+          id: 12,
+          restoreUrl: 'https://example.test/wp-admin/revision.php?revision=12',
+          title: 'Manual revision',
+          type: 'manual' as const
+        },
+        {
+          date: '2026-07-23T11:00:00Z',
+          dateLabel: '11:00',
+          id: 13,
+          restoreUrl: 'https://example.test/wp-admin/revision.php?revision=13',
+          title: 'Automatic revision',
+          type: 'auto' as const
+        }
+      ])
+    };
+    const view = render(<EditorRoot {...props} revisionPort={revisionPort} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '历史记录' }));
+
+    await waitFor(() =>
+      expect(revisionPort.get).toHaveBeenCalledWith(
+        12,
+        expect.any(AbortSignal)
+      )
+    );
+    const manualSignal = revisionPort.get.mock.calls[0]?.[1] as AbortSignal;
+    fireEvent.change(view.getByRole('combobox', { name: '全部' }), {
+      target: { value: 'auto' }
+    });
+
+    await waitFor(() =>
+      expect(revisionPort.get).toHaveBeenCalledWith(
+        13,
+        expect.any(AbortSignal)
+      )
+    );
+    expect(manualSignal.aborted).toBe(true);
+    expect(view.queryByRole('button', { name: '手动保存10:00' })).toBeNull();
+    fireEvent.click(view.getByRole('button', { name: '恢复到这个版本' }));
+    expect(props.restoreRevision).toHaveBeenCalledWith(
+      'https://example.test/wp-admin/revision.php?revision=13'
+    );
+  });
+
   it('layers Escape handling and restores focus to the immersive entry after exit', async () => {
     const props = fixture();
     const restoreFavicon = vi.fn();
@@ -1042,6 +1105,49 @@ describe('EditorRoot', () => {
       ).toBe(true);
     }
     expect(view.queryByText(/AI/u)).toBeNull();
+  });
+
+  it('updates the immersive heading label and cursor status for selection-only changes', async () => {
+    const props = fixture();
+    props.submissionField.value = '# First\nBody';
+    props.submissionField.defaultValue = '# First\nBody';
+    props.submissionField.setSelectionRange(0, 0);
+    const toolbar = {
+      ...props.toolbar,
+      commands: [
+        ...props.toolbar.commands,
+        {
+          action: 'heading',
+          group: 'heading',
+          icon: 'heading',
+          id: 'heading1',
+          label: 'Heading 1',
+          level: 1,
+          surface: 'heading-menu'
+        }
+      ]
+    } as const;
+    const view = render(<EditorRoot {...props} toolbar={toolbar} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    const heading = view.getByRole('button', { name: 'Headings' });
+    expect(
+      heading.querySelector('.easymde-toolbar-text-icon')?.textContent
+    ).toBe('H1');
+    expect(view.getByText('行 1, 列 1')).not.toBeNull();
+
+    const input = view.container.querySelector<HTMLElement>('.cm-content');
+    const editor = input ? EditorView.findFromDOM(input) : null;
+    act(() => {
+      editor?.dispatch({ selection: EditorSelection.cursor(8) });
+    });
+
+    await waitFor(() => {
+      expect(
+        heading.querySelector('.easymde-toolbar-text-icon')?.textContent
+      ).toBe('H');
+      expect(view.getByText('行 2, 列 1')).not.toBeNull();
+    });
   });
 
   it('does not resurrect immersive-only feedback after leaving the reference surface', async () => {
@@ -1181,6 +1287,18 @@ describe('EditorRoot', () => {
     const separator = view.getByRole('separator', {
       name: '调整大纲宽度'
     });
+    const outlineActions = view.getAllByRole('button', {
+      name: '收起大纲'
+    });
+    const footerAction = outlineActions.at(-1);
+    if (!footerAction) throw new Error('outline-footer-control-unavailable');
+    expect(
+      Array.from(footerAction.childNodes).some(
+        (node) =>
+          Node.TEXT_NODE === node.nodeType &&
+          '收起大纲' === node.textContent?.trim()
+      )
+    ).toBe(true);
 
     expect(separator.getAttribute('aria-valuenow')).toBe('240');
     fireEvent.pointerDown(separator, {

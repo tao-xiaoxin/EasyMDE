@@ -268,7 +268,7 @@ export function ImmersiveOutline({
         <div className="easymde-immersive-outline-footer">
           <button type="button" onClick={() => onOpenChange(false)}>
             <ChevronsLeft size={13} strokeWidth={2} />
-            <span>{strings.hideOutline}</span>
+            {strings.hideOutline}
           </button>
         </div>
       </aside>

@@ -92,6 +92,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     grid-column: 1 / -1;
     grid-row: 1;
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
     gap: 15px;
     min-width: 0;
@@ -124,7 +125,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-brand-mark > svg { flex: 0 0 15px; color: #3b82f6; }
 .easymde-immersive-brand-name { color: #334155; font-size: 13px; font-weight: 600; letter-spacing: 0; line-height: 19.5px; }
 .easymde-immersive-brand-divider { margin-inline: 1.875px; color: rgba(15, 23, 42, .07); font-size: 16.875px; line-height: 26.25px; }
-.easymde-immersive-title-wrap { min-width: 0; flex: 0 1 auto; }
+.easymde-immersive-title-wrap { min-width: 0; gap: 5.625px; flex: 0 1 auto; }
 .easymde-immersive-header-spacer.is-title-gap { width: 11.25px; flex: 0 0 auto; }
 .easymde-immersive-title-field { display: flex; min-width: 72px; max-width: 320px; align-items: center; gap: 5.625px; }
 .easymde-immersive-title-field > svg { flex: 0 0 auto; color: #94a3b8; }
@@ -156,15 +157,15 @@ body:has(.easymde-editor.is-immersive) .wrap {
     overflow-y: auto;
     background: transparent;
 }
-.easymde-immersive-save-state { display: flex; height: 26.25px; align-items: center; gap: 5.625px; padding: 0 3.75px; color: #64748b; font-size: 11.25px; white-space: nowrap; }
+.easymde-immersive-save-state { display: flex; height: 26.25px; flex: 0 0 auto; align-items: center; gap: 5.625px; padding: 0 3.75px; color: #64748b; font-size: 11.25px; white-space: nowrap; }
 .easymde-immersive-save-state svg { color: #10b981; }
 .easymde-immersive-save-state.is-dirty svg { color: #f59e0b; }
-.easymde-immersive-stats { display: flex; height: 15px; gap: 15px; color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11.25px; line-height: 15px; white-space: nowrap; }
+.easymde-immersive-stats { display: flex; height: 15px; flex: 0 0 auto; gap: 15px; color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11.25px; line-height: 15px; white-space: nowrap; }
 .easymde-immersive-header-spacer { min-width: 0; }
-.easymde-immersive-header-spacer.is-primary { flex: 1 1 0; }
-.easymde-immersive-header-spacer.is-secondary { flex: 3 1 0; }
-.easymde-immersive-header-actions { width: 230.421875px; gap: 11.25px; flex: 0 0 230.421875px; justify-content: flex-end; }
-.easymde-immersive-view-switch { gap: 3.75px; margin: 0; padding: 1.875px; border: 1px solid #e2e8f0; border-radius: 5.625px; background: #fff; }
+.easymde-immersive-header-spacer.is-primary { flex: 1 1 0%; }
+.easymde-immersive-header-spacer.is-secondary { flex: 3 1 0%; }
+.easymde-immersive-header-actions { width: 230.421875px; gap: 11.25px; flex: 0 0 auto; justify-content: flex-end; }
+.easymde-immersive-view-switch { flex: 0 0 auto; gap: 3.75px; margin: 0; padding: 1.875px; border: 1px solid #e2e8f0; border-radius: 5.625px; background: #fff; }
 .easymde-immersive-view-switch button {
     display: flex;
     align-items: center;
@@ -244,7 +245,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-formatting .easymde-toolbar-button:focus { border-color: #e2e8f0; background: rgba(0, 0, 0, .045); color: #0f172a; box-shadow: none; transform: none; }
 .easymde-immersive-formatting .easymde-toolbar-button-menu { width: 48px; min-width: 48px; gap: 4px; padding: 0 7.5px; }
 .easymde-immersive-formatting .easymde-toolbar-button-menu > svg { margin-top: 1px; }
-.easymde-immersive-formatting .easymde-toolbar-popover-headings .easymde-toolbar-text-icon { width: 18px; min-width: 18px; border-radius: 0; background: transparent; font-weight: 500; }
+.easymde-immersive-formatting .easymde-toolbar-popover-headings .easymde-toolbar-text-icon { width: 18px; min-width: 18px; height: 12px; border-radius: 0; background: transparent; font-size: 12px; font-weight: 600; line-height: 1; }
 .easymde-toolbar-popover-headings .easymde-toolbar-popover.is-immersive-heading-menu {
     position: fixed;
     top: auto;
@@ -480,8 +481,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-outline-dash { flex: 0 0 auto; color: #d3d6dc; font-size: 12px; user-select: none; }
 .easymde-immersive-outline button b { color: #171a20; font: inherit; }
 .easymde-immersive-outline-empty { padding: 0 16px; color: #94a3b8; font-size: 12px; }
-.easymde-immersive-outline-footer { box-sizing: border-box; height: 41.25px; flex: 0 0 auto; border-top: 1px solid #e8ebef; background: #fbfcfe; }
-.easymde-immersive-outline-footer button { display: flex; width: 100%; height: 100%; align-items: center; gap: 6px; padding: 0 16px; border: 0; background: transparent; color: oklch(0.554 0.046 257.417); font-size: 12.5px; cursor: pointer; }
+.easymde-immersive-outline-footer { display: flex; box-sizing: border-box; height: 41.25px; flex: 0 0 auto; align-items: center; padding: 0 15px; border-top: 1px solid #e8ebef; }
+.easymde-immersive-outline-footer button { display: flex; width: auto; height: auto; align-items: center; gap: 5.625px; padding: 0; border: 0; background: transparent; color: oklch(0.554 0.046 257.417); font-size: 12.5px; font-weight: 500; line-height: 18.75px; cursor: pointer; }
 .easymde-immersive-outline-show { position: fixed; z-index: 100110; bottom: 18px; inset-inline-start: 18px; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; color: #475569; box-shadow: 0 2px 8px rgba(15, 23, 42, .08); cursor: pointer; }
 .easymde-immersive-outline-show svg { transform: rotate(180deg); }
 .easymde-immersive-outline-resizer { z-index: 2; grid-column: 1; grid-row: 3; display: flex; width: 14px; height: calc(100% - 22.5px); margin: 0; padding: 0; align-self: center; justify-self: end; align-items: center; justify-content: center; border: 0; cursor: col-resize; touch-action: none; transform: translateX(11.25px); }

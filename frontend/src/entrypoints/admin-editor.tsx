@@ -207,6 +207,11 @@ export function mountAdminEditor(
   const nativeEditorCandidate = documentRef.querySelector('#postdivrich');
   const nativeEditor =
     nativeEditorCandidate instanceof HTMLElement ? nativeEditorCandidate : null;
+  const nativeContentCandidate = documentRef.querySelector('#content');
+  const nativeContentField =
+    nativeContentCandidate instanceof HTMLTextAreaElement
+      ? nativeContentCandidate
+      : null;
   const input = (selector: string, code: string) =>
     requiredElement(
       documentRef,
@@ -229,6 +234,10 @@ export function mountAdminEditor(
       'appearance-native-fields-unavailable'
     )
   };
+  const enabledField = input(
+    '#easymde-enabled-field',
+    'autosave-native-fields-unavailable'
+  );
   const fontFields = {
     appleFont: input(
       '#easymde-apple-font-field',
@@ -369,6 +378,13 @@ export function mountAdminEditor(
     scrollSyncPort: createBrowserScrollSync(windowRef),
     sessionPort: createWordPressEditorSessionPort({
       apiFetch,
+      autosaveFields: {
+        ...appearanceFields,
+        ...fontFields,
+        content: nativeContentField,
+        enabled: enabledField,
+        markdown: submissionField
+      },
       document: documentRef,
       hooks: runtime.wordpress.hooks,
       namespace: 'easymde/editor-root'

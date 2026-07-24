@@ -351,6 +351,13 @@ function HistoryDialog({
   const filteredItems = items?.filter(
     (item) => 'all' === filter || item.type === filter
   );
+  const changeFilter = (nextFilter: typeof filter) => {
+    const nextItems = items?.filter(
+      (item) => 'all' === nextFilter || item.type === nextFilter
+    );
+    setFilter(nextFilter);
+    setSelected(nextItems?.[0] ?? null);
+  };
   const selectedLabel =
     'manual' === selected?.type ? strings.manualSave : strings.autoSave;
   const filteredCount = filteredItems?.length ?? 0;
@@ -385,7 +392,7 @@ function HistoryDialog({
           <div className="easymde-history-filter">
             <span>{historyCount}</span>
             <label>
-              <select value={filter} aria-label={strings.historyAll} onChange={(event) => setFilter(event.currentTarget.value as typeof filter)}>
+              <select value={filter} aria-label={strings.historyAll} onChange={(event) => changeFilter(event.currentTarget.value as typeof filter)}>
                 <option value="all">{strings.historyAll}</option>
                 <option value="auto">{strings.autoSave}</option>
                 <option value="manual">{strings.manualSave}</option>

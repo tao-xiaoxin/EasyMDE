@@ -29,6 +29,7 @@ final class EditorSaveHandler {
 
 	public function register_hooks() {
 		add_action( 'save_post', array( $this, 'save_post_meta' ), 10, 3 );
+		add_action( 'wp_creating_autosave', array( $this, 'materialize_native_autosave_meta' ), 20, 2 );
 		add_filter( 'wp_insert_post_data', array( $this, 'render_markdown_post_content' ), 10, 2 );
 		add_filter( 'redirect_post_location', array( $this, 'redirect_after_native_publish' ), 10, 2 );
 	}
@@ -65,15 +66,12 @@ final class EditorSaveHandler {
 	public function save_post_meta( $post_id, $post, $update ) {
 		unset( $update );
 
-		if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
-			return;
-		}
-
 		if ( wp_is_post_revision( $post_id ) || ! $post || ! $this->post_document->is_supported_post_type( $post->post_type ) ) {
 			return;
 		}
 
-		if ( ! $this->has_valid_save_request() ) {
+		$request = $this->valid_save_request( $post_id );
+		if ( ! $request ) {
 			return;
 		}
 
@@ -87,10 +85,8 @@ final class EditorSaveHandler {
 			return;
 		}
 
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotValidated,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- has_valid_save_request() verifies the nonce/key; Markdown is stored as raw source and sanitized on render.
-		$markdown = wp_unslash( $_POST['easymde_markdown'] );
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- has_valid_save_request() verifies the EasyMDE save nonce before request sanitization.
-		$theme_state = $this->theme_state_repository->sanitize_theme_state_from_request( $_POST, $post_id );
+		$markdown    = wp_unslash( $request['source']['easymde_markdown'] );
+		$theme_state = $this->theme_state_repository->sanitize_theme_state_from_request( $request['source'], $post_id );
 
 		$this->post_document->mark_enabled( $post_id );
 		update_post_meta( $post_id, PostDocument::META_MARKDOWN, $markdown );
@@ -108,20 +104,50 @@ final class EditorSaveHandler {
 			$this->current_render_signature( $post_id, $markdown, $theme_state['markdownTheme'] )
 		);
 
-		$this->theme_state_repository->save_user_defaults( $theme_state );
+		if ( ! $request['autosave'] ) {
+			$this->theme_state_repository->save_user_defaults( $theme_state );
+		}
 		unset( $this->pending_render_signatures[ $post_id ] );
 	}
 
 	public function render_markdown_post_content( $data, $postarr ) {
-		if ( ! $this->has_valid_save_request() ) {
+		$is_revision = isset( $postarr['post_type'] ) && 'revision' === $postarr['post_type'];
+		$post_id     = $is_revision && ! empty( $postarr['post_parent'] )
+			? absint( $postarr['post_parent'] )
+			: ( ! empty( $postarr['ID'] ) ? absint( $postarr['ID'] ) : 0 );
+		$request = $this->valid_save_request( $post_id );
+		if ( ! $request ) {
 			return $data;
 		}
 
-		if ( empty( $postarr['post_type'] ) || ! $this->post_document->is_supported_post_type( $postarr['post_type'] ) ) {
+		if ( $is_revision && ! $request['autosave'] ) {
 			return $data;
 		}
 
-		if ( ! empty( $postarr['ID'] ) && ! current_user_can( 'edit_post', absint( $postarr['ID'] ) ) ) {
+		$owner_id    = $is_revision && ! empty( $postarr['post_parent'] )
+			? absint( $postarr['post_parent'] )
+			: $request['post_id'];
+		$owner       = $owner_id ? get_post( $owner_id ) : null;
+		if (
+			empty( $postarr['post_type'] )
+			|| (
+				! $is_revision
+				&& ! $this->post_document->is_supported_post_type( $postarr['post_type'] )
+			)
+			|| (
+				$is_revision
+				&& (
+					! $owner
+					|| ! $this->post_document->is_supported_post_type( $owner->post_type )
+					|| $owner_id !== $request['post_id']
+				)
+			)
+		) {
+			return $data;
+		}
+
+		$capability_post_id = $owner_id ? $owner_id : $post_id;
+		if ( $capability_post_id && ! current_user_can( 'edit_post', $capability_post_id ) ) {
 			return $data;
 		}
 
@@ -131,10 +157,8 @@ final class EditorSaveHandler {
 			return $data;
 		}
 
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotValidated,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- has_valid_save_request() verifies the nonce/key; Markdown is stored as raw source and sanitized on render.
-		$markdown = wp_unslash( $_POST['easymde_markdown'] );
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- has_valid_save_request() verifies the EasyMDE save nonce before request sanitization.
-		$theme_state = $this->theme_state_repository->sanitize_theme_state_from_request( $_POST, isset( $postarr['ID'] ) ? absint( $postarr['ID'] ) : 0 );
+		$markdown    = wp_unslash( $request['source']['easymde_markdown'] );
+		$theme_state = $this->theme_state_repository->sanitize_theme_state_from_request( $request['source'], $owner_id );
 
 		try {
 			$data['post_content'] = MarkdownRenderer::render( $markdown, $theme_state['markdownTheme'] );
@@ -157,6 +181,62 @@ final class EditorSaveHandler {
 		return $data;
 	}
 
+	public function materialize_native_autosave_meta( $new_autosave, $is_update = false ) {
+		unset( $is_update );
+
+		if ( ! is_array( $new_autosave ) || empty( $new_autosave['ID'] ) || empty( $new_autosave['post_parent'] ) ) {
+			return;
+		}
+
+		$revision_id = absint( $new_autosave['ID'] );
+		$parent_id   = absint( $new_autosave['post_parent'] );
+		$request     = $this->valid_save_request( $parent_id );
+		if ( ! $revision_id || ! $request || ! $request['autosave'] ) {
+			return;
+		}
+
+		if ( ! $this->is_renderer_available() ) {
+			$this->abort_renderer_unavailable();
+
+			return;
+		}
+
+		$markdown    = wp_unslash( $request['source']['easymde_markdown'] );
+		$theme_state = $this->theme_state_repository->sanitize_theme_state_from_request( $request['source'], $parent_id );
+		try {
+			$rendered_content = MarkdownRenderer::render( $markdown, $theme_state['markdownTheme'] );
+		} catch ( \Throwable $exception ) {
+			unset( $exception );
+
+			$this->abort_renderer_unavailable();
+
+			return;
+		}
+
+		$metadata = array(
+			PostDocument::META_ENABLED             => '1',
+			PostDocument::META_MARKDOWN            => $markdown,
+			PostDocument::META_MARKDOWN_THEME      => $theme_state['markdownTheme'],
+			PostDocument::META_CODE_THEME          => $theme_state['codeTheme'],
+			PostDocument::META_CUSTOM_CSS_ID       => $theme_state['customCssId'],
+			PostDocument::META_CUSTOM_CSS_SNAPSHOT => $theme_state['customCss'],
+			PostDocument::META_CUSTOM_FONT         => $theme_state['customFont'],
+			PostDocument::META_WINDOWS_FONT        => $theme_state['windowsFont'],
+			PostDocument::META_APPLE_FONT          => $theme_state['appleFont'],
+			PostDocument::META_SERIF_FONT          => $theme_state['serifFont'],
+			PostDocument::META_RENDER_SIGNATURE    => $this->post_document->render_signature(
+				$markdown,
+				$theme_state['markdownTheme'],
+				$rendered_content
+			),
+		);
+
+		foreach ( $metadata as $key => $value ) {
+			delete_metadata( 'post', $revision_id, $key );
+			add_metadata( 'post', $revision_id, $key, $value );
+		}
+	}
+
 	private function has_valid_save_request() {
 		if ( ! isset( $_POST['easymde_nonce'], $_POST['easymde_markdown'], $_POST['easymde_enabled'] ) ) {
 			return false;
@@ -169,6 +249,82 @@ final class EditorSaveHandler {
 		$nonce = sanitize_text_field( wp_unslash( $_POST['easymde_nonce'] ) );
 
 		return wp_verify_nonce( $nonce, 'easymde_save_markdown' );
+	}
+
+	private function valid_save_request( $post_id = 0 ) {
+		if ( $this->has_valid_save_request() ) {
+			return array(
+				'autosave' => false,
+				'post_id'  => absint( $post_id ),
+				'source'   => $_POST,
+			);
+		}
+
+		$autosave = $this->native_autosave_request();
+		if ( ! $autosave ) {
+			return false;
+		}
+
+		$request_post_id = absint( $autosave['post_id'] );
+		if ( $post_id && $post_id !== $request_post_id ) {
+			return false;
+		}
+
+		$source = array();
+		foreach (
+			array(
+				'enabled',
+				'markdown',
+				'markdown_theme',
+				'code_theme',
+				'custom_css_id',
+				'custom_font',
+				'windows_font',
+				'apple_font',
+				'serif_font',
+			) as $field
+		) {
+			$key = '_easymde_' . $field;
+			if ( array_key_exists( $key, $autosave ) ) {
+				$source[ 'easymde_' . $field ] = $autosave[ $key ];
+			}
+		}
+
+		return array(
+			'autosave' => true,
+			'post_id'  => $request_post_id,
+			'source'   => $source,
+		);
+	}
+
+	private function native_autosave_request() {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- The native action nonce is verified below after the request shape is validated.
+		if ( ! isset( $_POST['data']['wp_autosave'] ) || ! is_array( $_POST['data']['wp_autosave'] ) ) {
+			return false;
+		}
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- The native action nonce is verified below.
+		$autosave = $_POST['data']['wp_autosave'];
+		if (
+			! isset( $autosave['post_id'], $autosave['_wpnonce'], $autosave['_easymde_enabled'], $autosave['_easymde_markdown'] )
+			|| '1' !== sanitize_text_field( wp_unslash( $autosave['_easymde_enabled'] ) )
+		) {
+			return false;
+		}
+
+		$post_id = absint( $autosave['post_id'] );
+		$post    = $post_id ? get_post( $post_id ) : null;
+		$nonce   = sanitize_text_field( wp_unslash( $autosave['_wpnonce'] ) );
+		if (
+			! $post
+			|| ! $this->post_document->is_supported_post_type( $post->post_type )
+			|| ! current_user_can( 'edit_post', $post_id )
+			|| ! wp_verify_nonce( $nonce, 'update-post_' . $post_id )
+		) {
+			return false;
+		}
+
+		return $autosave;
 	}
 
 	private function is_renderer_available() {

@@ -255,6 +255,34 @@ function postPersistenceSnapshot(postId) {
   };
 }
 
+function postAutosaveId(postId) {
+  const value = runWp([
+    'eval',
+    `$autosave = wp_get_post_autosave(${Number.parseInt(String(postId), 10)}); echo $autosave ? (int) $autosave->ID : 0;`
+  ]);
+
+  return Number.parseInt(value || '0', 10);
+}
+
+async function triggerNativeAutosave(page) {
+  return page.evaluate(() => new Promise((resolve, reject) => {
+    const runtime = window.wp?.autosave?.server;
+    if (!runtime || 'function' !== typeof runtime.triggerSave) {
+      reject(new Error('wordpress-autosave-runtime-unavailable'));
+      return;
+    }
+    const timer = window.setTimeout(
+      () => reject(new Error('wordpress-autosave-timeout')),
+      15_000
+    );
+    window.jQuery(document).one('after-autosave', (_event, data) => {
+      window.clearTimeout(timer);
+      resolve(data);
+    });
+    runtime.triggerSave();
+  }));
+}
+
 function canonicalMarkdownForSite(pluginAssetUrl) {
   return fullCapabilityMarkdown.replace(
     /https:\/\/raw\.githubusercontent\.com\/tao-xiaoxin\/EasyMDE\/main\/docs\/assets\/easymde-logo-rounded\.png/g,
@@ -1478,8 +1506,16 @@ test.describe('EasyMDE editor workflows', () => {
     );
     await publishDialog.getByRole('textbox', { name: labels.addTags }).press('Enter');
     await publishDialog.locator('textarea').fill('Synthetic excerpt');
-    await publishDialog.getByRole('checkbox', { name: categoryName }).check();
-    await publishDialog.getByRole('checkbox', { name: labels.sticky }).check();
+    const categoryCheckbox = publishDialog.getByRole('checkbox', {
+      name: categoryName
+    });
+    await categoryCheckbox.locator('xpath=..').click();
+    await expect(categoryCheckbox).toBeChecked();
+    const stickyCheckbox = publishDialog.getByRole('checkbox', {
+      name: labels.sticky
+    });
+    await stickyCheckbox.locator('xpath=..').click();
+    await expect(stickyCheckbox).toBeChecked();
 
     await page.locator('#publish').evaluate((button) => {
       button.disabled = true;
@@ -1657,6 +1693,107 @@ test.describe('EasyMDE editor workflows', () => {
     await page.goto(revisionUrl.href);
     expect(new URL(page.url()).searchParams.get('revision')).toMatch(/^\d+$/);
     await expect(page.locator('.restore-revision')).toBeVisible();
+  });
+
+  test('bridges Markdown edits into native WordPress autosaves and the automatic history filter', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const marker = `Native autosave ${testSlug(testInfo)}`;
+    const title = `React autosave ${testSlug(testInfo)}`;
+    const markdown = `# Autosaved Markdown\n\n${marker}`;
+    const postId = Number.parseInt(
+      runWp([
+        'post',
+        'create',
+        `--post_author=${user.id}`,
+        '--post_status=publish',
+        `--post_title=${title}`,
+        '--post_content=<p>Published compatibility content.</p>',
+        '--porcelain'
+      ]),
+      10
+    );
+    runWp(['post', 'meta', 'update', String(postId), '_easymde_enabled', '1']);
+    runWp(['post', 'meta', 'update', String(postId), '_easymde_markdown', '# Published Markdown']);
+    runWp(['post', 'meta', 'update', String(postId), '_easymde_markdown_theme', 'default']);
+
+    await login(page, user);
+    await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    const before = postPersistenceSnapshot(postId);
+    await fillMarkdownAndWaitForPreview(page, markdown, marker);
+    await expect(page.locator('#content')).toHaveValue(markdown);
+
+    const autosaveResponse = await triggerNativeAutosave(page);
+    expect(autosaveResponse).toMatchObject({ success: true });
+    await expect.poll(() => postAutosaveId(postId)).toBeGreaterThan(0);
+
+    const autosaveId = postAutosaveId(postId);
+    expect(postMetaValue(autosaveId, '_easymde_markdown')).toBe(markdown);
+    const updatedMarkdown = `${markdown}\n\nUpdated through **native autosave**.`;
+    await fillMarkdownAndWaitForPreview(page, updatedMarkdown, 'native autosave');
+    expect(await triggerNativeAutosave(page)).toMatchObject({ success: true });
+    await expect.poll(() => postMetaValue(autosaveId, '_easymde_markdown')).toBe(
+      updatedMarkdown
+    );
+    expect(postAutosaveId(postId)).toBe(autosaveId);
+    expect(
+      runWp(['post', 'get', String(autosaveId), '--field=post_content'])
+    ).toContain('<strong>native autosave</strong>');
+    const after = postPersistenceSnapshot(postId);
+    expect({
+      ...after,
+      revisions: before.revisions
+    }).toEqual(before);
+
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.getByRole('button', { name: labels.history }).click();
+    const dialog = page.getByRole('dialog', { name: labels.historyVersions });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('combobox', { name: labels.historyAll }).selectOption('auto');
+    await expect(dialog.locator('.easymde-history-list > button')).toHaveCount(1);
+    await expect(dialog.locator('.easymde-history-list > button')).toContainText(labels.autoSave);
+    await expect(dialog.locator('.easymde-immersive-revision-preview')).toContainText('native autosave');
+  });
+
+  test('native draft autosave preserves Markdown authority and rendered compatibility HTML', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const marker = `Draft autosave ${testSlug(testInfo)}`;
+    const markdown = `# Draft Markdown\n\n${marker} through **WordPress**.`;
+    const postId = Number.parseInt(
+      runWp([
+        'post',
+        'create',
+        `--post_author=${user.id}`,
+        '--post_status=draft',
+        '--post_title=React draft autosave',
+        '--post_content=<p>Initial compatibility content.</p>',
+        '--porcelain'
+      ]),
+      10
+    );
+    runWp(['post', 'meta', 'update', String(postId), '_easymde_enabled', '1']);
+    runWp(['post', 'meta', 'update', String(postId), '_easymde_markdown', '# Initial Markdown']);
+    runWp(['post', 'meta', 'update', String(postId), '_easymde_markdown_theme', 'default']);
+
+    await login(page, user);
+    await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
+    await fillMarkdownAndWaitForPreview(page, markdown, marker);
+
+    const autosaveResponse = await triggerNativeAutosave(page);
+    expect(autosaveResponse).toMatchObject({ success: true });
+    await expect.poll(
+      () => postMetaValue(postId, '_easymde_markdown')
+    ).toBe(markdown);
+
+    const after = postPersistenceSnapshot(postId);
+    expect(after.status).toBe('draft');
+    expect(after.content).not.toBe(markdown);
+    expect(after.content).toContain('<strong>WordPress</strong>');
+    expect(postAutosaveId(postId)).toBe(0);
+    expect(postMetaValue(postId, '_easymde_render_signature')).not.toBe('');
   });
 
   test('loads local preview enhancements and exports only the stable server preview', async ({ page }, testInfo) => {

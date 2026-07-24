@@ -89,7 +89,10 @@ import {
   type LocalDraftSession,
   type LocalDraftSessionStatus
 } from '../../features/local-drafts/local-draft-session';
-import { createToolbarCommandSession } from '../../features/toolbar/toolbar-command-session';
+import {
+  activeHeadingLevel,
+  createToolbarCommandSession
+} from '../../features/toolbar/toolbar-command-session';
 import {
   EditorToolbar,
   type EditorToolbarSession,
@@ -259,6 +262,13 @@ function ActiveToolbar({
   toolbar,
   variant = 'default'
 }: ActiveToolbarProps) {
+  const getHeadingLevel = useCallback(() =>
+    activeHeadingLevel({
+      selection: session.document.getSelection(),
+      value: session.document.getValue()
+    }), [session]);
+  const [currentHeadingLevel, setCurrentHeadingLevel] =
+    useState(getHeadingLevel);
   const commandSessionRef = useRef<ReturnType<
     typeof createToolbarCommandSession
   > | null>(null);
@@ -301,9 +311,23 @@ function ActiveToolbar({
   }, [executeCommand, editorRoot, prepareToolbarShortcuts]);
 
   useEffect(() => () => commandSession.dispose(), [commandSession]);
+  useEffect(() => {
+    const updateHeadingLevel = () =>
+      setCurrentHeadingLevel(getHeadingLevel());
+    updateHeadingLevel();
+    const unsubscribeDocument =
+      session.document.subscribe(updateHeadingLevel);
+    const unsubscribeSelection =
+      session.document.subscribeSelection(updateHeadingLevel);
+    return () => {
+      unsubscribeDocument();
+      unsubscribeSelection();
+    };
+  }, [getHeadingLevel, session]);
 
   return (
     <EditorToolbar
+      activeHeadingLevel={currentHeadingLevel}
       bootstrap={toolbar}
       platform={platform}
       executeCommand={executeCommand}
@@ -984,7 +1008,13 @@ export function EditorRoot(props: EditorRootProps) {
     const update = () =>
       setCursorPosition(documentSession.document.getCursorPosition());
     update();
-    return documentSession.document.subscribe(update);
+    const unsubscribeDocument = documentSession.document.subscribe(update);
+    const unsubscribeSelection =
+      documentSession.document.subscribeSelection(update);
+    return () => {
+      unsubscribeDocument();
+      unsubscribeSelection();
+    };
   }, [documentSession]);
 
   useEffect(() => {

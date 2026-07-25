@@ -22,7 +22,7 @@
     radial-gradient(circle at 15px 15px, rgb(237, 108, 96) 0 5px, transparent 5.5px),
     radial-gradient(circle at 29px 15px, rgb(247, 193, 81) 0 5px, transparent 5.5px),
     radial-gradient(circle at 43px 15px, rgb(100, 200, 86) 0 5px, transparent 5.5px),
-    #282c34;
+    var(--easymde-code-frame-background, #282c34);
   box-shadow: none;
 }
 
@@ -117,7 +117,7 @@
     radial-gradient(circle at 15px 15px, rgb(237, 108, 96) 0 5px, transparent 5.5px),
     radial-gradient(circle at 29px 15px, rgb(247, 193, 81) 0 5px, transparent 5.5px),
     radial-gradient(circle at 43px 15px, rgb(100, 200, 86) 0 5px, transparent 5.5px),
-    #282c34;
+    var(--easymde-code-frame-background, #282c34);
   box-shadow: none;
 }
 
@@ -139,7 +139,7 @@
   width: 100%;
   height: 30px;
   border-radius: 5px;
-  background-color: #282c34;
+  background-color: var(--easymde-code-frame-background, #282c34);
   background-image:
     radial-gradient(ellipse 5px 5px at 16px 16px, #ed6c60 0 70%, #dc3c36 72% 100%, transparent 102%),
     radial-gradient(ellipse 5px 5px at 30px 16px, #f7c151 0 70%, #da9721 72% 100%, transparent 102%),
@@ -171,7 +171,7 @@
   width: 100%;
   height: 30px;
   border-radius: 5px;
-  background: #282c34 url("../../images/tech-blue-code-window.svg") 10px 10px / 40px auto no-repeat;
+  background: var(--easymde-code-frame-background, #282c34) url("../../images/tech-blue-code-window.svg") 10px 10px / 40px auto no-repeat;
   box-shadow: none;
 }
 
@@ -200,7 +200,7 @@
   width: 100%;
   height: 30px;
   border-radius: 5px;
-  background: #282c34 url("../../images/fullstack-blue-code-window.svg") 10px 10px / 40px auto no-repeat;
+  background: var(--easymde-code-frame-background, #282c34) url("../../images/fullstack-blue-code-window.svg") 10px 10px / 40px auto no-repeat;
   box-shadow: none;
 }
 
@@ -225,7 +225,7 @@
   width: 100%;
   height: 30px;
   border-radius: 5px;
-  background-color: #282c34;
+  background-color: var(--easymde-code-frame-background, #282c34);
   background-image:
     radial-gradient(ellipse 5px 5px at 16px 16px, #ed6c60 0 70%, #dc3c36 72% 100%, transparent 102%),
     radial-gradient(ellipse 5px 5px at 30px 16px, #f7c151 0 70%, #da9721 72% 100%, transparent 102%),
@@ -247,5 +247,7 @@
 }
 
 .easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac pre {
+  --easymde-code-frame-background: #0d1017;
+
   background: #0d1017;
 }

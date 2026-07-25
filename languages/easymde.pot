@@ -453,7 +453,7 @@ msgstr ""
 msgid "Copy to WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:400
+#: src/Admin/AdminAssets.php:400 src/Frontend/FrontendAssets.php:77
 msgid "Copied"
 msgstr ""
 
@@ -613,7 +613,7 @@ msgstr ""
 msgid "A different local draft was saved in another tab."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:607 src/Frontend/FrontendAssets.php:70
+#: src/Admin/AdminAssets.php:607 src/Frontend/FrontendAssets.php:75
 msgid "Rendering failed."
 msgstr ""
 
@@ -723,6 +723,18 @@ msgstr ""
 
 #: src/Admin/SettingsPage.php:230 templates/admin/settings-page.php:61
 msgid "Windows / Linux"
+msgstr ""
+
+#: src/Frontend/FrontendAssets.php:76
+msgid "Copy code"
+msgstr ""
+
+#: src/Frontend/FrontendAssets.php:78
+msgid "Code copied"
+msgstr ""
+
+#: src/Frontend/FrontendAssets.php:79
+msgid "Unable to copy code. Try again."
 msgstr ""
 
 #: src/Rest/CustomCssController.php:114

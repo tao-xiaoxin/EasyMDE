@@ -16,6 +16,7 @@ final class FrontendAssetsTest extends WP_UnitTestCase
             'easymde-content',
             'easymde-article-theme',
             'easymde-code-frame',
+            'easymde-code-copy',
             'easymde-highlight-theme',
             'easymde-math',
             'easymde-katex',
@@ -27,6 +28,7 @@ final class FrontendAssetsTest extends WP_UnitTestCase
 
         foreach (array(
             'easymde-enhancements',
+            'easymde-code-copy',
             'easymde-highlight',
             'easymde-katex',
             'easymde-math-renderer',
@@ -137,6 +139,30 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertTrue(wp_script_is('easymde-mermaid', 'enqueued'));
     }
 
+    public function test_code_copy_assets_are_only_enqueued_for_regular_frontend_code_blocks()
+    {
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+
+        $assets->enqueue_render_assets(0, 'Plain paragraph');
+        $this->assertFalse(wp_style_is('easymde-code-copy', 'enqueued'));
+        $this->assertFalse(wp_script_is('easymde-code-copy', 'enqueued'));
+
+        $assets->enqueue_render_assets(0, "```mermaid\ngraph TD; A-->B;\n```");
+        $this->assertFalse(wp_style_is('easymde-code-copy', 'enqueued'));
+        $this->assertFalse(wp_script_is('easymde-code-copy', 'enqueued'));
+
+        $assets->enqueue_render_assets(0, "```php\necho 'copy';\n```");
+        $this->assertTrue(wp_style_is('easymde-code-copy', 'enqueued'));
+        $this->assertTrue(wp_script_is('easymde-code-copy', 'enqueued'));
+        $this->assertSame(
+            array('easymde-content'),
+            wp_styles()->registered['easymde-code-copy']->deps
+        );
+    }
+
     public function test_editor_base_assets_do_not_enqueue_optional_preview_runtimes()
     {
         $post_id = self::factory()->post->create(array('post_type' => 'post'));
@@ -155,6 +181,7 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertFalse(wp_script_is('easymde-math-renderer', 'enqueued'));
         $this->assertFalse(wp_script_is('easymde-mermaid', 'enqueued'));
         $this->assertFalse(wp_script_is('easymde-mermaid-renderer', 'enqueued'));
+        $this->assertFalse(wp_script_is('easymde-code-copy', 'enqueued'));
         $this->assertSame(array(), wp_scripts()->registered['easymde-enhancements']->deps);
     }
 
@@ -175,10 +202,12 @@ final class FrontendAssetsTest extends WP_UnitTestCase
             'easymde-math-renderer' => 'assets/js/frontend/math.js',
             'easymde-mermaid' => 'assets/vendor/mermaid/mermaid.min.js',
             'easymde-mermaid-renderer' => 'assets/js/frontend/mermaid.js',
+            'easymde-code-copy' => 'assets/js/frontend/code-copy.js',
         );
         $expected_styles = array(
             'easymde-code-frame' => 'assets/css/frontend/code-frame.css',
             'easymde-highlight-theme' => 'assets/vendor/highlight/styles/atom-one-dark.min.css',
+            'easymde-code-copy' => 'assets/css/frontend/code-copy.css',
             'easymde-math' => 'assets/css/frontend/math.css',
             'easymde-katex' => 'assets/vendor/katex/katex.min.css',
         );
@@ -211,6 +240,9 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $indented_mermaid_example = $assets->get_feature_config("    ```mermaid\n    graph TD; A-->B;\n    ```");
         $tab_indented_mermaid_example = $assets->get_feature_config("\t```mermaid\n\tgraph TD; A-->B;\n\t```");
         $blockquote_mermaid = $assets->get_feature_config("> ```mermaid\n> graph TD; A-->B;\n> ```");
+        $mermaid_with_indented_content = $assets->get_feature_config("```mermaid\ngraph TD\n    A-->B\n```");
+        $five_space_indented_code = $assets->get_feature_config("     echo 'copy';");
+        $blockquote_indented_code = $assets->get_feature_config(">     echo 'copy';");
 
         $this->assertFalse($plain['syntaxHighlight']);
         $this->assertFalse($plain['math']);
@@ -233,5 +265,11 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertTrue($blockquote_mermaid['codeBlocks']);
         $this->assertTrue($blockquote_mermaid['mermaid']);
         $this->assertFalse($blockquote_mermaid['syntaxHighlight']);
+        $this->assertTrue($mermaid_with_indented_content['syntaxHighlight']);
+        $this->assertFalse($mermaid_with_indented_content['codeCopy']);
+        $this->assertFalse($five_space_indented_code['syntaxHighlight']);
+        $this->assertTrue($five_space_indented_code['codeCopy']);
+        $this->assertFalse($blockquote_indented_code['syntaxHighlight']);
+        $this->assertTrue($blockquote_indented_code['codeCopy']);
     }
 }

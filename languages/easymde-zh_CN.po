@@ -1276,3 +1276,15 @@ msgstr "加载预览中..."
 
 msgid "WordPress did not accept the publish request. Check the page state and try again."
 msgstr "WordPress 未接受发布请求，请检查页面状态后重试。"
+
+#: src/Frontend/FrontendAssets.php:62
+msgid "Copy code"
+msgstr "复制代码"
+
+#: src/Frontend/FrontendAssets.php:64
+msgid "Code copied"
+msgstr "代码已复制"
+
+#: src/Frontend/FrontendAssets.php
+msgid "Unable to copy code. Try again."
+msgstr "无法复制代码，请重试。"

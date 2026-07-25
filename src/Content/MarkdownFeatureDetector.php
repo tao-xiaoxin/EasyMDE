@@ -2,11 +2,22 @@
 
 namespace EasyMDE\Content;
 
+use League\CommonMark\Environment\Environment;
+use League\CommonMark\Extension\CommonMark\CommonMarkCoreExtension;
+use League\CommonMark\Extension\CommonMark\Node\Block\FencedCode;
+use League\CommonMark\Extension\CommonMark\Node\Block\IndentedCode;
+use League\CommonMark\Extension\GithubFlavoredMarkdownExtension;
+use League\CommonMark\Parser\MarkdownParser;
+use RuntimeException;
+
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
 final class MarkdownFeatureDetector {
+
+	private $copyable_code_cache_key;
+	private $copyable_code_cache;
 
 	public function detect( $markdown = '' ) {
 		$markdown                = (string) $markdown;
@@ -29,13 +40,58 @@ final class MarkdownFeatureDetector {
 		);
 	}
 
+	public function has_copyable_code_block( $markdown = '' ) {
+		$markdown  = (string) $markdown;
+		$cache_key = hash( 'sha256', $markdown );
+
+		if ( $cache_key === $this->copyable_code_cache_key ) {
+			return $this->copyable_code_cache;
+		}
+
+		if ( '' === $markdown ) {
+			return $this->cache_copyable_code_result( $cache_key, false );
+		}
+
+		if ( ! class_exists( Environment::class ) || ! class_exists( MarkdownParser::class ) ) {
+			throw new RuntimeException( 'The league/commonmark dependency is required to detect EasyMDE Markdown features.' );
+		}
+
+		$environment = new Environment(
+			array(
+				'html_input'              => 'strip',
+				'allow_unsafe_links'      => false,
+				'max_nesting_level'       => MarkdownRenderer::MAX_NESTING_LEVEL,
+				'max_delimiters_per_line' => MarkdownRenderer::MAX_DELIMITERS_PER_LINE,
+			)
+		);
+		$environment->addExtension( new CommonMarkCoreExtension() );
+		$environment->addExtension( new GithubFlavoredMarkdownExtension() );
+		$parser = new MarkdownParser( $environment );
+
+		foreach ( $parser->parse( $markdown )->iterator() as $node ) {
+			if ( $node instanceof IndentedCode ) {
+				return $this->cache_copyable_code_result( $cache_key, true );
+			}
+
+			if ( ! $node instanceof FencedCode ) {
+				continue;
+			}
+
+			$info_words = $node->getInfoWords();
+			if ( ! isset( $info_words[0] ) || 0 !== strcasecmp( $info_words[0], 'mermaid' ) ) {
+				return $this->cache_copyable_code_result( $cache_key, true );
+			}
+		}
+
+		return $this->cache_copyable_code_result( $cache_key, false );
+	}
+
 	private function detect_fenced_code_blocks( $markdown ) {
 		$result = array(
 			'any'     => false,
 			'regular' => false,
 			'mermaid' => false,
 		);
-
 		if ( false === strpos( $markdown, '```' ) && false === strpos( $markdown, '~~~' ) ) {
 			return $result;
 		}
@@ -89,6 +145,13 @@ final class MarkdownFeatureDetector {
 		}
 
 		return $line;
+	}
+
+	private function cache_copyable_code_result( $cache_key, $result ) {
+		$this->copyable_code_cache_key = $cache_key;
+		$this->copyable_code_cache     = (bool) $result;
+
+		return $this->copyable_code_cache;
 	}
 
 	private function might_contain_indented_code_block( $markdown ) {

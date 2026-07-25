@@ -45,6 +45,7 @@ function safeHtml(value: string): SafePreviewHtml {
 }
 
 function setup(options?: {
+  emptyMode?: 'message' | 'paper';
   enhance?: PreviewEnhancementPort['enhance'];
   initialHtml?: string;
   initialSignature?: string;
@@ -74,7 +75,7 @@ function setup(options?: {
       surface.scrollTop = snapshot.top;
     }
   };
-  const result = render(
+  const owner = (emptyMode = options?.emptyMode) => (
     <PreviewSurfaceOwner
       enhancementPort={enhancementPort}
       initial={{
@@ -85,6 +86,7 @@ function setup(options?: {
       }}
       initialRevision={0}
       messages={messages}
+      {...(emptyMode ? { emptyMode } : {})}
       onDiagnostic={onDiagnostic}
       {...(options?.onHtmlChange
         ? { onHtmlChange: options.onHtmlChange }
@@ -99,9 +101,20 @@ function setup(options?: {
       scrollPort={scrollPort}
     />
   );
+  const result = render(owner());
   const surface = result.container.querySelector('article');
   if (!(surface instanceof HTMLElement)) throw new Error('surface missing');
-  return { enhancementPort, onDiagnostic, renderPreview, responses, session, surface, ...result };
+  return {
+    enhancementPort,
+    onDiagnostic,
+    renderPreview,
+    responses,
+    session,
+    setEmptyMode: (emptyMode: 'message' | 'paper') =>
+      result.rerender(owner(emptyMode)),
+    surface,
+    ...result
+  };
 }
 
 describe('PreviewSurfaceOwner', () => {
@@ -113,6 +126,100 @@ describe('PreviewSurfaceOwner', () => {
     await act(async () => {});
     expect(surface.getAttribute('aria-busy')).toBe('false');
     expect(surface.easymdePreviewSignature).toBe('initial');
+  });
+
+  it('publishes enhanced generation-zero server HTML for visual editing', async () => {
+    const onHtmlChange = vi.fn<(html: SafePreviewHtml) => void>();
+    const current = setup({
+      enhance: async (surface) => {
+        surface.querySelector('h2')?.setAttribute('data-enhanced', '1');
+      },
+      initialHtml: '<h2>Server preview</h2>',
+      onHtmlChange
+    });
+
+    await act(async () => {});
+
+    expect(current.surface.easymdePreviewSignature).toBe('initial');
+    expect(onHtmlChange).toHaveBeenCalledOnce();
+    expect(onHtmlChange).toHaveBeenCalledWith(
+      safeHtml('<h2 data-enhanced="1">Server preview</h2>')
+    );
+  });
+
+  it('offers an immersive ready empty paper without changing the ordinary empty message', () => {
+    const ordinaryStatuses: PreviewSurfaceStatus[] = [];
+    const ordinary = setup({
+      initialHtml: '',
+      onStatusChange: (status) => ordinaryStatuses.push(status)
+    });
+
+    act(() => {
+      ordinary.session.schedule(request(''), true);
+    });
+
+    expect(ordinary.surface.textContent).toBe(messages.empty);
+    expect(ordinaryStatuses.at(-1)).toBe('empty');
+
+    const paperHtmlChanges: SafePreviewHtml[] = [];
+    const paperStatuses: PreviewSurfaceStatus[] = [];
+    const paper = setup({
+      emptyMode: 'paper',
+      initialHtml: '',
+      onHtmlChange: (html) => paperHtmlChanges.push(html),
+      onStatusChange: (status) => paperStatuses.push(status)
+    });
+
+    act(() => {
+      paper.session.schedule(request(''), true);
+    });
+
+    expect(paper.renderPreview).not.toHaveBeenCalled();
+    expect(paper.surface.matches('[data-easymde-preview-html-sink]')).toBe(true);
+    expect(paper.surface.innerHTML).toBe('');
+    expect(paper.surface.getAttribute('aria-busy')).toBe('false');
+    expect(paperStatuses.at(-1)).toBe('ready');
+    expect(paperHtmlChanges).toEqual([safeHtml('')]);
+  });
+
+  it('preserves a non-empty loading request when leaving empty paper mode', () => {
+    const statuses: PreviewSurfaceStatus[] = [];
+    const current = setup({
+      initialHtml: '',
+      onStatusChange: (status) => statuses.push(status)
+    });
+
+    act(() => {
+      current.session.schedule(request('# Still rendering'), true);
+      current.setEmptyMode('paper');
+      current.setEmptyMode('message');
+    });
+
+    expect(current.surface.textContent).toBe(messages.rendering);
+    expect(statuses.at(-1)).toBe('loading');
+    expect(current.surface.textContent).not.toBe(messages.empty);
+  });
+
+  it('preserves a failed non-empty request when leaving empty paper mode', async () => {
+    const statuses: PreviewSurfaceStatus[] = [];
+    const current = setup({
+      initialHtml: '',
+      onStatusChange: (status) => statuses.push(status)
+    });
+
+    act(() => {
+      current.session.schedule(request('# Failure'), true);
+      current.setEmptyMode('paper');
+    });
+    await act(async () => {
+      current.responses[0]?.reject(new Error('private response detail'));
+      await Promise.resolve();
+    });
+    act(() => current.setEmptyMode('message'));
+
+    expect(current.surface.textContent).toBe(messages.error);
+    expect(statuses.at(-1)).toBe('error');
+    expect(current.surface.textContent).not.toBe(messages.empty);
   });
 
   it('keeps rendered content visible while the next request is loading', () => {

@@ -35,6 +35,7 @@ type PreviewHtmlState = Readonly<{
   generation: number;
   html: SafePreviewHtml;
   kind: 'html';
+  paperPlaceholder?: true;
   phase: 'enhancing' | 'failed' | 'loading' | 'ready';
   signature: string;
 }>;
@@ -58,6 +59,8 @@ export type PreviewSurfaceRuntime = Readonly<{
 
 type PreviewSurfaceOwnerProps = Readonly<{
   className?: string;
+  contentEditable?: boolean;
+  emptyMode?: 'message' | 'paper';
   enhancementPort: PreviewEnhancementPort;
   initial: Readonly<{
     codeTheme?: string;
@@ -66,19 +69,35 @@ type PreviewSurfaceOwnerProps = Readonly<{
     signature: string;
   }>;
   initialRevision: number;
+  label?: string;
   messages: PreviewMessages;
   onDiagnostic?: (code: string) => void;
   onHtmlChange?: (html: SafePreviewHtml) => void;
+  onSnapshotReady?: (html: SafePreviewHtml, signature: string) => void;
   onDispose?: (runtime: PreviewSurfaceRuntime) => void;
   onReady: (runtime: PreviewSurfaceRuntime) => void;
   onStatusChange?: (status: PreviewSurfaceStatus) => void;
   port: PreviewRequestPort;
   scrollPort: PreviewScrollPort;
+  role?: string;
+  spellCheck?: boolean;
   style?: CSSProperties;
 }>;
 
 function initialState(props: PreviewSurfaceOwnerProps): PreviewSurfaceState {
   if (!props.initial.html.trim()) {
+    if ('paper' === props.emptyMode) {
+      return {
+        codeTheme: props.initial.codeTheme ?? '',
+        features: props.initial.features,
+        generation: 0,
+        html: props.initial.html,
+        kind: 'html',
+        paperPlaceholder: true,
+        phase: 'enhancing',
+        signature: props.initial.signature
+      };
+    }
     return { generation: 0, kind: 'loading' };
   }
   return {
@@ -137,6 +156,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   const surfaceRef = useRef<HTMLElement | null>(null);
   const scrollSnapshotRef = useRef<PreviewScrollSnapshot | null>(null);
   const generationRef = useRef(0);
+  const emptyModeRef = useRef(props.emptyMode);
+  emptyModeRef.current = props.emptyMode;
   const [state, setState] = useState<PreviewSurfaceState>(() => initialState(props));
 
   function captureScroll(): void {
@@ -153,12 +174,46 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       setState((current) =>
         'html' === current.kind
           ? { ...current, generation, phase: 'loading', signature: '' }
+          : 'paper' === emptyModeRef.current
+            ? {
+                codeTheme: requestState.request.codeTheme,
+                features: {},
+                generation,
+                html: '' as SafePreviewHtml,
+                kind: 'html',
+                paperPlaceholder: true,
+                phase: 'loading',
+                signature: ''
+              }
           : { generation, kind: 'loading' }
       );
       return;
     }
-    if ('empty' === requestState.kind || 'error' === requestState.kind) {
-      setState({ generation, kind: requestState.kind });
+    if ('empty' === requestState.kind) {
+      setState(
+        'paper' === emptyModeRef.current
+          ? {
+              codeTheme: requestState.request.codeTheme,
+              features: {},
+              generation,
+              // The empty string is the only HTML value that is intrinsically
+              // safe without invoking the server renderer.
+              html: '' as SafePreviewHtml,
+              kind: 'html',
+              paperPlaceholder: true,
+              phase: 'ready',
+              signature: requestState.request.signature
+            }
+          : { generation, kind: 'empty' }
+      );
+      return;
+    }
+    if ('error' === requestState.kind) {
+      setState((current) =>
+        'paper' === emptyModeRef.current && 'html' === current.kind
+          ? { ...current, generation, phase: 'failed', signature: '' }
+          : { generation, kind: 'error' }
+      );
       return;
     }
     setState({
@@ -194,16 +249,59 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   }, []);
 
   useLayoutEffect(() => {
+    setState((current) => {
+      if ('paper' === props.emptyMode) {
+        if ('empty' === current.kind) {
+          return {
+            codeTheme: props.initial.codeTheme ?? '',
+            features: {},
+            generation: current.generation,
+            html: '' as SafePreviewHtml,
+            kind: 'html',
+            paperPlaceholder: true,
+            phase: 'ready',
+            signature: ''
+          };
+        }
+        if ('loading' === current.kind) {
+          return {
+            codeTheme: props.initial.codeTheme ?? '',
+            features: {},
+            generation: current.generation,
+            html: '' as SafePreviewHtml,
+            kind: 'html',
+            paperPlaceholder: true,
+            phase: 'loading',
+            signature: ''
+          };
+        }
+        return current;
+      }
+      if ('html' !== current.kind || !current.paperPlaceholder) {
+        return current;
+      }
+      if ('ready' === current.phase) {
+        return { generation: current.generation, kind: 'empty' };
+      }
+      if ('failed' === current.phase) {
+        return { generation: current.generation, kind: 'error' };
+      }
+      return { generation: current.generation, kind: 'loading' };
+    });
+  }, [props.emptyMode, props.initial.codeTheme]);
+
+  useLayoutEffect(() => {
     if (
       'html' === state.kind
-      && state.generation > 0
       && 'ready' === state.phase
     ) {
       const surface = surfaceRef.current;
       if (!surface) throw new Error('preview-surface-missing');
-      props.onHtmlChange?.(surface.innerHTML as SafePreviewHtml);
+      const html = surface.innerHTML as SafePreviewHtml;
+      props.onHtmlChange?.(html);
+      props.onSnapshotReady?.(html, state.signature);
     }
-  }, [state, props.onHtmlChange]);
+  }, [state, props.onHtmlChange, props.onSnapshotReady]);
 
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
@@ -274,6 +372,14 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       html={'html' === state.kind ? state.html : null}
       refreshing={busy}
       surfaceRef={surfaceRef}
+      {...(undefined !== props.contentEditable
+        ? { contentEditable: props.contentEditable }
+        : {})}
+      {...(props.label ? { label: props.label } : {})}
+      {...(props.role ? { role: props.role } : {})}
+      {...(undefined !== props.spellCheck
+        ? { spellCheck: props.spellCheck }
+        : {})}
       {...(props.className ? { className: props.className } : {})}
       {...(props.style ? { style: props.style } : {})}
     >

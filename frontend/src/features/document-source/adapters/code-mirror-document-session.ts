@@ -10,7 +10,7 @@ import {
   EditorState,
   Transaction
 } from '@codemirror/state';
-import { EditorView, keymap } from '@codemirror/view';
+import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 
 export type DocumentSelectionDirection = 'backward' | 'forward' | 'none';
@@ -198,6 +198,9 @@ export function createCodeMirrorDocumentSession({
           }
         }),
         keymap.of([...defaultKeymap, ...historyKeymap]),
+        // Keep source line numbers in CodeMirror's own scroll-synchronized gutter.
+        // Immersive CSS is the only surface that makes this gutter visible.
+        lineNumbers(),
         EditorView.lineWrapping,
         editability.of(editabilityExtensions(submissionField)),
         EditorView.contentAttributes.of({

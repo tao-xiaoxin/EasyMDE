@@ -2,10 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ToolbarCommand } from '../../contracts/bootstrap/toolbar-bootstrap';
 import type { ToolbarCommandDocumentPort } from '../../contracts/ports/toolbar-command-port';
-import {
-  activeHeadingLevel,
-  createToolbarCommandSession
-} from './toolbar-command-session';
+import { createToolbarCommandSession } from './toolbar-command-session';
 
 function command(overrides: Partial<ToolbarCommand>): ToolbarCommand {
   return {
@@ -33,21 +30,6 @@ function documentPort(value: string, start: number, end: number, direction: 'bac
 }
 
 describe('createToolbarCommandSession', () => {
-  it('derives the active Markdown heading level from the selected line', () => {
-    expect(activeHeadingLevel({
-      value: '# First\nBody\n###### Sixth',
-      selection: { direction: 'none', end: 2, start: 2 }
-    })).toBe(1);
-    expect(activeHeadingLevel({
-      value: '# First\nBody\n###### Sixth',
-      selection: { direction: 'none', end: 20, start: 20 }
-    })).toBe(6);
-    expect(activeHeadingLevel({
-      value: '# First\nBody\n###### Sixth',
-      selection: { direction: 'none', end: 9, start: 9 }
-    })).toBe(0);
-  });
-
   it('wraps a backward selection and keeps the selected content active', () => {
     const document = documentPort('before text after', 7, 11, 'backward');
     const session = createToolbarCommandSession({

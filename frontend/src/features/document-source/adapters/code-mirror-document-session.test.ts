@@ -31,6 +31,8 @@ describe('createCodeMirrorDocumentSession', () => {
       direction: 'backward'
     });
     expect(container.querySelector('.cm-editor')).not.toBeNull();
+    expect(container.querySelector('.cm-gutters')).not.toBeNull();
+    expect(container.querySelector('.cm-lineNumbers')).not.toBeNull();
 
     session.destroy();
   });

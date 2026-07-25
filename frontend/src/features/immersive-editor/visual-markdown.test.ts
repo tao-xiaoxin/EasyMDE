@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   applyVisualBlockShortcut,
@@ -7,6 +7,7 @@ import {
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChange,
+  placeVisualCaretFromSourceOffset,
   protectVisualMarkdownReadOnlyRegions,
   serializeVisualMarkdown,
   visualSelectionSourceRange
@@ -400,6 +401,12 @@ A--&gt;B</code></pre>
     );
   });
 
+  it('maps the first visual input into an empty canonical document', () => {
+    expect(mergeVisualMarkdownChange('', '', 'First paragraph')).toBe(
+      'First paragraph'
+    );
+  });
+
   it('edits visible link text without rewriting reference links or raw HTML', () => {
     const source = [
       'Raw <u>underlined</u> text and an [OpenAI][openai] reference.',
@@ -465,5 +472,232 @@ A--&gt;B</code></pre>
         'Choose **this** text'
       )
     ).toEqual({ direction: 'forward', end: 13, start: 9 });
+  });
+
+  it('maps the non-empty paper root start to canonical offset zero', () => {
+    const surface = editor('<h1>Heading</h1><p>Body</p>');
+    placeCaret(surface, 0);
+
+    expect(
+      visualSelectionSourceRange(
+        surface,
+        '# Heading\n\nBody',
+        '# Heading\n\nBody'
+      )
+    ).toEqual({ direction: 'none', end: 0, start: 0 });
+  });
+
+  it.each([
+    {
+      html: '',
+      target: ''
+    },
+    {
+      html: '<p>Before <strong>new</strong> after</p>',
+      target: 'Before **new**'
+    },
+    {
+      html: '<h1>Heading</h1><ul><li>One</li><li>Two</li></ul>',
+      target: 'One'
+    },
+    {
+      html: '<pre><code>const x = 1;</code></pre>',
+      target: 'const x'
+    },
+    {
+      html: [
+        '<table><thead><tr><th>Name</th><th>State</th></tr></thead>',
+        '<tbody><tr><td>Editor</td><td>Ready</td></tr></tbody></table>'
+      ].join(''),
+      target: 'Ready'
+    }
+  ])(
+    'places a visual caret at a canonical source boundary for $target',
+    ({ html, target }) => {
+      const surface = editor(html);
+      const source = serializeVisualMarkdown(surface);
+      const sourceOffset = target
+        ? source.indexOf(target) + target.length
+        : 0;
+
+      placeVisualCaretFromSourceOffset(
+        surface,
+        source,
+        source,
+        sourceOffset
+      );
+
+      expect(
+        visualSelectionSourceRange(surface, source, source)
+      ).toEqual({
+        direction: 'none',
+        end: sourceOffset,
+        start: sourceOffset
+      });
+    }
+  );
+
+  it('places an end-of-document caret after completed inline formatting', () => {
+    const surface = editor('<p><strong>Bold</strong></p>');
+    const source = '**Bold**';
+
+    placeVisualCaretFromSourceOffset(
+      surface,
+      source,
+      source,
+      source.length
+    );
+    const selection = window.getSelection();
+    const caret = selection?.anchorNode;
+    if (!(caret instanceof Text)) {
+      throw new Error('missing neutral visual caret');
+    }
+    expect(caret.parentElement?.tagName).toBe('P');
+    expect(caret.previousSibling).toBe(surface.querySelector('strong'));
+    expect(caret.data).toBe('\u200b');
+    expect(selection?.anchorOffset).toBe(1);
+    caret.insertData(1, '!');
+
+    expect(serializeVisualMarkdown(surface)).toBe('**Bold**!');
+  });
+
+  it('restores a block-boundary caret without entering themed or read-only descendants', () => {
+    const svgLabels = Array.from(
+      { length: 40 },
+      (_, index) => `<text>Generated ${index}</text>`
+    ).join('');
+    const voidNodes = Array.from(
+      { length: 40 },
+      (_, index) =>
+        '<img src="https://example.test/'
+        + index
+        + '.png" alt="Generated image">'
+    ).join('');
+    const tableRows = Array.from(
+      { length: 40 },
+      (_, index) => `<tr><td>Row ${index}</td><td>Value ${index}</td></tr>`
+    ).join('');
+    const surface = editor([
+      '<h1><span class="prefix"></span><span class="content">Pasted heading</span><span class="suffix"></span></h1>',
+      '<p>Existing body</p>',
+      `<table><tbody>${tableRows}</tbody></table>`,
+      voidNodes,
+      `<div class="easymde-mermaid" data-easymde-visual-markdown-source="flowchart TD&#10;A--&gt;B"><svg>${svgLabels}</svg></div>`
+    ].join(''));
+    protectVisualMarkdownReadOnlyRegions(surface);
+    const source = serializeVisualMarkdown(surface);
+    const sourceOffset = '# Pasted heading\n\n'.length;
+
+    placeVisualCaretFromSourceOffset(
+      surface,
+      source,
+      source,
+      sourceOffset
+    );
+
+    expect(
+      visualSelectionSourceRange(surface, source, source)
+    ).toEqual({
+      direction: 'none',
+      end: sourceOffset,
+      start: sourceOffset
+    });
+  });
+
+  it('continues past an unmappable generated candidate to the exact canonical boundary', () => {
+    const generated = Array.from(
+      { length: 40 },
+      (_, index) =>
+        `<div class="easymde-mermaid" data-easymde-visual-markdown-source="flowchart TD&#10;A${index}--&gt;B${index}"><svg><text>Generated ${index}</text></svg></div>`
+    ).join('');
+    const surface = editor(
+      `<h1>Pasted heading</h1><p>Existing body</p>${generated}`
+    );
+    const source = serializeVisualMarkdown(surface);
+    const sourceOffset = '# Pasted heading\n\n'.length;
+
+    placeVisualCaretFromSourceOffset(
+      surface,
+      source,
+      source,
+      sourceOffset
+    );
+
+    expect(
+      visualSelectionSourceRange(surface, source, source)
+    ).toEqual({ direction: 'none', end: sourceOffset, start: sourceOffset });
+  });
+
+  it('skips a removed serialization candidate while locating an exact caret boundary', () => {
+    const surface = editor(
+      '<p>A</p><div class="footnotes">Generated note</div><p>B</p>'
+    );
+    const source = serializeVisualMarkdown(surface);
+
+    expect(source).toBe('A\n\nB');
+    placeVisualCaretFromSourceOffset(
+      surface,
+      source,
+      source,
+      source.length
+    );
+
+    expect(
+      visualSelectionSourceRange(surface, source, source)
+    ).toEqual({
+      direction: 'none',
+      end: source.length,
+      start: source.length
+    });
+  });
+
+  it('skips a visual-only candidate whose synthetic marker cannot merge to source', () => {
+    const surface = editor(
+      '<p>A</p><p>Theme decoration</p><p>B</p>'
+    );
+    const source = 'A\n\nB';
+    const baseline = serializeVisualMarkdown(surface);
+
+    expect(baseline).toBe('A\n\nTheme decoration\n\nB');
+    placeVisualCaretFromSourceOffset(
+      surface,
+      source,
+      baseline,
+      source.length
+    );
+
+    expect(
+      visualSelectionSourceRange(surface, source, baseline)
+    ).toEqual({
+      direction: 'none',
+      end: source.length,
+      start: source.length
+    });
+  });
+
+  it('bounds caret mapping work across a large visual-only text segment', () => {
+    const decoration = 'Visual only '.repeat(5_000);
+    const surface = editor(
+      `<p>A</p><p>${decoration}</p><p>B</p>`
+    );
+    const source = 'A\n\nB';
+    const baseline = serializeVisualMarkdown(surface);
+    const cloneSpy = vi.spyOn(surface, 'cloneNode');
+
+    placeVisualCaretFromSourceOffset(
+      surface,
+      source,
+      baseline,
+      source.length
+    );
+
+    expect(cloneSpy.mock.calls.length).toBeLessThanOrEqual(32);
+    expect(
+      visualSelectionSourceRange(surface, source, baseline)
+    ).toEqual({
+      direction: 'none',
+      end: source.length,
+      start: source.length
+    });
   });
 });

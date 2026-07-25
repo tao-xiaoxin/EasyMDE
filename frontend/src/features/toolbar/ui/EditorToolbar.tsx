@@ -29,7 +29,6 @@ import type {
 export type ToolbarPlatform = 'mac' | 'win';
 
 type EditorToolbarProps = Readonly<{
-  activeHeadingLevel?: number;
   bootstrap: ToolbarBootstrap;
   platform: ToolbarPlatform;
   executeCommand: (commandId: string) => void;
@@ -126,7 +125,6 @@ function CommandButton({
 }
 
 type HeadingMenuProps = Readonly<{
-  activeHeadingLevel: number;
   commands: ReadonlyArray<ToolbarCommand>;
   headingLabelFormat: string;
   headingLevelLabel: string;
@@ -145,7 +143,6 @@ type ImmersiveMenuPosition = Readonly<{
 }>;
 
 function HeadingMenu({
-  activeHeadingLevel,
   commands,
   headingLabelFormat,
   headingLevelLabel,
@@ -304,7 +301,7 @@ function HeadingMenu({
         }}
       >
         <span className="easymde-toolbar-text-icon" aria-hidden="true">
-          {activeHeadingLevel > 0 ? `H${activeHeadingLevel}` : 'H'}
+          H
         </span>
         <ChevronDown size={9} strokeWidth={2.5} aria-hidden="true" />
       </button>
@@ -390,7 +387,6 @@ function HeadingMenu({
 }
 
 export function EditorToolbar({
-  activeHeadingLevel = 0,
   bootstrap,
   platform,
   executeCommand,
@@ -461,7 +457,6 @@ export function EditorToolbar({
         </Fragment>
       ) : null}
       <HeadingMenu
-        activeHeadingLevel={activeHeadingLevel}
         commands={displayedHeadingCommands}
         headingLabelFormat={bootstrap.headingLabelFormat}
         headingLevelLabel={bootstrap.headingLevelLabel}

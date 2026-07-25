@@ -92,7 +92,42 @@ test('immersive publish CSS preserves reference geometry without hiding the pass
 test('immersive header view controls preserve the reference text baseline', () => {
   assert.match(
     css,
-    /\.easymde-immersive-view-switch button\s*\{[^}]*font-size:\s*12\.5px;[^}]*font-weight:\s*500;[^}]*line-height:\s*18\.75px;/s
+    /\.easymde-immersive-view-switch button\s*\{[^}]*font-size:\s*12\.5px;[^}]*font-weight:\s*500;[^}]*line-height:\s*18\.75px;[^}]*transition:\s*all 150ms cubic-bezier\(\.4, 0, \.2, 1\);/s
+  );
+});
+
+test('immersive Markdown pane preserves the reference header and source rhythm', () => {
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive \.easymde-pane-header\s*\{[^}]*padding:\s*10px 15px;[^}]*border-bottom:\s*1px solid #e8ebef;[^}]*font-family:\s*"EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;[^}]*font-size:\s*15px;[^}]*font-weight:\s*400;[^}]*letter-spacing:\s*0;[^}]*line-height:\s*22\.5px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive \.easymde-pane-source > \.easymde-pane-header > span:first-child\s*\{[^}]*font-size:\s*13px;[^}]*font-weight:\s*600;[^}]*letter-spacing:\s*\.3px;[^}]*line-height:\s*19\.5px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive \.easymde-source-react \.cm-content\s*\{[^}]*padding:\s*14px 14px 14px 0;[^}]*line-height:\s*28px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive \.easymde-source-react \.cm-line\s*\{[^}]*min-height:\s*28px;[^}]*line-height:\s*28px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive \.easymde-source-react \.cm-gutters\s*\{[^}]*display:\s*flex;[^}]*box-sizing:\s*border-box;[^}]*width:\s*36px;[^}]*min-width:\s*36px;[^}]*flex:\s*0 0 36px;[^}]*border:\s*0;[^}]*background:\s*#f2f2f2;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive \.easymde-source-react \.cm-lineNumbers \.cm-gutterElement\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*36px;[^}]*min-width:\s*36px;[^}]*padding:\s*0;[^}]*padding-inline-end:\s*14px;[^}]*font-size:\s*13\.5px;[^}]*line-height:\s*28px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-source-react \.cm-gutters\s*\{[^}]*display:\s*none;/s
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-editor\.is-immersive \.easymde-source-react \.cm-line::before/
   );
 });
 
@@ -104,6 +139,23 @@ test('immersive header preserves the reference flex geometry without decimal tru
   assert.match(
     css,
     /\.easymde-immersive-brand\s*\{[^}]*width:\s*auto;[^}]*flex:\s*0 0 auto;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-brand-mark\s*\{[^}]*gap:\s*5\.625px;[^}]*margin-inline-start:\s*3\.75px;[^}]*flex:\s*0 0 auto;/s
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-immersive-brand-mark\s*\{[^}]*(?:width|flex-basis):\s*77\.766px;/s,
+    'desktop brand width must be owned by its icon, gap, and text content'
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-brand-name\s*\{[^}]*color:\s*oklch\(37\.2% \.044 257\.287\);[^}]*font-size:\s*13px;[^}]*font-weight:\s*600;[^}]*letter-spacing:\s*-\.025em;[^}]*line-height:\s*19\.5px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-brand-mark > svg\s*\{[^}]*color:\s*oklch\(62\.3% \.214 259\.815\);/s
   );
   assert.match(
     css,
@@ -238,6 +290,14 @@ test('immersive Preview leaves article typography to the selected theme', () => 
   assert.doesNotMatch(
     css,
     /\.easymde-editor\.is-immersive-preview \.easymde-immersive-reference-prose/
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-split \.easymde-preview\s*\{[^}]*padding:\s*34px 48px 60px;[^}]*background:\s*#fff;/s
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-editor(?:\.is-immersive|\.is-immersive-preview) \.easymde-preview\s*\{[^}]*padding:\s*34px 48px 60px;[^}]*background:\s*#fff;/s
   );
 });
 

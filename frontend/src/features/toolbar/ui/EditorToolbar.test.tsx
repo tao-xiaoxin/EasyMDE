@@ -132,7 +132,6 @@ describe('EditorToolbar', () => {
     };
     const { container } = render(
       <EditorToolbar
-        activeHeadingLevel={2}
         bootstrap={immersiveBootstrap}
         platform="win"
         executeCommand={vi.fn()}
@@ -141,7 +140,7 @@ describe('EditorToolbar', () => {
     );
 
     const trigger = screen.getByRole('button', { name: '标题' });
-    expect(trigger.querySelector('.easymde-toolbar-text-icon')?.textContent).toBe('H2');
+    expect(trigger.querySelector('.easymde-toolbar-text-icon')?.textContent).toBe('H');
     vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
       bottom: 100.75,
       height: 30,

@@ -41,22 +41,6 @@ function documentSnapshot(document: ToolbarCommandDocumentPort): ToolbarCommandD
   return snapshot;
 }
 
-export function activeHeadingLevel(
-  snapshot: ToolbarCommandDocumentSnapshot
-): number {
-  const position = Math.max(
-    0,
-    Math.min(snapshot.value.length, snapshot.selection.start)
-  );
-  const lineStart = snapshot.value.lastIndexOf('\n', position - 1) + 1;
-  const foundLineEnd = snapshot.value.indexOf('\n', position);
-  const lineEnd =
-    -1 === foundLineEnd ? snapshot.value.length : foundLineEnd;
-  const match = snapshot.value.slice(lineStart, lineEnd).match(/^(#{1,6})\s+/);
-
-  return match?.[1]?.length ?? 0;
-}
-
 function replacement(
   snapshot: ToolbarCommandDocumentSnapshot,
   value: string,

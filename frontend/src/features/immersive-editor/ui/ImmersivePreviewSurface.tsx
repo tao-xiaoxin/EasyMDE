@@ -11,13 +11,13 @@ type Props = Readonly<{
   children: ReactNode;
   changed: boolean;
   editable: boolean;
+  hasSnapshot: boolean;
   ordinaryLabel: string;
   onToggleEditable: () => void;
   status: PreviewSurfaceStatus;
   statusMessages: Readonly<{
     empty: string;
     error: string;
-    loading: string;
   }>;
   strings: ImmersiveStrings;
 }>;
@@ -33,24 +33,31 @@ export function ImmersivePreviewSurface({
   children,
   changed,
   editable,
+  hasSnapshot,
   ordinaryLabel,
   onToggleEditable,
   status,
   statusMessages,
   strings
 }: Props) {
+  const hasCompletedPaper =
+    'ready' === status || ('loading' === status && hasSnapshot);
   const statusLabel =
-    'ready' === status
-      ? changed
-        ? strings.previewChangesRecorded
-        : strings.previewContentLoaded
-      : statusMessages[status];
+    'error' === status
+      ? statusMessages.error
+      : hasCompletedPaper
+        ? changed
+          ? strings.previewChangesRecorded
+          : strings.previewContentLoaded
+        : null;
 
   if (!active) {
     return (
       <section className="easymde-pane easymde-pane-preview">
         <header className="easymde-pane-header">{ordinaryLabel}</header>
-        {children}
+        <div className="easymde-immersive-preview-canvas">
+          <div className="easymde-immersive-preview-page">{children}</div>
+        </div>
       </section>
     );
   }
@@ -67,15 +74,17 @@ export function ImmersivePreviewSurface({
             </span>
           </div>
           <div className="easymde-immersive-preview-status">
-            <span
-              className={`is-${status}`}
-              role={'error' === status ? 'alert' : 'status'}
-            >
-              {'ready' === status ? (
+            {statusLabel ? (
+              <span
+                className={`is-${status}`}
+                role={'error' === status ? 'alert' : 'status'}
+              >
+              {hasCompletedPaper ? (
                 <Check aria-hidden="true" size={13} strokeWidth={2.4} />
               ) : null}
               {statusLabel}
-            </span>
+              </span>
+            ) : null}
             <button
               type="button"
               className={`easymde-immersive-preview-lock${editable ? ' is-editable' : ''}`}

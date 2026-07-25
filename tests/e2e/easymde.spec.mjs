@@ -411,6 +411,69 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(immersiveToggle).toBeVisible();
     await immersiveToggle.click();
     await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
+    const immersiveChromeMetrics = await page.evaluate(async () => {
+      await document.fonts.ready;
+      const brand = document.querySelector('.easymde-immersive-brand-name');
+      const brandIcon = document.querySelector(
+        '.easymde-immersive-brand-mark > svg'
+      );
+      const sourceLine = document.querySelector('.easymde-source-react .cm-line');
+      const lineNumber = document.querySelector(
+        '.easymde-source-react .cm-lineNumbers .cm-gutterElement'
+      );
+      const gutters = document.querySelector('.easymde-source-react .cm-gutters');
+      if (
+        !(brand instanceof HTMLElement) ||
+        !(brandIcon instanceof SVGElement) ||
+        !(sourceLine instanceof HTMLElement) ||
+        !(lineNumber instanceof HTMLElement) ||
+        !(gutters instanceof HTMLElement)
+      ) {
+        throw new Error('immersive-reference-chrome-unavailable');
+      }
+      const colorToRgba = (color) => {
+        const canvas = new OffscreenCanvas(1, 1);
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('immersive-reference-color-context-unavailable');
+        context.fillStyle = color;
+        context.fillRect(0, 0, 1, 1);
+        return Array.from(context.getImageData(0, 0, 1, 1).data);
+      };
+      const brandStyle = getComputedStyle(brand);
+      const brandIconStyle = getComputedStyle(brandIcon);
+      const lineStyle = getComputedStyle(sourceLine);
+      const lineNumberStyle = getComputedStyle(lineNumber);
+      const gutterStyle = getComputedStyle(gutters);
+      const sourceLineRect = sourceLine.getBoundingClientRect();
+      const lineNumberRect = lineNumber.getBoundingClientRect();
+      const gutterRect = gutters.getBoundingClientRect();
+      const lineNumberRight =
+        lineNumberRect.x + Number.parseFloat(lineNumberStyle.width) - Number.parseFloat(lineNumberStyle.paddingRight);
+      const sourceTextStart = sourceLineRect.x;
+      return {
+        brandColor: colorToRgba(brandStyle.color),
+        brandIconColor: colorToRgba(brandIconStyle.color),
+        brandLetterSpacing: brandStyle.letterSpacing,
+        brandWidth: brand.getBoundingClientRect().width,
+        gutterWidth: gutterStyle.width,
+        sourceLineStart: sourceLineRect.x,
+        lineNumberRight,
+        lineNumberToTextGap: sourceTextStart - lineNumberRight,
+        lineNumberTrackWidth:
+          Number.parseFloat(lineNumberStyle.width)
+          - Number.parseFloat(lineNumberStyle.paddingRight),
+        sourcePaddingInlineStart: lineStyle.paddingInlineStart,
+        sourceTextStart
+      };
+    });
+    expect(immersiveChromeMetrics.brandColor).toEqual([49, 65, 88, 255]);
+    expect(immersiveChromeMetrics.brandIconColor).toEqual([43, 127, 255, 255]);
+    expect(immersiveChromeMetrics.brandLetterSpacing).toBe('-0.325px');
+    expect(Math.abs(immersiveChromeMetrics.brandWidth - 57.140625)).toBeLessThanOrEqual(0.1);
+    expect(immersiveChromeMetrics.gutterWidth).toBe('36px');
+    expect(immersiveChromeMetrics.lineNumberTrackWidth).toBe(22);
+    expect(immersiveChromeMetrics.sourcePaddingInlineStart).toBe('0px');
+    expect(immersiveChromeMetrics.lineNumberToTextGap).toBe(14);
     await expect(page.locator('.easymde-draft-notice')).toHaveCount(0);
     await expect(
       page

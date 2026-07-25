@@ -531,17 +531,32 @@ function visualBoundarySourceOffset(
   if (sourceMarkdown.includes(marker) || baselineVisualMarkdown.includes(marker)) {
     throw new Error('visual-editor-selection-marker-conflict');
   }
-  const range = document.createRange();
-  range.setStart(node, offset);
-  range.collapse(true);
-  const markerNode = document.createTextNode(marker);
-  range.insertNode(markerNode);
-  let markedVisualMarkdown = '';
-  try {
-    markedVisualMarkdown = serializeVisualMarkdown(editor);
-  } finally {
-    markerNode.remove();
+  const path: number[] = [];
+  let current: Node | null = node;
+  while (current && current !== editor) {
+    const parent: ParentNode | null = current.parentNode;
+    if (!parent) throw new Error('visual-editor-selection-map-failed');
+    const index = Array.prototype.indexOf.call(parent.childNodes, current);
+    if (index < 0) throw new Error('visual-editor-selection-map-failed');
+    path.unshift(index);
+    current = parent as Node;
   }
+  if (current !== editor) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  const clone = editor.cloneNode(true) as HTMLElement;
+  let cloneNode: Node = clone;
+  for (const index of path) {
+    const child = cloneNode.childNodes[index];
+    if (!child) throw new Error('visual-editor-selection-map-failed');
+    cloneNode = child;
+  }
+  const range = editor.ownerDocument.createRange();
+  range.setStart(cloneNode, offset);
+  range.collapse(true);
+  const markerNode = editor.ownerDocument.createTextNode(marker);
+  range.insertNode(markerNode);
+  const markedVisualMarkdown = serializeVisualMarkdown(clone);
   const markedSource = mergeVisualMarkdownChange(
     sourceMarkdown,
     baselineVisualMarkdown,
@@ -552,6 +567,320 @@ function visualBoundarySourceOffset(
     throw new Error('visual-editor-selection-map-failed');
   }
   return sourceOffset;
+}
+
+type VisualBoundary = Readonly<{
+  node: Node;
+  offset: number;
+}>;
+
+type VisualBoundarySegment = Readonly<{
+  end: number;
+  node: Node;
+  offset: number;
+  start: number;
+}>;
+
+type VisualBoundaryIndex = Readonly<{
+  length: number;
+  segments: ReadonlyArray<VisualBoundarySegment>;
+}>;
+
+const VISUAL_CARET_MAPPING_ATTEMPT_LIMIT = 32;
+
+const VISUAL_CARET_OPAQUE_TAGS = new Set([
+  'AREA',
+  'BASE',
+  'BR',
+  'BUTTON',
+  'COL',
+  'EMBED',
+  'HR',
+  'IMG',
+  'INPUT',
+  'LINK',
+  'META',
+  'PARAM',
+  'SCRIPT',
+  'SELECT',
+  'SOURCE',
+  'STYLE',
+  'TEXTAREA',
+  'TRACK',
+  'WBR'
+]);
+
+const VISUAL_CARET_FORMATTING_TAGS = new Set([
+  'A',
+  'B',
+  'CODE',
+  'DEL',
+  'EM',
+  'I',
+  'MARK',
+  'S',
+  'STRONG',
+  'SUB',
+  'SUP',
+  'U'
+]);
+
+function isVisualCaretExcludedElement(element: Element): boolean {
+  if (VISUAL_CARET_OPAQUE_TAGS.has(element.tagName)) return true;
+  if (element instanceof SVGElement) return true;
+  if ('false' === element.getAttribute('contenteditable')) return true;
+  if (element.classList.contains('footnote-ref')) return true;
+
+  const parent = element.parentElement;
+  if (
+    parent
+    && /^H[1-6]$/.test(parent.tagName)
+    && (
+      element.classList.contains('prefix')
+      || element.classList.contains('suffix')
+    )
+  ) {
+    return true;
+  }
+  return Boolean(
+    parent
+    && 'BLOCKQUOTE' === parent.tagName
+    && element === parent.firstElementChild
+    && ['“', '❝'].includes(element.textContent?.trim() ?? '')
+  );
+}
+
+function visualBoundaryIndex(editor: HTMLElement): VisualBoundaryIndex {
+  const segments: VisualBoundarySegment[] = [];
+  let length = 0;
+  const addSegment = (node: Node, offset: number, count = 1): void => {
+    segments.push({
+      end: length + count - 1,
+      node,
+      offset,
+      start: length
+    });
+    length += count;
+  };
+  const visit = (element: Element): void => {
+    addSegment(element, 0);
+    for (
+      let childIndex = 0;
+      childIndex < element.childNodes.length;
+      childIndex += 1
+    ) {
+      const child = element.childNodes[childIndex];
+      if (!child) continue;
+      if (Node.TEXT_NODE === child.nodeType) {
+        const text = child as Text;
+        addSegment(text, 0, text.length + 1);
+      } else if (
+        Node.ELEMENT_NODE === child.nodeType
+        && !isVisualCaretExcludedElement(child as Element)
+      ) {
+        visit(child as Element);
+      }
+      addSegment(element, childIndex + 1);
+    }
+  };
+  visit(editor);
+  return { length, segments };
+}
+
+function visualBoundaryAt(
+  index: VisualBoundaryIndex,
+  position: number
+): Readonly<{
+  boundary: VisualBoundary;
+  segmentIndex: number;
+}> | null {
+  let lower = 0;
+  let upper = index.segments.length - 1;
+  while (lower <= upper) {
+    const middle = Math.floor((lower + upper) / 2);
+    const segment = index.segments[middle];
+    if (!segment) return null;
+    if (position < segment.start) {
+      upper = middle - 1;
+    } else if (position > segment.end) {
+      lower = middle + 1;
+    } else {
+      return {
+        boundary: {
+          node: segment.node,
+          offset: segment.offset + position - segment.start
+        },
+        segmentIndex: middle
+      };
+    }
+  }
+  return null;
+}
+
+function neutralVisualCaretBoundary(
+  editor: HTMLElement,
+  boundary: VisualBoundary
+): VisualBoundary {
+  if (
+    boundary.node === editor
+    || !(boundary.node instanceof HTMLElement)
+    || boundary.offset < 1
+  ) {
+    return boundary;
+  }
+  const previous = boundary.node.childNodes[boundary.offset - 1];
+  if (!previous) return boundary;
+  let tail: Node = previous;
+  while (tail.lastChild) tail = tail.lastChild;
+  let element = tail instanceof Element ? tail : tail.parentElement;
+  let endsWithFormatting = false;
+  while (element && boundary.node.contains(element)) {
+    if (VISUAL_CARET_FORMATTING_TAGS.has(element.tagName)) {
+      endsWithFormatting = true;
+      break;
+    }
+    if (element === previous) break;
+    element = element.parentElement;
+  }
+  if (!endsWithFormatting) return boundary;
+  const caret = editor.ownerDocument.createTextNode('\u200b');
+  boundary.node.insertBefore(
+    caret,
+    boundary.node.childNodes[boundary.offset] ?? null
+  );
+  return { node: caret, offset: 1 };
+}
+
+export function placeVisualCaretFromSourceOffset(
+  editor: HTMLElement,
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string,
+  sourceOffset: number
+): void {
+  if (sourceOffset < 0 || sourceOffset > sourceMarkdown.length) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  const boundaryIndex = visualBoundaryIndex(editor);
+  const mappedOffsets = new Map<number, number | null>();
+  let mappingAttempts = 0;
+  const mappedBoundary = (
+    index: number
+  ): Readonly<{
+    boundary: VisualBoundary;
+    index: number;
+    segmentIndex: number;
+    sourceOffset: number;
+  }> | null => {
+    const indexedBoundary = visualBoundaryAt(boundaryIndex, index);
+    if (!indexedBoundary) return null;
+    if (!mappedOffsets.has(index)) {
+      mappingAttempts += 1;
+      if (mappingAttempts > VISUAL_CARET_MAPPING_ATTEMPT_LIMIT) {
+        throw new Error('visual-editor-selection-map-budget-exceeded');
+      }
+      try {
+        mappedOffsets.set(
+          index,
+          visualBoundarySourceOffset(
+            editor,
+            sourceMarkdown,
+            baselineVisualMarkdown,
+            indexedBoundary.boundary.node,
+            indexedBoundary.boundary.offset
+          )
+        );
+      } catch (error) {
+        if (
+          error instanceof Error
+          && [
+            'visual-editor-markdown-merge-ambiguous',
+            'visual-editor-markdown-merge-failed',
+            'visual-editor-selection-map-failed'
+          ].includes(error.message)
+        ) {
+          mappedOffsets.set(index, null);
+        } else {
+          throw error;
+        }
+      }
+    }
+    const mapped = mappedOffsets.get(index);
+    return null == mapped
+      ? null
+      : {
+          boundary: indexedBoundary.boundary,
+          index,
+          segmentIndex: indexedBoundary.segmentIndex,
+          sourceOffset: mapped
+        };
+  };
+  const nearestMappableBoundary = (
+    middle: number,
+    lower: number,
+    upper: number
+  ) => {
+    const direct = mappedBoundary(middle);
+    if (direct) return direct;
+    const indexed = visualBoundaryAt(boundaryIndex, middle);
+    if (!indexed) return null;
+
+    for (let distance = 0; distance < boundaryIndex.segments.length; distance += 1) {
+      const probes = new Set<number>();
+      const left = boundaryIndex.segments[indexed.segmentIndex - distance];
+      const right = boundaryIndex.segments[indexed.segmentIndex + distance];
+      if (left) {
+        probes.add(Math.max(lower, Math.min(upper, left.start)));
+        probes.add(Math.max(lower, Math.min(upper, left.end)));
+      }
+      if (right) {
+        probes.add(Math.max(lower, Math.min(upper, right.start)));
+        probes.add(Math.max(lower, Math.min(upper, right.end)));
+      }
+      const candidates = Array.from(probes)
+        .filter((position) => position >= lower && position <= upper)
+        .map(mappedBoundary)
+        .filter((candidate) => null !== candidate);
+      if (candidates.length) {
+        return candidates.reduce((nearest, candidate) =>
+          Math.abs(candidate.sourceOffset - sourceOffset)
+            < Math.abs(nearest.sourceOffset - sourceOffset)
+            ? candidate
+            : nearest
+        );
+      }
+    }
+    return null;
+  };
+  let lower = 0;
+  let upper = boundaryIndex.length - 1;
+  let match: VisualBoundary | null = null;
+
+  while (lower <= upper) {
+    const middle = Math.floor((lower + upper) / 2);
+    const candidate = nearestMappableBoundary(middle, lower, upper);
+    if (!candidate) break;
+    if (candidate.sourceOffset === sourceOffset) {
+      match = candidate.boundary;
+      break;
+    }
+    if (candidate.sourceOffset < sourceOffset) {
+      lower = candidate.index + 1;
+    } else {
+      upper = candidate.index - 1;
+    }
+  }
+
+  if (!match) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  const selection = editor.ownerDocument.defaultView?.getSelection();
+  if (!selection) throw new Error('visual-editor-selection-unavailable');
+  const caret = neutralVisualCaretBoundary(editor, match);
+  const range = editor.ownerDocument.createRange();
+  range.setStart(caret.node, caret.offset);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
 }
 
 export function visualSelectionSourceRange(
@@ -616,6 +945,7 @@ export function mergeVisualMarkdownChange(
     sourceOffsets.push(offset);
   }
   const baselineToSource = new Map<number, number>();
+  baselineToSource.set(0, 0);
   const hiddenSourceRanges: Array<Readonly<{ end: number; start: number }>> = [];
   let sourcePosition = 0;
   let baselinePosition = 0;

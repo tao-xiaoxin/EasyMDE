@@ -129,9 +129,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-traffic-light.is-red { background: #ff605c; }
 .easymde-traffic-light.is-yellow { background: #ffbd44; }
 .easymde-traffic-light.is-green { background: #00ca4e; }
-.easymde-immersive-brand-mark { width: 77.766px; gap: 5.625px; margin-inline-start: 3.75px; flex-basis: 77.766px; }
-.easymde-immersive-brand-mark > svg { flex: 0 0 15px; color: #3b82f6; }
-.easymde-immersive-brand-name { color: #334155; font-size: 13px; font-weight: 600; letter-spacing: 0; line-height: 19.5px; }
+.easymde-immersive-brand-mark { gap: 5.625px; margin-inline-start: 3.75px; flex: 0 0 auto; }
+.easymde-immersive-brand-mark > svg { flex: 0 0 15px; color: oklch(62.3% .214 259.815); }
+.easymde-immersive-brand-name { color: oklch(37.2% .044 257.287); font-size: 13px; font-weight: 600; letter-spacing: -.025em; line-height: 19.5px; }
 .easymde-immersive-brand-divider { margin-inline: 1.875px; color: rgba(15, 23, 42, .07); font-size: 16.875px; line-height: 26.25px; }
 .easymde-immersive-title-wrap { min-width: 0; gap: 5.625px; flex: 0 1 auto; }
 .easymde-immersive-header-spacer.is-title-gap { width: 11.25px; flex: 0 0 auto; }
@@ -189,6 +189,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     font-size: 12.5px;
     font-weight: 500;
     line-height: 18.75px;
+    transition: all 150ms cubic-bezier(.4, 0, .2, 1);
     cursor: pointer;
 }
 .easymde-immersive-view-switch button.is-active { border-color: #c7d2fe; background: #fff; color: #4c6ef5; box-shadow: 0 0 0 3px #eef2ff; }
@@ -512,12 +513,15 @@ body:has(.easymde-editor.is-immersive) .wrap {
 [dir="rtl"] .easymde-immersive-outline { margin: 11.25px 11.25px 11.25px 2.75px; }
 .easymde-editor.is-immersive .easymde-pane { border: 1px solid #e8ebef; border-radius: 16px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .03); }
 .easymde-editor.is-immersive .easymde-pane-source { border-inline-end: 1px solid #e8ebef; }
-.easymde-editor.is-immersive .easymde-pane-header { display: flex; box-sizing: border-box; height: 40.5px; align-items: center; justify-content: space-between; padding: 0 15px; background: #fafbfc; color: #3d4350; font-size: 13px; font-weight: 600; letter-spacing: .3px; line-height: 40.5px; }
+.easymde-editor.is-immersive .easymde-pane-header { display: flex; box-sizing: border-box; height: 40.5px; align-items: center; justify-content: space-between; padding: 10px 15px; border-bottom: 1px solid #e8ebef; background: #fafbfc; color: #3d4350; font-family: "EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 15px; font-weight: 400; letter-spacing: 0; line-height: 22.5px; }
+.easymde-editor.is-immersive .easymde-pane-source > .easymde-pane-header > span:first-child { color: #3d4350; font-size: 13px; font-weight: 600; letter-spacing: .3px; line-height: 19.5px; }
 .easymde-immersive-more-actions { display: grid; width: 20px; height: 20px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #b0b4bc; cursor: pointer; }
 .easymde-immersive-more-actions:hover { background: #ecedf0; color: #666; }
-.easymde-editor.is-immersive .easymde-source-react .cm-content { padding: 18px 14px 60px 0; caret-color: #1f2430; counter-reset: easymde-line; }
-.easymde-editor.is-immersive .easymde-source-react .cm-line { position: relative; min-height: 28px; padding-inline-start: 36px; counter-increment: easymde-line; }
-.easymde-editor.is-immersive .easymde-source-react .cm-line::before { position: absolute; inset-inline-start: 0; width: 26px; color: #c7cbd3; content: counter(easymde-line); text-align: end; font-size: 13.5px; font-style: normal; font-weight: 400; }
+.easymde-editor.is-immersive .easymde-source-react .cm-content { padding: 14px 14px 14px 0; caret-color: #1f2430; line-height: 28px; }
+.easymde-editor.is-immersive .easymde-source-react .cm-line { min-height: 28px; line-height: 28px; }
+.easymde-editor.is-immersive .easymde-source-react .cm-gutters { display: flex; box-sizing: border-box; width: 36px; min-width: 36px; flex: 0 0 36px; border: 0; background: #f2f2f2; color: #c7cbd3; }
+.easymde-editor.is-immersive .easymde-source-react .cm-lineNumbers .cm-gutterElement { box-sizing: border-box; width: 36px; min-width: 36px; padding: 0; padding-inline-end: 14px; color: #c7cbd3; text-align: end; font-size: 13.5px; font-style: normal; font-weight: 400; line-height: 28px; }
+.easymde-editor:not(.is-immersive) .easymde-source-react .cm-gutters { display: none; }
 .easymde-editor.is-immersive .easymde-source-react { min-height: 0; flex: 1 1 auto; }
 .easymde-editor.is-immersive .easymde-source-react .cm-editor { color: #3d4350; background: #f2f2f2; font-size: 14.5px; line-height: 28px; }
 .easymde-editor.is-immersive .easymde-source-react .cm-editor { font-family: SFMono-Regular, Menlo, Consolas, monospace; font-feature-settings: "calt" 0; }
@@ -527,7 +531,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-autosave-state { display: flex; align-items: center; gap: 5px; }
 .easymde-immersive-statusbar .easymde-immersive-status-error { min-width: 0; overflow: hidden; color: #b32d2e; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .easymde-immersive-autosave-state > span { width: 6px; height: 6px; border-radius: 50%; background: #10b981; }
-.easymde-editor.is-immersive .easymde-preview { padding: 34px 48px 60px; background: #fff; }
+.easymde-editor.is-immersive-split .easymde-preview { padding: 34px 48px 60px; background: #fff; }
 .easymde-immersive-preview-canvas,
 .easymde-immersive-preview-page { display: contents; }
 .easymde-editor.is-immersive-source .easymde-workspace { grid-template-columns: 1fr; grid-template-areas: "source"; }

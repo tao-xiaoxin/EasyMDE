@@ -94,10 +94,7 @@ import {
   type LocalDraftSession,
   type LocalDraftSessionStatus
 } from '../../features/local-drafts/local-draft-session';
-import {
-  activeHeadingLevel,
-  createToolbarCommandSession
-} from '../../features/toolbar/toolbar-command-session';
+import { createToolbarCommandSession } from '../../features/toolbar/toolbar-command-session';
 import {
   EditorToolbar,
   type EditorToolbarSession,
@@ -111,7 +108,8 @@ import {
 import { ImmersivePreviewSurface } from '../../features/immersive-editor/ui/ImmersivePreviewSurface';
 import {
   ImmersiveVisualEditor,
-  type ImmersiveVisualEditorRuntime
+  type ImmersiveVisualEditorRuntime,
+  type VisualPreviewSnapshot
 } from '../../features/immersive-editor/ui/ImmersiveVisualEditor';
 import type { ImmersiveViewMode } from '../../features/immersive-editor/immersive-editor';
 import { openFeaturedImagePicker } from '../../features/immersive-editor/open-featured-image-picker';
@@ -274,13 +272,6 @@ function ActiveToolbar({
   toolbar,
   variant = 'default'
 }: ActiveToolbarProps) {
-  const getHeadingLevel = useCallback(() =>
-    activeHeadingLevel({
-      selection: session.document.getSelection(),
-      value: session.document.getValue()
-    }), [session]);
-  const [currentHeadingLevel, setCurrentHeadingLevel] =
-    useState(getHeadingLevel);
   const commandSessionRef = useRef<ReturnType<
     typeof createToolbarCommandSession
   > | null>(null);
@@ -334,23 +325,8 @@ function ActiveToolbar({
   }, [executeCommand, editorRoot, prepareToolbarShortcuts]);
 
   useEffect(() => () => commandSession.dispose(), [commandSession]);
-  useEffect(() => {
-    const updateHeadingLevel = () =>
-      setCurrentHeadingLevel(getHeadingLevel());
-    updateHeadingLevel();
-    const unsubscribeDocument =
-      session.document.subscribe(updateHeadingLevel);
-    const unsubscribeSelection =
-      session.document.subscribeSelection(updateHeadingLevel);
-    return () => {
-      unsubscribeDocument();
-      unsubscribeSelection();
-    };
-  }, [getHeadingLevel, session]);
-
   return (
     <EditorToolbar
-      activeHeadingLevel={currentHeadingLevel}
       bootstrap={toolbar}
       platform={platform}
       executeCommand={executeCommand}
@@ -475,9 +451,11 @@ export function EditorRoot(props: EditorRootProps) {
   const [previewRefreshRevision, setPreviewRefreshRevision] = useState(0);
   const [previewSurfaceStatus, setPreviewSurfaceStatus] =
     useState<PreviewSurfaceStatus>('loading');
-  const [visualPreviewHtml, setVisualPreviewHtml] =
-    useState<SafePreviewHtml | null>(null);
+  const [visualPreviewSnapshot, setVisualPreviewSnapshot] = useState<
+    (VisualPreviewSnapshot & { html: SafePreviewHtml }) | null
+  >(null);
   const [visualPreviewEditing, setVisualPreviewEditing] = useState(false);
+  const [visualPreviewPending, setVisualPreviewPending] = useState(false);
   const [visualEditorSurface, setVisualEditorSurface] =
     useState<HTMLElement | null>(null);
   const visualPreviewEditingRef = useRef(visualPreviewEditing);
@@ -625,6 +603,23 @@ export function EditorRoot(props: EditorRootProps) {
       scheduledPreviewRuntimeRef.current = null;
     }
   }, []);
+  const handlePreviewSnapshotReady = useCallback(
+    (html: SafePreviewHtml, signature: string) => {
+      setVisualPreviewSnapshot((current) => ({
+        html,
+        revision: (current?.revision ?? 0) + 1,
+        signature
+      }));
+    },
+    []
+  );
+  const handlePreviewStatusChange = useCallback(
+    (status: PreviewSurfaceStatus) => {
+      setPreviewSurfaceStatus(status);
+      if ('empty' === status) setVisualPreviewSnapshot(null);
+    },
+    []
+  );
   const handleVisualEditorReady = useCallback(
     (runtime: ImmersiveVisualEditorRuntime) => {
       visualEditorRuntimeRef.current = runtime;
@@ -645,33 +640,68 @@ export function EditorRoot(props: EditorRootProps) {
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
   }, []);
-  const schedulePreview = useCallback(
-    (immediate = false) => {
+  const schedulePreviewMarkdown = useCallback(
+    (markdown: string, immediate = false): string => {
       const runtime = previewRuntimeRef.current;
       if (!runtime) {
         throw new Error('preview-runtime-unavailable');
       }
       const revision = ++previewRevisionRef.current;
-      runtime.session.schedule(
-        previewRequest(
-          props.submissionField.value,
-          props.preview,
-          previewAppearanceRef.current,
-          revision
-        ),
-        immediate
+      const request = previewRequest(
+        markdown,
+        props.preview,
+        previewAppearanceRef.current,
+        revision
       );
+      runtime.session.schedule(request, immediate);
+      return request.signature;
     },
-    [props.preview, props.submissionField]
+    [props.preview]
+  );
+  const schedulePreview = useCallback(
+    (immediate = false) => {
+      schedulePreviewMarkdown(props.submissionField.value, immediate);
+    },
+    [props.submissionField, schedulePreviewMarkdown]
+  );
+  const handleVisualFailure = useCallback(
+    (code: string) => {
+      props.onFailure(code);
+      setPreviewSurfaceStatus('error');
+      setOwnedEditorStatus({
+        message: props.preview.messages.error,
+        type: 'error'
+      });
+    },
+    [props.onFailure, props.preview.messages.error, setOwnedEditorStatus]
+  );
+  const handleVisualMarkdownChange = useCallback(
+    () => setVisualPreviewChanged(true),
+    []
+  );
+  const handleVisualPendingChange = useCallback((pending: boolean) => {
+    if (rootActiveRef.current) setVisualPreviewPending(pending);
+  }, []);
+  const handleVisualPreviewRequest = useCallback(
+    (markdown: string) => schedulePreviewMarkdown(markdown, true),
+    [schedulePreviewMarkdown]
   );
   const leaveVisualPreview = useCallback(() => {
     if (!visualPreviewEditingRef.current) return false;
     visualPreviewEditingRef.current = false;
     setVisualPreviewEditing(false);
+    setVisualPreviewPending(false);
     setVisualPreviewChanged(false);
-    setVisualPreviewHtml(null);
+    setPreviewRefreshRevision((revision) => revision + 1);
     return true;
   }, []);
+  const handleVisualTransferFailure = useCallback(() => {
+    leaveVisualPreview();
+  }, [leaveVisualPreview]);
+  const handleVisualCanonicalDocumentChange = useCallback(() => {
+    props.onFailure('visual-editor-canonical-document-changed');
+    leaveVisualPreview();
+  }, [leaveVisualPreview, props.onFailure]);
   const prepareSourceMutation = useCallback(() => {
     if (!visualPreviewEditingRef.current) return true;
     const runtime = visualEditorRuntimeRef.current;
@@ -683,6 +713,8 @@ export function EditorRoot(props: EditorRootProps) {
   const appearancePort = useMemo<AppearancePort>(
     () => ({
       applyState: (state) => {
+        const visualPreviewWasEditing = visualPreviewEditingRef.current;
+        if (visualPreviewWasEditing && !prepareSourceMutation()) return;
         props.appearancePort.applyState(state);
         setAppearanceState(state);
         submissionStateRef.current = {
@@ -697,9 +729,7 @@ export function EditorRoot(props: EditorRootProps) {
         if (defaults) {
           fontControlsSessionRef.current?.replaceState(defaults);
         }
-        if (leaveVisualPreview()) {
-          setPreviewRefreshRevision((revision) => revision + 1);
-        } else {
+        if (!visualPreviewWasEditing) {
           schedulePreview(true);
         }
       },
@@ -713,6 +743,10 @@ export function EditorRoot(props: EditorRootProps) {
         if (sessionError) throw sessionError;
         const result = await props.appearancePort.saveCustomCss(input);
         if ('saved' === result.status) {
+          const visualPreviewWasEditing = visualPreviewEditingRef.current;
+          if (visualPreviewWasEditing && !prepareSourceMutation()) {
+            return result;
+          }
           props.appearancePort.applyState(result.snapshot.state);
           setAppearanceState(result.snapshot.state);
           submissionStateRef.current = {
@@ -721,9 +755,7 @@ export function EditorRoot(props: EditorRootProps) {
           };
           documentSession?.replaceSubmissionState(submissionStateRef.current);
           previewAppearanceRef.current = result.snapshot.state;
-          if (leaveVisualPreview()) {
-            setPreviewRefreshRevision((revision) => revision + 1);
-          } else {
+          if (!visualPreviewWasEditing) {
             schedulePreview(true);
           }
         }
@@ -732,9 +764,9 @@ export function EditorRoot(props: EditorRootProps) {
     }),
     [
       documentSession,
-      leaveVisualPreview,
       props.appearance.articleThemes,
       props.appearancePort,
+      prepareSourceMutation,
       protectedOperationError,
       schedulePreview
     ]
@@ -1002,6 +1034,7 @@ export function EditorRoot(props: EditorRootProps) {
     'easymde-code-mac',
     `easymde-markdown-theme-${appearanceState.markdownTheme}`,
     `easymde-code-theme-${appearanceState.codeTheme}`,
+    visualPreviewEditing ? 'easymde-immersive-visual-editor' : '',
     'custom' === appearanceState.markdownTheme
       ? 'easymde-custom-css-active'
       : '',
@@ -1462,72 +1495,88 @@ export function EditorRoot(props: EditorRootProps) {
             active={immersive && 'preview' === immersiveMode}
             canEdit={
               'ready' === previewSurfaceStatus
-              && null !== visualPreviewHtml
+              && null !== visualPreviewSnapshot
               && null !== documentSession
             }
             changed={visualPreviewChanged}
             editable={visualPreviewEditing}
+            hasSnapshot={null !== visualPreviewSnapshot}
             ordinaryLabel={props.labels.preview}
             onToggleEditable={() => {
               if (visualPreviewEditing) {
                 prepareSourceMutation();
                 return;
               }
-              if (!visualPreviewHtml || !documentSession) return;
+              if (!visualPreviewSnapshot || !documentSession) return;
               setPreviewSurfaceStatus('ready');
               setVisualPreviewChanged(false);
+              setVisualPreviewPending(false);
               setVisualPreviewEditing(true);
             }}
             status={previewSurfaceStatus}
-            statusMessages={{
-              empty: props.preview.messages.empty,
-              error: props.preview.messages.error,
-              loading: props.preview.messages.rendering
-            }}
+                statusMessages={{
+                  empty: props.preview.messages.empty,
+                  error: props.preview.messages.error
+                }}
             strings={props.immersiveStrings}
           >
-            {visualPreviewEditing && visualPreviewHtml && documentSession ? (
+            <PreviewSurfaceOwner
+              className={previewClassName}
+              emptyMode={
+                immersive && 'preview' === immersiveMode
+                  ? 'paper'
+                  : 'message'
+              }
+              enhancementPort={props.enhancementPort}
+              initial={{
+                codeTheme: props.appearance.state.codeTheme,
+                features: props.preview.features,
+                html: props.preview.html,
+                signature: props.preview.signature
+              }}
+              initialRevision={0}
+              messages={props.preview.messages}
+              onDiagnostic={props.onFailure}
+              onDispose={handlePreviewDispose}
+              onReady={handlePreviewReady}
+              onSnapshotReady={handlePreviewSnapshotReady}
+              onStatusChange={handlePreviewStatusChange}
+              port={previewPort}
+              scrollPort={props.scrollPort}
+              style={previewStyle}
+              {...(visualPreviewEditing
+                ? {
+                    contentEditable: !visualPreviewPending,
+                    label: props.immersiveStrings.previewEditorLabel,
+                    role: 'textbox',
+                    spellCheck: true
+                  }
+                : {})}
+            />
+            {visualPreviewEditing
+            && visualPreviewSnapshot
+            && documentSession
+            && previewRuntimeRef.current ? (
               <ImmersiveVisualEditor
-                className={previewClassName}
                 documentSession={documentSession}
-                html={visualPreviewHtml}
                 imageUploadEnabled={props.imageUpload.enabled}
-                label={props.immersiveStrings.previewEditorLabel}
-                onDispose={handleVisualEditorDispose}
-                onFailure={(code) => {
-                  props.onFailure(code);
-                  setPreviewSurfaceStatus('error');
-                  setOwnedEditorStatus({
-                    message: props.preview.messages.error,
-                    type: 'error'
-                  });
-                }}
-                onMarkdownChange={() => setVisualPreviewChanged(true)}
-                onReady={handleVisualEditorReady}
-                style={previewStyle}
-              />
-            ) : (
-              <PreviewSurfaceOwner
-                className={previewClassName}
-                enhancementPort={props.enhancementPort}
-                initial={{
-                  codeTheme: props.appearance.state.codeTheme,
-                  features: props.preview.features,
-                  html: props.preview.html,
-                  signature: props.preview.signature
-                }}
-                initialRevision={0}
-                messages={props.preview.messages}
+                onCanonicalDocumentChange={
+                  handleVisualCanonicalDocumentChange
+                }
                 onDiagnostic={props.onFailure}
-                onDispose={handlePreviewDispose}
-                onHtmlChange={setVisualPreviewHtml}
-                onReady={handlePreviewReady}
-                onStatusChange={setPreviewSurfaceStatus}
-                port={previewPort}
-                scrollPort={props.scrollPort}
-                style={previewStyle}
+                onDispose={handleVisualEditorDispose}
+                onFailure={handleVisualFailure}
+                onMarkdownChange={handleVisualMarkdownChange}
+                onPendingChange={handleVisualPendingChange}
+                onReady={handleVisualEditorReady}
+                onTransferFailure={handleVisualTransferFailure}
+                pending={visualPreviewPending}
+                previewSnapshot={visualPreviewSnapshot}
+                previewStatus={previewSurfaceStatus}
+                requestPreview={handleVisualPreviewRequest}
+                surface={previewRuntimeRef.current.surface}
               />
-            )}
+            ) : null}
           </ImmersivePreviewSurface>
         }
       />

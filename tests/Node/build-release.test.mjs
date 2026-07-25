@@ -656,6 +656,12 @@ test('release requirements include the Qinghe Zhusha article theme stylesheet', 
   assert.ok(requirements.includes('assets/themes/article/qinghe-zhusha.css'));
 });
 
+test('release requirements include the Terminal Noir code theme stylesheet', () => {
+  const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
+
+  assert.ok(requirements.includes('assets/themes/code/terminal-noir.css'));
+});
+
 test('release requirements do not include the removed md2html-normal article theme stylesheet', () => {
   const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
 

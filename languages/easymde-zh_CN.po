@@ -776,6 +776,10 @@ msgstr "Xcode"
 msgid "Wechat inspired"
 msgstr "公众号风格"
 
+#: src/Theme/CodeThemeRegistry.php:23
+msgid "Terminal Noir"
+msgstr "终端夜色"
+
 #: src/Theme/CustomCssPolicy.php:46
 msgid "Custom CSS is too large."
 msgstr "自定义 CSS 过大。"

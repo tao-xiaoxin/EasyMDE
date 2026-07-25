@@ -677,13 +677,13 @@ msgstr ""
 msgid "link text"
 msgstr ""
 
-#: src/Admin/EditorSaveHandler.php:351
+#: src/Admin/EditorSaveHandler.php:379
 msgid ""
 "EasyMDE cannot save this post because Markdown rendering is unavailable. "
 "Install Composer dependencies and try again."
 msgstr ""
 
-#: src/Admin/EditorSaveHandler.php:352
+#: src/Admin/EditorSaveHandler.php:380
 msgid "EasyMDE renderer unavailable"
 msgstr ""
 

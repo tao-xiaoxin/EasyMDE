@@ -8,9 +8,13 @@ export type EditorSessionStatus =
 
 export type EditorSessionSnapshot = Readonly<{ status: EditorSessionStatus }>;
 export type EditorSessionOperation = 'authenticated' | 'post-read' | 'post-write';
+export type EditorSessionAutosavePreparationResult = 'blocked' | 'continue';
 
 export interface EditorSessionPort {
   getSnapshot(): EditorSessionSnapshot;
+  subscribeBeforeAutosave(
+    listener: () => EditorSessionAutosavePreparationResult
+  ): () => void;
   subscribe(listener: () => void): () => void;
 }
 

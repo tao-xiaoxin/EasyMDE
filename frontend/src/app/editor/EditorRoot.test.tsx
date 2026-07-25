@@ -13,6 +13,7 @@ import type { ImmersivePreferences } from '../../contracts/ports/immersive-prefe
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type { RevisionPreview } from '../../contracts/ports/revision-port';
 import type {
+  EditorSessionAutosavePreparationResult,
   EditorSessionPort,
   EditorSessionStatus
 } from '../../contracts/ports/editor-session-port';
@@ -44,6 +45,7 @@ function fixture(): EditorRootProps &
       dispose: ReturnType<typeof vi.fn>;
     }>;
     shortcutBinding: PreparedToolbarShortcutBinding;
+    sessionAutosave: () => EditorSessionAutosavePreparationResult;
     sessionEmit: (status: EditorSessionStatus) => void;
   }> {
   const submissionField = document.createElement('textarea');
@@ -80,9 +82,16 @@ function fixture(): EditorRootProps &
   };
   const scrollSyncBinding = { activate: vi.fn(), dispose: vi.fn() };
   const sessionListeners = new Set<() => void>();
+  const sessionAutosaveListeners = new Set<
+    () => EditorSessionAutosavePreparationResult
+  >();
   let sessionSnapshot = { status: 'ready' as EditorSessionStatus };
   const sessionPort: EditorSessionPort = {
     getSnapshot: () => sessionSnapshot,
+    subscribeBeforeAutosave: vi.fn((listener) => {
+      sessionAutosaveListeners.add(listener);
+      return () => sessionAutosaveListeners.delete(listener);
+    }),
     subscribe: vi.fn((listener) => {
       sessionListeners.add(listener);
       return () => sessionListeners.delete(listener);
@@ -410,6 +419,12 @@ function fixture(): EditorRootProps &
     scrollSyncPort: {
       prepareBinding: vi.fn(() => scrollSyncBinding)
     },
+    sessionAutosave: () => {
+      for (const listener of sessionAutosaveListeners) {
+        if ('blocked' === listener()) return 'blocked';
+      }
+      return 'continue';
+    },
     sessionEmit: (status) => {
       sessionSnapshot = { status };
       for (const listener of sessionListeners) listener();
@@ -679,8 +694,10 @@ describe('EditorRoot', () => {
     expect(visualEditor.getAttribute('contenteditable')).toBe('true');
     visualEditor.innerHTML = '<p>Changed visually</p><p>Body</p>';
     fireEvent.input(visualEditor);
-    expect(props.submissionField.value).toBe(
-      'Changed visually\n\nBody'
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe(
+        'Changed visually\n\nBody'
+      )
     );
     expect(view.getByText('更改已记录')).not.toBeNull();
     expect(
@@ -772,7 +789,9 @@ describe('EditorRoot', () => {
 
     visualEditor.innerHTML = '<p>First visual paragraph</p>';
     fireEvent.input(visualEditor);
-    expect(props.submissionField.value).toBe('First visual paragraph');
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('First visual paragraph')
+    );
 
     fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
     await waitFor(() =>
@@ -781,6 +800,176 @@ describe('EditorRoot', () => {
           .hasAttribute('disabled')
       ).toBe(false)
     );
+  });
+
+  it('synchronizes visual typing immediately without duplicating the native submission write', async () => {
+    const props = fixture();
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: '<p>selected</p>' as SafePreviewHtml
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const canonicalInput = vi.fn();
+    props.submissionField.addEventListener('input', canonicalInput);
+
+    visualEditor.innerHTML = '<p>First visual value</p>';
+    fireEvent.input(visualEditor);
+    expect(props.submissionField.value).toBe('First visual value');
+    expect(canonicalInput).toHaveBeenCalledOnce();
+
+    visualEditor.innerHTML = '<p>Final visual value</p>';
+    fireEvent.input(visualEditor);
+    expect(props.submissionField.value).toBe('Final visual value');
+    expect(canonicalInput).toHaveBeenCalledTimes(2);
+
+    visualEditor.innerHTML = '<p>Submitted visual value</p>';
+    fireEvent.input(visualEditor);
+    expect(props.submissionField.value).toBe('Submitted visual value');
+    expect(canonicalInput).toHaveBeenCalledTimes(3);
+
+    const submitEvent = new SubmitEvent('submit', {
+      bubbles: true,
+      cancelable: true
+    });
+    act(() => {
+      expect(props.nativeForm.dispatchEvent(submitEvent)).toBe(true);
+    });
+    expect(props.submissionField.value).toBe('Submitted visual value');
+    expect(canonicalInput).toHaveBeenCalledTimes(3);
+    props.submissionField.removeEventListener('input', canonicalInput);
+  });
+
+  it('synchronizes visual input to the canonical field before browser navigation can inspect dirty state', async () => {
+    const props = fixture();
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: '<p>selected</p>' as SafePreviewHtml
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const canonicalInput = vi.fn();
+    props.submissionField.addEventListener('input', canonicalInput);
+
+    visualEditor.innerHTML = '<p>Navigation-safe visual value</p>';
+    fireEvent.input(visualEditor);
+
+    expect(props.submissionField.value).toBe('Navigation-safe visual value');
+    expect(canonicalInput).toHaveBeenCalledOnce();
+    props.submissionField.removeEventListener('input', canonicalInput);
+  });
+
+  it('flushes pending visual Markdown before WordPress autosave without leaving visual editing', async () => {
+    const props = fixture();
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: '<p>selected</p>' as SafePreviewHtml
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+
+    vi.useFakeTimers();
+    try {
+      visualEditor.innerHTML = '<p>Heartbeat visual value</p>';
+      fireEvent.input(visualEditor);
+      expect(props.submissionField.value).toBe('Heartbeat visual value');
+
+      expect(props.sessionAutosave()).toBe('continue');
+      expect(props.submissionField.value).toBe('Heartbeat visual value');
+      expect(
+        view.getByRole('textbox', { name: '可视化文章编辑器' })
+      ).toBe(visualEditor);
+      expect(
+        view.getByRole('button', { name: '锁定为只读' })
+      ).not.toBeNull();
+
+      act(() => vi.advanceTimersByTime(640));
+      expect(props.submissionField.value).toBe('Heartbeat visual value');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('synchronizes continuous visual typing immediately and stores the latest local draft', async () => {
+    const props = fixture();
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: '<p>selected</p>' as SafePreviewHtml
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const canonicalInput = vi.fn();
+    props.submissionField.addEventListener('input', canonicalInput);
+
+    vi.useFakeTimers();
+    try {
+      for (let index = 0; index <= 6; index += 1) {
+        visualEditor.innerHTML = `<p>Continuous value ${index}</p>`;
+        fireEvent.input(visualEditor);
+        if (index < 6) {
+          act(() => vi.advanceTimersByTime(100));
+        }
+      }
+
+      expect(props.submissionField.value).toBe('Continuous value 6');
+      expect(canonicalInput).toHaveBeenCalledTimes(7);
+
+      act(() => vi.advanceTimersByTime(499));
+      expect(props.localDraftStorage.write).not.toHaveBeenCalled();
+      act(() => vi.advanceTimersByTime(1));
+      expect(props.localDraftStorage.write).toHaveBeenCalledOnce();
+      expect(props.localDraftStorage.write).toHaveBeenCalledWith(
+        'Continuous value 6'
+      );
+      expect(canonicalInput).toHaveBeenCalledTimes(7);
+    } finally {
+      vi.useRealTimers();
+      props.submissionField.removeEventListener('input', canonicalInput);
+    }
   });
 
   it('turns the first empty-paper heading shortcut into themed visual markup', async () => {
@@ -832,7 +1021,9 @@ describe('EditorRoot', () => {
     expect(heading).not.toBeNull();
     expect(visualEditor.querySelector('p')).toBeNull();
     expect(visualEditor.textContent).not.toContain('#');
-    expect(props.submissionField.value).toBe('#');
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('#')
+    );
 
     if (!heading) throw new Error('missing transformed visual heading');
     heading.textContent = 'First themed heading';
@@ -847,7 +1038,9 @@ describe('EditorRoot', () => {
     selection?.addRange(headingRange);
     fireEvent.input(visualEditor);
 
-    expect(props.submissionField.value).toBe('# First themed heading');
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('# First themed heading')
+    );
     expect(heading.textContent).toBe('First themed heading');
   });
 
@@ -1271,8 +1464,10 @@ describe('EditorRoot', () => {
     liveSelection?.addRange(liveRange);
     fireEvent.input(visualEditor);
 
-    expect(props.submissionField.value).toBe(
-      'Before **new**! after'
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe(
+        'Before **new**! after'
+      )
     );
   });
 
@@ -1576,11 +1771,13 @@ describe('EditorRoot', () => {
     visualEditor.innerHTML = '<p>Unmapped replacement</p>';
     fireEvent.input(visualEditor);
 
-    expect(props.submissionField.value).toBe('selected');
-    expect(visualEditor.textContent).toBe('Rendered');
-    expect(props.onFailure).toHaveBeenCalledWith(
-      'visual-editor-markdown-merge-failed'
-    );
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe('selected');
+      expect(visualEditor.textContent).toBe('Rendered');
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'visual-editor-markdown-merge-failed'
+      );
+    });
     expect(
       view.container.querySelector(
         '.easymde-immersive-preview-status .is-error'
@@ -1938,8 +2135,10 @@ describe('EditorRoot', () => {
     paragraph.textContent = 'Edited paragraph';
     fireEvent.input(visualEditor);
 
-    expect(props.submissionField.value).toBe(
-      source.replace('Editable paragraph', 'Edited paragraph')
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe(
+        source.replace('Editable paragraph', 'Edited paragraph')
+      )
     );
   });
 
@@ -1975,7 +2174,9 @@ describe('EditorRoot', () => {
       expect(props.wechatClipboard.copy).toHaveBeenCalledOnce()
     );
     expect(props.wechatClipboard.copy).toHaveBeenCalledWith(visualEditor);
-    expect(props.submissionField.value).toBe('Edited paragraph');
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('Edited paragraph')
+    );
   });
 
   it('restores generated blocks when a visual selection deletes a read-only region', async () => {
@@ -2036,13 +2237,15 @@ describe('EditorRoot', () => {
     visualEditor.querySelector('.easymde-mermaid')?.remove();
     fireEvent.input(visualEditor);
 
-    expect(props.submissionField.value).toBe(source);
-    expect(
-      visualEditor.querySelector('.easymde-mermaid svg')
-    ).not.toBeNull();
-    expect(props.onFailure).toHaveBeenCalledWith(
-      'visual-editor-read-only-region-mutated'
-    );
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe(source);
+      expect(
+        visualEditor.querySelector('.easymde-mermaid svg')
+      ).not.toBeNull();
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'visual-editor-read-only-region-mutated'
+      );
+    });
   });
 
   it('maps the visual caret back to CodeMirror before locking and changing mode', async () => {
@@ -2418,6 +2621,88 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: '恢复到这个版本' }));
     expect(props.restoreRevision).toHaveBeenCalledWith(
       'https://example.test/wp-admin/revision.php?revision=12'
+    );
+  });
+
+  it('flushes an immediate visual edit before History can restore a revision', async () => {
+    const props = fixture();
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: '<p>selected</p>' as SafePreviewHtml
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+
+    vi.useFakeTimers();
+    try {
+      visualEditor.innerHTML = '<p>Immediate visual history edit</p>';
+      fireEvent.input(visualEditor);
+      expect(props.submissionField.value).toBe(
+        'Immediate visual history edit'
+      );
+
+      fireEvent.click(view.getByRole('button', { name: '历史记录' }));
+
+      expect(props.submissionField.value).toBe(
+        'Immediate visual history edit'
+      );
+      expect(
+        view.queryByRole('textbox', { name: '可视化文章编辑器' })
+      ).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await waitFor(() =>
+      expect(props.revisionPort?.get).toHaveBeenCalledWith(
+        12,
+        expect.any(AbortSignal)
+      )
+    );
+    fireEvent.click(view.getByRole('button', { name: '恢复到这个版本' }));
+
+    expect(props.restoreRevision).not.toHaveBeenCalled();
+    expect(view.getByRole('alert').textContent).toContain(
+      '未保存的更改将会丢失'
+    );
+  });
+
+  it('keeps History closed when a visual edit cannot synchronize safely', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+
+    visualEditor.innerHTML = '<p>Unmapped replacement</p>';
+    fireEvent.click(view.getByRole('button', { name: '历史记录' }));
+
+    expect(view.queryByRole('dialog', { name: '历史版本' })).toBeNull();
+    expect(
+      view.getByRole('textbox', { name: '可视化文章编辑器' })
+    ).toBe(visualEditor);
+    expect(props.onFailure).toHaveBeenCalledWith(
+      'visual-editor-markdown-merge-failed'
     );
   });
 

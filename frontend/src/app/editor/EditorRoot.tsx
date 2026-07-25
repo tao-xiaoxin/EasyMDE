@@ -1063,13 +1063,39 @@ export function EditorRoot(props: EditorRootProps) {
     if (!documentSession) {
       return;
     }
-    return props.nativeSubmissionPort.subscribeBeforeSubmit(() => {
-      const sessionError = protectedOperationError('post-write');
-      if (sessionError) return 'blocked';
+    return props.sessionPort.subscribeBeforeAutosave(() => {
+      if (visualPreviewEditingRef.current) {
+        const runtime = visualEditorRuntimeRef.current;
+        if (!runtime) throw new Error('visual-editor-runtime-unavailable');
+        if (!runtime.prepareToolbarFallback()) return 'blocked';
+      }
       documentSession.document.flush();
       return 'continue';
     });
-  }, [documentSession, props.nativeSubmissionPort, protectedOperationError]);
+  }, [documentSession, props.sessionPort]);
+
+  useEffect(() => {
+    if (!documentSession) {
+      return;
+    }
+    return props.nativeSubmissionPort.subscribeBeforeSubmit(() => {
+      const sessionError = protectedOperationError('post-write');
+      if (sessionError) return 'blocked';
+      if (
+        visualPreviewEditingRef.current
+        && !prepareSourceMutation()
+      ) {
+        return 'blocked';
+      }
+      documentSession.document.flush();
+      return 'continue';
+    });
+  }, [
+    documentSession,
+    prepareSourceMutation,
+    props.nativeSubmissionPort,
+    protectedOperationError
+  ]);
 
   useEffect(() => {
     if (!documentSession) {

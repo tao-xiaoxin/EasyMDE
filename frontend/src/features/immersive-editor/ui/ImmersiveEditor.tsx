@@ -650,7 +650,10 @@ export function ImmersiveEditor({
         wechatCopied={wechatCopied}
         onCopyWechat={copyWechat}
         onExit={onExit}
-        onHistory={() => setHistoryOpen(true)}
+        onHistory={() => {
+          if (!onBeforeSourceMutation()) return;
+          setHistoryOpen(true);
+        }}
         onModeChange={changeMode}
         onSettingsChange={changeSettings}
         onTable={() => {

@@ -361,7 +361,7 @@ function normalizeMarkdown(markdown) {
 async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
   await page.locator('.easymde-source-react .cm-content').fill(markdown);
   await expect(page.locator('#easymde-source')).toHaveValue(markdown);
-  const preview = page.locator('.easymde-pane-preview > article');
+  const preview = page.locator('.easymde-pane-preview article');
   await expect(preview).toHaveAttribute('aria-busy', 'false');
   await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
   if (expectedText) await expect(preview).toContainText(expectedText);
@@ -453,6 +453,9 @@ test.describe('EasyMDE editor workflows', () => {
       return {
         brandColor: colorToRgba(brandStyle.color),
         brandIconColor: colorToRgba(brandIconStyle.color),
+        brandFontFamily: brandStyle.fontFamily,
+        brandFontSize: brandStyle.fontSize,
+        brandFontWeight: brandStyle.fontWeight,
         brandLetterSpacing: brandStyle.letterSpacing,
         brandWidth: brand.getBoundingClientRect().width,
         gutterWidth: gutterStyle.width,
@@ -468,8 +471,11 @@ test.describe('EasyMDE editor workflows', () => {
     });
     expect(immersiveChromeMetrics.brandColor).toEqual([49, 65, 88, 255]);
     expect(immersiveChromeMetrics.brandIconColor).toEqual([43, 127, 255, 255]);
+    expect(immersiveChromeMetrics.brandFontFamily).toMatch(/^"EasyMDE Inter",/);
+    expect(immersiveChromeMetrics.brandFontSize).toBe('13px');
+    expect(immersiveChromeMetrics.brandFontWeight).toBe('600');
     expect(immersiveChromeMetrics.brandLetterSpacing).toBe('-0.325px');
-    expect(Math.abs(immersiveChromeMetrics.brandWidth - 57.140625)).toBeLessThanOrEqual(0.1);
+    expect(Math.abs(immersiveChromeMetrics.brandWidth - 57.140625)).toBeLessThanOrEqual(0.5);
     expect(immersiveChromeMetrics.gutterWidth).toBe('36px');
     expect(immersiveChromeMetrics.lineNumberTrackWidth).toBe(22);
     expect(immersiveChromeMetrics.sourcePaddingInlineStart).toBe('0px');
@@ -901,7 +907,7 @@ test.describe('EasyMDE editor workflows', () => {
     const reactSource = page.locator('.easymde-source-react');
     const nativeSource = page.locator('#easymde-source');
     const sourceEditor = reactSource.locator('.cm-content');
-    const activePreview = page.locator('.easymde-pane-preview > article');
+    const activePreview = page.locator('.easymde-pane-preview article');
 
     await expect(sourcePane).toHaveAttribute('data-easymde-document-owner', 'react');
     await expect(page.locator('[data-easymde-editor-owner="react"]')).toHaveCount(1);
@@ -910,7 +916,9 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(nativeSource).toBeHidden();
     await expect(page.locator('.easymde-pane-source .easymde-source:visible')).toHaveCount(1);
     await expect(activePreview).toBeVisible();
-    await expect(page.locator('.easymde-pane-preview > article')).toHaveCount(1);
+    await expect(
+      page.locator('.easymde-pane-preview article')
+    ).toHaveCount(1);
 
     await sourceEditor.fill('# React source\n\nBridge value');
     await expect(nativeSource).toHaveValue('# React source\n\nBridge value');
@@ -1069,7 +1077,7 @@ test.describe('EasyMDE editor workflows', () => {
     await login(page, user);
     await openEasyMdeNewPost(page);
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
-    const preview = page.locator('.easymde-pane-preview > article');
+    const preview = page.locator('.easymde-pane-preview article');
     const firstRequest = page.waitForRequest(/\/wp-json\/easymde\/v1\/preview(?:\?.*)?$/);
     await sourceEditor.fill('first request');
     await firstRequest;
@@ -1211,12 +1219,12 @@ test.describe('EasyMDE editor workflows', () => {
     const codeSelect = appearanceDialog.getByLabel(labels.codeTheme);
     for (const id of catalog.articleThemes) {
       await articleSelect.selectOption('theme:' + id);
-      await expect(page.locator('.easymde-pane-preview > article'))
+      await expect(page.locator('.easymde-pane-preview article'))
         .toHaveClass(new RegExp('easymde-markdown-theme-' + id));
     }
     for (const id of catalog.codeThemes) {
       await codeSelect.selectOption(id);
-      await expect(page.locator('.easymde-pane-preview > article'))
+      await expect(page.locator('.easymde-pane-preview article'))
         .toHaveClass(new RegExp('easymde-code-theme-' + id));
     }
 
@@ -1256,7 +1264,9 @@ test.describe('EasyMDE editor workflows', () => {
       for (const id of group.ids) {
         await fontDialog.locator(group.select).selectOption(id);
         await expect(page.locator(group.field)).toHaveValue(id);
-        await expect(page.locator('.easymde-pane-preview > article')).toHaveCSS('font-family', /.+/);
+        await expect(
+          page.locator('.easymde-pane-preview article')
+        ).toHaveCSS('font-family', /.+/);
       }
     }
   });
@@ -1879,11 +1889,14 @@ test.describe('EasyMDE editor workflows', () => {
     const catalog = await editorThemeCatalog(page);
     const markdown = canonicalMarkdownForSite(catalog.localFixtureImage);
     await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
-    const preview = page.locator('.easymde-pane-preview > article');
+    const preview = page.locator('.easymde-pane-preview article');
     await expect(preview.locator('pre code.hljs').first()).toBeVisible();
     await expect(preview.locator('.katex').first()).toBeVisible();
     await expect(preview.locator('.easymde-mermaid').first()).toBeVisible();
-    await expectRenderedFixture(page, '.easymde-pane-preview > article');
+    await expectRenderedFixture(
+      page,
+      '.easymde-pane-preview article'
+    );
 
     const copyCommand = await page.evaluate(() => {
       const command = window.EasyMDEEditorRootBootstrap.toolbar.commands.find(

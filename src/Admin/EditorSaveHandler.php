@@ -29,7 +29,8 @@ final class EditorSaveHandler {
 
 	public function register_hooks() {
 		add_action( 'save_post', array( $this, 'save_post_meta' ), 10, 3 );
-		add_action( 'wp_creating_autosave', array( $this, 'materialize_native_autosave_meta' ), 20, 2 );
+		add_action( 'wp_creating_autosave', array( $this, 'materialize_new_native_autosave_meta' ), 20, 2 );
+		add_action( 'wp_after_insert_post', array( $this, 'materialize_native_autosave_meta' ), 20, 4 );
 		add_filter( 'wp_insert_post_data', array( $this, 'render_markdown_post_content' ), 10, 2 );
 		add_filter( 'redirect_post_location', array( $this, 'redirect_after_native_publish' ), 10, 2 );
 	}
@@ -115,7 +116,7 @@ final class EditorSaveHandler {
 		$post_id     = $is_revision && ! empty( $postarr['post_parent'] )
 			? absint( $postarr['post_parent'] )
 			: ( ! empty( $postarr['ID'] ) ? absint( $postarr['ID'] ) : 0 );
-		$request = $this->valid_save_request( $post_id );
+		$request     = $this->valid_save_request( $post_id );
 		if ( ! $request ) {
 			return $data;
 		}
@@ -124,10 +125,10 @@ final class EditorSaveHandler {
 			return $data;
 		}
 
-		$owner_id    = $is_revision && ! empty( $postarr['post_parent'] )
+		$owner_id = $is_revision && ! empty( $postarr['post_parent'] )
 			? absint( $postarr['post_parent'] )
 			: $request['post_id'];
-		$owner       = $owner_id ? get_post( $owner_id ) : null;
+		$owner    = $owner_id ? get_post( $owner_id ) : null;
 		if (
 			empty( $postarr['post_type'] )
 			|| (
@@ -181,37 +182,63 @@ final class EditorSaveHandler {
 		return $data;
 	}
 
-	public function materialize_native_autosave_meta( $new_autosave, $is_update = false ) {
-		unset( $is_update );
+	public function materialize_native_autosave_meta( $post_id, $post, $update, $post_before ) {
+		unset( $post_before );
 
-		if ( ! is_array( $new_autosave ) || empty( $new_autosave['ID'] ) || empty( $new_autosave['post_parent'] ) ) {
+		if ( ! $update ) {
+			return;
+		}
+
+		$revision_id = absint( $post_id );
+		$parent_id   = $revision_id ? wp_is_post_autosave( $revision_id ) : false;
+		if (
+			! $revision_id
+			|| ! $parent_id
+			|| ! $post
+			|| 'revision' !== $post->post_type
+			|| (int) $post->post_parent !== (int) $parent_id
+		) {
+			return;
+		}
+
+		$this->materialize_persisted_native_autosave_meta( $revision_id, $post, $parent_id );
+	}
+
+	public function materialize_new_native_autosave_meta( $new_autosave, $is_update ) {
+		if (
+			$is_update
+			|| ! is_array( $new_autosave )
+			|| empty( $new_autosave['ID'] )
+			|| empty( $new_autosave['post_parent'] )
+		) {
 			return;
 		}
 
 		$revision_id = absint( $new_autosave['ID'] );
 		$parent_id   = absint( $new_autosave['post_parent'] );
-		$request     = $this->valid_save_request( $parent_id );
-		if ( ! $revision_id || ! $request || ! $request['autosave'] ) {
+		$post        = $revision_id ? get_post( $revision_id ) : null;
+		if (
+			! $revision_id
+			|| ! $parent_id
+			|| ! $post
+			|| wp_is_post_autosave( $revision_id ) !== $parent_id
+		) {
 			return;
 		}
 
-		if ( ! $this->is_renderer_available() ) {
-			$this->abort_renderer_unavailable();
+		$this->materialize_persisted_native_autosave_meta( $revision_id, $post, $parent_id );
+	}
 
+	private function materialize_persisted_native_autosave_meta( $revision_id, $post, $parent_id ) {
+		$parent_id = absint( $parent_id );
+		$request   = $this->valid_save_request( $parent_id );
+		if ( ! $request || ! $request['autosave'] ) {
 			return;
 		}
 
-		$markdown    = wp_unslash( $request['source']['easymde_markdown'] );
-		$theme_state = $this->theme_state_repository->sanitize_theme_state_from_request( $request['source'], $parent_id );
-		try {
-			$rendered_content = MarkdownRenderer::render( $markdown, $theme_state['markdownTheme'] );
-		} catch ( \Throwable $exception ) {
-			unset( $exception );
-
-			$this->abort_renderer_unavailable();
-
-			return;
-		}
+		$markdown         = wp_unslash( $request['source']['easymde_markdown'] );
+		$theme_state      = $this->theme_state_repository->sanitize_theme_state_from_request( $request['source'], $parent_id );
+		$rendered_content = (string) $post->post_content;
 
 		$metadata = array(
 			PostDocument::META_ENABLED             => '1',
@@ -256,6 +283,7 @@ final class EditorSaveHandler {
 			return array(
 				'autosave' => false,
 				'post_id'  => absint( $post_id ),
+				// phpcs:ignore WordPress.Security.NonceVerification.Missing -- has_valid_save_request() verifies the action-specific EasyMDE nonce before this source is consumed.
 				'source'   => $_POST,
 			);
 		}

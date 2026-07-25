@@ -122,6 +122,86 @@ describe('createWordPressEditorSessionPort', () => {
     expect(content.value).toBe('# Unsaved Markdown');
   });
 
+  it('prepares pending editor changes before serializing WordPress autosave metadata', () => {
+    const { emit, form, port } = fixture();
+    const markdown = form.querySelector<HTMLTextAreaElement>('#easymde-source');
+    const content = form.querySelector<HTMLTextAreaElement>('#content');
+    if (!markdown || !content) throw new Error('autosave-test-fields-unavailable');
+    const unsubscribeStatus = port.subscribe(vi.fn());
+    const prepare = vi.fn(() => {
+      markdown.value = '# Latest visual Markdown';
+      return 'continue' as const;
+    });
+    const unsubscribeAutosave = port.subscribeBeforeAutosave(prepare);
+    const heartbeat: Record<string, unknown> = {
+      wp_autosave: {
+        content: '# Stale Markdown',
+        post_id: '7'
+      }
+    };
+
+    emit('heartbeat.send', heartbeat);
+
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(content.value).toBe('# Latest visual Markdown');
+    expect(heartbeat.wp_autosave).toMatchObject({
+      content: '# Latest visual Markdown',
+      _easymde_markdown: '# Latest visual Markdown'
+    });
+    unsubscribeAutosave();
+    unsubscribeStatus();
+  });
+
+  it('removes a stale autosave payload when the editor cannot prepare it', () => {
+    const { emit, port } = fixture();
+    const unsubscribe = port.subscribeBeforeAutosave(() => 'blocked');
+    const heartbeat: Record<string, unknown> = {
+      wp_autosave: {
+        content: '# Stale Markdown',
+        post_id: '7'
+      }
+    };
+
+    emit('heartbeat.send', heartbeat);
+
+    expect(heartbeat).toEqual({
+      'wp-refresh-post-lock': { lock: '7:42', post_id: '7' }
+    });
+    unsubscribe();
+  });
+
+  it('does not prepare autosave for ordinary lock heartbeats', () => {
+    const { emit, hooks, port } = fixture();
+    const prepare = vi.fn(() => 'continue' as const);
+    const unsubscribe = port.subscribeBeforeAutosave(prepare);
+
+    emit('heartbeat.send', {});
+
+    expect(prepare).not.toHaveBeenCalled();
+    expect(hooks.addAction).toHaveBeenCalledTimes(5);
+    unsubscribe();
+    expect(hooks.removeAction).toHaveBeenCalledTimes(5);
+  });
+
+  it('removes stale autosave data and exposes preparation failures', () => {
+    const { emit, port } = fixture();
+    const unsubscribe = port.subscribeBeforeAutosave(() => {
+      throw new Error('synthetic-autosave-preparation-failure');
+    });
+    const heartbeat: Record<string, unknown> = {
+      wp_autosave: {
+        content: '# Stale Markdown',
+        post_id: '7'
+      }
+    };
+
+    expect(() => emit('heartbeat.send', heartbeat)).toThrowError(
+      'synthetic-autosave-preparation-failure'
+    );
+    expect(heartbeat).toEqual({});
+    unsubscribe();
+  });
+
   it('updates the apiFetch nonce owner before notifying subscribers', () => {
     const { emit, nonceMiddleware, port } = fixture();
     const snapshots: Array<unknown> = [];

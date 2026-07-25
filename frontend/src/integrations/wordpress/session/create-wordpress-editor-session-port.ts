@@ -1,4 +1,5 @@
 import type {
+  EditorSessionAutosavePreparationResult,
   EditorSessionPort,
   EditorSessionSnapshot,
   EditorSessionStatus
@@ -103,6 +104,9 @@ export function createWordPressEditorSessionPort({
     && document.querySelector('#post-lock-dialog')
   );
   const listeners = new Set<() => void>();
+  const autosavePreparationListeners = new Set<
+    () => EditorSessionAutosavePreparationResult
+  >();
   let authenticated = true;
   let capable = true;
   let connected = true;
@@ -116,9 +120,7 @@ export function createWordPressEditorSessionPort({
       autosaveFields.content.value = autosaveFields.markdown.value;
     }
   };
-  const appendAutosaveMetadata = (data: Record<string, unknown>) => {
-    const autosave = record(data.wp_autosave);
-    if (!autosave) return;
+  const appendAutosaveMetadata = (autosave: Record<string, unknown>) => {
     autosave._easymde_enabled = autosaveFields.enabled.value;
     autosave._easymde_markdown = autosaveFields.markdown.value;
     autosave._easymde_markdown_theme = autosaveFields.markdownTheme.value;
@@ -128,6 +130,24 @@ export function createWordPressEditorSessionPort({
     autosave._easymde_windows_font = autosaveFields.windowsFont.value;
     autosave._easymde_apple_font = autosaveFields.appleFont.value;
     autosave._easymde_serif_font = autosaveFields.serifFont.value;
+  };
+  const prepareAutosave = (data: Record<string, unknown>) => {
+    const autosave = record(data.wp_autosave);
+    if (!autosave) return;
+    try {
+      for (const listener of autosavePreparationListeners) {
+        if ('blocked' === listener()) {
+          delete data.wp_autosave;
+          return;
+        }
+      }
+      syncAutosaveContent();
+      autosave.content = autosaveFields.markdown.value;
+      appendAutosaveMetadata(autosave);
+    } catch (error) {
+      delete data.wp_autosave;
+      throw error;
+    }
   };
 
   const nextStatus = (): EditorSessionStatus => {
@@ -147,7 +167,7 @@ export function createWordPressEditorSessionPort({
   const send = (value: unknown) => {
     const data = record(value);
     if (!data) return;
-    appendAutosaveMetadata(data);
+    prepareAutosave(data);
     if (!monitorsLock || !postIdField?.value) return;
     const request: Record<string, string> = { post_id: postIdField.value };
     if (lockField?.value) request.lock = lockField.value;
@@ -214,9 +234,23 @@ export function createWordPressEditorSessionPort({
     autosaveFields.markdown.removeEventListener('input', syncAutosaveContent);
     for (const hook of HOOKS) hooks.removeAction(hook, namespace);
   };
+  const detachWhenUnused = () => {
+    if (!listeners.size && !autosavePreparationListeners.size) detach();
+  };
 
   return {
     getSnapshot: () => snapshot,
+    subscribeBeforeAutosave(listener) {
+      autosavePreparationListeners.add(listener);
+      attach();
+      let active = true;
+      return () => {
+        if (!active) return;
+        active = false;
+        autosavePreparationListeners.delete(listener);
+        detachWhenUnused();
+      };
+    },
     subscribe(listener) {
       listeners.add(listener);
       attach();
@@ -225,7 +259,7 @@ export function createWordPressEditorSessionPort({
         if (!active) return;
         active = false;
         listeners.delete(listener);
-        if (!listeners.size) detach();
+        detachWhenUnused();
       };
     }
   };

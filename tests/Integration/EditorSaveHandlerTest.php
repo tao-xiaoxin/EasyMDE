@@ -342,6 +342,100 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_repeated_native_autosave_renders_once_before_materializing_revision_meta()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_status' => 'publish',
+                'post_author' => $user_id,
+                'post_content' => '<p>Published content.</p>',
+            )
+        );
+        wp_set_current_user($user_id);
+
+        $renderer_checks = 0;
+        $handler = new EditorSaveHandler(
+            new PostDocument(),
+            $this->theme_state_repository(),
+            function () use (&$renderer_checks) {
+                ++$renderer_checks;
+
+                return true;
+            }
+        );
+        $handler->register_hooks();
+        $previous_post = $_POST;
+
+        try {
+            $first_markdown = "# First autosave\n\nInitial **revision**.";
+            $_POST = $this->native_autosave_request($post_id, $first_markdown);
+            $autosave_id = wp_create_post_autosave(
+                array(
+                    'post_ID' => $post_id,
+                    'post_type' => 'post',
+                    'post_author' => $user_id,
+                    'post_title' => 'First autosave',
+                    'post_content' => $first_markdown,
+                    'post_excerpt' => '',
+                )
+            );
+            $this->assertIsInt($autosave_id);
+            $this->assertGreaterThan(0, $autosave_id);
+            $this->assertSame(
+                $first_markdown,
+                get_post_meta($autosave_id, PostDocument::META_MARKDOWN, true)
+            );
+
+            $second_markdown = "# Second autosave\n\nUpdated **once**.";
+            $_POST = $this->native_autosave_request($post_id, $second_markdown);
+            $renderer_checks = 0;
+            $updated_autosave_id = wp_create_post_autosave(
+                array(
+                    'post_ID' => $post_id,
+                    'post_type' => 'post',
+                    'post_author' => $user_id,
+                    'post_title' => 'Second autosave',
+                    'post_content' => $second_markdown,
+                    'post_excerpt' => '',
+                )
+            );
+
+            $this->assertSame($autosave_id, $updated_autosave_id);
+            $this->assertSame(1, $renderer_checks);
+            $revision = get_post($updated_autosave_id);
+            $this->assertStringContainsString('<strong>once</strong>', $revision->post_content);
+            $this->assertSame(
+                $second_markdown,
+                get_post_meta($updated_autosave_id, PostDocument::META_MARKDOWN, true)
+            );
+            $this->assertSame(
+                (new PostDocument())->render_signature(
+                    $second_markdown,
+                    'default',
+                    $revision->post_content
+                ),
+                get_post_meta($updated_autosave_id, PostDocument::META_RENDER_SIGNATURE, true)
+            );
+        } finally {
+            $_POST = $previous_post;
+            remove_action('save_post', array($handler, 'save_post_meta'), 10);
+            remove_action(
+                'wp_creating_autosave',
+                array($handler, 'materialize_new_native_autosave_meta'),
+                20
+            );
+            remove_action(
+                'wp_after_insert_post',
+                array($handler, 'materialize_native_autosave_meta'),
+                20
+            );
+            remove_filter('wp_insert_post_data', array($handler, 'render_markdown_post_content'), 10);
+            remove_filter('redirect_post_location', array($handler, 'redirect_after_native_publish'), 10);
+        }
+    }
+
     public function test_native_autosave_with_invalid_nonce_cannot_change_content_or_metadata()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
@@ -800,6 +894,28 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             new ArticleThemeRegistry(),
             new CodeThemeRegistry(),
             new CustomCssPolicy()
+        );
+    }
+
+    private function native_autosave_request($post_id, $markdown)
+    {
+        return array(
+            'data' => array(
+                'wp_autosave' => array(
+                    'post_id' => (string) $post_id,
+                    'post_type' => 'post',
+                    '_wpnonce' => wp_create_nonce('update-post_' . $post_id),
+                    '_easymde_enabled' => '1',
+                    '_easymde_markdown' => $markdown,
+                    '_easymde_markdown_theme' => 'default',
+                    '_easymde_code_theme' => 'github',
+                    '_easymde_custom_css_id' => '',
+                    '_easymde_custom_font' => 'optima',
+                    '_easymde_windows_font' => 'microsoft-yahei',
+                    '_easymde_apple_font' => 'pingfang-sc-light',
+                    '_easymde_serif_font' => 'yes',
+                ),
+            ),
         );
     }
 }

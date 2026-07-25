@@ -1,5 +1,6 @@
 <?php
 
+use EasyMDE\Content\MarkdownFeatureDetector;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Support\Asset;
@@ -102,6 +103,23 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertTrue($features['syntaxHighlight']);
     }
 
+    public function test_code_copy_is_unavailable_without_commonmark_while_stored_content_assets_remain_available()
+    {
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+            new MarkdownFeatureDetector(static function () {
+                return false;
+            })
+        );
+
+        $features = $assets->get_feature_config("```php\necho 'hello';\n```");
+
+        $this->assertTrue($features['codeBlocks']);
+        $this->assertTrue($features['syntaxHighlight']);
+        $this->assertFalse($features['codeCopy']);
+    }
+
     public function test_code_frame_assets_follow_regular_code_features_not_legacy_meta()
     {
         $repository = new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy());
@@ -161,6 +179,73 @@ final class FrontendAssetsTest extends WP_UnitTestCase
             array('easymde-content'),
             wp_styles()->registered['easymde-code-copy']->deps
         );
+        $this->assertSame(array(), wp_scripts()->registered['easymde-code-copy']->deps);
+        $this->assertMatchesRegularExpression(
+            '#/assets/build/code-copy/assets/frontend-code-copy-[A-Za-z0-9_-]+\.js$#',
+            wp_scripts()->registered['easymde-code-copy']->src
+        );
+        $this->assertMatchesRegularExpression(
+            '/^[a-f0-9]{16}$/',
+            (string) wp_scripts()->registered['easymde-code-copy']->ver
+        );
+    }
+
+    public function test_code_copy_asset_loading_fails_when_the_production_manifest_is_missing()
+    {
+        $build_dir = $this->create_code_copy_build_directory();
+
+        try {
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessage('frontend-code-copy-manifest-invalid');
+
+            $this->invoke_code_copy_asset_loader($build_dir);
+        } finally {
+            rmdir($build_dir);
+        }
+    }
+
+    public function test_code_copy_asset_loading_rejects_a_tampered_production_script()
+    {
+        $build_dir = $this->create_code_copy_build_directory();
+        $script = 'assets/frontend-code-copy-test.js';
+        $metadata = 'assets/frontend-code-copy-test.asset.php';
+        wp_mkdir_p($build_dir . '/assets');
+
+        $manifest = array(
+            'schemaVersion' => 1,
+            'entries' => array(
+                'frontend/src/entrypoints/frontend-code-copy.ts' => array(
+                    'handle' => 'easymde-code-copy',
+                    'file' => $script,
+                    'asset' => $metadata,
+                    'dependencies' => array(),
+                    'resources' => array(),
+                ),
+            ),
+        );
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Writes isolated local test fixtures.
+        file_put_contents($build_dir . '/wordpress-manifest.json', wp_json_encode($manifest));
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Writes isolated local test fixtures.
+        file_put_contents($build_dir . '/' . $script, 'console.log("tampered");');
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Writes isolated local test fixtures.
+        file_put_contents(
+            $build_dir . '/' . $metadata,
+            "<?php\nreturn array( 'dependencies' => array(), 'version' => '0000000000000000' );\n"
+        );
+
+        try {
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessage('frontend-code-copy-build-integrity-invalid');
+
+            $this->invoke_code_copy_asset_loader($build_dir);
+        } finally {
+            unlink($build_dir . '/' . $metadata);
+            unlink($build_dir . '/' . $script);
+            unlink($build_dir . '/wordpress-manifest.json');
+            rmdir($build_dir . '/assets');
+            rmdir($build_dir);
+        }
     }
 
     public function test_editor_base_assets_do_not_enqueue_optional_preview_runtimes()
@@ -196,13 +281,19 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $assets->enqueue_render_assets(0, $markdown);
         $assets->enqueue_render_assets(0, $markdown);
 
+        $code_copy_manifest = json_decode(
+            file_get_contents(Asset::path('assets/build/code-copy/wordpress-manifest.json')),
+            true
+        );
+        $code_copy_entry = $code_copy_manifest['entries']['frontend/src/entrypoints/frontend-code-copy.ts'];
+
         $expected_scripts = array(
             'easymde-highlight' => 'assets/vendor/highlight/highlight.min.js',
             'easymde-katex' => 'assets/vendor/katex/katex.min.js',
             'easymde-math-renderer' => 'assets/js/frontend/math.js',
             'easymde-mermaid' => 'assets/vendor/mermaid/mermaid.min.js',
             'easymde-mermaid-renderer' => 'assets/js/frontend/mermaid.js',
-            'easymde-code-copy' => 'assets/js/frontend/code-copy.js',
+            'easymde-code-copy' => 'assets/build/code-copy/' . $code_copy_entry['file'],
         );
         $expected_styles = array(
             'easymde-code-frame' => 'assets/css/frontend/code-frame.css',
@@ -271,5 +362,26 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertTrue($five_space_indented_code['codeCopy']);
         $this->assertFalse($blockquote_indented_code['syntaxHighlight']);
         $this->assertTrue($blockquote_indented_code['codeCopy']);
+    }
+
+    private function create_code_copy_build_directory()
+    {
+        $temporary_file = wp_tempnam('easymde-code-copy-build');
+        unlink($temporary_file);
+        mkdir($temporary_file);
+
+        return $temporary_file;
+    }
+
+    private function invoke_code_copy_asset_loader($build_dir)
+    {
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+        $method = new ReflectionMethod(FrontendAssets::class, 'get_code_copy_asset');
+        $method->setAccessible(true);
+
+        return $method->invoke($assets, $build_dir);
     }
 }

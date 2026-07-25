@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "entries": {
+    "frontend/src/entrypoints/frontend-code-copy.ts": {
+      "handle": "easymde-code-copy",
+      "file": "assets/frontend-code-copy-y0z6DyeP.js",
+      "asset": "assets/frontend-code-copy-y0z6DyeP.asset.php",
+      "dependencies": [],
+      "resources": []
+    }
+  }
+}

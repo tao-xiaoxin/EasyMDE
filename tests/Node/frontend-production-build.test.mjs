@@ -15,7 +15,9 @@ import { fileURLToPath } from 'node:url';
 import test, { before } from 'node:test';
 
 import {
+  compareCodeCopyProductionBuilds,
   compareFrontendProductionBuilds,
+  validateCodeCopyProductionBuild,
   validateFrontendProductionBuild
 } from '../../scripts/verify-frontend-build.mjs';
 
@@ -23,6 +25,9 @@ const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const outputRoot = join(repoRoot, '.cache/easymde-frontend-production-check');
 const committedOutputRoot = join(repoRoot, 'assets/build');
 const sourceEntry = 'frontend/src/entrypoints/admin-editor.tsx';
+const codeCopyOutputRoot = join(repoRoot, '.cache/easymde-code-copy-production-check');
+const committedCodeCopyOutputRoot = join(repoRoot, 'assets/build/code-copy');
+const codeCopySourceEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
 let buildResult;
 
 function readJson(path) {
@@ -41,16 +46,42 @@ test('root package exposes the production frontend build and includes it in the 
 
   assert.equal(
     packageJson.scripts['build:frontend'],
-    'vite build --config frontend/vite.production.config.ts && node scripts/verify-frontend-build.mjs --production'
+    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.code-copy.config.ts && node scripts/verify-frontend-build.mjs --production'
   );
   assert.equal(
     packageJson.scripts['check:frontend-production'],
-    'vite build --mode easymde-check --config frontend/vite.production.config.ts && node scripts/verify-frontend-build.mjs --production-check'
+    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && node scripts/verify-frontend-build.mjs --production-check'
   );
   assert.equal(
     packageJson.scripts['frontend:check'],
     'npm run lint:frontend && npm run typecheck:frontend && npm run test:frontend && npm run build:frontend-contract && npm run check:frontend-production'
   );
+});
+
+test('production build emits a separate self-contained TypeScript code-copy entry', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+  assert.equal(existsSync(codeCopyOutputRoot), true);
+
+  const viteManifest = readJson(join(codeCopyOutputRoot, 'manifest.json'));
+  const wordpressManifest = readJson(join(codeCopyOutputRoot, 'wordpress-manifest.json'));
+  const viteEntry = viteManifest[codeCopySourceEntry];
+  const wordpressEntry = wordpressManifest.entries[codeCopySourceEntry];
+
+  assert.equal(wordpressManifest.schemaVersion, 1);
+  assert.equal(viteEntry.isEntry, true);
+  assert.match(viteEntry.file, /^assets\/frontend-code-copy-[a-zA-Z0-9_-]+\.js$/);
+  assert.equal(wordpressEntry.handle, 'easymde-code-copy');
+  assert.equal(wordpressEntry.file, viteEntry.file);
+  assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
+  assert.deepEqual(wordpressEntry.dependencies, []);
+  assert.deepEqual(wordpressEntry.resources, []);
+
+  const script = readFileSync(join(codeCopyOutputRoot, viteEntry.file), 'utf8');
+  assert.match(script, /easymde-code-copy__button/);
+  assert.doesNotMatch(script, /wp\.element|@wordpress\/element|react(?:-dom)?/i);
+  assert.doesNotMatch(script, /EasyMDECodeCopy/);
+  assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
+  validateCodeCopyProductionBuild(codeCopyOutputRoot);
 });
 
 test('production build emits one self-contained WordPress editor React entry', () => {
@@ -125,6 +156,36 @@ test('production comparison rejects stale or omitted committed runtime artifacts
   }
 });
 
+test('code-copy production comparison rejects stale or omitted committed runtime artifacts', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+
+  const generatedRoot = mkdtempSync(join(tmpdir(), 'easymde-code-copy-generated-'));
+  const committedRoot = mkdtempSync(join(tmpdir(), 'easymde-code-copy-committed-'));
+  cpSync(codeCopyOutputRoot, generatedRoot, { recursive: true });
+  cpSync(codeCopyOutputRoot, committedRoot, { recursive: true });
+
+  try {
+    const manifest = readJson(join(committedRoot, 'manifest.json'));
+    const entry = manifest[codeCopySourceEntry];
+    appendFileSync(join(committedRoot, entry.file), '\nstale runtime\n');
+    assert.throws(
+      () => compareCodeCopyProductionBuilds(generatedRoot, committedRoot),
+      /Committed code-copy production artifact is stale/
+    );
+
+    rmSync(committedRoot, { recursive: true, force: true });
+    cpSync(codeCopyOutputRoot, committedRoot, { recursive: true });
+    rmSync(join(committedRoot, entry.file), { force: true });
+    assert.throws(
+      () => compareCodeCopyProductionBuilds(generatedRoot, committedRoot),
+      /Built script is missing|missing, stale, or unexpected/
+    );
+  } finally {
+    rmSync(generatedRoot, { recursive: true, force: true });
+    rmSync(committedRoot, { recursive: true, force: true });
+  }
+});
+
 test('production validation rejects broad remote URLs and absolute build paths', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
 
@@ -153,11 +214,19 @@ test('production frontend artifacts are eligible for version control', () => {
 
   const wordpressManifest = readJson(join(committedOutputRoot, 'wordpress-manifest.json'));
   const wordpressEntry = wordpressManifest.entries[sourceEntry];
+  const codeCopyWordpressManifest = readJson(
+    join(committedCodeCopyOutputRoot, 'wordpress-manifest.json')
+  );
+  const codeCopyEntry = codeCopyWordpressManifest.entries[codeCopySourceEntry];
   const paths = [
     'assets/build/manifest.json',
     'assets/build/wordpress-manifest.json',
     `assets/build/${wordpressEntry.file}`,
-    `assets/build/${wordpressEntry.asset}`
+    `assets/build/${wordpressEntry.asset}`,
+    'assets/build/code-copy/manifest.json',
+    'assets/build/code-copy/wordpress-manifest.json',
+    `assets/build/code-copy/${codeCopyEntry.file}`,
+    `assets/build/code-copy/${codeCopyEntry.asset}`
   ];
   const result = spawnSync('git', ['check-ignore', '--no-index', ...paths], {
     cwd: repoRoot,

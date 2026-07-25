@@ -23,9 +23,29 @@ const productionSpec = {
   expectedResourceCount: 0,
   resourceHasManifestRecord: false,
   resourceReferencedByScript: false,
-  label: 'production build'
+  label: 'production build',
+  ignoredOutputPrefixes: ['code-copy/'],
+  requiredRuntimePattern: /\bwp\.element\b/,
+  requiredRuntimeLabel: 'WordPress element runtime'
 };
 const productionCheckRoot = join(repositoryRoot, '.cache/easymde-frontend-production-check');
+const codeCopyProductionSpec = {
+  outputRoot: join(repositoryRoot, 'assets/build/code-copy'),
+  sourceEntry: 'frontend/src/entrypoints/frontend-code-copy.ts',
+  expectedHandle: 'easymde-code-copy',
+  expectedDependencies: [],
+  resourceField: null,
+  expectedResourceCount: 0,
+  resourceHasManifestRecord: false,
+  resourceReferencedByScript: false,
+  label: 'code-copy production build',
+  requiredRuntimePattern: /easymde-code-copy__button/,
+  requiredRuntimeLabel: 'code-copy runtime'
+};
+const codeCopyProductionCheckRoot = join(
+  repositoryRoot,
+  '.cache/easymde-code-copy-production-check'
+);
 const forbiddenContent = [
   { pattern: /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/, label: 'private React runtime' },
   { pattern: /(?:localhost|127\.0\.0\.1)/i, label: 'development host' },
@@ -53,6 +73,7 @@ const nonFetchingXmlNamespaceDeclarations = [
   /\s+xmlns:xlink\s*=\s*(["'])http:\/\/www\.w3\.org\/1999\/xlink\1/g
 ];
 const nonFetchingMarkdownUrlPlaceholders = /\]\(https?:\/\/\)/gi;
+const nonFetchingSvgNamespaceLiteral = /(["'`])http:\/\/www\.w3\.org\/2000\/svg\1/g;
 
 function readJson(path, label) {
   try {
@@ -102,6 +123,13 @@ function collectFiles(root) {
   return files.sort();
 }
 
+function collectSpecFiles(root, spec) {
+  const ignoredPrefixes = spec.ignoredOutputPrefixes ?? [];
+  return collectFiles(root).filter(
+    (path) => !ignoredPrefixes.some((prefix) => path.startsWith(prefix))
+  );
+}
+
 function assertFile(root, path, label) {
   assertRelativeAssetPath(path, label);
   if (!existsSync(join(root, path))) {
@@ -114,6 +142,7 @@ function assertSafeProductionText(source, label) {
     source = source.replace(declaration, '');
   }
   source = source.replace(nonFetchingMarkdownUrlPlaceholders, '');
+  source = source.replace(nonFetchingSvgNamespaceLiteral, '');
 
   for (const forbidden of forbiddenContent) {
     if (forbidden.pattern.test(source)) {
@@ -244,8 +273,8 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
   const script = readFileSync(join(root, viteEntry.file), 'utf8');
   const assetMetadata = readFileSync(join(root, wordpressEntry.asset), 'utf8');
   assertSafeProductionText(script, 'Built script');
-  if (!/\bwp\.element\b/.test(script)) {
-    throw new Error('Built script does not reference the WordPress element runtime.');
+  if (spec.requiredRuntimePattern && !spec.requiredRuntimePattern.test(script)) {
+    throw new Error(`Built script does not reference the ${spec.requiredRuntimeLabel}.`);
   }
   const metadataDependencies = assetMetadata.match(/'dependencies'\s*=>\s*array\(([^)]*)\)/)?.[1]
     ?.match(/'[^']+'/g)?.map((value) => value.slice(1, -1)) ?? [];
@@ -268,7 +297,7 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
     wordpressEntry.asset,
     ...viteResources
   ].sort();
-  const actualFiles = collectFiles(root);
+  const actualFiles = collectSpecFiles(root, spec);
   if (JSON.stringify(expectedFiles) !== JSON.stringify(actualFiles)) {
     throw new Error('Frontend build contains missing, stale, or unexpected output files.');
   }
@@ -293,6 +322,12 @@ export function validateFrontendProductionBuild(outputRoot = productionSpec.outp
   return validateBuild(productionSpec, outputRoot);
 }
 
+export function validateCodeCopyProductionBuild(
+  outputRoot = codeCopyProductionSpec.outputRoot
+) {
+  return validateBuild(codeCopyProductionSpec, outputRoot);
+}
+
 export function compareFrontendProductionBuilds(
   generatedRoot = productionCheckRoot,
   committedRoot = productionSpec.outputRoot
@@ -300,8 +335,8 @@ export function compareFrontendProductionBuilds(
   validateFrontendProductionBuild(generatedRoot);
   validateFrontendProductionBuild(committedRoot);
 
-  const generatedFiles = collectFiles(resolve(generatedRoot));
-  const committedFiles = collectFiles(resolve(committedRoot));
+  const generatedFiles = collectSpecFiles(resolve(generatedRoot), productionSpec);
+  const committedFiles = collectSpecFiles(resolve(committedRoot), productionSpec);
   if (JSON.stringify(generatedFiles) !== JSON.stringify(committedFiles)) {
     throw new Error(
       'Committed production frontend artifacts are missing, stale, or unexpected. Run npm run build:frontend and review the generated files.'
@@ -319,13 +354,41 @@ export function compareFrontendProductionBuilds(
   }
 }
 
+export function compareCodeCopyProductionBuilds(
+  generatedRoot = codeCopyProductionCheckRoot,
+  committedRoot = codeCopyProductionSpec.outputRoot
+) {
+  validateCodeCopyProductionBuild(generatedRoot);
+  validateCodeCopyProductionBuild(committedRoot);
+
+  const generatedFiles = collectFiles(resolve(generatedRoot));
+  const committedFiles = collectFiles(resolve(committedRoot));
+  if (JSON.stringify(generatedFiles) !== JSON.stringify(committedFiles)) {
+    throw new Error(
+      'Committed code-copy production artifacts are missing, stale, or unexpected. Run npm run build:frontend and review the generated files.'
+    );
+  }
+
+  for (const path of generatedFiles) {
+    const generated = readFileSync(join(generatedRoot, path));
+    const committed = readFileSync(join(committedRoot, path));
+    if (!generated.equals(committed)) {
+      throw new Error(
+        `Committed code-copy production artifact is stale: ${path}. Run npm run build:frontend and review the generated files.`
+      );
+    }
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
     if (process.argv.includes('--production-check')) {
       compareFrontendProductionBuilds();
+      compareCodeCopyProductionBuilds();
       console.log('Committed frontend production build matches the validated source build.');
     } else if (process.argv.includes('--production')) {
       validateFrontendProductionBuild();
+      validateCodeCopyProductionBuild();
       console.log('Frontend production build is valid.');
     } else {
       validateFrontendBuild();

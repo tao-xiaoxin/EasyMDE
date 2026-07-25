@@ -67,6 +67,23 @@ const baseRequirements = [
   { path: 'languages/easymde-zh_CN.mo', type: 'file' }
 ];
 const productionFrontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
+const codeCopyFrontendEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
+const productionFrontendBuilds = [
+  {
+    buildRoot: 'assets/build',
+    dependencies: ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks'],
+    entry: productionFrontendEntry,
+    filePattern: /^assets\/admin-editor-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-admin-editor-toolbar'
+  },
+  {
+    buildRoot: 'assets/build/code-copy',
+    dependencies: [],
+    entry: codeCopyFrontendEntry,
+    filePattern: /^assets\/frontend-code-copy-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-code-copy'
+  }
+];
 
 const runtimeSupportAssetPaths = [
   'assets/images/cupid-busy-h2-prefix.png',
@@ -395,55 +412,58 @@ function runtimeAssetRequirements(root) {
 }
 
 function productionFrontendRequirements(root) {
-  const manifestPath = 'assets/build/manifest.json';
-  const wordpressManifestPath = 'assets/build/wordpress-manifest.json';
-  const requirements = [
-    { path: manifestPath, type: 'file' },
-    { path: wordpressManifestPath, type: 'file' }
-  ];
+  const requirements = productionFrontendBuilds.flatMap(({ buildRoot }) => [
+    { path: `${buildRoot}/manifest.json`, type: 'file' },
+    { path: `${buildRoot}/wordpress-manifest.json`, type: 'file' }
+  ]);
 
-  if (!existsSync(fromRoot(root, manifestPath)) || !existsSync(fromRoot(root, wordpressManifestPath))) {
+  if (requirements.some((requirement) => !existsSync(fromRoot(root, requirement.path)))) {
     return requirements;
   }
 
-  let manifest;
-  let wordpressManifest;
-  try {
-    manifest = JSON.parse(readText(root, manifestPath));
-    wordpressManifest = JSON.parse(readText(root, wordpressManifestPath));
-  } catch (error) {
-    throw new Error('Release build requires valid production frontend manifests.');
+  const managedRequirements = [...requirements];
+  for (const build of productionFrontendBuilds) {
+    let manifest;
+    let wordpressManifest;
+    try {
+      manifest = JSON.parse(readText(root, `${build.buildRoot}/manifest.json`));
+      wordpressManifest = JSON.parse(
+        readText(root, `${build.buildRoot}/wordpress-manifest.json`)
+      );
+    } catch {
+      throw new Error('Release build requires valid production frontend manifests.');
+    }
+
+    const viteEntry = manifest && manifest[build.entry];
+    const entries = wordpressManifest && wordpressManifest.entries;
+    const wordpressEntry = entries && entries[build.entry];
+    if (
+      1 !== Object.keys(manifest || {}).length
+      || 1 !== wordpressManifest.schemaVersion
+      || !entries
+      || 1 !== Object.keys(entries).length
+      || !viteEntry
+      || true !== viteEntry.isEntry
+      || !wordpressEntry
+      || build.handle !== wordpressEntry.handle
+      || viteEntry.file !== wordpressEntry.file
+      || !Array.isArray(wordpressEntry.dependencies)
+      || JSON.stringify(build.dependencies) !== JSON.stringify(wordpressEntry.dependencies)
+      || !Array.isArray(wordpressEntry.resources)
+      || 0 !== wordpressEntry.resources.length
+      || 'string' !== typeof wordpressEntry.file
+      || !build.filePattern.test(wordpressEntry.file)
+      || wordpressEntry.file.replace(/\.js$/, '.asset.php') !== wordpressEntry.asset
+    ) {
+      throw new Error('Release build requires matching production frontend manifest contracts.');
+    }
+
+    managedRequirements.push(
+      { path: `${build.buildRoot}/${wordpressEntry.file}`, type: 'file' },
+      { path: `${build.buildRoot}/${wordpressEntry.asset}`, type: 'file' }
+    );
   }
 
-  const viteEntry = manifest && manifest[productionFrontendEntry];
-  const entries = wordpressManifest && wordpressManifest.entries;
-  const wordpressEntry = entries && entries[productionFrontendEntry];
-  if (
-    1 !== Object.keys(manifest || {}).length
-    || 1 !== wordpressManifest.schemaVersion
-    || !entries
-    || 1 !== Object.keys(entries).length
-    || !viteEntry
-    || true !== viteEntry.isEntry
-    || !wordpressEntry
-    || 'easymde-admin-editor-toolbar' !== wordpressEntry.handle
-    || viteEntry.file !== wordpressEntry.file
-    || !Array.isArray(wordpressEntry.dependencies)
-    || JSON.stringify(['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks']) !== JSON.stringify(wordpressEntry.dependencies)
-    || !Array.isArray(wordpressEntry.resources)
-    || 0 !== wordpressEntry.resources.length
-    || 'string' !== typeof wordpressEntry.file
-    || !/^assets\/admin-editor-[A-Za-z0-9_-]+\.js$/.test(wordpressEntry.file)
-    || wordpressEntry.file.replace(/\.js$/, '.asset.php') !== wordpressEntry.asset
-  ) {
-    throw new Error('Release build requires matching production frontend manifest contracts.');
-  }
-
-  const managedRequirements = [
-    ...requirements,
-    { path: `assets/build/${wordpressEntry.file}`, type: 'file' },
-    { path: `assets/build/${wordpressEntry.asset}`, type: 'file' }
-  ];
   const expectedPaths = new Set(managedRequirements.map((requirement) => requirement.path));
   const unexpectedPaths = [];
 

@@ -8,7 +8,6 @@ use League\CommonMark\Extension\CommonMark\Node\Block\FencedCode;
 use League\CommonMark\Extension\CommonMark\Node\Block\IndentedCode;
 use League\CommonMark\Extension\GithubFlavoredMarkdownExtension;
 use League\CommonMark\Parser\MarkdownParser;
-use RuntimeException;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -18,6 +17,15 @@ final class MarkdownFeatureDetector {
 
 	private $copyable_code_cache_key;
 	private $copyable_code_cache;
+	private $commonmark_available;
+
+	public function __construct( ?callable $commonmark_available = null ) {
+		$this->commonmark_available = $commonmark_available
+			? $commonmark_available
+			: static function () {
+				return class_exists( Environment::class ) && class_exists( MarkdownParser::class );
+			};
+	}
 
 	public function detect( $markdown = '' ) {
 		$markdown                = (string) $markdown;
@@ -52,8 +60,8 @@ final class MarkdownFeatureDetector {
 			return $this->cache_copyable_code_result( $cache_key, false );
 		}
 
-		if ( ! class_exists( Environment::class ) || ! class_exists( MarkdownParser::class ) ) {
-			throw new RuntimeException( 'The league/commonmark dependency is required to detect EasyMDE Markdown features.' );
+		if ( ! call_user_func( $this->commonmark_available ) ) {
+			return $this->cache_copyable_code_result( $cache_key, false );
 		}
 
 		$environment = new Environment(

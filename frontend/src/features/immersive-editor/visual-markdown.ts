@@ -336,6 +336,7 @@ export function protectVisualMarkdownReadOnlyRegions(
 }
 
 const VISUAL_MARKDOWN_READ_ONLY_SELECTOR = [
+  '.easymde-toc',
   '.footnotes-sep',
   '.footnotes',
   '.easymde-math[data-easymde-rendered]',
@@ -1046,7 +1047,12 @@ export function mergeVisualMarkdownChange(
       );
     const insertionTouchesHiddenBoundary = 0 === replacedVisualText.length
       && hiddenSourceRanges.some(({ end: hiddenEnd, start: hiddenStart }) =>
-        sourceStart === hiddenStart || sourceStart === hiddenEnd
+        (sourceStart === hiddenStart || sourceStart === hiddenEnd)
+        && !(
+          sourceStart === hiddenStart
+          && hiddenEnd === source.length
+          && /^\n+$/.test(source.slice(hiddenStart, hiddenEnd))
+        )
       );
     if (hiddenTextMatchesEdit || insertionTouchesHiddenBoundary) {
       throw new Error('visual-editor-markdown-merge-ambiguous');

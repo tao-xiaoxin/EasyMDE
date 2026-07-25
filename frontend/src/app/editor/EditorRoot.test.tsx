@@ -2421,6 +2421,24 @@ describe('EditorRoot', () => {
     );
   });
 
+  it('keeps the History filter inside the modal focus loop while revisions load', async () => {
+    const props = fixture();
+    const revisionPort = {
+      get: vi.fn(),
+      list: vi.fn(() => new Promise<never>(() => undefined))
+    };
+    const view = render(<EditorRoot {...props} revisionPort={revisionPort} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '历史记录' }));
+    const dialog = view.getByRole('dialog', { name: '历史版本' });
+    const filter = within(dialog).getByRole('combobox', { name: '全部' });
+    const close = within(dialog).getByRole('button', { name: '取消' });
+    filter.focus();
+
+    expect(fireEvent.keyDown(filter, { key: 'Tab' })).toBe(false);
+    expect(document.activeElement).toBe(close);
+  });
+
   it('ignores a stale revision preview that resolves after the current selection', async () => {
     const firstPreview = deferred<RevisionPreview>();
     const secondPreview = deferred<RevisionPreview>();

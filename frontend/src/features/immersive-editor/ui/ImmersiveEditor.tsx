@@ -84,7 +84,7 @@ function trapFocus(event: ReactKeyboardEvent<HTMLElement>) {
   if ('Tab' !== event.key) return;
   const controls = Array.from(
     event.currentTarget.querySelectorAll<HTMLElement>(
-      'button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
     )
   ).filter((element) => !element.hidden);
   if (!controls.length) return;

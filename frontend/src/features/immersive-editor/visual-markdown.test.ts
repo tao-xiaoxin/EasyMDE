@@ -175,6 +175,26 @@ A--&gt;B</code></pre>
     );
   });
 
+  it('protects generated table-of-contents markup from visual editing', () => {
+    const surface = editor(`
+      <p>Editable paragraph</p>
+      <div class="easymde-toc">
+        <ul><li><a href="#heading">Generated heading link</a></li></ul>
+      </div>
+    `);
+
+    protectVisualMarkdownReadOnlyRegions(surface);
+    const snapshot = captureVisualMarkdownReadOnlySnapshot(surface);
+    const toc = surface.querySelector<HTMLElement>('.easymde-toc');
+
+    expect(toc?.getAttribute('contenteditable')).toBe('false');
+    expect(snapshot).toHaveLength(1);
+    toc?.querySelector('a')?.replaceChildren('Changed generated link');
+    expect(() =>
+      assertVisualMarkdownReadOnlySnapshot(surface, snapshot)
+    ).toThrow('visual-editor-read-only-region-mutated');
+  });
+
   it('rejects deletion, replacement and mutation of generated read-only regions', () => {
     const surface = editor(`
       <p>Editable paragraph</p>
@@ -405,6 +425,15 @@ A--&gt;B</code></pre>
     expect(mergeVisualMarkdownChange('', '', 'First paragraph')).toBe(
       'First paragraph'
     );
+  });
+
+  it('appends visual text before an untouched trailing source newline', () => {
+    expect(
+      mergeVisualMarkdownChange('Paragraph\n', 'Paragraph', 'Paragraph!')
+    ).toBe('Paragraph!\n');
+    expect(
+      mergeVisualMarkdownChange('Paragraph\r\n', 'Paragraph', 'Paragraph!')
+    ).toBe('Paragraph!\r\n');
   });
 
   it('edits visible link text without rewriting reference links or raw HTML', () => {

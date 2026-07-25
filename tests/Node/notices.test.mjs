@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import {
+  bundledFrontendPackages,
   composerRows,
   frontendRows
 } from '../../scripts/third-party-notices.mjs';
@@ -52,4 +53,9 @@ test('Composer runtime notices fail when a package lacks a purpose mapping', () 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('compiled Markdown parser packages have explicit notice ownership', () => {
+  assert.ok(Object.hasOwn(bundledFrontendPackages, '@codemirror/lang-markdown'));
+  assert.ok(Object.hasOwn(bundledFrontendPackages, '@lezer/markdown'));
 });

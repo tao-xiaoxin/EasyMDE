@@ -73,6 +73,9 @@ export function createBrowserImmersiveEnvironment(
         const last = controls[controls.length - 1];
         if (!first || !last) return;
         const active = documentRef.activeElement;
+        if (active instanceof HTMLElement && active.closest('.media-modal')) {
+          return;
+        }
         if (!boundary.contains(active)) {
           event.preventDefault();
           (event.shiftKey ? last : first).focus();

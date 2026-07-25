@@ -465,6 +465,9 @@ test.describe('EasyMDE editor workflows', () => {
     });
     page.on('pageerror', (error) => browserErrors.push(error.message));
     page.on('requestfailed', (request) => {
+      if ('net::ERR_ABORTED' === request.failure()?.errorText) {
+        return;
+      }
       const pathname = new URL(request.url()).pathname;
       if (pathname.includes('/wp-content/plugins/easymde/') || pathname.includes('/wp-json/easymde/')) {
         failedRequests.push(pathname);

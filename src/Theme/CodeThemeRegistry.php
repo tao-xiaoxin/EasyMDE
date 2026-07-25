@@ -20,6 +20,7 @@ final class CodeThemeRegistry {
 			'vs2015'          => $this->theme( 'vs2015', __( 'VS2015', 'easymde' ), 'assets/vendor/highlight/styles/vs2015.min.css', 'vendor' ),
 			'xcode'           => $this->theme( 'xcode', __( 'Xcode', 'easymde' ), 'assets/vendor/highlight/styles/xcode.min.css', 'vendor' ),
 			'wechat-inspired' => $this->theme( 'wechat-inspired', __( 'Wechat inspired', 'easymde' ), 'assets/themes/code/wechat-inspired.css', 'owned' ),
+			'terminal-noir'   => $this->theme( 'terminal-noir', __( 'Terminal Noir', 'easymde' ), 'assets/themes/code/terminal-noir.css', 'owned' ),
 		);
 
 		return apply_filters( 'easymde_code_themes', $themes );

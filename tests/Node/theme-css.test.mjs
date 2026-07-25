@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { JSDOM } from 'jsdom';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
@@ -100,5 +101,95 @@ test('Qinghe Zhusha highlighted code keeps the selected code theme background', 
       /background(?:-color)?:\s*transparent\b/,
       'highlighted code should not force a transparent background over the selected code theme'
     );
+  });
+});
+
+test('shared code typography prefers the neutral Mac terminal font stack', () => {
+  const css = readFileSync(join(repoRoot, 'assets/css/frontend/base.css'), 'utf8');
+
+  assert.equal(
+    cssVariable(css, '--easymde-code-font-family'),
+    'SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace'
+  );
+  assert.doesNotMatch(css, /--easymde-code-font-family:[^;]*Operator Mono/);
+});
+
+test('Terminal Noir preserves the reference terminal palette and readable contrast', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/code/terminal-noir.css'), 'utf8');
+  const frameCss = readFileSync(join(repoRoot, 'assets/css/frontend/code-frame.css'), 'utf8');
+  const macFrameSelector = '.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac pre';
+  const commentSelector = [
+    '.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac',
+    '.hljs',
+    '.hljs-comment'
+  ].join(' ');
+  const macFrameRuleBodies = cssRuleBodies(frameCss, macFrameSelector);
+  const commentRuleBodies = cssRuleBodies(css, commentSelector);
+  const background = '#0d1017';
+  const text = '#cad1d9';
+  const comment = '#8d949e';
+  const green = '#88c8a3';
+  const orange = '#e2a974';
+
+  assert.match(css, /pre code\.hljs\s*\{[^}]*color:\s*#cad1d9;[^}]*background:\s*#0d1017;/s);
+  assert.equal(macFrameRuleBodies.length, 1, 'Terminal Noir should define one Mac-frame background rule');
+  assert.match(macFrameRuleBodies[0], /--easymde-code-frame-background:\s*#0d1017;/);
+  assert.match(css, /\.hljs \.hljs-comment[^}]*\{[^}]*color:\s*#8d949e;/s);
+  assert.equal(commentRuleBodies.length, 1, 'Terminal Noir should define one comment rule');
+  assert.doesNotMatch(
+    commentRuleBodies[0],
+    /font-style:\s*italic/,
+    'reference terminal comments use the regular monospace face'
+  );
+  assert.match(css, /\.hljs \.hljs-(?:addition|meta|name)[^}]*\{[^}]*color:\s*#88c8a3;/s);
+  assert.match(css, /\.hljs \.hljs-(?:built_in|string)[^}]*\{[^}]*color:\s*#e2a974;/s);
+  assert.ok(contrast(text, background) >= 4.5, 'body text should meet AA contrast on the terminal background');
+  assert.ok(contrast(comment, background) >= 4.5, 'comments should meet AA contrast on the terminal background');
+  assert.ok(contrast(green, background) >= 4.5, 'green accents should meet AA contrast on the terminal background');
+  assert.ok(contrast(orange, background) >= 4.5, 'orange accents should meet AA contrast on the terminal background');
+});
+
+test('Terminal Noir remains authoritative across every registered article theme', () => {
+  const registry = readFileSync(join(repoRoot, 'src/Theme/ArticleThemeRegistry.php'), 'utf8');
+  const articleThemePaths = [
+    ...registry.matchAll(/'((?:assets\/themes\/article\/)[^']+\.css)'/g)
+  ].map((match) => match[1]);
+  const sharedCss = [
+    readFileSync(join(repoRoot, 'assets/css/frontend/base.css'), 'utf8'),
+    readFileSync(join(repoRoot, 'assets/css/frontend/code-frame.css'), 'utf8')
+  ];
+  const terminalCss = readFileSync(join(repoRoot, 'assets/themes/code/terminal-noir.css'), 'utf8');
+  const frameBackground = /var\(--easymde-code-frame-background,\s*#282c34\)/;
+
+  assert.notEqual(articleThemePaths.length, 0, 'article theme registry should expose CSS assets');
+
+  articleThemePaths.forEach((articleThemePath) => {
+    const articleTheme = articleThemePath.split('/').at(-1).replace(/\.css$/, '');
+    const css = [
+      sharedCss[0],
+      readFileSync(join(repoRoot, articleThemePath), 'utf8'),
+      sharedCss[1],
+      terminalCss
+    ].join('\n');
+    const dom = new JSDOM(
+      `<style>${css}</style>
+      <article class="easymde-rendered-content easymde-markdown-theme-${articleTheme} easymde-code-theme-terminal-noir easymde-code-mac">
+        <pre><code class="hljs"><span class="hljs-title">Title</span><span class="hljs-number">1</span></code></pre>
+      </article>`
+    );
+    const { window } = dom;
+    const titleBarSelector = [
+      `.easymde-rendered-content.easymde-markdown-theme-${articleTheme}.easymde-code-mac`,
+      'pre::before'
+    ].join(' ');
+    const titleBarRuleBodies = cssRuleBodies(sharedCss[1], titleBarSelector);
+
+    assert.equal(window.getComputedStyle(window.document.querySelector('pre')).backgroundColor, 'rgb(13, 16, 23)', articleTheme);
+    assert.equal(window.getComputedStyle(window.document.querySelector('code')).color, 'rgb(202, 209, 217)', articleTheme);
+    assert.equal(window.getComputedStyle(window.document.querySelector('.hljs-title')).color, 'rgb(221, 226, 232)', articleTheme);
+    assert.equal(window.getComputedStyle(window.document.querySelector('.hljs-number')).color, 'rgb(159, 184, 208)', articleTheme);
+    titleBarRuleBodies.forEach((body) => {
+      assert.match(body, frameBackground, `${articleTheme} title bar should inherit the selected frame background`);
+    });
   });
 });

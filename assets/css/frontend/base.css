@@ -43,7 +43,7 @@
 /* Shared EasyMDE rendered content rules migrated from easymde-themes.css. */
 .easymde-rendered-content {
   --easymde-theme-font-family: inherit;
-  --easymde-code-font-family: "Operator Mono", Consolas, Monaco, Menlo, monospace;
+  --easymde-code-font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace;
   word-break: break-word;
   overflow-wrap: break-word;
 }

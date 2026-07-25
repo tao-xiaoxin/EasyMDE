@@ -1014,6 +1014,23 @@ Feature boundaries:
 - **WeChat export:** copy only the current stable sanitized Preview; Clipboard rejection is a failure; fallback restores Selection, Focus, Scroll, and temporary DOM.
 - **AI assistant:** use `AiPort` and explicit user action; keep credentials server-side; disclose the selected provider and content boundary, send only the context required for the requested action, and make retention/logging policy explicit. Treat model output as untrusted; generated changes remain visible, rejectable, undoable, cancellation/stale-safe, and never automatically save, publish, upload, change settings, or execute returned code.
 
+### Theme Palette Duplication Gate
+
+Before adding an Article Theme or Code Theme, compare the proposed palette with
+every existing theme in the corresponding Registry and its effective CSS. Do
+not decide uniqueness from the theme ID, label, source filename, or declaration
+text alone; compare the rendered semantic color roles, including backgrounds,
+text, headings or tokens, links, accents, borders, and other visible states that
+define the palette.
+
+If an existing theme has the same effective palette, identify that theme by
+label and ID, tell the requester clearly that the palette already exists, and
+do not add a theme asset, Registry entry, alias, or renamed duplicate. Add a new
+theme only when this comparison finds no existing palette match; record the
+themes compared and the evidence for the distinct palette in the focused task
+or pull request. Differences limited to naming, selector structure, formatting,
+minification, or equivalent color notation do not make a palette new.
+
 ## Accessibility, UI, and CSS Quality
 
 Accessibility is part of the Component contract:

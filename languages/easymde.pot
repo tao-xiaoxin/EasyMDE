@@ -526,6 +526,10 @@ msgstr ""
 msgid "Wechat inspired"
 msgstr ""
 
+#: src/Theme/CodeThemeRegistry.php:23
+msgid "Terminal Noir"
+msgstr ""
+
 #: src/Theme/CustomCssPolicy.php:64
 msgid "Custom CSS is too large."
 msgstr ""

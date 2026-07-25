@@ -721,7 +721,11 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
-    await fillMarkdownAndWaitForPreview(page, '# Appearance\n\nPreview paragraph.', 'Preview paragraph.');
+    await fillMarkdownAndWaitForPreview(
+      page,
+      '# Appearance\n\n```js\nconst terminal = true;\n```\n\nPreview paragraph.',
+      'Preview paragraph.'
+    );
 
     const labels = await page.evaluate(() => ({
       appearance: window.EasyMDEEditorRootBootstrap.appearance.strings.appearance,
@@ -733,7 +737,8 @@ test.describe('EasyMDE editor workflows', () => {
       saveCss: window.EasyMDEEditorRootBootstrap.appearance.strings.saveCss
     }));
     const catalog = await page.evaluate(() => ({
-      articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes.map(({ id }) => id),
+      articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
+        .map(({ id, cssUrl }) => ({ id, cssUrl })),
       codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes.map(({ id }) => id),
       fontGroups: [
         {
@@ -781,10 +786,46 @@ test.describe('EasyMDE editor workflows', () => {
     expect(appearanceGeometry.topDelta).toBeLessThanOrEqual(1);
     const articleSelect = appearanceDialog.getByLabel(labels.articleTheme);
     const codeSelect = appearanceDialog.getByLabel(labels.codeTheme);
-    for (const id of catalog.articleThemes) {
+    const articleThemeLink = page.locator('#easymde-article-theme-css');
+    const previewCode = page.locator('.easymde-pane-preview > article pre code.hljs').first();
+    const fullWidthFrameThemes = new Set([
+      'fullstack-blue',
+      'orange-heart',
+      'red-crimson',
+      'tech-blue',
+      'yamabuki'
+    ]);
+    const hiddenFrameThemes = new Set(['qingbi-liujin', 'qinghe-zhusha']);
+    await codeSelect.selectOption('terminal-noir');
+    await expect(page.locator('.easymde-pane-preview > article'))
+      .toHaveClass(/easymde-code-theme-terminal-noir/);
+    for (const { id, cssUrl } of catalog.articleThemes) {
       await articleSelect.selectOption('theme:' + id);
       await expect(page.locator('.easymde-pane-preview > article'))
         .toHaveClass(new RegExp('easymde-markdown-theme-' + id));
+      await expect.poll(() => articleThemeLink.evaluate((link, expectedUrl) => (
+        link instanceof HTMLLinkElement
+        && link.href === expectedUrl
+        && link.sheet?.href === expectedUrl
+      ), cssUrl), { message: id + ' article stylesheet should finish loading' }).toBe(true);
+      await expect.poll(() => previewCode.evaluate((code) => ({
+        code: getComputedStyle(code).backgroundColor,
+        pre: getComputedStyle(code.parentElement).backgroundColor
+      }))).toEqual({ code: 'rgb(13, 16, 23)', pre: 'rgb(13, 16, 23)' });
+
+      const expectedFrame = fullWidthFrameThemes.has(id)
+        ? 'full:rgb(13, 16, 23)'
+        : hiddenFrameThemes.has(id)
+          ? 'hidden'
+          : 'dot:rgb(255, 95, 86)';
+      await expect.poll(() => previewCode.evaluate((code) => {
+        const style = getComputedStyle(code.parentElement, '::before');
+        if ('none' === style.display) return 'hidden';
+
+        const kind = '12px' === style.width && '12px' === style.height ? 'dot' : 'full';
+
+        return `${kind}:${style.backgroundColor}`;
+      }), { message: id + ' should preserve the expected Terminal Noir frame' }).toBe(expectedFrame);
     }
     for (const id of catalog.codeThemes) {
       await codeSelect.selectOption(id);

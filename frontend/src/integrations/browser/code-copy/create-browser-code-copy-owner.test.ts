@@ -138,7 +138,7 @@ describe('createBrowserCodeCopyOwner', () => {
     button?.click();
     await settle();
 
-    expect(copied).toEqual(['\talpha\n  beta\n']);
+    expect(copied).toEqual(['\talpha\n  beta']);
     expect(button?.classList.contains('is-copied')).toBe(true);
     expect(button?.getAttribute('aria-label')).toBe('Code copied');
     expect(button?.getAttribute('title')).toBe('Copied');
@@ -150,6 +150,25 @@ describe('createBrowserCodeCopyOwner', () => {
     vi.advanceTimersByTime(1);
     expect(button?.classList.contains('is-copied')).toBe(false);
     expect(button?.getAttribute('aria-label')).toBe('Copy code');
+  });
+
+  it('removes only the renderer terminator and preserves an authored trailing blank line', async () => {
+    fixture();
+    const code = document.querySelector<HTMLElement>('.language-js');
+    if (!code) throw new Error('code-copy-code-fixture-missing');
+    code.textContent = 'alpha\n\n';
+    const copied: Array<string> = [];
+    const { owner } = createRuntime({
+      writeClipboardText: async (text) => {
+        copied.push(text);
+      }
+    });
+    owner.enhance(document, config());
+
+    document.querySelector<HTMLButtonElement>('.easymde-code-copy__button')?.click();
+    await settle();
+
+    expect(copied).toEqual(['alpha\n']);
   });
 
   it('serializes cross-block writes so the last click remains in the clipboard', async () => {
@@ -173,11 +192,11 @@ describe('createBrowserCodeCopyOwner', () => {
     buttons[0]?.click();
     buttons[1]?.click();
     await settle();
-    expect(writes).toEqual(['\talpha\n  beta\n']);
+    expect(writes).toEqual(['\talpha\n  beta']);
 
     firstWrite.resolve();
     await settle();
-    expect(writes).toEqual(['\talpha\n  beta\n', 'second block']);
+    expect(writes).toEqual(['\talpha\n  beta', 'second block']);
     expect(buttons[0]?.classList.contains('is-copied')).toBe(false);
     expect(buttons[1]?.classList.contains('is-copied')).toBe(true);
   });

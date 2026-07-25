@@ -91,6 +91,10 @@ function parseStrings(config: unknown): CodeCopyStrings {
   };
 }
 
+function codeTextForClipboard(code: HTMLElement): string {
+  return (code.textContent ?? '').replace(/\r\n$|\n$|\r$/, '');
+}
+
 export function createBrowserCodeCopyOwner(runtime: CodeCopyRuntime): Readonly<{
   enhance: (root: ParentNode, config: unknown) => Cleanup;
 }> {
@@ -387,7 +391,7 @@ export function createBrowserCodeCopyOwner(runtime: CodeCopyRuntime): Readonly<{
       control.pending = true;
       button.setAttribute('aria-busy', 'true');
 
-      enqueueCopyText(code.textContent ?? '', preservedRanges, () =>
+      enqueueCopyText(codeTextForClipboard(code), preservedRanges, () =>
         !state.destroyed && operationGeneration === state.operationGeneration
       ).then(
         (copied) => {

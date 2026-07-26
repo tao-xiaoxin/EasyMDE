@@ -118,37 +118,63 @@ function surfaceStatus(state: PreviewSurfaceState): PreviewSurfaceStatus {
   return 'ready' === state.phase ? 'ready' : 'failed' === state.phase ? 'error' : 'loading';
 }
 
-function captureVisualMarkdownSources(surface: HTMLElement): Readonly<{
-  math: ReadonlyArray<string>;
-  mermaid: ReadonlyArray<string>;
-}> {
-  return {
-    math: Array.from(
-      surface.querySelectorAll<HTMLElement>('.easymde-math')
-    ).map((node) => node.textContent ?? ''),
-    mermaid: Array.from(
-      surface.querySelectorAll<HTMLElement>('pre > code.language-mermaid')
-    ).map((node) => node.textContent ?? '')
-  };
+type VisualMarkdownSourceMarker = Readonly<{
+  kind: 'math' | 'mermaid';
+  marker: Comment;
+  source: string;
+}>;
+
+function captureVisualMarkdownSources(
+  surface: HTMLElement
+): ReadonlyArray<VisualMarkdownSourceMarker> {
+  const sources: VisualMarkdownSourceMarker[] = [];
+  for (const node of surface.querySelectorAll<HTMLElement>('.easymde-math')) {
+    const marker = surface.ownerDocument.createComment(
+      'easymde-visual-markdown-source'
+    );
+    node.before(marker);
+    sources.push({ kind: 'math', marker, source: node.textContent ?? '' });
+  }
+  for (const node of surface.querySelectorAll<HTMLElement>(
+    'pre > code.language-mermaid'
+  )) {
+    const block = node.parentElement;
+    if (!block) throw new Error('preview-enhancement-visual-source-missing');
+    const marker = surface.ownerDocument.createComment(
+      'easymde-visual-markdown-source'
+    );
+    block.before(marker);
+    sources.push({ kind: 'mermaid', marker, source: node.textContent ?? '' });
+  }
+  return sources;
+}
+
+function removeVisualMarkdownSourceMarkers(
+  sources: ReadonlyArray<VisualMarkdownSourceMarker>
+): void {
+  for (const { marker } of sources) marker.remove();
 }
 
 function annotateEnhancedVisualSources(
-  surface: HTMLElement,
   sources: ReturnType<typeof captureVisualMarkdownSources>
 ): void {
-  const mathNodes = surface.querySelectorAll<HTMLElement>('.easymde-math');
-  for (const [index, source] of sources.math.entries()) {
-    mathNodes[index]?.setAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE, source);
-  }
-
-  const mermaidNodes = surface.querySelectorAll<HTMLElement>(
-    '.easymde-mermaid, pre > code.language-mermaid'
-  );
-  for (const [index, source] of sources.mermaid.entries()) {
-    mermaidNodes[index]?.setAttribute(
-      VISUAL_MARKDOWN_SOURCE_ATTRIBUTE,
-      source
-    );
+  try {
+    for (const { kind, marker, source } of sources) {
+      const output = marker.nextElementSibling;
+      const target = 'math' === kind
+        ? output?.matches('.easymde-math') ? output : null
+        : output?.matches('.easymde-mermaid')
+          ? output
+          : output?.matches('pre')
+            ? output.querySelector(':scope > code.language-mermaid')
+            : null;
+      if (!target) {
+        throw new Error('preview-enhancement-visual-source-missing');
+      }
+      target.setAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE, source);
+    }
+  } finally {
+    removeVisualMarkdownSourceMarkers(sources);
   }
 }
 
@@ -328,9 +354,20 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     const generation = state.generation;
     const controller = new AbortController();
     let active = true;
+    if (generationRef.current !== generation) return;
     const visualSources = captureVisualMarkdownSources(surface);
 
-    if (generationRef.current !== generation) return;
+    const failEnhancement = (error: unknown) => {
+      if (!active || generationRef.current !== generation) return;
+      removeVisualMarkdownSourceMarkers(visualSources);
+      props.onDiagnostic?.(previewEnhancementFailureCode(error));
+      setState((current) =>
+        'html' === current.kind && current.generation === generation
+          ? { ...current, phase: 'failed', signature: '' }
+          : current
+      );
+    };
+
     void props.enhancementPort.enhance(
       surface,
       state.features,
@@ -339,26 +376,24 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     ).then(
       () => {
         if (!active || generationRef.current !== generation) return;
-        annotateEnhancedVisualSources(surface, visualSources);
+        try {
+          annotateEnhancedVisualSources(visualSources);
+        } catch (error) {
+          failEnhancement(error);
+          return;
+        }
         setState((current) =>
           'html' === current.kind && current.generation === generation
             ? { ...current, phase: 'ready' }
             : current
         );
       },
-      (error) => {
-        if (!active || generationRef.current !== generation) return;
-        props.onDiagnostic?.(previewEnhancementFailureCode(error));
-        setState((current) =>
-          'html' === current.kind && current.generation === generation
-            ? { ...current, phase: 'failed', signature: '' }
-            : current
-        );
-      }
+      failEnhancement
     );
     return () => {
       active = false;
       controller.abort();
+      removeVisualMarkdownSourceMarkers(visualSources);
     };
   }, [state, props.enhancementPort]);
 

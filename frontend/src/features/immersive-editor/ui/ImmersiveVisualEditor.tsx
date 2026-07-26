@@ -477,7 +477,6 @@ export function ImmersiveVisualEditor({
     applyDocumentChange,
     documentSession,
     imageUploadEnabled,
-    onCanonicalDocumentChange,
     onDispose,
     onFailure,
     onPendingChange,

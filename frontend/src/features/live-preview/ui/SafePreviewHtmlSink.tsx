@@ -1,7 +1,7 @@
 import { createElement } from '@wordpress/element';
 import type {
-  CSSProperties,
   ClipboardEventHandler,
+  CSSProperties,
   DragEventHandler,
   FormEventHandler,
   KeyboardEventHandler,
@@ -52,7 +52,7 @@ export function SafePreviewHtmlSink({
     <article
       aria-busy={ariaBusy ? 'true' : 'false'}
       aria-label={label}
-      aria-live="polite"
+      aria-live={contentEditable ? undefined : 'polite'}
       className={className}
       contentEditable={contentEditable}
       data-easymde-preview-error={error ? '1' : undefined}
@@ -75,7 +75,7 @@ export function SafePreviewHtmlSink({
     <article
       aria-busy={ariaBusy ? 'true' : 'false'}
       aria-label={label}
-      aria-live="polite"
+      aria-live={contentEditable ? undefined : 'polite'}
       className={className}
       contentEditable={contentEditable}
       data-easymde-preview-error={error ? '1' : undefined}

@@ -7,9 +7,9 @@ import type {
   PreviewResponse,
   SafePreviewHtml
 } from '../../../contracts/ports/preview-request';
+import type { PreviewRequestSession } from '../model/create-preview-request-session';
 import type { PreviewEnhancementPort } from '../ports/preview-enhancement-port';
 import type { PreviewScrollPort } from '../ports/preview-scroll-port';
-import type { PreviewRequestSession } from '../model/create-preview-request-session';
 import {
   PreviewSurfaceOwner,
   type PreviewSurfaceStatus
@@ -45,6 +45,7 @@ function safeHtml(value: string): SafePreviewHtml {
 }
 
 function setup(options?: {
+  contentEditable?: boolean;
   emptyMode?: 'message' | 'paper';
   enhance?: PreviewEnhancementPort['enhance'];
   initialHtml?: string;
@@ -77,6 +78,9 @@ function setup(options?: {
   };
   const owner = (emptyMode = options?.emptyMode) => (
     <PreviewSurfaceOwner
+      {...(undefined !== options?.contentEditable
+        ? { contentEditable: options.contentEditable }
+        : {})}
       enhancementPort={enhancementPort}
       initial={{
         codeTheme: 'github',
@@ -118,6 +122,14 @@ function setup(options?: {
 }
 
 describe('PreviewSurfaceOwner', () => {
+  it('does not expose an editable visual surface as a live region', async () => {
+    const editable = setup({ contentEditable: true });
+
+    expect(editable.surface.getAttribute('contenteditable')).toBe('true');
+    expect(editable.surface.hasAttribute('aria-live')).toBe(false);
+    await act(async () => {});
+  });
+
   it('renders initial server HTML through the single preview sink', async () => {
     const { surface } = setup({ initialHtml: '<h2>Server preview</h2>' });
 
@@ -345,6 +357,82 @@ describe('PreviewSurfaceOwner', () => {
         .querySelector('.easymde-mermaid')
         ?.getAttribute('data-easymde-visual-markdown-source')
     ).toBe('flowchart TD\nA-->B');
+  });
+
+  it('keeps each visual Markdown source attached when enhancement changes node counts', async () => {
+    const onHtmlChange = vi.fn();
+    const current = setup({
+      initialHtml: '',
+      onHtmlChange,
+      enhance: async (surface) => {
+        for (const math of surface.querySelectorAll<HTMLElement>(
+          '.easymde-math'
+        )) {
+          math.innerHTML = `<span class="katex">${math.dataset.case}</span>`;
+          math.dataset.easymdeRendered = '1';
+        }
+        for (const code of surface.querySelectorAll<HTMLElement>(
+          'pre > code.language-mermaid'
+        )) {
+          const replacement = document.createElement('div');
+          replacement.className = 'easymde-mermaid';
+          replacement.dataset.case = code.dataset.case;
+          replacement.innerHTML = `<svg><text>${code.dataset.case}</text></svg>`;
+          code.parentElement?.replaceWith(replacement);
+        }
+
+        const extraMath = document.createElement('div');
+        extraMath.className = 'easymde-math';
+        extraMath.dataset.case = 'extra-math';
+        const extraMermaid = document.createElement('div');
+        extraMermaid.className = 'easymde-mermaid';
+        extraMermaid.dataset.case = 'extra-mermaid';
+        surface.prepend(extraMath, extraMermaid);
+      }
+    });
+
+    act(() => {
+      current.session.schedule(request('# Enhanced', 'enhanced'), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        features: { math: true, mermaid: true },
+        html: safeHtml([
+          '<div class="easymde-math" data-case="math-one">$$one$$</div>',
+          '<pre><code class="language-mermaid" data-case="mermaid-one">flowchart TD\nA--&gt;B</code></pre>',
+          '<div class="easymde-math" data-case="math-two">$$two$$</div>',
+          '<pre><code class="language-mermaid" data-case="mermaid-two">flowchart TD\nC--&gt;D</code></pre>'
+        ].join(''))
+      });
+      await Promise.resolve();
+    });
+
+    const enhanced = document.createElement('article');
+    enhanced.innerHTML = onHtmlChange.mock.calls[0]?.[0] ?? '';
+    expect(
+      enhanced.querySelector('[data-case="extra-math"]')
+        ?.hasAttribute('data-easymde-visual-markdown-source')
+    ).toBe(false);
+    expect(
+      enhanced.querySelector('[data-case="extra-mermaid"]')
+        ?.hasAttribute('data-easymde-visual-markdown-source')
+    ).toBe(false);
+    expect(
+      enhanced.querySelector('[data-case="math-one"]')
+        ?.getAttribute('data-easymde-visual-markdown-source')
+    ).toBe('$$one$$');
+    expect(
+      enhanced.querySelector('[data-case="math-two"]')
+        ?.getAttribute('data-easymde-visual-markdown-source')
+    ).toBe('$$two$$');
+    expect(
+      enhanced.querySelector('[data-case="mermaid-one"]')
+        ?.getAttribute('data-easymde-visual-markdown-source')
+    ).toBe('flowchart TD\nA-->B');
+    expect(
+      enhanced.querySelector('[data-case="mermaid-two"]')
+        ?.getAttribute('data-easymde-visual-markdown-source')
+    ).toBe('flowchart TD\nC-->D');
   });
 
   it('reports empty and failed states instead of retaining a stale ready status', async () => {

@@ -1244,28 +1244,6 @@
 	height: 8px;
 }
 
-.easymde-settings-center__connection-status[data-state="connected"] {
-	background: #e9f8ef;
-	color: #12a551;
-}
-
-.easymde-settings-center__connection-status[data-state="connected"] > span {
-	background: #13b45b;
-}
-
-.easymde-settings-center__last-test {
-	margin-left: 26px;
-	color: #657695;
-	font-size: 13px;
-	white-space: nowrap;
-}
-
-.easymde-settings-center__last-test > span {
-	margin-left: 7px;
-	color: #4f6388;
-	font-size: 14px;
-}
-
 .easymde-settings-center__connection-row > button {
 	display: flex;
 	height: 38px;
@@ -1290,10 +1268,6 @@
 .easymde-settings-center__connection-row > button:disabled {
 	cursor: default;
 	opacity: .6;
-}
-
-.easymde-settings-center__connection-row > button:disabled svg {
-	animation: easymde-settings-center-spin 1s linear infinite;
 }
 
 .easymde-settings-center__backup-description {

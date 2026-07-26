@@ -124,7 +124,10 @@ final class SettingsPageTest extends WP_UnitTestCase
         );
         $this->assertSame('EasyMDE', $bootstrap['strings']['brandName']);
         $this->assertSame('General Settings', $bootstrap['strings']['general']);
-        $this->assertCount(212, $bootstrap['strings']);
+        $this->assertArrayNotHasKey('testingConnection', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('connected', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('lastTest', $bootstrap['strings']);
+        $this->assertCount(209, $bootstrap['strings']);
     }
 
     public function test_settings_center_assets_load_only_on_the_independent_screen()

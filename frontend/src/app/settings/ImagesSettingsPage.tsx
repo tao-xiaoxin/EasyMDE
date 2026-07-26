@@ -1,6 +1,6 @@
 import { createElement, useEffect, useRef, useState } from '@wordpress/element';
 
-import { ChevronDown, Copy, Eye, Info, RefreshCcw } from '../../generated/lucide-icons';
+import { ChevronDown, Copy, Eye, Info } from '../../generated/lucide-icons';
 import type {
   SettingsCenterBootstrap,
   SettingsCenterStringKey
@@ -9,7 +9,6 @@ import { SettingsRow, SettingsToggle } from './SettingsControls';
 import { DocumentIcon, ImageLibraryIcon, SlidersIcon } from './settings-center-icons';
 
 type UploadFormat = 'jpg' | 'png' | 'webp' | 'gif';
-type ConnectionState = 'pending' | 'testing' | 'connected';
 
 type ImageSettingsDraft = {
   service: string;
@@ -96,18 +95,6 @@ function renderFileNameRuleExample(rule: string): string {
     (example, [token, value]) => example.replaceAll(token, value),
     rule
   );
-}
-
-function useConnectionTest(): readonly [ConnectionState, () => void] {
-  const [state, setState] = useState<ConnectionState>('pending');
-
-  useEffect(() => {
-    if (state !== 'testing') return undefined;
-    const timer = globalThis.setTimeout(() => setState('connected'), 650);
-    return () => globalThis.clearTimeout(timer);
-  }, [state]);
-
-  return [state, () => setState('testing')] as const;
 }
 
 function CompactSelect({
@@ -268,34 +255,18 @@ function FileNameRuleEditor({
 function ConnectionStatusRow({
   buttonLabel,
   label,
-  showLastTest,
-  start,
-  state,
   strings
 }: {
   buttonLabel: string;
   label: string;
-  showLastTest?: boolean;
-  start: () => void;
-  state: ConnectionState;
   strings: SettingsCenterBootstrap['strings'];
 }) {
-  const statusLabel = state === 'testing'
-    ? strings.testingConnection
-    : state === 'connected'
-      ? strings.connected
-      : strings.pendingTest;
-  return <SettingsRow label={label} minHeight={showLastTest ? 76 : 70}>
+  return <SettingsRow label={label} minHeight={70}>
     <div className="easymde-settings-center__connection-row">
-      <span className="easymde-settings-center__connection-status" data-state={state}>
-        <span />{statusLabel}
+      <span className="easymde-settings-center__connection-status" data-state="pending">
+        <span />{strings.pendingTest}
       </span>
-      {showLastTest ? <span className="easymde-settings-center__last-test">
-        {strings.lastTest}<span>2025-05-13 12:34</span>
-      </span> : null}
-      <button type="button" disabled={state === 'testing'} onClick={start}>
-        {state === 'testing' ? <RefreshCcw size={15} /> : null}{buttonLabel}
-      </button>
+      <button type="button" disabled>{buttonLabel}</button>
     </div>
   </SettingsRow>;
 }
@@ -332,9 +303,6 @@ export function ImagesSettingsPage({
     captionMode: strings.doNotInsert,
     featuredPlaceholder: true
   }));
-  const [primaryConnection, testPrimaryConnection] = useConnectionTest();
-  const [backupConnection, testBackupConnection] = useConnectionTest();
-
   function setValue<K extends keyof ImageSettingsDraft>(
     key: K,
     value: ImageSettingsDraft[K]
@@ -381,9 +349,8 @@ export function ImagesSettingsPage({
       <FileNameRuleEditor strings={strings} value={settings.fileNameRule}
         onChange={(value) => setValue('fileNameRule', value)} />
       <div className="easymde-settings-center__connection-divider">
-        <ConnectionStatusRow label={strings.connectionStatus} state={primaryConnection}
-          showLastTest start={testPrimaryConnection} buttonLabel={strings.testConnection}
-          strings={strings} />
+        <ConnectionStatusRow label={strings.connectionStatus}
+          buttonLabel={strings.testConnection} strings={strings} />
       </div>
     </section>
 
@@ -433,9 +400,8 @@ export function ImagesSettingsPage({
             onChange={(value) => setValue('backupFailureMode', value)} />
         </ImageBehaviorRow>
         <div className="easymde-settings-center__backup-connection-divider">
-          <ConnectionStatusRow label={strings.backupConnectionStatus} state={backupConnection}
-            start={testBackupConnection} buttonLabel={strings.testBackupConnection}
-            strings={strings} />
+          <ConnectionStatusRow label={strings.backupConnectionStatus}
+            buttonLabel={strings.testBackupConnection} strings={strings} />
         </div>
       </div> : null}
     </section>

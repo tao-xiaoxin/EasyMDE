@@ -93,6 +93,23 @@ describe('SettingsCenterRoot images section', () => {
     expect(screen.getByRole('textbox', { name: 'backupBucket' })).not.toBeNull();
   });
 
+  it('does not claim image-host connectivity without a real validation owner', () => {
+    render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+
+    const primaryTest = screen.getByRole<HTMLButtonElement>('button', {
+      name: 'testConnection'
+    });
+    const backupTest = screen.getByRole<HTMLButtonElement>('button', {
+      name: 'testBackupConnection'
+    });
+
+    expect(primaryTest.disabled).toBe(true);
+    expect(backupTest.disabled).toBe(true);
+    expect(screen.getAllByText('pendingTest')).toHaveLength(2);
+    expect(screen.queryByText('connected')).toBeNull();
+    expect(screen.queryByText('lastTest')).toBeNull();
+  });
+
   it('edits the filename rule from presets and upload formats locally', async () => {
     const user = userEvent.setup();
     render(<SettingsCenterRoot bootstrap={bootstrap()} />);

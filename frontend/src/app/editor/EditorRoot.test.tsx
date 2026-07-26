@@ -3035,6 +3035,16 @@ describe('EditorRoot', () => {
     ).toBeNull();
     expect(view.queryByRole('button', { name: /AI/u })).toBeNull();
     expect(view.getByRole('button', { name: '编辑器设置' })).not.toBeNull();
+    expect(view.queryByRole('button', { name: '更多操作' })).toBeNull();
+    const moreActions = view.container.querySelector(
+      '.easymde-immersive-more-actions'
+    );
+    expect(moreActions?.tagName).toBe('SPAN');
+    expect(moreActions?.getAttribute('aria-hidden')).toBe('true');
+    const settings = view.getByRole('button', { name: '编辑器设置' });
+    settings.focus();
+    fireEvent.click(moreActions as HTMLElement);
+    expect(document.activeElement).toBe(settings);
 
     const tableIcon = view
       .getByRole('button', { name: '表格' })

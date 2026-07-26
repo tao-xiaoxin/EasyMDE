@@ -30,15 +30,33 @@ describe('createWordPressImmersiveI18nPort', () => {
     );
   });
 
-  it('fails clearly when the WordPress locale is invalid', () => {
-    expect(() =>
-      createWordPressImmersiveI18nPort({
-        i18n: {
-          _n: (singular) => singular,
-          sprintf: (template, value) => template.replace('%s', value)
-        },
-        locale: 'not_a_locale_!'
-      })
-    ).toThrowError('wordpress-immersive-i18n-locale-invalid');
+  it('normalizes multi-part WordPress locale variants', () => {
+    const i18n = {
+      _n: (singular: string, multiple: string, count: number) =>
+        1 === count ? singular : multiple,
+      sprintf: (template: string, value: string) =>
+        template.replace('%s', value)
+    };
+
+    expect(
+      createWordPressImmersiveI18nPort({ i18n, locale: 'zh_Hans_CN' })
+        .words(1234)
+    ).toBe('1,234 words');
+    expect(
+      createWordPressImmersiveI18nPort({ i18n, locale: 'sr_Latn_RS' })
+        .words(1234)
+    ).toBe('1.234 words');
+  });
+
+  it('uses the existing locale fallback for an unsupported WordPress variant', () => {
+    const port = createWordPressImmersiveI18nPort({
+      i18n: {
+        _n: (singular, multiple, count) => 1 === count ? singular : multiple,
+        sprintf: (template, value) => template.replace('%s', value)
+      },
+      locale: 'not_a_locale_!'
+    });
+
+    expect(port.words(1234)).toBe('1,234 words');
   });
 });

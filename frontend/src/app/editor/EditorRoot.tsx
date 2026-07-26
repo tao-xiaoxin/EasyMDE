@@ -1480,15 +1480,13 @@ export function EditorRoot(props: EditorRootProps) {
             <header className="easymde-pane-header">
               <span>{immersive ? props.immersiveStrings.markdown.toUpperCase() : props.labels.source}</span>
               {immersive ? (
-                <button
-                  type="button"
+                <span
                   className="easymde-immersive-more-actions"
-                  aria-label={props.immersiveStrings.moreActions}
+                  aria-hidden="true"
                   title={props.immersiveStrings.moreActions}
-                  onClick={() => documentSession?.document.focus()}
                 >
                   <MoreHorizontal size={14} strokeWidth={2} />
-                </button>
+                </span>
               ) : null}
             </header>
             <div className="easymde-source easymde-source-react">

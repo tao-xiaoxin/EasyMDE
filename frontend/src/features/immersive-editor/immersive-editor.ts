@@ -85,11 +85,18 @@ export function extractOutline(markdown: string): ImmersiveOutlineItem[] {
   let index = 0;
   return markdownLinesOutsideFences(markdown).flatMap(
     ({ line, lineNumber, position }) => {
-      const match = /^(#{1,6})\s+(.+?)\s*#*$/u.exec(line);
+      const match = /^ {0,3}(#{1,6})(?=$|[ \t])(.*)$/u.exec(line);
       if (!match) return [];
       const hashes = match[1];
-      const text = match[2];
-      if (!hashes || !text) throw new Error('immersive-outline-match-invalid');
+      const tail = match[2];
+      if (!hashes || undefined === tail) {
+        throw new Error('immersive-outline-match-invalid');
+      }
+      const closingSequence = /[ \t]+#+[ \t]*$/u.exec(tail);
+      const text = tail
+        .slice(0, closingSequence?.index ?? tail.length)
+        .trim();
+      if (!text) return [];
       return [
         {
           level: hashes.length,

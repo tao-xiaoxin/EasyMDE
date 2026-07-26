@@ -400,6 +400,38 @@ __('Enter theme name…', 'easymde');
 	}
 });
 
+test("POT generation merges duplicate PHP and TypeScript messages", () => {
+	const root = makeTempRoot();
+
+	try {
+		writeText(
+			root,
+			"easymde.php",
+			`<?php
+/**
+ * Plugin Name: EasyMDE
+ * Version: 0.1.8
+ */
+_n('%s shared item', '%s shared items', 2, 'easymde');
+`,
+		);
+		writeText(
+			root,
+			"frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts",
+			`_n("%s shared item", "%s shared items", 2, "easymde");\n`,
+		);
+		mkdirSync(join(root, "languages"), { recursive: true });
+		makePot({ root });
+
+		const matches = parsePoEntries(join(root, "languages/easymde.pot"))
+			.filter((entry) => "%s shared item" === entry.msgid);
+		assert.equal(matches.length, 1);
+		assert.equal(matches[0].msgidPlural, "%s shared items");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("i18n check rejects fuzzy PO entries that msgfmt omits from the MO", () => {
 	const root = makeTempRoot();
 

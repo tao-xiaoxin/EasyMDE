@@ -181,6 +181,7 @@ export function makePot(options = {}) {
 	const tempDir = mkdtempSync(join(tmpdir(), "easymde-pot-"));
 	const bodyPath = join(tempDir, "messages.pot");
 	const jsBodyPath = join(tempDir, "messages-js.pot");
+	const mergedBodyPath = join(tempDir, "messages-merged.pot");
 	const sources = collectPhpSourceFiles(root);
 
 	try {
@@ -208,17 +209,38 @@ export function makePot(options = {}) {
 			throw new Error(`xgettext reported warnings:\n${result.stderr.trim()}`);
 		}
 
-		const bodies = [stripGeneratedPotHeader(readFileSync(bodyPath, "utf8"))];
+		const catalogs = [bodyPath];
 		if (makeJsPot(root, jsBodyPath)) {
-			bodies.push(stripGeneratedPotHeader(readFileSync(jsBodyPath, "utf8")));
+			catalogs.push(jsBodyPath);
 		}
-		if (bodies.some((body) => !body)) {
+		let mergedCatalog = catalogs[0];
+		if (catalogs.length > 1) {
+			requireCommand("msgcat");
+			const merge = run(
+				"msgcat",
+				[
+					"--force-po",
+					"-o",
+					mergedBodyPath,
+					...catalogs,
+				],
+				{ cwd: root },
+			);
+			if (merge.stderr.trim()) {
+				throw new Error(`msgcat reported warnings:\n${merge.stderr.trim()}`);
+			}
+			mergedCatalog = mergedBodyPath;
+		}
+		const body = stripGeneratedPotHeader(
+			readFileSync(mergedCatalog, "utf8"),
+		);
+		if (!body) {
 			throw new Error("POT generation produced no messages.");
 		}
 
 		writeFileSync(
 			output,
-			`${potHeader(pluginVersion(root))}\n${bodies.join("\n\n")}\n`,
+			`${potHeader(pluginVersion(root))}\n${body}\n`,
 		);
 	} finally {
 		rmSync(tempDir, { recursive: true, force: true });

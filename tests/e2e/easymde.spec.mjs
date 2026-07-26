@@ -1792,34 +1792,39 @@ test.describe('EasyMDE editor workflows', () => {
     const postId = await currentPostId(page);
     const before = postPersistenceSnapshot(postId);
 
-    await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
-    await expect(page.locator('#easymde-editor')).toBeVisible();
-    const labels = await page.evaluate(
+    // WordPress 7.0 can stop painting the Page that submitted the native
+    // classic-editor draft form. Reopen the saved Post in a fresh Page so this
+    // test measures EasyMDE's zero-write behavior, not that upstream renderer.
+    const editorPage = await page.context().newPage();
+    await page.close();
+    await editorPage.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
+    await expect(editorPage.locator('#easymde-editor')).toBeVisible();
+    const labels = await editorPage.evaluate(
       () => window.EasyMDEEditorRootBootstrap.strings.immersive
     );
-    await page.locator('.easymde-toolbar-immersive-toggle').click();
-    await page.waitForTimeout(750);
-    await page.getByRole('button', { name: labels.split, exact: true }).click();
-    await page.getByRole('button', { name: labels.preview, exact: true }).click();
-    await page.getByRole('button', { name: labels.edit, exact: true }).click();
-    await page.locator('.easymde-source-react .cm-content').focus();
+    await editorPage.locator('.easymde-toolbar-immersive-toggle').click();
+    await editorPage.waitForTimeout(750);
+    await editorPage.getByRole('button', { name: labels.split, exact: true }).click();
+    await editorPage.getByRole('button', { name: labels.preview, exact: true }).click();
+    await editorPage.getByRole('button', { name: labels.edit, exact: true }).click();
+    await editorPage.locator('.easymde-source-react .cm-content').focus();
 
-    await page.getByRole('button', { name: labels.table }).click();
-    await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: labels.editorSettings }).click();
-    await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: labels.history }).click();
+    await editorPage.getByRole('button', { name: labels.table }).click();
+    await editorPage.keyboard.press('Escape');
+    await editorPage.getByRole('button', { name: labels.editorSettings }).click();
+    await editorPage.keyboard.press('Escape');
+    await editorPage.getByRole('button', { name: labels.history }).click();
     await expect(
-      page.getByRole('dialog', { name: labels.historyVersions })
+      editorPage.getByRole('dialog', { name: labels.historyVersions })
     ).toBeVisible();
-    await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: labels.updateArticle, exact: true }).click();
+    await editorPage.keyboard.press('Escape');
+    await editorPage.getByRole('button', { name: labels.updateArticle, exact: true }).click();
     await expect(
-      page.getByRole('dialog', { name: labels.updateArticle })
+      editorPage.getByRole('dialog', { name: labels.updateArticle })
     ).toBeVisible();
-    await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: labels.exit }).click();
-    await expect(page.getByRole('region', { name: labels.immersive })).toHaveCount(0);
+    await editorPage.keyboard.press('Escape');
+    await editorPage.getByRole('button', { name: labels.exit }).click();
+    await expect(editorPage.getByRole('region', { name: labels.immersive })).toHaveCount(0);
 
     expect(postPersistenceSnapshot(postId)).toEqual(before);
   });

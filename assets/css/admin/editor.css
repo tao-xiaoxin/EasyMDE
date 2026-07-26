@@ -515,7 +515,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-editor.is-immersive .easymde-pane-source { border-inline-end: 1px solid #e8ebef; }
 .easymde-editor.is-immersive .easymde-pane-header { display: flex; box-sizing: border-box; height: 40.5px; align-items: center; justify-content: space-between; padding: 10px 15px; border-bottom: 1px solid #e8ebef; background: #fafbfc; color: #3d4350; font-family: "EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 15px; font-weight: 400; letter-spacing: 0; line-height: 22.5px; }
 .easymde-editor.is-immersive .easymde-pane-source > .easymde-pane-header > span:first-child { color: #3d4350; font-size: 13px; font-weight: 600; letter-spacing: .3px; line-height: 19.5px; }
-.easymde-immersive-more-actions { display: grid; width: 20px; height: 20px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #b0b4bc; cursor: pointer; }
+.easymde-immersive-more-actions { display: grid; width: 20px; height: 20px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #b0b4bc; cursor: default; }
 .easymde-immersive-more-actions:hover { background: #ecedf0; color: #666; }
 .easymde-editor.is-immersive .easymde-source-react .cm-content { padding: 14px 14px 14px 0; caret-color: #1f2430; line-height: 28px; }
 .easymde-editor.is-immersive .easymde-source-react .cm-line { min-height: 28px; line-height: 28px; }

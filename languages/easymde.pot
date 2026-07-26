@@ -1208,7 +1208,7 @@ msgid "Default: %s"
 msgstr ""
 
 #. translators: %s: Locale-formatted character count.
-#: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:37
+#: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:26
 #, javascript-format
 msgid "%s character"
 msgid_plural "%s characters"
@@ -1216,7 +1216,7 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: %s: Locale-formatted estimated reading time in minutes.
-#: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:43
+#: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:32
 #, javascript-format
 msgid "About %s minute"
 msgid_plural "About %s minutes"
@@ -1224,7 +1224,7 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: %s: Locale-formatted revision count.
-#: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:49
+#: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:38
 #, javascript-format
 msgid "%s revision"
 msgid_plural "%s revisions"
@@ -1232,7 +1232,7 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: %s: Locale-formatted word count.
-#: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:54
+#: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:43
 #, javascript-format
 msgid "%s word"
 msgid_plural "%s words"

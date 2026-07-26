@@ -32,6 +32,21 @@ describe('immersive editor model', () => {
     ]);
   });
 
+  it('parses CommonMark ATX indentation and closing sequences', () => {
+    const markdown = [
+      '  ## Indented',
+      '# C#',
+      '# Closed ###',
+      '    # Code block text'
+    ].join('\n');
+
+    expect(extractOutline(markdown)).toEqual([
+      { level: 2, text: 'Indented', line: 0, position: 0, index: 0 },
+      { level: 1, text: 'C#', line: 1, position: 14, index: 1 },
+      { level: 1, text: 'Closed', line: 2, position: 19, index: 2 }
+    ]);
+  });
+
   it('ignores tilde-fenced code in statistics and the outline', () => {
     const markdown = 'visible\n~~~markdown\n# ignored heading\nignored code\n~~~\n# Real';
 

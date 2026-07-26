@@ -1157,7 +1157,11 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
-    await fillMarkdownAndWaitForPreview(page, '# Appearance\n\nPreview paragraph.', 'Preview paragraph.');
+    await fillMarkdownAndWaitForPreview(
+      page,
+      '# Appearance\n\n```js\nconst terminal = true;\n```\n\nPreview paragraph.',
+      'Preview paragraph.'
+    );
 
     const labels = await page.evaluate(() => ({
       appearance: window.EasyMDEEditorRootBootstrap.appearance.strings.appearance,
@@ -1169,7 +1173,8 @@ test.describe('EasyMDE editor workflows', () => {
       saveCss: window.EasyMDEEditorRootBootstrap.appearance.strings.saveCss
     }));
     const catalog = await page.evaluate(() => ({
-      articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes.map(({ id }) => id),
+      articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
+        .map(({ id, cssUrl }) => ({ id, cssUrl })),
       codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes.map(({ id }) => id),
       fontGroups: [
         {
@@ -1217,10 +1222,46 @@ test.describe('EasyMDE editor workflows', () => {
     expect(appearanceGeometry.topDelta).toBeLessThanOrEqual(1);
     const articleSelect = appearanceDialog.getByLabel(labels.articleTheme);
     const codeSelect = appearanceDialog.getByLabel(labels.codeTheme);
-    for (const id of catalog.articleThemes) {
+    const articleThemeLink = page.locator('#easymde-article-theme-css');
+    const previewCode = page.locator('.easymde-pane-preview article pre code.hljs').first();
+    const fullWidthFrameThemes = new Set([
+      'fullstack-blue',
+      'orange-heart',
+      'red-crimson',
+      'tech-blue',
+      'yamabuki'
+    ]);
+    const hiddenFrameThemes = new Set(['qingbi-liujin', 'qinghe-zhusha']);
+    await codeSelect.selectOption('terminal-noir');
+    await expect(page.locator('.easymde-pane-preview article'))
+      .toHaveClass(/easymde-code-theme-terminal-noir/);
+    for (const { id, cssUrl } of catalog.articleThemes) {
       await articleSelect.selectOption('theme:' + id);
       await expect(page.locator('.easymde-pane-preview article'))
         .toHaveClass(new RegExp('easymde-markdown-theme-' + id));
+      await expect.poll(() => articleThemeLink.evaluate((link, expectedUrl) => (
+        link instanceof HTMLLinkElement
+        && link.href === expectedUrl
+        && link.sheet?.href === expectedUrl
+      ), cssUrl), { message: id + ' article stylesheet should finish loading' }).toBe(true);
+      await expect.poll(() => previewCode.evaluate((code) => ({
+        code: getComputedStyle(code).backgroundColor,
+        pre: getComputedStyle(code.parentElement).backgroundColor
+      }))).toEqual({ code: 'rgb(13, 16, 23)', pre: 'rgb(13, 16, 23)' });
+
+      const expectedFrame = fullWidthFrameThemes.has(id)
+        ? 'full:rgb(13, 16, 23)'
+        : hiddenFrameThemes.has(id)
+          ? 'hidden'
+          : 'dot:rgb(255, 95, 86)';
+      await expect.poll(() => previewCode.evaluate((code) => {
+        const style = getComputedStyle(code.parentElement, '::before');
+        if ('none' === style.display) return 'hidden';
+
+        const kind = '12px' === style.width && '12px' === style.height ? 'dot' : 'full';
+
+        return `${kind}:${style.backgroundColor}`;
+      }), { message: id + ' should preserve the expected Terminal Noir frame' }).toBe(expectedFrame);
     }
     for (const id of catalog.codeThemes) {
       await codeSelect.selectOption(id);
@@ -1633,6 +1674,69 @@ test.describe('EasyMDE editor workflows', () => {
     expect(postCategoryNames(postId).split(/\r?\n/)).toContain(categoryName);
     expect(JSON.parse(runWp(['option', 'get', 'sticky_posts', '--format=json'])))
       .toContain(postId);
+  });
+
+  test('projects only publish fields owned by the current WordPress Post Type', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = 'React Page publish ' + testSlug(testInfo);
+    const markdown = '# ' + title + '\n\nPublished without unsupported fields.';
+
+    await login(page, user);
+    await page.goto('/wp-admin/post-new.php?post_type=page');
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    await page.locator('#title').fill(title);
+    await fillMarkdownAndWaitForPreview(
+      page,
+      markdown,
+      'Published without unsupported fields.'
+    );
+    const available = await page.evaluate(() => ({
+      categories: document.querySelectorAll(
+        '#categorychecklist input[name="post_category[]"]'
+      ).length > 0,
+      excerpt: null !== document.querySelector('#excerpt'),
+      featuredImage: null !== document.querySelector('#_thumbnail_id'),
+      sticky: null !== document.querySelector('#sticky'),
+      tags: null !== document.querySelector('#tax-input-post_tag'),
+      visibility:
+        null !== document.querySelector('#visibility-radio-public') &&
+        null !== document.querySelector('#visibility-radio-password') &&
+        null !== document.querySelector('#visibility-radio-private') &&
+        null !== document.querySelector('#post_password')
+    }));
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.getByRole('button', { name: labels.publish, exact: true }).click();
+    const publishDialog = page.getByRole('dialog', { name: labels.publish });
+    await expect(publishDialog).toBeVisible();
+    const projected = {
+      categories: publishDialog.locator('.easymde-publish-field.is-categories'),
+      excerpt: publishDialog.locator('.easymde-publish-field.is-excerpt'),
+      featuredImage: publishDialog.locator('.easymde-publish-featured-empty, .easymde-publish-featured-selected'),
+      sticky: publishDialog.locator('.easymde-publish-sticky'),
+      tags: publishDialog.locator('.easymde-publish-field.is-tags'),
+      visibility: publishDialog.locator('.easymde-publish-visibility')
+    };
+    for (const [field, locator] of Object.entries(projected)) {
+      await expect(locator).toHaveCount(available[field] ? 1 : 0);
+    }
+
+    await publishDialog
+      .getByRole('switch', { name: labels.openAfterPublish })
+      .click();
+    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await publishDialog
+      .getByRole('button', { name: labels.publish, exact: true })
+      .click();
+    await navigation;
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+
+    const postId = await currentPostId(page);
+    expect(runWp(['post', 'get', String(postId), '--field=post_type'])).toBe('page');
+    expect(normalizeMarkdown(postMetaValue(postId, '_easymde_markdown'))).toBe(markdown);
   });
 
   test('opens the real WordPress article after an immersive publish when requested', async ({ page }, testInfo) => {

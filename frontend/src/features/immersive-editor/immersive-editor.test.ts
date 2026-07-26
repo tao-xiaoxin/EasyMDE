@@ -32,6 +32,32 @@ describe('immersive editor model', () => {
     ]);
   });
 
+  it('ignores tilde-fenced code in statistics and the outline', () => {
+    const markdown = 'visible\n~~~markdown\n# ignored heading\nignored code\n~~~\n# Real';
+
+    expect(getDocumentStats(markdown)).toEqual({
+      words: 2,
+      characters: 11,
+      minutes: 1
+    });
+    expect(extractOutline(markdown)).toEqual([
+      { level: 1, text: 'Real', line: 5, position: 55, index: 0 }
+    ]);
+  });
+
+  it('keeps shorter backtick runs inside a longer fence', () => {
+    const markdown = '````markdown\n# hidden\n```\n# still hidden\n````\n# Visible';
+
+    expect(getDocumentStats(markdown)).toEqual({
+      words: 1,
+      characters: 7,
+      minutes: 1
+    });
+    expect(extractOutline(markdown)).toEqual([
+      { level: 1, text: 'Visible', line: 5, position: 46, index: 0 }
+    ]);
+  });
+
   it('groups numbered sections as reference-level roots', () => {
     const items = extractOutline(
       '# Document\n## 1. Section\n# Heading 1\n## Heading 2\n## 2. Next'

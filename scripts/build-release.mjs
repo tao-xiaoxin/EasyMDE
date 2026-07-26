@@ -64,14 +64,15 @@ const baseRequirements = [
   { path: 'vendor/composer/platform_check.php', type: 'file' },
   { path: 'languages/easymde.pot', type: 'file' },
   { path: 'languages/easymde-zh_CN.po', type: 'file' },
-  { path: 'languages/easymde-zh_CN.mo', type: 'file' }
+  { path: 'languages/easymde-zh_CN.mo', type: 'file' },
+  { path: 'languages/easymde-zh_CN-easymde-admin-editor-toolbar.json', type: 'file' }
 ];
 const productionFrontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const codeCopyFrontendEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
 const productionFrontendBuilds = [
   {
     buildRoot: 'assets/build',
-    dependencies: ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks'],
+    dependencies: ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
     entry: productionFrontendEntry,
     filePattern: /^assets\/admin-editor-[A-Za-z0-9_-]+\.js$/,
     handle: 'easymde-admin-editor-toolbar'

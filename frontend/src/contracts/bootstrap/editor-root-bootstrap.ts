@@ -83,7 +83,6 @@ export type EditorRootBootstrap = Readonly<{
     autoSaveEnabled: string;
     articleOutline: string;
     cancel: string;
-    characters: string;
     close: string;
     column: string;
     edit: string;
@@ -98,14 +97,11 @@ export type EditorRootBootstrap = Readonly<{
     historyError: string;
     historyLoading: string;
     historyAll: string;
-    historyCount: string;
-    historyCountSingular: string;
     historyVersions: string;
     immersive: string;
     insert: string;
     insertTable: string;
     line: string;
-    minutes: string;
     manualSave: string;
     moreActions: string;
     markdown: string;
@@ -122,7 +118,6 @@ export type EditorRootBootstrap = Readonly<{
     previewUnlockEdit: string;
     previewMode: string;
     publish: string;
-    readingTime: string;
     restore: string;
     restoreConfirm: string;
     restoreThisVersion: string;
@@ -149,7 +144,6 @@ export type EditorRootBootstrap = Readonly<{
     wechatCopied: string;
     wordCount: string;
     wordCountDescription: string;
-    words: string;
     addTags: string;
     categories: string;
     categoriesDescription: string;
@@ -455,7 +449,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'autoSaveEnabled',
         'articleOutline',
         'cancel',
-        'characters',
         'close',
         'column',
         'edit',
@@ -470,14 +463,11 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'historyError',
         'historyLoading',
         'historyAll',
-        'historyCount',
-        'historyCountSingular',
         'historyVersions',
         'immersive',
         'insert',
         'insertTable',
         'line',
-        'minutes',
         'manualSave',
         'moreActions',
         'markdown',
@@ -494,7 +484,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'previewUnlockEdit',
         'previewMode',
         'publish',
-        'readingTime',
         'restore',
         'restoreConfirm',
         'restoreThisVersion',
@@ -521,7 +510,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'wechatCopied',
         'wordCount',
         'wordCountDescription',
-        'words',
         'addTags',
         'categories',
         'categoriesDescription',

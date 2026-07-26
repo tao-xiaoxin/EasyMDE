@@ -200,7 +200,7 @@ When restoring a revision that predates EasyMDE document state, the manager remo
 
 `ArticleThemeRegistry` and `CodeThemeRegistry` explicitly register themes. They do not scan theme directories at runtime.
 
-Article themes are EasyMDE-owned CSS files under `assets/themes/article/`. Highlight.js vendor styles remain under `assets/vendor/highlight/styles/`. The EasyMDE-owned `wechat-inspired` code theme is stored under `assets/themes/code/`.
+Article themes are EasyMDE-owned CSS files under `assets/themes/article/`. Highlight.js vendor styles remain under `assets/vendor/highlight/styles/`. The EasyMDE-owned `wechat-inspired` and `terminal-noir` code themes are stored under `assets/themes/code/`.
 
 The extension filters are:
 

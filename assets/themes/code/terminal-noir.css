@@ -1,0 +1,80 @@
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac pre code.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 16px;
+  color: #cad1d9;
+  background: #0d1017;
+}
+
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-comment,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-quote {
+  color: #8d949e;
+}
+
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-keyword,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-doctag,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-formula,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-type,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-variable.language_ {
+  color: #d7a5cc;
+}
+
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-name,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-addition,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-meta,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-selector-tag,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-selector-pseudo {
+  color: #88c8a3;
+}
+
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-built_in,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-builtin-name,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-string,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-regexp,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-link {
+  color: #e2a974;
+}
+
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-attr,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-attribute,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-literal,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-number,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-operator,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-variable {
+  color: #9fb8d0;
+}
+
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-title,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-title.class_,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-title.class_.inherited__,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-title.function_,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-section {
+  color: #dde2e8;
+  font-weight: 700;
+}
+
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-symbol,
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-bullet {
+  color: #d9bd72;
+}
+
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-subst {
+  color: #cad1d9;
+}
+
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-emphasis {
+  font-style: italic;
+}
+
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-strong {
+  font-weight: 700;
+}
+
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-deletion {
+  color: #e28b8b;
+  background: #351b21;
+}
+
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac .hljs .hljs-addition {
+  background: #173229;
+}

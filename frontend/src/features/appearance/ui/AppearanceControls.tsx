@@ -57,6 +57,7 @@ const CODE_THEME_SWATCHES: Readonly<Record<string, readonly [string, string]>> =
   monokai: ['#272822', '#F8F8F2'],
   vs2015: ['#1E1E1E', '#DCDCDC'],
   xcode: ['#FFFFFF', '#1D1D1F'],
+  'terminal-noir': ['#0D1017', '#CAD1D9'],
   'wechat-inspired': ['#F4F4F4', '#333333']
 };
 

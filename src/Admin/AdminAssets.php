@@ -115,6 +115,18 @@ final class AdminAssets {
 			true
 		);
 
+		if ( ! wp_set_script_translations( $asset['handle'], 'easymde', Asset::path( 'languages' ) ) ) {
+			wp_dequeue_script( $asset['handle'] );
+			$this->react_editor_asset_error = true;
+			wp_trigger_error(
+				__METHOD__,
+				'EasyMDE React editor translations failed to load (react-editor-translations-invalid).',
+				E_USER_WARNING
+			);
+
+			return false;
+		}
+
 		return true;
 	}
 
@@ -292,7 +304,6 @@ final class AdminAssets {
 					'autoSaveEnabled'             => __( 'Auto save is enabled', 'easymde' ),
 					'articleOutline'              => __( 'Article outline', 'easymde' ),
 					'cancel'                      => __( 'Cancel', 'easymde' ),
-					'characters'                  => __( 'characters', 'easymde' ),
 					'close'                       => __( 'Close', 'easymde' ),
 					'column'                      => __( 'Column', 'easymde' ),
 					'edit'                        => __( 'Edit', 'easymde' ),
@@ -307,15 +318,11 @@ final class AdminAssets {
 					'historyError'                => __( 'Revisions could not be loaded.', 'easymde' ),
 					'historyLoading'              => __( 'Loading revisions...', 'easymde' ),
 					'historyAll'                  => __( 'All', 'easymde' ),
-					/* translators: %s: Number of available revisions. */
-					'historyCount'                => __( '%s revisions', 'easymde' ),
-					'historyCountSingular'        => __( '1 revision', 'easymde' ),
 					'historyVersions'             => __( 'Revision history', 'easymde' ),
 					'immersive'                   => __( 'Immersive writing', 'easymde' ),
 					'insert'                      => __( 'Insert', 'easymde' ),
 					'insertTable'                 => __( 'Insert table', 'easymde' ),
 					'line'                        => __( 'Line', 'easymde' ),
-					'minutes'                     => __( 'minutes', 'easymde' ),
 					'manualSave'                  => __( 'Manual save', 'easymde' ),
 					'moreActions'                 => __( 'More actions', 'easymde' ),
 					'markdown'                    => __( 'Markdown', 'easymde' ),
@@ -332,7 +339,6 @@ final class AdminAssets {
 					'previewUnlockEdit'           => __( 'Unlock and edit', 'easymde' ),
 					'previewMode'                 => __( 'Preview mode', 'easymde' ),
 					'publish'                     => __( 'Publish article', 'easymde' ),
-					'readingTime'                 => __( 'About', 'easymde' ),
 					'restore'                     => __( 'Restore revision', 'easymde' ),
 					'restoreConfirm'              => __( 'Unsaved changes will be lost when WordPress restores this revision. Continue?', 'easymde' ),
 					'restoreThisVersion'          => __( 'Restore this revision', 'easymde' ),
@@ -400,7 +406,6 @@ final class AdminAssets {
 					'wechatCopied'                => __( 'Copied', 'easymde' ),
 					'wordCount'                   => __( 'Word count', 'easymde' ),
 					'wordCountDescription'        => __( 'Show words, characters, and reading time beside the title', 'easymde' ),
-					'words'                       => __( 'words', 'easymde' ),
 				),
 				'mediaPickerFailure' => $strings['mediaPickerFailed'],
 				'preview'            => __( 'Preview', 'easymde' ),
@@ -497,7 +502,7 @@ final class AdminAssets {
 		$asset = isset( $entry['asset'] ) ? (string) $entry['asset'] : '';
 		if (
 			'easymde-admin-editor-toolbar' !== ( $entry['handle'] ?? null )
-			|| array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks' ) !== ( $entry['dependencies'] ?? null )
+			|| array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ) !== ( $entry['dependencies'] ?? null )
 			|| array() !== ( $entry['resources'] ?? null )
 			|| ! preg_match( '#^assets/admin-editor-[A-Za-z0-9_-]+\.js$#', $file )
 			|| preg_replace( '/\.js$/', '.asset.php', $file ) !== $asset
@@ -514,7 +519,7 @@ final class AdminAssets {
 		$metadata = require $metadata_path;
 		if (
 			! is_array( $metadata )
-			|| array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks' ) !== ( $metadata['dependencies'] ?? null )
+			|| array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ) !== ( $metadata['dependencies'] ?? null )
 			|| ! isset( $metadata['version'] )
 			|| ! preg_match( '/^[a-f0-9]{16}$/', (string) $metadata['version'] )
 		) {

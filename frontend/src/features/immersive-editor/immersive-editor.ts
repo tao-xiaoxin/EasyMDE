@@ -19,9 +19,60 @@ export type ImmersiveOutlineNode = Readonly<{
   children: ReadonlyArray<ImmersiveOutlineNode>;
 }>;
 
+type MarkdownLine = Readonly<{
+  line: string;
+  lineNumber: number;
+  position: number;
+}>;
+
+type MarkdownFence = Readonly<{
+  length: number;
+  marker: '`' | '~';
+}>;
+
+function markdownLinesOutsideFences(
+  markdown: string
+): ReadonlyArray<MarkdownLine> {
+  let fence: MarkdownFence | null = null;
+  let position = 0;
+
+  return markdown.split('\n').flatMap((line, lineNumber) => {
+    const linePosition = position;
+    position += line.length + 1;
+    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+    const run = match?.[1];
+    const suffix = match?.[2];
+
+    if (fence) {
+      if (
+        run?.[0] === fence.marker &&
+        run.length >= fence.length &&
+        /^[ \t]*$/u.test(suffix ?? '')
+      ) {
+        fence = null;
+      }
+      return [];
+    }
+
+    if (run && suffix !== undefined) {
+      const marker = run[0];
+      if (
+        ('`' === marker || '~' === marker) &&
+        ('~' === marker || !suffix.includes('`'))
+      ) {
+        fence = { length: run.length, marker };
+        return [];
+      }
+    }
+
+    return [{ line, lineNumber, position: linePosition }];
+  });
+}
+
 export function getDocumentStats(markdown: string): DocumentStats {
-  const text = markdown
-    .replace(/```[\s\S]*?```/gu, '')
+  const text = markdownLinesOutsideFences(markdown)
+    .map(({ line }) => line)
+    .join('\n')
     .replace(/[#*_~`>|()]/g, '')
     .replaceAll('[', '')
     .replaceAll(']', '');
@@ -31,32 +82,25 @@ export function getDocumentStats(markdown: string): DocumentStats {
 }
 
 export function extractOutline(markdown: string): ImmersiveOutlineItem[] {
-  let inFence = false;
   let index = 0;
-  let position = 0;
-  return markdown.split('\n').flatMap((line, lineNumber) => {
-    const linePosition = position;
-    position += line.length + 1;
-    if (/^\s*```/u.test(line)) {
-      inFence = !inFence;
-      return [];
+  return markdownLinesOutsideFences(markdown).flatMap(
+    ({ line, lineNumber, position }) => {
+      const match = /^(#{1,6})\s+(.+?)\s*#*$/u.exec(line);
+      if (!match) return [];
+      const hashes = match[1];
+      const text = match[2];
+      if (!hashes || !text) throw new Error('immersive-outline-match-invalid');
+      return [
+        {
+          level: hashes.length,
+          text,
+          line: lineNumber,
+          position,
+          index: index++
+        }
+      ];
     }
-    if (inFence) return [];
-    const match = /^(#{1,6})\s+(.+?)\s*#*$/u.exec(line);
-    if (!match) return [];
-    const hashes = match[1];
-    const text = match[2];
-    if (!hashes || !text) throw new Error('immersive-outline-match-invalid');
-    return [
-      {
-        level: hashes.length,
-        text,
-        line: lineNumber,
-        position: linePosition,
-        index: index++
-      }
-    ];
-  });
+  );
 }
 
 export function buildOutlineTree(

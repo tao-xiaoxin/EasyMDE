@@ -1,4 +1,4 @@
-import { createElement, useEffect, useRef, useState } from '@wordpress/element';
+import { Fragment, createElement, useEffect, useRef, useState } from '@wordpress/element';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   CalendarCheck,
@@ -454,7 +454,7 @@ export function ImmersivePublishDialog({
 
         <div className="easymde-publish-dialog-body">
           <div className="easymde-publish-dialog-primary">
-            <section className="easymde-publish-field">
+            {snapshot.availableFields.tags ? <section className="easymde-publish-field is-tags">
               <h3><Hash size={15} strokeWidth={2.2} />{strings.tags}</h3>
               <p>{strings.tagsDescription}</p>
               <div className="easymde-publish-tags-input">
@@ -478,14 +478,14 @@ export function ImmersivePublishDialog({
                   }}
                 />
               </div>
-            </section>
+            </section> : null}
 
-            <section className="easymde-publish-field">
+            {snapshot.availableFields.excerpt ? <section className="easymde-publish-field is-excerpt">
               <div className="easymde-publish-field-heading"><h3><FileText size={15} strokeWidth={2.2} />{strings.excerpt}</h3><span>{draft.excerpt.length} / 160</span></div>
               <textarea value={draft.excerpt} disabled={submitting} maxLength={160} placeholder={strings.excerptPlaceholder} onChange={(event) => update({ excerpt: event.currentTarget.value })} />
-            </section>
+            </section> : null}
 
-            <section className="easymde-publish-field">
+            {snapshot.availableFields.categories ? <section className="easymde-publish-field is-categories">
               <div className="easymde-publish-field-heading"><h3><ListChecks size={15} strokeWidth={2.2} />{strings.categories}</h3><span className="is-count">{format(strings.categoriesSelected, draft.categoryIds.length)}</span></div>
               <p>{strings.categoriesDescription}</p>
               <div className="easymde-publish-category-box">
@@ -502,11 +502,12 @@ export function ImmersivePublishDialog({
                   }}
                 />
               </div>
-            </section>
+            </section> : null}
           </div>
 
           <aside className="easymde-publish-dialog-aside">
-            <h3>{strings.featuredImage}</h3>
+            {snapshot.availableFields.featuredImage ? <Fragment>
+              <h3>{strings.featuredImage}</h3>
             {draft.featuredImage ? (
               <div className="easymde-publish-featured-selected">
                 <div><img src={draft.featuredImage.url} alt={draft.featuredImage.alt} /></div>
@@ -520,8 +521,9 @@ export function ImmersivePublishDialog({
                 <small>{strings.imageRequirements}</small>
               </button>
             )}
+            </Fragment> : null}
 
-            <section className="easymde-publish-visibility">
+            {snapshot.availableFields.visibility ? <section className="easymde-publish-visibility">
               <h3><Eye size={16} strokeWidth={2} />{strings.visibility}</h3>
               <div role="radiogroup" aria-label={strings.visibility}>
                 {([
@@ -535,7 +537,7 @@ export function ImmersivePublishDialog({
                   </label>
                 ))}
               </div>
-              {'public' === draft.visibility ? (
+              {'public' === draft.visibility && snapshot.availableFields.sticky ? (
                 <label className="easymde-publish-sticky">
                   <input type="checkbox" checked={draft.sticky} disabled={submitting} onChange={(event) => update({ sticky: event.currentTarget.checked })} />
                   <span aria-hidden="true">{draft.sticky ? <Check size={10} strokeWidth={3.2} /> : null}</span>{strings.sticky}
@@ -549,7 +551,7 @@ export function ImmersivePublishDialog({
                 </div>
               ) : null}
               {'private' === draft.visibility ? <p className="easymde-publish-private-note">{strings.privateDescription}</p> : null}
-            </section>
+            </section> : null}
 
             <section className="easymde-publish-options">
               <h3><CalendarCheck size={16} strokeWidth={2} />{strings.publishOptions}</h3>

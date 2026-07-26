@@ -4,7 +4,6 @@ export type ImmersiveStrings = Readonly<{
   autoSaveEnabled: string;
   articleOutline: string;
   cancel: string;
-  characters: string;
   close: string;
   column: string;
   edit: string;
@@ -19,15 +18,12 @@ export type ImmersiveStrings = Readonly<{
   historyError: string;
   historyLoading: string;
   historyAll: string;
-  historyCount: string;
-  historyCountSingular: string;
   historyVersions: string;
   immersive: string;
   insert: string;
   insertTable: string;
   line: string;
   markdown: string;
-  minutes: string;
   manualSave: string;
   moreActions: string;
   noHeadings: string;
@@ -43,7 +39,6 @@ export type ImmersiveStrings = Readonly<{
   previewUnlockEdit: string;
   previewMode: string;
   publish: string;
-  readingTime: string;
   resizeOutline: string;
   resizeSplit: string;
   restore: string;
@@ -70,7 +65,6 @@ export type ImmersiveStrings = Readonly<{
   wechatCopied: string;
   wordCount: string;
   wordCountDescription: string;
-  words: string;
   addTags: string;
   categories: string;
   categoriesDescription: string;

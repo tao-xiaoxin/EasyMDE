@@ -138,6 +138,7 @@ export type EditorRootProps = Readonly<{
   >;
   imageUploadPort: ImageUploadPort;
   immersiveEnvironment: ImmersiveEnvironmentPort;
+  immersiveI18n: Parameters<typeof ImmersiveEditor>[0]['i18n'];
   immersivePreferencesPort: ImmersivePreferencesPort;
   immersiveStrings: Parameters<typeof ImmersiveEditor>[0]['strings'];
   layout: EditorLayoutBootstrap;
@@ -930,9 +931,19 @@ export function EditorRoot(props: EditorRootProps) {
       throw new Error('immersive-publish-session-unavailable');
     const sessionError = protectedOperationError('post-write');
     if (sessionError) return false;
-    props.nativePublishPort.apply(draft);
+    try {
+      props.nativePublishPort.apply(draft);
+    } catch {
+      props.onFailure('immersive-publish-native-owner-unavailable');
+      return false;
+    }
     if (true !== props.publishPost(documentSession)) {
-      props.nativePublishPort.apply(original);
+      try {
+        props.nativePublishPort.apply(original);
+      } catch {
+        props.onFailure('immersive-publish-native-restore-unavailable');
+        return false;
+      }
       props.onFailure('immersive-publish-command-unavailable');
       return false;
     }
@@ -1272,6 +1283,7 @@ export function EditorRoot(props: EditorRootProps) {
           documentSession={documentSession}
           environment={props.immersiveEnvironment}
           immersivePreferencesPort={props.immersivePreferencesPort}
+          i18n={props.immersiveI18n}
           initialPreferences={
             'loaded' === immersivePreferences.status
               ? immersivePreferences.preferences

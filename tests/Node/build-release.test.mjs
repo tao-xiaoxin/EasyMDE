@@ -281,7 +281,7 @@ function createCompleteFixture(root) {
           handle: 'easymde-admin-editor-toolbar',
           file: frontendScript,
           asset: frontendMetadata,
-          dependencies: ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks'],
+          dependencies: ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
           resources: []
         }
       }
@@ -291,7 +291,7 @@ function createCompleteFixture(root) {
   writeText(
     root,
     `assets/build/${frontendMetadata}`,
-    "<?php return array( 'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks' ), 'version' => '0123456789abcdef' );\n"
+    "<?php return array( 'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ), 'version' => '0123456789abcdef' );\n"
   );
   writeText(
     root,
@@ -405,6 +405,7 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/languages/easymde.pot'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.po'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.mo'));
+    assert.ok(entries.includes('easymde/languages/easymde-zh_CN-easymde-admin-editor-toolbar.json'));
     assert.ok(entries.includes('easymde/assets/build/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
@@ -702,6 +703,12 @@ test('release requirements include the Qinghe Zhusha article theme stylesheet', 
   const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
 
   assert.ok(requirements.includes('assets/themes/article/qinghe-zhusha.css'));
+});
+
+test('release requirements include the Terminal Noir code theme stylesheet', () => {
+  const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
+
+  assert.ok(requirements.includes('assets/themes/code/terminal-noir.css'));
 });
 
 test('release requirements do not include the removed md2html-normal article theme stylesheet', () => {

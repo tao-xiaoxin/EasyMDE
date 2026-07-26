@@ -11,7 +11,10 @@ import type {
 import type { ImageUploadResult } from '../../contracts/ports/image-upload-port';
 import type { ImmersivePreferences } from '../../contracts/ports/immersive-preferences-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
-import type { RevisionPreview } from '../../contracts/ports/revision-port';
+import type {
+  RevisionPreview,
+  RevisionSummary
+} from '../../contracts/ports/revision-port';
 import type {
   EditorSessionAutosavePreparationResult,
   EditorSessionPort,
@@ -169,7 +172,6 @@ function fixture(): EditorRootProps &
       autoSaveEnabled: '自动保存已开启',
       articleOutline: '文章大纲',
       cancel: '取消',
-      characters: '字符',
       close: '关闭',
       column: '列',
       edit: '编辑',
@@ -184,14 +186,11 @@ function fixture(): EditorRootProps &
       historyError: '无法加载修订版本',
       historyLoading: '正在加载修订版本',
       historyAll: '全部',
-      historyCount: '共 %s 条历史版本',
-      historyCountSingular: '共 1 条历史版本',
       historyVersions: '历史版本',
       immersive: '沉浸写作',
       insert: '插入',
       insertTable: '插入表格',
       line: '行',
-      minutes: '分钟',
       manualSave: '手动保存',
       moreActions: '更多操作',
       markdown: 'Markdown',
@@ -208,7 +207,6 @@ function fixture(): EditorRootProps &
       previewUnlockEdit: '解除锁定并编辑',
       previewMode: '预览模式',
       publish: '发布文章',
-      readingTime: '约',
       restore: '恢复修订版本',
       restoreConfirm: '未保存的更改将会丢失',
       restoreThisVersion: '恢复到这个版本',
@@ -272,8 +270,7 @@ function fixture(): EditorRootProps &
       wechat: '复制到公众号',
       wechatCopied: '已复制',
       wordCount: '字数统计',
-      wordCountDescription: '在文章标题旁显示词数、字符数与阅读时长',
-      words: '词'
+      wordCountDescription: '在文章标题旁显示词数、字符数与阅读时长'
     },
     immersiveEnvironment: {
       activeElement: () =>
@@ -291,6 +288,12 @@ function fixture(): EditorRootProps &
         document.addEventListener('keydown', listener);
         return () => document.removeEventListener('keydown', listener);
       }
+    },
+    immersiveI18n: {
+      characters: (count) => `${count} 字符`,
+      readingTime: (minutes) => `约 ${minutes} 分钟`,
+      revisions: (count) => `共 ${count} 条历史版本`,
+      words: (count) => `${count} 词`
     },
     immersivePreferencesPort: {
       read: vi.fn(() => ({ status: 'missing' as const })),
@@ -360,6 +363,14 @@ function fixture(): EditorRootProps &
     nativePublishPort: {
       apply: vi.fn(),
       read: vi.fn(() => ({
+        availableFields: {
+          categories: true,
+          excerpt: true,
+          featuredImage: true,
+          sticky: true,
+          tags: true,
+          visibility: true
+        },
         categories: [],
         categoryIds: [],
         excerpt: '',
@@ -2453,6 +2464,14 @@ describe('EditorRoot', () => {
   it('keeps hierarchical WordPress category selections independent', async () => {
     const props = fixture();
     vi.mocked(props.nativePublishPort.read).mockReturnValue({
+      availableFields: {
+        categories: true,
+        excerpt: true,
+        featuredImage: true,
+        sticky: true,
+        tags: true,
+        visibility: true
+      },
       categories: [
         {
           children: [
@@ -2506,6 +2525,32 @@ describe('EditorRoot', () => {
     );
   });
 
+  it('omits publish controls without authoritative WordPress form owners', async () => {
+    const props = fixture();
+    vi.mocked(props.nativePublishPort.read).mockReturnValue({
+      ...props.nativePublishPort.read(),
+      availableFields: {
+        categories: false,
+        excerpt: false,
+        featuredImage: false,
+        sticky: false,
+        tags: false,
+        visibility: true
+      }
+    });
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    const dialog = within(view.getByRole('dialog', { name: '更新文章' }));
+    expect(dialog.queryByText('标签')).toBeNull();
+    expect(dialog.queryByText('摘要')).toBeNull();
+    expect(dialog.queryByText('分类')).toBeNull();
+    expect(dialog.queryByText('封面图')).toBeNull();
+    expect(dialog.queryByRole('checkbox', { name: '置于首页顶端' })).toBeNull();
+    expect(dialog.getByRole('radiogroup', { name: '可见性' })).not.toBeNull();
+  });
+
   it('restores the native publish fields when the WordPress submit command is unavailable', async () => {
     const props = fixture();
     vi.mocked(props.publishPost).mockReturnValue(false);
@@ -2532,6 +2577,31 @@ describe('EditorRoot', () => {
     expect(
       view.container.querySelector('.easymde-editor-flash')
     ).toBeNull();
+  });
+
+  it('reports a native publish owner that disappears before confirmation', async () => {
+    const props = fixture();
+    vi.mocked(props.nativePublishPort.apply).mockImplementationOnce(() => {
+      throw new Error('native-publish-tags-owner-unavailable');
+    });
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+    fireEvent.click(
+      within(view.getByRole('dialog', { name: '更新文章' })).getByRole(
+        'button',
+        { name: '更新文章' }
+      )
+    );
+
+    expect(props.publishPost).not.toHaveBeenCalled();
+    expect(props.onFailure).toHaveBeenCalledWith(
+      'immersive-publish-native-owner-unavailable'
+    );
+    expect(
+      within(view.getByRole('dialog', { name: '更新文章' })).getByRole('alert')
+        .textContent
+    ).toBe('WordPress 未接受发布请求，请检查页面状态后重试。');
   });
 
   it('uses the existing title and document owners for immersive edits and table insertion', async () => {
@@ -2722,6 +2792,59 @@ describe('EditorRoot', () => {
 
     expect(fireEvent.keyDown(filter, { key: 'Tab' })).toBe(false);
     expect(document.activeElement).toBe(close);
+  });
+
+  it('selects the first matching revision when History is filtered before loading completes', async () => {
+    const revisions = deferred<ReadonlyArray<RevisionSummary>>();
+    const props = fixture();
+    const revisionPort = {
+      get: vi.fn().mockResolvedValue({
+        features: {},
+        html: '<p>Automatic revision</p>' as SafePreviewHtml,
+        id: 13
+      }),
+      list: vi.fn(() => revisions.promise)
+    };
+    const view = render(<EditorRoot {...props} revisionPort={revisionPort} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '历史记录' }));
+    fireEvent.change(view.getByRole('combobox', { name: '全部' }), {
+      target: { value: 'auto' }
+    });
+
+    await act(async () => {
+      revisions.resolve([
+        {
+          date: '2026-07-23T10:00:00Z',
+          dateLabel: '10:00',
+          id: 12,
+          restoreUrl: 'https://example.test/wp-admin/revision.php?revision=12',
+          title: 'Manual revision',
+          type: 'manual'
+        },
+        {
+          date: '2026-07-23T11:00:00Z',
+          dateLabel: '11:00',
+          id: 13,
+          restoreUrl: 'https://example.test/wp-admin/revision.php?revision=13',
+          title: 'Automatic revision',
+          type: 'auto'
+        }
+      ]);
+    });
+
+    await waitFor(() =>
+      expect(revisionPort.get).toHaveBeenCalledWith(
+        13,
+        expect.any(AbortSignal)
+      )
+    );
+    expect(view.getByText('Automatic revision')).not.toBeNull();
+    expect(
+      (view.getByRole('button', {
+        name: '恢复到这个版本'
+      }) as HTMLButtonElement).disabled
+    ).toBe(false);
   });
 
   it('ignores a stale revision preview that resolves after the current selection', async () => {

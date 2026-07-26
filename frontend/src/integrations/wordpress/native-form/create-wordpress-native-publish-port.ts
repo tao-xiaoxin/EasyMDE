@@ -61,6 +61,19 @@ function ownedTextControl(
   );
 }
 
+function ownedVisibilityInput(
+  documentRef: Document,
+  visibility: NativePublishVisibility
+): HTMLInputElement | null {
+  const input = ownedInput(
+    documentRef,
+    `#visibility-radio-${visibility}`,
+    'visibility',
+    'radio'
+  );
+  return input?.value === visibility ? input : null;
+}
+
 function inputs(documentRef: Document): ReadonlyArray<HTMLInputElement> {
   const form = postForm(documentRef);
   if (!form) return [];
@@ -149,14 +162,7 @@ function tags(documentRef: Document): ReadonlyArray<string> {
 }
 
 function visibility(documentRef: Document): NativePublishVisibility {
-  if (
-    ownedInput(
-      documentRef,
-      '#visibility-radio-private',
-      'visibility',
-      'radio'
-    )?.checked
-  ) {
+  if (ownedVisibilityInput(documentRef, 'private')?.checked) {
     return 'private';
   }
   const password = ownedInput(
@@ -166,12 +172,7 @@ function visibility(documentRef: Document): NativePublishVisibility {
     'text'
   );
   if (
-    ownedInput(
-      documentRef,
-      '#visibility-radio-password',
-      'visibility',
-      'radio'
-    )?.checked ||
+    ownedVisibilityInput(documentRef, 'password')?.checked ||
     password?.value
   ) {
     return 'password';
@@ -215,27 +216,9 @@ function availableFields(documentRef: Document): NativePublishFieldAvailability 
         'tax_input[post_tag]'
       ),
     visibility:
-      null !==
-        ownedInput(
-          documentRef,
-          '#visibility-radio-public',
-          'visibility',
-          'radio'
-        ) &&
-      null !==
-        ownedInput(
-          documentRef,
-          '#visibility-radio-password',
-          'visibility',
-          'radio'
-        ) &&
-      null !==
-        ownedInput(
-          documentRef,
-          '#visibility-radio-private',
-          'visibility',
-          'radio'
-        ) &&
+      null !== ownedVisibilityInput(documentRef, 'public') &&
+      null !== ownedVisibilityInput(documentRef, 'password') &&
+      null !== ownedVisibilityInput(documentRef, 'private') &&
       null !==
         ownedInput(documentRef, '#post_password', 'post_password', 'text')
   };
@@ -401,6 +384,7 @@ export function createWordPressNativePublishPort(
         previous.visibility,
         'public' !== draft.visibility || '' !== draft.password
       );
+      setOpenPreview(documentRef, draft.openPreview);
       const selected = new Set(draft.categoryIds);
       for (const input of categoryInputs) {
         setChecked(input, selected.has(input.value));
@@ -422,30 +406,15 @@ export function createWordPressNativePublishPort(
         draft.featuredImage ? String(draft.featuredImage.id) : '-1'
       );
       setChecked(
-        ownedInput(
-          documentRef,
-          '#visibility-radio-public',
-          'visibility',
-          'radio'
-        ),
+        ownedVisibilityInput(documentRef, 'public'),
         'public' === draft.visibility
       );
       setChecked(
-        ownedInput(
-          documentRef,
-          '#visibility-radio-password',
-          'visibility',
-          'radio'
-        ),
+        ownedVisibilityInput(documentRef, 'password'),
         'password' === draft.visibility
       );
       setChecked(
-        ownedInput(
-          documentRef,
-          '#visibility-radio-private',
-          'visibility',
-          'radio'
-        ),
+        ownedVisibilityInput(documentRef, 'private'),
         'private' === draft.visibility
       );
       setValue(
@@ -456,7 +425,6 @@ export function createWordPressNativePublishPort(
         ownedInput(documentRef, '#sticky', 'sticky', 'checkbox'),
         'public' === draft.visibility && draft.sticky
       );
-      setOpenPreview(documentRef, draft.openPreview);
     }
   };
 }

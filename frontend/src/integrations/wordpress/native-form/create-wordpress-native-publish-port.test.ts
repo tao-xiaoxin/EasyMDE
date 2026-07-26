@@ -300,6 +300,24 @@ describe('createWordPressNativePublishPort', () => {
     );
   });
 
+  it('rejects a visibility radio whose serialized value changes before apply', () => {
+    const port = createWordPressNativePublishPort(document);
+    const snapshot = port.read();
+    const privateField = document.querySelector<HTMLInputElement>(
+      '#visibility-radio-private'
+    );
+    const form = document.querySelector<HTMLFormElement>('#post');
+    if (!privateField || !form) {
+      throw new Error('synthetic-visibility-field-unavailable');
+    }
+    privateField.value = 'public';
+
+    expect(() => port.apply({ ...snapshot, visibility: 'private' })).toThrowError(
+      'native-publish-visibility-owner-unavailable'
+    );
+    expect(new FormData(form).getAll('visibility')).toEqual(['public']);
+  });
+
   it('rejects a tag owner whose replacement is not a value control', () => {
     const original = document.querySelector('#tax-input-post_tag');
     const replacement = document.createElement('input');
@@ -353,6 +371,48 @@ describe('createWordPressNativePublishPort', () => {
     expect(() => createWordPressNativePublishPort(document).read()).toThrowError(
       'native-publish-open-preview-owner-invalid'
     );
+  });
+
+  it('rejects an invalid open-preview owner before changing any native field', () => {
+    const port = createWordPressNativePublishPort(document);
+    const snapshot = port.read();
+    const form = document.querySelector<HTMLFormElement>('#post');
+    if (!form) throw new Error('synthetic-post-form-unavailable');
+    const conflicting = document.createElement('input');
+    conflicting.name = 'easymde_open_published_post';
+    conflicting.type = 'text';
+    conflicting.value = 'conflict';
+    form.append(conflicting);
+    const fieldState = () =>
+      Array.from(form.elements).flatMap((element) =>
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement
+          ? [{
+              checked:
+                element instanceof HTMLInputElement ? element.checked : null,
+              name: element.name,
+              type:
+                element instanceof HTMLInputElement ? element.type : 'textarea',
+              value: element.value
+            }]
+          : []
+      );
+    const before = fieldState();
+
+    expect(() =>
+      port.apply({
+        ...snapshot,
+        categoryIds: ['3'],
+        excerpt: 'Changed excerpt',
+        featuredImage: null,
+        openPreview: true,
+        password: 'secret',
+        sticky: true,
+        tags: ['Changed'],
+        visibility: 'password'
+      })
+    ).toThrowError('native-publish-open-preview-owner-invalid');
+    expect(fieldState()).toEqual(before);
   });
 
   it('rejects controls that are detached from the owning WordPress form', () => {

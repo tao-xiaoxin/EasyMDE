@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
+import { runCleanupSteps } from './support/run-cleanup-steps.mjs';
 
 const wpPath = process.env.EASYMDE_E2E_WP_PATH;
 const wpCli = process.env.EASYMDE_E2E_WP_CLI || 'wp';
@@ -374,12 +375,14 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test.afterEach(async ({}, testInfo) => {
-    for (const termId of testInfo.easymdeTermIds ?? []) {
-      runWp(['term', 'delete', 'category', String(termId)]);
-    }
-    if (testInfo.easymdeUser) {
-      deleteUserContent(testInfo.easymdeUser.id);
-    }
+    runCleanupSteps([
+      ...(testInfo.easymdeTermIds ?? []).map((termId) => () => {
+        runWp(['term', 'delete', 'category', String(termId)]);
+      }),
+      ...(testInfo.easymdeUser
+        ? [() => deleteUserContent(testInfo.easymdeUser.id)]
+        : [])
+    ]);
   });
 
   test('uses one React owner for ordinary and immersive editing', async ({ page }, testInfo) => {

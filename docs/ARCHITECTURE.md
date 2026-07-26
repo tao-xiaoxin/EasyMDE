@@ -54,7 +54,7 @@ public PHP compatibility contracts remain preserved as described below.
 - `assets/themes/article/`: EasyMDE-owned article themes.
 - `assets/themes/code/`: EasyMDE-owned code themes.
 - `assets/vendor/`: committed third-party runtime assets prepared from locked npm packages or verified upstream repository sources.
-- `frontend/`: strict TypeScript, React, CodeMirror, and Vite source for the production normal-editor Toolbar, document session, Preview Surface, synchronized scrolling, Font controls, Appearance controls, Media-picker session, pasted/dropped image upload session, Local Draft session, WeChat export, and the independent public code-copy enhancement, plus the test-only WordPress React build-contract fixture.
+- `frontend/`: strict TypeScript, React, CodeMirror, and Vite source for the production normal-editor Toolbar, document session, Preview Surface, synchronized scrolling, Font controls, Appearance controls, Media-picker session, pasted/dropped image upload session, Local Draft session, WeChat export, the independent Settings Center, and the independent public code-copy enhancement, plus the test-only WordPress React build-contract fixture.
 - `scripts/`: local asset preparation, i18n/notices, test setup, Plugin Check, clean WordPress install, and release package assembly scripts.
 - `tests/Unit/` and `tests/Integration/`: PHPUnit coverage for rendering, CSS policy, frontend assets, REST permissions, revisions, migration, editor gating, and compatibility facade behavior.
 - `tests/Node/`: Node tests for release packaging, CI invariants, i18n/notices, Plugin Check parsing, and destructive-script safety.
@@ -62,7 +62,7 @@ public PHP compatibility contracts remain preserved as described below.
 
 ## Frontend Build Foundation
 
-The root npm project owns Vite, TypeScript, Biome linting, React 18 development declarations, Vitest, CodeMirror 6, and the WordPress Element package used by browser builds. `npm run frontend:check` runs frontend linting, strict `tsc --noEmit`, component and contract tests, the test-only build contract, and temporary production Editor and public code-copy builds that must match their committed runtimes byte for byte.
+The root npm project owns Vite, TypeScript, Biome linting, React 18 development declarations, Vitest, CodeMirror 6, and the WordPress Element package used by browser builds. `npm run frontend:check` runs frontend linting, strict `tsc --noEmit`, component and contract tests, the test-only build contract, and temporary production Editor, public code-copy, and Settings Center builds that must match their committed runtimes byte for byte.
 
 The Vite entry under `frontend/test/build-contract/` remains test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
 
@@ -86,6 +86,17 @@ dependencies. The TypeScript owner adds the local Lucide Copy control, skips
 Mermaid blocks, serializes Clipboard operations, restores temporary fallback
 DOM, and tears down and reactivates across page lifecycle transitions. It does
 not render Markdown or load the admin React application.
+
+`frontend/src/entrypoints/settings-center.tsx` is a separate React production
+entry for the dedicated EasyMDE administration screen. `SettingsPage` requires
+`manage_options`, validates the dedicated
+`assets/build/settings-center/wordpress-manifest.json` and matching asset
+metadata, enqueues the stable `easymde-admin-settings-center` handle only on
+that screen, and emits a same-origin presentation Bootstrap contract. The
+Settings Center mounts its own Root and does not share mutable State with the
+Editor Root. Its current presentation-only controls do not register a setting,
+send a mutation, or create a browser settings authority; unavailable operations
+remain disabled or explicitly pending.
 
 The entrypoint parses external data before mounting, constructs focused
 WordPress and browser Adapters, mounts one `EditorRoot`, and owns idempotent

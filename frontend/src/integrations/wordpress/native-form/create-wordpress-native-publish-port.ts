@@ -18,7 +18,8 @@ function postForm(documentRef: Document): HTMLFormElement | null {
 function ownedInput(
   documentRef: Document,
   selector: string,
-  name: string
+  name: string,
+  type: string
 ): HTMLInputElement | null {
   const candidate = documentRef.querySelector(selector);
   const form = postForm(documentRef);
@@ -26,7 +27,8 @@ function ownedInput(
     form &&
     candidate.form === form &&
     !candidate.disabled &&
-    candidate.name === name
+    candidate.name === name &&
+    candidate.type === type
     ? candidate
     : null;
 }
@@ -53,7 +55,8 @@ function ownedTextControl(
   name: string
 ): HTMLInputElement | HTMLTextAreaElement | null {
   return (
-    ownedInput(documentRef, selector, name) ??
+    ownedInput(documentRef, selector, name, 'hidden') ??
+    ownedInput(documentRef, selector, name, 'text') ??
     ownedTextarea(documentRef, selector, name)
   );
 }
@@ -61,7 +64,7 @@ function ownedTextControl(
 function inputs(documentRef: Document): ReadonlyArray<HTMLInputElement> {
   const form = postForm(documentRef);
   if (!form) return [];
-  return Array.from(
+  const candidates = Array.from(
     documentRef.querySelectorAll(
       '#categorychecklist input[name="post_category[]"]'
     )
@@ -71,6 +74,9 @@ function inputs(documentRef: Document): ReadonlyArray<HTMLInputElement> {
       candidate.form === form &&
       !candidate.disabled
   );
+  return candidates.every((candidate) => 'checkbox' === candidate.type)
+    ? candidates
+    : [];
 }
 
 function labelText(input: HTMLInputElement): string {
@@ -147,7 +153,8 @@ function visibility(documentRef: Document): NativePublishVisibility {
     ownedInput(
       documentRef,
       '#visibility-radio-private',
-      'visibility'
+      'visibility',
+      'radio'
     )?.checked
   ) {
     return 'private';
@@ -155,13 +162,15 @@ function visibility(documentRef: Document): NativePublishVisibility {
   const password = ownedInput(
     documentRef,
     '#post_password',
-    'post_password'
+    'post_password',
+    'text'
   );
   if (
     ownedInput(
       documentRef,
       '#visibility-radio-password',
-      'visibility'
+      'visibility',
+      'radio'
     )?.checked ||
     password?.value
   ) {
@@ -174,7 +183,8 @@ function featuredImage(documentRef: Document): NativeFeaturedImage | null {
   const field = ownedInput(
     documentRef,
     '#_thumbnail_id',
-    '_thumbnail_id'
+    '_thumbnail_id',
+    'hidden'
   );
   const id = Number(field?.value);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
@@ -193,8 +203,10 @@ function availableFields(documentRef: Document): NativePublishFieldAvailability 
     categories: inputs(documentRef).length > 0,
     excerpt: null !== ownedTextarea(documentRef, '#excerpt', 'excerpt'),
     featuredImage:
-      null !== ownedInput(documentRef, '#_thumbnail_id', '_thumbnail_id'),
-    sticky: null !== ownedInput(documentRef, '#sticky', 'sticky'),
+      null !==
+      ownedInput(documentRef, '#_thumbnail_id', '_thumbnail_id', 'hidden'),
+    sticky:
+      null !== ownedInput(documentRef, '#sticky', 'sticky', 'checkbox'),
     tags:
       null !==
       ownedTextControl(
@@ -204,12 +216,28 @@ function availableFields(documentRef: Document): NativePublishFieldAvailability 
       ),
     visibility:
       null !==
-        ownedInput(documentRef, '#visibility-radio-public', 'visibility') &&
+        ownedInput(
+          documentRef,
+          '#visibility-radio-public',
+          'visibility',
+          'radio'
+        ) &&
       null !==
-        ownedInput(documentRef, '#visibility-radio-password', 'visibility') &&
+        ownedInput(
+          documentRef,
+          '#visibility-radio-password',
+          'visibility',
+          'radio'
+        ) &&
       null !==
-        ownedInput(documentRef, '#visibility-radio-private', 'visibility') &&
-      null !== ownedInput(documentRef, '#post_password', 'post_password')
+        ownedInput(
+          documentRef,
+          '#visibility-radio-private',
+          'visibility',
+          'radio'
+        ) &&
+      null !==
+        ownedInput(documentRef, '#post_password', 'post_password', 'text')
   };
 }
 
@@ -241,9 +269,7 @@ function setChecked(element: HTMLInputElement | null, checked: boolean): void {
 }
 
 function setOpenPreview(documentRef: Document, enabled: boolean): void {
-  const existing = documentRef.querySelector<HTMLInputElement>(
-    `input[name="${OPEN_PUBLISHED_POST_FIELD}"]`
-  );
+  const existing = openPreviewInput(documentRef);
   if (!enabled) {
     existing?.remove();
     return;
@@ -259,6 +285,23 @@ function setOpenPreview(documentRef: Document, enabled: boolean): void {
   field.name = OPEN_PUBLISHED_POST_FIELD;
   field.value = '1';
   form.append(field);
+}
+
+function openPreviewInput(documentRef: Document): HTMLInputElement | null {
+  const form = postForm(documentRef);
+  if (!form) return null;
+  const fields = Array.from(
+    documentRef.querySelectorAll<HTMLInputElement>(
+      `input[name="${OPEN_PUBLISHED_POST_FIELD}"]`
+    )
+  ).filter((candidate) => candidate.form === form && !candidate.disabled);
+  if (
+    1 < fields.length ||
+    fields.some((candidate) => 'hidden' !== candidate.type)
+  ) {
+    throw new Error('native-publish-open-preview-owner-invalid');
+  }
+  return fields[0] ?? null;
 }
 
 export function createWordPressNativePublishPort(
@@ -300,15 +343,14 @@ export function createWordPressNativePublishPort(
           ownedTextarea(documentRef, '#excerpt', 'excerpt')?.value ?? '',
         featuredImage: featuredImage(documentRef),
         openPreview:
-          '1' ===
-          documentRef.querySelector<HTMLInputElement>(
-            `input[name="${OPEN_PUBLISHED_POST_FIELD}"]`
-          )?.value,
+          '1' === openPreviewInput(documentRef)?.value,
         password:
-          ownedInput(documentRef, '#post_password', 'post_password')?.value ?? '',
+          ownedInput(documentRef, '#post_password', 'post_password', 'text')
+            ?.value ?? '',
         existing: '' !== status && 'auto-draft' !== status,
         sticky:
-          ownedInput(documentRef, '#sticky', 'sticky')?.checked ?? false,
+          ownedInput(documentRef, '#sticky', 'sticky', 'checkbox')?.checked ??
+          false,
         tags: tags(documentRef),
         visibility: visibility(documentRef)
       };
@@ -376,27 +418,42 @@ export function createWordPressNativePublishPort(
         draft.excerpt
       );
       setValue(
-        ownedInput(documentRef, '#_thumbnail_id', '_thumbnail_id'),
+        ownedInput(documentRef, '#_thumbnail_id', '_thumbnail_id', 'hidden'),
         draft.featuredImage ? String(draft.featuredImage.id) : '-1'
       );
       setChecked(
-        ownedInput(documentRef, '#visibility-radio-public', 'visibility'),
+        ownedInput(
+          documentRef,
+          '#visibility-radio-public',
+          'visibility',
+          'radio'
+        ),
         'public' === draft.visibility
       );
       setChecked(
-        ownedInput(documentRef, '#visibility-radio-password', 'visibility'),
+        ownedInput(
+          documentRef,
+          '#visibility-radio-password',
+          'visibility',
+          'radio'
+        ),
         'password' === draft.visibility
       );
       setChecked(
-        ownedInput(documentRef, '#visibility-radio-private', 'visibility'),
+        ownedInput(
+          documentRef,
+          '#visibility-radio-private',
+          'visibility',
+          'radio'
+        ),
         'private' === draft.visibility
       );
       setValue(
-        ownedInput(documentRef, '#post_password', 'post_password'),
+        ownedInput(documentRef, '#post_password', 'post_password', 'text'),
         'password' === draft.visibility ? draft.password : ''
       );
       setChecked(
-        ownedInput(documentRef, '#sticky', 'sticky'),
+        ownedInput(documentRef, '#sticky', 'sticky', 'checkbox'),
         'public' === draft.visibility && draft.sticky
       );
       setOpenPreview(documentRef, draft.openPreview);

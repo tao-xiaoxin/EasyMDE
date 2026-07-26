@@ -272,7 +272,7 @@ They delegate to `EasyMDE\Support\ToolbarRegistry`. Existing extension code shou
 
 EasyMDE uses the WordPress text domain `easymde` and loads bundled language files from `languages/` during plugin initialization.
 
-PHP remains the translation source for browser UI text. Admin JavaScript reads author-facing strings from `EasyMDEConfig.strings`, and frontend enhancement scripts read visitor-facing strings from `EasyMDEFrontendConfig.strings`.
+PHP remains the translation owner for most browser UI text. The Editor Root reads those author-facing strings from its PHP bootstrap, and frontend enhancement scripts read visitor-facing strings from `EasyMDEFrontendConfig.strings`. Immersive word, character, reading-time, and revision counters are the first React-owned translation unit: the production `easymde-admin-editor-toolbar` script externalizes `@wordpress/i18n` to WordPress `wp.i18n`, declares the `wp-i18n` dependency, and loads its handle-based catalog through `wp_set_script_translations()`.
 
 Translation maintenance uses:
 

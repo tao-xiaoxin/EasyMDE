@@ -24,7 +24,7 @@ const productionSpec = {
   resourceHasManifestRecord: false,
   resourceReferencedByScript: false,
   label: 'production build',
-  ignoredOutputPrefixes: ['code-copy/'],
+  ignoredOutputPrefixes: ['code-copy/', 'settings-center/'],
   requiredRuntimePattern: /\bwp\.element\b/,
   requiredRuntimeLabel: 'WordPress element runtime'
 };
@@ -45,6 +45,23 @@ const codeCopyProductionSpec = {
 const codeCopyProductionCheckRoot = join(
   repositoryRoot,
   '.cache/easymde-code-copy-production-check'
+);
+const settingsProductionSpec = {
+  outputRoot: join(repositoryRoot, 'assets/build/settings-center'),
+  sourceEntry: 'frontend/src/entrypoints/settings-center.tsx',
+  expectedHandle: 'easymde-admin-settings-center',
+  expectedDependencies: ['wp-element'],
+  resourceField: null,
+  expectedResourceCount: 0,
+  resourceHasManifestRecord: false,
+  resourceReferencedByScript: false,
+  label: 'settings-center production build',
+  requiredRuntimePattern: /EasyMDESettingsCenterBootstrap/,
+  requiredRuntimeLabel: 'settings-center bootstrap'
+};
+const settingsProductionCheckRoot = join(
+  repositoryRoot,
+  '.cache/easymde-settings-production-check'
 );
 const forbiddenContent = [
   { pattern: /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/, label: 'private React runtime' },
@@ -328,6 +345,12 @@ export function validateCodeCopyProductionBuild(
   return validateBuild(codeCopyProductionSpec, outputRoot);
 }
 
+export function validateSettingsProductionBuild(
+  outputRoot = settingsProductionSpec.outputRoot
+) {
+  return validateBuild(settingsProductionSpec, outputRoot);
+}
+
 export function compareFrontendProductionBuilds(
   generatedRoot = productionCheckRoot,
   committedRoot = productionSpec.outputRoot
@@ -380,15 +403,43 @@ export function compareCodeCopyProductionBuilds(
   }
 }
 
+export function compareSettingsProductionBuilds(
+  generatedRoot = settingsProductionCheckRoot,
+  committedRoot = settingsProductionSpec.outputRoot
+) {
+  validateSettingsProductionBuild(generatedRoot);
+  validateSettingsProductionBuild(committedRoot);
+
+  const generatedFiles = collectFiles(resolve(generatedRoot));
+  const committedFiles = collectFiles(resolve(committedRoot));
+  if (JSON.stringify(generatedFiles) !== JSON.stringify(committedFiles)) {
+    throw new Error(
+      'Committed settings-center production artifacts are missing, stale, or unexpected. Run npm run build:frontend and review the generated files.'
+    );
+  }
+
+  for (const path of generatedFiles) {
+    const generated = readFileSync(join(generatedRoot, path));
+    const committed = readFileSync(join(committedRoot, path));
+    if (!generated.equals(committed)) {
+      throw new Error(
+        `Committed settings-center production artifact is stale: ${path}. Run npm run build:frontend and review the generated files.`
+      );
+    }
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
     if (process.argv.includes('--production-check')) {
       compareFrontendProductionBuilds();
       compareCodeCopyProductionBuilds();
+      compareSettingsProductionBuilds();
       console.log('Committed frontend production build matches the validated source build.');
     } else if (process.argv.includes('--production')) {
       validateFrontendProductionBuild();
       validateCodeCopyProductionBuild();
+      validateSettingsProductionBuild();
       console.log('Frontend production build is valid.');
     } else {
       validateFrontendBuild();

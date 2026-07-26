@@ -95,7 +95,14 @@ function createAssetSourceFiles(root) {
   writeText(
     root,
     'src/Admin/SettingsPage.php',
-    "<?php\nAsset::url( 'assets/css/admin/settings.css' );\n"
+    [
+      '<?php',
+      "Asset::url( 'assets/css/admin/settings.css' );",
+      "Asset::url( 'assets/css/admin/settings-center.css' );",
+      "Asset::url( 'assets/images/settings-center/brand-icon-clean.png' );",
+      "Asset::url( 'assets/images/settings-center/header-illustration.png' );",
+      "Asset::url( 'assets/images/settings-center/search-empty-illustration.png' );"
+    ].join('\n')
   );
   writeText(
     root,
@@ -259,6 +266,9 @@ function createCompleteFixture(root) {
   const codeCopyEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
   const codeCopyScript = 'assets/frontend-code-copy-fixture.js';
   const codeCopyMetadata = 'assets/frontend-code-copy-fixture.asset.php';
+  const settingsEntry = 'frontend/src/entrypoints/settings-center.tsx';
+  const settingsScript = 'assets/settings-center-fixture.js';
+  const settingsMetadata = 'assets/settings-center-fixture.asset.php';
 
   writeText(
     root,
@@ -325,6 +335,43 @@ function createCompleteFixture(root) {
     root,
     `assets/build/code-copy/${codeCopyMetadata}`,
     "<?php return array( 'dependencies' => array(), 'version' => 'fedcba9876543210' );\n"
+  );
+  writeText(
+    root,
+    'assets/build/settings-center/manifest.json',
+    JSON.stringify({
+      [settingsEntry]: {
+        file: settingsScript,
+        isEntry: true,
+        src: settingsEntry
+      }
+    })
+  );
+  writeText(
+    root,
+    'assets/build/settings-center/wordpress-manifest.json',
+    JSON.stringify({
+      schemaVersion: 1,
+      entries: {
+        [settingsEntry]: {
+          handle: 'easymde-admin-settings-center',
+          file: settingsScript,
+          asset: settingsMetadata,
+          dependencies: ['wp-element'],
+          resources: []
+        }
+      }
+    })
+  );
+  writeText(
+    root,
+    `assets/build/settings-center/${settingsScript}`,
+    'window.EasyMDESettingsCenterBootstrap = {};\n'
+  );
+  writeText(
+    root,
+    `assets/build/settings-center/${settingsMetadata}`,
+    "<?php return array( 'dependencies' => array( 'wp-element' ), 'version' => '0011223344556677' );\n"
   );
 
   for (const requirement of collectReleaseRequirements(root)) {
@@ -411,6 +458,13 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/assets/build/code-copy/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/code-copy\/assets\/frontend-code-copy-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/code-copy\/assets\/frontend-code-copy-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/build/settings-center/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/css/admin/settings-center.css'));
+    assert.ok(entries.includes('easymde/assets/images/settings-center/brand-icon-clean.png'));
+    assert.ok(entries.includes('easymde/assets/images/settings-center/header-illustration.png'));
+    assert.ok(entries.includes('easymde/assets/images/settings-center/search-empty-illustration.png'));
     assert.ok(entries.includes('easymde/assets/js/frontend/bootstrap.js'));
     assert.equal(entries.includes('easymde/assets/js/frontend/code-copy.js'), false);
     assert.ok(entries.includes('easymde/assets/css/frontend/code-copy.css'));

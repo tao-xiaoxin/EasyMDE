@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "entries": {
+    "frontend/src/entrypoints/settings-center.tsx": {
+      "handle": "easymde-admin-settings-center",
+      "file": "assets/settings-center-C4T52izY.js",
+      "asset": "assets/settings-center-C4T52izY.asset.php",
+      "dependencies": [
+        "wp-element"
+      ],
+      "resources": []
+    }
+  }
+}

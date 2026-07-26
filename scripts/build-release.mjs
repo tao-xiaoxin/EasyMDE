@@ -68,6 +68,7 @@ const baseRequirements = [
 ];
 const productionFrontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const codeCopyFrontendEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
+const settingsFrontendEntry = 'frontend/src/entrypoints/settings-center.tsx';
 const productionFrontendBuilds = [
   {
     buildRoot: 'assets/build',
@@ -82,6 +83,13 @@ const productionFrontendBuilds = [
     entry: codeCopyFrontendEntry,
     filePattern: /^assets\/frontend-code-copy-[A-Za-z0-9_-]+\.js$/,
     handle: 'easymde-code-copy'
+  },
+  {
+    buildRoot: 'assets/build/settings-center',
+    dependencies: ['wp-element'],
+    entry: settingsFrontendEntry,
+    filePattern: /^assets\/settings-center-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-admin-settings-center'
   }
 ];
 

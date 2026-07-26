@@ -360,7 +360,7 @@ msgstr ""
 msgid "Ready to publish"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:377
+#: src/Admin/AdminAssets.php:377 src/Admin/SettingsPage.php:232
 msgid "Private"
 msgstr ""
 
@@ -368,7 +368,7 @@ msgstr ""
 msgid "Only site administrators and editors can view this article."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:379
+#: src/Admin/AdminAssets.php:379 src/Admin/SettingsPage.php:231
 msgid "Public"
 msgstr ""
 
@@ -698,13 +698,883 @@ msgstr ""
 msgid "You are not allowed to create this EasyMDE post."
 msgstr ""
 
-#: src/Admin/SettingsPage.php:32 src/Admin/SettingsPage.php:33
-#: templates/admin/settings-page.php:13
+#: src/Admin/SettingsPage.php:32
+msgid "EasyMDE Settings Center"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:33
+msgid "EasyMDE Settings"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:42 src/Admin/SettingsPage.php:43
+#: src/Admin/SettingsPage.php:153 templates/admin/settings-page.php:13
 msgid "EasyMDE"
 msgstr ""
 
+#: src/Admin/SettingsPage.php:154
+msgid "Settings Center"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:155
+msgid "Settings center navigation"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:156
+msgid "Help"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:157
+msgid "Documentation, FAQs, and usage guides"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:158
+msgid "View documentation"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:159
+msgid "Close settings center"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:160
+msgid "Search all settings"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:161
+msgid "Search all plugin settings..."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:162
+msgid "Clear search"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:163
+msgid "Search Settings"
+msgstr ""
+
+#. translators: %s: settings search query.
+#: src/Admin/SettingsPage.php:165
+#, php-format
+msgid "Only settings matching \"%s\" are shown."
+msgstr ""
+
+#. translators: %s: settings search query.
+#: src/Admin/SettingsPage.php:167
+#, php-format
+msgid "No settings related to \"%s\" were found"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:168
+msgid "Try a setting name, feature keyword, or service name."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:169
+msgid "General Settings"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:170
+msgid "Keyboard Shortcuts"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:171
+msgid "Image Hosting"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:172
+msgid "AI Settings"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:173
+msgid "Markdown Settings"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:174
+msgid "Article Sync"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:175
+msgid "Import / Export"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:176
+msgid "About Us"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:177
+msgid ""
+"Configure EasyMDE basic behavior and interface preferences in WordPress."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:178
+msgid "Configure shortcuts for common actions on Windows, Linux, and macOS."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:179
+msgid ""
+"Configure image upload and storage services, including common hosts and "
+"custom upload solutions."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:180
+msgid "Configure AI services and writing assistance for EasyMDE in WordPress."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:181
+msgid ""
+"Customize Markdown editor behavior and rendering for a more comfortable "
+"writing experience."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:182
+msgid ""
+"Configure article synchronization to publishing platforms and manage "
+"synchronization history."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:183
+msgid ""
+"Export plugin settings to a local file or import them for migration and "
+"backup."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:184
+msgid "Learn about the EasyMDE plugin, version status, and related resources."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:185
+msgid "This settings section is not connected yet."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:186
+msgid "Its real WordPress data interface will be connected in a later step."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:187
+msgid "Basic Preferences"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:188
+msgid "Editor Behavior"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:189
+msgid "Document Defaults"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:190
+msgid "Interface Language"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:191
+msgid "Default Editing Mode"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:192
+msgid "Auto-focus Editor"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:193
+msgid "Automatically focus the editor when creating a new article"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:194
+msgid "Show Line Numbers"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:195
+msgid "Show line numbers on the left side of the editor"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:196
+msgid "Code Highlighting"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:197
+msgid "Enable code syntax highlighting"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:198
+msgid "Status Bar Display"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:199
+msgid "Auto Save"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:200
+msgid "Periodically save content to prevent accidental loss"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:201
+msgid "Auto Save Interval"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:202
+msgid "Synchronized Scrolling (Preview and Editor)"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:203
+msgid "Synchronize scrolling between the preview and editor areas"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:204
+msgid "Clean Pasted Content"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:205
+msgid "Automatically remove unnecessary formatting when pasting"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:206
+msgid "Smart List Recognition"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:207
+msgid "Convert - or 1. to a list automatically"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:208
+msgid "Default Category Behavior"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:209
+msgid "Default Publish Visibility"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:210
+msgid "Open Preview After Publishing"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:211
+msgid "Automatically open the article preview after publishing or updating"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:212
+msgid "Default Summary Sync Method"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:213
+msgid "Automatically extract the summary from the beginning of the content"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:214
+msgid "Featured Image Placeholder"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:215
+msgid "Show a placeholder prompt when no featured image is set"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:216
+msgid "Simplified Chinese"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:217
+msgid "Traditional Chinese"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:218
+msgid "English"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:219
+msgid "Live Preview (WYSIWYG)"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:220
+msgid "Source Editing"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:221
+msgid "Preview Only"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:222
+msgid "Show Word Count and Reading Time"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:223
+msgid "Show Word Count Only"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:224
+msgid "Hide Status Bar"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:225
+msgid "30 seconds"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:226
+msgid "60 seconds"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:227
+msgid "2 minutes"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:228
+msgid "5 minutes"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:229
+msgid "Do Not Categorize Automatically"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:230
+msgid "Use Current Category"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:233
+msgid "Password Protected"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:234
+msgid "Automatically Extract (First 55 Characters)"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:235
+msgid "Automatically Extract (First 100 Characters)"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:236
+msgid "Enter Manually"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:237
+msgid "Common Shortcuts"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:238
+msgid "Headings and Formatting"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:239
+msgid "Shortcut Behavior"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:240
+msgid "Restore Default Shortcuts"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:241
+msgid "Function"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:242 src/Admin/SettingsPage.php:598
+#: templates/admin/settings-page.php:61
+msgid "Windows / Linux"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:243 src/Admin/SettingsPage.php:598
+#: templates/admin/settings-page.php:62
+msgid "macOS"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:244
+msgid "Save Article"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:245 src/Support/ToolbarRegistry.php:98
+msgid "Bold"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:246 src/Support/ToolbarRegistry.php:113
+msgid "Italic"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:247
+msgid "Insert Link"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:248
+msgid "Insert Image"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:249
+msgid "Open AI Assistant"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:250 src/Support/ToolbarRegistry.php:154
+msgid "Heading 1"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:251 src/Support/ToolbarRegistry.php:155
+msgid "Heading 2"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:252 src/Support/ToolbarRegistry.php:182
+msgid "Quote"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:253
+msgid "Unordered List"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:254
+msgid "Ordered List"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:255
+msgid "Show Shortcut Hints"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:256
+msgid "Show shortcut hints in the toolbar and action menus."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:257
+msgid "Detect and Warn About Conflicts"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:258
+msgid "Automatically warn and highlight when shortcut conflicts are detected."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:259
+msgid "Custom Shortcut Suggestions"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:260
+msgid "Clearing an input and saving restores that item's default shortcut."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:261
+msgid "Image Host Service"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:262
+msgid "Select Image Host Service"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:263
+msgid "Cloudflare R2"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:264
+msgid "Alibaba Cloud OSS"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:265
+msgid "Tencent Cloud COS"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:266
+msgid "Custom Upload"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:267
+msgid "Storage Space / Bucket"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:268
+msgid "Custom Domain"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:269
+msgid "Access Key"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:270
+msgid "Secret Key"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:271
+msgid "Show Secret"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:272
+msgid "Hide Secret"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:273
+msgid "File Name Rule"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:274
+msgid "Choose a template or combine variables to customize the storage path."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:275
+msgid "Common Naming Templates"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:276
+msgid "Select one to fill the rule automatically"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:277
+msgid "Date Archive"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:278
+msgid "MD5 Content Hash"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:279
+msgid "Year and Month Directory"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:280
+msgid "Keep Original Name"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:281
+msgid "Article Directory"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:282
+msgid "Time-based Name"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:283
+msgid "Available Variables"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:284
+msgid "Year"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:285
+msgid "Month"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:286
+msgid "Day"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:287
+msgid "Full Date"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:288
+msgid "Upload Time"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:289
+msgid "Post ID"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:290
+msgid "File MD5"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:291
+msgid "Unique Identifier"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:292
+msgid "Original File Name"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:293
+msgid "File Extension"
+msgstr ""
+
+#. translators: %s: file-name rule variable label.
+#: src/Admin/SettingsPage.php:295
+#, php-format
+msgid "Insert %s variable"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:296
+msgid "Example Preview"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:297
+msgid "Enter a file name rule"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:298
+msgid "Connection Status"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:299
+msgid "Pending Test"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:300
+msgid "Testing"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:301
+msgid "Connected"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:302
+msgid "Last Tested"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:303
+msgid "Test Connection"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:304
+msgid "Backup Image Host"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:305
+msgid ""
+"After the primary image host succeeds, continue writing to backup storage. "
+"By default, backup failures do not affect the primary URL."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:306
+msgid "Enable Backup Image Host"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:307
+msgid ""
+"Write the same file content and object path to a second storage service."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:308
+msgid "Backup Image Host Service"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:309
+msgid "Qiniu Kodo"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:310
+msgid "Backup Storage Space / Bucket"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:311
+msgid "Backup Custom Domain"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:312
+msgid "Backup Access Key"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:313
+msgid "Backup Secret Key"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:314
+msgid "Show Backup Access Key"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:315
+msgid "Hide Backup Access Key"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:316
+msgid "Show Backup Secret Key"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:317
+msgid "Hide Backup Secret Key"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:318
+msgid "Keep the Same Object Path"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:319
+msgid ""
+"Use the same file-name rule and object key for the primary and backup hosts."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:320
+msgid "Backup Failure Handling"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:321
+msgid ""
+"Control whether the primary upload result remains available when the backup "
+"write fails."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:322
+msgid "Record Error and Return Primary Image Host URL"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:323
+msgid "Fail Entire Upload and Prompt to Retry"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:324
+msgid "Backup Connection Status"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:325
+msgid "Test Backup Connection"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:326
+msgid "Upload Behavior"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:327
+msgid "Insert Markdown Link After Upload"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:328
+msgid "Compress Images Automatically"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:329
+msgid "Compress images before upload to save storage space."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:330
+msgid "Preserve Original File Name"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:331
+msgid "Do not rename uploaded files; preserve their original file names."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:332
+msgid "Copy Image URL to Clipboard"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:333
+msgid "Copy the image URL automatically after a successful upload."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:334
+msgid "Retry When Upload Fails"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:335
+msgid "Do Not Retry"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:336
+msgid "Retry Once"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:337
+msgid "Retry Twice"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:338
+msgid "Retry Three Times"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:339
+msgid "Maximum Image Size"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:340
+msgid "Original Size"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:341
+msgid "1920px"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:342
+msgid "2560px"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:343
+msgid "3840px"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:344
+msgid "Allowed Upload Formats"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:345
+msgid "Select the image file formats that the editor may choose and upload."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:346
+msgid "JPG / JPEG / JFIF"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:347
+msgid "PNG"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:348
+msgid "WebP"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:349
+msgid "GIF"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:350
+msgid "Allow Uploading JPG / JPEG / JFIF Format"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:351
+msgid "Allow Uploading PNG Format"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:352
+msgid "Allow Uploading WebP Format"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:353
+msgid "Allow Uploading GIF Format"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:354
+msgid ","
+msgstr ""
+
+#: src/Admin/SettingsPage.php:355
+msgid "Default Insertion and Description"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:356
+msgid "Default Insert Format"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:357
+msgid "Markdown Image"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:358
+msgid "HTML Image"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:359
+msgid "Insert URL Only"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:360
+msgid "Alt Text Source"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:361
+msgid "Use File Name"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:362
+msgid "Leave Empty"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:363
+msgid "Fill In During Upload"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:364
+msgid "Image Title Field"
+msgstr ""
+
+#: src/Admin/SettingsPage.php:365
+msgid "Do Not Insert"
+msgstr ""
+
+#. translators: %s: comma-separated image upload format labels.
+#: src/Admin/SettingsPage.php:367
+#, php-format
+msgid "Currently allowed uploads: %s."
+msgstr ""
+
+#: src/Admin/SettingsPage.php:368
+msgid ""
+"We recommend enabling automatic compression before uploading large images."
+msgstr ""
+
 #. translators: 1: toolbar command label, 2: platform label.
-#: src/Admin/SettingsPage.php:114
+#: src/Admin/SettingsPage.php:482
 #, php-format
 msgid ""
 "Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or "
@@ -712,17 +1582,9 @@ msgid ""
 msgstr ""
 
 #. translators: 1: first toolbar command label, 2: second toolbar command label, 3: shortcut, 4: platform label.
-#: src/Admin/SettingsPage.php:128
+#: src/Admin/SettingsPage.php:496
 #, php-format
 msgid "Shortcut conflict: %1$s and %2$s both use %3$s on %4$s."
-msgstr ""
-
-#: src/Admin/SettingsPage.php:230 templates/admin/settings-page.php:62
-msgid "macOS"
-msgstr ""
-
-#: src/Admin/SettingsPage.php:230 templates/admin/settings-page.php:61
-msgid "Windows / Linux"
 msgstr ""
 
 #: src/Frontend/FrontendAssets.php:76
@@ -798,28 +1660,12 @@ msgstr ""
 msgid "Save post"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:98
-msgid "Bold"
-msgstr ""
-
-#: src/Support/ToolbarRegistry.php:113
-msgid "Italic"
-msgstr ""
-
 #: src/Support/ToolbarRegistry.php:128
 msgid "Strikethrough"
 msgstr ""
 
 #: src/Support/ToolbarRegistry.php:143
 msgid "Paragraph"
-msgstr ""
-
-#: src/Support/ToolbarRegistry.php:154
-msgid "Heading 1"
-msgstr ""
-
-#: src/Support/ToolbarRegistry.php:155
-msgid "Heading 2"
 msgstr ""
 
 #: src/Support/ToolbarRegistry.php:156
@@ -836,10 +1682,6 @@ msgstr ""
 
 #: src/Support/ToolbarRegistry.php:159
 msgid "Heading 6"
-msgstr ""
-
-#: src/Support/ToolbarRegistry.php:182
-msgid "Quote"
 msgstr ""
 
 #: src/Support/ToolbarRegistry.php:196

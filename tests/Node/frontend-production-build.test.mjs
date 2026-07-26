@@ -17,8 +17,10 @@ import test, { before } from 'node:test';
 import {
   compareCodeCopyProductionBuilds,
   compareFrontendProductionBuilds,
+  compareSettingsProductionBuilds,
   validateCodeCopyProductionBuild,
-  validateFrontendProductionBuild
+  validateFrontendProductionBuild,
+  validateSettingsProductionBuild
 } from '../../scripts/verify-frontend-build.mjs';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -28,6 +30,9 @@ const sourceEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const codeCopyOutputRoot = join(repoRoot, '.cache/easymde-code-copy-production-check');
 const committedCodeCopyOutputRoot = join(repoRoot, 'assets/build/code-copy');
 const codeCopySourceEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
+const settingsOutputRoot = join(repoRoot, '.cache/easymde-settings-production-check');
+const committedSettingsOutputRoot = join(repoRoot, 'assets/build/settings-center');
+const settingsSourceEntry = 'frontend/src/entrypoints/settings-center.tsx';
 let buildResult;
 
 function readJson(path) {
@@ -46,16 +51,42 @@ test('root package exposes the production frontend build and includes it in the 
 
   assert.equal(
     packageJson.scripts['build:frontend'],
-    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.code-copy.config.ts && node scripts/verify-frontend-build.mjs --production'
+    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.code-copy.config.ts && vite build --config frontend/vite.settings.config.ts && node scripts/verify-frontend-build.mjs --production'
   );
   assert.equal(
     packageJson.scripts['check:frontend-production'],
-    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && node scripts/verify-frontend-build.mjs --production-check'
+    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && vite build --mode easymde-check --config frontend/vite.settings.config.ts && node scripts/verify-frontend-build.mjs --production-check'
   );
   assert.equal(
     packageJson.scripts['frontend:check'],
     'npm run lint:frontend && npm run typecheck:frontend && npm run test:frontend && npm run build:frontend-contract && npm run check:frontend-production'
   );
+});
+
+test('production build emits one independent WordPress settings-center React entry', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+  assert.equal(existsSync(settingsOutputRoot), true);
+
+  const viteManifest = readJson(join(settingsOutputRoot, 'manifest.json'));
+  const wordpressManifest = readJson(join(settingsOutputRoot, 'wordpress-manifest.json'));
+  const viteEntry = viteManifest[settingsSourceEntry];
+  const wordpressEntry = wordpressManifest.entries[settingsSourceEntry];
+
+  assert.equal(wordpressManifest.schemaVersion, 1);
+  assert.equal(viteEntry.isEntry, true);
+  assert.match(viteEntry.file, /^assets\/settings-center-[a-zA-Z0-9_-]+\.js$/);
+  assert.equal(wordpressEntry.handle, 'easymde-admin-settings-center');
+  assert.equal(wordpressEntry.file, viteEntry.file);
+  assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
+  assert.deepEqual(wordpressEntry.dependencies, ['wp-element']);
+  assert.deepEqual(wordpressEntry.resources, []);
+
+  const script = readFileSync(join(settingsOutputRoot, viteEntry.file), 'utf8');
+  assert.match(script, /wp\.element/);
+  assert.match(script, /EasyMDESettingsCenterBootstrap/);
+  assert.doesNotMatch(script, /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/);
+  assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
+  validateSettingsProductionBuild(settingsOutputRoot);
 });
 
 test('production build emits a separate self-contained TypeScript code-copy entry', () => {
@@ -186,6 +217,28 @@ test('code-copy production comparison rejects stale or omitted committed runtime
   }
 });
 
+test('settings-center production comparison rejects stale committed runtime artifacts', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+
+  const generatedRoot = mkdtempSync(join(tmpdir(), 'easymde-settings-generated-'));
+  const committedRoot = mkdtempSync(join(tmpdir(), 'easymde-settings-committed-'));
+  cpSync(settingsOutputRoot, generatedRoot, { recursive: true });
+  cpSync(settingsOutputRoot, committedRoot, { recursive: true });
+
+  try {
+    const manifest = readJson(join(committedRoot, 'manifest.json'));
+    const entry = manifest[settingsSourceEntry];
+    appendFileSync(join(committedRoot, entry.file), '\nstale runtime\n');
+    assert.throws(
+      () => compareSettingsProductionBuilds(generatedRoot, committedRoot),
+      /Committed settings-center production artifact is stale/
+    );
+  } finally {
+    rmSync(generatedRoot, { recursive: true, force: true });
+    rmSync(committedRoot, { recursive: true, force: true });
+  }
+});
+
 test('production validation rejects broad remote URLs and absolute build paths', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
 
@@ -218,6 +271,10 @@ test('production frontend artifacts are eligible for version control', () => {
     join(committedCodeCopyOutputRoot, 'wordpress-manifest.json')
   );
   const codeCopyEntry = codeCopyWordpressManifest.entries[codeCopySourceEntry];
+  const settingsWordpressManifest = readJson(
+    join(committedSettingsOutputRoot, 'wordpress-manifest.json')
+  );
+  const settingsEntry = settingsWordpressManifest.entries[settingsSourceEntry];
   const paths = [
     'assets/build/manifest.json',
     'assets/build/wordpress-manifest.json',
@@ -226,7 +283,11 @@ test('production frontend artifacts are eligible for version control', () => {
     'assets/build/code-copy/manifest.json',
     'assets/build/code-copy/wordpress-manifest.json',
     `assets/build/code-copy/${codeCopyEntry.file}`,
-    `assets/build/code-copy/${codeCopyEntry.asset}`
+    `assets/build/code-copy/${codeCopyEntry.asset}`,
+    'assets/build/settings-center/manifest.json',
+    'assets/build/settings-center/wordpress-manifest.json',
+    `assets/build/settings-center/${settingsEntry.file}`,
+    `assets/build/settings-center/${settingsEntry.asset}`
   ];
   const result = spawnSync('git', ['check-ignore', '--no-index', ...paths], {
     cwd: repoRoot,

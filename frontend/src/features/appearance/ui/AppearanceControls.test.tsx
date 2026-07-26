@@ -17,7 +17,8 @@ const bootstrap: AppearanceBootstrap = {
   ],
   codeThemes: [
     { id: 'atom-one-dark', label: 'Atom One Dark' },
-    { id: 'github', label: 'GitHub' }
+    { id: 'github', label: 'GitHub' },
+    { id: 'terminal-noir', label: 'Terminal Noir' }
   ],
   customCss: [{
     id: 'writer-css',
@@ -95,6 +96,28 @@ describe('AppearanceControls', () => {
     expect(
       screen.getByRole('button', { name: 'Custom CSS theme' }).textContent
     ).toContain('Custom CSS theme');
+  });
+
+  it('renders the registered Terminal Noir palette instead of the generic fallback', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Code theme' }));
+    const option = screen.getByRole('option', { name: /Terminal Noir/u });
+    const colors = Array.from(option.querySelectorAll<HTMLElement>(
+      '.easymde-immersive-theme-swatch > span'
+    )).map((element) => element.style.background);
+
+    expect(colors).toEqual(['rgb(13, 16, 23)', 'rgb(202, 209, 217)']);
   });
 
   it('moves focus through immersive theme options with the keyboard', async () => {

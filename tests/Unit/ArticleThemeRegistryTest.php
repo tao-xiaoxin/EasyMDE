@@ -118,6 +118,7 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
             'atom-one-dark' => 'assets/vendor/highlight/styles/atom-one-dark.min.css',
             'monokai' => 'assets/vendor/highlight/styles/monokai.min.css',
             'vs2015' => 'assets/vendor/highlight/styles/vs2015.min.css',
+            'terminal-noir' => 'assets/themes/code/terminal-noir.css',
         );
 
         foreach ($expected as $theme_id => $asset_path) {

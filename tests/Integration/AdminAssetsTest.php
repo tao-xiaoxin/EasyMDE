@@ -215,9 +215,20 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		$this->assertSame( 'easymde-admin-editor-toolbar', $asset['handle'] );
 		$this->assertMatchesRegularExpression( '#^assets/build/assets/admin-editor-[A-Za-z0-9_-]+\.js$#', $asset['path'] );
-		$this->assertSame( array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks' ), $asset['dependencies'] );
+		$this->assertSame( array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ), $asset['dependencies'] );
 		$this->assertMatchesRegularExpression( '/^[a-f0-9]{16}$/', $asset['version'] );
 		$this->assertFileExists( Asset::path( $asset['path'] ) );
+	}
+
+	public function test_react_editor_registers_its_handle_based_translation_catalog() {
+		$enqueue_react_editor_asset = new ReflectionMethod( AdminAssets::class, 'enqueue_react_editor_asset' );
+		$enqueue_react_editor_asset->setAccessible( true );
+
+		$this->assertTrue( $enqueue_react_editor_asset->invoke( $this->admin_assets ) );
+
+		$script = wp_scripts()->registered['easymde-admin-editor-toolbar'];
+		$this->assertSame( 'easymde', $script->textdomain );
+		$this->assertSame( Asset::path( 'languages' ), $script->translations_path );
 	}
 
 	public function test_rejects_react_editor_bundle_bytes_that_do_not_match_dependency_metadata() {
@@ -228,7 +239,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		file_put_contents( $build_dir . '/' . $file, 'console.log("corrupted");' );
 		file_put_contents(
 			$build_dir . '/' . $asset,
-			"<?php\nreturn array(\n\t'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks' ),\n\t'version' => '0000000000000000',\n);\n"
+			"<?php\nreturn array(\n\t'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),\n\t'version' => '0000000000000000',\n);\n"
 		);
 		file_put_contents(
 			$build_dir . '/wordpress-manifest.json',
@@ -240,7 +251,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 							'handle'       => 'easymde-admin-editor-toolbar',
 							'file'         => $file,
 							'asset'        => $asset,
-							'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks' ),
+							'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
 							'resources'    => array(),
 						),
 					)

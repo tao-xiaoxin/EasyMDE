@@ -7,6 +7,7 @@ import {
   PenLine
 } from '../../../generated/lucide-icons';
 import type { DocumentStats, ImmersiveViewMode } from '../immersive-editor';
+import type { ImmersiveI18nPort } from '../../../contracts/ports/immersive-i18n-port';
 import type { ImmersiveStrings } from './immersive-editor-ui-types';
 
 function PublishArticleIcon() {
@@ -45,6 +46,7 @@ function PublishArticleIcon() {
 
 export function ImmersiveHeader({
   dirty,
+  i18n,
   mode,
   publishLabel,
   showStats,
@@ -56,6 +58,7 @@ export function ImmersiveHeader({
   onTitleChange
 }: Readonly<{
   dirty: boolean;
+  i18n: ImmersiveI18nPort;
   mode: ImmersiveViewMode;
   publishLabel: string;
   showStats: boolean;
@@ -105,9 +108,9 @@ export function ImmersiveHeader({
       </span>
       {showStats ? (
         <span className="easymde-immersive-stats">
-          <span>{stats.words} {strings.words}</span>
-          <span>{stats.characters} {strings.characters}</span>
-          <span>{strings.readingTime} {stats.minutes} {strings.minutes}</span>
+          <span>{i18n.words(stats.words)}</span>
+          <span>{i18n.characters(stats.characters)}</span>
+          <span>{i18n.readingTime(stats.minutes)}</span>
         </span>
       ) : null}
       <span className="easymde-immersive-header-spacer is-primary" />

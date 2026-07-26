@@ -30,6 +30,7 @@ import { createWordPressNativePublishPort } from '../integrations/wordpress/nati
 import { createWordPressPreviewPort } from '../integrations/wordpress/preview/create-wordpress-preview-port';
 import { createWordPressRevisionPort } from '../integrations/wordpress/revisions/create-wordpress-revision-port';
 import { createWordPressEditorSessionPort } from '../integrations/wordpress/session/create-wordpress-editor-session-port';
+import { createWordPressImmersiveI18nPort } from '../integrations/wordpress/i18n/create-wordpress-immersive-i18n-port';
 
 type WordPressHooks = Readonly<{
   addAction: (
@@ -306,6 +307,9 @@ export function mountAdminEditor(
         bootstrap.previewEnhancement.assetBaseUrl
       ).toString()
     ),
+    immersiveI18n: createWordPressImmersiveI18nPort({
+      locale: bootstrap.localDrafts.locale
+    }),
     immersivePreferencesPort: createBrowserImmersivePreferencesPort({
       siteKey: bootstrap.localDrafts.siteKey,
       storage: localStorage(windowRef),

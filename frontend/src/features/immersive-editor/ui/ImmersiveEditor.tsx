@@ -26,6 +26,7 @@ import type {
   RevisionSummary
 } from '../../../contracts/ports/revision-port';
 import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
+import type { ImmersiveI18nPort } from '../../../contracts/ports/immersive-i18n-port';
 import type {
   ImmersivePreferences,
   ImmersivePreferencesPort
@@ -54,6 +55,7 @@ type Props = Readonly<{
   documentSession: EditorDocumentSession;
   environment: ImmersiveEnvironmentPort;
   immersivePreferencesPort: ImmersivePreferencesPort;
+  i18n: ImmersiveI18nPort;
   initialPreferences?: ImmersivePreferences | null;
   revisionPort: RevisionPort | null;
   restoreRevision: (restoreUrl: string) => void;
@@ -252,6 +254,7 @@ function TableDialog({
 function HistoryDialog({
   dirty,
   environment,
+  i18n,
   onFailure,
   port,
   restoreRevision,
@@ -260,6 +263,7 @@ function HistoryDialog({
 }: Readonly<{
   dirty: boolean;
   environment: ImmersiveEnvironmentPort;
+  i18n: ImmersiveI18nPort;
   onFailure: (code: string) => void;
   port: RevisionPort;
   restoreRevision: (url: string) => void;
@@ -291,7 +295,6 @@ function HistoryDialog({
       .list(controller.signal)
       .then((revisions) => {
         setItems(revisions);
-        setSelected(revisions[0] ?? null);
       })
       .catch(() => {
         if (!controller.signal.aborted) {
@@ -301,6 +304,20 @@ function HistoryDialog({
       });
     return () => controller.abort();
   }, [onFailure, port]);
+
+  useEffect(() => {
+    if (null === items) return;
+
+    const nextItems = items.filter(
+      (item) => 'all' === filter || item.type === filter
+    );
+    setSelected((current) => {
+      const retained = current
+        ? nextItems.find((item) => item.id === current.id)
+        : undefined;
+      return retained ?? nextItems[0] ?? null;
+    });
+  }, [filter, items]);
 
   useEffect(() => {
     const requestId = ++previewRequestRef.current;
@@ -352,19 +369,12 @@ function HistoryDialog({
     (item) => 'all' === filter || item.type === filter
   );
   const changeFilter = (nextFilter: typeof filter) => {
-    const nextItems = items?.filter(
-      (item) => 'all' === nextFilter || item.type === nextFilter
-    );
     setFilter(nextFilter);
-    setSelected(nextItems?.[0] ?? null);
   };
   const selectedLabel =
     'manual' === selected?.type ? strings.manualSave : strings.autoSave;
   const filteredCount = filteredItems?.length ?? 0;
-  const historyCount =
-    1 === filteredCount
-      ? strings.historyCountSingular
-      : strings.historyCount.replace('%s', String(filteredCount));
+  const historyCount = i18n.revisions(filteredCount);
 
   return (
     <div className="easymde-history-backdrop">
@@ -436,6 +446,7 @@ export function ImmersiveEditor({
   direction,
   documentSession,
   environment,
+  i18n,
   immersivePreferencesPort,
   initialPreferences = null,
   revisionPort,
@@ -607,6 +618,7 @@ export function ImmersiveEditor({
         <HistoryDialog
           dirty={dirty}
           environment={environment}
+          i18n={i18n}
           onFailure={onFailure}
           port={revisionPort}
           restoreRevision={restoreRevision}
@@ -626,6 +638,7 @@ export function ImmersiveEditor({
       ) : null}
       <ImmersiveHeader
         dirty={dirty}
+        i18n={i18n}
         mode={mode}
         publishLabel={
           initialPublishSnapshot.existing

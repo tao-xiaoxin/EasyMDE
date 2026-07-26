@@ -1,0 +1,27 @@
+{
+  "translation-revision-date": "2026-07-02 00:00+0000",
+  "generator": "EasyMDE i18n script",
+  "source": "frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts",
+  "domain": "easymde",
+  "locale_data": {
+    "easymde": {
+      "": {
+        "domain": "easymde",
+        "lang": "zh_CN",
+        "plural-forms": "nplurals=1; plural=0;"
+      },
+      "%s character": [
+        "%s 个字符"
+      ],
+      "About %s minute": [
+        "约 %s 分钟"
+      ],
+      "%s revision": [
+        "%s 个修订版本"
+      ],
+      "%s word": [
+        "%s 个词"
+      ]
+    }
+  }
+}

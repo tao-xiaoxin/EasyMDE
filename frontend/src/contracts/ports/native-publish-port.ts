@@ -23,7 +23,17 @@ export type NativePublishDraft = Readonly<{
   visibility: NativePublishVisibility;
 }>;
 
+export type NativePublishFieldAvailability = Readonly<{
+  categories: boolean;
+  excerpt: boolean;
+  featuredImage: boolean;
+  sticky: boolean;
+  tags: boolean;
+  visibility: boolean;
+}>;
+
 export type NativePublishSnapshot = NativePublishDraft & Readonly<{
+  availableFields: NativePublishFieldAvailability;
   categories: ReadonlyArray<NativePublishCategory>;
   existing: boolean;
 }>;

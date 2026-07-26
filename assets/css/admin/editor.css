@@ -515,7 +515,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-editor.is-immersive .easymde-pane-source { border-inline-end: 1px solid #e8ebef; }
 .easymde-editor.is-immersive .easymde-pane-header { display: flex; box-sizing: border-box; height: 40.5px; align-items: center; justify-content: space-between; padding: 10px 15px; border-bottom: 1px solid #e8ebef; background: #fafbfc; color: #3d4350; font-family: "EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 15px; font-weight: 400; letter-spacing: 0; line-height: 22.5px; }
 .easymde-editor.is-immersive .easymde-pane-source > .easymde-pane-header > span:first-child { color: #3d4350; font-size: 13px; font-weight: 600; letter-spacing: .3px; line-height: 19.5px; }
-.easymde-immersive-more-actions { display: grid; width: 20px; height: 20px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #b0b4bc; cursor: pointer; }
+.easymde-immersive-more-actions { display: grid; width: 20px; height: 20px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #b0b4bc; cursor: default; }
 .easymde-immersive-more-actions:hover { background: #ecedf0; color: #666; }
 .easymde-editor.is-immersive .easymde-source-react .cm-content { padding: 14px 14px 14px 0; caret-color: #1f2430; line-height: 28px; }
 .easymde-editor.is-immersive .easymde-source-react .cm-line { min-height: 28px; line-height: 28px; }
@@ -875,15 +875,15 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-publish-field { margin: 0; }
 .easymde-publish-field + .easymde-publish-field { margin-top: 22px; }
 .easymde-publish-field h3, .easymde-publish-dialog-aside > h3 { display: flex; align-items: center; gap: 7.5px; margin: 0; color: #0f172a; font-size: 14.5px; font-weight: 700; line-height: 21.75px; }
-.easymde-publish-field:first-child h3 svg { color: #2563eb; }
-.easymde-publish-field:nth-child(2) h3 svg { color: #7c3aed; }
-.easymde-publish-field:nth-child(3) h3 svg { color: #0f9f6e; }
+.easymde-publish-field.is-tags h3 svg { color: #2563eb; }
+.easymde-publish-field.is-excerpt h3 svg { color: #7c3aed; }
+.easymde-publish-field.is-categories h3 svg { color: #0f9f6e; }
 .easymde-publish-field > p { margin: 2px 0 8px; color: #94a3b8; font-size: 12.5px; line-height: 18.75px; }
-.easymde-publish-field:first-child > p { margin: 3.75px 0 7.5px; }
+.easymde-publish-field.is-tags > p { margin: 3.75px 0 7.5px; }
 .easymde-publish-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 11.25px; margin-bottom: 5.625px; }
-.easymde-publish-dialog-primary > .easymde-publish-field:nth-child(2) .easymde-publish-field-heading { min-height: 25.25px; }
-.easymde-publish-dialog-primary > .easymde-publish-field:nth-child(3) .easymde-publish-field-heading { min-height: 24.25px; align-items: baseline; margin-bottom: 1.875px; }
-.easymde-publish-dialog-primary > .easymde-publish-field:nth-child(3) > p { margin: 1.875px 0 7.5px; }
+.easymde-publish-dialog-primary > .easymde-publish-field.is-excerpt .easymde-publish-field-heading { min-height: 25.25px; }
+.easymde-publish-dialog-primary > .easymde-publish-field.is-categories .easymde-publish-field-heading { min-height: 24.25px; align-items: baseline; margin-bottom: 1.875px; }
+.easymde-publish-dialog-primary > .easymde-publish-field.is-categories > p { margin: 1.875px 0 7.5px; }
 .easymde-publish-field-heading > span { color: #94a3b8; font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; }
 .easymde-publish-field-heading > span.is-count { padding: 2px 10px; border: 1px solid #dbeafe; border-radius: 9999px; background: #eff6ff; color: #2563eb; font-size: 11.5px; line-height: 17.25px; }
 .easymde-publish-tags-input { display: flex; box-sizing: border-box; min-height: 47px; flex-wrap: wrap; align-items: center; gap: 7.5px; padding: 9.375px 11.25px; border: 1px solid #e6e9ef; border-radius: 12px; background: #fbfcfe; transition: border-color 120ms, box-shadow 120ms; }

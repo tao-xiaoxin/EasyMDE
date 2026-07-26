@@ -130,7 +130,13 @@ test('production build emits one self-contained WordPress editor React entry', (
   assert.equal(wordpressEntry.handle, 'easymde-admin-editor-toolbar');
   assert.equal(wordpressEntry.file, viteEntry.file);
   assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
-  assert.deepEqual(wordpressEntry.dependencies, ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks']);
+  assert.deepEqual(wordpressEntry.dependencies, [
+    'media-editor',
+    'wp-api-fetch',
+    'wp-element',
+    'wp-hooks',
+    'wp-i18n'
+  ]);
   assert.deepEqual(wordpressEntry.resources, []);
   assert.equal(viteEntry.css, undefined);
 
@@ -139,6 +145,8 @@ test('production build emits one self-contained WordPress editor React entry', (
   const metadata = readFileSync(join(outputRoot, wordpressEntry.asset), 'utf8');
 
   assert.match(script, /wp\.element/);
+  assert.match(script, /wp\.i18n/);
+  assert.doesNotMatch(script, /tannin|pluralForms|setLocaleData/);
   assert.match(script, /EasyMDEEditorRootBootstrap/);
   assert.doesNotMatch(script, /EasyMDEReactToolbar|EasyMDEReactDocumentSource/);
   assert.match(script, /cm-editor/);
@@ -151,7 +159,13 @@ test('production build emits one self-contained WordPress editor React entry', (
   assert.doesNotMatch(script, /\.at\(/);
   assert.doesNotMatch(script, /Object\.hasOwn\(/);
   assert.match(css, /\.easymde-react-toolbar-contents\s*\{[^}]*display:\s*contents;/s);
-  for (const dependency of ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks']) {
+  for (const dependency of [
+    'media-editor',
+    'wp-api-fetch',
+    'wp-element',
+    'wp-hooks',
+    'wp-i18n'
+  ]) {
     assert.match(metadata, new RegExp(`'${dependency}'`));
   }
   assert.equal(readdirSync(outputRoot).some((name) => name.endsWith('.map')), false);

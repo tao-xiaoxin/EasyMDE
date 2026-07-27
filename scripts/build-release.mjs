@@ -34,6 +34,15 @@ const excludedReleaseSegments = new Set([
   'test',
   'tests'
 ]);
+const javaScriptTranslationCatalogRequirements = [
+  {
+    path: 'languages/easymde-zh_CN-easymde-admin-editor-toolbar.json',
+    type: 'file'
+  }
+];
+const managedJavaScriptTranslationCatalogs = new Set(
+  javaScriptTranslationCatalogRequirements.map(({ path }) => path)
+);
 const excludedReleaseFiles = new Set([
   '.DS_Store',
   '.editorconfig',
@@ -65,7 +74,7 @@ const baseRequirements = [
   { path: 'languages/easymde.pot', type: 'file' },
   { path: 'languages/easymde-zh_CN.po', type: 'file' },
   { path: 'languages/easymde-zh_CN.mo', type: 'file' },
-  { path: 'languages/easymde-zh_CN-easymde-admin-editor-toolbar.json', type: 'file' }
+  ...javaScriptTranslationCatalogRequirements
 ];
 const productionFrontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const codeCopyFrontendEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
@@ -144,6 +153,32 @@ function walkFiles(dir, callback) {
     if (stat.isFile()) {
       callback(child);
     }
+  }
+}
+
+function assertManagedJavaScriptTranslationCatalogs(root) {
+  const languagesRoot = fromRoot(root, 'languages');
+  if (!existsSync(languagesRoot)) return;
+  const unexpectedPaths = [];
+
+  walkFiles(languagesRoot, (file) => {
+    const path = relative(root, file).split(/[\\/]+/).join('/');
+    if (
+      path.endsWith('.json')
+      && !managedJavaScriptTranslationCatalogs.has(path)
+    ) {
+      unexpectedPaths.push(path);
+    }
+  });
+
+  if (unexpectedPaths.length) {
+    throw new Error(
+      [
+        'Release build found unexpected JavaScript translation catalogs:',
+        ...unexpectedPaths.sort().map((path) => `- ${path}`),
+        'Remove stale catalogs or register the current catalog as a managed release asset.'
+      ].join('\n')
+    );
   }
 }
 
@@ -489,6 +524,7 @@ function productionFrontendRequirements(root) {
 }
 
 export function collectReleaseRequirements(root = defaultRoot) {
+  assertManagedJavaScriptTranslationCatalogs(root);
   return uniqueRequirements([
     ...packagePaths.map((path) => ({
       path,

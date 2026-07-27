@@ -505,6 +505,26 @@ test('release build fails when translation files are missing', () => {
   }
 });
 
+test('release build rejects unmanaged JavaScript translation catalogs', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(
+      root,
+      'languages/easymde-zh_CN-0123456789abcdef0123456789abcdef.json',
+      '{}\n'
+    );
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /unexpected JavaScript translation catalogs:[\s\S]*0123456789abcdef/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('release build fails when version fields do not match the plugin header', () => {
   const root = makeTempRoot();
 

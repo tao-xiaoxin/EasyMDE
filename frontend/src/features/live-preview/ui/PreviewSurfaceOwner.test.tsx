@@ -44,6 +44,20 @@ function safeHtml(value: string): SafePreviewHtml {
   return value as SafePreviewHtml;
 }
 
+function visualSourceMarkerCount(surface: HTMLElement): number {
+  const walker = surface.ownerDocument.createTreeWalker(
+    surface,
+    NodeFilter.SHOW_COMMENT
+  );
+  let count = 0;
+  while (walker.nextNode()) {
+    if ('easymde-visual-markdown-source' === walker.currentNode.nodeValue) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 function setup(options?: {
   contentEditable?: boolean;
   emptyMode?: 'message' | 'paper';
@@ -435,6 +449,34 @@ describe('PreviewSurfaceOwner', () => {
     ).toBe('flowchart TD\nC-->D');
   });
 
+  it('removes visual source markers when enhanced output no longer matches its source', async () => {
+    const current = setup({
+      enhance: async (surface) => {
+        surface.querySelector('.easymde-math')?.replaceWith(
+          document.createElement('p')
+        );
+      },
+      initialHtml: ''
+    });
+
+    act(() => {
+      current.session.schedule(request('$x$', 'mismatched'), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        features: { math: true },
+        html: safeHtml('<span class="easymde-math">$x$</span>')
+      });
+      await Promise.resolve();
+    });
+
+    expect(visualSourceMarkerCount(current.surface)).toBe(0);
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    expect(current.onDiagnostic).toHaveBeenCalledWith(
+      'preview-enhancement-failed'
+    );
+  });
+
   it('reports empty and failed states instead of retaining a stale ready status', async () => {
     const statuses: PreviewSurfaceStatus[] = [];
     const current = setup({
@@ -468,17 +510,19 @@ describe('PreviewSurfaceOwner', () => {
     });
     await act(async () => {
       current.responses[0]?.resolve({
-        html: safeHtml('<p>First</p>'),
+        html: safeHtml('<span class="easymde-math">$first$</span>'),
         features: { math: true }
       });
       await Promise.resolve();
     });
+    expect(visualSourceMarkerCount(current.surface)).toBe(1);
     const firstIsCurrent = enhance.mock.calls[0]?.[2];
     expect(firstIsCurrent?.()).toBe(true);
     act(() => {
       current.session.schedule(request('# Second', 'second'), true);
     });
     expect(firstIsCurrent?.()).toBe(false);
+    expect(visualSourceMarkerCount(current.surface)).toBe(0);
     await act(async () => {
       current.responses[1]?.resolve({ html: safeHtml('<p>Second</p>'), features: {} });
       await Promise.resolve();

@@ -991,7 +991,11 @@ msgid "Custom CSS contains a blocked feature: %s"
 msgstr ""
 
 #: src/Theme/ThemeStateRepository.php:397
-msgid "No custom font"
+#: src/Theme/ThemeStateRepository.php:444
+#: src/Theme/ThemeStateRepository.php:471
+#: src/Theme/ThemeStateRepository.php:493
+msgctxt "font selection option"
+msgid "None"
 msgstr ""
 
 #: src/Theme/ThemeStateRepository.php:402
@@ -1026,10 +1030,6 @@ msgstr ""
 msgid "Microsoft YaHei"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:444
-msgid "No Windows-specific font"
-msgstr ""
-
 #: src/Theme/ThemeStateRepository.php:451
 msgid "PingFang SC Light"
 msgstr ""
@@ -1046,10 +1046,6 @@ msgstr ""
 msgid "PingFang TC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:471
-msgid "No Apple-specific font"
-msgstr ""
-
 #: src/Theme/ThemeStateRepository.php:478
 msgctxt "serif font fallback option"
 msgid "Yes"
@@ -1061,11 +1057,6 @@ msgstr ""
 
 #: src/Theme/ThemeStateRepository.php:488
 msgid "sans-serif"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:493
-msgctxt "serif font fallback option"
-msgid "No"
 msgstr ""
 
 #: templates/admin/editor-shell.php:27

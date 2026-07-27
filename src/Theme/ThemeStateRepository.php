@@ -394,7 +394,7 @@ final class ThemeStateRepository {
 			'customFonts'  => array(
 				array(
 					'id'         => 'none',
-					'label'      => __( 'No custom font', 'easymde' ),
+					'label'      => _x( 'None', 'font selection option', 'easymde' ),
 					'fontFamily' => '',
 				),
 				array(
@@ -441,7 +441,7 @@ final class ThemeStateRepository {
 				),
 				array(
 					'id'         => 'no-windows-font',
-					'label'      => __( 'No Windows-specific font', 'easymde' ),
+					'label'      => _x( 'None', 'font selection option', 'easymde' ),
 					'fontFamily' => '',
 				),
 			),
@@ -468,7 +468,7 @@ final class ThemeStateRepository {
 				),
 				array(
 					'id'         => 'no-apple-font',
-					'label'      => __( 'No Apple-specific font', 'easymde' ),
+					'label'      => _x( 'None', 'font selection option', 'easymde' ),
 					'fontFamily' => '',
 				),
 			),
@@ -490,7 +490,7 @@ final class ThemeStateRepository {
 				),
 				array(
 					'id'         => 'no',
-					'label'      => _x( 'No', 'serif font fallback option', 'easymde' ),
+					'label'      => _x( 'None', 'font selection option', 'easymde' ),
 					'fontFamily' => '"Roboto", "Oxygen", "Ubuntu", "Cantarell", "PingFangSC-light", "PingFangTC-light", "Open Sans", "Helvetica Neue", sans-serif',
 				),
 			),

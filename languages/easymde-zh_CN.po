@@ -816,9 +816,13 @@ msgstr "无法安全解析自定义 CSS：%s"
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr "自定义 CSS 包含被阻止的特性：%s"
 
-#: src/Theme/ThemeStateRepository.php:359
-msgid "No custom font"
-msgstr "无自定义字体"
+#: src/Theme/ThemeStateRepository.php:397
+#: src/Theme/ThemeStateRepository.php:444
+#: src/Theme/ThemeStateRepository.php:471
+#: src/Theme/ThemeStateRepository.php:493
+msgctxt "font selection option"
+msgid "None"
+msgstr "无"
 
 #: src/Theme/ThemeStateRepository.php:364
 msgid "Optima"
@@ -852,10 +856,6 @@ msgstr "Helvetica Neue"
 msgid "Microsoft YaHei"
 msgstr "微软雅黑"
 
-#: src/Theme/ThemeStateRepository.php:406
-msgid "No Windows-specific font"
-msgstr "无 Windows 专用字体"
-
 #: src/Theme/ThemeStateRepository.php:413
 msgid "PingFang SC Light"
 msgstr "苹方简体细体"
@@ -872,10 +872,6 @@ msgstr "苹方繁体细体"
 msgid "PingFang TC Regular"
 msgstr "苹方繁体常规体"
 
-#: src/Theme/ThemeStateRepository.php:433
-msgid "No Apple-specific font"
-msgstr "无 Apple 专用字体"
-
 #: src/Theme/ThemeStateRepository.php:440
 msgctxt "serif font fallback option"
 msgid "Yes"
@@ -888,11 +884,6 @@ msgstr "衬线"
 #: src/Theme/ThemeStateRepository.php:450
 msgid "sans-serif"
 msgstr "无衬线"
-
-#: src/Theme/ThemeStateRepository.php:455
-msgctxt "serif font fallback option"
-msgid "No"
-msgstr "否"
 
 #: templates/admin/editor-shell.php:27
 msgid ""

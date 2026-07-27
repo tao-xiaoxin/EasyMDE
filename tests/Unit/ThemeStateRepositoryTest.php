@@ -204,6 +204,11 @@ final class ThemeStateRepositoryTest extends WP_UnitTestCase
         $custom_fonts = array_column($options['customFonts'], null, 'id');
         $windows_fonts = array_column($options['windowsFonts'], null, 'id');
         $apple_fonts = array_column($options['appleFonts'], null, 'id');
+        $serif_options = array_column($options['serifOptions'], null, 'id');
+        $this->assertSame('None', $custom_fonts['none']['label']);
+        $this->assertSame('None', $windows_fonts['no-windows-font']['label']);
+        $this->assertSame('None', $apple_fonts['no-apple-font']['label']);
+        $this->assertSame('None', $serif_options['no']['label']);
         $this->assertSame('Inter', $custom_fonts['inter']['fontFamily']);
         $this->assertSame('Helvetica, Arial', $custom_fonts['helvetica']['fontFamily']);
         $this->assertSame('"Microsoft YaHei", "微软雅黑"', $windows_fonts['microsoft-yahei']['fontFamily']);

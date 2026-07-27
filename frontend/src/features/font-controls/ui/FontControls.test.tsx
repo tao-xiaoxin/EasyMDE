@@ -10,7 +10,7 @@ import { FontControls } from './FontControls';
 const bootstrap: FontControlsBootstrap = {
   options: {
     customFonts: [
-      { id: 'none', label: 'No custom font', fontFamily: '' },
+      { id: 'none', label: 'None', fontFamily: '' },
       { id: 'optima', label: 'Optima', fontFamily: '"Optima"' }
     ],
     windowsFonts: [
@@ -78,7 +78,7 @@ describe('FontControls', () => {
     await user.keyboard('{ArrowDown}');
     expect(document.activeElement).toBe(screen.getByRole('option', { name: 'Optima' }));
     await user.keyboard('{Home}');
-    expect(document.activeElement).toBe(screen.getByRole('option', { name: 'No custom font' }));
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: 'None' }));
     await user.keyboard('{Escape}');
     expect(document.activeElement).toBe(select);
   });
@@ -100,7 +100,7 @@ describe('FontControls', () => {
     const panel = screen.getByRole('dialog', { name: 'Font' });
     const select = screen.getByRole('button', { name: 'Custom font' });
     await user.click(select);
-    await user.click(screen.getByRole('option', { name: 'No custom font' }));
+    await user.click(screen.getByRole('option', { name: 'None' }));
 
     expect(panel.hidden).toBe(false);
     expect(document.activeElement).toBe(select);

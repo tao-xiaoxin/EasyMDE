@@ -18,6 +18,7 @@ import {
   ListOrdered,
   Quote,
   Strikethrough,
+  Undo2,
   type LucideIcon
 } from '../../../generated/lucide-icons';
 
@@ -30,10 +31,12 @@ export type ToolbarPlatform = 'mac' | 'win';
 
 type EditorToolbarProps = Readonly<{
   bootstrap: ToolbarBootstrap;
+  canUndo?: boolean;
   platform: ToolbarPlatform;
   executeCommand: (commandId: string) => void;
   onPopoverOpen?: () => void;
   onReady?: (session: EditorToolbarSession) => void;
+  undo?: () => void;
   variant?: 'default' | 'immersive';
 }>;
 
@@ -103,7 +106,7 @@ function commandIcon(
     return (
       <Icon
         className={`easymde-toolbar-icon easymde-toolbar-icon-${command.id}`}
-        size={18}
+        size={16}
         strokeWidth={2.1}
         aria-hidden="true"
       />
@@ -438,10 +441,12 @@ function HeadingMenu({
 
 export function EditorToolbar({
   bootstrap,
+  canUndo = false,
   platform,
   executeCommand,
   onPopoverOpen,
   onReady,
+  undo,
   variant = 'default'
 }: EditorToolbarProps) {
   const [isHeadingOpen, setIsHeadingOpen] = useState(false);
@@ -491,6 +496,27 @@ export function EditorToolbar({
       className={`easymde-react-toolbar-contents is-${variant}`}
       data-easymde-react-toolbar="ready"
     >
+      {'default' === variant ? (
+        <button
+          type="button"
+          className="easymde-toolbar-button easymde-toolbar-button-compact"
+          aria-label={bootstrap.undoLabel}
+          title={bootstrap.undoLabel}
+          disabled={!canUndo}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (!undo) throw new Error('ordinary-toolbar-undo-unavailable');
+            undo();
+          }}
+        >
+          <Undo2
+            className="easymde-toolbar-icon easymde-toolbar-icon-undo"
+            size={16}
+            strokeWidth={2.1}
+            aria-hidden="true"
+          />
+        </button>
+      ) : null}
       {formatCommands.map((command) => (
         <CommandButton
           key={command.id}

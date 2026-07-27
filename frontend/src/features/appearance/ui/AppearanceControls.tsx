@@ -673,16 +673,6 @@ export function AppearanceControls({
             ))}
           </select>
         </label>
-        <div className="easymde-custom-css-toggle-row">
-          <button
-            type="button"
-            className="button button-secondary easymde-custom-css-toggle"
-            aria-expanded={isCustomOpen}
-            onClick={openCustomPanel}
-          >
-            {bootstrap.strings.customCss}
-          </button>
-        </div>
           </Fragment>
         )}
         <div className="easymde-custom-css-panel" hidden={!isCustomOpen}>

@@ -33,8 +33,10 @@ form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown
 remains canonical Markdown and `post_content` remains compatibility HTML.
 Focus Mode is not part of the default ordinary-editor surface. Issue #126
 provides a same-root immersive presentation that reuses the ordinary
-CodeMirror, Preview, native form, and WordPress capability owners. Outline,
-statistics/status, and view switching are scoped to that presentation;
+CodeMirror, Preview, native form, and WordPress capability owners. The ordinary
+workspace has one restrained footer for the live Markdown character count and
+WordPress-owned last-editor timestamp. Immersive Outline, expanded writing
+statistics, and view switching remain scoped to the immersive presentation;
 Publish and Revision controls delegate to the existing WordPress owners.
 
 The ordinary Editor now follows this single-Root boundary in the live branch.
@@ -236,7 +238,16 @@ Custom CSS library entries are stored in the current user's user meta. Creating,
 
 When a post uses custom CSS, EasyMDE stores a post-level snapshot so published content can retain the selected appearance if the user later edits or removes the saved library entry.
 
-The normal-editor React Appearance owner edits only a browser-session draft and sends an explicit save through the existing protected REST boundary. It does not validate or scope CSS as a security authority, retry a mutation, or report success before the server response has been validated. The existing hidden Custom CSS ID and snapshot fields remain the WordPress submission bridge. The post-level snapshot also remains usable when its library entry is later detached.
+The ordinary-editor Appearance panel may select an existing named Custom CSS
+theme, but it does not expose Custom CSS creation or editing. Custom CSS
+editing remains an immersive-editor surface, where it edits only a
+browser-session draft and sends an explicit save through the existing
+protected REST boundary.
+React does not validate or scope CSS as a security authority, retry a mutation,
+or report success before the server response has been validated. The existing
+hidden Custom CSS ID and snapshot fields remain the WordPress submission
+bridge. The post-level snapshot also remains usable when its library entry is
+later detached.
 
 ## REST Boundaries
 

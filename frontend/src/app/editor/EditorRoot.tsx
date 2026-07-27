@@ -273,6 +273,7 @@ function ActiveToolbar({
   toolbar,
   variant = 'default'
 }: ActiveToolbarProps) {
+  const [canUndo, setCanUndo] = useState(() => session.document.canUndo());
   const commandSessionRef = useRef<ReturnType<
     typeof createToolbarCommandSession
   > | null>(null);
@@ -326,13 +327,22 @@ function ActiveToolbar({
   }, [executeCommand, editorRoot, prepareToolbarShortcuts]);
 
   useEffect(() => () => commandSession.dispose(), [commandSession]);
+  useEffect(
+    () =>
+      session.document.subscribe(() => {
+        setCanUndo(session.document.canUndo());
+      }),
+    [session]
+  );
   return (
     <EditorToolbar
       bootstrap={toolbar}
+      canUndo={canUndo}
       platform={platform}
       executeCommand={executeCommand}
       onPopoverOpen={onPopoverOpen}
       onReady={onReady}
+      undo={session.document.undo}
       variant={variant}
     />
   );
@@ -462,8 +472,14 @@ export function EditorRoot(props: EditorRootProps) {
   const visualPreviewEditingRef = useRef(visualPreviewEditing);
   visualPreviewEditingRef.current = visualPreviewEditing;
   const [visualPreviewChanged, setVisualPreviewChanged] = useState(false);
-  const [appearanceState, setAppearanceState] = useState(
-    props.appearance.state
+  const [appearanceSnapshot, setAppearanceSnapshot] = useState(() => ({
+    customCss: props.appearance.customCss,
+    state: props.appearance.state
+  }));
+  const appearanceState = appearanceSnapshot.state;
+  const currentAppearance = useMemo<AppearanceBootstrap>(
+    () => ({ ...props.appearance, ...appearanceSnapshot }),
+    [appearanceSnapshot, props.appearance]
   );
   const [fontState, setFontState] = useState(props.fonts.state);
   const [immersive, setImmersive] = useState(false);
@@ -717,7 +733,7 @@ export function EditorRoot(props: EditorRootProps) {
         const visualPreviewWasEditing = visualPreviewEditingRef.current;
         if (visualPreviewWasEditing && !prepareSourceMutation()) return;
         props.appearancePort.applyState(state);
-        setAppearanceState(state);
+        setAppearanceSnapshot((snapshot) => ({ ...snapshot, state }));
         submissionStateRef.current = {
           ...submissionStateRef.current,
           ...state
@@ -749,7 +765,7 @@ export function EditorRoot(props: EditorRootProps) {
             return result;
           }
           props.appearancePort.applyState(result.snapshot.state);
-          setAppearanceState(result.snapshot.state);
+          setAppearanceSnapshot(result.snapshot);
           submissionStateRef.current = {
             ...submissionStateRef.current,
             ...result.snapshot.state
@@ -1308,7 +1324,7 @@ export function EditorRoot(props: EditorRootProps) {
           styleControls={
             <Fragment>
               <AppearanceControls
-                bootstrap={props.appearance}
+                bootstrap={currentAppearance}
                 onFailure={() =>
                   props.onFailure('react-editor-appearance-failed')
                 }
@@ -1418,7 +1434,7 @@ export function EditorRoot(props: EditorRootProps) {
               port={fontControlsPort}
             />
             <AppearanceControls
-              bootstrap={props.appearance}
+              bootstrap={currentAppearance}
               onFailure={() =>
                 props.onFailure('react-editor-appearance-failed')
               }
@@ -1470,6 +1486,16 @@ export function EditorRoot(props: EditorRootProps) {
       ) : null}
       <EditorWorkspace
         direction={props.layout.direction}
+        {...(!immersive && documentSession
+          ? {
+              ordinaryStatus: {
+                document: documentSession.document,
+                lastEdited: props.layout.status.lastEdited,
+                locale: props.localDrafts.locale,
+                wordCountTemplate: props.layout.status.wordCount
+              }
+            }
+          : {})}
         splitResizable={immersive && 'split' === immersiveMode}
         splitResizeLabel={props.immersiveStrings.resizeSplit}
         source={
@@ -1477,9 +1503,9 @@ export function EditorRoot(props: EditorRootProps) {
             className="easymde-pane easymde-pane-source"
             data-easymde-document-owner="react"
           >
-            <header className="easymde-pane-header">
-              <span>{immersive ? props.immersiveStrings.markdown.toUpperCase() : props.labels.source}</span>
-              {immersive ? (
+            {immersive ? (
+              <header className="easymde-pane-header">
+                <span>{props.immersiveStrings.markdown.toUpperCase()}</span>
                 <span
                   className="easymde-immersive-more-actions"
                   aria-hidden="true"
@@ -1487,8 +1513,8 @@ export function EditorRoot(props: EditorRootProps) {
                 >
                   <MoreHorizontal size={14} strokeWidth={2} />
                 </span>
-              ) : null}
-            </header>
+              </header>
+            ) : null}
             <div className="easymde-source easymde-source-react">
               <EditorDocumentSource
                 editorLabel={props.document.editorLabel}
@@ -1537,7 +1563,7 @@ export function EditorRoot(props: EditorRootProps) {
             changed={visualPreviewChanged}
             editable={visualPreviewEditing}
             hasSnapshot={null !== visualPreviewSnapshot}
-            ordinaryLabel={props.labels.preview}
+            ordinaryLabel={immersive ? props.labels.preview : null}
             onToggleEditable={() => {
               if (visualPreviewEditing) {
                 prepareSourceMutation();
@@ -1550,10 +1576,10 @@ export function EditorRoot(props: EditorRootProps) {
               setVisualPreviewEditing(true);
             }}
             status={previewSurfaceStatus}
-                statusMessages={{
-                  empty: props.preview.messages.empty,
-                  error: props.preview.messages.error
-                }}
+            statusMessages={{
+              empty: props.preview.messages.empty,
+              error: props.preview.messages.error
+            }}
             strings={props.immersiveStrings}
           >
             <PreviewSurfaceOwner

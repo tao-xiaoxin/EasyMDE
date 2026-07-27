@@ -5,6 +5,7 @@ import test from 'node:test';
 const css = readFileSync(new URL('../../assets/css/admin/editor.css', import.meta.url), 'utf8');
 
 test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () => {
+  assert.doesNotMatch(css, /\.easymde-workspace-shell(?:[^a-z0-9_-]|$)/i);
   assert.match(
     css,
     /\.easymde-workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\);[^}]*grid-template-areas:\s*"source preview";/s
@@ -19,10 +20,52 @@ test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () =
   );
 });
 
-test('CodeMirror source lines inherit the ordinary editor line height', () => {
+test('ordinary CodeMirror shows a stable scroll-synchronized line-number gutter', () => {
   assert.match(
     css,
     /\.easymde-editor:not\(\.is-immersive\) \.easymde-source-react \.cm-scroller\s*\{[^}]*line-height:\s*inherit;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-source-react \.cm-gutters\s*\{[^}]*display:\s*flex;[^}]*width:\s*40px;[^}]*min-width:\s*40px;[^}]*background:\s*#f7f8fa;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-source-react \.cm-lineNumbers \.cm-gutterElement\s*\{[^}]*width:\s*40px;[^}]*min-width:\s*40px;[^}]*font-size:\s*12\.5px;/s
+  );
+});
+
+test('ordinary Preview owns vertical scrolling and fits wide table content', () => {
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\s*\{[^}]*overflow-x:\s*hidden;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-rendered-content table\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;/s
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-rendered-content table\s*\{[^}]*table-layout:/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-rendered-content :is\(th, td\)\s*\{[^}]*overflow-wrap:\s*anywhere;/s
+  );
+});
+
+test('ordinary appearance and font popovers share the same pointer treatment', () => {
+  const popover = readFileSync(
+    new URL('../../assets/css/admin/popover.css', import.meta.url),
+    'utf8'
+  );
+  assert.match(
+    popover,
+    /\.easymde-toolbar-popover-appearance-panel:not\(\.is-immersive-panel\)::before,\s*\.easymde-toolbar-popover-font-panel:not\(\.is-immersive-panel\)::before\s*\{[^}]*content:\s*"";[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*transform:\s*rotate\(45deg\);/s
+  );
+  assert.match(
+    css,
+    /@media \(max-width:\s*782px\)[\s\S]*?\.easymde-toolbar-popover-appearance-panel:not\(\.is-immersive-panel\)::before,\s*\.easymde-toolbar-popover-font-panel:not\(\.is-immersive-panel\)::before\s*\{[^}]*left:\s*24px;/s
   );
 });
 
@@ -31,7 +74,6 @@ test('withdrawn ordinary editor surfaces have no retained CSS runtime', () => {
     'easymde-editor-context-bar',
     'easymde-draft-status',
     'easymde-editor-panes',
-    'easymde-editor-status-bar',
     'easymde-outline-panel',
     'easymde-pane-divider',
     'easymde-publishing-dialog',
@@ -43,6 +85,14 @@ test('withdrawn ordinary editor surfaces have no retained CSS runtime', () => {
   ]) {
     assert.doesNotMatch(css, new RegExp(`\\.${className}(?:[^a-z0-9_-]|$)`, 'i'));
   }
+  assert.match(
+    css,
+    /\.easymde-editor-status-bar\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*38px;/s
+  );
+  assert.match(
+    css,
+    /@media \(max-width:\s*782px\)[\s\S]*?\.easymde-editor-status-bar\s*\{[^}]*align-items:\s*flex-start;[^}]*flex-direction:\s*column;/s
+  );
 });
 
 test('immersive publish CSS preserves reference geometry without hiding the password field', () => {
@@ -128,7 +178,7 @@ test('immersive Markdown pane preserves the reference header and source rhythm',
     css,
     /\.easymde-editor\.is-immersive \.easymde-source-react \.cm-lineNumbers \.cm-gutterElement\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*36px;[^}]*min-width:\s*36px;[^}]*padding:\s*0;[^}]*padding-inline-end:\s*14px;[^}]*font-size:\s*13\.5px;[^}]*line-height:\s*28px;/s
   );
-  assert.match(
+  assert.doesNotMatch(
     css,
     /\.easymde-editor:not\(\.is-immersive\) \.easymde-source-react \.cm-gutters\s*\{[^}]*display:\s*none;/s
   );

@@ -25,6 +25,7 @@ export type ToolbarBootstrap = Readonly<{
   headingLevelLabel: string;
   headingsLabel: string;
   linkText: string;
+  undoLabel: string;
 }>;
 
 export class ToolbarBootstrapError extends Error {
@@ -165,6 +166,7 @@ export function parseToolbarBootstrap(value: unknown): ToolbarBootstrap {
       'invalid-heading-level-label'
     ),
     headingsLabel: requiredString(strings.headings, 'invalid-headings-label'),
-    linkText: requiredString(strings.linkText, 'invalid-link-text')
+    linkText: requiredString(strings.linkText, 'invalid-link-text'),
+    undoLabel: requiredString(strings.undo, 'invalid-undo-label')
   };
 }

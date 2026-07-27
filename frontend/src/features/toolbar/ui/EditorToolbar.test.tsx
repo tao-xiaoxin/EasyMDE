@@ -26,7 +26,8 @@ const bootstrap: ToolbarBootstrap = {
   headingLabelFormat: '标题 %s',
   headingLevelLabel: '标题级别',
   headingsLabel: '标题',
-  linkText: '链接文本'
+  linkText: '链接文本',
+  undoLabel: '撤销'
 };
 
 describe('EditorToolbar', () => {
@@ -39,6 +40,7 @@ describe('EditorToolbar', () => {
       container.querySelectorAll<HTMLButtonElement>('.easymde-toolbar-button')
     );
     expect(controls.map((control) => control.getAttribute('aria-label'))).toEqual([
+      '撤销',
       '粗体',
       '标题',
       '引用',
@@ -53,6 +55,51 @@ describe('EditorToolbar', () => {
     expect(screen.getByRole('button', { name: '标题' }).querySelector('.easymde-toolbar-chevron')).not.toBeNull();
     expect(container.querySelector('.dashicons')).toBeNull();
     expect(container.querySelectorAll('.easymde-toolbar-divider')).toHaveLength(2);
+  });
+
+  it('renders one history-aware Undo control only in the ordinary toolbar', () => {
+    const undo = vi.fn();
+    const { rerender } = render(
+      <EditorToolbar
+        bootstrap={bootstrap}
+        canUndo={false}
+        platform="win"
+        executeCommand={vi.fn()}
+        undo={undo}
+      />
+    );
+
+    const button = screen.getByRole('button', {
+      name: '撤销'
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.querySelector('.easymde-toolbar-icon-undo')).not.toBeNull();
+    expect(button.querySelector('path[d="M9 14 4 9l5-5"]')).not.toBeNull();
+    expect(button.querySelector('path[d^="M3 12a9"]')).toBeNull();
+
+    rerender(
+      <EditorToolbar
+        bootstrap={bootstrap}
+        canUndo
+        platform="win"
+        executeCommand={vi.fn()}
+        undo={undo}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: '撤销' }));
+    expect(undo).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <EditorToolbar
+        bootstrap={bootstrap}
+        canUndo
+        platform="win"
+        executeCommand={vi.fn()}
+        undo={undo}
+        variant="immersive"
+      />
+    );
+    expect(screen.queryByRole('button', { name: '撤销' })).toBeNull();
   });
 
   it('preserves the documented Dashicons fallback for extension commands', () => {

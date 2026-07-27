@@ -35,6 +35,23 @@ scripts/install-wp-tests.sh easymde_phpunit <db_user> <db_password> <db_host> 6.
 composer run test:phpunit
 ```
 
+For repeated local validation, build the pinned reusable CI image once from
+explicitly supplied local resources:
+
+```bash
+EASYMDE_CI_NODE_ARCHIVE=/path/to/node-v20.19.0-linux-<arch>.tar.xz \
+EASYMDE_CI_WP_CORE_SOURCE=/path/to/wordpress-6.7 \
+EASYMDE_CI_WP_TESTS_SOURCE=/path/to/wordpress-6.7-tests-lib \
+scripts/build-ci-image.sh
+```
+
+The builder requires the `composer:2` and `php:8.3-cli` base images to already
+exist locally, uses `--network=none`, never pulls or downloads resources, and
+reuses `easymde-ci:wp6.7-php8.3-node20.19.0` when it already exists. Resource
+preparation is an explicit operator action rather than an implicit side effect
+of each test run. The image exposes `WP_CORE_DIR` and `WP_TESTS_DIR`; use the
+already cached `mariadb:11.4` image as the disposable `easymde-ci-db` service.
+
 ## Node, i18n, And Notices
 
 CI uses npm for JavaScript syntax checks, Node tests, read-only runtime asset validation, i18n validation, and third-party notice validation.

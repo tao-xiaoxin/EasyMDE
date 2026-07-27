@@ -18,21 +18,27 @@ test('toolbar icons use one stable local SVG box and chevron contract', () => {
   const menuButton = ruleBody(
     '.easymde-editor:not(.is-immersive) .easymde-toolbar-button-menu'
   );
-  assert.match(menuButton, /width:\s*62px;/);
-  assert.match(menuButton, /min-width:\s*62px;/);
+  assert.match(menuButton, /width:\s*54px;/);
+  assert.match(menuButton, /min-width:\s*54px;/);
 
   const icon = ruleBody(
     '.easymde-editor:not(.is-immersive) .easymde-toolbar-icon'
   );
   assert.match(icon, /display:\s*block;/);
-  assert.match(icon, /width:\s*18px;/);
-  assert.match(icon, /height:\s*18px;/);
+  assert.match(icon, /width:\s*16px;/);
+  assert.match(icon, /height:\s*16px;/);
 
   const chevron = ruleBody(
     '.easymde-editor:not(.is-immersive) .easymde-toolbar-chevron'
   );
   assert.match(chevron, /width:\s*12px;/);
   assert.match(chevron, /height:\s*12px;/);
+
+  const compact = ruleBody(
+    '.easymde-editor:not(.is-immersive) .easymde-toolbar-button-compact'
+  );
+  assert.match(compact, /width:\s*34px;/);
+  assert.match(compact, /min-width:\s*34px;/);
 });
 
 test('typographic toolbar glyphs are unboxed and interaction states do not move controls', () => {

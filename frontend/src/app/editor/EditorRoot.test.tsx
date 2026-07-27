@@ -327,7 +327,13 @@ function fixture(): EditorRootProps &
         url: 'https://example.test/upload.png'
       } satisfies ImageUploadResult)
     },
-    layout: { direction: 'ltr' },
+    layout: {
+      direction: 'ltr',
+      status: {
+        lastEdited: 'Last edited by Editor on July 27, 2026 at 10:00',
+        wordCount: 'Character count: %s'
+      }
+    },
     localDraftStorage,
     localDrafts: {
       enabled: true,
@@ -478,7 +484,8 @@ function fixture(): EditorRootProps &
       headingLevelLabel: 'Heading level',
       headingsLabel: 'Headings',
       linkText: 'link text',
-      shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } }
+      shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } },
+      undoLabel: 'Undo'
     },
     wechatClipboard: {
       copy: vi.fn().mockResolvedValue({ method: 'clipboard', status: 'copied' })
@@ -528,6 +535,9 @@ describe('EditorRoot', () => {
     expect(props.submissionField.hidden).toBe(true);
     expect(props.onDocumentOwnerChange).toHaveBeenCalledWith(true);
     expect(view.container.querySelector('.cm-editor')).not.toBeNull();
+    expect(
+      view.container.querySelectorAll('.easymde-pane-header')
+    ).toHaveLength(0);
     await waitFor(() =>
       expect(props.previewPort.render).toHaveBeenCalledTimes(1)
     );
@@ -628,6 +638,9 @@ describe('EditorRoot', () => {
     expect(
       view.container.querySelectorAll('.easymde-pane-preview')
     ).toHaveLength(1);
+    expect(
+      view.container.querySelectorAll('.easymde-pane-header')
+    ).toHaveLength(2);
     expect(
       view.container.querySelector(
         '.easymde-pane-preview [data-easymde-preview-html-sink]'
@@ -3624,6 +3637,78 @@ describe('EditorRoot', () => {
         vi.mocked(props.enhancementPort.enhance).mock.calls.at(-1)?.[3]
       ).toEqual(expect.objectContaining({ codeTheme: 'github' }));
     });
+  });
+
+  it('preserves a named CSS theme saved in immersive mode after returning to the ordinary editor', async () => {
+    const props = fixture();
+    const savedSnapshot = {
+      customCss: [
+        {
+          css: '.note { color: navy; }',
+          id: 'writer-css',
+          name: 'Writer CSS',
+          scopedCss: '.easymde-rendered-content .note { color: navy; }'
+        }
+      ],
+      state: {
+        codeTheme: 'atom-one-dark',
+        customCssId: 'writer-css',
+        markdownTheme: 'custom'
+      }
+    } as const;
+    const appearancePort = {
+      ...props.appearancePort,
+      saveCustomCss: vi.fn().mockResolvedValue({
+        snapshot: savedSnapshot,
+        status: 'saved' as const
+      })
+    };
+    const view = render(
+      <EditorRoot {...props} appearancePort={appearancePort} />
+    );
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Custom CSS theme' }));
+    fireEvent.change(view.getByRole('textbox', { name: 'CSS name' }), {
+      target: { value: 'Writer CSS' }
+    });
+    fireEvent.change(view.getByRole('textbox', { name: 'Custom CSS' }), {
+      target: { value: '.note { color: navy; }' }
+    });
+    fireEvent.click(view.getByRole('button', { name: 'Save CSS' }));
+    await view.findByText('CSS saved');
+
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
+
+    const articleTheme = view.getByRole('combobox', {
+      name: 'Article theme'
+    }) as HTMLSelectElement;
+    expect(articleTheme.value).toBe('custom:writer-css');
+    expect(
+      view.getByRole('option', { name: 'Writer CSS' })
+    ).not.toBeNull();
+  });
+
+  it('carries an ordinary appearance choice into immersive mode', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: 'Appearance' }));
+    fireEvent.change(view.getByRole('combobox', { name: 'Article theme' }), {
+      target: { value: 'theme:newsprint' }
+    });
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+
+    expect(
+      view.getByRole('button', { name: 'Article theme' }).textContent
+    ).toContain('Newsprint');
   });
 
   it('applies theme classes and theme font defaults to the single Preview sink', async () => {

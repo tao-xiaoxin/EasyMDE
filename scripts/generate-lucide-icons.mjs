@@ -55,6 +55,7 @@ const icons = {
   Table2: 'table-2',
   Trash2: 'trash-2',
   Type: 'type',
+  Undo2: 'undo-2',
   Workflow: 'workflow',
   X: 'x'
 };

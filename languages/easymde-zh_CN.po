@@ -49,6 +49,22 @@ msgstr "正在渲染预览..."
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr "预览失败。可以继续编写，保存不受影响。"
 
+#: src/Admin/AdminAssets.php:574
+msgid "Not saved yet."
+msgstr "尚未保存。"
+
+#. translators: 1: display name of the last editor, 2: localized post modified date and time.
+#: src/Admin/AdminAssets.php:603
+#, php-format
+msgid "Last edited by %1$s on %2$s"
+msgstr "最后由 %1$s 编辑于 %2$s"
+
+#. translators: %s: localized post modified date and time.
+#: src/Admin/AdminAssets.php:609
+#, php-format
+msgid "Last edited on %s"
+msgstr "最后编辑于 %s"
+
 #: src/Admin/AdminAssets.php:562
 msgid "Insert Media"
 msgstr "插入媒体"
@@ -288,6 +304,10 @@ msgstr "字体"
 msgid "Headings"
 msgstr "标题"
 
+#: src/Admin/AdminAssets.php:624
+msgid "Undo"
+msgstr "撤销"
+
 #: src/Admin/AdminAssets.php:501
 msgid "Heading level"
 msgstr "标题级别"
@@ -295,6 +315,12 @@ msgstr "标题级别"
 #. translators: %s: Heading level from 1 through 6.
 msgid "Heading %s"
 msgstr "标题 %s"
+
+#. translators: %s: Locale-formatted Markdown character count.
+#: src/Admin/AdminAssets.php:677
+#, php-format
+msgid "Character count: %s"
+msgstr "字符统计：%s"
 
 #: src/Admin/AdminAssets.php:622
 msgid "Article theme"

@@ -42,7 +42,6 @@ describe('EditorToolbar', () => {
     expect(controls.map((control) => control.getAttribute('aria-label'))).toEqual([
       '撤销',
       '粗体',
-      '标题',
       '引用',
       '行内代码',
       '代码块'
@@ -51,8 +50,7 @@ describe('EditorToolbar', () => {
     expect(screen.getByRole('button', { name: '粗体' }).querySelector('.easymde-toolbar-icon-bold')).not.toBeNull();
     expect(screen.getByRole('button', { name: '引用' }).querySelector('.easymde-toolbar-icon-quote')).not.toBeNull();
     expect(screen.getByRole('button', { name: '代码块' }).querySelector('.easymde-toolbar-icon-codefence')).not.toBeNull();
-    expect(screen.getByRole('button', { name: '标题' }).querySelector('.easymde-toolbar-glyph-heading')).not.toBeNull();
-    expect(screen.getByRole('button', { name: '标题' }).querySelector('.easymde-toolbar-chevron')).not.toBeNull();
+    expect(screen.getByRole('button', { name: '一级标题' }).textContent).toBe('H1');
     expect(container.querySelector('.dashicons')).toBeNull();
     expect(container.querySelectorAll('.easymde-toolbar-divider')).toHaveLength(2);
   });
@@ -102,6 +100,68 @@ describe('EditorToolbar', () => {
     expect(screen.queryByRole('button', { name: '撤销' })).toBeNull();
   });
 
+  it('renders direct ordinary H1 through H5 controls without a heading menu', async () => {
+    const executeCommand = vi.fn();
+    const user = userEvent.setup();
+    const ordinaryBootstrap: ToolbarBootstrap = {
+      ...bootstrap,
+      commands: [
+        ...bootstrap.commands,
+        ...[2, 3, 4, 5, 6].map((level) => ({
+          id: `heading${level}`,
+          label: `${level}级标题`,
+          icon: 'heading',
+          surface: 'heading-menu',
+          action: 'heading',
+          group: 'heading',
+          level
+        }))
+      ],
+      shortcuts: {
+        ...bootstrap.shortcuts,
+        heading2: { win: 'Ctrl+2', mac: 'Cmd+2' },
+        heading3: { win: 'Ctrl+3', mac: 'Cmd+3' },
+        heading4: { win: 'Ctrl+4', mac: 'Cmd+4' },
+        heading5: { win: 'Ctrl+5', mac: 'Cmd+5' },
+        heading6: { win: 'Ctrl+6', mac: 'Cmd+6' }
+      }
+    };
+    const { container } = render(
+      <EditorToolbar
+        bootstrap={ordinaryBootstrap}
+        platform="win"
+        executeCommand={executeCommand}
+      />
+    );
+
+    const group = screen.getByRole('group', { name: '标题' });
+    const buttons = within(group).getAllByRole('button');
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      'H1',
+      'H2',
+      'H3',
+      'H4',
+      'H5'
+    ]);
+    expect(
+      buttons.map((button) => button.getAttribute('data-easymde-command'))
+    ).toEqual(['heading1', 'heading2', 'heading3', 'heading4', 'heading5']);
+    expect(
+      within(group).getByRole('button', { name: '3级标题' }).title
+    ).toBe('3级标题 (Ctrl+3)');
+    expect(
+      container.querySelector('.easymde-toolbar-popover-headings')
+    ).toBeNull();
+    expect(screen.queryByRole('menu', { name: '标题' })).toBeNull();
+    expect(container.querySelector('[data-easymde-command="paragraph"]')).toBeNull();
+    expect(container.querySelector('[data-easymde-command="heading6"]')).toBeNull();
+
+    const heading3 = within(group).getByRole('button', { name: '3级标题' });
+    expect(fireEvent.mouseDown(heading3)).toBe(false);
+    await user.click(heading3);
+    expect(executeCommand).toHaveBeenCalledWith('heading3');
+  });
+
   it('preserves the documented Dashicons fallback for extension commands', () => {
     const extensionBootstrap: ToolbarBootstrap = {
       ...bootstrap,
@@ -126,6 +186,42 @@ describe('EditorToolbar', () => {
       screen.getByRole('button', { name: '扩展命令' })
         .querySelector('.dashicons-admin-generic')
     ).not.toBeNull();
+  });
+
+  it('keeps registered heading-surface extensions visible without restoring the ordinary menu', async () => {
+    const executeCommand = vi.fn();
+    const user = userEvent.setup();
+    const extensionBootstrap: ToolbarBootstrap = {
+      ...bootstrap,
+      commands: [
+        ...bootstrap.commands,
+        {
+          id: 'extension-heading-command',
+          label: '扩展标题命令',
+          icon: 'admin-generic',
+          surface: 'heading-menu',
+          action: 'wrap',
+          group: 'heading',
+          prefix: '<heading>',
+          suffix: '</heading>'
+        }
+      ]
+    };
+    const { container } = render(
+      <EditorToolbar
+        bootstrap={extensionBootstrap}
+        platform="win"
+        executeCommand={executeCommand}
+      />
+    );
+
+    const extension = screen.getByRole('button', { name: '扩展标题命令' });
+    expect(extension.querySelector('.dashicons-admin-generic')).not.toBeNull();
+    expect(screen.queryByRole('menu', { name: '标题' })).toBeNull();
+    expect(container.querySelector('.easymde-toolbar-popover-headings')).toBeNull();
+
+    await user.click(extension);
+    expect(executeCommand).toHaveBeenCalledWith('extension-heading-command');
   });
 
   it('preserves an extension icon when the public registry replaces a built-in command ID', () => {
@@ -308,12 +404,17 @@ describe('EditorToolbar', () => {
     expect(container.querySelector('.is-immersive-heading-menu')).toBe(menu);
   });
 
-  it('exposes heading menu state and returns focus on Escape', async () => {
+  it('preserves immersive heading menu focus and Escape behavior', async () => {
     const executeCommand = vi.fn();
     const user = userEvent.setup();
     render(
       <div>
-        <EditorToolbar bootstrap={bootstrap} platform="win" executeCommand={executeCommand} />
+        <EditorToolbar
+          bootstrap={bootstrap}
+          platform="win"
+          executeCommand={executeCommand}
+          variant="immersive"
+        />
         <button type="button">外部控件</button>
       </div>
     );
@@ -324,8 +425,7 @@ describe('EditorToolbar', () => {
     await user.click(trigger);
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     const menu = screen.getByRole('menu', { name: '标题' });
-    const paragraph = within(menu).getByRole('menuitem', { name: /\u6bb5\u843d/ });
-    const heading = within(menu).getByRole('menuitem', { name: /一级标题/ });
+    const heading = within(menu).getByRole('menuitem', { name: /标题 1/ });
     expect(document.activeElement).toBe(outsideControl);
 
     await user.click(trigger);
@@ -335,26 +435,23 @@ describe('EditorToolbar', () => {
     trigger.focus();
     await user.keyboard('{Enter}');
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(paragraph);
+    expect(document.activeElement).toBe(heading);
     await user.keyboard('{Escape}');
 
     await user.keyboard(' ');
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(paragraph);
+    expect(document.activeElement).toBe(heading);
     await user.keyboard('{Escape}');
 
     trigger.focus();
     await user.keyboard('{ArrowDown}');
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(paragraph);
+    expect(document.activeElement).toBe(heading);
 
     await user.keyboard('{End}');
     expect(document.activeElement).toBe(heading);
 
     await user.keyboard('{Home}');
-    expect(document.activeElement).toBe(paragraph);
-
-    await user.keyboard('{ArrowDown}');
     expect(document.activeElement).toBe(heading);
 
     await user.keyboard('{Escape}');

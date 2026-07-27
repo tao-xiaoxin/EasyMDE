@@ -40,17 +40,34 @@ explicitly supplied local resources:
 
 ```bash
 EASYMDE_CI_NODE_ARCHIVE=/path/to/node-v20.19.0-linux-<arch>.tar.xz \
+EASYMDE_CI_COMPOSER_CACHE_SOURCE=/path/to/composer/cache \
 EASYMDE_CI_WP_CORE_SOURCE=/path/to/wordpress-6.7 \
 EASYMDE_CI_WP_TESTS_SOURCE=/path/to/wordpress-6.7-tests-lib \
 scripts/build-ci-image.sh
 ```
 
-The builder requires the `composer:2` and `php:8.3-cli` base images to already
-exist locally, uses `--network=none`, never pulls or downloads resources, and
+The builder requires the digest-pinned Composer 2.10.2 and PHP 8.3.32 base
+images to already exist locally, installs the exact `composer.lock` development
+dependencies from the explicitly supplied local Composer cache, uses
+`--network=none`, never pulls or downloads resources, and
 reuses `easymde-ci:wp6.7-php8.3-node20.19.0` when it already exists. Resource
 preparation is an explicit operator action rather than an implicit side effect
-of each test run. The image exposes `WP_CORE_DIR` and `WP_TESTS_DIR`; use the
-already cached `mariadb:11.4` image as the disposable `easymde-ci-db` service.
+of each test run. The builder accepts only the pinned WordPress 6.7 Core and
+matching test-library contents, ignores any caller-provided PHPUnit
+configuration, and installs the repository-owned synthetic configuration.
+Reuse validation checks PHP, Composer, Node, PHPUnit, the Polyfills package,
+the project lockfile hash, WordPress Core, and the WordPress test library.
+Run the exact mounted checkout without writing a local `vendor/` directory:
+
+```bash
+scripts/run-ci-image.sh
+```
+
+The runner requires the digest-pinned MariaDB 11.4 image to already exist
+locally. It never pulls an image, creates an internal one-run network and
+disposable database with synthetic credentials, waits for database readiness,
+verifies the complete CI image identity before execution, passes additional
+arguments to PHPUnit, and removes both resources on exit.
 
 ## Node, i18n, And Notices
 

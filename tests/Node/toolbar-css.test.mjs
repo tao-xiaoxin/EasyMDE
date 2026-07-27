@@ -54,6 +54,24 @@ test('typographic toolbar glyphs are unboxed and interaction states do not move 
   assert.match(interactive, /transform:\s*none;/);
 });
 
+test('ordinary heading controls form one stable compact segmented group', () => {
+  const group = ruleBody(
+    '.easymde-editor:not(.is-immersive) .easymde-toolbar-heading-group'
+  );
+  assert.match(group, /height:\s*36px;/);
+  assert.match(group, /border:\s*1px solid #d6dce3;/);
+  assert.match(group, /border-radius:\s*9px;/);
+  assert.match(group, /overflow:\s*hidden;/);
+
+  const button = ruleBody(
+    '.easymde-editor:not(.is-immersive) .easymde-toolbar-heading-button'
+  );
+  assert.match(button, /width:\s*36px;/);
+  assert.match(button, /height:\s*34px;/);
+  assert.match(button, /border:\s*0;/);
+  assert.match(button, /font-size:\s*14px;/);
+});
+
 test('immersive toolbar keeps the inherited pre-parity icon and interaction rules', () => {
   const button = ruleBody('.easymde-toolbar-button');
   assert.match(button, /transform 120ms ease/);

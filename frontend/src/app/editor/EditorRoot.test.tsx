@@ -3570,7 +3570,7 @@ describe('EditorRoot', () => {
     }
   });
 
-  it('keeps exactly one React toolbar popover open', async () => {
+  it('closes ordinary Settings when a direct heading command runs', async () => {
     const props = fixture();
     const toolbar = {
       ...props.toolbar,
@@ -3588,24 +3588,14 @@ describe('EditorRoot', () => {
       ]
     } as const;
     const view = render(<EditorRoot {...props} toolbar={toolbar} />);
-    const heading = view.getByRole('button', { name: 'Headings' });
+    const heading = view.getByRole('button', { name: 'Heading 1' });
     const settings = view.getByRole('button', { name: '编辑器设置' });
 
-    fireEvent.click(heading);
-    expect(heading.getAttribute('aria-expanded')).toBe('true');
-
     fireEvent.click(settings);
-    expect(heading.getAttribute('aria-expanded')).toBe('false');
     expect(settings.getAttribute('aria-expanded')).toBe('true');
 
     fireEvent.click(heading);
     expect(settings.getAttribute('aria-expanded')).toBe('false');
-    expect(heading.getAttribute('aria-expanded')).toBe('true');
-
-    fireEvent.click(settings);
-    expect(heading.getAttribute('aria-expanded')).toBe('false');
-    expect(settings.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(view.getByLabelText('Article theme'));
   });
 
   it('renders Preview from the current Appearance state', async () => {

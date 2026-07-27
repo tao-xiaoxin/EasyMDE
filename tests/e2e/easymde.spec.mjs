@@ -759,24 +759,13 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(toolbar.locator('[data-easymde-command="bold"]:visible')).toHaveCount(1);
 
     const source = page.locator('#easymde-source');
-    const headingTrigger = reactMain.locator('.easymde-toolbar-popover-headings > button');
+    const headingGroup = reactMain.getByRole('group', { name: 'Headings' });
     await expect(page.locator('#postdivrich')).toBeHidden();
     await expect(source).toBeHidden();
     await expect(sourceEditor).toBeVisible();
     await sourceEditor.focus();
-    await headingTrigger.click();
-    await expect(headingTrigger).toHaveAttribute('aria-expanded', 'true');
-    await expect(sourceEditor).toBeFocused();
-    await headingTrigger.click();
-    await expect(headingTrigger).toHaveAttribute('aria-expanded', 'false');
-    await expect(sourceEditor).toBeFocused();
-    await headingTrigger.focus();
-    await headingTrigger.press('Enter');
-    await expect(reactMain.locator('[data-easymde-command="paragraph"]')).toBeFocused();
-    await page.keyboard.press('Escape');
-    await headingTrigger.press('Space');
-    await expect(reactMain.locator('[data-easymde-command="paragraph"]')).toBeFocused();
-    await page.keyboard.press('Escape');
+    await expect(headingGroup.getByRole('button')).toHaveCount(5);
+    await expect(reactMain.getByRole('menu', { name: 'Headings' })).toHaveCount(0);
     await sourceEditor.fill('Toolbar parity');
     await sourceEditor.focus();
     await sourceEditor.press('Home');
@@ -798,15 +787,9 @@ test.describe('EasyMDE editor workflows', () => {
     await source.evaluate((field) => {
       field.setSelectionRange(0, 0);
     });
-    await headingTrigger.focus();
-    await headingTrigger.press('ArrowDown');
-    await expect(headingTrigger).toHaveAttribute('aria-expanded', 'true');
-    await expect(reactMain.locator('[data-easymde-command="paragraph"]')).toBeFocused();
-    await page.keyboard.press('End');
-    await expect(reactMain.locator('[data-easymde-command="heading6"]')).toBeFocused();
-    await page.keyboard.press('Enter');
-    await expect(source).toHaveValue('###### Heading parity');
-    await expect(sourceEditor).toHaveText('###### Heading parity');
+    await headingGroup.locator('[data-easymde-command="heading5"]').click();
+    await expect(source).toHaveValue('##### Heading parity');
+    await expect(sourceEditor).toHaveText('##### Heading parity');
     await expect(sourceEditor).toBeFocused();
   });
 
@@ -823,7 +806,6 @@ test.describe('EasyMDE editor workflows', () => {
     );
     const toolbar = page.getByRole('toolbar', { name: toolbarLabel });
     const main = toolbar.locator('.easymde-toolbar-section-main');
-    const headingTrigger = main.locator('.easymde-toolbar-popover-headings > button');
     const selectAll = async (value) => {
       await sourceEditor.fill(value);
       await sourceEditor.focus();
@@ -852,16 +834,13 @@ test.describe('EasyMDE editor workflows', () => {
     }
 
     for (const command of [
-      { expected: 'Alpha', id: 'paragraph', input: '### Alpha' },
       { expected: '# Alpha', id: 'heading1', input: 'Alpha' },
       { expected: '## Alpha', id: 'heading2', input: 'Alpha' },
       { expected: '### Alpha', id: 'heading3', input: 'Alpha' },
       { expected: '#### Alpha', id: 'heading4', input: 'Alpha' },
-      { expected: '##### Alpha', id: 'heading5', input: 'Alpha' },
-      { expected: '###### Alpha', id: 'heading6', input: 'Alpha' }
+      { expected: '##### Alpha', id: 'heading5', input: 'Alpha' }
     ]) {
       await selectAll(command.input);
-      await headingTrigger.click();
       await main.locator(`[data-easymde-command="${command.id}"]`).click();
       await expect(source).toHaveValue(command.expected);
       await expect(sourceEditor.locator('.cm-line')).toHaveText(command.expected.split('\n'));
@@ -1380,13 +1359,32 @@ test.describe('EasyMDE editor workflows', () => {
 
     const expectedToolbarLabels = await page.evaluate(() => {
       const bootstrap = window.EasyMDEEditorRootBootstrap;
+      const formatLabels = bootstrap.toolbar.commands
+        .filter(({ group, surface }) => 'main' === surface && 'format' === group)
+        .map(({ label }) => label);
+      const headingLabels = bootstrap.toolbar.commands
+        .filter(({ action, id, level, surface }) =>
+          'heading-menu' === surface
+          && 'heading' === action
+          && `heading${level}` === id
+          && level >= 1
+          && level <= 5
+        )
+        .sort((first, second) => first.level - second.level)
+        .map(({ label }) => label);
       const commandLabels = bootstrap.toolbar.commands
-        .filter(({ group, surface }) => 'main' === surface && 'export' !== group)
+        .filter(({ group, surface }) =>
+          'main' === surface
+          && 'format' !== group
+          && 'export' !== group
+        )
         .map(({ label }) => label);
       const exportLabels = bootstrap.toolbar.commands
         .filter(({ group, surface }) => 'main' === surface && 'export' === group)
         .map(({ label }) => label);
       return [
+        ...formatLabels,
+        ...headingLabels,
         ...commandLabels,
         ...exportLabels,
         bootstrap.strings.immersive.enter,
@@ -1529,27 +1527,21 @@ test.describe('EasyMDE editor workflows', () => {
     }
 
     const headingLabel = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.strings.headings);
-    const headingTrigger = page.getByRole('button', { name: headingLabel });
-    const headingChevron = headingTrigger.locator('.easymde-toolbar-chevron');
-    await expect(headingChevron).toHaveCount(1);
-    await expect(headingChevron).toHaveAttribute('aria-hidden', 'true');
-    await expect(headingChevron).toHaveAttribute('fill', 'none');
-    await expect(headingChevron).toHaveAttribute('stroke-width', '2.25');
-    await expect(headingChevron).toHaveCSS('width', '12px');
-    await expect(headingChevron).toHaveCSS('height', '12px');
-    await headingTrigger.click();
+    const headingGroup = page.getByRole('group', { name: headingLabel });
     const headingCommands = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.commands
-      .filter(({ surface }) => 'heading-menu' === surface)
-      .map(({ id, label }) => ({ id, label })));
-    const headingMenu = page.getByRole('menu', { name: headingLabel });
+      .filter(({ id }) => /^heading[1-5]$/.test(id))
+      .map(({ id, label, level }) => ({ id, label, level })));
+    await expect(page.getByRole('menu', { name: headingLabel })).toHaveCount(0);
     for (const command of headingCommands) {
-      const item = headingMenu.locator(`button[data-easymde-command="${command.id}"]`);
+      const item = headingGroup.locator(`button[data-easymde-command="${command.id}"]`);
       await expect(item).toHaveCount(1);
-      await expect(item).toHaveAttribute('role', 'menuitem');
-      await expect(item.locator('.easymde-popover-item-label')).toHaveText(command.label);
+      await expect(item).toHaveAttribute('aria-label', command.label);
+      await expect(item).toHaveText(`H${command.level}`);
+      await expect(item).toHaveCSS('width', '36px');
+      await expect(item).toHaveCSS('height', '34px');
     }
-    await page.keyboard.press('Escape');
-    await expect(headingTrigger).toBeFocused();
+    await expect(headingGroup.locator('[data-easymde-command="heading6"]')).toHaveCount(0);
+    await expect(headingGroup.locator('[data-easymde-command="paragraph"]')).toHaveCount(0);
 
     for (const selector of [
       '.easymde-editor-context-bar',

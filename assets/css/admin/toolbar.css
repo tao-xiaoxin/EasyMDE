@@ -94,6 +94,34 @@
     font-size: 18px;
 }
 
+.easymde-editor:not(.is-immersive) .easymde-toolbar-button {
+    transition: border-color 120ms ease, box-shadow 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-toolbar-button:hover,
+.easymde-editor:not(.is-immersive) .easymde-toolbar-button:focus {
+    transform: none;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-toolbar-button-menu {
+    width: 62px;
+    min-width: 62px;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-toolbar-icon {
+    display: block;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-toolbar-chevron {
+    display: block;
+    flex: 0 0 auto;
+    width: 12px;
+    height: 12px;
+}
+
 .easymde-toolbar-label {
     white-space: nowrap;
 }
@@ -133,6 +161,17 @@
     position: relative;
     border-radius: 6px;
     background: #eff2f5;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-toolbar-text-icon {
+    border-radius: 0;
+    background: transparent;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-toolbar-glyph-code {
+    font-size: 11px;
 }
 
 .easymde-font-glyph::after {

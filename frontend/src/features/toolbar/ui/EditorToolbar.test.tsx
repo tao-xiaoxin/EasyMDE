@@ -12,7 +12,7 @@ const bootstrap: ToolbarBootstrap = {
     { id: 'paragraph', label: '段落', icon: 'heading', surface: 'heading-menu', action: 'paragraph', group: 'heading' },
     { id: 'heading1', label: '一级标题', icon: 'heading', surface: 'heading-menu', action: 'heading', group: 'heading', level: 1, usesLevelLabel: true },
     { id: 'quote', label: '引用', icon: 'format-quote', surface: 'main', action: 'quote', group: 'block' },
-    { id: 'inlinecode', label: '行内代码', icon: 'code', surface: 'main', action: 'wrap', group: 'insert' },
+    { id: 'inlinecode', label: '行内代码', icon: 'editor-code', surface: 'main', action: 'wrap', group: 'insert' },
     { id: 'codefence', label: '代码块', icon: 'media-code', surface: 'main', action: 'codeFence', group: 'insert' }
   ],
   shortcuts: {
@@ -30,7 +30,7 @@ const bootstrap: ToolbarBootstrap = {
 };
 
 describe('EditorToolbar', () => {
-  it('renders the legacy command order, icon sources, and platform shortcut titles', () => {
+  it('renders the ordinary command order with one local icon contract and platform shortcut titles', () => {
     const { container } = render(
       <EditorToolbar bootstrap={bootstrap} platform="win" executeCommand={vi.fn()} />
     );
@@ -46,9 +46,91 @@ describe('EditorToolbar', () => {
       '代码块'
     ]);
     expect(screen.getByRole('button', { name: '粗体' }).title).toBe('粗体 (Ctrl+B)');
-    expect(screen.getByRole('button', { name: '粗体' }).querySelector('.dashicons-editor-bold')).not.toBeNull();
-    expect(screen.getByRole('button', { name: '代码块' }).textContent).toContain('</>');
+    expect(screen.getByRole('button', { name: '粗体' }).querySelector('.easymde-toolbar-icon-bold')).not.toBeNull();
+    expect(screen.getByRole('button', { name: '引用' }).querySelector('.easymde-toolbar-icon-quote')).not.toBeNull();
+    expect(screen.getByRole('button', { name: '代码块' }).querySelector('.easymde-toolbar-icon-codefence')).not.toBeNull();
+    expect(screen.getByRole('button', { name: '标题' }).querySelector('.easymde-toolbar-glyph-heading')).not.toBeNull();
+    expect(screen.getByRole('button', { name: '标题' }).querySelector('.easymde-toolbar-chevron')).not.toBeNull();
+    expect(container.querySelector('.dashicons')).toBeNull();
     expect(container.querySelectorAll('.easymde-toolbar-divider')).toHaveLength(2);
+  });
+
+  it('preserves the documented Dashicons fallback for extension commands', () => {
+    const extensionBootstrap: ToolbarBootstrap = {
+      ...bootstrap,
+      commands: [{
+        id: 'extension-command',
+        label: '扩展命令',
+        icon: 'admin-generic',
+        surface: 'main',
+        action: 'wrap',
+        group: 'format'
+      }]
+    };
+    render(
+      <EditorToolbar
+        bootstrap={extensionBootstrap}
+        platform="win"
+        executeCommand={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole('button', { name: '扩展命令' })
+        .querySelector('.dashicons-admin-generic')
+    ).not.toBeNull();
+  });
+
+  it('preserves an extension icon when the public registry replaces a built-in command ID', () => {
+    const extensionBootstrap: ToolbarBootstrap = {
+      ...bootstrap,
+      commands: [{
+        id: 'bold',
+        label: '替换粗体',
+        icon: 'admin-generic',
+        surface: 'main',
+        action: 'wrap',
+        group: 'format'
+      }]
+    };
+    render(
+      <EditorToolbar
+        bootstrap={extensionBootstrap}
+        platform="win"
+        executeCommand={vi.fn()}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: '替换粗体' });
+    expect(button.querySelector('.dashicons-admin-generic')).not.toBeNull();
+    expect(button.querySelector('.easymde-toolbar-icon-bold')).toBeNull();
+  });
+
+  it('keeps the existing immersive icon behavior when an extension replaces a built-in command ID', () => {
+    const extensionBootstrap: ToolbarBootstrap = {
+      ...bootstrap,
+      commands: [{
+        id: 'bold',
+        label: '替换粗体',
+        icon: 'admin-generic',
+        surface: 'main',
+        action: 'wrap',
+        group: 'format'
+      }]
+    };
+    render(
+      <EditorToolbar
+        bootstrap={extensionBootstrap}
+        platform="win"
+        executeCommand={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    const button = screen.getByRole('button', { name: '替换粗体' });
+    expect(button.querySelector('svg')).not.toBeNull();
+    expect(button.querySelector('.dashicons-admin-generic')).toBeNull();
+    expect(button.querySelector('.easymde-toolbar-icon-bold')).toBeNull();
   });
 
   it('renders the reference immersive group boundaries and distinct code icons', () => {

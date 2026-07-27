@@ -44,6 +44,22 @@ function createPort(applyState = vi.fn()): FontControlsPort {
 }
 
 describe('FontControls', () => {
+  it('uses the shared typographic glyph and local dropdown chevron in ordinary mode', () => {
+    render(
+      <FontControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+      />
+    );
+    const trigger = screen.getByRole('button', { name: 'Font' });
+
+    expect(trigger.querySelector('.easymde-font-glyph')).not.toBeNull();
+    expect(trigger.querySelector('.easymde-toolbar-chevron')).not.toBeNull();
+    expect(trigger.querySelector('.dashicons')).toBeNull();
+  });
+
   it('renders the reference type icon instead of a Dashicon in immersive mode', () => {
     render(
       <FontControls

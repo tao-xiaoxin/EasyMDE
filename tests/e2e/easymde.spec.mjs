@@ -1388,6 +1388,18 @@ test.describe('EasyMDE editor workflows', () => {
     const visibleCommands = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.commands
       .filter(({ surface }) => 'main' === surface)
       .map(({ id, label, icon, action }) => ({ id, label, icon, action })));
+    const lucideCommandIds = new Set([
+      'bold',
+      'codefence',
+      'image',
+      'inlinecode',
+      'italic',
+      'link',
+      'orderedlist',
+      'quote',
+      'strike',
+      'unorderedlist'
+    ]);
     for (const command of visibleCommands) {
       const button = page.locator(`button[data-easymde-command="${command.id}"]:not([role="menuitem"])`);
       await expect(button).toHaveCount(1);
@@ -1396,14 +1408,37 @@ test.describe('EasyMDE editor workflows', () => {
       expect(title?.startsWith(command.label)).toBe(true);
       const iconSelector = 'copyWechat' === command.action
         ? '.easymde-wechat-glyph'
+        : lucideCommandIds.has(command.id)
+        ? `.easymde-toolbar-icon-${command.id}`
         : 'media-code' === command.icon || 'mediacode' === command.icon
         ? '.easymde-toolbar-text-icon'
         : `.dashicons-${command.icon}`;
-      await expect(button.locator(iconSelector)).toHaveCount(1);
+      const icon = button.locator(iconSelector);
+      await expect(icon).toHaveCount(1);
+      if (lucideCommandIds.has(command.id)) {
+        await expect(icon).toHaveAttribute('aria-hidden', 'true');
+        await expect(icon).toHaveAttribute('fill', 'none');
+        await expect(icon).toHaveAttribute('stroke-width', '2.1');
+        await expect(icon).toHaveCSS('width', '18px');
+        await expect(icon).toHaveCSS('height', '18px');
+      }
     }
 
     const headingLabel = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.strings.headings);
     const headingTrigger = page.getByRole('button', { name: headingLabel });
+    for (const trigger of [
+      headingTrigger,
+      page.getByRole('button', { name: expectedToolbarLabels.at(-2) }),
+      page.getByRole('button', { name: expectedToolbarLabels.at(-1) })
+    ]) {
+      const chevron = trigger.locator('.easymde-toolbar-chevron');
+      await expect(chevron).toHaveCount(1);
+      await expect(chevron).toHaveAttribute('aria-hidden', 'true');
+      await expect(chevron).toHaveAttribute('fill', 'none');
+      await expect(chevron).toHaveAttribute('stroke-width', '2.25');
+      await expect(chevron).toHaveCSS('width', '12px');
+      await expect(chevron).toHaveCSS('height', '12px');
+    }
     await headingTrigger.click();
     const headingCommands = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.commands
       .filter(({ surface }) => 'heading-menu' === surface)

@@ -501,12 +501,16 @@ export function AppearanceControls({
           </Fragment>
         ) : (
           <Fragment>
-            <span
-              className="dashicons dashicons-admin-customizer"
+            <Palette
+              className="easymde-toolbar-icon easymde-toolbar-icon-appearance"
+              size={18}
+              strokeWidth={2.1}
               aria-hidden="true"
             />
-            <span
-              className="dashicons dashicons-arrow-down-alt2"
+            <ChevronDown
+              className="easymde-toolbar-chevron"
+              size={12}
+              strokeWidth={2.25}
               aria-hidden="true"
             />
           </Fragment>

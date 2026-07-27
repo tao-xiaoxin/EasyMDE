@@ -54,7 +54,7 @@ test('root package exposes the production frontend build and includes it in the 
   );
   assert.equal(
     packageJson.scripts['frontend:check'],
-    'npm run lint:frontend && npm run typecheck:frontend && npm run test:frontend && npm run build:frontend-contract && npm run check:frontend-production'
+    'npm run icons:check && npm run lint:frontend && npm run typecheck:frontend && npm run test:frontend && npm run build:frontend-contract && npm run check:frontend-production'
   );
 });
 

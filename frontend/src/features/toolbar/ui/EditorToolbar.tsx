@@ -61,6 +61,24 @@ const IMMERSIVE_ICONS: Readonly<Record<string, LucideIcon>> = {
   unorderedlist: List
 };
 
+type OrdinaryBuiltInIcon = Readonly<{
+  sourceIcon: string;
+  component: LucideIcon;
+}>;
+
+const ORDINARY_BUILT_IN_ICONS: Readonly<Record<string, OrdinaryBuiltInIcon>> = {
+  bold: { sourceIcon: 'editor-bold', component: Bold },
+  codefence: { sourceIcon: 'media-code', component: Code2 },
+  image: { sourceIcon: 'format-image', component: Image },
+  inlinecode: { sourceIcon: 'editor-code', component: Code },
+  italic: { sourceIcon: 'editor-italic', component: Italic },
+  link: { sourceIcon: 'admin-links', component: Link2 },
+  orderedlist: { sourceIcon: 'editor-ol', component: ListOrdered },
+  quote: { sourceIcon: 'format-quote', component: Quote },
+  strike: { sourceIcon: 'editor-strikethrough', component: Strikethrough },
+  unorderedlist: { sourceIcon: 'editor-ul', component: List }
+};
+
 function commandIcon(
   command: ToolbarCommand,
   variant: 'default' | 'immersive'
@@ -77,9 +95,26 @@ function commandIcon(
       />
     );
   }
+
+  const builtInIcon =
+    'default' === variant ? ORDINARY_BUILT_IN_ICONS[command.id] : undefined;
+  if (builtInIcon?.sourceIcon === command.icon) {
+    const Icon = builtInIcon.component;
+    return (
+      <Icon
+        className={`easymde-toolbar-icon easymde-toolbar-icon-${command.id}`}
+        size={18}
+        strokeWidth={2.1}
+        aria-hidden="true"
+      />
+    );
+  }
   if ('media-code' === command.icon || 'mediacode' === command.icon) {
     return (
-      <span className="easymde-toolbar-text-icon" aria-hidden="true">
+      <span
+        className={`easymde-toolbar-text-icon${'default' === variant ? ' easymde-toolbar-glyph-code' : ''}`}
+        aria-hidden="true"
+      >
         {'</>'}
       </span>
     );
@@ -87,7 +122,10 @@ function commandIcon(
 
   if ('heading' === command.icon) {
     return (
-      <span className="easymde-toolbar-text-icon" aria-hidden="true">
+      <span
+        className={`easymde-toolbar-text-icon${'default' === variant ? ' easymde-toolbar-glyph-heading' : ''}`}
+        aria-hidden="true"
+      >
         H
       </span>
     );
@@ -300,10 +338,22 @@ function HeadingMenu({
           setIsOpen(true);
         }}
       >
-        <span className="easymde-toolbar-text-icon" aria-hidden="true">
+        <span
+          className={`easymde-toolbar-text-icon${'default' === variant ? ' easymde-toolbar-glyph-heading' : ''}`}
+          aria-hidden="true"
+        >
           H
         </span>
-        <ChevronDown size={9} strokeWidth={2.5} aria-hidden="true" />
+        {'immersive' === variant ? (
+          <ChevronDown size={9} strokeWidth={2.5} aria-hidden="true" />
+        ) : (
+          <ChevronDown
+            className="easymde-toolbar-chevron"
+            size={12}
+            strokeWidth={2.25}
+            aria-hidden="true"
+          />
+        )}
       </button>
       <div
         className={`easymde-toolbar-popover${'immersive' === variant ? ' is-immersive-heading-menu' : ''}`}

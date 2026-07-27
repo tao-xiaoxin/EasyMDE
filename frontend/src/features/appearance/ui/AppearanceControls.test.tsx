@@ -58,6 +58,24 @@ function createPort(overrides: Partial<AppearancePort> = {}): AppearancePort {
 }
 
 describe('AppearanceControls', () => {
+  it('uses the local palette icon and shared dropdown chevron in ordinary mode', () => {
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+      />
+    );
+    const trigger = screen.getByRole('button', { name: 'Appearance' });
+
+    expect(
+      trigger.querySelector('.easymde-toolbar-icon-appearance')
+    ).not.toBeNull();
+    expect(trigger.querySelector('.easymde-toolbar-chevron')).not.toBeNull();
+    expect(trigger.querySelector('.dashicons')).toBeNull();
+  });
+
   it('renders the reference palette trigger and live theme accent in immersive mode', () => {
     render(
       <AppearanceControls

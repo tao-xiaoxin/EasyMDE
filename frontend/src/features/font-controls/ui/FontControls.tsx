@@ -340,8 +340,10 @@ export function FontControls({
             >
               A
             </span>
-            <span
-              className="dashicons dashicons-arrow-down-alt2"
+            <ChevronDown
+              className="easymde-toolbar-chevron"
+              size={12}
+              strokeWidth={2.25}
               aria-hidden="true"
             />
           </Fragment>

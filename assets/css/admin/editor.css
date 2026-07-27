@@ -1172,6 +1172,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
     font-family: inherit;
 }
 
+.easymde-editor:not(.is-immersive) .easymde-source-react .cm-scroller {
+    line-height: inherit;
+}
+
 .easymde-source-react .cm-content {
     box-sizing: border-box;
     min-height: 100%;

@@ -43,6 +43,7 @@ Useful local commands:
 
 ```bash
 npm install
+npm run icons:check
 npm run assets:check
 npm run lint:frontend
 npm run frontend:check
@@ -52,7 +53,7 @@ npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production normal-editor and public code-copy comparisons. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, and CodeMirror 6 on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production normal-editor and public code-copy comparisons. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
 The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds the Editor into `.cache/easymde-frontend-production-check/` and public code copy into `.cache/easymde-code-copy-production-check/`, validates both outputs, and compares each complete file set and its bytes with the committed `assets/build/` and `assets/build/code-copy/` runtimes without rewriting them. `npm run build:frontend` is the explicit maintainer command that regenerates both committed Vite/WordPress Manifest pairs, hashed scripts, and matching `.asset.php` dependency metadata. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The Editor entry retains the stable `easymde-admin-editor-toolbar` handle and declares the WordPress-owned `media-editor`, `wp-api-fetch`, `wp-element`, and `wp-hooks` runtimes it consumes. The independent public TypeScript entry retains the stable `easymde-code-copy` handle and has no WordPress script dependency.
 

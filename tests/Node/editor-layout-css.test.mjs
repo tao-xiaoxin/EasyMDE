@@ -19,6 +19,13 @@ test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () =
   );
 });
 
+test('CodeMirror source lines inherit the ordinary editor line height', () => {
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-source-react \.cm-scroller\s*\{[^}]*line-height:\s*inherit;/s
+  );
+});
+
 test('withdrawn ordinary editor surfaces have no retained CSS runtime', () => {
   for (const className of [
     'easymde-editor-context-bar',

@@ -169,6 +169,7 @@ final class ToolbarRegistry {
 					'action'             => 'heading',
 					'group'              => 'heading',
 					'level'              => $level,
+					'usesLevelLabel'     => true,
 					'defaultShortcutWin' => 'Ctrl+' . $level,
 					'defaultShortcutMac' => 'Cmd+' . $level,
 				)

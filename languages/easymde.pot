@@ -15,219 +15,649 @@ msgid ""
 "your site administrator."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:286
-msgid "Preview"
+#: src/Admin/AdminAssets.php:302
+msgid "Auto save"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:287
+#: src/Admin/AdminAssets.php:303
+msgid "Automatically save a local draft"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:304
+msgid "Auto save is enabled"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:305
+msgid "Article outline"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:306
+msgid "Cancel"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:307
+msgid "Close"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:308
+msgid "Column"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:309
+msgid "Edit"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:310
+msgid "Edit mode"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:311
+msgid "Editor settings"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:312
+msgid "Enter immersive writing"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:313
+msgid "Expand"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:314
+msgid "Exit immersive writing"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:315
+msgid "Close outline"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:316
+msgid "History"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:317
+msgid "No revisions are available."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:318
+msgid "Revisions could not be loaded."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:319
+msgid "Loading revisions..."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:320
+msgid "All"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:321
+msgid "Revision history"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:322
+msgid "Immersive writing"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:323
+msgid "Insert"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:324
+msgid "Insert table"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:325
+msgid "Line"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:326
+msgid "Manual save"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:327
+msgid "More actions"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:328 src/Admin/AdminAssets.php:412
 msgid "Markdown"
 msgstr ""
 
+#: src/Admin/AdminAssets.php:329
+msgid "No headings"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:330
+msgid "Outline"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:331
+msgid "Show heading navigation on the left"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:332 src/Admin/AdminAssets.php:411
+msgid "Preview"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:333
+msgid "Changes recorded"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:334
+msgid "Content loaded"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:335
+msgid "Editable"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:336
+msgid "Visual article editor"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:337
+msgid "Lock as read only"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:338
+msgid "Read only"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:339
+msgid "Unlock and edit"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:340
+msgid "Preview mode"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:341
+msgid "Publish article"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:342
+msgid "Restore revision"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:343
+msgid ""
+"Unsaved changes will be lost when WordPress restores this revision. Continue?"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:344
+msgid "Restore this revision"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:345
+msgid "Resize article outline"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:346
+msgid "Resize editor and Preview"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:347
+msgid "Saved"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:348
+msgid "Settings"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:349
+msgid "Open outline"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:350
+msgid "Split"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:351
+msgid "Split mode"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:352
+msgid "Split preview"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:353
+msgid "Show live preview by default"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:354
+msgid "Synchronized scrolling"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:355
+msgid "Keep the editor and preview in sync"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:356
+msgid "Table"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:357
+msgid "Columns"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:358
+msgid "Rows"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:359
+msgid "Theme"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:360
+msgid "Theme settings"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:361
+msgid "Add tags"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:362
+msgid "Categories"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:363
+msgid "Choose the sections this article belongs to."
+msgstr ""
+
+#. translators: %s: Number of selected categories.
+#: src/Admin/AdminAssets.php:365
+#, php-format
+msgid "Selected: %s"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:366
+msgid "Close publish dialog"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:367
+msgid "Collapse"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:368
+msgid "Continue adding..."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:369
+msgid "Excerpt"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:370
+msgid ""
+"Write a short excerpt for search results, article lists, and sharing "
+"previews..."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:371
+msgid "Featured image"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:372
+msgid "Landscape images are recommended"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:374
+msgid "Supports JPG, PNG, and WebP, max 5MB"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:375
+msgid "Nothing is written to WordPress before submission."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:376
+msgid "Open the article page after publishing"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:377
+msgid ""
+"After submission, open the article page with the same article styling as the "
+"current Preview."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:378
+msgid "Open the article page after updating"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:379
+msgid "Password"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:380
+msgid "Enter access password"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:381
+msgid "Enter an access password before submitting."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:382
+msgid "Ready to publish"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:383
+msgid "Private"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:384
+msgid "Only site administrators and editors can view this article."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:385
+msgid "Public"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:386
+msgid ""
+"Confirm the article details to publish it to the current WordPress site."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:387
+msgid ""
+"WordPress did not accept the publish request. Check the page state and try "
+"again."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:388
+msgid "Loading preview..."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:389
+msgid "Publish options"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:390
+msgid "Remove"
+msgstr ""
+
+#. translators: %s: Tag name.
+#: src/Admin/AdminAssets.php:392
+#, php-format
+msgid "Remove tag: %s"
+msgstr ""
+
 #: src/Admin/AdminAssets.php:393
-msgid "Markdown source"
+msgid "Replace"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:394
-msgid "Start writing Markdown to preview the article."
+msgid "Select featured image"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:395
-msgid "Rendering preview..."
+msgid "Stick to the top of the blog"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:396
-msgid "Preview failed. Please keep writing; saving is not affected."
+msgid "Tags"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:397
-msgid "Insert Media"
+msgid "Press Enter or comma to add a tag."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:398
-msgid "Markdown toolbar"
+msgid "Update article"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:399
-msgid "Appearance"
+msgid "Confirm these changes to update the current WordPress article."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:400
-msgid "Font"
+msgid "Update existing article"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:401
-msgid "Headings"
+msgid "Visibility"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:402
-msgid "Article theme"
+msgid "Article title"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:403
-msgid "Code theme"
+msgid "Unsaved"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:404
-msgid "Custom CSS"
+msgid "View modes"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:405
-msgid "Custom CSS theme"
+#: src/Admin/AdminAssets.php:405 src/Support/ToolbarRegistry.php:291
+msgid "Copy to WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:406
-msgid "Named custom CSS"
+#: src/Admin/AdminAssets.php:406 src/Frontend/FrontendAssets.php:77
+msgid "Copied"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:407
-msgid "CSS name"
+msgid "Word count"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:408
+msgid "Show words, characters, and reading time beside the title"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:576
+msgid "Markdown source"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:577
+msgid "Start writing Markdown to preview the article."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:578
+msgid "Rendering preview..."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:579
+msgid "Preview failed. Please keep writing; saving is not affected."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:580
+msgid "Insert Media"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:581
+msgid "Markdown toolbar"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:582
+msgid "Appearance"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:583
+msgid "Font"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:584
+msgid "Headings"
+msgstr ""
+
+#. translators: %s: Heading level from 1 through 6.
+#: src/Admin/AdminAssets.php:586
+#, php-format
+msgid "Heading %s"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:587
+msgid "Heading level"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:588
+msgid "Article theme"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:589
+msgid "Code theme"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:590
+msgid "Custom CSS"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:591
+msgid "Custom CSS theme"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:592
+msgid "Named custom CSS"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:593
+msgid "CSS name"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:594
 msgid "Save CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:409
+#: src/Admin/AdminAssets.php:595
 msgid "Saved CSS."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:410
+#: src/Admin/AdminAssets.php:596
 msgid "CSS save failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:411
+#: src/Admin/AdminAssets.php:597
 msgid "Custom font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:412
+#: src/Admin/AdminAssets.php:598
 msgid "Windows font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:413
+#: src/Admin/AdminAssets.php:599
 msgid "Apple font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:414
+#: src/Admin/AdminAssets.php:600
 msgid "Serif font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:415
+#: src/Admin/AdminAssets.php:601
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:416
+#: src/Admin/AdminAssets.php:602
 msgid "Local draft saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:417
+#: src/Admin/AdminAssets.php:603
 msgid "A newer local draft is available."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:418
+#: src/Admin/AdminAssets.php:604
 msgid "Restore draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:419
+#: src/Admin/AdminAssets.php:605
 msgid "Discard draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:420
+#: src/Admin/AdminAssets.php:606
 msgid "Draft restored."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:421
+#: src/Admin/AdminAssets.php:607
 msgid "Draft discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:422
+#: src/Admin/AdminAssets.php:608
 msgid "Local draft could not be read."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:423
+#: src/Admin/AdminAssets.php:609
 msgid "Local draft could not be saved."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:424
+#: src/Admin/AdminAssets.php:610
 msgid "Local draft could not be discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:425
+#: src/Admin/AdminAssets.php:611
 msgid "A different local draft was saved in another tab."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:426 src/Frontend/FrontendAssets.php:70
+#: src/Admin/AdminAssets.php:612 src/Frontend/FrontendAssets.php:75
 msgid "Rendering failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:427
+#: src/Admin/AdminAssets.php:613
 msgid "Copied preview for WeChat."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:428
+#: src/Admin/AdminAssets.php:614
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:429
+#: src/Admin/AdminAssets.php:615
 msgid "Clipboard access is not available in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:430
+#: src/Admin/AdminAssets.php:616
 msgid "Uploading pasted image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:431
+#: src/Admin/AdminAssets.php:617
 msgid "Pasted image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:432
+#: src/Admin/AdminAssets.php:618
 msgid "Pasted image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:433
+#: src/Admin/AdminAssets.php:619
 msgid "Pasted image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:434
+#: src/Admin/AdminAssets.php:620
 msgid "Uploading dropped image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:435
+#: src/Admin/AdminAssets.php:621
 msgid "Dropped image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:436
+#: src/Admin/AdminAssets.php:622
 msgid "Dropped image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:437
+#: src/Admin/AdminAssets.php:623
 msgid "Dropped image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:438
+#: src/Admin/AdminAssets.php:624
 msgid "alt text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:439
+#: src/Admin/AdminAssets.php:625
 msgid "image"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:440
+#: src/Admin/AdminAssets.php:626
 msgid "The WordPress media library could not be opened."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:441
+#: src/Admin/AdminAssets.php:627
 msgid "link text"
 msgstr ""
 
-#: src/Admin/EditorSaveHandler.php:165
+#: src/Admin/EditorSaveHandler.php:379
 msgid ""
 "EasyMDE cannot save this post because Markdown rendering is unavailable. "
 "Install Composer dependencies and try again."
 msgstr ""
 
-#: src/Admin/EditorSaveHandler.php:166
+#: src/Admin/EditorSaveHandler.php:380
 msgid "EasyMDE renderer unavailable"
 msgstr ""
 
@@ -267,6 +697,18 @@ msgstr ""
 
 #: src/Admin/SettingsPage.php:230 templates/admin/settings-page.php:61
 msgid "Windows / Linux"
+msgstr ""
+
+#: src/Frontend/FrontendAssets.php:76
+msgid "Copy code"
+msgstr ""
+
+#: src/Frontend/FrontendAssets.php:78
+msgid "Code copied"
+msgstr ""
+
+#: src/Frontend/FrontendAssets.php:79
+msgid "Unable to copy code. Try again."
 msgstr ""
 
 #: src/Rest/CustomCssController.php:114
@@ -322,7 +764,7 @@ msgstr ""
 msgid "The selected revision is too large to preview."
 msgstr ""
 
-#: src/Rest/RevisionController.php:183
+#: src/Rest/RevisionController.php:193
 msgid "The requested revision could not be found."
 msgstr ""
 
@@ -370,40 +812,36 @@ msgstr ""
 msgid "Heading 6"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:181
+#: src/Support/ToolbarRegistry.php:182
 msgid "Quote"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:195
+#: src/Support/ToolbarRegistry.php:196
 msgid "Unordered list"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:209
+#: src/Support/ToolbarRegistry.php:210
 msgid "Ordered list"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:223
+#: src/Support/ToolbarRegistry.php:224
 msgid "Inline code"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:238
+#: src/Support/ToolbarRegistry.php:239
 msgid "Code fence"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:251
+#: src/Support/ToolbarRegistry.php:252
 msgid "Math block"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:264
+#: src/Support/ToolbarRegistry.php:265
 msgid "Link"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:277
+#: src/Support/ToolbarRegistry.php:278
 msgid "Image"
-msgstr ""
-
-#: src/Support/ToolbarRegistry.php:290
-msgid "Copy to WeChat"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:15
@@ -768,3 +1206,35 @@ msgstr ""
 #, php-format
 msgid "Default: %s"
 msgstr ""
+
+#. translators: %s: Locale-formatted character count.
+#: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:26
+#, javascript-format
+msgid "%s character"
+msgid_plural "%s characters"
+msgstr[0] ""
+msgstr[1] ""
+
+#. translators: %s: Locale-formatted estimated reading time in minutes.
+#: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:32
+#, javascript-format
+msgid "About %s minute"
+msgid_plural "About %s minutes"
+msgstr[0] ""
+msgstr[1] ""
+
+#. translators: %s: Locale-formatted revision count.
+#: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:38
+#, javascript-format
+msgid "%s revision"
+msgid_plural "%s revisions"
+msgstr[0] ""
+msgstr[1] ""
+
+#. translators: %s: Locale-formatted word count.
+#: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:43
+#, javascript-format
+msgid "%s word"
+msgid_plural "%s words"
+msgstr[0] ""
+msgstr[1] ""

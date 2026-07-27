@@ -24,15 +24,21 @@ const composerPurposes = {
 
 export const bundledFrontendPackages = {
   '@codemirror/commands': 'CodeMirror editing commands, keymaps, and undo history.',
+  '@codemirror/lang-markdown': 'Markdown language parsing and syntax support for CodeMirror.',
   '@codemirror/language': 'Language-aware command infrastructure used by CodeMirror commands.',
   '@codemirror/state': 'CodeMirror document, selection, transaction, and editor state.',
   '@codemirror/view': 'CodeMirror browser editor view and input handling.',
   '@lezer/common': 'Shared syntax-tree infrastructure required by CodeMirror.',
   '@lezer/highlight': 'Highlighting infrastructure required by CodeMirror language support.',
   '@lezer/lr': 'LR parser infrastructure required by CodeMirror language support.',
+  '@lezer/markdown': 'Markdown parser used by CodeMirror language support.',
   '@marijn/find-cluster-break': 'Unicode grapheme boundary handling used by CodeMirror state.',
   crelt: 'DOM element construction used by CodeMirror view.',
+  diff: 'Character-level change mapping used to preserve canonical Markdown during visual editing.',
+  'lucide-react': 'Locked build-time icon nodes used by the immersive editor interface.',
   'style-mod': 'Scoped runtime style modules used by CodeMirror view.',
+  turndown: 'Converts the editable Preview DOM into a visual Markdown change model.',
+  'turndown-plugin-gfm': 'GFM table and task-list conversion for visual Markdown editing.',
   'w3c-keyname': 'Cross-browser keyboard key normalization used by CodeMirror view.'
 };
 

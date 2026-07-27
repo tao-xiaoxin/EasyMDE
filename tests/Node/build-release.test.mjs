@@ -105,6 +105,7 @@ function createAssetSourceFiles(root) {
       "Asset::url( 'assets/js/frontend/bootstrap.js' );",
       "Asset::url( 'assets/css/frontend/base.css' );",
       "Asset::url( 'assets/css/frontend/code-frame.css' );",
+      "Asset::url( 'assets/css/frontend/code-copy.css' );",
       "Asset::url( 'assets/vendor/highlight/highlight.min.js' );",
       "Asset::url( 'assets/css/frontend/math.css' );",
       "Asset::url( 'assets/vendor/katex/katex.min.css' );",
@@ -255,6 +256,9 @@ function createCompleteFixture(root) {
   const frontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
   const frontendScript = 'assets/admin-editor-fixture.js';
   const frontendMetadata = 'assets/admin-editor-fixture.asset.php';
+  const codeCopyEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
+  const codeCopyScript = 'assets/frontend-code-copy-fixture.js';
+  const codeCopyMetadata = 'assets/frontend-code-copy-fixture.asset.php';
 
   writeText(
     root,
@@ -277,7 +281,7 @@ function createCompleteFixture(root) {
           handle: 'easymde-admin-editor-toolbar',
           file: frontendScript,
           asset: frontendMetadata,
-          dependencies: ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks'],
+          dependencies: ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
           resources: []
         }
       }
@@ -287,7 +291,40 @@ function createCompleteFixture(root) {
   writeText(
     root,
     `assets/build/${frontendMetadata}`,
-    "<?php return array( 'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks' ), 'version' => '0123456789abcdef' );\n"
+    "<?php return array( 'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ), 'version' => '0123456789abcdef' );\n"
+  );
+  writeText(
+    root,
+    'assets/build/code-copy/manifest.json',
+    JSON.stringify({
+      [codeCopyEntry]: {
+        file: codeCopyScript,
+        isEntry: true,
+        src: codeCopyEntry
+      }
+    })
+  );
+  writeText(
+    root,
+    'assets/build/code-copy/wordpress-manifest.json',
+    JSON.stringify({
+      schemaVersion: 1,
+      entries: {
+        [codeCopyEntry]: {
+          handle: 'easymde-code-copy',
+          file: codeCopyScript,
+          asset: codeCopyMetadata,
+          dependencies: [],
+          resources: []
+        }
+      }
+    })
+  );
+  writeText(root, `assets/build/code-copy/${codeCopyScript}`, 'window.addEventListener("pagehide", function () {});\n');
+  writeText(
+    root,
+    `assets/build/code-copy/${codeCopyMetadata}`,
+    "<?php return array( 'dependencies' => array(), 'version' => 'fedcba9876543210' );\n"
   );
 
   for (const requirement of collectReleaseRequirements(root)) {
@@ -368,10 +405,16 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/languages/easymde.pot'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.po'));
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN.mo'));
+    assert.ok(entries.includes('easymde/languages/easymde-zh_CN-easymde-admin-editor-toolbar.json'));
     assert.ok(entries.includes('easymde/assets/build/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/build/code-copy/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/code-copy\/assets\/frontend-code-copy-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/code-copy\/assets\/frontend-code-copy-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/js/frontend/bootstrap.js'));
+    assert.equal(entries.includes('easymde/assets/js/frontend/code-copy.js'), false);
+    assert.ok(entries.includes('easymde/assets/css/frontend/code-copy.css'));
     assert.ok(entries.includes('easymde/assets/vendor/mermaid/LICENSE'));
     assert.ok(entries.includes('easymde/vendor/league/commonmark/runtime/Parser.php'));
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/tests/bootstrap.php')), false);
@@ -457,6 +500,26 @@ test('release build fails when translation files are missing', () => {
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /languages\/easymde-zh_CN\.mo/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build rejects unmanaged JavaScript translation catalogs', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    writeText(
+      root,
+      'languages/easymde-zh_CN-0123456789abcdef0123456789abcdef.json',
+      '{}\n'
+    );
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /unexpected JavaScript translation catalogs:[\s\S]*0123456789abcdef/
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -555,7 +618,10 @@ test('release build fails when required runtime assets or templates are missing'
     rmSync(join(root, 'assets/vendor/highlight/styles/github.min.css'), { force: true });
     rmSync(join(root, 'assets/vendor/mermaid/LICENSE'), { force: true });
     rmSync(join(root, 'assets/js/frontend/bootstrap.js'), { force: true });
+    rmSync(join(root, 'assets/css/frontend/code-copy.css'), { force: true });
     rmSync(join(root, 'assets/build/assets/admin-editor-fixture.js'), { force: true });
+    rmSync(join(root, 'assets/build/code-copy/assets/frontend-code-copy-fixture.js'), { force: true });
+    rmSync(join(root, 'assets/images/easymde-editor-icon.png'), { force: true });
     rmSync(join(root, 'assets/images/tech-blue-code-window.svg'), { force: true });
     rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
 
@@ -567,7 +633,10 @@ test('release build fails when required runtime assets or templates are missing'
     assert.ok(missing.includes('assets/vendor/highlight/styles/github.min.css'));
     assert.ok(missing.includes('assets/vendor/mermaid/LICENSE'));
     assert.ok(missing.includes('assets/js/frontend/bootstrap.js'));
+    assert.ok(missing.includes('assets/css/frontend/code-copy.css'));
     assert.ok(missing.includes('assets/build/assets/admin-editor-fixture.js'));
+    assert.ok(missing.includes('assets/build/code-copy/assets/frontend-code-copy-fixture.js'));
+    assert.ok(missing.includes('assets/images/easymde-editor-icon.png'));
     assert.ok(missing.includes('assets/images/tech-blue-code-window.svg'));
     assert.ok(missing.includes('THIRD-PARTY-NOTICES.md'));
 

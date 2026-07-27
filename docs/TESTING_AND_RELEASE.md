@@ -52,9 +52,9 @@ npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and a read-only production normal-editor comparison. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, and CodeMirror 6 on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+`npm run frontend:check` runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production normal-editor and public code-copy comparisons. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, and CodeMirror 6 on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
-The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds into `.cache/easymde-frontend-production-check/`, validates that output, and compares its complete file set and bytes with the committed `assets/build/` runtime without rewriting it. `npm run build:frontend` is the explicit maintainer command that regenerates the committed Vite Manifest, WordPress Manifest, hashed Editor script, and matching `.asset.php` dependency metadata. Both validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The production entry retains the stable `easymde-admin-editor-toolbar` handle and declares the WordPress-owned `media-editor`, `wp-api-fetch`, `wp-element`, and `wp-hooks` runtimes it consumes.
+The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds the Editor into `.cache/easymde-frontend-production-check/` and public code copy into `.cache/easymde-code-copy-production-check/`, validates both outputs, and compares each complete file set and its bytes with the committed `assets/build/` and `assets/build/code-copy/` runtimes without rewriting them. `npm run build:frontend` is the explicit maintainer command that regenerates both committed Vite/WordPress Manifest pairs, hashed scripts, and matching `.asset.php` dependency metadata. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The Editor entry retains the stable `easymde-admin-editor-toolbar` handle and declares the WordPress-owned `media-editor`, `wp-api-fetch`, `wp-element`, and `wp-hooks` runtimes it consumes. The independent public TypeScript entry retains the stable `easymde-code-copy` handle and has no WordPress script dependency.
 
 Translation maintenance commands are:
 
@@ -98,7 +98,7 @@ KaTeX, font, license, and notice destination with its declared local source;
 npm-backed sources must also exist in the root dependency and lockfile
 metadata. Validation fails on missing, changed, or unexpected managed files.
 
-The build verifies version consistency across `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json`. It also fails if required runtime dependencies, local runtime assets, registered theme assets, production Frontend manifests and hashed Editor artifacts, translation files, or third-party notices are missing, or if the generated third-party notice content is stale. CodeMirror and its compiled runtime dependencies are listed with their full license notices in `THIRD-PARTY-NOTICES.md`.
+The build verifies version consistency across `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json`. It also fails if required runtime dependencies, local runtime assets, registered theme assets, either production Frontend manifest pair, the hashed Editor or public code-copy artifacts, translation files, or third-party notices are missing, or if the generated third-party notice content is stale. CodeMirror and its compiled runtime dependencies are listed with their full license notices in `THIRD-PARTY-NOTICES.md`.
 
 The release build requires Composer runtime dependencies only. If Composer development packages are installed under `vendor/`, rebuild with Composer `--no-dev` before packaging.
 
@@ -109,7 +109,7 @@ The CI release package job also creates source snapshots from the checked-out tr
 
 Those source archives use `EasyMDE-<version>/` as their root directory. They are separate from the installable runtime plugin ZIP and are not consumed by Plugin Check or E2E.
 
-The installable plugin ZIP includes the committed production artifacts under `assets/build/` and excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
+The installable plugin ZIP includes the committed Editor artifacts under `assets/build/` and the public code-copy artifacts under `assets/build/code-copy/`; it excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
 
 CI uploads the release outputs as separate Actions artifacts:
 
@@ -156,15 +156,18 @@ npm run test:e2e
 
 Use the exact canonical WordPress origin configured for the test site; changing
 `localhost` to `127.0.0.1` or vice versa can invalidate WordPress login cookies.
-The suite covers the complete ordinary Editor Root: absence of Legacy/Focus
-assets, CodeMirror/IME/Undo/synchronized scrolling/uploads, Preview stale
-results and enhancements, Local Draft recovery and native Save, Appearance and
-Custom CSS, the fixed 50/50 desktop split and historical responsive/RTL/keyboard
-layout, WordPress-native Publishing with unknown extension fields, native
-revision navigation, and WeChat Clipboard success/failure. It also verifies
-withdrawn Outline/statistics/view/resizer/status/React Publish/React Revision
-surfaces and Focus assets are absent, and ordinary supported posts remain
-zero-write on open.
+The suite covers the complete ordinary Editor Root and the Issue #126 immersive
+composition: absence of Legacy Focus assets, CodeMirror/IME/Undo/synchronized
+scrolling/uploads, Preview stale results and enhancements, Local Draft recovery
+and native Save, Appearance and Custom CSS, the fixed 50/50 desktop split and
+historical responsive/RTL/keyboard layout, immersive
+Outline/statistics/view modes/table/history/Escape behavior,
+WordPress-native Publishing with unknown extension fields, native revision
+navigation, and WeChat Clipboard success/failure. It also verifies that the
+immersive surface reuses the single React document and Preview owners, keeps
+AI controls absent, exposes only the five real non-AI Settings preferences,
+loads no Legacy Focus assets, and remains zero-write until the user invokes a
+legitimate WordPress mutation.
 
 ## Release Script Safety Guards
 
@@ -184,7 +187,8 @@ The current release package includes runtime plugin files such as:
 - `easymde.php`, `uninstall.php`, and `readme.txt`;
 - root `README.md`, `SECURITY.md`, `UPGRADING.md`, `THIRD-PARTY-NOTICES.md`, and `LICENSE`;
 - `composer.json` and `composer.lock`;
-- `includes/`, `src/`, `templates/`, `assets/`, `languages/`, and runtime `vendor/`.
+- `includes/`, `src/`, `templates/`, `assets/` including both manifest-backed
+  production browser entries, `languages/`, and runtime `vendor/`.
 
 The package must include Composer runtime dependencies, local Highlight.js/Mermaid/KaTeX assets, KaTeX fonts, registered article and code themes, bundled language files, templates, source files, and generated third-party notices.
 

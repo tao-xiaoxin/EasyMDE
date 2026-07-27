@@ -314,6 +314,14 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $this->assertSame('manual', $list->get_data()['revisions'][0]['type']);
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/', $list->get_data()['revisions'][0]['date']);
         $this->assertNotSame('', $list->get_data()['revisions'][0]['date_label']);
+        $restore_url = $list->get_data()['revisions'][0]['restore_url'];
+        $restore_query = array();
+        wp_parse_str((string) wp_parse_url($restore_url, PHP_URL_QUERY), $restore_query);
+        $this->assertStringStartsWith(admin_url('revision.php'), $restore_url);
+        $this->assertStringNotContainsString('&amp;', $restore_url);
+        $this->assertSame('restore', $restore_query['action']);
+        $this->assertSame((string) $revision_id, $restore_query['revision']);
+        $this->assertSame(1, wp_verify_nonce($restore_query['_wpnonce'], 'restore-post_' . $revision_id));
         $this->assertSame(200, $detail->get_status());
         $this->assertStringContainsString('<h1', $detail->get_data()['html']);
         $this->assertStringContainsString('Revision source', $detail->get_data()['html']);
@@ -323,6 +331,152 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $this->assertSame($before_post->post_modified_gmt, get_post($post_id)->post_modified_gmt);
         $this->assertSame($before_meta, get_post_meta($post_id));
         $this->assertSame($before_revisions, count(wp_get_post_revisions($post_id)));
+    }
+
+    public function test_revision_history_lists_and_previews_wordpress_autosave_markdown()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'administrator'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_author' => $user_id,
+                'post_status' => 'publish',
+                'post_title' => 'Published title',
+                'post_content' => '<p>Published content</p>',
+            )
+        );
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Published Markdown');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
+
+        wp_set_current_user($user_id);
+        $previous_post = $_POST;
+        $_POST = array(
+            'data' => array(
+                'wp_autosave' => array(
+                    'post_id' => (string) $post_id,
+                    'post_type' => 'post',
+                    '_wpnonce' => wp_create_nonce('update-post_' . $post_id),
+                    '_easymde_enabled' => '1',
+                    '_easymde_markdown' => "# Autosaved Markdown\n\nAutosave preview marker.",
+                    '_easymde_markdown_theme' => 'default',
+                ),
+            ),
+        );
+
+        try {
+            $autosave_id = wp_create_post_autosave(
+                array(
+                    'post_ID' => $post_id,
+                    'post_type' => 'post',
+                    'post_author' => $user_id,
+                    'post_title' => 'Autosaved title',
+                    'post_content' => "# Autosaved Markdown\n\nAutosave preview marker.",
+                    'post_excerpt' => '',
+                )
+            );
+        } finally {
+            $_POST = $previous_post;
+        }
+
+        $this->assertIsInt($autosave_id);
+        $this->assertGreaterThan(0, $autosave_id);
+        $this->assertSame($post_id, wp_is_post_autosave($autosave_id));
+
+        $list = rest_do_request(new WP_REST_Request('GET', '/easymde/v1/posts/' . $post_id . '/revisions'));
+        $detail = rest_do_request(new WP_REST_Request('GET', '/easymde/v1/posts/' . $post_id . '/revisions/' . $autosave_id));
+
+        $this->assertSame(200, $list->get_status());
+        $listed = array_values(
+            array_filter(
+                $list->get_data()['revisions'],
+                static function ($revision) use ($autosave_id) {
+                    return $autosave_id === $revision['id'];
+                }
+            )
+        );
+        $this->assertCount(1, $listed);
+        $this->assertSame('auto', $listed[0]['type']);
+        $this->assertSame(200, $detail->get_status());
+        $this->assertStringContainsString('Autosaved Markdown', $detail->get_data()['html']);
+        $this->assertStringContainsString('Autosave preview marker.', $detail->get_data()['html']);
+        $this->assertSame(
+            "# Autosaved Markdown\n\nAutosave preview marker.",
+            get_post_meta($autosave_id, PostDocument::META_MARKDOWN, true)
+        );
+    }
+
+    public function test_wordpress_autosave_materializes_empty_markdown_and_custom_css_snapshot()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'administrator'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_author' => $user_id,
+                'post_status' => 'publish',
+                'post_content' => '<p>Published content</p>',
+            )
+        );
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Previous Markdown');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
+        update_user_meta(
+            $user_id,
+            'easymde_custom_css_library',
+            array(
+                array(
+                    'id' => 'autosave-css',
+                    'name' => 'Autosave CSS',
+                    'css' => '.easymde-preview { color: #123456; }',
+                    'updatedAt' => 1,
+                ),
+            )
+        );
+
+        wp_set_current_user($user_id);
+        $previous_post = $_POST;
+        $_POST = array(
+            'data' => array(
+                'wp_autosave' => array(
+                    'post_id' => (string) $post_id,
+                    'post_type' => 'post',
+                    '_wpnonce' => wp_create_nonce('update-post_' . $post_id),
+                    '_easymde_enabled' => '1',
+                    '_easymde_markdown' => '',
+                    '_easymde_markdown_theme' => 'custom',
+                    '_easymde_code_theme' => 'github',
+                    '_easymde_custom_css_id' => 'autosave-css',
+                    '_easymde_custom_font' => 'optima',
+                    '_easymde_windows_font' => 'microsoft-yahei',
+                    '_easymde_apple_font' => 'pingfang-sc-light',
+                    '_easymde_serif_font' => 'yes',
+                ),
+            ),
+        );
+
+        try {
+            $autosave_id = wp_create_post_autosave(
+                array(
+                    'post_ID' => $post_id,
+                    'post_type' => 'post',
+                    'post_author' => $user_id,
+                    'post_title' => 'Empty autosave',
+                    'post_content' => '',
+                    'post_excerpt' => '',
+                )
+            );
+        } finally {
+            $_POST = $previous_post;
+        }
+
+        $this->assertIsInt($autosave_id);
+        $this->assertTrue(metadata_exists('post', $autosave_id, PostDocument::META_MARKDOWN));
+        $this->assertSame('', get_post_meta($autosave_id, PostDocument::META_MARKDOWN, true));
+        $this->assertSame('custom', get_post_meta($autosave_id, PostDocument::META_MARKDOWN_THEME, true));
+        $this->assertSame('autosave-css', get_post_meta($autosave_id, PostDocument::META_CUSTOM_CSS_ID, true));
+        $this->assertSame(
+            '.easymde-preview { color: #123456; }',
+            get_post_meta($autosave_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, true)
+        );
+        $this->assertNotSame('', get_post_meta($autosave_id, PostDocument::META_RENDER_SIGNATURE, true));
     }
 
     public function test_revision_detail_rejects_a_revision_from_another_post()

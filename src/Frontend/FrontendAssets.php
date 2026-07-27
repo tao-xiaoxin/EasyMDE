@@ -44,6 +44,7 @@ final class FrontendAssets {
 		$post        = get_post( $post_id );
 		$markdown    = $this->post_document->get_markdown( $post );
 		$theme_state = $this->theme_state_repository->get_theme_state( $post_id );
+		$features    = $this->get_feature_config( $markdown );
 
 		$this->enqueue_render_assets( $post_id, $markdown );
 
@@ -52,6 +53,10 @@ final class FrontendAssets {
 		}
 
 		$dependencies = array( 'easymde-enhancements' );
+		if ( ! empty( $features['codeCopy'] ) ) {
+			$dependencies[] = 'easymde-code-copy';
+		}
+
 		wp_enqueue_script(
 			'easymde-frontend',
 			Asset::url( 'assets/js/frontend/bootstrap.js' ),
@@ -64,10 +69,14 @@ final class FrontendAssets {
 			'easymde-frontend',
 			'EasyMDEFrontendConfig',
 			array(
-				'features'   => $this->get_feature_config( $markdown ),
+				'features'   => $features,
 				'themeState' => $theme_state,
 				'strings'    => array(
 					'renderingFailed' => __( 'Rendering failed.', 'easymde' ),
+					'copyCode'        => __( 'Copy code', 'easymde' ),
+					'copied'          => __( 'Copied', 'easymde' ),
+					'codeCopied'      => __( 'Code copied', 'easymde' ),
+					'codeCopyFailed'  => __( 'Unable to copy code. Try again.', 'easymde' ),
 				),
 			)
 		);
@@ -113,6 +122,25 @@ final class FrontendAssets {
 				Asset::url( 'assets/vendor/highlight/highlight.min.js' ),
 				array(),
 				EASYMDE_VERSION,
+				true
+			);
+		}
+
+		if ( ! empty( $features['codeCopy'] ) ) {
+			$code_copy_asset = $this->get_code_copy_asset();
+
+			wp_enqueue_style(
+				'easymde-code-copy',
+				Asset::url( 'assets/css/frontend/code-copy.css' ),
+				array( 'easymde-content' ),
+				EASYMDE_VERSION
+			);
+
+			wp_enqueue_script(
+				$code_copy_asset['handle'],
+				Asset::url( $code_copy_asset['path'] ),
+				$code_copy_asset['dependencies'],
+				$code_copy_asset['version'],
 				true
 			);
 		}
@@ -245,10 +273,79 @@ final class FrontendAssets {
 	}
 
 	public function get_feature_config( $markdown = '' ) {
-		return $this->feature_detector->detect( $markdown );
+		$features = $this->feature_detector->detect( $markdown );
+
+		// TODO: Replace this default-on product rule with the future configuration-backed code-copy switch.
+		$features['codeCopy'] = $this->feature_detector->has_copyable_code_block( $markdown );
+
+		return $features;
 	}
 
 	private function versioned_asset_url( $asset_path ) {
 		return add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( $asset_path ) );
+	}
+
+	private function get_code_copy_asset( $build_dir = '' ) {
+		$build_dir     = $build_dir ? trailingslashit( $build_dir ) : Asset::path( 'assets/build/code-copy/' );
+		$manifest_path = $build_dir . 'wordpress-manifest.json';
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads a local committed build manifest, never a remote URL.
+		$manifest_json = is_readable( $manifest_path ) ? file_get_contents( $manifest_path ) : false;
+		$manifest      = false === $manifest_json ? null : json_decode( $manifest_json, true );
+		$entry_key     = 'frontend/src/entrypoints/frontend-code-copy.ts';
+
+		if (
+			! is_array( $manifest )
+			|| 1 !== ( $manifest['schemaVersion'] ?? null )
+			|| ! isset( $manifest['entries'] )
+			|| ! is_array( $manifest['entries'] )
+			|| array( $entry_key ) !== array_keys( $manifest['entries'] )
+			|| ! is_array( $manifest['entries'][ $entry_key ] )
+		) {
+			throw new \RuntimeException( 'frontend-code-copy-manifest-invalid' );
+		}
+
+		$entry = $manifest['entries'][ $entry_key ];
+		$file  = isset( $entry['file'] ) ? (string) $entry['file'] : '';
+		$asset = isset( $entry['asset'] ) ? (string) $entry['asset'] : '';
+		if (
+			'easymde-code-copy' !== ( $entry['handle'] ?? null )
+			|| array() !== ( $entry['dependencies'] ?? null )
+			|| array() !== ( $entry['resources'] ?? null )
+			|| ! preg_match( '#^assets/frontend-code-copy-[A-Za-z0-9_-]+\.js$#', $file )
+			|| preg_replace( '/\.js$/', '.asset.php', $file ) !== $asset
+		) {
+			throw new \RuntimeException( 'frontend-code-copy-manifest-invalid' );
+		}
+
+		$script_path   = $build_dir . $file;
+		$metadata_path = $build_dir . $asset;
+		if ( ! is_file( $script_path ) || ! is_readable( $metadata_path ) ) {
+			throw new \RuntimeException( 'frontend-code-copy-build-missing' );
+		}
+
+		$metadata = require $metadata_path;
+		if (
+			! is_array( $metadata )
+			|| array() !== ( $metadata['dependencies'] ?? null )
+			|| ! isset( $metadata['version'] )
+			|| ! preg_match( '/^[a-f0-9]{16}$/', (string) $metadata['version'] )
+		) {
+			throw new \RuntimeException( 'frontend-code-copy-metadata-invalid' );
+		}
+
+		$script_hash = hash_file( 'sha256', $script_path );
+		if (
+			false === $script_hash
+			|| ! hash_equals( (string) $metadata['version'], substr( $script_hash, 0, 16 ) )
+		) {
+			throw new \RuntimeException( 'frontend-code-copy-build-integrity-invalid' );
+		}
+
+		return array(
+			'handle'       => 'easymde-code-copy',
+			'path'         => 'assets/build/code-copy/' . $file,
+			'dependencies' => $metadata['dependencies'],
+			'version'      => (string) $metadata['version'],
+		);
 	}
 }

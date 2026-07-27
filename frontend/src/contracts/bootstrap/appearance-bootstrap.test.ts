@@ -40,6 +40,7 @@ const bootstrap = {
     articleTheme: 'Article theme',
     codeTheme: 'Code theme',
     customCss: 'Custom CSS',
+    customCssTheme: 'Custom CSS theme',
     cssName: 'CSS name',
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
@@ -99,7 +100,7 @@ describe('parseAppearanceBootstrap', () => {
       name: 'missing translated string',
       value: {
         ...bootstrap,
-        strings: { ...bootstrap.strings, cssSaveFailed: '' }
+        strings: { ...bootstrap.strings, customCssTheme: '' }
       },
       code: 'invalid-appearance-string'
     }

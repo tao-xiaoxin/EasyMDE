@@ -68,17 +68,93 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertArrayHasKey( 'layout', $bootstrap );
 		$this->assertArrayHasKey( 'mediaPicker', $bootstrap );
 		$this->assertArrayHasKey( 'previewEnhancement', $bootstrap );
+		$this->assertArrayHasKey( 'immersive', $bootstrap['strings'] );
 		$this->assertArrayNotHasKey( 'publishing', $bootstrap );
 		$this->assertArrayNotHasKey( 'revisions', $bootstrap );
 		$this->assertArrayHasKey( 'toolbar', $bootstrap );
 		$this->assertArrayHasKey( 'wechatExport', $bootstrap );
 		$this->assertArrayHasKey( 'wordpress', $bootstrap );
+		$this->assertArrayHasKey( 'publishCategories', $bootstrap['wordpress'] );
 		$this->assertSame( rest_url( 'easymde/v1/preview' ), $bootstrap['wordpress']['previewUrl'] );
 		$this->assertArrayNotHasKey( 'revisionAdminUrl', $bootstrap['wordpress'] );
-		$this->assertArrayNotHasKey( 'revisionsUrl', $bootstrap['wordpress'] );
+		$this->assertSame( rest_url( 'easymde/v1/posts/' ), $bootstrap['wordpress']['revisionsUrl'] );
 		$this->assertSame( rest_url( 'easymde/v1/media' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
+	}
+
+	public function test_new_post_bootstrap_exposes_the_post_category_tree_without_a_post_id() {
+		$user_id   = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$parent_id = self::factory()->category->create( array( 'name' => 'Parent category' ) );
+		$child_id  = self::factory()->category->create(
+			array(
+				'name'   => 'Child category',
+				'parent' => $parent_id,
+			)
+		);
+		wp_set_current_user( $user_id );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
+		$categories = $bootstrap['wordpress']['publishCategories'];
+		$parent = null;
+
+		foreach ( $categories as $category ) {
+			if ( (string) $parent_id === $category['id'] ) {
+				$parent = $category;
+				break;
+			}
+		}
+
+		$this->assertNotNull( $parent );
+		$this->assertSame( 'Parent category', $parent['label'] );
+		$this->assertSame( (string) $child_id, $parent['children'][0]['id'] );
+		$this->assertSame( 'Child category', $parent['children'][0]['label'] );
+	}
+
+	public function test_publish_categories_are_hidden_without_the_taxonomy_assignment_capability() {
+		$user_id = self::factory()->user->create( array( 'role' => 'subscriber' ) );
+		self::factory()->category->create( array( 'name' => 'Unavailable category' ) );
+		wp_set_current_user( $user_id );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
+
+		$this->assertSame( array(), $bootstrap['wordpress']['publishCategories'] );
+	}
+
+	public function test_publish_category_tree_is_bounded_to_the_client_schema_depth() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$parent_id = 0;
+		$category_ids = array();
+		for ( $index = 0; $index < 34; $index++ ) {
+			$parent_id = self::factory()->category->create(
+				array(
+					'name'   => 'Depth ' . $index,
+					'parent' => $parent_id,
+				)
+			);
+			$category_ids[] = $parent_id;
+		}
+		wp_set_current_user( $user_id );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
+		$categories = $bootstrap['wordpress']['publishCategories'];
+		$branch = null;
+		foreach ( $categories as $category ) {
+			if ( (string) $category_ids[0] === $category['id'] ) {
+				$branch = $category;
+				break;
+			}
+		}
+
+		$this->assertNotNull( $branch );
+		$emitted_ids = array();
+		while ( null !== $branch ) {
+			$emitted_ids[] = $branch['id'];
+			$branch = $branch['children'][0] ?? null;
+		}
+
+		$this->assertCount( 32, $emitted_ids );
+		$this->assertSame( array_map( 'strval', array_slice( $category_ids, 0, 32 ) ), $emitted_ids );
 	}
 
 	public function test_local_draft_bootstrap_exposes_a_versioned_bounded_locale_contract() {
@@ -139,9 +215,20 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		$this->assertSame( 'easymde-admin-editor-toolbar', $asset['handle'] );
 		$this->assertMatchesRegularExpression( '#^assets/build/assets/admin-editor-[A-Za-z0-9_-]+\.js$#', $asset['path'] );
-		$this->assertSame( array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks' ), $asset['dependencies'] );
+		$this->assertSame( array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ), $asset['dependencies'] );
 		$this->assertMatchesRegularExpression( '/^[a-f0-9]{16}$/', $asset['version'] );
 		$this->assertFileExists( Asset::path( $asset['path'] ) );
+	}
+
+	public function test_react_editor_registers_its_handle_based_translation_catalog() {
+		$enqueue_react_editor_asset = new ReflectionMethod( AdminAssets::class, 'enqueue_react_editor_asset' );
+		$enqueue_react_editor_asset->setAccessible( true );
+
+		$this->assertTrue( $enqueue_react_editor_asset->invoke( $this->admin_assets ) );
+
+		$script = wp_scripts()->registered['easymde-admin-editor-toolbar'];
+		$this->assertSame( 'easymde', $script->textdomain );
+		$this->assertSame( Asset::path( 'languages' ), $script->translations_path );
 	}
 
 	public function test_rejects_react_editor_bundle_bytes_that_do_not_match_dependency_metadata() {
@@ -152,7 +239,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		file_put_contents( $build_dir . '/' . $file, 'console.log("corrupted");' );
 		file_put_contents(
 			$build_dir . '/' . $asset,
-			"<?php\nreturn array(\n\t'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks' ),\n\t'version' => '0000000000000000',\n);\n"
+			"<?php\nreturn array(\n\t'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),\n\t'version' => '0000000000000000',\n);\n"
 		);
 		file_put_contents(
 			$build_dir . '/wordpress-manifest.json',
@@ -164,7 +251,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 							'handle'       => 'easymde-admin-editor-toolbar',
 							'file'         => $file,
 							'asset'        => $asset,
-							'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks' ),
+							'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
 							'resources'    => array(),
 						),
 					)

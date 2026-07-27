@@ -17,7 +17,8 @@ const bootstrap: AppearanceBootstrap = {
   ],
   codeThemes: [
     { id: 'atom-one-dark', label: 'Atom One Dark' },
-    { id: 'github', label: 'GitHub' }
+    { id: 'github', label: 'GitHub' },
+    { id: 'terminal-noir', label: 'Terminal Noir' }
   ],
   customCss: [{
     id: 'writer-css',
@@ -35,6 +36,7 @@ const bootstrap: AppearanceBootstrap = {
     articleTheme: 'Article theme',
     codeTheme: 'Code theme',
     customCss: 'Custom CSS',
+    customCssTheme: 'Custom CSS theme',
     cssName: 'CSS name',
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
@@ -56,6 +58,91 @@ function createPort(overrides: Partial<AppearancePort> = {}): AppearancePort {
 }
 
 describe('AppearanceControls', () => {
+  it('renders the reference palette trigger and live theme accent in immersive mode', () => {
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    const trigger = screen.getByRole('button', { name: 'Appearance' });
+    expect(trigger.querySelector('svg')).not.toBeNull();
+    expect(
+      trigger.querySelector('.easymde-immersive-theme-accent')?.getAttribute(
+        'data-theme'
+      )
+    ).toBe('default');
+    expect(trigger.querySelector('.dashicons')).toBeNull();
+  });
+
+  it('renders the translated custom CSS theme action in immersive mode', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+
+    expect(
+      screen.getByRole('button', { name: 'Custom CSS theme' }).textContent
+    ).toContain('Custom CSS theme');
+  });
+
+  it('renders the registered Terminal Noir palette instead of the generic fallback', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Code theme' }));
+    const option = screen.getByRole('option', { name: /Terminal Noir/u });
+    const colors = Array.from(option.querySelectorAll<HTMLElement>(
+      '.easymde-immersive-theme-swatch > span'
+    )).map((element) => element.style.background);
+
+    expect(colors).toEqual(['rgb(13, 16, 23)', 'rgb(202, 209, 217)']);
+  });
+
+  it('moves focus through immersive theme options with the keyboard', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    const select = screen.getByRole('button', { name: 'Article theme' });
+    select.focus();
+    await user.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /Default/u }));
+    await user.keyboard('{End}');
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /Writer CSS/u }));
+    await user.keyboard('{Escape}');
+    expect(document.activeElement).toBe(select);
+  });
+
   it('anchors the panel to the appearance trigger instead of the page', async () => {
     const user = userEvent.setup();
     render(

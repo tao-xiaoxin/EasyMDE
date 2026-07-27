@@ -3,6 +3,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { createNativeTitleSession } from './native-title-session';
 
 describe('createNativeTitleSession', () => {
+  it('writes through the native input owner and publishes one session change', () => {
+    const field = document.createElement('input');
+    field.value = 'Before';
+    field.defaultValue = 'Before';
+    const session = createNativeTitleSession(field);
+    const listener = vi.fn();
+    session.subscribe(listener);
+
+    session.setValue('After');
+
+    expect(field.value).toBe('After');
+    expect(session.getSnapshot().value).toBe('After');
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
   it('provides an inert title session when the supported post type has no title field', () => {
     const session = createNativeTitleSession(null);
     const listener = vi.fn();

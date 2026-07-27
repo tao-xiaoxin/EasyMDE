@@ -1,0 +1,8 @@
+{
+  "frontend/src/entrypoints/frontend-code-copy.ts": {
+    "file": "assets/frontend-code-copy-UPHpBXBK.js",
+    "name": "codeCopy",
+    "src": "frontend/src/entrypoints/frontend-code-copy.ts",
+    "isEntry": true
+  }
+}

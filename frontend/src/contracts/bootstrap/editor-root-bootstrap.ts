@@ -3,6 +3,7 @@ import {
   type PreviewFeatures,
   type SafePreviewHtml
 } from '../ports/preview-request';
+import type { NativePublishCategory } from '../ports/native-publish-port';
 import {
   parseAppearanceBootstrap,
   type AppearanceBootstrap
@@ -45,9 +46,10 @@ import {
   type WechatExportBootstrap
 } from './wechat-export-bootstrap';
 
-export type EditorRootLocalDraftsBootstrap = LocalDraftsBootstrap & Readonly<{
-  savedFingerprint: string;
-}>;
+export type EditorRootLocalDraftsBootstrap = LocalDraftsBootstrap &
+  Readonly<{
+    savedFingerprint: string;
+  }>;
 
 export type EditorRootPreviewBootstrap = Readonly<{
   features: PreviewFeatures;
@@ -65,6 +67,8 @@ export type EditorRootWordPressBootstrap = Readonly<{
   customCssUrl: string;
   nonce: string;
   previewUrl: string;
+  publishCategories: ReadonlyArray<NativePublishCategory>;
+  revisionsUrl: string;
 }>;
 
 export type EditorRootBootstrap = Readonly<{
@@ -73,6 +77,112 @@ export type EditorRootBootstrap = Readonly<{
   document: DocumentSourceBootstrap;
   fonts: FontControlsBootstrap;
   imageUpload: ImageUploadBootstrap;
+  immersiveStrings: Readonly<{
+    autoSave: string;
+    autoSaveDescription: string;
+    autoSaveEnabled: string;
+    articleOutline: string;
+    cancel: string;
+    close: string;
+    column: string;
+    edit: string;
+    editMode: string;
+    editorSettings: string;
+    enter: string;
+    expand: string;
+    exit: string;
+    hideOutline: string;
+    history: string;
+    historyEmpty: string;
+    historyError: string;
+    historyLoading: string;
+    historyAll: string;
+    historyVersions: string;
+    immersive: string;
+    insert: string;
+    insertTable: string;
+    line: string;
+    manualSave: string;
+    moreActions: string;
+    markdown: string;
+    noHeadings: string;
+    outline: string;
+    outlineDescription: string;
+    preview: string;
+    previewChangesRecorded: string;
+    previewContentLoaded: string;
+    previewEditable: string;
+    previewEditorLabel: string;
+    previewLockReadOnly: string;
+    previewReadOnly: string;
+    previewUnlockEdit: string;
+    previewMode: string;
+    publish: string;
+    restore: string;
+    restoreConfirm: string;
+    restoreThisVersion: string;
+    resizeOutline: string;
+    resizeSplit: string;
+    saved: string;
+    settings: string;
+    showOutline: string;
+    split: string;
+    splitMode: string;
+    splitPreview: string;
+    splitPreviewDescription: string;
+    syncScroll: string;
+    syncScrollDescription: string;
+    table: string;
+    tableColumns: string;
+    tableRows: string;
+    theme: string;
+    themeSettings: string;
+    title: string;
+    unsaved: string;
+    viewModes: string;
+    wechat: string;
+    wechatCopied: string;
+    wordCount: string;
+    wordCountDescription: string;
+    addTags: string;
+    categories: string;
+    categoriesDescription: string;
+    categoriesSelected: string;
+    closePublish: string;
+    collapse: string;
+    continueAddingTags: string;
+    excerpt: string;
+    excerptPlaceholder: string;
+    featuredImage: string;
+    imageRecommendation: string;
+    imageRequirements: string;
+    noWriteBeforeSubmit: string;
+    openAfterPublish: string;
+    openAfterPublishDescription: string;
+    openAfterUpdate: string;
+    password: string;
+    passwordPlaceholder: string;
+    passwordRequired: string;
+    preparingPublish: string;
+    private: string;
+    privateDescription: string;
+    public: string;
+    publishDescription: string;
+    publishFailed: string;
+    publishLoadingPreview: string;
+    publishOptions: string;
+    remove: string;
+    removeTag: string;
+    replace: string;
+    selectFeaturedImage: string;
+    sticky: string;
+    tags: string;
+    tagsDescription: string;
+    updateArticle: string;
+    updateDescription: string;
+    updateExisting: string;
+    visibility: string;
+  }>;
   layout: EditorLayoutBootstrap;
   localDrafts: EditorRootLocalDraftsBootstrap;
   labels: Readonly<{
@@ -113,16 +223,20 @@ function boundedString(
 ): string {
   const maxLength = options.maxLength ?? 512;
   if (
-    'string' !== typeof value
-    || value.length > maxLength
-    || (!options.allowEmpty && '' === value.trim())
+    'string' !== typeof value ||
+    value.length > maxLength ||
+    (!options.allowEmpty && '' === value.trim())
   ) {
     throw new EditorRootBootstrapError(code);
   }
   return value;
 }
 
-function unboundedString(value: unknown, code: string, allowEmpty = false): string {
+function unboundedString(
+  value: unknown,
+  code: string,
+  allowEmpty = false
+): string {
   if ('string' !== typeof value || (!allowEmpty && '' === value.trim())) {
     throw new EditorRootBootstrapError(code);
   }
@@ -135,9 +249,9 @@ function parseFeatures(value: unknown): PreviewFeatures {
   const features: Record<string, boolean> = {};
   for (const [key, enabled] of entries) {
     if (
-      !isPreviewFeatureKey(key)
-      || !/^[a-z0-9_-]{1,64}$/i.test(key)
-      || 'boolean' !== typeof enabled
+      !isPreviewFeatureKey(key) ||
+      !/^[a-z0-9_-]{1,64}$/i.test(key) ||
+      'boolean' !== typeof enabled
     ) {
       throw new EditorRootBootstrapError('editor-root-preview-invalid');
     }
@@ -155,11 +269,18 @@ function parsePreview(value: unknown): EditorRootPreviewBootstrap {
 
   return {
     features: parseFeatures(preview.features),
-    html: unboundedString(preview.html, 'editor-root-preview-invalid', true) as SafePreviewHtml,
+    html: unboundedString(
+      preview.html,
+      'editor-root-preview-invalid',
+      true
+    ) as SafePreviewHtml,
     messages: {
       empty: boundedString(messages.empty, 'editor-root-preview-invalid'),
       error: boundedString(messages.error, 'editor-root-preview-invalid'),
-      rendering: boundedString(messages.rendering, 'editor-root-preview-invalid')
+      rendering: boundedString(
+        messages.rendering,
+        'editor-root-preview-invalid'
+      )
     },
     postId: Number(preview.postId),
     signature: boundedString(preview.signature, 'editor-root-preview-invalid', {
@@ -185,14 +306,49 @@ function parseLocalDrafts(value: unknown): EditorRootLocalDraftsBootstrap {
 function parseWordPress(value: unknown): EditorRootWordPressBootstrap {
   const wordpress = objectValue(value, 'editor-root-wordpress-invalid');
   return {
-    customCssUrl: boundedString(wordpress.customCssUrl, 'editor-root-wordpress-invalid', {
-      maxLength: 4096
-    }),
+    customCssUrl: boundedString(
+      wordpress.customCssUrl,
+      'editor-root-wordpress-invalid',
+      {
+        maxLength: 4096
+      }
+    ),
     nonce: boundedString(wordpress.nonce, 'editor-root-wordpress-invalid'),
-    previewUrl: boundedString(wordpress.previewUrl, 'editor-root-wordpress-invalid', {
-      maxLength: 4096
-    }),
+    publishCategories: parsePublishCategories(wordpress.publishCategories),
+    previewUrl: boundedString(
+      wordpress.previewUrl,
+      'editor-root-wordpress-invalid',
+      {
+        maxLength: 4096
+      }
+    ),
+    revisionsUrl: boundedString(
+      wordpress.revisionsUrl,
+      'editor-root-wordpress-invalid',
+      { maxLength: 4096 }
+    )
   };
+}
+
+function parsePublishCategories(
+  value: unknown,
+  depth = 0
+): ReadonlyArray<NativePublishCategory> {
+  if (!Array.isArray(value) || value.length > 5000 || depth > 32) {
+    throw new EditorRootBootstrapError('editor-root-wordpress-invalid');
+  }
+  return value.map((candidate) => {
+    const category = objectValue(candidate, 'editor-root-wordpress-invalid');
+    return {
+      children: parsePublishCategories(category.children, depth + 1),
+      id: boundedString(category.id, 'editor-root-wordpress-invalid', {
+        maxLength: 32
+      }),
+      label: boundedString(category.label, 'editor-root-wordpress-invalid', {
+        maxLength: 256
+      })
+    };
+  });
 }
 
 export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
@@ -201,6 +357,10 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     throw new EditorRootBootstrapError('editor-root-schema-unsupported');
   }
   const labels = objectValue(bootstrap.strings, 'editor-root-label-invalid');
+  const immersive = objectValue(
+    labels.immersive,
+    'editor-root-immersive-label-invalid'
+  );
   let document: DocumentSourceBootstrap;
   let appearance: AppearanceBootstrap;
   let fonts: FontControlsBootstrap;
@@ -257,9 +417,13 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     throw new EditorRootBootstrapError('editor-root-media-picker-invalid');
   }
   try {
-    previewEnhancement = parsePreviewEnhancementBootstrap(bootstrap.previewEnhancement);
+    previewEnhancement = parsePreviewEnhancementBootstrap(
+      bootstrap.previewEnhancement
+    );
   } catch {
-    throw new EditorRootBootstrapError('editor-root-preview-enhancement-invalid');
+    throw new EditorRootBootstrapError(
+      'editor-root-preview-enhancement-invalid'
+    );
   }
   try {
     toolbar = parseToolbarBootstrap(bootstrap.toolbar);
@@ -278,6 +442,117 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     document,
     fonts,
     imageUpload,
+    immersiveStrings: Object.fromEntries(
+      [
+        'autoSave',
+        'autoSaveDescription',
+        'autoSaveEnabled',
+        'articleOutline',
+        'cancel',
+        'close',
+        'column',
+        'edit',
+        'editMode',
+        'editorSettings',
+        'enter',
+        'expand',
+        'exit',
+        'hideOutline',
+        'history',
+        'historyEmpty',
+        'historyError',
+        'historyLoading',
+        'historyAll',
+        'historyVersions',
+        'immersive',
+        'insert',
+        'insertTable',
+        'line',
+        'manualSave',
+        'moreActions',
+        'markdown',
+        'noHeadings',
+        'outline',
+        'outlineDescription',
+        'preview',
+        'previewChangesRecorded',
+        'previewContentLoaded',
+        'previewEditable',
+        'previewEditorLabel',
+        'previewLockReadOnly',
+        'previewReadOnly',
+        'previewUnlockEdit',
+        'previewMode',
+        'publish',
+        'restore',
+        'restoreConfirm',
+        'restoreThisVersion',
+        'resizeOutline',
+        'resizeSplit',
+        'saved',
+        'settings',
+        'showOutline',
+        'split',
+        'splitMode',
+        'splitPreview',
+        'splitPreviewDescription',
+        'syncScroll',
+        'syncScrollDescription',
+        'table',
+        'tableColumns',
+        'tableRows',
+        'theme',
+        'themeSettings',
+        'title',
+        'unsaved',
+        'viewModes',
+        'wechat',
+        'wechatCopied',
+        'wordCount',
+        'wordCountDescription',
+        'addTags',
+        'categories',
+        'categoriesDescription',
+        'categoriesSelected',
+        'closePublish',
+        'collapse',
+        'continueAddingTags',
+        'excerpt',
+        'excerptPlaceholder',
+        'featuredImage',
+        'imageRecommendation',
+        'imageRequirements',
+        'noWriteBeforeSubmit',
+        'openAfterPublish',
+        'openAfterPublishDescription',
+        'openAfterUpdate',
+        'password',
+        'passwordPlaceholder',
+        'passwordRequired',
+        'preparingPublish',
+        'private',
+        'privateDescription',
+        'public',
+        'publishDescription',
+        'publishFailed',
+        'publishLoadingPreview',
+        'publishOptions',
+        'remove',
+        'removeTag',
+        'replace',
+        'selectFeaturedImage',
+        'sticky',
+        'tags',
+        'tagsDescription',
+        'updateArticle',
+        'updateDescription',
+        'updateExisting',
+        'visibility'
+      ].map((key) => [
+        key,
+        boundedString(immersive[key], 'editor-root-immersive-label-invalid')
+      ])
+    ) as EditorRootBootstrap['immersiveStrings'],
     layout,
     localDrafts,
     labels: {

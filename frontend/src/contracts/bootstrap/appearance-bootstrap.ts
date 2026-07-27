@@ -35,6 +35,7 @@ export type AppearanceStrings = Readonly<{
   articleTheme: string;
   codeTheme: string;
   customCss: string;
+  customCssTheme: string;
   cssName: string;
   saveCss: string;
   cssSaved: string;
@@ -198,6 +199,7 @@ function parseStrings(value: unknown): AppearanceStrings {
     'articleTheme',
     'codeTheme',
     'customCss',
+    'customCssTheme',
     'cssName',
     'saveCss',
     'cssSaved',

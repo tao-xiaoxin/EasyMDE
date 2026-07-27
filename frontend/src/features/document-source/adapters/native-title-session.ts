@@ -7,16 +7,20 @@ export type NativeTitleSession = Readonly<{
   destroy: () => void;
   getSnapshot: () => NativeTitleSnapshot;
   replaceSavedValue: (value: string) => void;
+  setValue: (value: string) => void;
   subscribe: (listener: () => void) => () => void;
 }>;
 
-export function createNativeTitleSession(field: HTMLInputElement | null): NativeTitleSession {
+export function createNativeTitleSession(
+  field: HTMLInputElement | null
+): NativeTitleSession {
   if (!field) {
     const snapshot: NativeTitleSnapshot = { savedValue: '', value: '' };
     return {
       destroy() {},
       getSnapshot: () => snapshot,
       replaceSavedValue() {},
+      setValue() {},
       subscribe: () => () => {}
     };
   }
@@ -62,6 +66,14 @@ export function createNativeTitleSession(field: HTMLInputElement | null): Native
       savedValue = value;
       snapshot = { savedValue, value: snapshot.value };
       for (const listener of listeners) listener();
+    },
+    setValue(value: string) {
+      if (destroyed || field.value === value) return;
+      const EventConstructor = field.ownerDocument.defaultView?.Event;
+      if (!EventConstructor)
+        throw new Error('native-title-event-constructor-unavailable');
+      field.value = value;
+      field.dispatchEvent(new EventConstructor('input', { bubbles: true }));
     },
     subscribe(listener: () => void) {
       if (destroyed) {

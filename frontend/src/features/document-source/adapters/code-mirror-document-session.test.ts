@@ -1,3 +1,4 @@
+import { undo } from '@codemirror/commands';
 import { describe, expect, it, vi } from 'vitest';
 import { EditorSelection } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
@@ -30,7 +31,46 @@ describe('createCodeMirrorDocumentSession', () => {
       direction: 'backward'
     });
     expect(container.querySelector('.cm-editor')).not.toBeNull();
+    expect(container.querySelector('.cm-gutters')).not.toBeNull();
+    expect(container.querySelector('.cm-lineNumbers')).not.toBeNull();
 
+    session.destroy();
+  });
+
+  it('parses Markdown syntax inside the existing CodeMirror owner', () => {
+    const { container, submissionField } = createFixture(
+      '# Heading\n\n> Quote with **strong** and `code`'
+    );
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+
+    const markedText = Array.from(
+      container.querySelectorAll<HTMLElement>('.cm-line span')
+    ).map((element) => element.textContent?.trim());
+
+    expect(markedText).toContain('#');
+    expect(markedText).toContain('Heading');
+    expect(markedText).toContain('**');
+    expect(markedText).toContain('`');
+
+    session.destroy();
+  });
+
+  it('keeps heading markers regular and colors quote content as one block', () => {
+    const { container, submissionField } = createFixture('# Title\n> Quote');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const heading = container.querySelector('.cm-line');
+    const quote = container.querySelectorAll('.cm-line')[1];
+    if (!heading || !quote) throw new Error('test-fixture-invalid');
+    expect(heading.querySelector('span')?.textContent).toBe('#');
+    expect(quote.querySelectorAll('span')).toHaveLength(3);
     session.destroy();
   });
 
@@ -66,6 +106,32 @@ describe('createCodeMirrorDocumentSession', () => {
       submissionField.selectionDirection
     ]).toEqual([2, 9, 'forward']);
     expect(handleInput).toHaveBeenCalledTimes(1);
+
+    session.destroy();
+  });
+
+  it('keeps an externally applied visual edit in its own undo history group', () => {
+    const { container, submissionField } = createFixture('# Original');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+
+    view.dispatch({
+      changes: { from: 2, to: 10, insert: 'Source edit' },
+      userEvent: 'input.type'
+    });
+    session.applyTextChange({
+      selection: { direction: 'none', end: 21, start: 21 },
+      value: '# Source edit visual'
+    });
+
+    expect(session.getValue()).toBe('# Source edit visual');
+    expect(undo(view)).toBe(true);
+    expect(session.getValue()).toBe('# Source edit');
 
     session.destroy();
   });

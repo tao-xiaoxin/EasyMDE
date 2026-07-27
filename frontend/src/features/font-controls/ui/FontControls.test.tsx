@@ -44,6 +44,45 @@ function createPort(applyState = vi.fn()): FontControlsPort {
 }
 
 describe('FontControls', () => {
+  it('renders the reference type icon instead of a Dashicon in immersive mode', () => {
+    render(
+      <FontControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    const trigger = screen.getByRole('button', { name: 'Font' });
+    expect(trigger.querySelector('svg')).not.toBeNull();
+    expect(trigger.querySelector('.dashicons')).toBeNull();
+  });
+
+  it('moves focus through immersive font options with the keyboard', async () => {
+    const user = userEvent.setup();
+    render(
+      <FontControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Font' }));
+    const select = screen.getByRole('button', { name: 'Custom font' });
+    select.focus();
+    await user.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: 'Optima' }));
+    await user.keyboard('{Home}');
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: 'No custom font' }));
+    await user.keyboard('{Escape}');
+    expect(document.activeElement).toBe(select);
+  });
+
   it('anchors the panel to the font trigger instead of the page', async () => {
     const user = userEvent.setup();
     render(

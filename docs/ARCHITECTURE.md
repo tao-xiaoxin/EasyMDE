@@ -31,9 +31,11 @@ revisions:
 PHP and WordPress retain their existing data, authorization, rendering, native
 form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown`
 remains canonical Markdown and `post_content` remains compatibility HTML.
-Focus Mode is not implemented, connected, enqueued, or loaded by the ordinary
-Editor. Outline, statistics/status, view switching, draggable resizing, and
-duplicate React Publish/Revision surfaces are also absent by product decision.
+Focus Mode is not part of the default ordinary-editor surface. Issue #126
+provides a same-root immersive presentation that reuses the ordinary
+CodeMirror, Preview, native form, and WordPress capability owners. Outline,
+statistics/status, and view switching are scoped to that presentation;
+Publish and Revision controls delegate to the existing WordPress owners.
 
 The ordinary Editor now follows this single-Root boundary in the live branch.
 Legacy admin Browser Runtime files and Focus Mode assets have no ordinary
@@ -52,7 +54,7 @@ public PHP compatibility contracts remain preserved as described below.
 - `assets/themes/article/`: EasyMDE-owned article themes.
 - `assets/themes/code/`: EasyMDE-owned code themes.
 - `assets/vendor/`: committed third-party runtime assets prepared from locked npm packages or verified upstream repository sources.
-- `frontend/`: strict TypeScript, React, CodeMirror, and Vite source for the production normal-editor Toolbar, document session, Preview Surface, synchronized scrolling, Font controls, Appearance controls, Media-picker session, pasted/dropped image upload session, Local Draft session, and WeChat export, plus the test-only WordPress React build-contract fixture.
+- `frontend/`: strict TypeScript, React, CodeMirror, and Vite source for the production normal-editor Toolbar, document session, Preview Surface, synchronized scrolling, Font controls, Appearance controls, Media-picker session, pasted/dropped image upload session, Local Draft session, WeChat export, and the independent public code-copy enhancement, plus the test-only WordPress React build-contract fixture.
 - `scripts/`: local asset preparation, i18n/notices, test setup, Plugin Check, clean WordPress install, and release package assembly scripts.
 - `tests/Unit/` and `tests/Integration/`: PHPUnit coverage for rendering, CSS policy, frontend assets, REST permissions, revisions, migration, editor gating, and compatibility facade behavior.
 - `tests/Node/`: Node tests for release packaging, CI invariants, i18n/notices, Plugin Check parsing, and destructive-script safety.
@@ -60,7 +62,7 @@ public PHP compatibility contracts remain preserved as described below.
 
 ## Frontend Build Foundation
 
-The root npm project owns Vite, TypeScript, Biome linting, React 18 development declarations, Vitest, CodeMirror 6, and the WordPress Element package used by browser builds. `npm run frontend:check` runs frontend linting, strict `tsc --noEmit`, component and contract tests, the test-only build contract, and a temporary production Editor build that must match the committed runtime byte for byte.
+The root npm project owns Vite, TypeScript, Biome linting, React 18 development declarations, Vitest, CodeMirror 6, and the WordPress Element package used by browser builds. `npm run frontend:check` runs frontend linting, strict `tsc --noEmit`, component and contract tests, the test-only build contract, and temporary production Editor and public code-copy builds that must match their committed runtimes byte for byte.
 
 The Vite entry under `frontend/test/build-contract/` remains test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
 
@@ -74,6 +76,16 @@ Focus Mode assets. `templates/admin/editor-shell.php` provides one empty
 Markdown field remains visible until CodeMirror owns a working document session;
 React then hides both that bridge field and `#postdivrich`, restoring them on
 teardown or failure; there is no parallel Legacy editor container.
+
+`frontend/src/entrypoints/frontend-code-copy.ts` is a separate, non-React
+production entry for published EasyMDE content. `FrontendAssets` conditionally
+loads it only for regular code blocks, validates the dedicated
+`assets/build/code-copy/wordpress-manifest.json` and matching asset metadata,
+and enqueues the stable `easymde-code-copy` handle with no WordPress script
+dependencies. The TypeScript owner adds the local Lucide Copy control, skips
+Mermaid blocks, serializes Clipboard operations, restores temporary fallback
+DOM, and tears down and reactivates across page lifecycle transitions. It does
+not render Markdown or load the admin React application.
 
 The entrypoint parses external data before mounting, constructs focused
 WordPress and browser Adapters, mounts one `EditorRoot`, and owns idempotent
@@ -202,6 +214,8 @@ Frontend EasyMDE posts enqueue:
 - the EasyMDE base content stylesheet;
 - the selected article theme stylesheet;
 - code frame CSS only when regular code blocks need it;
+- the manifest-backed code-copy script and its scoped stylesheet only when
+  regular code blocks support copying;
 - the selected code theme stylesheet and Highlight.js only when syntax highlighting is needed;
 - KaTeX, Mermaid, and TOC assets only when the current Markdown needs them;
 - scoped custom CSS only for the current EasyMDE post when available.
@@ -258,7 +272,7 @@ They delegate to `EasyMDE\Support\ToolbarRegistry`. Existing extension code shou
 
 EasyMDE uses the WordPress text domain `easymde` and loads bundled language files from `languages/` during plugin initialization.
 
-PHP remains the translation source for browser UI text. Admin JavaScript reads author-facing strings from `EasyMDEConfig.strings`, and frontend enhancement scripts read visitor-facing strings from `EasyMDEFrontendConfig.strings`.
+PHP remains the translation owner for most browser UI text. The Editor Root reads those author-facing strings from its PHP bootstrap, and frontend enhancement scripts read visitor-facing strings from `EasyMDEFrontendConfig.strings`. Immersive word, character, reading-time, and revision counters are the first React-owned translation unit: the production `easymde-admin-editor-toolbar` script externalizes `@wordpress/i18n` to WordPress `wp.i18n`, declares the `wp-i18n` dependency, and loads its handle-based catalog through `wp_set_script_translations()`.
 
 Translation maintenance uses:
 

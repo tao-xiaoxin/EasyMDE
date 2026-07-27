@@ -581,9 +581,6 @@ final class AdminAssets {
 
 		$editor_id = absint( get_post_meta( $post_id, '_edit_last', true ) );
 		$editor    = get_userdata( $editor_id );
-		if ( ! $editor ) {
-			$editor = get_userdata( absint( $post->post_author ) );
-		}
 
 		$modified = get_post_modified_time(
 			get_option( 'date_format' ) . ' ' . get_option( 'time_format' ),

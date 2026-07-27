@@ -54,18 +54,26 @@ test('ordinary Preview owns vertical scrolling and fits wide table content', () 
   );
 });
 
-test('ordinary appearance and font popovers share the same pointer treatment', () => {
+test('ordinary editor settings combines theme and font controls in one responsive popover', () => {
   const popover = readFileSync(
     new URL('../../assets/css/admin/popover.css', import.meta.url),
     'utf8'
   );
   assert.match(
     popover,
-    /\.easymde-toolbar-popover-appearance-panel:not\(\.is-immersive-panel\)::before,\s*\.easymde-toolbar-popover-font-panel:not\(\.is-immersive-panel\)::before\s*\{[^}]*content:\s*"";[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*transform:\s*rotate\(45deg\);/s
+    /\.easymde-toolbar-popover-settings-panel::before\s*\{[^}]*content:\s*"";[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*transform:\s*rotate\(45deg\);/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-toolbar-popover-settings-panel\s*\{[^}]*width:\s*min\(468px, calc\(100vw - 32px\)\);[^}]*border-radius:\s*12px;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-editor-settings-fields\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/s
   );
   assert.match(
     css,
-    /@media \(max-width:\s*782px\)[\s\S]*?\.easymde-toolbar-popover-appearance-panel:not\(\.is-immersive-panel\)::before,\s*\.easymde-toolbar-popover-font-panel:not\(\.is-immersive-panel\)::before\s*\{[^}]*left:\s*24px;/s
+    /@media \(max-width:\s*782px\)[\s\S]*?\.easymde-toolbar-popover-settings-panel::before\s*\{[^}]*left:\s*24px;/s
   );
 });
 

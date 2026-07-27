@@ -1382,7 +1382,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 
     .easymde-toolbar-popover-appearance-panel:not(.is-immersive-panel)::before,
-    .easymde-toolbar-popover-font-panel:not(.is-immersive-panel)::before {
+    .easymde-toolbar-popover-font-panel:not(.is-immersive-panel)::before,
+    .easymde-toolbar-popover-settings-panel::before {
         right: auto;
         left: 24px;
     }
@@ -1394,8 +1395,13 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 
     .easymde-toolbar-popover-font,
-    .easymde-toolbar-popover-appearance {
+    .easymde-toolbar-popover-appearance,
+    .easymde-toolbar-popover-settings {
         position: static;
+    }
+
+    .easymde-toolbar-popover-settings-panel {
+        width: calc(100vw - 32px);
     }
 
     .easymde-toolbar-popover-font-panel .easymde-toolbar-control {

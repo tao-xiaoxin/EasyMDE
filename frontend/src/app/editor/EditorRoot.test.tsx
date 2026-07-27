@@ -594,8 +594,7 @@ describe('EditorRoot', () => {
       'Image',
       'Copy to WeChat',
       '进入沉浸写作',
-      'Font',
-      'Appearance'
+      '编辑器设置'
     ]);
     expect(
       toolbar.querySelectorAll(
@@ -3590,24 +3589,23 @@ describe('EditorRoot', () => {
     } as const;
     const view = render(<EditorRoot {...props} toolbar={toolbar} />);
     const heading = view.getByRole('button', { name: 'Headings' });
-    const appearance = view.getByRole('button', { name: 'Appearance' });
-    const fonts = view.getByRole('button', { name: 'Font' });
+    const settings = view.getByRole('button', { name: '编辑器设置' });
 
     fireEvent.click(heading);
     expect(heading.getAttribute('aria-expanded')).toBe('true');
 
-    fireEvent.click(appearance);
+    fireEvent.click(settings);
     expect(heading.getAttribute('aria-expanded')).toBe('false');
-    expect(appearance.getAttribute('aria-expanded')).toBe('true');
+    expect(settings.getAttribute('aria-expanded')).toBe('true');
 
-    fireEvent.click(fonts);
-    expect(appearance.getAttribute('aria-expanded')).toBe('false');
-    expect(fonts.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(heading);
+    expect(settings.getAttribute('aria-expanded')).toBe('false');
+    expect(heading.getAttribute('aria-expanded')).toBe('true');
 
-    fireEvent.click(appearance);
-    expect(fonts.getAttribute('aria-expanded')).toBe('false');
-    expect(appearance.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(appearance);
+    fireEvent.click(settings);
+    expect(heading.getAttribute('aria-expanded')).toBe('false');
+    expect(settings.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(view.getByLabelText('Article theme'));
   });
 
   it('renders Preview from the current Appearance state', async () => {
@@ -3617,7 +3615,7 @@ describe('EditorRoot', () => {
       expect(props.previewPort.render).toHaveBeenCalledTimes(1)
     );
 
-    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     fireEvent.change(view.getByLabelText('Article theme'), {
       target: { value: 'theme:newsprint' }
     });
@@ -3682,7 +3680,7 @@ describe('EditorRoot', () => {
     await view.findByText('CSS saved');
 
     fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
-    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
 
     const articleTheme = view.getByRole('combobox', {
       name: 'Article theme'
@@ -3697,7 +3695,7 @@ describe('EditorRoot', () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
 
-    fireEvent.click(await view.findByRole('button', { name: 'Appearance' }));
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
     fireEvent.change(view.getByRole('combobox', { name: 'Article theme' }), {
       target: { value: 'theme:newsprint' }
     });
@@ -3709,6 +3707,38 @@ describe('EditorRoot', () => {
     expect(
       view.getByRole('button', { name: 'Article theme' }).textContent
     ).toContain('Newsprint');
+  });
+
+  it('carries an ordinary font choice into immersive mode', async () => {
+    const props = fixture();
+    const fonts = {
+      ...props.fonts,
+      options: {
+        ...props.fonts.options,
+        customFonts: [
+          ...props.fonts.options.customFonts,
+          {
+            fontFamily: 'Optima, sans-serif',
+            id: 'optima',
+            label: 'Optima'
+          }
+        ]
+      }
+    };
+    const view = render(<EditorRoot {...props} fonts={fonts} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.change(view.getByRole('combobox', { name: 'Custom font' }), {
+      target: { value: 'optima' }
+    });
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: 'Font' }));
+
+    expect(
+      view.getByRole('button', { name: 'Custom font' }).textContent
+    ).toContain('Optima');
   });
 
   it('applies theme classes and theme font defaults to the single Preview sink', async () => {
@@ -3771,7 +3801,7 @@ describe('EditorRoot', () => {
       <EditorRoot {...props} appearance={appearance} fonts={fonts} />
     );
 
-    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     fireEvent.change(view.getByLabelText('Article theme'), {
       target: { value: 'theme:newsprint' }
     });

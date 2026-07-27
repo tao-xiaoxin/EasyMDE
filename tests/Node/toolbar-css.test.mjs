@@ -37,8 +37,8 @@ test('toolbar icons use one stable local SVG box and chevron contract', () => {
   const compact = ruleBody(
     '.easymde-editor:not(.is-immersive) .easymde-toolbar-button-compact'
   );
-  assert.match(compact, /width:\s*34px;/);
-  assert.match(compact, /min-width:\s*34px;/);
+  assert.match(compact, /width:\s*38px;/);
+  assert.match(compact, /min-width:\s*38px;/);
 });
 
 test('typographic toolbar glyphs are unboxed and interaction states do not move controls', () => {

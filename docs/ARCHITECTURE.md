@@ -238,11 +238,12 @@ Custom CSS library entries are stored in the current user's user meta. Creating,
 
 When a post uses custom CSS, EasyMDE stores a post-level snapshot so published content can retain the selected appearance if the user later edits or removes the saved library entry.
 
-The ordinary-editor Appearance panel may select an existing named Custom CSS
-theme, but it does not expose Custom CSS creation or editing. Custom CSS
-editing remains an immersive-editor surface, where it edits only a
-browser-session draft and sends an explicit save through the existing
-protected REST boundary.
+The ordinary editor exposes Appearance and Font choices through one compact
+Editor Settings popover. Its Appearance section may select an existing named
+Custom CSS theme, but it does not expose Custom CSS creation or editing.
+Custom CSS editing remains an immersive-editor surface, where it edits only a
+browser-session draft and sends an explicit save through the existing protected
+REST boundary.
 React does not validate or scope CSS as a security authority, retry a mutation,
 or report success before the server response has been validated. The existing
 hidden Custom CSS ID and snapshot fields remain the WordPress submission

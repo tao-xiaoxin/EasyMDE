@@ -16,7 +16,8 @@
 }
 
 .easymde-toolbar-popover-appearance-panel:not(.is-immersive-panel)::before,
-.easymde-toolbar-popover-font-panel:not(.is-immersive-panel)::before {
+.easymde-toolbar-popover-font-panel:not(.is-immersive-panel)::before,
+.easymde-toolbar-popover-settings-panel::before {
     content: "";
     position: absolute;
     top: -8px;
@@ -27,6 +28,99 @@
     border-left: 1px solid #d0d7de;
     background: #fff;
     transform: rotate(45deg);
+}
+
+.easymde-toolbar-popover-settings-panel {
+    box-sizing: border-box;
+    width: min(468px, calc(100vw - 32px));
+    padding: 0;
+    overflow: visible;
+    border-color: #dfe4ea;
+    border-radius: 12px;
+    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.15);
+}
+
+.easymde-editor-settings-heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+    padding: 0 16px;
+    border-bottom: 1px solid #e8ebef;
+    border-radius: 12px 12px 0 0;
+    background: #fbfcfd;
+    color: #263342;
+    font-size: 13px;
+}
+
+.easymde-editor-settings-heading svg {
+    color: #52616f;
+}
+
+.easymde-editor-settings-section {
+    padding: 14px 16px 16px;
+}
+
+.easymde-editor-settings-section + .easymde-editor-settings-section {
+    border-top: 1px solid #edf0f4;
+}
+
+.easymde-editor-settings-section h3 {
+    margin: 0 0 10px;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1.3;
+}
+
+.easymde-editor-settings-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 14px;
+}
+
+.easymde-editor-settings-section .easymde-toolbar-control {
+    display: flex;
+    min-width: 0;
+    gap: 5px;
+    margin: 0;
+    color: #334155;
+    font-size: 12.5px;
+}
+
+.easymde-editor-settings-section .easymde-toolbar-control-label {
+    color: #475569;
+    font-weight: 600;
+}
+
+.easymde-editor-settings-section .easymde-toolbar-control select {
+    min-height: 36px;
+    border-color: #cfd6df;
+    border-radius: 8px;
+    background-color: #fbfcfe;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    color: #1f2937;
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.easymde-editor-settings-section .easymde-toolbar-control select:hover {
+    border-color: #9aa7b6;
+    background-color: #fff;
+}
+
+.easymde-editor-settings-section .easymde-toolbar-control select:focus {
+    border-color: #2271b1;
+    box-shadow: 0 0 0 1px #2271b1;
+}
+
+.easymde-editor-settings-section .easymde-toolbar-help {
+    margin: 12px 0 0;
+    padding-top: 10px;
+    border-top: 1px solid #edf0f4;
+    color: #6b7280;
+    font-size: 12px;
+    line-height: 1.5;
 }
 
 .easymde-toolbar-popover[hidden] {

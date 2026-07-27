@@ -1173,6 +1173,7 @@ test.describe('EasyMDE editor workflows', () => {
       cssName: window.EasyMDEEditorRootBootstrap.appearance.strings.cssName,
       customCss: window.EasyMDEEditorRootBootstrap.appearance.strings.customCss,
       customCssTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.customCssTheme,
+      editorSettings: window.EasyMDEEditorRootBootstrap.strings.immersive.editorSettings,
       font: window.EasyMDEEditorRootBootstrap.fonts.strings.font,
       immersive: window.EasyMDEEditorRootBootstrap.strings.immersive,
       saveCss: window.EasyMDEEditorRootBootstrap.appearance.strings.saveCss
@@ -1205,26 +1206,34 @@ test.describe('EasyMDE editor workflows', () => {
       ]
     }));
 
-    const ordinaryFontDialog = page.locator(
-      '.easymde-toolbar-popover-font-panel:not(.is-immersive-panel)'
-    );
-    await expect(ordinaryFontDialog).toBeHidden();
-    const appearanceTrigger = page.locator('.easymde-toolbar-section-secondary')
-      .getByRole('button', { name: labels.appearance, exact: true });
-    await appearanceTrigger.click();
-    const appearanceDialog = page.getByRole('dialog', { name: labels.appearance });
-    await expect(appearanceTrigger).toBeFocused();
-    expect(await appearanceDialog.evaluate((panel, trigger) => (
+    const settingsTrigger = page.locator('.easymde-toolbar-section-secondary')
+      .getByRole('button', { name: labels.editorSettings, exact: true });
+    await expect(
+      page.locator('.easymde-toolbar-section-secondary')
+        .getByRole('button', { name: labels.font, exact: true })
+    ).toHaveCount(0);
+    await expect(
+      page.locator('.easymde-toolbar-section-secondary')
+        .getByRole('button', { name: labels.appearance, exact: true })
+    ).toHaveCount(0);
+    await settingsTrigger.click();
+    const settingsDialog = page.getByRole('dialog', { name: labels.editorSettings });
+    await expect(settingsDialog.getByLabel(labels.articleTheme)).toBeFocused();
+    expect(await settingsDialog.evaluate((panel, trigger) => (
       panel.parentElement === trigger.parentElement
       && panel.parentElement?.classList.contains('easymde-toolbar-popover-anchor')
-      && panel.parentElement?.classList.contains('easymde-toolbar-popover-appearance')
-    ), await appearanceTrigger.elementHandle())).toBe(true);
-    const appearanceGeometry = await appearanceDialog.evaluate((panel, trigger) => {
+      && panel.parentElement?.classList.contains('easymde-toolbar-popover-settings')
+    ), await settingsTrigger.elementHandle())).toBe(true);
+    const settingsGeometry = await settingsDialog.evaluate((panel, trigger) => {
       const panelBox = panel.getBoundingClientRect();
       const triggerBox = trigger.getBoundingClientRect();
       const pointer = getComputedStyle(panel, '::before');
       return {
         height: panelBox.height,
+        overflow: {
+          horizontal: panel.scrollWidth - panel.clientWidth,
+          vertical: panel.scrollHeight - panel.clientHeight
+        },
         pointer: {
           content: pointer.content,
           height: pointer.height,
@@ -1235,19 +1244,21 @@ test.describe('EasyMDE editor workflows', () => {
         topDelta: Math.abs(panelBox.top - triggerBox.bottom - 8),
         width: panelBox.width
       };
-    }, await appearanceTrigger.elementHandle());
-    expect(appearanceGeometry.height).toBe(112);
-    expect(appearanceGeometry.pointer).toEqual({
+    }, await settingsTrigger.elementHandle());
+    expect(settingsGeometry.height).toBeGreaterThanOrEqual(380);
+    expect(settingsGeometry.height).toBeLessThanOrEqual(410);
+    expect(settingsGeometry.overflow).toEqual({ horizontal: 0, vertical: 0 });
+    expect(settingsGeometry.pointer).toEqual({
       content: '""',
       height: '14px',
       transformed: true,
       width: '14px'
     });
-    expect(appearanceGeometry.rightDelta).toBeLessThanOrEqual(1);
-    expect(appearanceGeometry.topDelta).toBeLessThanOrEqual(1);
-    expect(appearanceGeometry.width).toBe(308);
-    const articleSelect = appearanceDialog.getByLabel(labels.articleTheme);
-    const codeSelect = appearanceDialog.getByLabel(labels.codeTheme);
+    expect(settingsGeometry.rightDelta).toBeLessThanOrEqual(1);
+    expect(settingsGeometry.topDelta).toBeLessThanOrEqual(1);
+    expect(settingsGeometry.width).toBe(468);
+    const articleSelect = settingsDialog.getByLabel(labels.articleTheme);
+    const codeSelect = settingsDialog.getByLabel(labels.codeTheme);
     const articleThemeLink = page.locator('#easymde-article-theme-css');
     const previewCode = page.locator('.easymde-pane-preview article pre code.hljs').first();
     const fullWidthFrameThemes = new Set([
@@ -1296,10 +1307,10 @@ test.describe('EasyMDE editor workflows', () => {
     }
 
     await expect(
-      appearanceDialog.getByRole('button', { name: labels.customCss, exact: true })
+      settingsDialog.getByRole('button', { name: labels.customCss, exact: true })
     ).toHaveCount(0);
     await page.keyboard.press('Escape');
-    await expect(appearanceDialog).toHaveCount(0);
+    await expect(settingsDialog).toHaveCount(0);
 
     await page.getByRole('button', { name: labels.immersive.enter }).click();
     const immersiveRegion = page.getByRole('region', { name: labels.immersive.immersive });
@@ -1329,39 +1340,13 @@ test.describe('EasyMDE editor workflows', () => {
     await immersiveRegion.getByRole('button', { name: labels.immersive.exit }).click();
     await expect(immersiveRegion).toHaveCount(0);
 
-    await appearanceTrigger.click();
-    await expect(appearanceDialog).toBeVisible();
+    await settingsTrigger.click();
+    await expect(settingsDialog).toBeVisible();
     await expect(articleSelect).toHaveValue(/^custom:/);
     await expect(articleSelect.locator('option:checked')).toHaveText(customName);
-    await page.keyboard.press('Escape');
-    await expect(appearanceDialog).toHaveCount(0);
-
-    const fontTrigger = page.getByRole('button', { name: labels.font, exact: true });
-    await fontTrigger.click();
-    const fontDialog = ordinaryFontDialog;
-    await expect(fontTrigger).toBeFocused();
-    expect(await fontDialog.evaluate((panel, trigger) => (
-      panel.parentElement === trigger.parentElement
-      && panel.parentElement?.classList.contains('easymde-toolbar-popover-anchor')
-      && panel.parentElement?.classList.contains('easymde-toolbar-popover-font')
-    ), await fontTrigger.elementHandle())).toBe(true);
-    const fontGeometry = await fontDialog.evaluate((panel, trigger) => {
-      const panelBox = panel.getBoundingClientRect();
-      const triggerBox = trigger.getBoundingClientRect();
-      return {
-        height: panelBox.height,
-        rightDelta: Math.abs(panelBox.right - triggerBox.right),
-        topDelta: Math.abs(panelBox.top - triggerBox.bottom - 8),
-        width: panelBox.width
-      };
-    }, await fontTrigger.elementHandle());
-    expect(fontGeometry.height).toBe(206);
-    expect(fontGeometry.rightDelta).toBeLessThanOrEqual(1);
-    expect(fontGeometry.topDelta).toBeLessThanOrEqual(1);
-    expect(fontGeometry.width).toBe(456);
     for (const group of catalog.fontGroups) {
       for (const id of group.ids) {
-        await fontDialog.locator(group.select).selectOption(id);
+        await settingsDialog.locator(group.select).selectOption(id);
         await expect(page.locator(group.field)).toHaveValue(id);
         await expect(
           page.locator('.easymde-pane-preview article')
@@ -1405,8 +1390,7 @@ test.describe('EasyMDE editor workflows', () => {
         ...commandLabels,
         ...exportLabels,
         bootstrap.strings.immersive.enter,
-        bootstrap.fonts.strings.font,
-        bootstrap.appearance.strings.appearance
+        bootstrap.strings.immersive.editorSettings
       ];
     });
     const toolbarLabels = await page.locator('.easymde-toolbar').evaluate((toolbar) => (
@@ -1501,7 +1485,7 @@ test.describe('EasyMDE editor workflows', () => {
       };
     });
     expect(immersiveGeometry).toEqual({
-      button: { height: 34, width: 34 },
+      button: { height: 36, width: 38 },
       icon: { height: 16, width: 16 }
     });
 
@@ -1546,19 +1530,13 @@ test.describe('EasyMDE editor workflows', () => {
 
     const headingLabel = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.strings.headings);
     const headingTrigger = page.getByRole('button', { name: headingLabel });
-    for (const trigger of [
-      headingTrigger,
-      page.getByRole('button', { name: expectedToolbarLabels.at(-2) }),
-      page.getByRole('button', { name: expectedToolbarLabels.at(-1) })
-    ]) {
-      const chevron = trigger.locator('.easymde-toolbar-chevron');
-      await expect(chevron).toHaveCount(1);
-      await expect(chevron).toHaveAttribute('aria-hidden', 'true');
-      await expect(chevron).toHaveAttribute('fill', 'none');
-      await expect(chevron).toHaveAttribute('stroke-width', '2.25');
-      await expect(chevron).toHaveCSS('width', '12px');
-      await expect(chevron).toHaveCSS('height', '12px');
-    }
+    const headingChevron = headingTrigger.locator('.easymde-toolbar-chevron');
+    await expect(headingChevron).toHaveCount(1);
+    await expect(headingChevron).toHaveAttribute('aria-hidden', 'true');
+    await expect(headingChevron).toHaveAttribute('fill', 'none');
+    await expect(headingChevron).toHaveAttribute('stroke-width', '2.25');
+    await expect(headingChevron).toHaveCSS('width', '12px');
+    await expect(headingChevron).toHaveCSS('height', '12px');
     await headingTrigger.click();
     const headingCommands = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.toolbar.commands
       .filter(({ surface }) => 'heading-menu' === surface)
@@ -1675,8 +1653,7 @@ test.describe('EasyMDE editor workflows', () => {
       }))).toEqual({ internalOverflow: 0, viewportOverflow: 0 });
 
       for (const [anchorSelector, panelSelector] of [
-        ['.easymde-toolbar-popover-font', '.easymde-toolbar-popover-font-panel'],
-        ['.easymde-toolbar-popover-appearance', '.easymde-toolbar-popover-appearance-panel']
+        ['.easymde-toolbar-popover-settings', '.easymde-toolbar-popover-settings-panel']
       ]) {
         const trigger = page.locator(`${anchorSelector} > button`);
         const panel = page.locator(panelSelector);

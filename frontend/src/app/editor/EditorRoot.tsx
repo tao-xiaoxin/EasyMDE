@@ -76,6 +76,10 @@ import {
   type FontControlsSession
 } from '../../features/font-controls/ui/FontControls';
 import {
+  OrdinaryEditorSettings,
+  type OrdinaryEditorSettingsSession
+} from '../../features/editor-settings/ui/OrdinaryEditorSettings';
+import {
   createImageUploadSession,
   type ImageUploadStatus
 } from '../../features/image-upload/image-upload-session';
@@ -433,6 +437,8 @@ export function EditorRoot(props: EditorRootProps) {
   const restoreImmersiveFocusRef = useRef(false);
   const appearanceSessionRef = useRef<AppearanceControlsSession | null>(null);
   const fontControlsSessionRef = useRef<FontControlsSession | null>(null);
+  const ordinarySettingsSessionRef =
+    useRef<OrdinaryEditorSettingsSession | null>(null);
   const toolbarSessionRef = useRef<EditorToolbarSession | null>(null);
   const previewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
   const visualEditorRuntimeRef =
@@ -482,6 +488,10 @@ export function EditorRoot(props: EditorRootProps) {
     [appearanceSnapshot, props.appearance]
   );
   const [fontState, setFontState] = useState(props.fonts.state);
+  const currentFonts = useMemo<FontControlsBootstrap>(
+    () => ({ ...props.fonts, state: fontState }),
+    [fontState, props.fonts]
+  );
   const [immersive, setImmersive] = useState(false);
   const immersiveRef = useRef(immersive);
   immersiveRef.current = immersive;
@@ -656,6 +666,7 @@ export function EditorRoot(props: EditorRootProps) {
   const closeForToolbar = useCallback(() => {
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
+    ordinarySettingsSessionRef.current?.close();
   }, []);
   const schedulePreviewMarkdown = useCallback(
     (markdown: string, immediate = false): string => {
@@ -753,6 +764,7 @@ export function EditorRoot(props: EditorRootProps) {
       closeOtherPopovers: () => {
         toolbarSessionRef.current?.closePopovers();
         fontControlsSessionRef.current?.close();
+        ordinarySettingsSessionRef.current?.close();
         props.appearancePort.closeOtherPopovers();
       },
       saveCustomCss: async (input) => {
@@ -802,6 +814,7 @@ export function EditorRoot(props: EditorRootProps) {
       closeOtherPopovers: () => {
         toolbarSessionRef.current?.closePopovers();
         appearanceSessionRef.current?.close();
+        ordinarySettingsSessionRef.current?.close();
         props.fontControlsPort.closeOtherPopovers();
       }
     }),
@@ -816,6 +829,12 @@ export function EditorRoot(props: EditorRootProps) {
   const handleFontControlsReady = useCallback(
     (session: FontControlsSession) => {
       fontControlsSessionRef.current = session;
+    },
+    []
+  );
+  const handleOrdinarySettingsReady = useCallback(
+    (session: OrdinaryEditorSettingsSession) => {
+      ordinarySettingsSessionRef.current = session;
     },
     []
   );
@@ -1335,7 +1354,7 @@ export function EditorRoot(props: EditorRootProps) {
                 variant="immersive"
               />
               <FontControls
-                bootstrap={props.fonts}
+                bootstrap={currentFonts}
                 onFailure={() => props.onFailure('react-editor-fonts-failed')}
                 onReady={handleFontControlsReady}
                 port={fontControlsPort}
@@ -1427,19 +1446,21 @@ export function EditorRoot(props: EditorRootProps) {
             >
               <ImmersiveToggleIcon />
             </button>
-            <FontControls
-              bootstrap={props.fonts}
-              onFailure={() => props.onFailure('react-editor-fonts-failed')}
-              onReady={handleFontControlsReady}
-              port={fontControlsPort}
-            />
-            <AppearanceControls
-              bootstrap={currentAppearance}
-              onFailure={() =>
-                props.onFailure('react-editor-appearance-failed')
-              }
-              onReady={handleAppearanceReady}
-              port={appearancePort}
+            <OrdinaryEditorSettings
+              appearance={currentAppearance}
+              appearancePort={appearancePort}
+              fonts={currentFonts}
+              fontControlsPort={fontControlsPort}
+              label={props.immersiveStrings.editorSettings}
+              onAppearanceReady={handleAppearanceReady}
+              onFailure={props.onFailure}
+              onFontControlsReady={handleFontControlsReady}
+              onOpen={() => {
+                toolbarSessionRef.current?.closePopovers();
+                props.appearancePort.closeOtherPopovers();
+                props.fontControlsPort.closeOtherPopovers();
+              }}
+              onReady={handleOrdinarySettingsReady}
             />
           </div>
         </div>

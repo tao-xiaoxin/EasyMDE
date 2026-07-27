@@ -52,6 +52,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	public function test_editor_root_bootstrap_exposes_the_complete_single_root_contract() {
 		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
 		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		update_post_meta( $post_id, '_edit_last', $user_id );
 		wp_set_current_user( $user_id );
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
@@ -123,7 +124,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		);
 	}
 
-	public function test_editor_status_falls_back_to_the_post_author_when_the_last_editor_no_longer_exists() {
+	public function test_editor_status_omits_the_editor_when_the_last_editor_no_longer_exists() {
 		$author_id = self::factory()->user->create(
 			array(
 				'display_name' => 'Synthetic Author',
@@ -136,8 +137,15 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
 
-		$this->assertStringContainsString(
-			'Last edited by Synthetic Author on ',
+		$modified = get_post_modified_time(
+			get_option( 'date_format' ) . ' ' . get_option( 'time_format' ),
+			false,
+			get_post( $post_id ),
+			true
+		);
+
+		$this->assertSame(
+			'Last edited on ' . $modified,
 			$bootstrap['layout']['status']['lastEdited']
 		);
 	}

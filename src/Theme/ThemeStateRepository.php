@@ -42,14 +42,15 @@ final class ThemeStateRepository {
 		$post_id  = absint( $post_id );
 		$defaults = $this->get_default_theme_state();
 
-		$markdown_theme = $defaults['markdownTheme'];
-		$code_theme     = $defaults['codeTheme'];
-		$custom_css_id  = $defaults['customCssId'];
-		$custom_font    = $defaults['customFont'];
-		$windows_font   = $defaults['windowsFont'];
-		$apple_font     = $defaults['appleFont'];
-		$serif_font     = $defaults['serifFont'];
-		$custom_css     = '';
+		$markdown_theme         = $defaults['markdownTheme'];
+		$code_theme             = $defaults['codeTheme'];
+		$custom_css_id          = $defaults['customCssId'];
+		$custom_font            = $defaults['customFont'];
+		$windows_font           = $defaults['windowsFont'];
+		$apple_font             = $defaults['appleFont'];
+		$serif_font             = $defaults['serifFont'];
+		$custom_css             = '';
+		$has_post_font_metadata = false;
 
 		if ( $post_id ) {
 			$stored_markdown_theme = get_post_meta( $post_id, PostDocument::META_MARKDOWN_THEME, true );
@@ -66,10 +67,14 @@ final class ThemeStateRepository {
 			$custom_css_id = sanitize_key( (string) get_post_meta( $post_id, PostDocument::META_CUSTOM_CSS_ID, true ) );
 			$custom_css    = (string) get_post_meta( $post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, true );
 
-			$stored_custom_font  = get_post_meta( $post_id, PostDocument::META_CUSTOM_FONT, true );
-			$stored_windows_font = get_post_meta( $post_id, PostDocument::META_WINDOWS_FONT, true );
-			$stored_apple_font   = get_post_meta( $post_id, PostDocument::META_APPLE_FONT, true );
-			$stored_serif_font   = get_post_meta( $post_id, PostDocument::META_SERIF_FONT, true );
+			$stored_custom_font     = get_post_meta( $post_id, PostDocument::META_CUSTOM_FONT, true );
+			$stored_windows_font    = get_post_meta( $post_id, PostDocument::META_WINDOWS_FONT, true );
+			$stored_apple_font      = get_post_meta( $post_id, PostDocument::META_APPLE_FONT, true );
+			$stored_serif_font      = get_post_meta( $post_id, PostDocument::META_SERIF_FONT, true );
+			$has_post_font_metadata = metadata_exists( 'post', $post_id, PostDocument::META_CUSTOM_FONT )
+				|| metadata_exists( 'post', $post_id, PostDocument::META_WINDOWS_FONT )
+				|| metadata_exists( 'post', $post_id, PostDocument::META_APPLE_FONT )
+				|| metadata_exists( 'post', $post_id, PostDocument::META_SERIF_FONT );
 
 			if ( '' !== $stored_custom_font ) {
 				$custom_font = $stored_custom_font;
@@ -96,6 +101,23 @@ final class ThemeStateRepository {
 		$windows_font              = $this->sanitize_font_option_id( 'windowsFonts', $windows_font, 'microsoft-yahei' );
 		$apple_font                = $this->sanitize_font_option_id( 'appleFonts', $apple_font, 'pingfang-sc-light' );
 		$serif_font                = $this->sanitize_font_option_id( 'serifOptions', $serif_font, 'yes' );
+		$apply_theme_font_defaults = $apply_theme_font_defaults || $this->should_apply_theme_font_defaults(
+			$custom_font,
+			$windows_font,
+			$apple_font,
+			$serif_font
+		);
+		$apply_theme_font_defaults = $apply_theme_font_defaults || (
+			! $has_post_font_metadata
+			&& $markdown_theme !== $defaults['markdownTheme']
+			&& $this->font_stack_matches_article_theme_defaults(
+				$defaults['markdownTheme'],
+				$custom_font,
+				$windows_font,
+				$apple_font,
+				$serif_font
+			)
+		);
 
 		$theme_font_defaults = $this->get_article_theme_font_defaults( $markdown_theme );
 		if ( $theme_font_defaults && $apply_theme_font_defaults ) {
@@ -233,6 +255,12 @@ final class ThemeStateRepository {
 		$windows_font              = $this->sanitize_font_option_id( 'windowsFonts', $windows_font, 'microsoft-yahei' );
 		$apple_font                = $this->sanitize_font_option_id( 'appleFonts', $apple_font, 'pingfang-sc-light' );
 		$serif_font                = $this->sanitize_font_option_id( 'serifOptions', $serif_font, 'yes' );
+		$apply_theme_font_defaults = $apply_theme_font_defaults || $this->should_apply_theme_font_defaults(
+			$custom_font,
+			$windows_font,
+			$apple_font,
+			$serif_font
+		);
 
 		$theme_font_defaults = $this->get_article_theme_font_defaults( $markdown_theme );
 		if ( $theme_font_defaults && $apply_theme_font_defaults ) {
@@ -607,6 +635,16 @@ final class ThemeStateRepository {
 			&& 'microsoft-yahei' === $windows_font
 			&& 'pingfang-sc-light' === $apple_font
 			&& 'yes' === $serif_font;
+	}
+
+	private function font_stack_matches_article_theme_defaults( $markdown_theme, $custom_font, $windows_font, $apple_font, $serif_font ) {
+		$defaults = $this->get_article_theme_font_defaults( $markdown_theme );
+
+		return $defaults
+			&& $defaults['customFont'] === $custom_font
+			&& $defaults['windowsFont'] === $windows_font
+			&& $defaults['appleFont'] === $apple_font
+			&& $defaults['serifFont'] === $serif_font;
 	}
 
 	private function should_apply_theme_font_defaults( $custom_font, $windows_font, $apple_font, $serif_font ) {

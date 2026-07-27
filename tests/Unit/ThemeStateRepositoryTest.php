@@ -313,6 +313,82 @@ final class ThemeStateRepositoryTest extends WP_UnitTestCase
         $this->assertSame($before_post_meta, get_post_meta($post_id));
     }
 
+    public function test_canonical_user_theme_defaults_follow_partial_posts_selected_theme_without_writing_meta()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+            )
+        );
+
+        wp_set_current_user($user_id);
+        update_user_meta(
+            $user_id,
+            'easymde_default_theme_state',
+            array(
+                'markdownTheme' => 'red-crimson',
+                'codeTheme' => 'atom-one-dark',
+                'customCssId' => '',
+                'customFont' => 'inter',
+                'windowsFont' => 'microsoft-yahei',
+                'appleFont' => 'pingfang-sc-regular',
+                'serifFont' => 'sans-serif-only',
+                'defaultsVersion' => EASYMDE_VERSION,
+            )
+        );
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'rose-purple');
+
+        $before_user_meta = get_user_meta($user_id, 'easymde_default_theme_state', true);
+        $before_post_meta = get_post_meta($post_id);
+        $state = $this->theme_state_repository()->get_theme_state($post_id);
+
+        $this->assertSame('rose-purple', $state['markdownTheme']);
+        $this->assertSame('optima', $state['customFont']);
+        $this->assertSame('microsoft-yahei', $state['windowsFont']);
+        $this->assertSame('pingfang-sc-regular', $state['appleFont']);
+        $this->assertSame('serif-only', $state['serifFont']);
+        $this->assertSame($before_user_meta, get_user_meta($user_id, 'easymde_default_theme_state', true));
+        $this->assertSame($before_post_meta, get_post_meta($post_id));
+    }
+
+    public function test_explicit_canonical_user_fonts_do_not_follow_an_unrelated_default_theme()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+            )
+        );
+
+        wp_set_current_user($user_id);
+        update_user_meta(
+            $user_id,
+            'easymde_default_theme_state',
+            array(
+                'markdownTheme' => 'default',
+                'codeTheme' => 'atom-one-dark',
+                'customCssId' => '',
+                'customFont' => 'inter',
+                'windowsFont' => 'microsoft-yahei',
+                'appleFont' => 'pingfang-sc-regular',
+                'serifFont' => 'sans-serif-only',
+                'defaultsVersion' => EASYMDE_VERSION,
+            )
+        );
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'rose-purple');
+
+        $state = $this->theme_state_repository()->get_theme_state($post_id);
+
+        $this->assertSame('rose-purple', $state['markdownTheme']);
+        $this->assertSame('inter', $state['customFont']);
+        $this->assertSame('microsoft-yahei', $state['windowsFont']);
+        $this->assertSame('pingfang-sc-regular', $state['appleFont']);
+        $this->assertSame('sans-serif-only', $state['serifFont']);
+    }
+
     public function test_legacy_user_defaults_apply_filtered_theme_font_defaults_without_writing_meta()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
@@ -462,6 +538,21 @@ final class ThemeStateRepositoryTest extends WP_UnitTestCase
         $this->assertSame('inter', $state['customFont']);
         $this->assertSame('no-windows-font', $state['windowsFont']);
         $this->assertSame('pingfang-tc-regular', $state['appleFont']);
+        $this->assertSame('sans-serif-only', $state['serifFont']);
+    }
+
+    public function test_request_without_font_fields_applies_selected_theme_defaults()
+    {
+        $state = $this->theme_state_repository()->sanitize_theme_state_from_request(
+            array(
+                'easymde_markdown_theme' => 'red-crimson',
+                'easymde_code_theme' => 'atom-one-dark',
+            )
+        );
+
+        $this->assertSame('inter', $state['customFont']);
+        $this->assertSame('microsoft-yahei', $state['windowsFont']);
+        $this->assertSame('pingfang-sc-regular', $state['appleFont']);
         $this->assertSame('sans-serif-only', $state['serifFont']);
     }
 

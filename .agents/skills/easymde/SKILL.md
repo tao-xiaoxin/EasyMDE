@@ -1020,7 +1020,7 @@ Feature boundaries:
 - **WeChat export:** copy only the current stable sanitized Preview; Clipboard rejection is a failure; fallback restores Selection, Focus, Scroll, and temporary DOM.
 - **AI assistant:** use `AiPort` and explicit user action; keep credentials server-side; disclose the selected provider and content boundary, send only the context required for the requested action, and make retention/logging policy explicit. Treat model output as untrusted; generated changes remain visible, rejectable, undoable, cancellation/stale-safe, and never automatically save, publish, upload, change settings, or execute returned code.
 
-### Theme Palette Duplication Gate
+### Theme, Code Ownership, and Font Duplication Gate
 
 Before adding an Article Theme or Code Theme, compare the proposed palette with
 every existing theme in the corresponding Registry and its effective CSS. Do
@@ -1036,6 +1036,47 @@ theme only when this comparison finds no existing palette match; record the
 themes compared and the evidence for the distinct palette in the focused task
 or pull request. Differences limited to naming, selector structure, formatting,
 minification, or equivalent color notation do not make a palette new.
+
+Before adding an Article Theme, add or reuse one Registry-owned association
+from that Article Theme to its own default Code Theme ID. Resolve the ID through
+the filtered Code Theme Registry and runtime-validate the browser descriptor;
+do not infer it from a filename, duplicate its CSS, or encode one generic
+default in PHP, React, JavaScript, or CSS. The association supplies the
+Article Theme's default or fallback only. An explicit valid persisted or
+session Code Theme selection remains authoritative.
+
+Article Theme CSS, Code Theme CSS, and the shared Mac frame remain independent
+owners even when Registry data associates their defaults:
+
+- Article Theme CSS owns article content presentation and must not copy or
+  override fenced/indented block-code structure, frame geometry, backgrounds,
+  token colors, structural padding, or code typography;
+- Code Theme CSS owns the code background, foreground, and syntax-token palette
+  and must not copy article typography or other non-code content styles;
+- the shared frame owns its fixed structure and must not be reimplemented by
+  either Theme type; and
+- remove a superseded conflicting CSS or JavaScript path physically. A later
+  override, unused selector, hidden branch, compatibility shim, or commented
+  copy does not satisfy Issue #58.
+
+Before adding a user-visible Font option or Article Theme font default, compare
+its effective CSS font stack with every canonical option in the same Font
+group. Preserve family order, generic fallbacks, weight/style implications, and
+glyph or locale semantics while treating insignificant quoting, whitespace,
+and case differences as equivalent. Inter repeated by orange-heart,
+red-crimson, ningye-purple, or cupid-busy is one canonical Inter option;
+Optima repeated by rose-purple or tech-blue is one canonical Optima option;
+Helvetica repeated by qingbi-liujin or qinghe-zhusha is one canonical Helvetica
+option.
+
+If the effective stack and fallback behavior already exist, reuse its canonical
+ID and do not add a Theme-labelled option, Registry entry, or duplicate label.
+Required historical IDs remain read-only compatibility aliases and normalize
+to the canonical ID on the next legitimate save; they do not reappear as
+visible choices. A separate option is valid only when the actual stack changes
+fallback order, glyph/locale coverage, weight/style semantics, or another
+observable rendering behavior. Record the compared options and that evidence
+in the focused task or pull request.
 
 ## Accessibility, UI, and CSS Quality
 

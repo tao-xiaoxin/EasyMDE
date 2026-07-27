@@ -91,65 +91,65 @@ final class ArticleThemeRegistry {
 		switch ( sanitize_key( (string) $markdown_theme ) ) {
 			case 'orange-heart':
 				return array(
-					'customFont'  => 'orange-heart-inter',
-					'windowsFont' => 'orange-heart-microsoft-yahei',
-					'appleFont'   => 'pingfang-sc-regular-raw',
+					'customFont'  => 'inter',
+					'windowsFont' => 'microsoft-yahei',
+					'appleFont'   => 'pingfang-sc-regular',
 					'serifFont'   => 'sans-serif-only',
 				);
 
 			case 'red-crimson':
 				return array(
-					'customFont'  => 'red-crimson-inter',
-					'windowsFont' => 'red-crimson-microsoft-yahei',
-					'appleFont'   => 'pingfang-sc-regular-raw',
+					'customFont'  => 'inter',
+					'windowsFont' => 'microsoft-yahei',
+					'appleFont'   => 'pingfang-sc-regular',
 					'serifFont'   => 'sans-serif-only',
 				);
 
 			case 'rose-purple':
 				return array(
-					'customFont'  => 'rose-purple-optima',
-					'windowsFont' => 'rose-purple-microsoft-yahei',
-					'appleFont'   => 'pingfang-sc-regular-raw',
+					'customFont'  => 'optima',
+					'windowsFont' => 'microsoft-yahei',
+					'appleFont'   => 'pingfang-sc-regular',
 					'serifFont'   => 'serif-only',
 				);
 
 			case 'ningye-purple':
 				return array(
-					'customFont'  => 'ningye-purple-inter',
-					'windowsFont' => 'ningye-purple-microsoft-yahei',
-					'appleFont'   => 'pingfang-sc-regular-raw',
+					'customFont'  => 'inter',
+					'windowsFont' => 'microsoft-yahei',
+					'appleFont'   => 'pingfang-sc-regular',
 					'serifFont'   => 'sans-serif-only',
 				);
 
 			case 'cupid-busy':
 				return array(
-					'customFont'  => 'cupid-busy-inter',
-					'windowsFont' => 'cupid-busy-microsoft-yahei',
-					'appleFont'   => 'pingfang-sc-regular-raw',
+					'customFont'  => 'inter',
+					'windowsFont' => 'microsoft-yahei',
+					'appleFont'   => 'pingfang-sc-regular',
 					'serifFont'   => 'sans-serif-only',
 				);
 
 			case 'tech-blue':
 				return array(
-					'customFont'  => 'tech-blue-optima',
-					'windowsFont' => 'tech-blue-microsoft-yahei',
-					'appleFont'   => 'pingfang-sc-regular-raw',
+					'customFont'  => 'optima',
+					'windowsFont' => 'microsoft-yahei',
+					'appleFont'   => 'pingfang-sc-regular',
 					'serifFont'   => 'serif-only',
 				);
 
 			case 'qingbi-liujin':
 				return array(
-					'customFont'  => 'qingbi-liujin-helvetica',
-					'windowsFont' => 'qingbi-liujin-no-windows',
-					'appleFont'   => 'qingbi-liujin-no-apple',
+					'customFont'  => 'helvetica',
+					'windowsFont' => 'no-windows-font',
+					'appleFont'   => 'no-apple-font',
 					'serifFont'   => 'sans-serif-only',
 				);
 
 			case 'qinghe-zhusha':
 				return array(
-					'customFont'  => 'qinghe-zhusha-helvetica',
-					'windowsFont' => 'qinghe-zhusha-no-windows',
-					'appleFont'   => 'qinghe-zhusha-no-apple',
+					'customFont'  => 'helvetica',
+					'windowsFont' => 'no-windows-font',
+					'appleFont'   => 'no-apple-font',
 					'serifFont'   => 'sans-serif-only',
 				);
 		}

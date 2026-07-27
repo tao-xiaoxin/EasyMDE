@@ -825,131 +825,71 @@ msgid "Optima"
 msgstr "Optima"
 
 #: src/Theme/ThemeStateRepository.php:369
-msgid "Inter (orange-heart)"
-msgstr "Inter（橙心）"
+msgid "Inter"
+msgstr "Inter"
 
 #: src/Theme/ThemeStateRepository.php:374
-msgid "Inter (red-crimson)"
-msgstr "Inter（红绯）"
+msgid "Helvetica"
+msgstr "Helvetica"
 
 #: src/Theme/ThemeStateRepository.php:379
-msgid "Optima (rose-purple)"
-msgstr "Optima（蔷薇紫）"
-
-#: src/Theme/ThemeStateRepository.php:384
-msgid "Inter (ningye-purple)"
-msgstr "Inter（凝夜紫）"
-
-#: src/Theme/ThemeStateRepository.php:389
-msgid "Inter (cupid-busy)"
-msgstr "Inter（丘比特忙）"
-
-#: src/Theme/ThemeStateRepository.php:394
-msgid "Optima (tech-blue)"
-msgstr "Optima（科技蓝）"
-
-#: src/Theme/ThemeStateRepository.php:399
-msgid "Helvetica (qingbi-liujin)"
-msgstr "Helvetica（青碧流金）"
-
-#: src/Theme/ThemeStateRepository.php:404
-msgid "Helvetica (qinghe-zhusha)"
-msgstr "Helvetica（清河朱砂）"
-
-#: src/Theme/ThemeStateRepository.php:409
 msgid "Georgia"
 msgstr "Georgia"
 
-#: src/Theme/ThemeStateRepository.php:414
+#: src/Theme/ThemeStateRepository.php:384
 msgid "Times"
 msgstr "Times"
 
-#: src/Theme/ThemeStateRepository.php:419
+#: src/Theme/ThemeStateRepository.php:389
 msgid "Cochin"
 msgstr "Cochin"
 
-#: src/Theme/ThemeStateRepository.php:424
+#: src/Theme/ThemeStateRepository.php:394
 msgid "Helvetica Neue"
 msgstr "Helvetica Neue"
 
-#: src/Theme/ThemeStateRepository.php:431
+#: src/Theme/ThemeStateRepository.php:401
 msgid "Microsoft YaHei"
 msgstr "微软雅黑"
 
-#: src/Theme/ThemeStateRepository.php:436
-msgid "Microsoft YaHei (orange-heart)"
-msgstr "微软雅黑（橙心）"
+#: src/Theme/ThemeStateRepository.php:406
+msgid "No Windows-specific font"
+msgstr "无 Windows 专用字体"
 
-#: src/Theme/ThemeStateRepository.php:441
-msgid "Microsoft YaHei (red-crimson)"
-msgstr "微软雅黑（红绯）"
-
-#: src/Theme/ThemeStateRepository.php:446
-msgid "Microsoft YaHei (rose-purple)"
-msgstr "微软雅黑（蔷薇紫）"
-
-#: src/Theme/ThemeStateRepository.php:451
-msgid "Microsoft YaHei (ningye-purple)"
-msgstr "微软雅黑（凝夜紫）"
-
-#: src/Theme/ThemeStateRepository.php:456
-msgid "Microsoft YaHei (cupid-busy)"
-msgstr "微软雅黑（丘比特忙）"
-
-#: src/Theme/ThemeStateRepository.php:461
-msgid "Microsoft YaHei (tech-blue)"
-msgstr "微软雅黑（科技蓝）"
-
-#: src/Theme/ThemeStateRepository.php:466
-msgid "No Windows-specific font (qingbi-liujin)"
-msgstr "无 Windows 特定字体（青碧流金）"
-
-#: src/Theme/ThemeStateRepository.php:471
-msgid "No Windows-specific font (qinghe-zhusha)"
-msgstr "无 Windows 特定字体（清河朱砂）"
-
-#: src/Theme/ThemeStateRepository.php:478
+#: src/Theme/ThemeStateRepository.php:413
 msgid "PingFang SC Light"
 msgstr "苹方简体细体"
 
-#: src/Theme/ThemeStateRepository.php:483
-msgid "PingFangSC-regular"
-msgstr "苹方简体常规体"
-
-#: src/Theme/ThemeStateRepository.php:488
+#: src/Theme/ThemeStateRepository.php:418
 msgid "PingFang SC Regular"
 msgstr "苹方简体常规体"
 
-#: src/Theme/ThemeStateRepository.php:493
+#: src/Theme/ThemeStateRepository.php:423
 msgid "PingFang TC Light"
 msgstr "苹方繁体细体"
 
-#: src/Theme/ThemeStateRepository.php:498
+#: src/Theme/ThemeStateRepository.php:428
 msgid "PingFang TC Regular"
 msgstr "苹方繁体常规体"
 
-#: src/Theme/ThemeStateRepository.php:503
-msgid "No Apple-specific font (qingbi-liujin)"
-msgstr "无 Apple 特定字体（青碧流金）"
+#: src/Theme/ThemeStateRepository.php:433
+msgid "No Apple-specific font"
+msgstr "无 Apple 专用字体"
 
-#: src/Theme/ThemeStateRepository.php:508
-msgid "No Apple-specific font (qinghe-zhusha)"
-msgstr "无 Apple 特定字体（清河朱砂）"
-
-#: src/Theme/ThemeStateRepository.php:515
+#: src/Theme/ThemeStateRepository.php:440
 msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr "是"
 
-#: src/Theme/ThemeStateRepository.php:520
+#: src/Theme/ThemeStateRepository.php:445
 msgid "serif"
 msgstr "衬线"
 
-#: src/Theme/ThemeStateRepository.php:525
+#: src/Theme/ThemeStateRepository.php:450
 msgid "sans-serif"
 msgstr "无衬线"
 
-#: src/Theme/ThemeStateRepository.php:530
+#: src/Theme/ThemeStateRepository.php:455
 msgctxt "serif font fallback option"
 msgid "No"
 msgstr "否"

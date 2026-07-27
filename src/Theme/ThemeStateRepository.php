@@ -30,7 +30,7 @@ final class ThemeStateRepository {
 		$library = $this->get_custom_css_library( get_current_user_id() );
 
 		return array(
-			'markdownThemes' => $this->article_themes->for_script(),
+			'markdownThemes' => $this->get_article_themes_for_script(),
 			'codeThemes'     => $this->code_themes->for_script(),
 			'fontOptions'    => $this->get_font_options(),
 			'customCss'      => array_values( array_map( array( $this, 'format_custom_css_item' ), $library ) ),
@@ -88,16 +88,17 @@ final class ThemeStateRepository {
 			}
 		}
 
-		$markdown_theme = $this->sanitize_markdown_theme_id( $markdown_theme );
-		$code_theme     = $this->sanitize_code_theme_id( $code_theme );
-		$custom_css_id  = sanitize_key( $custom_css_id );
-		$custom_font    = $this->sanitize_font_option_id( 'customFonts', $custom_font, 'optima' );
-		$windows_font   = $this->sanitize_font_option_id( 'windowsFonts', $windows_font, 'microsoft-yahei' );
-		$apple_font     = $this->sanitize_font_option_id( 'appleFonts', $apple_font, 'pingfang-sc-light' );
-		$serif_font     = $this->sanitize_font_option_id( 'serifOptions', $serif_font, 'yes' );
+		$apply_theme_font_defaults = $this->should_apply_theme_font_defaults( $custom_font, $windows_font, $apple_font, $serif_font );
+		$markdown_theme            = $this->sanitize_markdown_theme_id( $markdown_theme );
+		$code_theme                = $this->sanitize_code_theme_id( $code_theme );
+		$custom_css_id             = sanitize_key( $custom_css_id );
+		$custom_font               = $this->sanitize_font_option_id( 'customFonts', $custom_font, 'optima' );
+		$windows_font              = $this->sanitize_font_option_id( 'windowsFonts', $windows_font, 'microsoft-yahei' );
+		$apple_font                = $this->sanitize_font_option_id( 'appleFonts', $apple_font, 'pingfang-sc-light' );
+		$serif_font                = $this->sanitize_font_option_id( 'serifOptions', $serif_font, 'yes' );
 
-		$theme_font_defaults = $this->article_themes->font_defaults( $markdown_theme );
-		if ( $theme_font_defaults && $this->should_apply_theme_font_defaults( $custom_font, $windows_font, $apple_font, $serif_font ) ) {
+		$theme_font_defaults = $this->get_article_theme_font_defaults( $markdown_theme );
+		if ( $theme_font_defaults && $apply_theme_font_defaults ) {
 			$custom_font  = $theme_font_defaults['customFont'];
 			$windows_font = $theme_font_defaults['windowsFont'];
 			$apple_font   = $theme_font_defaults['appleFont'];
@@ -216,16 +217,25 @@ final class ThemeStateRepository {
 
 	public function sanitize_theme_state_from_request( $source, $post_id = 0 ) {
 		$post_id        = absint( $post_id );
-		$markdown_theme = $this->sanitize_markdown_theme_id( isset( $source['easymde_markdown_theme'] ) ? wp_unslash( $source['easymde_markdown_theme'] ) : '' );
-		$code_theme     = $this->sanitize_code_theme_id( isset( $source['easymde_code_theme'] ) ? wp_unslash( $source['easymde_code_theme'] ) : '' );
-		$custom_css_id  = sanitize_key( isset( $source['easymde_custom_css_id'] ) ? wp_unslash( $source['easymde_custom_css_id'] ) : '' );
-		$custom_font    = $this->sanitize_font_option_id( 'customFonts', isset( $source['easymde_custom_font'] ) ? wp_unslash( $source['easymde_custom_font'] ) : '', 'optima' );
-		$windows_font   = $this->sanitize_font_option_id( 'windowsFonts', isset( $source['easymde_windows_font'] ) ? wp_unslash( $source['easymde_windows_font'] ) : '', 'microsoft-yahei' );
-		$apple_font     = $this->sanitize_font_option_id( 'appleFonts', isset( $source['easymde_apple_font'] ) ? wp_unslash( $source['easymde_apple_font'] ) : '', 'pingfang-sc-light' );
-		$serif_font     = $this->sanitize_font_option_id( 'serifOptions', isset( $source['easymde_serif_font'] ) ? wp_unslash( $source['easymde_serif_font'] ) : '', 'yes' );
+		$markdown_theme = isset( $source['easymde_markdown_theme'] ) ? wp_unslash( $source['easymde_markdown_theme'] ) : '';
+		$code_theme     = isset( $source['easymde_code_theme'] ) ? wp_unslash( $source['easymde_code_theme'] ) : '';
+		$custom_css_id  = isset( $source['easymde_custom_css_id'] ) ? wp_unslash( $source['easymde_custom_css_id'] ) : '';
+		$custom_font    = isset( $source['easymde_custom_font'] ) ? wp_unslash( $source['easymde_custom_font'] ) : '';
+		$windows_font   = isset( $source['easymde_windows_font'] ) ? wp_unslash( $source['easymde_windows_font'] ) : '';
+		$apple_font     = isset( $source['easymde_apple_font'] ) ? wp_unslash( $source['easymde_apple_font'] ) : '';
+		$serif_font     = isset( $source['easymde_serif_font'] ) ? wp_unslash( $source['easymde_serif_font'] ) : '';
 
-		$theme_font_defaults = $this->article_themes->font_defaults( $markdown_theme );
-		if ( $theme_font_defaults && $this->should_apply_theme_font_defaults( $custom_font, $windows_font, $apple_font, $serif_font ) ) {
+		$apply_theme_font_defaults = $this->should_apply_theme_font_defaults( $custom_font, $windows_font, $apple_font, $serif_font );
+		$markdown_theme            = $this->sanitize_markdown_theme_id( $markdown_theme );
+		$code_theme                = $this->sanitize_code_theme_id( $code_theme );
+		$custom_css_id             = sanitize_key( $custom_css_id );
+		$custom_font               = $this->sanitize_font_option_id( 'customFonts', $custom_font, 'optima' );
+		$windows_font              = $this->sanitize_font_option_id( 'windowsFonts', $windows_font, 'microsoft-yahei' );
+		$apple_font                = $this->sanitize_font_option_id( 'appleFonts', $apple_font, 'pingfang-sc-light' );
+		$serif_font                = $this->sanitize_font_option_id( 'serifOptions', $serif_font, 'yes' );
+
+		$theme_font_defaults = $this->get_article_theme_font_defaults( $markdown_theme );
+		if ( $theme_font_defaults && $apply_theme_font_defaults ) {
 			$custom_font  = $theme_font_defaults['customFont'];
 			$windows_font = $theme_font_defaults['windowsFont'];
 			$apple_font   = $theme_font_defaults['appleFont'];
@@ -344,10 +354,10 @@ final class ThemeStateRepository {
 			'markdownTheme' => $this->sanitize_markdown_theme_id( isset( $stored['markdownTheme'] ) ? $stored['markdownTheme'] : 'default' ),
 			'codeTheme'     => $this->sanitize_code_theme_id( $stored_code_theme ),
 			'customCssId'   => sanitize_key( isset( $stored['customCssId'] ) ? $stored['customCssId'] : '' ),
-			'customFont'    => $this->sanitize_font_option_id( 'customFonts', isset( $stored['customFont'] ) ? $stored['customFont'] : 'optima', 'optima' ),
-			'windowsFont'   => $this->sanitize_font_option_id( 'windowsFonts', isset( $stored['windowsFont'] ) ? $stored['windowsFont'] : 'microsoft-yahei', 'microsoft-yahei' ),
-			'appleFont'     => $this->sanitize_font_option_id( 'appleFonts', isset( $stored['appleFont'] ) ? $stored['appleFont'] : 'pingfang-sc-light', 'pingfang-sc-light' ),
-			'serifFont'     => $this->sanitize_font_option_id( 'serifOptions', isset( $stored['serifFont'] ) ? $stored['serifFont'] : 'yes', 'yes' ),
+			'customFont'    => isset( $stored['customFont'] ) ? $stored['customFont'] : 'optima',
+			'windowsFont'   => isset( $stored['windowsFont'] ) ? $stored['windowsFont'] : 'microsoft-yahei',
+			'appleFont'     => isset( $stored['appleFont'] ) ? $stored['appleFont'] : 'pingfang-sc-light',
+			'serifFont'     => isset( $stored['serifFont'] ) ? $stored['serifFont'] : 'yes',
 		);
 	}
 
@@ -365,43 +375,13 @@ final class ThemeStateRepository {
 					'fontFamily' => '"Optima-Regular", "Optima"',
 				),
 				array(
-					'id'         => 'orange-heart-inter',
-					'label'      => __( 'Inter (orange-heart)', 'easymde' ),
+					'id'         => 'inter',
+					'label'      => __( 'Inter', 'easymde' ),
 					'fontFamily' => 'Inter',
 				),
 				array(
-					'id'         => 'red-crimson-inter',
-					'label'      => __( 'Inter (red-crimson)', 'easymde' ),
-					'fontFamily' => 'Inter',
-				),
-				array(
-					'id'         => 'rose-purple-optima',
-					'label'      => __( 'Optima (rose-purple)', 'easymde' ),
-					'fontFamily' => 'Optima',
-				),
-				array(
-					'id'         => 'ningye-purple-inter',
-					'label'      => __( 'Inter (ningye-purple)', 'easymde' ),
-					'fontFamily' => 'Inter',
-				),
-				array(
-					'id'         => 'cupid-busy-inter',
-					'label'      => __( 'Inter (cupid-busy)', 'easymde' ),
-					'fontFamily' => 'Inter',
-				),
-				array(
-					'id'         => 'tech-blue-optima',
-					'label'      => __( 'Optima (tech-blue)', 'easymde' ),
-					'fontFamily' => 'Optima',
-				),
-				array(
-					'id'         => 'qingbi-liujin-helvetica',
-					'label'      => __( 'Helvetica (qingbi-liujin)', 'easymde' ),
-					'fontFamily' => 'Helvetica, Arial',
-				),
-				array(
-					'id'         => 'qinghe-zhusha-helvetica',
-					'label'      => __( 'Helvetica (qinghe-zhusha)', 'easymde' ),
+					'id'         => 'helvetica',
+					'label'      => __( 'Helvetica', 'easymde' ),
 					'fontFamily' => 'Helvetica, Arial',
 				),
 				array(
@@ -432,43 +412,8 @@ final class ThemeStateRepository {
 					'fontFamily' => '"Microsoft YaHei", "微软雅黑"',
 				),
 				array(
-					'id'         => 'orange-heart-microsoft-yahei',
-					'label'      => __( 'Microsoft YaHei (orange-heart)', 'easymde' ),
-					'fontFamily' => '"Microsoft YaHei"',
-				),
-				array(
-					'id'         => 'red-crimson-microsoft-yahei',
-					'label'      => __( 'Microsoft YaHei (red-crimson)', 'easymde' ),
-					'fontFamily' => '"Microsoft YaHei"',
-				),
-				array(
-					'id'         => 'rose-purple-microsoft-yahei',
-					'label'      => __( 'Microsoft YaHei (rose-purple)', 'easymde' ),
-					'fontFamily' => '"Microsoft YaHei"',
-				),
-				array(
-					'id'         => 'ningye-purple-microsoft-yahei',
-					'label'      => __( 'Microsoft YaHei (ningye-purple)', 'easymde' ),
-					'fontFamily' => '"Microsoft YaHei"',
-				),
-				array(
-					'id'         => 'cupid-busy-microsoft-yahei',
-					'label'      => __( 'Microsoft YaHei (cupid-busy)', 'easymde' ),
-					'fontFamily' => '"Microsoft YaHei"',
-				),
-				array(
-					'id'         => 'tech-blue-microsoft-yahei',
-					'label'      => __( 'Microsoft YaHei (tech-blue)', 'easymde' ),
-					'fontFamily' => '"Microsoft YaHei"',
-				),
-				array(
-					'id'         => 'qingbi-liujin-no-windows',
-					'label'      => __( 'No Windows-specific font (qingbi-liujin)', 'easymde' ),
-					'fontFamily' => '',
-				),
-				array(
-					'id'         => 'qinghe-zhusha-no-windows',
-					'label'      => __( 'No Windows-specific font (qinghe-zhusha)', 'easymde' ),
+					'id'         => 'no-windows-font',
+					'label'      => __( 'No Windows-specific font', 'easymde' ),
 					'fontFamily' => '',
 				),
 			),
@@ -479,14 +424,9 @@ final class ThemeStateRepository {
 					'fontFamily' => '"PingFangSC-light", "PingFangSC-Light"',
 				),
 				array(
-					'id'         => 'pingfang-sc-regular-raw',
-					'label'      => __( 'PingFangSC-regular', 'easymde' ),
-					'fontFamily' => 'PingFangSC-regular',
-				),
-				array(
 					'id'         => 'pingfang-sc-regular',
 					'label'      => __( 'PingFang SC Regular', 'easymde' ),
-					'fontFamily' => '"PingFang SC"',
+					'fontFamily' => '"PingFangSC-regular", "PingFang SC"',
 				),
 				array(
 					'id'         => 'pingfang-tc-light',
@@ -499,13 +439,8 @@ final class ThemeStateRepository {
 					'fontFamily' => '"PingFang TC"',
 				),
 				array(
-					'id'         => 'qingbi-liujin-no-apple',
-					'label'      => __( 'No Apple-specific font (qingbi-liujin)', 'easymde' ),
-					'fontFamily' => '',
-				),
-				array(
-					'id'         => 'qinghe-zhusha-no-apple',
-					'label'      => __( 'No Apple-specific font (qinghe-zhusha)', 'easymde' ),
+					'id'         => 'no-apple-font',
+					'label'      => __( 'No Apple-specific font', 'easymde' ),
 					'fontFamily' => '',
 				),
 			),
@@ -580,9 +515,91 @@ final class ThemeStateRepository {
 	}
 
 	private function sanitize_font_option_id( $group, $id, $fallback ) {
-		$id = sanitize_key( (string) $id );
+		$id      = sanitize_key( (string) $id );
+		$aliases = $this->get_legacy_font_option_aliases();
+
+		if ( isset( $aliases[ $group ][ $id ] ) ) {
+			$id = $aliases[ $group ][ $id ];
+		}
 
 		return $this->get_font_option( $group, $id ) ? $id : $fallback;
+	}
+
+	private function get_legacy_font_option_aliases() {
+		return array(
+			'customFonts'  => array(
+				'orange-heart-inter'      => 'inter',
+				'red-crimson-inter'       => 'inter',
+				'rose-purple-optima'      => 'optima',
+				'ningye-purple-inter'     => 'inter',
+				'cupid-busy-inter'        => 'inter',
+				'tech-blue-optima'        => 'optima',
+				'qingbi-liujin-helvetica' => 'helvetica',
+				'qinghe-zhusha-helvetica' => 'helvetica',
+			),
+			'windowsFonts' => array(
+				'orange-heart-microsoft-yahei'  => 'microsoft-yahei',
+				'red-crimson-microsoft-yahei'   => 'microsoft-yahei',
+				'rose-purple-microsoft-yahei'   => 'microsoft-yahei',
+				'ningye-purple-microsoft-yahei' => 'microsoft-yahei',
+				'cupid-busy-microsoft-yahei'    => 'microsoft-yahei',
+				'tech-blue-microsoft-yahei'     => 'microsoft-yahei',
+				'qingbi-liujin-no-windows'      => 'no-windows-font',
+				'qinghe-zhusha-no-windows'      => 'no-windows-font',
+			),
+			'appleFonts'   => array(
+				'pingfang-sc-regular-raw' => 'pingfang-sc-regular',
+				'qingbi-liujin-no-apple'  => 'no-apple-font',
+				'qinghe-zhusha-no-apple'  => 'no-apple-font',
+			),
+		);
+	}
+
+	private function get_article_themes_for_script() {
+		$themes = $this->article_themes->for_script();
+
+		foreach ( $themes as &$theme ) {
+			if ( empty( $theme['fontDefaults'] ) || ! is_array( $theme['fontDefaults'] ) ) {
+				continue;
+			}
+
+			$theme['fontDefaults'] = $this->normalize_known_font_default_aliases( $theme['fontDefaults'] );
+		}
+		unset( $theme );
+
+		return $themes;
+	}
+
+	private function get_article_theme_font_defaults( $markdown_theme ) {
+		$theme = $this->article_themes->get( $markdown_theme );
+		if ( empty( $theme['fontDefaults'] ) || ! is_array( $theme['fontDefaults'] ) ) {
+			return null;
+		}
+
+		return $this->normalize_known_font_default_aliases( $theme['fontDefaults'] );
+	}
+
+	private function normalize_known_font_default_aliases( array $font_defaults ) {
+		$aliases = $this->get_legacy_font_option_aliases();
+		$fields  = array(
+			'customFont'  => 'customFonts',
+			'windowsFont' => 'windowsFonts',
+			'appleFont'   => 'appleFonts',
+			'serifFont'   => 'serifOptions',
+		);
+
+		foreach ( $fields as $field => $group ) {
+			if ( ! isset( $font_defaults[ $field ] ) || ! is_string( $font_defaults[ $field ] ) ) {
+				continue;
+			}
+
+			$id = sanitize_key( $font_defaults[ $field ] );
+			if ( isset( $aliases[ $group ][ $id ] ) ) {
+				$font_defaults[ $field ] = $aliases[ $group ][ $id ];
+			}
+		}
+
+		return $font_defaults;
 	}
 
 	private function is_legacy_default_font_stack( $custom_font, $windows_font, $apple_font, $serif_font ) {
@@ -593,34 +610,27 @@ final class ThemeStateRepository {
 	}
 
 	private function should_apply_theme_font_defaults( $custom_font, $windows_font, $apple_font, $serif_font ) {
+		$custom_font  = sanitize_key( (string) $custom_font );
+		$windows_font = sanitize_key( (string) $windows_font );
+		$apple_font   = sanitize_key( (string) $apple_font );
+		$serif_font   = sanitize_key( (string) $serif_font );
+		$font_stack   = array( $custom_font, $windows_font, $apple_font, $serif_font );
+
 		if ( $this->is_legacy_default_font_stack( $custom_font, $windows_font, $apple_font, $serif_font ) ) {
 			return true;
 		}
 
-		foreach (
-			array(
-				'orange-heart',
-				'red-crimson',
-				'rose-purple',
-				'ningye-purple',
-				'cupid-busy',
-				'tech-blue',
-				'qingbi-liujin',
-				'qinghe-zhusha',
-			) as $theme_id
-		) {
-			$defaults = $this->article_themes->font_defaults( $theme_id );
-			if (
-				$defaults
-				&& $defaults['customFont'] === $custom_font
-				&& $defaults['windowsFont'] === $windows_font
-				&& $defaults['appleFont'] === $apple_font
-				&& $defaults['serifFont'] === $serif_font
-			) {
-				return true;
-			}
-		}
+		$legacy_theme_font_stacks = array(
+			array( 'orange-heart-inter', 'orange-heart-microsoft-yahei', 'pingfang-sc-regular-raw', 'sans-serif-only' ),
+			array( 'red-crimson-inter', 'red-crimson-microsoft-yahei', 'pingfang-sc-regular-raw', 'sans-serif-only' ),
+			array( 'rose-purple-optima', 'rose-purple-microsoft-yahei', 'pingfang-sc-regular-raw', 'serif-only' ),
+			array( 'ningye-purple-inter', 'ningye-purple-microsoft-yahei', 'pingfang-sc-regular-raw', 'sans-serif-only' ),
+			array( 'cupid-busy-inter', 'cupid-busy-microsoft-yahei', 'pingfang-sc-regular-raw', 'sans-serif-only' ),
+			array( 'tech-blue-optima', 'tech-blue-microsoft-yahei', 'pingfang-sc-regular-raw', 'serif-only' ),
+			array( 'qingbi-liujin-helvetica', 'qingbi-liujin-no-windows', 'qingbi-liujin-no-apple', 'sans-serif-only' ),
+			array( 'qinghe-zhusha-helvetica', 'qinghe-zhusha-no-windows', 'qinghe-zhusha-no-apple', 'sans-serif-only' ),
+		);
 
-		return false;
+		return in_array( $font_stack, $legacy_theme_font_stacks, true );
 	}
 }

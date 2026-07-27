@@ -990,140 +990,80 @@ msgstr ""
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:359
+#: src/Theme/ThemeStateRepository.php:369
 msgid "No custom font"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:364
+#: src/Theme/ThemeStateRepository.php:374
 msgid "Optima"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:369
-msgid "Inter (orange-heart)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:374
-msgid "Inter (red-crimson)"
-msgstr ""
-
 #: src/Theme/ThemeStateRepository.php:379
-msgid "Optima (rose-purple)"
+msgid "Inter"
 msgstr ""
 
 #: src/Theme/ThemeStateRepository.php:384
-msgid "Inter (ningye-purple)"
+msgid "Helvetica"
 msgstr ""
 
 #: src/Theme/ThemeStateRepository.php:389
-msgid "Inter (cupid-busy)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:394
-msgid "Optima (tech-blue)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:399
-msgid "Helvetica (qingbi-liujin)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:404
-msgid "Helvetica (qinghe-zhusha)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:409
 msgid "Georgia"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:414
+#: src/Theme/ThemeStateRepository.php:394
 msgid "Times"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:419
+#: src/Theme/ThemeStateRepository.php:399
 msgid "Cochin"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:424
+#: src/Theme/ThemeStateRepository.php:404
 msgid "Helvetica Neue"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:431
+#: src/Theme/ThemeStateRepository.php:411
 msgid "Microsoft YaHei"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:436
-msgid "Microsoft YaHei (orange-heart)"
+#: src/Theme/ThemeStateRepository.php:416
+msgid "No Windows-specific font"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:441
-msgid "Microsoft YaHei (red-crimson)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:446
-msgid "Microsoft YaHei (rose-purple)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:451
-msgid "Microsoft YaHei (ningye-purple)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:456
-msgid "Microsoft YaHei (cupid-busy)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:461
-msgid "Microsoft YaHei (tech-blue)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:466
-msgid "No Windows-specific font (qingbi-liujin)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:471
-msgid "No Windows-specific font (qinghe-zhusha)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:478
+#: src/Theme/ThemeStateRepository.php:423
 msgid "PingFang SC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:483
-msgid "PingFangSC-regular"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:488
+#: src/Theme/ThemeStateRepository.php:428
 msgid "PingFang SC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:493
+#: src/Theme/ThemeStateRepository.php:433
 msgid "PingFang TC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:498
+#: src/Theme/ThemeStateRepository.php:438
 msgid "PingFang TC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:503
-msgid "No Apple-specific font (qingbi-liujin)"
+#: src/Theme/ThemeStateRepository.php:443
+msgid "No Apple-specific font"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:508
-msgid "No Apple-specific font (qinghe-zhusha)"
-msgstr ""
-
-#: src/Theme/ThemeStateRepository.php:515
+#: src/Theme/ThemeStateRepository.php:450
 msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:520
+#: src/Theme/ThemeStateRepository.php:455
 msgid "serif"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:525
+#: src/Theme/ThemeStateRepository.php:460
 msgid "sans-serif"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:530
+#: src/Theme/ThemeStateRepository.php:465
 msgctxt "serif font fallback option"
 msgid "No"
 msgstr ""

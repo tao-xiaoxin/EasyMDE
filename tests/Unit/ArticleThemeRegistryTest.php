@@ -82,18 +82,18 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
             'qingbi-liujin' => array(
                 'assetPath' => 'assets/themes/article/qingbi-liujin.css',
                 'fontDefaults' => array(
-                    'customFont' => 'qingbi-liujin-helvetica',
-                    'windowsFont' => 'qingbi-liujin-no-windows',
-                    'appleFont' => 'qingbi-liujin-no-apple',
+                    'customFont' => 'helvetica',
+                    'windowsFont' => 'no-windows-font',
+                    'appleFont' => 'no-apple-font',
                     'serifFont' => 'sans-serif-only',
                 ),
             ),
             'qinghe-zhusha' => array(
                 'assetPath' => 'assets/themes/article/qinghe-zhusha.css',
                 'fontDefaults' => array(
-                    'customFont' => 'qinghe-zhusha-helvetica',
-                    'windowsFont' => 'qinghe-zhusha-no-windows',
-                    'appleFont' => 'qinghe-zhusha-no-apple',
+                    'customFont' => 'helvetica',
+                    'windowsFont' => 'no-windows-font',
+                    'appleFont' => 'no-apple-font',
                     'serifFont' => 'sans-serif-only',
                 ),
             ),
@@ -105,6 +105,33 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
             $this->assertStringContainsString('ver=' . EASYMDE_VERSION, $themes[$theme_id]['cssUrl']);
             $this->assertSame($details['assetPath'], $themes[$theme_id]['assetPath']);
             $this->assertSame($details['fontDefaults'], $themes[$theme_id]['fontDefaults']);
+        }
+    }
+
+    public function test_theme_font_defaults_use_only_canonical_visible_option_ids()
+    {
+        $registry = new ArticleThemeRegistry();
+        $repository = new ThemeStateRepository(
+            $registry,
+            new CodeThemeRegistry(),
+            new CustomCssPolicy()
+        );
+        $font_options = $repository->get_theme_options_for_script(0)['fontOptions'];
+        $allowed = array(
+            'customFont' => array_column($font_options['customFonts'], 'id'),
+            'windowsFont' => array_column($font_options['windowsFonts'], 'id'),
+            'appleFont' => array_column($font_options['appleFonts'], 'id'),
+            'serifFont' => array_column($font_options['serifOptions'], 'id'),
+        );
+
+        foreach ($registry->for_script() as $theme) {
+            if (empty($theme['fontDefaults'])) {
+                continue;
+            }
+
+            foreach ($theme['fontDefaults'] as $state_key => $option_id) {
+                $this->assertContains($option_id, $allowed[$state_key], $theme['id'] . ':' . $state_key);
+            }
         }
     }
 

@@ -10,6 +10,174 @@ final class ThemeStateRepositoryTest extends WP_UnitTestCase
 {
     private const LEGACY_CODE_MAC_STYLE_META = '_easymde_code_mac_style';
 
+    public function test_article_association_supplies_code_theme_without_an_explicit_choice()
+    {
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'fullstack-blue');
+
+        $before = get_post_meta($post_id);
+        $state = $this->theme_state_repository()->get_theme_state($post_id);
+
+        $this->assertSame('fullstack-blue', $state['codeTheme']);
+        $this->assertFalse($state['codeThemeExplicit']);
+        $this->assertSame($before, get_post_meta($post_id));
+    }
+
+    public function test_explicit_post_code_theme_remains_authoritative()
+    {
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'orange-heart');
+        update_post_meta($post_id, PostDocument::META_CODE_THEME, 'github-dark');
+
+        $state = $this->theme_state_repository()->get_theme_state($post_id);
+
+        $this->assertSame('github-dark', $state['codeTheme']);
+        $this->assertTrue($state['codeThemeExplicit']);
+    }
+
+    public function test_explicit_user_code_theme_remains_authoritative()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        wp_set_current_user($user_id);
+        update_user_meta(
+            $user_id,
+            'easymde_default_theme_state',
+            array(
+                'markdownTheme' => 'orange-heart',
+                'codeTheme' => 'github',
+            )
+        );
+
+        $state = $this->theme_state_repository()->get_theme_state(0);
+
+        $this->assertSame('github', $state['codeTheme']);
+        $this->assertTrue($state['codeThemeExplicit']);
+    }
+
+    public function test_request_without_a_valid_explicit_code_theme_uses_article_association()
+    {
+        $state = $this->theme_state_repository()->sanitize_theme_state_from_request(
+            array(
+                'easymde_markdown_theme' => 'fullstack-blue',
+                'easymde_code_theme' => 'missing',
+            )
+        );
+
+        $this->assertSame('fullstack-blue', $state['codeTheme']);
+        $this->assertFalse($state['codeThemeExplicit']);
+    }
+
+    public function test_request_explicit_marker_preserves_valid_code_theme()
+    {
+        $state = $this->theme_state_repository()->sanitize_theme_state_from_request(
+            array(
+                'easymde_markdown_theme' => 'fullstack-blue',
+                'easymde_code_theme' => 'github',
+                'easymde_code_theme_explicit' => '1',
+            )
+        );
+
+        $this->assertSame('github', $state['codeTheme']);
+        $this->assertTrue($state['codeThemeExplicit']);
+    }
+
+    public function test_request_implicit_marker_uses_article_association()
+    {
+        $state = $this->theme_state_repository()->sanitize_theme_state_from_request(
+            array(
+                'easymde_markdown_theme' => 'fullstack-blue',
+                'easymde_code_theme' => 'github',
+                'easymde_code_theme_explicit' => '0',
+            )
+        );
+
+        $this->assertSame('fullstack-blue', $state['codeTheme']);
+        $this->assertFalse($state['codeThemeExplicit']);
+    }
+
+    public function test_legacy_request_without_explicit_marker_preserves_valid_code_theme()
+    {
+        $state = $this->theme_state_repository()->sanitize_theme_state_from_request(
+            array(
+                'easymde_markdown_theme' => 'fullstack-blue',
+                'easymde_code_theme' => 'github',
+            )
+        );
+
+        $this->assertSame('github', $state['codeTheme']);
+        $this->assertTrue($state['codeThemeExplicit']);
+    }
+
+    public function test_script_options_expose_code_theme_precedence_outside_persisted_state()
+    {
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'fullstack-blue');
+
+        $options = $this->theme_state_repository()->get_theme_options_for_script($post_id);
+        $article_themes = array_column($options['markdownThemes'], null, 'id');
+
+        $this->assertFalse($options['codeThemeExplicit']);
+        $this->assertArrayNotHasKey('codeThemeExplicit', $options['state']);
+        $this->assertSame('fullstack-blue', $options['state']['codeTheme']);
+        $this->assertSame('fullstack-blue', $article_themes['fullstack-blue']['defaultCodeTheme']);
+    }
+
+    public function test_filtered_article_association_uses_a_filtered_code_theme()
+    {
+        $article_callback = static function ($themes) {
+            $themes['default']['default_code_theme'] = 'extension-code';
+
+            return $themes;
+        };
+        $code_callback = static function ($themes) {
+            $themes['extension-code'] = array(
+                'id' => 'extension-code',
+                'label' => 'Extension code',
+                'asset_path' => 'assets/themes/code/extension-code.css',
+                'origin' => 'extension',
+            );
+
+            return $themes;
+        };
+
+        add_filter('easymde_article_themes', $article_callback);
+        add_filter('easymde_code_themes', $code_callback);
+
+        try {
+            $repository = $this->theme_state_repository();
+            $options = $repository->get_theme_options_for_script(0);
+            $article_themes = array_column($options['markdownThemes'], null, 'id');
+
+            $this->assertSame('extension-code', $repository->get_theme_state(0)['codeTheme']);
+            $this->assertSame('extension-code', $article_themes['default']['defaultCodeTheme']);
+        } finally {
+            remove_filter('easymde_code_themes', $code_callback);
+            remove_filter('easymde_article_themes', $article_callback);
+        }
+    }
+
+    public function test_invalid_filtered_article_association_falls_back_for_state_and_script()
+    {
+        $callback = static function ($themes) {
+            $themes['default']['default_code_theme'] = 'missing-code-theme';
+
+            return $themes;
+        };
+
+        add_filter('easymde_article_themes', $callback);
+
+        try {
+            $repository = $this->theme_state_repository();
+            $options = $repository->get_theme_options_for_script(0);
+            $article_themes = array_column($options['markdownThemes'], null, 'id');
+
+            $this->assertSame('atom-one-dark', $repository->get_theme_state(0)['codeTheme']);
+            $this->assertSame('atom-one-dark', $article_themes['default']['defaultCodeTheme']);
+        } finally {
+            remove_filter('easymde_article_themes', $callback);
+        }
+    }
+
     public function test_post_theme_state_falls_back_to_default_when_removed_builtin_theme_is_stored()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
@@ -162,6 +330,7 @@ final class ThemeStateRepositoryTest extends WP_UnitTestCase
             array(
                 'markdownTheme' => 'orange-heart',
                 'codeTheme' => 'github-dark',
+                'codeThemeExplicit' => true,
                 'customCssId' => '',
                 'customFont' => 'optima',
                 'windowsFont' => 'microsoft-yahei',
@@ -178,6 +347,39 @@ final class ThemeStateRepositoryTest extends WP_UnitTestCase
         $this->assertSame('keep-numeric-key', $stored[17]);
         $this->assertSame('orange-heart', $stored['markdownTheme']);
         $this->assertSame('github-dark', $stored['codeTheme']);
+    }
+
+    public function test_saving_implicit_code_theme_removes_only_the_explicit_user_default()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        wp_set_current_user($user_id);
+        update_user_meta(
+            $user_id,
+            'easymde_default_theme_state',
+            array(
+                'codeTheme' => 'github-dark',
+                'extensionPreference' => 'keep-me',
+            )
+        );
+
+        $this->theme_state_repository()->save_user_defaults(
+            array(
+                'markdownTheme' => 'fullstack-blue',
+                'codeTheme' => 'fullstack-blue',
+                'codeThemeExplicit' => false,
+                'customCssId' => '',
+                'customFont' => 'optima',
+                'windowsFont' => 'microsoft-yahei',
+                'appleFont' => 'pingfang-sc-light',
+                'serifFont' => 'yes',
+            )
+        );
+
+        $stored = get_user_meta($user_id, 'easymde_default_theme_state', true);
+
+        $this->assertArrayNotHasKey('codeTheme', $stored);
+        $this->assertSame('keep-me', $stored['extensionPreference']);
+        $this->assertSame('fullstack-blue', $stored['markdownTheme']);
     }
 
     public function test_font_options_for_script_expose_only_canonical_user_choices()

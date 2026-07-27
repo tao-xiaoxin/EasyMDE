@@ -175,15 +175,16 @@ final class AdminAssets {
 				'strings' => array( 'editorLabel' => $strings['editorLabel'] ),
 			),
 			'appearance'         => array(
-				'articleThemes' => $theme_options['markdownThemes'],
-				'codeThemes'    => $theme_options['codeThemes'],
-				'customCss'     => $custom_css,
-				'state'         => array(
+				'articleThemes'     => $theme_options['markdownThemes'],
+				'codeThemeExplicit' => $theme_options['codeThemeExplicit'],
+				'codeThemes'        => $theme_options['codeThemes'],
+				'customCss'         => $custom_css,
+				'state'             => array(
 					'markdownTheme' => $theme_state['markdownTheme'],
 					'codeTheme'     => $theme_state['codeTheme'],
 					'customCssId'   => $theme_state['customCssId'],
 				),
-				'strings'       => array(
+				'strings'           => array(
 					'appearance'     => $strings['appearance'],
 					'articleTheme'   => $strings['articleTheme'],
 					'codeTheme'      => $strings['codeTheme'],

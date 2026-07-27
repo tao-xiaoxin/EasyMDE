@@ -146,6 +146,7 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
             'monokai' => 'assets/vendor/highlight/styles/monokai.min.css',
             'vs2015' => 'assets/vendor/highlight/styles/vs2015.min.css',
             'terminal-noir' => 'assets/themes/code/terminal-noir.css',
+            'fullstack-blue' => 'assets/themes/code/fullstack-blue.css',
         );
 
         foreach ($expected as $theme_id => $asset_path) {
@@ -153,6 +154,22 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
             $this->assertStringContainsString($asset_path, $themes[$theme_id]['cssUrl']);
             $this->assertStringContainsString('ver=' . EASYMDE_VERSION, $themes[$theme_id]['cssUrl']);
         }
+    }
+
+    public function test_every_article_theme_exposes_a_registered_associated_code_theme()
+    {
+        $article_themes = (new ArticleThemeRegistry())->for_script();
+        $code_themes = array_column((new CodeThemeRegistry())->for_script(), null, 'id');
+
+        $this->assertCount(22, $article_themes);
+        foreach ($article_themes as $article_theme) {
+            $this->assertArrayHasKey($article_theme['defaultCodeTheme'], $code_themes);
+        }
+
+        $associations = array_column($article_themes, 'defaultCodeTheme', 'id');
+        $this->assertSame('fullstack-blue', $associations['fullstack-blue']);
+        unset($associations['fullstack-blue']);
+        $this->assertSame(array('atom-one-dark'), array_values(array_unique($associations)));
     }
 
     public function test_typora_derived_theme_state_outputs_scoped_render_class()

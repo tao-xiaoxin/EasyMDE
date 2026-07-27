@@ -104,9 +104,10 @@ function fixture(): EditorRootProps &
   return {
     appearance: {
       articleThemes: [
-        { id: 'default', label: 'Default' },
-        { id: 'newsprint', label: 'Newsprint' }
+        { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
+        { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'atom-one-dark' }
       ],
+      codeThemeExplicit: false,
       codeThemes: [
         { id: 'atom-one-dark', label: 'Atom One Dark' },
         { id: 'github', label: 'GitHub' }
@@ -1944,7 +1945,8 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
     expect(props.appearancePort.applyState).toHaveBeenCalledWith(
-      expect.objectContaining({ markdownTheme: 'newsprint' })
+      expect.objectContaining({ markdownTheme: 'newsprint' }),
+      false
     );
     expect(
       view.queryByRole('textbox', { name: '可视化文章编辑器' })
@@ -3640,7 +3642,8 @@ describe('EditorRoot', () => {
                 windowsFont: 'segoe-ui'
               },
               id: 'newsprint',
-              label: 'Newsprint'
+              label: 'Newsprint',
+              defaultCodeTheme: theme.defaultCodeTheme
             }
           : theme
       )

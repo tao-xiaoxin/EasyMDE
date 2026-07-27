@@ -14,7 +14,7 @@ export type CustomCssSaveResult =
   | Readonly<{ status: 'failed'; code: string }>;
 
 export interface AppearancePort {
-  applyState(state: AppearanceState): void;
+  applyState(state: AppearanceState, codeThemeExplicit: boolean): void;
   closeOtherPopovers(): void;
   saveCustomCss(input: CustomCssSaveInput): Promise<CustomCssSaveResult>;
 }

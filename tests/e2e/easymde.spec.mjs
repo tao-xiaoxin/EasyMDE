@@ -1162,7 +1162,9 @@ test.describe('EasyMDE editor workflows', () => {
     await openEasyMdeNewPost(page);
     await fillMarkdownAndWaitForPreview(
       page,
-      '# Appearance\n\n```js\nconst terminal = true;\n```\n\nPreview paragraph.',
+      '# Appearance\n\n```js\nconst terminal = true;\n'
+        + `const longValue = "${'x'.repeat(240)}";\n`
+        + '```\n\nPreview paragraph.',
       'Preview paragraph.'
     );
 
@@ -1177,8 +1179,9 @@ test.describe('EasyMDE editor workflows', () => {
     }));
     const catalog = await page.evaluate(() => ({
       articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
+        .map(({ id, cssUrl, defaultCodeTheme }) => ({ id, cssUrl, defaultCodeTheme })),
+      codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes
         .map(({ id, cssUrl }) => ({ id, cssUrl })),
-      codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes.map(({ id }) => id),
       fontGroups: [
         {
           field: '#easymde-custom-font-field',
@@ -1226,50 +1229,124 @@ test.describe('EasyMDE editor workflows', () => {
     const articleSelect = appearanceDialog.getByLabel(labels.articleTheme);
     const codeSelect = appearanceDialog.getByLabel(labels.codeTheme);
     const articleThemeLink = page.locator('#easymde-article-theme-css');
+    const codeThemeLink = page.locator('#easymde-highlight-theme-css');
     const previewCode = page.locator('.easymde-pane-preview article pre code.hljs').first();
-    const fullWidthFrameThemes = new Set([
-      'fullstack-blue',
-      'orange-heart',
-      'red-crimson',
-      'tech-blue',
-      'yamabuki'
-    ]);
-    const hiddenFrameThemes = new Set(['qingbi-liujin', 'qinghe-zhusha']);
-    await codeSelect.selectOption('terminal-noir');
-    await expect(page.locator('.easymde-pane-preview article'))
-      .toHaveClass(/easymde-code-theme-terminal-noir/);
-    for (const { id, cssUrl } of catalog.articleThemes) {
+    const codeGeometry = () => previewCode.evaluate((code) => {
+      const frame = code.parentElement;
+      const frameStyle = getComputedStyle(frame);
+      const codeStyle = getComputedStyle(code);
+      const dots = getComputedStyle(frame, '::before');
+
+      return {
+        code: {
+          borderRadius: codeStyle.borderRadius,
+          boxSizing: codeStyle.boxSizing,
+          display: codeStyle.display,
+          fontFamily: codeStyle.fontFamily,
+          fontSize: codeStyle.fontSize,
+          fontWeight: codeStyle.fontWeight,
+          letterSpacing: codeStyle.letterSpacing,
+          lineHeight: codeStyle.lineHeight,
+          overflowX: codeStyle.overflowX,
+          overflowY: codeStyle.overflowY,
+          padding: codeStyle.padding,
+          whiteSpace: codeStyle.whiteSpace,
+          wordBreak: codeStyle.wordBreak,
+          wordSpacing: codeStyle.wordSpacing
+        },
+        dots: {
+          backgroundColor: dots.backgroundColor,
+          borderRadius: dots.borderRadius,
+          boxShadow: dots.boxShadow,
+          height: dots.height,
+          left: dots.left,
+          position: dots.position,
+          top: dots.top,
+          width: dots.width
+        },
+        frame: {
+          borderRadius: frameStyle.borderRadius,
+          boxShadow: frameStyle.boxShadow,
+          boxSizing: frameStyle.boxSizing,
+          margin: frameStyle.margin,
+          overflowX: frameStyle.overflowX,
+          overflowY: frameStyle.overflowY,
+          padding: frameStyle.padding,
+          position: frameStyle.position,
+          wordBreak: frameStyle.wordBreak
+        }
+      };
+    });
+    let sharedGeometry;
+    for (const { id, cssUrl, defaultCodeTheme } of catalog.articleThemes) {
       await articleSelect.selectOption('theme:' + id);
       await expect(page.locator('.easymde-pane-preview article'))
         .toHaveClass(new RegExp('easymde-markdown-theme-' + id));
+      await expect(page.locator('.easymde-pane-preview article'))
+        .toHaveClass(new RegExp('easymde-code-theme-' + defaultCodeTheme));
+      await expect(page.locator('#easymde-code-theme-field')).toHaveValue(defaultCodeTheme);
       await expect.poll(() => articleThemeLink.evaluate((link, expectedUrl) => (
         link instanceof HTMLLinkElement
         && link.href === expectedUrl
         && link.sheet?.href === expectedUrl
       ), cssUrl), { message: id + ' article stylesheet should finish loading' }).toBe(true);
-      await expect.poll(() => previewCode.evaluate((code) => ({
-        code: getComputedStyle(code).backgroundColor,
-        pre: getComputedStyle(code.parentElement).backgroundColor
-      }))).toEqual({ code: 'rgb(13, 16, 23)', pre: 'rgb(13, 16, 23)' });
-
-      const expectedFrame = fullWidthFrameThemes.has(id)
-        ? 'full:rgb(13, 16, 23)'
-        : hiddenFrameThemes.has(id)
-          ? 'hidden'
-          : 'dot:rgb(255, 95, 86)';
       await expect.poll(() => previewCode.evaluate((code) => {
-        const style = getComputedStyle(code.parentElement, '::before');
-        if ('none' === style.display) return 'hidden';
-
-        const kind = '12px' === style.width && '12px' === style.height ? 'dot' : 'full';
-
-        return `${kind}:${style.backgroundColor}`;
-      }), { message: id + ' should preserve the expected Terminal Noir frame' }).toBe(expectedFrame);
+        const frame = code.parentElement;
+        const root = code.closest('.easymde-rendered-content');
+        return {
+          backgroundIsVisible: 'rgba(0, 0, 0, 0)' !== getComputedStyle(code).backgroundColor,
+          frameFitsRoot: frame.getBoundingClientRect().width <= root.getBoundingClientRect().width + 1,
+          preservesNewlines: code.textContent.split('\n').length > 1,
+          scrollsLocally: code.scrollWidth > code.clientWidth,
+          whiteSpace: getComputedStyle(code).whiteSpace
+        };
+      }), { message: id + ' associated code theme should preserve code semantics' }).toEqual({
+        backgroundIsVisible: true,
+        frameFitsRoot: true,
+        preservesNewlines: true,
+        scrollsLocally: true,
+        whiteSpace: 'pre'
+      });
+      if (!sharedGeometry) {
+        sharedGeometry = await codeGeometry();
+      } else {
+        await expect.poll(codeGeometry, {
+          message: id + ' should preserve the exact shared Mac frame geometry'
+        }).toEqual(sharedGeometry);
+      }
     }
-    for (const id of catalog.codeThemes) {
+    await codeSelect.selectOption('terminal-noir');
+    await expect(page.locator('.easymde-pane-preview article'))
+      .toHaveClass(/easymde-code-theme-terminal-noir/);
+    await expect(page.locator('#easymde-code-theme-field')).toHaveValue('terminal-noir');
+    await articleSelect.selectOption('theme:default');
+    await expect(page.locator('.easymde-pane-preview article'))
+      .toHaveClass(/easymde-markdown-theme-default/);
+    await expect(page.locator('.easymde-pane-preview article'))
+      .toHaveClass(/easymde-code-theme-terminal-noir/);
+    await expect(page.locator('#easymde-code-theme-field')).toHaveValue('terminal-noir');
+    await expect.poll(codeGeometry, {
+      message: 'an explicit code theme should not change shared frame geometry'
+    }).toEqual(sharedGeometry);
+    for (const { id, cssUrl } of catalog.codeThemes) {
       await codeSelect.selectOption(id);
       await expect(page.locator('.easymde-pane-preview article'))
         .toHaveClass(new RegExp('easymde-code-theme-' + id));
+      await expect.poll(() => codeThemeLink.evaluate((link, expectedUrl) => (
+        link instanceof HTMLLinkElement
+        && link.href === expectedUrl
+        && link.sheet?.href === expectedUrl
+      ), cssUrl), { message: id + ' code stylesheet should finish loading' }).toBe(true);
+      await expect.poll(() => previewCode.evaluate((code) => ({
+        sameBackground: getComputedStyle(code).backgroundColor
+          === getComputedStyle(code.parentElement).backgroundColor,
+        transparent: 'rgba(0, 0, 0, 0)' === getComputedStyle(code).backgroundColor
+      })), {
+        message: id + ' should own the complete code palette without stale frame color'
+      }).toEqual({ sameBackground: true, transparent: false });
+      await expect.poll(codeGeometry, {
+        message: id + ' should preserve the exact shared Mac frame geometry'
+      }).toEqual(sharedGeometry);
     }
 
     await appearanceDialog.getByRole('button', { name: labels.customCss, exact: true }).click();

@@ -12,28 +12,28 @@ final class ArticleThemeRegistry {
 
 	public function all() {
 		$themes = array(
-			'default'        => $this->theme( 'default', __( 'Default theme', 'easymde' ), 'assets/themes/article/default.css' ),
-			'orange-heart'   => $this->theme( 'orange-heart', __( 'Orange heart', 'easymde' ), 'assets/themes/article/orange-heart.css' ),
-			'chazi-purple'   => $this->theme( 'chazi-purple', __( 'Chazi purple', 'easymde' ), 'assets/themes/article/chazi-purple.css' ),
-			'nenqing-green'  => $this->theme( 'nenqing-green', __( 'Nenqing green', 'easymde' ), 'assets/themes/article/nenqing-green.css' ),
-			'green-vitality' => $this->theme( 'green-vitality', __( 'Green vitality', 'easymde' ), 'assets/themes/article/green-vitality.css' ),
-			'red-crimson'    => $this->theme( 'red-crimson', __( 'Red crimson', 'easymde' ), 'assets/themes/article/red-crimson.css' ),
-			'blue-ying'      => $this->theme( 'blue-ying', __( 'Blue ying', 'easymde' ), 'assets/themes/article/blue-ying.css' ),
-			'lanqing'        => $this->theme( 'lanqing', __( 'Lanqing', 'easymde' ), 'assets/themes/article/lanqing.css' ),
-			'yamabuki'       => $this->theme( 'yamabuki', __( 'Yamabuki', 'easymde' ), 'assets/themes/article/yamabuki.css' ),
-			'grid-black'     => $this->theme( 'grid-black', __( 'Grid black', 'easymde' ), 'assets/themes/article/grid-black.css' ),
-			'geek-black'     => $this->theme( 'geek-black', __( 'Geek black', 'easymde' ), 'assets/themes/article/geek-black.css' ),
-			'rose-purple'    => $this->theme( 'rose-purple', __( 'Rose purple', 'easymde' ), 'assets/themes/article/rose-purple.css' ),
-			'ningye-purple'  => $this->theme( 'ningye-purple', __( 'Ningye purple', 'easymde' ), 'assets/themes/article/ningye-purple.css' ),
-			'tech-blue'      => $this->theme( 'tech-blue', __( 'Tech blue', 'easymde' ), 'assets/themes/article/tech-blue.css' ),
-			'qingbi-liujin'  => $this->theme( 'qingbi-liujin', __( 'Qingbi Liujin', 'easymde' ), 'assets/themes/article/qingbi-liujin.css' ),
-			'qinghe-zhusha'  => $this->theme( 'qinghe-zhusha', __( 'Qinghe Zhusha', 'easymde' ), 'assets/themes/article/qinghe-zhusha.css' ),
-			'cute-green'     => $this->theme( 'cute-green', __( 'Cute green', 'easymde' ), 'assets/themes/article/cute-green.css' ),
-			'fullstack-blue' => $this->theme( 'fullstack-blue', __( 'Fullstack blue', 'easymde' ), 'assets/themes/article/fullstack-blue.css' ),
-			'minimal-black'  => $this->theme( 'minimal-black', __( 'Minimal black', 'easymde' ), 'assets/themes/article/minimal-black.css' ),
-			'orange-blue'    => $this->theme( 'orange-blue', __( 'Orange blue', 'easymde' ), 'assets/themes/article/orange-blue.css' ),
-			'frontend-peak'  => $this->theme( 'frontend-peak', __( 'Frontend peak', 'easymde' ), 'assets/themes/article/frontend-peak.css' ),
-			'cupid-busy'     => $this->theme( 'cupid-busy', __( 'Cupid busy', 'easymde' ), 'assets/themes/article/cupid-busy.css' ),
+			'default'        => $this->theme( 'default', __( 'Default theme', 'easymde' ), 'assets/themes/article/default.css', 'atom-one-dark' ),
+			'orange-heart'   => $this->theme( 'orange-heart', __( 'Orange heart', 'easymde' ), 'assets/themes/article/orange-heart.css', 'atom-one-dark' ),
+			'chazi-purple'   => $this->theme( 'chazi-purple', __( 'Chazi purple', 'easymde' ), 'assets/themes/article/chazi-purple.css', 'atom-one-dark' ),
+			'nenqing-green'  => $this->theme( 'nenqing-green', __( 'Nenqing green', 'easymde' ), 'assets/themes/article/nenqing-green.css', 'atom-one-dark' ),
+			'green-vitality' => $this->theme( 'green-vitality', __( 'Green vitality', 'easymde' ), 'assets/themes/article/green-vitality.css', 'atom-one-dark' ),
+			'red-crimson'    => $this->theme( 'red-crimson', __( 'Red crimson', 'easymde' ), 'assets/themes/article/red-crimson.css', 'atom-one-dark' ),
+			'blue-ying'      => $this->theme( 'blue-ying', __( 'Blue ying', 'easymde' ), 'assets/themes/article/blue-ying.css', 'atom-one-dark' ),
+			'lanqing'        => $this->theme( 'lanqing', __( 'Lanqing', 'easymde' ), 'assets/themes/article/lanqing.css', 'atom-one-dark' ),
+			'yamabuki'       => $this->theme( 'yamabuki', __( 'Yamabuki', 'easymde' ), 'assets/themes/article/yamabuki.css', 'atom-one-dark' ),
+			'grid-black'     => $this->theme( 'grid-black', __( 'Grid black', 'easymde' ), 'assets/themes/article/grid-black.css', 'atom-one-dark' ),
+			'geek-black'     => $this->theme( 'geek-black', __( 'Geek black', 'easymde' ), 'assets/themes/article/geek-black.css', 'atom-one-dark' ),
+			'rose-purple'    => $this->theme( 'rose-purple', __( 'Rose purple', 'easymde' ), 'assets/themes/article/rose-purple.css', 'atom-one-dark' ),
+			'ningye-purple'  => $this->theme( 'ningye-purple', __( 'Ningye purple', 'easymde' ), 'assets/themes/article/ningye-purple.css', 'atom-one-dark' ),
+			'tech-blue'      => $this->theme( 'tech-blue', __( 'Tech blue', 'easymde' ), 'assets/themes/article/tech-blue.css', 'atom-one-dark' ),
+			'qingbi-liujin'  => $this->theme( 'qingbi-liujin', __( 'Qingbi Liujin', 'easymde' ), 'assets/themes/article/qingbi-liujin.css', 'atom-one-dark' ),
+			'qinghe-zhusha'  => $this->theme( 'qinghe-zhusha', __( 'Qinghe Zhusha', 'easymde' ), 'assets/themes/article/qinghe-zhusha.css', 'atom-one-dark' ),
+			'cute-green'     => $this->theme( 'cute-green', __( 'Cute green', 'easymde' ), 'assets/themes/article/cute-green.css', 'atom-one-dark' ),
+			'fullstack-blue' => $this->theme( 'fullstack-blue', __( 'Fullstack blue', 'easymde' ), 'assets/themes/article/fullstack-blue.css', 'fullstack-blue' ),
+			'minimal-black'  => $this->theme( 'minimal-black', __( 'Minimal black', 'easymde' ), 'assets/themes/article/minimal-black.css', 'atom-one-dark' ),
+			'orange-blue'    => $this->theme( 'orange-blue', __( 'Orange blue', 'easymde' ), 'assets/themes/article/orange-blue.css', 'atom-one-dark' ),
+			'frontend-peak'  => $this->theme( 'frontend-peak', __( 'Frontend peak', 'easymde' ), 'assets/themes/article/frontend-peak.css', 'atom-one-dark' ),
+			'cupid-busy'     => $this->theme( 'cupid-busy', __( 'Cupid busy', 'easymde' ), 'assets/themes/article/cupid-busy.css', 'atom-one-dark' ),
 		);
 
 		foreach ( $themes as $id => $theme ) {
@@ -69,12 +69,13 @@ final class ArticleThemeRegistry {
 		$themes = array();
 		foreach ( $this->all() as $theme ) {
 			$item = array(
-				'id'        => $theme['id'],
-				'label'     => $theme['label'],
-				'className' => $theme['class_name'],
-				'cssUrl'    => $this->versioned_asset_url( $theme['asset_path'] ),
-				'assetPath' => $theme['asset_path'],
-				'origin'    => $theme['origin'],
+				'id'               => $theme['id'],
+				'label'            => $theme['label'],
+				'className'        => $theme['class_name'],
+				'cssUrl'           => $this->versioned_asset_url( $theme['asset_path'] ),
+				'assetPath'        => $theme['asset_path'],
+				'origin'           => $theme['origin'],
+				'defaultCodeTheme' => isset( $theme['default_code_theme'] ) ? sanitize_key( $theme['default_code_theme'] ) : 'atom-one-dark',
 			);
 
 			if ( ! empty( $theme['fontDefaults'] ) ) {
@@ -157,13 +158,14 @@ final class ArticleThemeRegistry {
 		return null;
 	}
 
-	private function theme( $id, $label, $asset_path ) {
+	private function theme( $id, $label, $asset_path, $default_code_theme ) {
 		return array(
-			'id'         => $id,
-			'label'      => $label,
-			'asset_path' => $asset_path,
-			'origin'     => 'owned',
-			'class_name' => 'easymde-markdown-theme-' . $id,
+			'id'                 => $id,
+			'label'              => $label,
+			'asset_path'         => $asset_path,
+			'origin'             => 'owned',
+			'class_name'         => 'easymde-markdown-theme-' . $id,
+			'default_code_theme' => $default_code_theme,
 		);
 	}
 

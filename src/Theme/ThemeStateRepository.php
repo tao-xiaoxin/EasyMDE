@@ -27,14 +27,18 @@ final class ThemeStateRepository {
 	}
 
 	public function get_theme_options_for_script( $post_id ) {
-		$library = $this->get_custom_css_library( get_current_user_id() );
+		$library             = $this->get_custom_css_library( get_current_user_id() );
+		$state               = $this->get_theme_state( $post_id );
+		$code_theme_explicit = $state['codeThemeExplicit'];
+		unset( $state['codeThemeExplicit'] );
 
 		return array(
-			'markdownThemes' => $this->get_article_themes_for_script(),
-			'codeThemes'     => $this->code_themes->for_script(),
-			'fontOptions'    => $this->get_font_options(),
-			'customCss'      => array_values( array_map( array( $this, 'format_custom_css_item' ), $library ) ),
-			'state'          => $this->get_theme_state( $post_id ),
+			'markdownThemes'    => $this->get_article_themes_for_script(),
+			'codeThemes'        => $this->code_themes->for_script(),
+			'codeThemeExplicit' => $code_theme_explicit,
+			'fontOptions'       => $this->get_font_options(),
+			'customCss'         => array_values( array_map( array( $this, 'format_custom_css_item' ), $library ) ),
+			'state'             => $state,
 		);
 	}
 
@@ -42,15 +46,16 @@ final class ThemeStateRepository {
 		$post_id  = absint( $post_id );
 		$defaults = $this->get_default_theme_state();
 
-		$markdown_theme         = $defaults['markdownTheme'];
-		$code_theme             = $defaults['codeTheme'];
-		$custom_css_id          = $defaults['customCssId'];
-		$custom_font            = $defaults['customFont'];
-		$windows_font           = $defaults['windowsFont'];
-		$apple_font             = $defaults['appleFont'];
-		$serif_font             = $defaults['serifFont'];
-		$custom_css             = '';
-		$has_post_font_metadata = false;
+		$markdown_theme          = $defaults['markdownTheme'];
+		$code_theme              = $defaults['codeTheme'];
+		$custom_css_id           = $defaults['customCssId'];
+		$custom_font             = $defaults['customFont'];
+		$windows_font            = $defaults['windowsFont'];
+		$apple_font              = $defaults['appleFont'];
+		$serif_font              = $defaults['serifFont'];
+		$custom_css              = '';
+		$has_post_font_metadata  = false;
+		$has_explicit_code_theme = $defaults['hasExplicitCodeTheme'];
 
 		if ( $post_id ) {
 			$stored_markdown_theme = get_post_meta( $post_id, PostDocument::META_MARKDOWN_THEME, true );
@@ -61,7 +66,8 @@ final class ThemeStateRepository {
 			}
 
 			if ( '' !== $stored_code_theme ) {
-				$code_theme = $stored_code_theme;
+				$has_explicit_code_theme = $this->is_valid_code_theme_id( $stored_code_theme );
+				$code_theme              = $stored_code_theme;
 			}
 
 			$custom_css_id = sanitize_key( (string) get_post_meta( $post_id, PostDocument::META_CUSTOM_CSS_ID, true ) );
@@ -95,7 +101,9 @@ final class ThemeStateRepository {
 
 		$apply_theme_font_defaults = $this->should_apply_theme_font_defaults( $custom_font, $windows_font, $apple_font, $serif_font );
 		$markdown_theme            = $this->sanitize_markdown_theme_id( $markdown_theme );
-		$code_theme                = $this->sanitize_code_theme_id( $code_theme );
+		$code_theme                = $has_explicit_code_theme
+			? $this->sanitize_code_theme_id( $code_theme )
+			: $this->get_associated_code_theme( $markdown_theme );
 		$custom_css_id             = sanitize_key( $custom_css_id );
 		$custom_font               = $this->sanitize_font_option_id( 'customFonts', $custom_font, 'optima' );
 		$windows_font              = $this->sanitize_font_option_id( 'windowsFonts', $windows_font, 'microsoft-yahei' );
@@ -143,16 +151,17 @@ final class ThemeStateRepository {
 		}
 
 		return array(
-			'markdownTheme'   => $markdown_theme,
-			'codeTheme'       => $code_theme,
-			'customCssId'     => $custom_css_id,
-			'customCss'       => $custom_css,
-			'scopedCustomCss' => $this->custom_css_policy->scope( $custom_css ),
-			'customFont'      => $custom_font,
-			'windowsFont'     => $windows_font,
-			'appleFont'       => $apple_font,
-			'serifFont'       => $serif_font,
-			'fontFamily'      => $this->get_font_stack( $custom_font, $windows_font, $apple_font, $serif_font ),
+			'markdownTheme'     => $markdown_theme,
+			'codeTheme'         => $code_theme,
+			'codeThemeExplicit' => $has_explicit_code_theme,
+			'customCssId'       => $custom_css_id,
+			'customCss'         => $custom_css,
+			'scopedCustomCss'   => $this->custom_css_policy->scope( $custom_css ),
+			'customFont'        => $custom_font,
+			'windowsFont'       => $windows_font,
+			'appleFont'         => $apple_font,
+			'serifFont'         => $serif_font,
+			'fontFamily'        => $this->get_font_stack( $custom_font, $windows_font, $apple_font, $serif_font ),
 		);
 	}
 
@@ -238,24 +247,33 @@ final class ThemeStateRepository {
 	}
 
 	public function sanitize_theme_state_from_request( $source, $post_id = 0 ) {
-		$post_id        = absint( $post_id );
-		$markdown_theme = isset( $source['easymde_markdown_theme'] ) ? wp_unslash( $source['easymde_markdown_theme'] ) : '';
-		$code_theme     = isset( $source['easymde_code_theme'] ) ? wp_unslash( $source['easymde_code_theme'] ) : '';
-		$custom_css_id  = isset( $source['easymde_custom_css_id'] ) ? wp_unslash( $source['easymde_custom_css_id'] ) : '';
-		$custom_font    = isset( $source['easymde_custom_font'] ) ? wp_unslash( $source['easymde_custom_font'] ) : '';
-		$windows_font   = isset( $source['easymde_windows_font'] ) ? wp_unslash( $source['easymde_windows_font'] ) : '';
-		$apple_font     = isset( $source['easymde_apple_font'] ) ? wp_unslash( $source['easymde_apple_font'] ) : '';
-		$serif_font     = isset( $source['easymde_serif_font'] ) ? wp_unslash( $source['easymde_serif_font'] ) : '';
+		$post_id             = absint( $post_id );
+		$markdown_theme      = isset( $source['easymde_markdown_theme'] ) ? wp_unslash( $source['easymde_markdown_theme'] ) : '';
+		$code_theme          = isset( $source['easymde_code_theme'] ) ? wp_unslash( $source['easymde_code_theme'] ) : '';
+		$code_theme_explicit = isset( $source['easymde_code_theme_explicit'] )
+			? wp_unslash( $source['easymde_code_theme_explicit'] )
+			: null;
+		$custom_css_id       = isset( $source['easymde_custom_css_id'] ) ? wp_unslash( $source['easymde_custom_css_id'] ) : '';
+		$custom_font         = isset( $source['easymde_custom_font'] ) ? wp_unslash( $source['easymde_custom_font'] ) : '';
+		$windows_font        = isset( $source['easymde_windows_font'] ) ? wp_unslash( $source['easymde_windows_font'] ) : '';
+		$apple_font          = isset( $source['easymde_apple_font'] ) ? wp_unslash( $source['easymde_apple_font'] ) : '';
+		$serif_font          = isset( $source['easymde_serif_font'] ) ? wp_unslash( $source['easymde_serif_font'] ) : '';
 
-		$apply_theme_font_defaults = $this->should_apply_theme_font_defaults( $custom_font, $windows_font, $apple_font, $serif_font );
-		$markdown_theme            = $this->sanitize_markdown_theme_id( $markdown_theme );
-		$code_theme                = $this->sanitize_code_theme_id( $code_theme );
-		$custom_css_id             = sanitize_key( $custom_css_id );
-		$custom_font               = $this->sanitize_font_option_id( 'customFonts', $custom_font, 'optima' );
-		$windows_font              = $this->sanitize_font_option_id( 'windowsFonts', $windows_font, 'microsoft-yahei' );
-		$apple_font                = $this->sanitize_font_option_id( 'appleFonts', $apple_font, 'pingfang-sc-light' );
-		$serif_font                = $this->sanitize_font_option_id( 'serifOptions', $serif_font, 'yes' );
-		$apply_theme_font_defaults = $apply_theme_font_defaults || $this->should_apply_theme_font_defaults(
+		$explicit_code_theme_requested = null === $code_theme_explicit
+			|| '0' !== sanitize_text_field( (string) $code_theme_explicit );
+		$has_explicit_code_theme       = $explicit_code_theme_requested
+			&& $this->is_valid_code_theme_id( $code_theme );
+		$apply_theme_font_defaults     = $this->should_apply_theme_font_defaults( $custom_font, $windows_font, $apple_font, $serif_font );
+		$markdown_theme                = $this->sanitize_markdown_theme_id( $markdown_theme );
+		$code_theme                    = $has_explicit_code_theme
+			? $this->sanitize_code_theme_id( $code_theme )
+			: $this->get_associated_code_theme( $markdown_theme );
+		$custom_css_id                 = sanitize_key( $custom_css_id );
+		$custom_font                   = $this->sanitize_font_option_id( 'customFonts', $custom_font, 'optima' );
+		$windows_font                  = $this->sanitize_font_option_id( 'windowsFonts', $windows_font, 'microsoft-yahei' );
+		$apple_font                    = $this->sanitize_font_option_id( 'appleFonts', $apple_font, 'pingfang-sc-light' );
+		$serif_font                    = $this->sanitize_font_option_id( 'serifOptions', $serif_font, 'yes' );
+		$apply_theme_font_defaults     = $apply_theme_font_defaults || $this->should_apply_theme_font_defaults(
 			$custom_font,
 			$windows_font,
 			$apple_font,
@@ -288,14 +306,15 @@ final class ThemeStateRepository {
 		}
 
 		return array(
-			'markdownTheme' => $markdown_theme,
-			'codeTheme'     => $code_theme,
-			'customCssId'   => $custom_css_id,
-			'customCss'     => $custom_css,
-			'customFont'    => $custom_font,
-			'windowsFont'   => $windows_font,
-			'appleFont'     => $apple_font,
-			'serifFont'     => $serif_font,
+			'markdownTheme'     => $markdown_theme,
+			'codeTheme'         => $code_theme,
+			'codeThemeExplicit' => $has_explicit_code_theme,
+			'customCssId'       => $custom_css_id,
+			'customCss'         => $custom_css,
+			'customFont'        => $custom_font,
+			'windowsFont'       => $windows_font,
+			'appleFont'         => $apple_font,
+			'serifFont'         => $serif_font,
 		);
 	}
 
@@ -317,23 +336,28 @@ final class ThemeStateRepository {
 		if ( ! is_array( $stored ) ) {
 			$stored = array();
 		}
+		$code_theme_explicit = ! array_key_exists( 'codeThemeExplicit', $state ) || ! empty( $state['codeThemeExplicit'] );
+		if ( ! $code_theme_explicit ) {
+			unset( $stored['codeTheme'] );
+		}
+
+		$active_state = array(
+			'markdownTheme'   => $state['markdownTheme'],
+			'customCssId'     => $state['customCssId'],
+			'customFont'      => $state['customFont'],
+			'windowsFont'     => $state['windowsFont'],
+			'appleFont'       => $state['appleFont'],
+			'serifFont'       => $state['serifFont'],
+			'defaultsVersion' => EASYMDE_VERSION,
+		);
+		if ( $code_theme_explicit ) {
+			$active_state['codeTheme'] = $state['codeTheme'];
+		}
 
 		update_user_meta(
 			get_current_user_id(),
 			$this->default_theme_user_meta_key,
-			array_replace(
-				$stored,
-				array(
-					'markdownTheme'   => $state['markdownTheme'],
-					'codeTheme'       => $state['codeTheme'],
-					'customCssId'     => $state['customCssId'],
-					'customFont'      => $state['customFont'],
-					'windowsFont'     => $state['windowsFont'],
-					'appleFont'       => $state['appleFont'],
-					'serifFont'       => $state['serifFont'],
-					'defaultsVersion' => EASYMDE_VERSION,
-				)
-			)
+			array_replace( $stored, $active_state )
 		);
 	}
 
@@ -376,17 +400,36 @@ final class ThemeStateRepository {
 			$stored = array();
 		}
 
-		$stored_code_theme = isset( $stored['codeTheme'] ) ? $stored['codeTheme'] : 'atom-one-dark';
+		$markdown_theme          = $this->sanitize_markdown_theme_id( isset( $stored['markdownTheme'] ) ? $stored['markdownTheme'] : 'default' );
+		$stored_code_theme       = isset( $stored['codeTheme'] ) ? $stored['codeTheme'] : '';
+		$has_explicit_code_theme = $this->is_valid_code_theme_id( $stored_code_theme );
 
 		return array(
-			'markdownTheme' => $this->sanitize_markdown_theme_id( isset( $stored['markdownTheme'] ) ? $stored['markdownTheme'] : 'default' ),
-			'codeTheme'     => $this->sanitize_code_theme_id( $stored_code_theme ),
-			'customCssId'   => sanitize_key( isset( $stored['customCssId'] ) ? $stored['customCssId'] : '' ),
-			'customFont'    => isset( $stored['customFont'] ) ? $stored['customFont'] : 'optima',
-			'windowsFont'   => isset( $stored['windowsFont'] ) ? $stored['windowsFont'] : 'microsoft-yahei',
-			'appleFont'     => isset( $stored['appleFont'] ) ? $stored['appleFont'] : 'pingfang-sc-light',
-			'serifFont'     => isset( $stored['serifFont'] ) ? $stored['serifFont'] : 'yes',
+			'markdownTheme'        => $markdown_theme,
+			'codeTheme'            => $has_explicit_code_theme
+				? $this->sanitize_code_theme_id( $stored_code_theme )
+				: $this->get_associated_code_theme( $markdown_theme ),
+			'hasExplicitCodeTheme' => $has_explicit_code_theme,
+			'customCssId'          => sanitize_key( isset( $stored['customCssId'] ) ? $stored['customCssId'] : '' ),
+			'customFont'           => isset( $stored['customFont'] ) ? $stored['customFont'] : 'optima',
+			'windowsFont'          => isset( $stored['windowsFont'] ) ? $stored['windowsFont'] : 'microsoft-yahei',
+			'appleFont'            => isset( $stored['appleFont'] ) ? $stored['appleFont'] : 'pingfang-sc-light',
+			'serifFont'            => isset( $stored['serifFont'] ) ? $stored['serifFont'] : 'yes',
 		);
+	}
+
+	private function get_associated_code_theme( $markdown_theme ) {
+		$theme = $this->article_themes->get( $markdown_theme );
+		$id    = isset( $theme['default_code_theme'] ) ? $theme['default_code_theme'] : 'atom-one-dark';
+
+		return $this->sanitize_code_theme_id( $id );
+	}
+
+	private function is_valid_code_theme_id( $id ) {
+		$id     = sanitize_key( (string) $id );
+		$themes = $this->code_themes->all();
+
+		return '' !== $id && isset( $themes[ $id ] );
 	}
 
 	private function get_font_options() {
@@ -587,6 +630,10 @@ final class ThemeStateRepository {
 		$themes = $this->article_themes->for_script();
 
 		foreach ( $themes as &$theme ) {
+			$theme['defaultCodeTheme'] = $this->sanitize_code_theme_id(
+				isset( $theme['defaultCodeTheme'] ) ? $theme['defaultCodeTheme'] : 'atom-one-dark'
+			);
+
 			if ( empty( $theme['fontDefaults'] ) || ! is_array( $theme['fontDefaults'] ) ) {
 				continue;
 			}

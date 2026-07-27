@@ -19,6 +19,7 @@ type ApiFetchRuntime = Readonly<{
 type WordPressAutosaveFields = Readonly<{
   appleFont: HTMLInputElement;
   codeTheme: HTMLInputElement;
+  codeThemeExplicit: HTMLInputElement;
   content: HTMLTextAreaElement | null;
   customCssId: HTMLInputElement;
   customFont: HTMLInputElement;
@@ -71,6 +72,7 @@ export function createWordPressEditorSessionPort({
   const autosaveInputs = [
     autosaveFields.appleFont,
     autosaveFields.codeTheme,
+    autosaveFields.codeThemeExplicit,
     autosaveFields.customCssId,
     autosaveFields.customFont,
     autosaveFields.enabled,
@@ -125,6 +127,7 @@ export function createWordPressEditorSessionPort({
     autosave._easymde_markdown = autosaveFields.markdown.value;
     autosave._easymde_markdown_theme = autosaveFields.markdownTheme.value;
     autosave._easymde_code_theme = autosaveFields.codeTheme.value;
+    autosave._easymde_code_theme_explicit = autosaveFields.codeThemeExplicit.value;
     autosave._easymde_custom_css_id = autosaveFields.customCssId.value;
     autosave._easymde_custom_font = autosaveFields.customFont.value;
     autosave._easymde_windows_font = autosaveFields.windowsFont.value;

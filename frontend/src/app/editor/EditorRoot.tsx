@@ -430,6 +430,7 @@ export function EditorRoot(props: EditorRootProps) {
   const scheduledPreviewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
   const previewRevisionRef = useRef(0);
   const previewAppearanceRef = useRef(props.appearance.state);
+  const codeThemeExplicitRef = useRef(props.appearance.codeThemeExplicit);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
   const featuredImageOperationRef = useRef<Promise<NativeFeaturedImage | null> | null>(null);
@@ -713,10 +714,11 @@ export function EditorRoot(props: EditorRootProps) {
   }, [leaveVisualPreview]);
   const appearancePort = useMemo<AppearancePort>(
     () => ({
-      applyState: (state) => {
+      applyState: (state, codeThemeExplicit) => {
         const visualPreviewWasEditing = visualPreviewEditingRef.current;
         if (visualPreviewWasEditing && !prepareSourceMutation()) return;
-        props.appearancePort.applyState(state);
+        props.appearancePort.applyState(state, codeThemeExplicit);
+        codeThemeExplicitRef.current = codeThemeExplicit;
         setAppearanceState(state);
         submissionStateRef.current = {
           ...submissionStateRef.current,
@@ -748,7 +750,10 @@ export function EditorRoot(props: EditorRootProps) {
           if (visualPreviewWasEditing && !prepareSourceMutation()) {
             return result;
           }
-          props.appearancePort.applyState(result.snapshot.state);
+          props.appearancePort.applyState(
+            result.snapshot.state,
+            codeThemeExplicitRef.current
+          );
           setAppearanceState(result.snapshot.state);
           submissionStateRef.current = {
             ...submissionStateRef.current,

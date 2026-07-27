@@ -1,4 +1,9 @@
-import { createElement } from '@wordpress/element';
+import {
+  createElement,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef
+} from '@wordpress/element';
 import type {
   ClipboardEventHandler,
   CSSProperties,
@@ -18,6 +23,7 @@ type SafePreviewHtmlSinkProps = Readonly<{
   children?: ReactNode;
   contentEditable?: boolean;
   html: SafePreviewHtml | null;
+  htmlRevision?: number;
   label?: string;
   onDrop?: DragEventHandler<HTMLElement>;
   onInput?: FormEventHandler<HTMLElement>;
@@ -37,6 +43,7 @@ export function SafePreviewHtmlSink({
   contentEditable,
   error = false,
   html,
+  htmlRevision = 0,
   label,
   onDrop,
   onInput,
@@ -48,6 +55,17 @@ export function SafePreviewHtmlSink({
   style,
   surfaceRef
 }: SafePreviewHtmlSinkProps) {
+  const htmlSurfaceRef = useRef<HTMLElement | null>(null);
+  useImperativeHandle(surfaceRef, () => {
+    if (!htmlSurfaceRef.current) throw new Error('preview-surface-missing');
+    return htmlSurfaceRef.current;
+  }, []);
+  useLayoutEffect(() => {
+    const surface = htmlSurfaceRef.current;
+    if (null === html || !surface || surface.innerHTML === html) return;
+    surface.innerHTML = html;
+  }, [html, htmlRevision]);
+
   if (null !== html) return (
     <article
       aria-busy={ariaBusy ? 'true' : 'false'}
@@ -64,7 +82,7 @@ export function SafePreviewHtmlSink({
       onPaste={onPaste}
       // biome-ignore lint/security/noDangerouslySetInnerHtml: This is the sole sink for PHP-rendered, server-sanitized Preview HTML.
       dangerouslySetInnerHTML={{ __html: html }}
-      ref={surfaceRef}
+      ref={htmlSurfaceRef}
       role={role}
       spellCheck={spellCheck}
       style={style}
@@ -84,7 +102,7 @@ export function SafePreviewHtmlSink({
       onInput={onInput}
       onKeyDown={onKeyDown}
       onPaste={onPaste}
-      ref={surfaceRef}
+      ref={htmlSurfaceRef}
       role={role}
       spellCheck={spellCheck}
       style={style}

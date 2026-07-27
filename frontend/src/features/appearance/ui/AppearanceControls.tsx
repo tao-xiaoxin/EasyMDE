@@ -57,12 +57,17 @@ const CODE_THEME_SWATCHES: Readonly<Record<string, readonly [string, string]>> =
   monokai: ['#272822', '#F8F8F2'],
   vs2015: ['#1E1E1E', '#DCDCDC'],
   xcode: ['#FFFFFF', '#1D1D1F'],
+  'fullstack-blue': ['#282C34', '#ABB2BF'],
   'terminal-noir': ['#0D1017', '#CAD1D9'],
   'wechat-inspired': ['#F4F4F4', '#333333']
 };
 
 function articleThemeAccent(id: string): string {
   return referenceArticleTheme(id).accent;
+}
+
+function codeThemeSwatch(id: string): readonly [string, string] {
+  return CODE_THEME_SWATCHES[id] ?? ['#F4F4F4', '#333333'];
 }
 
 function ThemeSettingsIcon() {
@@ -244,6 +249,25 @@ function selectedArticleValue(snapshot: AppearanceSnapshot): string {
     : `theme:${snapshot.state.markdownTheme}`;
 }
 
+function associatedCodeTheme(bootstrap: AppearanceBootstrap, markdownTheme: string): string {
+  const theme = bootstrap.articleThemes.find(({ id }) => id === markdownTheme);
+  if (!theme) {
+    throw new Error('appearance-associated-code-theme-missing');
+  }
+
+  return theme.defaultCodeTheme;
+}
+
+function customCssCodeTheme(
+  bootstrap: AppearanceBootstrap,
+  currentCodeTheme: string,
+  codeThemeExplicit: boolean
+): string {
+  return codeThemeExplicit
+    ? currentCodeTheme
+    : associatedCodeTheme(bootstrap, 'default');
+}
+
 export function AppearanceControls({
   bootstrap,
   port,
@@ -261,6 +285,7 @@ export function AppearanceControls({
     'immersive' === variant
       ? (immersiveTitle ?? controlLabel)
       : bootstrap.strings.appearance;
+  const codeThemeExplicitRef = useRef(bootstrap.codeThemeExplicit);
   const [snapshot, setSnapshot] = useState<AppearanceSnapshot>({
     customCss: bootstrap.customCss,
     state: bootstrap.state
@@ -380,7 +405,7 @@ export function AppearanceControls({
 
   const applyState = (nextState: AppearanceState) => {
     try {
-      port.applyState(nextState);
+      port.applyState(nextState, codeThemeExplicitRef.current);
     } catch {
       onFailure();
       return;
@@ -424,7 +449,19 @@ export function AppearanceControls({
         return;
       }
       if ('saved' === result.status) {
-        replaceSnapshot(result.snapshot);
+        const nextSnapshot = {
+          ...result.snapshot,
+          state: {
+            ...result.snapshot.state,
+            codeTheme: customCssCodeTheme(
+              bootstrap,
+              result.snapshot.state.codeTheme,
+              codeThemeExplicitRef.current
+            )
+          }
+        };
+        applyState(nextSnapshot.state);
+        replaceSnapshot(nextSnapshot);
         setStatus(bootstrap.strings.cssSaved);
       } else {
         setStatus(bootstrap.strings.cssSaveFailed);
@@ -457,7 +494,7 @@ export function AppearanceControls({
     (theme) => ({
       id: theme.id,
       label: theme.label,
-      swatch: CODE_THEME_SWATCHES[theme.id] ?? ['#F4F4F4', '#333333']
+      swatch: codeThemeSwatch(theme.id)
     })
   );
 
@@ -574,12 +611,21 @@ export function AppearanceControls({
                     applyState({
                       ...snapshotRef.current.state,
                       markdownTheme: 'custom',
+                      codeTheme: customCssCodeTheme(
+                        bootstrap,
+                        snapshotRef.current.state.codeTheme,
+                        codeThemeExplicitRef.current
+                      ),
                       customCssId: value.slice(7)
                     });
                   } else {
+                    const markdownTheme = value.slice(6);
                     applyState({
                       ...snapshotRef.current.state,
-                      markdownTheme: value.slice(6),
+                      markdownTheme,
+                      codeTheme: codeThemeExplicitRef.current
+                        ? snapshotRef.current.state.codeTheme
+                        : associatedCodeTheme(bootstrap, markdownTheme),
                       customCssId: ''
                     });
                   }
@@ -589,9 +635,10 @@ export function AppearanceControls({
                 label={bootstrap.strings.codeTheme}
                 value={snapshot.state.codeTheme}
                 options={codeOptions}
-                onChange={(codeTheme) =>
-                  applyState({ ...snapshotRef.current.state, codeTheme })
-                }
+                onChange={(codeTheme) => {
+                  codeThemeExplicitRef.current = true;
+                  applyState({ ...snapshotRef.current.state, codeTheme });
+                }}
               />
               <div className="easymde-immersive-custom-css-action">
                 <button
@@ -621,12 +668,21 @@ export function AppearanceControls({
                 applyState({
                   ...snapshotRef.current.state,
                   markdownTheme: 'custom',
+                  codeTheme: customCssCodeTheme(
+                    bootstrap,
+                    snapshotRef.current.state.codeTheme,
+                    codeThemeExplicitRef.current
+                  ),
                   customCssId: value.slice(7)
                 });
               } else {
+                const markdownTheme = value.slice(6);
                 applyState({
                   ...snapshotRef.current.state,
-                  markdownTheme: value.slice(6),
+                  markdownTheme,
+                  codeTheme: codeThemeExplicitRef.current
+                    ? snapshotRef.current.state.codeTheme
+                    : associatedCodeTheme(bootstrap, markdownTheme),
                   customCssId: ''
                 });
               }
@@ -655,12 +711,13 @@ export function AppearanceControls({
           <select
             className="easymde-code-theme-select"
             value={snapshot.state.codeTheme}
-            onChange={(event) =>
+            onChange={(event) => {
+              codeThemeExplicitRef.current = true;
               applyState({
                 ...snapshotRef.current.state,
                 codeTheme: event.currentTarget.value
-              })
-            }
+              });
+            }}
           >
             {bootstrap.codeThemes.map((theme) => (
               <option key={theme.id} value={theme.id}>

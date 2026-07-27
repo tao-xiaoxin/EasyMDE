@@ -144,6 +144,58 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_implicit_code_theme_survives_save_and_reload_without_becoming_explicit()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+            )
+        );
+        update_post_meta($post_id, PostDocument::META_CODE_THEME, 'github-dark');
+        update_user_meta(
+            $user_id,
+            'easymde_default_theme_state',
+            array('codeTheme' => 'github-dark')
+        );
+        wp_set_current_user($user_id);
+
+        $previous_post = $_POST;
+        $_POST = array(
+            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+            'easymde_enabled' => '1',
+            'easymde_markdown' => '# Associated code theme',
+            'easymde_markdown_theme' => 'fullstack-blue',
+            'easymde_code_theme' => 'fullstack-blue',
+            'easymde_code_theme_explicit' => '0',
+        );
+
+        try {
+            $repository = $this->theme_state_repository();
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $repository,
+                static function () {
+                    return true;
+                }
+            );
+            $handler->save_post_meta($post_id, get_post($post_id), true);
+
+            $this->assertFalse(metadata_exists('post', $post_id, PostDocument::META_CODE_THEME));
+            $this->assertArrayNotHasKey(
+                'codeTheme',
+                get_user_meta($user_id, 'easymde_default_theme_state', true)
+            );
+
+            $reloaded = $repository->get_theme_state($post_id);
+            $this->assertSame('fullstack-blue', $reloaded['codeTheme']);
+            $this->assertFalse($reloaded['codeThemeExplicit']);
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
     public function test_legacy_markdown_post_is_lazy_migrated_on_valid_save()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));

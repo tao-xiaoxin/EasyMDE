@@ -6,7 +6,12 @@ import { parseEditorRootBootstrap } from './editor-root-bootstrap';
 function validBootstrap() {
   return {
     appearance: {
-      articleThemes: [{ id: 'default', label: 'Default' }],
+      articleThemes: [{
+        id: 'default',
+        label: 'Default',
+        defaultCodeTheme: 'atom-one-dark'
+      }],
+      codeThemeExplicit: false,
       codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
       customCss: [],
       state: {
@@ -325,7 +330,8 @@ describe('parseEditorRootBootstrap', () => {
                 windowsFont: 'system'
               },
               id: 'default',
-              label: 'Default'
+              label: 'Default',
+              defaultCodeTheme: 'atom-one-dark'
             }
           ]
         }

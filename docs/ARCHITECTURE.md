@@ -108,7 +108,7 @@ revisions and Markdown signatures, and renders branded server-sanitized HTML
 through one React Safe HTML sink. `easymde/v1/preview` and PHP
 `MarkdownRenderer` remain the formal rendering authority. Focused TypeScript
 Adapters enhance only the accepted response with local Highlight.js, KaTeX,
-Mermaid, TOC, Code Theme, and the fixed Mac frame; enhancement failure preserves
+Mermaid, TOC, the selected Code Theme, and the Mac code frame; enhancement failure preserves
 sanitized HTML and is reported without inventing a renderer fallback.
 
 The WordPress session Adapter observes Heartbeat authentication, REST Nonce,
@@ -171,7 +171,7 @@ may reuse stored `post_content` for a fast initial preview only when this marker
 matches the current Markdown, article theme, and stored compatibility HTML;
 otherwise it renders from `_easymde_markdown`.
 
-The Mac-style source-code frame is fixed rendering behavior, not document state. Rendered EasyMDE roots always receive `easymde-code-mac`; `code-frame.css` is loaded only when feature detection finds a regular code block. Historical `_easymde_code_mac_style` post meta and `codeMacStyle` user-default entries are left untouched, but no active reader, writer, request, preview, or revision path consults them.
+The Mac-style source-code frame is fixed rendering behavior, not document state. Rendered EasyMDE roots always receive `easymde-code-mac`; `code-frame.css` is loaded only when feature detection finds a regular code block. The shared stylesheet alone owns frame geometry, traffic-light dots, spacing, radius, shadow, code typography, newline preservation, and local horizontal overflow. Historical `_easymde_code_mac_style` post meta and `codeMacStyle` user-default entries are left untouched, but no active reader, writer, request, preview, or revision path consults them.
 
 ## Rendering
 
@@ -200,7 +200,13 @@ When restoring a revision that predates EasyMDE document state, the manager remo
 
 `ArticleThemeRegistry` and `CodeThemeRegistry` explicitly register themes. They do not scan theme directories at runtime.
 
-Article themes are EasyMDE-owned CSS files under `assets/themes/article/`. Highlight.js vendor styles remain under `assets/vendor/highlight/styles/`. The EasyMDE-owned `wechat-inspired` and `terminal-noir` code themes are stored under `assets/themes/code/`.
+Article themes are EasyMDE-owned CSS files under `assets/themes/article/`. Highlight.js vendor styles remain under `assets/vendor/highlight/styles/`. EasyMDE-owned code themes, including `wechat-inspired`, `terminal-noir`, and the distinct `fullstack-blue` token palette, are stored under `assets/themes/code/`.
+
+Block-code presentation is independent from article-theme CSS. `assets/css/frontend/code-frame.css` owns the fixed cross-theme Mac frame. Code-theme assets own only block background, foreground, and Highlight.js token colors. Article-theme stylesheets retain inline code and non-code article presentation but contain no `pre`, Highlight.js token, frame, or legacy MDNice code-snippet selectors. Ordinary editor Preview, immersive Preview, revision Preview, REST-rendered content, frontend content, and WeChat export consume the same selected code-theme asset instead of defining surface-specific block-code rules.
+
+Each article-theme descriptor exposes a Registry-owned `defaultCodeTheme`. Themes with the same effective palette reuse the same registered code theme; `fullstack-blue` retains its genuinely distinct token palette without content-dependent JavaScript rewriting. When no valid persisted or browser-session code-theme choice exists, the current article association supplies the code theme. A valid explicit choice remains authoritative across later article-theme changes. `atom-one-dark` is only the compatibility fallback for a missing or invalid association, and opening the editor performs no hidden write.
+
+The selected code theme owns block-code presentation. Because upstream Highlight.js styles apply their background to `code.hljs`, the shared highlighter copies that computed background to the outer `pre` for generic themes after highlighting. This runtime bridge does not duplicate palettes or depend on article-theme IDs, so built-in associated themes and third-party themes registered through `easymde_code_themes` remain authoritative.
 
 The extension filters are:
 

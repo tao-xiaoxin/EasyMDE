@@ -849,11 +849,14 @@ Use `.agents/skills/i18n/SKILL.md` whenever a task adds, changes, moves,
 reviews, or validates user-visible text, locale formatting, RTL, accessibility
 copy, extraction, catalogs, translation loading, or package language assets.
 
-The current implementation keeps PHP gettext as the source of browser-facing
-strings and passes translated values through the existing
-`EasyMDEConfig.strings` and `EasyMDEFrontendConfig.strings` Bootstrap maps.
-Preserve that fact until a focused i18n/build task activates a complete React
-translation owner.
+The current implementation keeps PHP gettext as the owner of most
+browser-facing strings and passes those translated values through the Editor
+Root and `EasyMDEFrontendConfig.strings` Bootstrap maps. Immersive word,
+character, reading-time, and revision counters are the first React-owned
+translation unit; their focused Port uses WordPress `wp.i18n`, the production
+Script declares `wp-i18n`, and WordPress loads the handle-based JSON catalog.
+Preserve these single-owner boundaries unless a focused i18n/build migration
+activates and verifies another React translation unit.
 
 Each user-visible message instance has one owner. Do not ship the same instance
 through more than one translation path. When translation ownership moves from

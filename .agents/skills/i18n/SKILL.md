@@ -60,8 +60,7 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 
   - 文本域是 `easymde`。
   - 插件头定义 `Domain Path: /languages`（以当前源码为准）。
-  - i18n 生成是 `scripts/i18n.mjs` 管理的 PHP-only 流程。
-  - `scripts/i18n.mjs` 当前扫描 `easymde.php`、`includes`、`src`、`templates`（PHP 文件）。
+  - i18n 生成由 `scripts/i18n.mjs` 管理：扫描 `easymde.php`、`includes`、`src`、`templates` 的 PHP 文件，并提取 `create-wordpress-immersive-i18n-port.ts` 中已激活的 React 计数器消息；PHP/JS 临时 catalog 通过 `msgcat --force-po` 合并。
   - npm 命令是：
   - `i18n:make-pot`
   - `i18n:compile`
@@ -70,16 +69,15 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
   - `languages/easymde.pot`
   - `languages/easymde-zh_CN.po`
   - `languages/easymde-zh_CN.mo`
-  - 后台编辑器当前浏览器文本 owner 是 `AdminAssets::get_strings()` 注入到 `EasyMDEConfig.strings`。
+  - `languages/easymde-zh_CN-easymde-admin-editor-toolbar.json`
+  - 后台编辑器大部分浏览器文本 owner 是 `AdminAssets::get_strings()` 注入到 Editor Root bootstrap；沉浸式词数、字符数、阅读时间和修订版本计数由 `createWordPressImmersiveI18nPort()` 通过 WordPress `wp.i18n` 的 `_n()` / `sprintf()` 提供。
   - 公开文章增强当前浏览器文本 owner 是 `FrontendAssets::enqueue_frontend_assets()` 注入到 `EasyMDEFrontendConfig.strings`。
+  - 生产脚本 handle `easymde-admin-editor-toolbar` externalize `@wordpress/i18n` 到 `wp.i18n`，声明 `wp-i18n` 依赖，并由 `AdminAssets` 调用 `wp_set_script_translations()` 装载 handle-based JSON；安装包校验要求该 JSON 存在且拒绝未登记的额外 JSON catalog。
 
 - **Planned（未来可执行）**
 
-  - React/TypeScript 字符串源与 `@wordpress/i18n` 提取链路；
-  - `wp_set_script_translations()` 注册与 JSON 资源交付；
-  - 迁移后统一由 React/Feature owner 提供可验证文案。
-  - 当前未实现任何 React i18n ownership 转移。
-  - 在尚无 React 翻译 owner 时，JavaScript JSON catalog 没有运行时 consumer，仍是计划能力；从第一个 React 翻译 owner 激活开始，WordPress-compatible JSON catalog、加载合同和安装包验证成为强制交付条件。
+  - 除已迁移沉浸式动态计数器外，其余 React/Feature 文案按可独立验收单元逐步转移 owner。
+  - 每个新增 React owner 都必须扩展提取清单、WordPress-compatible JSON catalog、加载合同、非英语运行时证据和安装包验证；不得假设首个 owner 的单一 catalog 自动覆盖未来 chunk 或 entry。
 
 - **Required before migration（迁移前置）**
 
@@ -87,23 +85,23 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
   - 提取、校验、发布三个阶段都可复现实地验证；
   - 安装版 ZIP 中可见对应语言资源且可被 WordPress 加载。
 
-- 当前浏览器文本所有权是“PHP bootstrap 注入”：
-  - 管理后台：`src/Admin/AdminAssets.php::get_strings()`
-    - 通过 `wp_localize_script('easymde-admin', 'EasyMDEConfig', [... 'strings' => $this->get_strings()])`
+- 当前浏览器文本所有权按消息单元分离：
+  - 管理后台大部分静态文案：`src/Admin/AdminAssets.php::get_strings()` 注入 Editor Root bootstrap；
+  - 沉浸式动态计数器：`createWordPressImmersiveI18nPort()` 使用 `@wordpress/i18n`，由 `easymde-admin-editor-toolbar` handle 的 JSON catalog 提供翻译；
   - 文章增强前台：`src/Frontend/FrontendAssets.php`
     - 通过 `wp_localize_script('easymde-frontend', 'EasyMDEFrontendConfig', [... 'strings' => [ 'renderingFailed' => ... ]])`
-  - 目前仓库不包含 TypeScript/React 消息 JSON catalog 或 Script Module 翻译产物（例如 `languages/*.json`）。
+  - 当前唯一 TypeScript/React 消息 JSON catalog 是 `languages/easymde-zh_CN-easymde-admin-editor-toolbar.json`；仓库不使用 Script Module 翻译产物。
   - 当前最低支持为 WordPress 6.7，因此请以经典脚本 i18n（`wp_set_script_translations()`）路径为实际可行基线，不得将 `wp_set_script_module_translations()` 当作可用完成条件。
 
 ### 运行面契约快照（当前）
 
 - 后台编辑器
-  - Owner：`AdminAssets`（PHP Gettext `easymde`）；
-  - Bootstrap：`EasyMDEConfig.strings`；
-  - Script Handle：`easymde-admin`；
+  - Owner：大部分静态文案由 `AdminAssets`（PHP Gettext `easymde`）提供；沉浸式动态计数器由 React i18n port 提供；
+  - Bootstrap：Editor Root bootstrap（PHP-owned 文案）；
+  - Script Handle：`easymde-admin-editor-toolbar`（React counter catalog）；
   - Locale/方向：WordPress 管理请求上下文；
   - 装载时机：管理后台编辑页加载 `admin_enqueue_scripts`；
-  - 关键语言资产：`languages/easymde.pot` / `languages/easymde-zh_CN.po` / `languages/easymde-zh_CN.mo`。
+  - 关键语言资产：`languages/easymde.pot` / `languages/easymde-zh_CN.po` / `languages/easymde-zh_CN.mo` / `languages/easymde-zh_CN-easymde-admin-editor-toolbar.json`。
 - 公开文章增强
   - Owner：`FrontendAssets`（PHP Gettext `easymde`）；
   - Bootstrap：`EasyMDEFrontendConfig.strings`；
@@ -260,8 +258,8 @@ Unverified states:
 
 ### JSON Catalog 激活门槛
 
-- 当前没有 React 翻译 owner，不为 legacy-only Feature 预生成无 consumer 的 JavaScript JSON catalog；
-- 从第一个 React 翻译 owner 激活开始，该 owner 的 WordPress-compatible JavaScript JSON catalog、生产加载合同、非英语 locale 运行时证据和安装包证据全部是强制条件；
+- 首个 React 翻译 owner（沉浸式动态计数器）已经激活；不得为其余 legacy-only Feature 预生成无 consumer 的 JavaScript JSON catalog；
+- 已激活 owner 的 WordPress-compatible JavaScript JSON catalog、生产加载合同、非英语 locale 运行时证据和安装包证据全部是强制条件；
 - 缺失或过期 JSON 是交付故障，不得用 source English、inline fallback 或浏览器 mock 掩盖。
 
 ### 经典脚本翻译（当前最小兼容路径）
@@ -528,7 +526,7 @@ Gettext source message、translator comment、代码示例、测试 fixture、ca
 
 ### 首个 React i18n 迁移单元的强制证据
 
-这些是未来首个 React 翻译 owner 的完成条件，不是当前文档 PR 已执行的 runtime 验证。
+这些是当前已激活 React 翻译 owner 及后续 owner 的完成条件；只能把实际执行过的项目声明为当前证据。
 
 **Build evidence**
 
@@ -556,7 +554,7 @@ Gettext source message、translator comment、代码示例、测试 fixture、ca
 
 **Filename precedence negative-test contract**
 
-首个 React 翻译 owner 必须增加一个未来负向 Fixture：在同一自定义 Translation Path 中同时放入过期 Handle JSON 和内容正确的 MD5 JSON，证明 WordPress 6.7 会优先加载 Handle JSON，并证明 Release Validation 会拒绝两者不一致的安装包状态。该测试是未来实现合同，不是当前文档 PR 已执行的运行时测试。
+Release Validation 已用负向 Fixture 拒绝 handle catalog 之外的额外 JSON 候选，防止过期 MD5 JSON 进入安装包。WordPress 6.7 对 handle JSON 的实际优先加载仍必须由版本匹配的 Integration 或真实运行时证据证明；在该证据执行前不得把静态文件检查描述为加载优先级验证。
 
 **Runtime evidence**
 

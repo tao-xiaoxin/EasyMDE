@@ -14,10 +14,10 @@ function fixture(): void {
       </li>
     </ul>
     <div id="postimagediv"><div class="inside"><img src="https://example.test/image.png" alt="Featured"></div></div>
-    <input id="_thumbnail_id" name="_thumbnail_id" value="15">
-    <input id="visibility-radio-public" name="visibility" type="radio" checked>
-    <input id="visibility-radio-password" name="visibility" type="radio">
-    <input id="visibility-radio-private" name="visibility" type="radio">
+    <input id="_thumbnail_id" name="_thumbnail_id" type="hidden" value="15">
+    <input id="visibility-radio-public" name="visibility" type="radio" value="public" checked>
+    <input id="visibility-radio-password" name="visibility" type="radio" value="password">
+    <input id="visibility-radio-private" name="visibility" type="radio" value="private">
     <input id="post_password" name="post_password" value="">
     <input id="sticky" name="sticky" type="checkbox">
     </form>
@@ -253,6 +253,166 @@ describe('createWordPressNativePublishPort', () => {
       'native-publish-tags-owner-unavailable'
     );
     expect(tagField.value).toBe('EasyMDE, Markdown');
+  });
+
+  it.each([
+    ['categories', 'input[name="post_category[]"]', 'text', 'post_category[]'],
+    ['featuredImage', '#_thumbnail_id', 'checkbox', '_thumbnail_id'],
+    ['sticky', '#sticky', 'text', 'sticky'],
+    ['visibility', '#visibility-radio-public', 'text', 'visibility'],
+    ['visibility', '#post_password', 'checkbox', 'post_password']
+  ] as const)(
+    'rejects a %s owner whose input type changes native submission semantics',
+    (owner, selector, type, formField) => {
+      const fields = Array.from(
+        document.querySelectorAll<HTMLInputElement>(selector)
+      );
+      const form = document.querySelector<HTMLFormElement>('#post');
+      const field = fields[0];
+      if (!field || !form) throw new Error('synthetic-native-field-unavailable');
+      field.type = type;
+
+      const snapshot = createWordPressNativePublishPort(document).read();
+      const serialized = new FormData(form);
+
+      expect(snapshot.availableFields[owner]).toBe(false);
+      expect(serialized.has(formField)).toBe(
+        'checkbox' !== type || field.checked
+      );
+    }
+  );
+
+  it('rejects a native owner that is replaced by a wrong input type before apply', () => {
+    const port = createWordPressNativePublishPort(document);
+    const snapshot = port.read();
+    const publicField = document.querySelector<HTMLInputElement>(
+      '#visibility-radio-public'
+    );
+    const form = document.querySelector<HTMLFormElement>('#post');
+    if (!publicField || !form) {
+      throw new Error('synthetic-visibility-field-unavailable');
+    }
+    publicField.type = 'text';
+
+    expect(new FormData(form).getAll('visibility')).toEqual(['public']);
+    expect(() => port.apply({ ...snapshot, visibility: 'private' })).toThrowError(
+      'native-publish-visibility-owner-unavailable'
+    );
+  });
+
+  it('rejects a visibility radio whose serialized value changes before apply', () => {
+    const port = createWordPressNativePublishPort(document);
+    const snapshot = port.read();
+    const privateField = document.querySelector<HTMLInputElement>(
+      '#visibility-radio-private'
+    );
+    const form = document.querySelector<HTMLFormElement>('#post');
+    if (!privateField || !form) {
+      throw new Error('synthetic-visibility-field-unavailable');
+    }
+    privateField.value = 'public';
+
+    expect(() => port.apply({ ...snapshot, visibility: 'private' })).toThrowError(
+      'native-publish-visibility-owner-unavailable'
+    );
+    expect(new FormData(form).getAll('visibility')).toEqual(['public']);
+  });
+
+  it('rejects a tag owner whose replacement is not a value control', () => {
+    const original = document.querySelector('#tax-input-post_tag');
+    const replacement = document.createElement('input');
+    replacement.id = 'tax-input-post_tag';
+    replacement.name = 'tax_input[post_tag]';
+    replacement.type = 'checkbox';
+    original?.replaceWith(replacement);
+    const port = createWordPressNativePublishPort(document);
+    const snapshot = port.read();
+
+    expect(snapshot.availableFields.tags).toBe(false);
+    expect(snapshot.tags).toEqual([]);
+    expect(() => port.apply({ ...snapshot, tags: ['Unsaved'] })).toThrowError(
+      'native-publish-tags-owner-unavailable'
+    );
+  });
+
+  it('ignores a detached open-preview field and owns only its hidden post-form field', () => {
+    const detached = document.createElement('input');
+    detached.name = 'easymde_open_published_post';
+    detached.value = '1';
+    document.body.prepend(detached);
+    const port = createWordPressNativePublishPort(document);
+    const snapshot = port.read();
+
+    expect(snapshot.openPreview).toBe(false);
+    port.apply({ ...snapshot, openPreview: true });
+
+    const form = document.querySelector<HTMLFormElement>('#post');
+    const owned = form?.querySelector<HTMLInputElement>(
+      'input[name="easymde_open_published_post"]'
+    );
+    expect(owned?.type).toBe('hidden');
+    expect(
+      new FormData(form ?? undefined).getAll('easymde_open_published_post')
+    ).toEqual(['1']);
+
+    port.apply({ ...port.read(), openPreview: false });
+    expect(owned?.isConnected).toBe(false);
+    expect(detached.isConnected).toBe(true);
+  });
+
+  it('rejects a submittable open-preview field with the wrong type', () => {
+    const form = document.querySelector<HTMLFormElement>('#post');
+    const conflicting = document.createElement('input');
+    conflicting.name = 'easymde_open_published_post';
+    conflicting.type = 'text';
+    conflicting.value = '1';
+    form?.append(conflicting);
+
+    expect(() => createWordPressNativePublishPort(document).read()).toThrowError(
+      'native-publish-open-preview-owner-invalid'
+    );
+  });
+
+  it('rejects an invalid open-preview owner before changing any native field', () => {
+    const port = createWordPressNativePublishPort(document);
+    const snapshot = port.read();
+    const form = document.querySelector<HTMLFormElement>('#post');
+    if (!form) throw new Error('synthetic-post-form-unavailable');
+    const conflicting = document.createElement('input');
+    conflicting.name = 'easymde_open_published_post';
+    conflicting.type = 'text';
+    conflicting.value = 'conflict';
+    form.append(conflicting);
+    const fieldState = () =>
+      Array.from(form.elements).flatMap((element) =>
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement
+          ? [{
+              checked:
+                element instanceof HTMLInputElement ? element.checked : null,
+              name: element.name,
+              type:
+                element instanceof HTMLInputElement ? element.type : 'textarea',
+              value: element.value
+            }]
+          : []
+      );
+    const before = fieldState();
+
+    expect(() =>
+      port.apply({
+        ...snapshot,
+        categoryIds: ['3'],
+        excerpt: 'Changed excerpt',
+        featuredImage: null,
+        openPreview: true,
+        password: 'secret',
+        sticky: true,
+        tags: ['Changed'],
+        visibility: 'password'
+      })
+    ).toThrowError('native-publish-open-preview-owner-invalid');
+    expect(fieldState()).toEqual(before);
   });
 
   it('rejects controls that are detached from the owning WordPress form', () => {

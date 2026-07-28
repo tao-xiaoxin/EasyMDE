@@ -136,6 +136,31 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
   });
 
+  it('exposes the real CodeMirror undo history to the ordinary toolbar', () => {
+    const { container, submissionField } = createFixture('Original');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+
+    expect(session.canUndo()).toBe(false);
+    expect(session.undo()).toBe(false);
+
+    session.applyTextChange({
+      selection: { direction: 'none', end: 6, start: 6 },
+      value: 'Edited'
+    });
+
+    expect(session.canUndo()).toBe(true);
+    expect(session.undo()).toBe(true);
+    expect(session.getValue()).toBe('Original');
+    expect(submissionField.value).toBe('Original');
+    expect(session.canUndo()).toBe(false);
+
+    session.destroy();
+  });
+
   it('publishes stable document snapshots against the native saved baseline', () => {
     const { container, submissionField } = createFixture('saved document');
     submissionField.defaultValue = 'saved document';

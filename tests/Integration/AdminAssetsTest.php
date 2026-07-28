@@ -55,6 +55,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	public function test_editor_root_bootstrap_exposes_the_complete_single_root_contract() {
 		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
 		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		update_post_meta( $post_id, '_edit_last', $user_id );
 		wp_set_current_user( $user_id );
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
@@ -69,12 +70,16 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertArrayHasKey( 'appearance', $bootstrap );
 		$this->assertArrayHasKey( 'fonts', $bootstrap );
 		$this->assertArrayHasKey( 'layout', $bootstrap );
+		$this->assertSame( 'Character count: %s', $bootstrap['layout']['status']['wordCount'] );
+		$this->assertStringContainsString( 'Last edited by', $bootstrap['layout']['status']['lastEdited'] );
+		$this->assertStringContainsString( get_userdata( $user_id )->display_name, $bootstrap['layout']['status']['lastEdited'] );
 		$this->assertArrayHasKey( 'mediaPicker', $bootstrap );
 		$this->assertArrayHasKey( 'previewEnhancement', $bootstrap );
 		$this->assertArrayHasKey( 'immersive', $bootstrap['strings'] );
 		$this->assertArrayNotHasKey( 'publishing', $bootstrap );
 		$this->assertArrayNotHasKey( 'revisions', $bootstrap );
 		$this->assertArrayHasKey( 'toolbar', $bootstrap );
+		$this->assertSame( 'Undo', $bootstrap['toolbar']['strings']['undo'] );
 		$this->assertArrayHasKey( 'wechatExport', $bootstrap );
 		$this->assertArrayHasKey( 'wordpress', $bootstrap );
 		$this->assertArrayHasKey( 'publishCategories', $bootstrap['wordpress'] );
@@ -84,6 +89,77 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( rest_url( 'easymde/v1/media' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
+	}
+
+	public function test_editor_status_uses_the_last_editor_and_localized_modified_time() {
+		$author_id = self::factory()->user->create(
+			array(
+				'display_name' => 'Synthetic Author',
+				'role'         => 'administrator',
+			)
+		);
+		$editor_id = self::factory()->user->create(
+			array(
+				'display_name' => 'Synthetic Editor',
+				'role'         => 'editor',
+			)
+		);
+		$post_id   = self::factory()->post->create(
+			array(
+				'post_author'   => $author_id,
+				'post_modified' => '2026-07-14 15:53:00',
+			)
+		);
+		update_post_meta( $post_id, '_edit_last', $editor_id );
+		wp_set_current_user( $editor_id );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
+		$modified  = get_post_modified_time(
+			get_option( 'date_format' ) . ' ' . get_option( 'time_format' ),
+			false,
+			get_post( $post_id ),
+			true
+		);
+
+		$this->assertSame(
+			'Last edited by Synthetic Editor on ' . $modified,
+			$bootstrap['layout']['status']['lastEdited']
+		);
+	}
+
+	public function test_editor_status_omits_the_editor_when_the_last_editor_no_longer_exists() {
+		$author_id = self::factory()->user->create(
+			array(
+				'display_name' => 'Synthetic Author',
+				'role'         => 'administrator',
+			)
+		);
+		$post_id   = self::factory()->post->create( array( 'post_author' => $author_id ) );
+		update_post_meta( $post_id, '_edit_last', 999999 );
+		wp_set_current_user( $author_id );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
+
+		$modified = get_post_modified_time(
+			get_option( 'date_format' ) . ' ' . get_option( 'time_format' ),
+			false,
+			get_post( $post_id ),
+			true
+		);
+
+		$this->assertSame(
+			'Last edited on ' . $modified,
+			$bootstrap['layout']['status']['lastEdited']
+		);
+	}
+
+	public function test_new_post_status_reports_that_it_has_not_been_saved() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		wp_set_current_user( $user_id );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
+
+		$this->assertSame( 'Not saved yet.', $bootstrap['layout']['status']['lastEdited'] );
 	}
 
 	public function test_new_post_bootstrap_exposes_the_post_category_tree_without_a_post_id() {

@@ -100,6 +100,7 @@ test('immersive Custom CSS typography preserves the reference tracking', () => {
 });
 
 test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () => {
+  assert.doesNotMatch(css, /\.easymde-workspace-shell(?:[^a-z0-9_-]|$)/i);
   assert.match(
     css,
     /\.easymde-workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\);[^}]*grid-template-areas:\s*"source preview";/s
@@ -114,12 +115,123 @@ test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () =
   );
 });
 
+test('ordinary CodeMirror shows a stable scroll-synchronized line-number gutter', () => {
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-source-react \.cm-scroller\s*\{[^}]*line-height:\s*inherit;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-source-react \.cm-gutters\s*\{[^}]*display:\s*flex;[^}]*width:\s*40px;[^}]*min-width:\s*40px;[^}]*background:\s*#f7f8fa;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-source-react \.cm-lineNumbers \.cm-gutterElement\s*\{[^}]*width:\s*40px;[^}]*min-width:\s*40px;[^}]*font-size:\s*12\.5px;/s
+  );
+});
+
+test('ordinary Preview owns vertical scrolling and fits wide table content', () => {
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\s*\{[^}]*overflow-x:\s*hidden;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-rendered-content table\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;/s
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-rendered-content table\s*\{[^}]*table-layout:/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-rendered-content :is\(th, td\)\s*\{[^}]*overflow-wrap:\s*anywhere;/s
+  );
+});
+
+test('ordinary editor settings combines theme and font controls in one responsive popover', () => {
+  const popover = readFileSync(
+    new URL('../../assets/css/admin/popover.css', import.meta.url),
+    'utf8'
+  );
+  assert.match(
+    popover,
+    /\.easymde-toolbar-popover-settings-panel::before\s*\{[^}]*content:\s*"";[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*transform:\s*rotate\(45deg\);/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-toolbar-popover-settings-panel\s*\{[^}]*width:\s*min\(468px, calc\(100vw - 32px\)\);[^}]*border-radius:\s*12px;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-editor-settings-fields\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/s
+  );
+  assert.match(
+    css,
+    /@media \(max-width:\s*782px\)[\s\S]*?\.easymde-toolbar-popover-settings-panel::before\s*\{[^}]*left:\s*24px;/s
+  );
+});
+
+test('ordinary heading menu uses compact geometry without changing immersive styles', () => {
+  const toolbar = readFileSync(
+    new URL('../../assets/css/admin/toolbar.css', import.meta.url),
+    'utf8'
+  );
+  const popover = readFileSync(
+    new URL('../../assets/css/admin/popover.css', import.meta.url),
+    'utf8'
+  );
+  assert.match(
+    toolbar,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-button-menu\.easymde-toolbar-button-compact\s*\{[^}]*width:\s*54px;[^}]*min-width:\s*54px;/s
+  );
+  assert.match(
+    toolbar,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-glyph-heading\s*\{[^}]*flex:\s*0 0 24px;[^}]*width:\s*24px;[^}]*height:\s*24px;[^}]*border-radius:\s*7px;[^}]*background:\s*#f1f4f7;[^}]*font-size:\s*16px;[^}]*font-weight:\s*750;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover\s*\{[^}]*inset-inline-end:\s*auto;[^}]*inset-inline-start:\s*0;[^}]*width:\s*208px;[^}]*padding:\s*7px;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover::before\s*\{[^}]*content:\s*"";[^}]*position:\s*absolute;[^}]*top:\s*-8px;[^}]*inset-inline-start:\s*20px;[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*border-top:\s*1px solid #d0d7de;[^}]*border-left:\s*1px solid #d0d7de;[^}]*background:\s*#fff;[^}]*transform:\s*rotate\(45deg\);/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-popover-item\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*30px minmax\(0, 1fr\) auto;[^}]*min-height:\s*32px;[^}]*padding:\s*0 9px;[^}]*border-radius:\s*8px;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-heading-menu-badge\s*\{[^}]*width:\s*30px;[^}]*height:\s*24px;[^}]*justify-content:\s*center;[^}]*border:\s*1px solid #cbd5e1;[^}]*border-radius:\s*6px;[^}]*background:\s*#fbfcfe;[^}]*color:\s*#526987;/s
+  );
+  for (const [level, markSize, markWeight] of [
+    [1, 16, 700],
+    [2, 15, 680],
+    [3, 14, 650],
+    [4, 13, 620],
+    [5, 12, 600],
+    [6, 11, 580]
+  ]) {
+    assert.match(
+      popover,
+      new RegExp(
+        `\\.easymde-editor:not\\(\\.is-immersive\\) \\.easymde-heading-menu-badge\\[data-heading-level="${level}"\\]\\s*\\{[^}]*font-size:\\s*${markSize}px;[^}]*font-weight:\\s*${markWeight};`,
+        's'
+      )
+    );
+  }
+  assert.doesNotMatch(
+    popover,
+    /\.is-immersive-heading-menu[^}]*easymde-heading-menu-badge/s
+  );
+});
+
 test('withdrawn ordinary editor surfaces have no retained CSS runtime', () => {
   for (const className of [
     'easymde-editor-context-bar',
     'easymde-draft-status',
     'easymde-editor-panes',
-    'easymde-editor-status-bar',
     'easymde-outline-panel',
     'easymde-pane-divider',
     'easymde-publishing-dialog',
@@ -131,6 +243,14 @@ test('withdrawn ordinary editor surfaces have no retained CSS runtime', () => {
   ]) {
     assert.doesNotMatch(css, new RegExp(`\\.${className}(?:[^a-z0-9_-]|$)`, 'i'));
   }
+  assert.match(
+    css,
+    /\.easymde-editor-status-bar\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*38px;/s
+  );
+  assert.match(
+    css,
+    /@media \(max-width:\s*782px\)[\s\S]*?\.easymde-editor-status-bar\s*\{[^}]*align-items:\s*flex-start;[^}]*flex-direction:\s*column;/s
+  );
 });
 
 test('immersive publish CSS preserves reference geometry without hiding the password field', () => {
@@ -216,7 +336,7 @@ test('immersive Markdown pane preserves the reference header and source rhythm',
     css,
     /\.easymde-editor\.is-immersive \.easymde-source-react \.cm-lineNumbers \.cm-gutterElement\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*36px;[^}]*min-width:\s*36px;[^}]*padding:\s*0;[^}]*padding-inline-end:\s*14px;[^}]*font-size:\s*13\.5px;[^}]*line-height:\s*28px;/s
   );
-  assert.match(
+  assert.doesNotMatch(
     css,
     /\.easymde-editor:not\(\.is-immersive\) \.easymde-source-react \.cm-gutters\s*\{[^}]*display:\s*none;/s
   );

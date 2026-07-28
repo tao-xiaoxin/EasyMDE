@@ -76,6 +76,10 @@ import {
   type FontControlsSession
 } from '../../features/font-controls/ui/FontControls';
 import {
+  OrdinaryEditorSettings,
+  type OrdinaryEditorSettingsSession
+} from '../../features/editor-settings/ui/OrdinaryEditorSettings';
+import {
   createImageUploadSession,
   type ImageUploadStatus
 } from '../../features/image-upload/image-upload-session';
@@ -184,7 +188,7 @@ type ActiveToolbarProps = Readonly<{
   executeExternalCommand: EditorRootProps['executeExternalCommand'];
   platform: ToolbarPlatform;
   prepareToolbarShortcuts: EditorRootProps['prepareToolbarShortcuts'];
-  onPopoverOpen: () => void;
+  onPopoverOpen: (focusTarget?: HTMLElement) => void;
   onReady: (session: EditorToolbarSession) => void;
   session: EditorDocumentSession;
   toolbar: ToolbarBootstrap;
@@ -273,6 +277,7 @@ function ActiveToolbar({
   toolbar,
   variant = 'default'
 }: ActiveToolbarProps) {
+  const [canUndo, setCanUndo] = useState(() => session.document.canUndo());
   const commandSessionRef = useRef<ReturnType<
     typeof createToolbarCommandSession
   > | null>(null);
@@ -326,13 +331,22 @@ function ActiveToolbar({
   }, [executeCommand, editorRoot, prepareToolbarShortcuts]);
 
   useEffect(() => () => commandSession.dispose(), [commandSession]);
+  useEffect(
+    () =>
+      session.document.subscribe(() => {
+        setCanUndo(session.document.canUndo());
+      }),
+    [session]
+  );
   return (
     <EditorToolbar
       bootstrap={toolbar}
+      canUndo={canUndo}
       platform={platform}
       executeCommand={executeCommand}
       onPopoverOpen={onPopoverOpen}
       onReady={onReady}
+      undo={session.document.undo}
       variant={variant}
     />
   );
@@ -423,6 +437,8 @@ export function EditorRoot(props: EditorRootProps) {
   const restoreImmersiveFocusRef = useRef(false);
   const appearanceSessionRef = useRef<AppearanceControlsSession | null>(null);
   const fontControlsSessionRef = useRef<FontControlsSession | null>(null);
+  const ordinarySettingsSessionRef =
+    useRef<OrdinaryEditorSettingsSession | null>(null);
   const toolbarSessionRef = useRef<EditorToolbarSession | null>(null);
   const previewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
   const visualEditorRuntimeRef =
@@ -462,10 +478,20 @@ export function EditorRoot(props: EditorRootProps) {
   const visualPreviewEditingRef = useRef(visualPreviewEditing);
   visualPreviewEditingRef.current = visualPreviewEditing;
   const [visualPreviewChanged, setVisualPreviewChanged] = useState(false);
-  const [appearanceState, setAppearanceState] = useState(
-    props.appearance.state
+  const [appearanceSnapshot, setAppearanceSnapshot] = useState(() => ({
+    customCss: props.appearance.customCss,
+    state: props.appearance.state
+  }));
+  const appearanceState = appearanceSnapshot.state;
+  const currentAppearance = useMemo<AppearanceBootstrap>(
+    () => ({ ...props.appearance, ...appearanceSnapshot }),
+    [appearanceSnapshot, props.appearance]
   );
   const [fontState, setFontState] = useState(props.fonts.state);
+  const currentFonts = useMemo<FontControlsBootstrap>(
+    () => ({ ...props.fonts, state: fontState }),
+    [fontState, props.fonts]
+  );
   const [immersive, setImmersive] = useState(false);
   const immersiveRef = useRef(immersive);
   immersiveRef.current = immersive;
@@ -637,9 +663,10 @@ export function EditorRoot(props: EditorRootProps) {
     },
     []
   );
-  const closeForToolbar = useCallback(() => {
+  const closeForToolbar = useCallback((focusTarget?: HTMLElement) => {
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
+    ordinarySettingsSessionRef.current?.close(focusTarget);
   }, []);
   const schedulePreviewMarkdown = useCallback(
     (markdown: string, immediate = false): string => {
@@ -717,7 +744,7 @@ export function EditorRoot(props: EditorRootProps) {
         const visualPreviewWasEditing = visualPreviewEditingRef.current;
         if (visualPreviewWasEditing && !prepareSourceMutation()) return;
         props.appearancePort.applyState(state);
-        setAppearanceState(state);
+        setAppearanceSnapshot((snapshot) => ({ ...snapshot, state }));
         submissionStateRef.current = {
           ...submissionStateRef.current,
           ...state
@@ -737,6 +764,7 @@ export function EditorRoot(props: EditorRootProps) {
       closeOtherPopovers: () => {
         toolbarSessionRef.current?.closePopovers();
         fontControlsSessionRef.current?.close();
+        ordinarySettingsSessionRef.current?.close();
         props.appearancePort.closeOtherPopovers();
       },
       previewCustomCss: (css, signal) =>
@@ -751,7 +779,7 @@ export function EditorRoot(props: EditorRootProps) {
             return result;
           }
           props.appearancePort.applyState(result.snapshot.state);
-          setAppearanceState(result.snapshot.state);
+          setAppearanceSnapshot(result.snapshot);
           submissionStateRef.current = {
             ...submissionStateRef.current,
             ...result.snapshot.state
@@ -788,6 +816,7 @@ export function EditorRoot(props: EditorRootProps) {
       closeOtherPopovers: () => {
         toolbarSessionRef.current?.closePopovers();
         appearanceSessionRef.current?.close();
+        ordinarySettingsSessionRef.current?.close();
         props.fontControlsPort.closeOtherPopovers();
       }
     }),
@@ -802,6 +831,12 @@ export function EditorRoot(props: EditorRootProps) {
   const handleFontControlsReady = useCallback(
     (session: FontControlsSession) => {
       fontControlsSessionRef.current = session;
+    },
+    []
+  );
+  const handleOrdinarySettingsReady = useCallback(
+    (session: OrdinaryEditorSettingsSession) => {
+      ordinarySettingsSessionRef.current = session;
     },
     []
   );
@@ -1310,7 +1345,7 @@ export function EditorRoot(props: EditorRootProps) {
           styleControls={
             <Fragment>
               <AppearanceControls
-                bootstrap={props.appearance}
+                bootstrap={currentAppearance}
                 onFailure={() =>
                   props.onFailure('react-editor-appearance-failed')
                 }
@@ -1321,7 +1356,7 @@ export function EditorRoot(props: EditorRootProps) {
                 variant="immersive"
               />
               <FontControls
-                bootstrap={props.fonts}
+                bootstrap={currentFonts}
                 onFailure={() => props.onFailure('react-editor-fonts-failed')}
                 onReady={handleFontControlsReady}
                 port={fontControlsPort}
@@ -1413,19 +1448,21 @@ export function EditorRoot(props: EditorRootProps) {
             >
               <ImmersiveToggleIcon />
             </button>
-            <FontControls
-              bootstrap={props.fonts}
-              onFailure={() => props.onFailure('react-editor-fonts-failed')}
-              onReady={handleFontControlsReady}
-              port={fontControlsPort}
-            />
-            <AppearanceControls
-              bootstrap={props.appearance}
-              onFailure={() =>
-                props.onFailure('react-editor-appearance-failed')
-              }
-              onReady={handleAppearanceReady}
-              port={appearancePort}
+            <OrdinaryEditorSettings
+              appearance={currentAppearance}
+              appearancePort={appearancePort}
+              fonts={currentFonts}
+              fontControlsPort={fontControlsPort}
+              label={props.immersiveStrings.editorSettings}
+              onAppearanceReady={handleAppearanceReady}
+              onFailure={props.onFailure}
+              onFontControlsReady={handleFontControlsReady}
+              onOpen={() => {
+                toolbarSessionRef.current?.closePopovers();
+                props.appearancePort.closeOtherPopovers();
+                props.fontControlsPort.closeOtherPopovers();
+              }}
+              onReady={handleOrdinarySettingsReady}
             />
           </div>
         </div>
@@ -1472,6 +1509,16 @@ export function EditorRoot(props: EditorRootProps) {
       ) : null}
       <EditorWorkspace
         direction={props.layout.direction}
+        {...(!immersive && documentSession
+          ? {
+              ordinaryStatus: {
+                document: documentSession.document,
+                lastEdited: props.layout.status.lastEdited,
+                locale: props.localDrafts.locale,
+                wordCountTemplate: props.layout.status.wordCount
+              }
+            }
+          : {})}
         splitResizable={immersive && 'split' === immersiveMode}
         splitResizeLabel={props.immersiveStrings.resizeSplit}
         source={
@@ -1479,9 +1526,9 @@ export function EditorRoot(props: EditorRootProps) {
             className="easymde-pane easymde-pane-source"
             data-easymde-document-owner="react"
           >
-            <header className="easymde-pane-header">
-              <span>{immersive ? props.immersiveStrings.markdown.toUpperCase() : props.labels.source}</span>
-              {immersive ? (
+            {immersive ? (
+              <header className="easymde-pane-header">
+                <span>{props.immersiveStrings.markdown.toUpperCase()}</span>
                 <span
                   className="easymde-immersive-more-actions"
                   aria-hidden="true"
@@ -1489,8 +1536,8 @@ export function EditorRoot(props: EditorRootProps) {
                 >
                   <MoreHorizontal size={14} strokeWidth={2} />
                 </span>
-              ) : null}
-            </header>
+              </header>
+            ) : null}
             <div className="easymde-source easymde-source-react">
               <EditorDocumentSource
                 editorLabel={props.document.editorLabel}
@@ -1539,7 +1586,7 @@ export function EditorRoot(props: EditorRootProps) {
             changed={visualPreviewChanged}
             editable={visualPreviewEditing}
             hasSnapshot={null !== visualPreviewSnapshot}
-            ordinaryLabel={props.labels.preview}
+            ordinaryLabel={immersive ? props.labels.preview : null}
             onToggleEditable={() => {
               if (visualPreviewEditing) {
                 prepareSourceMutation();
@@ -1552,10 +1599,10 @@ export function EditorRoot(props: EditorRootProps) {
               setVisualPreviewEditing(true);
             }}
             status={previewSurfaceStatus}
-                statusMessages={{
-                  empty: props.preview.messages.empty,
-                  error: props.preview.messages.error
-                }}
+            statusMessages={{
+              empty: props.preview.messages.empty,
+              error: props.preview.messages.error
+            }}
             strings={props.immersiveStrings}
           >
             <PreviewSurfaceOwner

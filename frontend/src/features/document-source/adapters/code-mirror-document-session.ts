@@ -1,4 +1,10 @@
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  undo as undoCommand,
+  undoDepth
+} from '@codemirror/commands';
 import {
   HighlightStyle,
   syntaxHighlighting
@@ -38,6 +44,7 @@ export type DocumentCursorPosition = Readonly<{
 
 export type CodeMirrorDocumentSession = Readonly<{
   applyTextChange: (change: DocumentTextChange) => void;
+  canUndo: () => boolean;
   destroy: () => void;
   flush: () => void;
   focus: () => void;
@@ -52,6 +59,7 @@ export type CodeMirrorDocumentSession = Readonly<{
   subscribe: (listener: () => void) => () => void;
   subscribeSelection: (listener: () => void) => () => void;
   syncFromSubmissionField: () => void;
+  undo: () => boolean;
 }>;
 
 type CreateCodeMirrorDocumentSessionOptions = Readonly<{
@@ -198,8 +206,8 @@ export function createCodeMirrorDocumentSession({
           }
         }),
         keymap.of([...defaultKeymap, ...historyKeymap]),
-        // Keep source line numbers in CodeMirror's own scroll-synchronized gutter.
-        // Immersive CSS is the only surface that makes this gutter visible.
+        // Keep line numbers in CodeMirror's own scroll-synchronized gutter;
+        // each editor surface owns its presentation.
         lineNumbers(),
         EditorView.lineWrapping,
         editability.of(editabilityExtensions(submissionField)),
@@ -322,6 +330,7 @@ export function createCodeMirrorDocumentSession({
         selection: editorSelection(selection, value.length)
       });
     },
+    canUndo: () => !destroyed && undoDepth(view.state) > 0,
     destroy() {
       if (destroyed) {
         return;
@@ -392,6 +401,12 @@ export function createCodeMirrorDocumentSession({
       selectionListeners.add(listener);
       return () => selectionListeners.delete(listener);
     },
-    syncFromSubmissionField: syncFromNative
+    syncFromSubmissionField: syncFromNative,
+    undo() {
+      if (destroyed) return false;
+      const changed = undoCommand(view);
+      if (changed) view.focus();
+      return changed;
+    }
   };
 }

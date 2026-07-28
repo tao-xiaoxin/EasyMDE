@@ -33,8 +33,10 @@ form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown
 remains canonical Markdown and `post_content` remains compatibility HTML.
 Focus Mode is not part of the default ordinary-editor surface. Issue #126
 provides a same-root immersive presentation that reuses the ordinary
-CodeMirror, Preview, native form, and WordPress capability owners. Outline,
-statistics/status, and view switching are scoped to that presentation;
+CodeMirror, Preview, native form, and WordPress capability owners. The ordinary
+workspace has one restrained footer for the live Markdown character count and
+WordPress-owned last-editor timestamp. Immersive Outline, expanded writing
+statistics, and view switching remain scoped to the immersive presentation;
 Publish and Revision controls delegate to the existing WordPress owners.
 
 The ordinary Editor now follows this single-Root boundary in the live branch.
@@ -62,7 +64,7 @@ public PHP compatibility contracts remain preserved as described below.
 
 ## Frontend Build Foundation
 
-The root npm project owns Vite, TypeScript, Biome linting, React 18 development declarations, Vitest, CodeMirror 6, and the WordPress Element package used by browser builds. `npm run frontend:check` runs frontend linting, strict `tsc --noEmit`, component and contract tests, the test-only build contract, and temporary production Editor and public code-copy builds that must match their committed runtimes byte for byte.
+The root npm project owns Vite, TypeScript, Biome linting, React 18 development declarations, Vitest, CodeMirror 6, and the WordPress Element package used by browser builds. Exact `lucide-react@0.487.0` source is a development-only input to `scripts/generate-lucide-icons.mjs`; generated local icon nodes are compiled into the ordinary and immersive Editor interfaces without adding a browser runtime dependency. This version remains intentionally locked because the audited ordinary-toolbar contract uses its icon paths: `lucide-react@1.27.0` changes the visible Code, List, List Ordered, and Palette nodes. A future upgrade is therefore a visual-contract change and must repeat the controlled toolbar comparison. `npm run frontend:check` verifies the locked generated nodes, runs frontend linting, strict `tsc --noEmit`, component and contract tests, the test-only build contract, and temporary production Editor and public code-copy builds that must match their committed runtimes byte for byte.
 
 The Vite entry under `frontend/test/build-contract/` remains test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
 
@@ -102,6 +104,14 @@ synchronous submission bridges and are flushed before WordPress serializes the
 open form.
 React neither submits a closed field allowlist nor treats synchronization as a
 successful Save, so unknown WordPress and extension fields remain intact.
+
+The ordinary toolbar presents one compact heading dropdown containing the
+registered heading-menu command surface except the Paragraph action, including
+the built-in H1 through H6 commands and extension commands in registry order.
+The trigger uses a compact inset H glyph, and built-in levels use outlined
+H1-through-H6 badges with visibly descending type scale and weight. Every
+visible command retains its configured shortcut. The immersive heading menu keeps its
+existing Paragraph-command exclusion and presentation.
 
 The Preview session debounces Reads, aborts superseded requests, rejects stale
 revisions and Markdown signatures, and renders branded server-sanitized HTML
@@ -236,7 +246,17 @@ Custom CSS library entries are stored in the current user's user meta. Creating,
 
 When a post uses custom CSS, EasyMDE stores a post-level snapshot so published content can retain the selected appearance if the user later edits or removes the saved library entry.
 
-The normal-editor React Appearance owner edits only a browser-session draft and sends an explicit save through the existing protected REST boundary. It does not validate or scope CSS as a security authority, retry a mutation, or report success before the server response has been validated. The existing hidden Custom CSS ID and snapshot fields remain the WordPress submission bridge. The post-level snapshot also remains usable when its library entry is later detached.
+The ordinary editor exposes Appearance and Font choices through one compact
+Editor Settings popover. Its Appearance section may select an existing named
+Custom CSS theme, but it does not expose Custom CSS creation or editing.
+Custom CSS editing remains an immersive-editor surface, where it edits only a
+browser-session draft and sends an explicit save through the existing protected
+REST boundary.
+React does not validate or scope CSS as a security authority, retry a mutation,
+or report success before the server response has been validated. The existing
+hidden Custom CSS ID and snapshot fields remain the WordPress submission
+bridge. The post-level snapshot also remains usable when its library entry is
+later detached.
 
 ## REST Boundaries
 

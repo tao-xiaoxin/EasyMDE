@@ -18,13 +18,17 @@ const bootstrap = {
         appleFont: 'system', customFont: 'none', serifFont: 'off', windowsFont: 'system'
       },
       id: 'default',
-      label: 'Default'
+      label: 'Default',
+      defaultCodeTheme: 'atom-one-dark'
     },
-    { id: 'newsprint', label: 'Newsprint' }
+    { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'fullstack-blue' }
   ],
+  canManageCustomCss: true,
+  codeThemeExplicit: false,
   codeThemes: [
     { id: 'atom-one-dark', label: 'Atom One Dark' },
-    { id: 'github', label: 'GitHub' }
+    { id: 'github', label: 'GitHub' },
+    { id: 'fullstack-blue', label: 'Fullstack Blue' }
   ],
   customCss: [
     {
@@ -71,6 +75,22 @@ describe('parseAppearanceBootstrap', () => {
 
   it.each([
     {
+      name: 'invalid custom CSS capability',
+      value: {
+        ...bootstrap,
+        canManageCustomCss: 'true'
+      },
+      code: 'invalid-custom-css-capability'
+    },
+    {
+      name: 'invalid explicit code-theme marker',
+      value: {
+        ...bootstrap,
+        codeThemeExplicit: 'false'
+      },
+      code: 'invalid-code-theme-explicit-state'
+    },
+    {
       name: 'duplicate article theme IDs',
       value: {
         ...bootstrap,
@@ -93,6 +113,14 @@ describe('parseAppearanceBootstrap', () => {
         customCss: [{ ...bootstrap.customCss[0], css: 'a'.repeat(30_001) }]
       },
       code: 'invalid-custom-css-code'
+    },
+    {
+      name: 'unknown associated code theme',
+      value: {
+        ...bootstrap,
+        articleThemes: [{ ...bootstrap.articleThemes[0], defaultCodeTheme: 'missing' }]
+      },
+      code: 'invalid-associated-code-theme'
     },
     {
       name: 'unknown code theme selection',

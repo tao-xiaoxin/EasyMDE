@@ -2,18 +2,30 @@
 set -euo pipefail
 
 RELEASE_ZIP="${1:-dist/EasyMDE.zip}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 WP_PATH="${EASYMDE_WP_PATH:-/tmp/easymde-release-wp}"
 WP_URL="${EASYMDE_WP_URL:-http://127.0.0.1:8089}"
 WP_TITLE="${EASYMDE_WP_TITLE:-EasyMDE Release Test}"
-WP_ADMIN_USER="${EASYMDE_WP_ADMIN_USER:-admin}"
-WP_ADMIN_PASSWORD="${EASYMDE_WP_ADMIN_PASSWORD:-password}"
 WP_ADMIN_EMAIL="${EASYMDE_WP_ADMIN_EMAIL:-admin@example.test}"
 WP_VERSION="${EASYMDE_WP_VERSION:-latest}"
 DB_NAME="${EASYMDE_DB_NAME:-easymde_release}"
 DB_USER="${EASYMDE_DB_USER:-root}"
 DB_PASS="${EASYMDE_DB_PASS:-root}"
 DB_HOST="${EASYMDE_DB_HOST:-127.0.0.1:3306}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+dotenv_value() {
+	local name="$1"
+	node --env-file="${REPO_ROOT}/.env" -e 'process.stdout.write(process.env[process.argv[1]] || "")' "${name}"
+}
+
+if [ -f "${REPO_ROOT}/.env" ]; then
+	WORDPRESS_ADMIN_USER="${WORDPRESS_ADMIN_USER:-$(dotenv_value WORDPRESS_ADMIN_USER)}"
+	WORDPRESS_ADMIN_PASSWORD="${WORDPRESS_ADMIN_PASSWORD:-$(dotenv_value WORDPRESS_ADMIN_PASSWORD)}"
+fi
+
+WP_ADMIN_USER="${WORDPRESS_ADMIN_USER:?Set WORDPRESS_ADMIN_USER in .env or the process environment}"
+WP_ADMIN_PASSWORD="${WORDPRESS_ADMIN_PASSWORD:?Set WORDPRESS_ADMIN_PASSWORD in .env or the process environment}"
 
 export WP_CLI_PHP_ARGS="${WP_CLI_PHP_ARGS:--d memory_limit=512M}"
 

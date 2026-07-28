@@ -176,6 +176,8 @@ final class AdminAssets {
 			),
 			'appearance'         => array(
 				'articleThemes'      => $theme_options['markdownThemes'],
+				'canManageCustomCss' => current_user_can( 'unfiltered_html' ),
+				'codeThemeExplicit'  => $theme_options['codeThemeExplicit'],
 				'codeThemes'         => $theme_options['codeThemes'],
 				'customCss'          => $custom_css,
 				'customCssVariables' => $this->get_custom_css_variables(),

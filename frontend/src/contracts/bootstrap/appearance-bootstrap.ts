@@ -5,6 +5,10 @@ export type AppearanceOption = Readonly<{
   label: string;
 }>;
 
+export type ArticleThemeOption = AppearanceOption & Readonly<{
+  defaultCodeTheme: string;
+}>;
+
 export type FontDefaults = Readonly<{
   appleFont: string;
   customFont: string;
@@ -174,7 +178,9 @@ export const CUSTOM_CSS_VARIABLE_IDS = [
 export type CustomCssVariableId = typeof CUSTOM_CSS_VARIABLE_IDS[number];
 
 export type AppearanceBootstrap = Readonly<{
-  articleThemes: ReadonlyArray<AppearanceOption>;
+  articleThemes: ReadonlyArray<ArticleThemeOption>;
+  canManageCustomCss: boolean;
+  codeThemeExplicit: boolean;
   codeThemes: ReadonlyArray<AppearanceOption>;
   customCss: ReadonlyArray<CustomCssItem>;
   customCssVariables: ReadonlyArray<CustomCssVariable>;
@@ -262,6 +268,26 @@ function parseOptions(value: unknown): ReadonlyArray<AppearanceOption> {
       ...(cssUrl ? { cssUrl } : {}),
       ...(fontDefaults ? { fontDefaults } : {})
     };
+  });
+}
+
+function parseArticleOptions(
+  value: unknown,
+  codeThemes: ReadonlyArray<AppearanceOption>
+): ReadonlyArray<ArticleThemeOption> {
+  const options = parseOptions(value);
+
+  return options.map((option, index) => {
+    const source = objectValue((value as ReadonlyArray<unknown>)[index], 'invalid-appearance-option');
+    const defaultCodeTheme = undefined === source.defaultCodeTheme
+      ? 'atom-one-dark'
+      : identifier(source.defaultCodeTheme, 'invalid-associated-code-theme');
+
+    if (!codeThemes.some(({ id }) => id === defaultCodeTheme)) {
+      throw new AppearanceBootstrapError('invalid-associated-code-theme');
+    }
+
+    return { ...option, defaultCodeTheme };
   });
 }
 
@@ -413,12 +439,20 @@ function parseCustomCssVariables(value: unknown): ReadonlyArray<CustomCssVariabl
 
 export function parseAppearanceBootstrap(value: unknown): AppearanceBootstrap {
   const bootstrap = objectValue(value, 'invalid-appearance-bootstrap');
-  const articleThemes = parseOptions(bootstrap.articleThemes);
   const codeThemes = parseOptions(bootstrap.codeThemes);
+  const articleThemes = parseArticleOptions(bootstrap.articleThemes, codeThemes);
   const customCss = parseCustomCss(bootstrap.customCss);
+  if ('boolean' !== typeof bootstrap.canManageCustomCss) {
+    throw new AppearanceBootstrapError('invalid-custom-css-capability');
+  }
+  if ('boolean' !== typeof bootstrap.codeThemeExplicit) {
+    throw new AppearanceBootstrapError('invalid-code-theme-explicit-state');
+  }
 
   return {
     articleThemes,
+    canManageCustomCss: bootstrap.canManageCustomCss,
+    codeThemeExplicit: bootstrap.codeThemeExplicit,
     codeThemes,
     customCss,
     customCssVariables: parseCustomCssVariables(bootstrap.customCssVariables),

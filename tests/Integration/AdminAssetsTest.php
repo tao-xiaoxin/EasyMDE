@@ -68,6 +68,12 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( $post_id, $bootstrap['localDrafts']['postId'] );
 		$this->assertArrayHasKey( 'document', $bootstrap );
 		$this->assertArrayHasKey( 'appearance', $bootstrap );
+		$this->assertSame(
+			current_user_can( 'unfiltered_html' ),
+			$bootstrap['appearance']['canManageCustomCss']
+		);
+		$this->assertFalse( $bootstrap['appearance']['codeThemeExplicit'] );
+		$this->assertArrayNotHasKey( 'codeThemeExplicit', $bootstrap['appearance']['state'] );
 		$this->assertArrayHasKey( 'fonts', $bootstrap );
 		$this->assertArrayHasKey( 'layout', $bootstrap );
 		$this->assertSame( 'Character count: %s', $bootstrap['layout']['status']['wordCount'] );

@@ -23,6 +23,29 @@ final class ThemeStateRepositoryTest extends WP_UnitTestCase
         $this->assertSame($before, get_post_meta($post_id));
     }
 
+    public function test_article_association_ignores_the_viewing_users_explicit_code_theme_default()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        update_user_meta(
+            $user_id,
+            'easymde_default_theme_state',
+            array(
+                'markdownTheme' => 'orange-heart',
+                'codeTheme' => 'github-dark',
+            )
+        );
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'fullstack-blue');
+        wp_set_current_user($user_id);
+
+        $before = get_post_meta($post_id);
+        $state = $this->theme_state_repository()->get_theme_state($post_id);
+
+        $this->assertSame('fullstack-blue', $state['codeTheme']);
+        $this->assertFalse($state['codeThemeExplicit']);
+        $this->assertSame($before, get_post_meta($post_id));
+    }
+
     public function test_explicit_post_code_theme_remains_authoritative()
     {
         $post_id = self::factory()->post->create(array('post_type' => 'post'));

@@ -62,7 +62,8 @@ final class ThemeStateRepository {
 			$stored_code_theme     = get_post_meta( $post_id, PostDocument::META_CODE_THEME, true );
 
 			if ( '' !== $stored_markdown_theme ) {
-				$markdown_theme = $stored_markdown_theme;
+				$markdown_theme          = $stored_markdown_theme;
+				$has_explicit_code_theme = false;
 			}
 
 			if ( '' !== $stored_code_theme ) {

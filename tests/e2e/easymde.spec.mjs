@@ -815,6 +815,17 @@ test.describe('EasyMDE editor workflows', () => {
     );
     const toolbar = page.getByRole('toolbar', { name: toolbarLabel });
     const main = toolbar.locator('.easymde-toolbar-section-main');
+    const headingLabel = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.toolbar.strings.headings
+    );
+    const headingTrigger = main.getByRole('button', {
+      name: headingLabel,
+      exact: true
+    });
+    const headingMenu = main.getByRole('menu', {
+      name: headingLabel,
+      exact: true
+    });
     const selectAll = async (value) => {
       await sourceEditor.fill(value);
       await sourceEditor.focus();
@@ -847,10 +858,13 @@ test.describe('EasyMDE editor workflows', () => {
       { expected: '## Alpha', id: 'heading2', input: 'Alpha' },
       { expected: '### Alpha', id: 'heading3', input: 'Alpha' },
       { expected: '#### Alpha', id: 'heading4', input: 'Alpha' },
-      { expected: '##### Alpha', id: 'heading5', input: 'Alpha' }
+      { expected: '##### Alpha', id: 'heading5', input: 'Alpha' },
+      { expected: '###### Alpha', id: 'heading6', input: 'Alpha' }
     ]) {
       await selectAll(command.input);
-      await main.locator(`[data-easymde-command="${command.id}"]`).click();
+      await headingTrigger.click();
+      await expect(headingMenu).toBeVisible();
+      await headingMenu.locator(`[data-easymde-command="${command.id}"]`).click();
       await expect(source).toHaveValue(command.expected);
       await expect(sourceEditor.locator('.cm-line')).toHaveText(command.expected.split('\n'));
       await expect(sourceEditor).toBeFocused();
@@ -1393,6 +1407,7 @@ test.describe('EasyMDE editor workflows', () => {
     const toolbarLabels = await page.locator('.easymde-toolbar').evaluate((toolbar) => (
       Array.from(toolbar.querySelectorAll(
         'button[data-easymde-command]:not([role="menuitem"]), '
+        + '.easymde-toolbar-popover-headings > button, '
         + '.easymde-toolbar-section-secondary > button, '
         + '.easymde-toolbar-section-secondary > .easymde-toolbar-popover-anchor > button'
       )).map((button) => button.getAttribute('aria-label'))

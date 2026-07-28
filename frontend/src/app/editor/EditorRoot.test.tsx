@@ -1965,6 +1965,42 @@ describe('EditorRoot', () => {
     ).toBe(true);
   });
 
+  it('rejects explicit code-theme intent when visual Preview cannot synchronize', async () => {
+    const props = fixture();
+    const codeThemeExplicitField = document.createElement('input');
+    codeThemeExplicitField.value = '0';
+    const appearance = {
+      ...props.appearance,
+      codeThemes: [
+        ...props.appearance.codeThemes,
+        { id: 'terminal-noir', label: 'Terminal Noir' }
+      ]
+    };
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      (_state, explicit) => {
+        codeThemeExplicitField.value = explicit ? '1' : '0';
+      }
+    );
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    visualEditor.innerHTML = '<div class="easymde-mermaid"></div>';
+
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    const codeTheme = view.getByRole('button', { name: 'Code theme' });
+    fireEvent.click(codeTheme);
+    fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+
+    expect(props.appearancePort.applyState).not.toHaveBeenCalled();
+    expect(codeThemeExplicitField.value).toBe('0');
+    expect(codeTheme.textContent).toContain('Atom One Dark');
+  });
+
   it('keeps the Preview owner and paper alive when entering Preview mode', async () => {
     const firstPreview = deferred<PreviewResponse>();
     const props = fixture();
@@ -3626,6 +3662,97 @@ describe('EditorRoot', () => {
         vi.mocked(props.enhancementPort.enhance).mock.calls.at(-1)?.[3]
       ).toEqual(expect.objectContaining({ codeTheme: 'github' }));
     });
+  });
+
+  it('preserves an explicit code theme when Appearance remounts in immersive mode', async () => {
+    const props = fixture();
+    const codeThemeExplicitField = document.createElement('input');
+    codeThemeExplicitField.value = '0';
+    const appearance = {
+      ...props.appearance,
+      articleThemes: props.appearance.articleThemes.map((theme) => ({
+        ...theme,
+        defaultCodeTheme: 'newsprint' === theme.id
+          ? 'github'
+          : theme.defaultCodeTheme
+      })),
+      codeThemes: [
+        ...props.appearance.codeThemes,
+        { id: 'terminal-noir', label: 'Terminal Noir' }
+      ]
+    };
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      (_state, explicit) => {
+        codeThemeExplicitField.value = explicit ? '1' : '0';
+      }
+    );
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+
+    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
+    fireEvent.change(view.getByLabelText('Code theme'), {
+      target: { value: 'terminal-noir' }
+    });
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+    expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        codeTheme: 'terminal-noir',
+        markdownTheme: 'newsprint'
+      }),
+      true
+    );
+    expect(codeThemeExplicitField.value).toBe('1');
+  });
+
+  it('preserves an explicit code theme when Appearance remounts in ordinary mode', async () => {
+    const props = fixture();
+    const codeThemeExplicitField = document.createElement('input');
+    codeThemeExplicitField.value = '0';
+    const appearance = {
+      ...props.appearance,
+      articleThemes: props.appearance.articleThemes.map((theme) => ({
+        ...theme,
+        defaultCodeTheme: 'newsprint' === theme.id
+          ? 'github'
+          : theme.defaultCodeTheme
+      })),
+      codeThemes: [
+        ...props.appearance.codeThemes,
+        { id: 'terminal-noir', label: 'Terminal Noir' }
+      ]
+    };
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      (_state, explicit) => {
+        codeThemeExplicitField.value = explicit ? '1' : '0';
+      }
+    );
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
+    fireEvent.change(view.getByLabelText('Article theme'), {
+      target: { value: 'theme:newsprint' }
+    });
+
+    expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        codeTheme: 'terminal-noir',
+        markdownTheme: 'newsprint'
+      }),
+      true
+    );
+    expect(codeThemeExplicitField.value).toBe('1');
   });
 
   it('applies theme classes and theme font defaults to the single Preview sink', async () => {

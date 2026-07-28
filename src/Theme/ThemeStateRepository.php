@@ -635,11 +635,15 @@ final class ThemeStateRepository {
 				isset( $theme['defaultCodeTheme'] ) ? $theme['defaultCodeTheme'] : 'atom-one-dark'
 			);
 
-			if ( empty( $theme['fontDefaults'] ) || ! is_array( $theme['fontDefaults'] ) ) {
+			$font_defaults = $this->normalize_article_theme_font_defaults(
+				isset( $theme['fontDefaults'] ) ? $theme['fontDefaults'] : null
+			);
+			if ( null === $font_defaults ) {
+				unset( $theme['fontDefaults'] );
 				continue;
 			}
 
-			$theme['fontDefaults'] = $this->normalize_known_font_default_aliases( $theme['fontDefaults'] );
+			$theme['fontDefaults'] = $font_defaults;
 		}
 		unset( $theme );
 
@@ -648,11 +652,39 @@ final class ThemeStateRepository {
 
 	private function get_article_theme_font_defaults( $markdown_theme ) {
 		$theme = $this->article_themes->get( $markdown_theme );
-		if ( empty( $theme['fontDefaults'] ) || ! is_array( $theme['fontDefaults'] ) ) {
+
+		return $this->normalize_article_theme_font_defaults(
+			isset( $theme['fontDefaults'] ) ? $theme['fontDefaults'] : null
+		);
+	}
+
+	private function normalize_article_theme_font_defaults( $font_defaults ) {
+		if ( ! is_array( $font_defaults ) ) {
 			return null;
 		}
 
-		return $this->normalize_known_font_default_aliases( $theme['fontDefaults'] );
+		$font_defaults = $this->normalize_known_font_default_aliases( $font_defaults );
+		$fields        = array(
+			'customFont'  => 'customFonts',
+			'windowsFont' => 'windowsFonts',
+			'appleFont'   => 'appleFonts',
+			'serifFont'   => 'serifOptions',
+		);
+
+		foreach ( $fields as $field => $group ) {
+			if ( ! isset( $font_defaults[ $field ] ) || ! is_string( $font_defaults[ $field ] ) ) {
+				return null;
+			}
+
+			$id = sanitize_key( $font_defaults[ $field ] );
+			if ( ! $this->get_font_option( $group, $id ) ) {
+				return null;
+			}
+
+			$font_defaults[ $field ] = $id;
+		}
+
+		return $font_defaults;
 	}
 
 	private function normalize_known_font_default_aliases( array $font_defaults ) {

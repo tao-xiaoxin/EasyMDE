@@ -403,14 +403,18 @@ export function AppearanceControls({
     };
   }, [isOpen]);
 
-  const applyState = (nextState: AppearanceState) => {
+  const applyState = (
+    nextState: AppearanceState,
+    nextCodeThemeExplicit = codeThemeExplicitRef.current
+  ) => {
     try {
-      port.applyState(nextState, codeThemeExplicitRef.current);
+      port.applyState(nextState, nextCodeThemeExplicit);
     } catch {
       onFailure();
       return;
     }
 
+    codeThemeExplicitRef.current = nextCodeThemeExplicit;
     const nextSnapshot = { ...snapshotRef.current, state: nextState };
     snapshotRef.current = nextSnapshot;
     setSnapshot(nextSnapshot);
@@ -636,8 +640,10 @@ export function AppearanceControls({
                 value={snapshot.state.codeTheme}
                 options={codeOptions}
                 onChange={(codeTheme) => {
-                  codeThemeExplicitRef.current = true;
-                  applyState({ ...snapshotRef.current.state, codeTheme });
+                  applyState(
+                    { ...snapshotRef.current.state, codeTheme },
+                    true
+                  );
                 }}
               />
               <div className="easymde-immersive-custom-css-action">
@@ -712,11 +718,13 @@ export function AppearanceControls({
             className="easymde-code-theme-select"
             value={snapshot.state.codeTheme}
             onChange={(event) => {
-              codeThemeExplicitRef.current = true;
-              applyState({
-                ...snapshotRef.current.state,
-                codeTheme: event.currentTarget.value
-              });
+              applyState(
+                {
+                  ...snapshotRef.current.state,
+                  codeTheme: event.currentTarget.value
+                },
+                true
+              );
             }}
           >
             {bootstrap.codeThemes.map((theme) => (

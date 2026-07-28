@@ -483,6 +483,89 @@ final class ThemeStateRepositoryTest extends WP_UnitTestCase
         }
     }
 
+    public function test_filtered_theme_partial_font_defaults_are_ignored()
+    {
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        $callback = static function ($themes) {
+            $themes['extension-partial-fonts'] = array(
+                'id' => 'extension-partial-fonts',
+                'label' => 'Extension partial fonts',
+                'asset_path' => 'assets/themes/article/extension-partial-fonts.css',
+                'origin' => 'extension',
+                'class_name' => 'easymde-markdown-theme-extension-partial-fonts',
+                'fontDefaults' => array(
+                    'customFont' => 'inter',
+                ),
+            );
+
+            return $themes;
+        };
+
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'extension-partial-fonts');
+        add_filter('easymde_article_themes', $callback);
+
+        try {
+            $repository = $this->theme_state_repository();
+            $themes = array_column(
+                $repository->get_theme_options_for_script($post_id)['markdownThemes'],
+                null,
+                'id'
+            );
+            $state = $repository->get_theme_state($post_id);
+
+            $this->assertArrayNotHasKey('fontDefaults', $themes['extension-partial-fonts']);
+            $this->assertSame('optima', $state['customFont']);
+            $this->assertSame('microsoft-yahei', $state['windowsFont']);
+            $this->assertSame('pingfang-sc-light', $state['appleFont']);
+            $this->assertSame('yes', $state['serifFont']);
+        } finally {
+            remove_filter('easymde_article_themes', $callback);
+        }
+    }
+
+    public function test_filtered_theme_invalid_font_defaults_are_ignored()
+    {
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        $callback = static function ($themes) {
+            $themes['extension-invalid-fonts'] = array(
+                'id' => 'extension-invalid-fonts',
+                'label' => 'Extension invalid fonts',
+                'asset_path' => 'assets/themes/article/extension-invalid-fonts.css',
+                'origin' => 'extension',
+                'class_name' => 'easymde-markdown-theme-extension-invalid-fonts',
+                'fontDefaults' => array(
+                    'customFont' => 'unknown-font',
+                    'windowsFont' => 'microsoft-yahei',
+                    'appleFont' => 'pingfang-sc-light',
+                    'serifFont' => 'yes',
+                ),
+            );
+
+            return $themes;
+        };
+
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'extension-invalid-fonts');
+        add_filter('easymde_article_themes', $callback);
+
+        try {
+            $repository = $this->theme_state_repository();
+            $themes = array_column(
+                $repository->get_theme_options_for_script($post_id)['markdownThemes'],
+                null,
+                'id'
+            );
+            $state = $repository->get_theme_state($post_id);
+
+            $this->assertArrayNotHasKey('fontDefaults', $themes['extension-invalid-fonts']);
+            $this->assertSame('optima', $state['customFont']);
+            $this->assertSame('microsoft-yahei', $state['windowsFont']);
+            $this->assertSame('pingfang-sc-light', $state['appleFont']);
+            $this->assertSame('yes', $state['serifFont']);
+        } finally {
+            remove_filter('easymde_article_themes', $callback);
+        }
+    }
+
     public function test_legacy_theme_font_ids_are_normalized_without_writing_post_meta()
     {
         $post_id = self::factory()->post->create(array('post_type' => 'post'));

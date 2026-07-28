@@ -404,6 +404,40 @@ describe('AppearanceControls', () => {
     }, true);
   });
 
+  it('does not retain an explicit code theme intent when applying it fails', async () => {
+    const applyState = vi.fn()
+      .mockImplementationOnce(() => {
+        throw new Error('synthetic apply failure');
+      });
+    const onFailure = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort({ applyState })}
+        onFailure={onFailure}
+        onReady={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Code theme' }),
+      'terminal-noir'
+    );
+    expect(onFailure).toHaveBeenCalledOnce();
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Article theme' }),
+      'theme:newsprint'
+    );
+    expect(applyState).toHaveBeenLastCalledWith({
+      markdownTheme: 'newsprint',
+      codeTheme: 'fullstack-blue',
+      customCssId: ''
+    }, false);
+  });
+
   it('keeps custom CSS save single-flight and reports the authoritative result', async () => {
     let resolveSave: ((value: Awaited<ReturnType<AppearancePort['saveCustomCss']>>) => void) | undefined;
     const saveCustomCss = vi.fn().mockImplementation(() => new Promise((resolve) => {

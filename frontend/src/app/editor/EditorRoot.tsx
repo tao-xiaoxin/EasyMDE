@@ -437,6 +437,7 @@ export function EditorRoot(props: EditorRootProps) {
   const rootActiveRef = useRef(true);
   const initialSubmissionStateRef = useRef({
     ...props.appearance.state,
+    codeThemeExplicit: props.appearance.codeThemeExplicit,
     ...props.fonts.state
   });
   const submissionStateRef = useRef(initialSubmissionStateRef.current);
@@ -465,6 +466,9 @@ export function EditorRoot(props: EditorRootProps) {
   const [visualPreviewChanged, setVisualPreviewChanged] = useState(false);
   const [appearanceState, setAppearanceState] = useState(
     props.appearance.state
+  );
+  const [codeThemeExplicit, setCodeThemeExplicit] = useState(
+    props.appearance.codeThemeExplicit
   );
   const [fontState, setFontState] = useState(props.fonts.state);
   const [immersive, setImmersive] = useState(false);
@@ -716,13 +720,17 @@ export function EditorRoot(props: EditorRootProps) {
     () => ({
       applyState: (state, codeThemeExplicit) => {
         const visualPreviewWasEditing = visualPreviewEditingRef.current;
-        if (visualPreviewWasEditing && !prepareSourceMutation()) return;
+        if (visualPreviewWasEditing && !prepareSourceMutation()) {
+          throw new Error('visual-editor-source-sync-failed');
+        }
         props.appearancePort.applyState(state, codeThemeExplicit);
         codeThemeExplicitRef.current = codeThemeExplicit;
+        setCodeThemeExplicit(codeThemeExplicit);
         setAppearanceState(state);
         submissionStateRef.current = {
           ...submissionStateRef.current,
-          ...state
+          ...state,
+          codeThemeExplicit
         };
         documentSession?.replaceSubmissionState(submissionStateRef.current);
         previewAppearanceRef.current = state;
@@ -808,6 +816,11 @@ export function EditorRoot(props: EditorRootProps) {
     },
     []
   );
+  const currentAppearanceBootstrap = {
+    ...props.appearance,
+    codeThemeExplicit,
+    state: appearanceState
+  };
   const handleToolbarReady = useCallback((session: EditorToolbarSession) => {
     toolbarSessionRef.current = session;
   }, []);
@@ -1313,7 +1326,7 @@ export function EditorRoot(props: EditorRootProps) {
           styleControls={
             <Fragment>
               <AppearanceControls
-                bootstrap={props.appearance}
+                bootstrap={currentAppearanceBootstrap}
                 onFailure={() =>
                   props.onFailure('react-editor-appearance-failed')
                 }
@@ -1423,7 +1436,7 @@ export function EditorRoot(props: EditorRootProps) {
               port={fontControlsPort}
             />
             <AppearanceControls
-              bootstrap={props.appearance}
+              bootstrap={currentAppearanceBootstrap}
               onFailure={() =>
                 props.onFailure('react-editor-appearance-failed')
               }

@@ -1142,15 +1142,19 @@ Declared tolerances:
 Unverified inputs:
 ```
 
-Persist checklist status and privacy-safe evidence in that file after every
-material comparison or implementation slice. On continuation, read that record
-first, verify it against the current branch, reference revision, and rendered
-state, and resume at the first incomplete or invalidated item instead of
-repeating finished work or trusting compressed conversation memory. Never
-store credentials, Cookies, Nonces, browser Storage, private content, or raw
-administrator data in the progress record. Remove the task directory after its
-sanitized evidence has been handed to the repository contribution workflow and
-the focused work no longer needs to be resumed.
+During a write-authorized implementation task, persist checklist status and
+privacy-safe evidence in that file after every material comparison or
+implementation slice. A read-only review or validation may read an existing
+ledger but must not create or update it; keep transient checklist state inside
+the read-only review execution and return its sanitized findings through the
+owning review workflow instead. On continuation of a write-authorized task,
+read the ledger first, verify it against the current branch, reference
+revision, and rendered state, and resume at the first incomplete or invalidated
+item instead of repeating finished work or trusting compressed conversation
+memory. Never store credentials, Cookies, Nonces, browser Storage, private
+content, or raw administrator data in the progress record. Remove the task
+directory after its sanitized evidence has been handed to the repository
+contribution workflow and the focused work no longer needs to be resumed.
 
 Durable or public summaries use sanitized labels and synthetic measurements,
 not absolute paths, private URLs, raw screenshots, administrator data, or

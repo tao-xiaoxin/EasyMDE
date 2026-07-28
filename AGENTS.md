@@ -271,6 +271,11 @@ assets/vendor/           # Third-party libraries and upstream assets.
 - Register article and code Themes through explicit registries. Each entry has
   an ID, translated label, asset path, and origin, and preserves the public
   Theme Filters.
+- When adding an Article Theme, associate it in Registry data with that
+  Article Theme's own default Code Theme ID from the filtered Code Theme
+  Registry. Do not replace this per-Article-Theme association with one
+  hard-coded global Code Theme; an explicit valid user Code Theme selection
+  remains authoritative.
 - The fixed Mac code frame is a cross-Theme compatibility contract: three
   traffic-light dots, frame geometry, spacing, radius, shadow, readable code
   area, and responsive overflow.
@@ -278,6 +283,14 @@ assets/vendor/           # Third-party libraries and upstream assets.
   token colors. Neither may hide, replace, reposition, or restyle the shared
   Mac frame. Existing Theme-specific overrides are legacy Issue #58 cleanup,
   not precedent.
+- Do not copy Code Theme or shared-frame CSS into an Article Theme, or Article
+  Theme CSS into a Code Theme. Remove obsolete conflicting implementations
+  physically instead of retaining dead selectors, overrides, or hidden paths.
+- User-visible Font options are canonical effective font stacks, not
+  Theme-branded aliases. Reuse an existing canonical Font ID when the family
+  order and fallback semantics are equivalent; keep required historical IDs
+  only as compatibility aliases. The EasyMDE Skill owns the complete Theme,
+  Code Theme, and Font duplication gate.
 - An intentional shared-frame change requires a focused product task, change in
   the shared owner, and real-browser regression coverage across every
   registered article and code Theme.

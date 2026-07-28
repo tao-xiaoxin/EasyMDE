@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
 const root = path.resolve(import.meta.dirname, '../..');
 
-test('committed immersive icons match locked lucide-react 0.487.0 nodes', () => {
+test('lucide-react remains an exact development-only generation input', () => {
+  const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+  assert.equal(packageJson.dependencies?.['lucide-react'], undefined);
+  assert.match(packageJson.devDependencies?.['lucide-react'], /^\d+\.\d+\.\d+$/);
+});
+
+test('committed editor icons match the locked lucide-react nodes', () => {
   const result = spawnSync(
     process.execPath,
     ['scripts/generate-lucide-icons.mjs', '--check'],

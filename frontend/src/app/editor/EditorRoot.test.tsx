@@ -104,9 +104,10 @@ function fixture(): EditorRootProps &
   return {
     appearance: {
       articleThemes: [
-        { id: 'default', label: 'Default' },
-        { id: 'newsprint', label: 'Newsprint' }
+        { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
+        { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'atom-one-dark' }
       ],
+      codeThemeExplicit: false,
       codeThemes: [
         { id: 'atom-one-dark', label: 'Atom One Dark' },
         { id: 'github', label: 'GitHub' }
@@ -327,7 +328,13 @@ function fixture(): EditorRootProps &
         url: 'https://example.test/upload.png'
       } satisfies ImageUploadResult)
     },
-    layout: { direction: 'ltr' },
+    layout: {
+      direction: 'ltr',
+      status: {
+        lastEdited: 'Last edited by Editor on July 27, 2026 at 10:00',
+        wordCount: 'Character count: %s'
+      }
+    },
     localDraftStorage,
     localDrafts: {
       enabled: true,
@@ -478,7 +485,8 @@ function fixture(): EditorRootProps &
       headingLevelLabel: 'Heading level',
       headingsLabel: 'Headings',
       linkText: 'link text',
-      shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } }
+      shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } },
+      undoLabel: 'Undo'
     },
     wechatClipboard: {
       copy: vi.fn().mockResolvedValue({ method: 'clipboard', status: 'copied' })
@@ -528,6 +536,9 @@ describe('EditorRoot', () => {
     expect(props.submissionField.hidden).toBe(true);
     expect(props.onDocumentOwnerChange).toHaveBeenCalledWith(true);
     expect(view.container.querySelector('.cm-editor')).not.toBeNull();
+    expect(
+      view.container.querySelectorAll('.easymde-pane-header')
+    ).toHaveLength(0);
     await waitFor(() =>
       expect(props.previewPort.render).toHaveBeenCalledTimes(1)
     );
@@ -584,8 +595,7 @@ describe('EditorRoot', () => {
       'Image',
       'Copy to WeChat',
       '进入沉浸写作',
-      'Font',
-      'Appearance'
+      '编辑器设置'
     ]);
     expect(
       toolbar.querySelectorAll(
@@ -628,6 +638,9 @@ describe('EditorRoot', () => {
     expect(
       view.container.querySelectorAll('.easymde-pane-preview')
     ).toHaveLength(1);
+    expect(
+      view.container.querySelectorAll('.easymde-pane-header')
+    ).toHaveLength(2);
     expect(
       view.container.querySelector(
         '.easymde-pane-preview [data-easymde-preview-html-sink]'
@@ -1944,7 +1957,8 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
     expect(props.appearancePort.applyState).toHaveBeenCalledWith(
-      expect.objectContaining({ markdownTheme: 'newsprint' })
+      expect.objectContaining({ markdownTheme: 'newsprint' }),
+      false
     );
     expect(
       view.queryByRole('textbox', { name: '可视化文章编辑器' })
@@ -1961,6 +1975,86 @@ describe('EditorRoot', () => {
         .querySelector('[data-easymde-preview-html-sink]')
         ?.classList.contains('easymde-markdown-theme-newsprint')
     ).toBe(true);
+  });
+
+  it('rejects explicit code-theme intent when visual Preview cannot synchronize', async () => {
+    const props = fixture();
+    const codeThemeExplicitField = document.createElement('input');
+    codeThemeExplicitField.value = '0';
+    const appearance = {
+      ...props.appearance,
+      codeThemes: [
+        ...props.appearance.codeThemes,
+        { id: 'terminal-noir', label: 'Terminal Noir' }
+      ]
+    };
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      (_state, explicit) => {
+        codeThemeExplicitField.value = explicit ? '1' : '0';
+      }
+    );
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    visualEditor.innerHTML = '<div class="easymde-mermaid"></div>';
+
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    const codeTheme = view.getByRole('button', { name: 'Code theme' });
+    fireEvent.click(codeTheme);
+    fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+
+    expect(props.appearancePort.applyState).not.toHaveBeenCalled();
+    expect(codeThemeExplicitField.value).toBe('0');
+    expect(codeTheme.textContent).toContain('Atom One Dark');
+  });
+
+  it('rejects a saved Custom CSS snapshot when visual Preview cannot synchronize', async () => {
+    const props = fixture();
+    vi.mocked(props.appearancePort.saveCustomCss).mockResolvedValue({
+      status: 'saved',
+      snapshot: {
+        customCss: [{
+          id: 'saved-css',
+          name: 'Saved CSS',
+          css: '.saved { color: green; }',
+          scopedCss: '.easymde-rendered-content .saved { color: green; }'
+        }],
+        state: {
+          markdownTheme: 'custom',
+          codeTheme: 'atom-one-dark',
+          customCssId: 'saved-css'
+        }
+      }
+    });
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    visualEditor.innerHTML = '<div class="easymde-mermaid"></div>';
+
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Custom CSS theme' }));
+    fireEvent.change(view.getByRole('textbox', { name: 'CSS name' }), {
+      target: { value: 'Saved CSS' }
+    });
+    fireEvent.click(view.getByRole('button', { name: 'Save CSS' }));
+
+    await view.findByText('CSS save failed');
+    expect(props.appearancePort.saveCustomCss).not.toHaveBeenCalled();
+    expect(props.appearancePort.applyState).not.toHaveBeenCalled();
+    expect(props.onFailure).toHaveBeenCalledWith(
+      'react-editor-appearance-failed'
+    );
+    expect(view.queryByText('CSS saved')).toBeNull();
   });
 
   it('keeps the Preview owner and paper alive when entering Preview mode', async () => {
@@ -3558,7 +3652,7 @@ describe('EditorRoot', () => {
     }
   });
 
-  it('keeps exactly one React toolbar popover open', async () => {
+  it('closes ordinary Settings when the heading menu opens and runs its command', async () => {
     const props = fixture();
     const toolbar = {
       ...props.toolbar,
@@ -3576,25 +3670,18 @@ describe('EditorRoot', () => {
       ]
     } as const;
     const view = render(<EditorRoot {...props} toolbar={toolbar} />);
-    const heading = view.getByRole('button', { name: 'Headings' });
-    const appearance = view.getByRole('button', { name: 'Appearance' });
-    const fonts = view.getByRole('button', { name: 'Font' });
+    const headings = view.getByRole('button', { name: 'Headings' });
+    const settings = view.getByRole('button', { name: '编辑器设置' });
 
-    fireEvent.click(heading);
-    expect(heading.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(settings);
+    expect(settings.getAttribute('aria-expanded')).toBe('true');
 
-    fireEvent.click(appearance);
-    expect(heading.getAttribute('aria-expanded')).toBe('false');
-    expect(appearance.getAttribute('aria-expanded')).toBe('true');
-
-    fireEvent.click(fonts);
-    expect(appearance.getAttribute('aria-expanded')).toBe('false');
-    expect(fonts.getAttribute('aria-expanded')).toBe('true');
-
-    fireEvent.click(appearance);
-    expect(fonts.getAttribute('aria-expanded')).toBe('false');
-    expect(appearance.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(appearance);
+    fireEvent.mouseDown(headings);
+    fireEvent.click(headings, { detail: 1 });
+    expect(settings.getAttribute('aria-expanded')).toBe('false');
+    const headingItem = view.getByRole('menuitem', { name: 'Heading 1' });
+    expect(document.activeElement).toBe(headings);
+    fireEvent.click(headingItem);
   });
 
   it('renders Preview from the current Appearance state', async () => {
@@ -3604,7 +3691,7 @@ describe('EditorRoot', () => {
       expect(props.previewPort.render).toHaveBeenCalledTimes(1)
     );
 
-    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     fireEvent.change(view.getByLabelText('Article theme'), {
       target: { value: 'theme:newsprint' }
     });
@@ -3626,6 +3713,200 @@ describe('EditorRoot', () => {
     });
   });
 
+  it('preserves an explicit code theme when Appearance remounts in immersive mode', async () => {
+    const props = fixture();
+    const codeThemeExplicitField = document.createElement('input');
+    codeThemeExplicitField.value = '0';
+    const appearance = {
+      ...props.appearance,
+      articleThemes: props.appearance.articleThemes.map((theme) => ({
+        ...theme,
+        defaultCodeTheme: 'newsprint' === theme.id
+          ? 'github'
+          : theme.defaultCodeTheme
+      })),
+      codeThemes: [
+        ...props.appearance.codeThemes,
+        { id: 'terminal-noir', label: 'Terminal Noir' }
+      ]
+    };
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      (_state, explicit) => {
+        codeThemeExplicitField.value = explicit ? '1' : '0';
+      }
+    );
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.change(view.getByLabelText('Code theme'), {
+      target: { value: 'terminal-noir' }
+    });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+    expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        codeTheme: 'terminal-noir',
+        markdownTheme: 'newsprint'
+      }),
+      true
+    );
+    expect(codeThemeExplicitField.value).toBe('1');
+  });
+
+  it('preserves an explicit code theme when Appearance remounts in ordinary mode', async () => {
+    const props = fixture();
+    const codeThemeExplicitField = document.createElement('input');
+    codeThemeExplicitField.value = '0';
+    const appearance = {
+      ...props.appearance,
+      articleThemes: props.appearance.articleThemes.map((theme) => ({
+        ...theme,
+        defaultCodeTheme: 'newsprint' === theme.id
+          ? 'github'
+          : theme.defaultCodeTheme
+      })),
+      codeThemes: [
+        ...props.appearance.codeThemes,
+        { id: 'terminal-noir', label: 'Terminal Noir' }
+      ]
+    };
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      (_state, explicit) => {
+        codeThemeExplicitField.value = explicit ? '1' : '0';
+      }
+    );
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.change(view.getByLabelText('Article theme'), {
+      target: { value: 'theme:newsprint' }
+    });
+
+    expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        codeTheme: 'terminal-noir',
+        markdownTheme: 'newsprint'
+      }),
+      true
+    );
+    expect(codeThemeExplicitField.value).toBe('1');
+  });
+
+  it('preserves a named CSS theme saved in immersive mode after returning to the ordinary editor', async () => {
+    const props = fixture();
+    const savedSnapshot = {
+      customCss: [
+        {
+          css: '.note { color: navy; }',
+          id: 'writer-css',
+          name: 'Writer CSS',
+          scopedCss: '.easymde-rendered-content .note { color: navy; }'
+        }
+      ],
+      state: {
+        codeTheme: 'atom-one-dark',
+        customCssId: 'writer-css',
+        markdownTheme: 'custom'
+      }
+    } as const;
+    const appearancePort = {
+      ...props.appearancePort,
+      saveCustomCss: vi.fn().mockResolvedValue({
+        snapshot: savedSnapshot,
+        status: 'saved' as const
+      })
+    };
+    const view = render(
+      <EditorRoot {...props} appearancePort={appearancePort} />
+    );
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Custom CSS theme' }));
+    fireEvent.change(view.getByRole('textbox', { name: 'CSS name' }), {
+      target: { value: 'Writer CSS' }
+    });
+    fireEvent.change(view.getByRole('textbox', { name: 'Custom CSS' }), {
+      target: { value: '.note { color: navy; }' }
+    });
+    fireEvent.click(view.getByRole('button', { name: 'Save CSS' }));
+    await view.findByText('CSS saved');
+
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+
+    const articleTheme = view.getByRole('combobox', {
+      name: 'Article theme'
+    }) as HTMLSelectElement;
+    expect(articleTheme.value).toBe('custom:writer-css');
+    expect(
+      view.getByRole('option', { name: 'Writer CSS' })
+    ).not.toBeNull();
+  });
+
+  it('carries an ordinary appearance choice into immersive mode', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.change(view.getByRole('combobox', { name: 'Article theme' }), {
+      target: { value: 'theme:newsprint' }
+    });
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+
+    expect(
+      view.getByRole('button', { name: 'Article theme' }).textContent
+    ).toContain('Newsprint');
+  });
+
+  it('carries an ordinary font choice into immersive mode', async () => {
+    const props = fixture();
+    const fonts = {
+      ...props.fonts,
+      options: {
+        ...props.fonts.options,
+        customFonts: [
+          ...props.fonts.options.customFonts,
+          {
+            fontFamily: 'Optima, sans-serif',
+            id: 'optima',
+            label: 'Optima'
+          }
+        ]
+      }
+    };
+    const view = render(<EditorRoot {...props} fonts={fonts} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.change(view.getByRole('combobox', { name: 'Custom font' }), {
+      target: { value: 'optima' }
+    });
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: 'Font' }));
+
+    expect(
+      view.getByRole('button', { name: 'Custom font' }).textContent
+    ).toContain('Optima');
+  });
+
   it('applies theme classes and theme font defaults to the single Preview sink', async () => {
     const props = fixture();
     const appearance = {
@@ -3639,6 +3920,7 @@ describe('EditorRoot', () => {
                 serifFont: 'on',
                 windowsFont: 'segoe-ui'
               },
+              defaultCodeTheme: theme.defaultCodeTheme,
               id: 'newsprint',
               label: 'Newsprint'
             }
@@ -3686,7 +3968,7 @@ describe('EditorRoot', () => {
       <EditorRoot {...props} appearance={appearance} fonts={fonts} />
     );
 
-    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     fireEvent.change(view.getByLabelText('Article theme'), {
       target: { value: 'theme:newsprint' }
     });

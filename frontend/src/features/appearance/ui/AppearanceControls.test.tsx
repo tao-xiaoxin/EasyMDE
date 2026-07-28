@@ -12,13 +12,15 @@ import {
 
 const bootstrap: AppearanceBootstrap = {
   articleThemes: [
-    { id: 'default', label: 'Default' },
-    { id: 'newsprint', label: 'Newsprint' }
+    { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
+    { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'fullstack-blue' }
   ],
+  codeThemeExplicit: false,
   codeThemes: [
     { id: 'atom-one-dark', label: 'Atom One Dark' },
     { id: 'github', label: 'GitHub' },
-    { id: 'terminal-noir', label: 'Terminal Noir' }
+    { id: 'terminal-noir', label: 'Terminal Noir' },
+    { id: 'fullstack-blue', label: 'Fullstack Blue' }
   ],
   customCss: [{
     id: 'writer-css',
@@ -58,6 +60,24 @@ function createPort(overrides: Partial<AppearancePort> = {}): AppearancePort {
 }
 
 describe('AppearanceControls', () => {
+  it('uses the local palette icon and shared dropdown chevron in ordinary mode', () => {
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+      />
+    );
+    const trigger = screen.getByRole('button', { name: 'Appearance' });
+
+    expect(
+      trigger.querySelector('.easymde-toolbar-icon-appearance')
+    ).not.toBeNull();
+    expect(trigger.querySelector('.easymde-toolbar-chevron')).not.toBeNull();
+    expect(trigger.querySelector('.dashicons')).toBeNull();
+  });
+
   it('renders the reference palette trigger and live theme accent in immersive mode', () => {
     render(
       <AppearanceControls
@@ -98,6 +118,24 @@ describe('AppearanceControls', () => {
     ).toContain('Custom CSS theme');
   });
 
+  it('omits the custom CSS editing entry from the ordinary appearance panel', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+
+    expect(screen.queryByRole('button', { name: 'Custom CSS' })).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Article theme' })).not.toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Code theme' })).not.toBeNull();
+  });
+
   it('renders the registered Terminal Noir palette instead of the generic fallback', async () => {
     const user = userEvent.setup();
     render(
@@ -118,6 +156,28 @@ describe('AppearanceControls', () => {
     )).map((element) => element.style.background);
 
     expect(colors).toEqual(['rgb(13, 16, 23)', 'rgb(202, 209, 217)']);
+  });
+
+  it('renders the distinct associated Fullstack Blue code palette', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Code theme' }));
+    const option = screen.getByRole('option', { name: /Fullstack Blue/u });
+    const colors = Array.from(option.querySelectorAll<HTMLElement>(
+      '.easymde-immersive-theme-swatch > span'
+    )).map((element) => element.style.background);
+
+    expect(colors).toEqual(['rgb(40, 44, 52)', 'rgb(171, 178, 191)']);
   });
 
   it('moves focus through immersive theme options with the keyboard', async () => {
@@ -224,11 +284,12 @@ describe('AppearanceControls', () => {
           onReady={(nextSession) => {
             session = nextSession;
           }}
+          variant="immersive"
         />
       );
       const trigger = screen.getByRole('button', { name: 'Appearance' });
       await user.click(trigger);
-      await user.click(screen.getByRole('button', { name: 'Custom CSS' }));
+      await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
 
       expect(trigger.getAttribute('aria-expanded')).toBe('true');
       expect(screen.getByRole('textbox', { name: 'CSS name' })).not.toBeNull();
@@ -253,23 +314,214 @@ describe('AppearanceControls', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Article theme' }), 'theme:newsprint');
     expect(applyState).toHaveBeenLastCalledWith({
       markdownTheme: 'newsprint',
-      codeTheme: 'atom-one-dark',
+      codeTheme: 'fullstack-blue',
       customCssId: ''
-    });
+    }, false);
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Article theme' }), 'custom:writer-css');
     expect(applyState).toHaveBeenLastCalledWith({
       markdownTheme: 'custom',
       codeTheme: 'atom-one-dark',
       customCssId: 'writer-css'
-    });
+    }, false);
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Code theme' }), 'github');
     expect(applyState).toHaveBeenLastCalledWith({
       markdownTheme: 'custom',
       codeTheme: 'github',
       customCssId: 'writer-css'
+    }, true);
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Article theme' }), 'theme:default');
+    expect(applyState).toHaveBeenLastCalledWith({
+      markdownTheme: 'default',
+      codeTheme: 'github',
+      customCssId: ''
+    }, true);
+  });
+
+  it('uses the default article code theme for implicit custom CSS in immersive mode', async () => {
+    const applyState = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={{
+          ...bootstrap,
+          state: {
+            markdownTheme: 'newsprint',
+            codeTheme: 'fullstack-blue',
+            customCssId: ''
+          }
+        }}
+        port={createPort({ applyState })}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Article theme' }));
+    await user.click(screen.getByRole('option', { name: /Writer CSS/u }));
+
+    expect(applyState).toHaveBeenLastCalledWith({
+      markdownTheme: 'custom',
+      codeTheme: 'atom-one-dark',
+      customCssId: 'writer-css'
+    }, false);
+  });
+
+  it('applies the implicit custom CSS code theme after a successful save', async () => {
+    const applyState = vi.fn();
+    const saveCustomCss = vi.fn().mockResolvedValue({
+      status: 'saved',
+      snapshot: {
+        customCss: [{
+          id: 'saved-css',
+          name: 'Saved CSS',
+          css: '.saved { color: green; }',
+          scopedCss: '.easymde-rendered-content .saved { color: green; }'
+        }],
+        state: {
+          markdownTheme: 'custom',
+          codeTheme: 'fullstack-blue',
+          customCssId: 'saved-css'
+        }
+      }
     });
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={{
+          ...bootstrap,
+          state: {
+            markdownTheme: 'newsprint',
+            codeTheme: 'fullstack-blue',
+            customCssId: ''
+          }
+        }}
+        port={createPort({ applyState, saveCustomCss })}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
+    await user.type(screen.getByRole('textbox', { name: 'CSS name' }), 'Saved CSS');
+    await user.click(screen.getByRole('button', { name: 'Save CSS' }));
+    await screen.findByText('CSS saved.');
+
+    expect(applyState).toHaveBeenLastCalledWith({
+      markdownTheme: 'custom',
+      codeTheme: 'atom-one-dark',
+      customCssId: 'saved-css'
+    }, false);
+  });
+
+  it('does not publish a saved Custom CSS snapshot when applying it fails', async () => {
+    const applyState = vi.fn(() => {
+      throw new Error('synthetic apply failure');
+    });
+    const saveCustomCss = vi.fn().mockResolvedValue({
+      status: 'saved',
+      snapshot: {
+        customCss: [{
+          id: 'saved-css',
+          name: 'Saved CSS',
+          css: '.saved { color: green; }',
+          scopedCss: '.easymde-rendered-content .saved { color: green; }'
+        }],
+        state: {
+          markdownTheme: 'custom',
+          codeTheme: 'atom-one-dark',
+          customCssId: 'saved-css'
+        }
+      }
+    });
+    const onFailure = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort({ applyState, saveCustomCss })}
+        onFailure={onFailure}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
+    await user.type(
+      screen.getByRole('textbox', { name: 'CSS name' }),
+      'Saved CSS'
+    );
+    await user.click(screen.getByRole('button', { name: 'Save CSS' }));
+
+    await screen.findByText('CSS save failed.');
+    expect(onFailure).toHaveBeenCalledOnce();
+    expect(screen.queryByText('CSS saved.')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Article theme' }).textContent
+    ).toContain('Default');
+  });
+
+  it('keeps a valid persisted code theme authoritative when the article theme changes', async () => {
+    const applyState = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={{ ...bootstrap, codeThemeExplicit: true }}
+        port={createPort({ applyState })}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Article theme' }), 'theme:newsprint');
+
+    expect(applyState).toHaveBeenLastCalledWith({
+      markdownTheme: 'newsprint',
+      codeTheme: 'atom-one-dark',
+      customCssId: ''
+    }, true);
+  });
+
+  it('does not retain an explicit code theme intent when applying it fails', async () => {
+    const applyState = vi.fn()
+      .mockImplementationOnce(() => {
+        throw new Error('synthetic apply failure');
+      });
+    const onFailure = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort({ applyState })}
+        onFailure={onFailure}
+        onReady={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Code theme' }),
+      'terminal-noir'
+    );
+    expect(onFailure).toHaveBeenCalledOnce();
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Article theme' }),
+      'theme:newsprint'
+    );
+    expect(applyState).toHaveBeenLastCalledWith({
+      markdownTheme: 'newsprint',
+      codeTheme: 'fullstack-blue',
+      customCssId: ''
+    }, false);
   });
 
   it('keeps custom CSS save single-flight and reports the authoritative result', async () => {
@@ -284,11 +536,12 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        variant="immersive"
       />
     );
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
-    await user.click(screen.getByRole('button', { name: 'Custom CSS' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
     await user.type(screen.getByRole('textbox', { name: 'CSS name' }), 'New theme');
     const save = screen.getByRole('button', { name: 'Save CSS' });
     await user.click(save);
@@ -311,11 +564,12 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss: vi.fn().mockRejectedValue(new Error('session-expired')) })}
         onFailure={onFailure}
         onReady={vi.fn()}
+        variant="immersive"
       />
     );
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
-    await user.click(screen.getByRole('button', { name: 'Custom CSS' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
     await user.click(screen.getByRole('button', { name: 'Save CSS' }));
 
     await screen.findByText('CSS save failed.');

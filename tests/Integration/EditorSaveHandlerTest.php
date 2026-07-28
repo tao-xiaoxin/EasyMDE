@@ -144,6 +144,58 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_implicit_code_theme_survives_save_and_reload_without_becoming_explicit()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+            )
+        );
+        update_post_meta($post_id, PostDocument::META_CODE_THEME, 'github-dark');
+        update_user_meta(
+            $user_id,
+            'easymde_default_theme_state',
+            array('codeTheme' => 'github-dark')
+        );
+        wp_set_current_user($user_id);
+
+        $previous_post = $_POST;
+        $_POST = array(
+            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+            'easymde_enabled' => '1',
+            'easymde_markdown' => '# Associated code theme',
+            'easymde_markdown_theme' => 'fullstack-blue',
+            'easymde_code_theme' => 'fullstack-blue',
+            'easymde_code_theme_explicit' => '0',
+        );
+
+        try {
+            $repository = $this->theme_state_repository();
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $repository,
+                static function () {
+                    return true;
+                }
+            );
+            $handler->save_post_meta($post_id, get_post($post_id), true);
+
+            $this->assertFalse(metadata_exists('post', $post_id, PostDocument::META_CODE_THEME));
+            $this->assertArrayNotHasKey(
+                'codeTheme',
+                get_user_meta($user_id, 'easymde_default_theme_state', true)
+            );
+
+            $reloaded = $repository->get_theme_state($post_id);
+            $this->assertSame('fullstack-blue', $reloaded['codeTheme']);
+            $this->assertFalse($reloaded['codeThemeExplicit']);
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
     public function test_legacy_markdown_post_is_lazy_migrated_on_valid_save()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
@@ -292,6 +344,7 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
                     '_easymde_markdown' => $markdown,
                     '_easymde_markdown_theme' => 'default',
                     '_easymde_code_theme' => 'github',
+                    '_easymde_code_theme_explicit' => '1',
                     '_easymde_custom_css_id' => '',
                     '_easymde_custom_font' => 'optima',
                     '_easymde_windows_font' => 'microsoft-yahei',
@@ -332,6 +385,10 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             $handler->save_post_meta($post_id, get_post($post_id), true);
 
             $this->assertSame($markdown, get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+            $this->assertSame(
+                'github',
+                get_post_meta($post_id, PostDocument::META_CODE_THEME, true)
+            );
             $this->assertSame($rendered['post_content'], get_post($post_id)->post_content);
             $this->assertSame(
                 (new PostDocument())->render_signature($markdown, 'default', $rendered['post_content']),
@@ -387,6 +444,10 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
                 $first_markdown,
                 get_post_meta($autosave_id, PostDocument::META_MARKDOWN, true)
             );
+            $this->assertSame(
+                'github',
+                get_post_meta($autosave_id, PostDocument::META_CODE_THEME, true)
+            );
 
             $second_markdown = "# Second autosave\n\nUpdated **once**.";
             $_POST = $this->native_autosave_request($post_id, $second_markdown);
@@ -409,6 +470,10 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             $this->assertSame(
                 $second_markdown,
                 get_post_meta($updated_autosave_id, PostDocument::META_MARKDOWN, true)
+            );
+            $this->assertSame(
+                'github',
+                get_post_meta($updated_autosave_id, PostDocument::META_CODE_THEME, true)
             );
             $this->assertSame(
                 (new PostDocument())->render_signature(
@@ -756,15 +821,15 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
         $themes = array(
             'qingbi-liujin' => array(
                 'markdown' => '# Qingbi Liujin',
-                'customFont' => 'qingbi-liujin-helvetica',
-                'windowsFont' => 'qingbi-liujin-no-windows',
-                'appleFont' => 'qingbi-liujin-no-apple',
+                'customFont' => 'helvetica',
+                'windowsFont' => 'no-windows-font',
+                'appleFont' => 'no-apple-font',
             ),
             'qinghe-zhusha' => array(
                 'markdown' => '# Qinghe Zhusha',
-                'customFont' => 'qinghe-zhusha-helvetica',
-                'windowsFont' => 'qinghe-zhusha-no-windows',
-                'appleFont' => 'qinghe-zhusha-no-apple',
+                'customFont' => 'helvetica',
+                'windowsFont' => 'no-windows-font',
+                'appleFont' => 'no-apple-font',
             ),
         );
 
@@ -820,6 +885,92 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             } finally {
                 $_POST = $previous_post;
             }
+        }
+    }
+
+    public function test_valid_save_canonicalizes_legacy_theme_font_ids()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+            )
+        );
+        wp_set_current_user($user_id);
+
+        $previous_post = $_POST;
+        $_POST = array(
+            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+            'easymde_enabled' => '1',
+            'easymde_markdown' => '# Canonical font save',
+            'easymde_markdown_theme' => 'red-crimson',
+            'easymde_code_theme' => 'atom-one-dark',
+            'easymde_custom_font' => 'red-crimson-inter',
+            'easymde_windows_font' => 'red-crimson-microsoft-yahei',
+            'easymde_apple_font' => 'pingfang-sc-regular-raw',
+            'easymde_serif_font' => 'sans-serif-only',
+        );
+
+        try {
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $this->theme_state_repository(),
+                function () {
+                    return true;
+                }
+            );
+            $handler->save_post_meta($post_id, get_post($post_id), true);
+
+            $this->assertSame('inter', get_post_meta($post_id, PostDocument::META_CUSTOM_FONT, true));
+            $this->assertSame('microsoft-yahei', get_post_meta($post_id, PostDocument::META_WINDOWS_FONT, true));
+            $this->assertSame('pingfang-sc-regular', get_post_meta($post_id, PostDocument::META_APPLE_FONT, true));
+            $this->assertSame('sans-serif-only', get_post_meta($post_id, PostDocument::META_SERIF_FONT, true));
+        } finally {
+            $_POST = $previous_post;
+        }
+    }
+
+    public function test_valid_save_preserves_explicit_canonical_font_ids_that_match_another_theme()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+            )
+        );
+        wp_set_current_user($user_id);
+
+        $previous_post = $_POST;
+        $_POST = array(
+            'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+            'easymde_enabled' => '1',
+            'easymde_markdown' => '# Explicit canonical fonts',
+            'easymde_markdown_theme' => 'rose-purple',
+            'easymde_code_theme' => 'atom-one-dark',
+            'easymde_custom_font' => 'inter',
+            'easymde_windows_font' => 'microsoft-yahei',
+            'easymde_apple_font' => 'pingfang-sc-regular',
+            'easymde_serif_font' => 'sans-serif-only',
+        );
+
+        try {
+            $handler = new EditorSaveHandler(
+                new PostDocument(),
+                $this->theme_state_repository(),
+                function () {
+                    return true;
+                }
+            );
+            $handler->save_post_meta($post_id, get_post($post_id), true);
+
+            $this->assertSame('inter', get_post_meta($post_id, PostDocument::META_CUSTOM_FONT, true));
+            $this->assertSame('microsoft-yahei', get_post_meta($post_id, PostDocument::META_WINDOWS_FONT, true));
+            $this->assertSame('pingfang-sc-regular', get_post_meta($post_id, PostDocument::META_APPLE_FONT, true));
+            $this->assertSame('sans-serif-only', get_post_meta($post_id, PostDocument::META_SERIF_FONT, true));
+        } finally {
+            $_POST = $previous_post;
         }
     }
 
@@ -909,6 +1060,7 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
                     '_easymde_markdown' => $markdown,
                     '_easymde_markdown_theme' => 'default',
                     '_easymde_code_theme' => 'github',
+                    '_easymde_code_theme_explicit' => '1',
                     '_easymde_custom_css_id' => '',
                     '_easymde_custom_font' => 'optima',
                     '_easymde_windows_font' => 'microsoft-yahei',

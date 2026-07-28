@@ -99,11 +99,9 @@ const runtimeSupportAssetPaths = [
   'assets/images/cupid-busy-h2-prefix.png',
   'assets/images/cupid-busy-heart.png',
   'assets/images/easymde-editor-icon.png',
-  'assets/images/fullstack-blue-code-window.svg',
   'assets/images/fullstack-blue-h2.png',
   'assets/images/fullstack-blue-h3.png',
-  'assets/images/fullstack-blue-h4.png',
-  'assets/images/tech-blue-code-window.svg'
+  'assets/images/fullstack-blue-h4.png'
 ];
 
 export const packagePaths = [

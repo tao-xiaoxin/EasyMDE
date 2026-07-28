@@ -22,13 +22,16 @@ surface. Issue #126 is an approved same-root exception: it may be opened from
 React while reusing the existing document, Preview, native form, and
 WordPress capability owners; no second root, editor, renderer, or save path is
 permitted. The approved ordinary-editor parity baseline
-also has no Outline, writing statistics/status, Context Bar, view-mode switch,
+also has no Outline, expanded writing-statistics panel, Context Bar, view-mode switch,
 draggable split, React Publish, React Revision, or React History surface. Their
 absence does not remove WordPress capability: WordPress-native Publish,
 categories, tags, excerpts, featured media, and Revision Meta Boxes remain the
 owners of those workflows. The React Root retains the historical ordinary
 toolbar and fixed Source/Preview workspace together with editing, Preview,
 Appearance, Fonts, Custom CSS, Media, Local Draft, and WeChat behavior. Use the
+ordinary workspace footer only for the live Markdown character count and the
+PHP-provided last-editor timestamp; it must not become a second statistics,
+revision, or persistence owner. Use the
 migration Skill only for Legacy inventory and deletion evidence where it does
 not conflict with this explicit decision.
 
@@ -1020,7 +1023,7 @@ Feature boundaries:
 - **WeChat export:** copy only the current stable sanitized Preview; Clipboard rejection is a failure; fallback restores Selection, Focus, Scroll, and temporary DOM.
 - **AI assistant:** use `AiPort` and explicit user action; keep credentials server-side; disclose the selected provider and content boundary, send only the context required for the requested action, and make retention/logging policy explicit. Treat model output as untrusted; generated changes remain visible, rejectable, undoable, cancellation/stale-safe, and never automatically save, publish, upload, change settings, or execute returned code.
 
-### Theme Palette Duplication Gate
+### Theme, Code Ownership, and Font Duplication Gate
 
 Before adding an Article Theme or Code Theme, compare the proposed palette with
 every existing theme in the corresponding Registry and its effective CSS. Do
@@ -1036,6 +1039,47 @@ theme only when this comparison finds no existing palette match; record the
 themes compared and the evidence for the distinct palette in the focused task
 or pull request. Differences limited to naming, selector structure, formatting,
 minification, or equivalent color notation do not make a palette new.
+
+Before adding an Article Theme, add or reuse one Registry-owned association
+from that Article Theme to its own default Code Theme ID. Resolve the ID through
+the filtered Code Theme Registry and runtime-validate the browser descriptor;
+do not infer it from a filename, duplicate its CSS, or encode one generic
+default in PHP, React, JavaScript, or CSS. The association supplies the
+Article Theme's default or fallback only. An explicit valid persisted or
+session Code Theme selection remains authoritative.
+
+Article Theme CSS, Code Theme CSS, and the shared Mac frame remain independent
+owners even when Registry data associates their defaults:
+
+- Article Theme CSS owns article content presentation and must not copy or
+  override fenced/indented block-code structure, frame geometry, backgrounds,
+  token colors, structural padding, or code typography;
+- Code Theme CSS owns the code background, foreground, and syntax-token palette
+  and must not copy article typography or other non-code content styles;
+- the shared frame owns its fixed structure and must not be reimplemented by
+  either Theme type; and
+- remove a superseded conflicting CSS or JavaScript path physically. A later
+  override, unused selector, hidden branch, compatibility shim, or commented
+  copy does not satisfy Issue #58.
+
+Before adding a user-visible Font option or Article Theme font default, compare
+its effective CSS font stack with every canonical option in the same Font
+group. Preserve family order, generic fallbacks, weight/style implications, and
+glyph or locale semantics while treating insignificant quoting, whitespace,
+and case differences as equivalent. Inter repeated by orange-heart,
+red-crimson, ningye-purple, or cupid-busy is one canonical Inter option;
+Optima repeated by rose-purple or tech-blue is one canonical Optima option;
+Helvetica repeated by qingbi-liujin or qinghe-zhusha is one canonical Helvetica
+option.
+
+If the effective stack and fallback behavior already exist, reuse its canonical
+ID and do not add a Theme-labelled option, Registry entry, or duplicate label.
+Required historical IDs remain read-only compatibility aliases and normalize
+to the canonical ID on the next legitimate save; they do not reappear as
+visible choices. A separate option is valid only when the actual stack changes
+fallback order, glyph/locale coverage, weight/style semantics, or another
+observable rendering behavior. Record the compared options and that evidence
+in the focused task or pull request.
 
 ## Accessibility, UI, and CSS Quality
 
@@ -1771,12 +1815,13 @@ and one production React entry for the complete ordinary Editor. That entry
 mounts one Editor Root and owns Toolbar/commands, CodeMirror document and title
 sessions, Preview and local enhancements, synchronized scrolling, Appearance,
 Custom CSS, Fonts, Media and uploads, Local Drafts, WeChat export, the fixed
-Source/Preview layout, and WordPress session-state presentation through focused
+Source/Preview layout, the restrained ordinary character-count/last-editor
+footer, and WordPress session-state presentation through focused
 Ports and Adapters. Native title, Markdown, appearance, publishing, revisions,
 taxonomies, featured media, and extension fields remain WordPress submission or
 Meta Box surfaces; PHP descriptors and translated Bootstrap strings remain the
 current configuration and message authority. The ordinary Editor has no
-Outline, writing statistics/status, Context Bar, view-mode switch, draggable
+Outline, expanded writing-statistics panel, Context Bar, view-mode switch, draggable
 split, React Publish, React Revision, React History, Legacy startup fallback,
 secondary Toolbar, Focus Mode runtime, dual DOM, or reload-required handoff
 state. Changes to this production layout must update the live release owners,

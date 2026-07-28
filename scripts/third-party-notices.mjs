@@ -35,7 +35,7 @@ export const bundledFrontendPackages = {
   '@marijn/find-cluster-break': 'Unicode grapheme boundary handling used by CodeMirror state.',
   crelt: 'DOM element construction used by CodeMirror view.',
   diff: 'Character-level change mapping used to preserve canonical Markdown during visual editing.',
-  'lucide-react': 'Locked build-time icon nodes used by the immersive editor interface.',
+  'lucide-react': 'Locked build-time icon nodes used by the ordinary and immersive editor interfaces.',
   'style-mod': 'Scoped runtime style modules used by CodeMirror view.',
   turndown: 'Converts the editable Preview DOM into a visual Markdown change model.',
   'turndown-plugin-gfm': 'GFM table and task-list conversion for visual Markdown editing.',

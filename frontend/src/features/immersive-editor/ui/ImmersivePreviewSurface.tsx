@@ -12,7 +12,7 @@ type Props = Readonly<{
   changed: boolean;
   editable: boolean;
   hasSnapshot: boolean;
-  ordinaryLabel: string;
+  ordinaryLabel: string | null;
   onToggleEditable: () => void;
   status: PreviewSurfaceStatus;
   statusMessages: Readonly<{
@@ -54,7 +54,9 @@ export function ImmersivePreviewSurface({
   if (!active) {
     return (
       <section className="easymde-pane easymde-pane-preview">
-        <header className="easymde-pane-header">{ordinaryLabel}</header>
+        {ordinaryLabel ? (
+          <header className="easymde-pane-header">{ordinaryLabel}</header>
+        ) : null}
         <div className="easymde-immersive-preview-canvas">
           <div className="easymde-immersive-preview-page">{children}</div>
         </div>

@@ -32,7 +32,8 @@ const validBootstrap = {
     headingLabelFormat: '标题 %s',
     headingLevel: '标题级别',
     headings: '标题',
-    linkText: '链接文本'
+    linkText: '链接文本',
+    undo: '撤销'
   }
 };
 
@@ -48,6 +49,7 @@ describe('parseToolbarBootstrap', () => {
     expect(parsed.headingLevelLabel).toBe('标题级别');
     expect(parsed.headingsLabel).toBe('标题');
     expect(parsed.linkText).toBe('链接文本');
+    expect(parsed.undoLabel).toBe('撤销');
   });
 
   it('rejects duplicate command identities at the external boundary', () => {
@@ -85,6 +87,7 @@ describe('parseToolbarBootstrap', () => {
     ],
     ['invalid-headings-label', { ...validBootstrap, strings: { ...validBootstrap.strings, headings: '' } }],
     ['invalid-link-text', { ...validBootstrap, strings: { ...validBootstrap.strings, linkText: '' } }],
+    ['invalid-undo-label', { ...validBootstrap, strings: { ...validBootstrap.strings, undo: '' } }],
     [
       'invalid-command-prefix',
       { ...validBootstrap, commands: [{ ...validBootstrap.commands[0], prefix: 42 }] }

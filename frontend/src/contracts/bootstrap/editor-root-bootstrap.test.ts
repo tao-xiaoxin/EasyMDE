@@ -6,7 +6,12 @@ import { parseEditorRootBootstrap } from './editor-root-bootstrap';
 function validBootstrap() {
   return {
     appearance: {
-      articleThemes: [{ id: 'default', label: 'Default' }],
+      articleThemes: [{
+        id: 'default',
+        label: 'Default',
+        defaultCodeTheme: 'atom-one-dark'
+      }],
+      codeThemeExplicit: false,
       codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
       customCss: [],
       state: {
@@ -69,7 +74,13 @@ function validBootstrap() {
         pasteUploading: 'Paste uploading'
       }
     },
-    layout: { direction: 'ltr' as const },
+    layout: {
+      direction: 'ltr' as const,
+      status: {
+        lastEdited: 'Last edited by Editor on July 27, 2026 at 10:00',
+        wordCount: 'Character count: %s'
+      }
+    },
     localDrafts: {
       enabled: true,
       locale: 'en_US',
@@ -236,7 +247,8 @@ function validBootstrap() {
         headingLabelFormat: 'Heading %s',
         headingLevel: 'Heading level',
         headings: 'Headings',
-        linkText: 'link text'
+        linkText: 'link text',
+        undo: 'Undo'
       }
     },
     wechatExport: {
@@ -272,7 +284,13 @@ describe('parseEditorRootBootstrap', () => {
       fonts: validBootstrap().fonts,
       imageUpload: validBootstrap().imageUpload,
       immersiveStrings: validBootstrap().strings.immersive,
-      layout: { direction: 'ltr' },
+      layout: {
+        direction: 'ltr',
+        status: {
+          lastEdited: 'Last edited by Editor on July 27, 2026 at 10:00',
+          wordCount: 'Character count: %s'
+        }
+      },
       localDrafts: validBootstrap().localDrafts,
       labels: {
         mediaPickerFailure: 'The media library could not open.',
@@ -293,7 +311,8 @@ describe('parseEditorRootBootstrap', () => {
         headingLabelFormat: 'Heading %s',
         headingLevelLabel: 'Heading level',
         headingsLabel: 'Headings',
-        linkText: 'link text'
+        linkText: 'link text',
+        undoLabel: 'Undo'
       }),
       wechatExport: validBootstrap().wechatExport,
       wordpress: validBootstrap().wordpress
@@ -325,7 +344,8 @@ describe('parseEditorRootBootstrap', () => {
                 windowsFont: 'system'
               },
               id: 'default',
-              label: 'Default'
+              label: 'Default',
+              defaultCodeTheme: 'atom-one-dark'
             }
           ]
         }

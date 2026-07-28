@@ -113,6 +113,12 @@ deletion.
 
 Use the live repository scripts and run the smallest checks that exercise the
 changed path. Do not invent commands or report an unexecuted check as passing.
+When the verified reusable local CI Docker image is available, local CI and
+PHPUnit validation must prefer `scripts/run-ci-image.sh`; do not rebuild the
+image or download its resources for every test run. Rebuild only when its
+identity verification fails or an owned pinned input intentionally changes.
+The complete offline image and resource contract is in
+`docs/TESTING_AND_RELEASE.md`.
 
 For PHP changes, start with:
 

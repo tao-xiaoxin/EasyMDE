@@ -466,7 +466,8 @@ export function ImmersiveCustomCssDialog({
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [scopedPreviewCss, setScopedPreviewCss] = useState('');
-  const [previewUnavailable, setPreviewUnavailable] = useState(false);
+  const [previewStatus, setPreviewStatus] =
+    useState<'ready' | 'invalid' | 'unavailable'>('ready');
 
   useEffect(() => {
     activeRef.current = true;
@@ -552,14 +553,14 @@ export function ImmersiveCustomCssDialog({
       void onPreview(previewCss, controller.signal)
         .then((result) => {
           if (!controller.signal.aborted) {
-            setPreviewUnavailable(false);
+            setPreviewStatus(result.status);
             if ('ready' === result.status) {
               setScopedPreviewCss(result.scopedCss);
             }
           }
         })
         .catch(() => {
-          if (!controller.signal.aborted) setPreviewUnavailable(true);
+          if (!controller.signal.aborted) setPreviewStatus('unavailable');
         });
     }, 180);
     return () => {
@@ -972,7 +973,11 @@ export function ImmersiveCustomCssDialog({
         <footer>
           <span role="status" aria-live="polite">
             {saveError ||
-              (previewUnavailable ? strings.previewUnavailable : '')}
+              ('invalid' === previewStatus
+                ? strings.previewInvalid
+                : 'unavailable' === previewStatus
+                  ? strings.previewUnavailable
+                  : '')}
           </span>
           <button type="button" disabled={isSaving} onClick={closeDialog}>
             {strings.cancel}

@@ -394,6 +394,9 @@ describe('AppearanceControls', () => {
     await waitFor(() =>
       expect(previewCustomCss.mock.calls.length).toBeGreaterThan(requestCount)
     );
+    expect(screen.getByRole('status').textContent).toBe(
+      'Fix invalid CSS to update the live preview.'
+    );
     expect(
       document.querySelector(
         '.easymde-immersive-custom-css-preview style'
@@ -411,7 +414,7 @@ describe('AppearanceControls', () => {
     await waitFor(() =>
       expect(
         screen.getByRole('status').textContent
-      ).toBe('')
+      ).toBe('Fix invalid CSS to update the live preview.')
     );
     expect(
       document.querySelector(

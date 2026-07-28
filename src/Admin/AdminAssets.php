@@ -761,6 +761,7 @@ final class AdminAssets {
 			'previewTitle'                 => __( 'Modified style preview', 'easymde' ),
 			'livePreview'                  => __( 'Live', 'easymde' ),
 			'previewHelp'                  => __( 'The preview updates with the selected colors.', 'easymde' ),
+			'previewInvalid'               => __( 'Fix invalid CSS to update the live preview.', 'easymde' ),
 			'previewUnavailable'           => __( 'Live preview is temporarily unavailable.', 'easymde' ),
 			'themeVariables'               => __( 'Theme variables', 'easymde' ),
 			'themeVariableCategories'      => __( 'Theme variable categories', 'easymde' ),

@@ -53,6 +53,7 @@ export const customCssDialogStrings = {
   previewHeadingOne: 'Heading 1',
   previewHeadingTwo: 'Heading 2',
   previewHelp: 'Preview help',
+  previewInvalid: 'Fix invalid CSS to update the live preview.',
   previewUnavailable: 'Live preview is temporarily unavailable.',
   previewHighlight: 'highlight',
   previewInformation: 'Information',

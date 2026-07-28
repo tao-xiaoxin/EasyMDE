@@ -739,6 +739,8 @@ export function EditorRoot(props: EditorRootProps) {
         fontControlsSessionRef.current?.close();
         props.appearancePort.closeOtherPopovers();
       },
+      previewCustomCss: (css, signal) =>
+        props.appearancePort.previewCustomCss(css, signal),
       saveCustomCss: async (input) => {
         const sessionError = protectedOperationError('authenticated');
         if (sessionError) throw sessionError;

@@ -139,6 +139,10 @@ function fixture(): EditorRootProps &
     appearancePort: {
       applyState: vi.fn(),
       closeOtherPopovers: vi.fn(),
+      previewCustomCss: vi.fn().mockResolvedValue({
+        scopedCss: '',
+        status: 'ready'
+      }),
       saveCustomCss: vi
         .fn()
         .mockResolvedValue({ status: 'failed', code: 'synthetic' })

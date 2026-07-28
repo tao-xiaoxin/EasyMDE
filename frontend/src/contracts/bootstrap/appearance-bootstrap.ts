@@ -58,6 +58,7 @@ const CUSTOM_CSS_DIALOG_STRING_KEYS = [
   'previewTitle',
   'livePreview',
   'previewHelp',
+  'previewUnavailable',
   'themeVariables',
   'themeVariableCategories',
   'themeVariablePanelLabel',

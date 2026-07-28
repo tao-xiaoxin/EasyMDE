@@ -84,6 +84,51 @@ describe('createWordPressAppearancePort', () => {
     });
   });
 
+  it('uses the existing server policy endpoint for scoped Custom CSS previews', async () => {
+    const options = fixture();
+    options.apiFetch.mockResolvedValue({
+      css: '.note { color: green; }',
+      scopedCss:
+        '.easymde-immersive-workspace__custom-css-preview-content .note { color: green; }'
+    });
+    const port = createWordPressAppearancePort(options);
+    const controller = new AbortController();
+
+    await expect(
+      port.previewCustomCss('.note { color: green; }', controller.signal)
+    ).resolves.toMatchObject({
+      scopedCss:
+        expect.stringContaining(
+          '.easymde-immersive-workspace__custom-css-preview-content .note'
+        ),
+      status: 'ready'
+    });
+    expect(options.apiFetch).toHaveBeenCalledWith({
+      data: { css: '.note { color: green; }' },
+      headers: { 'X-WP-Nonce': 'synthetic-nonce' },
+      method: 'POST',
+      signal: controller.signal,
+      url: 'https://example.test/wp-json/easymde/v1/custom-css/preview'
+    });
+  });
+
+  it('distinguishes expected CSS validation failures from transport failures', async () => {
+    const options = fixture();
+    const port = createWordPressAppearancePort(options);
+    options.apiFetch.mockRejectedValueOnce({
+      code: 'easymde_invalid_custom_css'
+    });
+
+    await expect(
+      port.previewCustomCss('h2 {', new AbortController().signal)
+    ).resolves.toEqual({ status: 'invalid' });
+
+    options.apiFetch.mockRejectedValueOnce({ code: 'rest_cookie_invalid_nonce' });
+    await expect(
+      port.previewCustomCss('h2 {}', new AbortController().signal)
+    ).rejects.toEqual({ code: 'rest_cookie_invalid_nonce' });
+  });
+
   it.each([
     { customCssUrl: 'https://remote.test/custom-css' },
     { bootstrap: { ...fixture().bootstrap, articleThemes: [{ cssUrl: 'https://remote.test/theme.css', id: 'default', label: 'Default' }] } },

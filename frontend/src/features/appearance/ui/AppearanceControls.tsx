@@ -743,6 +743,7 @@ export function AppearanceControls({
             setIsCustomOpen(false);
             triggerRef.current?.focus();
           }}
+          onPreview={port.previewCustomCss}
           saveFailedMessage={bootstrap.strings.cssSaveFailed}
           strings={bootstrap.strings.customCssDialog}
           title={bootstrap.strings.customCssTheme}

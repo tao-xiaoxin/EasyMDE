@@ -16,6 +16,7 @@ import type {
   CustomCssVariable,
   CustomCssVariableId
 } from '../../../contracts/bootstrap/appearance-bootstrap';
+import type { CustomCssPreviewResult } from '../../../contracts/ports/appearance-port';
 import { CUSTOM_CSS_VARIABLE_IDS } from '../../../contracts/bootstrap/appearance-bootstrap';
 import {
   ChevronLeft,
@@ -38,6 +39,10 @@ type ImmersiveCustomCssDialogProps = Readonly<{
   initialName: string;
   onApply: (input: Readonly<{ css: string; name: string }>) => Promise<boolean>;
   onClose: () => void;
+  onPreview: (
+    css: string,
+    signal: AbortSignal
+  ) => Promise<CustomCssPreviewResult>;
   saveFailedMessage: string;
   strings: CustomCssDialogStrings;
   title: string;
@@ -254,7 +259,10 @@ function PreviewContent({
   style: CSSProperties;
 }>) {
   return (
-    <div className="easymde-custom-theme-preview" style={style}>
+    <div
+      className="easymde-custom-theme-preview easymde-immersive-workspace__custom-css-preview-content"
+      style={style}
+    >
       <h1>{strings.previewHeadingOne}</h1>
       <h2>{strings.previewHeadingTwo}</h2>
       <p>{strings.previewBodyText}</p>
@@ -384,11 +392,13 @@ function PreviewContent({
 }
 
 function CodeEditor({
+  disabled,
   label,
   onChange,
   placeholder,
   value
 }: Readonly<{
+  disabled: boolean;
   label: string;
   onChange: (value: string) => void;
   placeholder: string;
@@ -408,6 +418,7 @@ function CodeEditor({
       </div>
       <textarea
         aria-label={label}
+        disabled={disabled}
         value={value}
         placeholder={placeholder}
         spellCheck={false}
@@ -422,6 +433,7 @@ export function ImmersiveCustomCssDialog({
   initialName,
   onApply,
   onClose,
+  onPreview,
   saveFailedMessage,
   strings,
   title,
@@ -453,6 +465,8 @@ export function ImmersiveCustomCssDialog({
   const [cssEditorExpanded, setCssEditorExpanded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [scopedPreviewCss, setScopedPreviewCss] = useState('');
+  const [previewUnavailable, setPreviewUnavailable] = useState(false);
 
   useEffect(() => {
     activeRef.current = true;
@@ -523,6 +537,36 @@ export function ImmersiveCustomCssDialog({
     () => customCssPlaceholder(themeVariables, strings),
     [strings, themeVariables]
   );
+  const previewCss = useMemo(
+    () => buildImmersiveCustomCss(
+      themeVariables,
+      articleCustomCss,
+      codeCustomCss
+    ),
+    [articleCustomCss, codeCustomCss, themeVariables]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      void onPreview(previewCss, controller.signal)
+        .then((result) => {
+          if (!controller.signal.aborted) {
+            setPreviewUnavailable(false);
+            if ('ready' === result.status) {
+              setScopedPreviewCss(result.scopedCss);
+            }
+          }
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setPreviewUnavailable(true);
+        });
+    }, 180);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [onPreview, previewCss]);
 
   const resetAll = () => {
     setArticleName(strings.defaultArticleName);
@@ -601,6 +645,7 @@ export function ImmersiveCustomCssDialog({
           <div>
             <input
               id={articleNameId}
+              disabled={isSaving}
               value={articleName}
               maxLength={30}
               placeholder={strings.articleNamePlaceholder}
@@ -612,6 +657,7 @@ export function ImmersiveCustomCssDialog({
           <div>
             <input
               id={codeNameId}
+              disabled={isSaving}
               value={codeName}
               maxLength={30}
               placeholder={strings.codeNamePlaceholder}
@@ -653,6 +699,7 @@ export function ImmersiveCustomCssDialog({
                 </small>
               </div>
               <div>
+                <style>{scopedPreviewCss}</style>
                 <PreviewContent strings={strings} style={previewStyle} />
               </div>
             </section>
@@ -668,6 +715,7 @@ export function ImmersiveCustomCssDialog({
                   <div>
                     <button
                       type="button"
+                      disabled={isSaving}
                       onClick={() =>
                         'article' === cssTarget
                           ? setArticleCustomCss('')
@@ -679,6 +727,7 @@ export function ImmersiveCustomCssDialog({
                     </button>
                     <button
                       type="button"
+                      disabled={isSaving}
                       aria-label={
                         cssEditorExpanded
                           ? strings.shrinkCode
@@ -699,6 +748,7 @@ export function ImmersiveCustomCssDialog({
                     </button>
                     <button
                       type="button"
+                      disabled={isSaving}
                       onClick={() => {
                         setCssEditorExpanded(false);
                         setShowCssEditor(false);
@@ -711,6 +761,7 @@ export function ImmersiveCustomCssDialog({
                 ) : (
                   <button
                     type="button"
+                    disabled={isSaving}
                     onClick={() =>
                       setThemeVariables({ ...DEFAULT_THEME_VARIABLES })
                     }
@@ -733,6 +784,7 @@ export function ImmersiveCustomCssDialog({
                         key={target}
                         id={`${cssTargetTabId}-${target}`}
                         type="button"
+                        disabled={isSaving}
                         role="tab"
                         aria-selected={target === cssTarget}
                         aria-controls={`${cssTargetPanelId}-${target}`}
@@ -767,6 +819,7 @@ export function ImmersiveCustomCssDialog({
                         : strings.codeCssHelp}
                     </p>
                     <CodeEditor
+                      disabled={isSaving}
                       label={strings.customCssCodeTitle}
                       value={
                         'article' === cssTarget
@@ -794,6 +847,7 @@ export function ImmersiveCustomCssDialog({
                         key={category}
                         id={`${categoryTabId}-${category}`}
                         type="button"
+                        disabled={isSaving}
                         role="tab"
                         aria-selected={category === activeCategory}
                         aria-controls={`${categoryPanelId}-${category}`}
@@ -843,6 +897,7 @@ export function ImmersiveCustomCssDialog({
                                 />
                                 <input
                                   type="color"
+                                  disabled={isSaving}
                                   aria-label={strings.colorPickerLabel.replace(
                                     '%s',
                                     variable.label
@@ -865,6 +920,7 @@ export function ImmersiveCustomCssDialog({
                             <span>{variable.description}</span>
                             <input
                               aria-label={variable.label}
+                              disabled={isSaving}
                               aria-invalid={!valid}
                               value={value}
                               maxLength={7}
@@ -886,6 +942,7 @@ export function ImmersiveCustomCssDialog({
 
               <button
                 type="button"
+                disabled={isSaving}
                 className="easymde-immersive-custom-css-code-toggle"
                 onClick={() => {
                   if (showCssEditor) {
@@ -913,11 +970,14 @@ export function ImmersiveCustomCssDialog({
         </div>
 
         <footer>
-          <span role="status" aria-live="polite">{saveError}</span>
+          <span role="status" aria-live="polite">
+            {saveError ||
+              (previewUnavailable ? strings.previewUnavailable : '')}
+          </span>
           <button type="button" disabled={isSaving} onClick={closeDialog}>
             {strings.cancel}
           </button>
-          <button type="button" onClick={resetAll}>
+          <button type="button" disabled={isSaving} onClick={resetAll}>
             {strings.resetAll}
           </button>
           <button

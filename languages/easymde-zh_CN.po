@@ -722,6 +722,10 @@ msgid "The preview updates with the selected colors."
 msgstr "此处将实时应用右侧变量的配色效果"
 
 #: src/Admin/AdminAssets.php:764
+msgid "Live preview is temporarily unavailable."
+msgstr "实时预览暂时不可用。"
+
+#: src/Admin/AdminAssets.php:764
 msgid "Theme variables"
 msgstr "主题变量"
 

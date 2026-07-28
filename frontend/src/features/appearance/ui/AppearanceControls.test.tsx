@@ -55,6 +55,10 @@ function createPort(overrides: Partial<AppearancePort> = {}): AppearancePort {
   return {
     applyState: vi.fn(),
     closeOtherPopovers: vi.fn(),
+    previewCustomCss: vi.fn().mockResolvedValue({
+      scopedCss: '',
+      status: 'ready'
+    }),
     saveCustomCss: vi.fn().mockResolvedValue({
       status: 'failed',
       code: 'custom-css-save-failed'
@@ -341,6 +345,81 @@ describe('AppearanceControls', () => {
     });
   });
 
+  it('renders only server-scoped authored CSS in the live preview', async () => {
+    const user = userEvent.setup();
+    const previewCustomCss = vi.fn().mockResolvedValue({
+      scopedCss:
+        '.easymde-immersive-workspace__custom-css-preview-content h2 { color: rgb(18, 171, 52); }',
+      status: 'ready'
+    });
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort({ previewCustomCss })}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
+    await user.click(
+      screen.getByRole('button', { name: /Custom CSS code/ })
+    );
+    const editor = screen.getByRole('textbox', { name: 'Custom CSS code' });
+    await user.type(editor, 'h2 {{ color: #12ab34; }}');
+
+    await waitFor(() => {
+      expect(previewCustomCss.mock.calls.at(-1)?.[0]).toContain(
+        'h2 { color: #12ab34; }'
+      );
+    });
+    await waitFor(() => {
+      expect(
+        document.querySelector(
+          '.easymde-immersive-custom-css-preview style'
+        )?.textContent
+      ).toContain(
+        '.easymde-immersive-workspace__custom-css-preview-content h2'
+      );
+    });
+
+    const validPreview = document.querySelector(
+      '.easymde-immersive-custom-css-preview style'
+    )?.textContent;
+    const requestCount = previewCustomCss.mock.calls.length;
+    previewCustomCss.mockResolvedValueOnce({ status: 'invalid' });
+    await user.type(editor, '{{');
+    await waitFor(() =>
+      expect(previewCustomCss.mock.calls.length).toBeGreaterThan(requestCount)
+    );
+    expect(
+      document.querySelector(
+        '.easymde-immersive-custom-css-preview style'
+      )?.textContent
+    ).toBe(validPreview);
+    previewCustomCss.mockRejectedValueOnce(new Error('synthetic-network-error'));
+    await user.type(editor, '{{');
+    await waitFor(() =>
+      expect(
+        screen.getByRole('status').textContent
+      ).toBe('Live preview is temporarily unavailable.')
+    );
+    previewCustomCss.mockResolvedValueOnce({ status: 'invalid' });
+    await user.type(editor, '{{');
+    await waitFor(() =>
+      expect(
+        screen.getByRole('status').textContent
+      ).toBe('')
+    );
+    expect(
+      document.querySelector(
+        '.easymde-immersive-custom-css-preview style'
+      )?.textContent
+    ).toBe(validPreview);
+  });
+
   it('captures a changed theme-variable value before the React input event expires', async () => {
     const user = userEvent.setup();
     const saveCustomCss = vi.fn().mockResolvedValue({
@@ -488,6 +567,15 @@ describe('AppearanceControls', () => {
     expect(
       (screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement)
         .disabled
+    ).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: 'Reset all' }) as HTMLButtonElement)
+        .disabled
+    ).toBe(true);
+    expect(
+      (screen.getByRole('textbox', {
+        name: 'Article theme name'
+      }) as HTMLInputElement).disabled
     ).toBe(true);
 
     resolveSave?.({

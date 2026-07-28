@@ -31,7 +31,7 @@ msgstr ""
 msgid "Article outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:308 src/Admin/AdminAssets.php:785
+#: src/Admin/AdminAssets.php:308 src/Admin/AdminAssets.php:786
 msgid "Cancel"
 msgstr ""
 
@@ -716,472 +716,476 @@ msgid "The preview updates with the selected colors."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:764
-msgid "Theme variables"
+msgid "Live preview is temporarily unavailable."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:765
+msgid "Theme variables"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:766
 msgid "Theme variable categories"
 msgstr ""
 
 #. translators: %s: Custom CSS theme variable category label.
-#: src/Admin/AdminAssets.php:767
+#: src/Admin/AdminAssets.php:768
 #, php-format
 msgid "%s theme variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:768 src/Admin/AdminAssets.php:782
+#: src/Admin/AdminAssets.php:769 src/Admin/AdminAssets.php:783
 msgid "Custom CSS code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:769
+#: src/Admin/AdminAssets.php:770
 msgid "Reset"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:770
+#: src/Admin/AdminAssets.php:771
 msgid "Expand code editor"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:771
+#: src/Admin/AdminAssets.php:772
 msgid "Shrink code editor"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:772
+#: src/Admin/AdminAssets.php:773
 msgid "Back to variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:773
+#: src/Admin/AdminAssets.php:774
 msgid "CSS target"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:774
+#: src/Admin/AdminAssets.php:775
 msgid "Article CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:775
+#: src/Admin/AdminAssets.php:776
 msgid "Code CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:776
+#: src/Admin/AdminAssets.php:777
 msgid "These rules are applied to article content."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:777
+#: src/Admin/AdminAssets.php:778
 msgid "These rules are applied to code content."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:778
+#: src/Admin/AdminAssets.php:779
 msgid "Foundation"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:779
+#: src/Admin/AdminAssets.php:780
 msgid "Blocks"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:780
+#: src/Admin/AdminAssets.php:781
 msgid "Code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:781
+#: src/Admin/AdminAssets.php:782
 msgid "Alerts"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:783
+#: src/Admin/AdminAssets.php:784
 msgid "Add detailed CSS rules"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:784
+#: src/Admin/AdminAssets.php:785
 msgid "Back to theme variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:786
+#: src/Admin/AdminAssets.php:787
 msgid "Reset all"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:787
+#: src/Admin/AdminAssets.php:788
 msgid "Apply theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:788
+#: src/Admin/AdminAssets.php:789
 msgid "EasyMDE Blue"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:789
+#: src/Admin/AdminAssets.php:790
 msgid "EasyMDE Blue Code"
 msgstr ""
 
 #. translators: %s: Custom CSS color variable label.
-#: src/Admin/AdminAssets.php:791
+#: src/Admin/AdminAssets.php:792
 #, php-format
 msgid "%s color picker"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:792
+#: src/Admin/AdminAssets.php:793
 msgid "Current theme variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:793
+#: src/Admin/AdminAssets.php:794
 msgid "Add custom rules below"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:794
+#: src/Admin/AdminAssets.php:795
 msgid "Heading 1 preview sample"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:795
+#: src/Admin/AdminAssets.php:796
 msgid "Heading 2 preview sample"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:796
+#: src/Admin/AdminAssets.php:797
 msgid ""
 "This body text demonstrates the current theme typography, spacing, and "
 "layout."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:797
+#: src/Admin/AdminAssets.php:798
 msgid "Theme preview with"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:798
+#: src/Admin/AdminAssets.php:799
 msgid "bold text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:799
+#: src/Admin/AdminAssets.php:800
 msgid "italic text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:800
+#: src/Admin/AdminAssets.php:801
 msgid "deleted text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:801
+#: src/Admin/AdminAssets.php:802
 msgid "highlight"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:802
+#: src/Admin/AdminAssets.php:803
 msgid "inline code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:803
+#: src/Admin/AdminAssets.php:804
 msgid "Theme preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:804
+#: src/Admin/AdminAssets.php:805
 msgid "Blockquote and callout styling preview."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:805
+#: src/Admin/AdminAssets.php:806
 msgid "Unordered list item"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:806
+#: src/Admin/AdminAssets.php:807
 msgid "Completed task"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:807
+#: src/Admin/AdminAssets.php:808
 msgid "Ordered list item"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:808
+#: src/Admin/AdminAssets.php:809
 msgid "Second step"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:809
+#: src/Admin/AdminAssets.php:810
 msgid "Header"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:810
+#: src/Admin/AdminAssets.php:811
 msgid "Content"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:811
+#: src/Admin/AdminAssets.php:812
 msgid "Link color preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:812
+#: src/Admin/AdminAssets.php:813
 msgid "NOTE"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:813
+#: src/Admin/AdminAssets.php:814
 msgid "TIP"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:814
+#: src/Admin/AdminAssets.php:815
 msgid "WARNING"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:815
+#: src/Admin/AdminAssets.php:816
 msgid "CAUTION"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:816
+#: src/Admin/AdminAssets.php:817
 msgid "Information"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:817
+#: src/Admin/AdminAssets.php:818
 msgid "Success"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:818
+#: src/Admin/AdminAssets.php:819
 msgid "Warning"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:819
+#: src/Admin/AdminAssets.php:820
 msgid "Danger"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:820
+#: src/Admin/AdminAssets.php:821
 msgid "Additional details"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:821
+#: src/Admin/AdminAssets.php:822
 msgid "Longer supporting content can be previewed here."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:822
+#: src/Admin/AdminAssets.php:823
 msgid "Definition list"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:823
+#: src/Admin/AdminAssets.php:824
 msgid "Used to explain terms or add structured details."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:824
+#: src/Admin/AdminAssets.php:825
 msgid "Tertiary heading and supporting content"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:825
+#: src/Admin/AdminAssets.php:826
 msgid ""
 "Images, mathematical formulas, and footnotes use the body text system. "
 "Example footnote"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:826
+#: src/Admin/AdminAssets.php:827
 msgid "[1] Footnote and supporting text color sample."
 msgstr ""
 
 #. translators: Separator between inline Custom CSS preview examples.
-#: src/Admin/AdminAssets.php:828
+#: src/Admin/AdminAssets.php:829
 msgctxt "inline Custom CSS preview separator"
 msgid ", "
 msgstr ""
 
 #. translators: Conjunction before the keyboard shortcut in the inline Custom CSS preview.
-#: src/Admin/AdminAssets.php:830
+#: src/Admin/AdminAssets.php:831
 msgctxt "inline Custom CSS preview conjunction"
 msgid "and "
 msgstr ""
 
 #. translators: Sentence-ending punctuation in the inline Custom CSS preview.
-#: src/Admin/AdminAssets.php:832
+#: src/Admin/AdminAssets.php:833
 msgctxt "inline Custom CSS preview sentence end"
 msgid "."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:838
+#: src/Admin/AdminAssets.php:839
 msgid "Markdown source"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:839
+#: src/Admin/AdminAssets.php:840
 msgid "Start writing Markdown to preview the article."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:840
+#: src/Admin/AdminAssets.php:841
 msgid "Rendering preview..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:841
+#: src/Admin/AdminAssets.php:842
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:842
+#: src/Admin/AdminAssets.php:843
 msgid "Insert Media"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:843
+#: src/Admin/AdminAssets.php:844
 msgid "Markdown toolbar"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:844
+#: src/Admin/AdminAssets.php:845
 msgid "Appearance"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:845
+#: src/Admin/AdminAssets.php:846
 msgid "Font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:846
+#: src/Admin/AdminAssets.php:847
 msgid "Headings"
 msgstr ""
 
 #. translators: %s: Heading level from 1 through 6.
-#: src/Admin/AdminAssets.php:848
+#: src/Admin/AdminAssets.php:849
 #, php-format
 msgid "Heading %s"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:849
+#: src/Admin/AdminAssets.php:850
 msgid "Heading level"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:850
+#: src/Admin/AdminAssets.php:851
 msgid "Article theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:851
+#: src/Admin/AdminAssets.php:852
 msgid "Code theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:852
+#: src/Admin/AdminAssets.php:853
 msgid "Custom CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:853
+#: src/Admin/AdminAssets.php:854
 msgid "Custom CSS theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:854
+#: src/Admin/AdminAssets.php:855
 msgid "Named custom CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:855
+#: src/Admin/AdminAssets.php:856
 msgid "CSS name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:856
+#: src/Admin/AdminAssets.php:857
 msgid "Save CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:857
+#: src/Admin/AdminAssets.php:858
 msgid "Saved CSS."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:858
+#: src/Admin/AdminAssets.php:859
 msgid "CSS save failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:859
+#: src/Admin/AdminAssets.php:860
 msgid "Custom font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:860
+#: src/Admin/AdminAssets.php:861
 msgid "Windows font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:861
+#: src/Admin/AdminAssets.php:862
 msgid "Apple font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:862
+#: src/Admin/AdminAssets.php:863
 msgid "Serif font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:863
+#: src/Admin/AdminAssets.php:864
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:864
+#: src/Admin/AdminAssets.php:865
 msgid "Local draft saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:865
+#: src/Admin/AdminAssets.php:866
 msgid "A newer local draft is available."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:866
+#: src/Admin/AdminAssets.php:867
 msgid "Restore draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:867
+#: src/Admin/AdminAssets.php:868
 msgid "Discard draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:868
+#: src/Admin/AdminAssets.php:869
 msgid "Draft restored."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:869
+#: src/Admin/AdminAssets.php:870
 msgid "Draft discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:870
+#: src/Admin/AdminAssets.php:871
 msgid "Local draft could not be read."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:871
+#: src/Admin/AdminAssets.php:872
 msgid "Local draft could not be saved."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:872
+#: src/Admin/AdminAssets.php:873
 msgid "Local draft could not be discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:873
+#: src/Admin/AdminAssets.php:874
 msgid "A different local draft was saved in another tab."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:874 src/Frontend/FrontendAssets.php:75
+#: src/Admin/AdminAssets.php:875 src/Frontend/FrontendAssets.php:75
 msgid "Rendering failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:875
+#: src/Admin/AdminAssets.php:876
 msgid "Copied preview for WeChat."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:876
+#: src/Admin/AdminAssets.php:877
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:877
+#: src/Admin/AdminAssets.php:878
 msgid "Clipboard access is not available in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:878
+#: src/Admin/AdminAssets.php:879
 msgid "Uploading pasted image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:879
+#: src/Admin/AdminAssets.php:880
 msgid "Pasted image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:880
+#: src/Admin/AdminAssets.php:881
 msgid "Pasted image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:881
+#: src/Admin/AdminAssets.php:882
 msgid "Pasted image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:882
+#: src/Admin/AdminAssets.php:883
 msgid "Uploading dropped image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:883
+#: src/Admin/AdminAssets.php:884
 msgid "Dropped image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:884
+#: src/Admin/AdminAssets.php:885
 msgid "Dropped image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:885
+#: src/Admin/AdminAssets.php:886
 msgid "Dropped image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:886
+#: src/Admin/AdminAssets.php:887
 msgid "alt text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:887
+#: src/Admin/AdminAssets.php:888
 msgid "image"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:888
+#: src/Admin/AdminAssets.php:889
 msgid "The WordPress media library could not be opened."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:889
+#: src/Admin/AdminAssets.php:890
 msgid "link text"
 msgstr ""
 

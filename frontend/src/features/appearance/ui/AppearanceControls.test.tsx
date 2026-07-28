@@ -728,6 +728,54 @@ describe('AppearanceControls', () => {
     }, true);
   });
 
+  it('reuses immersive article and code palettes in the embedded theme menus', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="embedded"
+      />
+    );
+
+    const articleTheme = screen.getByRole('combobox', {
+      name: 'Article theme'
+    });
+    expect(
+      articleTheme.querySelector<HTMLElement>(
+        '.easymde-ordinary-select-swatch'
+      )?.style.background
+    ).toBe('rgb(51, 51, 51)');
+
+    await user.click(articleTheme);
+    expect(
+      screen.getByRole('option', { name: 'Writer CSS' })
+        .querySelector<HTMLElement>('.easymde-ordinary-select-swatch')
+        ?.style.background
+    ).toBe('rgb(220, 38, 38)');
+    await user.keyboard('{Escape}');
+
+    const codeTheme = screen.getByRole('combobox', { name: 'Code theme' });
+    const triggerColors = Array.from(
+      codeTheme.querySelectorAll<HTMLElement>(
+        '.easymde-ordinary-select-swatch > span'
+      )
+    ).map((element) => element.style.background);
+    expect(triggerColors).toEqual(['rgb(40, 44, 52)', 'rgb(171, 178, 191)']);
+
+    await user.click(codeTheme);
+    const terminalNoir = screen.getByRole('option', {
+      name: 'Terminal Noir'
+    });
+    expect(
+      Array.from(terminalNoir.querySelectorAll<HTMLElement>(
+        '.easymde-ordinary-select-swatch > span'
+      )).map((element) => element.style.background)
+    ).toEqual(['rgb(13, 16, 23)', 'rgb(202, 209, 217)']);
+  });
+
   it('renders the registered Terminal Noir palette instead of the generic fallback', async () => {
     const user = userEvent.setup();
     render(

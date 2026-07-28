@@ -168,6 +168,19 @@
     white-space: nowrap;
 }
 
+.easymde-editor-settings-section .easymde-ordinary-select-trigger > .easymde-ordinary-select-value.has-swatch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.easymde-editor-settings-section .easymde-ordinary-select-trigger > .easymde-ordinary-select-value.has-swatch > span:last-child {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .easymde-editor-settings-section .easymde-ordinary-select-trigger svg {
     flex: 0 0 auto;
     color: #64748b;
@@ -195,10 +208,12 @@
     overflow-x: hidden;
     overflow-y: auto;
     padding: 5px;
-    border: 1px solid #d8dee7;
+    border: 1px solid rgba(255, 255, 255, .72);
     border-radius: 10px;
-    background: #fff;
-    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
+    background: rgba(255, 255, 255, .78);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    backdrop-filter: blur(18px) saturate(150%);
+    box-shadow: 0 14px 32px rgba(15, 23, 42, .18), inset 0 1px 0 rgba(255, 255, 255, .85);
     color: #1f2937;
     overscroll-behavior: contain;
 }
@@ -222,6 +237,31 @@
     cursor: pointer;
 }
 
+.easymde-ordinary-select-options [role="option"].has-swatch {
+    grid-template-columns: 18px 11px minmax(0, 1fr);
+    gap: 8px;
+}
+
+.easymde-ordinary-select-swatch {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    flex: 0 0 auto;
+    overflow: hidden;
+    border: 1px solid rgba(0, 0, 0, .1);
+    border-radius: 50%;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .12);
+}
+
+.easymde-ordinary-select-swatch.is-split {
+    display: inline-flex;
+}
+
+.easymde-ordinary-select-swatch.is-split > span {
+    height: 100%;
+    flex: 1;
+}
+
 .easymde-ordinary-select-options [role="option"] > span:last-child {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -229,7 +269,7 @@
 }
 
 .easymde-ordinary-select-options [role="option"].is-active {
-    background: #eef5fb;
+    background: rgba(226, 239, 249, .82);
     color: #135e96;
 }
 

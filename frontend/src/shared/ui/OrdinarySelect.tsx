@@ -10,9 +10,12 @@ import type { KeyboardEvent } from 'react';
 
 import { Check, ChevronDown } from '../../generated/lucide-icons';
 
+export type OrdinarySelectSwatch = string | readonly [string, string];
+
 export type OrdinarySelectOption = Readonly<{
   id: string;
   label: string;
+  swatch?: OrdinarySelectSwatch;
 }>;
 
 type Props = Readonly<{
@@ -36,6 +39,26 @@ const MENU_MAX_HEIGHT = 264;
 
 function optionDomId(listboxId: string, id: string, index: number): string {
   return `${listboxId}-option-${index}-${id.replace(/[^a-z0-9_-]/gi, '-')}`;
+}
+
+function OrdinarySelectSwatch({
+  swatch
+}: Readonly<{ swatch: OrdinarySelectSwatch }>) {
+  return Array.isArray(swatch) ? (
+    <span
+      className="easymde-ordinary-select-swatch is-split"
+      aria-hidden="true"
+    >
+      <span style={{ background: swatch[0] }} />
+      <span style={{ background: swatch[1] }} />
+    </span>
+  ) : (
+    <span
+      className="easymde-ordinary-select-swatch"
+      aria-hidden="true"
+      style={{ background: swatch as string }}
+    />
+  );
 }
 
 export function OrdinarySelect({
@@ -84,16 +107,12 @@ export function OrdinarySelect({
       MENU_MAX_HEIGHT,
       menu.scrollHeight || fallbackHeight
     );
-    const spaceBelow =
-      windowRef.innerHeight - rect.bottom - MENU_GAP - VIEWPORT_PADDING;
-    const spaceAbove = rect.top - MENU_GAP - VIEWPORT_PADDING;
-    const placeAbove =
-      spaceBelow < Math.min(160, desiredHeight) && spaceAbove > spaceBelow;
-    const available = Math.max(0, placeAbove ? spaceAbove : spaceBelow);
+    const top = rect.bottom + MENU_GAP;
+    const available = Math.max(
+      0,
+      windowRef.innerHeight - top - VIEWPORT_PADDING
+    );
     const maxHeight = Math.min(desiredHeight, available);
-    const top = placeAbove
-      ? Math.max(VIEWPORT_PADDING, rect.top - MENU_GAP - maxHeight)
-      : rect.bottom + MENU_GAP;
 
     setPosition({ left, maxHeight, top, width });
   };
@@ -123,7 +142,7 @@ export function OrdinarySelect({
 
   useLayoutEffect(() => {
     if (open) updatePosition();
-  }, [activeId, open, options.length]);
+  }, [open, options.length]);
 
   useLayoutEffect(() => {
     const menu = menuRef.current;
@@ -163,13 +182,17 @@ export function OrdinarySelect({
       close();
     };
     const reposition = () => updatePosition();
+    const repositionForScroll = (event: Event) => {
+      if (event.target === menuRef.current) return;
+      updatePosition();
+    };
     documentRef.addEventListener('click', closeForPointer);
     windowRef.addEventListener('resize', reposition);
-    windowRef.addEventListener('scroll', reposition, true);
+    windowRef.addEventListener('scroll', repositionForScroll, true);
     return () => {
       documentRef.removeEventListener('click', closeForPointer);
       windowRef.removeEventListener('resize', reposition);
-      windowRef.removeEventListener('scroll', reposition, true);
+      windowRef.removeEventListener('scroll', repositionForScroll, true);
     };
   }, [open, options.length]);
 
@@ -252,7 +275,14 @@ export function OrdinarySelect({
         onClick={() => setOpen((current) => !current)}
         onKeyDown={handleKeyDown}
       >
-        <span>{selected?.label ?? ''}</span>
+        {selected?.swatch ? (
+          <span className="easymde-ordinary-select-value has-swatch">
+            <OrdinarySelectSwatch swatch={selected.swatch} />
+            <span>{selected.label}</span>
+          </span>
+        ) : (
+          <span>{selected?.label ?? ''}</span>
+        )}
         <ChevronDown size={14} strokeWidth={2.1} aria-hidden="true" />
       </button>
       {open ? (
@@ -281,7 +311,10 @@ export function OrdinarySelect({
                   role="option"
                   tabIndex={-1}
                   aria-selected={selectedOption}
-                  className={active ? 'is-active' : ''}
+                  className={[
+                    active ? 'is-active' : '',
+                    option.swatch ? 'has-swatch' : ''
+                  ].filter(Boolean).join(' ')}
                   onMouseDown={(event) => event.preventDefault()}
                   onMouseEnter={() => setActiveId(option.id)}
                   onClick={() => commit(option.id)}
@@ -289,6 +322,9 @@ export function OrdinarySelect({
                   <span className="easymde-ordinary-select-check" aria-hidden="true">
                     {selectedOption ? <Check size={13} strokeWidth={2.4} /> : null}
                   </span>
+                  {option.swatch ? (
+                    <OrdinarySelectSwatch swatch={option.swatch} />
+                  ) : null}
                   <span>{option.label}</span>
                 </button>
               </div>

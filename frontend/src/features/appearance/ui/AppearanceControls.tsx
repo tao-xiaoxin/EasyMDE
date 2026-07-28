@@ -22,7 +22,10 @@ import {
   Palette,
   PenLine
 } from '../../../generated/lucide-icons';
-import { OrdinarySelect } from '../../../shared/ui/OrdinarySelect';
+import {
+  OrdinarySelect,
+  type OrdinarySelectSwatch
+} from '../../../shared/ui/OrdinarySelect';
 
 export type AppearanceControlsSession = Readonly<{
   close: () => void;
@@ -42,7 +45,7 @@ type AppearanceControlsProps = Readonly<{
 type ImmersiveThemeOption = Readonly<{
   id: string;
   label: string;
-  swatch: string | readonly [string, string];
+  swatch: OrdinarySelectSwatch;
 }>;
 
 type ImmersivePanelPosition = Readonly<{
@@ -674,11 +677,13 @@ export function AppearanceControls({
               options={[
                 ...bootstrap.articleThemes.map((theme) => ({
                   id: `theme:${theme.id}`,
-                  label: theme.label
+                  label: theme.label,
+                  swatch: articleThemeAccent(theme.id)
                 })),
                 ...snapshot.customCss.map((item) => ({
                   id: `custom:${item.id}`,
-                  label: item.name
+                  label: item.name,
+                  swatch: '#DC2626'
                 }))
               ]}
               onChange={selectArticleTheme}
@@ -695,11 +700,13 @@ export function AppearanceControls({
               options={[
                 ...bootstrap.codeThemes.map((theme) => ({
                   id: `theme:${theme.id}`,
-                  label: theme.label
+                  label: theme.label,
+                  swatch: codeThemeSwatch(theme.id)
                 })),
                 ...snapshot.customCss.map((item) => ({
                   id: `custom:${item.id}`,
-                  label: item.name
+                  label: item.name,
+                  swatch: '#DC2626'
                 }))
               ]}
               onChange={selectCodeTheme}

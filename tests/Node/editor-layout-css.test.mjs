@@ -152,11 +152,11 @@ test('ordinary Preview owns vertical scrolling and fits wide table content', () 
 test('ordinary Preview provides an editorial reading rhythm without changing immersive Preview', () => {
   assert.match(
     css,
-    /\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\s*\{[^}]*padding-block:\s*0;[^}]*padding-inline:\s*max\(clamp\(14px, 4\.5%, 22px\), calc\(\(100% - 680px\) \/ 4\)\);[^}]*background-image:\s*none;[^}]*scroll-padding-block:\s*0;[^}]*scroll-padding-inline:\s*max\(clamp\(14px, 4\.5%, 22px\), calc\(\(100% - 680px\) \/ 4\)\);/s
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\s*\{[^}]*padding-block:\s*0;[^}]*padding-inline:\s*calc\(max\(clamp\(14px, 4\.5%, 22px\), calc\(\(100% - 680px\) \/ 4\)\) - 5px\);[^}]*background-image:\s*none;[^}]*scroll-padding-block:\s*0;[^}]*scroll-padding-inline:\s*calc\(max\(clamp\(14px, 4\.5%, 22px\), calc\(\(100% - 680px\) \/ 4\)\) - 5px\);/s
   );
   assert.match(
     css,
-    /@media \(max-width:\s*782px\)[\s\S]*?\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\s*\{[^}]*padding-block:\s*0;[^}]*padding-inline:\s*10px;/s
+    /@media \(max-width:\s*782px\)[\s\S]*?\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\s*\{[^}]*padding-block:\s*0;[^}]*padding-inline:\s*5px;/s
   );
   assert.doesNotMatch(
     css,
@@ -192,6 +192,22 @@ test('ordinary editor settings combines theme and font controls in one responsiv
   assert.match(
     popover,
     /\.easymde-editor-settings-tail\.is-above\s*\{[^}]*border-right:\s*1px solid #dfe4ea;[^}]*border-bottom:\s*1px solid #dfe4ea;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-ordinary-select-options\s*\{[^}]*border:\s*1px solid rgba\(255, 255, 255, \.72\);[^}]*background:\s*rgba\(255, 255, 255, \.78\);[^}]*-webkit-backdrop-filter:\s*blur\(18px\) saturate\(150%\);[^}]*backdrop-filter:\s*blur\(18px\) saturate\(150%\);[^}]*box-shadow:\s*0 14px 32px rgba\(15, 23, 42, \.18\), inset 0 1px 0 rgba\(255, 255, 255, \.85\);/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-ordinary-select-options \[role="option"\]\.is-active\s*\{[^}]*background:\s*rgba\(226, 239, 249, \.82\);/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-ordinary-select-options \[role="option"\]\.has-swatch\s*\{[^}]*grid-template-columns:\s*18px 11px minmax\(0, 1fr\);[^}]*gap:\s*8px;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-ordinary-select-swatch\s*\{[^}]*width:\s*11px;[^}]*height:\s*11px;[^}]*border:\s*1px solid rgba\(0, 0, 0, \.1\);[^}]*border-radius:\s*50%;[^}]*box-shadow:\s*0 1px 2px rgba\(15, 23, 42, \.12\);/s
   );
 });
 

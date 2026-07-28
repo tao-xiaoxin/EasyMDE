@@ -1973,10 +1973,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-editor:not(.is-immersive) .easymde-preview {
     overflow-x: hidden;
     padding-block: 0;
-    padding-inline: max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4));
+    padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
     background-image: none;
     scroll-padding-block: 0;
-    scroll-padding-inline: max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4));
+    scroll-padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
 }
 
 .easymde-editor:not(.is-immersive) .easymde-rendered-content table {
@@ -2254,7 +2254,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 
     .easymde-editor:not(.is-immersive) .easymde-preview {
         padding-block: 0;
-        padding-inline: 10px;
+        padding-inline: 5px;
     }
 
 }

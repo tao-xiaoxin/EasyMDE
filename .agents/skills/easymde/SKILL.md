@@ -1134,25 +1134,59 @@ Before editing, automatically:
   review text.
 
 Maintain the task's local-only reference ledger at
-`.cache/easymde/ui-fidelity/<task-id>/progress.md`. When a focused Issue exists,
-start `<task-id>` with its stable Issue number and append a short
-collision-resistant digest of the normalized focused task scope. Without an
-Issue, use a stable sanitized task slug plus a short collision-resistant digest
-derived locally from the repository identity and normalized focused task scope.
-Do not place a worktree path, username, private URL, or raw task content in the
-identifier. The repository ignores `.cache/`; do not force-add the ledger or
-create a second progress file elsewhere. On continuation, derive the same
-identifier from the stable Issue number and normalized focused task scope when
-a focused Issue exists; otherwise, use the stable sanitized task slug,
-repository identity, and normalized focused task scope before deciding that no
-ledger exists.
+`.cache/easymde/ui-fidelity/<task-id>/progress.md`. Derive `<task-id>` with the
+following `ui-fidelity-ledger-v1` contract:
+
+1. use the literal public repository identity `tao-xiaoxin/EasyMDE`; never
+   derive it from a checkout path, worktree path, remote URL, or account name;
+2. take verbatim the focused objective from the earliest current-human message
+   in this task that both defines that objective and authorizes its UI
+   implementation; later follow-ups, summaries, Goal wrappers, reviewer
+   prompts, and generated handoff wording never replace that canonical input.
+   Normalize it to Unicode NFC, convert line endings to LF, trim leading and
+   trailing whitespace, and replace every remaining run of Unicode whitespace
+   with one ASCII space while preserving case and punctuation;
+3. require a symbolic Git branch, take its exact short ref name without a
+   trailing line ending, and use the first 16 lowercase hexadecimal characters
+   of its UTF-8 SHA-256 as `<branch-digest>`; do not create or reuse a ledger
+   from a detached Head;
+4. compute SHA-256 over the UTF-8 bytes of
+   `tao-xiaoxin/EasyMDE`, one LF byte, the normalized objective, one LF byte,
+   and `<branch-digest>`, then use the first 24 lowercase hexadecimal characters
+   as `<scope-digest>`; and
+5. use `<issue-number>-<scope-digest>` when a focused Issue exists, otherwise
+   use `task-<scope-digest>`.
+
+Record the literal algorithm version `ui-fidelity-ledger-v1` and
+`<scope-digest>` in the ledger. On continuation, apply these exact steps and
+verify the recorded values before reuse. When the original canonical objective
+is unavailable in a fresh task, enumerate only
+`.cache/easymde/ui-fidelity/*/progress.md` and accept an existing ledger only
+when exactly one candidate records all of the following: algorithm version
+`ui-fidelity-ledger-v1`, repository identity `tao-xiaoxin/EasyMDE`, the
+`<branch-digest>` derived from the current symbolic branch, a valid
+`<scope-digest>`, and a recorded `Task ID:` for which the Issue or `task-`
+identifier derived from that digest, the recorded Task ID, and the parent
+directory name are exactly equal. Resume that unique candidate without
+re-deriving its scope digest. With zero or multiple valid candidates, keep every
+candidate unmodified and ask for the original task identity or exact existing
+`<task-id>`; never choose by recency or content similarity. Do not substitute a
+Goal objective, current follow-up, summary, handoff paraphrase, another
+repository identity, or newly invented slug. Do not place a worktree path,
+username, private URL, or raw task content in the identifier. The repository
+ignores `.cache/`; do not force-add the ledger or create a second progress file
+elsewhere.
 
 Use this ledger structure:
 
 ```text
-Task identity and scope digest:
-Reference source and revision:
-Rendered reference and deterministic state:
+Task identity algorithm version: ui-fidelity-ledger-v1
+Repository identity: tao-xiaoxin/EasyMDE
+Task ID:
+Scope digest:
+Git branch digest:
+Reference source and revision: sanitized label plus public or opaque revision only
+Rendered reference and deterministic state: sanitized label and state identifier only
 Target implementation and baseline revision:
 Viewport, zoom, DPR, fonts, locale, direction, and input mode:
 Fixture and privacy classification:
@@ -1172,17 +1206,18 @@ ledger but must not create or update it; keep transient checklist state inside
 the read-only review execution and return its sanitized findings through the
 owning review workflow instead. On continuation of a write-authorized task,
 read the ledger first and verify its task identity and scope digest, current
-branch, reference revision, and rendered state. A task identity or scope-digest
-mismatch identifies a different task: do not reuse or overwrite that ledger;
-derive the correct task identifier and start a separate ledger. Within a
-matching task ledger, a changed branch, reference revision, or rendered state
-invalidates the affected evidence and checklist items; record the new state in
-that same ledger and resume at the first invalidated or incomplete item instead
-of repeating unaffected work or trusting compressed conversation memory.
-Never store credentials, Cookies, Nonces, browser Storage, private content, or
-raw administrator data in the progress record. Remove the task directory after
-its sanitized evidence has been handed to the repository contribution workflow
-and the focused work no longer needs to be resumed.
+branch digest, reference revision, and rendered state. A task identity,
+scope-digest, or branch-digest mismatch identifies a different task: do not
+reuse or overwrite that ledger; derive the correct task identifier and start a
+separate ledger. A changed reference revision or rendered state within a
+matching ledger invalidates the affected evidence and checklist items; record
+the new state in that same ledger and resume at the first invalidated or
+incomplete item instead of repeating unaffected work or trusting compressed
+conversation memory. Never store credentials, Cookies, Nonces, browser Storage,
+private content, raw administrator data, machine-specific paths, private or
+loopback URLs, or account identity in the progress record. Remove the task
+directory after its sanitized evidence has been handed to the repository
+contribution workflow and the focused work no longer needs to be resumed.
 
 Durable or public summaries use sanitized labels and synthetic measurements,
 not absolute paths, private URLs, raw screenshots, administrator data, or

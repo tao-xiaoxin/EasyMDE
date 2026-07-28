@@ -58,6 +58,24 @@ function createPort(overrides: Partial<AppearancePort> = {}): AppearancePort {
 }
 
 describe('AppearanceControls', () => {
+  it('uses the local palette icon and shared dropdown chevron in ordinary mode', () => {
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+      />
+    );
+    const trigger = screen.getByRole('button', { name: 'Appearance' });
+
+    expect(
+      trigger.querySelector('.easymde-toolbar-icon-appearance')
+    ).not.toBeNull();
+    expect(trigger.querySelector('.easymde-toolbar-chevron')).not.toBeNull();
+    expect(trigger.querySelector('.dashicons')).toBeNull();
+  });
+
   it('renders the reference palette trigger and live theme accent in immersive mode', () => {
     render(
       <AppearanceControls
@@ -96,6 +114,24 @@ describe('AppearanceControls', () => {
     expect(
       screen.getByRole('button', { name: 'Custom CSS theme' }).textContent
     ).toContain('Custom CSS theme');
+  });
+
+  it('omits the custom CSS editing entry from the ordinary appearance panel', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+
+    expect(screen.queryByRole('button', { name: 'Custom CSS' })).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Article theme' })).not.toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Code theme' })).not.toBeNull();
   });
 
   it('renders the registered Terminal Noir palette instead of the generic fallback', async () => {
@@ -224,11 +260,12 @@ describe('AppearanceControls', () => {
           onReady={(nextSession) => {
             session = nextSession;
           }}
+          variant="immersive"
         />
       );
       const trigger = screen.getByRole('button', { name: 'Appearance' });
       await user.click(trigger);
-      await user.click(screen.getByRole('button', { name: 'Custom CSS' }));
+      await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
 
       expect(trigger.getAttribute('aria-expanded')).toBe('true');
       expect(screen.getByRole('textbox', { name: 'CSS name' })).not.toBeNull();
@@ -284,11 +321,12 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        variant="immersive"
       />
     );
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
-    await user.click(screen.getByRole('button', { name: 'Custom CSS' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
     await user.type(screen.getByRole('textbox', { name: 'CSS name' }), 'New theme');
     const save = screen.getByRole('button', { name: 'Save CSS' });
     await user.click(save);
@@ -311,11 +349,12 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss: vi.fn().mockRejectedValue(new Error('session-expired')) })}
         onFailure={onFailure}
         onReady={vi.fn()}
+        variant="immersive"
       />
     );
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
-    await user.click(screen.getByRole('button', { name: 'Custom CSS' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
     await user.click(screen.getByRole('button', { name: 'Save CSS' }));
 
     await screen.findByText('CSS save failed.');

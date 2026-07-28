@@ -29,7 +29,7 @@ type FontControlsProps = Readonly<{
   port: FontControlsPort;
   onFailure: () => void;
   onReady: (session: FontControlsSession) => void;
-  variant?: 'default' | 'immersive';
+  variant?: 'default' | 'embedded' | 'immersive';
 }>;
 
 type FontSelectProps = Readonly<{
@@ -298,6 +298,52 @@ export function FontControls({
   const select = (key: keyof FontControlsState, selected: string) => {
     replaceState({ ...stateRef.current, [key]: selected });
   };
+  const ordinaryFields = (
+    <Fragment>
+      <FontSelect
+        className="easymde-custom-font-select"
+        label={bootstrap.strings.customFont}
+        options={bootstrap.options.customFonts}
+        selected={state.customFont}
+        onChange={(selected) => select('customFont', selected)}
+      />
+      <FontSelect
+        className="easymde-windows-font-select"
+        label={bootstrap.strings.windowsFont}
+        options={bootstrap.options.windowsFonts}
+        selected={state.windowsFont}
+        onChange={(selected) => select('windowsFont', selected)}
+      />
+      <FontSelect
+        className="easymde-apple-font-select"
+        label={bootstrap.strings.appleFont}
+        options={bootstrap.options.appleFonts}
+        selected={state.appleFont}
+        onChange={(selected) => select('appleFont', selected)}
+      />
+      <FontSelect
+        className="easymde-serif-font-select"
+        label={bootstrap.strings.serifFont}
+        options={bootstrap.options.serifOptions}
+        selected={state.serifFont}
+        onChange={(selected) => select('serifFont', selected)}
+      />
+    </Fragment>
+  );
+
+  if ('embedded' === variant) {
+    return (
+      <section className="easymde-editor-settings-section is-font">
+        <h3>{bootstrap.strings.font}</h3>
+        <div className="easymde-editor-settings-fields">
+          {ordinaryFields}
+        </div>
+        <p className="easymde-toolbar-help">
+          {bootstrap.strings.fontStackHelp}
+        </p>
+      </section>
+    );
+  }
 
   return (
     <div
@@ -340,8 +386,10 @@ export function FontControls({
             >
               A
             </span>
-            <span
-              className="dashicons dashicons-arrow-down-alt2"
+            <ChevronDown
+              className="easymde-toolbar-chevron"
+              size={12}
+              strokeWidth={2.25}
               aria-hidden="true"
             />
           </Fragment>
@@ -402,36 +450,7 @@ export function FontControls({
             />
           </Fragment>
         ) : (
-          <Fragment>
-            <FontSelect
-              className="easymde-custom-font-select"
-              label={bootstrap.strings.customFont}
-              options={bootstrap.options.customFonts}
-              selected={state.customFont}
-              onChange={(selected) => select('customFont', selected)}
-            />
-            <FontSelect
-              className="easymde-windows-font-select"
-              label={bootstrap.strings.windowsFont}
-              options={bootstrap.options.windowsFonts}
-              selected={state.windowsFont}
-              onChange={(selected) => select('windowsFont', selected)}
-            />
-            <FontSelect
-              className="easymde-apple-font-select"
-              label={bootstrap.strings.appleFont}
-              options={bootstrap.options.appleFonts}
-              selected={state.appleFont}
-              onChange={(selected) => select('appleFont', selected)}
-            />
-            <FontSelect
-              className="easymde-serif-font-select"
-              label={bootstrap.strings.serifFont}
-              options={bootstrap.options.serifOptions}
-              selected={state.serifFont}
-              onChange={(selected) => select('serifFont', selected)}
-            />
-          </Fragment>
+          ordinaryFields
         )}
         <p className="easymde-toolbar-help">
           {bootstrap.strings.fontStackHelp}

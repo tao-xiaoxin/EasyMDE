@@ -12,7 +12,7 @@ const bootstrap: ToolbarBootstrap = {
     { id: 'paragraph', label: '段落', icon: 'heading', surface: 'heading-menu', action: 'paragraph', group: 'heading' },
     { id: 'heading1', label: '一级标题', icon: 'heading', surface: 'heading-menu', action: 'heading', group: 'heading', level: 1, usesLevelLabel: true },
     { id: 'quote', label: '引用', icon: 'format-quote', surface: 'main', action: 'quote', group: 'block' },
-    { id: 'inlinecode', label: '行内代码', icon: 'code', surface: 'main', action: 'wrap', group: 'insert' },
+    { id: 'inlinecode', label: '行内代码', icon: 'editor-code', surface: 'main', action: 'wrap', group: 'insert' },
     { id: 'codefence', label: '代码块', icon: 'media-code', surface: 'main', action: 'codeFence', group: 'insert' }
   ],
   shortcuts: {
@@ -26,11 +26,12 @@ const bootstrap: ToolbarBootstrap = {
   headingLabelFormat: '标题 %s',
   headingLevelLabel: '标题级别',
   headingsLabel: '标题',
-  linkText: '链接文本'
+  linkText: '链接文本',
+  undoLabel: '撤销'
 };
 
 describe('EditorToolbar', () => {
-  it('renders the legacy command order, icon sources, and platform shortcut titles', () => {
+  it('renders the ordinary command order with one local icon contract and platform shortcut titles', () => {
     const { container } = render(
       <EditorToolbar bootstrap={bootstrap} platform="win" executeCommand={vi.fn()} />
     );
@@ -39,6 +40,7 @@ describe('EditorToolbar', () => {
       container.querySelectorAll<HTMLButtonElement>('.easymde-toolbar-button')
     );
     expect(controls.map((control) => control.getAttribute('aria-label'))).toEqual([
+      '撤销',
       '粗体',
       '标题',
       '引用',
@@ -46,9 +48,262 @@ describe('EditorToolbar', () => {
       '代码块'
     ]);
     expect(screen.getByRole('button', { name: '粗体' }).title).toBe('粗体 (Ctrl+B)');
-    expect(screen.getByRole('button', { name: '粗体' }).querySelector('.dashicons-editor-bold')).not.toBeNull();
-    expect(screen.getByRole('button', { name: '代码块' }).textContent).toContain('</>');
+    expect(screen.getByRole('button', { name: '粗体' }).querySelector('.easymde-toolbar-icon-bold')).not.toBeNull();
+    expect(screen.getByRole('button', { name: '引用' }).querySelector('.easymde-toolbar-icon-quote')).not.toBeNull();
+    expect(screen.getByRole('button', { name: '代码块' }).querySelector('.easymde-toolbar-icon-codefence')).not.toBeNull();
+    expect(screen.getByRole('button', { name: '标题' }).textContent).toBe('H');
+    expect(container.querySelector('.dashicons')).toBeNull();
     expect(container.querySelectorAll('.easymde-toolbar-divider')).toHaveLength(2);
+  });
+
+  it('renders one history-aware Undo control only in the ordinary toolbar', () => {
+    const undo = vi.fn();
+    const { rerender } = render(
+      <EditorToolbar
+        bootstrap={bootstrap}
+        canUndo={false}
+        platform="win"
+        executeCommand={vi.fn()}
+        undo={undo}
+      />
+    );
+
+    const button = screen.getByRole('button', {
+      name: '撤销'
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.querySelector('.easymde-toolbar-icon-undo')).not.toBeNull();
+    expect(button.querySelector('path[d="M9 14 4 9l5-5"]')).not.toBeNull();
+    expect(button.querySelector('path[d^="M3 12a9"]')).toBeNull();
+
+    rerender(
+      <EditorToolbar
+        bootstrap={bootstrap}
+        canUndo
+        platform="win"
+        executeCommand={vi.fn()}
+        undo={undo}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: '撤销' }));
+    expect(undo).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <EditorToolbar
+        bootstrap={bootstrap}
+        canUndo
+        platform="win"
+        executeCommand={vi.fn()}
+        undo={undo}
+        variant="immersive"
+      />
+    );
+    expect(screen.queryByRole('button', { name: '撤销' })).toBeNull();
+  });
+
+  it('renders a compact ordinary heading menu without the paragraph command', async () => {
+    const executeCommand = vi.fn();
+    const user = userEvent.setup();
+    const ordinaryBootstrap: ToolbarBootstrap = {
+      ...bootstrap,
+      commands: [
+        ...bootstrap.commands,
+        ...[2, 3, 4, 5, 6].map((level) => ({
+          id: `heading${level}`,
+          label: `${level}级标题`,
+          icon: 'heading',
+          surface: 'heading-menu',
+          action: 'heading',
+          group: 'heading',
+          level
+        }))
+      ],
+      shortcuts: {
+        ...bootstrap.shortcuts,
+        heading2: { win: 'Ctrl+2', mac: 'Cmd+2' },
+        heading3: { win: 'Ctrl+3', mac: 'Cmd+3' },
+        heading4: { win: 'Ctrl+4', mac: 'Cmd+4' },
+        heading5: { win: 'Ctrl+5', mac: 'Cmd+5' },
+        heading6: { win: 'Ctrl+6', mac: 'Cmd+6' }
+      }
+    };
+    const { container } = render(
+      <EditorToolbar
+        bootstrap={ordinaryBootstrap}
+        platform="win"
+        executeCommand={executeCommand}
+      />
+    );
+
+    const trigger = screen.getByRole('button', { name: '标题' });
+    const menu = container.querySelector<HTMLDivElement>(
+      '.easymde-toolbar-popover-headings [role="menu"]'
+    );
+    expect(menu).not.toBeNull();
+    if (!menu) {
+      throw new Error('ordinary-heading-menu-unavailable');
+    }
+    expect(menu.hidden).toBe(true);
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+
+    await user.click(trigger);
+    expect(screen.getByRole('menu', { name: '标题' })).toBe(menu);
+    expect(menu.hidden).toBe(false);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.getAttribute('data-easymde-command'))
+    ).toEqual([
+      'heading1',
+      'heading2',
+      'heading3',
+      'heading4',
+      'heading5',
+      'heading6'
+    ]);
+    expect(
+      within(menu).queryByRole('menuitem', { name: /段落/ })
+    ).toBeNull();
+    const headingBadges = Array.from(
+      menu.querySelectorAll<HTMLElement>('.easymde-heading-menu-badge')
+    );
+    expect(headingBadges.map((badge) => badge.textContent)).toEqual([
+      'H1',
+      'H2',
+      'H3',
+      'H4',
+      'H5',
+      'H6'
+    ]);
+    expect(
+      headingBadges.map((badge) => badge.dataset.headingLevel)
+    ).toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(menu.querySelector('.easymde-heading-mark-letter')).toBeNull();
+    expect(menu.querySelector('.easymde-heading-mark-level')).toBeNull();
+    expect(
+      within(menu).getByRole('menuitem', { name: /3级标题/ }).textContent
+    ).toBe('H33级标题Ctrl+3');
+
+    const heading3 = within(menu).getByRole('menuitem', { name: /3级标题/ });
+    expect(fireEvent.mouseDown(heading3)).toBe(false);
+    await user.click(heading3);
+    expect(executeCommand).toHaveBeenCalledWith('heading3');
+    expect(menu.hidden).toBe(true);
+  });
+
+  it('preserves the documented Dashicons fallback for extension commands', () => {
+    const extensionBootstrap: ToolbarBootstrap = {
+      ...bootstrap,
+      commands: [{
+        id: 'extension-command',
+        label: '扩展命令',
+        icon: 'admin-generic',
+        surface: 'main',
+        action: 'wrap',
+        group: 'format'
+      }]
+    };
+    render(
+      <EditorToolbar
+        bootstrap={extensionBootstrap}
+        platform="win"
+        executeCommand={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole('button', { name: '扩展命令' })
+        .querySelector('.dashicons-admin-generic')
+    ).not.toBeNull();
+  });
+
+  it('keeps registered heading-surface extensions inside the restored ordinary menu', async () => {
+    const executeCommand = vi.fn();
+    const user = userEvent.setup();
+    const extensionBootstrap: ToolbarBootstrap = {
+      ...bootstrap,
+      commands: [
+        ...bootstrap.commands,
+        {
+          id: 'extension-heading-command',
+          label: '扩展标题命令',
+          icon: 'admin-generic',
+          surface: 'heading-menu',
+          action: 'wrap',
+          group: 'heading',
+          prefix: '<heading>',
+          suffix: '</heading>'
+        }
+      ]
+    };
+    render(
+      <EditorToolbar
+        bootstrap={extensionBootstrap}
+        platform="win"
+        executeCommand={executeCommand}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: '标题' }));
+    const extension = within(
+      screen.getByRole('menu', { name: '标题' })
+    ).getByRole('menuitem', { name: /扩展标题命令/ });
+
+    await user.click(extension);
+    expect(executeCommand).toHaveBeenCalledWith('extension-heading-command');
+  });
+
+  it('preserves an extension icon when the public registry replaces a built-in command ID', () => {
+    const extensionBootstrap: ToolbarBootstrap = {
+      ...bootstrap,
+      commands: [{
+        id: 'bold',
+        label: '替换粗体',
+        icon: 'admin-generic',
+        surface: 'main',
+        action: 'wrap',
+        group: 'format'
+      }]
+    };
+    render(
+      <EditorToolbar
+        bootstrap={extensionBootstrap}
+        platform="win"
+        executeCommand={vi.fn()}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: '替换粗体' });
+    expect(button.querySelector('.dashicons-admin-generic')).not.toBeNull();
+    expect(button.querySelector('.easymde-toolbar-icon-bold')).toBeNull();
+  });
+
+  it('keeps the existing immersive icon behavior when an extension replaces a built-in command ID', () => {
+    const extensionBootstrap: ToolbarBootstrap = {
+      ...bootstrap,
+      commands: [{
+        id: 'bold',
+        label: '替换粗体',
+        icon: 'admin-generic',
+        surface: 'main',
+        action: 'wrap',
+        group: 'format'
+      }]
+    };
+    render(
+      <EditorToolbar
+        bootstrap={extensionBootstrap}
+        platform="win"
+        executeCommand={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    const button = screen.getByRole('button', { name: '替换粗体' });
+    expect(button.querySelector('svg')).not.toBeNull();
+    expect(button.querySelector('.dashicons-admin-generic')).toBeNull();
+    expect(button.querySelector('.easymde-toolbar-icon-bold')).toBeNull();
   });
 
   it('renders the reference immersive group boundaries and distinct code icons', () => {
@@ -179,12 +434,17 @@ describe('EditorToolbar', () => {
     expect(container.querySelector('.is-immersive-heading-menu')).toBe(menu);
   });
 
-  it('exposes heading menu state and returns focus on Escape', async () => {
+  it('preserves immersive heading menu focus and Escape behavior', async () => {
     const executeCommand = vi.fn();
     const user = userEvent.setup();
     render(
       <div>
-        <EditorToolbar bootstrap={bootstrap} platform="win" executeCommand={executeCommand} />
+        <EditorToolbar
+          bootstrap={bootstrap}
+          platform="win"
+          executeCommand={executeCommand}
+          variant="immersive"
+        />
         <button type="button">外部控件</button>
       </div>
     );
@@ -195,8 +455,7 @@ describe('EditorToolbar', () => {
     await user.click(trigger);
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     const menu = screen.getByRole('menu', { name: '标题' });
-    const paragraph = within(menu).getByRole('menuitem', { name: /\u6bb5\u843d/ });
-    const heading = within(menu).getByRole('menuitem', { name: /一级标题/ });
+    const heading = within(menu).getByRole('menuitem', { name: /标题 1/ });
     expect(document.activeElement).toBe(outsideControl);
 
     await user.click(trigger);
@@ -206,26 +465,23 @@ describe('EditorToolbar', () => {
     trigger.focus();
     await user.keyboard('{Enter}');
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(paragraph);
+    expect(document.activeElement).toBe(heading);
     await user.keyboard('{Escape}');
 
     await user.keyboard(' ');
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(paragraph);
+    expect(document.activeElement).toBe(heading);
     await user.keyboard('{Escape}');
 
     trigger.focus();
     await user.keyboard('{ArrowDown}');
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(paragraph);
+    expect(document.activeElement).toBe(heading);
 
     await user.keyboard('{End}');
     expect(document.activeElement).toBe(heading);
 
     await user.keyboard('{Home}');
-    expect(document.activeElement).toBe(paragraph);
-
-    await user.keyboard('{ArrowDown}');
     expect(document.activeElement).toBe(heading);
 
     await user.keyboard('{Escape}');

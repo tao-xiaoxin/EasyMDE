@@ -521,7 +521,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-editor.is-immersive .easymde-source-react .cm-line { min-height: 28px; line-height: 28px; }
 .easymde-editor.is-immersive .easymde-source-react .cm-gutters { display: flex; box-sizing: border-box; width: 36px; min-width: 36px; flex: 0 0 36px; border: 0; background: #f2f2f2; color: #c7cbd3; }
 .easymde-editor.is-immersive .easymde-source-react .cm-lineNumbers .cm-gutterElement { box-sizing: border-box; width: 36px; min-width: 36px; padding: 0; padding-inline-end: 14px; color: #c7cbd3; text-align: end; font-size: 13.5px; font-style: normal; font-weight: 400; line-height: 28px; }
-.easymde-editor:not(.is-immersive) .easymde-source-react .cm-gutters { display: none; }
+.easymde-editor:not(.is-immersive) .easymde-source-react .cm-gutters { display: flex; box-sizing: border-box; width: 40px; min-width: 40px; flex: 0 0 40px; border: 0; border-inline-end: 1px solid #edf0f3; background: #f7f8fa; color: #9aa1ab; }
+.easymde-editor:not(.is-immersive) .easymde-source-react .cm-lineNumbers .cm-gutterElement { box-sizing: border-box; width: 40px; min-width: 40px; padding: 0 10px 0 6px; color: #9aa1ab; text-align: end; font-size: 12.5px; font-weight: 400; line-height: 25.2px; }
 .easymde-editor.is-immersive .easymde-source-react { min-height: 0; flex: 1 1 auto; }
 .easymde-editor.is-immersive .easymde-source-react .cm-editor { color: #3d4350; background: #f2f2f2; font-size: 14.5px; line-height: 28px; }
 .easymde-editor.is-immersive .easymde-source-react .cm-editor { font-family: SFMono-Regular, Menlo, Consolas, monospace; font-feature-settings: "calt" 0; }
@@ -1077,6 +1078,30 @@ body:has(.easymde-editor.is-immersive) .wrap {
     overflow: hidden;
 }
 
+.easymde-editor-status-bar {
+    display: flex;
+    box-sizing: border-box;
+    min-height: 38px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px 24px;
+    padding: 8px 16px;
+    border-top: 1px solid #e4e8ed;
+    background: #fbfcfd;
+    color: #6b7280;
+    font-size: 12.5px;
+    line-height: 1.45;
+}
+
+.easymde-editor-word-count {
+    color: #374151;
+    font-weight: 600;
+}
+
+.easymde-editor-last-edited {
+    text-align: end;
+}
+
 .easymde-pane {
     min-width: 0;
     min-height: 0;
@@ -1094,17 +1119,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
     grid-area: preview;
 }
 
-.easymde-pane-header {
-    height: 38px;
-    padding: 0 14px;
-    border-bottom: 1px solid #dcdcde;
-    background: #fff;
-    color: #475569;
-    font-size: 13px;
-    font-weight: 700;
-    line-height: 38px;
-}
-
 .easymde-source,
 .easymde-preview,
 .easymde-preview-react-root {
@@ -1116,6 +1130,19 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-source,
 .easymde-preview {
     overflow: auto;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-preview {
+    overflow-x: hidden;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-rendered-content table {
+    width: 100%;
+    max-width: 100%;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-rendered-content :is(th, td) {
+    overflow-wrap: anywhere;
 }
 
 .easymde-preview-react-root {
@@ -1170,6 +1197,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-source-react .cm-scroller {
     overflow: auto;
     font-family: inherit;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-source-react .cm-scroller {
+    line-height: inherit;
 }
 
 .easymde-source-react .cm-content {
@@ -1350,7 +1381,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
         width: min(360px, calc(100vw - 48px));
     }
 
-    .easymde-toolbar-popover-font-panel::before {
+    .easymde-toolbar-popover-appearance-panel:not(.is-immersive-panel)::before,
+    .easymde-toolbar-popover-font-panel:not(.is-immersive-panel)::before,
+    .easymde-toolbar-popover-settings-panel::before {
         right: auto;
         left: 24px;
     }
@@ -1362,8 +1395,13 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 
     .easymde-toolbar-popover-font,
-    .easymde-toolbar-popover-appearance {
+    .easymde-toolbar-popover-appearance,
+    .easymde-toolbar-popover-settings {
         position: static;
+    }
+
+    .easymde-toolbar-popover-settings-panel {
+        width: calc(100vw - 32px);
     }
 
     .easymde-toolbar-popover-font-panel .easymde-toolbar-control {
@@ -1375,6 +1413,16 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-toolbar-popover-font-panel .easymde-toolbar-control select,
     .easymde-toolbar-help {
         font-size: 16px;
+    }
+
+    .easymde-editor-status-bar {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .easymde-editor-last-edited {
+        text-align: start;
     }
 
 }

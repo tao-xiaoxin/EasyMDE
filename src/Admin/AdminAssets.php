@@ -233,6 +233,10 @@ final class AdminAssets {
 			),
 			'layout'             => array(
 				'direction' => is_rtl() ? 'rtl' : 'ltr',
+				'status'    => array(
+					'lastEdited' => $this->get_last_edited_label( $post_id ),
+					'wordCount'  => $strings['wordCount'],
+				),
 			),
 			'localDrafts'        => array(
 				'enabled'          => true,
@@ -287,6 +291,7 @@ final class AdminAssets {
 					'headingLevel'       => $strings['headingLevel'],
 					'headings'           => $strings['headings'],
 					'linkText'           => $strings['linkText'],
+					'undo'               => $strings['undo'],
 				),
 			),
 			'wechatExport'       => array(
@@ -564,6 +569,45 @@ final class AdminAssets {
 		);
 	}
 
+	private function get_last_edited_label( $post_id ) {
+		if ( ! $post_id ) {
+			return __( 'Not saved yet.', 'easymde' );
+		}
+
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			throw new \RuntimeException( 'editor-status-post-unavailable' );
+		}
+
+		$editor_id = absint( get_post_meta( $post_id, '_edit_last', true ) );
+		$editor    = get_userdata( $editor_id );
+
+		$modified = get_post_modified_time(
+			get_option( 'date_format' ) . ' ' . get_option( 'time_format' ),
+			false,
+			$post,
+			true
+		);
+		if ( ! is_string( $modified ) || '' === $modified ) {
+			throw new \RuntimeException( 'editor-status-modified-time-unavailable' );
+		}
+
+		if ( $editor ) {
+			return sprintf(
+				/* translators: 1: display name of the last editor, 2: localized post modified date and time. */
+				__( 'Last edited by %1$s on %2$s', 'easymde' ),
+				$editor->display_name,
+				$modified
+			);
+		}
+
+		return sprintf(
+			/* translators: %s: localized post modified date and time. */
+			__( 'Last edited on %s', 'easymde' ),
+			$modified
+		);
+	}
+
 	private function get_image_upload_config() {
 		return array(
 			'enabled'  => current_user_can( 'upload_files' ),
@@ -579,6 +623,7 @@ final class AdminAssets {
 			'previewError'          => __( 'Preview failed. Please keep writing; saving is not affected.', 'easymde' ),
 			'insertMedia'           => __( 'Insert Media', 'easymde' ),
 			'markdownToolbar'       => __( 'Markdown toolbar', 'easymde' ),
+			'undo'                  => __( 'Undo', 'easymde' ),
 			'appearance'            => __( 'Appearance', 'easymde' ),
 			'font'                  => __( 'Font', 'easymde' ),
 			'headings'              => __( 'Headings', 'easymde' ),
@@ -625,6 +670,8 @@ final class AdminAssets {
 			'mediaDefaultAlt'       => __( 'image', 'easymde' ),
 			'mediaPickerFailed'     => __( 'The WordPress media library could not be opened.', 'easymde' ),
 			'linkText'              => __( 'link text', 'easymde' ),
+			/* translators: %s: Locale-formatted Markdown character count. */
+			'wordCount'             => __( 'Character count: %s', 'easymde' ),
 		);
 	}
 

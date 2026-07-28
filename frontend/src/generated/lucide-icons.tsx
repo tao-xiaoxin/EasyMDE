@@ -79,5 +79,6 @@ export const Table = icon([["path",{"d":"M12 3v18","key":"108xh3"}],["rect",{"wi
 export const Table2 = icon([["path",{"d":"M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18","key":"gugj83"}]]);
 export const Trash2 = icon([["path",{"d":"M3 6h18","key":"d0wm0j"}],["path",{"d":"M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6","key":"4alrt4"}],["path",{"d":"M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2","key":"v07s0e"}],["line",{"x1":"10","x2":"10","y1":"11","y2":"17","key":"1uufr5"}],["line",{"x1":"14","x2":"14","y1":"11","y2":"17","key":"xtxkd"}]]);
 export const Type = icon([["polyline",{"points":"4 7 4 4 20 4 20 7","key":"1nosan"}],["line",{"x1":"9","x2":"15","y1":"20","y2":"20","key":"swin9y"}],["line",{"x1":"12","x2":"12","y1":"4","y2":"20","key":"1tx1rr"}]]);
+export const Undo2 = icon([["path",{"d":"M9 14 4 9l5-5","key":"102s5s"}],["path",{"d":"M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11","key":"f3b9sd"}]]);
 export const Workflow = icon([["rect",{"width":"8","height":"8","x":"3","y":"3","rx":"2","key":"by2w9f"}],["path",{"d":"M7 11v4a2 2 0 0 0 2 2h4","key":"xkn7yn"}],["rect",{"width":"8","height":"8","x":"13","y":"13","rx":"2","key":"1cgmvn"}]]);
 export const X = icon([["path",{"d":"M18 6 6 18","key":"1bl5f8"}],["path",{"d":"m6 6 12 12","key":"d8bk6v"}]]);

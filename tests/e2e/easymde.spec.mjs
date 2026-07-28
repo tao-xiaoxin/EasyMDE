@@ -6,7 +6,8 @@ import { runCleanupSteps } from './support/run-cleanup-steps.mjs';
 
 const wpPath = process.env.EASYMDE_E2E_WP_PATH;
 const wpCli = process.env.EASYMDE_E2E_WP_CLI || 'wp';
-const adminPassword = 'EasyMDE-e2e-pass-1!';
+const adminUser = requiredEnvironment('WORDPRESS_ADMIN_USER');
+const adminPassword = requiredEnvironment('WORDPRESS_ADMIN_PASSWORD');
 const fullCapabilityMarkdown = readFileSync(
   new URL('../../docs/examples/markdown-full-capability-test.md', import.meta.url),
   'utf8'
@@ -53,6 +54,16 @@ const managedRuntimeAssets = [
     matches: (pathname) => pathname.endsWith('/assets/js/frontend/mermaid.js')
   }
 ];
+
+function requiredEnvironment(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} must be set in the root .env or the process environment.`);
+  }
+
+  return value;
+}
+
 function collectRuntimeAssetRequests(page) {
   const requests = [];
   const runtimeResourceTypes = new Set(['font', 'script', 'stylesheet']);
@@ -117,7 +128,7 @@ function testSlug(testInfo) {
 }
 
 function createUser(slug, role = 'administrator') {
-  const username = `${slug}-user`;
+  const username = `${adminUser}-${slug}-user`;
   const email = `${slug}@example.test`;
   const userId = runWp([
     'user',

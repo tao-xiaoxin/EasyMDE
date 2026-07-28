@@ -1,5 +1,11 @@
 import { createElement } from '@wordpress/element';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -387,10 +393,25 @@ describe('AppearanceControls', () => {
 
   it('renders only server-scoped authored CSS in the live preview', async () => {
     const user = userEvent.setup();
-    const previewCustomCss = vi.fn().mockResolvedValue({
-      scopedCss:
-        '.easymde-immersive-workspace__custom-css-preview-content h2 { color: rgb(18, 171, 52); }',
-      status: 'ready'
+    const authoredCss = 'h2 { color: #12ab34; }';
+    const invalidCss = `${authoredCss}{`;
+    const unavailableCss = `${authoredCss}{{`;
+    const repeatedInvalidCss = `${authoredCss}{{{`;
+    const previewCustomCss = vi.fn().mockImplementation((css: string) => {
+      if (css.includes(repeatedInvalidCss)) {
+        return Promise.resolve({ status: 'invalid' });
+      }
+      if (css.includes(unavailableCss)) {
+        return Promise.reject(new Error('synthetic-network-error'));
+      }
+      if (css.includes(invalidCss)) {
+        return Promise.resolve({ status: 'invalid' });
+      }
+      return Promise.resolve({
+        scopedCss:
+          '.easymde-immersive-workspace__custom-css-preview-content h2 { color: rgb(18, 171, 52); }',
+        status: 'ready'
+      });
     });
     render(
       <AppearanceControls
@@ -408,12 +429,11 @@ describe('AppearanceControls', () => {
       screen.getByRole('button', { name: /Custom CSS code/ })
     );
     const editor = screen.getByRole('textbox', { name: 'Custom CSS code' });
-    await user.type(editor, 'h2 {{ color: #12ab34; }}');
+    fireEvent.change(editor, { target: { value: authoredCss } });
+    expect((editor as HTMLTextAreaElement).value).toBe(authoredCss);
 
     await waitFor(() => {
-      expect(previewCustomCss.mock.calls.at(-1)?.[0]).toContain(
-        'h2 { color: #12ab34; }'
-      );
+      expect(previewCustomCss.mock.calls.at(-1)?.[0]).toContain(authoredCss);
     });
     await waitFor(() => {
       expect(
@@ -428,34 +448,37 @@ describe('AppearanceControls', () => {
     const validPreview = document.querySelector(
       '.easymde-immersive-custom-css-preview style'
     )?.textContent;
-    const requestCount = previewCustomCss.mock.calls.length;
-    previewCustomCss.mockResolvedValueOnce({ status: 'invalid' });
-    await user.type(editor, '{{');
-    await waitFor(() =>
-      expect(previewCustomCss.mock.calls.length).toBeGreaterThan(requestCount)
-    );
-    expect(screen.getByRole('status').textContent).toBe(
-      'Fix invalid CSS to update the live preview.'
-    );
+    fireEvent.change(editor, { target: { value: invalidCss } });
+    expect((editor as HTMLTextAreaElement).value).toBe(invalidCss);
+    await waitFor(() => {
+      expect(previewCustomCss.mock.calls.at(-1)?.[0]).toContain(invalidCss);
+      expect(screen.getByRole('status').textContent).toBe(
+        'Fix invalid CSS to update the live preview.'
+      );
+    });
     expect(
       document.querySelector(
         '.easymde-immersive-custom-css-preview style'
       )?.textContent
     ).toBe(validPreview);
-    previewCustomCss.mockRejectedValueOnce(new Error('synthetic-network-error'));
-    await user.type(editor, '{{');
-    await waitFor(() =>
+    fireEvent.change(editor, { target: { value: unavailableCss } });
+    expect((editor as HTMLTextAreaElement).value).toBe(unavailableCss);
+    await waitFor(() => {
+      expect(previewCustomCss.mock.calls.at(-1)?.[0]).toContain(unavailableCss);
       expect(
         screen.getByRole('status').textContent
-      ).toBe('Live preview is temporarily unavailable.')
-    );
-    previewCustomCss.mockResolvedValueOnce({ status: 'invalid' });
-    await user.type(editor, '{{');
-    await waitFor(() =>
+      ).toBe('Live preview is temporarily unavailable.');
+    });
+    fireEvent.change(editor, { target: { value: repeatedInvalidCss } });
+    expect((editor as HTMLTextAreaElement).value).toBe(repeatedInvalidCss);
+    await waitFor(() => {
+      expect(previewCustomCss.mock.calls.at(-1)?.[0]).toContain(
+        repeatedInvalidCss
+      );
       expect(
         screen.getByRole('status').textContent
-      ).toBe('Fix invalid CSS to update the live preview.')
-    );
+      ).toBe('Fix invalid CSS to update the live preview.');
+    });
     expect(
       document.querySelector(
         '.easymde-immersive-custom-css-preview style'

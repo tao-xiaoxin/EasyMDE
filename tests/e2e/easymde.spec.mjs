@@ -1447,7 +1447,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     const expectedStatus = await page.evaluate((value) => {
       const status = window.EasyMDEEditorRootBootstrap.layout.status;
-      const count = value.replace(/\s/gu, '').length.toLocaleString(
+      const count = value.length.toLocaleString(
         window.EasyMDEEditorRootBootstrap.localDrafts.locale.replace('_', '-')
       );
       return {

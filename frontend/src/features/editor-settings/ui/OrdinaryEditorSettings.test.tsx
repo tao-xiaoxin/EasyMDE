@@ -1,5 +1,5 @@
 import { createElement } from '@wordpress/element';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -151,5 +151,22 @@ describe('OrdinaryEditorSettings', () => {
 
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it('does not intercept Escape consumed by a nested control', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    const trigger = screen.getByRole('button', { name: 'Editor settings' });
+
+    await user.click(trigger);
+    const select = screen.getByRole('combobox', { name: 'Article theme' });
+    select.addEventListener('keydown', (event) => {
+      if ('Escape' === event.key) event.stopPropagation();
+    });
+
+    fireEvent.keyDown(select, { key: 'Escape' });
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(select);
   });
 });

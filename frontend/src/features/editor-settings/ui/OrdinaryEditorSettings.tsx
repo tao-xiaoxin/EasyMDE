@@ -21,7 +21,7 @@ import {
 } from '../../font-controls/ui/FontControls';
 
 export type OrdinaryEditorSettingsSession = Readonly<{
-  close: () => void;
+  close: (focusTarget?: HTMLElement) => void;
 }>;
 
 type Props = Readonly<{
@@ -54,8 +54,13 @@ export function OrdinaryEditorSettings({
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const sessionRef = useRef<OrdinaryEditorSettingsSession>({
-    close: () => {
-      if (activeRef.current) setIsOpen(false);
+    close: (focusTarget) => {
+      if (!activeRef.current) return;
+      const activeElement = panelRef.current?.ownerDocument.activeElement;
+      if (activeElement && panelRef.current?.contains(activeElement)) {
+        (focusTarget ?? triggerRef.current)?.focus();
+      }
+      setIsOpen(false);
     }
   });
 
@@ -95,7 +100,7 @@ export function OrdinaryEditorSettings({
       ) {
         return;
       }
-      setIsOpen(false);
+      sessionRef.current.close();
     };
     const closeForEscape = (event: KeyboardEvent) => {
       if ('Escape' !== event.key) return;
@@ -128,11 +133,11 @@ export function OrdinaryEditorSettings({
     };
 
     documentRef.addEventListener('click', closeForPointer);
-    windowRef.addEventListener('keydown', closeForEscape, true);
+    windowRef.addEventListener('keydown', closeForEscape);
     windowRef.addEventListener('keydown', containKeyboardFocus, true);
     return () => {
       documentRef.removeEventListener('click', closeForPointer);
-      windowRef.removeEventListener('keydown', closeForEscape, true);
+      windowRef.removeEventListener('keydown', closeForEscape);
       windowRef.removeEventListener('keydown', containKeyboardFocus, true);
     };
   }, [isOpen]);

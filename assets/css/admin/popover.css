@@ -150,14 +150,27 @@
 
 .easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-toolbar-popover {
     box-sizing: border-box;
-    right: auto;
-    left: 0;
+    inset-inline-end: auto;
+    inset-inline-start: 0;
     width: 208px;
     min-width: 208px;
     max-width: calc(100vw - 48px);
     padding: 7px;
     border-radius: 12px;
     box-shadow: 0 12px 26px rgba(15, 23, 42, 0.16);
+}
+
+.easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-toolbar-popover::before {
+    content: "";
+    position: absolute;
+    top: -8px;
+    inset-inline-start: 20px;
+    width: 14px;
+    height: 14px;
+    border-top: 1px solid #d0d7de;
+    border-left: 1px solid #d0d7de;
+    background: #fff;
+    transform: rotate(45deg);
 }
 
 .easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-popover-item {

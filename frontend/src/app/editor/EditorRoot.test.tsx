@@ -3594,9 +3594,12 @@ describe('EditorRoot', () => {
     fireEvent.click(settings);
     expect(settings.getAttribute('aria-expanded')).toBe('true');
 
-    fireEvent.click(headings);
+    fireEvent.mouseDown(headings);
+    fireEvent.click(headings, { detail: 1 });
     expect(settings.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(view.getByRole('menuitem', { name: 'Heading 1' }));
+    const headingItem = view.getByRole('menuitem', { name: 'Heading 1' });
+    expect(document.activeElement).toBe(headings);
+    fireEvent.click(headingItem);
   });
 
   it('renders Preview from the current Appearance state', async () => {

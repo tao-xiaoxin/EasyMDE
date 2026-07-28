@@ -188,7 +188,7 @@ type ActiveToolbarProps = Readonly<{
   executeExternalCommand: EditorRootProps['executeExternalCommand'];
   platform: ToolbarPlatform;
   prepareToolbarShortcuts: EditorRootProps['prepareToolbarShortcuts'];
-  onPopoverOpen: () => void;
+  onPopoverOpen: (focusTarget?: HTMLElement) => void;
   onReady: (session: EditorToolbarSession) => void;
   session: EditorDocumentSession;
   toolbar: ToolbarBootstrap;
@@ -663,10 +663,10 @@ export function EditorRoot(props: EditorRootProps) {
     },
     []
   );
-  const closeForToolbar = useCallback(() => {
+  const closeForToolbar = useCallback((focusTarget?: HTMLElement) => {
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
-    ordinarySettingsSessionRef.current?.close();
+    ordinarySettingsSessionRef.current?.close(focusTarget);
   }, []);
   const schedulePreviewMarkdown = useCallback(
     (markdown: string, immediate = false): string => {

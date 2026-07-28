@@ -34,7 +34,7 @@ type EditorToolbarProps = Readonly<{
   canUndo?: boolean;
   platform: ToolbarPlatform;
   executeCommand: (commandId: string) => void;
-  onPopoverOpen?: () => void;
+  onPopoverOpen?: (focusTarget?: HTMLElement) => void;
   onReady?: (session: EditorToolbarSession) => void;
   undo?: () => void;
   variant?: 'default' | 'immersive';
@@ -173,7 +173,7 @@ type HeadingMenuProps = Readonly<{
   shortcuts: Readonly<Record<string, string>>;
   executeCommand: (commandId: string) => void;
   isOpen: boolean;
-  onOpen: () => void;
+  onOpen: (focusTarget?: HTMLElement) => void;
   setIsOpen: (isOpen: boolean) => void;
   variant: 'default' | 'immersive';
 }>;
@@ -324,7 +324,7 @@ function HeadingMenu({
           const nextIsOpen = !isOpen;
           if (nextIsOpen) {
             positionImmersiveMenu();
-            onOpen();
+            onOpen(triggerRef.current ?? undefined);
             initialFocus.current = 0 === event.detail ? 'first' : 'preserve';
           }
           setIsOpen(nextIsOpen);
@@ -336,7 +336,7 @@ function HeadingMenu({
 
           event.preventDefault();
           positionImmersiveMenu();
-          onOpen();
+          onOpen(triggerRef.current ?? undefined);
           initialFocus.current = 'ArrowUp' === event.key ? 'last' : 'first';
           setIsOpen(true);
         }}
@@ -564,7 +564,7 @@ export function EditorToolbar({
         shortcuts={shortcuts}
         executeCommand={executeCommand}
         isOpen={isHeadingOpen}
-        onOpen={() => onPopoverOpen?.()}
+        onOpen={(focusTarget) => onPopoverOpen?.(focusTarget)}
         setIsOpen={setIsHeadingOpen}
         variant={variant}
       />

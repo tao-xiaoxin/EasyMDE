@@ -40,7 +40,7 @@ const MIN_SPLIT = 20;
 const MAX_SPLIT = 80;
 
 function writingCharacterCount(markdown: string): number {
-  return markdown.replace(/\s/gu, '').length;
+  return markdown.length;
 }
 
 function formatCount(template: string, count: string): string {

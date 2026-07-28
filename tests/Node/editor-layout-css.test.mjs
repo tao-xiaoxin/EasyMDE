@@ -96,7 +96,11 @@ test('ordinary heading menu uses compact geometry without changing immersive sty
   );
   assert.match(
     popover,
-    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover\s*\{[^}]*width:\s*208px;[^}]*padding:\s*7px;/s
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover\s*\{[^}]*inset-inline-end:\s*auto;[^}]*inset-inline-start:\s*0;[^}]*width:\s*208px;[^}]*padding:\s*7px;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover::before\s*\{[^}]*content:\s*"";[^}]*position:\s*absolute;[^}]*top:\s*-8px;[^}]*inset-inline-start:\s*20px;[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*border-top:\s*1px solid #d0d7de;[^}]*border-left:\s*1px solid #d0d7de;[^}]*background:\s*#fff;[^}]*transform:\s*rotate\(45deg\);/s
   );
   assert.match(
     popover,

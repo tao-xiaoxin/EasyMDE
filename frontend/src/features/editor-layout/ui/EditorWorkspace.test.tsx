@@ -51,7 +51,7 @@ describe('EditorWorkspace', () => {
       />
     );
 
-    const count = view.getByText('Character count: 15');
+    const count = view.getByText('Character count: 19');
     expect(count).toBeTruthy();
     expect(count.getAttribute('aria-live')).toBeNull();
     expect(
@@ -65,11 +65,11 @@ describe('EditorWorkspace', () => {
         ?.previousElementSibling?.classList.contains('easymde-workspace')
     ).toBe(true);
 
-    value = 'Three';
+    value = ' \n\t';
     act(() => {
       for (const listener of listeners) listener();
     });
-    expect(view.getByText('Character count: 5')).toBeTruthy();
+    expect(view.getByText('Character count: 3')).toBeTruthy();
   });
 
   it('does not add the ordinary status owner to the immersive resizable workspace', () => {

@@ -35,6 +35,7 @@ export type AppearanceStrings = Readonly<{
   articleTheme: string;
   codeTheme: string;
   customCss: string;
+  customCssDialog: CustomCssDialogStrings;
   customCssTheme: string;
   cssName: string;
   saveCss: string;
@@ -43,10 +44,138 @@ export type AppearanceStrings = Readonly<{
   namedCustomCss: string;
 }>;
 
+const CUSTOM_CSS_DIALOG_STRING_KEYS = [
+  'description',
+  'close',
+  'closeTitle',
+  'articleThemeName',
+  'codeThemeName',
+  'articleNamePlaceholder',
+  'codeNamePlaceholder',
+  'unsavedChanges',
+  'invalidColor',
+  'missingName',
+  'previewTitle',
+  'livePreview',
+  'previewHelp',
+  'themeVariables',
+  'themeVariableCategories',
+  'themeVariablePanelLabel',
+  'customCssCodeTitle',
+  'reset',
+  'expandCode',
+  'shrinkCode',
+  'backToVariables',
+  'saveTarget',
+  'articleCss',
+  'codeCss',
+  'articleCssHelp',
+  'codeCssHelp',
+  'foundationCategory',
+  'blocksCategory',
+  'codeCategory',
+  'alertsCategory',
+  'customCssCode',
+  'customCssCodeHelp',
+  'backToThemeVariables',
+  'cancel',
+  'resetAll',
+  'applyCustomTheme',
+  'defaultArticleName',
+  'defaultCodeName',
+  'colorPickerLabel',
+  'currentThemeVariablesComment',
+  'addCustomRulesComment',
+  'previewHeadingOne',
+  'previewHeadingTwo',
+  'previewBodyText',
+  'previewParagraph',
+  'previewBoldText',
+  'previewItalicText',
+  'previewDeletedText',
+  'previewHighlight',
+  'previewInlineCode',
+  'previewCodeComment',
+  'previewBlockquote',
+  'previewUnorderedItem',
+  'previewCompletedTask',
+  'previewOrderedItem',
+  'previewSecondStep',
+  'previewTableHeader',
+  'previewTableContent',
+  'previewLink',
+  'previewNoteLabel',
+  'previewTipLabel',
+  'previewWarningLabel',
+  'previewCautionLabel',
+  'previewInformation',
+  'previewSuccess',
+  'previewWarning',
+  'previewDanger',
+  'previewDetails',
+  'previewDetailsContent',
+  'previewDefinitionTerm',
+  'previewDefinitionDescription',
+  'previewSupplementalHeading',
+  'previewSupplementalText',
+  'previewFootnote',
+  'previewInlineSeparator',
+  'previewInlineConjunction',
+  'previewSentenceEnd'
+] as const;
+
+export type CustomCssDialogStringKey =
+  typeof CUSTOM_CSS_DIALOG_STRING_KEYS[number];
+
+export type CustomCssDialogStrings = Readonly<
+  Record<CustomCssDialogStringKey, string>
+>;
+
+export type CustomCssVariable = Readonly<{
+  category: 'foundation' | 'blocks' | 'code' | 'alerts';
+  description: string;
+  id: string;
+  label: string;
+}>;
+
+export const CUSTOM_CSS_VARIABLE_IDS = [
+  'primaryColor',
+  'headingColor',
+  'textColor',
+  'mutedColor',
+  'linkColor',
+  'backgroundColor',
+  'borderColor',
+  'emphasisBackground',
+  'selectionBackground',
+  'quoteColor',
+  'quoteBackground',
+  'tableHeaderBackground',
+  'tableStripeBackground',
+  'inlineCodeColor',
+  'inlineCodeBackground',
+  'codeBlockTextColor',
+  'codeBlockBackground',
+  'codeKeywordColor',
+  'codeStringColor',
+  'codeCommentColor',
+  'infoColor',
+  'infoBackground',
+  'successColor',
+  'successBackground',
+  'warningColor',
+  'warningBackground',
+  'dangerColor',
+  'dangerBackground'
+] as const;
+
+export type CustomCssVariableId = typeof CUSTOM_CSS_VARIABLE_IDS[number];
+
 export type AppearanceBootstrap = Readonly<{
   articleThemes: ReadonlyArray<AppearanceOption>;
   codeThemes: ReadonlyArray<AppearanceOption>;
   customCss: ReadonlyArray<CustomCssItem>;
+  customCssVariables: ReadonlyArray<CustomCssVariable>;
   state: AppearanceState;
   strings: AppearanceStrings;
 }>;
@@ -194,7 +323,10 @@ function parseState(
 
 function parseStrings(value: unknown): AppearanceStrings {
   const strings = objectValue(value, 'invalid-appearance-strings');
-  const requiredKeys: ReadonlyArray<keyof AppearanceStrings> = [
+  const requiredKeys: ReadonlyArray<Exclude<
+    keyof AppearanceStrings,
+    'customCssDialog'
+  >> = [
     'appearance',
     'articleTheme',
     'codeTheme',
@@ -206,13 +338,75 @@ function parseStrings(value: unknown): AppearanceStrings {
     'cssSaveFailed',
     'namedCustomCss'
   ];
-  const result = {} as Record<keyof AppearanceStrings, string>;
+  const result = {} as Record<
+    Exclude<keyof AppearanceStrings, 'customCssDialog'>,
+    string
+  >;
 
   for (const key of requiredKeys) {
     result[key] = requiredString(strings[key], 'invalid-appearance-string');
   }
 
-  return result;
+  const dialog = objectValue(
+    strings.customCssDialog,
+    'invalid-custom-css-dialog-strings'
+  );
+  const customCssDialog = {} as Record<CustomCssDialogStringKey, string>;
+  for (const key of CUSTOM_CSS_DIALOG_STRING_KEYS) {
+    customCssDialog[key] = requiredString(
+      dialog[key],
+      'invalid-custom-css-dialog-string'
+    );
+  }
+
+  return { ...result, customCssDialog };
+}
+
+function parseCustomCssVariables(value: unknown): ReadonlyArray<CustomCssVariable> {
+  if (!Array.isArray(value) || 0 === value.length) {
+    throw new AppearanceBootstrapError('invalid-custom-css-variables');
+  }
+
+  const ids = new Set<string>();
+  const variables = value.map((entry) => {
+    const variable = objectValue(entry, 'invalid-custom-css-variable');
+    const id = requiredString(
+      variable.id,
+      'invalid-custom-css-variable-id',
+      64
+    );
+    if (!CUSTOM_CSS_VARIABLE_IDS.includes(id as CustomCssVariableId)) {
+      throw new AppearanceBootstrapError('invalid-custom-css-variable-id');
+    }
+    if (ids.has(id)) {
+      throw new AppearanceBootstrapError('duplicate-custom-css-variable-id');
+    }
+    ids.add(id);
+    const category = requiredString(
+      variable.category,
+      'invalid-custom-css-variable-category'
+    );
+    if (!['foundation', 'blocks', 'code', 'alerts'].includes(category)) {
+      throw new AppearanceBootstrapError('invalid-custom-css-variable-category');
+    }
+
+    return {
+      id,
+      category: category as CustomCssVariable['category'],
+      label: requiredString(
+        variable.label,
+        'invalid-custom-css-variable-label'
+      ),
+      description: requiredString(
+        variable.description,
+        'invalid-custom-css-variable-description'
+      )
+    };
+  });
+  if (ids.size !== CUSTOM_CSS_VARIABLE_IDS.length) {
+    throw new AppearanceBootstrapError('invalid-custom-css-variables');
+  }
+  return variables;
 }
 
 export function parseAppearanceBootstrap(value: unknown): AppearanceBootstrap {
@@ -225,6 +419,7 @@ export function parseAppearanceBootstrap(value: unknown): AppearanceBootstrap {
     articleThemes,
     codeThemes,
     customCss,
+    customCssVariables: parseCustomCssVariables(bootstrap.customCssVariables),
     state: parseState(bootstrap.state, articleThemes, codeThemes),
     strings: parseStrings(bootstrap.strings)
   };

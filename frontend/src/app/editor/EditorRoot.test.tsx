@@ -20,6 +20,10 @@ import type {
   EditorSessionPort,
   EditorSessionStatus
 } from '../../contracts/ports/editor-session-port';
+import {
+  customCssDialogStrings,
+  customCssVariables
+} from '../../test/fixtures/appearance-bootstrap';
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
 import { createWordPressNativeSubmissionPort } from '../../integrations/wordpress/native-form/wordpress-native-submission';
 import { EditorRoot, type EditorRootProps } from './EditorRoot';
@@ -112,6 +116,7 @@ function fixture(): EditorRootProps &
         { id: 'github', label: 'GitHub' }
       ],
       customCss: [],
+      customCssVariables,
       state: {
         codeTheme: 'atom-one-dark',
         customCssId: '',
@@ -126,6 +131,7 @@ function fixture(): EditorRootProps &
         cssSaved: 'CSS saved',
         customCss: 'Custom CSS',
         customCssTheme: 'Custom CSS theme',
+        customCssDialog: customCssDialogStrings,
         namedCustomCss: 'Named CSS',
         saveCss: 'Save CSS'
       }

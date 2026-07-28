@@ -31,6 +31,19 @@ export const frontendRuntimeAssets = [
     ].map(([source, destination, type]) => ({ source, destination, type }))
   },
   {
+    id: 'inter-variable-font',
+    displayName: 'Inter variable font',
+    packageName: '@fontsource-variable/inter',
+    bundledPaths: 'assets/vendor/fonts/inter-variable/',
+    purpose: 'Local reference-matched font for immersive Custom CSS tabs.',
+    noticeLocation: 'assets/vendor/fonts/inter-variable/LICENSE',
+    managedRoot: 'assets/vendor/fonts/inter-variable',
+    copies: [
+      ['node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2', 'assets/vendor/fonts/inter-variable/inter-latin-wght-normal.woff2', 'file'],
+      ['node_modules/@fontsource-variable/inter/LICENSE', 'assets/vendor/fonts/inter-variable/LICENSE', 'file']
+    ].map(([source, destination, type]) => ({ source, destination, type }))
+  },
+  {
     id: 'jetbrains-mono-font',
     displayName: 'JetBrains Mono font',
     packageName: '@fontsource/jetbrains-mono',

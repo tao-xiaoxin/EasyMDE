@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AppearanceBootstrap } from '../../../contracts/bootstrap/appearance-bootstrap';
+import {
+  customCssDialogStrings,
+  customCssVariables
+} from '../../../test/fixtures/appearance-bootstrap';
 import { createWordPressAppearancePort } from './create-wordpress-appearance-port';
 
 const assetBaseUrl = 'https://example.test/wp-content/plugins/easymde/';
@@ -21,11 +25,13 @@ function fixture() {
       name: 'Writer CSS',
       scopedCss: '.easymde-rendered-content .note { color: navy; }'
     }],
+    customCssVariables,
     state: { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'default' },
     strings: {
       appearance: 'Appearance', articleTheme: 'Article theme', codeTheme: 'Code theme',
       cssName: 'CSS name', cssSaveFailed: 'CSS save failed', cssSaved: 'CSS saved',
       customCss: 'Custom CSS', customCssTheme: 'Custom CSS theme',
+      customCssDialog: customCssDialogStrings,
       namedCustomCss: 'Named CSS', saveCss: 'Save CSS'
     }
   };

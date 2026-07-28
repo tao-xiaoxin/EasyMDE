@@ -1168,7 +1168,10 @@ test.describe('EasyMDE editor workflows', () => {
 
   test('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
-    const customName = 'E2E CSS ' + testSlug(testInfo);
+    const customThemeSuffix = randomUUID().slice(0, 8);
+    const customName = 'E2E CSS ' + customThemeSuffix;
+    const customCodeName = 'E2E Code ' + customThemeSuffix;
+    const savedCustomName = `${customName} / ${customCodeName}`;
     const customCss = 'p { color: rgb(1, 2, 3); }';
 
     await login(page, user);
@@ -1185,13 +1188,12 @@ test.describe('EasyMDE editor workflows', () => {
       appearance: window.EasyMDEEditorRootBootstrap.appearance.strings.appearance,
       articleTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.articleTheme,
       codeTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.codeTheme,
-      cssName: window.EasyMDEEditorRootBootstrap.appearance.strings.cssName,
       customCss: window.EasyMDEEditorRootBootstrap.appearance.strings.customCss,
+      customCssDialog: window.EasyMDEEditorRootBootstrap.appearance.strings.customCssDialog,
       customCssTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.customCssTheme,
       editorSettings: window.EasyMDEEditorRootBootstrap.strings.immersive.editorSettings,
       font: window.EasyMDEEditorRootBootstrap.fonts.strings.font,
-      immersive: window.EasyMDEEditorRootBootstrap.strings.immersive,
-      saveCss: window.EasyMDEEditorRootBootstrap.appearance.strings.saveCss
+      immersive: window.EasyMDEEditorRootBootstrap.strings.immersive
     }));
     const catalog = await page.evaluate(() => ({
       articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
@@ -1412,20 +1414,39 @@ test.describe('EasyMDE editor workflows', () => {
     await immersiveAppearanceDialog
       .getByRole('button', { name: labels.customCssTheme, exact: true })
       .click();
-    await immersiveAppearanceDialog.getByLabel(labels.cssName).fill(customName);
-    await immersiveAppearanceDialog.getByLabel(labels.customCss).fill(customCss);
+    const customCssDialog = page.getByRole('dialog', {
+      name: labels.customCssTheme
+    });
+    await expect(customCssDialog).toBeVisible();
+    await customCssDialog
+      .getByLabel(labels.customCssDialog.articleThemeName)
+      .fill(customName);
+    await customCssDialog
+      .getByLabel(labels.customCssDialog.codeThemeName)
+      .fill(customCodeName);
+    await customCssDialog
+      .getByRole('button', {
+        name: labels.customCssDialog.customCssCode
+      })
+      .click();
+    await customCssDialog
+      .getByLabel(labels.customCssDialog.customCssCodeTitle)
+      .fill(customCss);
     const customCssResponse = page.waitForResponse(
       (response) => new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/custom-css')
     );
-    await immersiveAppearanceDialog
-      .getByRole('button', { name: labels.saveCss, exact: true })
+    await customCssDialog
+      .getByRole('button', {
+        name: labels.customCssDialog.applyCustomTheme,
+        exact: true
+      })
       .click();
     expect((await customCssResponse).ok()).toBe(true);
+    await expect(customCssDialog).toHaveCount(0);
     await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('custom');
     await expect(page.locator('#easymde-custom-css-id-field')).not.toHaveValue('');
     await expect.poll(() => page.locator('#easymde-custom-css-preview').textContent())
       .toContain('.easymde-rendered-content.easymde-custom-css-active p');
-    await page.keyboard.press('Escape');
     await expect(immersiveAppearanceDialog).toHaveCount(0);
     await immersiveRegion.getByRole('button', { name: labels.immersive.exit }).click();
     await expect(immersiveRegion).toHaveCount(0);
@@ -1433,7 +1454,7 @@ test.describe('EasyMDE editor workflows', () => {
     await settingsTrigger.click();
     await expect(settingsDialog).toBeVisible();
     await expect(articleSelect).toHaveValue(/^custom:/);
-    await expect(articleSelect.locator('option:checked')).toHaveText(customName);
+    await expect(articleSelect.locator('option:checked')).toHaveText(savedCustomName);
     for (const group of catalog.fontGroups) {
       for (const id of group.ids) {
         await settingsDialog.locator(group.select).selectOption(id);

@@ -15,6 +15,7 @@ import type {
 } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type { AppearancePort } from '../../../contracts/ports/appearance-port';
 import { referenceArticleTheme } from '../reference-article-theme';
+import { ImmersiveCustomCssDialog } from './ImmersiveCustomCssDialog';
 import {
   Check,
   ChevronDown,
@@ -344,6 +345,7 @@ export function AppearanceControls({
     close: () => {
       if (activeRef.current) {
         setIsOpen(false);
+        setIsCustomOpen(false);
       }
     },
     replaceSnapshot: (nextSnapshot) => replaceSnapshotRef.current(nextSnapshot)
@@ -425,17 +427,31 @@ export function AppearanceControls({
   const openCustomPanel = () => {
     const nextOpen = !isCustomOpen;
     setIsCustomOpen(nextOpen);
+    if ('immersive' === variant && nextOpen) {
+      setIsOpen(false);
+    }
     setStatus('');
     if (nextOpen) {
-      const item = selectedCustomCss(snapshotRef.current);
-      setCustomName(item?.name ?? '');
-      setCustomCode(item?.css ?? '');
+      if ('immersive' === variant) {
+        setCustomName('');
+        setCustomCode('');
+      } else {
+        const item = selectedCustomCss(snapshotRef.current);
+        setCustomName(item?.name ?? '');
+        setCustomCode(item?.css ?? '');
+      }
     }
   };
 
-  const saveCustomCss = async () => {
+  const saveCustomCss = async (
+    input: Readonly<{ name: string; css: string }> = {
+      name: customName,
+      css: customCode
+    },
+    requestedId?: string
+  ): Promise<boolean> => {
     if (savingRef.current) {
-      return;
+      return false;
     }
     savingRef.current = true;
     setIsSaving(true);
@@ -443,15 +459,16 @@ export function AppearanceControls({
 
     try {
       const result = await port.saveCustomCss({
-        id:
-          'custom' === snapshotRef.current.state.markdownTheme
+        id: undefined !== requestedId
+          ? requestedId
+          : 'custom' === snapshotRef.current.state.markdownTheme
             ? snapshotRef.current.state.customCssId
             : '',
-        name: customName,
-        css: customCode
+        name: input.name,
+        css: input.css
       });
       if (!activeRef.current) {
-        return;
+        return false;
       }
       if ('saved' === result.status) {
         const nextSnapshot = {
@@ -467,18 +484,21 @@ export function AppearanceControls({
         };
         if (!applyState(nextSnapshot.state)) {
           setStatus(bootstrap.strings.cssSaveFailed);
-          return;
+          return false;
         }
         replaceSnapshot(nextSnapshot);
         setStatus(bootstrap.strings.cssSaved);
+        return true;
       } else {
         setStatus(bootstrap.strings.cssSaveFailed);
+        return false;
       }
     } catch {
       if (activeRef.current) {
         setStatus(bootstrap.strings.cssSaveFailed);
         onFailure();
       }
+      return false;
     } finally {
       savingRef.current = false;
       if (activeRef.current) {
@@ -520,7 +540,7 @@ export function AppearanceControls({
           type="button"
           className="button button-primary"
           disabled={isSaving}
-          onClick={saveCustomCss}
+          onClick={() => void saveCustomCss()}
         >
           {bootstrap.strings.saveCss}
         </button>
@@ -774,24 +794,44 @@ export function AppearanceControls({
                   );
                 }}
               />
-              <div className="easymde-immersive-custom-css-action">
-                <button
-                  type="button"
-                  className="easymde-immersive-custom-css-trigger"
-                  aria-expanded={isCustomOpen}
-                  onClick={openCustomPanel}
-                >
-                  <PenLine size={17} strokeWidth={2.1} aria-hidden="true" />
-                  {bootstrap.strings.customCssTheme}
-                </button>
-              </div>
+              {bootstrap.canManageCustomCss ? (
+                <div className="easymde-immersive-custom-css-action">
+                  <button
+                    type="button"
+                    className="easymde-immersive-custom-css-trigger"
+                    aria-expanded={isCustomOpen}
+                    onClick={openCustomPanel}
+                  >
+                    <PenLine size={17} strokeWidth={2.1} aria-hidden="true" />
+                    {bootstrap.strings.customCssTheme}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </Fragment>
         ) : (
           ordinaryFields
         )}
-        {customCssPanel}
+        {'default' === variant ? customCssPanel : null}
       </div>
+      {'immersive' === variant &&
+      bootstrap.canManageCustomCss &&
+      isCustomOpen ? (
+        <ImmersiveCustomCssDialog
+          initialCss={customCode}
+          initialName={customName}
+          onApply={(input) => saveCustomCss(input, '')}
+          onClose={() => {
+            setIsCustomOpen(false);
+            triggerRef.current?.focus();
+          }}
+          onPreview={port.previewCustomCss}
+          saveFailedMessage={bootstrap.strings.cssSaveFailed}
+          strings={bootstrap.strings.customCssDialog}
+          title={bootstrap.strings.customCssTheme}
+          variables={bootstrap.customCssVariables}
+        />
+      ) : null}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import {
 } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type {
   AppearancePort,
+  CustomCssPreviewResult,
   CustomCssSaveInput,
   CustomCssSaveResult
 } from '../../../contracts/ports/appearance-port';
@@ -29,6 +30,18 @@ type CreateWordPressAppearancePortOptions = Readonly<{
   nonce: string;
   siteUrl: string;
 }>;
+
+const CUSTOM_CSS_VALIDATION_ERRORS = new Set([
+  'easymde_blocked_custom_css',
+  'easymde_custom_css_too_large',
+  'easymde_invalid_custom_css'
+]);
+
+function restErrorCode(error: unknown): string {
+  if (!error || 'object' !== typeof error || Array.isArray(error)) return '';
+  const code = (error as Record<string, unknown>).code;
+  return 'string' === typeof code ? code : '';
+}
 
 function sameOriginUrl(value: string, siteUrl: string, code: string): string {
   try {
@@ -103,6 +116,11 @@ export function createWordPressAppearancePort({
     siteUrl,
     'appearance-custom-css-url-invalid'
   );
+  const previewEndpoint = sameOriginUrl(
+    `${endpoint.replace(/\/$/, '')}/preview`,
+    siteUrl,
+    'appearance-custom-css-preview-url-invalid'
+  );
   const articleThemeUrls = new Map(bootstrap.articleThemes.map((theme) => {
     if (!theme.cssUrl) {
       throw new Error('appearance-article-theme-asset-unavailable');
@@ -155,6 +173,34 @@ export function createWordPressAppearancePort({
   return {
     applyState,
     closeOtherPopovers: () => undefined,
+    async previewCustomCss(
+      css: string,
+      signal: AbortSignal
+    ): Promise<CustomCssPreviewResult> {
+      let response: unknown;
+      try {
+        response = await apiFetch({
+          data: { css },
+          headers: { 'X-WP-Nonce': nonce },
+          method: 'POST',
+          signal,
+          url: previewEndpoint
+        });
+      } catch (error) {
+        if (CUSTOM_CSS_VALIDATION_ERRORS.has(restErrorCode(error))) {
+          return { status: 'invalid' };
+        }
+        throw error;
+      }
+      if (!response || 'object' !== typeof response || Array.isArray(response)) {
+        throw new Error('custom-css-preview-response-invalid');
+      }
+      const scopedCss = (response as Record<string, unknown>).scopedCss;
+      if ('string' !== typeof scopedCss || scopedCss.length > 250_000) {
+        throw new Error('custom-css-preview-response-invalid');
+      }
+      return { scopedCss, status: 'ready' };
+    },
     async saveCustomCss(input: CustomCssSaveInput): Promise<CustomCssSaveResult> {
       let response: unknown;
       try {

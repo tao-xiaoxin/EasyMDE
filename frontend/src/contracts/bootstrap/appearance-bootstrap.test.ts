@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  customCssDialogStrings,
+  customCssVariables
+} from '../../test/fixtures/appearance-bootstrap';
+import {
   type AppearanceBootstrapError,
   parseAppearanceBootstrap,
   parseAppearanceSnapshot
@@ -19,6 +23,7 @@ const bootstrap = {
     },
     { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'fullstack-blue' }
   ],
+  canManageCustomCss: true,
   codeThemeExplicit: false,
   codeThemes: [
     { id: 'atom-one-dark', label: 'Atom One Dark' },
@@ -33,6 +38,7 @@ const bootstrap = {
       scopedCss: '.easymde-rendered-content .note { color: navy; }'
     }
   ],
+  customCssVariables,
   state: {
     markdownTheme: 'default',
     codeTheme: 'atom-one-dark',
@@ -44,6 +50,7 @@ const bootstrap = {
     codeTheme: 'Code theme',
     customCss: 'Custom CSS',
     customCssTheme: 'Custom CSS theme',
+    customCssDialog: customCssDialogStrings,
     cssName: 'CSS name',
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
@@ -67,6 +74,14 @@ describe('parseAppearanceBootstrap', () => {
   });
 
   it.each([
+    {
+      name: 'invalid custom CSS capability',
+      value: {
+        ...bootstrap,
+        canManageCustomCss: 'true'
+      },
+      code: 'invalid-custom-css-capability'
+    },
     {
       name: 'invalid explicit code-theme marker',
       value: {
@@ -122,6 +137,14 @@ describe('parseAppearanceBootstrap', () => {
         strings: { ...bootstrap.strings, customCssTheme: '' }
       },
       code: 'invalid-appearance-string'
+    },
+    {
+      name: 'missing Custom CSS variables',
+      value: {
+        ...bootstrap,
+        customCssVariables: bootstrap.customCssVariables.slice(1)
+      },
+      code: 'invalid-custom-css-variables'
     }
   ])('rejects $name', ({ value, code }) => {
     expect(() => parseAppearanceBootstrap(value)).toThrowError(

@@ -4,6 +4,101 @@ import test from 'node:test';
 
 const css = readFileSync(new URL('../../assets/css/admin/editor.css', import.meta.url), 'utf8');
 
+test('immersive Custom CSS expanded editor is anchored to its dialog', () => {
+  assert.match(
+    css,
+    /\.easymde-immersive-custom-css-dialog\s*\{[^}]*position:\s*relative;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-custom-css-dialog\.is-code-expanded \.easymde-immersive-custom-css-controls\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*36px;/s
+  );
+});
+
+test('immersive Custom CSS tabs own their geometry and interaction states', () => {
+  assert.match(
+    css,
+    /@font-face\s*\{[^}]*font-family:\s*"EasyMDE Inter Variable";[^}]*font-style:\s*normal;[^}]*font-weight:\s*100 900;[^}]*src:\s*url\("\.\.\/\.\.\/vendor\/fonts\/inter-variable\/inter-latin-wght-normal\.woff2"\) format\("woff2"\);/s
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-immersive-secondary-actions button\s*\{/,
+    'toolbar button geometry must not leak into descendant dialogs'
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-secondary-actions > button\s*\{[^}]*height:\s*30px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-custom-css-categories button,[\s\S]*?\.easymde-immersive-custom-css-targets button\s*\{[^}]*display:\s*block;[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*padding:\s*0;[^}]*border:\s*0;[^}]*border-radius:\s*5px;[^}]*color:\s*#69778e;[^}]*font-family:\s*"EasyMDE Inter Variable", system-ui, sans-serif;[^}]*font-size:\s*12px;[^}]*font-weight:\s*500;[^}]*line-height:\s*18px;[^}]*cursor:\s*default;[^}]*transition-property:\s*background-color, color, box-shadow;[^}]*transition-duration:\s*150ms;[^}]*transition-timing-function:\s*cubic-bezier\(\.4, 0, \.2, 1\);/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-custom-css-categories button\[aria-selected="false"\]:hover\s*\{[^}]*background:\s*rgba\(255, 255, 255, \.6\);[^}]*color:\s*#3e4d65;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-custom-css-targets button\[aria-selected="false"\]:hover\s*\{[^}]*background:\s*rgba\(255, 255, 255, \.6\);/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-custom-css-categories button:focus-visible,[\s\S]*?\.easymde-immersive-custom-css-targets button:focus-visible\s*\{[^}]*outline:\s*0;[^}]*box-shadow:\s*0 0 0 2px #cfe0ff;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-custom-css-categories button\[aria-selected="true"\]:focus-visible,[\s\S]*?\.easymde-immersive-custom-css-targets button\[aria-selected="true"\]:focus-visible\s*\{[^}]*box-shadow:\s*0 0 0 2px #cfe0ff,\s*0 1px 3px rgba\(38, 53, 78, \.1\);/s
+  );
+});
+
+test('immersive Custom CSS toggle separates its label from help text', () => {
+  assert.doesNotMatch(
+    css,
+    /\.easymde-immersive-custom-css-code-toggle\s*>\s*span\s*\{/
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-custom-css-code-toggle-label\s*\{[^}]*box-sizing:\s*border-box;[^}]*display:\s*inline-flex;[^}]*height:\s*34px;[^}]*gap:\s*8px;[^}]*padding:\s*0 10px;[^}]*border:\s*1px solid #d5e0f5;[^}]*border-radius:\s*7px;[^}]*font-size:\s*13px;[^}]*font-weight:\s*500;[^}]*line-height:\s*19\.5px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-custom-css-code-toggle-help\s*\{[^}]*box-sizing:\s*border-box;[^}]*min-width:\s*0;[^}]*margin-inline-start:\s*14px;[^}]*overflow:\s*hidden;[^}]*color:\s*#78859a;[^}]*font-size:\s*12px;[^}]*font-weight:\s*500;[^}]*line-height:\s*18px;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s
+  );
+});
+
+test('immersive Custom CSS preview isolates the native task checkbox', () => {
+  assert.match(
+    css,
+    /\.easymde-custom-theme-preview \.task-item input\s*\{[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*margin:\s*0;[^}]*appearance:\s*auto;[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;[^}]*color:\s*var\(--easymde-text-color\);[^}]*accent-color:\s*var\(--easymde-success-color\);[^}]*font-size:\s*15px;[^}]*line-height:\s*22\.5px;[^}]*vertical-align:\s*baseline;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-custom-theme-preview \.task-item input::before,[\s\S]*?\.easymde-custom-theme-preview \.task-item input::after\s*\{[^}]*display:\s*inline;[^}]*width:\s*auto;[^}]*height:\s*auto;[^}]*margin:\s*0;[^}]*float:\s*none;[^}]*content:\s*none;[^}]*vertical-align:\s*baseline;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-custom-theme-preview \.task-item input\[type="checkbox"\]:checked::before\s*\{[^}]*display:\s*inline;/s
+  );
+});
+
+test('immersive Custom CSS preview owns the reference blockquote border composition', () => {
+  assert.match(
+    css,
+    /\.easymde-custom-theme-preview blockquote\s*\{[^}]*border:\s*0 solid rgba\(15, 23, 42, \.07\);[^}]*border-left:\s*4px solid var\(--easymde-quote-color\);/s
+  );
+});
+
+test('immersive Custom CSS typography preserves the reference tracking', () => {
+  assert.match(
+    css,
+    /#wpbody-content \.easymde-immersive-custom-css-dialog > header h1\s*\{[^}]*font-size:\s*24px;[^}]*letter-spacing:\s*-\.02em;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-custom-theme-preview th\s*\{[^}]*font-size:\s*12px;[^}]*letter-spacing:\s*\.04em;/s
+  );
+});
+
 test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () => {
   assert.doesNotMatch(css, /\.easymde-workspace-shell(?:[^a-z0-9_-]|$)/i);
   assert.match(

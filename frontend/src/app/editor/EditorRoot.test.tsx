@@ -20,6 +20,10 @@ import type {
   EditorSessionPort,
   EditorSessionStatus
 } from '../../contracts/ports/editor-session-port';
+import {
+  customCssDialogStrings,
+  customCssVariables
+} from '../../test/fixtures/appearance-bootstrap';
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
 import { createWordPressNativeSubmissionPort } from '../../integrations/wordpress/native-form/wordpress-native-submission';
 import { EditorRoot, type EditorRootProps } from './EditorRoot';
@@ -107,12 +111,14 @@ function fixture(): EditorRootProps &
         { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
         { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'atom-one-dark' }
       ],
+      canManageCustomCss: true,
       codeThemeExplicit: false,
       codeThemes: [
         { id: 'atom-one-dark', label: 'Atom One Dark' },
         { id: 'github', label: 'GitHub' }
       ],
       customCss: [],
+      customCssVariables,
       state: {
         codeTheme: 'atom-one-dark',
         customCssId: '',
@@ -127,6 +133,7 @@ function fixture(): EditorRootProps &
         cssSaved: 'CSS saved',
         customCss: 'Custom CSS',
         customCssTheme: 'Custom CSS theme',
+        customCssDialog: customCssDialogStrings,
         namedCustomCss: 'Named CSS',
         saveCss: 'Save CSS'
       }
@@ -134,6 +141,10 @@ function fixture(): EditorRootProps &
     appearancePort: {
       applyState: vi.fn(),
       closeOtherPopovers: vi.fn(),
+      previewCustomCss: vi.fn().mockResolvedValue({
+        scopedCss: '',
+        status: 'ready'
+      }),
       saveCustomCss: vi
         .fn()
         .mockResolvedValue({ status: 'failed', code: 'synthetic' })
@@ -2043,10 +2054,7 @@ describe('EditorRoot', () => {
 
     fireEvent.click(view.getByRole('button', { name: '主题' }));
     fireEvent.click(view.getByRole('button', { name: 'Custom CSS theme' }));
-    fireEvent.change(view.getByRole('textbox', { name: 'CSS name' }), {
-      target: { value: 'Saved CSS' }
-    });
-    fireEvent.click(view.getByRole('button', { name: 'Save CSS' }));
+    fireEvent.click(view.getByRole('button', { name: 'Apply theme' }));
 
     await view.findByText('CSS save failed');
     expect(props.appearancePort.saveCustomCss).not.toHaveBeenCalled();
@@ -3836,14 +3844,22 @@ describe('EditorRoot', () => {
     );
     fireEvent.click(view.getByRole('button', { name: '主题' }));
     fireEvent.click(view.getByRole('button', { name: 'Custom CSS theme' }));
-    fireEvent.change(view.getByRole('textbox', { name: 'CSS name' }), {
+    fireEvent.change(view.getByRole('textbox', {
+      name: 'Article theme name'
+    }), {
       target: { value: 'Writer CSS' }
     });
-    fireEvent.change(view.getByRole('textbox', { name: 'Custom CSS' }), {
+    fireEvent.click(view.getByRole('button', { name: /Custom CSS code/ }));
+    fireEvent.change(view.getByRole('textbox', { name: 'Custom CSS code' }), {
       target: { value: '.note { color: navy; }' }
     });
-    fireEvent.click(view.getByRole('button', { name: 'Save CSS' }));
-    await view.findByText('CSS saved');
+    fireEvent.click(view.getByRole('button', { name: 'Apply theme' }));
+    await waitFor(() => {
+      expect(appearancePort.saveCustomCss).toHaveBeenCalledOnce();
+      expect(
+        view.queryByRole('dialog', { name: 'Custom CSS theme' })
+      ).toBeNull();
+    });
 
     fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));

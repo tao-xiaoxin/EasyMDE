@@ -16,8 +16,7 @@
 }
 
 .easymde-toolbar-popover-appearance-panel:not(.is-immersive-panel)::before,
-.easymde-toolbar-popover-font-panel:not(.is-immersive-panel)::before,
-.easymde-toolbar-popover-settings-panel::before {
+.easymde-toolbar-popover-font-panel:not(.is-immersive-panel)::before {
     content: "";
     position: absolute;
     top: -8px;
@@ -31,13 +30,35 @@
 }
 
 .easymde-toolbar-popover-settings-panel {
+    position: fixed;
     box-sizing: border-box;
     width: min(468px, calc(100vw - 32px));
     padding: 0;
-    overflow: visible;
+    overflow-x: visible;
+    overflow-y: auto;
     border-color: #dfe4ea;
     border-radius: 12px;
     box-shadow: 0 14px 30px rgba(15, 23, 42, 0.15);
+}
+
+.easymde-editor-settings-tail {
+    position: fixed;
+    z-index: 31;
+    box-sizing: border-box;
+    width: 14px;
+    height: 14px;
+    background: #fff;
+    transform: rotate(45deg);
+}
+
+.easymde-editor-settings-tail.is-below {
+    border-top: 1px solid #dfe4ea;
+    border-left: 1px solid #dfe4ea;
+}
+
+.easymde-editor-settings-tail.is-above {
+    border-right: 1px solid #dfe4ea;
+    border-bottom: 1px solid #dfe4ea;
 }
 
 .easymde-editor-settings-heading {
@@ -112,6 +133,124 @@
 .easymde-editor-settings-section .easymde-toolbar-control select:focus {
     border-color: #2271b1;
     box-shadow: 0 0 0 1px #2271b1;
+}
+
+.easymde-editor-settings-section .easymde-ordinary-select {
+    position: relative;
+    min-width: 0;
+}
+
+.easymde-editor-settings-section .easymde-ordinary-select-trigger {
+    display: flex;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 36px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 11px 0 12px;
+    border: 1px solid #cfd6df;
+    border-radius: 8px;
+    background: #fbfcfe;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    color: #1f2937;
+    font-size: 13px;
+    font-weight: 450;
+    line-height: 1.35;
+    text-align: start;
+    cursor: pointer;
+}
+
+.easymde-editor-settings-section .easymde-ordinary-select-trigger > span {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.easymde-editor-settings-section .easymde-ordinary-select-trigger svg {
+    flex: 0 0 auto;
+    color: #64748b;
+    transition: transform 120ms ease;
+}
+
+.easymde-editor-settings-section .easymde-ordinary-select-trigger[aria-expanded="true"] svg {
+    transform: rotate(180deg);
+}
+
+.easymde-editor-settings-section .easymde-ordinary-select-trigger:hover {
+    border-color: #9aa7b6;
+    background: #fff;
+}
+
+.easymde-editor-settings-section .easymde-ordinary-select-trigger:focus-visible {
+    border-color: #2271b1;
+    outline: 0;
+    box-shadow: 0 0 0 1px #2271b1;
+}
+
+.easymde-ordinary-select-options {
+    z-index: 100200;
+    box-sizing: border-box;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 5px;
+    border: 1px solid #d8dee7;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
+    color: #1f2937;
+    overscroll-behavior: contain;
+}
+
+.easymde-ordinary-select-group {
+    padding: 7px 9px 4px;
+    color: #7a8797;
+    font-size: 11px;
+    font-weight: 650;
+    line-height: 1.25;
+}
+
+.easymde-ordinary-select-options [role="option"] {
+    display: grid;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 34px;
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: center;
+    gap: 7px;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #263342;
+    font-size: 13px;
+    line-height: 1.35;
+    text-align: start;
+    cursor: pointer;
+}
+
+.easymde-ordinary-select-options [role="option"] > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.easymde-ordinary-select-options [role="option"].is-active {
+    background: #eef5fb;
+    color: #135e96;
+}
+
+.easymde-ordinary-select-options [role="option"][aria-selected="true"] {
+    font-weight: 600;
+}
+
+.easymde-ordinary-select-check {
+    display: grid;
+    width: 18px;
+    height: 18px;
+    place-items: center;
+    color: #2271b1;
 }
 
 .easymde-editor-settings-section .easymde-toolbar-help {

@@ -21,6 +21,7 @@ import {
   Palette,
   PenLine
 } from '../../../generated/lucide-icons';
+import { OrdinarySelect } from '../../../shared/ui/OrdinarySelect';
 
 export type AppearanceControlsSession = Readonly<{
   close: () => void;
@@ -460,6 +461,21 @@ export function AppearanceControls({
       swatch: CODE_THEME_SWATCHES[theme.id] ?? ['#F4F4F4', '#333333']
     })
   );
+  const selectArticleTheme = (value: string) => {
+    if (value.startsWith('custom:')) {
+      applyState({
+        ...snapshotRef.current.state,
+        markdownTheme: 'custom',
+        customCssId: value.slice(7)
+      });
+    } else {
+      applyState({
+        ...snapshotRef.current.state,
+        markdownTheme: value.slice(6),
+        customCssId: ''
+      });
+    }
+  };
   const ordinaryFields = (
     <Fragment>
       <label className="easymde-toolbar-control">
@@ -469,22 +485,7 @@ export function AppearanceControls({
         <select
           className="easymde-theme-select"
           value={selectedArticleValue(snapshot)}
-          onChange={(event) => {
-            const value = event.currentTarget.value;
-            if (value.startsWith('custom:')) {
-              applyState({
-                ...snapshotRef.current.state,
-                markdownTheme: 'custom',
-                customCssId: value.slice(7)
-              });
-            } else {
-              applyState({
-                ...snapshotRef.current.state,
-                markdownTheme: value.slice(6),
-                customCssId: ''
-              });
-            }
-          }}
+          onChange={(event) => selectArticleTheme(event.currentTarget.value)}
         >
           {bootstrap.articleThemes.map((theme) => (
             <option key={theme.id} value={`theme:${theme.id}`}>
@@ -531,7 +532,42 @@ export function AppearanceControls({
       <section className="easymde-editor-settings-section is-appearance">
         <h3>{bootstrap.strings.appearance}</h3>
         <div className="easymde-editor-settings-fields">
-          {ordinaryFields}
+          <div className="easymde-toolbar-control">
+            <span className="easymde-toolbar-control-label">
+              {bootstrap.strings.articleTheme}
+            </span>
+            <OrdinarySelect
+              className="easymde-theme-select"
+              label={bootstrap.strings.articleTheme}
+              value={selectedArticleValue(snapshot)}
+              options={[
+                ...bootstrap.articleThemes.map((theme) => ({
+                  id: `theme:${theme.id}`,
+                  label: theme.label
+                })),
+                ...snapshot.customCss.map((item) => ({
+                  group: bootstrap.strings.namedCustomCss,
+                  id: `custom:${item.id}`,
+                  label: item.name
+                }))
+              ]}
+              onChange={selectArticleTheme}
+            />
+          </div>
+          <div className="easymde-toolbar-control">
+            <span className="easymde-toolbar-control-label">
+              {bootstrap.strings.codeTheme}
+            </span>
+            <OrdinarySelect
+              className="easymde-code-theme-select"
+              label={bootstrap.strings.codeTheme}
+              value={snapshot.state.codeTheme}
+              options={bootstrap.codeThemes}
+              onChange={(codeTheme) =>
+                applyState({ ...snapshotRef.current.state, codeTheme })
+              }
+            />
+          </div>
         </div>
       </section>
     );

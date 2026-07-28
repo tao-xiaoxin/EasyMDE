@@ -80,7 +80,7 @@ test('ordinary editor settings combines theme and font controls in one responsiv
   );
   assert.match(
     popover,
-    /\.easymde-toolbar-popover-settings-panel::before\s*\{[^}]*content:\s*"";[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*transform:\s*rotate\(45deg\);/s
+    /\.easymde-editor-settings-tail\s*\{[^}]*position:\s*fixed;[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*transform:\s*rotate\(45deg\);/s
   );
   assert.match(
     popover,
@@ -91,8 +91,12 @@ test('ordinary editor settings combines theme and font controls in one responsiv
     /\.easymde-editor-settings-fields\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/s
   );
   assert.match(
-    css,
-    /@media \(max-width:\s*782px\)[\s\S]*?\.easymde-toolbar-popover-settings-panel::before\s*\{[^}]*left:\s*24px;/s
+    popover,
+    /\.easymde-editor-settings-tail\.is-below\s*\{[^}]*border-top:\s*1px solid #dfe4ea;[^}]*border-left:\s*1px solid #dfe4ea;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-editor-settings-tail\.is-above\s*\{[^}]*border-right:\s*1px solid #dfe4ea;[^}]*border-bottom:\s*1px solid #dfe4ea;/s
   );
 });
 

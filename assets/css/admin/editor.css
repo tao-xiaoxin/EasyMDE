@@ -1386,8 +1386,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 
     .easymde-toolbar-popover-appearance-panel:not(.is-immersive-panel)::before,
-    .easymde-toolbar-popover-font-panel:not(.is-immersive-panel)::before,
-    .easymde-toolbar-popover-settings-panel::before {
+    .easymde-toolbar-popover-font-panel:not(.is-immersive-panel)::before {
         right: auto;
         left: 24px;
     }
@@ -1399,8 +1398,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 
     .easymde-toolbar-popover-font,
-    .easymde-toolbar-popover-appearance,
-    .easymde-toolbar-popover-settings {
+    .easymde-toolbar-popover-appearance {
         position: static;
     }
 

@@ -18,6 +18,7 @@ import {
   ChevronDown,
   Type
 } from '../../../generated/lucide-icons';
+import { OrdinarySelect } from '../../../shared/ui/OrdinarySelect';
 
 export type FontControlsSession = Readonly<{
   close: () => void;
@@ -336,7 +337,54 @@ export function FontControls({
       <section className="easymde-editor-settings-section is-font">
         <h3>{bootstrap.strings.font}</h3>
         <div className="easymde-editor-settings-fields">
-          {ordinaryFields}
+          <div className="easymde-toolbar-control">
+            <span className="easymde-toolbar-control-label">
+              {bootstrap.strings.customFont}
+            </span>
+            <OrdinarySelect
+              className="easymde-custom-font-select"
+              label={bootstrap.strings.customFont}
+              options={bootstrap.options.customFonts}
+              value={state.customFont}
+              onChange={(selected) => select('customFont', selected)}
+            />
+          </div>
+          <div className="easymde-toolbar-control">
+            <span className="easymde-toolbar-control-label">
+              {bootstrap.strings.windowsFont}
+            </span>
+            <OrdinarySelect
+              className="easymde-windows-font-select"
+              label={bootstrap.strings.windowsFont}
+              options={bootstrap.options.windowsFonts}
+              value={state.windowsFont}
+              onChange={(selected) => select('windowsFont', selected)}
+            />
+          </div>
+          <div className="easymde-toolbar-control">
+            <span className="easymde-toolbar-control-label">
+              {bootstrap.strings.appleFont}
+            </span>
+            <OrdinarySelect
+              className="easymde-apple-font-select"
+              label={bootstrap.strings.appleFont}
+              options={bootstrap.options.appleFonts}
+              value={state.appleFont}
+              onChange={(selected) => select('appleFont', selected)}
+            />
+          </div>
+          <div className="easymde-toolbar-control">
+            <span className="easymde-toolbar-control-label">
+              {bootstrap.strings.serifFont}
+            </span>
+            <OrdinarySelect
+              className="easymde-serif-font-select"
+              label={bootstrap.strings.serifFont}
+              options={bootstrap.options.serifOptions}
+              value={state.serifFont}
+              onChange={(selected) => select('serifFont', selected)}
+            />
+          </div>
         </div>
         <p className="easymde-toolbar-help">
           {bootstrap.strings.fontStackHelp}

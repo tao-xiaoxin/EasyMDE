@@ -224,9 +224,17 @@ describe('AppearanceControls', () => {
       '.easymde-custom-theme-preview'
     );
     expect(preview).not.toBeNull();
-    expect(preview?.querySelector('pre > code.code-block')?.textContent).toContain(
-      'Hello, EasyMDE!'
+    const previewCode = preview?.querySelector('pre > code.code-block.hljs');
+    expect(previewCode?.textContent).toContain('Hello, EasyMDE!');
+    expect(previewCode?.querySelector('.hljs-keyword')?.textContent).toBe(
+      'const'
     );
+    expect(previewCode?.querySelector('.hljs-string')).not.toBeNull();
+    expect(previewCode?.querySelector('.hljs-comment')).not.toBeNull();
+    expect(previewCode?.querySelector('.hljs-title.function_')?.textContent).toBe(
+      'renderTheme'
+    );
+    expect(previewCode?.querySelector('[class^="token-"]')).toBeNull();
     expect(preview?.querySelector('a')?.textContent).toContain('Link preview');
     expect(preview?.querySelector('dl')?.textContent).toContain(
       'Definition list'
@@ -457,6 +465,11 @@ describe('AppearanceControls', () => {
       );
     });
     expect(
+      (screen.getByRole('button', {
+        name: 'Apply theme'
+      }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    expect(
       document.querySelector(
         '.easymde-immersive-custom-css-preview style'
       )?.textContent
@@ -469,6 +482,11 @@ describe('AppearanceControls', () => {
         screen.getByRole('status').textContent
       ).toBe('Live preview is temporarily unavailable.');
     });
+    expect(
+      (screen.getByRole('button', {
+        name: 'Apply theme'
+      }) as HTMLButtonElement).disabled
+    ).toBe(false);
     fireEvent.change(editor, { target: { value: repeatedInvalidCss } });
     expect((editor as HTMLTextAreaElement).value).toBe(repeatedInvalidCss);
     await waitFor(() => {
@@ -479,6 +497,11 @@ describe('AppearanceControls', () => {
         screen.getByRole('status').textContent
       ).toBe('Fix invalid CSS to update the live preview.');
     });
+    expect(
+      (screen.getByRole('button', {
+        name: 'Apply theme'
+      }) as HTMLButtonElement).disabled
+    ).toBe(true);
     expect(
       document.querySelector(
         '.easymde-immersive-custom-css-preview style'

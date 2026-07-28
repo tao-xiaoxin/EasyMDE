@@ -441,7 +441,11 @@ belong to `CONTRIBUTING.md`.
 For UI work, real behavior, accessibility, protected surfaces, lifecycle
 cleanup, privacy-safe evidence, and an honest unverified scope are mandatory.
 The complete seven-stage fidelity workflow belongs to
-`.agents/skills/easymde/SKILL.md`; do not recreate it here. For Issue #91's
+`.agents/skills/easymde/SKILL.md`; do not recreate it here. A supplied or
+discoverable design source, reference implementation, screenshot, app capture,
+prototype, or rendered reference automatically activates that workflow;
+agents inspect the available reference source and controlled rendered result
+without requiring the maintainer to repeat the checklist. For Issue #91's
 approved direct React cutover, use the migration Skill only for Legacy
 inventory and deletion evidence; do not introduce runtime handoff, fallback,
 or dual-owner architecture.

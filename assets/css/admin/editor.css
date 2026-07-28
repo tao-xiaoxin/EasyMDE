@@ -795,10 +795,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
     color: var(--easymde-code-comment-color);
     text-align: center;
 }
-.easymde-custom-theme-preview .token-keyword,
-.easymde-custom-theme-preview .token-function { color: var(--easymde-code-keyword-color); }
-.easymde-custom-theme-preview .token-string { color: var(--easymde-code-string-color); }
-.easymde-custom-theme-preview .token-comment { color: var(--easymde-code-comment-color); }
+.easymde-custom-theme-preview .hljs-keyword,
+.easymde-custom-theme-preview .hljs-title { color: var(--easymde-code-keyword-color); }
+.easymde-custom-theme-preview .hljs-string { color: var(--easymde-code-string-color); }
+.easymde-custom-theme-preview .hljs-comment { color: var(--easymde-code-comment-color); }
 .easymde-custom-theme-preview blockquote {
     margin: 13px 0;
     padding: 8px 12px;

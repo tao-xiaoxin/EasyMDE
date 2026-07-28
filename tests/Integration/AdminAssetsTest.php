@@ -21,6 +21,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	private $get_storage_config;
 	private $get_strings;
 	private $get_custom_css_variables;
+	private $get_custom_css_dialog_strings;
 	private $get_editor_root_bootstrap;
 
 	public function set_up() {
@@ -42,12 +43,14 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->get_storage_config = $reflection->getMethod( 'get_storage_config' );
 		$this->get_strings = $reflection->getMethod( 'get_strings' );
 		$this->get_custom_css_variables = $reflection->getMethod( 'get_custom_css_variables' );
+		$this->get_custom_css_dialog_strings = $reflection->getMethod( 'get_custom_css_dialog_strings' );
 		$this->get_editor_root_bootstrap = $reflection->getMethod( 'get_editor_root_bootstrap' );
 		$this->get_react_editor_asset->setAccessible( true );
 		$this->get_static_asset_version->setAccessible( true );
 		$this->get_storage_config->setAccessible( true );
 		$this->get_strings->setAccessible( true );
 		$this->get_custom_css_variables->setAccessible( true );
+		$this->get_custom_css_dialog_strings->setAccessible( true );
 		$this->get_editor_root_bootstrap->setAccessible( true );
 		wp_cache_flush();
 	}
@@ -315,6 +318,103 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			),
 			$groups
 		);
+	}
+
+	public function test_custom_css_dialog_strings_lock_the_bootstrap_contract() {
+		$strings       = $this->get_custom_css_dialog_strings->invoke( $this->admin_assets );
+		$expected_keys = array(
+			'description',
+			'close',
+			'closeTitle',
+			'articleThemeName',
+			'codeThemeName',
+			'articleNamePlaceholder',
+			'codeNamePlaceholder',
+			'unsavedChanges',
+			'invalidColor',
+			'missingName',
+			'previewTitle',
+			'livePreview',
+			'previewHelp',
+			'previewInvalid',
+			'previewUnavailable',
+			'themeVariables',
+			'themeVariableCategories',
+			'themeVariablePanelLabel',
+			'customCssCodeTitle',
+			'reset',
+			'expandCode',
+			'shrinkCode',
+			'backToVariables',
+			'saveTarget',
+			'articleCss',
+			'codeCss',
+			'articleCssHelp',
+			'codeCssHelp',
+			'foundationCategory',
+			'blocksCategory',
+			'codeCategory',
+			'alertsCategory',
+			'customCssCode',
+			'customCssCodeHelp',
+			'backToThemeVariables',
+			'cancel',
+			'resetAll',
+			'applyCustomTheme',
+			'defaultArticleName',
+			'defaultCodeName',
+			'colorPickerLabel',
+			'currentThemeVariablesComment',
+			'addCustomRulesComment',
+			'previewHeadingOne',
+			'previewHeadingTwo',
+			'previewBodyText',
+			'previewParagraph',
+			'previewBoldText',
+			'previewItalicText',
+			'previewDeletedText',
+			'previewHighlight',
+			'previewInlineCode',
+			'previewCodeComment',
+			'previewBlockquote',
+			'previewUnorderedItem',
+			'previewCompletedTask',
+			'previewOrderedItem',
+			'previewSecondStep',
+			'previewTableHeader',
+			'previewTableContent',
+			'previewLink',
+			'previewNoteLabel',
+			'previewTipLabel',
+			'previewWarningLabel',
+			'previewCautionLabel',
+			'previewInformation',
+			'previewSuccess',
+			'previewWarning',
+			'previewDanger',
+			'previewDetails',
+			'previewDetailsContent',
+			'previewDefinitionTerm',
+			'previewDefinitionDescription',
+			'previewSupplementalHeading',
+			'previewSupplementalText',
+			'previewFootnote',
+			'previewInlineSeparator',
+			'previewInlineConjunction',
+			'previewSentenceEnd',
+		);
+		$actual_keys   = array_keys( $strings );
+
+		sort( $expected_keys );
+		sort( $actual_keys );
+
+		$this->assertSame( $expected_keys, $actual_keys );
+
+		foreach ( $strings as $key => $value ) {
+			$this->assertIsString( $value, $key );
+			$this->assertNotSame( '', trim( $value ), $key );
+			$this->assertLessThanOrEqual( 512, strlen( $value ), $key );
+		}
 	}
 
 	public function test_editor_layout_omits_withdrawn_ui_strings_and_keeps_native_direction() {

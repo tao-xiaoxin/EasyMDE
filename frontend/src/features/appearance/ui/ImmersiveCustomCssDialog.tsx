@@ -280,18 +280,18 @@ function PreviewContent({
         {strings.previewSentenceEnd}
       </p>
       <pre>
-        <code className="code-block">
+        <code className="code-block hljs">
           <span className="code-preview-line">
             <span className="code-line-number">1</span>
             <span>
-              <span className="token-keyword">const</span> message ={' '}
-              <span className="token-string">&quot;Hello, EasyMDE!&quot;</span>
+              <span className="hljs-keyword">const</span> message ={' '}
+              <span className="hljs-string">&quot;Hello, EasyMDE!&quot;</span>
               {';'}
             </span>
           </span>
           <span className="code-preview-line">
             <span className="code-line-number">2</span>
-            <span className="token-comment">
+            <span className="hljs-comment">
               {'// '}
               {strings.previewCodeComment}
             </span>
@@ -299,7 +299,7 @@ function PreviewContent({
           <span className="code-preview-line">
             <span className="code-line-number">3</span>
             <span>
-              <span className="token-function">renderTheme</span>(message);
+              <span className="hljs-title function_">renderTheme</span>(message);
             </span>
           </span>
         </code>
@@ -520,7 +520,8 @@ export function ImmersiveCustomCssDialog({
     (value) => !isHexColor(value)
   );
   const hasMissingName = !articleName.trim() || !codeName.trim();
-  const hasFormError = hasInvalidColor || hasMissingName;
+  const hasFormError =
+    hasInvalidColor || hasMissingName || 'invalid' === previewStatus;
   const categoryLabels: Readonly<Record<ThemeVariableCategory, string>> = {
     foundation: strings.foundationCategory,
     blocks: strings.blocksCategory,

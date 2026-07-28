@@ -1179,59 +1179,83 @@ Before editing, automatically:
 
 Maintain the task's local-only reference ledger at
 `.cache/easymde/ui-fidelity/<task-id>/progress.md`. Derive `<task-id>` with the
-following `ui-fidelity-ledger-v1` contract:
+following `ui-fidelity-ledger-v2` contract:
 
 1. use the literal public repository identity `tao-xiaoxin/EasyMDE`; never
    derive it from a checkout path, worktree path, remote URL, or account name;
-2. take verbatim the focused objective from the earliest current-human message
-   in this task that both defines that objective and authorizes its UI
-   implementation; later follow-ups, summaries, Goal wrappers, reviewer
-   prompts, and generated handoff wording never replace that canonical input.
-   Normalize it to Unicode NFC, convert line endings to LF, trim leading and
-   trailing whitespace, and replace every remaining run of Unicode whitespace
-   with one ASCII space while preserving case and punctuation;
+2. select the earliest current-human message in this task whose entire
+   human-authored textual body both authorizes the focused UI implementation
+   and uniquely identifies the approved reference set with a privacy-safe
+   human-authored alias and immutable public or opaque revision. That whole
+   body is the canonical objective input; never extract a title, clause, list
+   item, or inferred objective from it. Exclude only host-injected attachment
+   or application metadata that is not part of the human-authored text.
+   Generic wording such as “match this” does not qualify because it does not
+   identify an attachment, screenshot, or connected-app object. Never hash
+   attachment bytes, local paths, private URLs, account data, or host-generated
+   identifiers. When no current-human message qualifies, or the host cannot
+   distinguish human-authored text from injected inputs, do not derive a task
+   identity: require a current-human message containing only an explicitly
+   identified canonical objective and privacy-safe reference alias/revision
+   before creating a ledger, or the exact existing `<task-id>` when continuing
+   one. The first message that satisfies all of these conditions becomes the
+   canonical input. Messages after that first qualifying message, summaries,
+   Goal wrappers, reviewer prompts, and generated handoff wording never replace
+   it. Normalize the entire selected body to Unicode NFC and convert CRLF and
+   lone CR line endings to LF.
+   For this algorithm, whitespace is exactly the code-point set U+0009 through
+   U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000 through U+200A, U+2028,
+   U+2029, U+202F, U+205F, U+3000, and U+FEFF; no runtime whitespace class or
+   Unicode property may replace this explicit set. Remove maximal runs of those
+   code points at both ends, then replace every remaining maximal run with one
+   ASCII space while preserving all other code points, case, and punctuation;
 3. require a symbolic Git branch, take its exact short ref name without a
    trailing line ending, and use the first 16 lowercase hexadecimal characters
    of its UTF-8 SHA-256 as `<branch-digest>`; do not create or reuse a ledger
    from a detached Head;
-4. compute SHA-256 over the UTF-8 bytes of
-   `tao-xiaoxin/EasyMDE`, one LF byte, the normalized objective, one LF byte,
-   and `<branch-digest>`, then use the first 24 lowercase hexadecimal characters
-   as `<scope-digest>`; and
+4. compute SHA-256 over the UTF-8 bytes of the literal
+   `ui-fidelity-ledger-v2`, one LF byte, `tao-xiaoxin/EasyMDE`, one LF byte, the
+   normalized objective, one LF byte, and `<branch-digest>`, then use the first
+   24 lowercase hexadecimal characters as `<scope-digest>`; and
 5. use `<issue-number>-<scope-digest>` when a focused Issue exists, otherwise
    use `task-<scope-digest>`.
 
-Record the literal algorithm version `ui-fidelity-ledger-v1` and
+Record the literal algorithm version `ui-fidelity-ledger-v2` and
 `<scope-digest>` in the ledger. On continuation, apply these exact steps and
 verify the recorded values before reuse. When the original canonical objective
-is unavailable in a fresh task, enumerate only
-`.cache/easymde/ui-fidelity/*/progress.md` and accept an existing ledger only
-when exactly one candidate records all of the following: algorithm version
-`ui-fidelity-ledger-v1`, repository identity `tao-xiaoxin/EasyMDE`, the
-`<branch-digest>` derived from the current symbolic branch, a valid
-`<scope-digest>`, and a recorded `Task ID:` for which the Issue or `task-`
-identifier derived from that digest, the recorded Task ID, and the parent
-directory name are exactly equal. Resume that unique candidate without
-re-deriving its scope digest. With zero or multiple valid candidates, keep every
-candidate unmodified and ask for the original task identity or exact existing
-`<task-id>`; never choose by recency or content similarity. Do not substitute a
-Goal objective, current follow-up, summary, handoff paraphrase, another
-repository identity, or newly invented slug. Do not place a worktree path,
-username, private URL, or raw task content in the identifier. The repository
-ignores `.cache/`; do not force-add the ledger or create a second progress file
-elsewhere.
+is unavailable in a fresh task, do not enumerate or select a ledger
+automatically, even when only one candidate exists or its Issue prefix matches
+the current Issue. Require the exact existing `<task-id>`, open only that
+candidate, and verify its algorithm version, repository identity, current
+symbolic-branch digest, valid scope digest, and exact equality among the
+Issue or `task-` identifier derived from that digest, the recorded `Task ID:`,
+the supplied `<task-id>`, and the parent directory name. A missing or invalid
+candidate remains unmodified and requires the original canonical objective or
+correct exact `<task-id>`. Never choose by recency, Issue prefix, branch,
+content similarity, or uniqueness, and never substitute a Goal objective,
+current follow-up, summary, handoff paraphrase, another repository identity,
+or newly invented slug. Do not place a worktree path, username, private URL,
+or raw task content in the identifier. The repository ignores `.cache/`; do
+not force-add the ledger or create a second progress file elsewhere. A
+`ui-fidelity-ledger-v1` record is incompatible legacy state: never reinterpret,
+migrate, or reuse its evidence as v2. Keep it unmodified, derive a separate v2
+ledger from the canonical objective, and remove the obsolete task directory
+only during the authorized evidence cleanup.
 
 Use this ledger structure:
 
 ```text
-Task identity algorithm version: ui-fidelity-ledger-v1
+Task identity algorithm version: ui-fidelity-ledger-v2
 Repository identity: tao-xiaoxin/EasyMDE
 Task ID:
 Scope digest:
 Git branch digest:
-Reference source and revision: sanitized label plus public or opaque revision only
-Rendered reference and deterministic state: sanitized label and state identifier only
-Target implementation revision: commit/tree ID plus task-scoped worktree digest when dirty
+Reference source and revision: sanitized label plus immutable public or privacy-safe opaque revision, or unverified
+Rendered reference baseline: freshly established in the current continuation; never reusable
+Approved target branch tip revision: immutable commit ID from the pull request base or explicitly approved integration branch
+Approved target base revision: unique merge-base commit derived from the approved target branch tip and target commit
+Target implementation paths: sorted repository-relative UTF-8 paths intended for contribution
+Target implementation revision: commit ID plus ui-fidelity-worktree-v1 digest when dirty
 Viewport, zoom, DPR, fonts, locale, direction, and input mode:
 Fixture and privacy classification:
 Reference component/style/icon owners:
@@ -1250,25 +1274,120 @@ ledger but must not create or update it; keep transient checklist state inside
 the read-only review execution and return its sanitized findings through the
 owning review workflow instead. On continuation of a write-authorized task,
 read the ledger first and verify its task identity and scope digest, current
-branch digest, target implementation revision, reference revision, and rendered
-state. Record the target implementation revision as the current commit or tree
-ID and, when task-scoped tracked or untracked worktree files differ from it, a
-SHA-256 digest over a lexicographically sorted, length-prefixed sequence of
-their repository-relative UTF-8 paths, current file bytes, and an explicit
-deleted-file marker; store only the resulting digest, never raw diff, path, or
-file content. A task identity,
-scope-digest, or branch-digest mismatch identifies a different task: do not
-reuse or overwrite that ledger; derive the correct task identifier and start a
-separate ledger. A changed target implementation revision, reference revision,
-or rendered state within a matching ledger invalidates the affected evidence
-and checklist items; record the new state in that same ledger and resume at the
-first invalidated or incomplete item instead of repeating unaffected work or
-trusting compressed conversation memory. Never store credentials, Cookies,
-Nonces, browser Storage, private content, raw administrator data,
-machine-specific paths, private or loopback URLs, or account identity in the
-progress record. Remove the task directory after its sanitized evidence has
-been handed to the repository contribution workflow and the focused work no
-longer needs to be resumed.
+branch digest, target implementation revision, and immutable public or
+privacy-safe opaque reference revision. A reference without either kind of
+immutable revision remains `unverified`; do not reuse its source mapping across
+continuations. On every continuation,
+discard every earlier rendered-reference and target browser baseline and every
+visual, interaction, accessibility, responsive, lifecycle, and protected-
+surface result, then establish fresh controlled baselines before relying on
+browser evidence. Before editing, record the exact task implementation path
+set in the `Target implementation paths` ledger field as sorted, unique,
+repository-relative UTF-8 paths intended for the contribution. Paths must be
+normal relative paths with no empty, `.` or `..` segment and no
+machine-specific or private value. Update that set before
+adding, deleting, renaming, or modifying another task file. Any change to that
+set or to the target implementation revision invalidates all source-to-render
+mapping and all target browser, integration, lifecycle, and protected-surface
+evidence; rebuild them before completion.
+
+The worktree used for target browser evidence must have task-only provenance.
+At the start of a new task, use a dedicated symbolic branch and worktree whose
+Head is the approved target base and whose index and worktree are clean before
+the first task edit. On continuation, require the matching ledger's verified
+target revision and worktree digest. If existing unverified changes touch any
+task path, or if unrelated and task-owned hunks in one path cannot be
+separated, do not declare the whole path task-owned: preserve the original
+worktree and recreate the task state in a clean dedicated worktree from the
+approved base using only independently reviewed task commits or patches.
+Otherwise mark target browser, integration, lifecycle, and protected-surface
+evidence blocked. Path-set membership is necessary for scope validation but
+never proves ownership of the changes within a path.
+
+Before establishing or refreshing any target browser baseline, identify the
+approved integration branch. For a focused pull request, use its authoritative
+base branch and immutable base-tip commit from current pull-request metadata.
+Without a pull request, require the integration branch or commit explicitly
+selected by the current human task or repository workflow; do not infer it from
+the current working branch. Resolve and record that immutable tip as
+`Approved target branch tip revision`. Run
+`git merge-base --all <approved-target-tip> <target-commit>` and require exactly
+one commit result that Git verifies as an ancestor of both inputs. Record that
+result as `Approved target base revision`; fail instead of choosing a result
+when Git fails, returns zero or multiple commits, or ancestry verification
+fails. Use the NUL-delimited paths from
+`git diff --name-only -z --no-renames <base>..<target-commit> --` plus the
+repository-wide NUL-delimited paths from
+`git status --porcelain=v2 -z --untracked-files=all --no-renames --` to verify
+that every committed, index, and non-ignored tracked or untracked path belongs
+to the recorded task path set. Here `<base>` is exactly the recorded
+`Approved target base revision`. Fail when either Git command fails or reports
+a path that is not valid UTF-8. Store the approved task path set only in its
+designated ledger field. Keep the names of discovered out-of-set paths
+transiently in memory for the membership test; never read unrelated file
+content or store those out-of-set path names in the ledger, logs, diagnostics,
+or public evidence. When out-of-set committed or working state exists,
+preserve it and
+either use a separate clean worktree created from the approved base with only
+the recorded task-path changes applied, or mark all target browser,
+integration, lifecycle, and protected-surface evidence blocked. Never certify
+browser evidence from a cross-task or contaminated tree. Preserve pre-existing
+unrelated changes outside the recorded set and never read or hash their content
+as task evidence.
+
+Record the target implementation revision as the current commit ID. If the
+index or worktree state of any recorded task path differs from that commit,
+also record a `ui-fidelity-worktree-v1` SHA-256 digest computed as follows:
+
+1. obtain the raw byte stream by invoking Git with the exact argument vector
+   `git`, `-c`, `core.quotepath=false`, `-c`, `core.fileMode=true`, `status`,
+   `--porcelain=v2`, `-z`, `--untracked-files=all`, `--no-renames`, `--`,
+   followed by one `:(top,literal)<path>` argument for every recorded task path
+   in byte-sorted order. Fail instead of hashing when Git fails, the task path
+   set is empty, or a reported repository-relative path is not valid UTF-8;
+2. start the digest input with the UTF-8 bytes
+   `ui-fidelity-worktree-v1`, followed by one NUL byte, then append one record
+   for every recorded task path in unmodified UTF-8 byte order. Each record
+   contains its unsigned 64-bit big-endian byte length and path bytes; one ASCII
+   type byte (`f` regular file, `l` symbolic link, or `d` deleted/missing); the
+   six ASCII bytes of its current-filesystem mode; and the unsigned 64-bit
+   big-endian payload length followed by the current regular-file bytes,
+   symbolic-link target bytes, or an empty payload for a deleted/missing path.
+   Derive type and mode from one `lstat` result: missing is type `d` and mode
+   `000000`; a symbolic link is type `l` and mode `120000`; a regular file is
+   type `f` and mode `100755` when any filesystem execute bit is set, otherwise
+   `100644`. Fail on any other type. Never derive this field from Head or index
+   mode; the raw status stream separately binds both index and worktree
+   transitions reported by Git;
+3. append the unsigned 64-bit big-endian length of the status stream and its
+   unmodified bytes, binding the index state for exactly the same literal path
+   set; and
+4. fail on any other filesystem type, hash the complete byte sequence with
+   SHA-256, and store only the lowercase hexadecimal digest, never the raw
+   status stream, diff, path, or file content.
+
+The approved base and recorded path set bind committed task scope. The file
+records bind current worktree bytes, filesystem mode/type, and deletion state;
+the restricted status stream binds index and Git-reported worktree state
+without reading unrelated or review-evidence files. A task identity,
+scope-digest, or branch-digest mismatch identifies a different task state: do
+not reuse or overwrite that ledger; derive the correct task identifier and
+start a separate ledger. A changed immutable reference revision
+invalidates all reference source mapping and every browser, interaction,
+accessibility, responsive, lifecycle, and protected-surface result. A changed
+approved target branch tip, approved base, target implementation path set, or
+target revision invalidates all source-to-render mapping and all target browser,
+integration, lifecycle, and protected-surface evidence.
+Record the new state in the same matching ledger, clear the invalidated results,
+and rebuild them before completion instead of trusting compressed conversation
+memory. Only task identity, authorization decisions, inventories, explicit
+unverified inputs, and checklist items that contain no result or conclusion may
+survive those invalidations. Never store credentials, Cookies, Nonces, browser
+Storage, private content, raw administrator data, machine-specific paths,
+private or loopback URLs, or account identity in the progress record. Remove
+the task directory after its sanitized evidence has been handed to the
+repository contribution workflow and the focused work no longer needs to be
+resumed.
 
 Durable or public summaries use sanitized labels and synthetic measurements,
 not absolute paths, private URLs, raw screenshots, administrator data, or
@@ -1517,12 +1636,14 @@ reference-source inspection
 → rebuild and full affected-state comparison
 ```
 
-Repeat the loop while a confirmed in-scope mismatch remains. Every material
-implementation change invalidates earlier evidence for the affected states.
-Do not lower a tolerance, remove a state from the matrix, or convert a failure
-to “close enough” to end the loop. If a required reference, browser, state, or
-tool remains unavailable, report that scope as unverified or blocked rather
-than claiming completion.
+Repeat the loop while a confirmed in-scope mismatch remains. Every target
+implementation path-set or revision change invalidates all earlier
+source-to-render mapping and target browser, integration, lifecycle, and
+protected-surface evidence; rebuild that evidence from fresh controlled
+baselines. Do not lower a tolerance, remove a state from the matrix, or convert
+a failure to “close enough” to end the loop. If a required reference, browser,
+state, or tool remains unavailable, report that scope as unverified or blocked
+rather than claiming completion.
 
 When applicable, collect:
 

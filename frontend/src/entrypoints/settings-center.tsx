@@ -27,9 +27,6 @@ export function mountSettingsCenter(
 
   const bootstrap = parseSettingsCenterBootstrap(rawBootstrap);
   assertSameOriginUrl(bootstrap.closeUrl, runtime.window);
-  assertSameOriginUrl(bootstrap.assets.brandMarkUrl, runtime.window);
-  assertSameOriginUrl(bootstrap.assets.headerIllustrationUrl, runtime.window);
-  assertSameOriginUrl(bootstrap.assets.searchEmptyIllustrationUrl, runtime.window);
 
   const root = createRoot(container);
   let active = true;

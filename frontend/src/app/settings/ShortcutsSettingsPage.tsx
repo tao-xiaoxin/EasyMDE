@@ -106,7 +106,10 @@ function ShortcutCard({
     {group.rows.map((row) => {
       const value = values[row.id];
       return <div key={row.id} className="easymde-settings-center__shortcut-row"
-        data-setting-search={`${s[row.label]} ${s[group.title]} ${value.windows} ${value.mac}`}>
+        data-setting-search={`${s[row.label]} ${s[group.title]} ${value.windows} ${value.mac}`}
+        data-setting-label={s[row.label]}
+        data-setting-description=""
+        data-setting-group={s[group.title]}>
         <span>{s[row.label]}</span>
         <input aria-label={`${s[row.label]} ${s.windowsLinux}`} value={value.windows}
           onChange={(event) => onChange(row.id, 'windows', event.target.value)} />

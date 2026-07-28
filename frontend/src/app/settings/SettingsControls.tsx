@@ -27,13 +27,17 @@ export function SettingsRow({
   description,
   label,
   minHeight,
-  query = ''
+  query = '',
+  searchableText,
+  searchGroup
 }: {
   children: ReactNode;
   description?: string;
   label: string;
-  minHeight?: 70 | 76 | 82;
+  minHeight?: 60 | 65 | 70 | 76 | 82 | 150;
   query?: string;
+  searchableText?: string;
+  searchGroup?: string;
 }) {
   if (!matchesSettingsQuery(query, [label, description])) return null;
 
@@ -43,7 +47,11 @@ export function SettingsRow({
     minHeight ? `is-height-${minHeight}` : ''
   ].filter(Boolean).join(' ');
 
-  return <div className={className}>
+  return <div className={className}
+    data-setting-search={`${label} ${description ?? ''} ${searchableText ?? ''}`}
+    data-setting-label={label}
+    data-setting-description={description ?? ''}
+    data-setting-group={searchGroup}>
     <div className="easymde-settings-center__row-label">
       <div>{label}</div>
       {description ? <p>{description}</p> : null}

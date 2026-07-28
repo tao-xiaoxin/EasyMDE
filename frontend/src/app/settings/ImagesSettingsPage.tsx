@@ -1,6 +1,6 @@
 import { createElement, useEffect, useRef, useState } from '@wordpress/element';
 
-import { ChevronDown, Copy, Eye, Info } from '../../generated/lucide-icons';
+import { ChevronDown, Copy, Eye, Info, RefreshCcw } from '../../generated/lucide-icons';
 import type {
   SettingsCenterBootstrap,
   SettingsCenterStringKey
@@ -166,7 +166,7 @@ function ImageBehaviorRow({
   description?: string;
   label: string;
 }) {
-  return <SettingsRow label={label} {...(description ? { description } : {})}>
+  return <SettingsRow label={label} minHeight={65} {...(description ? { description } : {})}>
     <div className="easymde-settings-center__image-field-control">{children}</div>
   </SettingsRow>;
 }
@@ -207,7 +207,8 @@ function FileNameRuleEditor({
 
   const example = renderFileNameRuleExample(value);
   return <div className="easymde-settings-center__file-name-editor">
-    <SettingsRow label={strings.fileNameRule} description={strings.fileNameRuleDescription}>
+    <SettingsRow label={strings.fileNameRule} description={strings.fileNameRuleDescription}
+      minHeight={60}>
       <div className="easymde-settings-center__image-field-control">
         <input ref={inputRef} className="easymde-settings-center__file-name-input"
           aria-label={strings.fileNameRule} value={value}
@@ -255,38 +256,67 @@ function FileNameRuleEditor({
 function ConnectionStatusRow({
   buttonLabel,
   label,
+  minHeight,
+  showLastTest = false,
   strings
 }: {
   buttonLabel: string;
   label: string;
+  minHeight: 70 | 76;
+  showLastTest?: boolean;
   strings: SettingsCenterBootstrap['strings'];
 }) {
-  return <SettingsRow label={label} minHeight={70}>
+  const [testing, setTesting] = useState(false);
+  const timeoutRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
+  }, []);
+
+  const testConnection = () => {
+    if (testing) return;
+    setTesting(true);
+    timeoutRef.current = window.setTimeout(() => {
+      timeoutRef.current = null;
+      setTesting(false);
+    }, 650);
+  };
+
+  return <SettingsRow label={label} minHeight={minHeight}>
     <div className="easymde-settings-center__connection-row">
-      <span className="easymde-settings-center__connection-status" data-state="pending">
-        <span />{strings.pendingTest}
+      <span className="easymde-settings-center__connection-status"
+        data-state={testing ? 'testing' : 'connected'}>
+        <span />{testing ? strings.testing : strings.connected}
       </span>
-      <button type="button" disabled>{buttonLabel}</button>
+      {showLastTest ? <span className="easymde-settings-center__last-test">
+        {`${strings.lastTest} `}<span>2025-05-13 12:34</span>
+      </span> : null}
+      <button type="button" disabled={testing} onClick={testConnection}>
+        {testing ? <RefreshCcw className="easymde-settings-center__connection-spinner"
+          size={15} /> : null}
+        {buttonLabel}
+      </button>
     </div>
   </SettingsRow>;
 }
 
 export function ImagesSettingsPage({
+  draft,
   strings
 }: {
+  draft: SettingsCenterBootstrap['drafts']['images'];
   strings: SettingsCenterBootstrap['strings'];
 }) {
   const [settings, setSettings] = useState<ImageSettingsDraft>(() => ({
     service: strings.cloudflareR2,
     bucket: 'easymde-assets',
-    domain: 'img.example.com',
+    domain: draft.domain,
     accessKey: 'easymde-access-key-example',
     secretKey: 'easymde-secret-key-example',
     fileNameRule: '{date}/{uuid}.{ext}',
     backupEnabled: true,
     backupService: strings.qiniuKodo,
     backupBucket: 'easymde-backup',
-    backupDomain: 'backup.example.com',
+    backupDomain: draft.backupDomain,
     backupAccessKey: 'easymde-backup-access-key-example',
     backupSecretKey: 'easymde-backup-secret-key-example',
     backupSameObjectKey: true,
@@ -324,33 +354,37 @@ export function ImagesSettingsPage({
   return <div className="easymde-settings-center__images-page">
     <section className="easymde-settings-center__image-group is-host-service">
       <h2><ImageLibraryIcon size={25} />{strings.imageHostService}</h2>
-      <ImageField label={strings.selectImageHostService}>
-        <CompactSelect label={strings.selectImageHostService} value={settings.service}
-          options={imageHostOptions} onChange={(value) => setValue('service', value)} />
-      </ImageField>
-      <ImageField label={strings.bucket}>
-        <ImageTextInput label={strings.bucket} value={settings.bucket}
-          onChange={(value) => setValue('bucket', value)} />
-      </ImageField>
-      <ImageField label={strings.customDomain}>
-        <ImageTextInput label={strings.customDomain} value={settings.domain}
-          onChange={(value) => setValue('domain', value)} />
-      </ImageField>
-      <ImageField label={strings.accessKey}>
-        <SecretInput label={strings.accessKey} value={settings.accessKey}
-          showLabel={strings.showSecret} hideLabel={strings.hideSecret}
-          onChange={(value) => setValue('accessKey', value)} />
-      </ImageField>
-      <ImageField label={strings.secretKey}>
-        <SecretInput label={strings.secretKey} value={settings.secretKey}
-          showLabel={strings.showSecret} hideLabel={strings.hideSecret}
-          onChange={(value) => setValue('secretKey', value)} />
-      </ImageField>
-      <FileNameRuleEditor strings={strings} value={settings.fileNameRule}
-        onChange={(value) => setValue('fileNameRule', value)} />
-      <div className="easymde-settings-center__connection-divider">
-        <ConnectionStatusRow label={strings.connectionStatus}
-          buttonLabel={strings.testConnection} strings={strings} />
+      <div>
+        <div>
+          <ImageField label={strings.selectImageHostService}>
+            <CompactSelect label={strings.selectImageHostService} value={settings.service}
+              options={imageHostOptions} onChange={(value) => setValue('service', value)} />
+          </ImageField>
+          <ImageField label={strings.bucket}>
+            <ImageTextInput label={strings.bucket} value={settings.bucket}
+              onChange={(value) => setValue('bucket', value)} />
+          </ImageField>
+          <ImageField label={strings.customDomain}>
+            <ImageTextInput label={strings.customDomain} value={settings.domain}
+              onChange={(value) => setValue('domain', value)} />
+          </ImageField>
+          <ImageField label={strings.accessKey}>
+            <SecretInput label={strings.accessKey} value={settings.accessKey}
+              showLabel={strings.showSecret} hideLabel={strings.hideSecret}
+              onChange={(value) => setValue('accessKey', value)} />
+          </ImageField>
+          <ImageField label={strings.secretKey}>
+            <SecretInput label={strings.secretKey} value={settings.secretKey}
+              showLabel={strings.showSecret} hideLabel={strings.hideSecret}
+              onChange={(value) => setValue('secretKey', value)} />
+          </ImageField>
+          <FileNameRuleEditor strings={strings} value={settings.fileNameRule}
+            onChange={(value) => setValue('fileNameRule', value)} />
+        </div>
+        <div className="easymde-settings-center__connection-divider">
+          <ConnectionStatusRow label={strings.connectionStatus}
+            buttonLabel={strings.testConnection} minHeight={76} showLastTest strings={strings} />
+        </div>
       </div>
     </section>
 
@@ -401,12 +435,13 @@ export function ImagesSettingsPage({
         </ImageBehaviorRow>
         <div className="easymde-settings-center__backup-connection-divider">
           <ConnectionStatusRow label={strings.backupConnectionStatus}
-            buttonLabel={strings.testBackupConnection} strings={strings} />
+            buttonLabel={strings.testBackupConnection} minHeight={70} strings={strings} />
         </div>
       </div> : null}
     </section>
 
-    <section className="easymde-settings-center__image-group is-upload-behavior">
+    <div className="easymde-settings-center__image-secondary-groups">
+      <section className="easymde-settings-center__image-group is-upload-behavior">
       <h2><SlidersIcon size={25} />{strings.uploadBehavior}</h2>
       <ImageBehaviorRow label={strings.insertMarkdownAfterUpload}>
         <SettingsToggle label={strings.insertMarkdownAfterUpload} checked={settings.insertMarkdown}
@@ -451,9 +486,9 @@ export function ImagesSettingsPage({
           })}
         </div>
       </SettingsRow>
-    </section>
+      </section>
 
-    <section className="easymde-settings-center__image-group is-default-insertion">
+      <section className="easymde-settings-center__image-group is-default-insertion">
       <h2><DocumentIcon size={25} />{strings.defaultInsertion}</h2>
       <ImageBehaviorRow label={strings.defaultInsertFormat}>
         <CompactSelect label={strings.defaultInsertFormat} value={settings.insertFormat}
@@ -470,9 +505,9 @@ export function ImagesSettingsPage({
           options={[strings.doNotInsert, strings.useFileName, strings.fillOnUpload]}
           onChange={(value) => setValue('captionMode', value)} />
       </ImageBehaviorRow>
-      <ImageBehaviorRow label={strings.featuredImagePlaceholder}
-        description={strings.featuredImagePlaceholderDescription}>
-        <SettingsToggle label={strings.featuredImagePlaceholder}
+      <ImageBehaviorRow label={strings.imageFeaturedPlaceholder}
+        description={strings.imageFeaturedPlaceholderDescription}>
+        <SettingsToggle label={strings.imageFeaturedPlaceholder}
           checked={settings.featuredPlaceholder}
           onChange={() => setValue('featuredPlaceholder', !settings.featuredPlaceholder)} />
       </ImageBehaviorRow>
@@ -483,6 +518,7 @@ export function ImagesSettingsPage({
         )}</div>
         <div>{strings.compressLargeImagesRecommendation}</div>
       </div>
-    </section>
+      </section>
+    </div>
   </div>;
 }

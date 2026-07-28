@@ -24,12 +24,24 @@ vi.mock('../contracts/bootstrap/settings-center-bootstrap', async (importOrigina
 function bootstrap(): SettingsCenterBootstrap {
   const origin = window.location.origin;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     closeUrl: `${origin}/wp-admin/options-general.php?page=easymde`,
     assets: {
       brandMarkUrl: `${origin}/plugin/brand.png`,
       headerIllustrationUrl: `${origin}/plugin/header.png`,
       searchEmptyIllustrationUrl: `${origin}/plugin/search-empty.png`
+    },
+    drafts: {
+      images: {
+        domain: 'https://img.example.test',
+        backupDomain: 'https://backup.example.test'
+      },
+      ai: {
+        provider: 'OpenAI',
+        endpoint: 'https://api.example.test/v1',
+        apiKey: 'example-api-key',
+        model: 'gpt-4.1-mini'
+      }
     },
     strings: Object.fromEntries(
       SETTINGS_CENTER_STRING_KEYS.map((key) => [key, key])
@@ -61,15 +73,31 @@ describe('mountSettingsCenter', () => {
     expect(unmount).toHaveBeenCalledOnce();
   });
 
-  it('rejects cross-origin navigation and runtime assets', () => {
+  it('rejects cross-origin navigation', () => {
     vi.mocked(parseSettingsCenterBootstrap).mockReturnValue({
       ...bootstrap(),
-      assets: { ...bootstrap().assets, brandMarkUrl: 'https://invalid.test/brand.png' }
+      closeUrl: 'https://invalid.test/wp-admin/options-general.php?page=easymde'
     });
 
     expect(() => mountSettingsCenter({}, { document, window })).toThrow(
       'settings-center-url-origin-invalid'
     );
     expect(createRoot).not.toHaveBeenCalled();
+  });
+
+  it('accepts WordPress asset URLs served from a configured content origin', () => {
+    const render = vi.fn();
+    vi.mocked(createRoot).mockReturnValue({ render, unmount: vi.fn() } as never);
+    vi.mocked(parseSettingsCenterBootstrap).mockReturnValue({
+      ...bootstrap(),
+      assets: {
+        brandMarkUrl: 'https://static.example.test/plugin/brand.png',
+        headerIllustrationUrl: 'https://static.example.test/plugin/header.png',
+        searchEmptyIllustrationUrl: 'https://static.example.test/plugin/search-empty.png'
+      }
+    });
+
+    expect(() => mountSettingsCenter({}, { document, window })).not.toThrow();
+    expect(render).toHaveBeenCalledOnce();
   });
 });

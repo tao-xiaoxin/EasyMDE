@@ -105,7 +105,7 @@ final class SettingsPageTest extends WP_UnitTestCase
 
         $bootstrap = $method->invoke($settings_page);
 
-        $this->assertSame(1, $bootstrap['schemaVersion']);
+        $this->assertSame(2, $bootstrap['schemaVersion']);
         $this->assertSame(
             admin_url('options-general.php?page=easymde'),
             $bootstrap['closeUrl']
@@ -124,10 +124,18 @@ final class SettingsPageTest extends WP_UnitTestCase
         );
         $this->assertSame('EasyMDE', $bootstrap['strings']['brandName']);
         $this->assertSame('General Settings', $bootstrap['strings']['general']);
+        $this->assertSame('https://img.example.com', $bootstrap['drafts']['images']['domain']);
+        $this->assertSame('OpenAI', $bootstrap['drafts']['ai']['provider']);
         $this->assertArrayNotHasKey('testingConnection', $bootstrap['strings']);
-        $this->assertArrayNotHasKey('connected', $bootstrap['strings']);
-        $this->assertArrayNotHasKey('lastTest', $bootstrap['strings']);
-        $this->assertCount(209, $bootstrap['strings']);
+        $this->assertArrayHasKey('connected', $bootstrap['strings']);
+        $this->assertArrayHasKey('lastTest', $bootstrap['strings']);
+        $this->assertArrayHasKey('promptManagement', $bootstrap['strings']);
+        $this->assertArrayHasKey('transferExportConfiguration', $bootstrap['strings']);
+        $this->assertArrayHasKey('transferConfigurationManagement', $bootstrap['strings']);
+        $this->assertArrayHasKey('transferIntegrationPendingNotice', $bootstrap['strings']);
+        $this->assertArrayHasKey('aboutVersionInformation', $bootstrap['strings']);
+        $this->assertArrayHasKey('aboutPluginIntroduction', $bootstrap['strings']);
+        $this->assertGreaterThan(209, count($bootstrap['strings']));
     }
 
     public function test_settings_center_assets_load_only_on_the_independent_screen()

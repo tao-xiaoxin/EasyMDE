@@ -148,11 +148,86 @@
     box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
 }
 
-.easymde-toolbar-popover-headings .easymde-toolbar-popover {
+.easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-toolbar-popover {
+    box-sizing: border-box;
     right: auto;
     left: 0;
-    width: 232px;
+    width: 208px;
+    min-width: 208px;
     max-width: calc(100vw - 48px);
+    padding: 7px;
+    border-radius: 12px;
+    box-shadow: 0 12px 26px rgba(15, 23, 42, 0.16);
+}
+
+.easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-popover-item {
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    justify-content: stretch;
+    gap: 8px;
+    min-height: 32px;
+    padding: 0 9px;
+    border-radius: 8px;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-heading-menu-badge {
+    display: flex;
+    box-sizing: border-box;
+    width: 30px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #fbfcfe;
+    color: #526987;
+    line-height: 1;
+    letter-spacing: 0;
+    transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-popover-item:hover .easymde-heading-menu-badge,
+.easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-popover-item:focus .easymde-heading-menu-badge {
+    border-color: #8ba8c2;
+    background: #f5f9fc;
+    color: #315a7d;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-heading-menu-badge[data-heading-level="1"] {
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-heading-menu-badge[data-heading-level="2"] {
+    font-size: 15px;
+    font-weight: 680;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-heading-menu-badge[data-heading-level="3"] {
+    font-size: 14px;
+    font-weight: 650;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-heading-menu-badge[data-heading-level="4"] {
+    font-size: 13px;
+    font-weight: 620;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-heading-menu-badge[data-heading-level="5"] {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-heading-menu-badge[data-heading-level="6"] {
+    font-size: 11px;
+    font-weight: 580;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-heading-menu-badge.is-command .dashicons {
+    width: 14px;
+    height: 14px;
+    font-size: 14px;
+    line-height: 14px;
 }
 
 .easymde-popover-item {

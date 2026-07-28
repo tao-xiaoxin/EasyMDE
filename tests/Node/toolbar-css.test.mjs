@@ -16,7 +16,7 @@ function ruleBody(selector) {
 
 test('toolbar icons use one stable local SVG box and chevron contract', () => {
   const menuButton = ruleBody(
-    '.easymde-editor:not(.is-immersive) .easymde-toolbar-button-menu'
+    '.easymde-editor:not(.is-immersive) .easymde-toolbar-button-menu.easymde-toolbar-button-compact'
   );
   assert.match(menuButton, /width:\s*54px;/);
   assert.match(menuButton, /min-width:\s*54px;/);
@@ -41,12 +41,23 @@ test('toolbar icons use one stable local SVG box and chevron contract', () => {
   assert.match(compact, /min-width:\s*38px;/);
 });
 
-test('typographic toolbar glyphs are unboxed and interaction states do not move controls', () => {
+test('ordinary heading glyph matches the compact inset reference', () => {
   const glyph = ruleBody(
     '.easymde-editor:not(.is-immersive) .easymde-toolbar-text-icon'
   );
   assert.match(glyph, /background:\s*transparent;/);
   assert.match(glyph, /border-radius:\s*0;/);
+
+  const headingGlyph = ruleBody(
+    '.easymde-editor:not(.is-immersive) .easymde-toolbar-glyph-heading'
+  );
+  assert.match(headingGlyph, /flex:\s*0 0 24px;/);
+  assert.match(headingGlyph, /width:\s*24px;/);
+  assert.match(headingGlyph, /height:\s*24px;/);
+  assert.match(headingGlyph, /border-radius:\s*7px;/);
+  assert.match(headingGlyph, /background:\s*#f1f4f7;/);
+  assert.match(headingGlyph, /font-size:\s*16px;/);
+  assert.match(headingGlyph, /font-weight:\s*750;/);
 
   const interactive = ruleBody(
     '.easymde-editor:not(.is-immersive) .easymde-toolbar-button:hover,\n.easymde-editor:not(.is-immersive) .easymde-toolbar-button:focus'
@@ -54,22 +65,11 @@ test('typographic toolbar glyphs are unboxed and interaction states do not move 
   assert.match(interactive, /transform:\s*none;/);
 });
 
-test('ordinary heading controls form one stable compact segmented group', () => {
-  const group = ruleBody(
-    '.easymde-editor:not(.is-immersive) .easymde-toolbar-heading-group'
+test('ordinary heading dropdown leaves no segmented heading-button CSS owner', () => {
+  assert.doesNotMatch(
+    css,
+    /\.easymde-toolbar-heading-(?:group|button)\b/
   );
-  assert.match(group, /height:\s*36px;/);
-  assert.match(group, /border:\s*1px solid #d6dce3;/);
-  assert.match(group, /border-radius:\s*9px;/);
-  assert.match(group, /overflow:\s*hidden;/);
-
-  const button = ruleBody(
-    '.easymde-editor:not(.is-immersive) .easymde-toolbar-heading-button'
-  );
-  assert.match(button, /width:\s*36px;/);
-  assert.match(button, /height:\s*34px;/);
-  assert.match(button, /border:\s*0;/);
-  assert.match(button, /font-size:\s*14px;/);
 });
 
 test('immersive toolbar keeps the inherited pre-parity icon and interaction rules', () => {

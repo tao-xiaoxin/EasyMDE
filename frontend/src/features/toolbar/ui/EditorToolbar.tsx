@@ -178,57 +178,10 @@ type HeadingMenuProps = Readonly<{
   variant: 'default' | 'immersive';
 }>;
 
-type OrdinaryHeadingButtonsProps = Readonly<{
-  commands: ReadonlyArray<ToolbarCommand>;
-  label: string;
-  shortcuts: Readonly<Record<string, string>>;
-  executeCommand: (commandId: string) => void;
-}>;
-
 type ImmersiveMenuPosition = Readonly<{
   left: number;
   top: number;
 }>;
-
-function OrdinaryHeadingButtons({
-  commands,
-  label,
-  shortcuts,
-  executeCommand
-}: OrdinaryHeadingButtonsProps) {
-  if (!commands.length) {
-    return null;
-  }
-
-  return (
-    <fieldset
-      className="easymde-toolbar-heading-group"
-      aria-label={label}
-    >
-      {commands.map((command) => {
-        const shortcut = shortcuts[command.id] ?? '';
-        const title = shortcut
-          ? `${command.label} (${shortcut})`
-          : command.label;
-
-        return (
-          <button
-            key={command.id}
-            type="button"
-            className="easymde-toolbar-heading-button"
-            data-easymde-command={command.id}
-            aria-label={command.label}
-            title={title}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => executeCommand(command.id)}
-          >
-            H{command.level}
-          </button>
-        );
-      })}
-    </fieldset>
-  );
-}
 
 function HeadingMenu({
   commands,
@@ -472,7 +425,25 @@ function HeadingMenu({
                       className={`dashicons dashicons-${command.icon}`}
                     />
                   </span>
-                ) : null}
+                ) : 'heading' === command.action &&
+                  'number' === typeof command.level ? (
+                  <span
+                    className="easymde-heading-menu-badge"
+                    data-heading-level={command.level}
+                    aria-hidden="true"
+                  >
+                    H{command.level}
+                  </span>
+                ) : (
+                  <span
+                    className="easymde-heading-menu-badge is-command"
+                    aria-hidden="true"
+                  >
+                    <span
+                      className={`dashicons dashicons-${command.icon}`}
+                    />
+                  </span>
+                )}
                 <span className="easymde-popover-item-label">{command.label}</span>
                 <span className="easymde-popover-item-shortcut">
                   {shortcuts[command.id]}
@@ -518,30 +489,11 @@ export function EditorToolbar({
   const headingCommands = bootstrap.commands.filter(
     (command) => 'heading-menu' === command.surface
   );
+  const ordinaryHeadingCommands = headingCommands.filter(
+    (command) => 'paragraph' !== command.action
+  );
   const immersiveHeadingCommands = headingCommands.filter(
     (command) => 'paragraph' !== command.id
-  );
-  const ordinaryHeadingCommands = [1, 2, 3, 4, 5].flatMap((level) => {
-    const command = headingCommands.find(
-      (candidate) =>
-        `heading${level}` === candidate.id &&
-        'heading' === candidate.action &&
-        level === candidate.level
-    );
-    return command ? [command] : [];
-  });
-  const ordinaryHeadingCommandIds = new Set(
-    ordinaryHeadingCommands.map(({ id }) => id)
-  );
-  const ordinaryHeadingExtensionCommands = headingCommands.filter(
-    (command) =>
-      !ordinaryHeadingCommandIds.has(command.id) &&
-      !(
-        ('paragraph' === command.id && 'paragraph' === command.action) ||
-        ('heading6' === command.id &&
-          'heading' === command.action &&
-          6 === command.level)
-      )
   );
   const blockCommands = commandsFor('main', 'block');
   const codeCommands = commandsFor('main', 'insert').filter(
@@ -600,38 +552,22 @@ export function EditorToolbar({
           <span className="easymde-toolbar-divider" aria-hidden="true" />
         </Fragment>
       ) : null}
-      {'immersive' === variant ? (
-        <HeadingMenu
-          commands={immersiveHeadingCommands}
-          headingLabelFormat={bootstrap.headingLabelFormat}
-          headingLevelLabel={bootstrap.headingLevelLabel}
-          label={bootstrap.headingsLabel}
-          shortcuts={shortcuts}
-          executeCommand={executeCommand}
-          isOpen={isHeadingOpen}
-          onOpen={() => onPopoverOpen?.()}
-          setIsOpen={setIsHeadingOpen}
-          variant={variant}
-        />
-      ) : (
-        <OrdinaryHeadingButtons
-          commands={ordinaryHeadingCommands}
-          label={bootstrap.headingsLabel}
-          shortcuts={shortcuts}
-          executeCommand={executeCommand}
-        />
-      )}
-      {'default' === variant
-        ? ordinaryHeadingExtensionCommands.map((command) => (
-            <CommandButton
-              key={command.id}
-              command={command}
-              shortcut={shortcuts[command.id] ?? ''}
-              executeCommand={executeCommand}
-              variant={variant}
-            />
-          ))
-        : null}
+      <HeadingMenu
+        commands={
+          'immersive' === variant
+            ? immersiveHeadingCommands
+            : ordinaryHeadingCommands
+        }
+        headingLabelFormat={bootstrap.headingLabelFormat}
+        headingLevelLabel={bootstrap.headingLevelLabel}
+        label={bootstrap.headingsLabel}
+        shortcuts={shortcuts}
+        executeCommand={executeCommand}
+        isOpen={isHeadingOpen}
+        onOpen={() => onPopoverOpen?.()}
+        setIsOpen={setIsHeadingOpen}
+        variant={variant}
+      />
       {'immersive' === variant && blockCommands.length ? (
         <span className="easymde-toolbar-divider is-after-heading" aria-hidden="true" />
       ) : null}

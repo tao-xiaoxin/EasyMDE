@@ -3570,7 +3570,7 @@ describe('EditorRoot', () => {
     }
   });
 
-  it('closes ordinary Settings when a direct heading command runs', async () => {
+  it('closes ordinary Settings when the heading menu opens and runs its command', async () => {
     const props = fixture();
     const toolbar = {
       ...props.toolbar,
@@ -3588,14 +3588,15 @@ describe('EditorRoot', () => {
       ]
     } as const;
     const view = render(<EditorRoot {...props} toolbar={toolbar} />);
-    const heading = view.getByRole('button', { name: 'Heading 1' });
+    const headings = view.getByRole('button', { name: 'Headings' });
     const settings = view.getByRole('button', { name: '编辑器设置' });
 
     fireEvent.click(settings);
     expect(settings.getAttribute('aria-expanded')).toBe('true');
 
-    fireEvent.click(heading);
+    fireEvent.click(headings);
     expect(settings.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(view.getByRole('menuitem', { name: 'Heading 1' }));
   });
 
   it('renders Preview from the current Appearance state', async () => {

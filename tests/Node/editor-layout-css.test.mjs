@@ -77,6 +77,57 @@ test('ordinary editor settings combines theme and font controls in one responsiv
   );
 });
 
+test('ordinary heading menu uses compact geometry without changing immersive styles', () => {
+  const toolbar = readFileSync(
+    new URL('../../assets/css/admin/toolbar.css', import.meta.url),
+    'utf8'
+  );
+  const popover = readFileSync(
+    new URL('../../assets/css/admin/popover.css', import.meta.url),
+    'utf8'
+  );
+  assert.match(
+    toolbar,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-button-menu\.easymde-toolbar-button-compact\s*\{[^}]*width:\s*54px;[^}]*min-width:\s*54px;/s
+  );
+  assert.match(
+    toolbar,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-glyph-heading\s*\{[^}]*flex:\s*0 0 24px;[^}]*width:\s*24px;[^}]*height:\s*24px;[^}]*border-radius:\s*7px;[^}]*background:\s*#f1f4f7;[^}]*font-size:\s*16px;[^}]*font-weight:\s*750;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover\s*\{[^}]*width:\s*208px;[^}]*padding:\s*7px;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-popover-item\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*30px minmax\(0, 1fr\) auto;[^}]*min-height:\s*32px;[^}]*padding:\s*0 9px;[^}]*border-radius:\s*8px;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-heading-menu-badge\s*\{[^}]*width:\s*30px;[^}]*height:\s*24px;[^}]*justify-content:\s*center;[^}]*border:\s*1px solid #cbd5e1;[^}]*border-radius:\s*6px;[^}]*background:\s*#fbfcfe;[^}]*color:\s*#526987;/s
+  );
+  for (const [level, markSize, markWeight] of [
+    [1, 16, 700],
+    [2, 15, 680],
+    [3, 14, 650],
+    [4, 13, 620],
+    [5, 12, 600],
+    [6, 11, 580]
+  ]) {
+    assert.match(
+      popover,
+      new RegExp(
+        `\\.easymde-editor:not\\(\\.is-immersive\\) \\.easymde-heading-menu-badge\\[data-heading-level="${level}"\\]\\s*\\{[^}]*font-size:\\s*${markSize}px;[^}]*font-weight:\\s*${markWeight};`,
+        's'
+      )
+    );
+  }
+  assert.doesNotMatch(
+    popover,
+    /\.is-immersive-heading-menu[^}]*easymde-heading-menu-badge/s
+  );
+});
+
 test('withdrawn ordinary editor surfaces have no retained CSS runtime', () => {
   for (const className of [
     'easymde-editor-context-bar',

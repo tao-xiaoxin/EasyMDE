@@ -105,12 +105,13 @@ open form.
 React neither submits a closed field allowlist nor treats synchronization as a
 successful Save, so unknown WordPress and extension fields remain intact.
 
-The ordinary toolbar presents the built-in H1 through H5 commands as one
-compact segmented control instead of a heading dropdown. Paragraph and H6
-remain registered commands and retain their configured shortcuts; the
-immersive heading menu keeps its existing command surface. Commands registered
-by extensions on the heading-menu surface remain available as ordinary toolbar
-buttons without restoring the removed built-in dropdown.
+The ordinary toolbar presents one compact heading dropdown containing the
+registered heading-menu command surface except the Paragraph action, including
+the built-in H1 through H6 commands and extension commands in registry order.
+The trigger uses a compact inset H glyph, and built-in levels use outlined
+H1-through-H6 badges with visibly descending type scale and weight. Every
+visible command retains its configured shortcut. The immersive heading menu keeps its
+existing Paragraph-command exclusion and presentation.
 
 The Preview session debounces Reads, aborts superseded requests, rejects stale
 revisions and Markdown signatures, and renders branded server-sanitized HTML

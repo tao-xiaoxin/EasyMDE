@@ -107,7 +107,7 @@
     transform: none;
 }
 
-.easymde-editor:not(.is-immersive) .easymde-toolbar-button-menu {
+.easymde-editor:not(.is-immersive) .easymde-toolbar-button-menu.easymde-toolbar-button-compact {
     width: 54px;
     min-width: 54px;
     padding: 0 7px;
@@ -135,55 +135,6 @@
 .easymde-editor:not(.is-immersive) .easymde-toolbar-button-compact {
     width: 38px;
     min-width: 38px;
-}
-
-.easymde-editor:not(.is-immersive) .easymde-toolbar-heading-group {
-    box-sizing: border-box;
-    display: inline-flex;
-    height: 36px;
-    flex: 0 0 auto;
-    margin: 0;
-    overflow: hidden;
-    padding: 0;
-    border: 1px solid #d6dce3;
-    border-radius: 9px;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-}
-
-.easymde-editor:not(.is-immersive) .easymde-toolbar-heading-button {
-    box-sizing: border-box;
-    display: inline-flex;
-    width: 36px;
-    min-width: 36px;
-    height: 34px;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: #334155;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 1;
-}
-
-.easymde-editor:not(.is-immersive) .easymde-toolbar-heading-button + .easymde-toolbar-heading-button {
-    border-inline-start: 1px solid #e1e6eb;
-}
-
-.easymde-editor:not(.is-immersive) .easymde-toolbar-heading-button:hover,
-.easymde-editor:not(.is-immersive) .easymde-toolbar-heading-button:focus-visible {
-    background: #eef5fa;
-    color: #0a4b78;
-}
-
-.easymde-editor:not(.is-immersive) .easymde-toolbar-heading-button:focus-visible {
-    position: relative;
-    z-index: 1;
-    outline: 2px solid #2271b1;
-    outline-offset: -2px;
 }
 
 .easymde-editor:not(.is-immersive) .easymde-toolbar-button .dashicons {
@@ -246,6 +197,17 @@
     background: transparent;
     font-size: 14px;
     font-weight: 700;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-toolbar-glyph-heading {
+    flex: 0 0 24px;
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    background: #f1f4f7;
+    color: #263446;
+    font-size: 16px;
+    font-weight: 750;
 }
 
 .easymde-editor:not(.is-immersive) .easymde-toolbar-glyph-code {

@@ -46,6 +46,14 @@ EASYMDE_CI_WP_TESTS_SOURCE=/path/to/wordpress-6.7-tests-lib \
 scripts/build-ci-image.sh
 ```
 
+Local CI validation must prefer the verified
+`easymde-ci:wp6.7-php8.3-node20.19.0` image when it is already available.
+Normal repeated test runs use `scripts/run-ci-image.sh`; they must not rebuild
+the image, pull base images, or download WordPress, Node, Composer, or test
+resources again. Rebuild only when `scripts/build-ci-image.sh --verify` rejects
+the image identity or an intentionally changed pinned input requires a new
+image.
+
 The builder requires the digest-pinned Composer 2.10.2 and PHP 8.3.32 base
 images to already exist locally, installs the exact `composer.lock` development
 dependencies from the explicitly supplied local Composer cache, uses

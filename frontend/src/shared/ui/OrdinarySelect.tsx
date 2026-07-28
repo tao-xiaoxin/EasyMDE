@@ -11,7 +11,6 @@ import type { KeyboardEvent } from 'react';
 import { Check, ChevronDown } from '../../generated/lucide-icons';
 
 export type OrdinarySelectOption = Readonly<{
-  group?: string;
   id: string;
   label: string;
 }>;
@@ -80,10 +79,7 @@ export function OrdinarySelect({
       Math.max(VIEWPORT_PADDING, rect.left),
       windowRef.innerWidth - width - VIEWPORT_PADDING
     );
-    const groupCount = new Set(
-      options.flatMap((option) => option.group ? [option.group] : [])
-    ).size;
-    const fallbackHeight = options.length * 36 + groupCount * 24 + 10;
+    const fallbackHeight = options.length * 36 + 10;
     const desiredHeight = Math.min(
       MENU_MAX_HEIGHT,
       menu.scrollHeight || fallbackHeight
@@ -238,7 +234,6 @@ export function OrdinarySelect({
     }
   };
 
-  let currentGroup: string | undefined;
   return (
     <div
       ref={rootRef}
@@ -276,20 +271,10 @@ export function OrdinarySelect({
           }}
         >
           {options.map((option, index) => {
-            const groupChanged = option.group !== currentGroup;
-            currentGroup = option.group;
             const active = option.id === activeId;
             const selectedOption = option.id === value;
             return (
               <div key={option.id}>
-                {groupChanged && option.group ? (
-                  <div
-                    className="easymde-ordinary-select-group"
-                    role="presentation"
-                  >
-                    {option.group}
-                  </div>
-                ) : null}
                 <button
                   type="button"
                   id={optionDomId(listboxId, option.id, index)}

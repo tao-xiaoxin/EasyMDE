@@ -622,7 +622,6 @@ test('release build fails when required runtime assets or templates are missing'
     rmSync(join(root, 'assets/build/assets/admin-editor-fixture.js'), { force: true });
     rmSync(join(root, 'assets/build/code-copy/assets/frontend-code-copy-fixture.js'), { force: true });
     rmSync(join(root, 'assets/images/easymde-editor-icon.png'), { force: true });
-    rmSync(join(root, 'assets/images/tech-blue-code-window.svg'), { force: true });
     rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
 
     const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
@@ -637,7 +636,6 @@ test('release build fails when required runtime assets or templates are missing'
     assert.ok(missing.includes('assets/build/assets/admin-editor-fixture.js'));
     assert.ok(missing.includes('assets/build/code-copy/assets/frontend-code-copy-fixture.js'));
     assert.ok(missing.includes('assets/images/easymde-editor-icon.png'));
-    assert.ok(missing.includes('assets/images/tech-blue-code-window.svg'));
     assert.ok(missing.includes('THIRD-PARTY-NOTICES.md'));
 
     const result = spawnSync(process.execPath, [scriptPath, '--root', root], {
@@ -729,6 +727,12 @@ test('release requirements include the Terminal Noir code theme stylesheet', () 
   const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
 
   assert.ok(requirements.includes('assets/themes/code/terminal-noir.css'));
+});
+
+test('release requirements include the distinct associated Fullstack Blue code theme', () => {
+  const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
+
+  assert.ok(requirements.includes('assets/themes/code/fullstack-blue.css'));
 });
 
 test('release requirements do not include the removed md2html-normal article theme stylesheet', () => {

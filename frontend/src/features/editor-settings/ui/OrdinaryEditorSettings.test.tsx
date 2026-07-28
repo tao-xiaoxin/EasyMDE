@@ -5,13 +5,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppearanceBootstrap } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type { FontControlsBootstrap } from '../../../contracts/bootstrap/font-controls-bootstrap';
+import {
+  customCssDialogStrings,
+  customCssVariables
+} from '../../../test/fixtures/appearance-bootstrap';
 import { OrdinaryEditorSettings } from './OrdinaryEditorSettings';
 
 const appearance: AppearanceBootstrap = {
   articleThemes: [
-    { id: 'default', label: 'Default' },
-    { id: 'newsprint', label: 'Newsprint' }
+    { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
+    { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'atom-one-dark' }
   ],
+  canManageCustomCss: true,
+  codeThemeExplicit: false,
   codeThemes: [
     { id: 'atom-one-dark', label: 'Atom One Dark' },
     { id: 'github', label: 'GitHub' }
@@ -22,6 +28,7 @@ const appearance: AppearanceBootstrap = {
     css: '.note { color: navy; }',
     scopedCss: '.easymde-rendered-content .note { color: navy; }'
   }],
+  customCssVariables,
   state: {
     markdownTheme: 'default',
     codeTheme: 'atom-one-dark',
@@ -32,6 +39,7 @@ const appearance: AppearanceBootstrap = {
     articleTheme: 'Article theme',
     codeTheme: 'Code theme',
     customCss: 'Custom CSS',
+    customCssDialog: customCssDialogStrings,
     customCssTheme: 'Custom CSS theme',
     cssName: 'CSS name',
     saveCss: 'Save CSS',
@@ -80,6 +88,7 @@ function renderSettings() {
       appearancePort={{
         applyState: vi.fn(),
         closeOtherPopovers: vi.fn(),
+        previewCustomCss: vi.fn(),
         saveCustomCss: vi.fn()
       }}
       fonts={fonts}

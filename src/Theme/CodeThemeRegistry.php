@@ -21,6 +21,7 @@ final class CodeThemeRegistry {
 			'xcode'           => $this->theme( 'xcode', __( 'Xcode', 'easymde' ), 'assets/vendor/highlight/styles/xcode.min.css', 'vendor' ),
 			'wechat-inspired' => $this->theme( 'wechat-inspired', __( 'Wechat inspired', 'easymde' ), 'assets/themes/code/wechat-inspired.css', 'owned' ),
 			'terminal-noir'   => $this->theme( 'terminal-noir', __( 'Terminal Noir', 'easymde' ), 'assets/themes/code/terminal-noir.css', 'owned' ),
+			'fullstack-blue'  => $this->theme( 'fullstack-blue', __( 'Fullstack blue', 'easymde' ), 'assets/themes/code/fullstack-blue.css', 'owned' ),
 		);
 
 		return apply_filters( 'easymde_code_themes', $themes );

@@ -203,14 +203,6 @@
     overscroll-behavior: contain;
 }
 
-.easymde-ordinary-select-group {
-    padding: 7px 9px 4px;
-    color: #7a8797;
-    font-size: 11px;
-    font-weight: 650;
-    line-height: 1.25;
-}
-
 .easymde-ordinary-select-options [role="option"] {
     display: grid;
     box-sizing: border-box;

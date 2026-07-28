@@ -226,6 +226,10 @@ export function mountAdminEditor(
       '#easymde-code-theme-field',
       'appearance-native-fields-unavailable'
     ),
+    codeThemeExplicit: input(
+      '#easymde-code-theme-explicit-field',
+      'appearance-native-fields-unavailable'
+    ),
     customCssId: input(
       '#easymde-custom-css-id-field',
       'appearance-native-fields-unavailable'

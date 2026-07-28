@@ -33,6 +33,7 @@ type PreviewHtmlState = Readonly<{
   features: PreviewFeatures;
   generation: number;
   html: SafePreviewHtml;
+  htmlRevision: number;
   kind: 'html';
   paperPlaceholder?: true;
   phase: 'enhancing' | 'failed' | 'loading' | 'ready';
@@ -91,6 +92,7 @@ function initialState(props: PreviewSurfaceOwnerProps): PreviewSurfaceState {
         features: props.initial.features,
         generation: 0,
         html: props.initial.html,
+        htmlRevision: 0,
         kind: 'html',
         paperPlaceholder: true,
         phase: 'enhancing',
@@ -104,6 +106,7 @@ function initialState(props: PreviewSurfaceOwnerProps): PreviewSurfaceState {
     features: props.initial.features,
     generation: 0,
     html: props.initial.html,
+    htmlRevision: 0,
     kind: 'html',
     phase: 'enhancing',
     signature: props.initial.signature
@@ -205,6 +208,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
                 features: {},
                 generation,
                 html: '' as SafePreviewHtml,
+                htmlRevision: generation,
                 kind: 'html',
                 paperPlaceholder: true,
                 phase: 'loading',
@@ -224,6 +228,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
               // The empty string is the only HTML value that is intrinsically
               // safe without invoking the server renderer.
               html: '' as SafePreviewHtml,
+              htmlRevision: generation,
               kind: 'html',
               paperPlaceholder: true,
               phase: 'ready',
@@ -246,6 +251,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       features: requestState.response.features,
       generation,
       html: requestState.response.html,
+      htmlRevision: generation,
       kind: 'html',
       phase: 'enhancing',
       signature: requestState.request.signature
@@ -282,6 +288,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
             features: {},
             generation: current.generation,
             html: '' as SafePreviewHtml,
+            htmlRevision: current.generation,
             kind: 'html',
             paperPlaceholder: true,
             phase: 'ready',
@@ -294,6 +301,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
             features: {},
             generation: current.generation,
             html: '' as SafePreviewHtml,
+            htmlRevision: current.generation,
             kind: 'html',
             paperPlaceholder: true,
             phase: 'loading',
@@ -404,6 +412,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       ariaBusy={busy}
       error={failed}
       html={'html' === state.kind ? state.html : null}
+      htmlRevision={'html' === state.kind ? state.htmlRevision : 0}
       refreshing={busy}
       surfaceRef={surfaceRef}
       {...(undefined !== props.contentEditable

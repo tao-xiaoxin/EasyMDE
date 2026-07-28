@@ -8,7 +8,7 @@ import { OrdinarySelect } from './OrdinarySelect';
 const options = [
   { id: 'red', label: 'Red' },
   { id: 'blue', label: 'Blue' },
-  { id: 'custom', label: 'Issue58 hidden relation fixture', group: 'Named custom CSS' }
+  { id: 'custom', label: 'Issue58 hidden relation fixture' }
 ];
 
 afterEach(() => {
@@ -57,7 +57,7 @@ describe('OrdinarySelect', () => {
     expect(listbox.style.width).toBe('210px');
     expect(top).toBeGreaterThanOrEqual(12);
     expect(top + maxHeight).toBeLessThanOrEqual(708);
-    expect(listbox.textContent).toContain('Named custom CSS');
+    expect(listbox.textContent).not.toContain('Named custom CSS');
   });
 
   it('reveals the current named custom CSS option when a long list opens', async () => {
@@ -149,7 +149,7 @@ describe('OrdinarySelect', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('selects grouped custom options by pointer and restores trigger focus', async () => {
+  it('selects custom options by pointer and restores trigger focus', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(

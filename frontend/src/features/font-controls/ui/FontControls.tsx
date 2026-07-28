@@ -157,12 +157,13 @@ function ImmersiveFontSelect({
                     } else if ('Enter' === event.key || ' ' === event.key) {
                       event.preventDefault();
                       onChange(option.id);
-                      setOpen(false);
                       triggerRef.current?.focus();
+                      setOpen(false);
                     }
                   }}
                   onClick={() => {
                     onChange(option.id);
+                    triggerRef.current?.focus();
                     setOpen(false);
                   }}
                 >
@@ -261,11 +262,10 @@ export function FontControls({
     }
 
     const closeForPointer = (event: MouseEvent) => {
-      const target = event.target;
+      const eventPath = event.composedPath();
       if (
-        target instanceof Node &&
-        (panelRef.current?.contains(target) ||
-          triggerRef.current?.contains(target))
+        (panelRef.current && eventPath.includes(panelRef.current)) ||
+        (triggerRef.current && eventPath.includes(triggerRef.current))
       ) {
         return;
       }

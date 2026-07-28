@@ -444,11 +444,15 @@ The complete seven-stage fidelity workflow belongs to
 `.agents/skills/easymde/SKILL.md`; do not recreate it here. A supplied or
 discoverable design source, reference implementation, screenshot, app capture,
 prototype, or rendered reference automatically activates that workflow;
-agents inspect the available reference source and controlled rendered result
-without requiring the maintainer to repeat the checklist. For Issue #91's
-approved direct React cutover, use the migration Skill only for Legacy
-inventory and deletion evidence; do not introduce runtime handoff, fallback,
-or dual-owner architecture.
+agents inventory the available evidence without requiring the maintainer to
+repeat the checklist. Discovery does not authorize dereferencing a URL or
+accessing a local, private, authenticated, or administrator surface. A current
+repository rule may approve the exact origin of a public reference; access to
+any local, private, authenticated, or administrator surface and required
+session always needs explicit authorization in the current human task and
+follows the Skill's isolation and privacy rules. For Issue #91's approved direct
+React cutover, use the migration Skill only for Legacy inventory and deletion
+evidence; do not introduce runtime handoff, fallback, or dual-owner architecture.
 
 Use live, scope-relevant commands only. Detailed current commands and release
 execution belong to `docs/TESTING_AND_RELEASE.md`; browser test selection and

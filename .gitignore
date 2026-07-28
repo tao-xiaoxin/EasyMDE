@@ -7,6 +7,7 @@ dist/
 /build/
 coverage/
 .cache/
+.codex-bridge/
 test-results/
 playwright-report/
 .phpunit.result.cache

@@ -1187,7 +1187,7 @@ Scope digest:
 Git branch digest:
 Reference source and revision: sanitized label plus public or opaque revision only
 Rendered reference and deterministic state: sanitized label and state identifier only
-Target implementation and baseline revision:
+Target implementation revision: commit/tree ID plus task-scoped worktree digest when dirty
 Viewport, zoom, DPR, fonts, locale, direction, and input mode:
 Fixture and privacy classification:
 Reference component/style/icon owners:
@@ -1206,18 +1206,25 @@ ledger but must not create or update it; keep transient checklist state inside
 the read-only review execution and return its sanitized findings through the
 owning review workflow instead. On continuation of a write-authorized task,
 read the ledger first and verify its task identity and scope digest, current
-branch digest, reference revision, and rendered state. A task identity,
+branch digest, target implementation revision, reference revision, and rendered
+state. Record the target implementation revision as the current commit or tree
+ID and, when task-scoped tracked or untracked worktree files differ from it, a
+SHA-256 digest over a lexicographically sorted, length-prefixed sequence of
+their repository-relative UTF-8 paths, current file bytes, and an explicit
+deleted-file marker; store only the resulting digest, never raw diff, path, or
+file content. A task identity,
 scope-digest, or branch-digest mismatch identifies a different task: do not
 reuse or overwrite that ledger; derive the correct task identifier and start a
-separate ledger. A changed reference revision or rendered state within a
-matching ledger invalidates the affected evidence and checklist items; record
-the new state in that same ledger and resume at the first invalidated or
-incomplete item instead of repeating unaffected work or trusting compressed
-conversation memory. Never store credentials, Cookies, Nonces, browser Storage,
-private content, raw administrator data, machine-specific paths, private or
-loopback URLs, or account identity in the progress record. Remove the task
-directory after its sanitized evidence has been handed to the repository
-contribution workflow and the focused work no longer needs to be resumed.
+separate ledger. A changed target implementation revision, reference revision,
+or rendered state within a matching ledger invalidates the affected evidence
+and checklist items; record the new state in that same ledger and resume at the
+first invalidated or incomplete item instead of repeating unaffected work or
+trusting compressed conversation memory. Never store credentials, Cookies,
+Nonces, browser Storage, private content, raw administrator data,
+machine-specific paths, private or loopback URLs, or account identity in the
+progress record. Remove the task directory after its sanitized evidence has
+been handed to the repository contribution workflow and the focused work no
+longer needs to be resumed.
 
 Durable or public summaries use sanitized labels and synthetic measurements,
 not absolute paths, private URLs, raw screenshots, administrator data, or

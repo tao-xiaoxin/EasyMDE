@@ -9,9 +9,10 @@ import { OrdinaryEditorSettings } from './OrdinaryEditorSettings';
 
 const appearance: AppearanceBootstrap = {
   articleThemes: [
-    { id: 'default', label: 'Default' },
-    { id: 'newsprint', label: 'Newsprint' }
+    { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
+    { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'atom-one-dark' }
   ],
+  codeThemeExplicit: false,
   codeThemes: [
     { id: 'atom-one-dark', label: 'Atom One Dark' },
     { id: 'github', label: 'GitHub' }

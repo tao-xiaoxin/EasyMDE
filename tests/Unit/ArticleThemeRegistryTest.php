@@ -82,18 +82,18 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
             'qingbi-liujin' => array(
                 'assetPath' => 'assets/themes/article/qingbi-liujin.css',
                 'fontDefaults' => array(
-                    'customFont' => 'qingbi-liujin-helvetica',
-                    'windowsFont' => 'qingbi-liujin-no-windows',
-                    'appleFont' => 'qingbi-liujin-no-apple',
+                    'customFont' => 'helvetica',
+                    'windowsFont' => 'no-windows-font',
+                    'appleFont' => 'no-apple-font',
                     'serifFont' => 'sans-serif-only',
                 ),
             ),
             'qinghe-zhusha' => array(
                 'assetPath' => 'assets/themes/article/qinghe-zhusha.css',
                 'fontDefaults' => array(
-                    'customFont' => 'qinghe-zhusha-helvetica',
-                    'windowsFont' => 'qinghe-zhusha-no-windows',
-                    'appleFont' => 'qinghe-zhusha-no-apple',
+                    'customFont' => 'helvetica',
+                    'windowsFont' => 'no-windows-font',
+                    'appleFont' => 'no-apple-font',
                     'serifFont' => 'sans-serif-only',
                 ),
             ),
@@ -108,6 +108,33 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
         }
     }
 
+    public function test_theme_font_defaults_use_only_canonical_visible_option_ids()
+    {
+        $registry = new ArticleThemeRegistry();
+        $repository = new ThemeStateRepository(
+            $registry,
+            new CodeThemeRegistry(),
+            new CustomCssPolicy()
+        );
+        $font_options = $repository->get_theme_options_for_script(0)['fontOptions'];
+        $allowed = array(
+            'customFont' => array_column($font_options['customFonts'], 'id'),
+            'windowsFont' => array_column($font_options['windowsFonts'], 'id'),
+            'appleFont' => array_column($font_options['appleFonts'], 'id'),
+            'serifFont' => array_column($font_options['serifOptions'], 'id'),
+        );
+
+        foreach ($registry->for_script() as $theme) {
+            if (empty($theme['fontDefaults'])) {
+                continue;
+            }
+
+            foreach ($theme['fontDefaults'] as $state_key => $option_id) {
+                $this->assertContains($option_id, $allowed[$state_key], $theme['id'] . ':' . $state_key);
+            }
+        }
+    }
+
     public function test_code_theme_registry_exposes_versioned_asset_urls_for_admin_script()
     {
         $registry = new CodeThemeRegistry();
@@ -119,6 +146,7 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
             'monokai' => 'assets/vendor/highlight/styles/monokai.min.css',
             'vs2015' => 'assets/vendor/highlight/styles/vs2015.min.css',
             'terminal-noir' => 'assets/themes/code/terminal-noir.css',
+            'fullstack-blue' => 'assets/themes/code/fullstack-blue.css',
         );
 
         foreach ($expected as $theme_id => $asset_path) {
@@ -126,6 +154,22 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
             $this->assertStringContainsString($asset_path, $themes[$theme_id]['cssUrl']);
             $this->assertStringContainsString('ver=' . EASYMDE_VERSION, $themes[$theme_id]['cssUrl']);
         }
+    }
+
+    public function test_every_article_theme_exposes_a_registered_associated_code_theme()
+    {
+        $article_themes = (new ArticleThemeRegistry())->for_script();
+        $code_themes = array_column((new CodeThemeRegistry())->for_script(), null, 'id');
+
+        $this->assertCount(22, $article_themes);
+        foreach ($article_themes as $article_theme) {
+            $this->assertArrayHasKey($article_theme['defaultCodeTheme'], $code_themes);
+        }
+
+        $associations = array_column($article_themes, 'defaultCodeTheme', 'id');
+        $this->assertSame('fullstack-blue', $associations['fullstack-blue']);
+        unset($associations['fullstack-blue']);
+        $this->assertSame(array('atom-one-dark'), array_values(array_unique($associations)));
     }
 
     public function test_typora_derived_theme_state_outputs_scoped_render_class()

@@ -5,6 +5,10 @@ export type AppearanceOption = Readonly<{
   label: string;
 }>;
 
+export type ArticleThemeOption = AppearanceOption & Readonly<{
+  defaultCodeTheme: string;
+}>;
+
 export type FontDefaults = Readonly<{
   appleFont: string;
   customFont: string;
@@ -44,7 +48,8 @@ export type AppearanceStrings = Readonly<{
 }>;
 
 export type AppearanceBootstrap = Readonly<{
-  articleThemes: ReadonlyArray<AppearanceOption>;
+  articleThemes: ReadonlyArray<ArticleThemeOption>;
+  codeThemeExplicit: boolean;
   codeThemes: ReadonlyArray<AppearanceOption>;
   customCss: ReadonlyArray<CustomCssItem>;
   state: AppearanceState;
@@ -134,6 +139,26 @@ function parseOptions(value: unknown): ReadonlyArray<AppearanceOption> {
   });
 }
 
+function parseArticleOptions(
+  value: unknown,
+  codeThemes: ReadonlyArray<AppearanceOption>
+): ReadonlyArray<ArticleThemeOption> {
+  const options = parseOptions(value);
+
+  return options.map((option, index) => {
+    const source = objectValue((value as ReadonlyArray<unknown>)[index], 'invalid-appearance-option');
+    const defaultCodeTheme = undefined === source.defaultCodeTheme
+      ? 'atom-one-dark'
+      : identifier(source.defaultCodeTheme, 'invalid-associated-code-theme');
+
+    if (!codeThemes.some(({ id }) => id === defaultCodeTheme)) {
+      throw new AppearanceBootstrapError('invalid-associated-code-theme');
+    }
+
+    return { ...option, defaultCodeTheme };
+  });
+}
+
 function parseCustomCss(value: unknown): ReadonlyArray<CustomCssItem> {
   if (!Array.isArray(value)) {
     throw new AppearanceBootstrapError('invalid-custom-css-library');
@@ -217,12 +242,16 @@ function parseStrings(value: unknown): AppearanceStrings {
 
 export function parseAppearanceBootstrap(value: unknown): AppearanceBootstrap {
   const bootstrap = objectValue(value, 'invalid-appearance-bootstrap');
-  const articleThemes = parseOptions(bootstrap.articleThemes);
   const codeThemes = parseOptions(bootstrap.codeThemes);
+  const articleThemes = parseArticleOptions(bootstrap.articleThemes, codeThemes);
   const customCss = parseCustomCss(bootstrap.customCss);
+  if ('boolean' !== typeof bootstrap.codeThemeExplicit) {
+    throw new AppearanceBootstrapError('invalid-code-theme-explicit-state');
+  }
 
   return {
     articleThemes,
+    codeThemeExplicit: bootstrap.codeThemeExplicit,
     codeThemes,
     customCss,
     state: parseState(bootstrap.state, articleThemes, codeThemes),

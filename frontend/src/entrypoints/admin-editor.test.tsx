@@ -209,6 +209,7 @@ describe('mountAdminEditor', () => {
         <input id="easymde-enabled-field" value="1">
         <textarea id="easymde-source"># Markdown</textarea>
         <input id="easymde-code-theme-field">
+        <input id="easymde-code-theme-explicit-field" value="0">
         <input id="easymde-custom-css-id-field">
         <input id="easymde-markdown-theme-field">
         <input id="easymde-apple-font-field">

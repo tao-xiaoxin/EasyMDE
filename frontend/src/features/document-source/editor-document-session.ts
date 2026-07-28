@@ -8,6 +8,7 @@ export type EditorDocumentSnapshot = Readonly<{
 export type EditorSubmissionState = Readonly<{
   appleFont: string;
   codeTheme: string;
+  codeThemeExplicit: boolean;
   customCssId: string;
   customFont: string;
   markdownTheme: string;
@@ -62,6 +63,7 @@ export function createEditorDocumentSession(
   ): boolean {
     return current.appleFont === saved.appleFont
       && current.codeTheme === saved.codeTheme
+      && current.codeThemeExplicit === saved.codeThemeExplicit
       && current.customCssId === saved.customCssId
       && current.customFont === saved.customFont
       && current.markdownTheme === saved.markdownTheme

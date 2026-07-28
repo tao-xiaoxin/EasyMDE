@@ -10,7 +10,7 @@ import { FontControls } from './FontControls';
 const bootstrap: FontControlsBootstrap = {
   options: {
     customFonts: [
-      { id: 'none', label: 'No custom font', fontFamily: '' },
+      { id: 'none', label: 'None', fontFamily: '' },
       { id: 'optima', label: 'Optima', fontFamily: '"Optima"' }
     ],
     windowsFonts: [
@@ -94,9 +94,36 @@ describe('FontControls', () => {
     await user.keyboard('{ArrowDown}');
     expect(document.activeElement).toBe(screen.getByRole('option', { name: 'Optima' }));
     await user.keyboard('{Home}');
-    expect(document.activeElement).toBe(screen.getByRole('option', { name: 'No custom font' }));
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: 'None' }));
     await user.keyboard('{Escape}');
     expect(document.activeElement).toBe(select);
+  });
+
+  it('keeps the immersive panel open and returns focus after a pointer selection', async () => {
+    const applyState = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <FontControls
+        bootstrap={bootstrap}
+        port={createPort(applyState)}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Font' }));
+    const panel = screen.getByRole('dialog', { name: 'Font' });
+    const select = screen.getByRole('button', { name: 'Custom font' });
+    await user.click(select);
+    await user.click(screen.getByRole('option', { name: 'None' }));
+
+    expect(panel.hidden).toBe(false);
+    expect(document.activeElement).toBe(select);
+    expect(applyState).toHaveBeenLastCalledWith({
+      ...bootstrap.state,
+      customFont: 'none'
+    });
   });
 
   it('anchors the panel to the font trigger instead of the page', async () => {

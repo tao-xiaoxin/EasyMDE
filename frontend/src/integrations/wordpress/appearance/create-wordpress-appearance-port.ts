@@ -14,6 +14,7 @@ import type { WordPressApiFetch } from '../preview/create-wordpress-preview-port
 
 type AppearanceFields = Readonly<{
   codeTheme: HTMLInputElement;
+  codeThemeExplicit: HTMLInputElement;
   customCssId: HTMLInputElement;
   markdownTheme: HTMLInputElement;
 }>;
@@ -114,7 +115,7 @@ export function createWordPressAppearancePort({
     state: bootstrap.state
   };
 
-  const applyState = (state: AppearanceState): void => {
+  const applyState = (state: AppearanceState, codeThemeExplicit: boolean): void => {
     const customCss = selectedCustomCss(snapshot.customCss, state);
     if ('custom' === state.markdownTheme && !customCss) {
       throw new Error('appearance-custom-css-unavailable');
@@ -146,6 +147,7 @@ export function createWordPressAppearancePort({
 
     fields.markdownTheme.value = state.markdownTheme;
     fields.codeTheme.value = state.codeTheme;
+    fields.codeThemeExplicit.value = codeThemeExplicit ? '1' : '0';
     fields.customCssId.value = 'custom' === state.markdownTheme ? state.customCssId : '';
     snapshot = { ...snapshot, state };
   };

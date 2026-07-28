@@ -280,37 +280,6 @@
   word-break: break-all;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-ningye-purple pre {
-  margin: 10px 0;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-ningye-purple pre code {
-  display: block;
-  font-family: var(--easymde-code-font-family);
-  font-size: 12px;
-  line-height: 26px;
-  border-radius: 0;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-ningye-purple pre code span {
-  line-height: 26px;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-ningye-purple .code-snippet__fix {
-  word-wrap: break-word !important;
-  color: #333;
-  font-size: 14px;
-  line-height: 20px;
-  display: flex;
-  position: relative;
-  margin: 10px 0;
-  background-color: rgba(0, 0, 0, 0.03);
-  border: 1px solid rgb(240, 240, 240);
-  border-radius: 2px;
-}
-
 .easymde-rendered-content.easymde-markdown-theme-ningye-purple .table-container {
   margin: 0;
   padding: 0;

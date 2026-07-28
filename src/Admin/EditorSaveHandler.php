@@ -92,7 +92,11 @@ final class EditorSaveHandler {
 		$this->post_document->mark_enabled( $post_id );
 		update_post_meta( $post_id, PostDocument::META_MARKDOWN, $markdown );
 		update_post_meta( $post_id, PostDocument::META_MARKDOWN_THEME, $theme_state['markdownTheme'] );
-		update_post_meta( $post_id, PostDocument::META_CODE_THEME, $theme_state['codeTheme'] );
+		if ( $theme_state['codeThemeExplicit'] ) {
+			update_post_meta( $post_id, PostDocument::META_CODE_THEME, $theme_state['codeTheme'] );
+		} else {
+			delete_post_meta( $post_id, PostDocument::META_CODE_THEME );
+		}
 		update_post_meta( $post_id, PostDocument::META_CUSTOM_CSS_ID, $theme_state['customCssId'] );
 		update_post_meta( $post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, $theme_state['customCss'] );
 		update_post_meta( $post_id, PostDocument::META_CUSTOM_FONT, $theme_state['customFont'] );
@@ -244,7 +248,6 @@ final class EditorSaveHandler {
 			PostDocument::META_ENABLED             => '1',
 			PostDocument::META_MARKDOWN            => $markdown,
 			PostDocument::META_MARKDOWN_THEME      => $theme_state['markdownTheme'],
-			PostDocument::META_CODE_THEME          => $theme_state['codeTheme'],
 			PostDocument::META_CUSTOM_CSS_ID       => $theme_state['customCssId'],
 			PostDocument::META_CUSTOM_CSS_SNAPSHOT => $theme_state['customCss'],
 			PostDocument::META_CUSTOM_FONT         => $theme_state['customFont'],
@@ -257,6 +260,11 @@ final class EditorSaveHandler {
 				$rendered_content
 			),
 		);
+		if ( $theme_state['codeThemeExplicit'] ) {
+			$metadata[ PostDocument::META_CODE_THEME ] = $theme_state['codeTheme'];
+		} else {
+			delete_metadata( 'post', $revision_id, PostDocument::META_CODE_THEME );
+		}
 
 		foreach ( $metadata as $key => $value ) {
 			delete_metadata( 'post', $revision_id, $key );
@@ -305,6 +313,7 @@ final class EditorSaveHandler {
 				'markdown',
 				'markdown_theme',
 				'code_theme',
+				'code_theme_explicit',
 				'custom_css_id',
 				'custom_font',
 				'windows_font',

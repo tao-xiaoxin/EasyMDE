@@ -1259,7 +1259,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-preview ul,
 .easymde-preview ol,
 .easymde-preview blockquote,
-.easymde-preview pre,
 .easymde-preview table {
     margin: 0 0 1em;
 }
@@ -1270,14 +1269,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     color: #475569;
 }
 
-.easymde-preview pre {
-    padding: 12px;
-    overflow: auto;
-    border-radius: 8px;
-    background: #f6f7f7;
-}
-
-.easymde-preview code {
+.easymde-preview :not(pre) > code {
     padding: 2px 4px;
     border-radius: 4px;
     background: #f6f7f7;
@@ -1305,11 +1297,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
     background: #fbfbfc;
     text-align: center;
     white-space: pre-wrap;
-}
-
-.easymde-preview pre code {
-    padding: 0;
-    background: transparent;
 }
 
 .easymde-preview img {

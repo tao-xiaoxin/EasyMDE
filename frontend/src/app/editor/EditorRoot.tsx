@@ -446,12 +446,14 @@ export function EditorRoot(props: EditorRootProps) {
   const scheduledPreviewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
   const previewRevisionRef = useRef(0);
   const previewAppearanceRef = useRef(props.appearance.state);
+  const codeThemeExplicitRef = useRef(props.appearance.codeThemeExplicit);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
   const featuredImageOperationRef = useRef<Promise<NativeFeaturedImage | null> | null>(null);
   const rootActiveRef = useRef(true);
   const initialSubmissionStateRef = useRef({
     ...props.appearance.state,
+    codeThemeExplicit: props.appearance.codeThemeExplicit,
     ...props.fonts.state
   });
   const submissionStateRef = useRef(initialSubmissionStateRef.current);
@@ -483,9 +485,16 @@ export function EditorRoot(props: EditorRootProps) {
     state: props.appearance.state
   }));
   const appearanceState = appearanceSnapshot.state;
+  const [codeThemeExplicit, setCodeThemeExplicit] = useState(
+    props.appearance.codeThemeExplicit
+  );
   const currentAppearance = useMemo<AppearanceBootstrap>(
-    () => ({ ...props.appearance, ...appearanceSnapshot }),
-    [appearanceSnapshot, props.appearance]
+    () => ({
+      ...props.appearance,
+      ...appearanceSnapshot,
+      codeThemeExplicit
+    }),
+    [appearanceSnapshot, codeThemeExplicit, props.appearance]
   );
   const [fontState, setFontState] = useState(props.fonts.state);
   const currentFonts = useMemo<FontControlsBootstrap>(
@@ -740,14 +749,19 @@ export function EditorRoot(props: EditorRootProps) {
   }, [leaveVisualPreview]);
   const appearancePort = useMemo<AppearancePort>(
     () => ({
-      applyState: (state) => {
+      applyState: (state, codeThemeExplicit) => {
         const visualPreviewWasEditing = visualPreviewEditingRef.current;
-        if (visualPreviewWasEditing && !prepareSourceMutation()) return;
-        props.appearancePort.applyState(state);
+        if (visualPreviewWasEditing && !prepareSourceMutation()) {
+          throw new Error('visual-editor-source-sync-failed');
+        }
+        props.appearancePort.applyState(state, codeThemeExplicit);
+        codeThemeExplicitRef.current = codeThemeExplicit;
+        setCodeThemeExplicit(codeThemeExplicit);
         setAppearanceSnapshot((snapshot) => ({ ...snapshot, state }));
         submissionStateRef.current = {
           ...submissionStateRef.current,
-          ...state
+          ...state,
+          codeThemeExplicit
         };
         documentSession?.replaceSubmissionState(submissionStateRef.current);
         previewAppearanceRef.current = state;
@@ -770,13 +784,16 @@ export function EditorRoot(props: EditorRootProps) {
       saveCustomCss: async (input) => {
         const sessionError = protectedOperationError('authenticated');
         if (sessionError) throw sessionError;
+        const visualPreviewWasEditing = visualPreviewEditingRef.current;
+        if (visualPreviewWasEditing && !prepareSourceMutation()) {
+          throw new Error('visual-editor-source-sync-failed');
+        }
         const result = await props.appearancePort.saveCustomCss(input);
         if ('saved' === result.status) {
-          const visualPreviewWasEditing = visualPreviewEditingRef.current;
-          if (visualPreviewWasEditing && !prepareSourceMutation()) {
-            return result;
-          }
-          props.appearancePort.applyState(result.snapshot.state);
+          props.appearancePort.applyState(
+            result.snapshot.state,
+            codeThemeExplicitRef.current
+          );
           setAppearanceSnapshot(result.snapshot);
           submissionStateRef.current = {
             ...submissionStateRef.current,
@@ -1341,9 +1358,9 @@ export function EditorRoot(props: EditorRootProps) {
           restoreRevision={restoreRevision}
           scrollSyncEnabled={scrollSyncEnabled}
           styleControls={
-            <Fragment>
-              <AppearanceControls
-                bootstrap={currentAppearance}
+              <Fragment>
+                <AppearanceControls
+                  bootstrap={currentAppearance}
                 onFailure={() =>
                   props.onFailure('react-editor-appearance-failed')
                 }

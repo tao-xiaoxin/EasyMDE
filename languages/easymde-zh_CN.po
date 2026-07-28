@@ -41,10 +41,6 @@ msgstr "Markdown 源文"
 msgid "Start writing Markdown to preview the article."
 msgstr "开始编写 Markdown 后将在此处预览文章。"
 
-#: src/Admin/AdminAssets.php:560
-msgid "Rendering preview..."
-msgstr "正在渲染预览..."
-
 #: src/Admin/AdminAssets.php:561
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr "预览失败。可以继续编写，保存不受影响。"

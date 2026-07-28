@@ -25,8 +25,8 @@ describe('createBrowserWechatClipboard', () => {
       write,
       pageOffset: () => ({ x: 0, y: 0 })
     });
-    const preview = document.createElement('div');
-    preview.innerHTML = '<span class="easymde-preview-pending">Pending</span>';
+    const preview = readyPreview();
+    preview.setAttribute('data-easymde-preview-refreshing', '1');
 
     await expect(clipboard.copy(preview)).resolves.toEqual({
       code: 'wechat-preview-unavailable',

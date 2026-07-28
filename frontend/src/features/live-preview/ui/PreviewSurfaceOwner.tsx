@@ -26,7 +26,6 @@ import { SafePreviewHtmlSink } from './SafePreviewHtmlSink';
 type PreviewMessages = Readonly<{
   empty: string;
   error: string;
-  rendering: string;
 }>;
 
 type PreviewHtmlState = Readonly<{
@@ -422,10 +421,6 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         <p className="easymde-preview-empty">{props.messages.empty}</p>
       ) : 'html' !== state.kind && 'error' === state.kind ? (
         <p className="easymde-preview-error">{props.messages.error}</p>
-      ) : 'html' !== state.kind ? (
-        <p className="easymde-preview-pending" role="status">
-          {props.messages.rendering}
-        </p>
       ) : null}
     </SafePreviewHtmlSink>
   );

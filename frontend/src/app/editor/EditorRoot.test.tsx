@@ -400,7 +400,7 @@ function fixture(): EditorRootProps &
     preview: {
       features: {},
       html: '<p>Initial</p>' as SafePreviewHtml,
-      messages: { empty: 'Empty', error: 'Failed', rendering: 'Rendering' },
+      messages: { empty: 'Empty', error: 'Failed' },
       postId: 7,
       signature: 'initial'
     },

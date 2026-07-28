@@ -69,7 +69,7 @@ function inlineStyles(
 function previewReady(preview: HTMLElement): boolean {
   return '' !== preview.innerHTML.trim()
     && !preview.querySelector(
-      '.easymde-preview-empty, .easymde-preview-pending, .easymde-preview-error, .easymde-render-error'
+      '.easymde-preview-empty, .easymde-preview-error, .easymde-render-error'
     )
     && '1' !== preview.getAttribute('data-easymde-preview-error')
     && '1' !== preview.getAttribute('data-easymde-preview-refreshing')

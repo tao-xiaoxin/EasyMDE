@@ -17,8 +17,7 @@ import {
 
 const messages = {
   empty: 'Start writing Markdown to preview the article.',
-  error: 'Preview failed. Please keep writing; saving is not affected.',
-  rendering: 'Rendering preview...'
+  error: 'Preview failed. Please keep writing; saving is not affected.'
 };
 
 const request = (markdown: string, signature = markdown): PreviewRequest => ({
@@ -208,7 +207,7 @@ describe('PreviewSurfaceOwner', () => {
     expect(paperHtmlChanges).toEqual([safeHtml('')]);
   });
 
-  it('preserves a non-empty loading request when leaving empty paper mode', () => {
+  it('keeps a non-empty initial request visually quiet when leaving empty paper mode', () => {
     const statuses: PreviewSurfaceStatus[] = [];
     const current = setup({
       initialHtml: '',
@@ -221,7 +220,12 @@ describe('PreviewSurfaceOwner', () => {
       current.setEmptyMode('message');
     });
 
-    expect(current.surface.textContent).toBe(messages.rendering);
+    expect(current.surface.textContent).toBe('');
+    expect(
+      current.surface.querySelector('.easymde-preview-pending')
+    ).toBeNull();
+    expect(current.surface.querySelector('[role="status"]')).toBeNull();
+    expect(current.surface.getAttribute('aria-busy')).toBe('true');
     expect(statuses.at(-1)).toBe('loading');
     expect(current.surface.textContent).not.toBe(messages.empty);
   });
@@ -258,7 +262,7 @@ describe('PreviewSurfaceOwner', () => {
     expect(surface.getAttribute('aria-busy')).toBe('true');
     expect(surface.getAttribute('data-easymde-preview-refreshing')).toBe('1');
     expect(surface.textContent).toContain('Initial preview');
-    expect(surface.textContent).not.toContain(messages.rendering);
+    expect(surface.querySelector('[role="status"]')).toBeNull();
   });
 
   it('renders accessible empty and error states without reporting readiness', async () => {

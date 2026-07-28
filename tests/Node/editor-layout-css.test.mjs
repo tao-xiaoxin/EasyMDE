@@ -54,6 +54,25 @@ test('ordinary Preview owns vertical scrolling and fits wide table content', () 
   );
 });
 
+test('ordinary Preview provides an editorial reading rhythm without changing immersive Preview', () => {
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\s*\{[^}]*padding-block:\s*0;[^}]*padding-inline:\s*max\(clamp\(14px, 4\.5%, 22px\), calc\(\(100% - 680px\) \/ 4\)\);[^}]*background-image:\s*none;[^}]*scroll-padding-block:\s*0;[^}]*scroll-padding-inline:\s*max\(clamp\(14px, 4\.5%, 22px\), calc\(\(100% - 680px\) \/ 4\)\);/s
+  );
+  assert.match(
+    css,
+    /@media \(max-width:\s*782px\)[\s\S]*?\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\s*\{[^}]*padding-block:\s*0;[^}]*padding-inline:\s*10px;/s
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-editor\.is-immersive(?:-split|-preview)? \.easymde-preview\s*\{[^}]*background-image:\s*none;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-rendered-content :is\(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a\)\s*\{[^}]*overflow-wrap:\s*anywhere;/s
+  );
+});
+
 test('ordinary editor settings combines theme and font controls in one responsive popover', () => {
   const popover = readFileSync(
     new URL('../../assets/css/admin/popover.css', import.meta.url),

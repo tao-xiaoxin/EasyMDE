@@ -15,12 +15,14 @@ import type {
 } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type { AppearancePort } from '../../../contracts/ports/appearance-port';
 import { referenceArticleTheme } from '../reference-article-theme';
+import { ImmersiveCustomCssDialog } from './ImmersiveCustomCssDialog';
 import {
   Check,
   ChevronDown,
   Palette,
   PenLine
 } from '../../../generated/lucide-icons';
+import { OrdinarySelect } from '../../../shared/ui/OrdinarySelect';
 
 export type AppearanceControlsSession = Readonly<{
   close: () => void;
@@ -57,12 +59,17 @@ const CODE_THEME_SWATCHES: Readonly<Record<string, readonly [string, string]>> =
   monokai: ['#272822', '#F8F8F2'],
   vs2015: ['#1E1E1E', '#DCDCDC'],
   xcode: ['#FFFFFF', '#1D1D1F'],
+  'fullstack-blue': ['#282C34', '#ABB2BF'],
   'terminal-noir': ['#0D1017', '#CAD1D9'],
   'wechat-inspired': ['#F4F4F4', '#333333']
 };
 
 function articleThemeAccent(id: string): string {
   return referenceArticleTheme(id).accent;
+}
+
+function codeThemeSwatch(id: string): readonly [string, string] {
+  return CODE_THEME_SWATCHES[id] ?? ['#F4F4F4', '#333333'];
 }
 
 function ThemeSettingsIcon() {
@@ -244,6 +251,25 @@ function selectedArticleValue(snapshot: AppearanceSnapshot): string {
     : `theme:${snapshot.state.markdownTheme}`;
 }
 
+function associatedCodeTheme(bootstrap: AppearanceBootstrap, markdownTheme: string): string {
+  const theme = bootstrap.articleThemes.find(({ id }) => id === markdownTheme);
+  if (!theme) {
+    throw new Error('appearance-associated-code-theme-missing');
+  }
+
+  return theme.defaultCodeTheme;
+}
+
+function customCssCodeTheme(
+  bootstrap: AppearanceBootstrap,
+  currentCodeTheme: string,
+  codeThemeExplicit: boolean
+): string {
+  return codeThemeExplicit
+    ? currentCodeTheme
+    : associatedCodeTheme(bootstrap, 'default');
+}
+
 export function AppearanceControls({
   bootstrap,
   port,
@@ -261,6 +287,7 @@ export function AppearanceControls({
     'immersive' === variant
       ? (immersiveTitle ?? controlLabel)
       : bootstrap.strings.appearance;
+  const codeThemeExplicitRef = useRef(bootstrap.codeThemeExplicit);
   const [snapshot, setSnapshot] = useState<AppearanceSnapshot>({
     customCss: bootstrap.customCss,
     state: bootstrap.state
@@ -319,6 +346,7 @@ export function AppearanceControls({
     close: () => {
       if (activeRef.current) {
         setIsOpen(false);
+        setIsCustomOpen(false);
       }
     },
     replaceSnapshot: (nextSnapshot) => replaceSnapshotRef.current(nextSnapshot)
@@ -378,34 +406,53 @@ export function AppearanceControls({
     };
   }, [isOpen]);
 
-  const applyState = (nextState: AppearanceState) => {
+  const applyState = (
+    nextState: AppearanceState,
+    nextCodeThemeExplicit = codeThemeExplicitRef.current
+  ): boolean => {
     try {
-      port.applyState(nextState);
+      port.applyState(nextState, nextCodeThemeExplicit);
     } catch {
       onFailure();
-      return;
+      return false;
     }
 
+    codeThemeExplicitRef.current = nextCodeThemeExplicit;
     const nextSnapshot = { ...snapshotRef.current, state: nextState };
     snapshotRef.current = nextSnapshot;
     setSnapshot(nextSnapshot);
     setStatus('');
+    return true;
   };
 
   const openCustomPanel = () => {
     const nextOpen = !isCustomOpen;
     setIsCustomOpen(nextOpen);
+    if ('immersive' === variant && nextOpen) {
+      setIsOpen(false);
+    }
     setStatus('');
     if (nextOpen) {
-      const item = selectedCustomCss(snapshotRef.current);
-      setCustomName(item?.name ?? '');
-      setCustomCode(item?.css ?? '');
+      if ('immersive' === variant) {
+        setCustomName('');
+        setCustomCode('');
+      } else {
+        const item = selectedCustomCss(snapshotRef.current);
+        setCustomName(item?.name ?? '');
+        setCustomCode(item?.css ?? '');
+      }
     }
   };
 
-  const saveCustomCss = async () => {
+  const saveCustomCss = async (
+    input: Readonly<{ name: string; css: string }> = {
+      name: customName,
+      css: customCode
+    },
+    requestedId?: string
+  ): Promise<boolean> => {
     if (savingRef.current) {
-      return;
+      return false;
     }
     savingRef.current = true;
     setIsSaving(true);
@@ -413,27 +460,46 @@ export function AppearanceControls({
 
     try {
       const result = await port.saveCustomCss({
-        id:
-          'custom' === snapshotRef.current.state.markdownTheme
+        id: undefined !== requestedId
+          ? requestedId
+          : 'custom' === snapshotRef.current.state.markdownTheme
             ? snapshotRef.current.state.customCssId
             : '',
-        name: customName,
-        css: customCode
+        name: input.name,
+        css: input.css
       });
       if (!activeRef.current) {
-        return;
+        return false;
       }
       if ('saved' === result.status) {
-        replaceSnapshot(result.snapshot);
+        const nextSnapshot = {
+          ...result.snapshot,
+          state: {
+            ...result.snapshot.state,
+            codeTheme: customCssCodeTheme(
+              bootstrap,
+              result.snapshot.state.codeTheme,
+              codeThemeExplicitRef.current
+            )
+          }
+        };
+        if (!applyState(nextSnapshot.state)) {
+          setStatus(bootstrap.strings.cssSaveFailed);
+          return false;
+        }
+        replaceSnapshot(nextSnapshot);
         setStatus(bootstrap.strings.cssSaved);
+        return true;
       } else {
         setStatus(bootstrap.strings.cssSaveFailed);
+        return false;
       }
     } catch {
       if (activeRef.current) {
         setStatus(bootstrap.strings.cssSaveFailed);
         onFailure();
       }
+      return false;
     } finally {
       savingRef.current = false;
       if (activeRef.current) {
@@ -457,8 +523,89 @@ export function AppearanceControls({
     (theme) => ({
       id: theme.id,
       label: theme.label,
-      swatch: CODE_THEME_SWATCHES[theme.id] ?? ['#F4F4F4', '#333333']
+      swatch: codeThemeSwatch(theme.id)
     })
+  );
+  const selectArticleTheme = (value: string) => {
+    if (value.startsWith('custom:')) {
+      applyState({
+        ...snapshotRef.current.state,
+        markdownTheme: 'custom',
+        codeTheme: customCssCodeTheme(
+          bootstrap,
+          snapshotRef.current.state.codeTheme,
+          codeThemeExplicitRef.current
+        ),
+        customCssId: value.slice(7)
+      });
+    } else {
+      const markdownTheme = value.slice(6);
+      applyState({
+        ...snapshotRef.current.state,
+        markdownTheme,
+        codeTheme: codeThemeExplicitRef.current
+          ? snapshotRef.current.state.codeTheme
+          : associatedCodeTheme(bootstrap, markdownTheme),
+        customCssId: ''
+      });
+    }
+  };
+  const selectCodeTheme = (value: string) => {
+    if (value.startsWith('custom:')) {
+      selectArticleTheme(value);
+      return;
+    }
+    applyState(
+      {
+        ...snapshotRef.current.state,
+        markdownTheme:
+          'custom' === snapshotRef.current.state.markdownTheme
+            ? 'default'
+            : snapshotRef.current.state.markdownTheme,
+        codeTheme: value.slice(6),
+        customCssId:
+          'custom' === snapshotRef.current.state.markdownTheme
+            ? ''
+            : snapshotRef.current.state.customCssId
+      },
+      true
+    );
+  };
+  const selectedCodeValue =
+    selectedCustomCss(snapshot) !== undefined
+      ? `custom:${snapshot.state.customCssId}`
+      : `theme:${snapshot.state.codeTheme}`;
+  const customCssPanel = (
+    <div className="easymde-custom-css-panel" hidden={!isCustomOpen}>
+      <div className="easymde-custom-css-row">
+        <input
+          type="text"
+          className="regular-text easymde-custom-css-name"
+          aria-label={bootstrap.strings.cssName}
+          placeholder={bootstrap.strings.cssName}
+          value={customName}
+          onChange={(event) => setCustomName(event.currentTarget.value)}
+        />
+        <button
+          type="button"
+          className="button button-primary"
+          disabled={isSaving}
+          onClick={() => void saveCustomCss()}
+        >
+          {bootstrap.strings.saveCss}
+        </button>
+        <span className="easymde-custom-css-status" aria-live="polite">
+          {status}
+        </span>
+      </div>
+      <textarea
+        className="easymde-custom-css-code"
+        aria-label={bootstrap.strings.customCss}
+        spellCheck={false}
+        value={customCode}
+        onChange={(event) => setCustomCode(event.currentTarget.value)}
+      />
+    </div>
   );
   const ordinaryFields = (
     <Fragment>
@@ -469,22 +616,7 @@ export function AppearanceControls({
         <select
           className="easymde-theme-select"
           value={selectedArticleValue(snapshot)}
-          onChange={(event) => {
-            const value = event.currentTarget.value;
-            if (value.startsWith('custom:')) {
-              applyState({
-                ...snapshotRef.current.state,
-                markdownTheme: 'custom',
-                customCssId: value.slice(7)
-              });
-            } else {
-              applyState({
-                ...snapshotRef.current.state,
-                markdownTheme: value.slice(6),
-                customCssId: ''
-              });
-            }
-          }}
+          onChange={(event) => selectArticleTheme(event.currentTarget.value)}
         >
           {bootstrap.articleThemes.map((theme) => (
             <option key={theme.id} value={`theme:${theme.id}`}>
@@ -508,17 +640,17 @@ export function AppearanceControls({
         </span>
         <select
           className="easymde-code-theme-select"
-          value={snapshot.state.codeTheme}
-          onChange={(event) =>
-            applyState({
-              ...snapshotRef.current.state,
-              codeTheme: event.currentTarget.value
-            })
-          }
+          value={selectedCodeValue}
+          onChange={(event) => selectCodeTheme(event.currentTarget.value)}
         >
           {bootstrap.codeThemes.map((theme) => (
-            <option key={theme.id} value={theme.id}>
+            <option key={theme.id} value={`theme:${theme.id}`}>
               {theme.label}
+            </option>
+          ))}
+          {snapshot.customCss.map((item) => (
+            <option key={item.id} value={`custom:${item.id}`}>
+              {item.name}
             </option>
           ))}
         </select>
@@ -531,7 +663,48 @@ export function AppearanceControls({
       <section className="easymde-editor-settings-section is-appearance">
         <h3>{bootstrap.strings.appearance}</h3>
         <div className="easymde-editor-settings-fields">
-          {ordinaryFields}
+          <div className="easymde-toolbar-control">
+            <span className="easymde-toolbar-control-label">
+              {bootstrap.strings.articleTheme}
+            </span>
+            <OrdinarySelect
+              className="easymde-theme-select"
+              label={bootstrap.strings.articleTheme}
+              value={selectedArticleValue(snapshot)}
+              options={[
+                ...bootstrap.articleThemes.map((theme) => ({
+                  id: `theme:${theme.id}`,
+                  label: theme.label
+                })),
+                ...snapshot.customCss.map((item) => ({
+                  id: `custom:${item.id}`,
+                  label: item.name
+                }))
+              ]}
+              onChange={selectArticleTheme}
+            />
+          </div>
+          <div className="easymde-toolbar-control">
+            <span className="easymde-toolbar-control-label">
+              {bootstrap.strings.codeTheme}
+            </span>
+            <OrdinarySelect
+              className="easymde-code-theme-select"
+              label={bootstrap.strings.codeTheme}
+              value={selectedCodeValue}
+              options={[
+                ...bootstrap.codeThemes.map((theme) => ({
+                  id: `theme:${theme.id}`,
+                  label: theme.label
+                })),
+                ...snapshot.customCss.map((item) => ({
+                  id: `custom:${item.id}`,
+                  label: item.name
+                }))
+              ]}
+              onChange={selectCodeTheme}
+            />
+          </div>
         </div>
       </section>
     );
@@ -654,12 +827,21 @@ export function AppearanceControls({
                     applyState({
                       ...snapshotRef.current.state,
                       markdownTheme: 'custom',
+                      codeTheme: customCssCodeTheme(
+                        bootstrap,
+                        snapshotRef.current.state.codeTheme,
+                        codeThemeExplicitRef.current
+                      ),
                       customCssId: value.slice(7)
                     });
                   } else {
+                    const markdownTheme = value.slice(6);
                     applyState({
                       ...snapshotRef.current.state,
-                      markdownTheme: value.slice(6),
+                      markdownTheme,
+                      codeTheme: codeThemeExplicitRef.current
+                        ? snapshotRef.current.state.codeTheme
+                        : associatedCodeTheme(bootstrap, markdownTheme),
                       customCssId: ''
                     });
                   }
@@ -669,57 +851,51 @@ export function AppearanceControls({
                 label={bootstrap.strings.codeTheme}
                 value={snapshot.state.codeTheme}
                 options={codeOptions}
-                onChange={(codeTheme) =>
-                  applyState({ ...snapshotRef.current.state, codeTheme })
-                }
+                onChange={(codeTheme) => {
+                  applyState(
+                    { ...snapshotRef.current.state, codeTheme },
+                    true
+                  );
+                }}
               />
-              <div className="easymde-immersive-custom-css-action">
-                <button
-                  type="button"
-                  className="easymde-immersive-custom-css-trigger"
-                  aria-expanded={isCustomOpen}
-                  onClick={openCustomPanel}
-                >
-                  <PenLine size={17} strokeWidth={2.1} aria-hidden="true" />
-                  {bootstrap.strings.customCssTheme}
-                </button>
-              </div>
+              {bootstrap.canManageCustomCss ? (
+                <div className="easymde-immersive-custom-css-action">
+                  <button
+                    type="button"
+                    className="easymde-immersive-custom-css-trigger"
+                    aria-expanded={isCustomOpen}
+                    onClick={openCustomPanel}
+                  >
+                    <PenLine size={17} strokeWidth={2.1} aria-hidden="true" />
+                    {bootstrap.strings.customCssTheme}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </Fragment>
         ) : (
           ordinaryFields
         )}
-        <div className="easymde-custom-css-panel" hidden={!isCustomOpen}>
-          <div className="easymde-custom-css-row">
-            <input
-              type="text"
-              className="regular-text easymde-custom-css-name"
-              aria-label={bootstrap.strings.cssName}
-              placeholder={bootstrap.strings.cssName}
-              value={customName}
-              onChange={(event) => setCustomName(event.currentTarget.value)}
-            />
-            <button
-              type="button"
-              className="button button-primary"
-              disabled={isSaving}
-              onClick={saveCustomCss}
-            >
-              {bootstrap.strings.saveCss}
-            </button>
-            <span className="easymde-custom-css-status" aria-live="polite">
-              {status}
-            </span>
-          </div>
-          <textarea
-            className="easymde-custom-css-code"
-            aria-label={bootstrap.strings.customCss}
-            spellCheck={false}
-            value={customCode}
-            onChange={(event) => setCustomCode(event.currentTarget.value)}
-          />
-        </div>
+        {'default' === variant ? customCssPanel : null}
       </div>
+      {'immersive' === variant &&
+      bootstrap.canManageCustomCss &&
+      isCustomOpen ? (
+        <ImmersiveCustomCssDialog
+          initialCss={customCode}
+          initialName={customName}
+          onApply={(input) => saveCustomCss(input, '')}
+          onClose={() => {
+            setIsCustomOpen(false);
+            triggerRef.current?.focus();
+          }}
+          onPreview={port.previewCustomCss}
+          saveFailedMessage={bootstrap.strings.cssSaveFailed}
+          strings={bootstrap.strings.customCssDialog}
+          title={bootstrap.strings.customCssTheme}
+          variables={bootstrap.customCssVariables}
+        />
+      ) : null}
     </div>
   );
 }

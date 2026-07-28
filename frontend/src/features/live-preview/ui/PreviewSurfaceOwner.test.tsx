@@ -325,6 +325,51 @@ describe('PreviewSurfaceOwner', () => {
     expect(statuses.at(-1)).toBe('ready');
   });
 
+  it('restores identical server HTML before enhancing a newer response', async () => {
+    const enhancementInputs: string[] = [];
+    const current = setup({
+      initialHtml: '',
+      enhance: async (surface) => {
+        const code = surface.querySelector('pre > code');
+        if (!(code instanceof HTMLElement)) throw new Error('code missing');
+        enhancementInputs.push(code.innerHTML);
+        code.classList.add('hljs');
+        code.dataset.highlighted = 'yes';
+        code.dataset.easymdeHighlighted = '1';
+        code.innerHTML = '<span class="hljs-keyword">const</span> value = 1;';
+      }
+    });
+    const html = safeHtml('<pre><code class="language-js">const value = 1;</code></pre>');
+
+    act(() => current.session.schedule(request('```js\nconst value = 1;\n```', 'first'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({
+        features: { syntaxHighlight: true },
+        html
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => current.session.schedule({
+      ...request('```js\nconst value = 1;\n```', 'second'),
+      codeTheme: 'github'
+    }, true));
+    await act(async () => {
+      current.responses[1]?.resolve({
+        features: { syntaxHighlight: true },
+        html
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(enhancementInputs).toEqual([
+      'const value = 1;',
+      'const value = 1;'
+    ]);
+  });
+
   it('hands enhanced Preview markup to visual editing with Markdown sources attached', async () => {
     const onHtmlChange = vi.fn();
     const current = setup({

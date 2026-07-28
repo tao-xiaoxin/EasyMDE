@@ -1,14 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
 import { previewEnhancementBootstrapFixture } from '../../test/preview-enhancement-bootstrap-fixture';
+import {
+  customCssDialogStrings,
+  customCssVariables
+} from '../../test/fixtures/appearance-bootstrap';
 import { parseEditorRootBootstrap } from './editor-root-bootstrap';
 
 function validBootstrap() {
   return {
     appearance: {
-      articleThemes: [{ id: 'default', label: 'Default' }],
+      articleThemes: [{
+        id: 'default',
+        label: 'Default',
+        defaultCodeTheme: 'atom-one-dark'
+      }],
+      canManageCustomCss: true,
+      codeThemeExplicit: false,
       codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
       customCss: [],
+      customCssVariables,
       state: {
         codeTheme: 'atom-one-dark',
         customCssId: '',
@@ -23,6 +34,7 @@ function validBootstrap() {
         cssSaved: 'CSS saved',
         customCss: 'Custom CSS',
         customCssTheme: 'Custom CSS theme',
+        customCssDialog: customCssDialogStrings,
         namedCustomCss: 'Named CSS',
         saveCss: 'Save CSS'
       }
@@ -339,7 +351,8 @@ describe('parseEditorRootBootstrap', () => {
                 windowsFont: 'system'
               },
               id: 'default',
-              label: 'Default'
+              label: 'Default',
+              defaultCodeTheme: 'atom-one-dark'
             }
           ]
         }

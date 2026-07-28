@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  customCssDialogStrings,
+  customCssVariables
+} from '../../test/fixtures/appearance-bootstrap';
+import {
   type AppearanceBootstrapError,
   parseAppearanceBootstrap,
   parseAppearanceSnapshot
@@ -14,13 +18,17 @@ const bootstrap = {
         appleFont: 'system', customFont: 'none', serifFont: 'off', windowsFont: 'system'
       },
       id: 'default',
-      label: 'Default'
+      label: 'Default',
+      defaultCodeTheme: 'atom-one-dark'
     },
-    { id: 'newsprint', label: 'Newsprint' }
+    { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'fullstack-blue' }
   ],
+  canManageCustomCss: true,
+  codeThemeExplicit: false,
   codeThemes: [
     { id: 'atom-one-dark', label: 'Atom One Dark' },
-    { id: 'github', label: 'GitHub' }
+    { id: 'github', label: 'GitHub' },
+    { id: 'fullstack-blue', label: 'Fullstack Blue' }
   ],
   customCss: [
     {
@@ -30,6 +38,7 @@ const bootstrap = {
       scopedCss: '.easymde-rendered-content .note { color: navy; }'
     }
   ],
+  customCssVariables,
   state: {
     markdownTheme: 'default',
     codeTheme: 'atom-one-dark',
@@ -41,6 +50,7 @@ const bootstrap = {
     codeTheme: 'Code theme',
     customCss: 'Custom CSS',
     customCssTheme: 'Custom CSS theme',
+    customCssDialog: customCssDialogStrings,
     cssName: 'CSS name',
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
@@ -64,6 +74,22 @@ describe('parseAppearanceBootstrap', () => {
   });
 
   it.each([
+    {
+      name: 'invalid custom CSS capability',
+      value: {
+        ...bootstrap,
+        canManageCustomCss: 'true'
+      },
+      code: 'invalid-custom-css-capability'
+    },
+    {
+      name: 'invalid explicit code-theme marker',
+      value: {
+        ...bootstrap,
+        codeThemeExplicit: 'false'
+      },
+      code: 'invalid-code-theme-explicit-state'
+    },
     {
       name: 'duplicate article theme IDs',
       value: {
@@ -89,6 +115,14 @@ describe('parseAppearanceBootstrap', () => {
       code: 'invalid-custom-css-code'
     },
     {
+      name: 'unknown associated code theme',
+      value: {
+        ...bootstrap,
+        articleThemes: [{ ...bootstrap.articleThemes[0], defaultCodeTheme: 'missing' }]
+      },
+      code: 'invalid-associated-code-theme'
+    },
+    {
       name: 'unknown code theme selection',
       value: {
         ...bootstrap,
@@ -103,6 +137,14 @@ describe('parseAppearanceBootstrap', () => {
         strings: { ...bootstrap.strings, customCssTheme: '' }
       },
       code: 'invalid-appearance-string'
+    },
+    {
+      name: 'missing Custom CSS variables',
+      value: {
+        ...bootstrap,
+        customCssVariables: bootstrap.customCssVariables.slice(1)
+      },
+      code: 'invalid-custom-css-variables'
     }
   ])('rejects $name', ({ value, code }) => {
     expect(() => parseAppearanceBootstrap(value)).toThrowError(

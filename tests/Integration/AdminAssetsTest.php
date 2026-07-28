@@ -20,6 +20,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	private $get_static_asset_version;
 	private $get_storage_config;
 	private $get_strings;
+	private $get_custom_css_variables;
 	private $get_editor_root_bootstrap;
 
 	public function set_up() {
@@ -40,11 +41,13 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->get_static_asset_version = $reflection->getMethod( 'get_static_asset_version' );
 		$this->get_storage_config = $reflection->getMethod( 'get_storage_config' );
 		$this->get_strings = $reflection->getMethod( 'get_strings' );
+		$this->get_custom_css_variables = $reflection->getMethod( 'get_custom_css_variables' );
 		$this->get_editor_root_bootstrap = $reflection->getMethod( 'get_editor_root_bootstrap' );
 		$this->get_react_editor_asset->setAccessible( true );
 		$this->get_static_asset_version->setAccessible( true );
 		$this->get_storage_config->setAccessible( true );
 		$this->get_strings->setAccessible( true );
+		$this->get_custom_css_variables->setAccessible( true );
 		$this->get_editor_root_bootstrap->setAccessible( true );
 		wp_cache_flush();
 	}
@@ -65,6 +68,12 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( $post_id, $bootstrap['localDrafts']['postId'] );
 		$this->assertArrayHasKey( 'document', $bootstrap );
 		$this->assertArrayHasKey( 'appearance', $bootstrap );
+		$this->assertSame(
+			current_user_can( 'unfiltered_html' ),
+			$bootstrap['appearance']['canManageCustomCss']
+		);
+		$this->assertFalse( $bootstrap['appearance']['codeThemeExplicit'] );
+		$this->assertArrayNotHasKey( 'codeThemeExplicit', $bootstrap['appearance']['state'] );
 		$this->assertArrayHasKey( 'fonts', $bootstrap );
 		$this->assertArrayHasKey( 'layout', $bootstrap );
 		$this->assertSame( 'Character count: %s', $bootstrap['layout']['status']['wordCount'] );
@@ -255,6 +264,57 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( 'Local draft could not be saved.', $strings['draftSaveFailed'] );
 		$this->assertSame( 'Local draft could not be discarded.', $strings['draftDiscardFailed'] );
 		$this->assertSame( 'A different local draft was saved in another tab.', $strings['draftConflict'] );
+	}
+
+	public function test_custom_css_variable_categories_match_the_reference_tab_panels() {
+		$variables = $this->get_custom_css_variables->invoke( $this->admin_assets );
+		$groups    = array();
+
+		foreach ( $variables as $variable ) {
+			$groups[ $variable['category'] ][] = $variable['id'];
+		}
+
+		$this->assertSame(
+			array(
+				'foundation' => array(
+					'primaryColor',
+					'headingColor',
+					'textColor',
+					'mutedColor',
+					'linkColor',
+					'backgroundColor',
+					'borderColor',
+				),
+				'blocks'     => array(
+					'emphasisBackground',
+					'selectionBackground',
+					'quoteColor',
+					'quoteBackground',
+					'tableHeaderBackground',
+					'tableStripeBackground',
+				),
+				'code'       => array(
+					'inlineCodeColor',
+					'inlineCodeBackground',
+					'codeBlockTextColor',
+					'codeBlockBackground',
+					'codeKeywordColor',
+					'codeStringColor',
+					'codeCommentColor',
+				),
+				'alerts'     => array(
+					'infoColor',
+					'infoBackground',
+					'successColor',
+					'successBackground',
+					'warningColor',
+					'warningBackground',
+					'dangerColor',
+					'dangerBackground',
+				),
+			),
+			$groups
+		);
 	}
 
 	public function test_editor_layout_omits_withdrawn_ui_strings_and_keeps_native_direction() {

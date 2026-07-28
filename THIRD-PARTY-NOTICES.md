@@ -25,6 +25,7 @@ Composer packages are bundled under `vendor/` in the release ZIP after `composer
 | Name | Version | Source | License | Purpose | Bundled in ZIP | Notice location |
 | --- | --- | --- | --- | --- | --- | --- |
 | Inter font | 5.3.0 | https://registry.npmjs.org/@fontsource/inter/-/inter-5.3.0.tgz | OFL-1.1 | Local immersive-editor interface font. | Yes, copied to assets/vendor/fonts/inter/ | assets/vendor/fonts/inter/LICENSE |
+| Inter variable font | 5.3.0 | https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz | OFL-1.1 | Local reference-matched font for immersive Custom CSS tabs. | Yes, copied to assets/vendor/fonts/inter-variable/ | assets/vendor/fonts/inter-variable/LICENSE |
 | JetBrains Mono font | 5.3.0 | https://registry.npmjs.org/@fontsource/jetbrains-mono/-/jetbrains-mono-5.3.0.tgz | OFL-1.1 | Local immersive-editor source and statistics font. | Yes, copied to assets/vendor/fonts/jetbrains-mono/ | assets/vendor/fonts/jetbrains-mono/LICENSE |
 | Lora font | 5.3.0 | https://registry.npmjs.org/@fontsource/lora/-/lora-5.3.0.tgz | OFL-1.1 | Local immersive Preview heading font. | Yes, copied to assets/vendor/fonts/lora/ | assets/vendor/fonts/lora/LICENSE |
 | Highlight.js CDN assets | 11.11.1 | https://registry.npmjs.org/@highlightjs/cdn-assets/-/cdn-assets-11.11.1.tgz | BSD-3-Clause | Local syntax highlighting script and bundled Highlight.js code themes. | Yes, copied to assets/vendor/highlight/highlight.min.js, assets/vendor/highlight/styles/*.css | assets/vendor/highlight/LICENSE |

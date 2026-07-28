@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
 const repoRoot = new URL('../..', import.meta.url).pathname;
+const syntheticAdminUser = `easymde-script-test-${process.pid}`;
+const syntheticAdminPassword = randomUUID();
 
 function makeTempRoot(prefix) {
   return mkdtempSync(join('/tmp', prefix));
@@ -103,6 +106,8 @@ function runScript(script, args, options = {}) {
     encoding: 'utf8',
     env: {
       ...process.env,
+      WORDPRESS_ADMIN_USER: syntheticAdminUser,
+      WORDPRESS_ADMIN_PASSWORD: syntheticAdminPassword,
       ...options.env
     }
   });

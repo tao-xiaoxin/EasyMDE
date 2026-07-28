@@ -104,9 +104,20 @@ test('repository frontend runtime assets match their locked local sources', () =
 
 test('frontend runtime preparation is explicit and uses only the Highlight.js prebuilt package', () => {
   const highlight = frontendRuntimeAssets.find((component) => component.id === 'highlight');
+  const variableInter = frontendRuntimeAssets.find(
+    (component) => component.id === 'inter-variable-font'
+  );
   const packageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
 
   assert.equal(highlight?.packageName, '@highlightjs/cdn-assets');
+  assert.equal(variableInter?.packageName, '@fontsource-variable/inter');
+  assert.ok(
+    variableInter?.copies.some(
+      ({ destination }) =>
+        destination ===
+        'assets/vendor/fonts/inter-variable/inter-latin-wght-normal.woff2'
+    )
+  );
   assert.equal(Object.hasOwn(packageJson.dependencies, 'highlight.js'), false);
   assert.equal(Object.hasOwn(packageJson.scripts, 'postinstall'), false);
   assert.equal(packageJson.scripts['prepare:assets'], 'node scripts/copy-vendor-assets.mjs');

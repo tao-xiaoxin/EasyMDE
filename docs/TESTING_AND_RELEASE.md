@@ -35,6 +35,48 @@ scripts/install-wp-tests.sh easymde_phpunit <db_user> <db_password> <db_host> 6.
 composer run test:phpunit
 ```
 
+For repeated local validation, build the pinned reusable CI image once from
+explicitly supplied local resources:
+
+```bash
+EASYMDE_CI_NODE_ARCHIVE=/path/to/node-v20.19.0-linux-<arch>.tar.xz \
+EASYMDE_CI_COMPOSER_CACHE_SOURCE=/path/to/composer/cache \
+EASYMDE_CI_WP_CORE_SOURCE=/path/to/wordpress-6.7 \
+EASYMDE_CI_WP_TESTS_SOURCE=/path/to/wordpress-6.7-tests-lib \
+scripts/build-ci-image.sh
+```
+
+Local CI validation must prefer the verified
+`easymde-ci:wp6.7-php8.3-node20.19.0` image when it is already available.
+Normal repeated test runs use `scripts/run-ci-image.sh`; they must not rebuild
+the image, pull base images, or download WordPress, Node, Composer, or test
+resources again. Rebuild only when `scripts/build-ci-image.sh --verify` rejects
+the image identity or an intentionally changed pinned input requires a new
+image.
+
+The builder requires the digest-pinned Composer 2.10.2 and PHP 8.3.32 base
+images to already exist locally, installs the exact `composer.lock` development
+dependencies from the explicitly supplied local Composer cache, uses
+`--network=none`, never pulls or downloads resources, and
+reuses `easymde-ci:wp6.7-php8.3-node20.19.0` when it already exists. Resource
+preparation is an explicit operator action rather than an implicit side effect
+of each test run. The builder accepts only the pinned WordPress 6.7 Core and
+matching test-library contents, ignores any caller-provided PHPUnit
+configuration, and installs the repository-owned synthetic configuration.
+Reuse validation checks PHP, Composer, Node, PHPUnit, the Polyfills package,
+the project lockfile hash, WordPress Core, and the WordPress test library.
+Run the exact mounted checkout without writing a local `vendor/` directory:
+
+```bash
+scripts/run-ci-image.sh
+```
+
+The runner requires the digest-pinned MariaDB 11.4 image to already exist
+locally. It never pulls an image, creates an internal one-run network and
+disposable database with synthetic credentials, waits for database readiness,
+verifies the complete CI image identity before execution, passes additional
+arguments to PHPUnit, and removes both resources on exit.
+
 ## Node, i18n, And Notices
 
 CI uses npm for JavaScript syntax checks, Node tests, read-only runtime asset validation, i18n validation, and third-party notice validation.
@@ -43,6 +85,7 @@ Useful local commands:
 
 ```bash
 npm install
+npm run icons:check
 npm run assets:check
 npm run lint:frontend
 npm run frontend:check
@@ -52,7 +95,7 @@ npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production normal-editor and public code-copy comparisons. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, and CodeMirror 6 on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production normal-editor and public code-copy comparisons. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
 The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds the Editor into `.cache/easymde-frontend-production-check/` and public code copy into `.cache/easymde-code-copy-production-check/`, validates both outputs, and compares each complete file set and its bytes with the committed `assets/build/` and `assets/build/code-copy/` runtimes without rewriting them. `npm run build:frontend` is the explicit maintainer command that regenerates both committed Vite/WordPress Manifest pairs, hashed scripts, and matching `.asset.php` dependency metadata. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The Editor entry retains the stable `easymde-admin-editor-toolbar` handle and declares the WordPress-owned `media-editor`, `wp-api-fetch`, `wp-element`, and `wp-hooks` runtimes it consumes. The independent public TypeScript entry retains the stable `easymde-code-copy` handle and has no WordPress script dependency.
 

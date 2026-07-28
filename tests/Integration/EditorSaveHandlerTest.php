@@ -344,6 +344,7 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
                     '_easymde_markdown' => $markdown,
                     '_easymde_markdown_theme' => 'default',
                     '_easymde_code_theme' => 'github',
+                    '_easymde_code_theme_explicit' => '1',
                     '_easymde_custom_css_id' => '',
                     '_easymde_custom_font' => 'optima',
                     '_easymde_windows_font' => 'microsoft-yahei',
@@ -384,6 +385,10 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             $handler->save_post_meta($post_id, get_post($post_id), true);
 
             $this->assertSame($markdown, get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+            $this->assertSame(
+                'github',
+                get_post_meta($post_id, PostDocument::META_CODE_THEME, true)
+            );
             $this->assertSame($rendered['post_content'], get_post($post_id)->post_content);
             $this->assertSame(
                 (new PostDocument())->render_signature($markdown, 'default', $rendered['post_content']),
@@ -439,6 +444,10 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
                 $first_markdown,
                 get_post_meta($autosave_id, PostDocument::META_MARKDOWN, true)
             );
+            $this->assertSame(
+                'github',
+                get_post_meta($autosave_id, PostDocument::META_CODE_THEME, true)
+            );
 
             $second_markdown = "# Second autosave\n\nUpdated **once**.";
             $_POST = $this->native_autosave_request($post_id, $second_markdown);
@@ -461,6 +470,10 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             $this->assertSame(
                 $second_markdown,
                 get_post_meta($updated_autosave_id, PostDocument::META_MARKDOWN, true)
+            );
+            $this->assertSame(
+                'github',
+                get_post_meta($updated_autosave_id, PostDocument::META_CODE_THEME, true)
             );
             $this->assertSame(
                 (new PostDocument())->render_signature(
@@ -1047,6 +1060,7 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
                     '_easymde_markdown' => $markdown,
                     '_easymde_markdown_theme' => 'default',
                     '_easymde_code_theme' => 'github',
+                    '_easymde_code_theme_explicit' => '1',
                     '_easymde_custom_css_id' => '',
                     '_easymde_custom_font' => 'optima',
                     '_easymde_windows_font' => 'microsoft-yahei',

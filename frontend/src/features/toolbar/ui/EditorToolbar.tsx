@@ -18,6 +18,7 @@ import {
   ListOrdered,
   Quote,
   Strikethrough,
+  Undo2,
   type LucideIcon
 } from '../../../generated/lucide-icons';
 
@@ -30,10 +31,12 @@ export type ToolbarPlatform = 'mac' | 'win';
 
 type EditorToolbarProps = Readonly<{
   bootstrap: ToolbarBootstrap;
+  canUndo?: boolean;
   platform: ToolbarPlatform;
   executeCommand: (commandId: string) => void;
-  onPopoverOpen?: () => void;
+  onPopoverOpen?: (focusTarget?: HTMLElement) => void;
   onReady?: (session: EditorToolbarSession) => void;
+  undo?: () => void;
   variant?: 'default' | 'immersive';
 }>;
 
@@ -61,6 +64,24 @@ const IMMERSIVE_ICONS: Readonly<Record<string, LucideIcon>> = {
   unorderedlist: List
 };
 
+type OrdinaryBuiltInIcon = Readonly<{
+  sourceIcon: string;
+  component: LucideIcon;
+}>;
+
+const ORDINARY_BUILT_IN_ICONS: Readonly<Record<string, OrdinaryBuiltInIcon>> = {
+  bold: { sourceIcon: 'editor-bold', component: Bold },
+  codefence: { sourceIcon: 'media-code', component: Code2 },
+  image: { sourceIcon: 'format-image', component: Image },
+  inlinecode: { sourceIcon: 'editor-code', component: Code },
+  italic: { sourceIcon: 'editor-italic', component: Italic },
+  link: { sourceIcon: 'admin-links', component: Link2 },
+  orderedlist: { sourceIcon: 'editor-ol', component: ListOrdered },
+  quote: { sourceIcon: 'format-quote', component: Quote },
+  strike: { sourceIcon: 'editor-strikethrough', component: Strikethrough },
+  unorderedlist: { sourceIcon: 'editor-ul', component: List }
+};
+
 function commandIcon(
   command: ToolbarCommand,
   variant: 'default' | 'immersive'
@@ -77,9 +98,26 @@ function commandIcon(
       />
     );
   }
+
+  const builtInIcon =
+    'default' === variant ? ORDINARY_BUILT_IN_ICONS[command.id] : undefined;
+  if (builtInIcon?.sourceIcon === command.icon) {
+    const Icon = builtInIcon.component;
+    return (
+      <Icon
+        className={`easymde-toolbar-icon easymde-toolbar-icon-${command.id}`}
+        size={16}
+        strokeWidth={2.1}
+        aria-hidden="true"
+      />
+    );
+  }
   if ('media-code' === command.icon || 'mediacode' === command.icon) {
     return (
-      <span className="easymde-toolbar-text-icon" aria-hidden="true">
+      <span
+        className={`easymde-toolbar-text-icon${'default' === variant ? ' easymde-toolbar-glyph-code' : ''}`}
+        aria-hidden="true"
+      >
         {'</>'}
       </span>
     );
@@ -87,7 +125,10 @@ function commandIcon(
 
   if ('heading' === command.icon) {
     return (
-      <span className="easymde-toolbar-text-icon" aria-hidden="true">
+      <span
+        className={`easymde-toolbar-text-icon${'default' === variant ? ' easymde-toolbar-glyph-heading' : ''}`}
+        aria-hidden="true"
+      >
         H
       </span>
     );
@@ -132,7 +173,7 @@ type HeadingMenuProps = Readonly<{
   shortcuts: Readonly<Record<string, string>>;
   executeCommand: (commandId: string) => void;
   isOpen: boolean;
-  onOpen: () => void;
+  onOpen: (focusTarget?: HTMLElement) => void;
   setIsOpen: (isOpen: boolean) => void;
   variant: 'default' | 'immersive';
 }>;
@@ -283,7 +324,7 @@ function HeadingMenu({
           const nextIsOpen = !isOpen;
           if (nextIsOpen) {
             positionImmersiveMenu();
-            onOpen();
+            onOpen(triggerRef.current ?? undefined);
             initialFocus.current = 0 === event.detail ? 'first' : 'preserve';
           }
           setIsOpen(nextIsOpen);
@@ -295,15 +336,27 @@ function HeadingMenu({
 
           event.preventDefault();
           positionImmersiveMenu();
-          onOpen();
+          onOpen(triggerRef.current ?? undefined);
           initialFocus.current = 'ArrowUp' === event.key ? 'last' : 'first';
           setIsOpen(true);
         }}
       >
-        <span className="easymde-toolbar-text-icon" aria-hidden="true">
+        <span
+          className={`easymde-toolbar-text-icon${'default' === variant ? ' easymde-toolbar-glyph-heading' : ''}`}
+          aria-hidden="true"
+        >
           H
         </span>
-        <ChevronDown size={9} strokeWidth={2.5} aria-hidden="true" />
+        {'immersive' === variant ? (
+          <ChevronDown size={9} strokeWidth={2.5} aria-hidden="true" />
+        ) : (
+          <ChevronDown
+            className="easymde-toolbar-chevron"
+            size={12}
+            strokeWidth={2.25}
+            aria-hidden="true"
+          />
+        )}
       </button>
       <div
         className={`easymde-toolbar-popover${'immersive' === variant ? ' is-immersive-heading-menu' : ''}`}
@@ -372,7 +425,25 @@ function HeadingMenu({
                       className={`dashicons dashicons-${command.icon}`}
                     />
                   </span>
-                ) : null}
+                ) : 'heading' === command.action &&
+                  'number' === typeof command.level ? (
+                  <span
+                    className="easymde-heading-menu-badge"
+                    data-heading-level={command.level}
+                    aria-hidden="true"
+                  >
+                    H{command.level}
+                  </span>
+                ) : (
+                  <span
+                    className="easymde-heading-menu-badge is-command"
+                    aria-hidden="true"
+                  >
+                    <span
+                      className={`dashicons dashicons-${command.icon}`}
+                    />
+                  </span>
+                )}
                 <span className="easymde-popover-item-label">{command.label}</span>
                 <span className="easymde-popover-item-shortcut">
                   {shortcuts[command.id]}
@@ -388,10 +459,12 @@ function HeadingMenu({
 
 export function EditorToolbar({
   bootstrap,
+  canUndo = false,
   platform,
   executeCommand,
   onPopoverOpen,
   onReady,
+  undo,
   variant = 'default'
 }: EditorToolbarProps) {
   const [isHeadingOpen, setIsHeadingOpen] = useState(false);
@@ -416,10 +489,12 @@ export function EditorToolbar({
   const headingCommands = bootstrap.commands.filter(
     (command) => 'heading-menu' === command.surface
   );
-  const displayedHeadingCommands =
-    'immersive' === variant
-      ? headingCommands.filter((command) => 'paragraph' !== command.id)
-      : headingCommands;
+  const ordinaryHeadingCommands = headingCommands.filter(
+    (command) => 'paragraph' !== command.action
+  );
+  const immersiveHeadingCommands = headingCommands.filter(
+    (command) => 'paragraph' !== command.id
+  );
   const blockCommands = commandsFor('main', 'block');
   const codeCommands = commandsFor('main', 'insert').filter(
     (command) => 'inlinecode' === command.id || 'codefence' === command.id
@@ -441,6 +516,27 @@ export function EditorToolbar({
       className={`easymde-react-toolbar-contents is-${variant}`}
       data-easymde-react-toolbar="ready"
     >
+      {'default' === variant ? (
+        <button
+          type="button"
+          className="easymde-toolbar-button easymde-toolbar-button-compact"
+          aria-label={bootstrap.undoLabel}
+          title={bootstrap.undoLabel}
+          disabled={!canUndo}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (!undo) throw new Error('ordinary-toolbar-undo-unavailable');
+            undo();
+          }}
+        >
+          <Undo2
+            className="easymde-toolbar-icon easymde-toolbar-icon-undo"
+            size={16}
+            strokeWidth={2.1}
+            aria-hidden="true"
+          />
+        </button>
+      ) : null}
       {formatCommands.map((command) => (
         <CommandButton
           key={command.id}
@@ -457,14 +553,18 @@ export function EditorToolbar({
         </Fragment>
       ) : null}
       <HeadingMenu
-        commands={displayedHeadingCommands}
+        commands={
+          'immersive' === variant
+            ? immersiveHeadingCommands
+            : ordinaryHeadingCommands
+        }
         headingLabelFormat={bootstrap.headingLabelFormat}
         headingLevelLabel={bootstrap.headingLevelLabel}
         label={bootstrap.headingsLabel}
         shortcuts={shortcuts}
         executeCommand={executeCommand}
         isOpen={isHeadingOpen}
-        onOpen={() => onPopoverOpen?.()}
+        onOpen={(focusTarget) => onPopoverOpen?.(focusTarget)}
         setIsOpen={setIsHeadingOpen}
         variant={variant}
       />

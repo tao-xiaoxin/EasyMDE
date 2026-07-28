@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE_ROOT="/workspace"
+RUN_ROOT="$(mktemp -d /tmp/easymde-phpunit.XXXXXX)"
+PROJECT_ROOT="${RUN_ROOT}/repository"
+
+cleanup() {
+	rm -rf "${RUN_ROOT}"
+}
+trap cleanup EXIT
+
+mkdir -p "${PROJECT_ROOT}"
+tar \
+	--exclude=.cache \
+	--exclude=.git \
+	--exclude=dist \
+	--exclude=node_modules \
+	--exclude=test-results \
+	--exclude=vendor \
+	-C "${SOURCE_ROOT}" \
+	-cf - . | tar -C "${PROJECT_ROOT}" -xf -
+
+rm -rf \
+	/opt/easymde/composer-project/includes \
+	/opt/easymde/composer-project/src
+ln -s "${PROJECT_ROOT}/includes" /opt/easymde/composer-project/includes
+ln -s "${PROJECT_ROOT}/src" /opt/easymde/composer-project/src
+ln -s /opt/easymde/composer-project/vendor "${PROJECT_ROOT}/vendor"
+
+cd "${PROJECT_ROOT}"
+"${PROJECT_ROOT}/vendor/bin/phpunit" "$@"

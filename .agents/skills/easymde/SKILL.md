@@ -22,13 +22,16 @@ surface. Issue #126 is an approved same-root exception: it may be opened from
 React while reusing the existing document, Preview, native form, and
 WordPress capability owners; no second root, editor, renderer, or save path is
 permitted. The approved ordinary-editor parity baseline
-also has no Outline, writing statistics/status, Context Bar, view-mode switch,
+also has no Outline, expanded writing-statistics panel, Context Bar, view-mode switch,
 draggable split, React Publish, React Revision, or React History surface. Their
 absence does not remove WordPress capability: WordPress-native Publish,
 categories, tags, excerpts, featured media, and Revision Meta Boxes remain the
 owners of those workflows. The React Root retains the historical ordinary
 toolbar and fixed Source/Preview workspace together with editing, Preview,
 Appearance, Fonts, Custom CSS, Media, Local Draft, and WeChat behavior. Use the
+ordinary workspace footer only for the live Markdown character count and the
+PHP-provided last-editor timestamp; it must not become a second statistics,
+revision, or persistence owner. Use the
 migration Skill only for Legacy inventory and deletion evidence where it does
 not conflict with this explicit decision.
 
@@ -1571,12 +1574,13 @@ and one production React entry for the complete ordinary Editor. That entry
 mounts one Editor Root and owns Toolbar/commands, CodeMirror document and title
 sessions, Preview and local enhancements, synchronized scrolling, Appearance,
 Custom CSS, Fonts, Media and uploads, Local Drafts, WeChat export, the fixed
-Source/Preview layout, and WordPress session-state presentation through focused
+Source/Preview layout, the restrained ordinary character-count/last-editor
+footer, and WordPress session-state presentation through focused
 Ports and Adapters. Native title, Markdown, appearance, publishing, revisions,
 taxonomies, featured media, and extension fields remain WordPress submission or
 Meta Box surfaces; PHP descriptors and translated Bootstrap strings remain the
 current configuration and message authority. The ordinary Editor has no
-Outline, writing statistics/status, Context Bar, view-mode switch, draggable
+Outline, expanded writing-statistics panel, Context Bar, view-mode switch, draggable
 split, React Publish, React Revision, React History, Legacy startup fallback,
 secondary Toolbar, Focus Mode runtime, dual DOM, or reload-required handoff
 state. Changes to this production layout must update the live release owners,

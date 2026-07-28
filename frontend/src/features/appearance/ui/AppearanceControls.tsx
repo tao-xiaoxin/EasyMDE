@@ -34,7 +34,7 @@ type AppearanceControlsProps = Readonly<{
   onReady: (session: AppearanceControlsSession) => void;
   immersiveLabel?: string;
   immersiveTitle?: string;
-  variant?: 'default' | 'immersive';
+  variant?: 'default' | 'embedded' | 'immersive';
 }>;
 
 type ImmersiveThemeOption = Readonly<{
@@ -406,12 +406,12 @@ export function AppearanceControls({
   const applyState = (
     nextState: AppearanceState,
     nextCodeThemeExplicit = codeThemeExplicitRef.current
-  ) => {
+  ): boolean => {
     try {
       port.applyState(nextState, nextCodeThemeExplicit);
     } catch {
       onFailure();
-      return;
+      return false;
     }
 
     codeThemeExplicitRef.current = nextCodeThemeExplicit;
@@ -419,6 +419,7 @@ export function AppearanceControls({
     snapshotRef.current = nextSnapshot;
     setSnapshot(nextSnapshot);
     setStatus('');
+    return true;
   };
 
   const openCustomPanel = () => {
@@ -464,7 +465,10 @@ export function AppearanceControls({
             )
           }
         };
-        applyState(nextSnapshot.state);
+        if (!applyState(nextSnapshot.state)) {
+          setStatus(bootstrap.strings.cssSaveFailed);
+          return;
+        }
         replaceSnapshot(nextSnapshot);
         setStatus(bootstrap.strings.cssSaved);
       } else {
@@ -501,6 +505,126 @@ export function AppearanceControls({
       swatch: codeThemeSwatch(theme.id)
     })
   );
+  const customCssPanel = (
+    <div className="easymde-custom-css-panel" hidden={!isCustomOpen}>
+      <div className="easymde-custom-css-row">
+        <input
+          type="text"
+          className="regular-text easymde-custom-css-name"
+          aria-label={bootstrap.strings.cssName}
+          placeholder={bootstrap.strings.cssName}
+          value={customName}
+          onChange={(event) => setCustomName(event.currentTarget.value)}
+        />
+        <button
+          type="button"
+          className="button button-primary"
+          disabled={isSaving}
+          onClick={saveCustomCss}
+        >
+          {bootstrap.strings.saveCss}
+        </button>
+        <span className="easymde-custom-css-status" aria-live="polite">
+          {status}
+        </span>
+      </div>
+      <textarea
+        className="easymde-custom-css-code"
+        aria-label={bootstrap.strings.customCss}
+        spellCheck={false}
+        value={customCode}
+        onChange={(event) => setCustomCode(event.currentTarget.value)}
+      />
+    </div>
+  );
+  const ordinaryFields = (
+    <Fragment>
+      <label className="easymde-toolbar-control">
+        <span className="easymde-toolbar-control-label">
+          {bootstrap.strings.articleTheme}
+        </span>
+        <select
+          className="easymde-theme-select"
+          value={selectedArticleValue(snapshot)}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            if (value.startsWith('custom:')) {
+              applyState({
+                ...snapshotRef.current.state,
+                markdownTheme: 'custom',
+                codeTheme: customCssCodeTheme(
+                  bootstrap,
+                  snapshotRef.current.state.codeTheme,
+                  codeThemeExplicitRef.current
+                ),
+                customCssId: value.slice(7)
+              });
+            } else {
+              const markdownTheme = value.slice(6);
+              applyState({
+                ...snapshotRef.current.state,
+                markdownTheme,
+                codeTheme: codeThemeExplicitRef.current
+                  ? snapshotRef.current.state.codeTheme
+                  : associatedCodeTheme(bootstrap, markdownTheme),
+                customCssId: ''
+              });
+            }
+          }}
+        >
+          {bootstrap.articleThemes.map((theme) => (
+            <option key={theme.id} value={`theme:${theme.id}`}>
+              {theme.label}
+            </option>
+          ))}
+          {snapshot.customCss.length > 0 ? (
+            <optgroup label={bootstrap.strings.namedCustomCss}>
+              {snapshot.customCss.map((item) => (
+                <option key={item.id} value={`custom:${item.id}`}>
+                  {item.name}
+                </option>
+              ))}
+            </optgroup>
+          ) : null}
+        </select>
+      </label>
+      <label className="easymde-toolbar-control">
+        <span className="easymde-toolbar-control-label">
+          {bootstrap.strings.codeTheme}
+        </span>
+        <select
+          className="easymde-code-theme-select"
+          value={snapshot.state.codeTheme}
+          onChange={(event) => {
+            applyState(
+              {
+                ...snapshotRef.current.state,
+                codeTheme: event.currentTarget.value
+              },
+              true
+            );
+          }}
+        >
+          {bootstrap.codeThemes.map((theme) => (
+            <option key={theme.id} value={theme.id}>
+              {theme.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    </Fragment>
+  );
+
+  if ('embedded' === variant) {
+    return (
+      <section className="easymde-editor-settings-section is-appearance">
+        <h3>{bootstrap.strings.appearance}</h3>
+        <div className="easymde-editor-settings-fields">
+          {ordinaryFields}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <div
@@ -542,12 +666,16 @@ export function AppearanceControls({
           </Fragment>
         ) : (
           <Fragment>
-            <span
-              className="dashicons dashicons-admin-customizer"
+            <Palette
+              className="easymde-toolbar-icon easymde-toolbar-icon-appearance"
+              size={18}
+              strokeWidth={2.1}
               aria-hidden="true"
             />
-            <span
-              className="dashicons dashicons-arrow-down-alt2"
+            <ChevronDown
+              className="easymde-toolbar-chevron"
+              size={12}
+              strokeWidth={2.25}
               aria-hidden="true"
             />
           </Fragment>
@@ -660,122 +788,9 @@ export function AppearanceControls({
             </div>
           </Fragment>
         ) : (
-          <Fragment>
-        <label className="easymde-toolbar-control">
-          <span className="easymde-toolbar-control-label">
-            {bootstrap.strings.articleTheme}
-          </span>
-          <select
-            className="easymde-theme-select"
-            value={selectedArticleValue(snapshot)}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              if (value.startsWith('custom:')) {
-                applyState({
-                  ...snapshotRef.current.state,
-                  markdownTheme: 'custom',
-                  codeTheme: customCssCodeTheme(
-                    bootstrap,
-                    snapshotRef.current.state.codeTheme,
-                    codeThemeExplicitRef.current
-                  ),
-                  customCssId: value.slice(7)
-                });
-              } else {
-                const markdownTheme = value.slice(6);
-                applyState({
-                  ...snapshotRef.current.state,
-                  markdownTheme,
-                  codeTheme: codeThemeExplicitRef.current
-                    ? snapshotRef.current.state.codeTheme
-                    : associatedCodeTheme(bootstrap, markdownTheme),
-                  customCssId: ''
-                });
-              }
-            }}
-          >
-            {bootstrap.articleThemes.map((theme) => (
-              <option key={theme.id} value={`theme:${theme.id}`}>
-                {theme.label}
-              </option>
-            ))}
-            {snapshot.customCss.length > 0 ? (
-              <optgroup label={bootstrap.strings.namedCustomCss}>
-                {snapshot.customCss.map((item) => (
-                  <option key={item.id} value={`custom:${item.id}`}>
-                    {item.name}
-                  </option>
-                ))}
-              </optgroup>
-            ) : null}
-          </select>
-        </label>
-        <label className="easymde-toolbar-control">
-          <span className="easymde-toolbar-control-label">
-            {bootstrap.strings.codeTheme}
-          </span>
-          <select
-            className="easymde-code-theme-select"
-            value={snapshot.state.codeTheme}
-            onChange={(event) => {
-              applyState(
-                {
-                  ...snapshotRef.current.state,
-                  codeTheme: event.currentTarget.value
-                },
-                true
-              );
-            }}
-          >
-            {bootstrap.codeThemes.map((theme) => (
-              <option key={theme.id} value={theme.id}>
-                {theme.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="easymde-custom-css-toggle-row">
-          <button
-            type="button"
-            className="button button-secondary easymde-custom-css-toggle"
-            aria-expanded={isCustomOpen}
-            onClick={openCustomPanel}
-          >
-            {bootstrap.strings.customCss}
-          </button>
-        </div>
-          </Fragment>
+          ordinaryFields
         )}
-        <div className="easymde-custom-css-panel" hidden={!isCustomOpen}>
-          <div className="easymde-custom-css-row">
-            <input
-              type="text"
-              className="regular-text easymde-custom-css-name"
-              aria-label={bootstrap.strings.cssName}
-              placeholder={bootstrap.strings.cssName}
-              value={customName}
-              onChange={(event) => setCustomName(event.currentTarget.value)}
-            />
-            <button
-              type="button"
-              className="button button-primary"
-              disabled={isSaving}
-              onClick={saveCustomCss}
-            >
-              {bootstrap.strings.saveCss}
-            </button>
-            <span className="easymde-custom-css-status" aria-live="polite">
-              {status}
-            </span>
-          </div>
-          <textarea
-            className="easymde-custom-css-code"
-            aria-label={bootstrap.strings.customCss}
-            spellCheck={false}
-            value={customCode}
-            onChange={(event) => setCustomCode(event.currentTarget.value)}
-          />
-        </div>
+        {customCssPanel}
       </div>
     </div>
   );

@@ -1138,12 +1138,14 @@ Maintain the task's local-only reference ledger at
 start `<task-id>` with its stable Issue number and append a short
 collision-resistant digest of the normalized focused task scope. Without an
 Issue, use a stable sanitized task slug plus a short collision-resistant digest
-derived locally from the repository identity, host task identity when
-available, and normalized task statement. Do not place a worktree path,
-username, private URL, or raw task content in the identifier. The repository
-ignores `.cache/`; do not force-add the ledger or create a second progress file
-elsewhere. On continuation, derive the same identifier from the current Issue
-and focused scope or task before deciding that no ledger exists.
+derived locally from the repository identity and normalized focused task scope.
+Do not place a worktree path, username, private URL, or raw task content in the
+identifier. The repository ignores `.cache/`; do not force-add the ledger or
+create a second progress file elsewhere. On continuation, derive the same
+identifier from the stable Issue number and normalized focused task scope when
+a focused Issue exists; otherwise, use the stable sanitized task slug,
+repository identity, and normalized focused task scope before deciding that no
+ledger exists.
 
 Use this ledger structure:
 

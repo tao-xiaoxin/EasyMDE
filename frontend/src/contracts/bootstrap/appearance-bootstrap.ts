@@ -18,7 +18,8 @@ export type FontDefaults = Readonly<{
 
 export type CustomCssItem = Readonly<{
   id: string;
-  name: string;
+  articleThemeName: string;
+  codeThemeName: string;
   css: string;
   scopedCss: string;
 }>;
@@ -218,14 +219,6 @@ function requiredString(value: unknown, code: string, maxLength = 512): string {
   return value;
 }
 
-function requiredUnboundedString(value: unknown, code: string): string {
-  if ('string' !== typeof value || '' === value.trim()) {
-    throw new AppearanceBootstrapError(code);
-  }
-
-  return value;
-}
-
 function identifier(value: unknown, code: string): string {
   const id = requiredString(value, code, 200);
   if (!/^[a-z0-9_-]+$/.test(id)) {
@@ -313,7 +306,16 @@ function parseCustomCss(value: unknown): ReadonlyArray<CustomCssItem> {
 
     return {
       id,
-      name: requiredUnboundedString(item.name, 'invalid-custom-css-name'),
+      articleThemeName: requiredString(
+        item.articleThemeName,
+        'invalid-custom-css-article-theme-name',
+        30
+      ),
+      codeThemeName: requiredString(
+        item.codeThemeName,
+        'invalid-custom-css-code-theme-name',
+        30
+      ),
       css: item.css,
       scopedCss: item.scopedCss
     };

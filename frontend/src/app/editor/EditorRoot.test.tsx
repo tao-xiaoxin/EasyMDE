@@ -2031,7 +2031,8 @@ describe('EditorRoot', () => {
       snapshot: {
         customCss: [{
           id: 'saved-css',
-          name: 'Saved CSS',
+          articleThemeName: 'Saved Article',
+          codeThemeName: 'Saved Code',
           css: '.saved { color: green; }',
           scopedCss: '.easymde-rendered-content .saved { color: green; }'
         }],
@@ -3812,9 +3813,10 @@ describe('EditorRoot', () => {
     const savedSnapshot = {
       customCss: [
         {
+          articleThemeName: 'Writer Article',
+          codeThemeName: 'Writer Code',
           css: '.note { color: navy; }',
           id: 'writer-css',
-          name: 'Writer CSS',
           scopedCss: '.easymde-rendered-content .note { color: navy; }'
         }
       ],
@@ -3843,7 +3845,7 @@ describe('EditorRoot', () => {
     fireEvent.change(view.getByRole('textbox', {
       name: 'Article theme name'
     }), {
-      target: { value: 'Writer CSS' }
+      target: { value: 'Writer Article' }
     });
     fireEvent.click(view.getByRole('button', { name: /Custom CSS code/ }));
     fireEvent.change(view.getByRole('textbox', { name: 'Custom CSS code' }), {
@@ -3852,6 +3854,12 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: 'Apply theme' }));
     await waitFor(() => {
       expect(appearancePort.saveCustomCss).toHaveBeenCalledOnce();
+      expect(appearancePort.saveCustomCss).toHaveBeenCalledWith(
+        expect.objectContaining({
+          articleThemeName: 'Writer Article',
+          codeThemeName: 'EasyMDE Blue Code'
+        })
+      );
       expect(
         view.queryByRole('dialog', { name: 'Custom CSS theme' })
       ).toBeNull();
@@ -3863,10 +3871,10 @@ describe('EditorRoot', () => {
     const articleTheme = view.getByRole('combobox', {
       name: 'Article theme'
     });
-    expect(articleTheme.textContent).toContain('Writer CSS');
+    expect(articleTheme.textContent).toContain('Writer Article');
     fireEvent.click(articleTheme);
     expect(
-      view.getByRole('option', { name: 'Writer CSS' }).getAttribute(
+      view.getByRole('option', { name: 'Writer Article' }).getAttribute(
         'aria-selected'
       )
     ).toBe('true');

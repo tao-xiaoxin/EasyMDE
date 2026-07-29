@@ -191,7 +191,8 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $create = new WP_REST_Request('POST', '/easymde/v1/custom-css');
         $create->set_body_params(
             array(
-                'name' => 'Blocked',
+                'articleThemeName' => 'Blocked Article',
+                'codeThemeName' => 'Blocked Code',
                 'css' => 'h2 { color: red; }',
             )
         );
@@ -202,7 +203,8 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $update->set_body_params(
             array(
                 'id' => 'blocked',
-                'name' => 'Blocked',
+                'articleThemeName' => 'Blocked Article',
+                'codeThemeName' => 'Blocked Code',
                 'css' => 'h2 { color: blue; }',
             )
         );
@@ -224,14 +226,26 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $create = new WP_REST_Request('POST', '/easymde/v1/custom-css');
         $create->set_body_params(
             array(
-                'name' => 'Owner Style',
+                'articleThemeName' => 'Owner Article',
+                'codeThemeName' => 'Owner Code',
                 'css' => 'h2 { color: red; }',
             )
         );
 
         $create_response = rest_do_request($create);
         $this->assertSame(200, $create_response->get_status());
-        $style_id = $create_response->get_data()['item']['id'];
+        $created_item = $create_response->get_data()['item'];
+        $style_id = $created_item['id'];
+        $this->assertSame('Owner Article', $created_item['articleThemeName']);
+        $this->assertSame('Owner Code', $created_item['codeThemeName']);
+        $this->assertArrayNotHasKey('name', $created_item);
+
+        $stored_library = get_user_meta($owner_id, 'easymde_custom_css_library', true);
+        $this->assertSame('Owner Article', $stored_library[0]['article_theme_name']);
+        $this->assertSame('Owner Code', $stored_library[0]['code_theme_name']);
+        $this->assertArrayNotHasKey('name', $stored_library[0]);
+        $this->assertArrayNotHasKey('articleThemeName', $stored_library[0]);
+        $this->assertArrayNotHasKey('codeThemeName', $stored_library[0]);
 
         wp_set_current_user($other_id);
 
@@ -250,7 +264,56 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $owner_options_response = rest_do_request($options);
 
         $this->assertCount(1, $owner_options_response->get_data()['customCss']);
-        $this->assertSame('Owner Style', $owner_options_response->get_data()['customCss'][0]['name']);
+        $this->assertSame('Owner Article', $owner_options_response->get_data()['customCss'][0]['articleThemeName']);
+        $this->assertSame('Owner Code', $owner_options_response->get_data()['customCss'][0]['codeThemeName']);
+        $this->assertArrayNotHasKey('name', $owner_options_response->get_data()['customCss'][0]);
+    }
+
+    public function test_custom_css_rejects_the_removed_single_name_contract_and_overlong_names()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($user_id);
+
+        update_user_meta(
+            $user_id,
+            'easymde_custom_css_library',
+            array(
+                array(
+                    'id' => 'legacy-name',
+                    'name' => 'Legacy combined name',
+                    'css' => 'h2 { color: red; }',
+                    'updatedAt' => 1,
+                ),
+            )
+        );
+
+        $options = new WP_REST_Request('GET', '/easymde/v1/theme-options');
+        $this->assertSame(array(), rest_do_request($options)->get_data()['customCss']);
+
+        $single_name = new WP_REST_Request('POST', '/easymde/v1/custom-css');
+        $single_name->set_body_params(
+            array(
+                'name' => 'Removed combined name',
+                'css' => 'h2 { color: blue; }',
+            )
+        );
+        $single_name_response = rest_do_request($single_name);
+
+        $this->assertSame(400, $single_name_response->get_status());
+        $this->assertSame('rest_missing_callback_param', $single_name_response->as_error()->get_error_code());
+
+        $overlong_name = new WP_REST_Request('POST', '/easymde/v1/custom-css');
+        $overlong_name->set_body_params(
+            array(
+                'articleThemeName' => str_repeat('a', 31),
+                'codeThemeName' => 'Valid code name',
+                'css' => 'h2 { color: blue; }',
+            )
+        );
+        $overlong_name_response = rest_do_request($overlong_name);
+
+        $this->assertSame(400, $overlong_name_response->get_status());
+        $this->assertSame('rest_invalid_param', $overlong_name_response->as_error()->get_error_code());
     }
 
     public function test_revision_history_requires_access_to_the_specific_post()
@@ -424,9 +487,10 @@ final class RestPermissionsTest extends WP_UnitTestCase
             array(
                 array(
                     'id' => 'autosave-css',
-                    'name' => 'Autosave CSS',
+                    'article_theme_name' => 'Autosave Article',
+                    'code_theme_name' => 'Autosave Code',
                     'css' => '.easymde-preview { color: #123456; }',
-                    'updatedAt' => 1,
+                    'updated_at' => 1,
                 ),
             )
         );

@@ -299,7 +299,8 @@ export function AppearanceControls({
   const [panelPosition, setPanelPosition] =
     useState<ImmersivePanelPosition | null>(null);
   const [isCustomOpen, setIsCustomOpen] = useState(false);
-  const [customName, setCustomName] = useState('');
+  const [customArticleThemeName, setCustomArticleThemeName] = useState('');
+  const [customCodeThemeName, setCustomCodeThemeName] = useState('');
   const [customCode, setCustomCode] = useState('');
   const [status, setStatus] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -338,7 +339,8 @@ export function AppearanceControls({
     setSnapshot(nextSnapshot);
     if (isCustomOpen) {
       const item = selectedCustomCss(nextSnapshot);
-      setCustomName(item?.name ?? '');
+      setCustomArticleThemeName(item?.articleThemeName ?? '');
+      setCustomCodeThemeName(item?.codeThemeName ?? '');
       setCustomCode(item?.css ?? '');
     }
     return true;
@@ -437,19 +439,26 @@ export function AppearanceControls({
     setStatus('');
     if (nextOpen) {
       if ('immersive' === variant) {
-        setCustomName('');
+        setCustomArticleThemeName('');
+        setCustomCodeThemeName('');
         setCustomCode('');
       } else {
         const item = selectedCustomCss(snapshotRef.current);
-        setCustomName(item?.name ?? '');
+        setCustomArticleThemeName(item?.articleThemeName ?? '');
+        setCustomCodeThemeName(item?.codeThemeName ?? '');
         setCustomCode(item?.css ?? '');
       }
     }
   };
 
   const saveCustomCss = async (
-    input: Readonly<{ name: string; css: string }> = {
-      name: customName,
+    input: Readonly<{
+      articleThemeName: string;
+      codeThemeName: string;
+      css: string;
+    }> = {
+      articleThemeName: customArticleThemeName,
+      codeThemeName: customCodeThemeName,
       css: customCode
     },
     requestedId?: string
@@ -468,7 +477,8 @@ export function AppearanceControls({
           : 'custom' === snapshotRef.current.state.markdownTheme
             ? snapshotRef.current.state.customCssId
             : '',
-        name: input.name,
+        articleThemeName: input.articleThemeName,
+        codeThemeName: input.codeThemeName,
         css: input.css
       });
       if (!activeRef.current) {
@@ -518,17 +528,22 @@ export function AppearanceControls({
     })),
     ...snapshot.customCss.map((item) => ({
       id: `custom:${item.id}`,
-      label: item.name,
+      label: item.articleThemeName,
       swatch: '#DC2626'
     }))
   ];
-  const codeOptions: ReadonlyArray<ImmersiveThemeOption> = bootstrap.codeThemes.map(
-    (theme) => ({
-      id: theme.id,
+  const codeOptions: ReadonlyArray<ImmersiveThemeOption> = [
+    ...bootstrap.codeThemes.map((theme) => ({
+      id: `theme:${theme.id}`,
       label: theme.label,
       swatch: codeThemeSwatch(theme.id)
-    })
-  );
+    })),
+    ...snapshot.customCss.map((item) => ({
+      id: `custom:${item.id}`,
+      label: item.codeThemeName,
+      swatch: '#DC2626'
+    }))
+  ];
   const selectArticleTheme = (value: string) => {
     if (value.startsWith('custom:')) {
       applyState({
@@ -555,27 +570,28 @@ export function AppearanceControls({
   };
   const selectCodeTheme = (value: string) => {
     if (value.startsWith('custom:')) {
-      selectArticleTheme(value);
+      // One customCssId owns the paired article and code CSS preset.
+      applyState(
+        {
+          ...snapshotRef.current.state,
+          markdownTheme: 'custom',
+          codeTheme: associatedCodeTheme(bootstrap, 'default'),
+          customCssId: value.slice(7)
+        },
+        false
+      );
       return;
     }
     applyState(
       {
         ...snapshotRef.current.state,
-        markdownTheme:
-          'custom' === snapshotRef.current.state.markdownTheme
-            ? 'default'
-            : snapshotRef.current.state.markdownTheme,
-        codeTheme: value.slice(6),
-        customCssId:
-          'custom' === snapshotRef.current.state.markdownTheme
-            ? ''
-            : snapshotRef.current.state.customCssId
+        codeTheme: value.slice(6)
       },
       true
     );
   };
   const selectedCodeValue =
-    selectedCustomCss(snapshot) !== undefined
+    !codeThemeExplicitRef.current && selectedCustomCss(snapshot) !== undefined
       ? `custom:${snapshot.state.customCssId}`
       : `theme:${snapshot.state.codeTheme}`;
   const customCssPanel = (
@@ -586,8 +602,8 @@ export function AppearanceControls({
           className="regular-text easymde-custom-css-name"
           aria-label={bootstrap.strings.cssName}
           placeholder={bootstrap.strings.cssName}
-          value={customName}
-          onChange={(event) => setCustomName(event.currentTarget.value)}
+          value={customArticleThemeName}
+          onChange={(event) => setCustomArticleThemeName(event.currentTarget.value)}
         />
         <button
           type="button"
@@ -630,7 +646,7 @@ export function AppearanceControls({
             <optgroup label={bootstrap.strings.namedCustomCss}>
               {snapshot.customCss.map((item) => (
                 <option key={item.id} value={`custom:${item.id}`}>
-                  {item.name}
+                  {item.articleThemeName}
                 </option>
               ))}
             </optgroup>
@@ -653,7 +669,7 @@ export function AppearanceControls({
           ))}
           {snapshot.customCss.map((item) => (
             <option key={item.id} value={`custom:${item.id}`}>
-              {item.name}
+              {item.codeThemeName}
             </option>
           ))}
         </select>
@@ -694,7 +710,7 @@ export function AppearanceControls({
                 })),
                 ...snapshot.customCss.map((item) => ({
                   id: `custom:${item.id}`,
-                  label: item.name,
+                  label: item.codeThemeName,
                   swatch: '#DC2626'
                 }))
               ]}
@@ -822,14 +838,9 @@ export function AppearanceControls({
               />
               <ImmersiveThemeSelect
                 label={bootstrap.strings.codeTheme}
-                value={snapshot.state.codeTheme}
+                value={selectedCodeValue}
                 options={codeOptions}
-                onChange={(codeTheme) => {
-                  applyState(
-                    { ...snapshotRef.current.state, codeTheme },
-                    true
-                  );
-                }}
+                onChange={selectCodeTheme}
               />
               {bootstrap.canManageCustomCss ? (
                 <div className="easymde-immersive-custom-css-action">
@@ -856,7 +867,8 @@ export function AppearanceControls({
       isCustomOpen ? (
         <ImmersiveCustomCssDialog
           initialCss={customCode}
-          initialName={customName}
+          initialArticleThemeName={customArticleThemeName}
+          initialCodeThemeName={customCodeThemeName}
           onApply={(input) => saveCustomCss(input, '')}
           onClose={() => {
             setIsCustomOpen(false);

@@ -26,8 +26,9 @@ const appearance: AppearanceBootstrap = {
     { id: 'github', label: 'GitHub' }
   ],
   customCss: [{
+    articleThemeName: 'Writer Article',
+    codeThemeName: 'Writer Code',
     id: 'writer-css',
-    name: 'Writer CSS',
     css: '.note { color: navy; }',
     scopedCss: '.easymde-rendered-content .note { color: navy; }'
   }],

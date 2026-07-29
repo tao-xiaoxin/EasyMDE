@@ -150,10 +150,11 @@ final class AdminAssets {
 
 			if ( ! $has_selected_item && '' !== trim( $theme_state['customCss'] ) ) {
 				$custom_css[] = array(
-					'id'        => $theme_state['customCssId'],
-					'name'      => $strings['customCssTheme'],
-					'css'       => $theme_state['customCss'],
-					'scopedCss' => $theme_state['scopedCustomCss'],
+					'id'               => $theme_state['customCssId'],
+					'articleThemeName' => $strings['customCssTheme'],
+					'codeThemeName'    => $strings['customCssTheme'],
+					'css'              => $theme_state['customCss'],
+					'scopedCss'        => $theme_state['scopedCustomCss'],
 				);
 			}
 		}

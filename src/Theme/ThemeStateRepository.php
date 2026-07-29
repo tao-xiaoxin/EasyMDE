@@ -190,7 +190,13 @@ final class ThemeStateRepository {
 
 		$normalized = array();
 		foreach ( $library as $item ) {
-			if ( ! is_array( $item ) || empty( $item['id'] ) || empty( $item['name'] ) || ! array_key_exists( 'css', $item ) ) {
+			if (
+				! is_array( $item )
+				|| empty( $item['id'] )
+				|| empty( $item['article_theme_name'] )
+				|| empty( $item['code_theme_name'] )
+				|| ! array_key_exists( 'css', $item )
+			) {
 				continue;
 			}
 
@@ -200,10 +206,11 @@ final class ThemeStateRepository {
 			}
 
 			$normalized[ $id ] = array(
-				'id'        => $id,
-				'name'      => sanitize_text_field( $item['name'] ),
-				'css'       => (string) $item['css'],
-				'updatedAt' => isset( $item['updatedAt'] ) ? absint( $item['updatedAt'] ) : 0,
+				'id'                 => $id,
+				'article_theme_name' => sanitize_text_field( $item['article_theme_name'] ),
+				'code_theme_name'    => sanitize_text_field( $item['code_theme_name'] ),
+				'css'                => (string) $item['css'],
+				'updated_at'         => isset( $item['updated_at'] ) ? absint( $item['updated_at'] ) : 0,
 			);
 		}
 
@@ -223,11 +230,12 @@ final class ThemeStateRepository {
 
 	public function format_custom_css_item( $item ) {
 		return array(
-			'id'        => $item['id'],
-			'name'      => $item['name'],
-			'css'       => $item['css'],
-			'scopedCss' => $this->custom_css_policy->scope( $item['css'] ),
-			'updatedAt' => $item['updatedAt'],
+			'id'               => $item['id'],
+			'articleThemeName' => $item['article_theme_name'],
+			'codeThemeName'    => $item['code_theme_name'],
+			'css'              => $item['css'],
+			'scopedCss'        => $this->custom_css_policy->scope( $item['css'] ),
+			'updatedAt'        => $item['updated_at'],
 		);
 	}
 

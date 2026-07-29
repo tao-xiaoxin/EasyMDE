@@ -5,7 +5,8 @@ import type {
 
 export type CustomCssSaveInput = Readonly<{
   id: string;
-  name: string;
+  articleThemeName: string;
+  codeThemeName: string;
   css: string;
 }>;
 

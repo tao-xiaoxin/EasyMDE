@@ -36,8 +36,13 @@ type ThemeVariables = Record<CustomCssVariableId, string>;
 
 type ImmersiveCustomCssDialogProps = Readonly<{
   initialCss: string;
-  initialName: string;
-  onApply: (input: Readonly<{ css: string; name: string }>) => Promise<boolean>;
+  initialArticleThemeName: string;
+  initialCodeThemeName: string;
+  onApply: (input: Readonly<{
+    articleThemeName: string;
+    codeThemeName: string;
+    css: string;
+  }>) => Promise<boolean>;
   onClose: () => void;
   onPreview: (
     css: string,
@@ -430,7 +435,8 @@ function CodeEditor({
 
 export function ImmersiveCustomCssDialog({
   initialCss,
-  initialName,
+  initialArticleThemeName,
+  initialCodeThemeName,
   onApply,
   onClose,
   onPreview,
@@ -450,9 +456,11 @@ export function ImmersiveCustomCssDialog({
   const activeRef = useRef(true);
   const savingRef = useRef(false);
   const [articleName, setArticleName] = useState(
-    initialName || strings.defaultArticleName
+    initialArticleThemeName || strings.defaultArticleName
   );
-  const [codeName, setCodeName] = useState(strings.defaultCodeName);
+  const [codeName, setCodeName] = useState(
+    initialCodeThemeName || strings.defaultCodeName
+  );
   const [themeVariables, setThemeVariables] = useState<ThemeVariables>({
     ...DEFAULT_THEME_VARIABLES
   });
@@ -594,7 +602,8 @@ export function ImmersiveCustomCssDialog({
     setSaveError('');
     try {
       const saved = await onApply({
-        name: `${articleName.trim()} / ${codeName.trim()}`,
+        articleThemeName: articleName.trim(),
+        codeThemeName: codeName.trim(),
         css: buildImmersiveCustomCss(
           themeVariables,
           articleCustomCss,

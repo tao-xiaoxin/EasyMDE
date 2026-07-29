@@ -42,6 +42,35 @@ function optionDomId(listboxId: string, id: string, index: number): string {
   return `${listboxId}-option-${index}-${id.replace(/[^a-z0-9_-]/gi, '-')}`;
 }
 
+function rectanglesIntersect(first: DOMRect, second: DOMRect): boolean {
+  return (
+    first.bottom > second.top
+    && first.right > second.left
+    && first.top < second.bottom
+    && first.left < second.right
+  );
+}
+
+function triggerIsVisibleForScroll(
+  trigger: HTMLButtonElement,
+  scrollOwner: EventTarget | null,
+  windowRef: Window
+): boolean {
+  const triggerRect = trigger.getBoundingClientRect();
+  const viewportRect = DOMRect.fromRect({
+    width: windowRef.innerWidth,
+    height: windowRef.innerHeight
+  });
+  if (!rectanglesIntersect(triggerRect, viewportRect)) {
+    return false;
+  }
+  return !(
+    scrollOwner instanceof Element
+    && scrollOwner.contains(trigger)
+    && !rectanglesIntersect(triggerRect, scrollOwner.getBoundingClientRect())
+  );
+}
+
 function OrdinarySelectSwatch({
   swatch
 }: Readonly<{ swatch: OrdinarySelectSwatch }>) {
@@ -205,6 +234,14 @@ export function OrdinarySelect({
     const reposition = () => updatePosition();
     const repositionForScroll = (event: Event) => {
       if (event.target === menuRef.current) return;
+      const trigger = triggerRef.current;
+      if (
+        trigger
+        && !triggerIsVisibleForScroll(trigger, event.target, windowRef)
+      ) {
+        close();
+        return;
+      }
       updatePosition();
     };
     documentRef.addEventListener('click', closeForPointer);

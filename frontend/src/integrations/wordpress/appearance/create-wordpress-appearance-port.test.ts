@@ -78,6 +78,22 @@ describe('createWordPressAppearancePort', () => {
       .toBe('.easymde-rendered-content .note { color: navy; }');
   });
 
+  it('fails fast when Bootstrap references unavailable Custom CSS', () => {
+    const options = fixture();
+    options.bootstrap = {
+      ...options.bootstrap,
+      customCss: [],
+      state: {
+        codeTheme: 'atom-one-dark',
+        customCssId: 'missing-css',
+        markdownTheme: 'custom'
+      }
+    };
+
+    expect(() => createWordPressAppearancePort(options))
+      .toThrowError('appearance-custom-css-unavailable');
+  });
+
   it('updates only delegated fields and local preview assets', () => {
     const options = fixture();
     const port = createWordPressAppearancePort(options);

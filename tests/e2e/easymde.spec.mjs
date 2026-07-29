@@ -1653,7 +1653,13 @@ test.describe('EasyMDE editor workflows', () => {
     const scrollSettingsPanel = page.locator(
       '.easymde-toolbar-popover-settings-panel'
     );
-    await scrollSettingsTrigger.scrollIntoViewIfNeeded();
+    await scrollSettingsTrigger.evaluate((trigger) => {
+      trigger.scrollIntoView({ block: 'center' });
+    });
+    await expect.poll(() => scrollSettingsTrigger.evaluate((trigger) => {
+      const rect = trigger.getBoundingClientRect();
+      return rect.bottom > 0 && rect.top < innerHeight;
+    })).toBe(true);
     await expect(scrollSettingsPanel).toBeVisible();
     await page.evaluate(() => {
       window.scrollTo(0, document.documentElement.scrollHeight);

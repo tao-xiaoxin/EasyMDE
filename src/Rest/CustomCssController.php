@@ -125,7 +125,7 @@ final class CustomCssController {
 			if ( $existing_id !== $id && 0 === strcasecmp( $item['name'], $name ) ) {
 				return new WP_Error(
 					'easymde_duplicate_custom_css_name',
-					__( 'A custom CSS style with this name already exists.', 'easymde' ),
+					__( 'A theme with this name already exists. Please choose another name and try again.', 'easymde' ),
 					array( 'status' => 409 )
 				);
 			}

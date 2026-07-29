@@ -1291,8 +1291,10 @@ msgid "CSS name and CSS content are required."
 msgstr "CSS 名称和 CSS 内容为必填项。"
 
 #: src/Rest/CustomCssController.php:128
-msgid "A custom CSS style with this name already exists."
-msgstr "已存在同名自定义 CSS 样式。"
+msgid ""
+"A theme with this name already exists. Please choose another name and try "
+"again."
+msgstr "主题名称已经存在，请更换后重试。"
 
 #: src/Rest/CustomCssController.php:159
 msgid "Custom CSS style not found."

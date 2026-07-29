@@ -214,6 +214,50 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $this->assertSame(403, rest_do_request($delete)->get_status());
     }
 
+    public function test_custom_css_create_rejects_a_duplicate_name_without_changing_the_library()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($user_id);
+
+        $create = new WP_REST_Request('POST', '/easymde/v1/custom-css');
+        $create->set_body_params(
+            array(
+                'name' => 'Duplicate Theme',
+                'css' => 'h2 { color: red; }',
+            )
+        );
+        $this->assertSame(200, rest_do_request($create)->get_status());
+
+        $library_before = get_user_meta($user_id, 'easymde_custom_css_library', true);
+
+        $duplicate = new WP_REST_Request('POST', '/easymde/v1/custom-css');
+        $duplicate->set_body_params(
+            array(
+                'name' => 'duplicate theme',
+                'css' => 'h2 { color: blue; }',
+            )
+        );
+        $response = rest_do_request($duplicate);
+        $data = $response->get_data();
+
+        $this->assertSame(409, $response->get_status());
+        $this->assertSame('easymde_duplicate_custom_css_name', $data['code']);
+        $this->assertSame(
+            'A theme with this name already exists. Please choose another name and try again.',
+            $data['message']
+        );
+        $this->assertSame(
+            $library_before,
+            get_user_meta($user_id, 'easymde_custom_css_library', true)
+        );
+
+        $options = new WP_REST_Request('GET', '/easymde/v1/theme-options');
+        $library = rest_do_request($options)->get_data()['customCss'];
+        $this->assertCount(1, $library);
+        $this->assertSame('Duplicate Theme', $library[0]['name']);
+        $this->assertSame('h2 {color: red;}', $library[0]['css']);
+    }
+
     public function test_custom_css_library_is_scoped_to_current_user()
     {
         $owner_id = self::factory()->user->create(array('role' => 'administrator'));

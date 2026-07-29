@@ -11,7 +11,7 @@ export type CustomCssSaveInput = Readonly<{
 
 export type CustomCssSaveResult =
   | Readonly<{ status: 'saved'; snapshot: AppearanceSnapshot }>
-  | Readonly<{ status: 'failed'; code: string }>;
+  | Readonly<{ status: 'failed'; code: string; message?: string }>;
 
 export type CustomCssPreviewResult =
   | Readonly<{ status: 'ready'; scopedCss: string }>

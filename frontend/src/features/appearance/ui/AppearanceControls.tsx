@@ -453,9 +453,12 @@ export function AppearanceControls({
       css: customCode
     },
     requestedId?: string
-  ): Promise<boolean> => {
+  ): Promise<
+    Readonly<{ status: 'saved' }> |
+    Readonly<{ status: 'failed'; message: string }>
+  > => {
     if (savingRef.current) {
-      return false;
+      return { status: 'failed', message: bootstrap.strings.cssSaveFailed };
     }
     savingRef.current = true;
     setIsSaving(true);
@@ -472,7 +475,7 @@ export function AppearanceControls({
         css: input.css
       });
       if (!activeRef.current) {
-        return false;
+        return { status: 'failed', message: bootstrap.strings.cssSaveFailed };
       }
       if ('saved' === result.status) {
         const nextSnapshot = {
@@ -488,21 +491,25 @@ export function AppearanceControls({
         };
         if (!applyState(nextSnapshot.state)) {
           setStatus(bootstrap.strings.cssSaveFailed);
-          return false;
+          return { status: 'failed', message: bootstrap.strings.cssSaveFailed };
         }
         replaceSnapshot(nextSnapshot);
         setStatus(bootstrap.strings.cssSaved);
-        return true;
+        return { status: 'saved' };
       } else {
-        setStatus(bootstrap.strings.cssSaveFailed);
-        return false;
+        const message =
+          'easymde_duplicate_custom_css_name' === result.code && result.message
+            ? result.message
+            : bootstrap.strings.cssSaveFailed;
+        setStatus(message);
+        return { status: 'failed', message };
       }
     } catch {
       if (activeRef.current) {
         setStatus(bootstrap.strings.cssSaveFailed);
         onFailure();
       }
-      return false;
+      return { status: 'failed', message: bootstrap.strings.cssSaveFailed };
     } finally {
       savingRef.current = false;
       if (activeRef.current) {
@@ -897,7 +904,6 @@ export function AppearanceControls({
             triggerRef.current?.focus();
           }}
           onPreview={port.previewCustomCss}
-          saveFailedMessage={bootstrap.strings.cssSaveFailed}
           strings={bootstrap.strings.customCssDialog}
           title={bootstrap.strings.customCssTheme}
           variables={bootstrap.customCssVariables}

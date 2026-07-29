@@ -37,13 +37,17 @@ type ThemeVariables = Record<CustomCssVariableId, string>;
 type ImmersiveCustomCssDialogProps = Readonly<{
   initialCss: string;
   initialName: string;
-  onApply: (input: Readonly<{ css: string; name: string }>) => Promise<boolean>;
+  onApply: (
+    input: Readonly<{ css: string; name: string }>
+  ) => Promise<Readonly<{ status: 'saved' }> | Readonly<{
+    status: 'failed';
+    message: string;
+  }>>;
   onClose: () => void;
   onPreview: (
     css: string,
     signal: AbortSignal
   ) => Promise<CustomCssPreviewResult>;
-  saveFailedMessage: string;
   strings: CustomCssDialogStrings;
   title: string;
   variables: ReadonlyArray<CustomCssVariable>;
@@ -434,7 +438,6 @@ export function ImmersiveCustomCssDialog({
   onApply,
   onClose,
   onPreview,
-  saveFailedMessage,
   strings,
   title,
   variables
@@ -593,7 +596,7 @@ export function ImmersiveCustomCssDialog({
     setIsSaving(true);
     setSaveError('');
     try {
-      const saved = await onApply({
+      const result = await onApply({
         name: `${articleName.trim()} / ${codeName.trim()}`,
         css: buildImmersiveCustomCss(
           themeVariables,
@@ -602,10 +605,10 @@ export function ImmersiveCustomCssDialog({
         )
       });
       if (!activeRef.current) return;
-      if (saved) {
+      if ('saved' === result.status) {
         onClose();
       } else {
-        setSaveError(saveFailedMessage);
+        setSaveError(result.message);
       }
     } finally {
       savingRef.current = false;

@@ -96,6 +96,43 @@ describe('createWordPressAppearancePort', () => {
     });
   });
 
+  it('preserves the translated duplicate-name error from the Custom CSS endpoint', async () => {
+    const options = fixture();
+    options.apiFetch.mockRejectedValue({
+      code: 'easymde_duplicate_custom_css_name',
+      message: 'A theme with this name already exists. Please choose another name and try again.'
+    });
+    const port = createWordPressAppearancePort(options);
+
+    await expect(port.saveCustomCss({
+      css: '.saved { color: green; }',
+      id: '',
+      name: 'Saved CSS'
+    })).resolves.toEqual({
+      code: 'easymde_duplicate_custom_css_name',
+      message: 'A theme with this name already exists. Please choose another name and try again.',
+      status: 'failed'
+    });
+  });
+
+  it('does not expose messages from non-duplicate Custom CSS failures', async () => {
+    const options = fixture();
+    options.apiFetch.mockRejectedValue({
+      code: 'rest_internal_error',
+      message: 'Sensitive server detail'
+    });
+    const port = createWordPressAppearancePort(options);
+
+    await expect(port.saveCustomCss({
+      css: '.saved { color: green; }',
+      id: '',
+      name: 'Saved CSS'
+    })).resolves.toEqual({
+      code: 'custom-css-save-failed',
+      status: 'failed'
+    });
+  });
+
   it('uses the existing server policy endpoint for scoped Custom CSS previews', async () => {
     const options = fixture();
     options.apiFetch.mockResolvedValue({

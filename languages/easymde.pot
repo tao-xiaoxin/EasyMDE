@@ -1280,7 +1280,9 @@ msgid "CSS name and CSS content are required."
 msgstr ""
 
 #: src/Rest/CustomCssController.php:128
-msgid "A custom CSS style with this name already exists."
+msgid ""
+"A theme with this name already exists. Please choose another name and try "
+"again."
 msgstr ""
 
 #: src/Rest/CustomCssController.php:159

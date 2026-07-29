@@ -188,6 +188,49 @@ describe('AppearanceControls', () => {
     expect(screen.getByText('Localized caution label')).not.toBeNull();
   });
 
+  it('keeps the dialog open and preserves edited names when the server rejects a duplicate theme name', async () => {
+    const user = userEvent.setup();
+    const saveCustomCss = vi.fn().mockResolvedValue({
+      status: 'failed',
+      code: 'easymde_duplicate_custom_css_name',
+      message: 'A theme with this name already exists. Please choose another name and try again.'
+    });
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort({ saveCustomCss })}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
+
+    const articleName = screen.getByRole('textbox', {
+      name: 'Article theme name'
+    });
+    const codeName = screen.getByRole('textbox', { name: 'Code theme name' });
+    await user.clear(articleName);
+    await user.type(articleName, 'Existing Article');
+    await user.clear(codeName);
+    await user.type(codeName, 'Existing Code');
+
+    await user.click(screen.getByRole('button', { name: 'Apply theme' }));
+
+    expect(await screen.findByText(
+      'A theme with this name already exists. Please choose another name and try again.'
+    )).not.toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Custom CSS theme' })).not.toBeNull();
+    expect((articleName as HTMLInputElement).value).toBe('Existing Article');
+    expect((codeName as HTMLInputElement).value).toBe('Existing Code');
+    expect(saveCustomCss).toHaveBeenCalledWith(expect.objectContaining({
+      id: '',
+      name: 'Existing Article / Existing Code'
+    }));
+  });
+
   it('renders the complete reference Custom CSS dialog preview fixture', async () => {
     const user = userEvent.setup();
     const { container } = render(

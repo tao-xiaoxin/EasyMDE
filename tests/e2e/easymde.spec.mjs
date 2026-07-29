@@ -124,7 +124,9 @@ function runWp(args, options = {}) {
 }
 
 async function selectOrdinaryOption(page, combobox, optionLabel) {
-  await combobox.click();
+  await combobox.focus();
+  await expect(combobox).toBeFocused();
+  await page.keyboard.press('Enter');
   const listboxId = await combobox.getAttribute('aria-controls');
   if (!listboxId) {
     throw new Error('ordinary-select-listbox-owner-unavailable');
@@ -1179,7 +1181,7 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
-    test.setTimeout(300_000);
+    test.setTimeout(180_000);
     const user = testInfo.easymdeUser;
     const customThemeSuffix = randomUUID().slice(0, 8);
     const customName = 'E2E CSS ' + customThemeSuffix;

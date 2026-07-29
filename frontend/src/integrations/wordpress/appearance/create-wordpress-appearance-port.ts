@@ -170,6 +170,8 @@ export function createWordPressAppearancePort({
     snapshot = { ...snapshot, state };
   };
 
+  applyState(snapshot.state, bootstrap.codeThemeExplicit);
+
   return {
     applyState,
     closeOtherPopovers: () => undefined,

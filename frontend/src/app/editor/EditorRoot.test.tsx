@@ -412,7 +412,7 @@ function fixture(): EditorRootProps &
     preview: {
       features: {},
       html: '<p>Initial</p>' as SafePreviewHtml,
-      messages: { empty: 'Empty', error: 'Failed', rendering: 'Rendering' },
+      messages: { empty: 'Empty', error: 'Failed' },
       postId: 7,
       signature: 'initial'
     },
@@ -3700,9 +3700,8 @@ describe('EditorRoot', () => {
     );
 
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
-    fireEvent.change(view.getByLabelText('Article theme'), {
-      target: { value: 'theme:newsprint' }
-    });
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
     await waitFor(() => {
       expect(props.previewPort.render).toHaveBeenLastCalledWith(
@@ -3711,9 +3710,8 @@ describe('EditorRoot', () => {
       );
     });
 
-    fireEvent.change(view.getByLabelText('Code theme'), {
-      target: { value: 'github' }
-    });
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
     await waitFor(() => {
       expect(
         vi.mocked(props.enhancementPort.enhance).mock.calls.at(-1)?.[3]
@@ -3746,9 +3744,8 @@ describe('EditorRoot', () => {
     const view = render(<EditorRoot {...props} appearance={appearance} />);
 
     fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
-    fireEvent.change(view.getByLabelText('Code theme'), {
-      target: { value: 'terminal-noir' }
-    });
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
     fireEvent.keyDown(window, { key: 'Escape' });
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '主题' }));
@@ -3797,9 +3794,8 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
     fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
-    fireEvent.change(view.getByLabelText('Article theme'), {
-      target: { value: 'theme:newsprint' }
-    });
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
     expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -3866,11 +3862,14 @@ describe('EditorRoot', () => {
 
     const articleTheme = view.getByRole('combobox', {
       name: 'Article theme'
-    }) as HTMLSelectElement;
-    expect(articleTheme.value).toBe('custom:writer-css');
+    });
+    expect(articleTheme.textContent).toContain('Writer CSS');
+    fireEvent.click(articleTheme);
     expect(
-      view.getByRole('option', { name: 'Writer CSS' })
-    ).not.toBeNull();
+      view.getByRole('option', { name: 'Writer CSS' }).getAttribute(
+        'aria-selected'
+      )
+    ).toBe('true');
   });
 
   it('carries an ordinary appearance choice into immersive mode', async () => {
@@ -3878,9 +3877,8 @@ describe('EditorRoot', () => {
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
-    fireEvent.change(view.getByRole('combobox', { name: 'Article theme' }), {
-      target: { value: 'theme:newsprint' }
-    });
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
     fireEvent.keyDown(window, { key: 'Escape' });
 
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
@@ -3910,9 +3908,8 @@ describe('EditorRoot', () => {
     const view = render(<EditorRoot {...props} fonts={fonts} />);
 
     fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
-    fireEvent.change(view.getByRole('combobox', { name: 'Custom font' }), {
-      target: { value: 'optima' }
-    });
+    fireEvent.click(view.getByRole('combobox', { name: 'Custom font' }));
+    fireEvent.click(view.getByRole('option', { name: 'Optima' }));
     fireEvent.keyDown(window, { key: 'Escape' });
 
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
@@ -3985,9 +3982,8 @@ describe('EditorRoot', () => {
     );
 
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
-    fireEvent.change(view.getByLabelText('Article theme'), {
-      target: { value: 'theme:newsprint' }
-    });
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
     await waitFor(() => {
       expect(props.fontControlsPort.applyState).toHaveBeenCalledWith(

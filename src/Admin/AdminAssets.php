@@ -274,9 +274,8 @@ final class AdminAssets {
 				'features'  => (object) array(),
 				'html'      => '',
 				'messages'  => array(
-					'empty'     => $strings['previewEmpty'],
-					'error'     => $strings['previewError'],
-					'rendering' => $strings['previewRendering'],
+					'empty' => $strings['previewEmpty'],
+					'error' => $strings['previewError'],
 				),
 				'postId'    => absint( $post_id ),
 				'signature' => '',
@@ -885,7 +884,6 @@ final class AdminAssets {
 		return array(
 			'editorLabel'           => __( 'Markdown source', 'easymde' ),
 			'previewEmpty'          => __( 'Start writing Markdown to preview the article.', 'easymde' ),
-			'previewRendering'      => __( 'Rendering preview...', 'easymde' ),
 			'previewError'          => __( 'Preview failed. Please keep writing; saving is not affected.', 'easymde' ),
 			'insertMedia'           => __( 'Insert Media', 'easymde' ),
 			'markdownToolbar'       => __( 'Markdown toolbar', 'easymde' ),

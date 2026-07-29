@@ -22,6 +22,10 @@ import {
   Palette,
   PenLine
 } from '../../../generated/lucide-icons';
+import {
+  OrdinarySelect,
+  type OrdinarySelectSwatch
+} from '../../../shared/ui/OrdinarySelect';
 
 export type AppearanceControlsSession = Readonly<{
   close: () => void;
@@ -41,7 +45,7 @@ type AppearanceControlsProps = Readonly<{
 type ImmersiveThemeOption = Readonly<{
   id: string;
   label: string;
-  swatch: string | readonly [string, string];
+  swatch: OrdinarySelectSwatch;
 }>;
 
 type ImmersivePanelPosition = Readonly<{
@@ -525,6 +529,55 @@ export function AppearanceControls({
       swatch: codeThemeSwatch(theme.id)
     })
   );
+  const selectArticleTheme = (value: string) => {
+    if (value.startsWith('custom:')) {
+      applyState({
+        ...snapshotRef.current.state,
+        markdownTheme: 'custom',
+        codeTheme: customCssCodeTheme(
+          bootstrap,
+          snapshotRef.current.state.codeTheme,
+          codeThemeExplicitRef.current
+        ),
+        customCssId: value.slice(7)
+      });
+    } else {
+      const markdownTheme = value.slice(6);
+      applyState({
+        ...snapshotRef.current.state,
+        markdownTheme,
+        codeTheme: codeThemeExplicitRef.current
+          ? snapshotRef.current.state.codeTheme
+          : associatedCodeTheme(bootstrap, markdownTheme),
+        customCssId: ''
+      });
+    }
+  };
+  const selectCodeTheme = (value: string) => {
+    if (value.startsWith('custom:')) {
+      selectArticleTheme(value);
+      return;
+    }
+    applyState(
+      {
+        ...snapshotRef.current.state,
+        markdownTheme:
+          'custom' === snapshotRef.current.state.markdownTheme
+            ? 'default'
+            : snapshotRef.current.state.markdownTheme,
+        codeTheme: value.slice(6),
+        customCssId:
+          'custom' === snapshotRef.current.state.markdownTheme
+            ? ''
+            : snapshotRef.current.state.customCssId
+      },
+      true
+    );
+  };
+  const selectedCodeValue =
+    selectedCustomCss(snapshot) !== undefined
+      ? `custom:${snapshot.state.customCssId}`
+      : `theme:${snapshot.state.codeTheme}`;
   const customCssPanel = (
     <div className="easymde-custom-css-panel" hidden={!isCustomOpen}>
       <div className="easymde-custom-css-row">
@@ -566,31 +619,7 @@ export function AppearanceControls({
         <select
           className="easymde-theme-select"
           value={selectedArticleValue(snapshot)}
-          onChange={(event) => {
-            const value = event.currentTarget.value;
-            if (value.startsWith('custom:')) {
-              applyState({
-                ...snapshotRef.current.state,
-                markdownTheme: 'custom',
-                codeTheme: customCssCodeTheme(
-                  bootstrap,
-                  snapshotRef.current.state.codeTheme,
-                  codeThemeExplicitRef.current
-                ),
-                customCssId: value.slice(7)
-              });
-            } else {
-              const markdownTheme = value.slice(6);
-              applyState({
-                ...snapshotRef.current.state,
-                markdownTheme,
-                codeTheme: codeThemeExplicitRef.current
-                  ? snapshotRef.current.state.codeTheme
-                  : associatedCodeTheme(bootstrap, markdownTheme),
-                customCssId: ''
-              });
-            }
-          }}
+          onChange={(event) => selectArticleTheme(event.currentTarget.value)}
         >
           {bootstrap.articleThemes.map((theme) => (
             <option key={theme.id} value={`theme:${theme.id}`}>
@@ -614,20 +643,17 @@ export function AppearanceControls({
         </span>
         <select
           className="easymde-code-theme-select"
-          value={snapshot.state.codeTheme}
-          onChange={(event) => {
-            applyState(
-              {
-                ...snapshotRef.current.state,
-                codeTheme: event.currentTarget.value
-              },
-              true
-            );
-          }}
+          value={selectedCodeValue}
+          onChange={(event) => selectCodeTheme(event.currentTarget.value)}
         >
           {bootstrap.codeThemes.map((theme) => (
-            <option key={theme.id} value={theme.id}>
+            <option key={theme.id} value={`theme:${theme.id}`}>
               {theme.label}
+            </option>
+          ))}
+          {snapshot.customCss.map((item) => (
+            <option key={item.id} value={`custom:${item.id}`}>
+              {item.name}
             </option>
           ))}
         </select>
@@ -640,7 +666,41 @@ export function AppearanceControls({
       <section className="easymde-editor-settings-section is-appearance">
         <h3>{bootstrap.strings.appearance}</h3>
         <div className="easymde-editor-settings-fields">
-          {ordinaryFields}
+          <div className="easymde-toolbar-control">
+            <span className="easymde-toolbar-control-label">
+              {bootstrap.strings.articleTheme}
+            </span>
+            <OrdinarySelect
+              className="easymde-theme-select"
+              label={bootstrap.strings.articleTheme}
+              value={selectedArticleValue(snapshot)}
+              options={articleOptions}
+              onChange={selectArticleTheme}
+            />
+          </div>
+          <div className="easymde-toolbar-control">
+            <span className="easymde-toolbar-control-label">
+              {bootstrap.strings.codeTheme}
+            </span>
+            <OrdinarySelect
+              className="easymde-code-theme-select"
+              label={bootstrap.strings.codeTheme}
+              value={selectedCodeValue}
+              options={[
+                ...bootstrap.codeThemes.map((theme) => ({
+                  id: `theme:${theme.id}`,
+                  label: theme.label,
+                  swatch: codeThemeSwatch(theme.id)
+                })),
+                ...snapshot.customCss.map((item) => ({
+                  id: `custom:${item.id}`,
+                  label: item.name,
+                  swatch: '#DC2626'
+                }))
+              ]}
+              onChange={selectCodeTheme}
+            />
+          </div>
         </div>
       </section>
     );
@@ -758,30 +818,7 @@ export function AppearanceControls({
                 label={bootstrap.strings.articleTheme}
                 value={selectedArticleValue(snapshot)}
                 options={articleOptions}
-                onChange={(value) => {
-                  if (value.startsWith('custom:')) {
-                    applyState({
-                      ...snapshotRef.current.state,
-                      markdownTheme: 'custom',
-                      codeTheme: customCssCodeTheme(
-                        bootstrap,
-                        snapshotRef.current.state.codeTheme,
-                        codeThemeExplicitRef.current
-                      ),
-                      customCssId: value.slice(7)
-                    });
-                  } else {
-                    const markdownTheme = value.slice(6);
-                    applyState({
-                      ...snapshotRef.current.state,
-                      markdownTheme,
-                      codeTheme: codeThemeExplicitRef.current
-                        ? snapshotRef.current.state.codeTheme
-                        : associatedCodeTheme(bootstrap, markdownTheme),
-                      customCssId: ''
-                    });
-                  }
-                }}
+                onChange={selectArticleTheme}
               />
               <ImmersiveThemeSelect
                 label={bootstrap.strings.codeTheme}

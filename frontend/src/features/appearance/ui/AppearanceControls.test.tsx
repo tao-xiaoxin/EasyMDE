@@ -726,6 +726,102 @@ describe('AppearanceControls', () => {
     expect(screen.getByRole('combobox', { name: 'Code theme' })).not.toBeNull();
   });
 
+  it('shows the same saved custom theme directly in both embedded theme menus', async () => {
+    const user = userEvent.setup();
+    const applyState = vi.fn();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort({ applyState })}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="embedded"
+      />
+    );
+
+    const articleTheme = screen.getByRole('combobox', {
+      name: 'Article theme'
+    });
+    await user.click(articleTheme);
+    const articleOptions = screen.getByRole('listbox', {
+      name: 'Article theme'
+    });
+    expect(articleOptions.textContent).not.toContain('Named custom CSS');
+    await user.click(screen.getByRole('option', { name: 'Writer CSS' }));
+
+    expect(applyState).toHaveBeenLastCalledWith({
+      markdownTheme: 'custom',
+      codeTheme: 'atom-one-dark',
+      customCssId: 'writer-css'
+    }, false);
+
+    const codeTheme = screen.getByRole('combobox', { name: 'Code theme' });
+    expect(codeTheme.textContent).toContain('Writer CSS');
+    await user.click(codeTheme);
+    const codeOptions = screen.getByRole('listbox', { name: 'Code theme' });
+    expect(codeOptions.textContent).not.toContain('Named custom CSS');
+    expect(
+      screen.getByRole('option', { name: 'Writer CSS' }).getAttribute(
+        'aria-selected'
+      )
+    ).toBe('true');
+
+    await user.click(screen.getByRole('option', { name: 'GitHub' }));
+    expect(applyState).toHaveBeenLastCalledWith({
+      markdownTheme: 'default',
+      codeTheme: 'github',
+      customCssId: ''
+    }, true);
+  });
+
+  it('reuses immersive article and code palettes in the embedded theme menus', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="embedded"
+      />
+    );
+
+    const articleTheme = screen.getByRole('combobox', {
+      name: 'Article theme'
+    });
+    expect(
+      articleTheme.querySelector<HTMLElement>(
+        '.easymde-ordinary-select-swatch'
+      )?.style.background
+    ).toBe('rgb(51, 51, 51)');
+
+    await user.click(articleTheme);
+    expect(
+      screen.getByRole('option', { name: 'Writer CSS' })
+        .querySelector<HTMLElement>('.easymde-ordinary-select-swatch')
+        ?.style.background
+    ).toBe('rgb(220, 38, 38)');
+    await user.keyboard('{Escape}');
+
+    const codeTheme = screen.getByRole('combobox', { name: 'Code theme' });
+    const triggerColors = Array.from(
+      codeTheme.querySelectorAll<HTMLElement>(
+        '.easymde-ordinary-select-swatch > span'
+      )
+    ).map((element) => element.style.background);
+    expect(triggerColors).toEqual(['rgb(40, 44, 52)', 'rgb(171, 178, 191)']);
+
+    await user.click(codeTheme);
+    const terminalNoir = screen.getByRole('option', {
+      name: 'Terminal Noir'
+    });
+    expect(
+      Array.from(terminalNoir.querySelectorAll<HTMLElement>(
+        '.easymde-ordinary-select-swatch > span'
+      )).map((element) => element.style.background)
+    ).toEqual(['rgb(13, 16, 23)', 'rgb(202, 209, 217)']);
+  });
+
   it('renders the registered Terminal Noir palette instead of the generic fallback', async () => {
     const user = userEvent.setup();
     render(
@@ -917,11 +1013,14 @@ describe('AppearanceControls', () => {
       customCssId: 'writer-css'
     }, false);
 
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Code theme' }), 'github');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Code theme' }),
+      'theme:github'
+    );
     expect(applyState).toHaveBeenLastCalledWith({
-      markdownTheme: 'custom',
+      markdownTheme: 'default',
       codeTheme: 'github',
-      customCssId: 'writer-css'
+      customCssId: ''
     }, true);
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Article theme' }), 'theme:default');
@@ -1099,7 +1198,7 @@ describe('AppearanceControls', () => {
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Code theme' }),
-      'terminal-noir'
+      'theme:terminal-noir'
     );
     expect(onFailure).toHaveBeenCalledOnce();
 

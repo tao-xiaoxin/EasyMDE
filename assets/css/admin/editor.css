@@ -1972,6 +1972,11 @@ body:has(.easymde-editor.is-immersive) .wrap {
 
 .easymde-editor:not(.is-immersive) .easymde-preview {
     overflow-x: hidden;
+    padding-block: 0;
+    padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
+    background-image: none;
+    scroll-padding-block: 0;
+    scroll-padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
 }
 
 .easymde-editor:not(.is-immersive) .easymde-rendered-content table {
@@ -1980,6 +1985,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
 }
 
 .easymde-editor:not(.is-immersive) .easymde-rendered-content :is(th, td) {
+    overflow-wrap: anywhere;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
     overflow-wrap: anywhere;
 }
 
@@ -2143,13 +2152,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
 }
 
 .easymde-preview-empty,
-.easymde-preview-pending,
 .easymde-preview-error {
     color: #64748b;
-}
-
-.easymde-preview-pending {
-    font-style: italic;
 }
 
 .easymde-preview-error {
@@ -2207,8 +2211,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 
     .easymde-toolbar-popover-appearance-panel:not(.is-immersive-panel)::before,
-    .easymde-toolbar-popover-font-panel:not(.is-immersive-panel)::before,
-    .easymde-toolbar-popover-settings-panel::before {
+    .easymde-toolbar-popover-font-panel:not(.is-immersive-panel)::before {
         right: auto;
         left: 24px;
     }
@@ -2220,8 +2223,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 
     .easymde-toolbar-popover-font,
-    .easymde-toolbar-popover-appearance,
-    .easymde-toolbar-popover-settings {
+    .easymde-toolbar-popover-appearance {
         position: static;
     }
 
@@ -2248,6 +2250,13 @@ body:has(.easymde-editor.is-immersive) .wrap {
 
     .easymde-editor-last-edited {
         text-align: start;
+    }
+
+    .easymde-editor:not(.is-immersive) .easymde-preview {
+        padding-block: 0;
+        padding-inline: 5px;
+        scroll-padding-block: 0;
+        scroll-padding-inline: 5px;
     }
 
 }

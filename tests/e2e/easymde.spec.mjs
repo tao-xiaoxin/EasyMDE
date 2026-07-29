@@ -123,6 +123,18 @@ function runWp(args, options = {}) {
   return result.stdout.trim();
 }
 
+async function selectOrdinaryOption(page, combobox, optionLabel) {
+  await combobox.click();
+  const listboxId = await combobox.getAttribute('aria-controls');
+  if (!listboxId) {
+    throw new Error('ordinary-select-listbox-owner-unavailable');
+  }
+  await page.locator(`[id=${JSON.stringify(listboxId)}]`)
+    .getByRole('option', { name: optionLabel, exact: true })
+    .click();
+  await expect(combobox).toContainText(optionLabel);
+}
+
 function testSlug(testInfo) {
   return `e2e-${testInfo.workerIndex}-${Date.now()}-${randomUUID().slice(0, 8)}`;
 }
@@ -1197,28 +1209,33 @@ test.describe('EasyMDE editor workflows', () => {
     }));
     const catalog = await page.evaluate(() => ({
       articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
-        .map(({ id, cssUrl, defaultCodeTheme }) => ({ id, cssUrl, defaultCodeTheme })),
+        .map(({ id, label, cssUrl, defaultCodeTheme }) => ({
+          id,
+          label,
+          cssUrl,
+          defaultCodeTheme
+        })),
       codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes
-        .map(({ id, cssUrl }) => ({ id, cssUrl })),
+        .map(({ id, label, cssUrl }) => ({ id, label, cssUrl })),
       fontGroups: [
         {
           field: '#easymde-custom-font-field',
-          ids: window.EasyMDEEditorRootBootstrap.fonts.options.customFonts.map(({ id }) => id),
+          options: window.EasyMDEEditorRootBootstrap.fonts.options.customFonts,
           select: '.easymde-custom-font-select'
         },
         {
           field: '#easymde-windows-font-field',
-          ids: window.EasyMDEEditorRootBootstrap.fonts.options.windowsFonts.map(({ id }) => id),
+          options: window.EasyMDEEditorRootBootstrap.fonts.options.windowsFonts,
           select: '.easymde-windows-font-select'
         },
         {
           field: '#easymde-apple-font-field',
-          ids: window.EasyMDEEditorRootBootstrap.fonts.options.appleFonts.map(({ id }) => id),
+          options: window.EasyMDEEditorRootBootstrap.fonts.options.appleFonts,
           select: '.easymde-apple-font-select'
         },
         {
           field: '#easymde-serif-font-field',
-          ids: window.EasyMDEEditorRootBootstrap.fonts.options.serifOptions.map(({ id }) => id),
+          options: window.EasyMDEEditorRootBootstrap.fonts.options.serifOptions,
           select: '.easymde-serif-font-select'
         }
       ]
@@ -1245,18 +1262,40 @@ test.describe('EasyMDE editor workflows', () => {
     const settingsGeometry = await settingsDialog.evaluate((panel, trigger) => {
       const panelBox = panel.getBoundingClientRect();
       const triggerBox = trigger.getBoundingClientRect();
-      const pointer = getComputedStyle(panel, '::before');
+      const tail = panel.parentElement?.querySelector('.easymde-editor-settings-tail');
+      if (!(tail instanceof HTMLElement)) {
+        throw new Error('editor-settings-tail-unavailable');
+      }
+      const tailBox = tail.getBoundingClientRect();
+      const tailStyle = getComputedStyle(tail);
+      const panelEdgeGutter = 23;
+      const tailOffset = 7;
+      const expectedTailCenter = Math.min(
+        panelBox.right - panelEdgeGutter,
+        Math.max(
+          panelBox.left + panelEdgeGutter,
+          triggerBox.left + triggerBox.width / 2
+        )
+      );
+      const expectedTailTop = tail.classList.contains('is-above')
+        ? panelBox.bottom - tailOffset
+        : panelBox.top - tailOffset;
       return {
         height: panelBox.height,
         overflow: {
           horizontal: panel.scrollWidth - panel.clientWidth,
           vertical: panel.scrollHeight - panel.clientHeight
         },
-        pointer: {
-          content: pointer.content,
-          height: pointer.height,
-          transformed: 'none' !== pointer.transform,
-          width: pointer.width
+        position: getComputedStyle(panel).position,
+        tail: {
+          anchorDelta: Math.abs(
+            tailBox.left + tailBox.width / 2 - expectedTailCenter
+          ),
+          height: tailStyle.height,
+          position: tailStyle.position,
+          topDelta: Math.abs(Number.parseFloat(tail.style.top) - expectedTailTop),
+          transformed: 'none' !== tailStyle.transform,
+          width: tailStyle.width
         },
         rightDelta: Math.abs(panelBox.right - triggerBox.right),
         topDelta: Math.abs(panelBox.top - triggerBox.bottom - 8),
@@ -1266,17 +1305,24 @@ test.describe('EasyMDE editor workflows', () => {
     expect(settingsGeometry.height).toBeGreaterThanOrEqual(380);
     expect(settingsGeometry.height).toBeLessThanOrEqual(410);
     expect(settingsGeometry.overflow).toEqual({ horizontal: 0, vertical: 0 });
-    expect(settingsGeometry.pointer).toEqual({
-      content: '""',
+    expect(settingsGeometry.position).toBe('fixed');
+    expect(settingsGeometry.tail).toMatchObject({
       height: '14px',
+      position: 'fixed',
       transformed: true,
       width: '14px'
     });
+    expect(settingsGeometry.tail.anchorDelta).toBeLessThanOrEqual(1);
+    expect(settingsGeometry.tail.topDelta).toBeLessThanOrEqual(1);
     expect(settingsGeometry.rightDelta).toBeLessThanOrEqual(1);
     expect(settingsGeometry.topDelta).toBeLessThanOrEqual(1);
     expect(settingsGeometry.width).toBe(468);
-    const articleSelect = settingsDialog.getByLabel(labels.articleTheme);
-    const codeSelect = settingsDialog.getByLabel(labels.codeTheme);
+    const articleSelect = settingsDialog.getByRole('combobox', {
+      name: labels.articleTheme
+    });
+    const codeSelect = settingsDialog.getByRole('combobox', {
+      name: labels.codeTheme
+    });
     const articleThemeLink = page.locator('#easymde-article-theme-css');
     const codeThemeLink = page.locator('#easymde-highlight-theme-css');
     const previewCode = page.locator('.easymde-pane-preview article pre code.hljs').first();
@@ -1327,8 +1373,8 @@ test.describe('EasyMDE editor workflows', () => {
       };
     });
     let sharedGeometry;
-    for (const { id, cssUrl, defaultCodeTheme } of catalog.articleThemes) {
-      await articleSelect.selectOption('theme:' + id);
+    for (const { id, label, cssUrl, defaultCodeTheme } of catalog.articleThemes) {
+      await selectOrdinaryOption(page, articleSelect, label);
       await expect(page.locator('.easymde-pane-preview article'))
         .toHaveClass(new RegExp('easymde-markdown-theme-' + id));
       await expect(page.locator('.easymde-pane-preview article'))
@@ -1364,11 +1410,19 @@ test.describe('EasyMDE editor workflows', () => {
         }).toEqual(sharedGeometry);
       }
     }
-    await codeSelect.selectOption('terminal-noir');
+    const terminalNoir = catalog.codeThemes.find(({ id }) => 'terminal-noir' === id);
+    if (!terminalNoir) {
+      throw new Error('terminal-noir-theme-unavailable');
+    }
+    await selectOrdinaryOption(page, codeSelect, terminalNoir.label);
     await expect(page.locator('.easymde-pane-preview article'))
       .toHaveClass(/easymde-code-theme-terminal-noir/);
     await expect(page.locator('#easymde-code-theme-field')).toHaveValue('terminal-noir');
-    await articleSelect.selectOption('theme:default');
+    const defaultArticleTheme = catalog.articleThemes.find(({ id }) => 'default' === id);
+    if (!defaultArticleTheme) {
+      throw new Error('default-article-theme-unavailable');
+    }
+    await selectOrdinaryOption(page, articleSelect, defaultArticleTheme.label);
     await expect(page.locator('.easymde-pane-preview article'))
       .toHaveClass(/easymde-markdown-theme-default/);
     await expect(page.locator('.easymde-pane-preview article'))
@@ -1377,8 +1431,8 @@ test.describe('EasyMDE editor workflows', () => {
     await expect.poll(codeGeometry, {
       message: 'an explicit code theme should not change shared frame geometry'
     }).toEqual(sharedGeometry);
-    for (const { id, cssUrl } of catalog.codeThemes) {
-      await codeSelect.selectOption(id);
+    for (const { id, label, cssUrl } of catalog.codeThemes) {
+      await selectOrdinaryOption(page, codeSelect, label);
       await expect(page.locator('.easymde-pane-preview article'))
         .toHaveClass(new RegExp('easymde-code-theme-' + id));
       await expect.poll(() => codeThemeLink.evaluate((link, expectedUrl) => (
@@ -1453,17 +1507,71 @@ test.describe('EasyMDE editor workflows', () => {
 
     await settingsTrigger.click();
     await expect(settingsDialog).toBeVisible();
-    await expect(articleSelect).toHaveValue(/^custom:/);
-    await expect(articleSelect.locator('option:checked')).toHaveText(savedCustomName);
+    await expect(articleSelect).toContainText(savedCustomName);
+    await articleSelect.click();
+    await expect(
+      page.getByRole('listbox', { name: labels.articleTheme })
+        .getByRole('option', { name: savedCustomName, exact: true })
+    ).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('Escape');
     for (const group of catalog.fontGroups) {
-      for (const id of group.ids) {
-        await settingsDialog.locator(group.select).selectOption(id);
+      const fontSelect = settingsDialog.locator(group.select).getByRole('combobox');
+      for (const { id, label } of group.options) {
+        await selectOrdinaryOption(page, fontSelect, label);
         await expect(page.locator(group.field)).toHaveValue(id);
-        await expect(
-          page.locator('.easymde-pane-preview article')
-        ).toHaveCSS('font-family', /.+/);
+        const expectedFontStack = await page.evaluate(() => {
+          const options = window.EasyMDEEditorRootBootstrap.fonts.options;
+          const selections = [
+            [options.customFonts, '#easymde-custom-font-field'],
+            [options.windowsFonts, '#easymde-windows-font-field'],
+            [options.appleFonts, '#easymde-apple-font-field'],
+            [options.serifOptions, '#easymde-serif-font-field']
+          ];
+          const seen = new Set();
+          const parts = [];
+          for (const [fontOptions, selector] of selections) {
+            const selected = document.querySelector(selector)?.value ?? '';
+            const family = fontOptions.find((option) => option.id === selected)
+              ?.fontFamily ?? '';
+            for (const part of family.split(',').map((value) => value.trim())) {
+              const key = part.toLowerCase();
+              if (part && !seen.has(key)) {
+                seen.add(key);
+                parts.push(part);
+              }
+            }
+          }
+          return parts.join(', ');
+        });
+        await expect.poll(() => page
+          .locator('.easymde-pane-preview article')
+          .evaluate((article) => article.style.getPropertyValue(
+            '--easymde-content-font-family'
+          ))).toBe(expectedFontStack);
       }
     }
+
+    await page.setViewportSize({ width: 783, height: 900 });
+    const scrollSettingsTrigger = page.locator(
+      '.easymde-toolbar-popover-settings > button'
+    );
+    const scrollSettingsPanel = page.locator(
+      '.easymde-toolbar-popover-settings-panel'
+    );
+    await scrollSettingsTrigger.scrollIntoViewIfNeeded();
+    await expect(scrollSettingsPanel).toBeVisible();
+    await page.evaluate(() => {
+      window.scrollTo(0, document.documentElement.scrollHeight);
+    });
+    await expect.poll(() => scrollSettingsTrigger.evaluate((trigger) => {
+      const rect = trigger.getBoundingClientRect();
+      return rect.bottom <= 0 || rect.top >= innerHeight;
+    })).toBe(true);
+    await expect(scrollSettingsPanel).toBeHidden();
+    await expect(scrollSettingsTrigger).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    );
   });
 
   test('restores the fixed ordinary toolbar and 50/50 workspace without withdrawn surfaces', async ({ page }, testInfo) => {
@@ -1790,7 +1898,7 @@ test.describe('EasyMDE editor workflows', () => {
         const scrollBeforeOpen = await page.evaluate(() => scrollY);
         await trigger.click();
         await expect(panel).toBeVisible();
-        const placement = await panel.evaluate((element, { anchorSelector, mobile }) => {
+        const placement = await panel.evaluate((element, { anchorSelector }) => {
           const triggerElement = element.parentElement?.querySelector(':scope > button');
           const toolbar = element.closest('.easymde-toolbar');
           if (!(triggerElement instanceof HTMLElement) || !(toolbar instanceof HTMLElement)) {
@@ -1799,7 +1907,25 @@ test.describe('EasyMDE editor workflows', () => {
           const panelBox = element.getBoundingClientRect();
           const triggerBox = triggerElement.getBoundingClientRect();
           const toolbarBox = toolbar.getBoundingClientRect();
-          const pointer = getComputedStyle(element, '::before');
+          const tail = element.parentElement?.querySelector(
+            '.easymde-editor-settings-tail'
+          );
+          if (!(tail instanceof HTMLElement)) {
+            throw new Error('editor-settings-tail-unavailable');
+          }
+          const tailBox = tail.getBoundingClientRect();
+          const panelEdgeGutter = 23;
+          const tailOffset = 7;
+          const expectedTailCenter = Math.min(
+            panelBox.right - panelEdgeGutter,
+            Math.max(
+              panelBox.left + panelEdgeGutter,
+              triggerBox.left + triggerBox.width / 2
+            )
+          );
+          const expectedTailTop = tail.classList.contains('is-above')
+            ? panelBox.bottom - tailOffset
+            : panelBox.top - tailOffset;
           return {
             geometry: {
               innerWidth,
@@ -1812,28 +1938,35 @@ test.describe('EasyMDE editor workflows', () => {
             },
             withinViewport: panelBox.left >= -1 && panelBox.right <= innerWidth + 1,
             parentIsAnchor: element.parentElement?.matches(anchorSelector) ?? false,
-            offsetOwnerMatches: mobile
-              ? element.offsetParent === toolbar
-              : element.offsetParent === element.parentElement,
-            verticalGap: mobile
-              ? panelBox.top - toolbarBox.bottom
-              : panelBox.top - triggerBox.bottom,
-            horizontalAnchorDelta: mobile
-              ? panelBox.left - toolbarBox.left
-              : panelBox.right - triggerBox.right,
-            pointerLeft: pointer.left,
+            fixedOwnerMatches:
+              'fixed' === getComputedStyle(element).position
+              && null === element.offsetParent
+              && 'fixed' === getComputedStyle(tail).position
+              && null === tail.offsetParent,
+            verticalGap: panelBox.top - triggerBox.bottom,
+            expectedLeftDelta: panelBox.left - Math.min(
+              Math.max(16, triggerBox.right - panelBox.width),
+              innerWidth - panelBox.width - 16
+            ),
+            tailAnchorDelta: Math.abs(
+              tailBox.left + tailBox.width / 2 - expectedTailCenter
+            ),
+            tailTopDelta: Math.abs(
+              Number.parseFloat(tail.style.top) - expectedTailTop
+            ),
             scrollY
           };
-        }, { anchorSelector, mobile: width <= 782 });
+        }, { anchorSelector });
         expect(placement.parentIsAnchor).toBe(true);
-        expect(placement.offsetOwnerMatches).toBe(true);
-        if (width <= 782) expect(placement.pointerLeft).toBe('24px');
+        expect(placement.fixedOwnerMatches).toBe(true);
+        expect(placement.tailAnchorDelta).toBeLessThanOrEqual(1);
+        expect(placement.tailTopDelta).toBeLessThanOrEqual(1);
         expect(
           placement.withinViewport,
           JSON.stringify({ anchorSelector, placement, width })
         ).toBe(true);
         expect(Math.abs(placement.verticalGap - 8)).toBeLessThanOrEqual(1);
-        expect(Math.abs(placement.horizontalAnchorDelta)).toBeLessThanOrEqual(1);
+        expect(Math.abs(placement.expectedLeftDelta)).toBeLessThanOrEqual(1);
         expect(placement.scrollY).toBe(scrollBeforeOpen);
         await page.keyboard.press('Escape');
         await expect(panel).toBeHidden();

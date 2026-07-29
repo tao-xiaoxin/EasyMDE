@@ -5,6 +5,7 @@ import {
   useRef,
   useState
 } from '@wordpress/element';
+import type { CSSProperties } from 'react';
 
 import type { AppearanceBootstrap } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type { FontControlsBootstrap } from '../../../contracts/bootstrap/font-controls-bootstrap';
@@ -37,6 +38,75 @@ type Props = Readonly<{
   onReady: (session: OrdinaryEditorSettingsSession) => void;
 }>;
 
+type PanelPosition = Readonly<{
+  left: number;
+  maxHeight: number;
+  placement: 'above' | 'below';
+  tailLeft: number;
+  tailTop: number;
+  top: number;
+  width: number;
+}>;
+
+function settingsPanelPosition(
+  trigger: HTMLButtonElement,
+  panel: HTMLDivElement
+): PanelPosition {
+  const windowRef = trigger.ownerDocument.defaultView;
+  if (!windowRef) {
+    throw new Error('ordinary-editor-settings-document-unavailable');
+  }
+  const viewportPadding = 12;
+  const inlinePadding = 16;
+  const gap = 8;
+  const rect = trigger.getBoundingClientRect();
+  const width = Math.min(468, windowRef.innerWidth - inlinePadding * 2);
+  const left = Math.min(
+    Math.max(inlinePadding, rect.right - width),
+    windowRef.innerWidth - width - inlinePadding
+  );
+  const panelFrameHeight = panel.offsetHeight - panel.clientHeight;
+  const desiredHeight = panel.scrollHeight + panelFrameHeight;
+  const belowTop = rect.bottom + gap;
+  const spaceBelow = windowRef.innerHeight - belowTop - viewportPadding;
+  const spaceAbove = rect.top - gap - viewportPadding;
+  const placeAbove = desiredHeight > spaceBelow && spaceAbove > spaceBelow;
+  const maxHeight = Math.min(
+    desiredHeight,
+    Math.max(0, placeAbove ? spaceAbove : spaceBelow)
+  );
+  const top = placeAbove
+    ? Math.max(viewportPadding, rect.top - gap - maxHeight)
+    : belowTop;
+  const tailLeft = Math.min(
+    width - 30,
+    Math.max(16, rect.left + rect.width / 2 - left - 7)
+  );
+  const tailTop = placeAbove ? top + maxHeight - 7 : top - 7;
+  return {
+    left,
+    maxHeight,
+    placement: placeAbove ? 'above' : 'below',
+    tailLeft,
+    tailTop,
+    top,
+    width
+  };
+}
+
+function triggerIntersectsViewport(
+  trigger: HTMLButtonElement,
+  windowRef: Window
+): boolean {
+  const rect = trigger.getBoundingClientRect();
+  return (
+    rect.bottom > 0 &&
+    rect.right > 0 &&
+    rect.top < windowRef.innerHeight &&
+    rect.left < windowRef.innerWidth
+  );
+}
+
 export function OrdinaryEditorSettings({
   appearance,
   appearancePort,
@@ -50,6 +120,7 @@ export function OrdinaryEditorSettings({
   onReady
 }: Props) {
   const [isOpen, setIsOpen] = useState(false);
+  const [panelPosition, setPanelPosition] = useState<PanelPosition | null>(null);
   const activeRef = useRef(true);
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -76,12 +147,18 @@ export function OrdinaryEditorSettings({
     if (!isOpen) return;
 
     const firstControl = panelRef.current?.querySelector<HTMLElement>(
-      'select:not([disabled]), button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      'button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
     );
     if (!firstControl) {
       throw new Error('ordinary-editor-settings-focus-target-unavailable');
     }
     firstControl.focus();
+    const trigger = triggerRef.current;
+    const panel = panelRef.current;
+    if (!trigger || !panel) {
+      throw new Error('ordinary-editor-settings-position-owner-unavailable');
+    }
+    setPanelPosition(settingsPanelPosition(trigger, panel));
   }, [isOpen]);
 
   useEffect(() => {
@@ -92,11 +169,10 @@ export function OrdinaryEditorSettings({
       throw new Error('ordinary-editor-settings-document-unavailable');
     }
     const closeForPointer = (event: MouseEvent) => {
-      const target = event.target;
+      const eventPath = event.composedPath();
       if (
-        target instanceof Node
-        && (triggerRef.current?.contains(target)
-          || panelRef.current?.contains(target))
+        (triggerRef.current && eventPath.includes(triggerRef.current))
+        || (panelRef.current && eventPath.includes(panelRef.current))
       ) {
         return;
       }
@@ -114,9 +190,9 @@ export function OrdinaryEditorSettings({
 
       const focusableControls = Array.from(
         panelRef.current?.querySelectorAll<HTMLElement>(
-          'select:not([disabled]), button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          'button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
         ) ?? []
-      );
+      ).filter((element) => !element.closest('[role="listbox"]'));
       if (0 === focusableControls.length) {
         throw new Error('ordinary-editor-settings-focus-target-unavailable');
       }
@@ -131,14 +207,29 @@ export function OrdinaryEditorSettings({
         (event.shiftKey ? lastControl : firstControl)?.focus();
       }
     };
+    const reposition = () => {
+      const trigger = triggerRef.current;
+      const panel = panelRef.current;
+      if (trigger && panel) {
+        if (!triggerIntersectsViewport(trigger, windowRef)) {
+          setIsOpen(false);
+          return;
+        }
+        setPanelPosition(settingsPanelPosition(trigger, panel));
+      }
+    };
 
     documentRef.addEventListener('click', closeForPointer);
     windowRef.addEventListener('keydown', closeForEscape);
     windowRef.addEventListener('keydown', containKeyboardFocus, true);
+    windowRef.addEventListener('resize', reposition);
+    windowRef.addEventListener('scroll', reposition, true);
     return () => {
       documentRef.removeEventListener('click', closeForPointer);
       windowRef.removeEventListener('keydown', closeForEscape);
       windowRef.removeEventListener('keydown', containKeyboardFocus, true);
+      windowRef.removeEventListener('resize', reposition);
+      windowRef.removeEventListener('scroll', reposition, true);
     };
   }, [isOpen]);
 
@@ -172,12 +263,29 @@ export function OrdinaryEditorSettings({
           aria-hidden="true"
         />
       </button>
+      {isOpen && panelPosition ? (
+        <span
+          className={`easymde-editor-settings-tail is-${panelPosition.placement}`}
+          aria-hidden="true"
+          style={{
+            left: panelPosition.left + panelPosition.tailLeft,
+            top: panelPosition.tailTop
+          }}
+        />
+      ) : null}
       <div
         ref={panelRef}
         className="easymde-toolbar-popover easymde-toolbar-popover-settings-panel"
         role="dialog"
         aria-label={label}
         hidden={!isOpen}
+        style={{
+          left: panelPosition?.left,
+          maxHeight: panelPosition?.maxHeight,
+          position: 'fixed',
+          top: panelPosition?.top,
+          width: panelPosition?.width
+        } as CSSProperties}
       >
         <div className="easymde-editor-settings-heading">
           <Settings size={15} strokeWidth={2} aria-hidden="true" />

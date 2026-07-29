@@ -36,6 +36,7 @@ type MenuPosition = Readonly<{
 const VIEWPORT_PADDING = 12;
 const MENU_GAP = 6;
 const MENU_MAX_HEIGHT = 264;
+const MENU_MIN_HEIGHT = 96;
 
 function optionDomId(listboxId: string, id: string, index: number): string {
   return `${listboxId}-option-${index}-${id.replace(/[^a-z0-9_-]/gi, '-')}`;
@@ -76,13 +77,10 @@ export function OrdinarySelect({
   const [activeId, setActiveId] = useState(value);
   const [position, setPosition] = useState<MenuPosition | null>(null);
   const selected = options.find((option) => option.id === value);
-  const activeIndex = Math.max(
-    0,
-    options.findIndex((option) => option.id === activeId)
-  );
   const activeOptionIndex = options.findIndex(
     (option) => option.id === activeId
   );
+  const activeIndex = activeOptionIndex;
   const activeOptionDomId = -1 === activeOptionIndex
     ? undefined
     : optionDomId(listboxId, activeId, activeOptionIndex);
@@ -107,14 +105,37 @@ export function OrdinarySelect({
       MENU_MAX_HEIGHT,
       menu.scrollHeight || fallbackHeight
     );
-    const top = rect.bottom + MENU_GAP;
-    const available = Math.max(
+    const belowTop = rect.bottom + MENU_GAP;
+    const availableBelow = Math.max(
       0,
-      windowRef.innerHeight - top - VIEWPORT_PADDING
+      windowRef.innerHeight - belowTop - VIEWPORT_PADDING
     );
-    const maxHeight = Math.min(desiredHeight, available);
+    const availableAbove = Math.max(
+      0,
+      rect.top - MENU_GAP - VIEWPORT_PADDING
+    );
+    const maxViewportHeight = Math.max(
+      0,
+      windowRef.innerHeight - VIEWPORT_PADDING * 2
+    );
+    const minimumHeight = Math.min(desiredHeight, MENU_MIN_HEIGHT);
+    const canOpenBelow = availableBelow >= minimumHeight;
+    const canOpenAbove = availableAbove >= minimumHeight;
+    const opensAbove =
+      !canOpenBelow && (canOpenAbove || availableAbove > availableBelow);
+    const availableVerticalSpace = opensAbove ? availableAbove : availableBelow;
+    const maxHeight = canOpenBelow || canOpenAbove
+      ? Math.max(minimumHeight, Math.min(desiredHeight, availableVerticalSpace))
+      : Math.min(desiredHeight, availableVerticalSpace);
+    const visibleHeight = Math.min(maxHeight, maxViewportHeight);
+    const top = opensAbove
+      ? Math.max(VIEWPORT_PADDING, rect.top - MENU_GAP - visibleHeight)
+      : Math.min(
+          Math.max(VIEWPORT_PADDING, belowTop),
+          windowRef.innerHeight - VIEWPORT_PADDING - visibleHeight
+        );
 
-    setPosition({ left, maxHeight, top, width });
+    setPosition({ left, maxHeight: visibleHeight, top, width });
   };
 
   const moveActive = (nextIndex: number) => {
@@ -150,7 +171,7 @@ export function OrdinarySelect({
 
     const activeOption = menu.ownerDocument.getElementById(activeOptionDomId);
     if (!activeOption) {
-      throw new Error('ordinary-select-active-option-unavailable');
+      return;
     }
 
     const optionTop = activeOption.offsetTop;
@@ -229,7 +250,7 @@ export function OrdinarySelect({
     if ('Enter' === event.key || ' ' === event.key) {
       event.preventDefault();
       if (open) {
-        commit(options[activeIndex]?.id ?? value);
+        commit(-1 === activeIndex ? value : (options[activeIndex]?.id ?? value));
       } else {
         setOpen(true);
       }
@@ -242,15 +263,16 @@ export function OrdinarySelect({
       && !event.metaKey
     ) {
       const query = event.key.toLocaleLowerCase();
+      const searchStartIndex = Math.max(0, activeIndex);
       const candidates = options
-        .slice(activeIndex + 1)
-        .concat(options.slice(0, activeIndex + 1));
+        .slice(searchStartIndex + 1)
+        .concat(options.slice(0, searchStartIndex + 1));
       const matchOffset = candidates.findIndex((option) =>
         option.label.toLocaleLowerCase().startsWith(query)
       );
       if (-1 !== matchOffset) {
         event.preventDefault();
-        const nextIndex = (activeIndex + 1 + matchOffset) % options.length;
+        const nextIndex = (searchStartIndex + 1 + matchOffset) % options.length;
         if (!open) setOpen(true);
         moveActive(nextIndex);
       }
@@ -304,30 +326,29 @@ export function OrdinarySelect({
             const active = option.id === activeId;
             const selectedOption = option.id === value;
             return (
-              <div key={option.id}>
-                <button
-                  type="button"
-                  id={optionDomId(listboxId, option.id, index)}
-                  role="option"
-                  tabIndex={-1}
-                  aria-selected={selectedOption}
-                  className={[
-                    active ? 'is-active' : '',
-                    option.swatch ? 'has-swatch' : ''
-                  ].filter(Boolean).join(' ')}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onMouseEnter={() => setActiveId(option.id)}
-                  onClick={() => commit(option.id)}
-                >
-                  <span className="easymde-ordinary-select-check" aria-hidden="true">
-                    {selectedOption ? <Check size={13} strokeWidth={2.4} /> : null}
-                  </span>
-                  {option.swatch ? (
-                    <OrdinarySelectSwatch swatch={option.swatch} />
-                  ) : null}
-                  <span>{option.label}</span>
-                </button>
-              </div>
+              <button
+                key={option.id}
+                type="button"
+                id={optionDomId(listboxId, option.id, index)}
+                role="option"
+                tabIndex={-1}
+                aria-selected={selectedOption}
+                className={[
+                  active ? 'is-active' : '',
+                  option.swatch ? 'has-swatch' : ''
+                ].filter(Boolean).join(' ')}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setActiveId(option.id)}
+                onClick={() => commit(option.id)}
+              >
+                <span className="easymde-ordinary-select-check" aria-hidden="true">
+                  {selectedOption ? <Check size={13} strokeWidth={2.4} /> : null}
+                </span>
+                {option.swatch ? (
+                  <OrdinarySelectSwatch swatch={option.swatch} />
+                ) : null}
+                <span>{option.label}</span>
+              </button>
             );
           })}
         </div>

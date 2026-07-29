@@ -2255,6 +2255,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-editor:not(.is-immersive) .easymde-preview {
         padding-block: 0;
         padding-inline: 5px;
+        scroll-padding-block: 0;
+        scroll-padding-inline: 5px;
     }
 
 }

@@ -11,19 +11,32 @@ const options = [
   { id: 'custom', label: 'Issue58 hidden relation fixture' }
 ];
 
+const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+
 afterEach(() => {
   vi.restoreAllMocks();
+  if (originalInnerWidth) {
+    Object.defineProperty(window, 'innerWidth', originalInnerWidth);
+  } else {
+    Reflect.deleteProperty(window, 'innerWidth');
+  }
+  if (originalInnerHeight) {
+    Object.defineProperty(window, 'innerHeight', originalInnerHeight);
+  } else {
+    Reflect.deleteProperty(window, 'innerHeight');
+  }
 });
 
 describe('OrdinarySelect', () => {
-  it('always opens below the trigger and constrains the menu to the viewport', async () => {
+  it('opens below the trigger when the viewport can keep a usable menu visible', async () => {
     const user = userEvent.setup();
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function getBoundingClientRect(this: HTMLElement) {
         if (this.classList.contains('easymde-ordinary-select-trigger')) {
           return DOMRect.fromRect({
             x: 1040,
-            y: 610,
+            y: 560,
             width: 210,
             height: 36
           });
@@ -55,10 +68,96 @@ describe('OrdinarySelect', () => {
 
     expect(listbox.style.position).toBe('fixed');
     expect(listbox.style.width).toBe('210px');
-    expect(top).toBe(652);
-    expect(maxHeight).toBe(56);
+    expect(maxHeight).toBe(106);
+    expect(top).toBe(602);
     expect(top + maxHeight).toBeLessThanOrEqual(708);
-    expect(listbox.textContent).not.toContain('Named custom CSS');
+    expect(screen.getAllByRole('option')).toHaveLength(options.length);
+  });
+
+  it('opens above the trigger near the viewport edge instead of covering it', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function getBoundingClientRect(this: HTMLElement) {
+        if (this.classList.contains('easymde-ordinary-select-trigger')) {
+          return DOMRect.fromRect({
+            x: 40,
+            y: 690,
+            width: 210,
+            height: 36
+          });
+        }
+        return DOMRect.fromRect();
+      });
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1280
+    });
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 720
+    });
+
+    render(
+      <OrdinarySelect
+        label="Article theme"
+        onChange={vi.fn()}
+        options={options}
+        value="red"
+      />
+    );
+
+    await user.click(screen.getByRole('combobox', { name: 'Article theme' }));
+    const listbox = screen.getByRole('listbox', { name: 'Article theme' });
+    const top = Number.parseFloat(listbox.style.top);
+    const maxHeight = Number.parseFloat(listbox.style.maxHeight);
+
+    expect(top).toBe(566);
+    expect(maxHeight).toBe(118);
+    expect(top + maxHeight).toBeLessThanOrEqual(708);
+    expect(top + maxHeight).toBeLessThanOrEqual(684);
+  });
+
+  it('uses the larger available side without covering the trigger when neither side fits the preferred minimum', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function getBoundingClientRect(this: HTMLElement) {
+        if (this.classList.contains('easymde-ordinary-select-trigger')) {
+          return DOMRect.fromRect({
+            x: 40,
+            y: 70,
+            width: 210,
+            height: 36
+          });
+        }
+        return DOMRect.fromRect();
+      });
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1280
+    });
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 180
+    });
+
+    render(
+      <OrdinarySelect
+        label="Article theme"
+        onChange={vi.fn()}
+        options={options}
+        value="red"
+      />
+    );
+
+    await user.click(screen.getByRole('combobox', { name: 'Article theme' }));
+    const listbox = screen.getByRole('listbox', { name: 'Article theme' });
+    const top = Number.parseFloat(listbox.style.top);
+    const maxHeight = Number.parseFloat(listbox.style.maxHeight);
+
+    expect(top).toBe(112);
+    expect(maxHeight).toBe(56);
+    expect(top).toBeGreaterThanOrEqual(106);
+    expect(top + maxHeight).toBeLessThanOrEqual(168);
   });
 
   it('does not reposition while navigating or scrolling inside an open menu', async () => {
@@ -161,6 +260,26 @@ describe('OrdinarySelect', () => {
     expect(onChange).toHaveBeenCalledWith('custom');
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it('does not commit the first option when the active value is absent', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <OrdinarySelect
+        label="Article theme"
+        onChange={onChange}
+        options={options}
+        value="missing"
+      />
+    );
+    const trigger = screen.getByRole('combobox', { name: 'Article theme' });
+
+    trigger.focus();
+    await user.keyboard('{Enter}{Enter}');
+
+    expect(onChange).toHaveBeenCalledWith('missing');
+    expect(onChange).not.toHaveBeenCalledWith('red');
   });
 
   it('closes on Escape or Tab while preserving the current value', async () => {

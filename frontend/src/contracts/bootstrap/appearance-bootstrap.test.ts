@@ -65,43 +65,21 @@ describe('parseAppearanceBootstrap', () => {
     expect(parseAppearanceBootstrap(bootstrap)).toEqual(bootstrap);
   });
 
-  it('rejects Custom CSS theme names longer than the server-owned limit', () => {
-    const articleThemeName = 'n'.repeat(31);
-
-    expect(() => parseAppearanceBootstrap({
-      ...bootstrap,
-      customCss: [{ ...bootstrap.customCss[0], articleThemeName }]
-    })).toThrowError(
-      expect.objectContaining<Partial<AppearanceBootstrapError>>({
-        code: 'invalid-custom-css-article-theme-name'
-      })
-    );
-  });
-
-  it('counts Custom CSS theme-name limits by Unicode code point', () => {
-    const symbol = String.fromCodePoint(0x1f3a8);
-    const acceptedName = symbol.repeat(20);
+  it('preserves stored Custom CSS theme names beyond the current save limit', () => {
+    const articleThemeName = 'Legacy article '.repeat(3);
+    const codeThemeName = String.fromCodePoint(0x1f3a8).repeat(31);
 
     expect(parseAppearanceBootstrap({
       ...bootstrap,
       customCss: [{
         ...bootstrap.customCss[0],
-        articleThemeName: acceptedName,
-        codeThemeName: acceptedName
+        articleThemeName,
+        codeThemeName
       }]
     }).customCss[0]).toMatchObject({
-      articleThemeName: acceptedName,
-      codeThemeName: acceptedName
+      articleThemeName,
+      codeThemeName
     });
-
-    expect(() => parseAppearanceBootstrap({
-      ...bootstrap,
-      customCss: [{ ...bootstrap.customCss[0], codeThemeName: symbol.repeat(31) }]
-    })).toThrowError(
-      expect.objectContaining<Partial<AppearanceBootstrapError>>({
-        code: 'invalid-custom-css-code-theme-name'
-      })
-    );
   });
 
   it('rejects the removed single-name Custom CSS contract', () => {

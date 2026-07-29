@@ -269,26 +269,35 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey('name', $owner_options_response->get_data()['customCss'][0]);
     }
 
-    public function test_custom_css_rejects_the_removed_single_name_contract_and_overlong_names()
+    public function test_custom_css_reads_legacy_names_without_writing_and_migrates_on_save()
     {
         $user_id = self::factory()->user->create(array('role' => 'administrator'));
         wp_set_current_user($user_id);
 
+        $legacy_name = 'Legacy combined name that exceeds thirty characters';
+        $legacy_library = array(
+            array(
+                'id' => 'legacy-name',
+                'name' => $legacy_name,
+                'css' => 'h2 { color: red; }',
+                'updatedAt' => 1,
+            ),
+        );
         update_user_meta(
             $user_id,
             'easymde_custom_css_library',
-            array(
-                array(
-                    'id' => 'legacy-name',
-                    'name' => 'Legacy combined name',
-                    'css' => 'h2 { color: red; }',
-                    'updatedAt' => 1,
-                ),
-            )
+            $legacy_library
         );
 
         $options = new WP_REST_Request('GET', '/easymde/v1/theme-options');
-        $this->assertSame(array(), rest_do_request($options)->get_data()['customCss']);
+        $custom_css = rest_do_request($options)->get_data()['customCss'];
+
+        $this->assertCount(1, $custom_css);
+        $this->assertSame($legacy_name, $custom_css[0]['articleThemeName']);
+        $this->assertSame($legacy_name, $custom_css[0]['codeThemeName']);
+        $this->assertSame(1, $custom_css[0]['updatedAt']);
+        $this->assertArrayNotHasKey('name', $custom_css[0]);
+        $this->assertSame($legacy_library, get_user_meta($user_id, 'easymde_custom_css_library', true));
 
         $single_name = new WP_REST_Request('POST', '/easymde/v1/custom-css');
         $single_name->set_body_params(
@@ -301,6 +310,24 @@ final class RestPermissionsTest extends WP_UnitTestCase
 
         $this->assertSame(400, $single_name_response->get_status());
         $this->assertSame('rest_missing_callback_param', $single_name_response->as_error()->get_error_code());
+
+        $migrate = new WP_REST_Request('POST', '/easymde/v1/custom-css');
+        $migrate->set_body_params(
+            array(
+                'id' => 'legacy-name',
+                'articleThemeName' => 'Migrated Article',
+                'codeThemeName' => 'Migrated Code',
+                'css' => 'h2 { color: blue; }',
+            )
+        );
+        $migrate_response = rest_do_request($migrate);
+        $stored_library = get_user_meta($user_id, 'easymde_custom_css_library', true);
+
+        $this->assertSame(200, $migrate_response->get_status());
+        $this->assertSame('Migrated Article', $stored_library[0]['article_theme_name']);
+        $this->assertSame('Migrated Code', $stored_library[0]['code_theme_name']);
+        $this->assertArrayNotHasKey('name', $stored_library[0]);
+        $this->assertArrayNotHasKey('updatedAt', $stored_library[0]);
 
         $overlong_name = new WP_REST_Request('POST', '/easymde/v1/custom-css');
         $overlong_name->set_body_params(

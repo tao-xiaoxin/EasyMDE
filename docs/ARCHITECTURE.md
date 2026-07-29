@@ -246,7 +246,9 @@ builder only validate them and fail on drift.
 
 ## Custom CSS
 
-Custom CSS library entries are stored in the current user's user meta. Creating, updating, and deleting full custom CSS requires `unfiltered_html`.
+Custom CSS library entries are stored in the current user's user meta with
+independent `article_theme_name` and `code_theme_name` labels. Creating,
+updating, and deleting full custom CSS requires `unfiltered_html`.
 
 `CustomCssPolicy` parses CSS with `sabberworm/php-css-parser`, enforces a size limit, rejects unsafe or remote-loading constructs, and scopes selectors to EasyMDE-rendered content. It preserves valid nested `@media`, `@supports`, and keyframe rules that pass the policy.
 

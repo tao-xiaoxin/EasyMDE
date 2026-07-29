@@ -220,11 +220,7 @@ function requiredString(value: unknown, code: string, maxLength = 512): string {
 }
 
 function customCssThemeName(value: unknown, code: string): string {
-  if (
-    'string' !== typeof value ||
-    '' === value.trim() ||
-    Array.from(value).length > 30
-  ) {
+  if ('string' !== typeof value || '' === value.trim()) {
     throw new AppearanceBootstrapError(code);
   }
 

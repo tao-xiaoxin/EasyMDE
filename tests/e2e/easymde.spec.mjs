@@ -1578,7 +1578,9 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('custom');
     await expect(page.locator('#easymde-code-theme-field')).toHaveValue(terminalNoir.id);
 
-    await settingsTrigger.click();
+    await settingsTrigger.focus();
+    await expect(settingsTrigger).toBeFocused();
+    await page.keyboard.press('Enter');
     await expect(settingsDialog).toBeVisible();
     await expect(articleSelect).toContainText(customName);
     await expect(codeSelect).toContainText(terminalNoir.label);

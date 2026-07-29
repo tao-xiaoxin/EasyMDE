@@ -193,24 +193,31 @@ final class ThemeStateRepository {
 			if (
 				! is_array( $item )
 				|| empty( $item['id'] )
-				|| empty( $item['article_theme_name'] )
-				|| empty( $item['code_theme_name'] )
 				|| ! array_key_exists( 'css', $item )
 			) {
 				continue;
 			}
 
-			$id = sanitize_key( $item['id'] );
-			if ( '' === $id ) {
+			$id                    = sanitize_key( $item['id'] );
+			$legacy_name           = isset( $item['name'] ) ? sanitize_text_field( $item['name'] ) : '';
+			$article_theme_name    = isset( $item['article_theme_name'] )
+				? sanitize_text_field( $item['article_theme_name'] )
+				: $legacy_name;
+			$code_theme_name       = isset( $item['code_theme_name'] )
+				? sanitize_text_field( $item['code_theme_name'] )
+				: $legacy_name;
+			$legacy_updated_at     = isset( $item['updatedAt'] ) ? absint( $item['updatedAt'] ) : 0;
+			$normalized_updated_at = isset( $item['updated_at'] ) ? absint( $item['updated_at'] ) : $legacy_updated_at;
+			if ( '' === $id || '' === $article_theme_name || '' === $code_theme_name ) {
 				continue;
 			}
 
 			$normalized[ $id ] = array(
 				'id'                 => $id,
-				'article_theme_name' => sanitize_text_field( $item['article_theme_name'] ),
-				'code_theme_name'    => sanitize_text_field( $item['code_theme_name'] ),
+				'article_theme_name' => $article_theme_name,
+				'code_theme_name'    => $code_theme_name,
 				'css'                => (string) $item['css'],
-				'updated_at'         => isset( $item['updated_at'] ) ? absint( $item['updated_at'] ) : 0,
+				'updated_at'         => $normalized_updated_at,
 			);
 		}
 

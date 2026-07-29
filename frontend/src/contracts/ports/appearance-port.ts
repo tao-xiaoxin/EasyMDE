@@ -11,7 +11,10 @@ export type CustomCssSaveInput = Readonly<{
 
 export type CustomCssSaveResult =
   | Readonly<{ status: 'saved'; snapshot: AppearanceSnapshot }>
-  | Readonly<{ status: 'failed'; code: string; message?: string }>;
+  | Readonly<{
+    status: 'failed';
+    code: 'easymde_duplicate_custom_css_name' | 'custom-css-save-failed';
+  }>;
 
 export type CustomCssPreviewResult =
   | Readonly<{ status: 'ready'; scopedCss: string }>

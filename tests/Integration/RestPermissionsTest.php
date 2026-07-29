@@ -258,6 +258,81 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $this->assertSame('h2 {color: red;}', $library[0]['css']);
     }
 
+    public function test_custom_css_create_rejects_a_unicode_case_variant_without_changing_the_library()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($user_id);
+
+        $create = new WP_REST_Request('POST', '/easymde/v1/custom-css');
+        $create->set_body_params(
+            array(
+                'name' => 'Été',
+                'css' => 'h2 { color: red; }',
+            )
+        );
+        $this->assertSame(200, rest_do_request($create)->get_status());
+
+        $library_before = get_user_meta($user_id, 'easymde_custom_css_library', true);
+        $duplicate = new WP_REST_Request('POST', '/easymde/v1/custom-css');
+        $duplicate->set_body_params(
+            array(
+                'name' => 'été',
+                'css' => 'h2 { color: blue; }',
+            )
+        );
+        $response = rest_do_request($duplicate);
+
+        $this->assertSame(409, $response->get_status());
+        $this->assertSame(
+            'easymde_duplicate_custom_css_name',
+            $response->get_data()['code']
+        );
+        $this->assertSame(
+            $library_before,
+            get_user_meta($user_id, 'easymde_custom_css_library', true)
+        );
+    }
+
+    public function test_custom_css_update_preserves_an_unchanged_legacy_unicode_case_duplicate()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($user_id);
+        update_user_meta(
+            $user_id,
+            'easymde_custom_css_library',
+            array(
+                array(
+                    'id' => 'ete-upper',
+                    'name' => 'Été',
+                    'css' => 'h2 { color: red; }',
+                    'updatedAt' => 1,
+                ),
+                array(
+                    'id' => 'ete-lower',
+                    'name' => 'été',
+                    'css' => 'h2 { color: green; }',
+                    'updatedAt' => 2,
+                ),
+            )
+        );
+
+        $update = new WP_REST_Request('POST', '/easymde/v1/custom-css');
+        $update->set_body_params(
+            array(
+                'id' => 'ete-upper',
+                'name' => 'Été',
+                'css' => 'h2 { color: blue; }',
+            )
+        );
+        $response = rest_do_request($update);
+
+        $this->assertSame(200, $response->get_status());
+        $library = get_user_meta($user_id, 'easymde_custom_css_library', true);
+        $this->assertCount(2, $library);
+        $this->assertSame('h2 {color: blue;}', $library[0]['css']);
+        $this->assertSame('h2 { color: green; }', $library[1]['css']);
+    }
+
     public function test_custom_css_library_is_scoped_to_current_user()
     {
         $owner_id = self::factory()->user->create(array('role' => 'administrator'));

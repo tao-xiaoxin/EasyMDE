@@ -53,6 +53,7 @@ const bootstrap: AppearanceBootstrap = {
     customCssTheme: 'Custom CSS theme',
     customCssDialog: customCssDialogStrings,
     cssName: 'CSS name',
+    cssNameDuplicate: 'This theme name is already in use. Choose another name and try again.',
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
     cssSaveFailed: 'CSS save failed.',
@@ -193,7 +194,7 @@ describe('AppearanceControls', () => {
     const saveCustomCss = vi.fn().mockResolvedValue({
       status: 'failed',
       code: 'easymde_duplicate_custom_css_name',
-      message: 'A theme with this name already exists. Please choose another name and try again.'
+      message: 'Sensitive server detail'
     });
     render(
       <AppearanceControls
@@ -217,18 +218,64 @@ describe('AppearanceControls', () => {
     await user.clear(codeName);
     await user.type(codeName, 'Existing Code');
 
-    await user.click(screen.getByRole('button', { name: 'Apply theme' }));
+    const apply = screen.getByRole('button', { name: 'Apply theme' });
+    apply.focus();
+    await user.keyboard('{Enter}');
 
-    expect(await screen.findByText(
-      'A theme with this name already exists. Please choose another name and try again.'
-    )).not.toBeNull();
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe(
+      'This theme name is already in use. Choose another name and try again.'
+    );
+    expect(alert.classList.contains(
+      'easymde-immersive-custom-css-notice'
+    )).toBe(true);
+    expect(alert.classList.contains('is-error')).toBe(true);
+    expect(alert.getAttribute('aria-atomic')).toBe('true');
+    expect(screen.queryByText('Sensitive server detail')).toBeNull();
     expect(screen.getByRole('dialog', { name: 'Custom CSS theme' })).not.toBeNull();
     expect((articleName as HTMLInputElement).value).toBe('Existing Article');
     expect((codeName as HTMLInputElement).value).toBe('Existing Code');
+    expect(articleName.getAttribute('aria-invalid')).toBe('true');
+    expect(codeName.getAttribute('aria-invalid')).toBe('true');
+    expect(articleName.getAttribute('aria-describedby')).toBe(alert.id);
+    expect(codeName.getAttribute('aria-describedby')).toBe(alert.id);
+    expect(document.activeElement).toBe(apply);
     expect(saveCustomCss).toHaveBeenCalledWith(expect.objectContaining({
       id: '',
       name: 'Existing Article / Existing Code'
     }));
+
+    await user.type(articleName, ' updated');
+
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(articleName.getAttribute('aria-invalid')).toBeNull();
+    expect(codeName.getAttribute('aria-invalid')).toBeNull();
+    expect(articleName.getAttribute('aria-describedby')).toBeNull();
+    expect(codeName.getAttribute('aria-describedby')).toBeNull();
+  });
+
+  it('keeps preview availability feedback separate from save errors', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort({
+          previewCustomCss: vi.fn().mockResolvedValue({ status: 'invalid' })
+        })}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
+
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toBe(customCssDialogStrings.previewInvalid);
+    expect(status.getAttribute('aria-live')).toBe('polite');
+    expect(status.getAttribute('aria-atomic')).toBe('true');
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('renders the complete reference Custom CSS dialog preview fixture', async () => {

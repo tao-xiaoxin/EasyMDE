@@ -31,6 +31,7 @@ function validBootstrap() {
         codeTheme: 'Code theme',
         cssName: 'CSS name',
         cssSaveFailed: 'CSS save failed',
+        cssNameDuplicate: 'A theme with this name already exists',
         cssSaved: 'CSS saved',
         customCss: 'Custom CSS',
         customCssTheme: 'Custom CSS theme',

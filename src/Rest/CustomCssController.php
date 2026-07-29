@@ -116,13 +116,14 @@ final class CustomCssController {
 			);
 		}
 
-		$library = $this->theme_state_repository->get_custom_css_library( $user_id );
+		$library      = $this->theme_state_repository->get_custom_css_library( $user_id );
+		$name_changed = ! isset( $library[ $id ] ) || $library[ $id ]['name'] !== $name;
 		if ( '' === $id || ! isset( $library[ $id ] ) ) {
 			$id = $this->theme_state_repository->unique_custom_css_id( $name, $library );
 		}
 
 		foreach ( $library as $existing_id => $item ) {
-			if ( $existing_id !== $id && 0 === strcasecmp( $item['name'], $name ) ) {
+			if ( $name_changed && $existing_id !== $id && $this->custom_css_names_match( $item['name'], $name ) ) {
 				return new WP_Error(
 					'easymde_duplicate_custom_css_name',
 					__( 'A theme with this name already exists. Please choose another name and try again.', 'easymde' ),
@@ -146,6 +147,16 @@ final class CustomCssController {
 				'customCss' => array_values( array_map( array( $this->theme_state_repository, 'format_custom_css_item' ), $library ) ),
 			)
 		);
+	}
+
+	private function custom_css_names_match( $left, $right ) {
+		$result = preg_match( '/\A' . preg_quote( (string) $left, '/' ) . '\z/iu', (string) $right );
+
+		if ( false === $result ) {
+			throw new \RuntimeException( 'easymde-custom-css-name-comparison-failed' );
+		}
+
+		return 1 === $result;
 	}
 
 	public function handle_delete_request( WP_REST_Request $request ) {

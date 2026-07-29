@@ -32,7 +32,8 @@ function fixture() {
     state: { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'default' },
     strings: {
       appearance: 'Appearance', articleTheme: 'Article theme', codeTheme: 'Code theme',
-      cssName: 'CSS name', cssSaveFailed: 'CSS save failed', cssSaved: 'CSS saved',
+      cssName: 'CSS name', cssNameDuplicate: 'This theme name is already in use. Choose another name and try again.',
+      cssSaveFailed: 'CSS save failed', cssSaved: 'CSS saved',
       customCss: 'Custom CSS', customCssTheme: 'Custom CSS theme',
       customCssDialog: customCssDialogStrings,
       namedCustomCss: 'Named CSS', saveCss: 'Save CSS'
@@ -96,11 +97,11 @@ describe('createWordPressAppearancePort', () => {
     });
   });
 
-  it('preserves the translated duplicate-name error from the Custom CSS endpoint', async () => {
+  it('maps duplicate-name failures to a controlled code without exposing the REST message', async () => {
     const options = fixture();
     options.apiFetch.mockRejectedValue({
       code: 'easymde_duplicate_custom_css_name',
-      message: 'A theme with this name already exists. Please choose another name and try again.'
+      message: 'Sensitive server detail'
     });
     const port = createWordPressAppearancePort(options);
 
@@ -110,7 +111,6 @@ describe('createWordPressAppearancePort', () => {
       name: 'Saved CSS'
     })).resolves.toEqual({
       code: 'easymde_duplicate_custom_css_name',
-      message: 'A theme with this name already exists. Please choose another name and try again.',
       status: 'failed'
     });
   });

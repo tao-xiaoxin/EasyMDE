@@ -187,17 +187,18 @@ final class AdminAssets {
 					'customCssId'   => $theme_state['customCssId'],
 				),
 				'strings'            => array(
-					'appearance'      => $strings['appearance'],
-					'articleTheme'    => $strings['articleTheme'],
-					'codeTheme'       => $strings['codeTheme'],
-					'customCss'       => $strings['customCss'],
-					'customCssTheme'  => $strings['customCssTheme'],
-					'cssName'         => $strings['cssName'],
-					'saveCss'         => $strings['saveCss'],
-					'cssSaved'        => $strings['cssSaved'],
-					'cssSaveFailed'   => $strings['cssSaveFailed'],
-					'namedCustomCss'  => $strings['namedCustomCss'],
-					'customCssDialog' => $this->get_custom_css_dialog_strings(),
+					'appearance'       => $strings['appearance'],
+					'articleTheme'     => $strings['articleTheme'],
+					'codeTheme'        => $strings['codeTheme'],
+					'customCss'        => $strings['customCss'],
+					'customCssTheme'   => $strings['customCssTheme'],
+					'cssName'          => $strings['cssName'],
+					'saveCss'          => $strings['saveCss'],
+					'cssSaved'         => $strings['cssSaved'],
+					'cssSaveFailed'    => $strings['cssSaveFailed'],
+					'cssNameDuplicate' => $strings['cssNameDuplicate'],
+					'namedCustomCss'   => $strings['namedCustomCss'],
+					'customCssDialog'  => $this->get_custom_css_dialog_strings(),
 				),
 			),
 			'fonts'              => array(
@@ -936,6 +937,7 @@ final class AdminAssets {
 			'linkText'              => __( 'link text', 'easymde' ),
 			/* translators: %s: Locale-formatted Markdown character count. */
 			'wordCount'             => __( 'Character count: %s', 'easymde' ),
+			'cssNameDuplicate'      => __( 'A theme with this name already exists. Please choose another name and try again.', 'easymde' ),
 		);
 	}
 

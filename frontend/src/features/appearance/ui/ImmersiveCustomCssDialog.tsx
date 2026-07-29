@@ -41,6 +41,7 @@ type ImmersiveCustomCssDialogProps = Readonly<{
     input: Readonly<{ css: string; name: string }>
   ) => Promise<Readonly<{ status: 'saved' }> | Readonly<{
     status: 'failed';
+    code: 'duplicate-name' | 'save-failed';
     message: string;
   }>>;
   onClose: () => void;
@@ -449,9 +450,13 @@ export function ImmersiveCustomCssDialog({
   const categoryPanelId = useId();
   const cssTargetTabId = useId();
   const cssTargetPanelId = useId();
+  const noticeId = useId();
   const dialogRef = useRef<HTMLElement>(null);
+  const applyButtonRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
   const activeRef = useRef(true);
   const savingRef = useRef(false);
+  const restoreApplyFocusRef = useRef(false);
   const [articleName, setArticleName] = useState(
     initialName || strings.defaultArticleName
   );
@@ -467,7 +472,10 @@ export function ImmersiveCustomCssDialog({
   const [showCssEditor, setShowCssEditor] = useState(false);
   const [cssEditorExpanded, setCssEditorExpanded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [saveError, setSaveError] = useState('');
+  const [saveError, setSaveError] = useState<Readonly<{
+    code: 'duplicate-name' | 'save-failed';
+    message: string;
+  }> | null>(null);
   const [scopedPreviewCss, setScopedPreviewCss] = useState('');
   const [previewStatus, setPreviewStatus] =
     useState<'ready' | 'invalid' | 'unavailable'>('ready');
@@ -478,6 +486,17 @@ export function ImmersiveCustomCssDialog({
       activeRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!isSaving && restoreApplyFocusRef.current) {
+      restoreApplyFocusRef.current = false;
+      applyButtonRef.current?.focus();
+    }
+  }, [isSaving]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -498,7 +517,7 @@ export function ImmersiveCustomCssDialog({
         if (cssEditorExpanded) {
           setCssEditorExpanded(false);
         } else {
-          onClose();
+          onCloseRef.current();
         }
         return;
       }
@@ -517,7 +536,7 @@ export function ImmersiveCustomCssDialog({
     const documentRef = dialog.ownerDocument;
     documentRef.addEventListener('keydown', onKeyDown, true);
     return () => documentRef.removeEventListener('keydown', onKeyDown, true);
-  }, [cssEditorExpanded, onClose]);
+  }, [cssEditorExpanded]);
 
   const hasInvalidColor = Object.values(themeVariables).some(
     (value) => !isHexColor(value)
@@ -583,7 +602,7 @@ export function ImmersiveCustomCssDialog({
     setActiveCategory('foundation');
     setShowCssEditor(false);
     setCssEditorExpanded(false);
-    setSaveError('');
+    setSaveError(null);
   };
 
   const closeDialog = () => {
@@ -592,9 +611,11 @@ export function ImmersiveCustomCssDialog({
 
   const applyCustomTheme = async () => {
     if (savingRef.current || hasFormError) return;
+    restoreApplyFocusRef.current =
+      dialogRef.current?.ownerDocument.activeElement === applyButtonRef.current;
     savingRef.current = true;
     setIsSaving(true);
-    setSaveError('');
+    setSaveError(null);
     try {
       const result = await onApply({
         name: `${articleName.trim()} / ${codeName.trim()}`,
@@ -608,7 +629,7 @@ export function ImmersiveCustomCssDialog({
       if ('saved' === result.status) {
         onClose();
       } else {
-        setSaveError(result.message);
+        setSaveError(result);
       }
     } finally {
       savingRef.current = false;
@@ -650,11 +671,22 @@ export function ImmersiveCustomCssDialog({
           <div>
             <input
               id={articleNameId}
+              aria-describedby={
+                'duplicate-name' === saveError?.code ? noticeId : undefined
+              }
+              aria-invalid={
+                'duplicate-name' === saveError?.code ? true : undefined
+              }
               disabled={isSaving}
               value={articleName}
               maxLength={30}
               placeholder={strings.articleNamePlaceholder}
-              onChange={(event) => setArticleName(event.currentTarget.value)}
+              onChange={(event) => {
+                setArticleName(event.currentTarget.value);
+                setSaveError((current) =>
+                  'duplicate-name' === current?.code ? null : current
+                );
+              }}
             />
             <span>{articleName.length}/30</span>
           </div>
@@ -662,11 +694,22 @@ export function ImmersiveCustomCssDialog({
           <div>
             <input
               id={codeNameId}
+              aria-describedby={
+                'duplicate-name' === saveError?.code ? noticeId : undefined
+              }
+              aria-invalid={
+                'duplicate-name' === saveError?.code ? true : undefined
+              }
               disabled={isSaving}
               value={codeName}
               maxLength={30}
               placeholder={strings.codeNamePlaceholder}
-              onChange={(event) => setCodeName(event.currentTarget.value)}
+              onChange={(event) => {
+                setCodeName(event.currentTarget.value);
+                setSaveError((current) =>
+                  'duplicate-name' === current?.code ? null : current
+                );
+              }}
             />
             <span>{codeName.length}/30</span>
           </div>
@@ -975,28 +1018,48 @@ export function ImmersiveCustomCssDialog({
         </div>
 
         <footer>
-          <span role="status" aria-live="polite">
-            {saveError ||
-              ('invalid' === previewStatus
-                ? strings.previewInvalid
-                : 'unavailable' === previewStatus
-                  ? strings.previewUnavailable
-                  : '')}
-          </span>
-          <button type="button" disabled={isSaving} onClick={closeDialog}>
-            {strings.cancel}
-          </button>
-          <button type="button" disabled={isSaving} onClick={resetAll}>
-            {strings.resetAll}
-          </button>
-          <button
-            type="button"
-            className="is-primary"
-            disabled={hasFormError || isSaving}
-            onClick={applyCustomTheme}
-          >
-            {strings.applyCustomTheme}
-          </button>
+          {saveError ? (
+            <div
+              id={noticeId}
+              className="easymde-immersive-custom-css-notice is-error"
+              role="alert"
+              aria-atomic="true"
+            >
+              <CircleAlert size={18} strokeWidth={2} aria-hidden="true" />
+              <span>{saveError.message}</span>
+            </div>
+          ) : 'invalid' === previewStatus || 'unavailable' === previewStatus ? (
+            <div
+              className="easymde-immersive-custom-css-notice is-info"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              <Info size={18} strokeWidth={2} aria-hidden="true" />
+              <span>
+                {'invalid' === previewStatus
+                  ? strings.previewInvalid
+                  : strings.previewUnavailable}
+              </span>
+            </div>
+          ) : null}
+          <div className="easymde-immersive-custom-css-actions">
+            <button type="button" disabled={isSaving} onClick={closeDialog}>
+              {strings.cancel}
+            </button>
+            <button type="button" disabled={isSaving} onClick={resetAll}>
+              {strings.resetAll}
+            </button>
+            <button
+              ref={applyButtonRef}
+              type="button"
+              className="is-primary"
+              disabled={hasFormError || isSaving}
+              onClick={applyCustomTheme}
+            >
+              {strings.applyCustomTheme}
+            </button>
+          </div>
         </footer>
       </section>
     </div>

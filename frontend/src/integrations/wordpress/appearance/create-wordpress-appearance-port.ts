@@ -43,12 +43,6 @@ function restErrorCode(error: unknown): string {
   return 'string' === typeof code ? code : '';
 }
 
-function restErrorMessage(error: unknown): string {
-  if (!error || 'object' !== typeof error || Array.isArray(error)) return '';
-  const message = (error as Record<string, unknown>).message;
-  return 'string' === typeof message ? message.trim() : '';
-}
-
 function sameOriginUrl(value: string, siteUrl: string, code: string): string {
   try {
     const site = new URL(siteUrl);
@@ -218,14 +212,10 @@ export function createWordPressAppearancePort({
         });
       } catch (error) {
         if ('easymde_duplicate_custom_css_name' === restErrorCode(error)) {
-          const message = restErrorMessage(error);
-          if (message) {
-            return {
-              code: 'easymde_duplicate_custom_css_name',
-              message,
-              status: 'failed'
-            };
-          }
+          return {
+            code: 'easymde_duplicate_custom_css_name',
+            status: 'failed'
+          };
         }
         return { code: 'custom-css-save-failed', status: 'failed' };
       }

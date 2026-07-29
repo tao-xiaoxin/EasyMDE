@@ -45,6 +45,7 @@ export type AppearanceStrings = Readonly<{
   saveCss: string;
   cssSaved: string;
   cssSaveFailed: string;
+  cssNameDuplicate: string;
   namedCustomCss: string;
 }>;
 
@@ -364,6 +365,7 @@ function parseStrings(value: unknown): AppearanceStrings {
     'saveCss',
     'cssSaved',
     'cssSaveFailed',
+    'cssNameDuplicate',
     'namedCustomCss'
   ];
   const result = {} as Record<

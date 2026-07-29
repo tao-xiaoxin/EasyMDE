@@ -455,10 +455,18 @@ export function AppearanceControls({
     requestedId?: string
   ): Promise<
     Readonly<{ status: 'saved' }> |
-    Readonly<{ status: 'failed'; message: string }>
+    Readonly<{
+      status: 'failed';
+      code: 'duplicate-name' | 'save-failed';
+      message: string;
+    }>
   > => {
     if (savingRef.current) {
-      return { status: 'failed', message: bootstrap.strings.cssSaveFailed };
+      return {
+        code: 'save-failed',
+        status: 'failed',
+        message: bootstrap.strings.cssSaveFailed
+      };
     }
     savingRef.current = true;
     setIsSaving(true);
@@ -475,7 +483,11 @@ export function AppearanceControls({
         css: input.css
       });
       if (!activeRef.current) {
-        return { status: 'failed', message: bootstrap.strings.cssSaveFailed };
+        return {
+          code: 'save-failed',
+          status: 'failed',
+          message: bootstrap.strings.cssSaveFailed
+        };
       }
       if ('saved' === result.status) {
         const nextSnapshot = {
@@ -491,25 +503,38 @@ export function AppearanceControls({
         };
         if (!applyState(nextSnapshot.state)) {
           setStatus(bootstrap.strings.cssSaveFailed);
-          return { status: 'failed', message: bootstrap.strings.cssSaveFailed };
+          return {
+            code: 'save-failed',
+            status: 'failed',
+            message: bootstrap.strings.cssSaveFailed
+          };
         }
         replaceSnapshot(nextSnapshot);
         setStatus(bootstrap.strings.cssSaved);
         return { status: 'saved' };
       } else {
-        const message =
-          'easymde_duplicate_custom_css_name' === result.code && result.message
-            ? result.message
-            : bootstrap.strings.cssSaveFailed;
+        const isDuplicate =
+          'easymde_duplicate_custom_css_name' === result.code;
+        const message = isDuplicate
+          ? bootstrap.strings.cssNameDuplicate
+          : bootstrap.strings.cssSaveFailed;
         setStatus(message);
-        return { status: 'failed', message };
+        return {
+          code: isDuplicate ? 'duplicate-name' : 'save-failed',
+          status: 'failed',
+          message
+        };
       }
     } catch {
       if (activeRef.current) {
         setStatus(bootstrap.strings.cssSaveFailed);
         onFailure();
       }
-      return { status: 'failed', message: bootstrap.strings.cssSaveFailed };
+      return {
+        code: 'save-failed',
+        status: 'failed',
+        message: bootstrap.strings.cssSaveFailed
+      };
     } finally {
       savingRef.current = false;
       if (activeRef.current) {

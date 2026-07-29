@@ -54,6 +54,16 @@ type ImmersiveCustomCssDialogProps = Readonly<{
   variables: ReadonlyArray<CustomCssVariable>;
 }>;
 
+const CUSTOM_THEME_NAME_MAX_LENGTH = 30;
+
+function limitCustomThemeName(value: string): string {
+  return Array.from(value).slice(0, CUSTOM_THEME_NAME_MAX_LENGTH).join('');
+}
+
+function customThemeNameLength(value: string): number {
+  return Array.from(value).length;
+}
+
 const DEFAULT_THEME_VARIABLES: ThemeVariables = {
   primaryColor: '#3B82F6',
   headingColor: '#6366F1',
@@ -658,11 +668,12 @@ export function ImmersiveCustomCssDialog({
               id={articleNameId}
               disabled={isSaving}
               value={articleName}
-              maxLength={30}
               placeholder={strings.articleNamePlaceholder}
-              onChange={(event) => setArticleName(event.currentTarget.value)}
+              onChange={(event) =>
+                setArticleName(limitCustomThemeName(event.currentTarget.value))
+              }
             />
-            <span>{articleName.length}/30</span>
+            <span>{customThemeNameLength(articleName)}/30</span>
           </div>
           <label htmlFor={codeNameId}>{strings.codeThemeName}</label>
           <div>
@@ -670,11 +681,12 @@ export function ImmersiveCustomCssDialog({
               id={codeNameId}
               disabled={isSaving}
               value={codeName}
-              maxLength={30}
               placeholder={strings.codeNamePlaceholder}
-              onChange={(event) => setCodeName(event.currentTarget.value)}
+              onChange={(event) =>
+                setCodeName(limitCustomThemeName(event.currentTarget.value))
+              }
             />
-            <span>{codeName.length}/30</span>
+            <span>{customThemeNameLength(codeName)}/30</span>
           </div>
           <div
             className={`easymde-immersive-custom-css-validity${

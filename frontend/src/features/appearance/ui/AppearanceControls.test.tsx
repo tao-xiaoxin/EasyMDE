@@ -402,6 +402,33 @@ describe('AppearanceControls', () => {
     });
   });
 
+  it('limits immersive Custom CSS names by Unicode code point', async () => {
+    const user = userEvent.setup();
+    const symbol = String.fromCodePoint(0x1f3a8);
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
+    const articleName = screen.getByRole('textbox', { name: 'Article theme name' });
+    const codeName = screen.getByRole('textbox', { name: 'Code theme name' });
+
+    fireEvent.change(articleName, { target: { value: symbol.repeat(20) } });
+    fireEvent.change(codeName, { target: { value: symbol.repeat(31) } });
+
+    expect((articleName as HTMLInputElement).value).toBe(symbol.repeat(20));
+    expect((codeName as HTMLInputElement).value).toBe(symbol.repeat(30));
+    expect(screen.getByText('20/30')).not.toBeNull();
+    expect(screen.getByText('30/30')).not.toBeNull();
+  });
+
   it('renders only server-scoped authored CSS in the live preview', async () => {
     const user = userEvent.setup();
     const authoredCss = 'h2 { color: #12ab34; }';
@@ -727,6 +754,9 @@ describe('AppearanceControls', () => {
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
 
     expect(screen.queryByRole('button', { name: 'Custom CSS' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save CSS' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'CSS name' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Custom CSS' })).toBeNull();
     expect(screen.getByRole('combobox', { name: 'Article theme' })).not.toBeNull();
     expect(screen.getByRole('combobox', { name: 'Code theme' })).not.toBeNull();
   });

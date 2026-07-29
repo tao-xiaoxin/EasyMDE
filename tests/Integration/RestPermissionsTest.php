@@ -313,7 +313,19 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $overlong_name_response = rest_do_request($overlong_name);
 
         $this->assertSame(400, $overlong_name_response->get_status());
-        $this->assertSame('rest_invalid_param', $overlong_name_response->as_error()->get_error_code());
+        $this->assertSame('easymde_invalid_custom_css', $overlong_name_response->as_error()->get_error_code());
+
+        $overlong_name->set_body_params(
+            array(
+                'articleThemeName' => 'Valid article name',
+                'codeThemeName' => str_repeat('b', 31),
+                'css' => 'h2 { color: blue; }',
+            )
+        );
+        $overlong_code_name_response = rest_do_request($overlong_name);
+
+        $this->assertSame(400, $overlong_code_name_response->get_status());
+        $this->assertSame('easymde_invalid_custom_css', $overlong_code_name_response->as_error()->get_error_code());
     }
 
     public function test_revision_history_requires_access_to_the_specific_post()

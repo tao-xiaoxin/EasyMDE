@@ -219,6 +219,18 @@ function requiredString(value: unknown, code: string, maxLength = 512): string {
   return value;
 }
 
+function customCssThemeName(value: unknown, code: string): string {
+  if (
+    'string' !== typeof value ||
+    '' === value.trim() ||
+    Array.from(value).length > 30
+  ) {
+    throw new AppearanceBootstrapError(code);
+  }
+
+  return value;
+}
+
 function identifier(value: unknown, code: string): string {
   const id = requiredString(value, code, 200);
   if (!/^[a-z0-9_-]+$/.test(id)) {
@@ -306,15 +318,13 @@ function parseCustomCss(value: unknown): ReadonlyArray<CustomCssItem> {
 
     return {
       id,
-      articleThemeName: requiredString(
+      articleThemeName: customCssThemeName(
         item.articleThemeName,
-        'invalid-custom-css-article-theme-name',
-        30
+        'invalid-custom-css-article-theme-name'
       ),
-      codeThemeName: requiredString(
+      codeThemeName: customCssThemeName(
         item.codeThemeName,
-        'invalid-custom-css-code-theme-name',
-        30
+        'invalid-custom-css-code-theme-name'
       ),
       css: item.css,
       scopedCss: item.scopedCss

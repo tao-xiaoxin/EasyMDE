@@ -302,8 +302,6 @@ export function AppearanceControls({
   const [customArticleThemeName, setCustomArticleThemeName] = useState('');
   const [customCodeThemeName, setCustomCodeThemeName] = useState('');
   const [customCode, setCustomCode] = useState('');
-  const [status, setStatus] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
   const activeRef = useRef(true);
   const savingRef = useRef(false);
   const snapshotRef = useRef(snapshot);
@@ -426,7 +424,6 @@ export function AppearanceControls({
     const nextSnapshot = { ...snapshotRef.current, state: nextState };
     snapshotRef.current = nextSnapshot;
     setSnapshot(nextSnapshot);
-    setStatus('');
     return true;
   };
 
@@ -436,18 +433,10 @@ export function AppearanceControls({
     if ('immersive' === variant && nextOpen) {
       setIsOpen(false);
     }
-    setStatus('');
     if (nextOpen) {
-      if ('immersive' === variant) {
-        setCustomArticleThemeName('');
-        setCustomCodeThemeName('');
-        setCustomCode('');
-      } else {
-        const item = selectedCustomCss(snapshotRef.current);
-        setCustomArticleThemeName(item?.articleThemeName ?? '');
-        setCustomCodeThemeName(item?.codeThemeName ?? '');
-        setCustomCode(item?.css ?? '');
-      }
+      setCustomArticleThemeName('');
+      setCustomCodeThemeName('');
+      setCustomCode('');
     }
   };
 
@@ -467,8 +456,6 @@ export function AppearanceControls({
       return false;
     }
     savingRef.current = true;
-    setIsSaving(true);
-    setStatus('');
 
     try {
       const result = await port.saveCustomCss({
@@ -497,27 +484,20 @@ export function AppearanceControls({
           }
         };
         if (!applyState(nextSnapshot.state)) {
-          setStatus(bootstrap.strings.cssSaveFailed);
           return false;
         }
         replaceSnapshot(nextSnapshot);
-        setStatus(bootstrap.strings.cssSaved);
         return true;
       } else {
-        setStatus(bootstrap.strings.cssSaveFailed);
         return false;
       }
     } catch {
       if (activeRef.current) {
-        setStatus(bootstrap.strings.cssSaveFailed);
         onFailure();
       }
       return false;
     } finally {
       savingRef.current = false;
-      if (activeRef.current) {
-        setIsSaving(false);
-      }
     }
   };
   const articleOptions: ReadonlyArray<ImmersiveThemeOption> = [
@@ -594,38 +574,6 @@ export function AppearanceControls({
     !codeThemeExplicitRef.current && selectedCustomCss(snapshot) !== undefined
       ? `custom:${snapshot.state.customCssId}`
       : `theme:${snapshot.state.codeTheme}`;
-  const customCssPanel = (
-    <div className="easymde-custom-css-panel" hidden={!isCustomOpen}>
-      <div className="easymde-custom-css-row">
-        <input
-          type="text"
-          className="regular-text easymde-custom-css-name"
-          aria-label={bootstrap.strings.cssName}
-          placeholder={bootstrap.strings.cssName}
-          value={customArticleThemeName}
-          onChange={(event) => setCustomArticleThemeName(event.currentTarget.value)}
-        />
-        <button
-          type="button"
-          className="button button-primary"
-          disabled={isSaving}
-          onClick={() => void saveCustomCss()}
-        >
-          {bootstrap.strings.saveCss}
-        </button>
-        <span className="easymde-custom-css-status" aria-live="polite">
-          {status}
-        </span>
-      </div>
-      <textarea
-        className="easymde-custom-css-code"
-        aria-label={bootstrap.strings.customCss}
-        spellCheck={false}
-        value={customCode}
-        onChange={(event) => setCustomCode(event.currentTarget.value)}
-      />
-    </div>
-  );
   const ordinaryFields = (
     <Fragment>
       <label className="easymde-toolbar-control">
@@ -860,7 +808,6 @@ export function AppearanceControls({
         ) : (
           ordinaryFields
         )}
-        {'default' === variant ? customCssPanel : null}
       </div>
       {'immersive' === variant &&
       bootstrap.canManageCustomCss &&

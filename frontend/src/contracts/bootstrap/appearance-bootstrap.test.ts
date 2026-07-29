@@ -78,6 +78,32 @@ describe('parseAppearanceBootstrap', () => {
     );
   });
 
+  it('counts Custom CSS theme-name limits by Unicode code point', () => {
+    const symbol = String.fromCodePoint(0x1f3a8);
+    const acceptedName = symbol.repeat(20);
+
+    expect(parseAppearanceBootstrap({
+      ...bootstrap,
+      customCss: [{
+        ...bootstrap.customCss[0],
+        articleThemeName: acceptedName,
+        codeThemeName: acceptedName
+      }]
+    }).customCss[0]).toMatchObject({
+      articleThemeName: acceptedName,
+      codeThemeName: acceptedName
+    });
+
+    expect(() => parseAppearanceBootstrap({
+      ...bootstrap,
+      customCss: [{ ...bootstrap.customCss[0], codeThemeName: symbol.repeat(31) }]
+    })).toThrowError(
+      expect.objectContaining<Partial<AppearanceBootstrapError>>({
+        code: 'invalid-custom-css-code-theme-name'
+      })
+    );
+  });
+
   it('rejects the removed single-name Custom CSS contract', () => {
     const item = bootstrap.customCss[0];
     if (!item) {

@@ -12,6 +12,9 @@ const fullCapabilityMarkdown = readFileSync(
   new URL('../../docs/examples/markdown-full-capability-test.md', import.meta.url),
   'utf8'
 );
+const fullCapabilityImage = readFileSync(
+  new URL('../../docs/assets/easymde-logo-rounded.png', import.meta.url)
+);
 const longFixtureHeadingPrefix = '超长中英文标题用于验证狭窄预览容器';
 const managedRuntimeAssets = [
   {
@@ -315,16 +318,27 @@ function canonicalMarkdownForSite(pluginAssetUrl) {
   );
 }
 
+async function canonicalMarkdownForPage(page) {
+  const fixtureImageUrl = new URL(
+    '/easymde-e2e-fixtures/markdown-full-capability-image.png',
+    page.url()
+  ).href;
+
+  await page.route(fixtureImageUrl, (route) => route.fulfill({
+    status: 200,
+    contentType: 'image/png',
+    body: fullCapabilityImage
+  }));
+
+  return canonicalMarkdownForSite(fixtureImageUrl);
+}
+
 async function editorThemeCatalog(page) {
   return page.evaluate(() => ({
     articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
       .map(({ id, label, cssUrl }) => ({ id, label, cssUrl })),
     codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes
-      .map(({ id, cssUrl }) => ({ id, cssUrl })),
-    localFixtureImage: new URL(
-      '../../images/easymde-editor-icon.png',
-      window.EasyMDEEditorRootBootstrap.previewEnhancement.assets.codeFrameCssUrl
-    ).href
+      .map(({ id, cssUrl }) => ({ id, cssUrl }))
   }));
 }
 
@@ -1455,7 +1469,7 @@ test.describe('EasyMDE editor workflows', () => {
     await openEasyMdeNewPost(page);
 
     const catalog = await editorThemeCatalog(page);
-    const markdown = canonicalMarkdownForSite(catalog.localFixtureImage);
+    const markdown = await canonicalMarkdownForPage(page);
     await fillMarkdownAndWaitForPreview(
       page,
       markdown,
@@ -1468,7 +1482,7 @@ test.describe('EasyMDE editor workflows', () => {
         && image.complete
         && image.naturalWidth > 0
     ), {
-      message: 'the packaged full-capability fixture image should load'
+      message: 'the authoritative full-capability fixture image should load'
     }).toBe(true);
 
     const labels = await page.evaluate(() => ({
@@ -2952,7 +2966,7 @@ test.describe('EasyMDE editor workflows', () => {
     await login(page, user);
     await openEasyMdeNewPost(page);
     const catalog = await editorThemeCatalog(page);
-    const markdown = canonicalMarkdownForSite(catalog.localFixtureImage);
+    const markdown = await canonicalMarkdownForPage(page);
     await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
     const preview = page.locator('.easymde-pane-preview article');
     await expect(preview.locator('pre code.hljs').first()).toBeVisible();

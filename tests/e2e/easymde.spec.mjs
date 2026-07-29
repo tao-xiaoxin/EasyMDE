@@ -1476,6 +1476,11 @@ test.describe('EasyMDE editor workflows', () => {
     const preview = page.locator('.easymde-pane-preview article');
     const failures = [];
     const matrix = [];
+    const headingRhythmContracts = new Map([
+      ['qingbi-liujin', { contentFontSize: null }],
+      ['qinghe-zhusha', { contentFontSize: null }],
+      ['geek-black', { contentFontSize: '13px' }]
+    ]);
     let mainFrameNavigations = 0;
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) mainFrameNavigations += 1;
@@ -1509,6 +1514,47 @@ test.describe('EasyMDE editor workflows', () => {
       }
 
       return geometry.decoration;
+    };
+
+    const recordHeadingRhythm = async (themeId, state, expectedBorderGap) => {
+      const contract = headingRhythmContracts.get(themeId);
+      if (!contract) return;
+
+      const headingRhythm = await preview.evaluate((root) => {
+        const h1 = root.querySelector('h1');
+        if (!(h1 instanceof HTMLElement)) {
+          throw new Error('theme-first-heading-unavailable');
+        }
+
+        root.scrollTop = 0;
+        const rootBox = root.getBoundingClientRect();
+        const h1Box = h1.getBoundingClientRect();
+        const h1Style = getComputedStyle(h1);
+        const content = h1.querySelector('.content');
+
+        return {
+          borderGap: h1Box.top - rootBox.top,
+          contentFontSize: content instanceof HTMLElement
+            ? getComputedStyle(content).fontSize
+            : null,
+          fontSize: h1Style.fontSize,
+          lineHeight: h1Style.lineHeight,
+          marginTop: h1Style.marginTop
+        };
+      });
+
+      if (
+        '24px' !== headingRhythm.fontSize
+        || '30px' !== headingRhythm.lineHeight
+        || '30px' !== headingRhythm.marginTop
+        || Math.abs(headingRhythm.borderGap - expectedBorderGap) > 1
+        || contract.contentFontSize !== headingRhythm.contentFontSize
+      ) {
+        failures.push(
+          `${themeId}/${state}/top: heading-rhythm-contract-`
+            + JSON.stringify(headingRhythm)
+        );
+      }
     };
 
     for (const { id, label, cssUrl } of catalog.articleThemes) {
@@ -1551,6 +1597,8 @@ test.describe('EasyMDE editor workflows', () => {
       }
       await page.keyboard.press('Escape');
       await expect(settingsDialog).toHaveCount(0);
+
+      await recordHeadingRhythm(id, 'ordinary-1200', 30);
 
       let desktopDecoration;
       for (const width of [1200, 760, 680]) {
@@ -1597,6 +1645,9 @@ test.describe('EasyMDE editor workflows', () => {
             'top',
             desktopDecoration
           );
+        }
+        if ('is-immersive-split' === mode[1]) {
+          await recordHeadingRhythm(id, 'immersive-transition-splitMode', 64);
         }
       }
 

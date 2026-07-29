@@ -85,6 +85,40 @@ test('Qinghe Zhusha mobile list margins can reset', () => {
   );
 });
 
+test('Qingbi Liujin and Qinghe Zhusha keep a compact, separated first heading', () => {
+  for (const theme of ['qingbi-liujin', 'qinghe-zhusha']) {
+    const css = readFileSync(
+      join(repoRoot, `assets/themes/article/${theme}.css`),
+      'utf8'
+    );
+    const root = `.easymde-rendered-content.easymde-markdown-theme-${theme}`;
+    const firstChildRule = cssRuleBodies(css, `${root} > :not(pre):first-child`);
+    const firstHeadingRule = cssRuleBodies(css, `${root} > h1:first-child`);
+    const h1Rule = cssRuleBodies(css, `${root} h1`)
+      .find((body) => /font-size:\s*24px;/.test(body));
+
+    assert.equal(firstChildRule.length, 1);
+    assert.match(firstChildRule[0], /margin-top:\s*0\s*!important;/);
+    assert.equal(firstHeadingRule.length, 1);
+    assert.match(firstHeadingRule[0], /margin-top:\s*30px\s*!important;/);
+    assert.ok(h1Rule);
+    assert.match(h1Rule, /font-size:\s*24px;/);
+    assert.match(h1Rule, /line-height:\s*1\.25;/);
+  }
+});
+
+test('Geek Black changes only its final H1 top rhythm', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/geek-black.css'), 'utf8');
+  const selector = '.easymde-rendered-content.easymde-markdown-theme-geek-black h1';
+  const h1Rules = cssRuleBodies(css, selector);
+  const fontRule = h1Rules.find((body) => /font-size:\s*24px;/.test(body));
+  const finalH1Rule = h1Rules.at(-1);
+
+  assert.ok(fontRule);
+  assert.match(finalH1Rule, /margin-top:\s*30px;/);
+  assert.doesNotMatch(finalH1Rule, /margin-top:\s*-0\.46em;/);
+});
+
 test('shared code typography prefers the neutral Mac terminal font stack', () => {
   const css = readFileSync(join(repoRoot, 'assets/css/frontend/base.css'), 'utf8');
 

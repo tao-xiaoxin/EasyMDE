@@ -65,7 +65,8 @@ function settingsPanelPosition(
     Math.max(inlinePadding, rect.right - width),
     windowRef.innerWidth - width - inlinePadding
   );
-  const desiredHeight = panel.scrollHeight;
+  const panelFrameHeight = panel.offsetHeight - panel.clientHeight;
+  const desiredHeight = panel.scrollHeight + panelFrameHeight;
   const belowTop = rect.bottom + gap;
   const spaceBelow = windowRef.innerHeight - belowTop - viewportPadding;
   const spaceAbove = rect.top - gap - viewportPadding;
@@ -91,6 +92,19 @@ function settingsPanelPosition(
     top,
     width
   };
+}
+
+function triggerIntersectsViewport(
+  trigger: HTMLButtonElement,
+  windowRef: Window
+): boolean {
+  const rect = trigger.getBoundingClientRect();
+  return (
+    rect.bottom > 0 &&
+    rect.right > 0 &&
+    rect.top < windowRef.innerHeight &&
+    rect.left < windowRef.innerWidth
+  );
 }
 
 export function OrdinaryEditorSettings({
@@ -197,6 +211,10 @@ export function OrdinaryEditorSettings({
       const trigger = triggerRef.current;
       const panel = panelRef.current;
       if (trigger && panel) {
+        if (!triggerIntersectsViewport(trigger, windowRef)) {
+          setIsOpen(false);
+          return;
+        }
         setPanelPosition(settingsPanelPosition(trigger, panel));
       }
     };

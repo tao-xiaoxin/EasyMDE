@@ -1554,72 +1554,72 @@ msgstr ""
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:449
-#: src/Theme/ThemeStateRepository.php:496
-#: src/Theme/ThemeStateRepository.php:523
-#: src/Theme/ThemeStateRepository.php:545
+#: src/Theme/ThemeStateRepository.php:456
+#: src/Theme/ThemeStateRepository.php:503
+#: src/Theme/ThemeStateRepository.php:530
+#: src/Theme/ThemeStateRepository.php:552
 msgctxt "font selection option"
 msgid "None"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:454
+#: src/Theme/ThemeStateRepository.php:461
 msgid "Optima"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:459
+#: src/Theme/ThemeStateRepository.php:466
 msgid "Inter"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:464
+#: src/Theme/ThemeStateRepository.php:471
 msgid "Helvetica"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:469
+#: src/Theme/ThemeStateRepository.php:476
 msgid "Georgia"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:474
+#: src/Theme/ThemeStateRepository.php:481
 msgid "Times"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:479
+#: src/Theme/ThemeStateRepository.php:486
 msgid "Cochin"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:484
+#: src/Theme/ThemeStateRepository.php:491
 msgid "Helvetica Neue"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:491
+#: src/Theme/ThemeStateRepository.php:498
 msgid "Microsoft YaHei"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:503
+#: src/Theme/ThemeStateRepository.php:510
 msgid "PingFang SC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:508
+#: src/Theme/ThemeStateRepository.php:515
 msgid "PingFang SC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:513
+#: src/Theme/ThemeStateRepository.php:520
 msgid "PingFang TC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:518
+#: src/Theme/ThemeStateRepository.php:525
 msgid "PingFang TC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:530
+#: src/Theme/ThemeStateRepository.php:537
 msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:535
+#: src/Theme/ThemeStateRepository.php:542
 msgid "serif"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:540
+#: src/Theme/ThemeStateRepository.php:547
 msgid "sans-serif"
 msgstr ""
 

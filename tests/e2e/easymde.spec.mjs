@@ -1189,7 +1189,10 @@ test.describe('EasyMDE editor workflows', () => {
     await login(page, user);
     await openEasyMdeNewPost(page);
     const fixtureCatalog = await editorThemeCatalog(page);
-    const markdown = canonicalMarkdownForSite(fixtureCatalog.localFixtureImage);
+    const markdown = canonicalMarkdownForSite(fixtureCatalog.localFixtureImage)
+      + '\n\n```js\n'
+      + `const longValue = "${'x'.repeat(240)}";\n`
+      + '```';
     await fillMarkdownAndWaitForPreview(
       page,
       markdown,
@@ -1326,7 +1329,9 @@ test.describe('EasyMDE editor workflows', () => {
     });
     const articleThemeLink = page.locator('#easymde-article-theme-css');
     const codeThemeLink = page.locator('#easymde-highlight-theme-css');
-    const previewCode = page.locator('.easymde-pane-preview article pre code.hljs').first();
+    const previewCode = page.locator('.easymde-pane-preview article pre code.hljs')
+      .filter({ hasText: 'const longValue' })
+      .first();
     const codeGeometry = () => previewCode.evaluate((code) => {
       const frame = code.parentElement;
       const frameStyle = getComputedStyle(frame);

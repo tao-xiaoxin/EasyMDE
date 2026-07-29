@@ -322,7 +322,7 @@ async function editorThemeCatalog(page) {
     codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes
       .map(({ id, cssUrl }) => ({ id, cssUrl })),
     localFixtureImage: new URL(
-      '../../../docs/assets/easymde-logo-rounded.png',
+      '../../images/easymde-editor-icon.png',
       window.EasyMDEEditorRootBootstrap.previewEnhancement.assets.codeFrameCssUrl
     ).href
   }));
@@ -1463,6 +1463,13 @@ test.describe('EasyMDE editor workflows', () => {
     );
     await expect(page.locator('.easymde-pane-preview .katex').first()).toBeVisible();
     await expect(page.locator('.easymde-pane-preview .easymde-mermaid').first()).toBeVisible();
+    await expect.poll(() => page.locator('.easymde-pane-preview img').first().evaluate(
+      (image) => image instanceof HTMLImageElement
+        && image.complete
+        && image.naturalWidth > 0
+    ), {
+      message: 'the packaged full-capability fixture image should load'
+    }).toBe(true);
 
     const labels = await page.evaluate(() => ({
       articleTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.articleTheme,

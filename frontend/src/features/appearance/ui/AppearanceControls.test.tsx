@@ -235,11 +235,11 @@ describe('AppearanceControls', () => {
     expect(
       alert.parentElement?.classList.contains('is-dialog-compact')
     ).toBe(true);
+    const dialogHeader = dialog.querySelector(':scope > header');
+    expect(dialogHeader?.contains(alert)).toBe(true);
     expect(
-      alert.parentElement?.previousElementSibling?.classList.contains(
-        'easymde-immersive-custom-css-names'
-      )
-    ).toBe(true);
+      alert.parentElement?.nextElementSibling?.getAttribute('aria-label')
+    ).toBe('Close');
     expect(alert.textContent).toContain(
       'This theme name is already in use. Choose another name and try again.'
     );
@@ -260,16 +260,26 @@ describe('AppearanceControls', () => {
     const firstMainControl = within(dialog).getByRole('checkbox', {
       name: 'Completed task'
     });
-    codeName.focus();
+    const dialogClose = dialogHeader?.querySelector<HTMLElement>(
+      ':scope > button[aria-label="Close"]'
+    );
+    expect(dialogClose).not.toBeNull();
+    apply.focus();
     await user.keyboard('{Tab}');
     expect(document.activeElement).toBe(notificationClose);
+    await user.keyboard('{Tab}');
+    expect(document.activeElement).toBe(dialogClose);
+    await user.keyboard('{Tab}');
+    expect(document.activeElement).toBe(articleName);
+    codeName.focus();
     await user.keyboard('{Tab}');
     expect(document.activeElement).toBe(firstMainControl);
     await user.keyboard('{Shift>}{Tab}{/Shift}');
-    expect(document.activeElement).toBe(notificationClose);
+    expect(document.activeElement).toBe(codeName);
+    notificationClose.focus();
     await user.keyboard('{Enter}');
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(document.activeElement).toBe(codeName);
+    expect(document.activeElement).toBe(apply);
     expect(saveCustomCss).toHaveBeenCalledWith(expect.objectContaining({
       id: '',
       name: 'Existing Article / Existing Code'

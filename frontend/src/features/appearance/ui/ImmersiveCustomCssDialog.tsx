@@ -650,12 +650,24 @@ export function ImmersiveCustomCssDialog({
           cssEditorExpanded ? ' is-code-expanded' : ''
         }`}
       >
-        <header>
+        <header className={saveError ? 'has-message-alert' : undefined}>
           <div>
             <ThemeSparkIcon />
             <h1 id={titleId}>{title}</h1>
           </div>
           <p>{strings.description}</p>
+          {saveError ? (
+            <div className="easymde-editor-message-alert-host is-dialog-compact">
+              <EditorMessageAlert
+                closeLabel={strings.close}
+                density="compact"
+                message={saveError.message}
+                messageId={noticeId}
+                onDismiss={() => setSaveError(null)}
+                type="error"
+              />
+            </div>
+          ) : null}
           <button
             type="button"
             aria-label={strings.close}
@@ -731,19 +743,6 @@ export function ImmersiveCustomCssDialog({
                 : strings.unsavedChanges}
           </div>
         </div>
-
-        {saveError ? (
-          <div className="easymde-editor-message-alert-host is-dialog-compact">
-            <EditorMessageAlert
-              closeLabel={strings.close}
-              density="compact"
-              message={saveError.message}
-              messageId={noticeId}
-              onDismiss={() => setSaveError(null)}
-              type="error"
-            />
-          </div>
-        ) : null}
 
         <div className="easymde-immersive-custom-css-main">
           <div className="easymde-immersive-custom-css-grid">

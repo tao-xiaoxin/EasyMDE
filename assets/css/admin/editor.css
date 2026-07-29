@@ -476,10 +476,21 @@ body:has(.easymde-editor.is-immersive) .wrap {
     flex: 0 0 auto;
     padding: 22px 38px 12px;
 }
+.easymde-immersive-custom-css-dialog > header.has-message-alert {
+    display: grid;
+    height: auto;
+    min-height: 88px;
+    grid-template-columns: minmax(0, 1fr) 324px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+}
 .easymde-immersive-custom-css-dialog > header > div {
     display: flex;
     align-items: center;
     gap: 11px;
+}
+.easymde-immersive-custom-css-dialog > header.has-message-alert > div:first-child {
+    grid-column: 1;
+    grid-row: 1;
 }
 #wpbody-content .easymde-immersive-custom-css-dialog > header h1 {
     display: block;
@@ -496,6 +507,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
     color: #66758f;
     font-size: 14px;
     line-height: 21px;
+}
+.easymde-immersive-custom-css-dialog > header.has-message-alert > p {
+    grid-column: 1;
+    grid-row: 2;
 }
 .easymde-immersive-custom-css-dialog > header > button {
     position: absolute;
@@ -1932,18 +1947,36 @@ body:has(.easymde-editor.is-immersive) .wrap {
     transform: translateX(-50%);
 }
 
-.easymde-immersive-custom-css-dialog > .easymde-editor-message-alert-host.is-dialog-compact {
+.easymde-immersive-custom-css-dialog > header > .easymde-editor-message-alert-host.is-dialog-compact {
     position: static;
     z-index: auto;
     display: flex;
     box-sizing: border-box;
-    width: 100%;
-    max-width: none;
-    flex: 0 0 auto;
+    grid-column: 2;
+    grid-row: 1 / 3;
+    width: 324px;
+    max-width: 324px;
+    align-self: start;
     justify-content: center;
-    margin: 0 0 8px;
-    padding: 0 38px;
+    justify-self: center;
+    margin: -2px 0 0;
+    padding: 0;
     transform: none;
+}
+
+@media (max-width: 1080px) {
+    .easymde-immersive-custom-css-dialog > header.has-message-alert {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto auto auto;
+    }
+
+    .easymde-immersive-custom-css-dialog > header > .easymde-editor-message-alert-host.is-dialog-compact {
+        grid-column: 1;
+        grid-row: 3;
+        width: 100%;
+        max-width: none;
+        margin-top: 12px;
+    }
 }
 
 .easymde-editor-message-alert {
@@ -2073,7 +2106,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
         margin-inline-start: 12px;
     }
 
-    .easymde-immersive-custom-css-dialog > .easymde-editor-message-alert-host.is-dialog-compact {
+    .easymde-immersive-custom-css-dialog > header > .easymde-editor-message-alert-host.is-dialog-compact {
         width: 100%;
         padding-inline: 12px;
     }

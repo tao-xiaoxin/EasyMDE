@@ -576,9 +576,53 @@ async function measureArticleThemeGeometry(page, position) {
       const paneScrollLeft = scrollElement(pane);
       const imageResults = Array.from(root.querySelectorAll('img')).map((image) => {
         const box = image.getBoundingClientRect();
-        return box.left >= rootBox.left - tolerance
-          && box.right <= rootBox.right + tolerance;
+        const style = getComputedStyle(image);
+        const parent = image.parentElement;
+        const parentBox = parent?.getBoundingClientRect();
+        const parentStyle = parent ? getComputedStyle(parent) : null;
+
+        return {
+          contained: box.left >= rootBox.left - tolerance
+            && box.right <= rootBox.right + tolerance,
+          box: {
+            left: box.left,
+            right: box.right,
+            width: box.width
+          },
+          style: {
+            boxSizing: style.boxSizing,
+            marginLeft: style.marginLeft,
+            marginRight: style.marginRight,
+            maxWidth: style.maxWidth,
+            width: style.width
+          },
+          root: {
+            left: rootBox.left,
+            right: rootBox.right,
+            width: rootBox.width,
+            clientWidth: root.clientWidth,
+            scrollWidth: root.scrollWidth,
+            boxSizing: getComputedStyle(root).boxSizing,
+            paddingLeft: getComputedStyle(root).paddingLeft,
+            paddingRight: getComputedStyle(root).paddingRight
+          },
+          parent: parentBox && parentStyle ? {
+            tag: parent.tagName.toLowerCase(),
+            left: parentBox.left,
+            right: parentBox.right,
+            width: parentBox.width,
+            clientWidth: parent.clientWidth,
+            scrollWidth: parent.scrollWidth,
+            boxSizing: parentStyle.boxSizing,
+            display: parentStyle.display,
+            marginLeft: parentStyle.marginLeft,
+            marginRight: parentStyle.marginRight,
+            paddingLeft: parentStyle.paddingLeft,
+            paddingRight: parentStyle.paddingRight
+          } : null
+        };
       });
+      const outsideImage = imageResults.find(({ contained }) => !contained);
       const flexGridResults = Array.from(root.querySelectorAll('*'))
         .filter((element) => ['flex', 'inline-flex', 'grid', 'inline-grid']
           .includes(getComputedStyle(element).display))
@@ -642,7 +686,9 @@ async function measureArticleThemeGeometry(page, position) {
               ? ['long-heading-clipped-or-unwrapped']
               : []
           ),
-          ...(imageResults.every(Boolean) ? [] : ['image-outside-article']),
+          ...(outsideImage
+            ? [`image-outside-article-${JSON.stringify(outsideImage)}`]
+            : []),
           ...(flexGridResults.every(Boolean) ? [] : ['flex-or-grid-descendant-cannot-shrink']),
           ...(tableResults.every((result) => (
             result.contained
@@ -664,7 +710,8 @@ async function measureArticleThemeGeometry(page, position) {
           position: scrollPosition
         },
         tableResults,
-        codeResults
+        codeResults,
+        imageDiagnostic: outsideImage ?? null
       };
     },
     {

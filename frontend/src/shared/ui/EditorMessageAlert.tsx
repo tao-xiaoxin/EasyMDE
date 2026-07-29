@@ -8,8 +8,11 @@ export type EditorMessageAlertType =
   | 'success'
   | 'warning';
 
+export type EditorMessageAlertDensity = 'compact' | 'standard';
+
 type Props = Readonly<{
   closeLabel: string;
+  density?: EditorMessageAlertDensity;
   message: string;
   messageId?: string;
   onDismiss: () => void;
@@ -29,6 +32,7 @@ function MessageIcon({ type }: Readonly<{ type: EditorMessageAlertType }>) {
 
 export function EditorMessageAlert({
   closeLabel,
+  density = 'standard',
   message,
   messageId,
   onDismiss,
@@ -39,7 +43,7 @@ export function EditorMessageAlert({
 
   return (
     <div
-      className={`easymde-editor-message-alert is-${type}`}
+      className={`easymde-editor-message-alert is-${type} is-${density}`}
       role={'warning' === type || 'error' === type ? 'alert' : 'status'}
       aria-atomic="true"
     >

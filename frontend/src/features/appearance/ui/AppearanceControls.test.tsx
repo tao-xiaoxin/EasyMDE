@@ -231,6 +231,15 @@ describe('AppearanceControls', () => {
     expect(screen.queryByText('Sensitive server detail')).toBeNull();
     const dialog = screen.getByRole('dialog', { name: 'Custom CSS theme' });
     expect(dialog.contains(alert)).toBe(true);
+    expect(alert.classList.contains('is-compact')).toBe(true);
+    expect(
+      alert.parentElement?.classList.contains('is-dialog-compact')
+    ).toBe(true);
+    expect(
+      alert.parentElement?.previousElementSibling?.classList.contains(
+        'easymde-immersive-custom-css-names'
+      )
+    ).toBe(true);
     expect(alert.textContent).toContain(
       'This theme name is already in use. Choose another name and try again.'
     );
@@ -245,26 +254,28 @@ describe('AppearanceControls', () => {
       'This theme name is already in use. Choose another name and try again.'
     );
     expect(document.activeElement).toBe(apply);
-    await user.keyboard('{Tab}');
     const notificationClose = within(alert).getByRole('button', {
       name: 'Close'
     });
-    const dialogClose = within(dialog).getAllByRole('button', {
-      name: 'Close'
-    })[0];
+    const firstMainControl = within(dialog).getByRole('checkbox', {
+      name: 'Completed task'
+    });
+    codeName.focus();
+    await user.keyboard('{Tab}');
     expect(document.activeElement).toBe(notificationClose);
     await user.keyboard('{Tab}');
-    expect(document.activeElement).toBe(dialogClose);
+    expect(document.activeElement).toBe(firstMainControl);
     await user.keyboard('{Shift>}{Tab}{/Shift}');
     expect(document.activeElement).toBe(notificationClose);
     await user.keyboard('{Enter}');
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(document.activeElement).toBe(apply);
+    expect(document.activeElement).toBe(codeName);
     expect(saveCustomCss).toHaveBeenCalledWith(expect.objectContaining({
       id: '',
       name: 'Existing Article / Existing Code'
     }));
 
+    apply.focus();
     await user.keyboard('{Enter}');
     expect(await screen.findByRole('alert')).not.toBeNull();
     await user.type(articleName, ' updated');

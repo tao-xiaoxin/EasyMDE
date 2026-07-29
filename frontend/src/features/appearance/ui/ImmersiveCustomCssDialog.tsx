@@ -732,6 +732,19 @@ export function ImmersiveCustomCssDialog({
           </div>
         </div>
 
+        {saveError ? (
+          <div className="easymde-editor-message-alert-host is-dialog-compact">
+            <EditorMessageAlert
+              closeLabel={strings.close}
+              density="compact"
+              message={saveError.message}
+              messageId={noticeId}
+              onDismiss={() => setSaveError(null)}
+              type="error"
+            />
+          </div>
+        ) : null}
+
         <div className="easymde-immersive-custom-css-main">
           <div className="easymde-immersive-custom-css-grid">
             <section className="easymde-immersive-custom-css-preview">
@@ -1052,17 +1065,6 @@ export function ImmersiveCustomCssDialog({
             </button>
           </div>
         </footer>
-        {saveError ? (
-          <div className="easymde-editor-message-alert-host">
-            <EditorMessageAlert
-              closeLabel={strings.close}
-              message={saveError.message}
-              messageId={noticeId}
-              onDismiss={() => setSaveError(null)}
-              type="error"
-            />
-          </div>
-        ) : null}
       </section>
     </div>
   );

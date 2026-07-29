@@ -6,6 +6,35 @@ import { describe, expect, it, vi } from 'vitest';
 import { EditorMessageAlert } from './EditorMessageAlert';
 
 describe('EditorMessageAlert', () => {
+  it('uses standard density by default and exposes compact density explicitly', () => {
+    const { rerender } = render(
+      <EditorMessageAlert
+        closeLabel="Close"
+        message="Saved"
+        onDismiss={vi.fn()}
+        type="success"
+      />
+    );
+
+    expect(screen.getByRole('status').classList.contains('is-standard')).toBe(
+      true
+    );
+
+    rerender(
+      <EditorMessageAlert
+        closeLabel="Close"
+        density="compact"
+        message="Theme name already exists."
+        onDismiss={vi.fn()}
+        type="error"
+      />
+    );
+
+    const alert = screen.getByRole('alert');
+    expect(alert.classList.contains('is-compact')).toBe(true);
+    expect(alert.classList.contains('is-standard')).toBe(false);
+  });
+
   it.each([
     ['success', 'status', 'Saved'],
     ['info', 'status', 'Autosave enabled'],

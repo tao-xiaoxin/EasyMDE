@@ -442,6 +442,7 @@
   display: flex;
   box-sizing: border-box;
   width: 200px;
+  max-width: 100%;
   height: 10px;
   border-top-left-radius: 20px;
   background: rgba(64, 184, 250, .5);
@@ -737,4 +738,27 @@
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h4 .content::before {
   background-image: url("../../images/fullstack-blue-h4.png");
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue table > thead,
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-fullstack-blue table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
 }

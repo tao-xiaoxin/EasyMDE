@@ -18,6 +18,8 @@
 
 ###### 六级标题 Heading 6
 
+## 超长中英文标题用于验证狭窄预览容器中的正常换行、完整可读性以及主题前后缀装饰仍然保持可见 This intentionally long bilingual heading verifies wrapping and complete readability without clipping in narrow preview panes
+
 ---
 
 ## 2. 文本样式

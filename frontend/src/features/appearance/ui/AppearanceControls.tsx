@@ -26,16 +26,25 @@ import {
   OrdinarySelect,
   type OrdinarySelectSwatch
 } from '../../../shared/ui/OrdinarySelect';
+import type { EditorMessageAlertType } from '../../../shared/ui/EditorMessageAlert';
 
 export type AppearanceControlsSession = Readonly<{
   close: () => void;
   replaceSnapshot: (snapshot: AppearanceSnapshot) => boolean;
 }>;
 
+export type AppearanceNotification = Readonly<{
+  id: 'appearance-custom-css';
+  message: string;
+  type: EditorMessageAlertType;
+}>;
+
 type AppearanceControlsProps = Readonly<{
   bootstrap: AppearanceBootstrap;
   port: AppearancePort;
   onFailure: () => void;
+  onNotification?: (notification: AppearanceNotification) => void;
+  onNotificationDismiss?: (id: AppearanceNotification['id']) => void;
   onReady: (session: AppearanceControlsSession) => void;
   immersiveLabel?: string;
   immersiveTitle?: string;
@@ -277,6 +286,8 @@ export function AppearanceControls({
   bootstrap,
   port,
   onFailure,
+  onNotification,
+  onNotificationDismiss,
   onReady,
   immersiveLabel,
   immersiveTitle,
@@ -435,6 +446,7 @@ export function AppearanceControls({
       setIsOpen(false);
     }
     setStatus('');
+    onNotificationDismiss?.('appearance-custom-css');
     if (nextOpen) {
       if ('immersive' === variant) {
         setCustomName('');
@@ -502,7 +514,15 @@ export function AppearanceControls({
           }
         };
         if (!applyState(nextSnapshot.state)) {
-          setStatus(bootstrap.strings.cssSaveFailed);
+          if (onNotification && 'immersive' !== variant) {
+            onNotification({
+              id: 'appearance-custom-css',
+              message: bootstrap.strings.cssSaveFailed,
+              type: 'error'
+            });
+          } else {
+            setStatus(bootstrap.strings.cssSaveFailed);
+          }
           return {
             code: 'save-failed',
             status: 'failed',
@@ -510,7 +530,15 @@ export function AppearanceControls({
           };
         }
         replaceSnapshot(nextSnapshot);
-        setStatus(bootstrap.strings.cssSaved);
+        if (onNotification) {
+          onNotification({
+            id: 'appearance-custom-css',
+            message: bootstrap.strings.cssSaved,
+            type: 'success'
+          });
+        } else {
+          setStatus(bootstrap.strings.cssSaved);
+        }
         return { status: 'saved' };
       } else {
         const isDuplicate =
@@ -518,7 +546,15 @@ export function AppearanceControls({
         const message = isDuplicate
           ? bootstrap.strings.cssNameDuplicate
           : bootstrap.strings.cssSaveFailed;
-        setStatus(message);
+        if (onNotification && 'immersive' !== variant) {
+          onNotification({
+            id: 'appearance-custom-css',
+            message,
+            type: 'error'
+          });
+        } else {
+          setStatus(message);
+        }
         return {
           code: isDuplicate ? 'duplicate-name' : 'save-failed',
           status: 'failed',
@@ -527,7 +563,15 @@ export function AppearanceControls({
       }
     } catch {
       if (activeRef.current) {
-        setStatus(bootstrap.strings.cssSaveFailed);
+        if (onNotification && 'immersive' !== variant) {
+          onNotification({
+            id: 'appearance-custom-css',
+            message: bootstrap.strings.cssSaveFailed,
+            type: 'error'
+          });
+        } else {
+          setStatus(bootstrap.strings.cssSaveFailed);
+        }
         onFailure();
       }
       return {
@@ -619,7 +663,10 @@ export function AppearanceControls({
           aria-label={bootstrap.strings.cssName}
           placeholder={bootstrap.strings.cssName}
           value={customName}
-          onChange={(event) => setCustomName(event.currentTarget.value)}
+          onChange={(event) => {
+            setCustomName(event.currentTarget.value);
+            onNotificationDismiss?.('appearance-custom-css');
+          }}
         />
         <button
           type="button"
@@ -638,7 +685,10 @@ export function AppearanceControls({
         aria-label={bootstrap.strings.customCss}
         spellCheck={false}
         value={customCode}
-        onChange={(event) => setCustomCode(event.currentTarget.value)}
+        onChange={(event) => {
+          setCustomCode(event.currentTarget.value);
+          onNotificationDismiss?.('appearance-custom-css');
+        }}
       />
     </div>
   );

@@ -1946,9 +1946,13 @@ describe('EditorRoot', () => {
     expect(
       view.queryByRole('textbox', { name: '可视化文章编辑器' })
     ).toBeNull();
+    const messageHost = view.container.querySelector(
+      '.easymde-editor-message-alert-host'
+    );
+    expect(messageHost).not.toBeNull();
     expect(
-      view.queryByText('paste' === source ? 'Paste uploaded' : 'Drop uploaded')
-    ).toBeNull();
+      within(messageHost as HTMLElement).getByRole('status').textContent
+    ).toContain('paste' === source ? 'Paste uploaded' : 'Drop uploaded');
   }
   );
 
@@ -2678,7 +2682,7 @@ describe('EditorRoot', () => {
       within(dialog).getByRole('alert').textContent
     ).toBe('WordPress 未接受发布请求，请检查页面状态后重试。');
     expect(
-      view.container.querySelector('.easymde-editor-flash')
+      view.container.querySelector('.easymde-editor-message-alert-host')
     ).toBeNull();
   });
 
@@ -3184,10 +3188,10 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(view.getByRole('button', { name: '已复制' })).not.toBeNull()
     );
+    expect(view.getByRole('status').textContent).toContain('Copied');
     expect(
-      view.container.querySelector('.easymde-editor-flash')
-    ).toBeNull();
-    expect(view.queryByText('Copied')).toBeNull();
+      view.container.querySelector('.easymde-editor-message-alert-host')
+    ).not.toBeNull();
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     expect(view.getByRole('dialog', { name: '编辑器设置' })).not.toBeNull();
     for (const name of ['文章大纲', '字数统计', '分屏预览', '自动保存', '同步滚动']) {
@@ -3241,7 +3245,7 @@ describe('EditorRoot', () => {
     });
   });
 
-  it('does not resurrect immersive-only feedback after leaving the reference surface', async () => {
+  it('keeps unified operation feedback stable while leaving immersive mode', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
@@ -3252,10 +3256,10 @@ describe('EditorRoot', () => {
     );
     fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
 
-    expect(view.queryByText('Copied')).toBeNull();
+    expect(view.getByRole('status').textContent).toContain('Copied');
     expect(
-      view.container.querySelector('.easymde-editor-flash')
-    ).toBeNull();
+      view.container.querySelector('.easymde-editor-message-alert-host')
+    ).not.toBeNull();
   });
 
   it('keeps a late immersive clipboard failure visible after returning to the ordinary editor', async () => {
@@ -3281,11 +3285,11 @@ describe('EditorRoot', () => {
 
     expect(view.getByText('Copy failed')).not.toBeNull();
     expect(
-      view.container.querySelector('.easymde-editor-flash')
+      view.container.querySelector('.easymde-editor-message-alert-host')
     ).not.toBeNull();
   });
 
-  it('keeps immersive operation failures in the existing status bar without a floating message', async () => {
+  it('renders immersive operation failures in the shared top alert', async () => {
     const props = fixture();
     vi.mocked(props.wechatClipboard.copy).mockResolvedValue({
       code: 'wechat-copy-failed',
@@ -3299,11 +3303,11 @@ describe('EditorRoot', () => {
       expect(view.getByRole('alert').textContent).toBe('Copy failed')
     );
     expect(
-      view.container.querySelector('.easymde-editor-flash')
-    ).toBeNull();
+      view.container.querySelector('.easymde-editor-message-alert-host')
+    ).not.toBeNull();
 
     fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
-    expect(view.queryByText('Copy failed')).toBeNull();
+    expect(view.getByRole('alert').textContent).toBe('Copy failed');
   });
 
   it('expires ordinary feedback after 3200ms without letting a stale timer clear newer feedback', async () => {
@@ -3340,6 +3344,55 @@ describe('EditorRoot', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('pauses auto-dismiss while the notification close control has focus', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    await view.findByRole('button', { name: 'Copy to WeChat' });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(view.getByRole('button', { name: 'Copy to WeChat' }));
+        await Promise.resolve();
+      });
+      const close = view.getByRole('button', { name: '关闭' });
+      fireEvent.focus(close);
+
+      act(() => {
+        vi.advanceTimersByTime(6400);
+      });
+      expect(view.getByText('Copied')).not.toBeNull();
+
+      fireEvent.blur(close);
+      act(() => {
+        vi.advanceTimersByTime(3200);
+      });
+      expect(view.queryByText('Copied')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let unrelated success feedback overwrite a persistent error', async () => {
+    const props = fixture();
+    vi.mocked(props.wechatClipboard.copy).mockResolvedValue({
+      code: 'wechat-copy-failed',
+      status: 'failed'
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: 'Copy to WeChat' }));
+    await waitFor(() =>
+      expect(view.getByRole('alert').textContent).toBe('Copy failed')
+    );
+
+    fireEvent.click(view.getByRole('button', { name: 'Bold' }));
+    await waitFor(() =>
+      expect(props.localDraftStorage.write).toHaveBeenCalledOnce()
+    );
+    expect(view.getByRole('alert').textContent).toBe('Copy failed');
   });
 
   it('matches the reference 1800ms immersive copy-feedback duration', async () => {
@@ -4147,6 +4200,44 @@ describe('EditorRoot', () => {
     expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves an upload error when the upload session remounts', async () => {
+    const props = fixture();
+    let uploadCount = 0;
+    vi.mocked(props.imageUploadPort.upload).mockImplementation(() => {
+      uploadCount += 1;
+      if (1 === uploadCount) {
+        return Promise.resolve({ code: 'request-failed', status: 'failed' });
+      }
+      return new Promise(() => undefined);
+    });
+    const view = render(<EditorRoot {...props} />);
+    const source = view.container.querySelector('.cm-content');
+    expect(source).not.toBeNull();
+
+    source?.dispatchEvent(imageTransferEvent(
+      'paste',
+      new File(['first'], 'first.png', { type: 'image/png' })
+    ));
+    await waitFor(() => expect(view.getByText('Paste failed')).not.toBeNull());
+
+    view.rerender(
+      <EditorRoot
+        {...props}
+        imageUpload={{ ...props.imageUpload }}
+      />
+    );
+    source?.dispatchEvent(imageTransferEvent(
+      'paste',
+      new File(['second'], 'second.png', { type: 'image/png' })
+    ));
+
+    await waitFor(() =>
+      expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(2)
+    );
+    expect(view.getByText('Paste failed')).not.toBeNull();
+    expect(view.queryByText('Paste uploading')).toBeNull();
+  });
+
   it('restores an available local draft and releases its storage subscription', async () => {
     const props = fixture();
     const unsubscribe = vi.fn();
@@ -4219,6 +4310,45 @@ describe('EditorRoot', () => {
       expect(props.localDraftStorage.write).toHaveBeenCalledTimes(2)
     );
     expect(view.queryByText('Local draft saved 12:34')).toBeNull();
+  });
+
+  it('keeps local draft failures visible in the immersive surface', async () => {
+    const props = fixture();
+    vi.mocked(props.localDraftStorage.write).mockReturnValue({
+      code: 'local-draft-write-failed',
+      status: 'failed'
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: 'Bold' }));
+
+    await waitFor(() =>
+      expect(view.getByRole('alert').textContent).toBe(
+        props.localDrafts.strings.saveFailed
+      )
+    );
+  });
+
+  it('does not clear an existing local draft failure when entering immersive mode', async () => {
+    const props = fixture();
+    vi.mocked(props.localDraftStorage.write).mockReturnValue({
+      code: 'local-draft-write-failed',
+      status: 'failed'
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: 'Bold' }));
+    await waitFor(() =>
+      expect(view.getByRole('alert').textContent).toBe(
+        props.localDrafts.strings.saveFailed
+      )
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.getByRole('alert').textContent).toBe(
+      props.localDrafts.strings.saveFailed
+    );
   });
 
   it('schedules local drafts from the document owner without depending on native bridge events', async () => {

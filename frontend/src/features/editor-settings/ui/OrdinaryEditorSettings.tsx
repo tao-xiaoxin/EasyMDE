@@ -14,6 +14,7 @@ import type { FontControlsPort } from '../../../contracts/ports/font-controls-po
 import { Settings } from '../../../generated/lucide-icons';
 import {
   AppearanceControls,
+  type AppearanceNotification,
   type AppearanceControlsSession
 } from '../../appearance/ui/AppearanceControls';
 import {
@@ -33,6 +34,8 @@ type Props = Readonly<{
   label: string;
   onAppearanceReady: (session: AppearanceControlsSession) => void;
   onFailure: (code: string) => void;
+  onNotification?: (notification: AppearanceNotification) => void;
+  onNotificationDismiss?: (id: AppearanceNotification['id']) => void;
   onFontControlsReady: (session: FontControlsSession) => void;
   onOpen: () => void;
   onReady: (session: OrdinaryEditorSettingsSession) => void;
@@ -101,6 +104,8 @@ export function OrdinaryEditorSettings({
   label,
   onAppearanceReady,
   onFailure,
+  onNotification,
+  onNotificationDismiss,
   onFontControlsReady,
   onOpen,
   onReady
@@ -279,6 +284,8 @@ export function OrdinaryEditorSettings({
           onReady={onAppearanceReady}
           port={appearancePort}
           variant="embedded"
+          {...(onNotification ? { onNotification } : {})}
+          {...(onNotificationDismiss ? { onNotificationDismiss } : {})}
         />
         <FontControls
           bootstrap={fonts}

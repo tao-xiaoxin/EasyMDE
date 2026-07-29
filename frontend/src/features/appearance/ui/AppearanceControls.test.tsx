@@ -191,19 +191,23 @@ describe('AppearanceControls', () => {
 
   it('keeps the dialog open and preserves edited names when the server rejects a duplicate theme name', async () => {
     const user = userEvent.setup();
+    const onNotification = vi.fn();
     const saveCustomCss = vi.fn().mockResolvedValue({
       status: 'failed',
       code: 'easymde_duplicate_custom_css_name',
       message: 'Sensitive server detail'
     });
     render(
-      <AppearanceControls
-        bootstrap={bootstrap}
-        port={createPort({ saveCustomCss })}
-        onFailure={vi.fn()}
-        onReady={vi.fn()}
-        variant="immersive"
-      />
+      <div className="easymde-editor">
+        <AppearanceControls
+          bootstrap={bootstrap}
+          port={createPort({ saveCustomCss })}
+          onFailure={vi.fn()}
+          onNotification={onNotification}
+          onReady={vi.fn()}
+          variant="immersive"
+        />
+      </div>
     );
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
@@ -223,28 +227,46 @@ describe('AppearanceControls', () => {
     await user.keyboard('{Enter}');
 
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toBe(
+    expect(onNotification).not.toHaveBeenCalled();
+    expect(screen.queryByText('Sensitive server detail')).toBeNull();
+    const dialog = screen.getByRole('dialog', { name: 'Custom CSS theme' });
+    expect(dialog.contains(alert)).toBe(true);
+    expect(alert.textContent).toContain(
       'This theme name is already in use. Choose another name and try again.'
     );
-    expect(alert.classList.contains(
-      'easymde-immersive-custom-css-notice'
-    )).toBe(true);
-    expect(alert.classList.contains('is-error')).toBe(true);
-    expect(alert.getAttribute('aria-atomic')).toBe('true');
-    expect(screen.queryByText('Sensitive server detail')).toBeNull();
-    expect(screen.getByRole('dialog', { name: 'Custom CSS theme' })).not.toBeNull();
     expect((articleName as HTMLInputElement).value).toBe('Existing Article');
     expect((codeName as HTMLInputElement).value).toBe('Existing Code');
     expect(articleName.getAttribute('aria-invalid')).toBe('true');
     expect(codeName.getAttribute('aria-invalid')).toBe('true');
-    expect(articleName.getAttribute('aria-describedby')).toBe(alert.id);
-    expect(codeName.getAttribute('aria-describedby')).toBe(alert.id);
+    const descriptionId = articleName.getAttribute('aria-describedby');
+    expect(descriptionId).not.toBeNull();
+    expect(codeName.getAttribute('aria-describedby')).toBe(descriptionId);
+    expect(document.getElementById(descriptionId ?? '')?.textContent).toBe(
+      'This theme name is already in use. Choose another name and try again.'
+    );
+    expect(document.activeElement).toBe(apply);
+    await user.keyboard('{Tab}');
+    const notificationClose = within(alert).getByRole('button', {
+      name: 'Close'
+    });
+    const dialogClose = within(dialog).getAllByRole('button', {
+      name: 'Close'
+    })[0];
+    expect(document.activeElement).toBe(notificationClose);
+    await user.keyboard('{Tab}');
+    expect(document.activeElement).toBe(dialogClose);
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(document.activeElement).toBe(notificationClose);
+    await user.keyboard('{Enter}');
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(document.activeElement).toBe(apply);
     expect(saveCustomCss).toHaveBeenCalledWith(expect.objectContaining({
       id: '',
       name: 'Existing Article / Existing Code'
     }));
 
+    await user.keyboard('{Enter}');
+    expect(await screen.findByRole('alert')).not.toBeNull();
     await user.type(articleName, ' updated');
 
     expect(screen.queryByRole('alert')).toBeNull();
@@ -1240,7 +1262,10 @@ describe('AppearanceControls', () => {
     await screen.findByText('CSS save failed.');
     expect(onFailure).toHaveBeenCalledOnce();
     expect(screen.queryByText('CSS saved.')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Close' }));
+    const dialog = screen.getByRole('dialog', { name: 'Custom CSS theme' });
+    await user.click(
+      within(dialog).getAllByRole('button', { name: 'Close' })[0] as HTMLElement
+    );
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     expect(
       screen.getByRole('button', { name: 'Article theme' }).textContent

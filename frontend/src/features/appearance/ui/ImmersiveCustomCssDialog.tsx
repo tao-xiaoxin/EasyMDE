@@ -30,6 +30,7 @@ import {
   RotateCcw,
   X
 } from '../../../generated/lucide-icons';
+import { EditorMessageAlert } from '../../../shared/ui/EditorMessageAlert';
 
 type ThemeVariableCategory = CustomCssVariable['category'];
 type ThemeVariables = Record<CustomCssVariableId, string>;
@@ -1018,17 +1019,7 @@ export function ImmersiveCustomCssDialog({
         </div>
 
         <footer>
-          {saveError ? (
-            <div
-              id={noticeId}
-              className="easymde-immersive-custom-css-notice is-error"
-              role="alert"
-              aria-atomic="true"
-            >
-              <CircleAlert size={18} strokeWidth={2} aria-hidden="true" />
-              <span>{saveError.message}</span>
-            </div>
-          ) : 'invalid' === previewStatus || 'unavailable' === previewStatus ? (
+          {'invalid' === previewStatus || 'unavailable' === previewStatus ? (
             <div
               className="easymde-immersive-custom-css-notice is-info"
               role="status"
@@ -1061,6 +1052,17 @@ export function ImmersiveCustomCssDialog({
             </button>
           </div>
         </footer>
+        {saveError ? (
+          <div className="easymde-editor-message-alert-host">
+            <EditorMessageAlert
+              closeLabel={strings.close}
+              message={saveError.message}
+              messageId={noticeId}
+              onDismiss={() => setSaveError(null)}
+              type="error"
+            />
+          </div>
+        ) : null}
       </section>
     </div>
   );

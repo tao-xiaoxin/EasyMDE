@@ -1922,26 +1922,111 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-publish-dialog-footer > div { width: 100%; }
 }
 
-.easymde-editor-flash {
-    padding: 10px 14px;
-    border-bottom: 1px solid #dcdcde;
-    font-size: 13px;
-    font-weight: 600;
+.easymde-editor-message-alert-host {
+    position: fixed;
+    z-index: 100310;
+    top: max(101px, env(safe-area-inset-top));
+    left: 50%;
+    box-sizing: border-box;
+    width: min(802px, calc(100vw - 32px));
+    transform: translateX(-50%);
 }
 
-.easymde-editor-flash.is-success {
-    background: #e9f8ef;
-    color: #0f6b32;
+.easymde-editor-message-alert {
+    display: flex;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 77px;
+    align-items: center;
+    padding: 0 30px;
+    border: 1px solid;
+    border-radius: 15px;
+    color: #1a1b20;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 22.5px;
 }
 
-.easymde-editor-flash.is-error {
-    background: #fdecec;
-    color: #b32d2e;
+.easymde-editor-message-alert.is-success { border-color: #cad9d0; background: #e9edee; }
+.easymde-editor-message-alert.is-info { border-color: #becde9; background: #eaebf5; }
+.easymde-editor-message-alert.is-warning { border-color: #d9c6ba; background: #f0ebec; }
+.easymde-editor-message-alert.is-error { border-color: #e6bec0; background: #f2e9ed; }
+
+.easymde-editor-message-alert__icon {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    place-items: center;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 22px;
 }
 
-.easymde-editor-flash.is-info {
-    background: #eef6ff;
-    color: #0a4b78;
+.easymde-editor-message-alert.is-success .easymde-editor-message-alert__icon { background: #00c802; }
+.easymde-editor-message-alert.is-info .easymde-editor-message-alert__icon { background: #0b7dff; }
+.easymde-editor-message-alert.is-warning .easymde-editor-message-alert__icon { background: #ffac00; }
+.easymde-editor-message-alert.is-error .easymde-editor-message-alert__icon { background: #ff334e; }
+
+.easymde-editor-message-alert__message {
+    min-width: 0;
+    margin-inline-start: 18.75px;
+    overflow-wrap: anywhere;
+}
+
+.easymde-editor-message-alert__close {
+    display: grid;
+    box-sizing: border-box;
+    width: 26.25px;
+    height: 26.25px;
+    margin-inline-start: auto;
+    margin-inline-end: -2px;
+    padding: 0;
+    flex: 0 0 26.25px;
+    place-items: center;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: #7a8290;
+    cursor: pointer;
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to;
+    transition-duration: 150ms;
+    transition-timing-function: cubic-bezier(.4, 0, .2, 1);
+}
+
+.easymde-editor .easymde-editor-message-alert__close:hover {
+    background: rgba(255, 255, 255, .45);
+    color: #505968;
+}
+
+.easymde-editor .easymde-editor-message-alert__close:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px currentcolor;
+}
+
+@media (max-width: 600px) {
+    .easymde-editor-message-alert-host {
+        top: max(24px, env(safe-area-inset-top));
+        width: calc(100vw - 24px);
+    }
+
+    .easymde-editor-message-alert {
+        min-height: 64px;
+        padding: 10px 16px;
+    }
+
+    .easymde-editor-message-alert__message {
+        margin-inline-start: 12px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .easymde-editor-message-alert__close {
+        transition: none;
+    }
 }
 
 .easymde-draft-notice {

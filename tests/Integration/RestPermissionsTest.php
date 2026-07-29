@@ -243,6 +243,7 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $stored_library = get_user_meta($owner_id, 'easymde_custom_css_library', true);
         $this->assertSame('Owner Article', $stored_library[0]['article_theme_name']);
         $this->assertSame('Owner Code', $stored_library[0]['code_theme_name']);
+        $this->assertGreaterThan(0, $stored_library[0]['updated_at']);
         $this->assertArrayNotHasKey('name', $stored_library[0]);
         $this->assertArrayNotHasKey('articleThemeName', $stored_library[0]);
         $this->assertArrayNotHasKey('codeThemeName', $stored_library[0]);
@@ -326,13 +327,26 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $this->assertSame(200, $migrate_response->get_status());
         $this->assertSame('Migrated Article', $stored_library[0]['article_theme_name']);
         $this->assertSame('Migrated Code', $stored_library[0]['code_theme_name']);
+        $this->assertGreaterThan(0, $stored_library[0]['updated_at']);
         $this->assertArrayNotHasKey('name', $stored_library[0]);
         $this->assertArrayNotHasKey('updatedAt', $stored_library[0]);
+
+        $unicode_boundary = new WP_REST_Request('POST', '/easymde/v1/custom-css');
+        $unicode_boundary->set_body_params(
+            array(
+                'articleThemeName' => str_repeat("\xE6\x96\x87", 30),
+                'codeThemeName' => str_repeat("\xE7\xA0\x81", 30),
+                'css' => 'h2 { color: green; }',
+            )
+        );
+        $unicode_boundary_response = rest_do_request($unicode_boundary);
+
+        $this->assertSame(200, $unicode_boundary_response->get_status());
 
         $overlong_name = new WP_REST_Request('POST', '/easymde/v1/custom-css');
         $overlong_name->set_body_params(
             array(
-                'articleThemeName' => str_repeat('a', 31),
+                'articleThemeName' => str_repeat("\xE6\x96\x87", 31),
                 'codeThemeName' => 'Valid code name',
                 'css' => 'h2 { color: blue; }',
             )
@@ -345,7 +359,7 @@ final class RestPermissionsTest extends WP_UnitTestCase
         $overlong_name->set_body_params(
             array(
                 'articleThemeName' => 'Valid article name',
-                'codeThemeName' => str_repeat('b', 31),
+                'codeThemeName' => str_repeat("\xE7\xA0\x81", 31),
                 'css' => 'h2 { color: blue; }',
             )
         );

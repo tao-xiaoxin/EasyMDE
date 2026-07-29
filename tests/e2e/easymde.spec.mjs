@@ -1538,8 +1538,10 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(articleSelect).toContainText(customName);
 
     await selectOrdinaryOption(page, articleSelect, defaultArticleTheme.label);
+    await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue(defaultArticleTheme.id);
     await expect(page.locator('#easymde-code-theme-field')).toHaveValue(terminalNoir.id);
     await selectOrdinaryOption(page, articleSelect, customName);
+    await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('custom');
     await expect(page.locator('#easymde-code-theme-field')).toHaveValue(terminalNoir.id);
 
     await page.keyboard.press('Escape');

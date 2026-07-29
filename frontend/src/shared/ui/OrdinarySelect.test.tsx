@@ -201,6 +201,55 @@ describe('OrdinarySelect', () => {
     expect(listbox.style.top).toBe(initialTop);
   });
 
+  it('closes when an ancestor scroll clips its trigger out of view', async () => {
+    const user = userEvent.setup();
+    let triggerTop = 140;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function getBoundingClientRect(this: HTMLElement) {
+        if (this.classList.contains('easymde-ordinary-select-trigger')) {
+          return DOMRect.fromRect({
+            x: 120,
+            y: triggerTop,
+            width: 210,
+            height: 36
+          });
+        }
+        if (this.dataset.scrollOwner) {
+          return DOMRect.fromRect({
+            x: 80,
+            y: 100,
+            width: 300,
+            height: 180
+          });
+        }
+        return DOMRect.fromRect();
+      });
+
+    render(
+      <div data-scroll-owner="settings-panel">
+        <OrdinarySelect
+          label="Article theme"
+          onChange={vi.fn()}
+          options={options}
+          value="red"
+        />
+      </div>
+    );
+
+    const trigger = screen.getByRole('combobox', { name: 'Article theme' });
+    await user.click(trigger);
+    expect(screen.getByRole('listbox', { name: 'Article theme' })).not.toBeNull();
+
+    triggerTop = 40;
+    document.querySelector<HTMLElement>('[data-scroll-owner]')
+      ?.dispatchEvent(new Event('scroll'));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('listbox', { name: 'Article theme' })).toBeNull();
+    });
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('reveals the current named custom CSS option when a long list opens', async () => {
     const user = userEvent.setup();
     vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get')

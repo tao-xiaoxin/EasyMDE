@@ -1767,13 +1767,18 @@ test.describe('EasyMDE editor workflows', () => {
       }
       const tailBox = tail.getBoundingClientRect();
       const tailStyle = getComputedStyle(tail);
+      const panelEdgeGutter = 23;
+      const tailOffset = 7;
       const expectedTailCenter = Math.min(
-        panelBox.right - 23,
-        Math.max(panelBox.left + 23, triggerBox.left + triggerBox.width / 2)
+        panelBox.right - panelEdgeGutter,
+        Math.max(
+          panelBox.left + panelEdgeGutter,
+          triggerBox.left + triggerBox.width / 2
+        )
       );
       const expectedTailTop = tail.classList.contains('is-above')
-        ? panelBox.bottom - 7
-        : panelBox.top - 7;
+        ? panelBox.bottom - tailOffset
+        : panelBox.top - tailOffset;
       return {
         height: panelBox.height,
         overflow: {
@@ -2013,9 +2018,35 @@ test.describe('EasyMDE editor workflows', () => {
       for (const { id, label } of group.options) {
         await selectOrdinaryOption(page, fontSelect, label);
         await expect(page.locator(group.field)).toHaveValue(id);
-        await expect(
-          page.locator('.easymde-pane-preview article')
-        ).toHaveCSS('font-family', /.+/);
+        const expectedFontStack = await page.evaluate(() => {
+          const options = window.EasyMDEEditorRootBootstrap.fonts.options;
+          const selections = [
+            [options.customFonts, '#easymde-custom-font-field'],
+            [options.windowsFonts, '#easymde-windows-font-field'],
+            [options.appleFonts, '#easymde-apple-font-field'],
+            [options.serifOptions, '#easymde-serif-font-field']
+          ];
+          const seen = new Set();
+          const parts = [];
+          for (const [fontOptions, selector] of selections) {
+            const selected = document.querySelector(selector)?.value ?? '';
+            const family = fontOptions.find((option) => option.id === selected)
+              ?.fontFamily ?? '';
+            for (const part of family.split(',').map((value) => value.trim())) {
+              const key = part.toLowerCase();
+              if (part && !seen.has(key)) {
+                seen.add(key);
+                parts.push(part);
+              }
+            }
+          }
+          return parts.join(', ');
+        });
+        await expect.poll(() => page
+          .locator('.easymde-pane-preview article')
+          .evaluate((article) => article.style.getPropertyValue(
+            '--easymde-content-font-family'
+          ))).toBe(expectedFontStack);
       }
     }
 
@@ -2382,13 +2413,18 @@ test.describe('EasyMDE editor workflows', () => {
             throw new Error('editor-settings-tail-unavailable');
           }
           const tailBox = tail.getBoundingClientRect();
+          const panelEdgeGutter = 23;
+          const tailOffset = 7;
           const expectedTailCenter = Math.min(
-            panelBox.right - 23,
-            Math.max(panelBox.left + 23, triggerBox.left + triggerBox.width / 2)
+            panelBox.right - panelEdgeGutter,
+            Math.max(
+              panelBox.left + panelEdgeGutter,
+              triggerBox.left + triggerBox.width / 2
+            )
           );
           const expectedTailTop = tail.classList.contains('is-above')
-            ? panelBox.bottom - 7
-            : panelBox.top - 7;
+            ? panelBox.bottom - tailOffset
+            : panelBox.top - tailOffset;
           return {
             geometry: {
               innerWidth,

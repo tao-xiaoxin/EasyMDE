@@ -11,6 +11,9 @@ import {
 } from '../../../test/fixtures/appearance-bootstrap';
 import { OrdinaryEditorSettings } from './OrdinaryEditorSettings';
 
+const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+
 const appearance: AppearanceBootstrap = {
   articleThemes: [
     { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
@@ -108,6 +111,12 @@ function renderSettings() {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  if (originalInnerWidth) {
+    Object.defineProperty(window, 'innerWidth', originalInnerWidth);
+  }
+  if (originalInnerHeight) {
+    Object.defineProperty(window, 'innerHeight', originalInnerHeight);
+  }
 });
 
 describe('OrdinaryEditorSettings', () => {

@@ -350,7 +350,7 @@ describe('OrdinaryEditorSettings', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
 
     triggerTop = -100;
-    fireEvent.scroll(window);
+    fireEvent.scroll(document);
 
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     expect(

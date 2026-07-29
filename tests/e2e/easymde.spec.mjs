@@ -1521,6 +1521,11 @@ test.describe('EasyMDE editor workflows', () => {
         .getByRole('option', { name: customName, exact: true })
     ).toHaveAttribute('aria-selected', 'true');
     await page.keyboard.press('Escape');
+    await codeSelect.click();
+    const customCodeOption = page.getByRole('listbox', { name: labels.codeTheme })
+      .getByRole('option', { name: customCodeName, exact: true });
+    await expect(customCodeOption).toHaveAttribute('aria-selected', 'false');
+    await customCodeOption.click();
     await expect(codeSelect).toContainText(customCodeName);
     await expect(codeSelect).not.toContainText(customName);
     await expect(page.locator('body')).not.toContainText(removedCombinedName);

@@ -464,3 +464,26 @@
 .easymde-rendered-content.easymde-markdown-theme-lanqing .footnote-ref {
   color: #009688;
 }
+
+.easymde-rendered-content.easymde-markdown-theme-lanqing table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-lanqing table > thead,
+.easymde-rendered-content.easymde-markdown-theme-lanqing table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-lanqing table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-lanqing table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
+}

@@ -892,3 +892,26 @@
   text-align: center;
   padding-left: 5px;
 }
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson table > thead,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-red-crimson table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-red-crimson table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
+}

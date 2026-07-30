@@ -458,3 +458,26 @@
 .easymde-rendered-content.easymde-markdown-theme-green-vitality .footnote-ref {
   color: #35b378;
 }
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table > thead,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-green-vitality table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
+}

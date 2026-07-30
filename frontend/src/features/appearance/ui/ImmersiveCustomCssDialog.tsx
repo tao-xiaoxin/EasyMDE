@@ -37,14 +37,20 @@ type ThemeVariables = Record<CustomCssVariableId, string>;
 
 type ImmersiveCustomCssDialogProps = Readonly<{
   initialCss: string;
-  initialName: string;
-  onApply: (
-    input: Readonly<{ css: string; name: string }>
-  ) => Promise<Readonly<{ status: 'saved' }> | Readonly<{
-    status: 'failed';
-    code: 'duplicate-name' | 'save-failed';
-    message: string;
-  }>>;
+  initialArticleThemeName: string;
+  initialCodeThemeName: string;
+  onApply: (input: Readonly<{
+    articleThemeName: string;
+    codeThemeName: string;
+    css: string;
+  }>) => Promise<
+    Readonly<{ status: 'saved' }> |
+    Readonly<{
+      status: 'failed';
+      code: 'duplicate-name' | 'save-failed';
+      message: string;
+    }>
+  >;
   onClose: () => void;
   onPreview: (
     css: string,
@@ -54,6 +60,16 @@ type ImmersiveCustomCssDialogProps = Readonly<{
   title: string;
   variables: ReadonlyArray<CustomCssVariable>;
 }>;
+
+const CUSTOM_THEME_NAME_MAX_LENGTH = 30;
+
+function limitCustomThemeName(value: string): string {
+  return Array.from(value).slice(0, CUSTOM_THEME_NAME_MAX_LENGTH).join('');
+}
+
+function customThemeNameLength(value: string): number {
+  return Array.from(value).length;
+}
 
 const DEFAULT_THEME_VARIABLES: ThemeVariables = {
   primaryColor: '#3B82F6',
@@ -436,7 +452,8 @@ function CodeEditor({
 
 export function ImmersiveCustomCssDialog({
   initialCss,
-  initialName,
+  initialArticleThemeName,
+  initialCodeThemeName,
   onApply,
   onClose,
   onPreview,
@@ -459,9 +476,11 @@ export function ImmersiveCustomCssDialog({
   const savingRef = useRef(false);
   const restoreApplyFocusRef = useRef(false);
   const [articleName, setArticleName] = useState(
-    initialName || strings.defaultArticleName
+    initialArticleThemeName || strings.defaultArticleName
   );
-  const [codeName, setCodeName] = useState(strings.defaultCodeName);
+  const [codeName, setCodeName] = useState(
+    initialCodeThemeName || strings.defaultCodeName
+  );
   const [themeVariables, setThemeVariables] = useState<ThemeVariables>({
     ...DEFAULT_THEME_VARIABLES
   });
@@ -619,7 +638,8 @@ export function ImmersiveCustomCssDialog({
     setSaveError(null);
     try {
       const result = await onApply({
-        name: `${articleName.trim()} / ${codeName.trim()}`,
+        articleThemeName: articleName.trim(),
+        codeThemeName: codeName.trim(),
         css: buildImmersiveCustomCss(
           themeVariables,
           articleCustomCss,
@@ -692,16 +712,15 @@ export function ImmersiveCustomCssDialog({
               }
               disabled={isSaving}
               value={articleName}
-              maxLength={30}
               placeholder={strings.articleNamePlaceholder}
               onChange={(event) => {
-                setArticleName(event.currentTarget.value);
+                setArticleName(limitCustomThemeName(event.currentTarget.value));
                 setSaveError((current) =>
                   'duplicate-name' === current?.code ? null : current
                 );
               }}
             />
-            <span>{articleName.length}/30</span>
+            <span>{customThemeNameLength(articleName)}/30</span>
           </div>
           <label htmlFor={codeNameId}>{strings.codeThemeName}</label>
           <div>
@@ -715,16 +734,15 @@ export function ImmersiveCustomCssDialog({
               }
               disabled={isSaving}
               value={codeName}
-              maxLength={30}
               placeholder={strings.codeNamePlaceholder}
               onChange={(event) => {
-                setCodeName(event.currentTarget.value);
+                setCodeName(limitCustomThemeName(event.currentTarget.value));
                 setSaveError((current) =>
                   'duplicate-name' === current?.code ? null : current
                 );
               }}
             />
-            <span>{codeName.length}/30</span>
+            <span>{customThemeNameLength(codeName)}/30</span>
           </div>
           <div
             className={`easymde-immersive-custom-css-validity${

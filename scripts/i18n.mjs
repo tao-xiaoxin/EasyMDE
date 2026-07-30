@@ -175,6 +175,12 @@ function stripGeneratedPotHeader(content) {
 	return content.slice(bodyStart + 2).trim();
 }
 
+function normalizePotSourceReferences(content) {
+	return content.replace(/^#: .*$/gm, (reference) =>
+		reference.replaceAll("\\", "/"),
+	);
+}
+
 export function makePot(options = {}) {
 	const root = options.root || defaultRoot;
 	const output = options.output || fromRoot(root, potPath);
@@ -231,8 +237,8 @@ export function makePot(options = {}) {
 			}
 			mergedCatalog = mergedBodyPath;
 		}
-		const body = stripGeneratedPotHeader(
-			readFileSync(mergedCatalog, "utf8"),
+		const body = normalizePotSourceReferences(
+			stripGeneratedPotHeader(readFileSync(mergedCatalog, "utf8")),
 		);
 		if (!body) {
 			throw new Error("POT generation produced no messages.");

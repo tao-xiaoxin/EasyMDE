@@ -124,14 +124,36 @@ function runWp(args, options = {}) {
 }
 
 async function selectOrdinaryOption(page, combobox, optionLabel) {
-  await combobox.click();
+  await combobox.focus();
+  await expect(combobox).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(combobox).toHaveAttribute('aria-expanded', 'true');
   const listboxId = await combobox.getAttribute('aria-controls');
   if (!listboxId) {
     throw new Error('ordinary-select-listbox-owner-unavailable');
   }
-  await page.locator(`[id=${JSON.stringify(listboxId)}]`)
-    .getByRole('option', { name: optionLabel, exact: true })
-    .click();
+  const options = page.locator(`[id=${JSON.stringify(listboxId)}] [role="option"]`);
+  const optionLabels = (await options.allTextContents()).map((label) => label.trim());
+  const optionIndex = optionLabels.indexOf(optionLabel);
+  if (-1 === optionIndex) {
+    throw new Error(`ordinary-select-option-unavailable:${optionLabel}`);
+  }
+  const lastOptionIndex = optionLabels.length - 1;
+  const startAtEnd = optionIndex > lastOptionIndex / 2;
+  await page.keyboard.press(startAtEnd ? 'End' : 'Home');
+  const distance = startAtEnd
+    ? lastOptionIndex - optionIndex
+    : optionIndex;
+  for (let index = 0; index < distance; index += 1) {
+    await page.keyboard.press(startAtEnd ? 'ArrowUp' : 'ArrowDown');
+  }
+  const optionId = await options.nth(optionIndex).getAttribute('id');
+  if (!optionId) {
+    throw new Error('ordinary-select-option-id-unavailable');
+  }
+  await expect(combobox).toHaveAttribute('aria-activedescendant', optionId);
+  await page.keyboard.press('Enter');
+  await expect(combobox).toHaveAttribute('aria-expanded', 'false');
   await expect(combobox).toContainText(optionLabel);
 }
 
@@ -1179,22 +1201,27 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
+    test.setTimeout(180_000);
     const user = testInfo.easymdeUser;
     const customThemeSuffix = randomUUID().slice(0, 8);
     const customName = 'E2E CSS ' + customThemeSuffix;
     const customCodeName = 'E2E Code ' + customThemeSuffix;
-    const savedCustomName = `${customName} / ${customCodeName}`;
+    const removedCombinedName = `${customName} / ${customCodeName}`;
     const customCss = 'p { color: rgb(1, 2, 3); }';
 
     await login(page, user);
     await openEasyMdeNewPost(page);
+    const fixtureCatalog = await editorThemeCatalog(page);
+    const markdown = canonicalMarkdownForSite(fixtureCatalog.localFixtureImage)
+      + '\n\n```js\n'
+      + `const longValue = "${'x'.repeat(240)}";\n`
+      + '```';
     await fillMarkdownAndWaitForPreview(
       page,
-      '# Appearance\n\n```js\nconst terminal = true;\n'
-        + `const longValue = "${'x'.repeat(240)}";\n`
-        + '```\n\nPreview paragraph.',
-      'Preview paragraph.'
+      markdown,
+      'Markdown 全量能力测试文档'
     );
+    await expectRenderedFixture(page, '.easymde-pane-preview article');
 
     const labels = await page.evaluate(() => ({
       appearance: window.EasyMDEEditorRootBootstrap.appearance.strings.appearance,
@@ -1325,7 +1352,9 @@ test.describe('EasyMDE editor workflows', () => {
     });
     const articleThemeLink = page.locator('#easymde-article-theme-css');
     const codeThemeLink = page.locator('#easymde-highlight-theme-css');
-    const previewCode = page.locator('.easymde-pane-preview article pre code.hljs').first();
+    const previewCode = page.locator('.easymde-pane-preview article pre code.hljs')
+      .filter({ hasText: 'const longValue' })
+      .first();
     const codeGeometry = () => previewCode.evaluate((code) => {
       const frame = code.parentElement;
       const frameStyle = getComputedStyle(frame);
@@ -1507,13 +1536,79 @@ test.describe('EasyMDE editor workflows', () => {
 
     await settingsTrigger.click();
     await expect(settingsDialog).toBeVisible();
-    await expect(articleSelect).toContainText(savedCustomName);
+    await expect(articleSelect).toContainText(customName);
+    await expect(articleSelect).not.toContainText(customCodeName);
     await articleSelect.click();
     await expect(
       page.getByRole('listbox', { name: labels.articleTheme })
-        .getByRole('option', { name: savedCustomName, exact: true })
+        .getByRole('option', { name: customName, exact: true })
     ).toHaveAttribute('aria-selected', 'true');
     await page.keyboard.press('Escape');
+    await codeSelect.click();
+    const customCodeOption = page.getByRole('listbox', { name: labels.codeTheme })
+      .getByRole('option', { name: customCodeName, exact: true });
+    await expect(customCodeOption).toHaveAttribute('aria-selected', 'false');
+    await customCodeOption.click();
+    await expect(codeSelect).toContainText(customCodeName);
+    await expect(codeSelect).not.toContainText(customName);
+    await expect(page.locator('body')).not.toContainText(removedCombinedName);
+
+    await selectOrdinaryOption(page, codeSelect, terminalNoir.label);
+    await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('custom');
+    await expect(page.locator('#easymde-custom-css-id-field')).not.toHaveValue('');
+    await expect(page.locator('#easymde-code-theme-field')).toHaveValue(terminalNoir.id);
+    await expect(articleSelect).toContainText(customName);
+
+    await selectOrdinaryOption(page, articleSelect, defaultArticleTheme.label);
+    await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue(defaultArticleTheme.id);
+    await expect(page.locator('#easymde-code-theme-field')).toHaveValue(terminalNoir.id);
+    await selectOrdinaryOption(page, articleSelect, customName);
+    await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('custom');
+    await expect(page.locator('#easymde-code-theme-field')).toHaveValue(terminalNoir.id);
+
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: labels.immersive.enter }).click();
+    const refreshedImmersiveRegion = page.getByRole('region', {
+      name: labels.immersive.immersive
+    });
+    await refreshedImmersiveRegion
+      .getByRole('button', { name: labels.immersive.theme })
+      .click();
+    const refreshedImmersiveAppearance = page.getByRole('dialog', {
+      name: labels.immersive.themeSettings
+    });
+    await expect(
+      refreshedImmersiveAppearance.getByRole('button', {
+        name: labels.articleTheme
+      })
+    ).toContainText(customName);
+    await expect(
+      refreshedImmersiveAppearance.getByRole('button', {
+        name: labels.codeTheme
+      })
+    ).toContainText(terminalNoir.label);
+    await page.keyboard.press('Escape');
+    await refreshedImmersiveRegion
+      .getByRole('button', { name: labels.immersive.exit })
+      .click();
+
+    const postId = await currentPostId(page);
+    const savedNavigation = page.waitForNavigation({ waitUntil: 'load' });
+    await page.locator('#save-post').click();
+    await savedNavigation;
+    expect(postMetaValue(postId, '_easymde_markdown_theme')).toBe('custom');
+    expect(postMetaValue(postId, '_easymde_code_theme')).toBe(terminalNoir.id);
+    expect(postMetaValue(postId, '_easymde_custom_css_id')).not.toBe('');
+    await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('custom');
+    await expect(page.locator('#easymde-code-theme-field')).toHaveValue(terminalNoir.id);
+
+    await settingsTrigger.focus();
+    await expect(settingsTrigger).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(settingsDialog).toBeVisible();
+    await expect(articleSelect).toContainText(customName);
+    await expect(codeSelect).toContainText(terminalNoir.label);
+    await expect(page.locator('body')).not.toContainText(removedCombinedName);
     for (const group of catalog.fontGroups) {
       const fontSelect = settingsDialog.locator(group.select).getByRole('combobox');
       for (const { id, label } of group.options) {
@@ -1558,7 +1653,13 @@ test.describe('EasyMDE editor workflows', () => {
     const scrollSettingsPanel = page.locator(
       '.easymde-toolbar-popover-settings-panel'
     );
-    await scrollSettingsTrigger.scrollIntoViewIfNeeded();
+    await scrollSettingsTrigger.evaluate((trigger) => {
+      trigger.scrollIntoView({ block: 'center' });
+    });
+    await expect.poll(() => scrollSettingsTrigger.evaluate((trigger) => {
+      const rect = trigger.getBoundingClientRect();
+      return rect.bottom > 0 && rect.top < innerHeight;
+    })).toBe(true);
     await expect(scrollSettingsPanel).toBeVisible();
     await page.evaluate(() => {
       window.scrollTo(0, document.documentElement.scrollHeight);

@@ -38,17 +38,24 @@ final class CustomCssController {
 				'callback'            => array( $this, 'handle_save_request' ),
 				'permission_callback' => array( $this->capabilities, 'can_manage_custom_css' ),
 				'args'                => array(
-					'id'   => array(
+					'id'               => array(
 						'type'              => 'string',
 						'required'          => false,
 						'sanitize_callback' => 'sanitize_key',
 					),
-					'name' => array(
+					'articleThemeName' => array(
 						'type'              => 'string',
 						'required'          => true,
+						'maxLength'         => 30,
 						'sanitize_callback' => 'sanitize_text_field',
 					),
-					'css'  => array(
+					'codeThemeName'    => array(
+						'type'              => 'string',
+						'required'          => true,
+						'maxLength'         => 30,
+						'sanitize_callback' => 'sanitize_text_field',
+					),
+					'css'              => array(
 						'type'              => 'string',
 						'required'          => true,
 						'sanitize_callback' => array( $this, 'sanitize_css_input' ),
@@ -99,16 +106,19 @@ final class CustomCssController {
 	}
 
 	public function handle_save_request( WP_REST_Request $request ) {
-		$user_id = get_current_user_id();
-		$name    = sanitize_text_field( (string) $request->get_param( 'name' ) );
-		$id      = sanitize_key( (string) $request->get_param( 'id' ) );
-		$css     = $this->custom_css_policy->normalize_for_storage( (string) $request->get_param( 'css' ) );
+		$user_id            = get_current_user_id();
+		$article_theme_name = sanitize_text_field( (string) $request->get_param( 'articleThemeName' ) );
+		$code_theme_name    = sanitize_text_field( (string) $request->get_param( 'codeThemeName' ) );
+		$id                 = sanitize_key( (string) $request->get_param( 'id' ) );
+		$css                = $this->custom_css_policy->normalize_for_storage( (string) $request->get_param( 'css' ) );
+		$valid_article_name = 1 === preg_match( '/^.{1,30}$/us', $article_theme_name );
+		$valid_code_name    = 1 === preg_match( '/^.{1,30}$/us', $code_theme_name );
 
 		if ( is_wp_error( $css ) ) {
 			return $css;
 		}
 
-		if ( '' === $name || '' === trim( $css ) ) {
+		if ( ! $valid_article_name || ! $valid_code_name || '' === trim( $css ) ) {
 			return new WP_Error(
 				'easymde_invalid_custom_css',
 				__( 'CSS name and CSS content are required.', 'easymde' ),
@@ -116,14 +126,29 @@ final class CustomCssController {
 			);
 		}
 
-		$library      = $this->theme_state_repository->get_custom_css_library( $user_id );
-		$name_changed = ! isset( $library[ $id ] ) || $library[ $id ]['name'] !== $name;
+		$library              = $this->theme_state_repository->get_custom_css_library( $user_id );
+		$article_name_changed = ! isset( $library[ $id ] )
+			|| $library[ $id ]['article_theme_name'] !== $article_theme_name;
+		$code_name_changed    = ! isset( $library[ $id ] )
+			|| $library[ $id ]['code_theme_name'] !== $code_theme_name;
 		if ( '' === $id || ! isset( $library[ $id ] ) ) {
-			$id = $this->theme_state_repository->unique_custom_css_id( $name, $library );
+			$id = $this->theme_state_repository->unique_custom_css_id( $article_theme_name, $library );
 		}
 
 		foreach ( $library as $existing_id => $item ) {
-			if ( $name_changed && $existing_id !== $id && $this->custom_css_names_match( $item['name'], $name ) ) {
+			if (
+				$existing_id !== $id
+				&& (
+					(
+						$article_name_changed
+						&& $this->custom_css_names_match( $item['article_theme_name'], $article_theme_name )
+					)
+					|| (
+						$code_name_changed
+						&& $this->custom_css_names_match( $item['code_theme_name'], $code_theme_name )
+					)
+				)
+			) {
 				return new WP_Error(
 					'easymde_duplicate_custom_css_name',
 					__( 'A theme with this name already exists. Please choose another name and try again.', 'easymde' ),
@@ -133,10 +158,11 @@ final class CustomCssController {
 		}
 
 		$library[ $id ] = array(
-			'id'        => $id,
-			'name'      => $name,
-			'css'       => $css,
-			'updatedAt' => time(),
+			'id'                 => $id,
+			'article_theme_name' => $article_theme_name,
+			'code_theme_name'    => $code_theme_name,
+			'css'                => $css,
+			'updated_at'         => time(),
 		);
 
 		$this->theme_state_repository->update_custom_css_library( $user_id, $library );

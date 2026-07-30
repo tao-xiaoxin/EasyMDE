@@ -23,9 +23,10 @@ function fixture() {
     codeThemeExplicit: false,
     codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
     customCss: [{
+      articleThemeName: 'Writer Article',
+      codeThemeName: 'Writer Code',
       css: '.note { color: navy; }',
       id: 'writer-css',
-      name: 'Writer CSS',
       scopedCss: '.easymde-rendered-content .note { color: navy; }'
     }],
     customCssVariables,
@@ -118,17 +119,28 @@ describe('createWordPressAppearancePort', () => {
     const options = fixture();
     options.apiFetch.mockResolvedValue({
       customCss: [{
-        css: '.saved { color: green; }', id: 'saved-css', name: 'Saved CSS',
+        articleThemeName: 'Saved Article', codeThemeName: 'Saved Code',
+        css: '.saved { color: green; }', id: 'saved-css',
         scopedCss: '.easymde-rendered-content .saved { color: green; }'
       }],
       item: { id: 'saved-css' }
     });
     const port = createWordPressAppearancePort(options);
 
-    await expect(port.saveCustomCss({ css: '.saved { color: green; }', id: '', name: 'Saved CSS' }))
+    await expect(port.saveCustomCss({
+      articleThemeName: 'Saved Article',
+      codeThemeName: 'Saved Code',
+      css: '.saved { color: green; }',
+      id: ''
+    }))
       .resolves.toMatchObject({ status: 'saved', snapshot: { state: { customCssId: 'saved-css' } } });
     expect(options.apiFetch).toHaveBeenCalledWith({
-      data: { css: '.saved { color: green; }', id: '', name: 'Saved CSS' },
+      data: {
+        articleThemeName: 'Saved Article',
+        codeThemeName: 'Saved Code',
+        css: '.saved { color: green; }',
+        id: ''
+      },
       headers: { 'X-WP-Nonce': 'synthetic-nonce' },
       method: 'POST',
       url: 'https://example.test/wp-json/easymde/v1/custom-css'
@@ -144,9 +156,10 @@ describe('createWordPressAppearancePort', () => {
     const port = createWordPressAppearancePort(options);
 
     await expect(port.saveCustomCss({
+      articleThemeName: 'Saved Article',
+      codeThemeName: 'Saved Code',
       css: '.saved { color: green; }',
-      id: '',
-      name: 'Saved CSS'
+      id: ''
     })).resolves.toEqual({
       code: 'easymde_duplicate_custom_css_name',
       status: 'failed'
@@ -162,9 +175,10 @@ describe('createWordPressAppearancePort', () => {
     const port = createWordPressAppearancePort(options);
 
     await expect(port.saveCustomCss({
+      articleThemeName: 'Saved Article',
+      codeThemeName: 'Saved Code',
       css: '.saved { color: green; }',
-      id: '',
-      name: 'Saved CSS'
+      id: ''
     })).resolves.toEqual({
       code: 'custom-css-save-failed',
       status: 'failed'

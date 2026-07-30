@@ -223,18 +223,22 @@ export function OrdinaryEditorSettings({
         setPanelPosition(settingsPanelPosition(trigger, panel));
       }
     };
+    const repositionForScroll = (event: Event) => {
+      if (event.target === panelRef.current) return;
+      reposition();
+    };
 
     documentRef.addEventListener('click', closeForPointer);
+    documentRef.addEventListener('scroll', repositionForScroll, true);
     windowRef.addEventListener('keydown', closeForEscape);
     windowRef.addEventListener('keydown', containKeyboardFocus, true);
     windowRef.addEventListener('resize', reposition);
-    windowRef.addEventListener('scroll', reposition, true);
     return () => {
       documentRef.removeEventListener('click', closeForPointer);
+      documentRef.removeEventListener('scroll', repositionForScroll, true);
       windowRef.removeEventListener('keydown', closeForEscape);
       windowRef.removeEventListener('keydown', containKeyboardFocus, true);
       windowRef.removeEventListener('resize', reposition);
-      windowRef.removeEventListener('scroll', reposition, true);
     };
   }, [isOpen]);
 

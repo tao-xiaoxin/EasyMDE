@@ -2293,9 +2293,6 @@ test.describe('EasyMDE editor workflows', () => {
       scrollingElement.dispatchEvent(new Event('scroll', { bubbles: true }));
       window.dispatchEvent(new Event('scroll'));
     });
-    await page.evaluate(() => new Promise((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(resolve));
-    }));
     await expect.poll(() => scrollSettingsTrigger.evaluate((trigger) => {
       const rect = trigger.getBoundingClientRect();
       return rect.bottom <= 0 || rect.top >= innerHeight;

@@ -11,6 +11,9 @@ import {
 } from '../../../test/fixtures/appearance-bootstrap';
 import { OrdinaryEditorSettings } from './OrdinaryEditorSettings';
 
+const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+
 const appearance: AppearanceBootstrap = {
   articleThemes: [
     { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
@@ -109,6 +112,12 @@ function renderSettings() {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  if (originalInnerWidth) {
+    Object.defineProperty(window, 'innerWidth', originalInnerWidth);
+  }
+  if (originalInnerHeight) {
+    Object.defineProperty(window, 'innerHeight', originalInnerHeight);
+  }
 });
 
 describe('OrdinaryEditorSettings', () => {
@@ -219,7 +228,7 @@ describe('OrdinaryEditorSettings', () => {
         if (this.classList.contains('easymde-toolbar-settings-trigger')) {
           return DOMRect.fromRect({
             x: 911,
-            y: 324,
+            y: 200,
             width: 38,
             height: 36
           });
@@ -232,6 +241,18 @@ describe('OrdinaryEditorSettings', () => {
           ? 388
           : 0;
       });
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get')
+      .mockImplementation(function clientHeight(this: HTMLElement) {
+        return this.classList.contains('easymde-toolbar-popover-settings-panel')
+          ? 388
+          : 0;
+      });
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get')
+      .mockImplementation(function offsetHeight(this: HTMLElement) {
+        return this.classList.contains('easymde-toolbar-popover-settings-panel')
+          ? 390
+          : 0;
+      });
 
     renderSettings();
     await user.click(screen.getByRole('button', { name: 'Editor settings' }));
@@ -241,6 +262,7 @@ describe('OrdinaryEditorSettings', () => {
 
     expect(panel.style.position).toBe('fixed');
     expect(panel.style.width).toBe('468px');
+    expect(maxHeight).toBe(390);
     expect(top).toBeGreaterThanOrEqual(12);
     expect(top + maxHeight).toBeLessThanOrEqual(708);
     expect(
@@ -290,5 +312,52 @@ describe('OrdinaryEditorSettings', () => {
     expect(top + maxHeight).toBeLessThan(650);
     expect(tail).not.toBeNull();
     expect(Number.parseFloat(tail?.style.top ?? '')).toBe(top + maxHeight - 7);
+  });
+
+  it('closes the fixed panel when scrolling moves its trigger outside the viewport', async () => {
+    const user = userEvent.setup();
+    let triggerTop = 200;
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1280
+    });
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 720
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function getBoundingClientRect(this: HTMLElement) {
+        if (this.classList.contains('easymde-toolbar-settings-trigger')) {
+          return DOMRect.fromRect({
+            x: 911,
+            y: triggerTop,
+            width: 38,
+            height: 36
+          });
+        }
+        return DOMRect.fromRect();
+      });
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get')
+      .mockImplementation(function scrollHeight(this: HTMLElement) {
+        return this.classList.contains('easymde-toolbar-popover-settings-panel')
+          ? 388
+          : 0;
+      });
+
+    renderSettings();
+    const trigger = screen.getByRole('button', { name: 'Editor settings' });
+    await user.click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+
+    triggerTop = -100;
+    fireEvent.scroll(window);
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(
+      screen.queryByRole('dialog', { name: 'Editor settings' })
+    ).toBeNull();
+    expect(
+      document.querySelector('.easymde-editor-settings-tail')
+    ).toBeNull();
   });
 });

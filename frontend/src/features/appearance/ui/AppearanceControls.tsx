@@ -756,18 +756,7 @@ export function AppearanceControls({
               className="easymde-theme-select"
               label={bootstrap.strings.articleTheme}
               value={selectedArticleValue(snapshot)}
-              options={[
-                ...bootstrap.articleThemes.map((theme) => ({
-                  id: `theme:${theme.id}`,
-                  label: theme.label,
-                  swatch: articleThemeAccent(theme.id)
-                })),
-                ...snapshot.customCss.map((item) => ({
-                  id: `custom:${item.id}`,
-                  label: item.name,
-                  swatch: '#DC2626'
-                }))
-              ]}
+              options={articleOptions}
               onChange={selectArticleTheme}
             />
           </div>
@@ -911,30 +900,7 @@ export function AppearanceControls({
                 label={bootstrap.strings.articleTheme}
                 value={selectedArticleValue(snapshot)}
                 options={articleOptions}
-                onChange={(value) => {
-                  if (value.startsWith('custom:')) {
-                    applyState({
-                      ...snapshotRef.current.state,
-                      markdownTheme: 'custom',
-                      codeTheme: customCssCodeTheme(
-                        bootstrap,
-                        snapshotRef.current.state.codeTheme,
-                        codeThemeExplicitRef.current
-                      ),
-                      customCssId: value.slice(7)
-                    });
-                  } else {
-                    const markdownTheme = value.slice(6);
-                    applyState({
-                      ...snapshotRef.current.state,
-                      markdownTheme,
-                      codeTheme: codeThemeExplicitRef.current
-                        ? snapshotRef.current.state.codeTheme
-                        : associatedCodeTheme(bootstrap, markdownTheme),
-                      customCssId: ''
-                    });
-                  }
-                }}
+                onChange={selectArticleTheme}
               />
               <ImmersiveThemeSelect
                 label={bootstrap.strings.codeTheme}

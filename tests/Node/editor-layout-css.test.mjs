@@ -4,6 +4,26 @@ import test from 'node:test';
 
 const css = readFileSync(new URL('../../assets/css/admin/editor.css', import.meta.url), 'utf8');
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function cssRule(source, selector) {
+  const match = source.match(new RegExp(`${escapeRegExp(selector)}\\s*\\{(?<body>[^}]*)\\}`, 's'));
+  assert.ok(match?.groups?.body, `Missing CSS rule: ${selector}`);
+  return match.groups.body;
+}
+
+function assertDeclaration(rule, property, valuePattern) {
+  const pattern = valuePattern instanceof RegExp
+    ? valuePattern.source
+    : escapeRegExp(valuePattern);
+  assert.match(
+    rule,
+    new RegExp(`${escapeRegExp(property)}:\\s*${pattern};`, 's')
+  );
+}
+
 test('immersive Custom CSS expanded editor is anchored to its dialog', () => {
   assert.match(
     css,
@@ -150,13 +170,26 @@ test('ordinary Preview owns vertical scrolling and fits wide table content', () 
 });
 
 test('ordinary Preview provides an editorial reading rhythm without changing immersive Preview', () => {
-  assert.match(
+  const previewRule = cssRule(
     css,
-    /\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\s*\{[^}]*padding-block:\s*0;[^}]*padding-inline:\s*calc\(max\(clamp\(14px, 4\.5%, 22px\), calc\(\(100% - 680px\) \/ 4\)\) - 5px\);[^}]*background-image:\s*none;[^}]*scroll-padding-block:\s*0;[^}]*scroll-padding-inline:\s*calc\(max\(clamp\(14px, 4\.5%, 22px\), calc\(\(100% - 680px\) \/ 4\)\) - 5px\);/s
+    '.easymde-editor:not(.is-immersive) .easymde-preview'
+  );
+  assertDeclaration(previewRule, 'padding-block', '0');
+  assertDeclaration(
+    previewRule,
+    'padding-inline',
+    'calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px)'
+  );
+  assertDeclaration(previewRule, 'background-image', 'none');
+  assertDeclaration(previewRule, 'scroll-padding-block', '0');
+  assertDeclaration(
+    previewRule,
+    'scroll-padding-inline',
+    'calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px)'
   );
   assert.match(
     css,
-    /@media \(max-width:\s*782px\)[\s\S]*?\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\s*\{[^}]*padding-block:\s*0;[^}]*padding-inline:\s*5px;/s
+    /@media \(max-width:\s*782px\)[\s\S]*?\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\s*\{[^}]*padding-block:\s*0;[^}]*padding-inline:\s*5px;[^}]*scroll-padding-block:\s*0;[^}]*scroll-padding-inline:\s*5px;/s
   );
   assert.doesNotMatch(
     css,
@@ -193,9 +226,34 @@ test('ordinary editor settings combines theme and font controls in one responsiv
     popover,
     /\.easymde-editor-settings-tail\.is-above\s*\{[^}]*border-right:\s*1px solid #dfe4ea;[^}]*border-bottom:\s*1px solid #dfe4ea;/s
   );
-  assert.match(
+  const optionsRule = cssRule(
     popover,
-    /\.easymde-ordinary-select-options\s*\{[^}]*border:\s*1px solid rgba\(255, 255, 255, \.72\);[^}]*background:\s*rgba\(255, 255, 255, \.78\);[^}]*-webkit-backdrop-filter:\s*blur\(18px\) saturate\(150%\);[^}]*backdrop-filter:\s*blur\(18px\) saturate\(150%\);[^}]*box-shadow:\s*0 14px 32px rgba\(15, 23, 42, \.18\), inset 0 1px 0 rgba\(255, 255, 255, \.85\);/s
+    '.easymde-ordinary-select-options'
+  );
+  assertDeclaration(
+    optionsRule,
+    'border',
+    '1px solid rgba(255, 255, 255, .72)'
+  );
+  assertDeclaration(
+    optionsRule,
+    'background',
+    'rgba(255, 255, 255, .78)'
+  );
+  assertDeclaration(
+    optionsRule,
+    '-webkit-backdrop-filter',
+    'blur(18px) saturate(150%)'
+  );
+  assertDeclaration(
+    optionsRule,
+    'backdrop-filter',
+    'blur(18px) saturate(150%)'
+  );
+  assertDeclaration(
+    optionsRule,
+    'box-shadow',
+    '0 14px 32px rgba(15, 23, 42, .18), inset 0 1px 0 rgba(255, 255, 255, .85)'
   );
   assert.match(
     popover,

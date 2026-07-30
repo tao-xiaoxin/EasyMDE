@@ -57,6 +57,44 @@ function fixture() {
 }
 
 describe('createWordPressAppearancePort', () => {
+  it('applies the saved appearance before the first user interaction', () => {
+    const options = fixture();
+    options.bootstrap = {
+      ...options.bootstrap,
+      codeThemeExplicit: true,
+      state: {
+        codeTheme: 'atom-one-dark',
+        customCssId: 'writer-css',
+        markdownTheme: 'custom'
+      }
+    };
+
+    createWordPressAppearancePort(options);
+
+    expect(options.fields.markdownTheme.value).toBe('custom');
+    expect(options.fields.codeTheme.value).toBe('atom-one-dark');
+    expect(options.fields.codeThemeExplicit.value).toBe('1');
+    expect(options.fields.customCssId.value).toBe('writer-css');
+    expect(document.querySelector<HTMLStyleElement>('#easymde-custom-css-preview')?.textContent)
+      .toBe('.easymde-rendered-content .note { color: navy; }');
+  });
+
+  it('fails fast when Bootstrap references unavailable Custom CSS', () => {
+    const options = fixture();
+    options.bootstrap = {
+      ...options.bootstrap,
+      customCss: [],
+      state: {
+        codeTheme: 'atom-one-dark',
+        customCssId: 'missing-css',
+        markdownTheme: 'custom'
+      }
+    };
+
+    expect(() => createWordPressAppearancePort(options))
+      .toThrowError('appearance-custom-css-unavailable');
+  });
+
   it('updates only delegated fields and local preview assets', () => {
     const options = fixture();
     const port = createWordPressAppearancePort(options);

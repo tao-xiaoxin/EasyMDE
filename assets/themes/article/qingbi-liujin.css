@@ -34,6 +34,10 @@
   margin-top: 0 !important;
 }
 
+.easymde-rendered-content.easymde-markdown-theme-qingbi-liujin > h1:first-child {
+  margin-top: 30px !important;
+}
+
 .easymde-rendered-content.easymde-markdown-theme-qingbi-liujin > :not(pre):last-child {
   margin-bottom: 0 !important;
 }
@@ -70,7 +74,8 @@
 
 .easymde-rendered-content.easymde-markdown-theme-qingbi-liujin h1 {
   color: var(--easymde-qingbi-heading);
-  font-size: 28px;
+  font-size: 24px;
+  line-height: 1.25;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-qingbi-liujin h2 {

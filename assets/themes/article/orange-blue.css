@@ -563,3 +563,26 @@
 .easymde-rendered-content.easymde-markdown-theme-orange-blue .table-container::-webkit-scrollbar {
   height: 4px;
 }
+
+.easymde-rendered-content.easymde-markdown-theme-orange-blue table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-blue table > thead,
+.easymde-rendered-content.easymde-markdown-theme-orange-blue table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-orange-blue table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-orange-blue table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
+}

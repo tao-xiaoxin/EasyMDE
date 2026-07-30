@@ -553,3 +553,26 @@
   box-shadow: none;
   border-radius: 0;
 }
+
+.easymde-rendered-content.easymde-markdown-theme-minimal-black table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-minimal-black table > thead,
+.easymde-rendered-content.easymde-markdown-theme-minimal-black table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-minimal-black table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-minimal-black table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
+}

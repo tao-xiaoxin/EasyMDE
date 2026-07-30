@@ -456,3 +456,26 @@
 .easymde-rendered-content.easymde-markdown-theme-nenqing-green .footnote-item em {
   color: black;
 }
+
+.easymde-rendered-content.easymde-markdown-theme-nenqing-green table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-nenqing-green table > thead,
+.easymde-rendered-content.easymde-markdown-theme-nenqing-green table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-nenqing-green table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-nenqing-green table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
+}

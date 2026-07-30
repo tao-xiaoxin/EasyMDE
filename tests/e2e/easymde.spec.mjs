@@ -12,6 +12,10 @@ const fullCapabilityMarkdown = readFileSync(
   new URL('../../docs/examples/markdown-full-capability-test.md', import.meta.url),
   'utf8'
 );
+const fullCapabilityImage = readFileSync(
+  new URL('../../docs/assets/easymde-logo-rounded.png', import.meta.url)
+);
+const longFixtureHeadingPrefix = '超长中英文标题用于验证狭窄预览容器';
 const managedRuntimeAssets = [
   {
     key: 'codeFrameCss',
@@ -314,16 +318,27 @@ function canonicalMarkdownForSite(pluginAssetUrl) {
   );
 }
 
+async function canonicalMarkdownForPage(page) {
+  const fixtureImageUrl = new URL(
+    '/easymde-e2e-fixtures/markdown-full-capability-image.png',
+    page.url()
+  ).href;
+
+  await page.route(fixtureImageUrl, (route) => route.fulfill({
+    status: 200,
+    contentType: 'image/png',
+    body: fullCapabilityImage
+  }));
+
+  return canonicalMarkdownForSite(fixtureImageUrl);
+}
+
 async function editorThemeCatalog(page) {
   return page.evaluate(() => ({
     articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
-      .map(({ id, cssUrl }) => ({ id, cssUrl })),
+      .map(({ id, label, cssUrl }) => ({ id, label, cssUrl })),
     codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes
-      .map(({ id, cssUrl }) => ({ id, cssUrl })),
-    localFixtureImage: new URL(
-      '../../../docs/assets/easymde-logo-rounded.png',
-      window.EasyMDEEditorRootBootstrap.previewEnhancement.assets.codeFrameCssUrl
-    ).href
+      .map(({ id, cssUrl }) => ({ id, cssUrl }))
   }));
 }
 
@@ -389,6 +404,325 @@ async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
   await expect(preview).toHaveAttribute('aria-busy', 'false');
   await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
   if (expectedText) await expect(preview).toContainText(expectedText);
+}
+
+async function setImmersiveSplitRatio(page, ratio, resizeLabel) {
+  const divider = page.getByRole('separator', { name: resizeLabel });
+  await expect(divider).toBeVisible();
+  await divider.focus();
+  await divider.press('Home');
+
+  const key = ratio < 50 ? 'ArrowLeft' : 'ArrowRight';
+  for (let step = 0; step < Math.abs(ratio - 50); step += 1) {
+    await divider.press(key);
+  }
+
+  await expect(divider).toHaveAttribute('aria-valuenow', String(ratio));
+}
+
+async function measureArticleThemeGeometry(page, position) {
+  return page.locator('.easymde-pane-preview article').evaluate(
+    (root, { longHeadingPrefix, scrollPosition }) => {
+      const tolerance = 1;
+      const pane = root.closest('.easymde-pane-preview');
+      if (!(pane instanceof HTMLElement)) {
+        throw new Error('theme-preview-pane-unavailable');
+      }
+
+      const maximumScrollTop = Math.max(0, root.scrollHeight - root.clientHeight);
+      const targetScrollTop = 'top' === scrollPosition
+        ? 0
+        : ('middle' === scrollPosition ? maximumScrollTop / 2 : maximumScrollTop);
+      root.scrollTop = targetScrollTop;
+
+      const rootBox = root.getBoundingClientRect();
+      const paneBox = pane.getBoundingClientRect();
+      const longHeading = Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+        .find((heading) => heading.textContent?.includes(longHeadingPrefix));
+      if (!(longHeading instanceof HTMLElement)) {
+        throw new Error('theme-long-heading-unavailable');
+      }
+
+      const headingBox = longHeading.getBoundingClientRect();
+      const headingStyle = getComputedStyle(longHeading);
+      const headingTextRange = document.createRange();
+      headingTextRange.selectNodeContents(longHeading);
+      const headingTextBox = headingTextRange.getBoundingClientRect();
+      const meaningfulElements = Array.from(root.querySelectorAll(
+        'h1, h2, h3, h4, h5, h6, p, li, blockquote, img, figure, .easymde-toc'
+      )).filter((element) => {
+        if (element.closest('table')) return false;
+        const box = element.getBoundingClientRect();
+        return box.width > 0 && box.height > 0;
+      });
+      const headings = Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+      const headingParts = Array.from(root.querySelectorAll(
+        'h1 .prefix, h2 .prefix, h3 .prefix, h4 .prefix, h5 .prefix, h6 .prefix, '
+          + 'h1 .content, h2 .content, h3 .content, h4 .content, h5 .content, h6 .content, '
+          + 'h1 .suffix, h2 .suffix, h3 .suffix, h4 .suffix, h5 .suffix, h6 .suffix'
+      ));
+      const isVisible = (element) => {
+        const style = getComputedStyle(element);
+        const box = element.getBoundingClientRect();
+        return box.width > 0
+          && box.height > 0
+          && 'none' !== style.display
+          && 'hidden' !== style.visibility;
+      };
+      const pseudoCount = headings.reduce((count, heading) => (
+        count + ['::before', '::after'].filter((pseudo) => {
+          const style = getComputedStyle(heading, pseudo);
+          return !['none', 'normal'].includes(style.content)
+            && 'none' !== style.display
+            && 'hidden' !== style.visibility;
+        }).length
+      ), 0);
+      const styledHeadingCount = headings.filter((heading) => {
+        const style = getComputedStyle(heading);
+        return 'rgba(0, 0, 0, 0)' !== style.backgroundColor
+          || 'none' !== style.backgroundImage
+          || 'none' !== style.boxShadow
+          || [
+            style.borderTopWidth,
+            style.borderRightWidth,
+            style.borderBottomWidth,
+            style.borderLeftWidth
+          ].some((width) => Number.parseFloat(width) > 0);
+      }).length;
+      const scrollElement = (element) => {
+        const original = element.scrollLeft;
+        element.scrollLeft = Number.MAX_SAFE_INTEGER;
+        const movement = element.scrollLeft;
+        element.scrollLeft = original;
+        return movement;
+      };
+      const horizontalScrollOwners = (element) => {
+        const owners = [];
+        for (
+          let candidate = element;
+          candidate instanceof HTMLElement && candidate !== root;
+          candidate = candidate.parentElement
+        ) {
+          const style = getComputedStyle(candidate);
+          if (
+            candidate.scrollWidth > candidate.clientWidth + tolerance
+            && ['auto', 'scroll'].includes(style.overflowX)
+          ) {
+            owners.push(candidate);
+          }
+        }
+        return owners;
+      };
+      const tableResults = Array.from(root.querySelectorAll('table')).map((table) => {
+        const wrapper = table.closest('.table-container, .easymde-table-container');
+        const owners = horizontalScrollOwners(table);
+        const owner = owners[0]
+          ?? (wrapper instanceof HTMLElement && root.contains(wrapper) ? wrapper : table);
+        const ownerStyle = getComputedStyle(owner);
+        const ownerBox = owner.getBoundingClientRect();
+        const overflow = owner.scrollWidth - owner.clientWidth;
+        const rows = Array.from(table.rows);
+        const rowWidths = rows
+          .map((row) => row.getBoundingClientRect().width)
+          .filter((width) => width > 0);
+        const firstRow = rows[0];
+        const columnsAligned = firstRow
+          && rows.every((row) => (
+            row.cells.length === firstRow.cells.length
+            && Array.from(row.cells).every((cell, cellIndex) => {
+              const box = cell.getBoundingClientRect();
+              const firstBox = firstRow.cells[cellIndex].getBoundingClientRect();
+              return Math.abs(box.left - firstBox.left) <= tolerance
+                && Math.abs(box.right - firstBox.right) <= tolerance;
+            })
+          ));
+        const layoutPreserved = rowWidths.length > 0
+          && Math.max(...rowWidths) >= owner.scrollWidth * 0.95
+          && columnsAligned;
+        const needsLocalScroll = table.scrollWidth > table.clientWidth + tolerance
+          || (
+            wrapper instanceof HTMLElement
+            && wrapper.scrollWidth > wrapper.clientWidth + tolerance
+          );
+
+        return {
+          contained: ownerBox.left >= rootBox.left - tolerance
+            && ownerBox.right <= rootBox.right + tolerance,
+          localWhenNeeded: !needsLocalScroll || (
+            1 === owners.length
+            && ['auto', 'scroll'].includes(ownerStyle.overflowX)
+            && scrollElement(owner) > 0
+          ),
+          layoutPreserved,
+          ownerCount: owners.length,
+          overflow
+        };
+      });
+      const codeResults = Array.from(root.querySelectorAll('pre code')).map((codeBlock) => {
+        const style = getComputedStyle(codeBlock);
+        const overflow = codeBlock.scrollWidth - codeBlock.clientWidth;
+        const owners = horizontalScrollOwners(codeBlock);
+
+        return {
+          localWhenNeeded: overflow <= tolerance || (
+            ['auto', 'scroll'].includes(style.overflowX)
+            && scrollElement(codeBlock) > 0
+          ),
+          ownerCount: owners.length,
+          ownerIsExpected: 0 === owners.length || owners[0] === codeBlock,
+          overflow
+        };
+      });
+      const rootScrollLeft = scrollElement(root);
+      const paneScrollLeft = scrollElement(pane);
+      const articleImages = Array.from(root.querySelectorAll('img'))
+        .filter((image) => !image.closest('table'));
+      const imageResults = articleImages.map((image) => {
+        const box = image.getBoundingClientRect();
+        const style = getComputedStyle(image);
+        const parent = image.parentElement;
+        const parentBox = parent?.getBoundingClientRect();
+        const parentStyle = parent ? getComputedStyle(parent) : null;
+
+        return {
+          contained: box.left >= rootBox.left - tolerance
+            && box.right <= rootBox.right + tolerance,
+          box: {
+            left: box.left,
+            right: box.right,
+            width: box.width
+          },
+          style: {
+            boxSizing: style.boxSizing,
+            marginLeft: style.marginLeft,
+            marginRight: style.marginRight,
+            maxWidth: style.maxWidth,
+            width: style.width
+          },
+          root: {
+            left: rootBox.left,
+            right: rootBox.right,
+            width: rootBox.width,
+            clientWidth: root.clientWidth,
+            scrollWidth: root.scrollWidth,
+            boxSizing: getComputedStyle(root).boxSizing,
+            paddingLeft: getComputedStyle(root).paddingLeft,
+            paddingRight: getComputedStyle(root).paddingRight
+          },
+          parent: parentBox && parentStyle ? {
+            tag: parent.tagName.toLowerCase(),
+            left: parentBox.left,
+            right: parentBox.right,
+            width: parentBox.width,
+            clientWidth: parent.clientWidth,
+            scrollWidth: parent.scrollWidth,
+            boxSizing: parentStyle.boxSizing,
+            display: parentStyle.display,
+            marginLeft: parentStyle.marginLeft,
+            marginRight: parentStyle.marginRight,
+            paddingLeft: parentStyle.paddingLeft,
+            paddingRight: parentStyle.paddingRight
+          } : null
+        };
+      });
+      const outsideImage = imageResults.find(({ contained }) => !contained);
+      const flexGridResults = Array.from(root.querySelectorAll('*'))
+        .filter((element) => ['flex', 'inline-flex', 'grid', 'inline-grid']
+          .includes(getComputedStyle(element).display))
+        .map((element) => {
+          const box = element.getBoundingClientRect();
+          const visibleChildren = Array.from(element.children).filter(isVisible);
+          return 0 === visibleChildren.length
+            ? element.scrollWidth <= element.clientWidth + tolerance
+            : visibleChildren.every((child) => {
+                const childBox = child.getBoundingClientRect();
+                return childBox.width <= box.width + tolerance;
+              });
+        });
+      const actualScrollTop = root.scrollTop;
+      const scrollPositionValid = Math.abs(actualScrollTop - targetScrollTop) <= tolerance;
+      const placeholderVisible = Array.from(
+        document.querySelectorAll('.easymde-preview-pending')
+      ).some(isVisible);
+
+      return {
+        decoration: {
+          headings: headings.length,
+          parts: headingParts.length,
+          pseudo: pseudoCount,
+          styledHeadings: styledHeadingCount,
+          visibleParts: headingParts.filter(isVisible).length
+        },
+        failures: [
+          ...(
+            rootBox.left < paneBox.left - tolerance
+            || rootBox.right > paneBox.right + tolerance
+              ? ['article-root-outside-preview-scrollport']
+              : []
+          ),
+          ...(pane.scrollWidth > pane.clientWidth + tolerance || paneScrollLeft > tolerance
+            ? ['preview-pane-horizontal-scroll']
+            : []),
+          ...(root.scrollWidth > root.clientWidth + tolerance || rootScrollLeft > tolerance
+            ? ['article-root-horizontal-scroll']
+            : []),
+          ...(meaningfulElements.some((element) => {
+            const box = element.getBoundingClientRect();
+            return box.left < rootBox.left - tolerance || box.right > rootBox.right + tolerance;
+          }) ? ['meaningful-content-outside-article'] : []),
+          ...(
+            headingBox.left < rootBox.left - tolerance
+            || headingBox.right > rootBox.right + tolerance
+            || headingTextBox.left < rootBox.left - tolerance
+            || headingTextBox.right > rootBox.right + tolerance
+            || headingTextBox.top < headingBox.top - tolerance
+            || headingTextBox.bottom > headingBox.bottom + tolerance
+            || (
+              'visible' !== headingStyle.overflowX
+              && longHeading.scrollWidth > longHeading.clientWidth + tolerance
+            )
+            || (
+              'visible' !== headingStyle.overflowY
+              && longHeading.scrollHeight > longHeading.clientHeight + tolerance
+            )
+            || 'normal' !== headingStyle.whiteSpace
+              ? ['long-heading-clipped-or-unwrapped']
+              : []
+          ),
+          ...(outsideImage
+            ? [`image-outside-article-${JSON.stringify(outsideImage)}`]
+            : []),
+          ...(0 === imageResults.length ? ['article-image-unavailable'] : []),
+          ...(flexGridResults.every(Boolean) ? [] : ['flex-or-grid-descendant-cannot-shrink']),
+          ...(tableResults.every((result) => (
+            result.contained
+            && result.layoutPreserved
+            && result.localWhenNeeded
+            && result.ownerCount <= 1
+          )) ? [] : ['table-horizontal-scroll-owner-invalid']),
+          ...(codeResults.every((result) => (
+            result.localWhenNeeded
+            && result.ownerCount <= 1
+            && result.ownerIsExpected
+          )) ? [] : ['code-horizontal-scroll-owner-invalid']),
+          ...(scrollPositionValid ? [] : ['preview-scroll-position-invalid']),
+          ...(placeholderVisible ? ['preview-placeholder-visible'] : [])
+        ],
+        scroll: {
+          actual: actualScrollTop,
+          maximum: maximumScrollTop,
+          position: scrollPosition
+        },
+        tableResults,
+        codeResults,
+        imageDiagnostic: outsideImage ?? null
+      };
+    },
+    {
+      longHeadingPrefix: longFixtureHeadingPrefix,
+      scrollPosition: position
+    }
+  );
 }
 
 test.describe('EasyMDE editor workflows', () => {
@@ -1176,6 +1510,297 @@ test.describe('EasyMDE editor workflows', () => {
     await page.keyboard.press('Enter');
     await savedNavigation;
     expect(normalizeMarkdown(postMetaValue(postId, '_easymde_markdown'))).toBe(markdown);
+  });
+
+  test('keeps every registered article theme contained across ordinary and immersive preview states', async ({ page }, testInfo) => {
+    test.setTimeout(10 * 60_000);
+
+    const user = testInfo.easymdeUser;
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+
+    const catalog = await editorThemeCatalog(page);
+    const markdown = await canonicalMarkdownForPage(page);
+    await fillMarkdownAndWaitForPreview(
+      page,
+      markdown,
+      longFixtureHeadingPrefix
+    );
+    await expect(page.locator('.easymde-pane-preview .katex').first()).toBeVisible();
+    await expect(page.locator('.easymde-pane-preview .easymde-mermaid').first()).toBeVisible();
+    const authoritativeImage = page.locator('.easymde-pane-preview')
+      .getByAltText('占位测试图片', { exact: true });
+    await expect(authoritativeImage).toHaveCount(1);
+    await expect.poll(() => authoritativeImage.evaluate(
+      (image) => image instanceof HTMLImageElement
+        && image.complete
+        && image.naturalWidth > 0
+    ), {
+      message: 'the authoritative full-capability fixture image should load'
+    }).toBe(true);
+
+    const labels = await page.evaluate(() => ({
+      articleTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.articleTheme,
+      editorSettings: window.EasyMDEEditorRootBootstrap.strings.immersive.editorSettings,
+      immersive: window.EasyMDEEditorRootBootstrap.strings.immersive
+    }));
+    const settingsTrigger = page.locator('.easymde-toolbar-section-secondary')
+      .getByRole('button', { name: labels.editorSettings, exact: true });
+    const articleThemeLink = page.locator('#easymde-article-theme-css');
+    const editorOwner = page.locator('[data-easymde-editor-owner="react"]');
+    const preview = page.locator('.easymde-pane-preview article');
+    const failures = [];
+    const matrix = [];
+    const headingRhythmContracts = new Map([
+      ['qingbi-liujin', { contentFontSize: null }],
+      ['qinghe-zhusha', { contentFontSize: null }],
+      ['geek-black', { contentFontSize: '13px' }]
+    ]);
+    let mainFrameNavigations = 0;
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) mainFrameNavigations += 1;
+    });
+
+    const recordGeometry = async (
+      themeId,
+      state,
+      position,
+      expectedDecoration = null
+    ) => {
+      const geometry = await measureArticleThemeGeometry(page, position);
+      matrix.push({
+        themeId,
+        state,
+        decoration: geometry.decoration,
+        scroll: geometry.scroll,
+        tables: geometry.tableResults.map(({ overflow }) => overflow),
+        code: geometry.codeResults.map(({ overflow }) => overflow)
+      });
+      for (const failure of geometry.failures) {
+        failures.push(`${themeId}/${state}/${position}: ${failure}`);
+      }
+      if (
+        expectedDecoration
+        && JSON.stringify(geometry.decoration) !== JSON.stringify(expectedDecoration)
+      ) {
+        failures.push(
+          `${themeId}/${state}/${position}: heading-decoration-inventory-changed`
+        );
+      }
+
+      return geometry.decoration;
+    };
+
+    const recordHeadingRhythm = async (themeId, state, expectedBorderGap) => {
+      const contract = headingRhythmContracts.get(themeId);
+      if (!contract) return;
+
+      const headingRhythm = await preview.evaluate((root) => {
+        const h1 = root.querySelector('h1');
+        if (!(h1 instanceof HTMLElement)) {
+          throw new Error('theme-first-heading-unavailable');
+        }
+
+        root.scrollTop = 0;
+        const rootBox = root.getBoundingClientRect();
+        const h1Box = h1.getBoundingClientRect();
+        const h1Style = getComputedStyle(h1);
+        const content = h1.querySelector('.content');
+
+        return {
+          borderGap: h1Box.top - rootBox.top,
+          contentFontSize: content instanceof HTMLElement
+            ? getComputedStyle(content).fontSize
+            : null,
+          fontSize: h1Style.fontSize,
+          lineHeight: h1Style.lineHeight,
+          marginTop: h1Style.marginTop
+        };
+      });
+
+      if (
+        '24px' !== headingRhythm.fontSize
+        || '30px' !== headingRhythm.lineHeight
+        || '30px' !== headingRhythm.marginTop
+        || Math.abs(headingRhythm.borderGap - expectedBorderGap) > 1
+        || contract.contentFontSize !== headingRhythm.contentFontSize
+      ) {
+        failures.push(
+          `${themeId}/${state}/top: heading-rhythm-contract-`
+            + JSON.stringify(headingRhythm)
+        );
+      }
+    };
+
+    for (const { id, label, cssUrl } of catalog.articleThemes) {
+      await page.setViewportSize({ width: 1200, height: 900 });
+      await settingsTrigger.click();
+      const settingsDialog = page.getByRole('dialog', {
+        name: labels.editorSettings
+      });
+      const articleSelect = settingsDialog.getByLabel(labels.articleTheme);
+      await articleSelect.click();
+      await page.getByRole('option', { name: label, exact: true }).click();
+      await expect(preview).toHaveClass(
+        new RegExp(`easymde-markdown-theme-${id}`)
+      );
+      await expect.poll(() => articleThemeLink.evaluate((link, expectedUrl) => (
+        link instanceof HTMLLinkElement
+        && link.href === expectedUrl
+        && link.sheet?.href === expectedUrl
+      ), cssUrl), {
+        message: `${id} article stylesheet should finish loading`
+      }).toBe(true);
+      const tableAccessibility = await preview.locator('table').first().ariaSnapshot();
+      for (const [role, expectedCount] of Object.entries({
+        table: 1,
+        rowgroup: 2,
+        row: 5,
+        columnheader: 4,
+        cell: 16
+      })) {
+        const actualCount = (
+          tableAccessibility.match(new RegExp(`^\\s*- ${role}(?: |:)`, 'gm'))
+          || []
+        ).length;
+        if (actualCount !== expectedCount) {
+          failures.push(
+            `${id}/ordinary-1200/top: table-accessibility-${role}-count-`
+              + `${actualCount}-expected-${expectedCount}`
+          );
+        }
+      }
+      await page.keyboard.press('Escape');
+      await expect(settingsDialog).toHaveCount(0);
+
+      await recordHeadingRhythm(id, 'ordinary-1200', 30);
+
+      let desktopDecoration;
+      for (const width of [1200, 760, 680]) {
+        await page.setViewportSize({ width, height: 900 });
+        for (const position of ['top', 'middle', 'bottom']) {
+          const decoration = await recordGeometry(
+            id,
+            `ordinary-${width}`,
+            position,
+            desktopDecoration
+          );
+          if (1200 === width && !desktopDecoration) {
+            desktopDecoration = decoration;
+          }
+        }
+      }
+
+      await page.setViewportSize({ width: 1200, height: 900 });
+      await page.getByRole('button', {
+        name: labels.immersive.enter,
+        exact: true
+      }).click();
+      await expect(page.getByRole('region', {
+        name: labels.immersive.immersive
+      })).toBeVisible();
+
+      for (const mode of [
+        ['previewMode', 'is-immersive-preview'],
+        ['splitMode', 'is-immersive-split'],
+        ['editMode', 'is-immersive-source'],
+        ['splitMode', 'is-immersive-split'],
+        ['previewMode', 'is-immersive-preview'],
+        ['splitMode', 'is-immersive-split']
+      ]) {
+        await page.getByRole('button', {
+          name: labels.immersive[mode[0]],
+          exact: true
+        }).click();
+        await expect(editorOwner).toHaveClass(new RegExp(mode[1]));
+        if ('is-immersive-source' !== mode[1]) {
+          await recordGeometry(
+            id,
+            `immersive-transition-${mode[0]}`,
+            'top',
+            desktopDecoration
+          );
+        }
+        if ('is-immersive-split' === mode[1]) {
+          await recordHeadingRhythm(id, 'immersive-transition-splitMode', 64);
+        }
+      }
+
+      const showOutline = page.getByRole('button', {
+        name: labels.immersive.showOutline,
+        exact: true
+      });
+      if (await showOutline.isVisible().catch(() => false)) {
+        await showOutline.click();
+      }
+      await expect(page.locator('.easymde-immersive-outline')).toBeVisible();
+
+      for (const ratio of [35, 50, 75]) {
+        await setImmersiveSplitRatio(
+          page,
+          ratio,
+          labels.immersive.resizeSplit
+        );
+        for (const position of ['top', 'middle', 'bottom']) {
+          await recordGeometry(
+            id,
+            `immersive-outline-shown-ratio-${ratio}`,
+            position,
+            desktopDecoration
+          );
+        }
+      }
+
+      await page.locator('.easymde-immersive-outline-close').click();
+      await expect(page.locator('.easymde-immersive-outline')).toHaveCount(0);
+
+      for (const ratio of [35, 50, 75]) {
+        await setImmersiveSplitRatio(
+          page,
+          ratio,
+          labels.immersive.resizeSplit
+        );
+        for (const position of ['top', 'middle', 'bottom']) {
+          await recordGeometry(
+            id,
+            `immersive-outline-hidden-ratio-${ratio}`,
+            position,
+            desktopDecoration
+          );
+        }
+      }
+
+      await page.setViewportSize({ width: 680, height: 900 });
+      await setImmersiveSplitRatio(
+        page,
+        50,
+        labels.immersive.resizeSplit
+      );
+      for (const position of ['top', 'middle', 'bottom']) {
+        await recordGeometry(
+          id,
+          'immersive-680-outline-hidden-ratio-50',
+          position
+        );
+      }
+      await page.setViewportSize({ width: 1200, height: 900 });
+      await page.getByRole('button', {
+        name: labels.immersive.exit,
+        exact: true
+      }).click();
+      await expect(page.getByRole('region', {
+        name: labels.immersive.immersive
+      })).toHaveCount(0);
+    }
+
+    await testInfo.attach('article-theme-geometry-matrix.json', {
+      body: JSON.stringify(matrix, null, 2),
+      contentType: 'application/json'
+    });
+    expect(new Set(matrix.map(({ themeId }) => themeId)).size)
+      .toBe(catalog.articleThemes.length);
+    expect(mainFrameNavigations).toBe(0);
+    expect(failures, failures.join('\n')).toEqual([]);
   });
 
   test('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
@@ -2395,7 +3020,7 @@ test.describe('EasyMDE editor workflows', () => {
     await login(page, user);
     await openEasyMdeNewPost(page);
     const catalog = await editorThemeCatalog(page);
-    const markdown = canonicalMarkdownForSite(catalog.localFixtureImage);
+    const markdown = await canonicalMarkdownForPage(page);
     await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
     const preview = page.locator('.easymde-pane-preview article');
     await expect(preview.locator('pre code.hljs').first()).toBeVisible();

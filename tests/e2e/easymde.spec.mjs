@@ -451,6 +451,7 @@ async function measureArticleThemeGeometry(page, position) {
       const meaningfulElements = Array.from(root.querySelectorAll(
         'h1, h2, h3, h4, h5, h6, p, li, blockquote, img, figure, .easymde-toc'
       )).filter((element) => {
+        if (element.closest('table')) return false;
         const box = element.getBoundingClientRect();
         return box.width > 0 && box.height > 0;
       });
@@ -574,7 +575,9 @@ async function measureArticleThemeGeometry(page, position) {
       });
       const rootScrollLeft = scrollElement(root);
       const paneScrollLeft = scrollElement(pane);
-      const imageResults = Array.from(root.querySelectorAll('img')).map((image) => {
+      const articleImages = Array.from(root.querySelectorAll('img'))
+        .filter((image) => !image.closest('table'));
+      const imageResults = articleImages.map((image) => {
         const box = image.getBoundingClientRect();
         const style = getComputedStyle(image);
         const parent = image.parentElement;
@@ -689,6 +692,7 @@ async function measureArticleThemeGeometry(page, position) {
           ...(outsideImage
             ? [`image-outside-article-${JSON.stringify(outsideImage)}`]
             : []),
+          ...(0 === imageResults.length ? ['article-image-unavailable'] : []),
           ...(flexGridResults.every(Boolean) ? [] : ['flex-or-grid-descendant-cannot-shrink']),
           ...(tableResults.every((result) => (
             result.contained
@@ -1524,7 +1528,10 @@ test.describe('EasyMDE editor workflows', () => {
     );
     await expect(page.locator('.easymde-pane-preview .katex').first()).toBeVisible();
     await expect(page.locator('.easymde-pane-preview .easymde-mermaid').first()).toBeVisible();
-    await expect.poll(() => page.locator('.easymde-pane-preview img').first().evaluate(
+    const authoritativeImage = page.locator('.easymde-pane-preview')
+      .getByAltText('占位测试图片', { exact: true });
+    await expect(authoritativeImage).toHaveCount(1);
+    await expect.poll(() => authoritativeImage.evaluate(
       (image) => image instanceof HTMLImageElement
         && image.complete
         && image.naturalWidth > 0

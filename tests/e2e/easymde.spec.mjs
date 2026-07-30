@@ -1051,9 +1051,19 @@ test.describe('EasyMDE editor workflows', () => {
       }));
     });
     expect((await rejectedUploadResponse).status()).toBe(415);
-    await expect(page.locator('.easymde-editor-flash')).toContainText(
+    const editorMessageHost = page.locator(
+      '.easymde-editor > .easymde-editor-message-alert-host'
+    );
+    await expect(editorMessageHost.getByRole('alert')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.imageUpload.strings.dropFailed)
     );
+    await editorMessageHost.getByRole('button', {
+      name: await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive.close
+      )
+    }).click();
+    await expect(editorMessageHost).toHaveCount(0);
+    await expect(sourceEditor).toBeFocused();
     await expect(nativeSource).toHaveValue(beforeRejectedDrop);
     await expect(sourceEditor).toHaveText(beforeRejectedDrop);
     expect(imageUploadRequests).toHaveLength(1);
@@ -1078,7 +1088,7 @@ test.describe('EasyMDE editor workflows', () => {
       }));
     });
     expect((await acceptedUploadResponse).ok()).toBe(true);
-    await expect(page.locator('.easymde-editor-flash')).toContainText(
+    await expect(editorMessageHost.getByRole('status')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.imageUpload.strings.dropUploaded)
     );
     await expect(nativeSource).toHaveValue(/^Before accepted image drop\.\!\[synthetic pixel\]\(.+\)$/);
@@ -2141,7 +2151,9 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(publishDialog.getByRole('alert')).toContainText(
       labels.publishFailed
     );
-    await expect(page.locator('.easymde-editor-flash')).toHaveCount(0);
+    await expect(
+      page.locator('.easymde-editor > .easymde-editor-message-alert-host')
+    ).toHaveCount(0);
     await expect(page.locator('#excerpt')).toHaveValue('');
     await expect(page.locator('#tax-input-post_tag')).toHaveValue('');
     await expect(
@@ -2516,9 +2528,13 @@ test.describe('EasyMDE editor workflows', () => {
     expect(copyCommand).not.toBe('');
     await page.locator('[data-easymde-command="' + copyCommand + '"]').click();
     await expect.poll(() => page.evaluate(() => window.__easymdeClipboardWrites.length)).toBe(1);
-    await expect(page.locator('.easymde-editor-flash')).toContainText(
+    const editorMessageHost = page.locator(
+      '.easymde-editor > .easymde-editor-message-alert-host'
+    );
+    await expect(editorMessageHost.getByRole('status')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.wechatExport.strings.success)
     );
+    await expect(editorMessageHost).toHaveCount(0, { timeout: 4_000 });
     const immersiveLabels = await page.evaluate(
       () => window.EasyMDEEditorRootBootstrap.strings.immersive
     );
@@ -2541,7 +2557,9 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.getByRole('button', {
       name: immersiveLabels.wechatCopied
     })).toBeVisible();
-    await expect(page.locator('.easymde-editor-flash')).toHaveCount(0);
+    await expect(editorMessageHost.getByRole('status')).toContainText(
+      await page.evaluate(() => window.EasyMDEEditorRootBootstrap.wechatExport.strings.success)
+    );
     await page.getByRole('button', { name: immersiveLabels.exit }).click();
     await expect(immersiveFavicon).toHaveCount(0);
     expect(
@@ -2549,7 +2567,8 @@ test.describe('EasyMDE editor workflows', () => {
         .locator('head link[rel~="icon"]')
         .evaluateAll((icons) => icons.map((icon) => icon.href))
     ).toEqual(wordpressFavicons);
-    await expect(page.locator('.easymde-editor-flash')).toHaveCount(0);
+    await expect(editorMessageHost.getByRole('status')).toBeVisible();
+    await expect(editorMessageHost).toHaveCount(0, { timeout: 4_000 });
 
     const origin = new URL(page.url()).origin;
     expectRuntimeAssetRequests(

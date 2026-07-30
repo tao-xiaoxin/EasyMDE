@@ -108,4 +108,31 @@ describe('EditorMessageAlert', () => {
 
     expect(onFocusChange.mock.calls).toEqual([[true], [false]]);
   });
+
+  it('keeps Escape non-destructive and dismisses with Space while restoring focus', async () => {
+    const onDismiss = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <EditorMessageAlert
+        closeLabel="Close"
+        message="Uploading"
+        onDismiss={onDismiss}
+        type="info"
+      />
+    );
+    const returnTarget = document.createElement('button');
+    document.body.append(returnTarget);
+    returnTarget.focus();
+    const close = screen.getByRole('button', { name: 'Close' });
+    close.focus();
+
+    await user.keyboard('{Escape}');
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(screen.getByRole('status')).not.toBeNull();
+
+    await user.keyboard(' ');
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(returnTarget);
+    returnTarget.remove();
+  });
 });

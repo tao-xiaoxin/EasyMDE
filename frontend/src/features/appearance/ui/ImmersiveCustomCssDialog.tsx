@@ -30,10 +30,17 @@ import {
   RotateCcw,
   X
 } from '../../../generated/lucide-icons';
-import { EditorMessageAlert } from '../../../shared/ui/EditorMessageAlert';
+import {
+  EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS,
+  EditorMessageAlert
+} from '../../../shared/ui/EditorMessageAlert';
 
 type ThemeVariableCategory = CustomCssVariable['category'];
 type ThemeVariables = Record<CustomCssVariableId, string>;
+type CustomCssSaveError = Readonly<{
+  code: 'duplicate-name' | 'save-failed';
+  message: string;
+}>;
 
 type ImmersiveCustomCssDialogProps = Readonly<{
   initialCss: string;
@@ -475,6 +482,15 @@ export function ImmersiveCustomCssDialog({
   const activeRef = useRef(true);
   const savingRef = useRef(false);
   const restoreApplyFocusRef = useRef(false);
+  const saveErrorTimerRef = useRef<{
+    deadline: number | null;
+    error: CustomCssSaveError | null;
+    remaining: number;
+  }>({
+    deadline: null,
+    error: null,
+    remaining: EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS
+  });
   const [articleName, setArticleName] = useState(
     initialArticleThemeName || strings.defaultArticleName
   );
@@ -492,10 +508,8 @@ export function ImmersiveCustomCssDialog({
   const [showCssEditor, setShowCssEditor] = useState(false);
   const [cssEditorExpanded, setCssEditorExpanded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [saveError, setSaveError] = useState<Readonly<{
-    code: 'duplicate-name' | 'save-failed';
-    message: string;
-  }> | null>(null);
+  const [saveError, setSaveError] = useState<CustomCssSaveError | null>(null);
+  const [saveErrorFocused, setSaveErrorFocused] = useState(false);
   const [scopedPreviewCss, setScopedPreviewCss] = useState('');
   const [previewStatus, setPreviewStatus] =
     useState<'ready' | 'invalid' | 'unavailable'>('ready');
@@ -517,6 +531,47 @@ export function ImmersiveCustomCssDialog({
       applyButtonRef.current?.focus();
     }
   }, [isSaving]);
+
+  useEffect(() => {
+    const timerState = saveErrorTimerRef.current;
+    if (!saveError) {
+      timerState.deadline = null;
+      timerState.error = null;
+      timerState.remaining = EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS;
+      return undefined;
+    }
+    if (timerState.error !== saveError) {
+      timerState.deadline = null;
+      timerState.error = saveError;
+      timerState.remaining = EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS;
+    }
+    if (saveErrorFocused) return undefined;
+
+    const scheduledError = saveError;
+    const delay = timerState.remaining;
+    timerState.deadline = window.Date.now() + delay;
+    const timeout = window.setTimeout(() => {
+      timerState.deadline = null;
+      timerState.remaining = 0;
+      setSaveErrorFocused(false);
+      setSaveError((currentError) =>
+        currentError === scheduledError ? null : currentError
+      );
+    }, delay);
+    return () => {
+      window.clearTimeout(timeout);
+      if (
+        timerState.error === scheduledError &&
+        null !== timerState.deadline
+      ) {
+        timerState.remaining = Math.max(
+          0,
+          timerState.deadline - window.Date.now()
+        );
+        timerState.deadline = null;
+      }
+    };
+  }, [saveError, saveErrorFocused]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -622,6 +677,7 @@ export function ImmersiveCustomCssDialog({
     setActiveCategory('foundation');
     setShowCssEditor(false);
     setCssEditorExpanded(false);
+    setSaveErrorFocused(false);
     setSaveError(null);
   };
 
@@ -635,6 +691,7 @@ export function ImmersiveCustomCssDialog({
       dialogRef.current?.ownerDocument.activeElement === applyButtonRef.current;
     savingRef.current = true;
     setIsSaving(true);
+    setSaveErrorFocused(false);
     setSaveError(null);
     try {
       const result = await onApply({
@@ -683,7 +740,11 @@ export function ImmersiveCustomCssDialog({
                 density="compact"
                 message={saveError.message}
                 messageId={noticeId}
-                onDismiss={() => setSaveError(null)}
+                onDismiss={() => {
+                  setSaveErrorFocused(false);
+                  setSaveError(null);
+                }}
+                onFocusChange={setSaveErrorFocused}
                 type="error"
               />
             </div>

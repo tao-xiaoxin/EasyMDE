@@ -99,6 +99,13 @@ export function createBrowserImmersiveEnvironment(
         documentRef.querySelector('.easymde-toolbar-popover:not([hidden])')
       );
     },
+    now() {
+      const browserWindow = documentRef.defaultView;
+      if (!browserWindow) {
+        throw new Error('immersive-window-unavailable');
+      }
+      return browserWindow.Date.now();
+    },
     schedule(callback, delay) {
       const timer = documentRef.defaultView?.setTimeout(callback, delay);
       if (undefined === timer) {

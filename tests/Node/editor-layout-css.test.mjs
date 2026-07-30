@@ -119,6 +119,66 @@ test('immersive Custom CSS typography preserves the reference tracking', () => {
   );
 });
 
+test('shared editor message alerts use one compact semantic treatment', () => {
+  assert.match(
+    css,
+    /\.easymde-editor-message-alert-host\s*\{[^}]*display:\s*flex;[^}]*width:\s*min\(560px, calc\(100vw - 32px\)\);[^}]*justify-content:\s*center;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor-message-alert\s*\{[^}]*width:\s*fit-content;[^}]*min-width:\s*min\(344px, 100%\);[^}]*max-width:\s*100%;[^}]*min-height:\s*44px;[^}]*padding:\s*5px 6px 5px 26px;[^}]*border-color:\s*rgba\(var\(--easymde-message-rgb\), \.18\);[^}]*border-radius:\s*10px;[^}]*background:\s*rgba\(var\(--easymde-message-rgb\), \.055\);[^}]*box-shadow:\s*0 6px 18px rgba\(var\(--easymde-message-rgb\), \.08\);[^}]*font-size:\s*14px;[^}]*letter-spacing:\s*\.5px;[^}]*line-height:\s*21px;/s
+  );
+  for (const [type, rgb] of [
+    ['success', '0, 200, 2'],
+    ['info', '11, 125, 255'],
+    ['warning', '255, 172, 0'],
+    ['error', '255, 51, 78']
+  ]) {
+    assert.match(
+      css,
+      new RegExp(
+        `\\.easymde-editor-message-alert\\.is-${type}\\s*\\{[^}]*--easymde-message-rgb:\\s*${rgb};`,
+        's'
+      )
+    );
+  }
+  assert.match(
+    css,
+    /\.easymde-editor-message-alert__icon\s*\{[^}]*width:\s*15px;[^}]*height:\s*15px;[^}]*flex:\s*0 0 15px;[^}]*background:\s*rgb\(var\(--easymde-message-rgb\)\);[^}]*font-size:\s*10px;[^}]*line-height:\s*15px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor-message-alert__message\s*\{[^}]*min-width:\s*0;[^}]*margin-inline-start:\s*11px;[^}]*flex:\s*0 1 auto;[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor-message-alert__close\s*\{[^}]*width:\s*30px;[^}]*height:\s*30px;[^}]*margin-inline-start:\s*auto;[^}]*margin-inline-end:\s*-2px;[^}]*flex:\s*0 0 30px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor-message-alert__close svg\s*\{[^}]*width:\s*17px;[^}]*height:\s*17px;/s
+  );
+  assert.match(
+    css,
+    /@media \(max-width:\s*600px\)[\s\S]*?\.easymde-editor-message-alert-host\s*\{[^}]*width:\s*calc\(100vw - 24px\);[^}]*\}[\s\S]*?\.easymde-editor-message-alert\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*0;/s
+  );
+  assert.match(
+    css,
+    /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.easymde-editor-message-alert__close\s*\{[^}]*transition:\s*none;/s
+  );
+});
+
+test('immersive Custom CSS duplicate error keeps the approved centered width', () => {
+  assert.match(
+    css,
+    /\.easymde-immersive-custom-css-dialog > header\.has-message-alert\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) 344px minmax\(0, 1fr\);/s
+  );
+  assert.match(
+    css,
+    /\.easymde-immersive-custom-css-dialog \.easymde-editor-message-alert\.is-error\.is-compact\s*\{[^}]*width:\s*344px;/s
+  );
+});
+
 test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () => {
   assert.doesNotMatch(css, /\.easymde-workspace-shell(?:[^a-z0-9_-]|$)/i);
   assert.match(

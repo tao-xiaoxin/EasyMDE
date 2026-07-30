@@ -293,6 +293,7 @@ function fixture(): EditorRootProps &
       activateFavicon: vi.fn(() => vi.fn()),
       activateFocusBoundary: vi.fn(() => vi.fn()),
       hasOpenToolbarPopover: () => false,
+      now: () => Date.now(),
       schedule: (callback, delay) => {
         const timer = window.setTimeout(callback, delay);
         return () => window.clearTimeout(timer);
@@ -3311,7 +3312,7 @@ describe('EditorRoot', () => {
     expect(view.getByRole('alert').textContent).toBe('Copy failed');
   });
 
-  it('expires ordinary feedback after 3200ms without letting a stale timer clear newer feedback', async () => {
+  it('expires ordinary feedback after 3000ms without letting a stale timer clear newer feedback', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
     await view.findByRole('button', { name: 'Copy to WeChat' });
@@ -3325,7 +3326,7 @@ describe('EditorRoot', () => {
       expect(view.getByText('Copied')).not.toBeNull();
 
       act(() => {
-        vi.advanceTimersByTime(3199);
+        vi.advanceTimersByTime(2999);
       });
       expect(view.getByText('Copied')).not.toBeNull();
 
@@ -3339,7 +3340,7 @@ describe('EditorRoot', () => {
       expect(view.getByText('Copied')).not.toBeNull();
 
       act(() => {
-        vi.advanceTimersByTime(3199);
+        vi.advanceTimersByTime(2999);
       });
       expect(view.queryByText('Copied')).toBeNull();
     } finally {
@@ -3347,7 +3348,7 @@ describe('EditorRoot', () => {
     }
   });
 
-  it('pauses auto-dismiss while the notification close control has focus', async () => {
+  it('resumes auto-dismiss with only the remaining time after focus leaves', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
     await view.findByRole('button', { name: 'Copy to WeChat' });
@@ -3359,16 +3360,25 @@ describe('EditorRoot', () => {
         await Promise.resolve();
       });
       const close = view.getByRole('button', { name: '关闭' });
+
+      act(() => {
+        vi.advanceTimersByTime(2500);
+      });
       fireEvent.focus(close);
 
       act(() => {
-        vi.advanceTimersByTime(6400);
+        vi.advanceTimersByTime(6000);
       });
       expect(view.getByText('Copied')).not.toBeNull();
 
       fireEvent.blur(close);
       act(() => {
-        vi.advanceTimersByTime(3200);
+        vi.advanceTimersByTime(499);
+      });
+      expect(view.getByText('Copied')).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
       });
       expect(view.queryByText('Copied')).toBeNull();
     } finally {
@@ -3376,7 +3386,38 @@ describe('EditorRoot', () => {
     }
   });
 
-  it('does not let unrelated success feedback overwrite a persistent error', async () => {
+  it('automatically dismisses an error after 3000ms', async () => {
+    const props = fixture();
+    vi.mocked(props.wechatClipboard.copy).mockResolvedValue({
+      code: 'wechat-copy-failed',
+      status: 'failed'
+    });
+    const view = render(<EditorRoot {...props} />);
+    const copy = await view.findByRole('button', { name: 'Copy to WeChat' });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(copy);
+        await Promise.resolve();
+      });
+      expect(view.getByRole('alert').textContent).toBe('Copy failed');
+
+      act(() => {
+        vi.advanceTimersByTime(2999);
+      });
+      expect(view.getByRole('alert').textContent).toBe('Copy failed');
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(view.queryByRole('alert')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let unrelated success feedback overwrite an error before auto-dismiss', async () => {
     const props = fixture();
     vi.mocked(props.wechatClipboard.copy).mockResolvedValue({
       code: 'wechat-copy-failed',

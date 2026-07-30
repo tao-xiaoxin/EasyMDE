@@ -121,7 +121,10 @@ import {
 } from '../../features/immersive-editor/ui/ImmersiveVisualEditor';
 import type { ImmersiveViewMode } from '../../features/immersive-editor/immersive-editor';
 import { openFeaturedImagePicker } from '../../features/immersive-editor/open-featured-image-picker';
-import { EditorMessageAlert } from '../../shared/ui/EditorMessageAlert';
+import {
+  EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS,
+  EditorMessageAlert
+} from '../../shared/ui/EditorMessageAlert';
 import type { EditorMessageAlertType } from '../../shared/ui/EditorMessageAlert';
 
 type EditorStatus = Readonly<{
@@ -474,6 +477,15 @@ export function EditorRoot(props: EditorRootProps) {
   const [draftUnreadable, setDraftUnreadable] = useState(false);
   const [editorStatus, setEditorStatus] = useState<EditorStatus | null>(null);
   const [editorStatusFocused, setEditorStatusFocused] = useState(false);
+  const editorStatusTimerRef = useRef<{
+    deadline: number | null;
+    remaining: number;
+    status: EditorStatus | null;
+  }>({
+    deadline: null,
+    remaining: EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS,
+    status: null
+  });
   const [previewRuntimeGeneration, setPreviewRuntimeGeneration] = useState(0);
   const [previewRefreshRevision, setPreviewRefreshRevision] = useState(0);
   const [previewSurfaceStatus, setPreviewSurfaceStatus] =
@@ -587,19 +599,43 @@ export function EditorRoot(props: EditorRootProps) {
     [publishEditorStatus]
   );
   useEffect(() => {
-    if (
-      !editorStatus ||
-      'error' === editorStatus.type ||
-      editorStatusFocused
-    ) {
+    const timerState = editorStatusTimerRef.current;
+    if (!editorStatus) {
+      timerState.deadline = null;
+      timerState.remaining = EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS;
+      timerState.status = null;
       return undefined;
     }
+    if (timerState.status !== editorStatus) {
+      timerState.deadline = null;
+      timerState.remaining = EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS;
+      timerState.status = editorStatus;
+    }
+    if (editorStatusFocused) return undefined;
+
     const scheduledStatus = editorStatus;
-    return props.immersiveEnvironment.schedule(() => {
+    const delay = timerState.remaining;
+    timerState.deadline = props.immersiveEnvironment.now() + delay;
+    const cancel = props.immersiveEnvironment.schedule(() => {
+      timerState.deadline = null;
+      timerState.remaining = 0;
       setEditorStatus((currentStatus) =>
         currentStatus === scheduledStatus ? null : currentStatus
       );
-    }, 3200);
+    }, delay);
+    return () => {
+      cancel();
+      if (
+        timerState.status === scheduledStatus &&
+        null !== timerState.deadline
+      ) {
+        timerState.remaining = Math.max(
+          0,
+          timerState.deadline - props.immersiveEnvironment.now()
+        );
+        timerState.deadline = null;
+      }
+    };
   }, [editorStatus, editorStatusFocused, props.immersiveEnvironment]);
   const setAppearanceNotification = useCallback(
     (notification: AppearanceNotification) =>

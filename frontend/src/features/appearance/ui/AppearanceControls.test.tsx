@@ -1,5 +1,6 @@
 import { createElement } from '@wordpress/element';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -297,6 +298,72 @@ describe('AppearanceControls', () => {
     expect(codeName.getAttribute('aria-invalid')).toBeNull();
     expect(articleName.getAttribute('aria-describedby')).toBeNull();
     expect(codeName.getAttribute('aria-describedby')).toBeNull();
+  });
+
+  it('resumes Custom CSS error dismissal with only the remaining time after focus leaves', async () => {
+    const user = userEvent.setup();
+    const saveCustomCss = vi.fn().mockResolvedValue({
+      status: 'failed',
+      code: 'easymde_duplicate_custom_css_name',
+      message: 'Sensitive server detail'
+    });
+    render(
+      <div className="easymde-editor">
+        <AppearanceControls
+          bootstrap={bootstrap}
+          port={createPort({ saveCustomCss })}
+          onFailure={vi.fn()}
+          onReady={vi.fn()}
+          variant="immersive"
+        />
+      </div>
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
+    const articleName = screen.getByRole('textbox', {
+      name: 'Article theme name'
+    });
+    const codeName = screen.getByRole('textbox', { name: 'Code theme name' });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Apply theme' }));
+        await Promise.resolve();
+      });
+      expect(screen.getByRole('alert')).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(2500);
+      });
+      const close = within(screen.getByRole('alert')).getByRole('button', {
+        name: 'Close'
+      });
+      fireEvent.focus(close);
+
+      act(() => {
+        vi.advanceTimersByTime(6000);
+      });
+      expect(screen.getByRole('alert')).not.toBeNull();
+      expect(articleName.getAttribute('aria-invalid')).toBe('true');
+      expect(codeName.getAttribute('aria-invalid')).toBe('true');
+
+      fireEvent.blur(close);
+      act(() => {
+        vi.advanceTimersByTime(499);
+      });
+      expect(screen.getByRole('alert')).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(articleName.getAttribute('aria-invalid')).toBeNull();
+      expect(codeName.getAttribute('aria-invalid')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps preview availability feedback separate from save errors', async () => {

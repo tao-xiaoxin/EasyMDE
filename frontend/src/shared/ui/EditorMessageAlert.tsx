@@ -2,6 +2,8 @@ import { createElement, useRef } from '@wordpress/element';
 
 import { Check, X } from '../../generated/lucide-icons';
 
+export const EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS = 3000;
+
 export type EditorMessageAlertType =
   | 'error'
   | 'info'

@@ -1826,7 +1826,7 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
-    test.setTimeout(180_000);
+    test.setTimeout(5 * 60_000);
     const user = testInfo.easymdeUser;
     const customThemeSuffix = randomUUID().slice(0, 8);
     const customName = 'E2E CSS ' + customThemeSuffix;

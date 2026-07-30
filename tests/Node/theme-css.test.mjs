@@ -115,8 +115,9 @@ test('Geek Black changes only its final H1 top rhythm', () => {
   const finalH1Rule = h1Rules.at(-1);
 
   assert.ok(fontRule);
+  assert.ok(finalH1Rule);
   assert.match(finalH1Rule, /margin-top:\s*30px;/);
-  assert.doesNotMatch(finalH1Rule, /margin-top:\s*-0\.46em;/);
+  assert.doesNotMatch(css, /margin-top:\s*-0\.46em;/);
 });
 
 test('shared code typography prefers the neutral Mac terminal font stack', () => {

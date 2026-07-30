@@ -19,6 +19,7 @@ type Props = Readonly<{
   messageId?: string;
   onDismiss: () => void;
   onFocusChange?: (focused: boolean) => void;
+  returnFocusTo?: () => HTMLElement | null;
   type: EditorMessageAlertType;
 }>;
 
@@ -39,6 +40,7 @@ export function EditorMessageAlert({
   messageId,
   onDismiss,
   onFocusChange,
+  returnFocusTo,
   type
 }: Props) {
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -67,18 +69,17 @@ export function EditorMessageAlert({
         aria-label={closeLabel}
         title={closeLabel}
         onFocus={(event) => {
-          if (!returnFocusRef.current) {
-            returnFocusRef.current =
-              event.relatedTarget instanceof HTMLElement
-                ? event.relatedTarget
-                : null;
-          }
+          returnFocusRef.current =
+            event.relatedTarget instanceof HTMLElement
+              ? event.relatedTarget
+              : null;
           onFocusChange?.(true);
         }}
         onBlur={() => onFocusChange?.(false)}
         onClick={() => {
+          const returnTarget = returnFocusTo?.() ?? returnFocusRef.current;
           onDismiss();
-          returnFocusRef.current?.focus();
+          returnTarget?.focus();
         }}
       >
         <X size={21} strokeWidth={1.7} aria-hidden="true" />

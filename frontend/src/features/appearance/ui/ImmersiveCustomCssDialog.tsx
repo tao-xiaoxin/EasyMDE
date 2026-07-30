@@ -745,6 +745,7 @@ export function ImmersiveCustomCssDialog({
                   setSaveError(null);
                 }}
                 onFocusChange={setSaveErrorFocused}
+                returnFocusTo={() => applyButtonRef.current}
                 type="error"
               />
             </div>

@@ -475,8 +475,12 @@ export function EditorRoot(props: EditorRootProps) {
     );
   const [draftCandidate, setDraftCandidate] = useState(false);
   const [draftUnreadable, setDraftUnreadable] = useState(false);
-  const [editorStatus, setEditorStatus] = useState<EditorStatus | null>(null);
-  const [editorStatusFocused, setEditorStatusFocused] = useState(false);
+  const [editorStatusState, setEditorStatusState] = useState<{
+    focused: boolean;
+    status: EditorStatus | null;
+  }>({ focused: false, status: null });
+  const editorStatus = editorStatusState.status;
+  const editorStatusFocused = editorStatusState.focused;
   const editorStatusTimerRef = useRef<{
     deadline: number | null;
     remaining: number;
@@ -554,13 +558,17 @@ export function EditorRoot(props: EditorRootProps) {
   const sessionSnapshot = useEditorSession(props.sessionPort);
   const publishEditorStatus = useCallback(
     (nextStatus: EditorStatus) =>
-      setEditorStatus((currentStatus) =>
-        'error' === currentStatus?.type &&
-        currentStatus.id !== nextStatus.id &&
-        'error' !== nextStatus.type
-          ? currentStatus
-          : nextStatus
-      ),
+      setEditorStatusState((currentState) => {
+        const next =
+          'error' === currentState.status?.type &&
+          currentState.status.id !== nextStatus.id &&
+          'error' !== nextStatus.type
+            ? currentState.status
+            : nextStatus;
+        return next === currentState.status
+          ? currentState
+          : { ...currentState, status: next };
+      }),
     []
   );
   const setImageUploadStatus = useCallback(
@@ -619,8 +627,10 @@ export function EditorRoot(props: EditorRootProps) {
     const cancel = props.immersiveEnvironment.schedule(() => {
       timerState.deadline = null;
       timerState.remaining = 0;
-      setEditorStatus((currentStatus) =>
-        currentStatus === scheduledStatus ? null : currentStatus
+      setEditorStatusState((currentState) =>
+        currentState.status === scheduledStatus
+          ? { focused: false, status: null }
+          : currentState
       );
     }, delay);
     return () => {
@@ -644,9 +654,10 @@ export function EditorRoot(props: EditorRootProps) {
   );
   const dismissAppearanceNotification = useCallback(
     (id: AppearanceNotification['id']) => {
-      setEditorStatusFocused(false);
-      setEditorStatus((currentStatus) =>
-        id === currentStatus?.id ? null : currentStatus
+      setEditorStatusState((currentState) =>
+        id === currentState.status?.id
+          ? { focused: false, status: null }
+          : currentState
       );
     },
     []
@@ -1130,12 +1141,14 @@ export function EditorRoot(props: EditorRootProps) {
     } else if ('missing' === preferences.status) {
       setImmersiveMode('split');
     }
-    setEditorStatusFocused(false);
-    setEditorStatus((current) =>
-      'local-draft' === current?.owner && 'error' !== current.type
-        ? null
-        : current
-    );
+    setEditorStatusState((currentState) => ({
+      focused: false,
+      status:
+        'local-draft' === currentState.status?.owner &&
+        'error' !== currentState.status.type
+          ? null
+          : currentState.status
+    }));
     immersiveRef.current = true;
     setImmersive(true);
   }, [closeForToolbar, props.immersivePreferencesPort]);
@@ -1570,10 +1583,21 @@ export function EditorRoot(props: EditorRootProps) {
             closeLabel={props.immersiveStrings.close}
             message={editorStatus.message}
             onDismiss={() => {
-              setEditorStatusFocused(false);
-              setEditorStatus(null);
+              setEditorStatusState((currentState) => ({
+                focused: false,
+                status:
+                  currentState.status === editorStatus
+                    ? null
+                    : currentState.status
+              }));
             }}
-            onFocusChange={setEditorStatusFocused}
+            onFocusChange={(focused) => {
+              setEditorStatusState((currentState) =>
+                currentState.focused === focused
+                  ? currentState
+                  : { ...currentState, focused }
+              );
+            }}
             type={editorStatus.type}
           />
         </div>

@@ -3348,6 +3348,64 @@ describe('EditorRoot', () => {
     }
   });
 
+  it('does not let a stale close action clear newer feedback queued in the same turn', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const copy = await view.findByRole('button', { name: 'Copy to WeChat' });
+
+    fireEvent.click(copy);
+    await waitFor(() => expect(view.getByText('Copied')).not.toBeNull());
+    const staleClose = view.getByRole('button', { name: '关闭' });
+    const source = view.container.querySelector('.cm-content');
+    expect(source).not.toBeNull();
+
+    act(() => {
+      source?.dispatchEvent(imageTransferEvent(
+        'paste',
+        new File(['x'.repeat(1025)], 'too-large.png', { type: 'image/png' })
+      ));
+      staleClose.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(view.getByRole('alert').textContent).toBe('Paste too large');
+  });
+
+  it('resumes replacement feedback expiry after a focused stale close restores focus', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const copy = await view.findByRole('button', { name: 'Copy to WeChat' });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(copy);
+        await Promise.resolve();
+      });
+      const staleClose = view.getByRole('button', { name: '关闭' });
+      const source = view.container.querySelector('.cm-content');
+      expect(source).not.toBeNull();
+      copy.focus();
+      staleClose.focus();
+
+      act(() => {
+        source?.dispatchEvent(imageTransferEvent(
+          'paste',
+          new File(['x'.repeat(1025)], 'too-large.png', { type: 'image/png' })
+        ));
+        staleClose.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      expect(view.getByRole('alert').textContent).toBe('Paste too large');
+      expect(document.activeElement).toBe(copy);
+      act(() => {
+        vi.advanceTimersByTime(3000);
+      });
+      expect(view.queryByRole('alert')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('resumes auto-dismiss with only the remaining time after focus leaves', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);

@@ -109,6 +109,32 @@ describe('EditorMessageAlert', () => {
     expect(onFocusChange.mock.calls).toEqual([[true], [false]]);
   });
 
+  it('restores focus to the control used for the latest close-button entry', async () => {
+    const user = userEvent.setup();
+    render(
+      <EditorMessageAlert
+        closeLabel="Close"
+        message="Saved"
+        onDismiss={vi.fn()}
+        type="success"
+      />
+    );
+    const firstTarget = document.createElement('button');
+    const latestTarget = document.createElement('button');
+    document.body.append(firstTarget, latestTarget);
+    const close = screen.getByRole('button', { name: 'Close' });
+
+    firstTarget.focus();
+    close.focus();
+    latestTarget.focus();
+    close.focus();
+    await user.keyboard('{Enter}');
+
+    expect(document.activeElement).toBe(latestTarget);
+    firstTarget.remove();
+    latestTarget.remove();
+  });
+
   it('keeps Escape non-destructive and dismisses with Space while restoring focus', async () => {
     const onDismiss = vi.fn();
     const user = userEvent.setup();

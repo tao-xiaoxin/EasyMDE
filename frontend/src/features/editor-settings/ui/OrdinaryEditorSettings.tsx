@@ -218,9 +218,14 @@ export function OrdinaryEditorSettings({
         setPanelPosition(settingsPanelPosition(trigger, panel));
       }
     };
+    let scrollFrame: number | null = null;
     const repositionForScroll = (event: Event) => {
       if (event.target === panelRef.current) return;
-      reposition();
+      if (null !== scrollFrame) return;
+      scrollFrame = windowRef.requestAnimationFrame(() => {
+        scrollFrame = null;
+        reposition();
+      });
     };
     const trigger = triggerRef.current;
     if (!trigger) {
@@ -241,6 +246,9 @@ export function OrdinaryEditorSettings({
     windowRef.addEventListener('resize', reposition);
     windowRef.addEventListener('scroll', repositionForScroll);
     return () => {
+      if (null !== scrollFrame) {
+        windowRef.cancelAnimationFrame(scrollFrame);
+      }
       visibilityObserver.disconnect();
       documentRef.removeEventListener('click', closeForPointer);
       documentRef.removeEventListener('scroll', repositionForScroll, true);

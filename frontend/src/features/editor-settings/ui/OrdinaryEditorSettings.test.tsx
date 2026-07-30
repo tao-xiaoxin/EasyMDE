@@ -338,6 +338,12 @@ describe('OrdinaryEditorSettings', () => {
   it('closes the fixed panel and restores focus when its trigger leaves the viewport', async () => {
     const user = userEvent.setup();
     let triggerTop = 200;
+    let scrollFrame: FrameRequestCallback | null = null;
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      scrollFrame = callback;
+      return 1;
+    });
+    const cancelAnimationFrame = vi.spyOn(window, 'cancelAnimationFrame');
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 1280
@@ -373,6 +379,10 @@ describe('OrdinaryEditorSettings', () => {
     triggerTop = -100;
     fireEvent.scroll(window);
 
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    act(() => {
+      scrollFrame?.(0);
+    });
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(trigger);
     expect(disconnectIntersectionObserver).toHaveBeenCalledOnce();
@@ -382,6 +392,7 @@ describe('OrdinaryEditorSettings', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
 
     triggerTop = -100;
+    fireEvent.scroll(window);
     act(() => {
       intersectionObserverCallback([
         {
@@ -400,5 +411,6 @@ describe('OrdinaryEditorSettings', () => {
     ).toBeNull();
     expect(document.activeElement).toBe(trigger);
     expect(disconnectIntersectionObserver).toHaveBeenCalledTimes(2);
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
   });
 });

@@ -22,7 +22,7 @@ import {
 } from '../../font-controls/ui/FontControls';
 
 export type OrdinaryEditorSettingsSession = Readonly<{
-  close: (focusTarget?: HTMLElement) => void;
+  close: (focusTarget?: HTMLElement, focusOptions?: FocusOptions) => void;
 }>;
 
 type Props = Readonly<{
@@ -125,11 +125,11 @@ export function OrdinaryEditorSettings({
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const sessionRef = useRef<OrdinaryEditorSettingsSession>({
-    close: (focusTarget) => {
+    close: (focusTarget, focusOptions) => {
       if (!activeRef.current) return;
       const activeElement = panelRef.current?.ownerDocument.activeElement;
       if (activeElement && panelRef.current?.contains(activeElement)) {
-        (focusTarget ?? triggerRef.current)?.focus();
+        (focusTarget ?? triggerRef.current)?.focus(focusOptions);
       }
       setIsOpen(false);
     }
@@ -212,7 +212,7 @@ export function OrdinaryEditorSettings({
       const panel = panelRef.current;
       if (trigger && panel) {
         if (!triggerIntersectsViewport(trigger, windowRef)) {
-          setIsOpen(false);
+          sessionRef.current.close(trigger, { preventScroll: true });
           return;
         }
         setPanelPosition(settingsPanelPosition(trigger, panel));
@@ -222,18 +222,32 @@ export function OrdinaryEditorSettings({
       if (event.target === panelRef.current) return;
       reposition();
     };
+    const trigger = triggerRef.current;
+    if (!trigger) {
+      throw new Error('ordinary-editor-settings-trigger-unavailable');
+    }
+    const visibilityObserver = new windowRef.IntersectionObserver((entries) => {
+      const triggerEntry = entries.find((entry) => entry.target === trigger);
+      if (triggerEntry && !triggerEntry.isIntersecting) {
+        sessionRef.current.close(trigger, { preventScroll: true });
+      }
+    });
+    visibilityObserver.observe(trigger);
 
     documentRef.addEventListener('click', closeForPointer);
     documentRef.addEventListener('scroll', repositionForScroll, true);
     windowRef.addEventListener('keydown', closeForEscape);
     windowRef.addEventListener('keydown', containKeyboardFocus, true);
     windowRef.addEventListener('resize', reposition);
+    windowRef.addEventListener('scroll', repositionForScroll);
     return () => {
+      visibilityObserver.disconnect();
       documentRef.removeEventListener('click', closeForPointer);
       documentRef.removeEventListener('scroll', repositionForScroll, true);
       windowRef.removeEventListener('keydown', closeForEscape);
       windowRef.removeEventListener('keydown', containKeyboardFocus, true);
       windowRef.removeEventListener('resize', reposition);
+      windowRef.removeEventListener('scroll', repositionForScroll);
     };
   }, [isOpen]);
 

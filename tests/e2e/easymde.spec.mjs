@@ -1673,6 +1673,7 @@ test.describe('EasyMDE editor workflows', () => {
       'aria-expanded',
       'false'
     );
+    await expect(scrollSettingsTrigger).toBeFocused();
   });
 
   test('restores the fixed ordinary toolbar and 50/50 workspace without withdrawn surfaces', async ({ page }, testInfo) => {

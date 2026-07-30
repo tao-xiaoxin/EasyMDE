@@ -1,7 +1,7 @@
 import { createElement } from '@wordpress/element';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppearanceBootstrap } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type { FontControlsBootstrap } from '../../../contracts/bootstrap/font-controls-bootstrap';
@@ -13,6 +13,26 @@ import { OrdinaryEditorSettings } from './OrdinaryEditorSettings';
 
 const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
 const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+let intersectionObserverCallback: IntersectionObserverCallback;
+const disconnectIntersectionObserver = vi.fn();
+
+beforeEach(() => {
+  disconnectIntersectionObserver.mockClear();
+  vi.stubGlobal('IntersectionObserver', class IntersectionObserverMock {
+    readonly root = null;
+    readonly rootMargin = '0px';
+    readonly thresholds = [0];
+
+    constructor(callback: IntersectionObserverCallback) {
+      intersectionObserverCallback = callback;
+    }
+
+    disconnect = disconnectIntersectionObserver;
+    observe = vi.fn();
+    takeRecords = () => [];
+    unobserve = vi.fn();
+  });
+});
 
 const appearance: AppearanceBootstrap = {
   articleThemes: [
@@ -112,6 +132,7 @@ function renderSettings() {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   if (originalInnerWidth) {
     Object.defineProperty(window, 'innerWidth', originalInnerWidth);
   }
@@ -314,7 +335,7 @@ describe('OrdinaryEditorSettings', () => {
     expect(Number.parseFloat(tail?.style.top ?? '')).toBe(top + maxHeight - 7);
   });
 
-  it('closes the fixed panel when scrolling moves its trigger outside the viewport', async () => {
+  it('closes the fixed panel and restores focus when its trigger leaves the viewport', async () => {
     const user = userEvent.setup();
     let triggerTop = 200;
     Object.defineProperty(window, 'innerWidth', {
@@ -350,7 +371,25 @@ describe('OrdinaryEditorSettings', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
 
     triggerTop = -100;
-    fireEvent.scroll(document);
+    fireEvent.scroll(window);
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(trigger);
+    expect(disconnectIntersectionObserver).toHaveBeenCalledOnce();
+
+    triggerTop = 200;
+    await user.click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+
+    triggerTop = -100;
+    act(() => {
+      intersectionObserverCallback([
+        {
+          isIntersecting: false,
+          target: trigger
+        } as unknown as IntersectionObserverEntry
+      ], {} as IntersectionObserver);
+    });
 
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     expect(
@@ -359,5 +398,7 @@ describe('OrdinaryEditorSettings', () => {
     expect(
       document.querySelector('.easymde-editor-settings-tail')
     ).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(disconnectIntersectionObserver).toHaveBeenCalledTimes(2);
   });
 });

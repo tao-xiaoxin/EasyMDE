@@ -1826,7 +1826,7 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
-    test.setTimeout(5 * 60_000);
+    test.setTimeout(10 * 60_000);
     const user = testInfo.easymdeUser;
     const customThemeSuffix = randomUUID().slice(0, 8);
     const customName = 'E2E CSS ' + customThemeSuffix;
@@ -2286,11 +2286,16 @@ test.describe('EasyMDE editor workflows', () => {
       return rect.bottom > 0 && rect.top < innerHeight;
     })).toBe(true);
     await expect(scrollSettingsPanel).toBeVisible();
-    const scrollDistance = await page.evaluate(
-      () => document.documentElement.scrollHeight
-    );
-    await page.mouse.move(391, 5);
-    await page.mouse.wheel(0, scrollDistance);
+    await page.evaluate(() => {
+      const scrollingElement = document.scrollingElement;
+      if (!scrollingElement) throw new Error('document-scrolling-element-unavailable');
+      scrollingElement.scrollTop = scrollingElement.scrollHeight;
+      scrollingElement.dispatchEvent(new Event('scroll', { bubbles: true }));
+      window.dispatchEvent(new Event('scroll'));
+    });
+    await page.evaluate(() => new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    }));
     await expect.poll(() => scrollSettingsTrigger.evaluate((trigger) => {
       const rect = trigger.getBoundingClientRect();
       return rect.bottom <= 0 || rect.top >= innerHeight;

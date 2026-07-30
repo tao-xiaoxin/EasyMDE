@@ -411,7 +411,8 @@
 
 .easymde-rendered-content.easymde-markdown-theme-grid-black h2 {
   margin: 10px auto;
-  height: 40px;
+  min-height: 40px;
+  height: auto;
   background-color: rgb(251, 251, 251);
   border-bottom: 1px solid rgb(246, 246, 246);
   overflow: hidden;
@@ -422,7 +423,10 @@
   margin-left: -10px;
   display: inline-block;
   width: auto;
-  height: 40px;
+  max-width: 100%;
+  min-height: 40px;
+  height: auto;
+  box-sizing: border-box;
   background-color: rgb(33, 33, 34);
   border-bottom-right-radius:100px;
   color: rgb(255, 255, 255);
@@ -430,6 +434,7 @@
   padding-left: 30px;
   line-height: 40px;
   font-size: 18px;
+  overflow-wrap: anywhere;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-grid-black h3 {
@@ -504,4 +509,27 @@
 
 .easymde-rendered-content.easymde-markdown-theme-grid-black .footnote-ref {
   color: rgb(239, 112, 96);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-grid-black table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-grid-black table > thead,
+.easymde-rendered-content.easymde-markdown-theme-grid-black table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-grid-black table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-grid-black table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
 }

@@ -385,7 +385,7 @@
   word-spacing: 0em;
   box-sizing: border-box;
   width: 650px;
-  max-width: none !important;
+  max-width: none;
   padding: 0 10px;
   background-color: rgba(0, 0, 0, 0);
   background-image: linear-gradient(90deg, rgba(50, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0) 6.76%), linear-gradient(360deg, rgba(50, 0, 0, 0.05) 0%, rgba(249, 247, 252, 0) 9.46%);
@@ -395,6 +395,11 @@
   word-break: break-word;
   overflow-wrap: break-word;
   text-align: left;
+}
+
+.easymde-pane-preview .easymde-rendered-content.easymde-markdown-theme-rose-purple {
+  width: 100%;
+  max-width: 650px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple p {
@@ -744,4 +749,33 @@
     margin-left: calc((100% - (100vw - 50px)) / 2);
     margin-right: calc((100% - (100vw - 50px)) / 2);
   }
+
+  .easymde-pane-preview .easymde-rendered-content.easymde-markdown-theme-rose-purple {
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+  }
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table > thead,
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
 }

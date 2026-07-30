@@ -2286,9 +2286,11 @@ test.describe('EasyMDE editor workflows', () => {
       return rect.bottom > 0 && rect.top < innerHeight;
     })).toBe(true);
     await expect(scrollSettingsPanel).toBeVisible();
-    await page.evaluate(() => {
-      window.scrollTo(0, document.documentElement.scrollHeight);
-    });
+    const scrollDistance = await page.evaluate(
+      () => document.documentElement.scrollHeight
+    );
+    await page.mouse.move(391, 5);
+    await page.mouse.wheel(0, scrollDistance);
     await expect.poll(() => scrollSettingsTrigger.evaluate((trigger) => {
       const rect = trigger.getBoundingClientRect();
       return rect.bottom <= 0 || rect.top >= innerHeight;

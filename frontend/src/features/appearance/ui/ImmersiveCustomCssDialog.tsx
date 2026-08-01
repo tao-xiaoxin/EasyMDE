@@ -17,6 +17,7 @@ import type {
   CustomCssVariableId
 } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type { CustomCssPreviewResult } from '../../../contracts/ports/appearance-port';
+import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
 import { CUSTOM_CSS_VARIABLE_IDS } from '../../../contracts/bootstrap/appearance-bootstrap';
 import {
   ChevronLeft,
@@ -41,11 +42,16 @@ type CustomCssSaveError = Readonly<{
   code: 'duplicate-name' | 'save-failed';
   message: string;
 }>;
+type MessageAlertTimer = Pick<
+  ImmersiveEnvironmentPort,
+  'now' | 'schedule'
+>;
 
 type ImmersiveCustomCssDialogProps = Readonly<{
   initialCss: string;
   initialArticleThemeName: string;
   initialCodeThemeName: string;
+  messageAlertTimer: MessageAlertTimer;
   onApply: (input: Readonly<{
     articleThemeName: string;
     codeThemeName: string;
@@ -461,6 +467,7 @@ export function ImmersiveCustomCssDialog({
   initialCss,
   initialArticleThemeName,
   initialCodeThemeName,
+  messageAlertTimer,
   onApply,
   onClose,
   onPreview,
@@ -549,8 +556,8 @@ export function ImmersiveCustomCssDialog({
 
     const scheduledError = saveError;
     const delay = timerState.remaining;
-    timerState.deadline = window.Date.now() + delay;
-    const timeout = window.setTimeout(() => {
+    timerState.deadline = messageAlertTimer.now() + delay;
+    const cancel = messageAlertTimer.schedule(() => {
       timerState.deadline = null;
       timerState.remaining = 0;
       setSaveErrorFocused(false);
@@ -559,19 +566,19 @@ export function ImmersiveCustomCssDialog({
       );
     }, delay);
     return () => {
-      window.clearTimeout(timeout);
+      cancel();
       if (
         timerState.error === scheduledError &&
         null !== timerState.deadline
       ) {
         timerState.remaining = Math.max(
           0,
-          timerState.deadline - window.Date.now()
+          timerState.deadline - messageAlertTimer.now()
         );
         timerState.deadline = null;
       }
     };
-  }, [saveError, saveErrorFocused]);
+  }, [messageAlertTimer, saveError, saveErrorFocused]);
 
   useEffect(() => {
     const dialog = dialogRef.current;

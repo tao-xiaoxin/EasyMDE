@@ -215,7 +215,7 @@ export function createWordPressAppearancePort({
       } catch (error) {
         if ('easymde_duplicate_custom_css_name' === restErrorCode(error)) {
           return {
-            code: 'easymde_duplicate_custom_css_name',
+            code: 'duplicate-name',
             status: 'failed'
           };
         }

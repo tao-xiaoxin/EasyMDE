@@ -11,6 +11,7 @@ import type { AppearanceBootstrap } from '../../../contracts/bootstrap/appearanc
 import type { FontControlsBootstrap } from '../../../contracts/bootstrap/font-controls-bootstrap';
 import type { AppearancePort } from '../../../contracts/ports/appearance-port';
 import type { FontControlsPort } from '../../../contracts/ports/font-controls-port';
+import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
 import { Settings } from '../../../generated/lucide-icons';
 import {
   AppearanceControls,
@@ -32,6 +33,7 @@ type Props = Readonly<{
   fonts: FontControlsBootstrap;
   fontControlsPort: FontControlsPort;
   label: string;
+  messageAlertTimer: Pick<ImmersiveEnvironmentPort, 'now' | 'schedule'>;
   onAppearanceReady: (session: AppearanceControlsSession) => void;
   onFailure: (code: string) => void;
   onNotification?: (notification: AppearanceNotification) => void;
@@ -103,6 +105,7 @@ export function OrdinaryEditorSettings({
   fonts,
   fontControlsPort,
   label,
+  messageAlertTimer,
   onAppearanceReady,
   onFailure,
   onNotification,
@@ -215,7 +218,10 @@ export function OrdinaryEditorSettings({
       }
     };
     const repositionForScroll = (event: Event) => {
-      if (event.target === panelRef.current) return;
+      if (
+        event.target instanceof Node
+        && panelRef.current?.contains(event.target)
+      ) return;
       reposition();
     };
     const visibilityObserver = new IntersectionObserverRef((entries) => {
@@ -309,6 +315,7 @@ export function OrdinaryEditorSettings({
           onFailure={() => onFailure('react-editor-appearance-failed')}
           onReady={onAppearanceReady}
           port={appearancePort}
+          messageAlertTimer={messageAlertTimer}
           variant="embedded"
           {...(onNotification ? { onNotification } : {})}
           {...(onNotificationDismiss ? { onNotificationDismiss } : {})}

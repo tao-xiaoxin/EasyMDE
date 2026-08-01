@@ -14,7 +14,7 @@ export type CustomCssSaveResult =
   | Readonly<{ status: 'saved'; snapshot: AppearanceSnapshot }>
   | Readonly<{
     status: 'failed';
-    code: 'easymde_duplicate_custom_css_name' | 'custom-css-save-failed';
+    code: 'duplicate-name' | 'custom-css-save-failed';
   }>;
 
 export type CustomCssPreviewResult =

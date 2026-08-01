@@ -1989,7 +1989,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
     max-width: 100%;
     min-height: 44px;
     align-items: center;
-    padding: 5px 6px 5px 26px;
+    padding-block: 5px;
+    padding-inline: 26px 6px;
     border: 1px solid;
     border-color: rgba(var(--easymde-message-rgb), .18);
     border-radius: 10px;

@@ -1452,24 +1452,25 @@ export function EditorRoot(props: EditorRootProps) {
               <Fragment>
                 <AppearanceControls
                   bootstrap={currentAppearance}
-                onFailure={() =>
-                  props.onFailure('react-editor-appearance-failed')
-                }
-                onNotification={setAppearanceNotification}
-                onNotificationDismiss={dismissAppearanceNotification}
-                onReady={handleAppearanceReady}
-                port={appearancePort}
-                immersiveLabel={props.immersiveStrings.theme}
-                immersiveTitle={props.immersiveStrings.themeSettings}
-                variant="immersive"
-              />
-              <FontControls
-                bootstrap={currentFonts}
-                onFailure={() => props.onFailure('react-editor-fonts-failed')}
-                onReady={handleFontControlsReady}
-                port={fontControlsPort}
-                variant="immersive"
-              />
+                  messageAlertTimer={props.immersiveEnvironment}
+                  onFailure={() =>
+                    props.onFailure('react-editor-appearance-failed')
+                  }
+                  onNotification={setAppearanceNotification}
+                  onNotificationDismiss={dismissAppearanceNotification}
+                  onReady={handleAppearanceReady}
+                  port={appearancePort}
+                  immersiveLabel={props.immersiveStrings.theme}
+                  immersiveTitle={props.immersiveStrings.themeSettings}
+                  variant="immersive"
+                />
+                <FontControls
+                  bootstrap={currentFonts}
+                  onFailure={() => props.onFailure('react-editor-fonts-failed')}
+                  onReady={handleFontControlsReady}
+                  port={fontControlsPort}
+                  variant="immersive"
+                />
             </Fragment>
           }
           toolbar={
@@ -1562,6 +1563,7 @@ export function EditorRoot(props: EditorRootProps) {
               fonts={currentFonts}
               fontControlsPort={fontControlsPort}
               label={props.immersiveStrings.editorSettings}
+              messageAlertTimer={props.immersiveEnvironment}
               onAppearanceReady={handleAppearanceReady}
               onFailure={props.onFailure}
               onNotification={setAppearanceNotification}

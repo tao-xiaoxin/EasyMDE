@@ -175,7 +175,7 @@ function stripGeneratedPotHeader(content) {
 	return content.slice(bodyStart + 2).trim();
 }
 
-function normalizePotSourceReferences(content) {
+export function normalizePotSourceReferences(content) {
 	return content.replace(/^#: .*$/gm, (reference) =>
 		reference.replaceAll("\\", "/"),
 	);

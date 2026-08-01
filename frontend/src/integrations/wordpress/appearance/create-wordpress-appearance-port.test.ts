@@ -161,7 +161,7 @@ describe('createWordPressAppearancePort', () => {
       css: '.saved { color: green; }',
       id: ''
     })).resolves.toEqual({
-      code: 'easymde_duplicate_custom_css_name',
+      code: 'duplicate-name',
       status: 'failed'
     });
   });

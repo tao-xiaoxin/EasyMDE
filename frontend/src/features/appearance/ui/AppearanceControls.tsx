@@ -14,6 +14,7 @@ import type {
   CustomCssItem
 } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type { AppearancePort } from '../../../contracts/ports/appearance-port';
+import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
 import { referenceArticleTheme } from '../reference-article-theme';
 import { ImmersiveCustomCssDialog } from './ImmersiveCustomCssDialog';
 import {
@@ -28,6 +29,11 @@ import {
 } from '../../../shared/ui/OrdinarySelect';
 import type { EditorMessageAlertType } from '../../../shared/ui/EditorMessageAlert';
 
+type MessageAlertTimer = Pick<
+  ImmersiveEnvironmentPort,
+  'now' | 'schedule'
+>;
+
 export type AppearanceControlsSession = Readonly<{
   close: () => void;
   replaceSnapshot: (snapshot: AppearanceSnapshot) => boolean;
@@ -39,7 +45,7 @@ export type AppearanceNotification = Readonly<{
   type: EditorMessageAlertType;
 }>;
 
-type AppearanceControlsProps = Readonly<{
+type AppearanceControlsCommonProps = Readonly<{
   bootstrap: AppearanceBootstrap;
   port: AppearancePort;
   onFailure: () => void;
@@ -48,8 +54,17 @@ type AppearanceControlsProps = Readonly<{
   onReady: (session: AppearanceControlsSession) => void;
   immersiveLabel?: string;
   immersiveTitle?: string;
-  variant?: 'default' | 'embedded' | 'immersive';
 }>;
+type AppearanceControlsProps = AppearanceControlsCommonProps & Readonly<
+  | {
+    messageAlertTimer: MessageAlertTimer;
+    variant: 'immersive';
+  }
+  | {
+    messageAlertTimer?: MessageAlertTimer;
+    variant?: 'default' | 'embedded';
+  }
+>;
 
 type ImmersiveThemeOption = Readonly<{
   id: string;
@@ -82,6 +97,13 @@ function articleThemeAccent(id: string): string {
 
 function codeThemeSwatch(id: string): readonly [string, string] {
   return CODE_THEME_SWATCHES[id] ?? ['#F4F4F4', '#333333'];
+}
+
+function requireMessageAlertTimer(
+  timer: MessageAlertTimer | undefined
+): MessageAlertTimer {
+  if (!timer) throw new Error('custom-css-message-alert-timer-unavailable');
+  return timer;
 }
 
 function ThemeSettingsIcon() {
@@ -291,6 +313,7 @@ export function AppearanceControls({
   onReady,
   immersiveLabel,
   immersiveTitle,
+  messageAlertTimer,
   variant = 'default'
 }: AppearanceControlsProps) {
   const controlLabel =
@@ -534,8 +557,7 @@ export function AppearanceControls({
         }
         return { status: 'saved' };
       } else {
-        const isDuplicate =
-          'easymde_duplicate_custom_css_name' === result.code;
+        const isDuplicate = 'duplicate-name' === result.code;
         const message = isDuplicate
           ? bootstrap.strings.cssNameDuplicate
           : bootstrap.strings.cssSaveFailed;
@@ -888,6 +910,7 @@ export function AppearanceControls({
           initialCss={customCode}
           initialArticleThemeName={customArticleThemeName}
           initialCodeThemeName={customCodeThemeName}
+          messageAlertTimer={requireMessageAlertTimer(messageAlertTimer)}
           onApply={(input) => saveCustomCss(input, '')}
           onClose={() => {
             setIsCustomOpen(false);

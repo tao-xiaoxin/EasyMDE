@@ -14,6 +14,49 @@ function cssRule(source, selector) {
   return match.groups.body;
 }
 
+function cssBlock(source, prelude, fromIndex = 0) {
+  const preludeIndex = source.indexOf(prelude, fromIndex);
+  assert.notEqual(preludeIndex, -1, `Missing CSS block: ${prelude}`);
+  const openingBrace = source.indexOf('{', preludeIndex + prelude.length);
+  assert.notEqual(openingBrace, -1, `Missing opening brace: ${prelude}`);
+
+  let depth = 1;
+  let quote = null;
+  let inComment = false;
+  for (let index = openingBrace + 1; index < source.length; index += 1) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (inComment) {
+      if ('*' === character && '/' === next) {
+        inComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if ('\\' === character) {
+        index += 1;
+      } else if (quote === character) {
+        quote = null;
+      }
+      continue;
+    }
+    if ('/' === character && '*' === next) {
+      inComment = true;
+      index += 1;
+    } else if ('"' === character || "'" === character) {
+      quote = character;
+    } else if ('{' === character) {
+      depth += 1;
+    } else if ('}' === character) {
+      depth -= 1;
+      if (0 === depth) return source.slice(openingBrace + 1, index);
+    }
+  }
+
+  assert.fail(`Missing closing brace: ${prelude}`);
+}
+
 function assertDeclaration(rule, property, valuePattern) {
   const pattern = valuePattern instanceof RegExp
     ? valuePattern.source
@@ -126,7 +169,7 @@ test('shared editor message alerts use one compact semantic treatment', () => {
   );
   assert.match(
     css,
-    /\.easymde-editor-message-alert\s*\{[^}]*width:\s*fit-content;[^}]*min-width:\s*min\(344px, 100%\);[^}]*max-width:\s*100%;[^}]*min-height:\s*44px;[^}]*padding:\s*5px 6px 5px 26px;[^}]*border-color:\s*rgba\(var\(--easymde-message-rgb\), \.18\);[^}]*border-radius:\s*10px;[^}]*background:\s*rgba\(var\(--easymde-message-rgb\), \.055\);[^}]*box-shadow:\s*0 6px 18px rgba\(var\(--easymde-message-rgb\), \.08\);[^}]*font-size:\s*14px;[^}]*letter-spacing:\s*\.5px;[^}]*line-height:\s*21px;/s
+    /\.easymde-editor-message-alert\s*\{[^}]*width:\s*fit-content;[^}]*min-width:\s*min\(344px, 100%\);[^}]*max-width:\s*100%;[^}]*min-height:\s*44px;[^}]*padding-block:\s*5px;[^}]*padding-inline:\s*26px 6px;[^}]*border-color:\s*rgba\(var\(--easymde-message-rgb\), \.18\);[^}]*border-radius:\s*10px;[^}]*background:\s*rgba\(var\(--easymde-message-rgb\), \.055\);[^}]*box-shadow:\s*0 6px 18px rgba\(var\(--easymde-message-rgb\), \.08\);[^}]*font-size:\s*14px;[^}]*letter-spacing:\s*\.5px;[^}]*line-height:\s*21px;/s
   );
   for (const [type, rgb] of [
     ['success', '0, 200, 2'],
@@ -158,24 +201,58 @@ test('shared editor message alerts use one compact semantic treatment', () => {
     css,
     /\.easymde-editor-message-alert__close svg\s*\{[^}]*width:\s*17px;[^}]*height:\s*17px;/s
   );
-  assert.match(
-    css,
-    /@media \(max-width:\s*600px\)[\s\S]*?\.easymde-editor-message-alert-host\s*\{[^}]*width:\s*calc\(100vw - 24px\);[^}]*\}[\s\S]*?\.easymde-editor-message-alert\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*0;/s
+  const mobileAlerts = cssBlock(css, '@media (max-width: 600px)');
+  assertDeclaration(
+    cssRule(mobileAlerts, '.easymde-editor-message-alert-host'),
+    'width',
+    'calc(100vw - 24px)'
   );
-  assert.match(
+  const mobileAlert = cssRule(
+    mobileAlerts,
+    '.easymde-editor-message-alert'
+  );
+  assertDeclaration(mobileAlert, 'width', '100%');
+  assertDeclaration(mobileAlert, 'min-width', '0');
+
+  const reducedMotionPrelude = '@media (prefers-reduced-motion: reduce)';
+  const reducedMotion = cssBlock(
     css,
-    /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.easymde-editor-message-alert__close\s*\{[^}]*transition:\s*none;/s
+    reducedMotionPrelude,
+    css.lastIndexOf(reducedMotionPrelude)
+  );
+  assertDeclaration(
+    cssRule(reducedMotion, '.easymde-editor-message-alert__close'),
+    'transition',
+    'none'
   );
 });
 
 test('immersive Custom CSS duplicate error keeps the approved centered width', () => {
-  assert.match(
+  const header = cssRule(
     css,
-    /\.easymde-immersive-custom-css-dialog > header\.has-message-alert\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) 344px minmax\(0, 1fr\);/s
+    '.easymde-immersive-custom-css-dialog > header.has-message-alert'
   );
-  assert.match(
+  assertDeclaration(
+    header,
+    'grid-template-columns',
+    'minmax(0, 1fr) 344px minmax(0, 1fr)'
+  );
+  const host = cssRule(
     css,
-    /\.easymde-immersive-custom-css-dialog \.easymde-editor-message-alert\.is-error\.is-compact\s*\{[^}]*width:\s*344px;/s
+    '.easymde-immersive-custom-css-dialog > header > .easymde-editor-message-alert-host.is-dialog-compact'
+  );
+  assertDeclaration(host, 'grid-column', '2');
+  assertDeclaration(host, 'grid-row', '1 / 3');
+  assertDeclaration(host, 'width', '344px');
+  assertDeclaration(host, 'max-width', '344px');
+  assertDeclaration(host, 'justify-self', 'center');
+  assertDeclaration(
+    cssRule(
+      css,
+      '.easymde-immersive-custom-css-dialog .easymde-editor-message-alert.is-error.is-compact'
+    ),
+    'width',
+    '344px'
   );
 });
 

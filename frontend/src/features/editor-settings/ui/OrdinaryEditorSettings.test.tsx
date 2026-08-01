@@ -137,6 +137,13 @@ function renderSettings() {
         closeOtherPopovers: vi.fn()
       }}
       label="Editor settings"
+      messageAlertTimer={{
+        now: () => Date.now(),
+        schedule: (callback, delay) => {
+          const timer = window.setTimeout(callback, delay);
+          return () => window.clearTimeout(timer);
+        }
+      }}
       onAppearanceReady={vi.fn()}
       onFailure={vi.fn()}
       onFontControlsReady={vi.fn()}
@@ -463,16 +470,20 @@ describe('OrdinaryEditorSettings', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('keeps the fixed panel open while its own content scrolls', async () => {
+  it('ignores captured scroll events from the panel and its descendants', async () => {
     const user = userEvent.setup();
     renderSettings();
     const trigger = screen.getByRole('button', { name: 'Editor settings' });
 
     await user.click(trigger);
     const panel = screen.getByRole('dialog', { name: 'Editor settings' });
+    const descendant = screen.getByRole('combobox', { name: 'Article theme' });
+    const readTriggerRect = vi.spyOn(trigger, 'getBoundingClientRect');
     fireEvent.scroll(panel);
+    fireEvent.scroll(descendant);
 
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     expect(panel.hidden).toBe(false);
+    expect(readTriggerRect).not.toHaveBeenCalled();
   });
 });

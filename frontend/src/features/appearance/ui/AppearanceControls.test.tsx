@@ -79,6 +79,14 @@ function createPort(overrides: Partial<AppearancePort> = {}): AppearancePort {
   };
 }
 
+const messageAlertTimer = {
+  now: () => Date.now(),
+  schedule: (callback: () => void, delay: number) => {
+    const timer = window.setTimeout(callback, delay);
+    return () => window.clearTimeout(timer);
+  }
+};
+
 describe('AppearanceControls', () => {
   it('uses the local palette icon and shared dropdown chevron in ordinary mode', () => {
     render(
@@ -105,6 +113,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -127,6 +136,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -146,6 +156,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -166,6 +177,7 @@ describe('AppearanceControls', () => {
         onFailure={vi.fn()}
         onReady={vi.fn()}
         immersiveTitle="Theme settings"
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -196,7 +208,7 @@ describe('AppearanceControls', () => {
     const onNotification = vi.fn();
     const saveCustomCss = vi.fn().mockResolvedValue({
       status: 'failed',
-      code: 'easymde_duplicate_custom_css_name',
+      code: 'duplicate-name',
       message: 'Sensitive server detail'
     });
     render(
@@ -207,6 +219,7 @@ describe('AppearanceControls', () => {
           onFailure={vi.fn()}
           onNotification={onNotification}
           onReady={vi.fn()}
+          messageAlertTimer={messageAlertTimer}
           variant="immersive"
         />
       </div>
@@ -304,7 +317,7 @@ describe('AppearanceControls', () => {
     const user = userEvent.setup();
     const saveCustomCss = vi.fn().mockResolvedValue({
       status: 'failed',
-      code: 'easymde_duplicate_custom_css_name',
+      code: 'duplicate-name',
       message: 'Sensitive server detail'
     });
     render(
@@ -314,6 +327,7 @@ describe('AppearanceControls', () => {
           port={createPort({ saveCustomCss })}
           onFailure={vi.fn()}
           onReady={vi.fn()}
+          messageAlertTimer={messageAlertTimer}
           variant="immersive"
         />
       </div>
@@ -376,6 +390,7 @@ describe('AppearanceControls', () => {
         })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -398,6 +413,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -463,6 +479,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -575,6 +592,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -612,6 +630,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -658,6 +677,7 @@ describe('AppearanceControls', () => {
         port={createPort({ previewCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -759,6 +779,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -801,6 +822,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -837,6 +859,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -870,6 +893,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -926,6 +950,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -1107,6 +1132,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -1129,6 +1155,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -1151,6 +1178,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -1247,6 +1275,7 @@ describe('AppearanceControls', () => {
           onReady={(nextSession) => {
             session = nextSession;
           }}
+          messageAlertTimer={messageAlertTimer}
           variant="immersive"
         />
       );
@@ -1324,6 +1353,7 @@ describe('AppearanceControls', () => {
         port={createPort({ applyState })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -1375,6 +1405,7 @@ describe('AppearanceControls', () => {
         port={createPort({ applyState, saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -1421,6 +1452,7 @@ describe('AppearanceControls', () => {
         port={createPort({ applyState, saveCustomCss })}
         onFailure={onFailure}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -1510,6 +1542,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -1542,6 +1575,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss: vi.fn().mockRejectedValue(new Error('session-expired')) })}
         onFailure={onFailure}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );

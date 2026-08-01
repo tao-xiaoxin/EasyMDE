@@ -20,6 +20,7 @@ import {
 	compileJsCatalog,
 	compileMo,
 	makePot,
+	normalizePotSourceReferences,
 	parsePoEntries,
 } from "../../scripts/i18n.mjs";
 
@@ -135,6 +136,15 @@ function jsFrontendStringKeys() {
 
 	return keys;
 }
+
+test("POT source references normalize Windows path separators", () => {
+	assert.equal(
+		normalizePotSourceReferences(
+			'#: src\\Admin\\Editor.php:18 templates\\admin\\editor.php:7\nmsgid "Editor"\n',
+		),
+		'#: src/Admin/Editor.php:18 templates/admin/editor.php:7\nmsgid "Editor"\n',
+	);
+});
 
 function phpTranslationCallPattern() {
 	const singleQuoted = "'(?:\\\\.|[^'\\\\])*'";

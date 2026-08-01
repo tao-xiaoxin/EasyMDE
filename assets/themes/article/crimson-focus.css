@@ -1,6 +1,6 @@
 /* EasyMDE-maintained Crimson focus article theme. */
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus {
-  --easymde-theme-font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+  --easymde-theme-font-family: -apple-system, blinkmacsystemfont, "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --easymde-crimson-focus-text: #334155;
   --easymde-crimson-focus-heading: #0f172a;

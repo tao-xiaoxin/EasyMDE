@@ -31,6 +31,27 @@ function cssRuleBodies(source, selector) {
   return bodies;
 }
 
+function cssRuleSelectors(source) {
+  const selectors = [];
+  const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+  let match;
+
+  while ((match = rulePattern.exec(source)) !== null) {
+    selectors.push(...match[1].split(',').map((item) => item.trim()));
+  }
+
+  return selectors;
+}
+
+function targetsCodeFrame(selector) {
+  const normalizedSelector = selector
+    .replaceAll(/:not\(\s*pre\s*\)/g, '')
+    .replaceAll(/:not\(\s*\.hljs(?:-[a-z0-9-]+)?\s*\)/g, '');
+
+  return /(^|[\s>+~])pre(?=$|[\s>+~:.\[#])/.test(normalizedSelector)
+    || /(^|[\s>+~])\.hljs(?:-|(?=$|[\s>+~:.\[#]))/.test(normalizedSelector);
+}
+
 function luminance(hex) {
   const value = hex.replace('#', '');
   const channels = [0, 2, 4].map((index) => Number.parseInt(value.slice(index, index + 2), 16) / 255);
@@ -117,10 +138,18 @@ test('Crimson focus follows the reference light surface and preserves code-theme
   assert.ok(contrast(text, white) >= 7, 'body text should meet the light-theme AAA target');
   assert.ok(contrast(accent, white) >= 4.5, 'accent text should meet AA contrast on white');
   assert.ok(contrast(text, soft) >= 4.5, 'body text should meet AA contrast on accent surfaces');
-  assert.equal(cssRuleBodies(css, root).length, 1, 'theme root should be scoped once');
+  const normalizedCss = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.equal(
+    cssRuleBodies(normalizedCss, root).length,
+    2,
+    'base and mobile root rules should be scoped'
+  );
   assert.match(css, /@media \(max-width: 700px\)/);
-  assert.doesNotMatch(css, /\bpre\s*\{/);
-  assert.doesNotMatch(css, /code\.hljs/);
+  assert.deepEqual(
+    cssRuleSelectors(normalizedCss).filter(targetsCodeFrame),
+    [],
+    'article theme must not target shared code-frame selectors'
+  );
 
   const dom = new JSDOM(
     `<style>${css}</style>

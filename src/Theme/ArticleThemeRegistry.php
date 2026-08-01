@@ -100,6 +100,7 @@ final class ArticleThemeRegistry {
 				);
 
 			case 'red-crimson':
+			case 'crimson-focus':
 				return array(
 					'customFont'  => 'inter',
 					'windowsFont' => 'microsoft-yahei',

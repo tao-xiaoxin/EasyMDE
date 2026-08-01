@@ -377,6 +377,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-theme-accent[data-theme="nenqing-green"] { background: #00b4a6; }
 .easymde-immersive-theme-accent[data-theme="green-vitality"] { background: #27ae60; }
 .easymde-immersive-theme-accent[data-theme="red-crimson"] { background: #e74c3c; }
+.easymde-immersive-theme-accent[data-theme="crimson-focus"] { background: #b42318; }
 .easymde-immersive-theme-accent[data-theme="blue-ying"] { background: #1e90ff; }
 .easymde-immersive-theme-accent[data-theme="lanqing"] { background: #4a90e2; }
 .easymde-immersive-theme-accent[data-theme="yamabuki"] { background: #d4ac0d; }

@@ -46,6 +46,15 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
         );
         $this->assertSame('easymde-markdown-theme-crimson-focus', $themes['crimson-focus']['className']);
         $this->assertSame('atom-one-dark', $themes['crimson-focus']['defaultCodeTheme']);
+        $this->assertSame(
+            array(
+                'customFont'  => 'inter',
+                'windowsFont' => 'microsoft-yahei',
+                'appleFont'   => 'pingfang-sc-regular',
+                'serifFont'   => 'sans-serif-only',
+            ),
+            $themes['crimson-focus']['fontDefaults']
+        );
         $this->assertSame('crimson-focus', $registry->sanitize_id('crimson-focus'));
     }
 
@@ -178,8 +187,7 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
     {
         $article_themes = (new ArticleThemeRegistry())->for_script();
         $code_themes = array_column((new CodeThemeRegistry())->for_script(), null, 'id');
-
-        $this->assertCount(24, $article_themes);
+        $this->assertCount(23, $article_themes);
         foreach ($article_themes as $article_theme) {
             $this->assertArrayHasKey($article_theme['defaultCodeTheme'], $code_themes);
         }

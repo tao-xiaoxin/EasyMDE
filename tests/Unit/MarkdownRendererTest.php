@@ -91,4 +91,18 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringNotContainsString('class="content"', $html);
         $this->assertStringNotContainsString('class="footnote-ref"', $html);
     }
+
+    public function test_crimson_focus_wraps_tables_and_images_for_narrow_preview_surfaces()
+    {
+        $html = MarkdownRenderer::render(
+            "![Crimson caption](https://example.test/crimson.png)\n\n" .
+            "| Name | Value |\n| --- | --- |\n| One | Two |",
+            'crimson-focus'
+        );
+
+        $this->assertStringContainsString('<section class="table-container"><table>', $html);
+        $this->assertStringNotContainsString('<table>', str_replace('<section class="table-container"><table>', '', $html));
+        $this->assertStringContainsString('<figure><img', $html);
+        $this->assertStringContainsString('<figcaption>Crimson caption</figcaption>', $html);
+    }
 }

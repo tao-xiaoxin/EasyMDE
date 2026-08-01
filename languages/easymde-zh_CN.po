@@ -1450,6 +1450,10 @@ msgid "Blue ying"
 msgstr "蓝莹"
 
 #: src/Theme/ArticleThemeRegistry.php:22
+msgid "Crimson focus"
+msgstr "绯红专注"
+
+#: src/Theme/ArticleThemeRegistry.php:22
 msgid "Lanqing"
 msgstr "兰青"
 

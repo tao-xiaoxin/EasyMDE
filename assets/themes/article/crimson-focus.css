@@ -162,6 +162,13 @@
   color: var(--easymde-crimson-focus-muted);
 }
 
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote p,
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote li,
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote dl {
+  color: var(--easymde-crimson-focus-muted);
+}
+
+
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote > :first-child {
   margin-top: 0;
 }
@@ -218,7 +225,7 @@
   text-align: center;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-crimson-focus .easymde-table-container {
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .table-container {
   max-width: 100%;
   margin: 1.5em 0;
   overflow-x: auto;
@@ -264,6 +271,7 @@
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus .footnotes p,
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus .footnote-item p {
+  color: var(--easymde-crimson-focus-muted);
   font-size: 14px;
   line-height: 1.6;
 }

@@ -189,11 +189,11 @@ final class ThemeMarkupTransformer {
 	}
 
 	private static function theme_uses_image_figures( $theme ) {
-		return in_array( $theme, array( 'qingbi-liujin', 'qinghe-zhusha' ), true );
+		return in_array( $theme, array( 'qingbi-liujin', 'qinghe-zhusha', 'crimson-focus' ), true );
 	}
 
 	private static function theme_uses_table_container( $theme ) {
-		return in_array( $theme, array( 'qingbi-liujin', 'qinghe-zhusha' ), true );
+		return in_array( $theme, array( 'qingbi-liujin', 'qinghe-zhusha', 'crimson-focus' ), true );
 	}
 
 	private static function wrap_cupid_busy_containers( DOMDocument $document, DOMElement $root ) {

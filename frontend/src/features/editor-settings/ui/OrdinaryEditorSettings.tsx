@@ -97,19 +97,6 @@ function settingsPanelPosition(
   };
 }
 
-function triggerIntersectsViewport(
-  trigger: HTMLButtonElement,
-  windowRef: Window
-): boolean {
-  const rect = trigger.getBoundingClientRect();
-  return (
-    rect.bottom > 0 &&
-    rect.right > 0 &&
-    rect.top < windowRef.innerHeight &&
-    rect.left < windowRef.innerWidth
-  );
-}
-
 export function OrdinaryEditorSettings({
   appearance,
   appearancePort,
@@ -134,7 +121,7 @@ export function OrdinaryEditorSettings({
       if (!activeRef.current) return;
       const activeElement = panelRef.current?.ownerDocument.activeElement;
       if (activeElement && panelRef.current?.contains(activeElement)) {
-        (focusTarget ?? triggerRef.current)?.focus();
+        (focusTarget ?? triggerRef.current)?.focus({ preventScroll: true });
       }
       setIsOpen(false);
     }
@@ -173,6 +160,15 @@ export function OrdinaryEditorSettings({
     if (!documentRef || !windowRef) {
       throw new Error('ordinary-editor-settings-document-unavailable');
     }
+    const IntersectionObserverRef = windowRef.IntersectionObserver;
+    if (!IntersectionObserverRef) {
+      throw new Error('ordinary-editor-settings-visibility-owner-unavailable');
+    }
+    const trigger = triggerRef.current;
+    if (!trigger) {
+      throw new Error('ordinary-editor-settings-trigger-unavailable');
+    }
+    let active = true;
     const closeForPointer = (event: MouseEvent) => {
       const eventPath = event.composedPath();
       if (
@@ -213,13 +209,8 @@ export function OrdinaryEditorSettings({
       }
     };
     const reposition = () => {
-      const trigger = triggerRef.current;
       const panel = panelRef.current;
       if (trigger && panel) {
-        if (!triggerIntersectsViewport(trigger, windowRef)) {
-          setIsOpen(false);
-          return;
-        }
         setPanelPosition(settingsPanelPosition(trigger, panel));
       }
     };
@@ -227,18 +218,31 @@ export function OrdinaryEditorSettings({
       if (event.target === panelRef.current) return;
       reposition();
     };
+    const visibilityObserver = new IntersectionObserverRef((entries) => {
+      if (
+        active
+        && entries.some((entry) => (
+          entry.target === trigger && !entry.isIntersecting
+        ))
+      ) {
+        sessionRef.current.close();
+      }
+    });
+    visibilityObserver.observe(trigger);
 
     documentRef.addEventListener('click', closeForPointer);
-    documentRef.addEventListener('scroll', repositionForScroll, true);
     windowRef.addEventListener('keydown', closeForEscape);
     windowRef.addEventListener('keydown', containKeyboardFocus, true);
     windowRef.addEventListener('resize', reposition);
+    windowRef.addEventListener('scroll', repositionForScroll, true);
     return () => {
+      active = false;
+      visibilityObserver.disconnect();
       documentRef.removeEventListener('click', closeForPointer);
-      documentRef.removeEventListener('scroll', repositionForScroll, true);
       windowRef.removeEventListener('keydown', closeForEscape);
       windowRef.removeEventListener('keydown', containKeyboardFocus, true);
       windowRef.removeEventListener('resize', reposition);
+      windowRef.removeEventListener('scroll', repositionForScroll, true);
     };
   }, [isOpen]);
 

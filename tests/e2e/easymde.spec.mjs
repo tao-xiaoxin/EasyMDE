@@ -428,6 +428,23 @@ async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
   if (expectedText) await expect(preview).toContainText(expectedText);
 }
 
+async function readyPreviewSignature(preview) {
+  return preview.evaluate((root) => (
+    'string' === typeof root.easymdePreviewSignature
+      ? root.easymdePreviewSignature
+      : ''
+  ));
+}
+
+async function waitForPreviewRefresh(preview, previousSignature, message) {
+  await expect.poll(async () => {
+    const signature = await readyPreviewSignature(preview);
+    return '' !== signature && signature !== previousSignature;
+  }, { message }).toBe(true);
+  await expect(preview).toHaveAttribute('aria-busy', 'false');
+  await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
+}
+
 async function setImmersiveSplitRatio(page, ratio, resizeLabel) {
   const divider = page.getByRole('separator', { name: resizeLabel });
   await expect(divider).toBeVisible();
@@ -1138,12 +1155,16 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(toolbar.locator('[data-easymde-command="bold"]:visible')).toHaveCount(1);
 
     const source = page.locator('#easymde-source');
+    const headingLabel = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.toolbar.strings.headings
+    );
     const headingTrigger = reactMain.getByRole('button', {
-      name: 'Headings',
+      name: headingLabel,
       exact: true
     });
     const headingMenu = reactMain.getByRole('menu', {
-      name: 'Headings',
+      name: headingLabel,
+      exact: true,
       includeHidden: true
     });
     await expect(page.locator('#postdivrich')).toBeHidden();
@@ -1672,6 +1693,7 @@ test.describe('EasyMDE editor workflows', () => {
       });
       const articleSelect = settingsDialog.getByLabel(labels.articleTheme);
       await articleSelect.click();
+      const previousPreviewSignature = await readyPreviewSignature(preview);
       await page.getByRole('option', { name: label, exact: true }).click();
       await expect(preview).toHaveClass(
         new RegExp(`easymde-markdown-theme-${id}`)
@@ -1683,6 +1705,11 @@ test.describe('EasyMDE editor workflows', () => {
       ), cssUrl), {
         message: `${id} article stylesheet should finish loading`
       }).toBe(true);
+      await waitForPreviewRefresh(
+        preview,
+        previousPreviewSignature,
+        `${id} server preview should finish rendering`
+      );
       const tableAccessibility = await preview.locator('table').first().ariaSnapshot();
       for (const [role, expectedCount] of Object.entries({
         table: 1,
@@ -2125,7 +2152,9 @@ test.describe('EasyMDE editor workflows', () => {
     await page.getByRole('button', { name: labels.immersive.enter }).click();
     const immersiveRegion = page.getByRole('region', { name: labels.immersive.immersive });
     await expect(immersiveRegion).toBeVisible();
-    await immersiveRegion.getByRole('button', { name: labels.immersive.theme }).click();
+    await immersiveRegion
+      .getByRole('button', { name: labels.immersive.theme, exact: true })
+      .click();
     const immersiveAppearanceDialog = page.getByRole('dialog', {
       name: labels.immersive.themeSettings
     });
@@ -2207,7 +2236,7 @@ test.describe('EasyMDE editor workflows', () => {
       name: labels.immersive.immersive
     });
     await refreshedImmersiveRegion
-      .getByRole('button', { name: labels.immersive.theme })
+      .getByRole('button', { name: labels.immersive.theme, exact: true })
       .click();
     const refreshedImmersiveAppearance = page.getByRole('dialog', {
       name: labels.immersive.themeSettings
@@ -2296,18 +2325,47 @@ test.describe('EasyMDE editor workflows', () => {
       return rect.bottom > 0 && rect.top < innerHeight;
     })).toBe(true);
     await expect(scrollSettingsPanel).toBeVisible();
-    await page.evaluate(() => {
-      window.scrollTo(0, document.documentElement.scrollHeight);
+    await page.evaluate(async () => {
+      window.scrollTo(0, Number.MAX_SAFE_INTEGER);
+      await new Promise((resolve) => requestAnimationFrame(() => (
+        requestAnimationFrame(resolve)
+      )));
     });
-    await expect.poll(() => scrollSettingsTrigger.evaluate((trigger) => {
-      const rect = trigger.getBoundingClientRect();
-      return rect.bottom <= 0 || rect.top >= innerHeight;
-    })).toBe(true);
-    await expect(scrollSettingsPanel).toBeHidden();
-    await expect(scrollSettingsTrigger).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    );
+    await expect.poll(() => page.evaluate(() => {
+      const trigger = document.querySelector(
+        '.easymde-toolbar-popover-settings > button'
+      );
+      const panel = document.querySelector(
+        '.easymde-toolbar-popover-settings-panel'
+      );
+      if (!(trigger instanceof HTMLElement) || !(panel instanceof HTMLElement)) {
+        return false;
+      }
+      const triggerRect = trigger.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const scrollBottom = Math.max(
+        0,
+        document.documentElement.scrollHeight - innerHeight
+      );
+      const scrollPositionPreserved = Math.abs(scrollY - scrollBottom) <= 1;
+      const closed = panel.hidden
+        && 'false' === trigger.getAttribute('aria-expanded')
+        && !panel.contains(document.activeElement);
+      if (closed) return scrollPositionPreserved;
+      const triggerVisible = triggerRect.bottom > 0
+        && triggerRect.top < innerHeight;
+      const panelContained = panelRect.top >= 0
+        && panelRect.bottom <= innerHeight
+        && panelRect.left >= 0
+        && panelRect.right <= innerWidth;
+      return triggerVisible
+        && scrollPositionPreserved
+        && !panel.hidden
+        && 'true' === trigger.getAttribute('aria-expanded')
+        && panelContained;
+    }), {
+      message: 'scrolling should close an unanchored panel or keep it visibly anchored'
+    }).toBe(true);
   });
 
   test('restores the fixed ordinary toolbar and 50/50 workspace without withdrawn surfaces', async ({ page }, testInfo) => {

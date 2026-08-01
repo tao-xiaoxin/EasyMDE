@@ -106,6 +106,37 @@ test('Qingbi Liujin and Qinghe Zhusha keep a compact, separated first heading', 
     assert.match(h1Rule, /line-height:\s*1\.25;/);
   }
 });
+test('Crimson focus follows the reference light surface and preserves code-theme ownership', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/crimson-focus.css'), 'utf8');
+  const root = '.easymde-rendered-content.easymde-markdown-theme-crimson-focus';
+  const white = '#ffffff';
+  const text = cssVariable(css, '--easymde-crimson-focus-text');
+  const accent = cssVariable(css, '--easymde-crimson-focus-accent');
+  const soft = cssVariable(css, '--easymde-crimson-focus-accent-soft');
+
+  assert.ok(contrast(text, white) >= 7, 'body text should meet the light-theme AAA target');
+  assert.ok(contrast(accent, white) >= 4.5, 'accent text should meet AA contrast on white');
+  assert.ok(contrast(text, soft) >= 4.5, 'body text should meet AA contrast on accent surfaces');
+  assert.equal(cssRuleBodies(css, root).length, 1, 'theme root should be scoped once');
+  assert.match(css, /@media \(max-width: 700px\)/);
+  assert.doesNotMatch(css, /\bpre\s*\{/);
+  assert.doesNotMatch(css, /code\.hljs/);
+
+  const dom = new JSDOM(
+    `<style>${css}</style>
+     <article class="easymde-rendered-content easymde-markdown-theme-crimson-focus">
+       <h1>普通编辑 Preview</h1><h2>沉浸式 Preview</h2><p>阅读内容</p>
+     </article>`
+  );
+  const { window } = dom;
+  const article = window.document.querySelector(root);
+  const heading = window.document.querySelector('h2');
+
+  assert.ok(article);
+  assert.ok(heading);
+  assert.equal(cssVariable(css, '--easymde-crimson-focus-surface'), '#ffffff');
+  assert.equal(cssVariable(css, '--easymde-crimson-focus-heading'), '#0f172a');
+});
 
 test('Geek Black changes only its final H1 top rhythm', () => {
   const css = readFileSync(join(repoRoot, 'assets/themes/article/geek-black.css'), 'utf8');

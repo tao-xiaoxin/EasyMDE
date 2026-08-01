@@ -19,6 +19,7 @@ final class ArticleThemeRegistry {
 			'green-vitality' => $this->theme( 'green-vitality', __( 'Green vitality', 'easymde' ), 'assets/themes/article/green-vitality.css', 'atom-one-dark' ),
 			'red-crimson'    => $this->theme( 'red-crimson', __( 'Red crimson', 'easymde' ), 'assets/themes/article/red-crimson.css', 'atom-one-dark' ),
 			'blue-ying'      => $this->theme( 'blue-ying', __( 'Blue ying', 'easymde' ), 'assets/themes/article/blue-ying.css', 'atom-one-dark' ),
+			'crimson-focus'  => $this->theme( 'crimson-focus', __( 'Crimson focus', 'easymde' ), 'assets/themes/article/crimson-focus.css', 'atom-one-dark' ),
 			'lanqing'        => $this->theme( 'lanqing', __( 'Lanqing', 'easymde' ), 'assets/themes/article/lanqing.css', 'atom-one-dark' ),
 			'yamabuki'       => $this->theme( 'yamabuki', __( 'Yamabuki', 'easymde' ), 'assets/themes/article/yamabuki.css', 'atom-one-dark' ),
 			'grid-black'     => $this->theme( 'grid-black', __( 'Grid black', 'easymde' ), 'assets/themes/article/grid-black.css', 'atom-one-dark' ),

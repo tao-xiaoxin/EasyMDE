@@ -135,6 +135,11 @@ test('Crimson focus follows the reference light surface and preserves code-theme
   const accent = cssVariable(css, '--easymde-crimson-focus-accent');
   const soft = cssVariable(css, '--easymde-crimson-focus-accent-soft');
 
+  assert.equal(text, '#0f172a');
+  assert.equal(accent, '#b42318');
+  assert.equal(soft, '#fdf0ee');
+  assert.equal(cssVariable(css, '--easymde-crimson-focus-muted'), '#475569');
+  assert.equal(cssVariable(css, '--easymde-crimson-focus-inline'), '#fdf0ee');
   assert.ok(contrast(text, white) >= 7, 'body text should meet the light-theme AAA target');
   assert.ok(contrast(accent, white) >= 4.5, 'accent text should meet AA contrast on white');
   assert.ok(contrast(text, soft) >= 4.5, 'body text should meet AA contrast on accent surfaces');

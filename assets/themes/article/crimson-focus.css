@@ -2,15 +2,15 @@
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus {
   --easymde-theme-font-family: -apple-system, blinkmacsystemfont, "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
-  --easymde-crimson-focus-text: #334155;
+  --easymde-crimson-focus-text: #0f172a;
   --easymde-crimson-focus-heading: #0f172a;
   --easymde-crimson-focus-accent: #b42318;
   --easymde-crimson-focus-accent-soft: #fdf0ee;
   --easymde-crimson-focus-surface: #ffffff;
-  --easymde-crimson-focus-muted: #64748b;
-  --easymde-crimson-focus-border: #dbe2ea;
+  --easymde-crimson-focus-muted: #475569;
+  --easymde-crimson-focus-border: #e2e8f0;
   --easymde-crimson-focus-rule: #cbd5e1;
-  --easymde-crimson-focus-inline: #f3f4f6;
+  --easymde-crimson-focus-inline: #fdf0ee;
 
   box-sizing: border-box;
   max-width: 100%;
@@ -254,7 +254,7 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus tr:nth-child(even) td {
-  background-color: #fafafa;
+  background-color: #f8fafc;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus .easymde-toc a {
@@ -281,7 +281,7 @@
   margin: 1.5em 0;
   padding: 16px;
   overflow-x: auto;
-  background: #fafafa;
+  background: #f8fafc;
   text-align: center;
 }
 
@@ -301,7 +301,7 @@
   padding: 12px 16px;
   border: 1px solid var(--easymde-crimson-focus-border);
   border-radius: 6px;
-  background: #fafafa;
+  background: #f8fafc;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus summary {

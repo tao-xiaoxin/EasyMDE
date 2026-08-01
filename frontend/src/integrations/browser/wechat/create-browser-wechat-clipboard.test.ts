@@ -270,12 +270,13 @@ describe('createBrowserWechatClipboard', () => {
     holder.innerHTML = html;
     expect(holder.querySelector('div')).toBeNull();
     expect(holder.querySelector('section')).not.toBeNull();
-    expect(holder.querySelectorAll('span[leaf]')).toHaveLength(6);
+    expect(holder.querySelectorAll('span[leaf]')).toHaveLength(7);
     expect(holder.querySelector('a[href^="javascript:"]')).toBeNull();
     expect(holder.querySelector('a[href="https://example.test/ok"]')).not.toBeNull();
     expect(holder.querySelector('img[src^="javascript:"]')).toBeNull();
     expect(holder.querySelector('img[src="https://example.test/image.png"]')).not.toBeNull();
     expect(holder.querySelector('pre')?.getAttribute('style')).toContain('overflow-x:auto');
+    expect(holder.querySelectorAll('pre > code br')).toHaveLength(1);
     expect(holder.querySelector('pre > span[aria-hidden="true"]')?.getAttribute('style')).toContain('margin:-22px 0 10px 14px');
     expect(holder.querySelector('pre > span[aria-hidden="true"]')?.getAttribute('style')).toContain('box-shadow:rgb(255, 189, 46) 20px 0 0, rgb(39, 201, 63) 40px 0 0');
   });
@@ -290,7 +291,7 @@ describe('createBrowserWechatClipboard', () => {
     preview.innerHTML = [
       '<p><a href="#math-target">Jump to math</a></p>',
       '<h3 id="math-target">Formula</h3>',
-      '<div class="katex"><span class="katex-html">x + y</span></div>',
+      '<div class="katex"><span class="katex-mathml"><math><annotation>x + y</annotation></math></span><span class="katex-html">x + y</span></div>',
       '<svg id="diagram" viewBox="0 0 20 20"><defs><linearGradient id="gradient"><stop offset="0" stop-color="#fff"></stop></linearGradient><marker id="arrowhead"><path d="M0 0l4 2-4 2z"></path></marker></defs><path id="path" fill="url(#gradient)" marker-end="url(#arrowhead)" d="M0 0h20v20H0z"></path></svg>',
       '<p id="discard-me"><img src="data:image/png;base64,AAAA" srcset="data:image/png;base64,AAAA 1x, javascript:bad 2x, https://example.test/image.png 2x" alt="inline image"></p>'
     ].join('');
@@ -320,9 +321,12 @@ describe('createBrowserWechatClipboard', () => {
     await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
     const item = (writes[0] as ClipboardItemStub[])[0];
     const htmlBlob = item?.payload['text/html'];
+    const textBlob = item?.payload['text/plain'];
     if (!htmlBlob) throw new Error('clipboard html missing');
+    if (!textBlob) throw new Error('clipboard text missing');
     const holder = document.createElement('div');
     holder.innerHTML = await htmlBlob.text();
+    const text = await textBlob.text();
     expect(holder.querySelector('a[href="#math-target"]')).not.toBeNull();
     expect(holder.querySelector('#math-target')).not.toBeNull();
     expect(holder.querySelector('#discard-me')).toBeNull();
@@ -332,6 +336,10 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelector('svg #path')?.getAttribute('style')).toContain('fill:url(#gradient)');
     expect(holder.querySelector('svg #path')?.getAttribute('style')).toContain('marker-end:url("#arrowhead")');
     expect(holder.querySelector('.katex')).toBeNull();
+    expect(holder.querySelector('math')).toBeNull();
+    expect([...holder.querySelectorAll('section span')].some((element) => element.textContent?.includes('x + y')))
+      .toBe(true);
+    expect(text.match(/x \+ y/g)).toHaveLength(1);
     expect(holder.querySelector('section[style*="position:fixed"]')).toBeNull();
     expect(holder.querySelector('section span[style*="position:relative"]')).not.toBeNull();
     expect(holder.querySelector('img[src="data:image/png;base64,AAAA"]')).not.toBeNull();

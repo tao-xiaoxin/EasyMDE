@@ -528,6 +528,20 @@ async function measureArticleThemeGeometry(page, position) {
             style.borderLeftWidth
           ].some((width) => Number.parseFloat(width) > 0);
       }).length;
+      const decorationResults = headingParts
+        .filter((element) => isVisible(element))
+        .map((element) => {
+          const style = getComputedStyle(element);
+          const box = element.getBoundingClientRect();
+          const flexBasis = Number.parseFloat(style.flexBasis);
+
+          return {
+            selector: `${element.tagName.toLowerCase()}.${element.className}`,
+            width: box.width,
+            height: box.height,
+            flexBasis: Number.isFinite(flexBasis) ? flexBasis : null
+          };
+        });
       const scrollElement = (element) => {
         const original = element.scrollLeft;
         element.scrollLeft = Number.MAX_SAFE_INTEGER;
@@ -690,7 +704,8 @@ async function measureArticleThemeGeometry(page, position) {
           parts: headingParts.length,
           pseudo: pseudoCount,
           styledHeadings: styledHeadingCount,
-          visibleParts: headingParts.filter(isVisible).length
+          visibleParts: headingParts.filter(isVisible).length,
+          boxes: decorationResults
         },
         failures: [
           ...(
@@ -733,6 +748,9 @@ async function measureArticleThemeGeometry(page, position) {
             : []),
           ...(0 === imageResults.length ? ['article-image-unavailable'] : []),
           ...(flexGridResults.every(Boolean) ? [] : ['flex-or-grid-descendant-cannot-shrink']),
+          ...(decorationResults.some(({ width, flexBasis }) => (
+            null !== flexBasis && width < flexBasis - tolerance
+          )) ? ['heading-decoration-shrunk'] : []),
           ...(tableResults.every((result) => (
             result.contained
             && result.layoutPreserved

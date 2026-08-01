@@ -280,6 +280,35 @@ function normalizeCodeFrames(root: HTMLElement): void {
   });
 }
 
+function materializeCodeLineBreaks(root: HTMLElement): void {
+  root.querySelectorAll('pre > code').forEach((code) => {
+    const walker = code.ownerDocument.createTreeWalker(code, 4);
+    const textNodes: Text[] = [];
+    let node = walker.nextNode();
+    while (node) {
+      textNodes.push(node as Text);
+      node = walker.nextNode();
+    }
+
+    textNodes.forEach((textNode) => {
+      const value = textNode.nodeValue ?? '';
+      if (!/[\r\n]/.test(value)) return;
+      const fragment = code.ownerDocument.createDocumentFragment();
+      const lines = value.split(/\r\n?|\n/);
+      lines.forEach((line, index) => {
+        if (line) fragment.append(code.ownerDocument.createTextNode(line));
+        if (index < lines.length - 1) fragment.append(code.ownerDocument.createElement('br'));
+      });
+      textNode.replaceWith(fragment);
+    });
+  });
+}
+
+function findKaTeXMathMl(root: HTMLElement): Set<Element> {
+  // WeChat imports KaTeX's MathML and visual trees as separate text runs.
+  return new Set(root.querySelectorAll('.katex-mathml'));
+}
+
 function referencedFragmentIds(preview: HTMLElement): Set<string> {
   const ids = new Set<string>();
   preview.querySelectorAll('a[href^="#"]').forEach((link) => {
@@ -339,7 +368,11 @@ function createMarkup(
 ): HTMLElement {
   const clone = preview.cloneNode(true) as HTMLElement;
   const fragmentIds = referencedFragmentIds(preview);
+  const mathMlNodes = findKaTeXMathMl(clone);
   inlineStyles(preview, clone, getComputedStyle, true);
+  mathMlNodes.forEach((element) => {
+    element.remove();
+  });
   clone.querySelectorAll('*').forEach((element) => {
     if (HIDDEN_NODES.has(element)) element.remove();
   });
@@ -356,6 +389,7 @@ function createMarkup(
     appendDeclarations(element, ['width:100%', 'max-width:100%', 'border-collapse:collapse']);
   });
   normalizeCodeFrames(normalized);
+  materializeCodeLineBreaks(normalized);
   wrapTextLeaves(normalized);
   return normalized;
 }

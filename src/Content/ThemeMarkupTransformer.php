@@ -65,8 +65,9 @@ final class ThemeMarkupTransformer {
 		$uses_markdown2html_markup = self::theme_uses_markdown2html_markup( $theme );
 		$uses_image_figures        = self::theme_uses_image_figures( $theme );
 		$uses_table_container      = self::theme_uses_table_container( $theme );
+		$uses_task_list_markup     = 'crimson-focus' === $theme;
 
-		if ( ! $uses_markdown2html_markup && ! $uses_image_figures && ! $uses_table_container ) {
+		if ( ! $uses_markdown2html_markup && ! $uses_image_figures && ! $uses_table_container && ! $uses_task_list_markup ) {
 			return $html;
 		}
 
@@ -89,6 +90,7 @@ final class ThemeMarkupTransformer {
 		)
 			|| ( $uses_image_figures && false !== stripos( $html, '<img' ) )
 			|| ( $uses_table_container && false !== stripos( $html, '<table' ) );
+		$needs_markup = $needs_markup || ( $uses_task_list_markup && false !== stripos( $html, '<input' ) );
 
 		if ( ! $needs_markup ) {
 			return $html;
@@ -113,6 +115,9 @@ final class ThemeMarkupTransformer {
 		}
 
 		$footnotes = '';
+		if ( $uses_task_list_markup ) {
+			self::add_crimson_focus_task_list_classes( $root );
+		}
 
 		if ( $uses_markdown2html_markup ) {
 			if ( 'cupid-busy' === $theme ) {
@@ -194,6 +199,40 @@ final class ThemeMarkupTransformer {
 
 	private static function theme_uses_table_container( $theme ) {
 		return in_array( $theme, array( 'qingbi-liujin', 'qinghe-zhusha', 'crimson-focus' ), true );
+	}
+
+	private static function add_crimson_focus_task_list_classes( DOMElement $root ) {
+		foreach ( array( 'ul', 'ol' ) as $list_name ) {
+			$lists = $root->getElementsByTagName( $list_name );
+			foreach ( iterator_to_array( $lists ) as $list ) {
+				if ( ! ( $list instanceof DOMElement ) ) {
+					continue;
+				}
+
+				$items      = array();
+				$task_items = array();
+				foreach ( $list->childNodes as $child ) {
+					if ( ! ( $child instanceof DOMElement ) || 'li' !== strtolower( $child->nodeName ) ) {
+						continue;
+					}
+
+					$items[] = $child;
+					if ( self::task_item_has_checkbox( $child ) ) {
+						$task_items[] = $child;
+					}
+				}
+
+				if ( empty( $task_items ) ) {
+					continue;
+				}
+
+				$list_class = count( $items ) === count( $task_items ) ? 'task-list' : 'contains-task-list';
+				self::add_class( $list, $list_class );
+				foreach ( $task_items as $item ) {
+					self::add_class( $item, 'task-list-item' );
+				}
+			}
+		}
 	}
 
 	private static function wrap_cupid_busy_containers( DOMDocument $document, DOMElement $root ) {
@@ -624,6 +663,40 @@ final class ThemeMarkupTransformer {
 		}
 
 		return false;
+	}
+
+	private static function task_item_has_checkbox( DOMElement $element ) {
+		foreach ( $element->childNodes as $child ) {
+			if ( self::is_checkbox_input( $child ) ) {
+				return true;
+			}
+
+			if ( $child instanceof DOMElement && 'p' === strtolower( $child->nodeName ) ) {
+				foreach ( $child->childNodes as $paragraph_child ) {
+					if ( self::is_checkbox_input( $paragraph_child ) ) {
+						return true;
+					}
+				}
+			}
+		}
+
+		return false;
+	}
+
+	private static function is_checkbox_input( $node ) {
+		return $node instanceof DOMElement
+			&& 'input' === strtolower( $node->nodeName )
+			&& 'checkbox' === strtolower( (string) $node->getAttribute( 'type' ) );
+	}
+
+	private static function add_class( DOMElement $element, $class_name ) {
+		$classes = preg_split( '/\s+/', trim( (string) $element->getAttribute( 'class' ) ) );
+		if ( in_array( $class_name, $classes, true ) ) {
+			return;
+		}
+
+		$classes[] = $class_name;
+		$element->setAttribute( 'class', trim( implode( ' ', array_filter( $classes ) ) ) );
 	}
 
 	private static function single_media_child( DOMElement $element ) {

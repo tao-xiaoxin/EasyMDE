@@ -12,7 +12,7 @@ final class ArticleThemeRegistry {
 
 	public function all() {
 		$themes = array(
-			'default'        => $this->theme( 'default', __( 'Default theme', 'easymde' ), 'assets/themes/article/default.css', 'atom-one-dark' ),
+			'default'        => $this->theme( 'default', __( 'Default theme', 'easymde' ), 'assets/themes/article/default.css', 'atom-one-dark', false ),
 			'orange-heart'   => $this->theme( 'orange-heart', __( 'Orange heart', 'easymde' ), 'assets/themes/article/orange-heart.css', 'atom-one-dark' ),
 			'chazi-purple'   => $this->theme( 'chazi-purple', __( 'Chazi purple', 'easymde' ), 'assets/themes/article/chazi-purple.css', 'atom-one-dark' ),
 			'nenqing-green'  => $this->theme( 'nenqing-green', __( 'Nenqing green', 'easymde' ), 'assets/themes/article/nenqing-green.css', 'atom-one-dark' ),
@@ -78,6 +78,9 @@ final class ArticleThemeRegistry {
 				'origin'           => $theme['origin'],
 				'defaultCodeTheme' => isset( $theme['default_code_theme'] ) ? sanitize_key( $theme['default_code_theme'] ) : 'atom-one-dark',
 			);
+			if ( ! empty( $theme['uses_theme_font_family'] ) ) {
+				$item['usesThemeFontFamily'] = true;
+			}
 
 			if ( ! empty( $theme['fontDefaults'] ) ) {
 				$item['fontDefaults'] = $theme['fontDefaults'];
@@ -99,8 +102,15 @@ final class ArticleThemeRegistry {
 					'serifFont'   => 'sans-serif-only',
 				);
 
-			case 'red-crimson':
 			case 'crimson-focus':
+				return array(
+					'customFont'  => 'none',
+					'windowsFont' => 'no-windows-font',
+					'appleFont'   => 'no-apple-font',
+					'serifFont'   => 'theme-default',
+				);
+
+			case 'red-crimson':
 				return array(
 					'customFont'  => 'inter',
 					'windowsFont' => 'microsoft-yahei',
@@ -160,14 +170,21 @@ final class ArticleThemeRegistry {
 		return null;
 	}
 
-	private function theme( $id, $label, $asset_path, $default_code_theme ) {
+	public function uses_theme_font_family( $markdown_theme ) {
+		$theme = $this->get( $markdown_theme );
+
+		return ! empty( $theme['uses_theme_font_family'] );
+	}
+
+	private function theme( $id, $label, $asset_path, $default_code_theme, $uses_theme_font_family = true ) {
 		return array(
-			'id'                 => $id,
-			'label'              => $label,
-			'asset_path'         => $asset_path,
-			'origin'             => 'owned',
-			'class_name'         => 'easymde-markdown-theme-' . $id,
-			'default_code_theme' => $default_code_theme,
+			'id'                     => $id,
+			'label'                  => $label,
+			'asset_path'             => $asset_path,
+			'origin'                 => 'owned',
+			'class_name'             => 'easymde-markdown-theme-' . $id,
+			'default_code_theme'     => $default_code_theme,
+			'uses_theme_font_family' => $uses_theme_font_family,
 		);
 	}
 

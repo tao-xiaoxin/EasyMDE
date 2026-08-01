@@ -1579,6 +1579,11 @@ msgctxt "font selection option"
 msgid "None"
 msgstr "无"
 
+#: src/Theme/ThemeStateRepository.php:557
+msgctxt "font selection option"
+msgid "Theme default"
+msgstr "主题默认"
+
 #: src/Theme/ThemeStateRepository.php:446
 msgid "Optima"
 msgstr "Optima"

@@ -136,12 +136,163 @@ test('Crimson focus follows the reference light surface and preserves code-theme
   const soft = cssVariable(css, '--easymde-crimson-focus-accent-soft');
 
   assert.equal(text, '#0f172a');
-  assert.equal(accent, '#b42318');
-  assert.equal(soft, '#fdf0ee');
+  assert.equal(accent, '#e74c3c');
+  assert.equal(
+    cssVariable(css, '--easymde-theme-font-family'),
+    '"EasyMDE Lora", Lora, Georgia, "Times New Roman", serif'
+  );
+  assert.equal(cssVariable(css, '--easymde-crimson-focus-accent-text'), '#b42318');
+  assert.equal(soft, '#fdedec');
   assert.equal(cssVariable(css, '--easymde-crimson-focus-muted'), '#475569');
-  assert.equal(cssVariable(css, '--easymde-crimson-focus-inline'), '#fdf0ee');
+  assert.equal(cssVariable(css, '--easymde-crimson-focus-inline'), '#fdedec');
+  assert.match(
+    css,
+    /@font-face\s*\{[^}]*font-family:\s*"EasyMDE Lora";[^}]*font-weight:\s*400;[^}]*src:\s*url\("\.\.\/\.\.\/vendor\/fonts\/lora\/lora-latin-400-normal\.woff2"\) format\("woff2"\);/s
+  );
+  assert.match(
+    css,
+    /@font-face\s*\{[^}]*font-family:\s*"EasyMDE Inter";[^}]*font-weight:\s*400;[^}]*src:\s*url\("\.\.\/\.\.\/vendor\/fonts\/inter\/inter-latin-400-normal\.woff2"\) format\("woff2"\);/s
+  );
+  assert.match(
+    css,
+    /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus:not\(\.easymde-preview\)\s*\{[^}]*max-width:\s*680px;[^}]*padding:\s*36px 52px 48px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus\s*\{[^}]*width:\s*100%;[^}]*margin-inline:\s*auto;[^}]*padding:\s*0;/s,
+    'the Preview root should delegate its geometry to the owning editor container'
+  );
+  assert.match(
+    css,
+    /> :not\(pre\):first-child\s*\{[\s\S]*margin-top:\s*0;/
+  );
+  assert.match(
+    css,
+    /> :not\(pre\):last-child\s*\{[\s\S]*margin-bottom:\s*0;/
+  );
+  assert.match(css, /font-size:\s*15px;\s*\n\s*line-height:\s*1\.85;/);
+  assert.match(
+    css,
+    /h1\s*\{[\s\S]*font-family:\s*var\(--easymde-content-font-family, "EasyMDE Lora", Lora, Georgia, serif\);[\s\S]*font-size:\s*2rem;[\s\S]*line-height:\s*1\.2;/
+  );
+  assert.match(css, /h3\s*\{[\s\S]*font-family:\s*var\(--easymde-content-font-family, "EasyMDE Inter", system-ui, sans-serif\);/);
+  assert.match(css, /h4,[\s\S]*h6\s*\{[\s\S]*font-family:\s*var\(--easymde-content-font-family, "EasyMDE Inter", system-ui, sans-serif\);[\s\S]*font-size:\s*0\.9rem;/);
+  assert.match(css, /h2\s*\{[\s\S]*font-size:\s*18px;[\s\S]*letter-spacing:\s*0\.06em;/);
+  assert.match(
+    css,
+    /\.easymde-theme-default-fonts h1\s*\{[\s\S]*font-family:\s*"EasyMDE Lora", Lora, Georgia, "Times New Roman", serif !important;/
+  );
+  assert.match(
+    css,
+    /\.easymde-theme-default-fonts h2,[\s\S]*\.easymde-theme-default-fonts h6\s*\{[\s\S]*font-family:\s*"EasyMDE Inter", Inter, system-ui, sans-serif !important;/
+  );
+  assert.match(
+    css,
+    /\.easymde-theme-default-fonts :is\(h1, h2, h3, h4, h5, h6\) :is\(a, strong, em\)\s*\{[\s\S]*font-family:\s*inherit !important;/
+  );
+  assert.doesNotMatch(css, /h2\s*\{[\s\S]*text-transform:\s*uppercase;/);
+  assert.match(css, /h2\s*\{[\s\S]*padding-bottom:\s*7\.5px;/);
+  assert.match(
+    css,
+    /h1 code,[\s\S]*h6 code\s*\{[\s\S]*font-size:\s*inherit;/
+  );
+  assert.match(
+    css,
+    /\.task-list-item\s*\{[\s\S]*display:\s*list-item;[\s\S]*list-style-type:\s*none;/
+  );
+  assert.doesNotMatch(
+    css,
+    /ol > \.task-list-item\s*\{[\s\S]*display:\s*block;/,
+    'ordered task items must remain list items so mixed-list numbering is preserved'
+  );
+  assert.match(
+    css,
+    /@supports selector\(:has\(\*\)\)[\s\S]*:is\(ul, ol\) > li:has\(> input\[type="checkbox"\]\),[\s\S]*:is\(ul, ol\) > li:has\(> p > input\[type="checkbox"\]\)\s*\{[\s\S]*display:\s*list-item;/
+  );
+  assert.match(
+    css,
+    /\.task-list\s*\{[\s\S]*padding-inline-start:\s*3\.75px;[\s\S]*list-style:\s*none;/
+  );
+  assert.doesNotMatch(
+    css,
+    /:is\(ul, ol\):has\(> li > input\[type="checkbox"\]\)\s*\{[\s\S]*list-style:\s*none;/
+  );
+  assert.match(
+    css,
+    /\.task-list-item::marker\s*\{[\s\S]*content:\s*none;/
+  );
+  assert.match(
+    css,
+    /@supports selector\(:has\(\*\)\)[\s\S]*:is\(ul, ol\) > li:has\(> input\[type="checkbox"\]\)::marker,[\s\S]*:is\(ul, ol\) > li:has\(> p > input\[type="checkbox"\]\)::marker\s*\{[\s\S]*content:\s*none;/
+  );
+  assert.match(
+    css,
+    /ul\s*\{[\s\S]*list-style-type:\s*"—\s+";[\s\S]*\}/
+  );
+  assert.match(
+    css,
+    /ul > li::marker\s*\{[\s\S]*color:\s*var\(--easymde-crimson-focus-accent\);/
+  );
+  assert.doesNotMatch(
+    css,
+    /ul > li::marker\s*\{[\s\S]*content:\s*"—\s+"/
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus ul li::before/,
+    'unordered markers must use the native marker box'
+  );
+  assert.match(
+    css,
+    /\.task-list-item > input\[type="checkbox"\],[\s\S]*\.task-list-item > p > input\[type="checkbox"\]\s*\{[\s\S]*margin-inline-end:\s*7\.5px;[\s\S]*vertical-align:\s*baseline;/
+  );
+  assert.match(
+    css,
+    /@supports selector\(:has\(\*\)\)[\s\S]*:is\(ul, ol\) > li:has\(> input\[type="checkbox"\]\) > input\[type="checkbox"\],[\s\S]*:is\(ul, ol\) > li:has\(> p > input\[type="checkbox"\]\) > p > input\[type="checkbox"\]\s*\{[\s\S]*margin-inline-end:\s*7\.5px;[\s\S]*vertical-align:\s*baseline;/
+  );
+  assert.doesNotMatch(css, /th\s*\{[\s\S]*text-transform:\s*uppercase;/);
+  assert.match(css, /border-inline-start:\s*3px solid/);
+  assert.match(css, /border-start-end-radius:\s*4px;/);
+  assert.match(
+    css,
+    /blockquote code,[\s\S]*blockquote tt\s*\{[\s\S]*font-style:\s*normal;/
+  );
+  assert.match(
+    css,
+    /blockquote > :not\(pre\):first-child\s*\{[\s\S]*margin-top:\s*0;/
+  );
+  assert.match(
+    css,
+    /blockquote > :not\(pre\):last-child\s*\{[\s\S]*margin-bottom:\s*0;/
+  );
+  assert.match(css, /text-align:\s*start;/);
+  assert.match(css, /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus img\s*\{[\s\S]*display:\s*block;[\s\S]*margin:\s*11\.25px auto;/);
+  assert.match(
+    css,
+    /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus table\s*\{[\s\S]*min-width:\s*520px;/
+  );
+  assert.match(
+    css,
+    /\.table-container\s*\{[\s\S]*overflow-x:\s*auto;/
+  );
+  assert.doesNotMatch(
+    css,
+    /@media \(max-width:\s*640px\)[\s\S]*\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus table\s*\{[\s\S]*display:\s*block;/
+  );
+  assert.match(
+    css,
+    /@media \(max-width:\s*640px\)[\s\S]*\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus:not\(\.easymde-preview\)\s*\{[^}]*padding:\s*28px 20px 36px;/s
+  );
+  assert.doesNotMatch(css, /clamp\(/, 'heading sizes should remain stable across viewports');
   assert.ok(contrast(text, white) >= 7, 'body text should meet the light-theme AAA target');
-  assert.ok(contrast(accent, white) >= 4.5, 'accent text should meet AA contrast on white');
+  assert.ok(
+    contrast(cssVariable(css, '--easymde-crimson-focus-accent-text'), white) >= 4.5,
+    'accent text should meet AA contrast on white'
+  );
+  assert.ok(
+    contrast(cssVariable(css, '--easymde-crimson-focus-heading'), accent) >= 4.5,
+    'table header text should meet AA contrast on the accent background'
+  );
   assert.ok(contrast(text, soft) >= 4.5, 'body text should meet AA contrast on accent surfaces');
   const normalizedCss = css.replace(/\/\*[\s\S]*?\*\//g, '');
   assert.equal(
@@ -149,7 +300,7 @@ test('Crimson focus follows the reference light surface and preserves code-theme
     2,
     'base and mobile root rules should be scoped'
   );
-  assert.match(css, /@media \(max-width: 700px\)/);
+  assert.match(css, /@media \(max-width: 640px\)/);
   assert.deepEqual(
     cssRuleSelectors(normalizedCss).filter(targetsCodeFrame),
     [],

@@ -118,6 +118,16 @@ final class ThemeStateRepository {
 		);
 		$apply_theme_font_defaults = $apply_theme_font_defaults || (
 			! $has_post_font_metadata
+			&& 'crimson-focus' === $defaults['markdownTheme']
+			&& $this->is_legacy_crimson_focus_font_stack(
+				$custom_font,
+				$windows_font,
+				$apple_font,
+				$serif_font
+			)
+		);
+		$apply_theme_font_defaults = $apply_theme_font_defaults || (
+			! $has_post_font_metadata
 			&& $markdown_theme !== $defaults['markdownTheme']
 			&& $this->font_stack_matches_article_theme_defaults(
 				$defaults['markdownTheme'],
@@ -162,7 +172,7 @@ final class ThemeStateRepository {
 			'windowsFont'       => $windows_font,
 			'appleFont'         => $apple_font,
 			'serifFont'         => $serif_font,
-			'fontFamily'        => $this->get_font_stack( $custom_font, $windows_font, $apple_font, $serif_font ),
+			'fontFamily'        => $this->get_font_stack( $custom_font, $windows_font, $apple_font, $serif_font, $markdown_theme ),
 		);
 	}
 
@@ -397,6 +407,13 @@ final class ThemeStateRepository {
 
 		if ( ! empty( $theme_state['fontFamily'] ) ) {
 			$classes[] = 'easymde-font-overrides';
+			if (
+				'crimson-focus' === $theme_state['markdownTheme']
+				&& isset( $theme_state['serifFont'] )
+				&& 'theme-default' === $theme_state['serifFont']
+			) {
+				$classes[] = 'easymde-theme-default-fonts';
+			}
 		}
 
 		return implode( ' ', array_filter( $classes ) );
@@ -552,6 +569,11 @@ final class ThemeStateRepository {
 					'label'      => _x( 'None', 'font selection option', 'easymde' ),
 					'fontFamily' => '"Roboto", "Oxygen", "Ubuntu", "Cantarell", "PingFangSC-light", "PingFangTC-light", "Open Sans", "Helvetica Neue", sans-serif',
 				),
+				array(
+					'id'         => 'theme-default',
+					'label'      => _x( 'Theme default', 'font selection option', 'easymde' ),
+					'fontFamily' => '',
+				),
 			),
 		);
 	}
@@ -571,10 +593,11 @@ final class ThemeStateRepository {
 		return null;
 	}
 
-	private function get_font_stack( $custom_font, $windows_font, $apple_font, $serif_font ) {
-		$parts   = array();
-		$seen    = array();
-		$choices = array(
+	private function get_font_stack( $custom_font, $windows_font, $apple_font, $serif_font, $markdown_theme ) {
+		$parts         = array();
+		$seen          = array();
+		$theme_default = 'theme-default' === $serif_font;
+		$choices       = array(
 			array( 'customFonts', $custom_font ),
 			array( 'windowsFonts', $windows_font ),
 			array( 'appleFonts', $apple_font ),
@@ -582,6 +605,9 @@ final class ThemeStateRepository {
 		);
 
 		foreach ( $choices as $choice ) {
+			if ( $theme_default && 'serifOptions' === $choice[0] && 'theme-default' === $choice[1] ) {
+				continue;
+			}
 			$option = $this->get_font_option( $choice[0], $choice[1] );
 			if ( ! $option || empty( $option['fontFamily'] ) ) {
 				continue;
@@ -596,6 +622,10 @@ final class ThemeStateRepository {
 					$parts[]      = $font;
 				}
 			}
+		}
+
+		if ( $theme_default && ! empty( $parts ) && $this->article_themes->uses_theme_font_family( $markdown_theme ) ) {
+			$parts[] = 'var(--easymde-theme-font-family, sans-serif)';
 		}
 
 		return implode( ', ', $parts );
@@ -730,6 +760,13 @@ final class ThemeStateRepository {
 			&& 'microsoft-yahei' === $windows_font
 			&& 'pingfang-sc-light' === $apple_font
 			&& 'yes' === $serif_font;
+	}
+
+	private function is_legacy_crimson_focus_font_stack( $custom_font, $windows_font, $apple_font, $serif_font ) {
+		return 'inter' === $custom_font
+			&& 'microsoft-yahei' === $windows_font
+			&& 'pingfang-sc-regular' === $apple_font
+			&& 'sans-serif-only' === $serif_font;
 	}
 
 	private function font_stack_matches_article_theme_defaults( $markdown_theme, $custom_font, $windows_font, $apple_font, $serif_font ) {

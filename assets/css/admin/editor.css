@@ -377,7 +377,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-theme-accent[data-theme="nenqing-green"] { background: #00b4a6; }
 .easymde-immersive-theme-accent[data-theme="green-vitality"] { background: #27ae60; }
 .easymde-immersive-theme-accent[data-theme="red-crimson"] { background: #e74c3c; }
-.easymde-immersive-theme-accent[data-theme="crimson-focus"] { background: #b42318; }
+.easymde-immersive-theme-accent[data-theme="crimson-focus"] { background: #e74c3c; }
 .easymde-immersive-theme-accent[data-theme="blue-ying"] { background: #1e90ff; }
 .easymde-immersive-theme-accent[data-theme="lanqing"] { background: #4a90e2; }
 .easymde-immersive-theme-accent[data-theme="yamabuki"] { background: #d4ac0d; }
@@ -1554,6 +1554,24 @@ body:has(.easymde-editor.is-immersive) .wrap {
     font-size: 15px;
     font-weight: 400;
 }
+.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) {
+    background: #fff;
+    background-image: none;
+}
+.easymde-editor.is-immersive-preview .easymde-immersive-preview-page:has(> .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor)) {
+    padding: 0;
+}
+.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor) {
+    padding: 36px 40px;
+}
+.easymde-editor.is-immersive-preview .easymde-immersive-preview-page:has(> .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor) {
+    padding: 0;
+}
+.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor {
+    width: 100%;
+    max-width: none;
+    padding: 36px 40px;
+}
 .easymde-editor.is-immersive-preview .easymde-immersive-visual-editor {
     outline: 0;
     cursor: text;
@@ -1592,11 +1610,23 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-editor.is-immersive-preview .easymde-immersive-preview-page {
         padding: 45px 52.5px;
     }
+    .easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor {
+        padding: 45px 52.5px;
+    }
+    .easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor) {
+        padding: 45px 52.5px;
+    }
 }
 @media (max-width: 760px) {
     .easymde-editor.is-immersive-preview .easymde-immersive-preview-page {
         padding: 28px 24px;
         min-height: 520px;
+    }
+    .easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor {
+        padding: 28px 24px;
+    }
+    .easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor) {
+        padding: 28px 24px;
     }
 
 }
@@ -2184,6 +2214,24 @@ body:has(.easymde-editor.is-immersive) .wrap {
     background-image: none;
     scroll-padding-block: 0;
     scroll-padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
+}
+
+.easymde-editor:not(.is-immersive) .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active),
+.easymde-editor.is-immersive-split .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: none;
+    margin-inline: 0;
+    padding: 36px max(20px, calc((100% - 576px) / 2)) 48px;
+    background: #fff;
+    background-image: none;
+}
+
+@media (max-width: 782px) {
+    .easymde-editor:not(.is-immersive) .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active),
+    .easymde-editor.is-immersive-split .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) {
+        padding: 28px max(20px, calc((100% - 576px) / 2)) 36px;
+    }
 }
 
 .easymde-editor:not(.is-immersive) .easymde-rendered-content table {

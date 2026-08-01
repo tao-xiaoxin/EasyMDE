@@ -105,4 +105,29 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringContainsString('<figure><img', $html);
         $this->assertStringContainsString('<figcaption>Crimson caption</figcaption>', $html);
     }
+
+    public function test_crimson_focus_marks_task_lists_for_theme_css_fallback()
+    {
+        $mixed = MarkdownRenderer::render(
+            "- [ ] Todo\n- Plain item",
+            'crimson-focus'
+        );
+        $this->assertStringContainsString('<ul class="contains-task-list">', $mixed);
+        $this->assertStringContainsString('<li class="task-list-item"><input', $mixed);
+        $this->assertStringContainsString('Plain item', $mixed);
+
+        $loose_mixed = MarkdownRenderer::render(
+            "- [ ] Todo\n\n- Plain item",
+            'crimson-focus'
+        );
+        $this->assertStringContainsString('<ul class="contains-task-list">', $loose_mixed);
+        $this->assertStringContainsString('<li class="task-list-item">\n<p><input', $loose_mixed);
+
+        $all_tasks = MarkdownRenderer::render(
+            "- [ ] Todo\n- [x] Done",
+            'crimson-focus'
+        );
+        $this->assertStringContainsString('<ul class="task-list">', $all_tasks);
+        $this->assertSame( 2, substr_count( $all_tasks, 'class="task-list-item"' ) );
+    }
 }

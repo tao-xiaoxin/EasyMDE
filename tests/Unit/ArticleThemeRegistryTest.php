@@ -46,12 +46,14 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
         );
         $this->assertSame('easymde-markdown-theme-crimson-focus', $themes['crimson-focus']['className']);
         $this->assertSame('atom-one-dark', $themes['crimson-focus']['defaultCodeTheme']);
+        $this->assertTrue($themes['crimson-focus']['usesThemeFontFamily']);
+        $this->assertArrayNotHasKey('usesThemeFontFamily', $themes['default']);
         $this->assertSame(
             array(
-                'customFont'  => 'inter',
-                'windowsFont' => 'microsoft-yahei',
-                'appleFont'   => 'pingfang-sc-regular',
-                'serifFont'   => 'sans-serif-only',
+                'customFont'  => 'none',
+                'windowsFont' => 'no-windows-font',
+                'appleFont'   => 'no-apple-font',
+                'serifFont'   => 'theme-default',
             ),
             $themes['crimson-focus']['fontDefaults']
         );

@@ -20,7 +20,7 @@ const REFERENCE_ARTICLE_THEMES: Readonly<Record<string, ReferenceArticleTheme>> 
   'nenqing-green': { accent: '#00B4A6', accentLight: '#7FD8D2', accentBackground: '#E0F7F5' },
   'green-vitality': { accent: '#27AE60', accentLight: '#82D9A8', accentBackground: '#EAFAF1' },
   'red-crimson': { accent: '#E74C3C', accentLight: '#F5A89E', accentBackground: '#FDEDEC' },
-  'crimson-focus': { accent: '#B42318', accentLight: '#EFB5AE', accentBackground: '#FDF0EE' },
+  'crimson-focus': { accent: '#E74C3C', accentLight: '#F5A89E', accentBackground: '#FDEDEC' },
   'blue-ying': { accent: '#1E90FF', accentLight: '#90C8FF', accentBackground: '#EBF5FB' },
   lanqing: { accent: '#4A90E2', accentLight: '#A4C8F0', accentBackground: '#EBF5FB' },
   yamabuki: { accent: '#D4AC0D', accentLight: '#EDD86A', accentBackground: '#FEF9E7' },

@@ -1453,63 +1453,63 @@ msgstr "蓝莹"
 msgid "Crimson focus"
 msgstr "绯红专注"
 
-#: src/Theme/ArticleThemeRegistry.php:22
+#: src/Theme/ArticleThemeRegistry.php:23
 msgid "Lanqing"
 msgstr "兰青"
 
-#: src/Theme/ArticleThemeRegistry.php:23
+#: src/Theme/ArticleThemeRegistry.php:24
 msgid "Yamabuki"
 msgstr "山吹"
 
-#: src/Theme/ArticleThemeRegistry.php:24
+#: src/Theme/ArticleThemeRegistry.php:25
 msgid "Grid black"
 msgstr "网格黑"
 
-#: src/Theme/ArticleThemeRegistry.php:25
+#: src/Theme/ArticleThemeRegistry.php:26
 msgid "Geek black"
 msgstr "极客黑"
 
-#: src/Theme/ArticleThemeRegistry.php:26
+#: src/Theme/ArticleThemeRegistry.php:27
 msgid "Rose purple"
 msgstr "蔷薇紫"
 
-#: src/Theme/ArticleThemeRegistry.php:27
+#: src/Theme/ArticleThemeRegistry.php:28
 msgid "Ningye purple"
 msgstr "凝夜紫"
 
-#: src/Theme/ArticleThemeRegistry.php:28
+#: src/Theme/ArticleThemeRegistry.php:29
 msgid "Tech blue"
 msgstr "科技蓝"
 
-#: src/Theme/ArticleThemeRegistry.php:29
+#: src/Theme/ArticleThemeRegistry.php:30
 msgid "Qingbi Liujin"
 msgstr "青碧流金"
 
-#: src/Theme/ArticleThemeRegistry.php:30
+#: src/Theme/ArticleThemeRegistry.php:31
 msgid "Qinghe Zhusha"
 msgstr "清河朱砂"
 
-#: src/Theme/ArticleThemeRegistry.php:31
+#: src/Theme/ArticleThemeRegistry.php:32
 msgid "Cute green"
 msgstr "萌绿风"
 
-#: src/Theme/ArticleThemeRegistry.php:32 src/Theme/CodeThemeRegistry.php:24
+#: src/Theme/ArticleThemeRegistry.php:33 src/Theme/CodeThemeRegistry.php:24
 msgid "Fullstack blue"
 msgstr "全栈蓝"
 
-#: src/Theme/ArticleThemeRegistry.php:33
+#: src/Theme/ArticleThemeRegistry.php:34
 msgid "Minimal black"
 msgstr "极简黑"
 
-#: src/Theme/ArticleThemeRegistry.php:34
+#: src/Theme/ArticleThemeRegistry.php:35
 msgid "Orange blue"
 msgstr "橙蓝风"
 
-#: src/Theme/ArticleThemeRegistry.php:35
+#: src/Theme/ArticleThemeRegistry.php:36
 msgid "Frontend peak"
 msgstr "前端之巅同款"
 
-#: src/Theme/ArticleThemeRegistry.php:36
+#: src/Theme/ArticleThemeRegistry.php:37
 msgid "Cupid busy"
 msgstr "丘比特忙"
 

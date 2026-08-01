@@ -20,6 +20,7 @@ import {
 	compileJsCatalog,
 	compileMo,
 	makePot,
+	normalizePotSourceReferences,
 	parsePoEntries,
 } from "../../scripts/i18n.mjs";
 
@@ -135,6 +136,15 @@ function jsFrontendStringKeys() {
 
 	return keys;
 }
+
+test("POT source references normalize Windows path separators", () => {
+	assert.equal(
+		normalizePotSourceReferences(
+			'#: src\\Admin\\Editor.php:18 templates\\admin\\editor.php:7\nmsgid "Editor"\n',
+		),
+		'#: src/Admin/Editor.php:18 templates/admin/editor.php:7\nmsgid "Editor"\n',
+	);
+});
 
 function phpTranslationCallPattern() {
 	const singleQuoted = "'(?:\\\\.|[^'\\\\])*'";
@@ -395,6 +405,36 @@ __('Enter theme name…', 'easymde');
 			entries.some((entry) => "Enter theme name" === entry.msgid),
 			false,
 		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("POT generation uses portable source reference paths", () => {
+	const root = makeTempRoot();
+
+	try {
+		writeText(
+			root,
+			"easymde.php",
+			`<?php
+/**
+ * Plugin Name: EasyMDE
+ * Version: 0.1.8
+ */
+`,
+		);
+		writeText(
+			root,
+			"src/Admin/Nested.php",
+			"<?php __('Portable reference', 'easymde');\n",
+		);
+		mkdirSync(join(root, "languages"), { recursive: true });
+		makePot({ root });
+
+		const pot = readFileSync(join(root, "languages/easymde.pot"), "utf8");
+		assert.match(pot, /^#: src\/Admin\/Nested\.php:1$/m);
+		assert.doesNotMatch(pot, /^#: .*\\/m);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

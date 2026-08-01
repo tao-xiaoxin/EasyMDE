@@ -150,10 +150,11 @@ final class AdminAssets {
 
 			if ( ! $has_selected_item && '' !== trim( $theme_state['customCss'] ) ) {
 				$custom_css[] = array(
-					'id'        => $theme_state['customCssId'],
-					'name'      => $strings['customCssTheme'],
-					'css'       => $theme_state['customCss'],
-					'scopedCss' => $theme_state['scopedCustomCss'],
+					'id'               => $theme_state['customCssId'],
+					'articleThemeName' => $strings['customCssTheme'],
+					'codeThemeName'    => $strings['customCssTheme'],
+					'css'              => $theme_state['customCss'],
+					'scopedCss'        => $theme_state['scopedCustomCss'],
 				);
 			}
 		}
@@ -187,17 +188,18 @@ final class AdminAssets {
 					'customCssId'   => $theme_state['customCssId'],
 				),
 				'strings'            => array(
-					'appearance'      => $strings['appearance'],
-					'articleTheme'    => $strings['articleTheme'],
-					'codeTheme'       => $strings['codeTheme'],
-					'customCss'       => $strings['customCss'],
-					'customCssTheme'  => $strings['customCssTheme'],
-					'cssName'         => $strings['cssName'],
-					'saveCss'         => $strings['saveCss'],
-					'cssSaved'        => $strings['cssSaved'],
-					'cssSaveFailed'   => $strings['cssSaveFailed'],
-					'namedCustomCss'  => $strings['namedCustomCss'],
-					'customCssDialog' => $this->get_custom_css_dialog_strings(),
+					'appearance'       => $strings['appearance'],
+					'articleTheme'     => $strings['articleTheme'],
+					'codeTheme'        => $strings['codeTheme'],
+					'customCss'        => $strings['customCss'],
+					'customCssTheme'   => $strings['customCssTheme'],
+					'cssName'          => $strings['cssName'],
+					'saveCss'          => $strings['saveCss'],
+					'cssSaved'         => $strings['cssSaved'],
+					'cssSaveFailed'    => $strings['cssSaveFailed'],
+					'cssNameDuplicate' => $strings['cssNameDuplicate'],
+					'namedCustomCss'   => $strings['namedCustomCss'],
+					'customCssDialog'  => $this->get_custom_css_dialog_strings(),
 				),
 			),
 			'fonts'              => array(
@@ -936,6 +938,7 @@ final class AdminAssets {
 			'linkText'              => __( 'link text', 'easymde' ),
 			/* translators: %s: Locale-formatted Markdown character count. */
 			'wordCount'             => __( 'Character count: %s', 'easymde' ),
+			'cssNameDuplicate'      => __( 'A theme with this name already exists. Please choose another name and try again.', 'easymde' ),
 		);
 	}
 

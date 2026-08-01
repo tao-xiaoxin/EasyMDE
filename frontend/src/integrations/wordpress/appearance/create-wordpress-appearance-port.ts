@@ -212,7 +212,13 @@ export function createWordPressAppearancePort({
           method: 'POST',
           url: endpoint
         });
-      } catch {
+      } catch (error) {
+        if ('easymde_duplicate_custom_css_name' === restErrorCode(error)) {
+          return {
+            code: 'duplicate-name',
+            status: 'failed'
+          };
+        }
         return { code: 'custom-css-save-failed', status: 'failed' };
       }
 

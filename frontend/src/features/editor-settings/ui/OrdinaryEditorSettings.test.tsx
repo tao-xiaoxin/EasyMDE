@@ -1,7 +1,7 @@
 import { createElement } from '@wordpress/element';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppearanceBootstrap } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type { FontControlsBootstrap } from '../../../contracts/bootstrap/font-controls-bootstrap';
@@ -13,6 +13,41 @@ import { OrdinaryEditorSettings } from './OrdinaryEditorSettings';
 
 const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
 const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+type ObserverRecord = Readonly<{
+  callback: IntersectionObserverCallback;
+  disconnect: ReturnType<typeof vi.fn>;
+  observe: ReturnType<typeof vi.fn>;
+  observer: IntersectionObserver;
+}>;
+let observerRecords: ObserverRecord[] = [];
+
+function intersectionEntry(
+  target: Element,
+  isIntersecting: boolean
+): IntersectionObserverEntry {
+  const rectangle = DOMRect.fromRect();
+  return {
+    boundingClientRect: rectangle,
+    intersectionRatio: isIntersecting ? 1 : 0,
+    intersectionRect: rectangle,
+    isIntersecting,
+    rootBounds: null,
+    target,
+    time: 0
+  };
+}
+
+function emitIntersection(
+  record: ObserverRecord | undefined,
+  target: Element,
+  isIntersecting: boolean
+): void {
+  if (!record) throw new Error('intersection-observer-test-owner-unavailable');
+  record.callback(
+    [intersectionEntry(target, isIntersecting)],
+    record.observer
+  );
+}
 
 const appearance: AppearanceBootstrap = {
   articleThemes: [
@@ -26,8 +61,9 @@ const appearance: AppearanceBootstrap = {
     { id: 'github', label: 'GitHub' }
   ],
   customCss: [{
+    articleThemeName: 'Writer Article',
+    codeThemeName: 'Writer Code',
     id: 'writer-css',
-    name: 'Writer CSS',
     css: '.note { color: navy; }',
     scopedCss: '.easymde-rendered-content .note { color: navy; }'
   }],
@@ -48,6 +84,7 @@ const appearance: AppearanceBootstrap = {
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
     cssSaveFailed: 'CSS save failed.',
+    cssNameDuplicate: 'A theme with this name already exists.',
     namedCustomCss: 'Named custom CSS'
   }
 };
@@ -100,6 +137,13 @@ function renderSettings() {
         closeOtherPopovers: vi.fn()
       }}
       label="Editor settings"
+      messageAlertTimer={{
+        now: () => Date.now(),
+        schedule: (callback, delay) => {
+          const timer = window.setTimeout(callback, delay);
+          return () => window.clearTimeout(timer);
+        }
+      }}
       onAppearanceReady={vi.fn()}
       onFailure={vi.fn()}
       onFontControlsReady={vi.fn()}
@@ -109,8 +153,38 @@ function renderSettings() {
   );
 }
 
+beforeEach(() => {
+  observerRecords = [];
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class IntersectionObserverMock {
+      public readonly root = null;
+      public readonly rootMargin = '0px';
+      public readonly scrollMargin = '0px';
+      public readonly thresholds = [0];
+      public readonly disconnect = vi.fn();
+      public readonly observe = vi.fn();
+      public readonly unobserve = vi.fn();
+
+      public constructor(callback: IntersectionObserverCallback) {
+        observerRecords.push({
+          callback,
+          disconnect: this.disconnect,
+          observe: this.observe,
+          observer: this
+        });
+      }
+
+      public takeRecords(): IntersectionObserverEntry[] {
+        return [];
+      }
+    }
+  );
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   if (originalInnerWidth) {
     Object.defineProperty(window, 'innerWidth', originalInnerWidth);
   }
@@ -313,9 +387,8 @@ describe('OrdinaryEditorSettings', () => {
     expect(Number.parseFloat(tail?.style.top ?? '')).toBe(top + maxHeight - 7);
   });
 
-  it('closes the fixed panel when scrolling moves its trigger outside the viewport', async () => {
+  it('closes the fixed panel when its trigger leaves the viewport', async () => {
     const user = userEvent.setup();
-    let triggerTop = 200;
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 1280
@@ -329,7 +402,7 @@ describe('OrdinaryEditorSettings', () => {
         if (this.classList.contains('easymde-toolbar-settings-trigger')) {
           return DOMRect.fromRect({
             x: 911,
-            y: triggerTop,
+            y: 200,
             width: 38,
             height: 36
           });
@@ -347,16 +420,70 @@ describe('OrdinaryEditorSettings', () => {
     const trigger = screen.getByRole('button', { name: 'Editor settings' });
     await user.click(trigger);
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    const focusTrigger = vi.spyOn(trigger, 'focus');
+    const observer = observerRecords.at(-1);
+    expect(observer).toBeDefined();
+    expect(observer?.observe).toHaveBeenCalledWith(trigger);
 
-    triggerTop = -100;
-    fireEvent.scroll(window);
+    act(() => {
+      emitIntersection(observer, trigger, false);
+    });
 
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(trigger);
+    expect(focusTrigger).toHaveBeenCalledWith({ preventScroll: true });
     expect(
       screen.queryByRole('dialog', { name: 'Editor settings' })
     ).toBeNull();
     expect(
       document.querySelector('.easymde-editor-settings-tail')
     ).toBeNull();
+    expect(observer?.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores stale visibility callbacks after reopening the panel', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    const trigger = screen.getByRole('button', { name: 'Editor settings' });
+
+    await user.click(trigger);
+    const firstObserver = observerRecords.at(-1);
+    act(() => {
+      emitIntersection(firstObserver, trigger, true);
+    });
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+
+    await user.keyboard('{Escape}');
+    await user.click(trigger);
+    const secondObserver = observerRecords.at(-1);
+    expect(secondObserver).not.toBe(firstObserver);
+    expect(firstObserver?.disconnect).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      emitIntersection(firstObserver, trigger, false);
+    });
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+
+    act(() => {
+      emitIntersection(secondObserver, trigger, false);
+    });
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('ignores captured scroll events from the panel and its descendants', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    const trigger = screen.getByRole('button', { name: 'Editor settings' });
+
+    await user.click(trigger);
+    const panel = screen.getByRole('dialog', { name: 'Editor settings' });
+    const descendant = screen.getByRole('combobox', { name: 'Article theme' });
+    const readTriggerRect = vi.spyOn(trigger, 'getBoundingClientRect');
+    fireEvent.scroll(panel);
+    fireEvent.scroll(descendant);
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(panel.hidden).toBe(false);
+    expect(readTriggerRect).not.toHaveBeenCalled();
   });
 });

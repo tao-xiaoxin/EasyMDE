@@ -5,13 +5,17 @@ import type {
 
 export type CustomCssSaveInput = Readonly<{
   id: string;
-  name: string;
+  articleThemeName: string;
+  codeThemeName: string;
   css: string;
 }>;
 
 export type CustomCssSaveResult =
   | Readonly<{ status: 'saved'; snapshot: AppearanceSnapshot }>
-  | Readonly<{ status: 'failed'; code: string }>;
+  | Readonly<{
+    status: 'failed';
+    code: 'duplicate-name' | 'custom-css-save-failed';
+  }>;
 
 export type CustomCssPreviewResult =
   | Readonly<{ status: 'ready'; scopedCss: string }>

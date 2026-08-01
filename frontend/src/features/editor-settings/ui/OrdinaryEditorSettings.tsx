@@ -11,9 +11,11 @@ import type { AppearanceBootstrap } from '../../../contracts/bootstrap/appearanc
 import type { FontControlsBootstrap } from '../../../contracts/bootstrap/font-controls-bootstrap';
 import type { AppearancePort } from '../../../contracts/ports/appearance-port';
 import type { FontControlsPort } from '../../../contracts/ports/font-controls-port';
+import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
 import { Settings } from '../../../generated/lucide-icons';
 import {
   AppearanceControls,
+  type AppearanceNotification,
   type AppearanceControlsSession
 } from '../../appearance/ui/AppearanceControls';
 import {
@@ -31,8 +33,11 @@ type Props = Readonly<{
   fonts: FontControlsBootstrap;
   fontControlsPort: FontControlsPort;
   label: string;
+  messageAlertTimer: Pick<ImmersiveEnvironmentPort, 'now' | 'schedule'>;
   onAppearanceReady: (session: AppearanceControlsSession) => void;
   onFailure: (code: string) => void;
+  onNotification?: (notification: AppearanceNotification) => void;
+  onNotificationDismiss?: (id: AppearanceNotification['id']) => void;
   onFontControlsReady: (session: FontControlsSession) => void;
   onOpen: () => void;
   onReady: (session: OrdinaryEditorSettingsSession) => void;
@@ -94,27 +99,17 @@ function settingsPanelPosition(
   };
 }
 
-function triggerIntersectsViewport(
-  trigger: HTMLButtonElement,
-  windowRef: Window
-): boolean {
-  const rect = trigger.getBoundingClientRect();
-  return (
-    rect.bottom > 0 &&
-    rect.right > 0 &&
-    rect.top < windowRef.innerHeight &&
-    rect.left < windowRef.innerWidth
-  );
-}
-
 export function OrdinaryEditorSettings({
   appearance,
   appearancePort,
   fonts,
   fontControlsPort,
   label,
+  messageAlertTimer,
   onAppearanceReady,
   onFailure,
+  onNotification,
+  onNotificationDismiss,
   onFontControlsReady,
   onOpen,
   onReady
@@ -129,7 +124,7 @@ export function OrdinaryEditorSettings({
       if (!activeRef.current) return;
       const activeElement = panelRef.current?.ownerDocument.activeElement;
       if (activeElement && panelRef.current?.contains(activeElement)) {
-        (focusTarget ?? triggerRef.current)?.focus();
+        (focusTarget ?? triggerRef.current)?.focus({ preventScroll: true });
       }
       setIsOpen(false);
     }
@@ -168,6 +163,15 @@ export function OrdinaryEditorSettings({
     if (!documentRef || !windowRef) {
       throw new Error('ordinary-editor-settings-document-unavailable');
     }
+    const IntersectionObserverRef = windowRef.IntersectionObserver;
+    if (!IntersectionObserverRef) {
+      throw new Error('ordinary-editor-settings-visibility-owner-unavailable');
+    }
+    const trigger = triggerRef.current;
+    if (!trigger) {
+      throw new Error('ordinary-editor-settings-trigger-unavailable');
+    }
+    let active = true;
     const closeForPointer = (event: MouseEvent) => {
       const eventPath = event.composedPath();
       if (
@@ -208,28 +212,43 @@ export function OrdinaryEditorSettings({
       }
     };
     const reposition = () => {
-      const trigger = triggerRef.current;
       const panel = panelRef.current;
       if (trigger && panel) {
-        if (!triggerIntersectsViewport(trigger, windowRef)) {
-          setIsOpen(false);
-          return;
-        }
         setPanelPosition(settingsPanelPosition(trigger, panel));
       }
     };
+    const repositionForScroll = (event: Event) => {
+      if (
+        event.target instanceof Node
+        && panelRef.current?.contains(event.target)
+      ) return;
+      reposition();
+    };
+    const visibilityObserver = new IntersectionObserverRef((entries) => {
+      if (
+        active
+        && entries.some((entry) => (
+          entry.target === trigger && !entry.isIntersecting
+        ))
+      ) {
+        sessionRef.current.close();
+      }
+    });
+    visibilityObserver.observe(trigger);
 
     documentRef.addEventListener('click', closeForPointer);
     windowRef.addEventListener('keydown', closeForEscape);
     windowRef.addEventListener('keydown', containKeyboardFocus, true);
     windowRef.addEventListener('resize', reposition);
-    windowRef.addEventListener('scroll', reposition, true);
+    windowRef.addEventListener('scroll', repositionForScroll, true);
     return () => {
+      active = false;
+      visibilityObserver.disconnect();
       documentRef.removeEventListener('click', closeForPointer);
       windowRef.removeEventListener('keydown', closeForEscape);
       windowRef.removeEventListener('keydown', containKeyboardFocus, true);
       windowRef.removeEventListener('resize', reposition);
-      windowRef.removeEventListener('scroll', reposition, true);
+      windowRef.removeEventListener('scroll', repositionForScroll, true);
     };
   }, [isOpen]);
 
@@ -296,7 +315,10 @@ export function OrdinaryEditorSettings({
           onFailure={() => onFailure('react-editor-appearance-failed')}
           onReady={onAppearanceReady}
           port={appearancePort}
+          messageAlertTimer={messageAlertTimer}
           variant="embedded"
+          {...(onNotification ? { onNotification } : {})}
+          {...(onNotificationDismiss ? { onNotificationDismiss } : {})}
         />
         <FontControls
           bootstrap={fonts}

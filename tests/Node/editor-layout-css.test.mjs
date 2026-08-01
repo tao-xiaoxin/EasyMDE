@@ -14,6 +14,49 @@ function cssRule(source, selector) {
   return match.groups.body;
 }
 
+function cssBlock(source, prelude, fromIndex = 0) {
+  const preludeIndex = source.indexOf(prelude, fromIndex);
+  assert.notEqual(preludeIndex, -1, `Missing CSS block: ${prelude}`);
+  const openingBrace = source.indexOf('{', preludeIndex + prelude.length);
+  assert.notEqual(openingBrace, -1, `Missing opening brace: ${prelude}`);
+
+  let depth = 1;
+  let quote = null;
+  let inComment = false;
+  for (let index = openingBrace + 1; index < source.length; index += 1) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (inComment) {
+      if ('*' === character && '/' === next) {
+        inComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if ('\\' === character) {
+        index += 1;
+      } else if (quote === character) {
+        quote = null;
+      }
+      continue;
+    }
+    if ('/' === character && '*' === next) {
+      inComment = true;
+      index += 1;
+    } else if ('"' === character || "'" === character) {
+      quote = character;
+    } else if ('{' === character) {
+      depth += 1;
+    } else if ('}' === character) {
+      depth -= 1;
+      if (0 === depth) return source.slice(openingBrace + 1, index);
+    }
+  }
+
+  assert.fail(`Missing closing brace: ${prelude}`);
+}
+
 function assertDeclaration(rule, property, valuePattern) {
   const pattern = valuePattern instanceof RegExp
     ? valuePattern.source
@@ -116,6 +159,100 @@ test('immersive Custom CSS typography preserves the reference tracking', () => {
   assert.match(
     css,
     /\.easymde-custom-theme-preview th\s*\{[^}]*font-size:\s*12px;[^}]*letter-spacing:\s*\.04em;/s
+  );
+});
+
+test('shared editor message alerts use one compact semantic treatment', () => {
+  assert.match(
+    css,
+    /\.easymde-editor-message-alert-host\s*\{[^}]*display:\s*flex;[^}]*width:\s*min\(560px, calc\(100vw - 32px\)\);[^}]*justify-content:\s*center;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor-message-alert\s*\{[^}]*width:\s*fit-content;[^}]*min-width:\s*min\(344px, 100%\);[^}]*max-width:\s*100%;[^}]*min-height:\s*44px;[^}]*padding-block:\s*5px;[^}]*padding-inline:\s*26px 6px;[^}]*border-color:\s*rgba\(var\(--easymde-message-rgb\), \.18\);[^}]*border-radius:\s*10px;[^}]*background:\s*rgba\(var\(--easymde-message-rgb\), \.055\);[^}]*box-shadow:\s*0 6px 18px rgba\(var\(--easymde-message-rgb\), \.08\);[^}]*font-size:\s*14px;[^}]*letter-spacing:\s*\.5px;[^}]*line-height:\s*21px;/s
+  );
+  for (const [type, rgb] of [
+    ['success', '0, 200, 2'],
+    ['info', '11, 125, 255'],
+    ['warning', '255, 172, 0'],
+    ['error', '255, 51, 78']
+  ]) {
+    assert.match(
+      css,
+      new RegExp(
+        `\\.easymde-editor-message-alert\\.is-${type}\\s*\\{[^}]*--easymde-message-rgb:\\s*${rgb};`,
+        's'
+      )
+    );
+  }
+  assert.match(
+    css,
+    /\.easymde-editor-message-alert__icon\s*\{[^}]*width:\s*15px;[^}]*height:\s*15px;[^}]*flex:\s*0 0 15px;[^}]*background:\s*rgb\(var\(--easymde-message-rgb\)\);[^}]*font-size:\s*10px;[^}]*line-height:\s*15px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor-message-alert__message\s*\{[^}]*min-width:\s*0;[^}]*margin-inline-start:\s*11px;[^}]*flex:\s*0 1 auto;[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor-message-alert__close\s*\{[^}]*width:\s*30px;[^}]*height:\s*30px;[^}]*margin-inline-start:\s*auto;[^}]*margin-inline-end:\s*-2px;[^}]*flex:\s*0 0 30px;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor-message-alert__close svg\s*\{[^}]*width:\s*17px;[^}]*height:\s*17px;/s
+  );
+  const mobileAlerts = cssBlock(css, '@media (max-width: 600px)');
+  assertDeclaration(
+    cssRule(mobileAlerts, '.easymde-editor-message-alert-host'),
+    'width',
+    'calc(100vw - 24px)'
+  );
+  const mobileAlert = cssRule(
+    mobileAlerts,
+    '.easymde-editor-message-alert'
+  );
+  assertDeclaration(mobileAlert, 'width', '100%');
+  assertDeclaration(mobileAlert, 'min-width', '0');
+
+  const reducedMotionPrelude = '@media (prefers-reduced-motion: reduce)';
+  const reducedMotion = cssBlock(
+    css,
+    reducedMotionPrelude,
+    css.lastIndexOf(reducedMotionPrelude)
+  );
+  assertDeclaration(
+    cssRule(reducedMotion, '.easymde-editor-message-alert__close'),
+    'transition',
+    'none'
+  );
+});
+
+test('immersive Custom CSS duplicate error keeps the approved centered width', () => {
+  const header = cssRule(
+    css,
+    '.easymde-immersive-custom-css-dialog > header.has-message-alert'
+  );
+  assertDeclaration(
+    header,
+    'grid-template-columns',
+    'minmax(0, 1fr) 344px minmax(0, 1fr)'
+  );
+  const host = cssRule(
+    css,
+    '.easymde-immersive-custom-css-dialog > header > .easymde-editor-message-alert-host.is-dialog-compact'
+  );
+  assertDeclaration(host, 'grid-column', '2');
+  assertDeclaration(host, 'grid-row', '1 / 3');
+  assertDeclaration(host, 'width', '344px');
+  assertDeclaration(host, 'max-width', '344px');
+  assertDeclaration(host, 'justify-self', 'center');
+  assertDeclaration(
+    cssRule(
+      css,
+      '.easymde-immersive-custom-css-dialog .easymde-editor-message-alert.is-error.is-compact'
+    ),
+    'width',
+    '344px'
   );
 });
 

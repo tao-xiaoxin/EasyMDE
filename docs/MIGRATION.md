@@ -93,6 +93,11 @@ Existing custom CSS library data remains readable from the current user's
 `easymde_custom_css_library` user meta. Creating, updating, or deleting full
 Custom CSS requires `unfiltered_html`.
 
+Legacy library entries with one `name` expose that value as both the article
+and code theme label without writing during Read. The next authorized Custom
+CSS Save stores the entry with independent `article_theme_name` and
+`code_theme_name` fields and the normalized `updated_at` timestamp.
+
 `sabberworm/php-css-parser` owns parsing, normalization, selector scoping, and
 safe output. The policy rejects `@import`, `@charset`, `@font-face`, `url(...)`,
 `expression(...)`, `behavior`, `-moz-binding`, and `javascript:` while retaining

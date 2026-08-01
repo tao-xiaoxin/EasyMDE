@@ -1,5 +1,6 @@
 import { createElement } from '@wordpress/element';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -35,7 +36,8 @@ const bootstrap: AppearanceBootstrap = {
   ],
   customCss: [{
     id: 'writer-css',
-    name: 'Writer CSS',
+    articleThemeName: 'Writer Article',
+    codeThemeName: 'Writer Code',
     css: '.note { color: navy; }',
     scopedCss: '.easymde-rendered-content .note { color: navy; }'
   }],
@@ -53,6 +55,7 @@ const bootstrap: AppearanceBootstrap = {
     customCssTheme: 'Custom CSS theme',
     customCssDialog: customCssDialogStrings,
     cssName: 'CSS name',
+    cssNameDuplicate: 'This theme name is already in use. Choose another name and try again.',
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
     cssSaveFailed: 'CSS save failed.',
@@ -75,6 +78,14 @@ function createPort(overrides: Partial<AppearancePort> = {}): AppearancePort {
     ...overrides
   };
 }
+
+const messageAlertTimer = {
+  now: () => Date.now(),
+  schedule: (callback: () => void, delay: number) => {
+    const timer = window.setTimeout(callback, delay);
+    return () => window.clearTimeout(timer);
+  }
+};
 
 describe('AppearanceControls', () => {
   it('uses the local palette icon and shared dropdown chevron in ordinary mode', () => {
@@ -102,6 +113,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -124,6 +136,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -143,6 +156,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -163,6 +177,7 @@ describe('AppearanceControls', () => {
         onFailure={vi.fn()}
         onReady={vi.fn()}
         immersiveTitle="Theme settings"
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -188,6 +203,208 @@ describe('AppearanceControls', () => {
     expect(screen.getByText('Localized caution label')).not.toBeNull();
   });
 
+  it('keeps the dialog open and preserves edited names when the server rejects a duplicate theme name', async () => {
+    const user = userEvent.setup();
+    const onNotification = vi.fn();
+    const saveCustomCss = vi.fn().mockResolvedValue({
+      status: 'failed',
+      code: 'duplicate-name',
+      message: 'Sensitive server detail'
+    });
+    render(
+      <div className="easymde-editor">
+        <AppearanceControls
+          bootstrap={bootstrap}
+          port={createPort({ saveCustomCss })}
+          onFailure={vi.fn()}
+          onNotification={onNotification}
+          onReady={vi.fn()}
+          messageAlertTimer={messageAlertTimer}
+          variant="immersive"
+        />
+      </div>
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
+
+    const articleName = screen.getByRole('textbox', {
+      name: 'Article theme name'
+    });
+    const codeName = screen.getByRole('textbox', { name: 'Code theme name' });
+    await user.clear(articleName);
+    await user.type(articleName, 'Existing Article');
+    await user.clear(codeName);
+    await user.type(codeName, 'Existing Code');
+
+    const apply = screen.getByRole('button', { name: 'Apply theme' });
+    apply.focus();
+    await user.keyboard('{Enter}');
+
+    const alert = await screen.findByRole('alert');
+    expect(onNotification).not.toHaveBeenCalled();
+    expect(screen.queryByText('Sensitive server detail')).toBeNull();
+    const dialog = screen.getByRole('dialog', { name: 'Custom CSS theme' });
+    expect(dialog.contains(alert)).toBe(true);
+    expect(alert.classList.contains('is-compact')).toBe(true);
+    expect(
+      alert.parentElement?.classList.contains('is-dialog-compact')
+    ).toBe(true);
+    const dialogHeader = dialog.querySelector(':scope > header');
+    expect(dialogHeader?.contains(alert)).toBe(true);
+    expect(
+      alert.parentElement?.nextElementSibling?.getAttribute('aria-label')
+    ).toBe('Close');
+    expect(alert.textContent).toContain(
+      'This theme name is already in use. Choose another name and try again.'
+    );
+    expect((articleName as HTMLInputElement).value).toBe('Existing Article');
+    expect((codeName as HTMLInputElement).value).toBe('Existing Code');
+    expect(articleName.getAttribute('aria-invalid')).toBe('true');
+    expect(codeName.getAttribute('aria-invalid')).toBe('true');
+    const descriptionId = articleName.getAttribute('aria-describedby');
+    expect(descriptionId).not.toBeNull();
+    expect(codeName.getAttribute('aria-describedby')).toBe(descriptionId);
+    expect(document.getElementById(descriptionId ?? '')?.textContent).toBe(
+      'This theme name is already in use. Choose another name and try again.'
+    );
+    expect(document.activeElement).toBe(apply);
+    const notificationClose = within(alert).getByRole('button', {
+      name: 'Close'
+    });
+    const firstMainControl = within(dialog).getByRole('checkbox', {
+      name: 'Completed task'
+    });
+    const dialogClose = dialogHeader?.querySelector<HTMLElement>(
+      ':scope > button[aria-label="Close"]'
+    );
+    expect(dialogClose).not.toBeNull();
+    apply.focus();
+    await user.keyboard('{Tab}');
+    expect(document.activeElement).toBe(notificationClose);
+    await user.keyboard('{Tab}');
+    expect(document.activeElement).toBe(dialogClose);
+    await user.keyboard('{Tab}');
+    expect(document.activeElement).toBe(articleName);
+    codeName.focus();
+    await user.keyboard('{Tab}');
+    expect(document.activeElement).toBe(firstMainControl);
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(document.activeElement).toBe(codeName);
+    notificationClose.focus();
+    await user.keyboard('{Enter}');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(document.activeElement).toBe(apply);
+    expect(saveCustomCss).toHaveBeenCalledWith(expect.objectContaining({
+      articleThemeName: 'Existing Article',
+      codeThemeName: 'Existing Code',
+      id: '',
+    }));
+
+    apply.focus();
+    await user.keyboard('{Enter}');
+    expect(await screen.findByRole('alert')).not.toBeNull();
+    await user.type(articleName, ' updated');
+
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(articleName.getAttribute('aria-invalid')).toBeNull();
+    expect(codeName.getAttribute('aria-invalid')).toBeNull();
+    expect(articleName.getAttribute('aria-describedby')).toBeNull();
+    expect(codeName.getAttribute('aria-describedby')).toBeNull();
+  });
+
+  it('resumes Custom CSS error dismissal with only the remaining time after focus leaves', async () => {
+    const user = userEvent.setup();
+    const saveCustomCss = vi.fn().mockResolvedValue({
+      status: 'failed',
+      code: 'duplicate-name',
+      message: 'Sensitive server detail'
+    });
+    render(
+      <div className="easymde-editor">
+        <AppearanceControls
+          bootstrap={bootstrap}
+          port={createPort({ saveCustomCss })}
+          onFailure={vi.fn()}
+          onReady={vi.fn()}
+          messageAlertTimer={messageAlertTimer}
+          variant="immersive"
+        />
+      </div>
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
+    const articleName = screen.getByRole('textbox', {
+      name: 'Article theme name'
+    });
+    const codeName = screen.getByRole('textbox', { name: 'Code theme name' });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Apply theme' }));
+        await Promise.resolve();
+      });
+      expect(screen.getByRole('alert')).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(2500);
+      });
+      const close = within(screen.getByRole('alert')).getByRole('button', {
+        name: 'Close'
+      });
+      fireEvent.focus(close);
+
+      act(() => {
+        vi.advanceTimersByTime(6000);
+      });
+      expect(screen.getByRole('alert')).not.toBeNull();
+      expect(articleName.getAttribute('aria-invalid')).toBe('true');
+      expect(codeName.getAttribute('aria-invalid')).toBe('true');
+
+      fireEvent.blur(close);
+      act(() => {
+        vi.advanceTimersByTime(499);
+      });
+      expect(screen.getByRole('alert')).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(articleName.getAttribute('aria-invalid')).toBeNull();
+      expect(codeName.getAttribute('aria-invalid')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps preview availability feedback separate from save errors', async () => {
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort({
+          previewCustomCss: vi.fn().mockResolvedValue({ status: 'invalid' })
+        })}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
+
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toBe(customCssDialogStrings.previewInvalid);
+    expect(status.getAttribute('aria-live')).toBe('polite');
+    expect(status.getAttribute('aria-atomic')).toBe('true');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('renders the complete reference Custom CSS dialog preview fixture', async () => {
     const user = userEvent.setup();
     const { container } = render(
@@ -196,6 +413,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -261,6 +479,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -354,9 +573,10 @@ describe('AppearanceControls', () => {
       status: 'saved',
       snapshot: {
         customCss: [{
+          articleThemeName: 'EasyMDE Blue',
+          codeThemeName: 'EasyMDE Blue Code',
           css: ':root { color: #1F2937; }',
           id: 'easymde-blue',
-          name: 'EasyMDE Blue',
           scopedCss: '.easymde-rendered-content { color: #1F2937; }'
         }],
         state: {
@@ -372,6 +592,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -383,7 +604,8 @@ describe('AppearanceControls', () => {
     expect(saveCustomCss).toHaveBeenCalledTimes(1);
     expect(saveCustomCss).toHaveBeenCalledWith(expect.objectContaining({
       id: '',
-      name: 'EasyMDE Blue / EasyMDE Blue Code',
+      articleThemeName: 'EasyMDE Blue',
+      codeThemeName: 'EasyMDE Blue Code',
       css: expect.stringMatching(
         /--easymde-primary-color: #3B82F6;[\s\S]*code:not\(\.hljs\):not\(\[class\*="language-"\]\)[\s\S]*\.hljs-keyword/
       )
@@ -397,6 +619,34 @@ describe('AppearanceControls', () => {
         screen.queryByRole('dialog', { name: 'Custom CSS theme' })
       ).toBeNull();
     });
+  });
+
+  it('limits immersive Custom CSS names by Unicode code point', async () => {
+    const user = userEvent.setup();
+    const symbol = String.fromCodePoint(0x1f3a8);
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
+    const articleName = screen.getByRole('textbox', { name: 'Article theme name' });
+    const codeName = screen.getByRole('textbox', { name: 'Code theme name' });
+
+    fireEvent.change(articleName, { target: { value: symbol.repeat(20) } });
+    fireEvent.change(codeName, { target: { value: symbol.repeat(31) } });
+
+    expect((articleName as HTMLInputElement).value).toBe(symbol.repeat(20));
+    expect((codeName as HTMLInputElement).value).toBe(symbol.repeat(30));
+    expect(screen.getByText('20/30')).not.toBeNull();
+    expect(screen.getByText('30/30')).not.toBeNull();
   });
 
   it('renders only server-scoped authored CSS in the live preview', async () => {
@@ -427,6 +677,7 @@ describe('AppearanceControls', () => {
         port={createPort({ previewCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -528,6 +779,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -570,6 +822,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -581,12 +834,13 @@ describe('AppearanceControls', () => {
     const input = saveCustomCss.mock.calls[0]?.[0];
     expect(input).toEqual(expect.objectContaining({
       id: '',
-      name: 'EasyMDE Blue / EasyMDE Blue Code'
+      articleThemeName: 'EasyMDE Blue',
+      codeThemeName: 'EasyMDE Blue Code'
     }));
     expect(input?.css).not.toContain('.note { color: navy; }');
   });
 
-  it('persists the editable code theme name in the combined Custom CSS record name', async () => {
+  it('persists the editable article and code theme names as separate fields', async () => {
     const user = userEvent.setup();
     const saveCustomCss = vi.fn().mockResolvedValue({
       status: 'saved',
@@ -605,6 +859,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -617,7 +872,8 @@ describe('AppearanceControls', () => {
     await user.click(screen.getByRole('button', { name: 'Apply theme' }));
 
     expect(saveCustomCss).toHaveBeenCalledWith(expect.objectContaining({
-      name: 'EasyMDE Blue / Midnight Code'
+      articleThemeName: 'EasyMDE Blue',
+      codeThemeName: 'Midnight Code'
     }));
   });
 
@@ -637,6 +893,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -693,6 +950,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -722,11 +980,14 @@ describe('AppearanceControls', () => {
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
 
     expect(screen.queryByRole('button', { name: 'Custom CSS' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save CSS' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'CSS name' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Custom CSS' })).toBeNull();
     expect(screen.getByRole('combobox', { name: 'Article theme' })).not.toBeNull();
     expect(screen.getByRole('combobox', { name: 'Code theme' })).not.toBeNull();
   });
 
-  it('shows the same saved custom theme directly in both embedded theme menus', async () => {
+  it('shows each saved custom theme name only in its owned embedded menu', async () => {
     const user = userEvent.setup();
     const applyState = vi.fn();
     render(
@@ -747,7 +1008,9 @@ describe('AppearanceControls', () => {
       name: 'Article theme'
     });
     expect(articleOptions.textContent).not.toContain('Named custom CSS');
-    await user.click(screen.getByRole('option', { name: 'Writer CSS' }));
+    expect(articleOptions.textContent).toContain('Writer Article');
+    expect(articleOptions.textContent).not.toContain('Writer Code');
+    await user.click(screen.getByRole('option', { name: 'Writer Article' }));
 
     expect(applyState).toHaveBeenLastCalledWith({
       markdownTheme: 'custom',
@@ -756,22 +1019,61 @@ describe('AppearanceControls', () => {
     }, false);
 
     const codeTheme = screen.getByRole('combobox', { name: 'Code theme' });
-    expect(codeTheme.textContent).toContain('Writer CSS');
+    expect(codeTheme.textContent).toContain('Writer Code');
     await user.click(codeTheme);
     const codeOptions = screen.getByRole('listbox', { name: 'Code theme' });
     expect(codeOptions.textContent).not.toContain('Named custom CSS');
+    expect(codeOptions.textContent).toContain('Writer Code');
+    expect(codeOptions.textContent).not.toContain('Writer Article');
     expect(
-      screen.getByRole('option', { name: 'Writer CSS' }).getAttribute(
+      screen.getByRole('option', { name: 'Writer Code' }).getAttribute(
         'aria-selected'
       )
     ).toBe('true');
 
     await user.click(screen.getByRole('option', { name: 'GitHub' }));
     expect(applyState).toHaveBeenLastCalledWith({
-      markdownTheme: 'default',
+      markdownTheme: 'custom',
       codeTheme: 'github',
-      customCssId: ''
+      customCssId: 'writer-css'
     }, true);
+  });
+
+  it('uses a custom code label to select its paired Custom CSS preset', async () => {
+    const applyState = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={{
+          ...bootstrap,
+          state: {
+            markdownTheme: 'newsprint',
+            codeTheme: 'github',
+            customCssId: ''
+          },
+          codeThemeExplicit: true
+        }}
+        port={createPort({ applyState })}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="embedded"
+      />
+    );
+
+    await user.click(screen.getByRole('combobox', { name: 'Code theme' }));
+    await user.click(screen.getByRole('option', { name: 'Writer Code' }));
+
+    expect(applyState).toHaveBeenLastCalledWith({
+      markdownTheme: 'custom',
+      codeTheme: 'atom-one-dark',
+      customCssId: 'writer-css'
+    }, false);
+    expect(
+      screen.getByRole('combobox', { name: 'Article theme' }).textContent
+    ).toContain('Writer Article');
+    expect(
+      screen.getByRole('combobox', { name: 'Code theme' }).textContent
+    ).toContain('Writer Code');
   });
 
   it('reuses immersive article and code palettes in the embedded theme menus', async () => {
@@ -797,7 +1099,7 @@ describe('AppearanceControls', () => {
 
     await user.click(articleTheme);
     expect(
-      screen.getByRole('option', { name: 'Writer CSS' })
+      screen.getByRole('option', { name: 'Writer Article' })
         .querySelector<HTMLElement>('.easymde-ordinary-select-swatch')
         ?.style.background
     ).toBe('rgb(220, 38, 38)');
@@ -830,6 +1132,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -852,6 +1155,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -874,6 +1178,7 @@ describe('AppearanceControls', () => {
         port={createPort()}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -884,7 +1189,7 @@ describe('AppearanceControls', () => {
     await user.keyboard('{ArrowDown}');
     expect(document.activeElement).toBe(screen.getByRole('option', { name: /Default/u }));
     await user.keyboard('{End}');
-    expect(document.activeElement).toBe(screen.getByRole('option', { name: /Writer CSS/u }));
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /Writer Article/u }));
     await user.keyboard('{Escape}');
     expect(document.activeElement).toBe(select);
   });
@@ -970,6 +1275,7 @@ describe('AppearanceControls', () => {
           onReady={(nextSession) => {
             session = nextSession;
           }}
+          messageAlertTimer={messageAlertTimer}
           variant="immersive"
         />
       );
@@ -1018,9 +1324,9 @@ describe('AppearanceControls', () => {
       'theme:github'
     );
     expect(applyState).toHaveBeenLastCalledWith({
-      markdownTheme: 'default',
+      markdownTheme: 'custom',
       codeTheme: 'github',
-      customCssId: ''
+      customCssId: 'writer-css'
     }, true);
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Article theme' }), 'theme:default');
@@ -1047,19 +1353,23 @@ describe('AppearanceControls', () => {
         port={createPort({ applyState })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Article theme' }));
-    await user.click(screen.getByRole('option', { name: /Writer CSS/u }));
+    await user.click(screen.getByRole('option', { name: /Writer Article/u }));
 
     expect(applyState).toHaveBeenLastCalledWith({
       markdownTheme: 'custom',
       codeTheme: 'atom-one-dark',
       customCssId: 'writer-css'
     }, false);
+    expect(
+      screen.getByRole('button', { name: 'Code theme' }).textContent
+    ).toContain('Writer Code');
   });
 
   it('applies the implicit custom CSS code theme after a successful save', async () => {
@@ -1069,7 +1379,8 @@ describe('AppearanceControls', () => {
       snapshot: {
         customCss: [{
           id: 'saved-css',
-          name: 'Saved CSS',
+          articleThemeName: 'Saved Article',
+          codeThemeName: 'Saved Code',
           css: '.saved { color: green; }',
           scopedCss: '.easymde-rendered-content .saved { color: green; }'
         }],
@@ -1094,6 +1405,7 @@ describe('AppearanceControls', () => {
         port={createPort({ applyState, saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -1120,7 +1432,8 @@ describe('AppearanceControls', () => {
       snapshot: {
         customCss: [{
           id: 'saved-css',
-          name: 'Saved CSS',
+          articleThemeName: 'Saved Article',
+          codeThemeName: 'Saved Code',
           css: '.saved { color: green; }',
           scopedCss: '.easymde-rendered-content .saved { color: green; }'
         }],
@@ -1139,6 +1452,7 @@ describe('AppearanceControls', () => {
         port={createPort({ applyState, saveCustomCss })}
         onFailure={onFailure}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -1150,7 +1464,10 @@ describe('AppearanceControls', () => {
     await screen.findByText('CSS save failed.');
     expect(onFailure).toHaveBeenCalledOnce();
     expect(screen.queryByText('CSS saved.')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Close' }));
+    const dialog = screen.getByRole('dialog', { name: 'Custom CSS theme' });
+    await user.click(
+      within(dialog).getAllByRole('button', { name: 'Close' })[0] as HTMLElement
+    );
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     expect(
       screen.getByRole('button', { name: 'Article theme' }).textContent
@@ -1225,6 +1542,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss })}
         onFailure={vi.fn()}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );
@@ -1257,6 +1575,7 @@ describe('AppearanceControls', () => {
         port={createPort({ saveCustomCss: vi.fn().mockRejectedValue(new Error('session-expired')) })}
         onFailure={onFailure}
         onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
         variant="immersive"
       />
     );

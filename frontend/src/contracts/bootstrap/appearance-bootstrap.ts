@@ -18,7 +18,8 @@ export type FontDefaults = Readonly<{
 
 export type CustomCssItem = Readonly<{
   id: string;
-  name: string;
+  articleThemeName: string;
+  codeThemeName: string;
   css: string;
   scopedCss: string;
 }>;
@@ -45,6 +46,7 @@ export type AppearanceStrings = Readonly<{
   saveCss: string;
   cssSaved: string;
   cssSaveFailed: string;
+  cssNameDuplicate: string;
   namedCustomCss: string;
 }>;
 
@@ -218,7 +220,7 @@ function requiredString(value: unknown, code: string, maxLength = 512): string {
   return value;
 }
 
-function requiredUnboundedString(value: unknown, code: string): string {
+function customCssThemeName(value: unknown, code: string): string {
   if ('string' !== typeof value || '' === value.trim()) {
     throw new AppearanceBootstrapError(code);
   }
@@ -313,7 +315,14 @@ function parseCustomCss(value: unknown): ReadonlyArray<CustomCssItem> {
 
     return {
       id,
-      name: requiredUnboundedString(item.name, 'invalid-custom-css-name'),
+      articleThemeName: customCssThemeName(
+        item.articleThemeName,
+        'invalid-custom-css-article-theme-name'
+      ),
+      codeThemeName: customCssThemeName(
+        item.codeThemeName,
+        'invalid-custom-css-code-theme-name'
+      ),
       css: item.css,
       scopedCss: item.scopedCss
     };
@@ -364,6 +373,7 @@ function parseStrings(value: unknown): AppearanceStrings {
     'saveCss',
     'cssSaved',
     'cssSaveFailed',
+    'cssNameDuplicate',
     'namedCustomCss'
   ];
   const result = {} as Record<

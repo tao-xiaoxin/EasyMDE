@@ -190,20 +190,34 @@ final class ThemeStateRepository {
 
 		$normalized = array();
 		foreach ( $library as $item ) {
-			if ( ! is_array( $item ) || empty( $item['id'] ) || empty( $item['name'] ) || ! array_key_exists( 'css', $item ) ) {
+			if (
+				! is_array( $item )
+				|| empty( $item['id'] )
+				|| ! array_key_exists( 'css', $item )
+			) {
 				continue;
 			}
 
-			$id = sanitize_key( $item['id'] );
-			if ( '' === $id ) {
+			$id                    = sanitize_key( $item['id'] );
+			$legacy_name           = isset( $item['name'] ) ? sanitize_text_field( $item['name'] ) : '';
+			$article_theme_name    = isset( $item['article_theme_name'] )
+				? sanitize_text_field( $item['article_theme_name'] )
+				: $legacy_name;
+			$code_theme_name       = isset( $item['code_theme_name'] )
+				? sanitize_text_field( $item['code_theme_name'] )
+				: $legacy_name;
+			$legacy_updated_at     = isset( $item['updatedAt'] ) ? absint( $item['updatedAt'] ) : 0;
+			$normalized_updated_at = isset( $item['updated_at'] ) ? absint( $item['updated_at'] ) : $legacy_updated_at;
+			if ( '' === $id || '' === $article_theme_name || '' === $code_theme_name ) {
 				continue;
 			}
 
 			$normalized[ $id ] = array(
-				'id'        => $id,
-				'name'      => sanitize_text_field( $item['name'] ),
-				'css'       => (string) $item['css'],
-				'updatedAt' => isset( $item['updatedAt'] ) ? absint( $item['updatedAt'] ) : 0,
+				'id'                 => $id,
+				'article_theme_name' => $article_theme_name,
+				'code_theme_name'    => $code_theme_name,
+				'css'                => (string) $item['css'],
+				'updated_at'         => $normalized_updated_at,
 			);
 		}
 
@@ -223,11 +237,12 @@ final class ThemeStateRepository {
 
 	public function format_custom_css_item( $item ) {
 		return array(
-			'id'        => $item['id'],
-			'name'      => $item['name'],
-			'css'       => $item['css'],
-			'scopedCss' => $this->custom_css_policy->scope( $item['css'] ),
-			'updatedAt' => $item['updatedAt'],
+			'id'               => $item['id'],
+			'articleThemeName' => $item['article_theme_name'],
+			'codeThemeName'    => $item['code_theme_name'],
+			'css'              => $item['css'],
+			'scopedCss'        => $this->custom_css_policy->scope( $item['css'] ),
+			'updatedAt'        => $item['updated_at'],
 		);
 	}
 

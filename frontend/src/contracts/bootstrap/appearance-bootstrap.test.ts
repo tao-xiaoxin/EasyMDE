@@ -33,7 +33,8 @@ const bootstrap = {
   customCss: [
     {
       id: 'writer-css',
-      name: 'Writer CSS',
+      articleThemeName: 'Writer Article',
+      codeThemeName: 'Writer Code',
       css: '.note { color: navy; }',
       scopedCss: '.easymde-rendered-content .note { color: navy; }'
     }
@@ -55,6 +56,7 @@ const bootstrap = {
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
     cssSaveFailed: 'CSS save failed.',
+    cssNameDuplicate: 'A theme with this name already exists.',
     namedCustomCss: 'Named custom CSS'
   }
 };
@@ -64,13 +66,37 @@ describe('parseAppearanceBootstrap', () => {
     expect(parseAppearanceBootstrap(bootstrap)).toEqual(bootstrap);
   });
 
-  it('accepts existing Custom CSS names without imposing a client-only length limit', () => {
-    const name = 'n'.repeat(513);
+  it('preserves stored Custom CSS theme names beyond the current save limit', () => {
+    const articleThemeName = 'Legacy article '.repeat(3);
+    const codeThemeName = String.fromCodePoint(0x1f3a8).repeat(31);
 
     expect(parseAppearanceBootstrap({
       ...bootstrap,
-      customCss: [{ ...bootstrap.customCss[0], name }]
-    }).customCss[0]?.name).toBe(name);
+      customCss: [{
+        ...bootstrap.customCss[0],
+        articleThemeName,
+        codeThemeName
+      }]
+    }).customCss[0]).toMatchObject({
+      articleThemeName,
+      codeThemeName
+    });
+  });
+
+  it('rejects the removed single-name Custom CSS contract', () => {
+    const item = bootstrap.customCss[0];
+    if (!item) {
+      throw new Error('custom-css-fixture-unavailable');
+    }
+
+    expect(() => parseAppearanceBootstrap({
+      ...bootstrap,
+      customCss: [{ id: item.id, name: 'Combined Name', css: item.css, scopedCss: item.scopedCss }]
+    })).toThrowError(
+      expect.objectContaining<Partial<AppearanceBootstrapError>>({
+        code: 'invalid-custom-css-article-theme-name'
+      })
+    );
   });
 
   it.each([

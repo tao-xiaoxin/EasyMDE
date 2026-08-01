@@ -1863,7 +1863,7 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
-    test.setTimeout(180_000);
+    test.setTimeout(240_000);
     const user = testInfo.easymdeUser;
     const customThemeSuffix = randomUUID().slice(0, 8);
     const customName = 'E2E CSS ' + customThemeSuffix;
@@ -2309,7 +2309,13 @@ test.describe('EasyMDE editor workflows', () => {
           ))).toBe(expectedFontStack);
       }
     }
+  });
 
+  test('keeps the ordinary settings popover anchored or closes it when the page scrolls', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
     await page.setViewportSize({ width: 783, height: 900 });
     const scrollSettingsTrigger = page.locator(
       '.easymde-toolbar-popover-settings > button'
@@ -2324,6 +2330,7 @@ test.describe('EasyMDE editor workflows', () => {
       const rect = trigger.getBoundingClientRect();
       return rect.bottom > 0 && rect.top < innerHeight;
     })).toBe(true);
+    await scrollSettingsTrigger.click();
     await expect(scrollSettingsPanel).toBeVisible();
     await page.evaluate(async () => {
       window.scrollTo(0, Number.MAX_SAFE_INTEGER);

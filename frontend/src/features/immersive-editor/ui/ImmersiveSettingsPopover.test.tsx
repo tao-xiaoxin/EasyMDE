@@ -49,6 +49,13 @@ describe('ImmersiveSettingsPopover', () => {
 
     const outline = view.getByRole('checkbox', { name: '文章大纲' });
     expect(outline.getAttribute('aria-checked')).toBe('true');
+    expect(outline.getAttribute('aria-describedby')).toBe(
+      'immersive-setting-outline-description'
+    );
+    expect(
+      document.getElementById('immersive-setting-outline-description')
+        ?.textContent
+    ).toBe(strings.outlineDescription);
     expect(document.activeElement).toBe(outline);
 
     fireEvent.click(outline);

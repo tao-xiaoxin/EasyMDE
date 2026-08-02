@@ -160,6 +160,7 @@ export function ImmersiveSettingsPopover({
                 <div className="easymde-immersive-settings-list">
                   {items.map((item) => {
                     const checked = settings[item.key];
+                    const descriptionId = `immersive-setting-${item.key}-description`;
                     return (
                       // biome-ignore lint/a11y/useSemanticElements: The reference UI exposes each setting row as a checkbox button.
                       <button
@@ -168,6 +169,7 @@ export function ImmersiveSettingsPopover({
                         role="checkbox"
                         aria-checked={checked}
                         aria-label={item.label}
+                        aria-describedby={descriptionId}
                         onClick={() =>
                           onChange({
                             ...settings,
@@ -185,7 +187,7 @@ export function ImmersiveSettingsPopover({
                         </span>
                         <span>
                           <strong>{item.label}</strong>
-                          <small>{item.description}</small>
+                          <small id={descriptionId}>{item.description}</small>
                         </span>
                       </button>
                     );

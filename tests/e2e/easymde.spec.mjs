@@ -500,9 +500,37 @@ async function setImmersiveSplitRatio(page, ratio, resizeLabel) {
   await expect(divider).toHaveAttribute('aria-valuenow', String(ratio));
 }
 
-async function measureArticleThemeGeometry(page, position) {
+async function readArticleThemeBackgroundImage(page, themeId) {
+  return page.evaluate((id) => {
+    const probe = document.createElement('article');
+    probe.className = `easymde-rendered-content easymde-markdown-theme-${id}`;
+    probe.style.cssText = [
+      'position: fixed',
+      'left: -10000px',
+      'top: -10000px',
+      'width: 1px',
+      'height: 1px',
+      'visibility: hidden',
+      'pointer-events: none'
+    ].join(';');
+    document.body.append(probe);
+    const backgroundImage = getComputedStyle(probe).backgroundImage;
+    probe.remove();
+    return backgroundImage;
+  }, themeId);
+}
+
+async function measureArticleThemeGeometry(
+  page,
+  position,
+  expectedThemeBackgroundImage = null
+) {
   return page.locator('.easymde-pane-preview article').evaluate(
-    (root, { longHeadingPrefix, scrollPosition }) => {
+    (root, {
+      expectedThemeBackgroundImage,
+      longHeadingPrefix,
+      scrollPosition
+    }) => {
       const tolerance = 1;
       const pane = root.closest('.easymde-pane-preview');
       if (!(pane instanceof HTMLElement)) {
@@ -740,6 +768,12 @@ async function measureArticleThemeGeometry(page, position) {
       const immersivePageStyle = immersivePage
         ? getComputedStyle(immersivePage)
         : null;
+      const articleStyle = getComputedStyle(root);
+      const usesSharedImmersiveGrid = articleStyle.backgroundImage.includes(
+        'rgba(247, 250, 252, 0.92)'
+      ) && articleStyle.backgroundImage.includes(
+        'rgba(226, 232, 240, 0.45)'
+      );
       const paneStyle = getComputedStyle(pane);
       const isImmersivePreview = editor?.classList.contains('is-immersive-preview');
       const isImmersiveSplit = editor?.classList.contains('is-immersive-split');
@@ -751,6 +785,9 @@ async function measureArticleThemeGeometry(page, position) {
         pageBorderWidth: immersivePageStyle?.borderTopWidth ?? null,
         pageBorderStyle: immersivePageStyle?.borderTopStyle ?? null,
         pageBorderColor: immersivePageStyle?.borderTopColor ?? null,
+        articleBackgroundImage: articleStyle.backgroundImage,
+        articleUsesSharedImmersiveGrid: usesSharedImmersiveGrid,
+        expectedThemeBackgroundImage,
         paneBackground: paneStyle.backgroundColor,
         paneRect: {
           left: paneBox.left,
@@ -848,6 +885,19 @@ async function measureArticleThemeGeometry(page, position) {
           ),
           ...(
             isImmersivePreview
+            && surfaces.articleUsesSharedImmersiveGrid
+              ? ['immersive-preview-shared-article-grid-background']
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && null !== surfaces.expectedThemeBackgroundImage
+            && surfaces.articleBackgroundImage !== surfaces.expectedThemeBackgroundImage
+              ? ['immersive-preview-theme-owned-background-not-preserved']
+              : []
+          ),
+          ...(
+            isImmersivePreview
             && immersiveCanvas
             && immersivePage
             && 'none' !== surfaces.canvasDisplay
@@ -889,6 +939,7 @@ async function measureArticleThemeGeometry(page, position) {
       };
     },
     {
+      expectedThemeBackgroundImage,
       longHeadingPrefix: longFixtureHeadingPrefix,
       scrollPosition: position
     }
@@ -1735,6 +1786,7 @@ test.describe('EasyMDE editor workflows', () => {
     const preview = page.locator('.easymde-pane-preview article');
     const failures = [];
     const matrix = [];
+    let expectedThemeBackgroundImage = null;
     const headingRhythmContracts = new Map([
       ['qingbi-liujin', { contentFontSize: null }],
       ['qinghe-zhusha', { contentFontSize: null }],
@@ -1751,7 +1803,11 @@ test.describe('EasyMDE editor workflows', () => {
       position,
       expectedDecoration = null
     ) => {
-      const geometry = await measureArticleThemeGeometry(page, position);
+      const geometry = await measureArticleThemeGeometry(
+        page,
+        position,
+        expectedThemeBackgroundImage
+      );
       matrix.push({
         themeId,
         state,
@@ -1842,6 +1898,7 @@ test.describe('EasyMDE editor workflows', () => {
       ), cssUrl), {
         message: `${id} article stylesheet should finish loading`
       }).toBe(true);
+      expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
       const ordinarySwatch = await articleSelect.locator(
         '.easymde-ordinary-select-swatch'
       ).evaluate((swatchElement) => getComputedStyle(swatchElement).backgroundColor);
@@ -1885,6 +1942,7 @@ test.describe('EasyMDE editor workflows', () => {
       let desktopDecoration;
       for (const width of [1200, 760, 680]) {
         await page.setViewportSize({ width, height: 900 });
+        expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
         for (const position of ['top', 'middle', 'bottom']) {
           const decoration = await recordGeometry(
             id,
@@ -1899,6 +1957,7 @@ test.describe('EasyMDE editor workflows', () => {
       }
 
       await page.setViewportSize({ width: 1200, height: 900 });
+      expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
       await page.getByRole('button', {
         name: labels.immersive.enter,
         exact: true
@@ -1999,6 +2058,7 @@ test.describe('EasyMDE editor workflows', () => {
       }
 
       await page.setViewportSize({ width: 680, height: 900 });
+      expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
       await setImmersiveSplitRatio(
         page,
         50,

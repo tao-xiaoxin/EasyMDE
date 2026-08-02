@@ -1516,6 +1516,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
     border-radius: 8px;
     background: #d8dde6;
 }
+.easymde-editor.is-immersive-preview :where(.easymde-preview) {
+    background-image: none;
+}
 .easymde-editor.is-immersive-preview .easymde-immersive-preview-page {
     display: block;
     box-sizing: border-box;

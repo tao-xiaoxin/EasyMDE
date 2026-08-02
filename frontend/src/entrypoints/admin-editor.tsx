@@ -404,6 +404,7 @@ export function mountAdminEditor(
       blob: Blob,
       clipboardItem: clipboardItem(windowRef),
       document: documentRef,
+      fetch: (input, init) => windowRef.fetch(input, init),
       getComputedStyle: (element, pseudoElement) => windowRef.getComputedStyle(element, pseudoElement),
       getSelection: () => windowRef.getSelection(),
       pageOffset: () => ({ x: windowRef.scrollX, y: windowRef.scrollY }),

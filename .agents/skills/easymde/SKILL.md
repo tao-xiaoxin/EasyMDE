@@ -1020,7 +1020,61 @@ Feature boundaries:
 - **Themes and Custom CSS:** choices come from PHP Registries. Full Custom CSS editing requires `unfiltered_html`; the library remains scoped to the current user's WordPress user meta and an endpoint must not read or mutate another user's library. PHP `CustomCssPolicy` and its maintained CSS parser remain authoritative for validation, blocked features, normalization, selector scoping, payload limits, and safe Preview / public output. React may edit and display typed results, but it must not parse CSS as a security boundary, construct trusted scoped CSS, or render rejected or unparseable legacy CSS. Preserve a legacy stored value when required for compatibility without emitting unsafe output.
 - **Settings:** if a focused task creates a React Settings application, use a separate Root; `manage_options`, Options API, `register_setting()`, and PHP Sanitization remain authoritative.
 - **Local drafts:** Recovery data is not a WordPress save; scope Keys by Site, User, Post, and Schema Version; never store Nonces or credentials. Define payload limits, retention/expiry, authoritative-save cleanup, re-keying, explicit discard, and cross-tab conflict behavior without silently losing newer unsaved content.
-- **WeChat export:** copy only the current stable sanitized Preview; Clipboard rejection is a failure; fallback restores Selection, Focus, Scroll, and temporary DOM.
+- **WeChat export:** copy only the current stable sanitized and locally enhanced
+  Preview Safe HTML sink; the EditorRoot/session is responsible for passing that
+  sink, while the browser Adapter receives an HTMLElement and does not become a
+  second document authority. The browser Adapter at
+  `integrations/browser/wechat/create-browser-wechat-clipboard.ts` owns one
+  clone/serialization pipeline; `navigator.clipboard.write` and the legacy
+  `document.execCommand('copy')` compatibility path must consume the same
+  normalized HTML. The modern path writes `text/plain` from that same clone
+  after removing exporter whitespace markers and normalizing non-breaking spaces;
+  the legacy path selects the same HTML and lets the destination derive visible
+  plain text. Do not
+  add a Markdown renderer, copy the CodeMirror/editor shell DOM, or maintain a
+  second serializer.
+  `features/wechat-export/wechat-export-session.ts` is the single session owner
+  shared by ordinary and immersive surfaces. It must reject disabled or
+  inactive export, and refuse to touch Clipboard when the Safe Preview sink is
+  empty, loading, or in an error state (`wechat-preview-unavailable`). It
+  coalesces concurrent copy requests, maps an Adapter rejection to
+  `wechat-copy-failed`, reports `wechat-clipboard-unsupported` distinctly, and
+  suppresses late status after teardown.
+  `previewReady()` requires non-empty HTML and rejects the Preview
+  `.easymde-preview-empty`, `.easymde-preview-error`, and
+  `.easymde-render-error` classes, `data-easymde-preview-error="1"`,
+  `data-easymde-preview-refreshing="1"`, and `aria-busy="true"`; a missing
+  Preview element is the same unavailable result.
+  The pipeline removes scripts, styles, controls, CSS classes, and source/editor
+  transient attributes; keeps only valid fragment IDs and SVG-internal IDs;
+  sanitizes URL/style values; preserves safe image `src`/`srcset` candidates and
+  link URLs; drops unsafe URLs and non-allowlisted CSS background URLs; and
+  materializes same-origin
+  `/assets/images/` background assets as bounded GIF/JPEG/PNG/WebP data images
+  (the fetched source blob is limited by `MAX_DATA_IMAGE_LENGTH` = 4,000,000).
+  It preserves approved computed styles,
+  quoted-literal pseudo decorations, code-frame geometry, table layout, and
+  KaTeX visual SVG geometry while removing KaTeX MathML. Exporter-owned
+  `aria-hidden` decoration and `leaf` markers are structural exceptions to the
+  source transient-attribute rule.
+  It normalizes article/div roots to portable section structure, wraps text
+  leaves, preserves code and KaTeX whitespace markers, sanitizes `srcset` and
+  fragment IDs along with ordinary URL attributes, and gives non-math SVG and
+  media responsive bounds. A theme-image fetch or data conversion failure must
+  fail the copy rather than emit a partial payload.
+  Code lines must retain explicit line breaks and non-wrapping intrinsic line
+  boxes. The `<pre>`/direct-`<code>` frame pair receives the horizontal
+  overflow rules required by the destination; browser evidence must identify
+  the actual owner and reject nested vertical scrolling. Tables and display
+  formulas are centered in the destination column and may scroll horizontally;
+  inline formulas remain non-wrapping. No exporter wrapper may create a
+  whole-article height constraint. A page-level WeChat scrollbar is outside
+  this Adapter's ownership and must be diagnosed from the current session
+  before changing export code.
+  Clipboard rejection is a failure. The legacy compatibility attempt is part
+  of the same explicit user action, not silent success. Always restore
+  Selection, Focus, Scroll, and temporary DOM on every fallback exit, and
+  leave article state untouched.
 - **AI assistant:** use `AiPort` and explicit user action; keep credentials server-side; disclose the selected provider and content boundary, send only the context required for the requested action, and make retention/logging policy explicit. Treat model output as untrusted; generated changes remain visible, rejectable, undoable, cancellation/stale-safe, and never automatically save, publish, upload, change settings, or execute returned code.
 
 ### Theme, Code Ownership, and Font Duplication Gate

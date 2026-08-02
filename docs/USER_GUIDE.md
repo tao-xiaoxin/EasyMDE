@@ -76,9 +76,9 @@ The table of contents is generated from rendered headings and is inserted where 
 
 ## Copy To WeChat
 
-The **Copy to WeChat** action copies the current rendered preview as rich text. When browser APIs allow it, EasyMDE writes both `text/html` and `text/plain` clipboard payloads. Before copying, it clones the preview, removes script/style elements, inlines important computed styles, and uses the sanitized rendered preview content.
+The **Copy to WeChat** action copies the current ready rendered preview as rich text. The modern Clipboard API writes `text/html` and `text/plain` from one sanitized preview clone; the plain-text value removes exporter-only whitespace markers. If modern item construction or writing is unavailable or rejected, EasyMDE tries the older copy path with that same normalized HTML. Empty, loading, or failed previews are not copied. The export removes editor-only nodes, inlines portable computed styles, preserves theme decorations and the visible KaTeX tree without duplicate KaTeX MathML, and keeps code lines, tables, and long display formulas horizontally scrollable when they exceed the WeChat column; inline formulas remain non-wrapping. It does not add a vertical scroll container around the article or change the post.
 
-Browser support and permissions vary. If the modern Clipboard API is blocked or unavailable, EasyMDE tries the older copy path. If neither path works, the editor shows an error message and leaves the post content unchanged.
+Browser support and permissions vary. If both copy paths fail, the editor shows an error message and leaves the post content unchanged. Repeated clicks while a copy is pending share one operation, and leaving the editor suppresses late success messages.
 
 ## Revisions And Deactivation
 

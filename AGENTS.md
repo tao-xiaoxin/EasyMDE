@@ -367,6 +367,50 @@ Markdown and HTML:
 - Sanitize final rendered HTML before output and use one Preview-owned Safe
   HTML sink.
 
+WeChat Clipboard is a compatibility export, not a persistence or publication
+authority:
+
+- It reads only the current stable, sanitized, and locally enhanced Preview
+  from that Safe HTML sink; it never copies Markdown source, CodeMirror DOM,
+  editor chrome, or a second browser-side render.
+- `frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts`
+  is the single serializer. The modern Clipboard API and the legacy
+  `execCommand` path consume the same normalized HTML; the modern path derives
+  `text/plain` from that one clone, while the legacy path selects the same HTML
+  and lets the destination derive visible plain text. The legacy path is a
+  user-initiated compatibility attempt, not a second renderer or silent
+  success.
+- The serialized tree removes scripts, styles, controls, CSS classes, and
+  source/editor transient attributes, retains only valid fragment IDs and
+  SVG-internal IDs, sanitizes URL/style values, and materializes only bounded
+  same-origin `/assets/images/` background assets as safe data images. Safe
+  image `src`/`srcset` candidates and link URLs remain; unsafe URLs and
+  non-allowlisted CSS background URLs are dropped. KaTeX MathML is removed while
+  its visual tree, SVG geometry,
+  quoted-literal pseudo-element decorations, and approved computed styles are
+  preserved. Exporter-owned `aria-hidden` decoration and `leaf` markers may
+  remain to preserve the copied visual tree.
+- Article/div roots are normalized to portable sections, text leaves are wrapped
+  for destination stability, non-math SVG and media receive responsive bounds,
+  and code/KaTeX whitespace markers are removed from plain text.
+- Code lines, tables, and long display formulas may own horizontal overflow;
+  their vertical overflow is hidden and their height remains content-driven.
+  The exporter must not add a whole-article height or vertical scroll
+  container; page/editor navigation scrolling belongs to WeChat and is
+  diagnosed outside the copied article.
+- Clipboard failure is reported from the real browser result. Temporary DOM,
+  Selection, Focus, and Scroll are restored on every legacy-path exit, and
+  no article state is changed by a copy attempt.
+- The WeChat export session is the single owner for the ordinary and immersive
+  surfaces: it rejects disabled, inactive, empty, loading, and error Preview
+  states before touching Clipboard, coalesces concurrent copy requests, maps
+  Adapter rejection to an explicit failure, and suppresses late status after
+  teardown.
+
+The executable serializer and browser-evidence procedure belong to the
+EasyMDE Skill, `CONTRIBUTING.md`, and `docs/TESTING_AND_RELEASE.md`; the
+architectural rationale is recorded in [ADR-001](docs/decisions/ADR-001-wechat-clipboard-serialization.md).
+
 Privacy:
 
 - Never put article content, Custom CSS, prompts, model output, credentials,

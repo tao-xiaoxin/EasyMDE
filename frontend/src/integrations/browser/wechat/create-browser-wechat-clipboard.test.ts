@@ -174,7 +174,27 @@ describe('createBrowserWechatClipboard', () => {
           return declaration({ display: 'flex', position: 'relative', width: '320px' });
         }
         if ('H2' === element.tagName && '::before' === pseudoElement) {
-          return declaration({ content: '"Chapter"', display: 'inline', color: 'rgb(1, 2, 3)' });
+          return declaration({
+            content: '"Chapter"',
+            display: 'inline',
+            color: 'rgb(1, 2, 3)',
+            'border-bottom-width': '36px',
+            'border-bottom-style': 'solid',
+            'border-bottom-color': 'rgb(239, 235, 233)',
+            'border-right-width': '20px',
+            'border-right-style': 'solid',
+            'border-right-color': 'rgba(0, 0, 0, 0)',
+            'background-image': 'linear-gradient(135deg, rgb(1, 2, 3), transparent)'
+          });
+        }
+        if ('H1' === element.tagName && '::before' === pseudoElement) {
+          return declaration({
+            content: '""',
+            display: 'block',
+            width: '76px',
+            height: '42px',
+            'background-image': 'linear-gradient(135deg, rgb(1, 2, 3), transparent)'
+          });
         }
         return computedStyle(element, pseudoElement);
       },
@@ -195,7 +215,16 @@ describe('createBrowserWechatClipboard', () => {
     const holder = document.createElement('div');
     holder.innerHTML = html;
     expect(holder.querySelector('h1')).not.toBeNull();
+    expect(holder.querySelector('h1 > span[aria-hidden="true"]')?.textContent).toBe(' ');
+    expect(holder.querySelector('h1 > span[aria-hidden="true"]')?.getAttribute('style'))
+      .toContain('font-size:0');
+    expect(holder.querySelector('h1 > span[aria-hidden="true"]')?.getAttribute('style'))
+      .toContain('background-image:linear-gradient(135deg, rgb(1, 2, 3), transparent)');
     expect(holder.querySelector('h2 > span[aria-hidden="true"]')?.textContent).toBe('Chapter');
+    expect(holder.querySelector('h2 > span[aria-hidden="true"]')?.getAttribute('style'))
+      .toContain('background-image:linear-gradient(135deg, rgb(1, 2, 3), transparent)');
+    expect(holder.querySelector('h2 > span[aria-hidden="true"]')?.getAttribute('style'))
+      .toContain('border-right-color:rgba(0, 0, 0, 0)');
     expect(holder.querySelector('strong')?.textContent).toBe('Bold');
     expect(holder.querySelector('em')?.textContent).toBe('italic');
     expect(holder.querySelector('a')?.getAttribute('href')).toBe('https://example.test/link');
@@ -207,7 +236,7 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelector('figure')?.getAttribute('style')).toContain('display:flex');
     expect(holder.querySelector('img')?.getAttribute('alt')).toBe('Synthetic image');
     expect(holder.querySelector('img')?.getAttribute('style')).toContain('max-width:100%');
-    expect(holder.querySelector('pre code')?.textContent).toContain('const value = 1;');
+    expect(holder.querySelector('pre code')?.textContent?.replaceAll('\u2060', '').replaceAll('\u00a0', ' ')).toContain('const value = 1;');
     expect(holder.querySelector('button')).toBeNull();
     expect(html).not.toContain('data-easymde-');
     expect(html).not.toContain('class=');
@@ -218,17 +247,72 @@ describe('createBrowserWechatClipboard', () => {
     expect(text).toContain('Article title');
   });
 
-  it('normalizes WeChat structure, leaf text, unsafe URLs, and code overflow', async () => {
+  it('inlines same-origin theme background images without fetching arbitrary URLs', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub {
       constructor(public payload: Record<string, Blob>) {}
     }
     const preview = document.createElement('article');
     preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h1>Theme heading</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Theme heading' });
+    const imageUrl = new URL('/assets/images/cupid-busy-heart.png', document.baseURI).href;
+    const fetch = vi.fn(async () => new Response('theme image', {
+      status: 200,
+      headers: { 'content-type': 'image/png' }
+    }));
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if ('H1' === element.tagName && '::before' === pseudoElement) {
+          return declaration({
+            content: '""',
+            display: 'block',
+            width: '20px',
+            height: '20px',
+            background: `transparent url("${imageUrl}") 0 0 / 100% 100% no-repeat`,
+            'background-image': `url("${imageUrl}")`
+          });
+        }
+        return computedStyle(element, pseudoElement);
+      },
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); },
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const html = await htmlBlob.text();
+    const holder = document.createElement('div');
+    holder.innerHTML = html;
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(holder.querySelector('h1 > span[aria-hidden="true"] img')?.getAttribute('src'))
+      .toMatch(/^data:image\/png;base64,/);
+    expect(holder.querySelector('h1 > span[aria-hidden="true"] img')?.getAttribute('style'))
+      .toContain('width:20px');
+    expect(html).not.toContain('background-image:url("data:');
+    expect(html).not.toContain(imageUrl);
+  });
+
+  it('normalizes WeChat structure, leaf text, unsafe URLs, and code overflow', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const longLine = `const long = "${'x'.repeat(240)}";`;
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
     preview.innerHTML = [
       '<div class="wrapper"><h3>公众号标题</h3><p>正文 <strong>重点</strong> <a href="javascript:alert(1)">危险链接</a></p></div>',
       '<p><a href="https://example.test/ok">安全链接</a><img src="javascript:alert(1)" alt="bad"><img src="https://example.test/image.png" alt="good"></p>',
-      '<pre><code>const value = 1;\nconst second = 2;</code></pre>'
+      `<pre><code>const value = 1;\n${longLine}</code></pre>`
     ].join('');
     Object.defineProperty(preview, 'innerText', { configurable: true, value: '公众号标题\n正文 重点 危险链接\n安全链接\nconst value = 1;' });
     const clipboard = createBrowserWechatClipboard({
@@ -275,10 +359,273 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelector('a[href="https://example.test/ok"]')).not.toBeNull();
     expect(holder.querySelector('img[src^="javascript:"]')).toBeNull();
     expect(holder.querySelector('img[src="https://example.test/image.png"]')).not.toBeNull();
-    expect(holder.querySelector('pre')?.getAttribute('style')).toContain('overflow-x:auto');
+    const preStyle = holder.querySelector('pre')?.getAttribute('style') ?? '';
+    const codeStyle = holder.querySelector('pre > code')?.getAttribute('style') ?? '';
+    expect(preStyle).toContain('overflow-x:auto');
+    expect(preStyle).toContain('-webkit-overflow-scrolling:touch');
+    expect(preStyle).toContain('white-space:pre');
+    expect(preStyle).toContain('overflow-x:auto!important');
+    expect(preStyle).toContain('white-space:pre!important');
+    expect(codeStyle).toContain('display:block');
+    expect(codeStyle).toContain('width:100%');
+    expect(codeStyle).toContain('max-width:100%');
+    expect(codeStyle).toContain('overflow-x:auto');
+    expect(codeStyle).toContain('white-space:pre');
+    expect(codeStyle).toContain('word-break:normal');
+    expect(codeStyle).toContain('overflow-wrap:normal');
+    expect(codeStyle).toContain('overflow-x:auto!important');
+    expect(codeStyle).toContain('white-space:pre!important');
+    expect(holder.querySelector('pre > code')?.textContent?.replaceAll('\u2060', '').replaceAll('\u00a0', ' ')).toContain(longLine);
+    const longLineWrapper = [...holder.querySelectorAll('pre > code > nobr')]
+      .find((element) => element.textContent?.replaceAll('\u2060', '').replaceAll('\u00a0', ' ').includes(longLine));
+    expect(longLineWrapper?.getAttribute('style')).toContain('display:inline-block');
+    expect(longLineWrapper?.getAttribute('style')).toContain('width:max-content');
+    expect(longLineWrapper?.getAttribute('style')).toContain('min-width:max-content');
+    expect(longLineWrapper?.getAttribute('style')).toContain('white-space:nowrap');
+    expect(longLineWrapper?.getAttribute('style')).toContain('word-break:keep-all');
+    expect(longLineWrapper?.getAttribute('style')).toContain('max-width:none!important');
+    expect(longLineWrapper?.getAttribute('style')).toContain('white-space:nowrap!important');
+    expect(holder.querySelector('pre > code span[leaf]')?.getAttribute('style'))
+      .toContain('white-space:pre');
+    expect(holder.querySelector('pre > code span[leaf]')?.getAttribute('style'))
+      .toContain('white-space:pre!important');
     expect(holder.querySelectorAll('pre > code br')).toHaveLength(1);
     expect(holder.querySelector('pre > span[aria-hidden="true"]')?.getAttribute('style')).toContain('margin:-22px 0 10px 14px');
     expect(holder.querySelector('pre > span[aria-hidden="true"]')?.getAttribute('style')).toContain('box-shadow:rgb(255, 189, 46) 20px 0 0, rgb(39, 201, 63) 40px 0 0');
+  });
+
+  it('keeps syntax-highlighted long lines in one non-wrapping line box', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const longLine = `print("Hello, ${'x'.repeat(240)} world")`;
+    const source = `${longLine}\nreturn value`;
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = `<pre><code><span class="hljs-built_in">print</span>(<span class="hljs-string">"Hello, ${'x'.repeat(240)} world"</span>)\n<span class="hljs-keyword">return</span> value</code></pre>`;
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: source });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (_element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        return declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' });
+      },
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); },
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await htmlBlob.text();
+    const code = holder.querySelector('pre > code');
+    const line = code?.querySelector(':scope > nobr');
+    const serialized = code
+      ? Array.from(code.childNodes).map((node) => 'BR' === (node as Element).tagName ? '\n' : node.textContent ?? '').join('')
+      : '';
+    expect(serialized.replaceAll('\u2060', '').replaceAll('\u00a0', ' ')).toBe(source);
+    expect(code?.querySelectorAll(':scope > br')).toHaveLength(1);
+    expect(line?.textContent?.replaceAll('\u2060', '').replaceAll('\u00a0', ' ')).toBe(longLine);
+    expect(line?.getAttribute('style')).toContain('display:inline-block');
+    expect(line?.getAttribute('style')).toContain('width:max-content');
+    expect(line?.getAttribute('style')).toContain('min-width:max-content');
+    expect(line?.getAttribute('style')).toContain('white-space:nowrap');
+    expect(line?.getAttribute('style')).toContain('word-break:keep-all');
+    expect(line?.getAttribute('style')).toContain('max-width:none!important');
+    expect(line?.getAttribute('style')).toContain('white-space:nowrap!important');
+    expect(line?.querySelector('span[leaf]')).not.toBeNull();
+  });
+
+  it('centers intrinsic-width tables and keeps their overflow horizontal', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<table><thead><tr><th>Name</th><th>Status</th></tr></thead><tbody><tr><td>EasyMDE</td><td>Ready</td></tr></tbody></table>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Name Status\nEasyMDE Ready' });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element) => {
+        if ('TABLE' === element.tagName) {
+          return declaration({
+            display: 'table',
+            width: '320px',
+            'max-width': '100%',
+            overflow: 'auto',
+            'overflow-x': 'auto',
+            'overflow-y': 'auto',
+            'margin-left': '0px',
+            'margin-right': '0px',
+            'border-collapse': 'separate'
+          });
+        }
+        return declaration({ display: 'table-row' });
+      },
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); },
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await htmlBlob.text();
+    const tableStyle = holder.querySelector('table')?.getAttribute('style') ?? '';
+    expect(tableStyle).toContain('display:table!important');
+    expect(tableStyle).toContain('inline-size:auto!important');
+    expect(tableStyle).toContain('max-width:100%!important');
+    expect(tableStyle).toContain('min-width:0!important');
+    expect(tableStyle).toContain('margin-left:auto!important');
+    expect(tableStyle).toContain('margin-right:auto!important');
+    expect(tableStyle).toContain('table-layout:auto!important');
+    expect(tableStyle).toContain('overflow-x:auto!important');
+    expect(tableStyle).toContain('overflow-y:hidden!important');
+    expect(tableStyle).toContain('border-collapse:collapse!important');
+  });
+
+  it('makes formula blocks horizontal-only scroll owners with automatic height', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="base"><span class="mord">long formula</span></span></span></span></span></div>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'long formula' });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element) => {
+        if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
+          return declaration({
+            display: 'block',
+            height: '88px',
+            'max-height': '120px',
+            overflow: 'auto',
+            'overflow-x': 'auto',
+            'overflow-y': 'auto',
+            'text-align': 'left'
+          });
+        }
+        if ('SPAN' === element.tagName && element.closest('.katex')) {
+          return declaration({ display: 'inline', 'white-space': 'nowrap' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); },
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await htmlBlob.text();
+    const formulaStyle = [...holder.querySelectorAll('section')]
+      .filter((element) => element.textContent?.includes('long formula'))
+      .at(-1)
+      ?.getAttribute('style') ?? '';
+    const formulaLayoutStyle = holder.querySelector('section > span')?.getAttribute('style') ?? '';
+    const formulaVisualStyle = holder.querySelector('section > span > nobr > span')?.getAttribute('style') ?? '';
+    expect(holder.querySelector('nobr')?.getAttribute('style')).toContain('display:block!important');
+    expect(formulaLayoutStyle).toContain('inline-size:100%!important');
+    expect(formulaLayoutStyle).toContain('max-inline-size:100%!important');
+    expect(formulaLayoutStyle).toContain('width:auto!important');
+    expect(formulaLayoutStyle).toContain('box-sizing:border-box!important');
+    expect(formulaLayoutStyle).toContain('text-align:center!important');
+    expect(formulaVisualStyle).toContain('inline-size:100%!important');
+    expect(formulaVisualStyle).toContain('max-inline-size:100%!important');
+    expect(formulaVisualStyle).toContain('width:auto!important');
+    expect(formulaVisualStyle).toContain('box-sizing:border-box!important');
+    expect(formulaVisualStyle).toContain('text-align:center!important');
+    expect(formulaStyle).toContain('overflow-x:auto!important');
+    expect(formulaStyle).toContain('overflow-y:hidden!important');
+    expect(formulaStyle).toContain('height:auto!important');
+    expect(formulaStyle).toContain('max-height:none!important');
+    expect(formulaStyle).toContain('inline-size:100%!important');
+    expect(formulaStyle).toContain('max-inline-size:100%!important');
+    expect(formulaStyle).toContain('margin-left:auto!important');
+    expect(formulaStyle).toContain('margin-right:auto!important');
+    expect(formulaStyle).toContain('text-align:center!important');
+  });
+
+  it('preserves KaTeX SVG geometry while normalizing non-math SVG media', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="base"><span class="mord"><span class="sqrt"><svg width="400em" height="2.48em"></svg><span class="sqrt-line"></span></span></span></span></span></span></span></div>',
+      '<svg id="diagram" width="100" height="40"></svg>'
+    ].join('');
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'sqrt formula' });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element) => {
+        if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
+          return declaration({
+            display: 'block',
+            overflow: 'auto',
+            'overflow-x': 'auto',
+            'overflow-y': 'auto'
+          });
+        }
+        if ('svg' === element.tagName.toLowerCase()) {
+          return element.closest('.katex')
+            ? declaration({
+              display: 'block',
+              position: 'absolute',
+              width: '175px',
+              height: '45px',
+              overflow: 'hidden'
+            })
+            : declaration({ display: 'inline-block', width: '100px', height: '40px' });
+        }
+        if (element.closest('.katex')) {
+          return declaration({ display: 'inline', position: 'relative', 'white-space': 'nowrap' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); },
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await htmlBlob.text();
+    const katexSvgStyle = holder.querySelector('nobr svg')?.getAttribute('style') ?? '';
+    const diagramStyle = holder.querySelector('svg#diagram')?.getAttribute('style') ?? '';
+    expect(katexSvgStyle).toContain('height:45px');
+    expect(katexSvgStyle).not.toContain('height:auto');
+    expect(diagramStyle).toContain('height:auto');
+    expect(diagramStyle).toContain('max-width:100%');
   });
 
   it('keeps referenced anchors, SVG paint, supported math layout, and safe image URLs', async () => {
@@ -291,7 +638,7 @@ describe('createBrowserWechatClipboard', () => {
     preview.innerHTML = [
       '<p><a href="#math-target">Jump to math</a></p>',
       '<h3 id="math-target">Formula</h3>',
-      '<div class="katex"><span class="katex-mathml"><math><annotation>x + y</annotation></math></span><span class="katex-html">x + y</span></div>',
+      '<div class="katex"><span class="katex-mathml"><math><annotation>x + y</annotation></math></span><span class="katex-html"><span class="vlist-t"><span class="vlist-r"><span class="vlist"><span class="pstrut"></span>x + y</span></span></span></span></div>',
       '<svg id="diagram" viewBox="0 0 20 20"><defs><linearGradient id="gradient"><stop offset="0" stop-color="#fff"></stop></linearGradient><marker id="arrowhead"><path d="M0 0l4 2-4 2z"></path></marker></defs><path id="path" fill="url(#gradient)" marker-end="url(#arrowhead)" d="M0 0h20v20H0z"></path></svg>',
       '<p id="discard-me"><img src="data:image/png;base64,AAAA" srcset="data:image/png;base64,AAAA 1x, javascript:bad 2x, https://example.test/image.png 2x" alt="inline image"></p>'
     ].join('');
@@ -305,6 +652,18 @@ describe('createBrowserWechatClipboard', () => {
           return declaration({ display: 'inline', position: 'fixed', width: 'min-content' });
         }
         if ('SPAN' === element.tagName && element.closest('.katex')) {
+          if (element.classList.contains('vlist-t')) {
+            return declaration({ display: 'inline-table', position: 'static', 'white-space': 'nowrap' });
+          }
+          if (element.classList.contains('vlist-r')) {
+            return declaration({ display: 'table-row', position: 'static', 'white-space': 'nowrap' });
+          }
+          if (element.classList.contains('vlist')) {
+            return declaration({ display: 'table-cell', position: 'relative', 'white-space': 'nowrap' });
+          }
+          if (element.classList.contains('pstrut')) {
+            return declaration({ display: 'inline-block', width: '0px', height: '45.7344px', 'white-space': 'nowrap' });
+          }
           return declaration({ display: 'inline', position: 'relative', height: '1.2em', transform: 'translateY(1px)' });
         }
         if ('path' === element.tagName.toLowerCase()) {
@@ -337,14 +696,107 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelector('svg #path')?.getAttribute('style')).toContain('marker-end:url("#arrowhead")');
     expect(holder.querySelector('.katex')).toBeNull();
     expect(holder.querySelector('math')).toBeNull();
+    expect(holder.querySelector('nobr')).not.toBeNull();
+    expect(holder.querySelector('nobr')?.getAttribute('style')).toContain('display:inline-block!important');
+    expect(holder.querySelector('span[style*="display:inline-table"]')).not.toBeNull();
+    expect(holder.querySelector('span[style*="height:45.7344px"]')?.textContent).toContain('\u2060');
     expect([...holder.querySelectorAll('section span')].some((element) => element.textContent?.includes('x + y')))
       .toBe(true);
+    const visualFormulaNodes = [...holder.querySelectorAll('section span')]
+      .filter((element) => element.textContent?.includes('x + y'));
+    expect(visualFormulaNodes.some((element) => {
+      const style = element.getAttribute('style') ?? '';
+      return style.includes('white-space:nowrap!important')
+        && style.includes('word-break:normal!important')
+        && style.includes('overflow-wrap:normal!important')
+        && style.includes('max-width:none!important');
+    })).toBe(true);
     expect(text.match(/x \+ y/g)).toHaveLength(1);
     expect(holder.querySelector('section[style*="position:fixed"]')).toBeNull();
     expect(holder.querySelector('section span[style*="position:relative"]')).not.toBeNull();
     expect(holder.querySelector('img[src="data:image/png;base64,AAAA"]')).not.toBeNull();
     expect(holder.querySelector('img[srcset*="javascript:"]')).toBeNull();
     expect(holder.querySelector('img[srcset*="https://example.test/image.png"]')).not.toBeNull();
+  });
+
+  it('preserves multi-row KaTeX matrix and cases layout', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const column = (first: string, second: string): string => [
+      '<span class="col-align-c"><span class="vlist-t vlist-t2">',
+      `<span class="vlist-r"><span class="vlist"><span style="top:-2em"><span class="pstrut"></span><span class="mord">${first}</span></span></span></span>`,
+      `<span class="vlist-r"><span class="vlist"><span><span class="pstrut"></span><span class="mord">${second}</span></span></span></span>`,
+      '</span></span>'
+    ].join('');
+    const row = (content: string): string => [
+      '<span class="vlist-r"><span class="vlist"><span><span class="pstrut"></span><span class="mord">',
+      content,
+      '</span></span></span></span>'
+    ].join('');
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<div class="katex"><span class="katex-mathml"><math><mtable><mtr><mtd>1</mtd></mtr></mtable></math></span><span class="katex-html"><span class="base"><span class="mord"><span class="mtable">',
+      column('1', '4'),
+      column('2', '5'),
+      column('3', '6'),
+      '</span></span></span></span></div>',
+      '<div class="katex"><span class="katex-mathml"><math><mtable><mtr><mtd>x+y=10</mtd></mtr><mtr><mtd>2x-y=5</mtd></mtr></mtable></math></span><span class="katex-html"><span class="base"><span class="mord"><span class="vlist-t">',
+      row('x + y = 10'),
+      row('2x - y = 5'),
+      '</span></span></span></span></div>'
+    ].join('');
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: '1 4 2 5 3 6\nx + y = 10\n2x - y = 5' });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element) => {
+        if ('DIV' === element.tagName && element.classList.contains('katex')) {
+          return declaration({ display: 'inline', position: 'relative', 'white-space': 'nowrap' });
+        }
+        if ('SPAN' === element.tagName && element.closest('.katex')) {
+          if (element.classList.contains('vlist-t')) {
+            return declaration({ display: 'inline-table', position: 'static', 'white-space': 'nowrap' });
+          }
+          if (element.classList.contains('vlist-r')) {
+            return declaration({ display: 'table-row', position: 'static', 'white-space': 'nowrap' });
+          }
+          if (element.classList.contains('vlist')) {
+            return declaration({ display: 'table-cell', position: 'relative', 'white-space': 'nowrap' });
+          }
+          if (element.classList.contains('pstrut')) {
+            return declaration({ display: 'inline-block', width: '0px', height: '45.7344px', 'white-space': 'nowrap' });
+          }
+          return declaration({ display: 'inline', position: 'relative', 'white-space': 'nowrap' });
+        }
+        return declaration({ display: 'inline' });
+      },
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); },
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await htmlBlob.text();
+    const visualText = (holder.textContent ?? '').replaceAll('\u2060', '').replace(/\s+/g, ' ');
+    expect(holder.querySelectorAll('nobr')).toHaveLength(2);
+    expect(holder.querySelectorAll('nobr[style*="display:inline-block!important"]')).toHaveLength(2);
+    expect(holder.querySelector('math')).toBeNull();
+    expect(holder.querySelectorAll('span[style*="display:inline-table"]').length).toBeGreaterThanOrEqual(4);
+    expect(holder.querySelectorAll('span[style*="display:table-row"]').length).toBeGreaterThanOrEqual(8);
+    expect(holder.querySelectorAll('span[style*="display:table-cell"]').length).toBeGreaterThanOrEqual(8);
+    expect(holder.querySelectorAll('span[style*="height:45.7344px"]').length).toBeGreaterThanOrEqual(8);
+    expect(visualText).toContain('142536');
+    expect(visualText).toContain('x + y = 10');
+    expect(visualText).toContain('2x - y = 5');
   });
 
   it('uses the synchronous compatibility copy only when modern write is unavailable', async () => {

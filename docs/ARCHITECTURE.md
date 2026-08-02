@@ -133,9 +133,54 @@ Local Draft recovery uses the versioned
 500-millisecond latest-write scheduler, explicit read/write/discard failures,
 and cross-tab conflict handling. New-post identity comes from the stable PHP
 Bootstrap contract rather than WordPress's temporary auto-draft ID. WeChat
-export accepts only the current stable sanitized and enhanced Preview; Clipboard
-failure remains visible and temporary fallback DOM, Selection, Focus, and Scroll
-are cleaned up.
+export is invoked with only the current stable sanitized and enhanced Preview.
+The session/EditorRoot owns that source boundary; the Adapter serializes the
+HTMLElement it receives and does not establish a second document authority. The
+`createBrowserWechatClipboard` Adapter owns one clone-and-serialize pipeline;
+that session passes it the current stable Preview sink. Both
+`navigator.clipboard.write` and the legacy `document.execCommand('copy')`
+compatibility path receive the same normalized HTML. The modern path derives
+`text/plain` from that clone after removing exporter whitespace markers and
+normalizing non-breaking spaces; the legacy path selects the same HTML and lets
+the destination derive visible plain text. Copy is a browser compatibility
+output and never writes Markdown, `post_content`, metadata, revisions, or
+publication state.
+
+The serializer removes scripts, styles, interactive controls, CSS classes, and
+source/editor transient attributes; keeps only valid fragment IDs and
+SVG-internal IDs; sanitizes URL and style values; preserves safe image `src`,
+`srcset` candidates, and link URLs; drops unsafe URLs and non-allowlisted CSS
+background URLs; and
+materializes same-origin `/assets/images/` background assets as bounded
+GIF/JPEG/PNG/WebP data images (the fetched source blob is limited by
+`MAX_DATA_IMAGE_LENGTH` = 4,000,000). It preserves
+approved computed typography, borders, quoted-literal pseudo elements, theme
+decorations, non-math SVG responsiveness, media bounds, and KaTeX's visual SVG
+tree, but removes KaTeX MathML so WeChat cannot import two competing formula
+trees. Exporter-owned `aria-hidden` decoration and `leaf` markers are structural
+exceptions to source transient-attribute removal. Article/div roots become
+portable sections and text leaves are wrapped for destination stability. Code
+frames encode line breaks explicitly and keep each source line non-wrapping.
+Tables and display formulas are centered within the destination column and
+receive horizontal-overflow rules; inline formulas remain non-wrapping. The
+actual code/table/formula scroll owner must be checked in the destination, and
+no exporter wrapper may impose a whole-article height or vertical scrollbar, so
+a page-level WeChat scrollbar is not evidence of an article-level serializer
+defect.
+
+On failure, the Adapter reports the actual browser result. Its temporary
+fallback container, Selection, Focus, and Scroll are restored on every exit;
+the WeChat export session exposes an error and never claims a copy succeeded.
+`createWechatExportSession` is the single session owner shared by the ordinary
+and immersive surfaces. It checks the enabled/active state and the current
+Preview sink before invoking the Adapter, rejects empty/loading/error Preview
+states with `wechat-preview-unavailable`, coalesces concurrent requests, maps
+Adapter rejection to `wechat-copy-failed`, reports
+`wechat-clipboard-unsupported` separately, and suppresses late status after
+teardown. A failed same-origin theme-image fetch or conversion rejects the
+copy; it never publishes a partial payload.
+The decision rationale and rejected alternatives are in
+[ADR-001](decisions/ADR-001-wechat-clipboard-serialization.md).
 
 ## Service Wiring
 

@@ -788,6 +788,44 @@ hypothetical future change, or combine unrelated problems.
 - Keep sensitive evidence in an approved private security or maintainer channel
   and publish only a privacy-safe summary.
 
+### WeChat Clipboard Evidence
+
+Treat WeChat paste output as a browser integration boundary, not as a static
+HTML snapshot. For a copy or rendering change:
+
+- Use `docs/examples/markdown-full-capability-test.md` or an equally synthetic,
+  reviewed fixture. Capture the source Preview and the pasted WeChat result at
+  the same controlled viewport and from the exact current build; a screenshot
+  from another draft, browser profile, session, or build is not current evidence.
+- Verify the single serializer's HTML in both modern Clipboard API and legacy
+  compatibility paths. Compare the payloads, then inspect pasted DOM for
+  removed KaTeX MathML, source classes/transient attributes, unsafe URLs, hidden
+  controls, exporter-owned structural markers, and the expected visual tree.
+- Verify the session boundary as well as the serializer: disabled, inactive,
+  empty, loading, or failed Preview states must not invoke Clipboard; repeated
+  clicks share one pending operation; Adapter rejection stays a failure; and a
+  teardown cannot announce a late success.
+- Measure the actual scroll owners for code, tables, and display formulas:
+  long content may scroll horizontally, but it must not create a nested
+  vertical axis or an exporter-imposed whole-article height. Measure the
+  WeChat page/editor shell separately before attributing its scrollbar to the
+  copied article.
+- Inspect screenshots and computed geometry for headings, theme decorations,
+  images, code line breaks, tables, inline formulas, every display-formula
+  family, and both horizontal edges of at least one long code/formula case.
+  Confirm focus, selection, page scroll, and temporary DOM are restored after
+  fallback and after failure.
+- Keep browser access limited to the explicitly authorized local authenticated
+  session. Do not publish or send an article. Do not commit raw screenshots,
+  article content, clipboard payloads, credentials, cookies, tokens, browser
+  storage, private URLs, or machine-specific paths; record only sanitized
+  metrics and temporary local evidence paths.
+
+The focused serializer tests, frontend build comparison, release package
+contract, and required browser evidence are maintained in
+`docs/TESTING_AND_RELEASE.md` and the EasyMDE Skill. The architectural choice
+is maintained in [ADR-001](docs/decisions/ADR-001-wechat-clipboard-serialization.md).
+
 ## Completion Report
 
 Report:

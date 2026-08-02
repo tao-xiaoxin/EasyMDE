@@ -99,6 +99,74 @@ npm test
 
 The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds the Editor into `.cache/easymde-frontend-production-check/` and public code copy into `.cache/easymde-code-copy-production-check/`, validates both outputs, and compares each complete file set and its bytes with the committed `assets/build/` and `assets/build/code-copy/` runtimes without rewriting them. `npm run build:frontend` is the explicit maintainer command that regenerates both committed Vite/WordPress Manifest pairs, hashed scripts, and matching `.asset.php` dependency metadata. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The Editor entry retains the stable `easymde-admin-editor-toolbar` handle and declares the WordPress-owned `media-editor`, `wp-api-fetch`, `wp-element`, and `wp-hooks` runtimes it consumes. The independent public TypeScript entry retains the stable `easymde-code-copy` handle and has no WordPress script dependency.
 
+## WeChat Clipboard Verification
+
+The focused browser-Adapter test is:
+
+```bash
+npm run test:frontend -- frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.test.ts
+```
+
+The session boundary has a separate focused command:
+
+```bash
+npm run test:frontend -- frontend/src/features/wechat-export/wechat-export-session.test.ts
+```
+
+The current focused Adapter suite covers the normalized clone, unsafe URL/style
+rejection, pseudo-element and same-origin theme-image portability, KaTeX
+visual-tree and KaTeX MathML behavior, explicit code line breaks, table/formula
+horizontal overflow, modern/legacy HTML parity, and an explicit failure result
+with sandbox cleanup. It does not yet prove modern-write rejection followed by
+legacy success, `ClipboardItem` construction failure, the unsupported legacy
+result, theme-image fetch/data-conversion failure, or full Selection/Focus/Scroll
+restoration on every failure path; add those cases before treating the boundary
+as fully covered. `npm run frontend:check` is the required full frontend gate;
+`npm run check:frontend-production` must compare the compiled admin entry
+containing the Adapter with the committed hashed runtime without rewriting it.
+
+The companion `frontend/src/features/wechat-export/wechat-export-session.test.ts`
+currently covers one pending operation for concurrent requests, the unsupported
+Adapter result, and late completion after teardown. Keep it as the session
+boundary and extend it with disabled/inactive export, every empty/loading/error
+Preview readiness state, rejection before Clipboard, Adapter rejection mapping,
+and truthful status messages. The Chromium coverage in
+`tests/e2e/easymde.spec.mjs` must exercise both ordinary and immersive Copy to
+WeChat commands against the same stable Preview and confirm that local runtime
+assets remain the only loaded executable resources.
+
+When the copy boundary or any theme/Preview enhancement changes, run a fresh
+real-browser check in an explicitly authorized local authenticated WordPress
+and WeChat session using the synthetic full-capability fixture. Capture source
+Preview and pasted WeChat screenshots at the same viewport, then inspect the
+payload and pasted DOM. Measure card, code, table, and formula `clientWidth`,
+`scrollWidth`, `scrollTop`, and `overflow-x/y`; expected long content has one
+horizontal owner and no exporter-created article-wide vertical owner. Check
+that `.katex-mathml`, source CSS classes/transient attributes, unsafe URLs,
+hidden controls, and remote executable resources are absent; exporter-owned
+`aria-hidden`/`leaf` markers are expected structural exceptions. A page-level scrollbar
+must be measured at the WeChat document/editor shell separately; it is not a
+copy regression unless the current pasted article itself owns that scroll.
+Compare both Clipboard API and legacy compatibility results, restore/failure
+states, and visual geometry for headings, theme decorations, images, code,
+tables, inline formulas, every display-formula family, and both edges of a
+long case. Also verify that a loading/error/empty Preview does not call either
+copy path, repeated clicks do not create parallel clipboard writes, and
+leaving the editor does not announce a late success. Never publish or send the
+test article, and keep screenshots and browser reports temporary and
+privacy-safe.
+
+For a theme or copy-boundary change, run the canonical fixture through every
+registered Article Theme and its Registry-owned default Code Theme, recording
+the exact theme pair and build in the evidence. At minimum, inspect headings,
+theme decorations, images, code, tables, inline formulas, and every display
+formula family at both horizontal edges of one long case. The formula matrix is
+maintained in [the full-capability fixture](examples/markdown-full-capability-test.md):
+inline expressions, integral, partial-derivative/limit, matrix, equation
+system, piecewise, statistics, neural-network, error-rate, and percentage
+forms. A screenshot of only one theme or two formula cards is not complete
+family coverage.
+
 Translation maintenance commands are:
 
 ```bash
@@ -206,7 +274,10 @@ and native Save, Appearance and Custom CSS, the fixed 50/50 desktop split and
 historical responsive/RTL/keyboard layout, immersive
 Outline/statistics/view modes/table/history/Escape behavior,
 WordPress-native Publishing with unknown extension fields, native revision
-navigation, and WeChat Clipboard success/failure. It also verifies that the
+navigation, and successful modern WeChat Clipboard writes from ordinary and
+immersive surfaces. This E2E does not emulate legacy or failure Clipboard
+branches or paste into a real WeChat editor; the authorized browser procedure
+below supplies that evidence. It also verifies that the
 immersive surface reuses the single React document and Preview owners, keeps
 AI controls absent, exposes only the five real non-AI Settings preferences,
 loads no Legacy Focus assets, and remains zero-write until the user invokes a

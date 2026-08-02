@@ -257,12 +257,12 @@ describe('createBrowserWechatClipboard', () => {
     preview.innerHTML = '<h1>Theme heading</h1>';
     Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Theme heading' });
     const imageUrl = new URL('/assets/images/cupid-busy-heart.png', document.baseURI).href;
-    const fetch = vi.fn(async () => new Response('theme image', {
-      status: 200,
-      headers: { 'content-type': 'image/png' }
-    }));
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      blob: async () => new window.Blob(['theme image'], { type: 'image/png' })
+    } as unknown as Response));
     const clipboard = createBrowserWechatClipboard({
-      blob: Blob,
+      blob: window.Blob,
       clipboardItem: ClipboardItemStub,
       document,
       fetch,

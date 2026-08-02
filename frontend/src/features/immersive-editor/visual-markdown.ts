@@ -87,8 +87,11 @@ export function prepareVisualTaskListMarkers(root: HTMLElement): void {
 
 function visualBlockText(block: HTMLElement): string {
   const clone = block.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll('.easymde-task-checkbox, input[type="checkbox"]')
-    .forEach((marker) => marker.remove());
+  for (const marker of clone.querySelectorAll(
+    '.easymde-task-checkbox, input[type="checkbox"]'
+  )) {
+    marker.remove();
+  }
   return clone.textContent ?? '';
 }
 

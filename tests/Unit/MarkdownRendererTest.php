@@ -123,7 +123,9 @@ final class MarkdownRendererTest extends WP_UnitTestCase
             'crimson-focus'
         );
         $this->assertStringContainsString('<ul class="contains-task-list">', $loose_mixed);
-        $this->assertStringContainsString('<li class="task-list-item">\n<p><input', $loose_mixed);
+        $this->assertStringContainsString('<li class="task-list-item">', $loose_mixed);
+        $this->assertStringContainsString('<p><input', $loose_mixed);
+        $this->assertStringContainsString('Todo</p>', $loose_mixed);
 
         $all_tasks = MarkdownRenderer::render(
             "- [ ] Todo\n- [x] Done",

@@ -405,15 +405,14 @@ test('Cupid Busy keeps heading decorations at their declared sizes', () => {
 
 test('Nenqing Green is removed from the built-in article theme surface', () => {
   const registry = readFileSync(join(repoRoot, 'src/Theme/ArticleThemeRegistry.php'), 'utf8');
-  const referenceThemes = readFileSync(
-    join(repoRoot, 'frontend/src/features/appearance/reference-article-theme.ts'),
-    'utf8'
-  );
   const editorCss = readFileSync(join(repoRoot, 'assets/css/admin/editor.css'), 'utf8');
 
   assert.doesNotMatch(registry, /['"]nenqing-green['"]/);
-  assert.doesNotMatch(referenceThemes, /['"]nenqing-green['"]/);
-  assert.doesNotMatch(editorCss, /data-theme=["']nenqing-green["']/);
+  assert.doesNotMatch(editorCss, /\.easymde-immersive-theme-accent\[data-theme=/);
+  assert.equal(
+    existsSync(join(repoRoot, 'frontend/src/features/appearance/reference-article-theme.ts')),
+    false
+  );
   assert.equal(existsSync(join(repoRoot, 'assets/themes/article/nenqing-green.css')), false);
 });
 

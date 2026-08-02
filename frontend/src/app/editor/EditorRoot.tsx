@@ -685,6 +685,16 @@ export function EditorRoot(props: EditorRootProps) {
     previewRuntimeRef.current = runtime;
     setPreviewRuntimeGeneration((generation) => generation + 1);
   }, []);
+  const prepareWechatPreview = useCallback(
+    (surface: HTMLElement | null) => {
+      const prepare = props.wechatClipboard.prepare;
+      if (!surface || !prepare) return;
+      void prepare(surface).catch(() => {
+        props.onFailure('wechat-theme-image-prepare-failed');
+      });
+    },
+    [props.onFailure, props.wechatClipboard]
+  );
   const handlePreviewDispose = useCallback((runtime: PreviewSurfaceRuntime) => {
     if (previewRuntimeRef.current === runtime) {
       previewRuntimeRef.current = null;
@@ -701,8 +711,9 @@ export function EditorRoot(props: EditorRootProps) {
         revision: (current?.revision ?? 0) + 1,
         signature
       }));
+      prepareWechatPreview(previewRuntimeRef.current?.surface ?? null);
     },
-    []
+    [prepareWechatPreview]
   );
   const handlePreviewStatusChange = useCallback(
     (status: PreviewSurfaceStatus) => {
@@ -715,8 +726,9 @@ export function EditorRoot(props: EditorRootProps) {
     (runtime: ImmersiveVisualEditorRuntime) => {
       visualEditorRuntimeRef.current = runtime;
       setVisualEditorSurface(runtime.surface);
+      prepareWechatPreview(runtime.surface);
     },
-    []
+    [prepareWechatPreview]
   );
   const handleVisualEditorDispose = useCallback(
     (runtime: ImmersiveVisualEditorRuntime) => {

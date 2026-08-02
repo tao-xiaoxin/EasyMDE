@@ -142,9 +142,14 @@ that session passes it the current stable Preview sink. Both
 compatibility path receive the same normalized HTML. The modern path derives
 `text/plain` from that clone after removing exporter whitespace markers and
 normalizing non-breaking spaces; the legacy path selects the same HTML and lets
-the destination derive visible plain text. Copy is a browser compatibility
-output and never writes Markdown, `post_content`, metadata, revisions, or
-publication state.
+the destination derive visible plain text. Stable Preview notifications may
+prewarm the Adapter's bounded same-origin theme-image cache (at most 32
+entries). When preparation
+is still pending, the modern path passes deferred `Blob` Promises to one
+`ClipboardItem` and starts `navigator.clipboard.write` in the originating click
+task; the legacy path uses the same prepared HTML after the cache resolves.
+Copy is a browser compatibility output and never writes Markdown,
+`post_content`, metadata, revisions, or publication state.
 
 Mermaid flowcharts use SVG `foreignObject` labels whose preview dimensions are
 calculated with the preview font. WeChat can use a wider fallback font and
@@ -160,8 +165,8 @@ SVG-internal IDs; sanitizes URL and style values; preserves safe image `src`,
 `srcset` candidates, and link URLs; drops unsafe URLs and non-allowlisted CSS
 background URLs; and
 materializes same-origin `/assets/images/` background assets as bounded
-GIF/JPEG/PNG/WebP data images (the fetched source blob is limited by
-`MAX_DATA_IMAGE_LENGTH` = 4,000,000). It preserves
+GIF/JPEG/PNG/WebP data images (at most 32 cached assets; each fetched source
+blob is limited by `MAX_DATA_IMAGE_LENGTH` = 4,000,000). It preserves
 approved computed typography, borders, quoted-literal pseudo elements, theme
 decorations, non-math SVG responsiveness, media bounds, and KaTeX's visual SVG
 tree, but removes KaTeX MathML so WeChat cannot import two competing formula

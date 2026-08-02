@@ -9,4 +9,5 @@ export type WechatClipboardResult =
 
 export type WechatClipboardPort = Readonly<{
   copy: (preview: HTMLElement) => Promise<WechatClipboardResult>;
+  prepare?: (preview: HTMLElement) => Promise<void>;
 }>;

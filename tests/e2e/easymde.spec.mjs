@@ -3245,10 +3245,29 @@ test.describe('EasyMDE editor workflows', () => {
 
     await page.addInitScript(() => {
       window.__easymdeClipboardWrites = [];
+      window.__easymdeClipboardActivation = [];
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (!url.includes('/assets/images/cupid-busy-heart.png')) {
+          return nativeFetch(input, init);
+        }
+        return new Promise((resolve, reject) => {
+          window.setTimeout(() => nativeFetch(input, init).then(resolve, reject), 300);
+        });
+      };
       Object.defineProperty(navigator, 'clipboard', {
         configurable: true,
         value: {
           write: async (items) => {
+            window.__easymdeClipboardActivation.push(
+              navigator.userActivation?.isActive === true
+            );
+            const item = items[0];
+            if (item && 'function' === typeof item.getType) {
+              await item.getType('text/html');
+              await item.getType('text/plain');
+            }
             window.__easymdeClipboardWrites.push(items.length);
           }
         }
@@ -3268,6 +3287,28 @@ test.describe('EasyMDE editor workflows', () => {
       '.easymde-pane-preview article'
     );
 
+    const cupidBusy = catalog.articleThemes.find(({ id }) => 'cupid-busy' === id);
+    if (!cupidBusy) {
+      throw new Error('cupid-busy-theme-unavailable');
+    }
+    const editorSettingsLabel = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive.editorSettings
+    );
+    const articleThemeLabel = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.appearance.strings.articleTheme
+    );
+    await page.locator('.easymde-toolbar-section-secondary')
+      .getByRole('button', { name: editorSettingsLabel, exact: true })
+      .click();
+    const settingsDialog = page.getByRole('dialog', { name: editorSettingsLabel });
+    await selectOrdinaryOption(
+      page,
+      settingsDialog.getByRole('combobox', { name: articleThemeLabel }),
+      cupidBusy.label
+    );
+    await expect(preview).toHaveClass(/easymde-markdown-theme-cupid-busy/);
+    await page.keyboard.press('Escape');
+
     const copyCommand = await page.evaluate(() => {
       const command = window.EasyMDEEditorRootBootstrap.toolbar.commands.find(
         ({ action }) => 'copyWechat' === action
@@ -3277,6 +3318,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(copyCommand).not.toBe('');
     await page.locator('[data-easymde-command="' + copyCommand + '"]').click();
     await expect.poll(() => page.evaluate(() => window.__easymdeClipboardWrites.length)).toBe(1);
+    expect(await page.evaluate(() => window.__easymdeClipboardActivation)).toEqual([true]);
     const editorMessageHost = page.locator(
       '.easymde-editor > .easymde-editor-message-alert-host'
     );

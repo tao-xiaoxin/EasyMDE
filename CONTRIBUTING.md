@@ -801,6 +801,10 @@ HTML snapshot. For a copy or rendering change:
   compatibility paths. Compare the payloads, then inspect pasted DOM for
   removed KaTeX MathML, source classes/transient attributes, unsafe URLs, hidden
   controls, exporter-owned structural markers, and the expected visual tree.
+- When approved theme images are present, delay one image request and verify
+  that modern `Clipboard.write` starts while the originating user activation is
+  still active; confirm deferred HTML and plain-text payloads resolve from the
+  shared cache. Legacy compatibility must consume the same prepared HTML.
 - Verify the session boundary as well as the serializer: disabled, inactive,
   empty, loading, or failed Preview states must not invoke Clipboard; repeated
   clicks share one pending operation; Adapter rejection stays a failure; and a

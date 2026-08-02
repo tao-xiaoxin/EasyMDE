@@ -325,6 +325,11 @@ State-changing operations:
   requests, and recursive Save/render paths.
 - Save, Publish, Upload, Restore, Settings, and Clipboard operations never
   report success until the real WordPress or browser owner succeeds.
+- Clipboard adapters must invoke `navigator.clipboard.write` in the originating
+  user-activation task. Asynchronous approved theme-image materialization uses
+  deferred `ClipboardItem` payloads for the modern path and a shared prewarmed
+  asset cache for the legacy path; a fetch or conversion failure remains an
+  explicit copy failure rather than partial success.
 - Protected Mutations do not retry automatically. They handle duplicate
   activation, cancellation, stale results, Network failure, and lost
   authentication, capability, Nonce freshness, or Post Lock truthfully.

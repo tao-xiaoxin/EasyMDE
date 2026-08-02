@@ -122,6 +122,20 @@ export type BrowserWechatClipboardRuntime = Readonly<{
 }>;
 
 type BackgroundAssetCache = Map<string, Promise<string>>;
+const MAX_BACKGROUND_ASSET_CACHE_ENTRIES = 32;
+
+function cacheBackgroundAsset(
+  cache: BackgroundAssetCache,
+  value: string,
+  request: Promise<string>
+): void {
+  while (cache.size >= MAX_BACKGROUND_ASSET_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if ('string' !== typeof oldest) break;
+    cache.delete(oldest);
+  }
+  cache.set(value, request);
+}
 
 function isThemeImageUrl(value: string, document: Document): boolean {
   try {
@@ -161,11 +175,17 @@ function materializeThemeImage(
   if (existing) return existing;
   if (!runtime.fetch) return Promise.reject(new Error('wechat-theme-image-fetch-unavailable'));
 
-  const request = runtime.fetch(value).then((response) => {
-    if (!response.ok) throw new Error('wechat-theme-image-fetch-failed');
-    return response.blob().then(dataUrlFromBlob);
-  });
-  cache.set(value, request);
+  let request: Promise<string>;
+  request = runtime.fetch(value)
+    .then((response) => {
+      if (!response.ok) throw new Error('wechat-theme-image-fetch-failed');
+      return response.blob().then(dataUrlFromBlob);
+    })
+    .catch((error: unknown) => {
+      if (cache.get(value) === request) cache.delete(value);
+      throw error;
+    });
+  cacheBackgroundAsset(cache, value, request);
   return request;
 }
 
@@ -826,7 +846,8 @@ function previewReady(preview: HTMLElement): boolean {
 
 async function createMarkup(
   preview: HTMLElement,
-  runtime: BrowserWechatClipboardRuntime
+  runtime: BrowserWechatClipboardRuntime,
+  cache: BackgroundAssetCache
 ): Promise<HTMLElement> {
   const clone = preview.cloneNode(true) as HTMLElement;
   const fragmentIds = referencedFragmentIds(preview);
@@ -837,7 +858,7 @@ async function createMarkup(
     runtime.getComputedStyle,
     true,
     runtime,
-    new Map()
+    cache
   );
   mathMlNodes.forEach((element) => {
     element.remove();
@@ -909,6 +930,25 @@ async function createMarkup(
   return normalized;
 }
 
+type SerializedClipboardPayload = Readonly<{
+  html: string;
+  text: string;
+}>;
+
+async function serializeClipboardPayload(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime,
+  cache: BackgroundAssetCache
+): Promise<SerializedClipboardPayload> {
+  const clone = await createMarkup(preview, runtime, cache);
+  return {
+    html: clone.outerHTML,
+    text: (clone.innerText || clone.textContent || '')
+      .replaceAll('\u2060', '')
+      .replaceAll('\u00a0', ' ')
+  };
+}
+
 function legacyCopy(html: string, runtime: BrowserWechatClipboardRuntime): boolean {
   const selection = runtime.getSelection();
   const ranges = selection
@@ -950,32 +990,51 @@ function legacyCopy(html: string, runtime: BrowserWechatClipboardRuntime): boole
 export function createBrowserWechatClipboard(
   runtime: BrowserWechatClipboardRuntime
 ): WechatClipboardPort {
+  const backgroundAssetCache: BackgroundAssetCache = new Map();
+
   return {
+    async prepare(preview: HTMLElement): Promise<void> {
+      if (!previewReady(preview)) return;
+      await serializeClipboardPayload(preview, runtime, backgroundAssetCache);
+    },
     async copy(preview: HTMLElement): Promise<WechatClipboardResult> {
       if (!previewReady(preview)) {
         return { code: 'wechat-preview-unavailable', status: 'failed' };
       }
-      const clone = await createMarkup(preview, runtime);
-      const html = clone.outerHTML;
-      const text = (clone.innerText || clone.textContent || '')
-        .replaceAll('\u2060', '')
-        .replaceAll('\u00a0', ' ');
+      const payload = serializeClipboardPayload(
+        preview,
+        runtime,
+        backgroundAssetCache
+      );
 
       if (runtime.write && runtime.clipboardItem) {
         try {
           const item = new runtime.clipboardItem({
-            'text/html': new runtime.blob([html], { type: 'text/html' }),
-            'text/plain': new runtime.blob([text], { type: 'text/plain' })
-          });
+            // ClipboardItem accepts PromiseLike<Blob> values. Starting the
+            // write before theme-image fetches finish keeps the click's
+            // transient user activation attached to the operation.
+            'text/html': payload.then(({ html }) =>
+              new runtime.blob([html], { type: 'text/html' })
+            ),
+            'text/plain': payload.then(({ text }) =>
+              new runtime.blob([text], { type: 'text/plain' })
+            )
+          } as unknown as Record<string, Blob>);
           await runtime.write([item]);
           return { method: 'clipboard', status: 'copied' };
         } catch {
-          if (legacyCopy(html, runtime)) return { method: 'legacy', status: 'copied' };
+          const serialized = await payload.catch(() => null);
+          if (serialized && legacyCopy(serialized.html, runtime)) {
+            return { method: 'legacy', status: 'copied' };
+          }
           return { code: 'wechat-copy-failed', status: 'failed' };
         }
       }
 
-      if (legacyCopy(html, runtime)) return { method: 'legacy', status: 'copied' };
+      const serialized = await payload.catch(() => null);
+      if (serialized && legacyCopy(serialized.html, runtime)) {
+        return { method: 'legacy', status: 'copied' };
+      }
       return { code: 'wechat-clipboard-unsupported', status: 'failed' };
     }
   };

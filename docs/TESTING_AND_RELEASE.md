@@ -118,8 +118,11 @@ rejection, pseudo-element and same-origin theme-image portability, Mermaid
 `foreignObject` label overflow and non-wrapping markers, KaTeX visual-tree and
 KaTeX MathML behavior, explicit code line breaks, table/formula horizontal
 overflow, modern/legacy HTML parity, and an explicit failure result with
-sandbox cleanup. Its Mermaid assertion covers complete non-ASCII labels in both
-payload paths; the modern `text/plain` assertion removes exporter-only markers.
+sandbox cleanup. Its theme-image activation assertion verifies that modern
+`Clipboard.write` starts before a delayed approved image fetch resolves and
+that the deferred HTML payload still materializes. Its Mermaid assertion covers
+complete non-ASCII labels in both payload paths; the modern `text/plain`
+assertion removes exporter-only markers.
 It does not yet prove modern-write rejection followed by legacy success,
 `ClipboardItem` construction failure, the unsupported legacy result,
 theme-image fetch/data-conversion failure, or full Selection/Focus/Scroll
@@ -283,9 +286,10 @@ historical responsive/RTL/keyboard layout, immersive
 Outline/statistics/view modes/table/history/Escape behavior,
 WordPress-native Publishing with unknown extension fields, native revision
 navigation, and successful modern WeChat Clipboard writes from ordinary and
-immersive surfaces. This E2E does not emulate legacy or failure Clipboard
-branches or paste into a real WeChat editor; the authorized browser procedure
-below supplies that evidence. It also verifies that the
+immersive surfaces, including an activation-gated modern write while an
+approved Cupid Busy theme image is delayed. This E2E does not emulate legacy
+or failure Clipboard branches or paste into a real WeChat editor; the
+authorized browser procedure below supplies that evidence. It also verifies that the
 immersive surface reuses the single React document and Preview owners, keeps
 AI controls absent, exposes only the five real non-AI Settings preferences,
 loads no Legacy Focus assets, and remains zero-write until the user invokes a

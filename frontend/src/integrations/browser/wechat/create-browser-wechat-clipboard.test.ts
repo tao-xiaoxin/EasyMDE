@@ -20,6 +20,10 @@ function declaration(values: Record<string, string>): CSSStyleDeclaration {
   return { getPropertyValue: (property: string) => values[property] ?? '' } as unknown as CSSStyleDeclaration;
 }
 
+async function blobText(value: Blob | PromiseLike<Blob>): Promise<string> {
+  return (await value).text();
+}
+
 describe('createBrowserWechatClipboard', () => {
   it('rejects pending, failed, or empty preview surfaces before touching Clipboard', async () => {
     const write = vi.fn();
@@ -70,8 +74,8 @@ describe('createBrowserWechatClipboard', () => {
     expect(htmlBlob).toBeDefined();
     expect(textBlob).toBeDefined();
     if (!htmlBlob || !textBlob) throw new Error('clipboard payload missing');
-    const html = await htmlBlob.text();
-    const text = await textBlob.text();
+    const html = await blobText(htmlBlob);
+    const text = await blobText(textBlob);
     expect(html).toContain('Rendered');
     expect(html).toContain('max-width:100%');
     expect(html).not.toContain('<script');
@@ -127,9 +131,9 @@ describe('createBrowserWechatClipboard', () => {
     const htmlBlob = item?.payload['text/html'];
     const textBlob = item?.payload['text/plain'];
     if (!htmlBlob) throw new Error('clipboard html missing');
-    const html = await htmlBlob.text();
+    const html = await blobText(htmlBlob);
     if (!textBlob) throw new Error('clipboard text missing');
-    const text = await textBlob.text();
+    const text = await blobText(textBlob);
     expect(html).toContain('background-color:rgb(250, 251, 252)');
     expect(html).toContain('line-height:1.6');
     expect(html).not.toContain('display:grid');
@@ -209,9 +213,9 @@ describe('createBrowserWechatClipboard', () => {
     const htmlBlob = item?.payload['text/html'];
     const textBlob = item?.payload['text/plain'];
     if (!htmlBlob) throw new Error('clipboard html missing');
-    const html = await htmlBlob.text();
+    const html = await blobText(htmlBlob);
     if (!textBlob) throw new Error('clipboard text missing');
-    const text = await textBlob.text();
+    const text = await blobText(textBlob);
     const holder = document.createElement('div');
     holder.innerHTML = html;
     expect(holder.querySelector('h1')).not.toBeNull();
@@ -289,7 +293,7 @@ describe('createBrowserWechatClipboard', () => {
     const item = (writes[0] as ClipboardItemStub[])[0];
     const htmlBlob = item?.payload['text/html'];
     if (!htmlBlob) throw new Error('clipboard html missing');
-    const html = await htmlBlob.text();
+    const html = await blobText(htmlBlob);
     const holder = document.createElement('div');
     holder.innerHTML = html;
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -299,6 +303,127 @@ describe('createBrowserWechatClipboard', () => {
       .toContain('width:20px');
     expect(html).not.toContain('background-image:url("data:');
     expect(html).not.toContain(imageUrl);
+  });
+
+  it('starts the Clipboard write while a theme image is still pending activation', async () => {
+    let resolveImage: ((response: Response) => void) | null = null;
+    let activation = true;
+    let activationAtWrite = false;
+    const imageResponse = new Promise<Response>((resolve) => {
+      resolveImage = resolve;
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h1>Theme heading</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Theme heading' });
+    const imageUrl = new URL('/assets/images/cupid-busy-heart.png', document.baseURI).href;
+    const writes: unknown[] = [];
+    const clipboard = createBrowserWechatClipboard({
+      blob: window.Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      fetch: vi.fn(() => imageResponse),
+      getComputedStyle: (element, pseudoElement) => {
+        if ('H1' === element.tagName && '::before' === pseudoElement) {
+          return declaration({
+            content: '""',
+            display: 'block',
+            width: '20px',
+            height: '20px',
+            background: `transparent url("${imageUrl}") 0 0 / 100% 100% no-repeat`,
+            'background-image': `url("${imageUrl}")`
+          });
+        }
+        return computedStyle(element, pseudoElement);
+      },
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        activationAtWrite = activation;
+        writes.push(items);
+        const item = items[0] as { payload: Record<string, Blob | PromiseLike<Blob>> };
+        const htmlPayload = item?.payload['text/html'];
+        if (!htmlPayload) throw new Error('clipboard html missing');
+        await blobText(htmlPayload);
+      },
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+
+    const copy = clipboard.copy(preview);
+    expect(writes).toHaveLength(1);
+    expect(activationAtWrite).toBe(true);
+    activation = false;
+    const resolvePendingImage = resolveImage as unknown as (response: Response) => void;
+    resolvePendingImage({
+      blob: async () => new window.Blob(['theme image'], { type: 'image/png' }),
+      ok: true
+    } as unknown as Response);
+    await expect(copy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+  });
+
+  it('does not retain a rejected theme image request for the next copy', async () => {
+    const writes: unknown[] = [];
+    const responses = [
+      { ok: false, blob: async () => new window.Blob([], { type: 'image/png' }) },
+      { ok: true, blob: async () => new window.Blob(['theme image'], { type: 'image/png' }) }
+    ];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h1>Theme heading</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Theme heading' });
+    const imageUrl = new URL('/assets/images/cupid-busy-heart.png', document.baseURI).href;
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => false)
+    });
+    const fetch = vi.fn(async () => responses.shift() as unknown as Response);
+    const clipboard = createBrowserWechatClipboard({
+      blob: window.Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if ('H1' === element.tagName && '::before' === pseudoElement) {
+          return declaration({
+            content: '""',
+            display: 'block',
+            width: '20px',
+            height: '20px',
+            background: `transparent url("${imageUrl}") 0 0 / 100% 100% no-repeat`,
+            'background-image': `url("${imageUrl}")`
+          });
+        }
+        return computedStyle(element, pseudoElement);
+      },
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+        const item = items[0] as { payload: Record<string, Blob | PromiseLike<Blob>> };
+        const htmlPayload = item?.payload['text/html'];
+        const textPayload = item?.payload['text/plain'];
+        if (!htmlPayload || !textPayload) throw new Error('clipboard payload missing');
+        await Promise.all([blobText(htmlPayload), blobText(textPayload)]);
+      },
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      code: 'wechat-copy-failed',
+      status: 'failed'
+    });
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(writes).toHaveLength(2);
   });
 
   it('normalizes WeChat structure, leaf text, unsafe URLs, and code overflow', async () => {
@@ -349,7 +474,7 @@ describe('createBrowserWechatClipboard', () => {
     const item = (writes[0] as ClipboardItemStub[])[0];
     const htmlBlob = item?.payload['text/html'];
     if (!htmlBlob) throw new Error('clipboard html missing');
-    const html = await htmlBlob.text();
+    const html = await blobText(htmlBlob);
     const holder = document.createElement('div');
     holder.innerHTML = html;
     expect(holder.querySelector('div')).toBeNull();
@@ -424,7 +549,7 @@ describe('createBrowserWechatClipboard', () => {
     const htmlBlob = item?.payload['text/html'];
     if (!htmlBlob) throw new Error('clipboard html missing');
     const holder = document.createElement('div');
-    holder.innerHTML = await htmlBlob.text();
+    holder.innerHTML = await blobText(htmlBlob);
     const code = holder.querySelector('pre > code');
     const line = code?.querySelector(':scope > nobr');
     const serialized = code
@@ -483,7 +608,7 @@ describe('createBrowserWechatClipboard', () => {
     const htmlBlob = item?.payload['text/html'];
     if (!htmlBlob) throw new Error('clipboard html missing');
     const holder = document.createElement('div');
-    holder.innerHTML = await htmlBlob.text();
+    holder.innerHTML = await blobText(htmlBlob);
     const tableStyle = holder.querySelector('table')?.getAttribute('style') ?? '';
     expect(tableStyle).toContain('display:table!important');
     expect(tableStyle).toContain('inline-size:auto!important');
@@ -538,7 +663,7 @@ describe('createBrowserWechatClipboard', () => {
     const htmlBlob = item?.payload['text/html'];
     if (!htmlBlob) throw new Error('clipboard html missing');
     const holder = document.createElement('div');
-    holder.innerHTML = await htmlBlob.text();
+    holder.innerHTML = await blobText(htmlBlob);
     const formulaStyle = [...holder.querySelectorAll('section')]
       .filter((element) => element.textContent?.includes('long formula'))
       .at(-1)
@@ -619,7 +744,7 @@ describe('createBrowserWechatClipboard', () => {
     const htmlBlob = item?.payload['text/html'];
     if (!htmlBlob) throw new Error('clipboard html missing');
     const holder = document.createElement('div');
-    holder.innerHTML = await htmlBlob.text();
+    holder.innerHTML = await blobText(htmlBlob);
     const katexSvgStyle = holder.querySelector('nobr svg')?.getAttribute('style') ?? '';
     const diagramStyle = holder.querySelector('svg#diagram')?.getAttribute('style') ?? '';
     expect(katexSvgStyle).toContain('height:45px');
@@ -688,7 +813,7 @@ describe('createBrowserWechatClipboard', () => {
     const modernItem = (writes[0] as ClipboardItemStub[])[0];
     const modernBlob = modernItem?.payload['text/html'];
     if (!modernBlob) throw new Error('modern clipboard html missing');
-    const modernHtml = await modernBlob.text();
+    const modernHtml = await blobText(modernBlob);
     const modernHolder = document.createElement('div');
     modernHolder.innerHTML = modernHtml;
     expect(modernHolder.querySelectorAll('svg foreignObject')).toHaveLength(4);
@@ -781,8 +906,8 @@ describe('createBrowserWechatClipboard', () => {
     if (!htmlBlob) throw new Error('clipboard html missing');
     if (!textBlob) throw new Error('clipboard text missing');
     const holder = document.createElement('div');
-    holder.innerHTML = await htmlBlob.text();
-    const text = await textBlob.text();
+    holder.innerHTML = await blobText(htmlBlob);
+    const text = await blobText(textBlob);
     expect(holder.querySelector('a[href="#math-target"]')).not.toBeNull();
     expect(holder.querySelector('#math-target')).not.toBeNull();
     expect(holder.querySelector('#discard-me')).toBeNull();
@@ -882,7 +1007,7 @@ describe('createBrowserWechatClipboard', () => {
     const htmlBlob = item?.payload['text/html'];
     if (!htmlBlob) throw new Error('clipboard html missing');
     const holder = document.createElement('div');
-    holder.innerHTML = await htmlBlob.text();
+    holder.innerHTML = await blobText(htmlBlob);
     const visualText = (holder.textContent ?? '').replaceAll('\u2060', '').replace(/\s+/g, ' ');
     expect(holder.querySelectorAll('nobr')).toHaveLength(2);
     expect(holder.querySelectorAll('nobr[style*="display:inline-block!important"]')).toHaveLength(2);
@@ -958,7 +1083,7 @@ describe('createBrowserWechatClipboard', () => {
     const modernItem = (writes[0] as ClipboardItemStub[])[0];
     const modernBlob = modernItem?.payload['text/html'];
     if (!modernBlob) throw new Error('modern clipboard html missing');
-    const modernHtml = await modernBlob.text();
+    const modernHtml = await blobText(modernBlob);
 
     let legacyHtml = '';
     Object.defineProperty(document, 'execCommand', {

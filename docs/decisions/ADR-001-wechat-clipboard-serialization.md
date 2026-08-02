@@ -30,13 +30,22 @@ path writes `text/plain` from that clone after removing exporter whitespace
 markers and normalizing non-breaking spaces; the legacy path selects that same
 HTML and lets the destination derive visible plain text.
 
+Stable Preview notifications may prewarm the bounded same-origin theme-image
+cache shared by preparation and Copy (at most 32 entries). If an approved image
+is still pending at the click, the modern path supplies deferred `Blob` Promises to one
+`ClipboardItem` and starts `navigator.clipboard.write` in the originating
+activation task. The legacy path consumes the same serialized HTML after the
+cache resolves; either path fails explicitly when preparation or conversion
+fails.
+
 The normalized payload:
 
 - removes scripts, styles, interactive controls, CSS classes, and source/editor
   transient attributes; preserves only valid fragment IDs and SVG-internal IDs;
 - validates URL and style values, and materializes only same-origin
   `/assets/images/` background assets as safe GIF/JPEG/PNG/WebP data images
-  bounded by the fetched source blob limit `MAX_DATA_IMAGE_LENGTH` = 4,000,000;
+  bounded to 32 cache entries and by the fetched source blob limit
+  `MAX_DATA_IMAGE_LENGTH` = 4,000,000;
   safe image `src`/`srcset`
   candidates and link URLs remain while unsafe URLs and non-allowlisted CSS
   background URLs are dropped;
@@ -100,7 +109,8 @@ All runtime assets remain local; no remote executable resource is introduced.
 ## Verification
 
 The focused serializer tests cover unsafe input, pseudo elements, theme-image
-materialization, Mermaid non-ASCII label preservation, code line preservation,
+materialization, delayed modern Clipboard activation, Mermaid non-ASCII label
+preservation, code line preservation,
 table/formula horizontal overflow, KaTeX MathML removal, modern/legacy HTML parity,
 and an explicit failure result
 with sandbox cleanup. The current suite still needs explicit cases for modern

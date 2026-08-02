@@ -1045,13 +1045,23 @@ Feature boundaries:
   `.easymde-render-error` classes, `data-easymde-preview-error="1"`,
   `data-easymde-preview-refreshing="1"`, and `aria-busy="true"`; a missing
   Preview element is the same unavailable result.
+  Theme-image preparation must share the Adapter's bounded asset cache with
+  Copy: stable Preview notifications may prewarm approved `/assets/images/`
+  data URLs before a user click. The cache is limited to 32 pending or resolved
+  assets, and each fetched blob is size/type validated. The modern Adapter must
+  still construct one `ClipboardItem` with deferred `Blob` payload Promises and call
+  `navigator.clipboard.write` in the originating activation task, because a
+  `fetch`/`FileReader` await can otherwise lose transient user activation.
+  The legacy path consumes the same serialized HTML after preparation; it must
+  not emit a partial URL or claim success when preparation fails.
   The pipeline removes scripts, styles, controls, CSS classes, and source/editor
   transient attributes; keeps only valid fragment IDs and SVG-internal IDs;
   sanitizes URL/style values; preserves safe image `src`/`srcset` candidates and
   link URLs; drops unsafe URLs and non-allowlisted CSS background URLs; and
   materializes same-origin
   `/assets/images/` background assets as bounded GIF/JPEG/PNG/WebP data images
-  (the fetched source blob is limited by `MAX_DATA_IMAGE_LENGTH` = 4,000,000).
+  (at most 32 cache entries; each fetched source blob is limited by
+  `MAX_DATA_IMAGE_LENGTH` = 4,000,000).
   It preserves approved computed styles,
   quoted-literal pseudo decorations, code-frame geometry, table layout, and
   KaTeX visual SVG geometry while removing KaTeX MathML. Exporter-owned

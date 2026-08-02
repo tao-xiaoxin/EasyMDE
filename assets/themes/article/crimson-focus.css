@@ -244,6 +244,25 @@
   font-weight: 600;
 }
 
+/* Match the reference editor's flat-text treatment for indented bullets. */
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus ul ul:not(.task-list) {
+  margin-inline-start: -22.5px;
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus ul ul:not(.task-list) > li {
+  margin: 11.25px 0;
+  list-style: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus ul ul:not(.task-list) > li::before {
+  margin-inline-end: 6px;
+  color: var(--easymde-crimson-focus-text);
+  content: "*";
+  font-weight: 400;
+}
+
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus ol {
   margin: 11.25px 0;
   padding-inline-start: 22.5px;

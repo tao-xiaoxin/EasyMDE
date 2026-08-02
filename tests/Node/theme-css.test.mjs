@@ -240,8 +240,20 @@ test('Crimson focus follows the reference light surface and preserves code-theme
   );
   assert.doesNotMatch(
     css,
-    /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus ul li::before/,
-    'unordered markers must use the native marker box'
+    /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus ul > li::before/,
+    'top-level unordered markers must use the native marker box'
+  );
+  assert.match(
+    css,
+    /ul ul:not\(\.task-list\)\s*\{[\s\S]*margin-inline-start:\s*-22\.5px;[\s\S]*padding-inline-start:\s*0;[\s\S]*list-style:\s*none;/
+  );
+  assert.match(
+    css,
+    /ul ul:not\(\.task-list\) > li::before\s*\{[\s\S]*content:\s*"\*";[\s\S]*color:\s*var\(--easymde-crimson-focus-text\);/
+  );
+  assert.match(
+    css,
+    /ul ul:not\(\.task-list\) > li\s*\{[\s\S]*margin:\s*11\.25px 0;[\s\S]*list-style:\s*none;/
   );
   assert.match(
     css,

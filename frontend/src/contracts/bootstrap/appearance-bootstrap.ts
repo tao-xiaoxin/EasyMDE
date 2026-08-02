@@ -8,6 +8,7 @@ export type AppearanceOption = Readonly<{
 
 export type ArticleThemeOption = AppearanceOption & Readonly<{
   defaultCodeTheme: string;
+  swatch?: string;
 }>;
 
 export type FontDefaults = Readonly<{
@@ -221,6 +222,19 @@ function requiredString(value: unknown, code: string, maxLength = 512): string {
   return value;
 }
 
+function optionalHexColor(value: unknown, code: string): string | undefined {
+  if (undefined === value) {
+    return undefined;
+  }
+
+  const color = requiredString(value, code, 7);
+  if (!/^#[0-9a-f]{6}$/i.test(color)) {
+    throw new AppearanceBootstrapError(code);
+  }
+
+  return color;
+}
+
 function customCssThemeName(value: unknown, code: string): string {
   if ('string' !== typeof value || '' === value.trim()) {
     throw new AppearanceBootstrapError(code);
@@ -295,7 +309,13 @@ function parseArticleOptions(
       throw new AppearanceBootstrapError('invalid-associated-code-theme');
     }
 
-    return { ...option, defaultCodeTheme };
+    const swatch = optionalHexColor(source.swatch, 'invalid-article-theme-swatch');
+
+    return {
+      ...option,
+      defaultCodeTheme,
+      ...(swatch ? { swatch } : {})
+    };
   });
 }
 

@@ -358,10 +358,51 @@ async function canonicalMarkdownForPage(page) {
 async function editorThemeCatalog(page) {
   return page.evaluate(() => ({
     articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
-      .map(({ id, label, cssUrl }) => ({ id, label, cssUrl })),
+      .map(({ id, label, cssUrl, swatch }) => ({ id, label, cssUrl, swatch })),
     codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes
       .map(({ id, cssUrl }) => ({ id, cssUrl }))
   }));
+}
+
+function hexToRgbCss(hex) {
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) {
+    throw new Error(`article-theme-swatch-invalid:${hex}`);
+  }
+
+  const value = Number.parseInt(hex.slice(1), 16);
+  return `rgb(${value >> 16}, ${(value >> 8) & 255}, ${value & 255})`;
+}
+
+async function previewContainsThemeSwatch(preview, expectedSwatch) {
+  return preview.evaluate((root, expected) => {
+    const properties = [
+      'color',
+      'backgroundColor',
+      'borderTopColor',
+      'borderRightColor',
+      'borderBottomColor',
+      'borderLeftColor'
+    ];
+    const elements = [root, ...root.querySelectorAll('*')];
+    const colors = new Set();
+
+    for (const element of elements) {
+      const style = getComputedStyle(element);
+      for (const property of properties) {
+        const color = style[property];
+        if (color && !color.includes('transparent')) colors.add(color.toLowerCase());
+      }
+      for (const pseudo of ['::before', '::after']) {
+        const pseudoStyle = getComputedStyle(element, pseudo);
+        for (const property of properties) {
+          const color = pseudoStyle[property];
+          if (color && !color.includes('transparent')) colors.add(color.toLowerCase());
+        }
+      }
+    }
+
+    return colors.has(expected.toLowerCase());
+  }, expectedSwatch);
 }
 
 async function expectRenderedFixture(page, selector) {
@@ -707,6 +748,9 @@ async function measureArticleThemeGeometry(page, position) {
         canvasDisplay: immersiveCanvasStyle?.display ?? null,
         pageBackground: immersivePageStyle?.backgroundColor ?? null,
         pageDisplay: immersivePageStyle?.display ?? null,
+        pageBorderWidth: immersivePageStyle?.borderTopWidth ?? null,
+        pageBorderStyle: immersivePageStyle?.borderTopStyle ?? null,
+        pageBorderColor: immersivePageStyle?.borderTopColor ?? null,
         paneBackground: paneStyle.backgroundColor,
         paneRect: {
           left: paneBox.left,
@@ -794,6 +838,12 @@ async function measureArticleThemeGeometry(page, position) {
             isImmersivePreview
             && 'rgb(255, 255, 255)' !== surfaces.pageBackground
               ? [`immersive-preview-page-background-${surfaces.pageBackground}`]
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && ('0px' !== surfaces.pageBorderWidth || 'none' !== surfaces.pageBorderStyle)
+              ? [`immersive-preview-page-border-${surfaces.pageBorderWidth}-${surfaces.pageBorderStyle}-${surfaces.pageBorderColor}`]
               : []
           ),
           ...(
@@ -1768,7 +1818,11 @@ test.describe('EasyMDE editor workflows', () => {
       }
     };
 
-    for (const { id, label, cssUrl } of catalog.articleThemes) {
+    for (const { id, label, cssUrl, swatch } of catalog.articleThemes) {
+      if (!swatch) {
+        throw new Error(`${id}-article-theme-swatch-unavailable`);
+      }
+      const expectedSwatch = hexToRgbCss(swatch);
       await page.setViewportSize({ width: 1200, height: 900 });
       await settingsTrigger.click();
       const settingsDialog = page.getByRole('dialog', {
@@ -1788,11 +1842,22 @@ test.describe('EasyMDE editor workflows', () => {
       ), cssUrl), {
         message: `${id} article stylesheet should finish loading`
       }).toBe(true);
+      const ordinarySwatch = await articleSelect.locator(
+        '.easymde-ordinary-select-swatch'
+      ).evaluate((swatchElement) => getComputedStyle(swatchElement).backgroundColor);
+      if (ordinarySwatch !== expectedSwatch) {
+        failures.push(
+          `${id}/ordinary-selector:swatch-${ordinarySwatch}-expected-${expectedSwatch}`
+        );
+      }
       await waitForPreviewRefresh(
         preview,
         previousPreviewSignature,
         `${id} server preview should finish rendering`
       );
+      if (!await previewContainsThemeSwatch(preview, expectedSwatch)) {
+        failures.push(`${id}/ordinary-preview:theme-swatch-not-rendered-${expectedSwatch}`);
+      }
       const tableAccessibility = await preview.locator('table').first().ariaSnapshot();
       for (const [role, expectedCount] of Object.entries({
         table: 1,
@@ -1841,6 +1906,18 @@ test.describe('EasyMDE editor workflows', () => {
       await expect(page.getByRole('region', {
         name: labels.immersive.immersive
       })).toBeVisible();
+      const immersiveAppearance = page.locator(
+        '.easymde-immersive-secondary-actions'
+      ).getByRole('button', { name: labels.immersive.theme, exact: true });
+      await expect(immersiveAppearance).toBeVisible();
+      const immersiveSwatch = await immersiveAppearance.locator(
+        '.easymde-immersive-theme-accent'
+      ).evaluate((swatchElement) => getComputedStyle(swatchElement).backgroundColor);
+      if (immersiveSwatch !== expectedSwatch) {
+        failures.push(
+          `${id}/immersive-selector:swatch-${immersiveSwatch}-expected-${expectedSwatch}`
+        );
+      }
 
       for (const mode of [
         ['previewMode', 'is-immersive-preview'],
@@ -1855,6 +1932,15 @@ test.describe('EasyMDE editor workflows', () => {
           exact: true
         }).click();
         await expect(editorOwner).toHaveClass(new RegExp(mode[1]));
+        if ('is-immersive-preview' === mode[1]) {
+          const immersivePreview = page.locator(
+            '.easymde-immersive-preview-page .easymde-preview'
+          );
+          await expect(immersivePreview).toBeVisible();
+          if (!await previewContainsThemeSwatch(immersivePreview, expectedSwatch)) {
+            failures.push(`${id}/immersive-preview:theme-swatch-not-rendered-${expectedSwatch}`);
+          }
+        }
         if ('is-immersive-source' !== mode[1]) {
           await recordGeometry(
             id,

@@ -133,6 +133,6 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         );
         $this->assertStringContainsString('<ul class="task-list">', $all_tasks);
         $this->assertSame( 2, substr_count( $all_tasks, 'class="task-list-item"' ) );
-        $this->assertStringContainsString('checked="" disabled="" type="checkbox"', $all_tasks);
+        $this->assertStringContainsString('<input checked disabled type="checkbox">', $all_tasks);
     }
 }

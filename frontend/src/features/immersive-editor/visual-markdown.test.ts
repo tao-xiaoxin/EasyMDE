@@ -8,6 +8,7 @@ import {
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChange,
   placeVisualCaretFromSourceOffset,
+  prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
   serializeVisualMarkdown,
   visualSelectionSourceRange
@@ -70,6 +71,51 @@ A--&gt;B</code></pre>
         '```'
       ].join('\n')
     );
+  });
+
+  it('round-trips static Crimson task markers through the visual editor', () => {
+    const surface = editor(`
+      <ul class="task-list">
+        <li class="task-list-item"><span class="easymde-task-checkbox is-checked" role="checkbox" aria-checked="true" aria-disabled="true">✓</span>Done</li>
+        <li class="task-list-item"><span class="easymde-task-checkbox" role="checkbox" aria-checked="false" aria-disabled="true"></span>Todo</li>
+      </ul>
+    `);
+
+    expect(serializeVisualMarkdown(surface)).toBe('- [x] Done\n- [ ] Todo');
+  });
+
+  it('prepares native Crimson task inputs only for the visual editor', () => {
+    const surface = editor(`
+      <ul class="task-list">
+        <li class="task-list-item"><input type="checkbox" checked disabled>Done</li>
+        <li class="task-list-item"><p><input type="checkbox" disabled>Todo</p></li>
+      </ul>
+    `);
+
+    prepareVisualTaskListMarkers(surface);
+
+    expect(surface.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
+    expect(surface.querySelectorAll('.easymde-task-checkbox')).toHaveLength(2);
+    expect(serializeVisualMarkdown(surface)).toBe('- [x] Done\n- [ ] Todo');
+  });
+
+  it('treats a checked empty task marker as empty for block shortcuts', () => {
+    const surface = editor('<ul class="task-list"><li class="task-list-item"><span class="easymde-task-checkbox is-checked">✓</span></li></ul>');
+    const item = surface.querySelector('li') as HTMLLIElement;
+    placeCaret(item, item.childNodes.length);
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommand
+    });
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+
+    expect(applyVisualBlockShortcut(surface, event)).toBe(true);
+    expect(execCommand).toHaveBeenCalledWith('insertUnorderedList');
   });
 
   it('removes theme presentation wrappers from the Markdown serialization clone', () => {

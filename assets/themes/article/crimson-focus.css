@@ -208,11 +208,13 @@
   border-end-start-radius: 0;
   background-color: var(--easymde-crimson-focus-accent-soft);
   color: var(--easymde-crimson-focus-muted);
-  font-style: italic;
+  font-style: normal;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote code,
-.easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote tt {
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote p code,
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote li code,
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote p tt,
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote li tt {
   font-style: normal;
 }
 
@@ -220,6 +222,7 @@
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote li,
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote dl {
   color: var(--easymde-crimson-focus-muted);
+  font-style: italic;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus blockquote > :not(pre):first-child {
@@ -266,34 +269,80 @@
   content: none;
 }
 
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > .easymde-task-checkbox,
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > p > .easymde-task-checkbox,
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > input[type="checkbox"],
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > p > input[type="checkbox"] {
+  appearance: none;
+  display: inline-block;
   width: 13px;
   height: 13px;
   margin-top: 3px;
   margin-inline-end: 7.5px;
-  accent-color: var(--easymde-crimson-focus-accent);
+  border: 1px solid var(--easymde-crimson-focus-accent);
+  border-radius: 2px;
+  background: var(--easymde-crimson-focus-surface);
+  color: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 11px;
+  text-align: center;
   vertical-align: baseline;
 }
 
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .easymde-task-checkbox.is-checked,
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > input[type="checkbox"]:checked,
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > p > input[type="checkbox"]:checked {
+  color: var(--easymde-crimson-focus-accent);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > input[type="checkbox"]:checked,
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > p > input[type="checkbox"]:checked {
+  background: var(--easymde-crimson-focus-accent);
+  box-shadow: inset 0 0 0 2px var(--easymde-crimson-focus-surface);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > input[type="checkbox"]:checked::after,
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > p > input[type="checkbox"]:checked::after {
+  display: block;
+  color: var(--easymde-crimson-focus-surface);
+  content: "✓";
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 11px;
+  text-align: center;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .easymde-task-checkbox.is-checked {
+  background: var(--easymde-crimson-focus-accent);
+  box-shadow: inset 0 0 0 2px var(--easymde-crimson-focus-surface);
+  color: var(--easymde-crimson-focus-surface);
+}
+
 @supports selector(:has(*)) {
+  .easymde-rendered-content.easymde-markdown-theme-crimson-focus :is(ul, ol) > li:has(> .easymde-task-checkbox),
+  .easymde-rendered-content.easymde-markdown-theme-crimson-focus :is(ul, ol) > li:has(> p > .easymde-task-checkbox),
   .easymde-rendered-content.easymde-markdown-theme-crimson-focus :is(ul, ol) > li:has(> input[type="checkbox"]),
   .easymde-rendered-content.easymde-markdown-theme-crimson-focus :is(ul, ol) > li:has(> p > input[type="checkbox"]) {
     display: list-item;
   }
 
+  .easymde-rendered-content.easymde-markdown-theme-crimson-focus :is(ul, ol) > li:has(> .easymde-task-checkbox)::marker,
+  .easymde-rendered-content.easymde-markdown-theme-crimson-focus :is(ul, ol) > li:has(> p > .easymde-task-checkbox)::marker,
   .easymde-rendered-content.easymde-markdown-theme-crimson-focus :is(ul, ol) > li:has(> input[type="checkbox"])::marker,
   .easymde-rendered-content.easymde-markdown-theme-crimson-focus :is(ul, ol) > li:has(> p > input[type="checkbox"])::marker {
     content: none;
   }
 
+  .easymde-rendered-content.easymde-markdown-theme-crimson-focus :is(ul, ol) > li:has(> .easymde-task-checkbox) > .easymde-task-checkbox,
+  .easymde-rendered-content.easymde-markdown-theme-crimson-focus :is(ul, ol) > li:has(> p > .easymde-task-checkbox) > p > .easymde-task-checkbox,
   .easymde-rendered-content.easymde-markdown-theme-crimson-focus :is(ul, ol) > li:has(> input[type="checkbox"]) > input[type="checkbox"],
   .easymde-rendered-content.easymde-markdown-theme-crimson-focus :is(ul, ol) > li:has(> p > input[type="checkbox"]) > p > input[type="checkbox"] {
+    display: inline-block;
     width: 13px;
     height: 13px;
     margin-top: 3px;
     margin-inline-end: 7.5px;
-    accent-color: var(--easymde-crimson-focus-accent);
     vertical-align: baseline;
   }
 }
@@ -409,10 +458,6 @@
   color: var(--easymde-crimson-focus-heading);
   cursor: pointer;
   font-weight: 600;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-crimson-focus input[type="checkbox"] {
-  accent-color: var(--easymde-crimson-focus-accent);
 }
 
 @media (max-width: 640px) {

@@ -21,7 +21,7 @@ function registeredThemes(registryPath) {
 function articleThemeAssociations() {
   return Array.from(
     source('src/Theme/ArticleThemeRegistry.php').matchAll(
-      /=>\s*\$this->theme\(\s*'([^']+)'[\s\S]*?'(assets\/themes\/article\/[^']+\.css)'\s*,\s*'([a-z0-9-]+)'\s*\)/g
+      /=>\s*\$this->theme\(\s*'([^']+)'[\s\S]*?'(assets\/themes\/article\/[^']+\.css)'\s*,\s*'([a-z0-9-]+)'(?:\s*,\s*(?:true|false))?\s*\)/g
     ),
     ([, id, assetPath, defaultCodeTheme]) => ({ id, assetPath, defaultCodeTheme })
   );

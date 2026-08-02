@@ -205,26 +205,27 @@ test('Crimson focus follows the reference light surface and preserves code-theme
     /ol > \.task-list-item\s*\{[\s\S]*display:\s*block;/,
     'ordered task items must remain list items so mixed-list numbering is preserved'
   );
-  assert.match(
-    css,
-    /@supports selector\(:has\(\*\)\)[\s\S]*:is\(ul, ol\) > li:has\(> input\[type="checkbox"\]\),[\s\S]*:is\(ul, ol\) > li:has\(> p > input\[type="checkbox"\]\)\s*\{[\s\S]*display:\s*list-item;/
-  );
+  assert.match(css, /@supports selector\(:has\(\*\)\)/);
+  assert.match(css, /:is\(ul, ol\) > li:has\(> \.easymde-task-checkbox\)/);
+  assert.match(css, /:is\(ul, ol\) > li:has\(> p > \.easymde-task-checkbox\)/);
+  assert.match(css, /:is\(ul, ol\) > li:has\(> input\[type="checkbox"\]\)/);
+  assert.match(css, /:is\(ul, ol\) > li:has\(> p > input\[type="checkbox"\]\)/);
   assert.match(
     css,
     /\.task-list\s*\{[\s\S]*padding-inline-start:\s*3\.75px;[\s\S]*list-style:\s*none;/
   );
   assert.doesNotMatch(
     css,
-    /:is\(ul, ol\):has\(> li > input\[type="checkbox"\]\)\s*\{[\s\S]*list-style:\s*none;/
+    /:is\(ul, ol\):has\(> li > \.easymde-task-checkbox\)\s*\{[\s\S]*list-style:\s*none;/
   );
   assert.match(
     css,
     /\.task-list-item::marker\s*\{[\s\S]*content:\s*none;/
   );
-  assert.match(
-    css,
-    /@supports selector\(:has\(\*\)\)[\s\S]*:is\(ul, ol\) > li:has\(> input\[type="checkbox"\]\)::marker,[\s\S]*:is\(ul, ol\) > li:has\(> p > input\[type="checkbox"\]\)::marker\s*\{[\s\S]*content:\s*none;/
-  );
+  assert.match(css, /:is\(ul, ol\) > li:has\(> \.easymde-task-checkbox\)::marker/);
+  assert.match(css, /:is\(ul, ol\) > li:has\(> p > \.easymde-task-checkbox\)::marker/);
+  assert.match(css, /:is\(ul, ol\) > li:has\(> input\[type="checkbox"\]\)::marker/);
+  assert.match(css, /:is\(ul, ol\) > li:has\(> p > input\[type="checkbox"\]\)::marker/);
   assert.match(
     css,
     /ul\s*\{[\s\S]*list-style-type:\s*"—\s+";[\s\S]*\}/
@@ -244,19 +245,32 @@ test('Crimson focus follows the reference light surface and preserves code-theme
   );
   assert.match(
     css,
-    /\.task-list-item > input\[type="checkbox"\],[\s\S]*\.task-list-item > p > input\[type="checkbox"\]\s*\{[\s\S]*margin-inline-end:\s*7\.5px;[\s\S]*vertical-align:\s*baseline;/
+    /\.task-list-item > \.easymde-task-checkbox,[\s\S]*\.task-list-item > p > \.easymde-task-checkbox,[\s\S]*\.task-list-item > input\[type="checkbox"\],[\s\S]*\.task-list-item > p > input\[type="checkbox"\]\s*\{[\s\S]*appearance:\s*none;[\s\S]*margin-inline-end:\s*7\.5px;[\s\S]*vertical-align:\s*baseline;/
   );
-  assert.match(
-    css,
-    /@supports selector\(:has\(\*\)\)[\s\S]*:is\(ul, ol\) > li:has\(> input\[type="checkbox"\]\) > input\[type="checkbox"\],[\s\S]*:is\(ul, ol\) > li:has\(> p > input\[type="checkbox"\]\) > p > input\[type="checkbox"\]\s*\{[\s\S]*margin-inline-end:\s*7\.5px;[\s\S]*vertical-align:\s*baseline;/
-  );
+  assert.match(css, /:is\(ul, ol\) > li:has\(> \.easymde-task-checkbox\) > \.easymde-task-checkbox/);
+  assert.match(css, /:is\(ul, ol\) > li:has\(> p > \.easymde-task-checkbox\) > p > \.easymde-task-checkbox/);
+  assert.match(css, /:is\(ul, ol\) > li:has\(> input\[type="checkbox"\]\) > input\[type="checkbox"\]/);
+  assert.match(css, /:is\(ul, ol\) > li:has\(> p > input\[type="checkbox"\]\) > p > input\[type="checkbox"\]/);
   assert.doesNotMatch(css, /th\s*\{[\s\S]*text-transform:\s*uppercase;/);
+  assert.match(css, /input\[type="checkbox"\]:checked\s*\{[\s\S]*color:\s*var\(--easymde-crimson-focus-accent\);/);
+  assert.match(css, /input\[type="checkbox"\]:checked\s*\{[\s\S]*background:\s*var\(--easymde-crimson-focus-accent\);[\s\S]*box-shadow:/);
+  assert.match(css, /input\[type="checkbox"\]:checked::after,[\s\S]*input\[type="checkbox"\]:checked::after\s*\{[\s\S]*content:\s*"✓";[\s\S]*color:\s*var\(--easymde-crimson-focus-surface\);/);
+  assert.match(css, /\.easymde-task-checkbox\.is-checked\s*\{[\s\S]*background:\s*var\(--easymde-crimson-focus-accent\);[\s\S]*color:\s*var\(--easymde-crimson-focus-surface\);/);
   assert.match(css, /border-inline-start:\s*3px solid/);
   assert.match(css, /border-start-end-radius:\s*4px;/);
   assert.match(
     css,
-    /blockquote code,[\s\S]*blockquote tt\s*\{[\s\S]*font-style:\s*normal;/
+    /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus blockquote\s*\{[\s\S]*font-style:\s*normal;/
   );
+  assert.match(
+    css,
+    /blockquote p,[\s\S]*blockquote li,[\s\S]*blockquote dl\s*\{[\s\S]*font-style:\s*italic;/
+  );
+  assert.match(
+    css,
+    /blockquote p code,[\s\S]*blockquote li code,[\s\S]*blockquote p tt,[\s\S]*blockquote li tt\s*\{[\s\S]*font-style:\s*normal;/
+  );
+  assert.match(css, /\.easymde-task-checkbox\.is-checked,[\s\S]*\{[\s\S]*color:\s*var\(--easymde-crimson-focus-accent\);/);
   assert.match(
     css,
     /blockquote > :not\(pre\):first-child\s*\{[\s\S]*margin-top:\s*0;/

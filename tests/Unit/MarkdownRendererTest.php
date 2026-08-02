@@ -114,7 +114,9 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         );
         $this->assertStringContainsString('<ul class="contains-task-list">', $mixed);
         $this->assertStringContainsString('<li class="task-list-item"><input', $mixed);
+        $this->assertStringContainsString('type="checkbox"', $mixed);
         $this->assertStringContainsString('Plain item', $mixed);
+        $this->assertStringNotContainsString('onclick=', $mixed);
 
         $loose_mixed = MarkdownRenderer::render(
             "- [ ] Todo\n\n- Plain item",
@@ -129,5 +131,6 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         );
         $this->assertStringContainsString('<ul class="task-list">', $all_tasks);
         $this->assertSame( 2, substr_count( $all_tasks, 'class="task-list-item"' ) );
+        $this->assertStringContainsString('checked="" disabled="" type="checkbox"', $all_tasks);
     }
 }

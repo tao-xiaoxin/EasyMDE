@@ -295,7 +295,8 @@
 .easymde-rendered-content.easymde-markdown-theme-spring{
     background-color: var(--content-write-bg-color);
     max-width: 1200px;
-    min-width: 800px;
+    min-width: 0;
+    width: 100%;
     margin: 0 auto;
     padding-bottom: 7.5rem;
     overflow: overlay;

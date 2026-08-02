@@ -169,6 +169,7 @@
 .easymde-rendered-content.easymde-markdown-theme-onedark h4,
 .easymde-rendered-content.easymde-markdown-theme-onedark h5,
 .easymde-rendered-content.easymde-markdown-theme-onedark h6{
+  color: var(--text-color1);
   margin-top: 0.5em;
   margin-bottom: 0em;
   line-height: 1em;

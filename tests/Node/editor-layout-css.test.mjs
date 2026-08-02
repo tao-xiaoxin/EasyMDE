@@ -713,7 +713,7 @@ test('immersive outline and editor panes use the reference 16px card radius', ()
 test('immersive Preview mode owns the reference canvas and article page geometry', () => {
   assert.match(
     css,
-    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-canvas\s*\{[^}]*display:\s*block;[^}]*overflow-y:\s*auto;[^}]*padding:\s*28px 20px;[^}]*border:\s*0 solid rgba\(15, 23, 42, \.07\);[^}]*background:\s*#f4f5f7;[^}]*color:\s*#0f172a;[^}]*font-size:\s*15px;[^}]*font-weight:\s*400;/s
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-canvas\s*\{[^}]*display:\s*block;[^}]*overflow-y:\s*auto;[^}]*padding:\s*28px 20px;[^}]*border:\s*0 solid rgba\(15, 23, 42, \.07\);[^}]*background:\s*#fff;[^}]*color:\s*#0f172a;[^}]*font-size:\s*15px;[^}]*font-weight:\s*400;/s
   );
   assert.match(
     css,

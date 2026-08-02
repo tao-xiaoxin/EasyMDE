@@ -690,6 +690,30 @@ async function measureArticleThemeGeometry(page, position) {
         document.querySelectorAll('.easymde-preview-pending')
       ).some(isVisible);
       const topMeaningfulBox = topMeaningful?.getBoundingClientRect();
+      const editor = root.closest('[data-easymde-editor-owner="react"]');
+      const immersiveCanvas = root.closest('.easymde-immersive-preview-canvas');
+      const immersivePage = root.closest('.easymde-immersive-preview-page');
+      const immersiveCanvasStyle = immersiveCanvas
+        ? getComputedStyle(immersiveCanvas)
+        : null;
+      const immersivePageStyle = immersivePage
+        ? getComputedStyle(immersivePage)
+        : null;
+      const paneStyle = getComputedStyle(pane);
+      const isImmersivePreview = editor?.classList.contains('is-immersive-preview');
+      const isImmersiveSplit = editor?.classList.contains('is-immersive-split');
+      const surfaces = {
+        canvasBackground: immersiveCanvasStyle?.backgroundColor ?? null,
+        canvasDisplay: immersiveCanvasStyle?.display ?? null,
+        pageBackground: immersivePageStyle?.backgroundColor ?? null,
+        pageDisplay: immersivePageStyle?.display ?? null,
+        paneBackground: paneStyle.backgroundColor,
+        paneRect: {
+          left: paneBox.left,
+          right: paneBox.right,
+          width: paneBox.width
+        }
+      };
 
       return {
         decoration: {
@@ -759,13 +783,49 @@ async function measureArticleThemeGeometry(page, position) {
             && result.ownerIsExpected
           )) ? [] : ['code-horizontal-scroll-owner-invalid']),
           ...(scrollPositionValid ? [] : ['preview-scroll-position-invalid']),
-          ...(placeholderVisible ? ['preview-placeholder-visible'] : [])
+          ...(placeholderVisible ? ['preview-placeholder-visible'] : []),
+          ...(
+            isImmersivePreview
+            && 'rgb(255, 255, 255)' !== surfaces.canvasBackground
+              ? [`immersive-preview-canvas-background-${surfaces.canvasBackground}`]
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && 'rgb(255, 255, 255)' !== surfaces.pageBackground
+              ? [`immersive-preview-page-background-${surfaces.pageBackground}`]
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && immersiveCanvas
+            && immersivePage
+            && 'none' !== surfaces.canvasDisplay
+            && 'none' !== surfaces.pageDisplay
+            && 'contents' !== surfaces.canvasDisplay
+            && 'contents' !== surfaces.pageDisplay
+            && (() => {
+              const canvasBox = immersiveCanvas.getBoundingClientRect();
+              const pageBox = immersivePage.getBoundingClientRect();
+              return pageBox.left < canvasBox.left - tolerance
+                || pageBox.right > canvasBox.right + tolerance;
+            })()
+              ? ['immersive-preview-page-outside-canvas']
+              : []
+          ),
+          ...(
+            isImmersiveSplit
+            && 'rgb(255, 255, 255)' !== surfaces.paneBackground
+              ? [`immersive-split-pane-background-${surfaces.paneBackground}`]
+              : []
+          )
         ],
         scroll: {
           actual: actualScrollTop,
           maximum: maximumScrollTop,
           position: scrollPosition
         },
+        surfaces,
         topContent: topMeaningful && topMeaningfulBox ? {
           tag: topMeaningful.tagName.toLowerCase(),
           top: topMeaningfulBox.top,
@@ -1646,6 +1706,7 @@ test.describe('EasyMDE editor workflows', () => {
         themeId,
         state,
         decoration: geometry.decoration,
+        surfaces: geometry.surfaces,
         scroll: geometry.scroll,
         topContent: geometry.topContent,
         tables: geometry.tableResults.map(({ overflow }) => overflow),

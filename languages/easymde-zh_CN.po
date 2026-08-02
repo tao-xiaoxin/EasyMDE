@@ -1451,7 +1451,7 @@ msgstr "蓝莹"
 
 #: src/Theme/ArticleThemeRegistry.php:22
 msgid "Crimson focus"
-msgstr "绯红专注"
+msgstr "墨绯"
 
 #: src/Theme/ArticleThemeRegistry.php:23
 msgid "Lanqing"

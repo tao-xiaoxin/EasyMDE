@@ -291,8 +291,7 @@ $$
 
 $$
 \frac{\partial}{\partial x} f(x, y)
-===================================
-
+=
 \lim_{\Delta x \to 0}
 \frac{f(x+\Delta x, y)-f(x, y)}{\Delta x}
 $$
@@ -648,8 +647,7 @@ xychart-beta
 
 $$
 \text{Error Rate}
-=================
-
+=
 \frac{\text{Failed Requests}}{\text{Total Requests}}
 \times 100\%
 $$

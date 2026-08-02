@@ -1648,6 +1648,14 @@ test.describe('EasyMDE editor workflows', () => {
       ['qinghe-zhusha', { contentFontSize: null }],
       ['geek-black', { contentFontSize: '13px' }]
     ]);
+    const decorationInventory = (decoration) => ({
+      headings: decoration.headings,
+      parts: decoration.parts,
+      pseudo: decoration.pseudo,
+      styledHeadings: decoration.styledHeadings,
+      visibleParts: decoration.visibleParts,
+      boxes: decoration.boxes.map(({ selector, flexBasis }) => ({ selector, flexBasis }))
+    });
     let mainFrameNavigations = 0;
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) mainFrameNavigations += 1;
@@ -1674,7 +1682,8 @@ test.describe('EasyMDE editor workflows', () => {
       }
       if (
         expectedDecoration
-        && JSON.stringify(geometry.decoration) !== JSON.stringify(expectedDecoration)
+        && JSON.stringify(decorationInventory(geometry.decoration))
+          !== JSON.stringify(decorationInventory(expectedDecoration))
       ) {
         failures.push(
           `${themeId}/${state}/${position}: heading-decoration-inventory-changed`

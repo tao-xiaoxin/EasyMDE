@@ -369,6 +369,22 @@ test('Geek Black changes only its final H1 top rhythm', () => {
   assert.doesNotMatch(css, /margin-top:\s*-0\.46em;/);
 });
 
+test('Grid Black and Cupid Busy fix only the first H1 top rhythm', () => {
+  for (const theme of ['grid-black', 'cupid-busy']) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const root = `.easymde-rendered-content.easymde-markdown-theme-${theme}`;
+    const h1Rules = cssRuleBodies(css, `${root} h1`);
+    const firstH1Rules = cssRuleBodies(css, `${root} > h1:first-child`);
+    const finalH1Rule = h1Rules.at(-1);
+    const firstH1Rule = firstH1Rules.at(-1);
+
+    assert.ok(finalH1Rule, `${theme} should define a final H1 rule`);
+    assert.ok(firstH1Rule, `${theme} should define a first-child H1 rule`);
+    assert.match(firstH1Rule, /margin-top:\s*30px;/, `${theme} first H1 should remain inside the article root`);
+    assert.match(finalH1Rule, /margin-top:\s*-/i, `${theme} later H1 rhythm should remain theme-owned`);
+  }
+});
+
 test('shared code typography prefers the neutral Mac terminal font stack', () => {
   const css = readFileSync(join(repoRoot, 'assets/css/frontend/base.css'), 'utf8');
 

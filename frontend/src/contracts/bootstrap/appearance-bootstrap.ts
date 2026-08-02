@@ -3,6 +3,7 @@ export type AppearanceOption = Readonly<{
   fontDefaults?: FontDefaults;
   id: string;
   label: string;
+  usesThemeFontFamily?: boolean;
 }>;
 
 export type ArticleThemeOption = AppearanceOption & Readonly<{
@@ -263,12 +264,17 @@ function parseOptions(value: unknown): ReadonlyArray<AppearanceOption> {
       serifFont: identifier(defaults.serifFont, 'invalid-appearance-font-defaults'),
       windowsFont: identifier(defaults.windowsFont, 'invalid-appearance-font-defaults')
     } : undefined;
+    if (undefined !== option.usesThemeFontFamily && true !== option.usesThemeFontFamily) {
+      throw new AppearanceBootstrapError('invalid-appearance-theme-font-family');
+    }
+    const usesThemeFontFamily = true === option.usesThemeFontFamily;
 
     return {
       id,
       label: requiredString(option.label, 'invalid-appearance-option-label'),
       ...(cssUrl ? { cssUrl } : {}),
-      ...(fontDefaults ? { fontDefaults } : {})
+      ...(fontDefaults ? { fontDefaults } : {}),
+      ...(usesThemeFontFamily ? { usesThemeFontFamily: true } : {})
     };
   });
 }

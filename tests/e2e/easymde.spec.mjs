@@ -494,6 +494,12 @@ async function measureArticleThemeGeometry(page, position) {
         const box = element.getBoundingClientRect();
         return box.width > 0 && box.height > 0;
       });
+      const topMeaningful = meaningfulElements.reduce((current, element) => {
+        if (!current) return element;
+        return element.getBoundingClientRect().top < current.getBoundingClientRect().top
+          ? element
+          : current;
+      }, null);
       const headings = Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6'));
       const headingParts = Array.from(root.querySelectorAll(
         'h1 .prefix, h2 .prefix, h3 .prefix, h4 .prefix, h5 .prefix, h6 .prefix, '
@@ -697,6 +703,7 @@ async function measureArticleThemeGeometry(page, position) {
       const placeholderVisible = Array.from(
         document.querySelectorAll('.easymde-preview-pending')
       ).some(isVisible);
+      const topMeaningfulBox = topMeaningful?.getBoundingClientRect();
 
       return {
         decoration: {
@@ -724,6 +731,13 @@ async function measureArticleThemeGeometry(page, position) {
             const box = element.getBoundingClientRect();
             return box.left < rootBox.left - tolerance || box.right > rootBox.right + tolerance;
           }) ? ['meaningful-content-outside-article'] : []),
+          ...(
+            'top' === scrollPosition
+            && topMeaningfulBox
+            && topMeaningfulBox.top < rootBox.top - tolerance
+              ? ['meaningful-content-above-article']
+              : []
+          ),
           ...(
             headingBox.left < rootBox.left - tolerance
             || headingBox.right > rootBox.right + tolerance
@@ -770,6 +784,13 @@ async function measureArticleThemeGeometry(page, position) {
           maximum: maximumScrollTop,
           position: scrollPosition
         },
+        topContent: topMeaningful && topMeaningfulBox ? {
+          tag: topMeaningful.tagName.toLowerCase(),
+          top: topMeaningfulBox.top,
+          bottom: topMeaningfulBox.bottom,
+          gap: topMeaningfulBox.top - rootBox.top,
+          marginTop: getComputedStyle(topMeaningful).marginTop
+        } : null,
         tableResults,
         codeResults,
         imageDiagnostic: outsideImage ?? null
@@ -1644,6 +1665,7 @@ test.describe('EasyMDE editor workflows', () => {
         state,
         decoration: geometry.decoration,
         scroll: geometry.scroll,
+        topContent: geometry.topContent,
         tables: geometry.tableResults.map(({ overflow }) => overflow),
         code: geometry.codeResults.map(({ overflow }) => overflow)
       });
@@ -2298,6 +2320,10 @@ test.describe('EasyMDE editor workflows', () => {
         await expect(page.locator(group.field)).toHaveValue(id);
         const expectedFontStack = await page.evaluate(() => {
           const options = window.EasyMDEEditorRootBootstrap.fonts.options;
+          const bootstrap = window.EasyMDEEditorRootBootstrap;
+          const activeTheme = bootstrap.appearance.articleThemes.find(
+            (theme) => theme.id === document.querySelector('#easymde-markdown-theme-field')?.value
+          );
           const selections = [
             [options.customFonts, '#easymde-custom-font-field'],
             [options.windowsFonts, '#easymde-windows-font-field'],
@@ -2307,8 +2333,11 @@ test.describe('EasyMDE editor workflows', () => {
           const seen = new Set();
           const parts = [];
           for (const [fontOptions, selector] of selections) {
-            const selected = document.querySelector(selector)?.value ?? '';
-            const family = fontOptions.find((option) => option.id === selected)
+            const selectedId = document.querySelector(selector)?.value ?? '';
+            if (selector === '#easymde-serif-font-field' && selectedId === 'theme-default') {
+              continue;
+            }
+            const family = fontOptions.find((option) => option.id === selectedId)
               ?.fontFamily ?? '';
             for (const part of family.split(',').map((value) => value.trim())) {
               const key = part.toLowerCase();
@@ -2317,6 +2346,9 @@ test.describe('EasyMDE editor workflows', () => {
                 parts.push(part);
               }
             }
+          }
+          if (document.querySelector('#easymde-serif-font-field')?.value === 'theme-default' && parts.length && activeTheme?.usesThemeFontFamily) {
+            parts.push('var(--easymde-theme-font-family, sans-serif)');
           }
           return parts.join(', ');
         });

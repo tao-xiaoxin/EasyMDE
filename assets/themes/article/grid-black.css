@@ -400,6 +400,10 @@
   box-sizing: border-box;
 }
 
+.easymde-rendered-content.easymde-markdown-theme-grid-black > h1:first-child {
+  margin-top: 30px;
+}
+
 .easymde-rendered-content.easymde-markdown-theme-grid-black h1 .content {
   padding-top: 5px;
   padding-bottom: 5px;

@@ -12,13 +12,14 @@ final class ArticleThemeRegistry {
 
 	public function all() {
 		$themes = array(
-			'default'        => $this->theme( 'default', __( 'Default theme', 'easymde' ), 'assets/themes/article/default.css', 'atom-one-dark' ),
+			'default'        => $this->theme( 'default', __( 'Default theme', 'easymde' ), 'assets/themes/article/default.css', 'atom-one-dark', false ),
 			'orange-heart'   => $this->theme( 'orange-heart', __( 'Orange heart', 'easymde' ), 'assets/themes/article/orange-heart.css', 'atom-one-dark' ),
 			'chazi-purple'   => $this->theme( 'chazi-purple', __( 'Chazi purple', 'easymde' ), 'assets/themes/article/chazi-purple.css', 'atom-one-dark' ),
 			'nenqing-green'  => $this->theme( 'nenqing-green', __( 'Nenqing green', 'easymde' ), 'assets/themes/article/nenqing-green.css', 'atom-one-dark' ),
 			'green-vitality' => $this->theme( 'green-vitality', __( 'Green vitality', 'easymde' ), 'assets/themes/article/green-vitality.css', 'atom-one-dark' ),
 			'red-crimson'    => $this->theme( 'red-crimson', __( 'Red crimson', 'easymde' ), 'assets/themes/article/red-crimson.css', 'atom-one-dark' ),
 			'blue-ying'      => $this->theme( 'blue-ying', __( 'Blue ying', 'easymde' ), 'assets/themes/article/blue-ying.css', 'atom-one-dark' ),
+			'crimson-focus'  => $this->theme( 'crimson-focus', __( 'Crimson focus', 'easymde' ), 'assets/themes/article/crimson-focus.css', 'atom-one-dark' ),
 			'lanqing'        => $this->theme( 'lanqing', __( 'Lanqing', 'easymde' ), 'assets/themes/article/lanqing.css', 'atom-one-dark' ),
 			'yamabuki'       => $this->theme( 'yamabuki', __( 'Yamabuki', 'easymde' ), 'assets/themes/article/yamabuki.css', 'atom-one-dark' ),
 			'grid-black'     => $this->theme( 'grid-black', __( 'Grid black', 'easymde' ), 'assets/themes/article/grid-black.css', 'atom-one-dark' ),
@@ -77,6 +78,9 @@ final class ArticleThemeRegistry {
 				'origin'           => $theme['origin'],
 				'defaultCodeTheme' => isset( $theme['default_code_theme'] ) ? sanitize_key( $theme['default_code_theme'] ) : 'atom-one-dark',
 			);
+			if ( ! empty( $theme['uses_theme_font_family'] ) ) {
+				$item['usesThemeFontFamily'] = true;
+			}
 
 			if ( ! empty( $theme['fontDefaults'] ) ) {
 				$item['fontDefaults'] = $theme['fontDefaults'];
@@ -96,6 +100,14 @@ final class ArticleThemeRegistry {
 					'windowsFont' => 'microsoft-yahei',
 					'appleFont'   => 'pingfang-sc-regular',
 					'serifFont'   => 'sans-serif-only',
+				);
+
+			case 'crimson-focus':
+				return array(
+					'customFont'  => 'none',
+					'windowsFont' => 'no-windows-font',
+					'appleFont'   => 'no-apple-font',
+					'serifFont'   => 'theme-default',
 				);
 
 			case 'red-crimson':
@@ -158,14 +170,21 @@ final class ArticleThemeRegistry {
 		return null;
 	}
 
-	private function theme( $id, $label, $asset_path, $default_code_theme ) {
+	public function uses_theme_font_family( $markdown_theme ) {
+		$theme = $this->get( $markdown_theme );
+
+		return ! empty( $theme['uses_theme_font_family'] );
+	}
+
+	private function theme( $id, $label, $asset_path, $default_code_theme, $uses_theme_font_family = true ) {
 		return array(
-			'id'                 => $id,
-			'label'              => $label,
-			'asset_path'         => $asset_path,
-			'origin'             => 'owned',
-			'class_name'         => 'easymde-markdown-theme-' . $id,
-			'default_code_theme' => $default_code_theme,
+			'id'                     => $id,
+			'label'                  => $label,
+			'asset_path'             => $asset_path,
+			'origin'                 => 'owned',
+			'class_name'             => 'easymde-markdown-theme-' . $id,
+			'default_code_theme'     => $default_code_theme,
+			'uses_theme_font_family' => $uses_theme_font_family,
 		);
 	}
 

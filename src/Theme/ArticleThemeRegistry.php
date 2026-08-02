@@ -15,7 +15,6 @@ final class ArticleThemeRegistry {
 			'default'        => $this->theme( 'default', __( 'Default theme', 'easymde' ), 'assets/themes/article/default.css', 'atom-one-dark', false ),
 			'orange-heart'   => $this->theme( 'orange-heart', __( 'Orange heart', 'easymde' ), 'assets/themes/article/orange-heart.css', 'atom-one-dark' ),
 			'chazi-purple'   => $this->theme( 'chazi-purple', __( 'Chazi purple', 'easymde' ), 'assets/themes/article/chazi-purple.css', 'atom-one-dark' ),
-			'nenqing-green'  => $this->theme( 'nenqing-green', __( 'Nenqing green', 'easymde' ), 'assets/themes/article/nenqing-green.css', 'atom-one-dark' ),
 			'green-vitality' => $this->theme( 'green-vitality', __( 'Green vitality', 'easymde' ), 'assets/themes/article/green-vitality.css', 'atom-one-dark' ),
 			'red-crimson'    => $this->theme( 'red-crimson', __( 'Red crimson', 'easymde' ), 'assets/themes/article/red-crimson.css', 'atom-one-dark' ),
 			'blue-ying'      => $this->theme( 'blue-ying', __( 'Blue ying', 'easymde' ), 'assets/themes/article/blue-ying.css', 'atom-one-dark' ),

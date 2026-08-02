@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -367,6 +367,20 @@ test('Geek Black changes only its final H1 top rhythm', () => {
   assert.ok(finalH1Rule);
   assert.match(finalH1Rule, /margin-top:\s*30px;/);
   assert.doesNotMatch(css, /margin-top:\s*-0\.46em;/);
+});
+
+test('Nenqing Green is removed from the built-in article theme surface', () => {
+  const registry = readFileSync(join(repoRoot, 'src/Theme/ArticleThemeRegistry.php'), 'utf8');
+  const referenceThemes = readFileSync(
+    join(repoRoot, 'frontend/src/features/appearance/reference-article-theme.ts'),
+    'utf8'
+  );
+  const editorCss = readFileSync(join(repoRoot, 'assets/css/admin/editor.css'), 'utf8');
+
+  assert.doesNotMatch(registry, /['"]nenqing-green['"]/);
+  assert.doesNotMatch(referenceThemes, /['"]nenqing-green['"]/);
+  assert.doesNotMatch(editorCss, /data-theme=["']nenqing-green["']/);
+  assert.equal(existsSync(join(repoRoot, 'assets/themes/article/nenqing-green.css')), false);
 });
 
 test('Grid Black and Cupid Busy fix only the first H1 top rhythm', () => {

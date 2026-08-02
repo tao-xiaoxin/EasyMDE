@@ -171,7 +171,6 @@ final class ThemeMarkupTransformer {
 				'md2html-normal',
 				'orange-heart',
 				'chazi-purple',
-				'nenqing-green',
 				'green-vitality',
 				'red-crimson',
 				'blue-ying',

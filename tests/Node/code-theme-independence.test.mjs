@@ -47,7 +47,7 @@ test('every article theme declares a registered associated code theme', () => {
   const codeThemes = registeredThemes('src/Theme/CodeThemeRegistry.php');
   const codeThemeIds = new Set(codeThemes.map(({ id }) => id));
 
-  assert.equal(articleThemes.length, 23);
+  assert.equal(articleThemes.length, 22);
   for (const theme of articleThemes) {
     assert.ok(codeThemeIds.has(theme.defaultCodeTheme), `${theme.defaultCodeTheme} should be registered`);
   }

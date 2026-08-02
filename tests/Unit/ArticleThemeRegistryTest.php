@@ -257,7 +257,7 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
     {
         $article_themes = (new ArticleThemeRegistry())->for_script();
         $code_themes = array_column((new CodeThemeRegistry())->for_script(), null, 'id');
-        $this->assertCount(22, $article_themes);
+        $this->assertCount(31, $article_themes);
         foreach ($article_themes as $article_theme) {
             $this->assertArrayHasKey($article_theme['defaultCodeTheme'], $code_themes);
         }
@@ -280,6 +280,15 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
                 'red-crimson'    => '#f83929',
                 'blue-ying'      => '#5c9dff',
                 'crimson-focus'  => '#e74c3c',
+                'inkwell'         => '#3b82c4',
+                'nocturne'        => '#b080ff',
+                'animal-island'   => '#19c8b9',
+                'phycat-mint'     => '#3db8bf',
+                'onedark'         => '#3e4249',
+                'mdmdt'           => '#3e69d7',
+                'dogschoice-pink' => '#f55066',
+                'bloom-petal'     => '#e8859b',
+                'spring'          => '#3ea173',
                 'lanqing'        => '#009688',
                 'yamabuki'       => '#ffb11b',
                 'grid-black'     => '#212122',

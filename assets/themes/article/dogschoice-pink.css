@@ -1,0 +1,496 @@
+/*
+ * EasyMDE Dog's Choice Pink article theme.
+ * Source: Dog's Choice Pink (Typora theme, adapted to the scoped EasyMDE preview surface).
+ */
+
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
+    font-family: "Noto Sans SC Medium", "HanChanJinShuSong", Helvetica, Arial, sans-serif;
+    color: rgb(51, 51, 51);
+    line-height: 1.6;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
+    max-width: 860px;
+      margin: 0 auto;
+      padding: 30px;
+    padding-bottom: 100px;
+    color: var(--main-text-color);
+}
+
+@media only screen and (min-width: 1400px){
+    .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
+        max-width: 1024px;
+    }
+}
+
+@media only screen and (min-width: 1800px){
+    .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
+        max-width: 1200px;
+    }
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink > ul:first-child,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink > ol:first-child{
+    margin-top: 30px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink cursor{
+    color: var(--text-cursor-color)
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink a{
+    color: var(--a-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink strong{
+    font-weight: bold;
+    color: var(--text-strong-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink em{
+    font-style: italic;
+    color: var(--text-em-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h1,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h2,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h3,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h4,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h5,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h6{
+    position: relative;
+    font-weight: bold;
+    line-height: 1.4;
+    cursor: text;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h1:hover a.anchor,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h2:hover a.anchor,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h3:hover a.anchor,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h4:hover a.anchor,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h5:hover a.anchor,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h6:hover a.anchor{
+    text-decoration: none;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h1 tt,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h1 code{
+    font-size: inherit;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h2 tt,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h2 code{
+    font-size: inherit;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h3 tt,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h3 code{
+    font-size: inherit;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h4 tt,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h4 code{
+    font-size: inherit;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h5 tt,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h5 code{
+    font-size: inherit;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h6 tt,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h6 code{
+    font-size: inherit;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h1{
+    font-size: 2.1em;
+    line-height: 1.2;
+    color: var(--h1-4-text-color);
+    text-align: center;
+    padding-top: 0.3rem;
+    padding-bottom: 0.3rem;
+    background-color: var(--h1-background-color);
+    border-left: 0.5rem solid var(--header-lr-border-color);
+    border-right: 0.5rem solid var(--header-lr-border-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h2{
+    font-size: 1.8em;
+    line-height: 1.225;
+    color: var(--h1-4-text-color);
+    border-bottom: .13rem solid var(--header-bottom-border-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h3{
+    font-size: 1.5em;
+    line-height: 1.43;
+    color: var(--h1-4-text-color);
+    border-bottom: .12rem dashed var(--header-bottom-border-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h4{
+    font-size: 1.2em;
+    color: var(--h1-4-text-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h5{
+    font-size: 1.1em;
+    color: var(--h5-text-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h6{
+    font-size: 1em;
+    color: var(--h6-text-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h4:before{
+    content: "";
+    display: inline-block;
+    background: var(--header-lr-border-color);
+    opacity: 1;
+    pointer-events: none;
+    width: .3rem;
+    vertical-align: middle;
+    margin-right: .5rem;
+    height: 1.2rem;
+    transform: translateY(-0.1rem);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink>h3.md-focus:before,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink>h4.md-focus:before{
+    border: 0px;
+    position: unset;
+    padding: 0px;
+    font-size: 0px;
+    line-height: unset;
+    border-radius: 0px;
+    float: unset;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink img{
+    border: 1px solid var(--img-border-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink mark{
+    background: var(--mark-bg-color);
+    color: var(--main-text-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink p,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink blockquote,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ul,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ol,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink dl,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table{
+    margin: .7em 0;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink li>ol,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink li>ul{
+    margin: 0 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink hr{
+    height: .1rem;
+    padding: 0;
+    margin: 16px 0;
+    background-color: var(--hr-color);
+    border: 0 none;
+    overflow: hidden;
+    box-sizing: content-box;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink li p.first{
+    display: inline-block;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ul,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ol{
+    padding-left: 30px;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ul:first-child,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ol:first-child{
+    margin-top: 0;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ul:last-child,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ol:last-child{
+    margin-bottom: 0;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink blockquote{
+    border-left: 4px solid var(--blockquote-decoration-color);
+    background-color: var(--blockquote-bg-color);
+    padding: 8px 10px;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink blockquote blockquote{
+    padding-right: 0;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table{
+    padding: 0;
+    word-break: initial;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink thead{
+    background-color: var(--table-thead-bg-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table th{
+    font-weight: bold;
+    border: 0.05rem solid var(--table-border-color);
+    border-bottom: 0;
+    margin: 0;
+    padding: 6px 13px;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table td{
+    border: 0.05rem solid var(--table-border-color);
+    margin: 0;
+    padding: 6px 13px;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table th:first-child,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table td:first-child{
+    margin-top: 0;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table th:last-child,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table td:last-child{
+    margin-bottom: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .code-tooltip{
+    box-shadow: 0 1px 1px 0 rgba(0,28,36,.3);
+    border-top: 1px solid #eef2f2;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink tt{
+    font-size: 95%;
+    background-color: var(--codeblock-bg-color);
+    padding: 12px 4px 9px 4px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .md-task-list-item > input{
+  margin-left: -1.3em;
+}
+
+@media print{
+    .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
+        font-size: 13px;
+    }
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .mathjax-block>.code-tooltip{
+    bottom: .375rem;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .md-mathjax-midline{
+    background: #fafafa;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .md-image>.md-meta{
+
+    border-radius: 3px;
+    padding: 2px 0px 0px 4px;
+    font-size: 0.9em;
+    color: inherit;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .md-tag{
+    color: #a7a7a7;
+    opacity: 1;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .md-toc{
+    margin-top:20px;
+    padding-bottom:20px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .sidebar-tabs{
+    border-bottom: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #typora-quick-open{
+    border: 1px solid #ddd;
+    background-color: #f8f8f8;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #typora-quick-open-item{
+    background-color: #FAFAFA;
+    border-color: #FEFEFE #e5e5e5 #e5e5e5 #eee;
+    border-style: solid;
+    border-width: 1px;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .on-focus-mode blockquote{
+    border-left-color: rgba(85, 85, 85, 0.12);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink header,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .context-menu,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .megamenu-content,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink footer{
+    font-family: "Segoe UI", "Arial", sans-serif;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .file-node-content:hover .file-node-icon,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .file-node-content:hover .file-node-open-state{
+    visibility: visible;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .mac-seamless-mode #typora-sidebar{
+    background-color: var(--side-bar-bg-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .md-lang{
+    color: #b4654d;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #md-notification .btn{
+    border: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .ty-preferences .window-content{
+    background-color: #fafafa;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .ty-preferences .nav-group-item.active{
+    color: white;
+    background: #999;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .menu-item-container a.menu-style-btn{
+    background-color: #f5f8fa;
+    background-image: linear-gradient( 180deg , hsla(0, 0%, 100%, 0.8), hsla(0, 0%, 100%, 0));
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #typora-quick-open{
+  color: var(--control-text-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .typora-quick-open-item-path{
+  white-space: nowrap;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .outline-item:hover{
+    background-color: var(--active-file-bg-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #sidebar-files-menu{
+  border: 1px solid var(--sidebar-border-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #file-library-tree .file-tree-node{
+    padding-left: .9em;
+    color: var(--control-text-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .file-tree-node .file-node-content:hover{
+    background-color: var(--sidebar-btn-hover-color);
+    cursor: pointer;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #typora-sidebar #ty-sidebar-footer .sidebar-footer-item:hover{
+  background: var(--sidebar-btn-hover-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #typora-sidebar #ty-sidebar-footer #sidebar-files-menu .show+.menuitem-group-label.show{
+  border-color: var(--sidebar-border-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #typora-sidebar #ty-sidebar-footer{
+    border-top: 1px solid var(--sidebar-border-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #typora-sidebar #ty-sidebar-footer #sidebar-files-menu li>a:hover{
+    background: var(--sidebar-btn-hover-color);
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #typora-sidebar #ty-sidebar-footer #sidebar-files-menu .ty-side-sort-btn.active,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #typora-sidebar #ty-sidebar-footer #sidebar-files-menu .selected-folder-menu-item a:after{
+    color: var(--sidebar-sort-btn-active-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #typora-sidebar #ty-sidebar-footer #sidebar-files-menu .ty-side-sort-btn:hover{
+    cursor: pointer;
+    color: var(--sidebar-sort-btn-active-color);
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .info-panel-tab:hover{
+  color: var(--control-text-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .sidebar-menu{
+  color: var(--control-text-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .sidebar-menu .dropdown-menu>li>a,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .sidebar-menu .dropdown-menu>li>a:focus,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .sidebar-menu .dropdown-menu>li>a:hover{
+  color: var(--control-text-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .dropdown-menu .selected-folder-menu-item a:after{
+  color: var(--control-text-color);
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .sidebar-menu .ty-sidebar-search-panel #file-library-search-input{
+    color: var(--control-text-color);
+    background: var(--sidebar-search-bg-color);
+    border: 1px solid var(--sidebar-border-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .sidebar-menu .ty-sidebar-search-panel #file-library-search-input:focus{
+    border-color: var(--sidebar-search-focus-border-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink .sidebar-menu .ty-sidebar-search-panel{
+    border-bottom: 1px solid var(--sidebar-border-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink #typora-sidebar-resizer.dragging{
+    color: var(--sidebar-resizer-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
+
+    --side-bar-bg-color: #F9FAFB;
+    --active-file-bg-color: #FAE8FF;
+    --active-file-text-color: var(--control-text-color);
+    --active-file-border-color: var(--control-text-color);
+    --control-text-color: #5B1C79;
+    --control-text-hover-color: var(--control-text-color);
+
+
+    --sidebar-btn-hover-color: #FAE8FF;
+    --sidebar-border-color: #FAE8FF;
+    --sidebar-sort-btn-active-color: #5B1C79;
+    --sidebar-resizer-color: #FAE8FF;
+    --sidebar-search-bg-color: #FAE8FF;
+    --sidebar-search-focus-border-color: #5B1C79;
+
+    --main-text-color: #000;
+    --a-color: #768cce;
+    --text-strong-color: #8F00D2;
+    --text-em-color: #f55066;
+
+    --mark-bg-color: #FCFFC8;
+
+    --text-cursor-color: var(--main-text-color);
+
+    --h1-4-text-color: #000;
+    --h1-background-color: #FFE8E8;
+    --header-lr-border-color: #FDB7B7;
+    --header-bottom-border-color: #FFBFBF;
+    --h5-text-color: #000;
+    --h6-text-color: #000;
+    --header-tip-color: var(--header-bottom-border-color);
+
+    --table-thead-bg-color: #FFF3E4;
+    --table-border-color: #F3D6B3;
+
+    --blockquote-bg-color: #E4FFEA;
+    --blockquote-decoration-color: #96F3AC;
+
+    --img-border-color: #FFE8F7;
+
+    --code-inline--color: #224F94;
+    --code-inline-bg-color: #B3BEC946;
+
+    --codeblock-bg-color: #E4F3FF;
+
+    --hr-color: #FFE8F7;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink :not(pre) > code,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink :not(pre) > tt {
+  font-family: var(--easymde-code-font-family);
+}

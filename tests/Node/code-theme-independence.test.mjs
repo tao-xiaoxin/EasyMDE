@@ -47,7 +47,7 @@ test('every article theme declares a registered associated code theme', () => {
   const codeThemes = registeredThemes('src/Theme/CodeThemeRegistry.php');
   const codeThemeIds = new Set(codeThemes.map(({ id }) => id));
 
-  assert.equal(articleThemes.length, 22);
+  assert.equal(articleThemes.length, 31);
   for (const theme of articleThemes) {
     assert.ok(codeThemeIds.has(theme.defaultCodeTheme), `${theme.defaultCodeTheme} should be registered`);
   }
@@ -112,6 +112,30 @@ test('registered article themes contain no block-code presentation selectors', (
     const blockSelectors = selectors.filter(blockCodeSelector);
 
     assert.deepEqual(blockSelectors, [], `${theme.id} should not own block-code presentation`);
+  }
+});
+
+test('Typora-derived article themes stay locally scoped and offline-safe', () => {
+  const typoraThemes = [
+    'inkwell',
+    'nocturne',
+    'animal-island',
+    'phycat-mint',
+    'onedark',
+    'mdmdt',
+    'dogschoice-pink',
+    'bloom-petal',
+    'spring'
+  ];
+
+  for (const theme of typoraThemes) {
+    const css = source(`assets/themes/article/${theme}.css`);
+    const root = `.easymde-rendered-content.easymde-markdown-theme-${theme}`;
+
+    assert.match(css, new RegExp(`${root.replaceAll('.', '\\.')}\\s*\\{`), `${theme} should define its scoped root`);
+    assert.doesNotMatch(css, /@import\s/);
+    assert.doesNotMatch(css, /url\(\s*["']?(?:https?:)?\/\//i, `${theme} should not require remote runtime assets`);
+    assert.doesNotMatch(css, /(?:^|[,{])\s*(?:html|body|:root)\s*(?:[,\{])/m, `${theme} should not leak global selectors`);
   }
 });
 

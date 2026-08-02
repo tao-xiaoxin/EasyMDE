@@ -1423,78 +1423,74 @@ msgid "Chazi purple"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:18
-msgid "Nenqing green"
-msgstr ""
-
-#: src/Theme/ArticleThemeRegistry.php:19
 msgid "Green vitality"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:20
+#: src/Theme/ArticleThemeRegistry.php:19
 msgid "Red crimson"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:21
+#: src/Theme/ArticleThemeRegistry.php:20
 msgid "Blue ying"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:22
+#: src/Theme/ArticleThemeRegistry.php:21
 msgid "Lanqing"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:23
+#: src/Theme/ArticleThemeRegistry.php:22
 msgid "Yamabuki"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:24
+#: src/Theme/ArticleThemeRegistry.php:23
 msgid "Grid black"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:25
+#: src/Theme/ArticleThemeRegistry.php:24
 msgid "Geek black"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:26
+#: src/Theme/ArticleThemeRegistry.php:25
 msgid "Rose purple"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:27
+#: src/Theme/ArticleThemeRegistry.php:26
 msgid "Ningye purple"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:28
+#: src/Theme/ArticleThemeRegistry.php:27
 msgid "Tech blue"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:29
+#: src/Theme/ArticleThemeRegistry.php:28
 msgid "Qingbi Liujin"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:30
+#: src/Theme/ArticleThemeRegistry.php:29
 msgid "Qinghe Zhusha"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:31
+#: src/Theme/ArticleThemeRegistry.php:30
 msgid "Cute green"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:32 src/Theme/CodeThemeRegistry.php:24
+#: src/Theme/ArticleThemeRegistry.php:31 src/Theme/CodeThemeRegistry.php:24
 msgid "Fullstack blue"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:33
+#: src/Theme/ArticleThemeRegistry.php:32
 msgid "Minimal black"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:34
+#: src/Theme/ArticleThemeRegistry.php:33
 msgid "Orange blue"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:35
+#: src/Theme/ArticleThemeRegistry.php:34
 msgid "Frontend peak"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:36
+#: src/Theme/ArticleThemeRegistry.php:35
 msgid "Cupid busy"
 msgstr ""
 

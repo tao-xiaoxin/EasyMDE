@@ -161,7 +161,7 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
         $article_themes = (new ArticleThemeRegistry())->for_script();
         $code_themes = array_column((new CodeThemeRegistry())->for_script(), null, 'id');
 
-        $this->assertCount(22, $article_themes);
+        $this->assertCount(21, $article_themes);
         foreach ($article_themes as $article_theme) {
             $this->assertArrayHasKey($article_theme['defaultCodeTheme'], $code_themes);
         }

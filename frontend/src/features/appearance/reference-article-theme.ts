@@ -17,7 +17,6 @@ const REFERENCE_ARTICLE_THEMES: Readonly<Record<string, ReferenceArticleTheme>> 
   default: DEFAULT_REFERENCE_ARTICLE_THEME,
   'orange-heart': { accent: '#FF6200', accentLight: '#FFB380', accentBackground: '#FFF3E0' },
   'chazi-purple': { accent: '#8E44AD', accentLight: '#C39BD3', accentBackground: '#F5EEF8' },
-  'nenqing-green': { accent: '#00B4A6', accentLight: '#7FD8D2', accentBackground: '#E0F7F5' },
   'green-vitality': { accent: '#27AE60', accentLight: '#82D9A8', accentBackground: '#EAFAF1' },
   'red-crimson': { accent: '#E74C3C', accentLight: '#F5A89E', accentBackground: '#FDEDEC' },
   'blue-ying': { accent: '#1E90FF', accentLight: '#90C8FF', accentBackground: '#EBF5FB' },

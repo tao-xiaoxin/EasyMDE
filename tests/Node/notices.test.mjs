@@ -58,4 +58,5 @@ test('Composer runtime notices fail when a package lacks a purpose mapping', () 
 test('compiled Markdown parser packages have explicit notice ownership', () => {
   assert.ok(Object.hasOwn(bundledFrontendPackages, '@codemirror/lang-markdown'));
   assert.ok(Object.hasOwn(bundledFrontendPackages, '@lezer/markdown'));
+  assert.ok(Object.hasOwn(bundledFrontendPackages, 'mermaid'));
 });

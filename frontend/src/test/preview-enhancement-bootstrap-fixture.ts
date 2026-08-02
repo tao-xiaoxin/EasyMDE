@@ -10,9 +10,9 @@ export const previewEnhancementBootstrapFixture = {
     katexScriptUrl: 'https://example.test/wp-content/plugins/easymde/assets/vendor/katex/katex.min.js',
     mathCssLinkId: 'easymde-math-css',
     mathCssUrl: 'https://example.test/wp-content/plugins/easymde/assets/css/frontend/math.css',
-    mathRendererUrl: 'https://example.test/wp-content/plugins/easymde/assets/js/frontend/math.js',
-    mermaidRendererUrl: 'https://example.test/wp-content/plugins/easymde/assets/js/frontend/mermaid.js',
-    mermaidScriptUrl: 'https://example.test/wp-content/plugins/easymde/assets/vendor/mermaid/mermaid.min.js',
+    mathRendererUrl: 'https://example.test/wp-content/plugins/easymde/assets/build/frontend-enhancements/assets/frontend-enhancements-fixture.js',
+    mermaidRendererUrl: 'https://example.test/wp-content/plugins/easymde/assets/build/frontend-enhancements/assets/frontend-enhancements-fixture.js',
+    mermaidScriptUrl: 'https://example.test/wp-content/plugins/easymde/assets/build/frontend-mermaid/assets/frontend-mermaid-fixture.js',
     tocCssLinkId: 'easymde-toc-css',
     tocCssUrl: 'https://example.test/wp-content/plugins/easymde/assets/css/frontend/toc.css'
   },

@@ -101,8 +101,7 @@ function createAssetSourceFiles(root) {
     root,
     'src/Frontend/FrontendAssets.php',
     [
-      '<?php',
-      "Asset::url( 'assets/js/frontend/bootstrap.js' );",
+    '<?php',
       "Asset::url( 'assets/css/frontend/base.css' );",
       "Asset::url( 'assets/css/frontend/code-frame.css' );",
       "Asset::url( 'assets/css/frontend/code-copy.css' );",
@@ -110,11 +109,7 @@ function createAssetSourceFiles(root) {
       "Asset::url( 'assets/css/frontend/math.css' );",
       "Asset::url( 'assets/vendor/katex/katex.min.css' );",
       "Asset::url( 'assets/vendor/katex/katex.min.js' );",
-      "Asset::url( 'assets/js/frontend/math.js' );",
       "Asset::url( 'assets/css/frontend/toc.css' );",
-      "Asset::url( 'assets/vendor/mermaid/mermaid.min.js' );",
-      "Asset::url( 'assets/js/frontend/mermaid.js' );",
-      "Asset::url( 'assets/js/frontend/code-highlight.js' );"
     ].join('\n')
   );
 }
@@ -225,6 +220,11 @@ function createFrontendAssetSources(root) {
       `MIT License\n\nCopyright fixture for ${packageName}\n`
     );
   }
+  writeText(
+    root,
+    'scripts/vendor-licenses/mermaid-LICENSE',
+    'MIT License\n\nCopyright fixture for mermaid\n'
+  );
   writeFileSync(packageJsonPath, JSON.stringify(packageJson));
   writeText(root, 'package-lock.json', JSON.stringify({ packages }));
   prepareFrontendAssets(root);
@@ -259,6 +259,15 @@ function createCompleteFixture(root) {
   const codeCopyEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
   const codeCopyScript = 'assets/frontend-code-copy-fixture.js';
   const codeCopyMetadata = 'assets/frontend-code-copy-fixture.asset.php';
+  const enhancementsEntry = 'frontend/src/entrypoints/frontend-enhancements.ts';
+  const enhancementsScript = 'assets/frontend-enhancements-fixture.js';
+  const enhancementsMetadata = 'assets/frontend-enhancements-fixture.asset.php';
+  const bootstrapEntry = 'frontend/src/entrypoints/frontend-bootstrap.ts';
+  const bootstrapScript = 'assets/frontend-bootstrap-fixture.js';
+  const bootstrapMetadata = 'assets/frontend-bootstrap-fixture.asset.php';
+  const mermaidEntry = 'frontend/src/entrypoints/frontend-mermaid-runtime.ts';
+  const mermaidScript = 'assets/frontend-mermaid-fixture.js';
+  const mermaidMetadata = 'assets/frontend-mermaid-fixture.asset.php';
 
   writeText(
     root,
@@ -326,6 +335,67 @@ function createCompleteFixture(root) {
     `assets/build/code-copy/${codeCopyMetadata}`,
     "<?php return array( 'dependencies' => array(), 'version' => 'fedcba9876543210' );\n"
   );
+
+  for (const build of [
+    {
+      root: 'assets/build/frontend-enhancements',
+      entry: enhancementsEntry,
+      script: enhancementsScript,
+      metadata: enhancementsMetadata,
+      handle: 'easymde-enhancements',
+      source: 'window.EasyMDEEnhancements = { enhance: function () {} }; window.EasyMDEMathRenderer = {}; window.EasyMDEMermaidRenderer = {};\n'
+    },
+    {
+      root: 'assets/build/frontend-bootstrap',
+      entry: bootstrapEntry,
+      script: bootstrapScript,
+      metadata: bootstrapMetadata,
+      handle: 'easymde-frontend',
+      source: 'document.addEventListener("DOMContentLoaded", function () {});\n'
+    },
+    {
+      root: 'assets/build/frontend-mermaid',
+      entry: mermaidEntry,
+      script: mermaidScript,
+      metadata: mermaidMetadata,
+      handle: 'easymde-mermaid',
+      source: 'window.mermaid = { initialize: function () {}, render: async function () { return { svg: "" }; } };\n'
+    }
+  ]) {
+    writeText(
+      root,
+      `${build.root}/manifest.json`,
+      JSON.stringify({
+        [build.entry]: {
+          file: build.script,
+          isEntry: true,
+          src: build.entry
+        }
+      })
+    );
+    writeText(
+      root,
+      `${build.root}/wordpress-manifest.json`,
+      JSON.stringify({
+        schemaVersion: 1,
+        entries: {
+          [build.entry]: {
+            handle: build.handle,
+            file: build.script,
+            asset: build.metadata,
+            dependencies: [],
+            resources: []
+          }
+        }
+      })
+    );
+    writeText(root, `${build.root}/${build.script}`, build.source);
+    writeText(
+      root,
+      `${build.root}/${build.metadata}`,
+      "<?php return array( 'dependencies' => array(), 'version' => 'abcdef0123456789' );\n"
+    );
+  }
 
   for (const requirement of collectReleaseRequirements(root)) {
     if ('file' === requirement.type) {
@@ -412,10 +482,16 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/assets/build/code-copy/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/code-copy\/assets\/frontend-code-copy-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/code-copy\/assets\/frontend-code-copy-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
-    assert.ok(entries.includes('easymde/assets/js/frontend/bootstrap.js'));
-    assert.equal(entries.includes('easymde/assets/js/frontend/code-copy.js'), false);
+    assert.ok(entries.includes('easymde/assets/build/frontend-enhancements/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/frontend-enhancements\/assets\/frontend-enhancements-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/frontend-enhancements\/assets\/frontend-enhancements-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/build/frontend-bootstrap/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/frontend-bootstrap\/assets\/frontend-bootstrap-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/frontend-bootstrap\/assets\/frontend-bootstrap-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/build/frontend-mermaid/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/frontend-mermaid\/assets\/frontend-mermaid-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/frontend-mermaid\/assets\/frontend-mermaid-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/css/frontend/code-copy.css'));
-    assert.ok(entries.includes('easymde/assets/vendor/mermaid/LICENSE'));
     assert.ok(entries.includes('easymde/vendor/league/commonmark/runtime/Parser.php'));
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/tests/bootstrap.php')), false);
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/.github/workflows/ci.yml')), false);
@@ -612,12 +688,11 @@ test('release build fails when required runtime assets or templates are missing'
   try {
     createCompleteFixture(root);
     rmSync(join(root, 'templates'), { recursive: true, force: true });
-    rmSync(join(root, 'assets/vendor/mermaid/mermaid.min.js'), { force: true });
     rmSync(join(root, 'assets/vendor/katex/katex.min.css'), { force: true });
     rmSync(join(root, 'assets/vendor/katex/fonts'), { recursive: true, force: true });
     rmSync(join(root, 'assets/vendor/highlight/styles/github.min.css'), { force: true });
-    rmSync(join(root, 'assets/vendor/mermaid/LICENSE'), { force: true });
-    rmSync(join(root, 'assets/js/frontend/bootstrap.js'), { force: true });
+    rmSync(join(root, 'assets/build/frontend-mermaid/assets/frontend-mermaid-fixture.js'), { force: true });
+    rmSync(join(root, 'assets/build/frontend-enhancements/assets/frontend-enhancements-fixture.js'), { force: true });
     rmSync(join(root, 'assets/css/frontend/code-copy.css'), { force: true });
     rmSync(join(root, 'assets/build/assets/admin-editor-fixture.js'), { force: true });
     rmSync(join(root, 'assets/build/code-copy/assets/frontend-code-copy-fixture.js'), { force: true });
@@ -626,12 +701,11 @@ test('release build fails when required runtime assets or templates are missing'
 
     const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
     assert.ok(missing.includes('templates'));
-    assert.ok(missing.includes('assets/vendor/mermaid/mermaid.min.js'));
     assert.ok(missing.includes('assets/vendor/katex/katex.min.css'));
     assert.ok(missing.includes('assets/vendor/katex/fonts'));
     assert.ok(missing.includes('assets/vendor/highlight/styles/github.min.css'));
-    assert.ok(missing.includes('assets/vendor/mermaid/LICENSE'));
-    assert.ok(missing.includes('assets/js/frontend/bootstrap.js'));
+    assert.ok(missing.includes('assets/build/frontend-mermaid/assets/frontend-mermaid-fixture.js'));
+    assert.ok(missing.includes('assets/build/frontend-enhancements/assets/frontend-enhancements-fixture.js'));
     assert.ok(missing.includes('assets/css/frontend/code-copy.css'));
     assert.ok(missing.includes('assets/build/assets/admin-editor-fixture.js'));
     assert.ok(missing.includes('assets/build/code-copy/assets/frontend-code-copy-fixture.js'));
@@ -643,7 +717,7 @@ test('release build fails when required runtime assets or templates are missing'
     });
 
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /assets\/vendor\/mermaid\/mermaid\.min\.js/);
+    assert.match(result.stderr, /assets\/vendor\/highlight\/styles\/github\.min\.css/);
     assert.match(result.stderr, /npm run prepare:assets/);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -655,11 +729,11 @@ test('release build fails when a prepared frontend runtime asset differs from it
 
   try {
     createCompleteFixture(root);
-    writeText(root, 'assets/vendor/mermaid/mermaid.min.js', 'changed after preparation');
+    writeText(root, 'assets/vendor/highlight/highlight.min.js', 'changed after preparation');
 
     assert.throws(
       () => buildRelease({ root }),
-      /assets\/vendor\/mermaid\/mermaid\.min\.js/
+      /assets\/vendor\/highlight\/highlight\.min\.js/
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

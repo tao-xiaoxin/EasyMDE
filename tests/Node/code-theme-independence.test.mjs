@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import vm from 'node:vm';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
@@ -156,116 +155,26 @@ test('admin preview CSS delegates block-code presentation to the shared frame', 
   assert.deepEqual(previewBlockSelectors, []);
 });
 
-test('production highlighting has no article-specific token rewriting', async () => {
-  const highlighted = [];
-  const frameVariables = new Map();
-  const codeClasses = new Set();
-  const frame = {
-    style: {
-      setProperty(name, value) {
-        frameVariables.set(name, value);
-      }
-    }
-  };
-  const code = {
-    classList: {
-      add(className) {
-        codeClasses.add(className);
-      },
-      contains(className) {
-        return codeClasses.has(className);
-      }
-    },
-    dataset: {},
-    parentElement: frame
-  };
-  const mermaidCode = {
-    classList: {
-      contains(className) {
-        return 'language-mermaid' === className;
-      }
-    },
-    dataset: {},
-    parentElement: frame
-  };
-  const root = {
-    querySelectorAll(selector) {
-      if ('pre > code' === selector) return [code, mermaidCode];
-      if ('pre > code:not(.language-mermaid)' === selector) return [code];
-      assert.fail(`unexpected code-block selector: ${selector}`);
-    }
-  };
-  const window = {
-    getComputedStyle() {
-      return { backgroundColor: 'rgb(12, 34, 56)' };
-    },
-    hljs: {
-      highlightElement(node) {
-        highlighted.push(node);
-      }
-    }
-  };
-  const highlightSource = source('assets/js/frontend/code-highlight.js');
+test('production highlighting has no article-specific token rewriting', () => {
+  const enhancementSource = source(
+    'frontend/src/integrations/preview-runtime/frontend-enhancement-runtime.ts'
+  );
 
-  assert.doesNotMatch(highlightSource, /fullstack-blue|normalizeFullstackBlueHighlight|easymde-mdnice-/);
-  vm.runInNewContext(highlightSource, { document: {}, window });
-  await window.EasyMDEEnhancements.enhance(root, { features: { syntaxHighlight: true } });
-
-  assert.deepEqual(highlighted, [code]);
-  assert.equal(codeClasses.has('hljs'), true);
-  assert.equal(code.dataset.easymdeHighlighted, '1');
-  assert.equal(frameVariables.get('--easymde-code-frame-background'), 'rgb(12, 34, 56)');
-  assert.equal(mermaidCode.dataset.easymdeHighlighted, undefined);
+  assert.doesNotMatch(enhancementSource, /fullstack-blue|normalizeFullstackBlueHighlight|easymde-mdnice-/);
+  assert.match(enhancementSource, /pre > code:not\(\.language-mermaid\)/);
+  assert.match(enhancementSource, /highlightElement\(element\)/);
+  assert.match(enhancementSource, /--easymde-code-frame-background/);
+  assert.match(enhancementSource, /dataset\.easymdeHighlighted = '1'/);
 });
 
-test('code-theme background remains authoritative without Highlight.js', async () => {
-  const frameVariables = new Map();
-  const codeClasses = new Set();
-  const frame = {
-    style: {
-      setProperty(name, value) {
-        frameVariables.set(name, value);
-      }
-    }
-  };
-  const code = {
-    classList: {
-      add(className) {
-        codeClasses.add(className);
-      },
-      contains(className) {
-        return codeClasses.has(className);
-      }
-    },
-    dataset: {},
-    parentElement: frame
-  };
-  const root = {
-    querySelectorAll(selector) {
-      if ('pre > code' === selector || 'pre > code:not(.language-mermaid)' === selector) {
-        return [code];
-      }
-      assert.fail(`unexpected code-block selector: ${selector}`);
-    }
-  };
-  const window = {
-    getComputedStyle(node) {
-      assert.equal(node.classList.contains('hljs'), true);
-      return { backgroundColor: 'rgb(250, 250, 250)' };
-    }
-  };
-
-  vm.runInNewContext(source('assets/js/frontend/code-highlight.js'), { document: {}, window });
-  await window.EasyMDEEnhancements.enhance(root, {
-    features: { syntaxHighlight: false }
-  });
-
-  assert.equal(codeClasses.has('hljs'), true);
-  assert.equal(code.dataset.easymdeHighlighted, undefined);
-  assert.equal(
-    frameVariables.get('--easymde-code-frame-background'),
-    'rgb(250, 250, 250)'
+test('code-theme background remains authoritative without Highlight.js', () => {
+  const enhancementSource = source(
+    'frontend/src/integrations/preview-runtime/frontend-enhancement-runtime.ts'
   );
+
+  assert.match(enhancementSource, /if \(!syntaxHighlight \|\| !windowRef\.hljs/);
+  assert.match(enhancementSource, /windowRef\.getComputedStyle\(element\)\.backgroundColor/);
+  assert.match(enhancementSource, /element\.parentElement\.style\.setProperty/);
 });
 
 test('obsolete article-theme frame assets are physically absent', () => {

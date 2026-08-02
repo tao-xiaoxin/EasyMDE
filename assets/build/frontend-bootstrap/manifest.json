@@ -1,0 +1,8 @@
+{
+  "frontend/src/entrypoints/frontend-bootstrap.ts": {
+    "file": "assets/frontend-bootstrap-CoOTOAEs.js",
+    "name": "frontend-bootstrap",
+    "src": "frontend/src/entrypoints/frontend-bootstrap.ts",
+    "isEntry": true
+  }
+}

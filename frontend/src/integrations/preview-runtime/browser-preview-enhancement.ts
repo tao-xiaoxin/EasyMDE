@@ -74,6 +74,7 @@ function waitForResource(promise: Promise<void>, signal: AbortSignal): Promise<v
 
 function createResourceLoader(documentRef: Document) {
   const scriptLoads = new Map<string, ScriptLoad>();
+  const scriptLoadsByUrl = new Map<string, ScriptLoad>();
   const styleLoads = new Map<string, StyleLoad>();
   let disposed = false;
 
@@ -85,6 +86,14 @@ function createResourceLoader(documentRef: Document) {
 
   function loadScript(id: string, url: string, signal: AbortSignal): Promise<void> {
     if (disposed) return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
+    const cachedByUrl = scriptLoadsByUrl.get(url);
+    if (cachedByUrl?.script.isConnected) {
+      return waitForResource(cachedByUrl.promise, signal);
+    }
+    if (cachedByUrl) {
+      cachedByUrl.cancel();
+      scriptLoadsByUrl.delete(url);
+    }
     const cached = scriptLoads.get(id);
     if (cached?.url === url && cached.script.isConnected) {
       return waitForResource(cached.promise, signal);
@@ -126,6 +135,7 @@ function createResourceLoader(documentRef: Document) {
       cleanup();
       script.remove();
       if (scriptLoads.get(id) === load) scriptLoads.delete(id);
+      if (scriptLoadsByUrl.get(url) === load) scriptLoadsByUrl.delete(url);
       rejectLoad(resourceError(code));
     };
     const handleLoad = () => {
@@ -145,6 +155,7 @@ function createResourceLoader(documentRef: Document) {
       url
     };
     scriptLoads.set(id, load);
+    scriptLoadsByUrl.set(url, load);
     script.addEventListener('load', handleLoad);
     script.addEventListener('error', handleError);
     timer = setTimeout(handleError, RESOURCE_LOAD_TIMEOUT_MS);
@@ -273,6 +284,7 @@ function createResourceLoader(documentRef: Document) {
       if (!load.loaded()) load.cancel();
     }
     scriptLoads.clear();
+    scriptLoadsByUrl.clear();
     styleLoads.clear();
   }
 
@@ -320,8 +332,12 @@ export function createBrowserPreviewEnhancementPort(
   }
 
   async function prepareMermaid(signal: AbortSignal): Promise<void> {
+    const mermaidScriptUrl = assets.mermaidScriptUrl;
+    if (!mermaidScriptUrl) {
+      throw resourceError('preview-enhancement-mermaid-runtime-unavailable');
+    }
     await loadRuntime(options.runtime.hasMermaid, () =>
-      loader.loadScript('easymde-mermaid-js', assets.mermaidScriptUrl, signal));
+      loader.loadScript('easymde-mermaid-js', mermaidScriptUrl, signal));
     await loadRuntime(options.runtime.hasMermaidRenderer, () =>
       loader.loadScript('easymde-mermaid-renderer-js', assets.mermaidRendererUrl, signal));
   }

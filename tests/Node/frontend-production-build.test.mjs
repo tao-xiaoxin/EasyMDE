@@ -17,6 +17,12 @@ import test, { before } from 'node:test';
 import {
   compareCodeCopyProductionBuilds,
   compareFrontendProductionBuilds,
+  compareFrontendBootstrapProductionBuilds,
+  compareFrontendEnhancementsProductionBuilds,
+  compareFrontendMermaidProductionBuilds,
+  validateFrontendBootstrapProductionBuild,
+  validateFrontendEnhancementsProductionBuild,
+  validateFrontendMermaidProductionBuild,
   validateCodeCopyProductionBuild,
   validateFrontendProductionBuild
 } from '../../scripts/verify-frontend-build.mjs';
@@ -28,6 +34,12 @@ const sourceEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const codeCopyOutputRoot = join(repoRoot, '.cache/easymde-code-copy-production-check');
 const committedCodeCopyOutputRoot = join(repoRoot, 'assets/build/code-copy');
 const codeCopySourceEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
+const enhancementsOutputRoot = join(repoRoot, '.cache/easymde-frontend-enhancements-production-check');
+const committedEnhancementsOutputRoot = join(repoRoot, 'assets/build/frontend-enhancements');
+const bootstrapOutputRoot = join(repoRoot, '.cache/easymde-frontend-bootstrap-production-check');
+const committedBootstrapOutputRoot = join(repoRoot, 'assets/build/frontend-bootstrap');
+const mermaidOutputRoot = join(repoRoot, '.cache/easymde-frontend-mermaid-production-check');
+const committedMermaidOutputRoot = join(repoRoot, 'assets/build/frontend-mermaid');
 let buildResult;
 
 function readJson(path) {
@@ -46,11 +58,11 @@ test('root package exposes the production frontend build and includes it in the 
 
   assert.equal(
     packageJson.scripts['build:frontend'],
-    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.code-copy.config.ts && node scripts/verify-frontend-build.mjs --production'
+    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.code-copy.config.ts && vite build --config frontend/vite.enhancements.config.ts && vite build --config frontend/vite.bootstrap.config.ts && vite build --config frontend/vite.mermaid.config.ts && node scripts/verify-frontend-build.mjs --production'
   );
   assert.equal(
     packageJson.scripts['check:frontend-production'],
-    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && node scripts/verify-frontend-build.mjs --production-check'
+    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && vite build --mode easymde-check --config frontend/vite.enhancements.config.ts && vite build --mode easymde-check --config frontend/vite.bootstrap.config.ts && vite build --mode easymde-check --config frontend/vite.mermaid.config.ts && node scripts/verify-frontend-build.mjs --production-check'
   );
   assert.equal(
     packageJson.scripts['frontend:check'],
@@ -140,6 +152,38 @@ test('production build emits one self-contained WordPress editor React entry', (
   assert.equal(readdirSync(outputRoot).some((name) => name.endsWith('.map')), false);
 });
 
+test('production build emits shared enhancement, bootstrap, and Mermaid entries', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+
+  for (const [root, entryKey, handle, validator] of [
+    [enhancementsOutputRoot, 'frontend/src/entrypoints/frontend-enhancements.ts', 'easymde-enhancements', validateFrontendEnhancementsProductionBuild],
+    [bootstrapOutputRoot, 'frontend/src/entrypoints/frontend-bootstrap.ts', 'easymde-frontend', validateFrontendBootstrapProductionBuild],
+    [mermaidOutputRoot, 'frontend/src/entrypoints/frontend-mermaid-runtime.ts', 'easymde-mermaid', validateFrontendMermaidProductionBuild]
+  ]) {
+    const viteManifest = readJson(join(root, 'manifest.json'));
+    const wordpressManifest = readJson(join(root, 'wordpress-manifest.json'));
+    const viteEntry = viteManifest[entryKey];
+    const wordpressEntry = wordpressManifest.entries[entryKey];
+
+    assert.equal(viteEntry.isEntry, true);
+    assert.equal(wordpressEntry.handle, handle);
+    assert.equal(wordpressEntry.file, viteEntry.file);
+    assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
+    assert.deepEqual(wordpressEntry.dependencies, []);
+    assert.deepEqual(wordpressEntry.resources, []);
+    validator(root);
+  }
+
+  const mermaidManifest = readJson(join(mermaidOutputRoot, 'manifest.json'));
+  const mermaidScript = readFileSync(
+    join(mermaidOutputRoot, mermaidManifest['frontend/src/entrypoints/frontend-mermaid-runtime.ts'].file),
+    'utf8'
+  );
+  assert.match(mermaidScript, /\.mermaid=/);
+  assert.match(mermaidScript, /startOnLoad/);
+  assert.doesNotMatch(mermaidScript, /assets\/vendor\/mermaid\/mermaid\.min\.js/);
+});
+
 test('production comparison rejects stale or omitted committed runtime artifacts', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
 
@@ -168,6 +212,13 @@ test('production comparison rejects stale or omitted committed runtime artifacts
     rmSync(generatedRoot, { recursive: true, force: true });
     rmSync(committedRoot, { recursive: true, force: true });
   }
+});
+
+test('enhancement and bootstrap comparisons reject stale committed artifacts', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+  compareFrontendEnhancementsProductionBuilds(enhancementsOutputRoot, committedEnhancementsOutputRoot);
+  compareFrontendBootstrapProductionBuilds(bootstrapOutputRoot, committedBootstrapOutputRoot);
+  compareFrontendMermaidProductionBuilds(mermaidOutputRoot, committedMermaidOutputRoot);
 });
 
 test('code-copy production comparison rejects stale or omitted committed runtime artifacts', () => {

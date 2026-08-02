@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "entries": {
+    "frontend/src/entrypoints/frontend-bootstrap.ts": {
+      "handle": "easymde-frontend",
+      "file": "assets/frontend-bootstrap-CoOTOAEs.js",
+      "asset": "assets/frontend-bootstrap-CoOTOAEs.asset.php",
+      "dependencies": [],
+      "resources": []
+    }
+  }
+}

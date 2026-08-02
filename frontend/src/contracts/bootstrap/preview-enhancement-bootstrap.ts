@@ -10,7 +10,7 @@ export type PreviewEnhancementAssets = Readonly<{
   mathCssUrl: string;
   mathRendererUrl: string;
   mermaidRendererUrl: string;
-  mermaidScriptUrl: string;
+  mermaidScriptUrl: string | null;
   tocCssLinkId: string;
   tocCssUrl: string;
 }>;
@@ -90,6 +90,15 @@ function localAssetUrl(value: unknown, assetBaseUrl: string, code: string): stri
   }
 }
 
+function optionalLocalAssetUrl(
+  value: unknown,
+  assetBaseUrl: string,
+  code: string
+): string | null {
+  if (null === value) return null;
+  return localAssetUrl(value, assetBaseUrl, code);
+}
+
 function parseAssets(value: unknown, assetBaseUrl: string): PreviewEnhancementAssets {
   const assets = objectValue(value, 'preview-enhancement-assets-invalid');
   const urlKeys: ReadonlyArray<keyof PreviewEnhancementAssets> = [
@@ -100,7 +109,6 @@ function parseAssets(value: unknown, assetBaseUrl: string): PreviewEnhancementAs
     'mathCssUrl',
     'mathRendererUrl',
     'mermaidRendererUrl',
-    'mermaidScriptUrl',
     'tocCssUrl'
   ];
   const idKeys: ReadonlyArray<keyof PreviewEnhancementAssets> = [
@@ -110,7 +118,9 @@ function parseAssets(value: unknown, assetBaseUrl: string): PreviewEnhancementAs
     'mathCssLinkId',
     'tocCssLinkId'
   ];
-  const parsed = {} as Record<keyof PreviewEnhancementAssets, string>;
+  const parsed = {} as {
+    -readonly [Key in keyof PreviewEnhancementAssets]: PreviewEnhancementAssets[Key];
+  };
   const ids = new Set<string>();
 
   for (const key of urlKeys) {
@@ -120,6 +130,11 @@ function parseAssets(value: unknown, assetBaseUrl: string): PreviewEnhancementAs
       'preview-enhancement-assets-invalid'
     );
   }
+  parsed.mermaidScriptUrl = optionalLocalAssetUrl(
+    assets.mermaidScriptUrl,
+    assetBaseUrl,
+    'preview-enhancement-assets-invalid'
+  );
   for (const key of idKeys) {
     const id = identifier(assets[key], 'preview-enhancement-assets-invalid');
     if (ids.has(id)) {

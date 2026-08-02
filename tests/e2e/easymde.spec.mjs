@@ -46,16 +46,16 @@ const managedRuntimeAssets = [
     matches: (pathname) => /\/assets\/vendor\/katex\/fonts\/[^/]+\.(?:woff2?|ttf|otf)$/.test(pathname)
   },
   {
-    key: 'mathRenderer',
-    matches: (pathname) => pathname.endsWith('/assets/js/frontend/math.js')
+    key: 'frontendEnhancements',
+    matches: (pathname) => /\/assets\/build\/frontend-enhancements\/assets\/frontend-enhancements-[^/]+\.js$/.test(pathname)
   },
   {
     key: 'mermaidScript',
-    matches: (pathname) => pathname.endsWith('/assets/vendor/mermaid/mermaid.min.js')
+    matches: (pathname) => /\/assets\/build\/frontend-mermaid\/assets\/frontend-mermaid-[^/]+\.js$/.test(pathname)
   },
   {
-    key: 'mermaidRenderer',
-    matches: (pathname) => pathname.endsWith('/assets/js/frontend/mermaid.js')
+    key: 'frontendBootstrap',
+    matches: (pathname) => /\/assets\/build\/frontend-bootstrap\/assets\/frontend-bootstrap-[^/]+\.js$/.test(pathname)
   }
 ];
 
@@ -3295,7 +3295,7 @@ test.describe('EasyMDE editor workflows', () => {
     const origin = new URL(page.url()).origin;
     expectRuntimeAssetRequests(
       requests,
-      ['codeFrameCss', 'highlightScript', 'highlightThemeCss', 'katexCss', 'katexFont', 'katexScript', 'mathCss', 'mathRenderer', 'mermaidRenderer', 'mermaidScript'],
+      ['codeFrameCss', 'frontendBootstrap', 'frontendEnhancements', 'highlightScript', 'highlightThemeCss', 'katexCss', 'katexFont', 'katexScript', 'mathCss', 'mermaidScript'],
       origin
     );
     await expect(page.locator('script[src*="/assets/js/admin/bootstrap.js"]')).toHaveCount(0);

@@ -78,19 +78,55 @@ final class AdminAssets {
 			array( 'easymde-admin-toolbar', 'easymde-admin-popover' ),
 			$this->get_static_asset_version( 'assets/css/admin/editor.css' )
 		);
-		$this->frontend_assets->enqueue_editor_base_assets( $post_id );
+		try {
+			$this->frontend_assets->enqueue_editor_base_assets( $post_id );
+		} catch ( \Throwable $error ) {
+			if ( ! $this->is_frontend_asset_error( $error ) ) {
+				throw $error;
+			}
+
+			$this->react_editor_asset_error = true;
+			wp_trigger_error(
+				__METHOD__,
+				'EasyMDE frontend enhancement asset contract failed (frontend-enhancement-asset-invalid).',
+				E_USER_WARNING
+			);
+
+			return;
+		}
 
 		wp_enqueue_media();
 		if ( $this->enqueue_react_editor_asset() ) {
+			try {
+				$root_bootstrap = $this->get_editor_root_bootstrap( $post_id, $screen->post_type );
+			} catch ( \Throwable $error ) {
+				if ( ! $this->is_frontend_asset_error( $error ) ) {
+					throw $error;
+				}
+
+				$this->react_editor_asset_error = true;
+				wp_trigger_error(
+					__METHOD__,
+					'EasyMDE frontend enhancement asset contract failed (frontend-enhancement-asset-invalid).',
+					E_USER_WARNING
+				);
+
+				return;
+			}
+
 			wp_add_inline_script(
 				'easymde-admin-editor-toolbar',
 				'window.EasyMDEEditorRootBootstrap = ' . wp_json_encode(
-					$this->get_editor_root_bootstrap( $post_id, $screen->post_type ),
+					$root_bootstrap,
 					JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
 				) . ';',
 				'before'
 			);
 		}
+	}
+
+	private function is_frontend_asset_error( \Throwable $error ) {
+		return 0 === strpos( $error->getMessage(), 'frontend-enhancement-' );
 	}
 
 	private function enqueue_react_editor_asset( $build_dir = '' ) {

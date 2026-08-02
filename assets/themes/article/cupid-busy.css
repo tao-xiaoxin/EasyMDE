@@ -94,6 +94,10 @@
   font-weight: 500;
 }
 
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy > h1:first-child {
+  margin-top: 30px;
+}
+
 .easymde-rendered-content.easymde-markdown-theme-cupid-busy h1 .content {
   display: flex;
   align-items: center;

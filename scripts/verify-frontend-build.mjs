@@ -130,7 +130,7 @@ const forbiddenContent = [
 	{ pattern: /https?:\/\//i, label: "remote runtime URL" },
 	{
 		pattern:
-		/(?:file:\/\/\/|(?:^|[\s"'=])\/(?:Users|home|private|tmp|var|Volumes|workspace|workspaces|root|mnt|opt|srv|etc|usr)(?:\/|["'\s])|(?:^|[\r\n"'=])\/(?!\/)(?:[A-Za-z0-9._~%+-]+\/){2,}[A-Za-z0-9._~%+-]+|\b[A-Za-z]:[\\/](?:[A-Za-z0-9._~%+-]+[\\/])+|\\\\[A-Za-z0-9._-]+\\[A-Za-z0-9$._-]+)/m,
+		/(?:file:\/\/\/|(?:^|[\s"'=:(])\/(?:Users|home|private|tmp|var|Volumes|workspace|workspaces|root|mnt|opt|srv|etc|usr)(?:\/|["'\s])|(?:^|[\r\n"'=:(])\/(?!\/)(?:[A-Za-z0-9._~%+-]+\/){2,}[A-Za-z0-9._~%+-]+|\b[A-Za-z]:[\\/](?:[A-Za-z0-9._~%+-]+[\\/])+|\\\\[A-Za-z0-9._-]+\\[A-Za-z0-9$._-]+)/m,
 		label: "absolute local path",
 	},
 	{ pattern: /sourceMappingURL=/, label: "source map reference" },

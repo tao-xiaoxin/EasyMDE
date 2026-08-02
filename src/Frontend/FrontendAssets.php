@@ -204,27 +204,22 @@ final class FrontendAssets {
 			);
 		}
 
+		$mermaid_runtime = null;
 		if ( ! empty( $features['mermaid'] ) ) {
-			try {
-				$mermaid_runtime = $this->get_frontend_enhancement_asset(
-					'frontend/src/entrypoints/frontend-mermaid-runtime.ts',
-					'assets/build/frontend-mermaid/',
-					'easymde-mermaid',
-					false
-				);
+			$mermaid_runtime = $this->get_frontend_enhancement_asset(
+				'frontend/src/entrypoints/frontend-mermaid-runtime.ts',
+				'assets/build/frontend-mermaid/',
+				'easymde-mermaid',
+				false
+			);
 
-				wp_enqueue_script(
-					$mermaid_runtime['handle'],
-					Asset::url( $mermaid_runtime['path'] ),
-					array(),
-					$mermaid_runtime['version'],
-					true
-				);
-			} catch ( \RuntimeException $error ) {
-				// Mermaid is optional; retain unrelated public enhancements when its bundle is unavailable.
-				$mermaid_runtime = null;
-				$this->report_frontend_enhancement_asset_error( $error );
-			}
+			wp_enqueue_script(
+				$mermaid_runtime['handle'],
+				Asset::url( $mermaid_runtime['path'] ),
+				array(),
+				$mermaid_runtime['version'],
+				true
+			);
 		}
 
 		$dependencies = array();
@@ -277,8 +272,7 @@ final class FrontendAssets {
 		$enhancements = $this->get_frontend_enhancement_asset(
 			'frontend/src/entrypoints/frontend-enhancements.ts',
 			'assets/build/frontend-enhancements/',
-			'easymde-enhancements',
-			false
+			'easymde-enhancements'
 		);
 
 		wp_enqueue_script(
@@ -291,7 +285,7 @@ final class FrontendAssets {
 	}
 
 	public function get_editor_preview_assets() {
-		$enhancements = $this->get_frontend_enhancement_asset(
+		$enhancements    = $this->get_frontend_enhancement_asset(
 			'frontend/src/entrypoints/frontend-enhancements.ts',
 			'assets/build/frontend-enhancements/',
 			'easymde-enhancements'
@@ -310,6 +304,7 @@ final class FrontendAssets {
 		} catch ( \RuntimeException $error ) {
 			// Mermaid is optional. Preview reports the missing runtime only when a
 			// document actually requests Mermaid rendering.
+			$mermaid_url = null;
 		}
 
 		return array(
@@ -366,7 +361,7 @@ final class FrontendAssets {
 		$file  = isset( $entry['file'] ) ? (string) $entry['file'] : '';
 		$asset = isset( $entry['asset'] ) ? (string) $entry['asset'] : '';
 		if (
-			$expected_handle !== ( $entry['handle'] ?? null )
+			( $entry['handle'] ?? null ) !== $expected_handle
 			|| array() !== ( $entry['dependencies'] ?? null )
 			|| array() !== ( $entry['resources'] ?? null )
 			|| ! preg_match( '#^assets/frontend-(?:enhancements|bootstrap|mermaid)-[A-Za-z0-9_-]+\.js$#', $file )

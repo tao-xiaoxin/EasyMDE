@@ -256,7 +256,8 @@ test('production validation rejects broad remote URLs and absolute build paths',
 
   for (const prohibited of [
     'const remote = "https://[::1]/runtime.js";',
-    'const buildFile = "/srv/ci/workspace/runtime.js";'
+    'const buildFile = "/srv/ci/workspace/runtime.js";',
+    'const stylesheet = "url(/Users/builder/easymde/source.css)";'
   ]) {
     const generatedRoot = mkdtempSync(join(tmpdir(), 'easymde-frontend-unsafe-'));
     cpSync(outputRoot, generatedRoot, { recursive: true });

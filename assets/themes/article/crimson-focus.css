@@ -87,9 +87,10 @@
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus h1 {
   margin: 24px 0 12px;
+  padding: 0;
   color: var(--easymde-crimson-focus-heading);
-  font-family: var(--easymde-content-font-family, "EasyMDE Lora", Lora, Georgia, serif);
-  font-size: 2rem;
+  font-family: "EasyMDE Lora", Lora, Georgia, "Times New Roman", serif !important;
+  font-size: 30px;
   font-weight: 600;
   line-height: 1.2;
   letter-spacing: -0.02em;
@@ -98,21 +99,23 @@
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus h2 {
   display: inline-block;
   margin: 30px 0 9px;
-  padding-bottom: 7.5px;
+  padding: 0 0 7.5px;
   border-bottom: 2px solid var(--easymde-crimson-focus-accent);
   color: var(--easymde-crimson-focus-heading);
-  font-family: var(--easymde-content-font-family, "EasyMDE Inter", system-ui, sans-serif);
-  font-size: 18px;
+  font-family: "EasyMDE Inter", Inter, system-ui, sans-serif !important;
+  font-size: 16.875px;
   font-weight: 600;
   line-height: 1.3;
+  text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus h3 {
   margin: 22.5px 0 6px;
+  padding: 0;
   color: var(--easymde-crimson-focus-heading);
-  font-family: var(--easymde-content-font-family, "EasyMDE Inter", system-ui, sans-serif);
-  font-size: 16px;
+  font-family: "EasyMDE Inter", Inter, system-ui, sans-serif !important;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1.5;
 }
@@ -137,16 +140,51 @@
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus h5,
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus h6 {
   margin: 18px 0 4.5px;
+  padding: 0;
   color: var(--easymde-crimson-focus-muted);
-  font-family: var(--easymde-content-font-family, "EasyMDE Inter", system-ui, sans-serif);
-  font-size: 0.9rem;
+  font-family: "EasyMDE Inter", Inter, system-ui, sans-serif !important;
+  font-size: 13.5px;
   font-weight: 600;
   line-height: 1.5;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus h5,
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus h6 {
+  line-height: 1.85;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus p {
   margin: 11.25px 0;
   color: var(--easymde-crimson-focus-text);
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* WordPress admin heading rules are ID-scoped and otherwise override the
+ * article theme inside #poststuff. Keep the preview typography identical to
+ * the standalone reference UI without changing public article output. */
+#poststuff .easymde-rendered-content.easymde-markdown-theme-crimson-focus h1 {
+  margin: 24px 0 12px;
+  padding: 0;
+}
+
+#poststuff .easymde-rendered-content.easymde-markdown-theme-crimson-focus h2 {
+  margin: 30px 0 9px;
+  padding: 0 0 7.5px;
+  font-size: 16.875px;
+  line-height: 1.3;
+}
+
+#poststuff .easymde-rendered-content.easymde-markdown-theme-crimson-focus h3,
+#poststuff .easymde-rendered-content.easymde-markdown-theme-crimson-focus h4,
+#poststuff .easymde-rendered-content.easymde-markdown-theme-crimson-focus h5,
+#poststuff .easymde-rendered-content.easymde-markdown-theme-crimson-focus h6 {
+  padding: 0;
+}
+
+#poststuff .easymde-rendered-content.easymde-markdown-theme-crimson-focus p {
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus strong {
@@ -391,6 +429,7 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-align: start;
+  text-transform: uppercase;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus td {

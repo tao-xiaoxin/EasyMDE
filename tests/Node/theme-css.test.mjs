@@ -173,11 +173,14 @@ test('Crimson focus follows the reference light surface and preserves code-theme
   assert.match(css, /font-size:\s*15px;\s*\n\s*line-height:\s*1\.85;/);
   assert.match(
     css,
-    /h1\s*\{[\s\S]*font-family:\s*var\(--easymde-content-font-family, "EasyMDE Lora", Lora, Georgia, serif\);[\s\S]*font-size:\s*2rem;[\s\S]*line-height:\s*1\.2;/
+    /h1\s*\{[\s\S]*padding:\s*0;[\s\S]*font-family:\s*"EasyMDE Lora", Lora, Georgia, "Times New Roman", serif !important;[\s\S]*font-size:\s*30px;[\s\S]*line-height:\s*1\.2;/
   );
-  assert.match(css, /h3\s*\{[\s\S]*font-family:\s*var\(--easymde-content-font-family, "EasyMDE Inter", system-ui, sans-serif\);/);
-  assert.match(css, /h4,[\s\S]*h6\s*\{[\s\S]*font-family:\s*var\(--easymde-content-font-family, "EasyMDE Inter", system-ui, sans-serif\);[\s\S]*font-size:\s*0\.9rem;/);
-  assert.match(css, /h2\s*\{[\s\S]*font-size:\s*18px;[\s\S]*letter-spacing:\s*0\.06em;/);
+  assert.match(css, /h3\s*\{[\s\S]*padding:\s*0;[\s\S]*font-family:\s*"EasyMDE Inter", Inter, system-ui, sans-serif !important;[\s\S]*font-size:\s*15px;[\s\S]*line-height:\s*1\.5;/);
+  assert.match(css, /h4,[\s\S]*h6\s*\{[\s\S]*padding:\s*0;[\s\S]*font-family:\s*"EasyMDE Inter", Inter, system-ui, sans-serif !important;[\s\S]*font-size:\s*13\.5px;[\s\S]*line-height:\s*1\.5;/);
+  assert.match(css, /h5,[\s\S]*h6\s*\{\s*line-height:\s*1\.85;/);
+  assert.match(css, /h2\s*\{[\s\S]*padding:\s*0 0 7\.5px;[\s\S]*font-family:\s*"EasyMDE Inter", Inter, system-ui, sans-serif !important;[\s\S]*font-size:\s*16\.875px;[\s\S]*line-height:\s*1\.3;[\s\S]*text-transform:\s*uppercase;[\s\S]*letter-spacing:\s*0\.06em;/);
+  assert.match(css, /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus p\s*\{[\s\S]*font-size:\s*inherit;[\s\S]*line-height:\s*inherit;/);
+  assert.match(css, /#poststuff \.easymde-rendered-content\.easymde-markdown-theme-crimson-focus h2\s*\{[\s\S]*padding:\s*0 0 7\.5px;[\s\S]*font-size:\s*16\.875px;/);
   assert.match(
     css,
     /\.easymde-theme-default-fonts h1\s*\{[\s\S]*font-family:\s*"EasyMDE Lora", Lora, Georgia, "Times New Roman", serif !important;/
@@ -190,8 +193,7 @@ test('Crimson focus follows the reference light surface and preserves code-theme
     css,
     /\.easymde-theme-default-fonts :is\(h1, h2, h3, h4, h5, h6\) :is\(a, strong, em\)\s*\{[\s\S]*font-family:\s*inherit !important;/
   );
-  assert.doesNotMatch(css, /h2\s*\{[\s\S]*text-transform:\s*uppercase;/);
-  assert.match(css, /h2\s*\{[\s\S]*padding-bottom:\s*7\.5px;/);
+  assert.match(css, /h2\s*\{[\s\S]*padding:\s*0 0 7\.5px;/);
   assert.match(
     css,
     /h1 code,[\s\S]*h6 code\s*\{[\s\S]*font-size:\s*inherit;/
@@ -263,7 +265,7 @@ test('Crimson focus follows the reference light surface and preserves code-theme
   assert.match(css, /:is\(ul, ol\) > li:has\(> p > \.easymde-task-checkbox\) > p > \.easymde-task-checkbox/);
   assert.match(css, /:is\(ul, ol\) > li:has\(> input\[type="checkbox"\]\) > input\[type="checkbox"\]/);
   assert.match(css, /:is\(ul, ol\) > li:has\(> p > input\[type="checkbox"\]\) > p > input\[type="checkbox"\]/);
-  assert.doesNotMatch(css, /th\s*\{[\s\S]*text-transform:\s*uppercase;/);
+  assert.match(css, /th\s*\{[\s\S]*text-transform:\s*uppercase;/);
   assert.match(
     css,
     /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus th\s*\{[\s\S]*color:\s*#f8fafc;/,

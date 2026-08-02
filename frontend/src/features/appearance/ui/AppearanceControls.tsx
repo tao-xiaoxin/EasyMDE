@@ -15,7 +15,6 @@ import type {
 } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type { AppearancePort } from '../../../contracts/ports/appearance-port';
 import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
-import { referenceArticleTheme } from '../reference-article-theme';
 import { ImmersiveCustomCssDialog } from './ImmersiveCustomCssDialog';
 import {
   Check,
@@ -91,9 +90,8 @@ const CODE_THEME_SWATCHES: Readonly<Record<string, readonly [string, string]>> =
   'wechat-inspired': ['#F4F4F4', '#333333']
 };
 
-function articleThemeAccent(id: string): string {
-  return referenceArticleTheme(id).accent;
-}
+const DEFAULT_ARTICLE_THEME_SWATCH = '#333333';
+const CUSTOM_CSS_THEME_SWATCH = '#DC2626';
 
 function codeThemeSwatch(id: string): readonly [string, string] {
   return CODE_THEME_SWATCHES[id] ?? ['#F4F4F4', '#333333'];
@@ -598,14 +596,22 @@ export function AppearanceControls({
     ...bootstrap.articleThemes.map((theme) => ({
       id: `theme:${theme.id}`,
       label: theme.label,
-      swatch: articleThemeAccent(theme.id)
+      swatch: theme.swatch ?? DEFAULT_ARTICLE_THEME_SWATCH
     })),
     ...snapshot.customCss.map((item) => ({
       id: `custom:${item.id}`,
       label: item.articleThemeName,
-      swatch: '#DC2626'
+      swatch: CUSTOM_CSS_THEME_SWATCH
     }))
   ];
+  const selectedArticleSwatch = 'custom' === snapshot.state.markdownTheme
+    ? CUSTOM_CSS_THEME_SWATCH
+    : articleOptions.find(
+      ({ id }) => id === selectedArticleValue(snapshot)
+    )?.swatch;
+  const activeArticleSwatch = typeof selectedArticleSwatch === 'string'
+    ? selectedArticleSwatch
+    : DEFAULT_ARTICLE_THEME_SWATCH;
   const codeOptions: ReadonlyArray<ImmersiveThemeOption> = [
     ...bootstrap.codeThemes.map((theme) => ({
       id: `theme:${theme.id}`,
@@ -615,7 +621,7 @@ export function AppearanceControls({
     ...snapshot.customCss.map((item) => ({
       id: `custom:${item.id}`,
       label: item.codeThemeName,
-      swatch: '#DC2626'
+      swatch: CUSTOM_CSS_THEME_SWATCH
     }))
   ];
   const selectArticleTheme = (value: string) => {
@@ -799,6 +805,7 @@ export function AppearanceControls({
             <span
               className="easymde-immersive-theme-accent"
               data-theme={snapshot.state.markdownTheme}
+              style={{ background: activeArticleSwatch }}
               aria-hidden="true"
             />
           </Fragment>

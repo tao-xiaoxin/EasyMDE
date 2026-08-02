@@ -19,9 +19,15 @@ const bootstrap = {
       },
       id: 'default',
       label: 'Default',
-      defaultCodeTheme: 'atom-one-dark'
+      defaultCodeTheme: 'atom-one-dark',
+      swatch: '#1d2327'
     },
-    { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'fullstack-blue' }
+    {
+      id: 'newsprint',
+      label: 'Newsprint',
+      defaultCodeTheme: 'fullstack-blue',
+      swatch: '#3c70c6'
+    }
   ],
   canManageCustomCss: true,
   codeThemeExplicit: false,
@@ -147,6 +153,14 @@ describe('parseAppearanceBootstrap', () => {
         articleThemes: [{ ...bootstrap.articleThemes[0], defaultCodeTheme: 'missing' }]
       },
       code: 'invalid-associated-code-theme'
+    },
+    {
+      name: 'invalid article theme swatch',
+      value: {
+        ...bootstrap,
+        articleThemes: [{ ...bootstrap.articleThemes[0], swatch: 'not-a-color' }]
+      },
+      code: 'invalid-article-theme-swatch'
     },
     {
       name: 'unknown code theme selection',

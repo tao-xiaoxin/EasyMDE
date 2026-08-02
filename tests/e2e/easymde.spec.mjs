@@ -3502,7 +3502,7 @@ test.describe('EasyMDE editor workflows', () => {
     const origin = new URL(page.url()).origin;
     expectRuntimeAssetRequests(
       requests,
-      ['codeFrameCss', 'frontendBootstrap', 'frontendEnhancements', 'highlightScript', 'highlightThemeCss', 'katexCss', 'katexFont', 'katexScript', 'mathCss', 'mermaidScript'],
+      ['codeFrameCss', 'frontendEnhancements', 'highlightScript', 'highlightThemeCss', 'katexCss', 'katexFont', 'katexScript', 'mathCss', 'mermaidScript'],
       origin
     );
     await expect(page.locator('script[src*="/assets/js/admin/bootstrap.js"]')).toHaveCount(0);

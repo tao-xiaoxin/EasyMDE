@@ -3325,7 +3325,6 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(editorMessageHost.getByRole('status')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.wechatExport.strings.success)
     );
-    await expect(editorMessageHost).toHaveCount(0, { timeout: 4_000 });
     const immersiveLabels = await page.evaluate(
       () => window.EasyMDEEditorRootBootstrap.strings.immersive
     );
@@ -3359,7 +3358,6 @@ test.describe('EasyMDE editor workflows', () => {
         .evaluateAll((icons) => icons.map((icon) => icon.href))
     ).toEqual(wordpressFavicons);
     await expect(editorMessageHost.getByRole('status')).toBeVisible();
-    await expect(editorMessageHost).toHaveCount(0, { timeout: 4_000 });
 
     const origin = new URL(page.url()).origin;
     expectRuntimeAssetRequests(

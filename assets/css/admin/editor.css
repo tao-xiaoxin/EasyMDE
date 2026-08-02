@@ -1640,13 +1640,12 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-settings-popover > header button { display: grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #9ca0a8; cursor: pointer; }
 .easymde-immersive-settings-popover > header button:hover { background: #f3f4f6; color: #4b5160; }
 .easymde-immersive-settings-list { padding: 4px 14px 10px; }
-.easymde-immersive-settings-list > label { position: relative; display: flex; box-sizing: border-box; width: 100%; min-height: 0; align-items: center; gap: 8px; padding: 10px 3px; border-bottom: 1px solid #ecedf0; background: transparent; color: #171a20; text-align: start; cursor: pointer; }
-.easymde-immersive-settings-list > label:last-child { border-bottom: 0; }
-.easymde-immersive-settings-list > label:hover { background: #f8f9fb; }
-.easymde-immersive-settings-list > label:has(input:focus-visible) { outline: 2px solid #bfdbfe; outline-offset: -2px; }
-.easymde-immersive-settings-list input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.easymde-immersive-settings-list > button { position: relative; display: flex; box-sizing: border-box; width: 100%; min-height: 0; align-items: center; gap: 8px; padding: 10px 3px; border: 0; border-bottom: 1px solid #ecedf0; background: transparent; color: #171a20; font: inherit; text-align: start; cursor: pointer; }
+.easymde-immersive-settings-list > button:last-child { border-bottom: 0; }
+.easymde-immersive-settings-list > button:hover { background: #f8f9fb; }
+.easymde-immersive-settings-list > button:focus-visible { outline: 2px solid #bfdbfe; outline-offset: -2px; }
 .easymde-immersive-settings-check { display: grid; width: 22px; height: 22px; flex: 0 0 auto; place-items: center; color: #0b6cff; }
-.easymde-immersive-settings-list > label > span:last-child { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+.easymde-immersive-settings-list > button > span:last-child { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
 .easymde-immersive-settings-list strong { font-size: 13.5px; font-weight: 700; line-height: 20.25px; }
 .easymde-immersive-settings-list small { color: #9ca0a8; font-size: 11.5px; line-height: 1.4; }
 

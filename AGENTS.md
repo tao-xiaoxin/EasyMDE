@@ -327,9 +327,16 @@ State-changing operations:
   report success until the real WordPress or browser owner succeeds.
 - Clipboard adapters must invoke `navigator.clipboard.write` in the originating
   user-activation task. Asynchronous approved theme-image materialization uses
-  deferred `ClipboardItem` payloads for the modern path and a shared prewarmed
-  asset cache for the legacy path; a fetch or conversion failure remains an
-  explicit copy failure rather than partial success.
+  deferred `ClipboardItem` payloads for the modern path and a shared prepared
+  payload for the legacy path. Legacy `execCommand` must run synchronously in
+  the originating click task after preparation has completed; a pending
+  preparation or a rejected modern write must not cross an `await` and then
+  fall back to legacy. If `ClipboardItem` construction or the `write()` call
+  itself throws synchronously, an already prepared payload may use legacy in
+  that same click task; an asynchronous write rejection remains a failure.
+  Modern copy reports success only after both the browser write and deferred
+  payload resolve; fetch or conversion failure remains an explicit copy
+  failure rather than partial success.
 - Protected Mutations do not retry automatically. They handle duplicate
   activation, cancellation, stale results, Network failure, and lost
   authentication, capability, Nonce freshness, or Post Lock truthfully.
@@ -381,15 +388,47 @@ authority:
 - `frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts`
   is the single serializer. The modern Clipboard API and the legacy
   `execCommand` path consume the same normalized HTML; the modern path derives
-  `text/plain` from that one clone, while the legacy path selects the same HTML
-  and lets the destination derive visible plain text. The legacy path is a
-  user-initiated compatibility attempt, not a second renderer or silent
-  success.
+  `text/plain` from the connected normalized export surface captured for that
+  same preparation, while the legacy path selects the same HTML and lets the
+  destination derive visible plain text. Stable Preview
+  notifications schedule one debounced preparation for the current sink after
+  the Preview settles. The
+  legacy path may consume it only when already resolved in the same user
+  activation task; it must fail explicitly while preparation is pending and
+  must never be entered after an asynchronous modern-write rejection. A
+  synchronous modern setup failure may use that prepared payload in the same
+  task. Window/viewport and immersive split-layout changes schedule the same
+  debounced preparation, so a layout-only change cannot strand a stale legacy
+  payload. Background preparation failures are consumed by the next actual
+  copy attempt and are not reported as copy failures while editing or viewing.
+  The browser environment also observes the current Preview sink's image/video
+  load, error, metadata, and resize events, FontFaceSet loading
+  completion/failure, ResizeObserver geometry, and inserted or removed
+  descendants; those post-render layout changes schedule the same refresh,
+  removed nodes are unobserved immediately, and all listeners/observers are
+  removed when the sink changes or the Root is torn down.
+  The observer follows the actual active copy surface when immersive visual
+  Preview mounts or replaces the ordinary Preview surface. Appearance and
+  Custom CSS changes that first leave visual editing increment a Root-owned
+  refresh revision; its post-unmount layout effect prepares the surviving
+  Preview surface instead of scheduling work against a disposed visual runtime.
+  This is a user-initiated compatibility attempt, not a second renderer or
+  silent success. Immersive visual Preview edits coalesce preparation after
+  rapid input, and the serializer compares the full current sink markup,
+  including root `class`/`style` attributes, plus the current viewport,
+  computed export styles, pseudo-element styles, and element geometry before
+  reusing a payload. Font, theme, or responsive layout changes therefore
+  cannot reuse stale HTML, and ordinary and immersive paths cannot reuse output
+  from an earlier edit.
 - The serialized tree removes scripts, styles, controls, CSS classes, and
   source/editor transient attributes, retains only valid fragment IDs and
   SVG-internal IDs, sanitizes URL/style values, and materializes only bounded
-  same-origin `/assets/images/` background assets as safe data images. Safe
-  image `src`/`srcset` candidates and link URLs remain; unsafe URLs and
+  same-origin `/assets/images/` background assets as safe data images. Repeating
+  theme backgrounds retain their materialized `background` declaration instead
+  of being flattened to one `<img>`. Generated
+  theme-image `<img>` nodes retain their explicit background dimensions and are
+  excluded from the generic responsive `height:auto` media rule. Safe image
+  `src`/`srcset` candidates and link URLs remain; unsafe URLs and
   non-allowlisted CSS background URLs are dropped. KaTeX MathML is removed while
   its visual tree, SVG geometry,
   quoted-literal pseudo-element decorations, and approved computed styles are
@@ -403,8 +442,15 @@ authority:
   from the modern `text/plain` payload. This rule is scoped to Mermaid
   `foreignObject` labels and must not alter ordinary SVG or KaTeX geometry.
 - Article/div roots are normalized to portable sections, text leaves are wrapped
-  for destination stability, non-math SVG and media receive responsive bounds,
-  and code/KaTeX whitespace markers are removed from plain text.
+  for destination stability, non-math SVG and media receive responsive bounds
+  without changing an inline media element's computed display or margins,
+  and code/KaTeX whitespace markers are removed from plain text. Non-root theme
+  decoration nodes retain safe computed layout properties such as dimensions,
+  positioning, flex sizing, float, overflow, and box sizing; preview-root editor
+  geometry is still excluded. Materialized background-image overlays use an
+  isolated negative stacking level so they remain behind copied text; computed
+  `0%`, `50%`, and `100%` positions normalize before centered axes compose both
+  translations instead of shifting or covering decorations in the pasted article.
 - Code lines, tables, and long display formulas may own horizontal overflow;
   their vertical overflow is hidden and their height remains content-driven.
   The exporter must not add a whole-article height or vertical scroll

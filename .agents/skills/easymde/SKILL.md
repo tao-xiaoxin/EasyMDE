@@ -1027,8 +1027,9 @@ Feature boundaries:
   `integrations/browser/wechat/create-browser-wechat-clipboard.ts` owns one
   clone/serialization pipeline; `navigator.clipboard.write` and the legacy
   `document.execCommand('copy')` compatibility path must consume the same
-  normalized HTML. The modern path writes `text/plain` from that same clone
-  after removing exporter whitespace markers and normalizing non-breaking spaces;
+  normalized HTML. The modern path writes `text/plain` from the connected
+  normalized export surface captured for that same preparation, after removing
+  exporter whitespace markers and normalizing non-breaking spaces;
   the legacy path selects the same HTML and lets the destination derive visible
   plain text. Do not
   add a Markdown renderer, copy the CodeMirror/editor shell DOM, or maintain a
@@ -1046,14 +1047,45 @@ Feature boundaries:
   `data-easymde-preview-refreshing="1"`, and `aria-busy="true"`; a missing
   Preview element is the same unavailable result.
   Theme-image preparation must share the Adapter's bounded asset cache with
-  Copy: stable Preview notifications may prewarm approved `/assets/images/`
-  data URLs before a user click. The cache is limited to 32 pending or resolved
+  Copy: stable Preview notifications schedule one debounced preparation after
+  the Preview settles, which may prewarm approved `/assets/images/` data URLs
+  before a user click. The cache is limited to 32 pending or resolved
   assets, and each fetched blob is size/type validated. The modern Adapter must
   still construct one `ClipboardItem` with deferred `Blob` payload Promises and call
   `navigator.clipboard.write` in the originating activation task, because a
-  `fetch`/`FileReader` await can otherwise lose transient user activation.
-  The legacy path consumes the same serialized HTML after preparation; it must
-  not emit a partial URL or claim success when preparation fails.
+  `fetch`/`FileReader` await can otherwise lose transient user activation. It
+  reports success only after both the browser write and deferred payload resolve;
+  a fast write must not hide a later serialization failure.
+  Preparation stores one serialized HTML/plain-text payload for the current
+  stable Preview sink. The legacy path consumes that already-resolved payload
+  synchronously in the originating click task; it must fail while preparation
+  is pending, must not await theme-image work from the click handler, and must
+  not be entered after an asynchronous modern-write rejection. If
+  `ClipboardItem` construction or `write()` invocation throws synchronously,
+  the same click task may use an already prepared payload through legacy. It
+  must not emit a partial URL or claim success when preparation fails. Window
+  or viewport resize and immersive split-pane changes schedule the same
+  debounced preparation so layout-only changes refresh the legacy payload;
+  background preparation failures are reported only by a later copy attempt,
+  not as copy failures during ordinary editing. Rapid immersive visual Markdown
+  edits coalesce preparation, while the serializer
+  compares the full current sink markup, including root `class`/`style`
+  attributes, plus the current viewport, computed export styles,
+  pseudo-element styles, and element geometry before reusing a payload. Font,
+  theme, or responsive layout changes therefore cannot reuse stale HTML, and
+  an immersive surface cannot reuse output from an earlier edit or when the
+  mode opened. The browser environment observes the current Preview sink's
+  image/video load, error, metadata, and resize events, FontFaceSet loading
+  completion/failure, ResizeObserver geometry, and inserted or removed
+  descendants; these post-render layout changes schedule the same debounced
+  preparation, removed nodes are unobserved immediately, and all
+  listeners/observers are cleaned up when the sink changes or the Root is torn
+  down.
+  The observer must follow the actual active copy surface when immersive visual
+  Preview mounts or replaces the ordinary Preview owner. If an appearance or
+  Custom CSS mutation first exits visual editing, increment a Root-owned
+  refresh revision and prepare the surviving Preview surface after the visual
+  runtime cleanup; do not leave a timer attached to the disposed runtime.
   The pipeline removes scripts, styles, controls, CSS classes, and source/editor
   transient attributes; keeps only valid fragment IDs and SVG-internal IDs;
   sanitizes URL/style values; preserves safe image `src`/`srcset` candidates and
@@ -1061,8 +1093,12 @@ Feature boundaries:
   materializes same-origin
   `/assets/images/` background assets as bounded GIF/JPEG/PNG/WebP data images
   (at most 32 cache entries; each fetched source blob is limited by
-  `MAX_DATA_IMAGE_LENGTH` = 4,000,000).
-  It preserves approved computed styles,
+  `MAX_DATA_IMAGE_LENGTH` = 4,000,000). Repeating theme backgrounds retain
+  their materialized `background` declaration instead of being flattened to one
+  `<img>`. Generated theme-image `<img>` nodes
+  retain their explicit background dimensions and are excluded from the
+  generic responsive `height:auto` media rule.
+  It preserves approved computed styles, including non-default flex sizing,
   quoted-literal pseudo decorations, code-frame geometry, table layout, and
   KaTeX visual SVG geometry while removing KaTeX MathML. Exporter-owned
   `aria-hidden` decoration and `leaf` markers are structural exceptions to the
@@ -1077,8 +1113,14 @@ Feature boundaries:
   It normalizes article/div roots to portable section structure, wraps text
   leaves, preserves code and KaTeX whitespace markers, sanitizes `srcset` and
   fragment IDs along with ordinary URL attributes, and gives non-math SVG and
-  media responsive bounds. A theme-image fetch or data conversion failure must
-  fail the copy rather than emit a partial payload.
+  media responsive bounds without changing an inline media element's computed
+  display or margins. Non-root theme decoration nodes retain safe computed
+  dimensions, positioning, flex sizing, float, overflow, and
+  box-sizing while preview-root editor geometry remains excluded. Materialized
+  background overlays use an isolated negative stacking level so they remain
+  behind copied text; computed `0%`, `50%`, and `100%` background positions are
+  normalized before composing centered image overlays. A theme-image fetch or
+  data conversion failure must fail the copy rather than emit a partial payload.
   Code lines must retain explicit line breaks and non-wrapping intrinsic line
   boxes. The `<pre>`/direct-`<code>` frame pair receives the horizontal
   overflow rules required by the destination; browser evidence must identify
@@ -1088,10 +1130,12 @@ Feature boundaries:
   whole-article height constraint. A page-level WeChat scrollbar is outside
   this Adapter's ownership and must be diagnosed from the current session
   before changing export code.
-  Clipboard rejection is a failure. The legacy compatibility attempt is part
-  of the same explicit user action, not silent success. Always restore
-  Selection, Focus, Scroll, and temporary DOM on every fallback exit, and
-  leave article state untouched.
+  Clipboard rejection is a failure; a rejected modern write is not an
+  invitation to cross an asynchronous boundary into legacy `execCommand`.
+  The legacy compatibility attempt is part of the same explicit user action,
+  consumes only an already-prepared payload, and is not silent success.
+  Always restore Selection, Focus, Scroll, and temporary DOM on every legacy
+  exit, and leave article state untouched.
 - **AI assistant:** use `AiPort` and explicit user action; keep credentials server-side; disclose the selected provider and content boundary, send only the context required for the requested action, and make retention/logging policy explicit. Treat model output as untrusted; generated changes remain visible, rejectable, undoable, cancellation/stale-safe, and never automatically save, publish, upload, change settings, or execute returned code.
 
 ### Theme, Code Ownership, and Font Duplication Gate

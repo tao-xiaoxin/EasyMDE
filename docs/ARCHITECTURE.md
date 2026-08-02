@@ -140,14 +140,42 @@ HTMLElement it receives and does not establish a second document authority. The
 that session passes it the current stable Preview sink. Both
 `navigator.clipboard.write` and the legacy `document.execCommand('copy')`
 compatibility path receive the same normalized HTML. The modern path derives
-`text/plain` from that clone after removing exporter whitespace markers and
-normalizing non-breaking spaces; the legacy path selects the same HTML and lets
-the destination derive visible plain text. Stable Preview notifications may
-prewarm the Adapter's bounded same-origin theme-image cache (at most 32
-entries). When preparation
-is still pending, the modern path passes deferred `Blob` Promises to one
-`ClipboardItem` and starts `navigator.clipboard.write` in the originating click
-task; the legacy path uses the same prepared HTML after the cache resolves.
+`text/plain` from the connected normalized export surface captured for that
+same preparation after removing exporter whitespace markers and normalizing
+non-breaking spaces; the legacy path selects the same HTML and lets the
+destination derive visible plain text. Stable Preview notifications schedule
+one debounced preparation after the Preview settles; this may prewarm the
+Adapter's bounded same-origin theme-image cache (at most 32 entries). When
+preparation is still pending, the modern path passes deferred
+`Blob` Promises to one `ClipboardItem` and starts `navigator.clipboard.write` in
+the originating click task. Preparation retains one serialized HTML/plain-text
+payload for the current Preview sink; the legacy path consumes it only when
+already resolved and calls `execCommand` synchronously in that same click task.
+  A click before preparation completes, a modern write rejected after an await,
+  or a payload that resolves after a fast write with an error is an explicit
+  failure and never enters legacy asynchronously. A synchronous
+  `ClipboardItem`/`write()` setup failure may use an already prepared payload
+  through legacy in the same click task. Immersive visual edits coalesce
+  preparation, and later stable Preview notifications replace the prepared
+  payload; the full sink markup, including root `class`/`style` attributes,
+  plus the current viewport, computed export styles, pseudo-element styles, and
+  element geometry is checked before reuse. Window/viewport resize and
+  immersive split-pane changes schedule a refreshed payload, so layout-only
+  changes cannot strand a stale legacy copy. Background preparation failures
+  remain quiet until the actual copy attempt reports the failure. The browser
+  environment also observes the current sink's image/video load, error,
+  metadata, and resize events, FontFaceSet loading completion/failure,
+  ResizeObserver geometry, and inserted or removed descendants; those
+  post-render layout changes schedule the same refresh, removed nodes are
+  unobserved immediately, and observers/listeners are cleaned up with the sink.
+  Font, theme,
+  or responsive layout changes cannot reuse stale HTML, and output from the
+  moment immersive mode opened or from an earlier edit is not reused.
+  The EditorRoot observes whichever Preview surface is currently active,
+  including the immersive visual surface. When a visual appearance or Custom CSS
+  update first tears down that runtime, a Root-owned appearance revision waits
+  for cleanup and then prepares the surviving Preview surface so legacy Copy
+  never depends on a disposed element.
 Copy is a browser compatibility output and never writes Markdown,
 `post_content`, metadata, revisions, or publication state.
 
@@ -166,14 +194,24 @@ SVG-internal IDs; sanitizes URL and style values; preserves safe image `src`,
 background URLs; and
 materializes same-origin `/assets/images/` background assets as bounded
 GIF/JPEG/PNG/WebP data images (at most 32 cached assets; each fetched source
-blob is limited by `MAX_DATA_IMAGE_LENGTH` = 4,000,000). It preserves
+blob is limited by `MAX_DATA_IMAGE_LENGTH` = 4,000,000). Repeating theme
+backgrounds retain their materialized `background` declaration rather than
+being flattened to one `<img>`. Generated theme-image
+`<img>` nodes retain their explicit background dimensions and are excluded from
+the generic responsive `height:auto` media rule. It preserves
 approved computed typography, borders, quoted-literal pseudo elements, theme
-decorations, non-math SVG responsiveness, media bounds, and KaTeX's visual SVG
-tree, but removes KaTeX MathML so WeChat cannot import two competing formula
-trees. Exporter-owned `aria-hidden` decoration and `leaf` markers are structural
-exceptions to source transient-attribute removal. Article/div roots become
-portable sections and text leaves are wrapped for destination stability. Code
-frames encode line breaks explicitly and keep each source line non-wrapping.
+  decorations, non-root decoration dimensions/positioning/flex sizing/float/
+  overflow and box sizing, non-math SVG responsiveness, media bounds without
+  changing inline media display or margins, and
+  KaTeX's visual SVG tree, but removes KaTeX MathML so WeChat cannot import two
+  competing formula trees. Materialized background-image overlays use an
+  isolated negative stacking level so they remain behind copied text. Computed
+  `0%`, `50%`, and `100%` background positions are normalized before composing
+  centered theme-image overlays. Exporter-owned `aria-hidden` decoration
+and `leaf` markers are structural exceptions to source transient-attribute
+removal. Article/div roots become portable sections and text leaves are wrapped
+for destination stability. Code frames encode line breaks explicitly and keep
+each source line non-wrapping.
 Tables and display formulas are centered within the destination column and
 receive horizontal-overflow rules; inline formulas remain non-wrapping. The
 actual code/table/formula scroll owner must be checked in the destination, and

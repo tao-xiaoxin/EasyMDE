@@ -26,32 +26,69 @@ enhanced Preview Safe HTML sink; the Adapter itself accepts an HTMLElement and
 does not establish a second document authority. It builds one normalized clone.
 Both the modern `navigator.clipboard.write` path and the legacy
 `document.execCommand('copy')` compatibility path use the same HTML. The modern
-path writes `text/plain` from that clone after removing exporter whitespace
-markers and normalizing non-breaking spaces; the legacy path selects that same
-HTML and lets the destination derive visible plain text.
+path writes `text/plain` from the connected normalized export surface captured
+for that same preparation after removing exporter whitespace markers and
+normalizing non-breaking spaces; the legacy path selects that same HTML and lets the
+destination derive visible plain text.
 
-Stable Preview notifications may prewarm the bounded same-origin theme-image
-cache shared by preparation and Copy (at most 32 entries). If an approved image
+Stable Preview notifications schedule one debounced preparation after the
+Preview settles; this may prewarm the bounded same-origin theme-image cache
+shared by preparation and Copy (at most 32 entries). If an approved image
 is still pending at the click, the modern path supplies deferred `Blob` Promises to one
 `ClipboardItem` and starts `navigator.clipboard.write` in the originating
-activation task. The legacy path consumes the same serialized HTML after the
-cache resolves; either path fails explicitly when preparation or conversion
-fails.
+activation task. Preparation retains one serialized HTML/plain-text payload for
+the current Preview sink. The legacy path consumes that payload only when it is
+already resolved and invokes `execCommand` synchronously in the originating
+click task. If preparation is pending, or if modern writing rejects after an
+await, the operation fails explicitly rather than entering legacy after the
+activation window. Copy reports success only after both the browser write and
+deferred HTML/plain-text payload resolve; preparation or conversion failures
+never produce partial output.
+Window/viewport resize and immersive split-pane changes schedule a refreshed
+payload, so layout-only changes cannot strand a stale legacy copy. Background
+preparation failures remain quiet until the actual copy attempt reports the
+failure. The browser environment also observes Preview image/video load, error,
+metadata, and resize events, FontFaceSet loading completion/failure,
+ResizeObserver geometry, and inserted or removed descendants; these post-render
+layout changes schedule the same refresh, removed nodes are unobserved
+immediately, and the observers are cleaned up with the Preview sink.
+The EditorRoot binds that observer to the actual ordinary or immersive Preview
+surface. A theme or Custom CSS change that first exits visual editing records a
+Root-owned appearance revision and prepares the surviving Preview after visual
+runtime teardown, so legacy Copy never uses a disposed surface or waits for an
+unrelated edit.
+Immersive visual edits coalesce preparation after rapid input, and later stable
+Preview notifications replace the prepared payload before another copy. The
+serializer compares the full sink markup, including root `class`/`style`
+attributes, plus the current viewport, computed export styles, pseudo-element
+styles, and element geometry before reuse, so font/theme-only changes,
+responsive layout changes, and immersive edits cannot reuse HTML captured when
+the surface was first opened or before a later edit.
 
 The normalized payload:
 
 - removes scripts, styles, interactive controls, CSS classes, and source/editor
   transient attributes; preserves only valid fragment IDs and SVG-internal IDs;
 - validates URL and style values, and materializes only same-origin
-  `/assets/images/` background assets as safe GIF/JPEG/PNG/WebP data images
+  `/assets/images/` background assets as safe GIF/JPEG/PNG/WebP data images;
+  repeating theme backgrounds retain their materialized `background`
+  declaration rather than being flattened to one `<img>`;
   bounded to 32 cache entries and by the fetched source blob limit
   `MAX_DATA_IMAGE_LENGTH` = 4,000,000;
   safe image `src`/`srcset`
   candidates and link URLs remain while unsafe URLs and non-allowlisted CSS
   background URLs are dropped;
 - preserves approved computed typography, borders, quoted-literal pseudo-element
-  decorations, code-frame geometry, table structure, responsive non-math SVG and
-  media bounds, and KaTeX's visual SVG geometry while removing KaTeX MathML;
+  decorations, non-root theme decoration dimensions/positioning/flex sizing/
+  float/overflow and box sizing, code-frame geometry, table structure,
+  responsive non-math SVG and media bounds without changing inline media
+  display or margins, and KaTeX's visual SVG geometry
+  while removing KaTeX MathML; materialized background images use an isolated
+  negative stacking level so they remain behind copied text; computed `0%`,
+  `50%`, and `100%` background positions are normalized before composing
+  centered theme-image overlays; generated theme-image `<img>` nodes retain
+  their explicit background dimensions and are excluded from the generic
+  responsive `height:auto` media rule;
   exporter-owned `aria-hidden` decoration and `leaf` markers remain as
   structural exceptions;
 - treats Mermaid HTML-label SVGs as a destination-font compatibility boundary:
@@ -72,8 +109,13 @@ The normalized payload:
   vertical scroll container.
 
 The legacy path is a compatibility branch inside the same explicit user action,
-not a second renderer or a silent success. Clipboard failure remains a failure;
-temporary fallback DOM, Selection, Focus, and Scroll are restored on every exit.
+not a second renderer or a silent success. It consumes only an already-prepared
+payload and never performs asynchronous serialization in the click handler. If
+`ClipboardItem` construction or the `write()` call throws synchronously, that
+same click task may use the prepared legacy payload; a modern write rejection
+after an await remains a failure rather than an asynchronous legacy fallback.
+Clipboard failure remains a failure; temporary fallback DOM, Selection, Focus,
+and Scroll are restored on every exit.
 
 `createWechatExportSession` is the single session owner shared by the ordinary
 and immersive editor surfaces. It checks the enabled/active state and current
@@ -110,13 +152,14 @@ All runtime assets remain local; no remote executable resource is introduced.
 
 The focused serializer tests cover unsafe input, pseudo elements, theme-image
 materialization, delayed modern Clipboard activation, Mermaid non-ASCII label
-preservation, code line preservation,
-table/formula horizontal overflow, KaTeX MathML removal, modern/legacy HTML parity,
-and an explicit failure result
-with sandbox cleanup. The current suite still needs explicit cases for modern
-rejection followed by legacy success, `ClipboardItem` construction failure,
-unsupported legacy results, theme-image fetch/data-conversion failures, and
-full Selection/Focus/Scroll restoration on every failure path. The companion
+preservation, code line preservation, table/formula horizontal overflow, KaTeX
+MathML removal, modern/legacy HTML parity, synchronous legacy preparation,
+rejection without asynchronous legacy fallback, deferred payload failure after
+a fast write, and an explicit failure result with sandbox cleanup. The current
+suite still needs explicit cases for
+`ClipboardItem` construction failure, unsupported legacy results, theme-image
+fetch/data-conversion failures, and full Selection/Focus/Scroll restoration on
+every failure path. The companion
 session tests cover concurrent single-flight, unsupported results, and late
 teardown; disabled/inactive and all Preview-readiness variants remain required
 boundary cases. The full frontend checks validate the compiled admin bundle and

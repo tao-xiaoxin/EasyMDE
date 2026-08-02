@@ -5,8 +5,9 @@ import type {
 
 const COPY_STYLE_PROPERTIES = [
   'display', 'flex-direction', 'flex-wrap', 'flex-flow', 'justify-content',
-  'align-items', 'align-content', 'align-self', 'order', 'gap', 'column-gap',
-  'row-gap', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+  'align-items', 'align-content', 'align-self', 'order', 'flex', 'flex-grow',
+  'flex-shrink', 'flex-basis', 'gap', 'column-gap', 'row-gap', 'margin-top',
+  'margin-right', 'margin-bottom', 'margin-left',
   'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
   'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
   'border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style',
@@ -32,6 +33,11 @@ const SPECIAL_LAYOUT_PROPERTIES = [
   'position', 'top', 'right', 'bottom', 'left', 'width', 'min-width', 'max-width',
   'height', 'min-height', 'max-height', 'overflow', 'overflow-x', 'overflow-y',
   'box-sizing', 'transform', 'transform-origin', 'z-index'
+] as const;
+const ORDINARY_LAYOUT_PROPERTIES = [
+  'position', 'top', 'right', 'bottom', 'left', 'width', 'min-width', 'max-width',
+  'height', 'min-height', 'max-height', 'overflow', 'overflow-x', 'overflow-y',
+  'box-sizing', 'float', 'clear', 'transform', 'transform-origin', 'z-index'
 ] as const;
 
 const KATEX_VISUAL_LAYOUT_DECLARATIONS = [
@@ -81,9 +87,12 @@ const DEFAULT_STYLE_VALUES: Record<string, Set<string>> = {
   'box-shadow': new Set(['none']),
   'column-gap': new Set(['normal', '0px']),
   'display': new Set(),
+  'flex-basis': new Set(['auto']),
   'flex-direction': new Set(['row']),
   'flex-flow': new Set(['row nowrap']),
   'flex-wrap': new Set(['nowrap']),
+  'flex-grow': new Set(['0']),
+  'flex-shrink': new Set(['1']),
   'font-stretch': new Set(['100%']),
   'font-variant': new Set(['normal']),
   'gap': new Set(['normal', '0px']),
@@ -105,7 +114,20 @@ const KATEX_VISUAL_NODES = new WeakSet<Element>();
 const MATH_BLOCK_ROOTS = new WeakSet<Element>();
 const MERMAID_SVG_ROOTS = new WeakSet<Element>();
 const MERMAID_FOREIGN_OBJECTS = new WeakSet<Element>();
+const THEME_IMAGE_CLONES = new WeakSet<Element>();
 const HIDDEN_NODES = new WeakSet<Element>();
+
+const PREPARED_STYLE_PROPERTIES = [...new Set([
+  ...COPY_STYLE_PROPERTIES,
+  ...SVG_STYLE_PROPERTIES,
+  ...SPECIAL_LAYOUT_PROPERTIES,
+  ...ORDINARY_LAYOUT_PROPERTIES,
+  'background-position',
+  'background-repeat',
+  'background-size',
+  'content'
+])];
+const PREPARED_PSEUDO_ELEMENTS = ['::before', '::after'] as const;
 
 export type ClipboardItemConstructor = new (payload: Record<string, Blob>) => unknown;
 
@@ -123,6 +145,19 @@ export type BrowserWechatClipboardRuntime = Readonly<{
 
 type BackgroundAssetCache = Map<string, Promise<string>>;
 const MAX_BACKGROUND_ASSET_CACHE_ENTRIES = 32;
+
+type SerializedClipboardPayload = Readonly<{
+  html: string;
+  text: string;
+}>;
+
+type PreparedClipboardPayload = {
+  payload: SerializedClipboardPayload | null;
+  promise: Promise<SerializedClipboardPayload>;
+  sourceMarkup: string;
+  layoutSignature: string;
+};
+type PreparedClipboardPayloadCache = WeakMap<HTMLElement, PreparedClipboardPayload>;
 
 function cacheBackgroundAsset(
   cache: BackgroundAssetCache,
@@ -235,14 +270,24 @@ function dataImageUrlsFromDeclarations(declarations: string[]): string[] {
   return [...urls];
 }
 
-function removeDataImageBackgroundDeclarations(declarations: string[]): string[] {
+function removeDataImageBackgroundDeclarations(
+  declarations: string[],
+  preserveRepeatingBackground: boolean
+): string[] {
   return declarations.filter((declaration) => {
     const separator = declaration.indexOf(':');
     if (separator < 0 || !['background', 'background-image'].includes(declaration.slice(0, separator))) {
       return true;
     }
-    return !hasOnlySafeDataImageUrls(declaration.slice(separator + 1));
+    const value = declaration.slice(separator + 1);
+    return preserveRepeatingBackground || !hasOnlySafeDataImageUrls(value);
   });
+}
+
+function hasRepeatingBackground(computed: CSSStyleDeclaration): boolean {
+  return /(?:^|\s)(?:repeat|repeat-x|repeat-y|space|round)(?:\s|$)/i.test(
+    computed.getPropertyValue('background-repeat').trim()
+  );
 }
 
 function backgroundLength(value: string): string | null {
@@ -274,13 +319,14 @@ function appendThemeImages(
     ? elementHeight ?? backgroundSize.height
     : backgroundSize.height ?? elementHeight;
   const position = computed.getPropertyValue('background-position').trim().split(/\s+/).filter(Boolean);
-  const positionX = position[0] ?? '0%';
-  const positionY = position[1] ?? '0%';
+  const positionX = backgroundPositionAxis(position[0] ?? '0%', 'x');
+  const positionY = backgroundPositionAxis(position[1] ?? '0%', 'y');
   const overlay = !emptyDecoration && Boolean(clone.textContent?.trim() || clone.children.length);
 
   imageUrls.forEach((src, index) => {
     const image = document.createElement('img');
     image.setAttribute('src', src);
+    THEME_IMAGE_CLONES.add(image);
     const declarations = ['display:block', 'max-width:100%'];
     if (imageWidth) declarations.push(`width:${imageWidth}`);
     if (imageHeight) declarations.push(`height:${imageHeight}`);
@@ -290,14 +336,26 @@ function appendThemeImages(
       } else if (!clone.getAttribute('style')?.includes('position:')) {
         appendDeclarations(clone, [`position:${computed.getPropertyValue('position')}`]);
       }
-      declarations.push('position:absolute', 'z-index:0', 'pointer-events:none');
-      if ('center' === positionX) declarations.push('left:50%', 'transform:translateX(-50%)');
-      else if ('right' === positionX) declarations.push('right:0');
+      // Isolate the cloned element so a negative stacking level paints above
+      // its background but below normal-flow text. This preserves the source
+      // background-image semantics after materializing it as an <img> child.
+      appendDeclarations(clone, ['isolation:isolate']);
+      declarations.push('position:absolute', 'z-index:-1', 'pointer-events:none');
+      const transforms: string[] = [];
+      if ('center' === positionX) {
+        declarations.push('left:50%');
+        transforms.push('translateX(-50%)');
+      }
+      else if ('end' === positionX) declarations.push('right:0');
+      else if ('start' === positionX) declarations.push('left:0');
       else declarations.push(`left:${positionX}`);
       if ('center' === positionY) {
-        declarations.push('top:50%', 'transform:translate(-50%,-50%)');
-      } else if ('bottom' === positionY) declarations.push('bottom:0');
+        declarations.push('top:50%');
+        transforms.push('translateY(-50%)');
+      } else if ('end' === positionY) declarations.push('bottom:0');
+      else if ('start' === positionY) declarations.push('top:0');
       else declarations.push(`top:${positionY}`);
+      if (transforms.length) declarations.push(`transform:${transforms.join(' ')}`);
       if (index > 0) declarations.push('display:none');
       clone.insertBefore(image, clone.firstChild);
     } else {
@@ -305,6 +363,16 @@ function appendThemeImages(
     }
     image.setAttribute('style', declarations.join(';'));
   });
+}
+
+function backgroundPositionAxis(value: string, axis: 'x' | 'y'): 'center' | 'start' | 'end' | string {
+  const normalized = value.trim().toLowerCase();
+  if ('center' === normalized || /^50(?:\.0+)?%$/.test(normalized)) return 'center';
+  if (('x' === axis && 'left' === normalized) || ('y' === axis && 'top' === normalized)
+    || /^0(?:\.0+)?%$/.test(normalized)) return 'start';
+  if (('x' === axis && 'right' === normalized) || ('y' === axis && 'bottom' === normalized)
+    || /^100(?:\.0+)?%$/.test(normalized)) return 'end';
+  return value;
 }
 
 function keepStyle(
@@ -325,6 +393,8 @@ function keepStyle(
     && hasOnlySafeDataImageUrls(value);
   if (UNSAFE_STYLE_VALUE.test(value) && !svgFragmentUrl && !safeDataImageStyle) return false;
   if ('display' === property && true !== SAFE_DISPLAY_VALUES[value]) return false;
+  if ('float' === property && !['none', 'left', 'right', 'inline-start', 'inline-end'].includes(value)) return false;
+  if ('clear' === property && !['none', 'left', 'right', 'both', 'inline-start', 'inline-end'].includes(value)) return false;
   if ('position' === property && !['static', 'relative', 'absolute'].includes(value)) return false;
   if (DEFAULT_STYLE_VALUES[property]?.has(value)) return false;
   if ('normal' === value && ['font-style', 'letter-spacing', 'text-transform'].includes(property)) {
@@ -408,7 +478,11 @@ async function styleDeclarations(
   const properties = [
     ...COPY_STYLE_PROPERTIES,
     ...(isSvgElement(source) ? SVG_STYLE_PROPERTIES : []),
-    ...(supportsSpecialLayout(source) ? SPECIAL_LAYOUT_PROPERTIES : []),
+    ...(supportsSpecialLayout(source)
+      ? SPECIAL_LAYOUT_PROPERTIES
+      : root
+        ? []
+        : ORDINARY_LAYOUT_PROPERTIES),
     ...(pseudoElement ? ['width', 'height'] : [])
   ];
   const declarations: string[] = [];
@@ -479,10 +553,19 @@ async function addPseudoElement(
   // whitespace marker keeps CSS-only decorations while remaining invisible.
   marker.textContent = content || ' ';
   const imageUrls = dataImageUrlsFromDeclarations(declarations);
-  const portableDeclarations = removeDataImageBackgroundDeclarations(declarations);
+  const preserveRepeatingBackground = hasRepeatingBackground(computed);
+  const portableDeclarations = removeDataImageBackgroundDeclarations(
+    declarations,
+    preserveRepeatingBackground
+  );
   if (!content) portableDeclarations.push('font-size:0');
   if (portableDeclarations.length) marker.setAttribute('style', portableDeclarations.join(';'));
-  appendThemeImages(marker, imageUrls, computed, true);
+  appendThemeImages(
+    marker,
+    preserveRepeatingBackground ? [] : imageUrls,
+    computed,
+    true
+  );
   if ('PRE' === source.tagName && '::before' === pseudo && !content && /box-shadow:/.test(portableDeclarations.join(';'))) {
     MAC_FRAME_MARKERS.add(marker);
   }
@@ -506,7 +589,11 @@ async function inlineStyles(
   }
   const declarations = await styleDeclarations(source, computed, false, root, runtime, cache);
   const imageUrls = dataImageUrlsFromDeclarations(declarations);
-  const portableDeclarations = removeDataImageBackgroundDeclarations(declarations);
+  const preserveRepeatingBackground = hasRepeatingBackground(computed);
+  const portableDeclarations = removeDataImageBackgroundDeclarations(
+    declarations,
+    preserveRepeatingBackground
+  );
   if (portableDeclarations.length) clone.setAttribute('style', portableDeclarations.join(';'));
   else clone.removeAttribute('style');
   if (source.matches('.katex')) KATEX_VISUAL_ROOTS.add(clone);
@@ -534,7 +621,12 @@ async function inlineStyles(
   }
   await addPseudoElement(source, clone, '::before', getComputedStyle, root, runtime, cache);
   await addPseudoElement(source, clone, '::after', getComputedStyle, root, runtime, cache);
-  appendThemeImages(clone, imageUrls, computed, !source.textContent?.trim() && !source.children.length);
+  appendThemeImages(
+    clone,
+    preserveRepeatingBackground ? [] : imageUrls,
+    computed,
+    !source.textContent?.trim() && !source.children.length
+  );
 }
 
 function normalizeStructure(clone: HTMLElement): HTMLElement {
@@ -875,7 +967,10 @@ async function createMarkup(
   retainReferencedFragmentIds(normalized, fragmentIds);
   appendDeclarations(normalized, ['max-width:100%', 'margin:0 auto']);
   normalized.querySelectorAll('img, video').forEach((element) => {
-    appendDeclarations(element, ['max-width:100%', 'height:auto', 'display:block', 'margin:0 auto']);
+    if (THEME_IMAGE_CLONES.has(element)) return;
+    // Keep the preview's computed display and margins so inline media remains
+    // inline after paste. Only the responsive bounds are exporter-owned.
+    appendDeclarations(element, ['max-width:100%', 'height:auto']);
   });
   normalized.querySelectorAll('svg').forEach((element) => {
     // KaTeX stretchy symbols use absolutely positioned SVGs whose intrinsic
@@ -893,7 +988,7 @@ async function createMarkup(
       ], true);
     }
     if (isKaTeXVisualClone(element)) return;
-    appendDeclarations(element, ['max-width:100%', 'height:auto', 'display:block', 'margin:0 auto']);
+    appendDeclarations(element, ['max-width:100%', 'height:auto']);
   });
   normalized.querySelectorAll('foreignObject').forEach((element) => {
     if (!MERMAID_FOREIGN_OBJECTS.has(element)) return;
@@ -930,10 +1025,51 @@ async function createMarkup(
   return normalized;
 }
 
-type SerializedClipboardPayload = Readonly<{
-  html: string;
-  text: string;
-}>;
+function normalizedPlainText(value: string): string {
+  return value.replaceAll('\u2060', '').replaceAll('\u00a0', ' ');
+}
+
+function connectedPlainText(root: HTMLElement, source: HTMLElement): string {
+  const document = root.ownerDocument;
+  if (!document.body) throw new Error('wechat-plain-text-document-body-unavailable');
+  const textRoot = root.cloneNode(true) as HTMLElement;
+  // Plain text does not need media resources. Remove their fetchable
+  // attributes from the temporary measurement tree while leaving the HTML
+  // payload untouched.
+  textRoot.querySelectorAll('img, video, source').forEach((element) => {
+    element.removeAttribute('src');
+    element.removeAttribute('srcset');
+    element.removeAttribute('poster');
+  });
+  const host = document.createElement('div');
+  // `innerText` uses layout only while a node is connected. Keep this host
+  // outside the viewport without using `display:none` or `visibility:hidden`,
+  // either of which makes `innerText` empty or loses block boundaries.
+  host.style.cssText = [
+    'position:fixed',
+    'left:-100000px',
+    'top:0',
+    'opacity:0',
+    'pointer-events:none',
+    'contain:layout'
+  ].join(';');
+  document.body.append(host);
+  host.append(textRoot);
+  try {
+    const connectedText = normalizedPlainText(textRoot.innerText || textRoot.textContent || '');
+    // jsdom and other non-layout DOM implementations flatten a connected
+    // clone too. When the real Preview exposes line-aware `innerText`, retain
+    // those source boundaries only in that no-layout case; the normalized
+    // clone remains the source for browsers that can perform layout.
+    const sourceText = source.innerText;
+    if (!connectedText.includes('\n') && 'string' === typeof sourceText && sourceText.includes('\n')) {
+      return normalizedPlainText(sourceText);
+    }
+    return connectedText;
+  } finally {
+    host.remove();
+  }
+}
 
 async function serializeClipboardPayload(
   preview: HTMLElement,
@@ -943,10 +1079,86 @@ async function serializeClipboardPayload(
   const clone = await createMarkup(preview, runtime, cache);
   return {
     html: clone.outerHTML,
-    text: (clone.innerText || clone.textContent || '')
-      .replaceAll('\u2060', '')
-      .replaceAll('\u00a0', ' ')
+    text: connectedPlainText(clone, preview)
   };
+}
+
+function preparedLayoutSignature(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime
+): string {
+  const viewport = preview.ownerDocument.defaultView;
+  const viewportSignature = viewport
+    ? `${viewport.innerWidth}x${viewport.innerHeight}@${viewport.devicePixelRatio}`
+    : '';
+  const elements = [preview, ...Array.from(preview.querySelectorAll('*'))];
+  return [
+    viewportSignature,
+    ...elements.map((element, index) => {
+      const rect = element.getBoundingClientRect();
+      const computed = runtime.getComputedStyle(element);
+      const styles = PREPARED_STYLE_PROPERTIES
+        .map((property) => `${property}=${computed.getPropertyValue(property)}`)
+        .join(';');
+      const pseudoStyles = PREPARED_PSEUDO_ELEMENTS.map((pseudoElement) => {
+        const pseudo = runtime.getComputedStyle(element, pseudoElement);
+        return `${pseudoElement}:${PREPARED_STYLE_PROPERTIES
+          .map((property) => `${property}=${pseudo.getPropertyValue(property)}`)
+          .join(';')}`;
+      }).join('|');
+      return `${index}:${rect.left},${rect.top},${rect.width},${rect.height},${rect.right},${rect.bottom}:${styles}:${pseudoStyles}`;
+    })
+  ].join('\u0001');
+}
+
+function createPreparedClipboardPayload(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime,
+  backgroundAssetCache: BackgroundAssetCache,
+  preparedPayloads: PreparedClipboardPayloadCache
+): PreparedClipboardPayload {
+  let prepared: PreparedClipboardPayload;
+  // Root class/style changes (font and article-theme controls) can change the
+  // computed output without changing the rendered child markup. Responsive
+  // breakpoints can also change computed styles and geometry without changing
+  // the DOM, so keep both the full sink markup and a layout fingerprint.
+  const sourceMarkup = preview.outerHTML;
+  const layoutSignature = preparedLayoutSignature(preview, runtime);
+  const promise = serializeClipboardPayload(preview, runtime, backgroundAssetCache)
+    .then((payload) => {
+      prepared.payload = payload;
+      return payload;
+    })
+    .catch((error: unknown) => {
+      if (preparedPayloads.get(preview) === prepared) preparedPayloads.delete(preview);
+      throw error;
+    });
+  prepared = { payload: null, promise, sourceMarkup, layoutSignature };
+  preparedPayloads.set(preview, prepared);
+  return prepared;
+}
+
+function preparedClipboardPayload(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime,
+  backgroundAssetCache: BackgroundAssetCache,
+  preparedPayloads: PreparedClipboardPayloadCache,
+  replace = false
+): PreparedClipboardPayload {
+  if (!replace) {
+    const existing = preparedPayloads.get(preview);
+    if (
+      existing
+      && existing.sourceMarkup === preview.outerHTML
+      && existing.layoutSignature === preparedLayoutSignature(preview, runtime)
+    ) return existing;
+  }
+  return createPreparedClipboardPayload(
+    preview,
+    runtime,
+    backgroundAssetCache,
+    preparedPayloads
+  );
 }
 
 function legacyCopy(html: string, runtime: BrowserWechatClipboardRuntime): boolean {
@@ -991,48 +1203,90 @@ export function createBrowserWechatClipboard(
   runtime: BrowserWechatClipboardRuntime
 ): WechatClipboardPort {
   const backgroundAssetCache: BackgroundAssetCache = new Map();
+  const preparedPayloads: PreparedClipboardPayloadCache = new WeakMap();
 
   return {
     async prepare(preview: HTMLElement): Promise<void> {
       if (!previewReady(preview)) return;
-      await serializeClipboardPayload(preview, runtime, backgroundAssetCache);
+      await preparedClipboardPayload(
+        preview,
+        runtime,
+        backgroundAssetCache,
+        preparedPayloads,
+        true
+      ).promise;
     },
     async copy(preview: HTMLElement): Promise<WechatClipboardResult> {
       if (!previewReady(preview)) {
         return { code: 'wechat-preview-unavailable', status: 'failed' };
       }
-      const payload = serializeClipboardPayload(
-        preview,
-        runtime,
-        backgroundAssetCache
-      );
 
       if (runtime.write && runtime.clipboardItem) {
+        const prepared = preparedClipboardPayload(
+          preview,
+          runtime,
+          backgroundAssetCache,
+          preparedPayloads
+        );
+        const payload = prepared.promise;
+        const htmlBlob = payload.then(({ html }) =>
+          new runtime.blob([html], { type: 'text/html' })
+        );
+        const textBlob = payload.then(({ text }) =>
+          new runtime.blob([text], { type: 'text/plain' })
+        );
+        const observeBlobRejections = (): void => {
+          void htmlBlob.catch(() => undefined);
+          void textBlob.catch(() => undefined);
+        };
+        const fallbackAfterSynchronousModernFailure = (): WechatClipboardResult => {
+          // ClipboardItem construction and write invocation still happen in
+          // the originating click task. A payload prepared before that task
+          // may therefore use the activation-safe compatibility path.
+          if (prepared.payload && legacyCopy(prepared.payload.html, runtime)) {
+            return { method: 'legacy', status: 'copied' };
+          }
+          return { code: 'wechat-copy-failed', status: 'failed' };
+        };
+        let writePromise: Promise<void>;
         try {
           const item = new runtime.clipboardItem({
             // ClipboardItem accepts PromiseLike<Blob> values. Starting the
             // write before theme-image fetches finish keeps the click's
             // transient user activation attached to the operation.
-            'text/html': payload.then(({ html }) =>
-              new runtime.blob([html], { type: 'text/html' })
-            ),
-            'text/plain': payload.then(({ text }) =>
-              new runtime.blob([text], { type: 'text/plain' })
-            )
+            'text/html': htmlBlob,
+            'text/plain': textBlob
           } as unknown as Record<string, Blob>);
-          await runtime.write([item]);
+          writePromise = runtime.write([item]);
+        } catch {
+          observeBlobRejections();
+          return fallbackAfterSynchronousModernFailure();
+        }
+        try {
+          await Promise.all([writePromise, payload, htmlBlob, textBlob]);
           return { method: 'clipboard', status: 'copied' };
         } catch {
-          const serialized = await payload.catch(() => null);
-          if (serialized && legacyCopy(serialized.html, runtime)) {
-            return { method: 'legacy', status: 'copied' };
-          }
+          // A rejected modern write resumes after an await and cannot safely
+          // enter the activation-sensitive legacy path. Report the failure
+          // instead of attempting an asynchronous compatibility fallback.
+          observeBlobRejections();
           return { code: 'wechat-copy-failed', status: 'failed' };
         }
       }
 
-      const serialized = await payload.catch(() => null);
-      if (serialized && legacyCopy(serialized.html, runtime)) {
+      // Legacy execCommand must run synchronously in the originating click
+      // task. Preview preparation owns the asynchronous serialization; a
+      // click before it resolves is a truthful failure and can be retried once
+      // the next stable Preview notification has completed preparation.
+      const prepared = preparedPayloads.get(preview);
+      if (
+        !prepared?.payload
+        || prepared.sourceMarkup !== preview.outerHTML
+        || prepared.layoutSignature !== preparedLayoutSignature(preview, runtime)
+      ) {
+        return { code: 'wechat-copy-failed', status: 'failed' };
+      }
+      if (legacyCopy(prepared.payload.html, runtime)) {
         return { method: 'legacy', status: 'copied' };
       }
       return { code: 'wechat-clipboard-unsupported', status: 'failed' };

@@ -804,7 +804,44 @@ HTML snapshot. For a copy or rendering change:
 - When approved theme images are present, delay one image request and verify
   that modern `Clipboard.write` starts while the originating user activation is
   still active; confirm deferred HTML and plain-text payloads resolve from the
-  shared cache. Legacy compatibility must consume the same prepared HTML.
+  shared cache and that a fast write cannot report success when that payload
+  later rejects. Confirm legacy compatibility succeeds only after preparation
+  has completed and invokes `execCommand` synchronously in the originating
+  click task; a pending preparation or rejected modern write must not cross an
+  `await` and then enter legacy. A synchronous `ClipboardItem` construction or
+  `write()` invocation failure may use an already prepared payload through
+  legacy in that same click task, and this branch must be covered separately.
+- If immersive visual editing is involved, make several rapid edits before
+  copying and verify that preparation is coalesced for the same surface; the
+  copied payload must not remain from the moment immersive mode opened or an
+  earlier edit. Change a root font or article-theme class/style without
+  changing `innerHTML` and verify the prepared payload is invalidated before
+  copying. Change a responsive computed width or viewport geometry with the DOM
+  unchanged and verify that the prepared payload is invalidated before copying.
+  Check non-root theme decoration dimensions, positioning, flex sizing,
+  float/overflow, and box sizing; verify that generated theme-image dimensions
+  are not replaced by the generic `height:auto` rule, repeating theme backgrounds
+  retain their materialized CSS declaration instead of flattening to one image,
+  and materialized images remain
+  behind copied text, and computed percentage background positions preserve
+  centered overlays on both axes.
+- Resize the browser viewport and, in immersive split mode, resize the source/
+  Preview divider without changing the document. Verify that the debounced
+  preparation refreshes the legacy payload and that a background preparation
+  failure is reported only by the subsequent copy attempt, not while viewing or
+  editing.
+- Trigger a late image/video load, metadata/resize event, font loading completion/failure, and post-render
+  Preview descendant insertion/removal. Verify that the same debounced
+  preparation refreshes the legacy payload, removed nodes stop notifying, and
+  observer/listener cleanup occurs when the Preview sink or Root is disposed.
+  Enter immersive visual Preview and verify the layout observer rebinds to the
+  active surface. Change an article theme and save Custom CSS while visual
+  editing, then keep the replacement Preview request pending; preparation must
+  still refresh after the visual editor is disposed and must not target its
+  detached runtime.
+- Include an inline image or video in a paragraph and verify that the pasted
+  element keeps its computed inline display and margins while receiving only
+  responsive size bounds.
 - Verify the session boundary as well as the serializer: disabled, inactive,
   empty, loading, or failed Preview states must not invoke Clipboard; repeated
   clicks share one pending operation; Adapter rejection stays a failure; and a

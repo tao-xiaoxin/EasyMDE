@@ -151,4 +151,81 @@ describe('createBrowserImmersiveEnvironment', () => {
     vi.advanceTimersByTime(1);
     expect(callback).not.toHaveBeenCalled();
   });
+
+  it('subscribes and unsubscribes viewport resize notifications', () => {
+    const environment = createBrowserImmersiveEnvironment(document, faviconUrl);
+    const listener = vi.fn();
+    const unsubscribe = environment.subscribeResize(listener);
+
+    window.dispatchEvent(new Event('resize'));
+    expect(listener).toHaveBeenCalledOnce();
+
+    unsubscribe();
+    window.dispatchEvent(new Event('resize'));
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it('observes preview media and font layout changes and cleans up listeners', () => {
+    const environment = createBrowserImmersiveEnvironment(document, faviconUrl);
+    const surface = document.createElement('article');
+    const image = document.createElement('img');
+    surface.append(image);
+    const listener = vi.fn();
+    const unsubscribe = environment.observePreviewLayout(surface, listener);
+
+    image.dispatchEvent(new Event('load'));
+    expect(listener).toHaveBeenCalledOnce();
+
+    unsubscribe();
+    image.dispatchEvent(new Event('error'));
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it('reconciles preview media listeners when rendered nodes are replaced', async () => {
+    const environment = createBrowserImmersiveEnvironment(document, faviconUrl);
+    const surface = document.createElement('article');
+    const firstImage = document.createElement('img');
+    surface.append(firstImage);
+    const listener = vi.fn();
+    const unsubscribe = environment.observePreviewLayout(surface, listener);
+
+    firstImage.dispatchEvent(new Event('load'));
+    expect(listener).toHaveBeenCalledOnce();
+
+    firstImage.remove();
+    await Promise.resolve();
+    const callsAfterRemoval = listener.mock.calls.length;
+    firstImage.dispatchEvent(new Event('load'));
+    expect(listener).toHaveBeenCalledTimes(callsAfterRemoval);
+
+    const secondImage = document.createElement('img');
+    surface.append(secondImage);
+    await Promise.resolve();
+    const callsAfterInsertion = listener.mock.calls.length;
+    secondImage.dispatchEvent(new Event('load'));
+    expect(listener).toHaveBeenCalledTimes(callsAfterInsertion + 1);
+
+    unsubscribe();
+  });
+
+  it('refreshes for video media layout events and releases removed video listeners', async () => {
+    const environment = createBrowserImmersiveEnvironment(document, faviconUrl);
+    const surface = document.createElement('article');
+    const video = document.createElement('video');
+    surface.append(video);
+    const listener = vi.fn();
+    const unsubscribe = environment.observePreviewLayout(surface, listener);
+
+    video.dispatchEvent(new Event('loadedmetadata'));
+    expect(listener).toHaveBeenCalledOnce();
+
+    video.remove();
+    await Promise.resolve();
+    const callsAfterRemoval = listener.mock.calls.length;
+    video.dispatchEvent(new Event('resize'));
+    video.dispatchEvent(new Event('loadeddata'));
+    expect(listener).toHaveBeenCalledTimes(callsAfterRemoval);
+
+    unsubscribe();
+  });
 });

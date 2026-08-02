@@ -76,9 +76,38 @@ The table of contents is generated from rendered headings and is inserted where 
 
 ## Copy To WeChat
 
-The **Copy to WeChat** action copies the current ready rendered preview as rich text. The modern Clipboard API writes `text/html` and `text/plain` from one sanitized preview clone; the plain-text value removes exporter-only whitespace markers. Approved theme images are prepared in a shared local cache limited to 32 assets; if an image is still loading, the modern write starts during the click and resolves its deferred payload afterward. If modern item construction or writing is unavailable or rejected, EasyMDE tries the older copy path with that same normalized HTML after preparation. Empty, loading, or failed previews are not copied. The export removes editor-only nodes, inlines portable computed styles, preserves theme decorations and the visible KaTeX tree without duplicate KaTeX MathML, and keeps code lines, tables, and long display formulas horizontally scrollable when they exceed the WeChat column; inline formulas remain non-wrapping. Mermaid flowchart labels are kept as complete single-line labels even when WeChat rewrites SVG `foreignObject` styles; exporter-only invisible markers are removed from plain text. It does not add a vertical scroll container around the article or change the post.
+The **Copy to WeChat** action copies the current ready rendered preview as rich text. The modern Clipboard API writes normalized `text/html` and `text/plain` captured from the connected normalized export surface for the same preparation; plain text retains the Preview's paragraph and list line breaks, excludes removed editor/MathML nodes, and removes exporter-only whitespace markers. Approved theme images are prepared after a debounced stable Preview update in a shared local cache limited to 32 assets; window/viewport resizes and immersive split-pane changes schedule the same refresh so the legacy payload is not stale after a layout-only change. If an image or video is still loading or changing intrinsic size, the modern write starts during the click and resolves its deferred payload afterward. Repeating theme backgrounds retain their materialized CSS background instead of becoming one flattened image. Background preparation failures stay quiet while editing and are reported by the actual copy attempt. The older compatibility path is available only when that same normalized payload is already prepared and can be selected synchronously in the click task. A click while preparation is pending, an unavailable legacy path, or an asynchronously rejected modern write reports failure; a synchronous `ClipboardItem` or `write()` setup failure may use the prepared legacy payload in that same click task. EasyMDE never awaits and then falls back to legacy after activation is lost. Empty, loading, or failed previews are not copied. The export removes editor-only nodes, inlines portable computed styles, preserves theme decorations and the visible KaTeX tree without duplicate KaTeX MathML, and keeps code lines, tables, and long display formulas horizontally scrollable when they exceed the WeChat column; inline formulas remain non-wrapping. Responsive bounds do not turn inline images or videos into centered block elements, and generated theme-image dimensions are not overwritten by those bounds. Mermaid flowchart labels are kept as complete single-line labels even when WeChat rewrites SVG `foreignObject` styles; exporter-only invisible markers are removed from plain text. It does not add a vertical scroll container around the article or change the post.
 
-Browser support and permissions vary. If both copy paths fail, the editor shows an error message and leaves the post content unchanged. Repeated clicks while a copy is pending share one operation, and leaving the editor suppresses late success messages.
+The layout observer reconciles inserted and removed Preview descendants; removed
+images, videos, SVGs, and foreignObjects stop notifying immediately, and sink teardown
+releases all remaining listeners and observers.
+
+When editing the Preview directly in immersive mode, EasyMDE coalesces preparation
+after rapid accepted visual edits and refreshes after a stable Preview update,
+so the copied HTML reflects the current surface without serializing the whole
+article on every keystroke. The serializer checks the full current sink markup,
+including root `class`/`style` attributes, before reusing a prepared payload, so
+font or theme-only changes cannot reuse stale output. Responsive viewport,
+computed-style, pseudo-element, and element-geometry changes also invalidate
+the prepared payload. Preview image/video load, error, metadata, and resize
+events, font loading completion/failure, and inserted descendants schedule the
+same refresh. Theme
+decoration dimensions,
+positioning, flex sizing, float/overflow, and box sizing are retained for
+non-root nodes; materialized background images remain behind copied text, and
+computed percentage background positions are normalized so centered image
+decorations remain centered after paste.
+The preparation observer follows the active ordinary or immersive Preview
+surface. If a theme or Custom CSS change exits immersive visual editing, the
+refresh is queued after that editor surface is disposed and the remaining
+Preview surface is ready; it never copies a disposed surface.
+
+Modern copy is successful only after both the browser write and its deferred
+HTML/plain-text payload resolve; a later theme-image or serialization failure
+therefore remains an explicit copy failure. Browser support and permissions
+vary. If the selected copy path fails, the editor shows an error message and
+leaves the post content unchanged. Repeated clicks while a copy is pending
+share one operation, and leaving the editor suppresses late success messages.
 
 ## Revisions And Deactivation
 

@@ -114,20 +114,44 @@ npm run test:frontend -- frontend/src/features/wechat-export/wechat-export-sessi
 ```
 
 The current focused Adapter suite covers the normalized clone, unsafe URL/style
-rejection, pseudo-element and same-origin theme-image portability, Mermaid
-`foreignObject` label overflow and non-wrapping markers, KaTeX visual-tree and
-KaTeX MathML behavior, explicit code line breaks, table/formula horizontal
-overflow, modern/legacy HTML parity, and an explicit failure result with
-sandbox cleanup. Its theme-image activation assertion verifies that modern
+rejection, pseudo-element and same-origin theme-image portability, repeating
+theme-background preservation, inline media
+layout preservation with responsive bounds, Mermaid `foreignObject` label
+overflow and non-wrapping markers, KaTeX visual-tree and KaTeX MathML behavior,
+explicit code line breaks, table/formula horizontal overflow, modern/legacy HTML
+parity, synchronous legacy preparation, synchronous modern setup fallback,
+modern write rejection without asynchronous legacy fallback, and an explicit
+failure result with sandbox cleanup. Its theme-image activation assertion verifies that modern
 `Clipboard.write` starts before a delayed approved image fetch resolves and
-that the deferred HTML payload still materializes. Its Mermaid assertion covers
+that the deferred HTML payload still materializes; repeating theme backgrounds
+retain their materialized CSS declaration rather than flattening to one image;
+a fast write followed by a
+failed deferred payload remains an explicit failure. Its Mermaid assertion covers
 complete non-ASCII labels in both payload paths; the modern `text/plain`
 assertion removes exporter-only markers.
-It does not yet prove modern-write rejection followed by legacy success,
-`ClipboardItem` construction failure, the unsupported legacy result,
-theme-image fetch/data-conversion failure, or full Selection/Focus/Scroll
-restoration on every failure path; add those cases before treating the boundary
-as fully covered. `npm run frontend:check` is the required full frontend gate;
+The Adapter and EditorRoot regressions also verify that immersive visual edits
+  coalesce preparation and replace the prepared payload, root-only font/theme
+  changes or responsive computed-style/geometry changes cannot reuse a stale
+  prepared payload, and ordinary non-root theme decorations retain
+  dimensions/positioning/flex sizing/float/overflow/box-sizing, materialized
+  theme-image dimensions are not overwritten by generic media bounds, and
+background images remain behind copied text, and computed percentage background
+positions compose both centered overlay transforms.
+The EditorRoot and layout-owner checks also cover viewport resize and immersive
+split-pane changes refreshing the debounced legacy payload, while background
+preparation rejection stays silent until the actual copy attempt. Browser
+environment coverage also verifies Preview image/video load, error, metadata,
+and resize observation and listener cleanup; the implementation observes font
+loading, post-render geometry, and inserted or removed descendants through the
+same Port and releases removed-node observers immediately.
+EditorRoot coverage also verifies that the observer is rebound when immersive
+visual Preview mounts, and that article-theme and Custom CSS changes refresh
+the legacy payload after visual-editor teardown even when the replacement
+Preview request is still pending.
+It does not yet prove the unsupported legacy result, theme-image fetch/data-conversion
+failure, or full
+Selection/Focus/Scroll restoration on every failure path; add those cases
+before treating the boundary as fully covered. `npm run frontend:check` is the required full frontend gate;
 `npm run check:frontend-production` must compare the compiled admin entry
 containing the Adapter with the committed hashed runtime without rewriting it.
 

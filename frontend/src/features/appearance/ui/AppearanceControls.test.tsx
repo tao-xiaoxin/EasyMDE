@@ -23,8 +23,18 @@ import {
 
 const bootstrap: AppearanceBootstrap = {
   articleThemes: [
-    { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
-    { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'fullstack-blue' }
+    {
+      id: 'default',
+      label: 'Default',
+      defaultCodeTheme: 'atom-one-dark',
+      swatch: '#1d2327'
+    },
+    {
+      id: 'newsprint',
+      label: 'Newsprint',
+      defaultCodeTheme: 'fullstack-blue',
+      swatch: '#3c70c6'
+    }
   ],
   canManageCustomCss: true,
   codeThemeExplicit: false,
@@ -106,7 +116,7 @@ describe('AppearanceControls', () => {
     expect(trigger.querySelector('.dashicons')).toBeNull();
   });
 
-  it('renders the reference palette trigger and live theme accent in immersive mode', () => {
+  it('renders the registry palette trigger and live theme accent in immersive mode', () => {
     render(
       <AppearanceControls
         bootstrap={bootstrap}
@@ -125,6 +135,9 @@ describe('AppearanceControls', () => {
         'data-theme'
       )
     ).toBe('default');
+    expect(
+      trigger.querySelector<HTMLElement>('.easymde-immersive-theme-accent')?.style.background
+    ).toBe('rgb(29, 35, 39)');
     expect(trigger.querySelector('.dashicons')).toBeNull();
   });
 
@@ -1095,7 +1108,7 @@ describe('AppearanceControls', () => {
       articleTheme.querySelector<HTMLElement>(
         '.easymde-ordinary-select-swatch'
       )?.style.background
-    ).toBe('rgb(51, 51, 51)');
+    ).toBe('rgb(29, 35, 39)');
 
     await user.click(articleTheme);
     expect(
@@ -1122,6 +1135,61 @@ describe('AppearanceControls', () => {
         '.easymde-ordinary-select-swatch > span'
       )).map((element) => element.style.background)
     ).toEqual(['rgb(13, 16, 23)', 'rgb(202, 209, 217)']);
+  });
+
+  it('keeps the neutral fallback for article themes without a registry swatch', () => {
+    const defaultArticleTheme = bootstrap.articleThemes[0];
+    if (!defaultArticleTheme) throw new Error('default-article-theme-fixture-unavailable');
+
+    render(
+      <AppearanceControls
+        bootstrap={{
+          ...bootstrap,
+          articleThemes: [{
+            id: defaultArticleTheme.id,
+            label: defaultArticleTheme.label,
+            defaultCodeTheme: defaultArticleTheme.defaultCodeTheme
+          }]
+        }}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="embedded"
+      />
+    );
+
+    expect(
+      screen.getByRole('combobox', { name: 'Article theme' })
+        .querySelector<HTMLElement>('.easymde-ordinary-select-swatch')
+        ?.style.background
+    ).toBe('rgb(51, 51, 51)');
+  });
+
+  it('keeps the custom accent when its saved preset is no longer available', () => {
+    render(
+      <AppearanceControls
+        bootstrap={{
+          ...bootstrap,
+          customCss: [],
+          state: {
+            ...bootstrap.state,
+            markdownTheme: 'custom',
+            customCssId: 'deleted-preset'
+          }
+        }}
+        port={createPort()}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+        variant="immersive"
+        messageAlertTimer={messageAlertTimer}
+      />
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Appearance' })
+        .querySelector<HTMLElement>('.easymde-immersive-theme-accent')
+        ?.style.background
+    ).toBe('rgb(220, 38, 38)');
   });
 
   it('renders the registered Terminal Noir palette instead of the generic fallback', async () => {

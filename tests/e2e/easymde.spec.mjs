@@ -358,10 +358,51 @@ async function canonicalMarkdownForPage(page) {
 async function editorThemeCatalog(page) {
   return page.evaluate(() => ({
     articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
-      .map(({ id, label, cssUrl }) => ({ id, label, cssUrl })),
+      .map(({ id, label, cssUrl, swatch }) => ({ id, label, cssUrl, swatch })),
     codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes
       .map(({ id, cssUrl }) => ({ id, cssUrl }))
   }));
+}
+
+function hexToRgbCss(hex) {
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) {
+    throw new Error(`article-theme-swatch-invalid:${hex}`);
+  }
+
+  const value = Number.parseInt(hex.slice(1), 16);
+  return `rgb(${value >> 16}, ${(value >> 8) & 255}, ${value & 255})`;
+}
+
+async function previewContainsThemeSwatch(preview, expectedSwatch) {
+  return preview.evaluate((root, expected) => {
+    const properties = [
+      'color',
+      'backgroundColor',
+      'borderTopColor',
+      'borderRightColor',
+      'borderBottomColor',
+      'borderLeftColor'
+    ];
+    const elements = [root, ...root.querySelectorAll('*')];
+    const colors = new Set();
+
+    for (const element of elements) {
+      const style = getComputedStyle(element);
+      for (const property of properties) {
+        const color = style[property];
+        if (color && !color.includes('transparent')) colors.add(color.toLowerCase());
+      }
+      for (const pseudo of ['::before', '::after']) {
+        const pseudoStyle = getComputedStyle(element, pseudo);
+        for (const property of properties) {
+          const color = pseudoStyle[property];
+          if (color && !color.includes('transparent')) colors.add(color.toLowerCase());
+        }
+      }
+    }
+
+    return colors.has(expected.toLowerCase());
+  }, expectedSwatch);
 }
 
 async function expectRenderedFixture(page, selector) {
@@ -459,9 +500,37 @@ async function setImmersiveSplitRatio(page, ratio, resizeLabel) {
   await expect(divider).toHaveAttribute('aria-valuenow', String(ratio));
 }
 
-async function measureArticleThemeGeometry(page, position) {
+async function readArticleThemeBackgroundImage(page, themeId) {
+  return page.evaluate((id) => {
+    const probe = document.createElement('article');
+    probe.className = `easymde-rendered-content easymde-markdown-theme-${id}`;
+    probe.style.cssText = [
+      'position: fixed',
+      'left: -10000px',
+      'top: -10000px',
+      'width: 1px',
+      'height: 1px',
+      'visibility: hidden',
+      'pointer-events: none'
+    ].join(';');
+    document.body.append(probe);
+    const backgroundImage = getComputedStyle(probe).backgroundImage;
+    probe.remove();
+    return backgroundImage;
+  }, themeId);
+}
+
+async function measureArticleThemeGeometry(
+  page,
+  position,
+  expectedThemeBackgroundImage = null
+) {
   return page.locator('.easymde-pane-preview article').evaluate(
-    (root, { longHeadingPrefix, scrollPosition }) => {
+    (root, {
+      expectedThemeBackgroundImage,
+      longHeadingPrefix,
+      scrollPosition
+    }) => {
       const tolerance = 1;
       const pane = root.closest('.easymde-pane-preview');
       if (!(pane instanceof HTMLElement)) {
@@ -690,6 +759,42 @@ async function measureArticleThemeGeometry(page, position) {
         document.querySelectorAll('.easymde-preview-pending')
       ).some(isVisible);
       const topMeaningfulBox = topMeaningful?.getBoundingClientRect();
+      const editor = root.closest('[data-easymde-editor-owner="react"]');
+      const immersiveCanvas = root.closest('.easymde-immersive-preview-canvas');
+      const immersivePage = root.closest('.easymde-immersive-preview-page');
+      const immersiveCanvasStyle = immersiveCanvas
+        ? getComputedStyle(immersiveCanvas)
+        : null;
+      const immersivePageStyle = immersivePage
+        ? getComputedStyle(immersivePage)
+        : null;
+      const articleStyle = getComputedStyle(root);
+      const usesSharedImmersiveGrid = articleStyle.backgroundImage.includes(
+        'rgba(247, 250, 252, 0.92)'
+      ) && articleStyle.backgroundImage.includes(
+        'rgba(226, 232, 240, 0.45)'
+      );
+      const paneStyle = getComputedStyle(pane);
+      const isImmersivePreview = editor?.classList.contains('is-immersive-preview');
+      const isImmersiveSplit = editor?.classList.contains('is-immersive-split');
+      const surfaces = {
+        canvasBackground: immersiveCanvasStyle?.backgroundColor ?? null,
+        canvasDisplay: immersiveCanvasStyle?.display ?? null,
+        pageBackground: immersivePageStyle?.backgroundColor ?? null,
+        pageDisplay: immersivePageStyle?.display ?? null,
+        pageBorderWidth: immersivePageStyle?.borderTopWidth ?? null,
+        pageBorderStyle: immersivePageStyle?.borderTopStyle ?? null,
+        pageBorderColor: immersivePageStyle?.borderTopColor ?? null,
+        articleBackgroundImage: articleStyle.backgroundImage,
+        articleUsesSharedImmersiveGrid: usesSharedImmersiveGrid,
+        expectedThemeBackgroundImage,
+        paneBackground: paneStyle.backgroundColor,
+        paneRect: {
+          left: paneBox.left,
+          right: paneBox.right,
+          width: paneBox.width
+        }
+      };
 
       return {
         decoration: {
@@ -759,13 +864,68 @@ async function measureArticleThemeGeometry(page, position) {
             && result.ownerIsExpected
           )) ? [] : ['code-horizontal-scroll-owner-invalid']),
           ...(scrollPositionValid ? [] : ['preview-scroll-position-invalid']),
-          ...(placeholderVisible ? ['preview-placeholder-visible'] : [])
+          ...(placeholderVisible ? ['preview-placeholder-visible'] : []),
+          ...(
+            isImmersivePreview
+            && 'rgb(255, 255, 255)' !== surfaces.canvasBackground
+              ? [`immersive-preview-canvas-background-${surfaces.canvasBackground}`]
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && 'rgb(255, 255, 255)' !== surfaces.pageBackground
+              ? [`immersive-preview-page-background-${surfaces.pageBackground}`]
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && ('0px' !== surfaces.pageBorderWidth || 'none' !== surfaces.pageBorderStyle)
+              ? [`immersive-preview-page-border-${surfaces.pageBorderWidth}-${surfaces.pageBorderStyle}-${surfaces.pageBorderColor}`]
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && surfaces.articleUsesSharedImmersiveGrid
+              ? ['immersive-preview-shared-article-grid-background']
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && null !== surfaces.expectedThemeBackgroundImage
+            && surfaces.articleBackgroundImage !== surfaces.expectedThemeBackgroundImage
+              ? ['immersive-preview-theme-owned-background-not-preserved']
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && immersiveCanvas
+            && immersivePage
+            && 'none' !== surfaces.canvasDisplay
+            && 'none' !== surfaces.pageDisplay
+            && 'contents' !== surfaces.canvasDisplay
+            && 'contents' !== surfaces.pageDisplay
+            && (() => {
+              const canvasBox = immersiveCanvas.getBoundingClientRect();
+              const pageBox = immersivePage.getBoundingClientRect();
+              return pageBox.left < canvasBox.left - tolerance
+                || pageBox.right > canvasBox.right + tolerance;
+            })()
+              ? ['immersive-preview-page-outside-canvas']
+              : []
+          ),
+          ...(
+            isImmersiveSplit
+            && 'rgb(255, 255, 255)' !== surfaces.paneBackground
+              ? [`immersive-split-pane-background-${surfaces.paneBackground}`]
+              : []
+          )
         ],
         scroll: {
           actual: actualScrollTop,
           maximum: maximumScrollTop,
           position: scrollPosition
         },
+        surfaces,
         topContent: topMeaningful && topMeaningfulBox ? {
           tag: topMeaningful.tagName.toLowerCase(),
           top: topMeaningfulBox.top,
@@ -779,6 +939,7 @@ async function measureArticleThemeGeometry(page, position) {
       };
     },
     {
+      expectedThemeBackgroundImage,
       longHeadingPrefix: longFixtureHeadingPrefix,
       scrollPosition: position
     }
@@ -1625,6 +1786,7 @@ test.describe('EasyMDE editor workflows', () => {
     const preview = page.locator('.easymde-pane-preview article');
     const failures = [];
     const matrix = [];
+    let expectedThemeBackgroundImage = null;
     const headingRhythmContracts = new Map([
       ['qingbi-liujin', { contentFontSize: null }],
       ['qinghe-zhusha', { contentFontSize: null }],
@@ -1641,11 +1803,16 @@ test.describe('EasyMDE editor workflows', () => {
       position,
       expectedDecoration = null
     ) => {
-      const geometry = await measureArticleThemeGeometry(page, position);
+      const geometry = await measureArticleThemeGeometry(
+        page,
+        position,
+        expectedThemeBackgroundImage
+      );
       matrix.push({
         themeId,
         state,
         decoration: geometry.decoration,
+        surfaces: geometry.surfaces,
         scroll: geometry.scroll,
         topContent: geometry.topContent,
         tables: geometry.tableResults.map(({ overflow }) => overflow),
@@ -1707,7 +1874,11 @@ test.describe('EasyMDE editor workflows', () => {
       }
     };
 
-    for (const { id, label, cssUrl } of catalog.articleThemes) {
+    for (const { id, label, cssUrl, swatch } of catalog.articleThemes) {
+      if (!swatch) {
+        throw new Error(`${id}-article-theme-swatch-unavailable`);
+      }
+      const expectedSwatch = hexToRgbCss(swatch);
       await page.setViewportSize({ width: 1200, height: 900 });
       await settingsTrigger.click();
       const settingsDialog = page.getByRole('dialog', {
@@ -1727,11 +1898,23 @@ test.describe('EasyMDE editor workflows', () => {
       ), cssUrl), {
         message: `${id} article stylesheet should finish loading`
       }).toBe(true);
+      expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
+      const ordinarySwatch = await articleSelect.locator(
+        '.easymde-ordinary-select-swatch'
+      ).evaluate((swatchElement) => getComputedStyle(swatchElement).backgroundColor);
+      if (ordinarySwatch !== expectedSwatch) {
+        failures.push(
+          `${id}/ordinary-selector:swatch-${ordinarySwatch}-expected-${expectedSwatch}`
+        );
+      }
       await waitForPreviewRefresh(
         preview,
         previousPreviewSignature,
         `${id} server preview should finish rendering`
       );
+      if (!await previewContainsThemeSwatch(preview, expectedSwatch)) {
+        failures.push(`${id}/ordinary-preview:theme-swatch-not-rendered-${expectedSwatch}`);
+      }
       const tableAccessibility = await preview.locator('table').first().ariaSnapshot();
       for (const [role, expectedCount] of Object.entries({
         table: 1,
@@ -1759,6 +1942,7 @@ test.describe('EasyMDE editor workflows', () => {
       let desktopDecoration;
       for (const width of [1200, 760, 680]) {
         await page.setViewportSize({ width, height: 900 });
+        expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
         for (const position of ['top', 'middle', 'bottom']) {
           const decoration = await recordGeometry(
             id,
@@ -1773,6 +1957,7 @@ test.describe('EasyMDE editor workflows', () => {
       }
 
       await page.setViewportSize({ width: 1200, height: 900 });
+      expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
       await page.getByRole('button', {
         name: labels.immersive.enter,
         exact: true
@@ -1780,6 +1965,18 @@ test.describe('EasyMDE editor workflows', () => {
       await expect(page.getByRole('region', {
         name: labels.immersive.immersive
       })).toBeVisible();
+      const immersiveAppearance = page.locator(
+        '.easymde-immersive-secondary-actions'
+      ).getByRole('button', { name: labels.immersive.theme, exact: true });
+      await expect(immersiveAppearance).toBeVisible();
+      const immersiveSwatch = await immersiveAppearance.locator(
+        '.easymde-immersive-theme-accent'
+      ).evaluate((swatchElement) => getComputedStyle(swatchElement).backgroundColor);
+      if (immersiveSwatch !== expectedSwatch) {
+        failures.push(
+          `${id}/immersive-selector:swatch-${immersiveSwatch}-expected-${expectedSwatch}`
+        );
+      }
 
       for (const mode of [
         ['previewMode', 'is-immersive-preview'],
@@ -1794,6 +1991,15 @@ test.describe('EasyMDE editor workflows', () => {
           exact: true
         }).click();
         await expect(editorOwner).toHaveClass(new RegExp(mode[1]));
+        if ('is-immersive-preview' === mode[1]) {
+          const immersivePreview = page.locator(
+            '.easymde-immersive-preview-page .easymde-preview'
+          );
+          await expect(immersivePreview).toBeVisible();
+          if (!await previewContainsThemeSwatch(immersivePreview, expectedSwatch)) {
+            failures.push(`${id}/immersive-preview:theme-swatch-not-rendered-${expectedSwatch}`);
+          }
+        }
         if ('is-immersive-source' !== mode[1]) {
           await recordGeometry(
             id,
@@ -1852,6 +2058,7 @@ test.describe('EasyMDE editor workflows', () => {
       }
 
       await page.setViewportSize({ width: 680, height: 900 });
+      expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
       await setImmersiveSplitRatio(
         page,
         50,

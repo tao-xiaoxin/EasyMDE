@@ -97,9 +97,77 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
                 'assets/themes/article/third-party-md2html-normal.css',
                 $registry->get('md2html-normal')['asset_path']
             );
+            $this->assertArrayNotHasKey('swatch', $themes['md2html-normal']);
         } finally {
             remove_filter('easymde_article_themes', $callback);
         }
+    }
+
+    public function test_filtered_builtin_theme_override_retains_registered_swatch()
+    {
+        $callback = static function ($themes) {
+            $themes['orange-heart'] = array(
+                'id' => 'orange-heart',
+                'label' => 'Custom Orange heart',
+                'asset_path' => 'assets/themes/article/custom-orange-heart.css',
+                'origin' => 'extension',
+                'class_name' => 'easymde-markdown-theme-orange-heart',
+            );
+
+            return $themes;
+        };
+
+        add_filter('easymde_article_themes', $callback);
+
+        try {
+            $themes = array_column((new ArticleThemeRegistry())->for_script(), null, 'id');
+
+            $this->assertSame('#ef7060', $themes['orange-heart']['swatch']);
+            $this->assertSame(
+                'assets/themes/article/custom-orange-heart.css',
+                $themes['orange-heart']['assetPath']
+            );
+        } finally {
+            remove_filter('easymde_article_themes', $callback);
+        }
+    }
+
+    public function test_invalid_third_party_swatch_is_not_serialized_and_is_observable()
+    {
+        $callback = static function ($themes) {
+            $themes['invalid-swatch'] = array(
+                'id' => 'invalid-swatch',
+                'label' => 'Invalid swatch',
+                'asset_path' => 'assets/themes/article/invalid-swatch.css',
+                'origin' => 'extension',
+                'class_name' => 'easymde-markdown-theme-invalid-swatch',
+                'swatch' => 'var(--accent)',
+            );
+
+            return $themes;
+        };
+        $warnings = array();
+
+        add_filter('easymde_article_themes', $callback);
+        set_error_handler(
+            static function ($severity, $message) use (&$warnings) {
+                $warnings[] = array($severity, $message);
+                return true;
+            },
+            E_USER_WARNING
+        );
+
+        try {
+            $themes = array_column((new ArticleThemeRegistry())->for_script(), null, 'id');
+        } finally {
+            restore_error_handler();
+            remove_filter('easymde_article_themes', $callback);
+        }
+
+        $this->assertArrayHasKey('invalid-swatch', $themes);
+        $this->assertArrayNotHasKey('swatch', $themes['invalid-swatch']);
+        $this->assertNotEmpty($warnings);
+        $this->assertStringContainsString('invalid-article-theme-swatch:invalid-swatch', $warnings[0][1]);
     }
 
     public function test_typora_derived_themes_expose_asset_and_font_defaults_for_admin_script()
@@ -198,6 +266,41 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
         $this->assertSame('fullstack-blue', $associations['fullstack-blue']);
         unset($associations['fullstack-blue']);
         $this->assertSame(array('atom-one-dark'), array_values(array_unique($associations)));
+    }
+
+    public function test_every_builtin_article_theme_exposes_its_css_accent_swatch()
+    {
+        $themes = array_column((new ArticleThemeRegistry())->for_script(), 'swatch', 'id');
+        $this->assertSame(
+            array(
+                'default'        => '#1d2327',
+                'orange-heart'   => '#ef7060',
+                'chazi-purple'   => '#773098',
+                'green-vitality' => '#35b378',
+                'red-crimson'    => '#f83929',
+                'blue-ying'      => '#5c9dff',
+                'crimson-focus'  => '#e74c3c',
+                'lanqing'        => '#009688',
+                'yamabuki'       => '#ffb11b',
+                'grid-black'     => '#212122',
+                'geek-black'     => '#212122',
+                'rose-purple'    => '#916dd5',
+                'ningye-purple'  => '#916dd5',
+                'tech-blue'      => '#0e88eb',
+                'qingbi-liujin'  => '#1ea089',
+                'qinghe-zhusha'  => '#4f7f22',
+                'cute-green'     => '#48b378',
+                'fullstack-blue' => '#40b8fa',
+                'minimal-black'  => '#000000',
+                'orange-blue'    => '#e7642b',
+                'frontend-peak'  => '#3c70c6',
+                'cupid-busy'     => '#827fc4',
+            ),
+            $themes
+        );
+        foreach ($themes as $theme_id => $swatch) {
+            $this->assertMatchesRegularExpression('/^#[0-9a-f]{6}$/', $swatch, $theme_id);
+        }
     }
 
     public function test_typora_derived_theme_state_outputs_scoped_render_class()

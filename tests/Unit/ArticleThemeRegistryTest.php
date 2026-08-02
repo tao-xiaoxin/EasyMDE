@@ -31,6 +31,35 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
         $this->assertSame('qinghe-zhusha', $registry->sanitize_id('qinghe-zhusha'));
     }
 
+    public function test_crimson_focus_is_added_without_replacing_red_crimson()
+    {
+        $registry = new ArticleThemeRegistry();
+        $themes = array_column($registry->for_script(), null, 'id');
+
+        $this->assertArrayHasKey('red-crimson', $themes);
+        $this->assertSame('assets/themes/article/red-crimson.css', $themes['red-crimson']['assetPath']);
+        $this->assertArrayHasKey('crimson-focus', $themes);
+        $this->assertSame('Crimson focus', $themes['crimson-focus']['label']);
+        $this->assertSame(
+            'assets/themes/article/crimson-focus.css',
+            $themes['crimson-focus']['assetPath']
+        );
+        $this->assertSame('easymde-markdown-theme-crimson-focus', $themes['crimson-focus']['className']);
+        $this->assertSame('atom-one-dark', $themes['crimson-focus']['defaultCodeTheme']);
+        $this->assertTrue($themes['crimson-focus']['usesThemeFontFamily']);
+        $this->assertArrayNotHasKey('usesThemeFontFamily', $themes['default']);
+        $this->assertSame(
+            array(
+                'customFont'  => 'none',
+                'windowsFont' => 'no-windows-font',
+                'appleFont'   => 'no-apple-font',
+                'serifFont'   => 'theme-default',
+            ),
+            $themes['crimson-focus']['fontDefaults']
+        );
+        $this->assertSame('crimson-focus', $registry->sanitize_id('crimson-focus'));
+    }
+
     public function test_removed_md2html_normal_theme_is_not_registered_and_falls_back_to_default()
     {
         $registry = new ArticleThemeRegistry();
@@ -160,8 +189,7 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
     {
         $article_themes = (new ArticleThemeRegistry())->for_script();
         $code_themes = array_column((new CodeThemeRegistry())->for_script(), null, 'id');
-
-        $this->assertCount(21, $article_themes);
+        $this->assertCount(22, $article_themes);
         foreach ($article_themes as $article_theme) {
             $this->assertArrayHasKey($article_theme['defaultCodeTheme'], $code_themes);
         }

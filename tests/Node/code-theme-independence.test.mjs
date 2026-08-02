@@ -21,7 +21,7 @@ function registeredThemes(registryPath) {
 function articleThemeAssociations() {
   return Array.from(
     source('src/Theme/ArticleThemeRegistry.php').matchAll(
-      /=>\s*\$this->theme\(\s*'([^']+)'[\s\S]*?'(assets\/themes\/article\/[^']+\.css)'\s*,\s*'([a-z0-9-]+)'\s*\)/g
+      /=>\s*\$this->theme\(\s*'([^']+)'[\s\S]*?'(assets\/themes\/article\/[^']+\.css)'\s*,\s*'([a-z0-9-]+)'(?:\s*,\s*(?:true|false))?\s*\)/g
     ),
     ([, id, assetPath, defaultCodeTheme]) => ({ id, assetPath, defaultCodeTheme })
   );
@@ -47,7 +47,7 @@ test('every article theme declares a registered associated code theme', () => {
   const codeThemes = registeredThemes('src/Theme/CodeThemeRegistry.php');
   const codeThemeIds = new Set(codeThemes.map(({ id }) => id));
 
-  assert.equal(articleThemes.length, 21);
+  assert.equal(articleThemes.length, 22);
   for (const theme of articleThemes) {
     assert.ok(codeThemeIds.has(theme.defaultCodeTheme), `${theme.defaultCodeTheme} should be registered`);
   }

@@ -1435,62 +1435,66 @@ msgid "Blue ying"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:21
-msgid "Lanqing"
+msgid "Crimson focus"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:22
-msgid "Yamabuki"
+msgid "Lanqing"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:23
-msgid "Grid black"
+msgid "Yamabuki"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:24
-msgid "Geek black"
+msgid "Grid black"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:25
-msgid "Rose purple"
+msgid "Geek black"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:26
-msgid "Ningye purple"
+msgid "Rose purple"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:27
-msgid "Tech blue"
+msgid "Ningye purple"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:28
-msgid "Qingbi Liujin"
+msgid "Tech blue"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:29
-msgid "Qinghe Zhusha"
+msgid "Qingbi Liujin"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:30
+msgid "Qinghe Zhusha"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:31
 msgid "Cute green"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:31 src/Theme/CodeThemeRegistry.php:24
+#: src/Theme/ArticleThemeRegistry.php:32 src/Theme/CodeThemeRegistry.php:24
 msgid "Fullstack blue"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:32
+#: src/Theme/ArticleThemeRegistry.php:33
 msgid "Minimal black"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:33
+#: src/Theme/ArticleThemeRegistry.php:34
 msgid "Orange blue"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:34
+#: src/Theme/ArticleThemeRegistry.php:35
 msgid "Frontend peak"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:35
+#: src/Theme/ArticleThemeRegistry.php:36
 msgid "Cupid busy"
 msgstr ""
 
@@ -1552,73 +1556,78 @@ msgstr ""
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:456
-#: src/Theme/ThemeStateRepository.php:503
-#: src/Theme/ThemeStateRepository.php:530
-#: src/Theme/ThemeStateRepository.php:552
+#: src/Theme/ThemeStateRepository.php:473
+#: src/Theme/ThemeStateRepository.php:520
+#: src/Theme/ThemeStateRepository.php:547
+#: src/Theme/ThemeStateRepository.php:569
 msgctxt "font selection option"
 msgid "None"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:461
+#: src/Theme/ThemeStateRepository.php:478
 msgid "Optima"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:466
+#: src/Theme/ThemeStateRepository.php:483
 msgid "Inter"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:471
+#: src/Theme/ThemeStateRepository.php:488
 msgid "Helvetica"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:476
+#: src/Theme/ThemeStateRepository.php:493
 msgid "Georgia"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:481
+#: src/Theme/ThemeStateRepository.php:498
 msgid "Times"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:486
+#: src/Theme/ThemeStateRepository.php:503
 msgid "Cochin"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:491
+#: src/Theme/ThemeStateRepository.php:508
 msgid "Helvetica Neue"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:498
+#: src/Theme/ThemeStateRepository.php:515
 msgid "Microsoft YaHei"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:510
+#: src/Theme/ThemeStateRepository.php:527
 msgid "PingFang SC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:515
+#: src/Theme/ThemeStateRepository.php:532
 msgid "PingFang SC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:520
+#: src/Theme/ThemeStateRepository.php:537
 msgid "PingFang TC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:525
+#: src/Theme/ThemeStateRepository.php:542
 msgid "PingFang TC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:537
+#: src/Theme/ThemeStateRepository.php:554
 msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:542
+#: src/Theme/ThemeStateRepository.php:559
 msgid "serif"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:547
+#: src/Theme/ThemeStateRepository.php:564
 msgid "sans-serif"
+msgstr ""
+
+#: src/Theme/ThemeStateRepository.php:574
+msgctxt "font selection option"
+msgid "Theme default"
 msgstr ""
 
 #: templates/admin/editor-shell.php:28

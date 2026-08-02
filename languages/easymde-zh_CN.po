@@ -1446,62 +1446,66 @@ msgid "Blue ying"
 msgstr "蓝莹"
 
 #: src/Theme/ArticleThemeRegistry.php:21
+msgid "Crimson focus"
+msgstr "墨绯"
+
+#: src/Theme/ArticleThemeRegistry.php:22
 msgid "Lanqing"
 msgstr "兰青"
 
-#: src/Theme/ArticleThemeRegistry.php:22
+#: src/Theme/ArticleThemeRegistry.php:23
 msgid "Yamabuki"
 msgstr "山吹"
 
-#: src/Theme/ArticleThemeRegistry.php:23
+#: src/Theme/ArticleThemeRegistry.php:24
 msgid "Grid black"
 msgstr "网格黑"
 
-#: src/Theme/ArticleThemeRegistry.php:24
+#: src/Theme/ArticleThemeRegistry.php:25
 msgid "Geek black"
 msgstr "极客黑"
 
-#: src/Theme/ArticleThemeRegistry.php:25
+#: src/Theme/ArticleThemeRegistry.php:26
 msgid "Rose purple"
 msgstr "蔷薇紫"
 
-#: src/Theme/ArticleThemeRegistry.php:26
+#: src/Theme/ArticleThemeRegistry.php:27
 msgid "Ningye purple"
 msgstr "凝夜紫"
 
-#: src/Theme/ArticleThemeRegistry.php:27
+#: src/Theme/ArticleThemeRegistry.php:28
 msgid "Tech blue"
 msgstr "科技蓝"
 
-#: src/Theme/ArticleThemeRegistry.php:28
+#: src/Theme/ArticleThemeRegistry.php:29
 msgid "Qingbi Liujin"
 msgstr "青碧流金"
 
-#: src/Theme/ArticleThemeRegistry.php:29
+#: src/Theme/ArticleThemeRegistry.php:30
 msgid "Qinghe Zhusha"
 msgstr "清河朱砂"
 
-#: src/Theme/ArticleThemeRegistry.php:30
+#: src/Theme/ArticleThemeRegistry.php:31
 msgid "Cute green"
 msgstr "萌绿风"
 
-#: src/Theme/ArticleThemeRegistry.php:31 src/Theme/CodeThemeRegistry.php:24
+#: src/Theme/ArticleThemeRegistry.php:32 src/Theme/CodeThemeRegistry.php:24
 msgid "Fullstack blue"
 msgstr "全栈蓝"
 
-#: src/Theme/ArticleThemeRegistry.php:32
+#: src/Theme/ArticleThemeRegistry.php:33
 msgid "Minimal black"
 msgstr "极简黑"
 
-#: src/Theme/ArticleThemeRegistry.php:33
+#: src/Theme/ArticleThemeRegistry.php:34
 msgid "Orange blue"
 msgstr "橙蓝风"
 
-#: src/Theme/ArticleThemeRegistry.php:34
+#: src/Theme/ArticleThemeRegistry.php:35
 msgid "Frontend peak"
 msgstr "前端之巅同款"
 
-#: src/Theme/ArticleThemeRegistry.php:35
+#: src/Theme/ArticleThemeRegistry.php:36
 msgid "Cupid busy"
 msgstr "丘比特忙"
 
@@ -1570,6 +1574,11 @@ msgstr "自定义 CSS 包含被阻止的特性：%s"
 msgctxt "font selection option"
 msgid "None"
 msgstr "无"
+
+#: src/Theme/ThemeStateRepository.php:574
+msgctxt "font selection option"
+msgid "Theme default"
+msgstr "主题默认"
 
 #: src/Theme/ThemeStateRepository.php:446
 msgid "Optima"

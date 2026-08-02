@@ -376,6 +376,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-theme-accent[data-theme="chazi-purple"] { background: #8e44ad; }
 .easymde-immersive-theme-accent[data-theme="green-vitality"] { background: #27ae60; }
 .easymde-immersive-theme-accent[data-theme="red-crimson"] { background: #e74c3c; }
+.easymde-immersive-theme-accent[data-theme="crimson-focus"] { background: #e74c3c; }
 .easymde-immersive-theme-accent[data-theme="blue-ying"] { background: #1e90ff; }
 .easymde-immersive-theme-accent[data-theme="lanqing"] { background: #4a90e2; }
 .easymde-immersive-theme-accent[data-theme="yamabuki"] { background: #d4ac0d; }
@@ -1552,6 +1553,24 @@ body:has(.easymde-editor.is-immersive) .wrap {
     font-size: 15px;
     font-weight: 400;
 }
+.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) {
+    background: #fff;
+    background-image: none;
+}
+.easymde-editor.is-immersive-preview .easymde-immersive-preview-page:has(> .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor)) {
+    padding: 0;
+}
+.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor) {
+    padding: 36px 40px;
+}
+.easymde-editor.is-immersive-preview .easymde-immersive-preview-page:has(> .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor) {
+    padding: 0;
+}
+.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor {
+    width: 100%;
+    max-width: none;
+    padding: 36px 40px;
+}
 .easymde-editor.is-immersive-preview .easymde-immersive-visual-editor {
     outline: 0;
     cursor: text;
@@ -1590,11 +1609,23 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-editor.is-immersive-preview .easymde-immersive-preview-page {
         padding: 45px 52.5px;
     }
+    .easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor {
+        padding: 45px 52.5px;
+    }
+    .easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor) {
+        padding: 45px 52.5px;
+    }
 }
 @media (max-width: 760px) {
     .easymde-editor.is-immersive-preview .easymde-immersive-preview-page {
         padding: 28px 24px;
         min-height: 520px;
+    }
+    .easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor {
+        padding: 28px 24px;
+    }
+    .easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor) {
+        padding: 28px 24px;
     }
 
 }
@@ -1608,13 +1639,12 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-settings-popover > header button { display: grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #9ca0a8; cursor: pointer; }
 .easymde-immersive-settings-popover > header button:hover { background: #f3f4f6; color: #4b5160; }
 .easymde-immersive-settings-list { padding: 4px 14px 10px; }
-.easymde-immersive-settings-list > label { position: relative; display: flex; box-sizing: border-box; width: 100%; min-height: 0; align-items: center; gap: 8px; padding: 10px 3px; border-bottom: 1px solid #ecedf0; background: transparent; color: #171a20; text-align: start; cursor: pointer; }
-.easymde-immersive-settings-list > label:last-child { border-bottom: 0; }
-.easymde-immersive-settings-list > label:hover { background: #f8f9fb; }
-.easymde-immersive-settings-list > label:has(input:focus-visible) { outline: 2px solid #bfdbfe; outline-offset: -2px; }
-.easymde-immersive-settings-list input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.easymde-immersive-settings-list > button { position: relative; display: flex; box-sizing: border-box; width: 100%; min-height: 0; align-items: center; gap: 8px; padding: 10px 3px; border: 0; border-bottom: 1px solid #ecedf0; background: transparent; color: #171a20; font: inherit; text-align: start; cursor: pointer; }
+.easymde-immersive-settings-list > button:last-child { border-bottom: 0; }
+.easymde-immersive-settings-list > button:hover { background: #f8f9fb; }
+.easymde-immersive-settings-list > button:focus-visible { outline: 2px solid #bfdbfe; outline-offset: -2px; }
 .easymde-immersive-settings-check { display: grid; width: 22px; height: 22px; flex: 0 0 auto; place-items: center; color: #0b6cff; }
-.easymde-immersive-settings-list > label > span:last-child { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+.easymde-immersive-settings-list > button > span:last-child { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
 .easymde-immersive-settings-list strong { font-size: 13.5px; font-weight: 700; line-height: 20.25px; }
 .easymde-immersive-settings-list small { color: #9ca0a8; font-size: 11.5px; line-height: 1.4; }
 
@@ -2182,6 +2212,24 @@ body:has(.easymde-editor.is-immersive) .wrap {
     background-image: none;
     scroll-padding-block: 0;
     scroll-padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
+}
+
+.easymde-editor:not(.is-immersive) .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active),
+.easymde-editor.is-immersive-split .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: none;
+    margin-inline: 0;
+    padding: 36px max(20px, calc((100% - 576px) / 2)) 48px;
+    background: #fff;
+    background-image: none;
+}
+
+@media (max-width: 782px) {
+    .easymde-editor:not(.is-immersive) .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active),
+    .easymde-editor.is-immersive-split .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) {
+        padding: 28px max(20px, calc((100% - 576px) / 2)) 36px;
+    }
 }
 
 .easymde-editor:not(.is-immersive) .easymde-rendered-content table {

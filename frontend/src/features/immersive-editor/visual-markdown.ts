@@ -57,6 +57,44 @@ function currentVisualBlock(editor: HTMLElement): HTMLElement | null {
   return element?.parentElement === editor ? element : null;
 }
 
+export function prepareVisualTaskListMarkers(root: HTMLElement): void {
+  for (const item of root.querySelectorAll<HTMLLIElement>('li.task-list-item')) {
+    const inputs: HTMLInputElement[] = [];
+    for (const child of Array.from(item.children)) {
+      if (child instanceof HTMLInputElement && 'checkbox' === child.type) {
+        inputs.push(child);
+      } else if ('P' === child.tagName) {
+        for (const paragraphChild of Array.from(child.children)) {
+          if (paragraphChild instanceof HTMLInputElement && 'checkbox' === paragraphChild.type) {
+            inputs.push(paragraphChild);
+          }
+        }
+      }
+    }
+    for (const input of inputs) {
+      const marker = root.ownerDocument.createElement('span');
+      const checked = input.checked;
+      marker.className = `easymde-task-checkbox${checked ? ' is-checked' : ''}`;
+      marker.setAttribute('role', 'checkbox');
+      marker.setAttribute('aria-checked', checked ? 'true' : 'false');
+      marker.setAttribute('aria-disabled', 'true');
+      marker.contentEditable = 'false';
+      if (checked) marker.textContent = '✓';
+      input.replaceWith(marker);
+    }
+  }
+}
+
+function visualBlockText(block: HTMLElement): string {
+  const clone = block.cloneNode(true) as HTMLElement;
+  for (const marker of clone.querySelectorAll(
+    '.easymde-task-checkbox, input[type="checkbox"]'
+  )) {
+    marker.remove();
+  }
+  return clone.textContent ?? '';
+}
+
 function caretIsAtEnd(block: HTMLElement): boolean {
   const selection = window.getSelection();
   if (
@@ -90,7 +128,7 @@ export function applyVisualBlockShortcut(
   const selection = window.getSelection();
   if (!block || !selection?.isCollapsed) return false;
 
-  const text = block.textContent ?? '';
+  const text = visualBlockText(block);
   if ('Backspace' === event.key && '' === text) {
     if (
       /^H[1-6]$/.test(block.tagName) ||
@@ -397,6 +435,28 @@ function unwrap(element: Element): void {
   element.remove();
 }
 
+function restoreTaskListCheckboxInputs(root: HTMLElement): void {
+  for (const checkbox of root.querySelectorAll<HTMLElement>('.easymde-task-checkbox')) {
+    const input = root.ownerDocument.createElement('input');
+    input.type = 'checkbox';
+    input.checked = 'true' === checkbox.getAttribute('aria-checked')
+      || checkbox.classList.contains('is-checked');
+    input.disabled = true;
+    input.contentEditable = 'false';
+    const paragraph = checkbox.parentElement;
+    const item = paragraph?.parentElement;
+    if ('P' === paragraph?.tagName && 'LI' === item?.tagName) {
+      item.insertBefore(input, paragraph);
+      for (const child of Array.from(paragraph.childNodes)) {
+        if (child !== checkbox) item.insertBefore(child, paragraph);
+      }
+      paragraph.remove();
+    } else {
+      checkbox.replaceWith(input);
+    }
+  }
+}
+
 function restoreThemeFootnoteLinks(root: HTMLElement): void {
   const footnotes = new Map<
     string,
@@ -431,6 +491,7 @@ function restoreThemeFootnoteLinks(root: HTMLElement): void {
 
 function markdownSerializationRoot(editor: HTMLElement): HTMLElement {
   const root = editor.cloneNode(true) as HTMLElement;
+  restoreTaskListCheckboxInputs(root);
   restoreThemeFootnoteLinks(root);
 
   for (const heading of root.querySelectorAll('h1, h2, h3, h4, h5, h6')) {

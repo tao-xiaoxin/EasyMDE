@@ -18,7 +18,8 @@ function selectedOption(
 
 export function buildFontStack(
   options: FontControlsOptions,
-  state: FontControlsState
+  state: FontControlsState,
+  themeFontFallback = ''
 ): string {
   const selected = [
     selectedOption(options.customFonts, state.customFont),
@@ -29,7 +30,8 @@ export function buildFontStack(
   const seen = new Set<string>();
   const parts: Array<string> = [];
 
-  for (const option of selected) {
+  for (const [index, option] of selected.entries()) {
+    if (3 === index && 'theme-default' === state.serifFont) continue;
     for (const part of option.fontFamily.split(',')) {
       const family = part.trim();
       const key = family.toLowerCase();
@@ -38,6 +40,10 @@ export function buildFontStack(
         parts.push(family);
       }
     }
+  }
+
+  if ('theme-default' === state.serifFont && parts.length && themeFontFallback) {
+    parts.push(themeFontFallback);
   }
 
   return parts.join(', ');

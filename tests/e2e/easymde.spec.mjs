@@ -2302,6 +2302,10 @@ test.describe('EasyMDE editor workflows', () => {
         await expect(page.locator(group.field)).toHaveValue(id);
         const expectedFontStack = await page.evaluate(() => {
           const options = window.EasyMDEEditorRootBootstrap.fonts.options;
+          const bootstrap = window.EasyMDEEditorRootBootstrap;
+          const activeTheme = bootstrap.appearance.articleThemes.find(
+            (theme) => theme.id === document.querySelector('#easymde-markdown-theme-field')?.value
+          );
           const selections = [
             [options.customFonts, '#easymde-custom-font-field'],
             [options.windowsFonts, '#easymde-windows-font-field'],
@@ -2311,8 +2315,11 @@ test.describe('EasyMDE editor workflows', () => {
           const seen = new Set();
           const parts = [];
           for (const [fontOptions, selector] of selections) {
-            const selected = document.querySelector(selector)?.value ?? '';
-            const family = fontOptions.find((option) => option.id === selected)
+            const selectedId = document.querySelector(selector)?.value ?? '';
+            if (selector === '#easymde-serif-font-field' && selectedId === 'theme-default') {
+              continue;
+            }
+            const family = fontOptions.find((option) => option.id === selectedId)
               ?.fontFamily ?? '';
             for (const part of family.split(',').map((value) => value.trim())) {
               const key = part.toLowerCase();
@@ -2321,6 +2328,9 @@ test.describe('EasyMDE editor workflows', () => {
                 parts.push(part);
               }
             }
+          }
+          if (document.querySelector('#easymde-serif-font-field')?.value === 'theme-default' && parts.length && activeTheme?.usesThemeFontFamily) {
+            parts.push('var(--easymde-theme-font-family, sans-serif)');
           }
           return parts.join(', ');
         });

@@ -19,6 +19,7 @@ const REFERENCE_ARTICLE_THEMES: Readonly<Record<string, ReferenceArticleTheme>> 
   'chazi-purple': { accent: '#8E44AD', accentLight: '#C39BD3', accentBackground: '#F5EEF8' },
   'green-vitality': { accent: '#27AE60', accentLight: '#82D9A8', accentBackground: '#EAFAF1' },
   'red-crimson': { accent: '#E74C3C', accentLight: '#F5A89E', accentBackground: '#FDEDEC' },
+  'crimson-focus': { accent: '#E74C3C', accentLight: '#F5A89E', accentBackground: '#FDEDEC' },
   'blue-ying': { accent: '#1E90FF', accentLight: '#90C8FF', accentBackground: '#EBF5FB' },
   lanqing: { accent: '#4A90E2', accentLight: '#A4C8F0', accentBackground: '#EBF5FB' },
   yamabuki: { accent: '#D4AC0D', accentLight: '#EDD86A', accentBackground: '#FEF9E7' },

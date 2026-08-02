@@ -15,6 +15,7 @@ import {
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChange,
   placeVisualCaretFromSourceOffset,
+  prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
   serializeVisualMarkdown,
   type VisualMarkdownReadOnlySnapshot,
@@ -126,6 +127,7 @@ export function ImmersiveVisualEditor({
     useRef<VisualMarkdownReadOnlySnapshot | null>(null);
 
   const captureSnapshot = useCallback((sourceMarkdown: string) => {
+    prepareVisualTaskListMarkers(surface);
     ensureEmptyVisualParagraph(surface, sourceMarkdown);
     protectVisualMarkdownReadOnlyRegions(surface);
     readOnlySnapshotRef.current =

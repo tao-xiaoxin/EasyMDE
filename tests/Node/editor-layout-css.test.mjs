@@ -336,6 +336,24 @@ test('ordinary Preview provides an editorial reading rhythm without changing imm
     css,
     /\.easymde-editor:not\(\.is-immersive\) \.easymde-rendered-content :is\(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a\)\s*\{[^}]*overflow-wrap:\s*anywhere;/s
   );
+  const crimsonPreviewRule = css.match(
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\.easymde-markdown-theme-crimson-focus:not\(\.easymde-custom-css-active\),\s*\.easymde-editor\.is-immersive-split \.easymde-preview\.easymde-markdown-theme-crimson-focus:not\(\.easymde-custom-css-active\)\s*\{(?<body>[^}]*)\}/s
+  );
+  assert.ok(crimsonPreviewRule?.groups?.body, 'Missing Crimson preview geometry rule');
+  assertDeclaration(crimsonPreviewRule.groups.body, 'width', '100%');
+  assertDeclaration(crimsonPreviewRule.groups.body, 'max-width', 'none');
+  assertDeclaration(crimsonPreviewRule.groups.body, 'margin-inline', '0');
+  assertDeclaration(crimsonPreviewRule.groups.body, 'padding', '36px max(20px, calc((100% - 576px) / 2)) 48px');
+  assertDeclaration(crimsonPreviewRule.groups.body, 'background', '#fff');
+  assertDeclaration(crimsonPreviewRule.groups.body, 'background-image', 'none');
+  const mobileCrimsonLayout = cssBlock(css, '@media (max-width: 782px)');
+  assertDeclaration(
+    mobileCrimsonLayout.match(
+      /\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\.easymde-markdown-theme-crimson-focus:not\(\.easymde-custom-css-active\),\s*\.easymde-editor\.is-immersive-split \.easymde-preview\.easymde-markdown-theme-crimson-focus:not\(\.easymde-custom-css-active\)\s*\{(?<body>[^}]*)\}/s
+    )?.groups?.body ?? '',
+    'padding',
+    '28px max(20px, calc((100% - 576px) / 2)) 36px'
+  );
 });
 
 test('ordinary editor settings combines theme and font controls in one responsive popover', () => {
@@ -701,9 +719,71 @@ test('immersive Preview mode owns the reference canvas and article page geometry
     css,
     /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page\s*\{[^}]*box-sizing:\s*border-box;[^}]*max-width:\s*760px;[^}]*min-height:\s*680px;[^}]*margin:\s*0 auto;[^}]*padding:\s*36px 40px;[^}]*border:\s*1px solid #e1e5eb;[^}]*background:\s*#fff;[^}]*box-shadow:\s*0 8px 28px rgba\(15, 23, 42, \.06\);[^}]*color:\s*#0f172a;[^}]*font-size:\s*15px;[^}]*font-weight:\s*400;/s
   );
+  const immersivePreviewContentRule = cssRule(
+    css,
+    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active)'
+  );
+  assertDeclaration(immersivePreviewContentRule, 'background', '#fff');
+  assertDeclaration(immersivePreviewContentRule, 'background-image', 'none');
+  const readonlyPreviewPageRule = cssRule(
+    css,
+    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page:has(> .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor))'
+  );
+  assertDeclaration(readonlyPreviewPageRule, 'padding', '0');
+  const readonlyPreviewContentRule = cssRule(
+    css,
+    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor)'
+  );
+  assertDeclaration(readonlyPreviewContentRule, 'padding', '36px 40px');
+  const editablePreviewPageRule = cssRule(
+    css,
+    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page:has(> .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor)'
+  );
+  assertDeclaration(editablePreviewPageRule, 'padding', '0');
+  const editablePreviewContentRule = cssRule(
+    css,
+    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor'
+  );
+  assertDeclaration(editablePreviewContentRule, 'width', '100%');
+  assertDeclaration(editablePreviewContentRule, 'max-width', 'none');
+  assertDeclaration(editablePreviewContentRule, 'padding', '36px 40px');
+  const desktopImmersivePreview = cssBlock(css, '@media (min-width: 640px)');
+  assertDeclaration(
+    cssRule(
+      desktopImmersivePreview,
+      '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor)'
+    ),
+    'padding',
+    '45px 52.5px'
+  );
+  assertDeclaration(
+    cssRule(
+      desktopImmersivePreview,
+      '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor'
+    ),
+    'padding',
+    '45px 52.5px'
+  );
+  const mobileImmersivePreview = cssBlock(css, '@media (max-width: 760px)');
+  assertDeclaration(
+    cssRule(
+      mobileImmersivePreview,
+      '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor)'
+    ),
+    'padding',
+    '28px 24px'
+  );
+  assertDeclaration(
+    cssRule(
+      mobileImmersivePreview,
+      '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor'
+    ),
+    'padding',
+    '28px 24px'
+  );
   assert.doesNotMatch(
     css,
-    /\.easymde-editor\.is-immersive-preview[^{]*\.easymde-immersive-preview-page\s*>\s*\.easymde-preview(?:\s|[.:#>+~\[])[^{]*\{/s
+    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page > \.easymde-preview\s*\{/
   );
   assert.match(
     css,

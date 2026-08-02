@@ -813,6 +813,11 @@ HTML snapshot. For a copy or rendering change:
 - Inspect screenshots and computed geometry for headings, theme decorations,
   images, code line breaks, tables, inline formulas, every display-formula
   family, and both horizontal edges of at least one long code/formula case.
+  When Mermaid HTML labels are present, include a flowchart screenshot with
+  multi-character non-ASCII labels and inspect the pasted DOM after WeChat's
+  sanitizer has rewritten `foreignObject` children. Complete labels must remain
+  on one line even when `white-space`, `word-break`, and `<nobr>` are removed;
+  verify that any zero-width markers are absent from modern `text/plain`.
   Confirm focus, selection, page scroll, and temporary DOM are restored after
   fallback and after failure.
 - Keep browser access limited to the explicitly authorized local authenticated

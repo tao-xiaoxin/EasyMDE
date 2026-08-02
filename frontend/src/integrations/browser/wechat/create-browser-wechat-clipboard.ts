@@ -40,6 +40,11 @@ const KATEX_VISUAL_LAYOUT_DECLARATIONS = [
   'overflow-wrap:normal',
   'max-width:none'
 ] as const;
+const MERMAID_LABEL_LAYOUT_DECLARATIONS = [
+  'white-space:nowrap',
+  'word-break:normal',
+  'overflow-wrap:normal'
+] as const;
 
 const SAFE_DISPLAY_VALUES: Record<string, true> = {
   block: true,
@@ -98,6 +103,8 @@ const MAC_FRAME_MARKERS = new WeakSet<Element>();
 const KATEX_VISUAL_ROOTS = new WeakSet<Element>();
 const KATEX_VISUAL_NODES = new WeakSet<Element>();
 const MATH_BLOCK_ROOTS = new WeakSet<Element>();
+const MERMAID_SVG_ROOTS = new WeakSet<Element>();
+const MERMAID_FOREIGN_OBJECTS = new WeakSet<Element>();
 const HIDDEN_NODES = new WeakSet<Element>();
 
 export type ClipboardItemConstructor = new (payload: Record<string, Blob>) => unknown;
@@ -361,6 +368,15 @@ function isSvgElement(source: Element): boolean {
   return Boolean(source.closest('svg'));
 }
 
+function isMermaidSvgRoot(source: Element): boolean {
+  return 'svg' === source.localName.toLowerCase() && Boolean(source.closest('.easymde-mermaid'));
+}
+
+function isMermaidForeignObject(source: Element): boolean {
+  return 'foreignobject' === source.localName.toLowerCase()
+    && Boolean(source.closest('.easymde-mermaid'));
+}
+
 async function styleDeclarations(
   source: Element,
   computed: CSSStyleDeclaration,
@@ -475,6 +491,8 @@ async function inlineStyles(
   else clone.removeAttribute('style');
   if (source.matches('.katex')) KATEX_VISUAL_ROOTS.add(clone);
   if (source.matches('.easymde-math-block')) MATH_BLOCK_ROOTS.add(clone);
+  if (isMermaidSvgRoot(source)) MERMAID_SVG_ROOTS.add(clone);
+  if (isMermaidForeignObject(source)) MERMAID_FOREIGN_OBJECTS.add(clone);
   if (isKaTeXVisualNode(source)) {
     KATEX_VISUAL_NODES.add(clone);
     // WeChat applies `white-space:pre-wrap` and `overflow-wrap:break-word`
@@ -570,6 +588,42 @@ function normalizeCodeFrames(root: HTMLElement): void {
     const marker = pre.querySelector(':scope > span[aria-hidden="true"]');
     if (!marker || !MAC_FRAME_MARKERS.has(marker)) return;
     appendDeclarations(marker, ['display:block', 'margin:-22px 0 10px 14px']);
+  });
+}
+
+function wrapMermaidLabelContents(root: HTMLElement): void {
+  const document = root.ownerDocument;
+  root.querySelectorAll('foreignObject').forEach((element) => {
+    if (!MERMAID_FOREIGN_OBJECTS.has(element)) return;
+    const label = element.firstElementChild;
+    if (!label || label.matches('nobr')) return;
+    const wrapper = document.createElement('nobr');
+    appendDeclarations(wrapper, [
+      'display:inline-block',
+      ...MERMAID_LABEL_LAYOUT_DECLARATIONS
+    ], true);
+    while (label.firstChild) wrapper.appendChild(label.firstChild);
+    label.appendChild(wrapper);
+  });
+}
+
+function preserveMermaidLabelWhitespace(root: HTMLElement): void {
+  root.querySelectorAll('foreignObject').forEach((element) => {
+    if (!MERMAID_FOREIGN_OBJECTS.has(element)) return;
+    const walker = element.ownerDocument.createTreeWalker(element, 4);
+    const textNodes: Text[] = [];
+    let node = walker.nextNode();
+    while (node) {
+      textNodes.push(node as Text);
+      node = walker.nextNode();
+    }
+    textNodes.forEach((textNode) => {
+      const value = textNode.nodeValue ?? '';
+      if (!value || value.includes('\u2060')) return;
+      textNode.nodeValue = Array.from(value)
+        .map((character) => ' ' === character ? '\u2060 \u2060' : character)
+        .join('\u2060');
+    });
   });
 }
 
@@ -807,9 +861,30 @@ async function createMarkup(
     // height is part of the visual layout. A generic `height:auto` media rule
     // collapses those SVGs after paste, while non-math SVG illustrations still
     // need the portable responsive rule.
+    if (MERMAID_SVG_ROOTS.has(element)) {
+      // Mermaid HTML labels are rendered in fixed-size foreignObject boxes.
+      // WeChat's fallback font can be wider than the preview font, so preserve
+      // the label's overflow instead of clipping its final glyphs.
+      appendDeclarations(element, [
+        'overflow:visible',
+        'overflow-x:visible',
+        'overflow-y:visible'
+      ], true);
+    }
     if (isKaTeXVisualClone(element)) return;
     appendDeclarations(element, ['max-width:100%', 'height:auto', 'display:block', 'margin:0 auto']);
   });
+  normalized.querySelectorAll('foreignObject').forEach((element) => {
+    if (!MERMAID_FOREIGN_OBJECTS.has(element)) return;
+    appendDeclarations(element, [
+      ...MERMAID_LABEL_LAYOUT_DECLARATIONS,
+      'overflow:visible',
+      'overflow-x:visible',
+      'overflow-y:visible'
+    ], true);
+  });
+  wrapMermaidLabelContents(normalized);
+  preserveMermaidLabelWhitespace(normalized);
   normalized.querySelectorAll('table').forEach((element) => {
     appendDeclarations(element, [
       'display:table',

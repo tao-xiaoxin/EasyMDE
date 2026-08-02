@@ -146,6 +146,14 @@ the destination derive visible plain text. Copy is a browser compatibility
 output and never writes Markdown, `post_content`, metadata, revisions, or
 publication state.
 
+Mermaid flowcharts use SVG `foreignObject` labels whose preview dimensions are
+calculated with the preview font. WeChat can use a wider fallback font and
+also strips `white-space`, `word-break`, and `<nobr>` during paste. The shared
+serializer therefore scopes visible overflow and non-wrapping structure to
+Mermaid `foreignObject` labels and inserts zero-width word-joiner markers;
+modern plain text removes those markers. Ordinary SVG, ER/text diagrams, and
+KaTeX are not rewritten by this Mermaid-specific path.
+
 The serializer removes scripts, styles, interactive controls, CSS classes, and
 source/editor transient attributes; keeps only valid fragment IDs and
 SVG-internal IDs; sanitizes URL and style values; preserves safe image `src`,

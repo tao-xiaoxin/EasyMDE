@@ -1057,6 +1057,13 @@ Feature boundaries:
   KaTeX visual SVG geometry while removing KaTeX MathML. Exporter-owned
   `aria-hidden` decoration and `leaf` markers are structural exceptions to the
   source transient-attribute rule.
+  Mermaid HTML-label SVGs are a separate compatibility case: mark only Mermaid
+  roots and their `foreignObject` labels, make their overflow visible, and
+  preserve one-line label text with `<nobr>` plus zero-width word-joiner
+  markers. The modern `text/plain` path strips those markers. Do not apply
+  this to ordinary SVG or KaTeX, and do not rely on `white-space` alone because
+  WeChat removes that declaration while sanitizing pasted `foreignObject`
+  content.
   It normalizes article/div roots to portable section structure, wraps text
   leaves, preserves code and KaTeX whitespace markers, sanitizes `srcset` and
   fragment IDs along with ordinary URL attributes, and gives non-math SVG and

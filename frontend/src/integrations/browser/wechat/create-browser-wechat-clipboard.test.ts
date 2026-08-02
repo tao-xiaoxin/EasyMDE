@@ -628,6 +628,103 @@ describe('createBrowserWechatClipboard', () => {
     expect(diagramStyle).toContain('max-width:100%');
   });
 
+  it('keeps complete Mermaid HTML labels visible in modern and legacy payloads', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<div class="easymde-mermaid">',
+      '<svg width="220" height="360" viewBox="0 0 220 360">',
+      '<foreignObject width="64" height="22" x="78" y="0"><div xmlns="http://www.w3.org/1999/xhtml"><span>用户请求</span></div></foreignObject>',
+      '<foreignObject width="101.875" height="22" x="59" y="70"><div xmlns="http://www.w3.org/1999/xhtml"><span>是否命中缓存?</span></div></foreignObject>',
+      '<foreignObject width="96" height="22" x="62" y="140"><div xmlns="http://www.w3.org/1999/xhtml"><span>返回缓存结果</span></div></foreignObject>',
+      '<foreignObject width="72" height="22" x="74" y="210"><div xmlns="http://www.w3.org/1999/xhtml"><span>调用 API</span></div></foreignObject>',
+      '</svg></div>'
+    ].join('');
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: '用户请求\n是否命中缓存?\n返回缓存结果\n调用 API' });
+
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const runtime = {
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element: Element, pseudoElement?: string) => {
+        if (pseudoElement) return declaration({});
+        if ('svg' === element.localName) {
+          return declaration({
+            display: 'block',
+            width: '220px',
+            height: '360px',
+            overflow: 'hidden',
+            'overflow-x': 'hidden',
+            'overflow-y': 'hidden'
+          });
+        }
+        if ('foreignobject' === element.localName) {
+          return declaration({
+            display: 'block',
+            width: element.getAttribute('width') ?? '64px',
+            height: '22px',
+            overflow: 'hidden',
+            'overflow-x': 'hidden',
+            'overflow-y': 'hidden'
+          });
+        }
+        if ('div' === element.localName || 'span' === element.localName) {
+          return declaration({ display: 'block', 'white-space': 'nowrap' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items: unknown[]) => { writes.push(items); },
+      pageOffset: () => ({ x: 0, y: 0 })
+    };
+
+    const modern = createBrowserWechatClipboard(runtime);
+    await expect(modern.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const modernItem = (writes[0] as ClipboardItemStub[])[0];
+    const modernBlob = modernItem?.payload['text/html'];
+    if (!modernBlob) throw new Error('modern clipboard html missing');
+    const modernHtml = await modernBlob.text();
+    const modernHolder = document.createElement('div');
+    modernHolder.innerHTML = modernHtml;
+    expect(modernHolder.querySelectorAll('svg foreignObject')).toHaveLength(4);
+    expect(modernHolder.querySelector('svg')?.getAttribute('style')).toContain('overflow:visible!important');
+    expect([...modernHolder.querySelectorAll('foreignObject')].every((element) => {
+      const style = element.getAttribute('style') ?? '';
+      return style.includes('overflow:visible!important')
+        && style.includes('overflow-x:visible!important')
+        && style.includes('overflow-y:visible!important')
+        && style.includes('white-space:nowrap!important')
+        && style.includes('word-break:normal!important')
+        && style.includes('overflow-wrap:normal!important');
+    })).toBe(true);
+    expect([...modernHolder.querySelectorAll('foreignObject')].every((element) => {
+      const label = element.querySelector('nobr');
+      return label?.textContent === element.textContent;
+    })).toBe(true);
+    const visualText = modernHolder.textContent?.replaceAll('\u2060', '') ?? '';
+    for (const label of ['用户请求', '是否命中缓存?', '返回缓存结果', '调用 API']) {
+      expect(visualText).toContain(label);
+    }
+    expect(modernHtml).toContain('\u2060');
+
+    let legacyHtml = '';
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    const legacy = createBrowserWechatClipboard({ ...runtime, clipboardItem: null, write: null });
+    await expect(legacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+    expect(legacyHtml).toBe(modernHtml);
+  });
+
   it('keeps referenced anchors, SVG paint, supported math layout, and safe image URLs', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub {

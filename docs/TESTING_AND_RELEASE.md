@@ -114,12 +114,15 @@ npm run test:frontend -- frontend/src/features/wechat-export/wechat-export-sessi
 ```
 
 The current focused Adapter suite covers the normalized clone, unsafe URL/style
-rejection, pseudo-element and same-origin theme-image portability, KaTeX
-visual-tree and KaTeX MathML behavior, explicit code line breaks, table/formula
-horizontal overflow, modern/legacy HTML parity, and an explicit failure result
-with sandbox cleanup. It does not yet prove modern-write rejection followed by
-legacy success, `ClipboardItem` construction failure, the unsupported legacy
-result, theme-image fetch/data-conversion failure, or full Selection/Focus/Scroll
+rejection, pseudo-element and same-origin theme-image portability, Mermaid
+`foreignObject` label overflow and non-wrapping markers, KaTeX visual-tree and
+KaTeX MathML behavior, explicit code line breaks, table/formula horizontal
+overflow, modern/legacy HTML parity, and an explicit failure result with
+sandbox cleanup. Its Mermaid assertion covers complete non-ASCII labels in both
+payload paths; the modern `text/plain` assertion removes exporter-only markers.
+It does not yet prove modern-write rejection followed by legacy success,
+`ClipboardItem` construction failure, the unsupported legacy result,
+theme-image fetch/data-conversion failure, or full Selection/Focus/Scroll
 restoration on every failure path; add those cases before treating the boundary
 as fully covered. `npm run frontend:check` is the required full frontend gate;
 `npm run check:frontend-production` must compare the compiled admin entry
@@ -139,7 +142,11 @@ When the copy boundary or any theme/Preview enhancement changes, run a fresh
 real-browser check in an explicitly authorized local authenticated WordPress
 and WeChat session using the synthetic full-capability fixture. Capture source
 Preview and pasted WeChat screenshots at the same viewport, then inspect the
-payload and pasted DOM. Measure card, code, table, and formula `clientWidth`,
+payload and pasted DOM. For Mermaid, verify complete labels in at least one
+HTML-label flowchart and one non-`foreignObject` diagram (for example ER/text);
+record whether the destination strips CSS/`nobr` and confirm the zero-width
+marker path keeps labels on one line. Measure card, code, table, and formula
+`clientWidth`,
 `scrollWidth`, `scrollTop`, and `overflow-x/y`; expected long content has one
 horizontal owner and no exporter-created article-wide vertical owner. Check
 that `.katex-mathml`, source CSS classes/transient attributes, unsafe URLs,
@@ -147,7 +154,8 @@ hidden controls, and remote executable resources are absent; exporter-owned
 `aria-hidden`/`leaf` markers are expected structural exceptions. A page-level scrollbar
 must be measured at the WeChat document/editor shell separately; it is not a
 copy regression unless the current pasted article itself owns that scroll.
-Compare both Clipboard API and legacy compatibility results, restore/failure
+Compare both Clipboard API and legacy compatibility results, including equal
+visible `text/plain` after exporter-marker removal, restore/failure
 states, and visual geometry for headings, theme decorations, images, code,
 tables, inline formulas, every display-formula family, and both edges of a
 long case. Also verify that a loading/error/empty Preview does not call either

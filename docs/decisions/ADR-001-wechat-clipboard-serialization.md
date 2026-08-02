@@ -45,6 +45,12 @@ The normalized payload:
   media bounds, and KaTeX's visual SVG geometry while removing KaTeX MathML;
   exporter-owned `aria-hidden` decoration and `leaf` markers remain as
   structural exceptions;
+- treats Mermaid HTML-label SVGs as a destination-font compatibility boundary:
+  only Mermaid roots and their `foreignObject` labels receive visible overflow,
+  semantic non-wrapping structure, and zero-width word-joiner markers. WeChat
+  may remove the label CSS and `<nobr>` while sanitizing the paste, so the
+  marker path is required for complete labels; modern `text/plain` removes the
+  markers and ordinary SVG/KaTeX paths remain unchanged;
 - normalizes article/div roots to portable section structure, wraps text leaves,
   preserves code and KaTeX whitespace markers, and sanitizes `srcset` and
   fragment IDs together with ordinary URL attributes;
@@ -94,8 +100,9 @@ All runtime assets remain local; no remote executable resource is introduced.
 ## Verification
 
 The focused serializer tests cover unsafe input, pseudo elements, theme-image
-materialization, code line preservation, table/formula horizontal overflow,
-KaTeX MathML removal, modern/legacy HTML parity, and an explicit failure result
+materialization, Mermaid non-ASCII label preservation, code line preservation,
+table/formula horizontal overflow, KaTeX MathML removal, modern/legacy HTML parity,
+and an explicit failure result
 with sandbox cleanup. The current suite still needs explicit cases for modern
 rejection followed by legacy success, `ClipboardItem` construction failure,
 unsupported legacy results, theme-image fetch/data-conversion failures, and

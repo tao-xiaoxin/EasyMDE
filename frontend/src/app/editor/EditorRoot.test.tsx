@@ -697,12 +697,23 @@ describe('EditorRoot', () => {
     ).toBeNull();
     expect(
       view.queryByRole('complementary', { name: '文章大纲' })
-    ).toBeNull();
-    expect(view.queryByRole('button', { name: '收起大纲' })).toBeNull();
-    expect(view.queryByRole('button', { name: '展开大纲' })).toBeNull();
+    ).not.toBeNull();
+    expect(view.getAllByRole('button', { name: '收起大纲' })).toHaveLength(2);
     expect(
       view.queryByRole('separator', { name: '调整大纲宽度' })
+    ).not.toBeNull();
+    const previewHideOutline = view.getAllByRole('button', {
+      name: '收起大纲'
+    })[0];
+    if (!previewHideOutline) throw new Error('preview-outline-close-unavailable');
+    fireEvent.click(previewHideOutline);
+    expect(
+      view.queryByRole('complementary', { name: '文章大纲' })
     ).toBeNull();
+    fireEvent.click(view.getByRole('button', { name: '展开大纲' }));
+    expect(
+      view.queryByRole('complementary', { name: '文章大纲' })
+    ).not.toBeNull();
     expect(
       view.container.querySelectorAll('[data-easymde-preview-html-sink]')
     ).toHaveLength(1);
@@ -748,7 +759,7 @@ describe('EditorRoot', () => {
     ).toHaveLength(1);
     expect(
       view.queryByRole('complementary', { name: '文章大纲' })
-    ).toBeNull();
+    ).not.toBeNull();
     expect(props.enhancementPort.dispose).not.toHaveBeenCalled();
     fireEvent.click(view.getByRole('button', { name: 'Image' }));
     expect(props.mediaPickerFrame?.open).toHaveBeenCalledTimes(1);
@@ -3198,8 +3209,8 @@ describe('EditorRoot', () => {
     expect(view.getByRole('dialog', { name: '编辑器设置' })).not.toBeNull();
     for (const name of ['文章大纲', '字数统计', '分屏预览', '自动保存', '同步滚动']) {
       expect(
-        (view.getByRole('checkbox', { name }) as HTMLInputElement).checked
-      ).toBe(true);
+        view.getByRole('checkbox', { name }).getAttribute('aria-checked')
+      ).toBe('true');
     }
     expect(view.queryByText(/AI/u)).toBeNull();
   });
@@ -3622,13 +3633,15 @@ describe('EditorRoot', () => {
 
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     expect(
-      (view.getByRole('checkbox', { name: '自动保存' }) as HTMLInputElement)
-        .checked
-    ).toBe(false);
+      view
+        .getByRole('checkbox', { name: '自动保存' })
+        .getAttribute('aria-checked')
+    ).toBe('false');
     expect(
-      (view.getByRole('checkbox', { name: '同步滚动' }) as HTMLInputElement)
-        .checked
-    ).toBe(false);
+      view
+        .getByRole('checkbox', { name: '同步滚动' })
+        .getAttribute('aria-checked')
+    ).toBe('false');
     expect(
       view.container
         .querySelector('.easymde-editor')

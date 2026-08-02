@@ -38,7 +38,7 @@ final class MarkdownRenderer {
 			)
 		);
 
-		$html = self::restore_math( wp_kses_post( (string) $converter->convert( $markdown ) ), $math );
+		$html = self::restore_math( self::sanitize_rendered_html( (string) $converter->convert( $markdown ), $theme, 'crimson-focus' === $theme ), $math );
 
 		return self::post_process_html( $html, $theme );
 	}
@@ -127,6 +127,21 @@ final class MarkdownRenderer {
 		$html = TocGenerator::add_heading_ids_and_toc( $html );
 		$html = ThemeMarkupTransformer::transform( $html, $theme );
 
-		return wp_kses_post( $html );
+		return self::sanitize_rendered_html( $html, $theme, 'crimson-focus' === $theme );
+	}
+
+	private static function sanitize_rendered_html( $html, $theme, $allow_task_inputs = false ) {
+		$allowed_html = wp_kses_allowed_html( 'post' );
+
+		if ( $allow_task_inputs && 'crimson-focus' === $theme ) {
+			$allowed_html['input'] = array(
+				'class'    => true,
+				'checked'  => true,
+				'disabled' => true,
+				'type'     => true,
+			);
+		}
+
+		return wp_kses( $html, $allowed_html );
 	}
 }

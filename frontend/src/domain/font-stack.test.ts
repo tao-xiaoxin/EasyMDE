@@ -27,4 +27,48 @@ describe('buildFontStack', () => {
       serifFont: 'serif'
     })).toBe('"Inter", Arial, "Microsoft YaHei", "PingFang SC", Georgia, serif');
   });
+
+  it('keeps the theme fallback after explicit font selections', () => {
+    expect(buildFontStack({
+      ...options,
+      serifOptions: [
+        { id: 'theme-default', label: 'Theme default', fontFamily: 'var(--easymde-theme-font-family)' }
+      ]
+    }, {
+      customFont: 'custom',
+      windowsFont: 'windows',
+      appleFont: 'apple',
+      serifFont: 'theme-default'
+    }, 'var(--easymde-theme-font-family, sans-serif)')).toBe('"Inter", Arial, "Microsoft YaHei", "PingFang SC", var(--easymde-theme-font-family, sans-serif)');
+  });
+
+  it('keeps a safe fallback when the active theme has no font variable', () => {
+    expect(buildFontStack({
+      ...options,
+      serifOptions: [
+        { id: 'theme-default', label: 'Theme default', fontFamily: 'var(--easymde-theme-font-family)' }
+      ]
+    }, {
+      customFont: 'custom',
+      windowsFont: 'windows',
+      appleFont: 'apple',
+      serifFont: 'theme-default'
+    }, 'var(--easymde-theme-font-family, sans-serif)')).toBe('"Inter", Arial, "Microsoft YaHei", "PingFang SC", var(--easymde-theme-font-family, sans-serif)');
+  });
+
+  it('returns an empty stack when theme default is the only selection', () => {
+    expect(buildFontStack({
+      customFonts: [{ id: 'none', label: 'None', fontFamily: '' }],
+      windowsFonts: [{ id: 'none', label: 'None', fontFamily: '' }],
+      appleFonts: [{ id: 'none', label: 'None', fontFamily: '' }],
+      serifOptions: [
+        { id: 'theme-default', label: 'Theme default', fontFamily: 'var(--easymde-theme-font-family)' }
+      ]
+    }, {
+      customFont: 'none',
+      windowsFont: 'none',
+      appleFont: 'none',
+      serifFont: 'theme-default'
+    })).toBe('');
+  });
 });

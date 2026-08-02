@@ -63,6 +63,7 @@ import type { RevisionPort } from '../../contracts/ports/revision-port';
 import type { ScrollSyncPort } from '../../contracts/ports/scroll-sync-port';
 import type { ToolbarShortcutsPort } from '../../contracts/ports/toolbar-shortcuts-port';
 import type { WechatClipboardPort } from '../../contracts/ports/wechat-clipboard-port';
+import { buildFontStack } from '../../domain/font-stack';
 import {
   AppearanceControls,
   type AppearanceNotification,
@@ -410,34 +411,6 @@ function mediaPickerFailureCode(error: unknown): string {
     /^media-picker-[a-z0-9-]+$/.test(error.message)
     ? error.message
     : 'media-picker-operation-failed';
-}
-
-function fontStack(
-  bootstrap: FontControlsBootstrap,
-  state: FontControlsBootstrap['state']
-): string {
-  const selections = [
-    [bootstrap.options.customFonts, state.customFont],
-    [bootstrap.options.windowsFonts, state.windowsFont],
-    [bootstrap.options.appleFonts, state.appleFont],
-    [bootstrap.options.serifOptions, state.serifFont]
-  ] as const;
-  const seen = new Set<string>();
-  const parts: string[] = [];
-  for (const [options, selected] of selections) {
-    const family = options.find(({ id }) => id === selected)?.fontFamily ?? '';
-    for (const part of family
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean)) {
-      const key = part.toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        parts.push(part);
-      }
-    }
-  }
-  return parts.join(', ');
 }
 
 export function EditorRoot(props: EditorRootProps) {
@@ -1179,7 +1152,20 @@ export function EditorRoot(props: EditorRootProps) {
     documentSession.document.focus();
     return releaseFocusBoundary;
   }, [documentSession, immersive, props.immersiveEnvironment]);
-  const previewFontStack = fontStack(props.fonts, fontState);
+  const activeArticleTheme = props.appearance.articleThemes.find(
+    ({ id }) => id === appearanceState.markdownTheme
+  );
+  const previewFontStack = buildFontStack(
+    props.fonts.options,
+    fontState,
+    activeArticleTheme?.usesThemeFontFamily
+      ? 'var(--easymde-theme-font-family, sans-serif)'
+      : ''
+  );
+  const usesCrimsonThemeDefaults =
+    'crimson-focus' === appearanceState.markdownTheme &&
+    'theme-default' === fontState.serifFont &&
+    Boolean(previewFontStack);
   const previewClassName = [
     'easymde-preview',
     'easymde-rendered-content',
@@ -1190,7 +1176,8 @@ export function EditorRoot(props: EditorRootProps) {
     'custom' === appearanceState.markdownTheme
       ? 'easymde-custom-css-active'
       : '',
-    previewFontStack ? 'easymde-font-overrides' : ''
+    previewFontStack ? 'easymde-font-overrides' : '',
+    usesCrimsonThemeDefaults ? 'easymde-theme-default-fonts' : ''
   ]
     .filter(Boolean)
     .join(' ');

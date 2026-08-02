@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -401,6 +401,20 @@ test('Cupid Busy keeps heading decorations at their declared sizes', () => {
   assert.match(h1Suffix, /flex:\s*0 0 20px;/);
   assert.match(h2Prefix, /flex:\s*0 0 35px;/);
   assert.match(h2Suffix, /flex:\s*0 0 15px;/);
+});
+
+test('Nenqing Green is removed from the built-in article theme surface', () => {
+  const registry = readFileSync(join(repoRoot, 'src/Theme/ArticleThemeRegistry.php'), 'utf8');
+  const referenceThemes = readFileSync(
+    join(repoRoot, 'frontend/src/features/appearance/reference-article-theme.ts'),
+    'utf8'
+  );
+  const editorCss = readFileSync(join(repoRoot, 'assets/css/admin/editor.css'), 'utf8');
+
+  assert.doesNotMatch(registry, /['"]nenqing-green['"]/);
+  assert.doesNotMatch(referenceThemes, /['"]nenqing-green['"]/);
+  assert.doesNotMatch(editorCss, /data-theme=["']nenqing-green["']/);
+  assert.equal(existsSync(join(repoRoot, 'assets/themes/article/nenqing-green.css')), false);
 });
 
 test('Grid Black and Cupid Busy fix only the first H1 top rhythm', () => {

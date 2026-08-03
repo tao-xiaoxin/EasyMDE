@@ -261,14 +261,13 @@ async function pulseWordPressHeartbeat(page) {
     throw new Error(`wordpress-heartbeat-http-${response.status()}`);
   }
   const payload = await response.json();
-  const data = payload?.data;
-  if (!data || 'object' !== typeof data || Array.isArray(data)) {
+  if (!payload || 'object' !== typeof payload || Array.isArray(payload)) {
     throw new Error('wordpress-heartbeat-response-invalid');
   }
-  if ('boolean' !== typeof data['wp-auth-check']) {
+  if ('boolean' !== typeof payload['wp-auth-check']) {
     throw new Error('wordpress-heartbeat-auth-state-missing');
   }
-  return data['wp-auth-check'];
+  return payload['wp-auth-check'];
 }
 
 async function reauthenticateWordPressSession(page, user) {

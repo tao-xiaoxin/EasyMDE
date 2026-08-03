@@ -180,7 +180,7 @@
 .easymde-rendered-content.easymde-markdown-theme-onedark h1{
   font-size: 2.5em;
   padding-bottom: 0.5em;
-  border-bottom: 3px double var(--text-color5);
+  border-bottom: 3px double rgb(62, 66, 73);
 
 }
 
@@ -188,14 +188,14 @@
 .easymde-rendered-content.easymde-markdown-theme-onedark h2{
   font-size: 2em;
   padding-bottom: 0.5em;
-  border-bottom: 3px double var(--text-color5);
+  border-bottom: 3px double rgb(62, 66, 73);
 }
 
 
 .easymde-rendered-content.easymde-markdown-theme-onedark h3{
   font-size: 1.75em;
   padding-bottom: 0.5em;
-  border-bottom: 1px solid var(--text-color5);
+  border-bottom: 1px solid rgb(62, 66, 73);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-onedark h4{

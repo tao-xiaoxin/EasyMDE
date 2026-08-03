@@ -2195,6 +2195,24 @@ body:has(.easymde-editor.is-immersive) .wrap {
     scroll-padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
 }
 
+/* Typora-derived paper rules must not expand the ordinary split-pane track. */
+.easymde-editor:not(.is-immersive) .easymde-preview.easymde-rendered-content {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    margin-inline: 0;
+}
+
+/* The same containment applies while immersive split panes are resized. */
+.easymde-editor.is-immersive-split .easymde-preview.easymde-rendered-content {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    margin-inline: 0;
+}
+
 .easymde-editor:not(.is-immersive) .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active),
 .easymde-editor.is-immersive-split .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) {
     box-sizing: border-box;

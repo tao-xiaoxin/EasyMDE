@@ -176,7 +176,7 @@
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-petal h1{
     font-size: 2.25em;
-    border-bottom: 1px solid rgba(var(--accent-rgb), 0.3);
+    border-bottom: 1px solid rgb(232, 133, 155);
     padding-bottom: 0.3em;
 }
 

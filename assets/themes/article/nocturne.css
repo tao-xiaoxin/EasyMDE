@@ -44,11 +44,11 @@ so its CSS is not copied.
   box-sizing: border-box;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-nocturne > :first-child{
+.easymde-rendered-content.easymde-markdown-theme-nocturne > :first-child:not(pre){
   margin-top: 0;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-nocturne > :last-child{
+.easymde-rendered-content.easymde-markdown-theme-nocturne > :last-child:not(pre){
   margin-bottom: 0;
 }
 

@@ -9,6 +9,7 @@ export type PreviewEnhancementAssets = Readonly<{
   mathCssLinkId: string;
   mathCssUrl: string;
   mathRendererUrl: string;
+  mermaidAssetError: string | null;
   mermaidRendererUrl: string;
   mermaidScriptUrl: string | null;
   tocCssLinkId: string;
@@ -99,6 +100,19 @@ function optionalLocalAssetUrl(
   return localAssetUrl(value, assetBaseUrl, code);
 }
 
+function optionalAssetError(value: unknown, code: string): string | null {
+  if (undefined === value || null === value) return null;
+  if (
+    'string' !== typeof value
+    || '' === value.trim()
+    || value.length > 128
+    || !/^[a-z0-9-]+$/.test(value)
+  ) {
+    throw new PreviewEnhancementBootstrapError(code);
+  }
+  return value;
+}
+
 function parseAssets(value: unknown, assetBaseUrl: string): PreviewEnhancementAssets {
   const assets = objectValue(value, 'preview-enhancement-assets-invalid');
   const urlKeys: ReadonlyArray<keyof PreviewEnhancementAssets> = [
@@ -133,6 +147,10 @@ function parseAssets(value: unknown, assetBaseUrl: string): PreviewEnhancementAs
   parsed.mermaidScriptUrl = optionalLocalAssetUrl(
     assets.mermaidScriptUrl,
     assetBaseUrl,
+    'preview-enhancement-assets-invalid'
+  );
+  parsed.mermaidAssetError = optionalAssetError(
+    assets.mermaidAssetError,
     'preview-enhancement-assets-invalid'
   );
   for (const key of idKeys) {

@@ -140,10 +140,12 @@ test('the shared frame has no article-theme or code-theme branches', () => {
   }
   assert.match(css, /\.easymde-rendered-content\.easymde-code-mac pre\s*\{[^}]*box-sizing:\s*border-box;/s);
   assert.match(css, /\.easymde-rendered-content\.easymde-code-mac pre\s*\{[^}]*padding:\s*34px 0 0;/s);
-  assert.match(css, /\.easymde-rendered-content\.easymde-code-mac pre > code:not\(\.language-mermaid\)\s*\{[^}]*display:\s*block;/s);
-  assert.match(css, /\.easymde-rendered-content\.easymde-code-mac pre > code:not\(\.language-mermaid\)\s*\{[^}]*white-space:\s*pre;/s);
-  assert.match(css, /\.easymde-rendered-content\.easymde-code-mac pre > code:not\(\.language-mermaid\)\s*\{[^}]*letter-spacing:\s*0;/s);
-  assert.match(css, /\.easymde-rendered-content\.easymde-code-mac pre > code:not\(\.language-mermaid\)\s*\{[^}]*word-spacing:\s*0;/s);
+  const codeFrameCodeRule = /\.easymde-rendered-content\.easymde-code-mac pre > code:not\(\.language-mermaid\),\s*\.easymde-rendered-content\.easymde-code-mac pre\[data-easymde-mermaid-fallback\] > code\.language-mermaid\s*\{[^}]*;/s;
+  assert.match(css, codeFrameCodeRule);
+  assert.match(css, /pre\[data-easymde-mermaid-fallback\] > code\.language-mermaid\s*\{[^}]*display:\s*block;/s);
+  assert.match(css, /pre\[data-easymde-mermaid-fallback\] > code\.language-mermaid\s*\{[^}]*white-space:\s*pre;/s);
+  assert.match(css, /pre\[data-easymde-mermaid-fallback\] > code\.language-mermaid\s*\{[^}]*letter-spacing:\s*0;/s);
+  assert.match(css, /pre\[data-easymde-mermaid-fallback\] > code\.language-mermaid\s*\{[^}]*word-spacing:\s*0;/s);
 });
 
 test('admin preview CSS delegates block-code presentation to the shared frame', () => {
@@ -172,7 +174,7 @@ test('code-theme background remains authoritative without Highlight.js', () => {
     'frontend/src/integrations/preview-runtime/frontend-enhancement-runtime.ts'
   );
 
-  assert.match(enhancementSource, /if \(!syntaxHighlight \|\| !windowRef\.hljs/);
+  assert.match(enhancementSource, /!syntaxHighlight\s*\|\|\s*!windowRef\.hljs/);
   assert.match(enhancementSource, /windowRef\.getComputedStyle\(element\)\.backgroundColor/);
   assert.match(enhancementSource, /element\.parentElement\.style\.setProperty/);
 });

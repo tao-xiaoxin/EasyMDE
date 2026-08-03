@@ -350,6 +350,42 @@ describe('createBrowserPreviewEnhancementPort', () => {
     )).rejects.toThrowError('preview-enhancement-mermaid-runtime-unavailable');
   });
 
+  it('downgrades a classified Mermaid asset failure to readable preview code and reports it', async () => {
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    autoLoadResources();
+    const port = createBrowserPreviewEnhancementPort(
+      {
+        ...previewEnhancementBootstrapFixture,
+        assets: {
+          ...previewEnhancementBootstrapFixture.assets,
+          mermaidAssetError: 'frontend-enhancement-build-integrity-invalid',
+          mermaidScriptUrl: null
+        }
+      },
+      { documentRef: document, runtime: runtime(enhance) }
+    );
+
+    await expect(port.enhance(
+      document.createElement('article'),
+      { mermaid: true },
+      () => true,
+      context()
+    )).rejects.toThrowError('preview-enhancement-mermaid-asset-contract-failed');
+
+    expect(document.querySelector('#easymde-code-frame-css')).not.toBeNull();
+    expect(document.querySelector('#easymde-highlight-theme-css')).not.toBeNull();
+    expect(document.querySelector('#easymde-highlight-js')).toBeNull();
+
+    expect(enhance).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      {
+        assetErrors: { mermaid: 'frontend-enhancement-build-integrity-invalid' },
+        features: { mermaid: false },
+        strings: { renderingFailed: 'Rendering failed.' }
+      }
+    );
+  });
+
   it('removes a failed script and permits a later explicit preview retry', async () => {
     const append = document.head.appendChild.bind(document.head);
     let mermaidAttempts = 0;

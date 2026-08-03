@@ -6,7 +6,8 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
-  rmSync
+  rmSync,
+  writeFileSync
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -184,11 +185,41 @@ test('production build emits shared enhancement, bootstrap, and Mermaid entries'
     join(mermaidOutputRoot, mermaidManifest['frontend/src/entrypoints/frontend-mermaid-runtime.ts'].file),
     'utf8'
   );
+  const enhancementsManifest = readJson(join(enhancementsOutputRoot, 'manifest.json'));
+  const enhancementsScript = readFileSync(
+    join(enhancementsOutputRoot, enhancementsManifest['frontend/src/entrypoints/frontend-enhancements.ts'].file),
+    'utf8'
+  );
   assert.match(mermaidScript, /\.mermaid=/);
   assert.match(mermaidScript, /startOnLoad/);
-  assert.match(mermaidScript, /securityLevel:[`"']strict[`"']/);
+  assert.match(enhancementsScript, /securityLevel:[`"']strict[`"']/);
   assert.doesNotMatch(mermaidScript, /assets\/vendor\/mermaid\/mermaid\.min\.js/);
   assert.match(readFileSync(join(repoRoot, 'frontend/src/entrypoints/frontend-bootstrap.ts'), 'utf8'), /readyState/);
+});
+
+test('Frontend enhancements validation rejects a weakened Mermaid security level', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+
+  const weakenedRoot = mkdtempSync(join(tmpdir(), 'easymde-enhancements-weakened-'));
+  const manifest = readJson(join(enhancementsOutputRoot, 'manifest.json'));
+  const scriptPath = join(weakenedRoot, manifest['frontend/src/entrypoints/frontend-enhancements.ts'].file);
+  cpSync(enhancementsOutputRoot, weakenedRoot, { recursive: true });
+
+  try {
+    const script = readFileSync(scriptPath, 'utf8');
+    const weakenedScript = script.replace(
+      /securityLevel:[`"']strict[`"']/,
+      'securityLevel:"loose"'
+    );
+    assert.notEqual(weakenedScript, script);
+    writeFileSync(scriptPath, weakenedScript);
+    assert.throws(
+      () => validateFrontendEnhancementsProductionBuild(weakenedRoot),
+      /Built script does not reference the Mermaid strict security level/
+    );
+  } finally {
+    rmSync(weakenedRoot, { recursive: true, force: true });
+  }
 });
 
 test('production comparison rejects stale or omitted committed runtime artifacts', () => {

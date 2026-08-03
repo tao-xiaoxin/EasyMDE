@@ -91,10 +91,24 @@ function mathText(element: HTMLElement): string {
   return normalizeMathTex(value);
 }
 
-function syncCodeFrameBackgrounds(root: ParentNode, windowRef: FrontendEnhancementWindow): void {
-  root.querySelectorAll('pre > code:not(.language-mermaid)').forEach((element) => {
+function syncCodeFrameBackgrounds(
+  root: ParentNode,
+  config: FrontendEnhancementConfig,
+  windowRef: FrontendEnhancementWindow
+): void {
+  const codeBlocks = [
+    ...root.querySelectorAll('pre > code:not(.language-mermaid)'),
+    ...(!featureEnabled(config, 'mermaid')
+      ? root.querySelectorAll('pre > code.language-mermaid')
+      : [])
+  ];
+
+  codeBlocks.forEach((element) => {
     if (!(element instanceof HTMLElement) || !element.parentElement) {
       throw new Error('easymde-code-frame-parent-missing');
+    }
+    if (element.classList.contains('language-mermaid')) {
+      element.parentElement.setAttribute('data-easymde-mermaid-fallback', '1');
     }
     element.parentElement.style.setProperty(
       '--easymde-code-frame-background',
@@ -109,20 +123,43 @@ function highlightCode(
   windowRef: FrontendEnhancementWindow
 ): void {
   const syntaxHighlight = featureEnabled(config, 'syntaxHighlight');
+  const codeBlocks = [
+    ...root.querySelectorAll('pre > code:not(.language-mermaid)'),
+    ...(!featureEnabled(config, 'mermaid')
+      ? root.querySelectorAll('pre > code.language-mermaid')
+      : [])
+  ];
 
-  root.querySelectorAll('pre > code').forEach((element) => {
+  codeBlocks.forEach((element) => {
     if (!(element instanceof HTMLElement)) {
       throw new Error('easymde-code-element-invalid');
     }
-    if (element.classList.contains('language-mermaid')) return;
 
     element.classList.add('hljs');
-    if (!syntaxHighlight || !windowRef.hljs || element.dataset.easymdeHighlighted) return;
+    if (
+      element.classList.contains('language-mermaid')
+      || !syntaxHighlight
+      || !windowRef.hljs
+      || element.dataset.easymdeHighlighted
+    ) return;
 
     windowRef.hljs.highlightElement(element);
     element.dataset.easymdeHighlighted = '1';
   });
-  syncCodeFrameBackgrounds(root, windowRef);
+  syncCodeFrameBackgrounds(root, config, windowRef);
+}
+
+function markMermaidAssetFailure(root: ParentNode, config: FrontendEnhancementConfig): void {
+  const error = property(property(config, 'assetErrors'), 'mermaid')
+    ?? property(property(config, 'features'), 'mermaidAssetError');
+  if ('string' !== typeof error || !error) return;
+
+  root.querySelectorAll('pre > code.language-mermaid').forEach((element) => {
+    if (!(element instanceof HTMLElement) || !element.parentElement) {
+      throw new Error('easymde-mermaid-parent-missing');
+    }
+    element.parentElement.setAttribute('data-easymde-mermaid-error', error);
+  });
 }
 
 export function renderMathContent(
@@ -219,6 +256,7 @@ export function enhanceFrontendContent(
   if (!root) return Promise.resolve();
 
   highlightCode(root, config, windowRef);
+  markMermaidAssetFailure(root, config);
   const tasks: Array<Promise<void> | void> = [];
   if (windowRef.EasyMDEMathRenderer) {
     tasks.push(windowRef.EasyMDEMathRenderer.render(root, config));

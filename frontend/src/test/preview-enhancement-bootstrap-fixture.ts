@@ -11,6 +11,7 @@ export const previewEnhancementBootstrapFixture = {
     mathCssLinkId: 'easymde-math-css',
     mathCssUrl: 'https://example.test/wp-content/plugins/easymde/assets/css/frontend/math.css',
     mathRendererUrl: 'https://example.test/wp-content/plugins/easymde/assets/build/frontend-enhancements/assets/frontend-enhancements-fixture.js',
+    mermaidAssetError: null,
     mermaidRendererUrl: 'https://example.test/wp-content/plugins/easymde/assets/build/frontend-enhancements/assets/frontend-enhancements-fixture.js',
     mermaidScriptUrl: 'https://example.test/wp-content/plugins/easymde/assets/build/frontend-mermaid/assets/frontend-mermaid-fixture.js',
     tocCssLinkId: 'easymde-toc-css',

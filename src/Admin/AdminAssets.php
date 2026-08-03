@@ -105,6 +105,7 @@ final class AdminAssets {
 					throw $error;
 				}
 
+				wp_dequeue_script( 'easymde-admin-editor-toolbar' );
 				$this->react_editor_asset_error = true;
 				wp_trigger_error(
 					__METHOD__,

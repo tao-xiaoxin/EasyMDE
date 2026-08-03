@@ -6,6 +6,7 @@ type SharedEnhancements = Readonly<{
   enhance: (
     surface: HTMLElement,
     config: Readonly<{
+      assetErrors?: Readonly<{ mermaid?: string }>;
       features: PreviewFeatures;
       strings: Readonly<{ renderingFailed: string }>;
     }>
@@ -329,6 +330,15 @@ export function createBrowserPreviewEnhancementPort(
     ]);
   }
 
+  async function prepareMermaidFallback(codeTheme: string, signal: AbortSignal): Promise<void> {
+    const theme = bootstrap.codeThemes.find(({ id }) => id === codeTheme);
+    if (!theme) throw resourceError('preview-enhancement-code-theme-missing');
+    await Promise.all([
+      loader.loadStylesheet(assets.codeFrameLinkId, assets.codeFrameCssUrl, signal),
+      loader.loadStylesheet(assets.highlightThemeLinkId, theme.cssUrl, signal)
+    ]);
+  }
+
   async function prepareMath(signal: AbortSignal): Promise<void> {
     await Promise.all([
       loader.loadStylesheet(assets.mathCssLinkId, assets.mathCssUrl, signal),
@@ -355,19 +365,26 @@ export function createBrowserPreviewEnhancementPort(
     dispose: loader.dispose,
     async enhance(surface, features, isCurrent, context) {
       if (!isCurrent() || context.signal.aborted) return;
+      const mermaidAssetFailure = !!assets.mermaidAssetError && !!features.mermaid;
+      const fallbackFeatures = mermaidAssetFailure
+        ? { ...features, mermaid: false }
+        : features;
       const tasks: Promise<void>[] = [];
       const hasExecutableEnhancement = !!(
-        features.syntaxHighlight
-        || features.math
-        || features.mermaid
+        fallbackFeatures.syntaxHighlight
+        || fallbackFeatures.math
+        || fallbackFeatures.mermaid
+        || mermaidAssetFailure
       );
 
-      if (features.syntaxHighlight) {
+      if (fallbackFeatures.syntaxHighlight) {
         tasks.push(prepareHighlight(context.codeTheme, context.signal));
+      } else if (mermaidAssetFailure) {
+        tasks.push(prepareMermaidFallback(context.codeTheme, context.signal));
       }
-      if (features.math) tasks.push(prepareMath(context.signal));
-      if (features.mermaid) tasks.push(prepareMermaid(context.signal));
-      if (features.toc) {
+      if (fallbackFeatures.math) tasks.push(prepareMath(context.signal));
+      if (fallbackFeatures.mermaid) tasks.push(prepareMermaid(context.signal));
+      if (fallbackFeatures.toc) {
         tasks.push(
           loader.loadStylesheet(assets.tocCssLinkId, assets.tocCssUrl, context.signal)
         );
@@ -381,12 +398,18 @@ export function createBrowserPreviewEnhancementPort(
         throw resourceError('preview-enhancement-runtime-unavailable');
       }
       await enhancements.enhance(surface, {
-        features,
+        ...(assets.mermaidAssetError
+          ? { assetErrors: { mermaid: assets.mermaidAssetError } }
+          : {}),
+        features: fallbackFeatures,
         strings: bootstrap.strings
       });
       if (!isCurrent() || context.signal.aborted) return;
       if (surface.querySelector('.easymde-render-error')) {
         throw resourceError('preview-enhancement-render-failed');
+      }
+      if (mermaidAssetFailure) {
+        throw resourceError('preview-enhancement-mermaid-asset-contract-failed');
       }
     }
   };

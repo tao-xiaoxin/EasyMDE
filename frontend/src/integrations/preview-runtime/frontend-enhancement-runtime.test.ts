@@ -50,6 +50,57 @@ describe('frontend enhancement runtime', () => {
       .toBe('rgb(12, 34, 56)');
   });
 
+  it('keeps Mermaid fences readable as code when the optional renderer is unavailable', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code class="language-mermaid">graph TD; A--&gt;B;</code></pre>';
+    const windowRef = runtime();
+    const highlighted: HTMLElement[] = [];
+    windowRef.hljs = {
+      highlightElement: (code) => highlighted.push(code)
+    };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)'
+    } as CSSStyleDeclaration);
+
+    await enhanceFrontendContent(
+      root,
+      { features: { mermaid: false, syntaxHighlight: false } },
+      windowRef
+    );
+
+    const code = root.querySelector('code');
+    expect(code?.classList.contains('hljs')).toBe(true);
+    expect(highlighted).toEqual([]);
+    expect(code?.dataset.easymdeHighlighted).toBeUndefined();
+    expect(code?.parentElement?.getAttribute('data-easymde-mermaid-fallback')).toBe('1');
+    expect(code?.parentElement?.style.getPropertyValue('--easymde-code-frame-background'))
+      .toBe('rgb(12, 34, 56)');
+  });
+
+  it('exposes a Mermaid asset contract failure without changing the fallback presentation', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code class="language-mermaid">graph TD; A--&gt;B;</code></pre>';
+    const windowRef = runtime();
+
+    await enhanceFrontendContent(
+      root,
+      {
+        features: {
+          mermaid: false,
+          syntaxHighlight: false,
+          mermaidAssetError: 'frontend-enhancement-build-integrity-invalid'
+        }
+      },
+      windowRef
+    );
+
+    const pre = root.querySelector('pre');
+    expect(pre?.getAttribute('data-easymde-mermaid-fallback')).toBe('1');
+    expect(pre?.getAttribute('data-easymde-mermaid-error'))
+      .toBe('frontend-enhancement-build-integrity-invalid');
+    expect(pre?.classList.contains('easymde-render-error')).toBe(false);
+  });
+
   it('keeps KaTeX normalization, options, and rendered marker behavior unchanged', () => {
     const root = document.createElement('article');
     root.innerHTML = '<span class="easymde-math easymde-math-block">$$frac{a}{b}$$</span>';

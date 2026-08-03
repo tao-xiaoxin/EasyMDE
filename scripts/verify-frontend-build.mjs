@@ -79,6 +79,10 @@ const enhancementsProductionSpec = {
 		{ pattern: /EasyMDEEnhancements/, label: "shared frontend enhancements" },
 		{ pattern: /EasyMDEMathRenderer/, label: "Math renderer" },
 		{ pattern: /EasyMDEMermaidRenderer/, label: "Mermaid renderer" },
+		{
+			pattern: /securityLevel:[`"']strict[`"']/,
+			label: "Mermaid strict security level",
+		},
 	],
 };
 const enhancementsProductionCheckRoot = join(

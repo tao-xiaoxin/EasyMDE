@@ -129,7 +129,37 @@ final class FrontendAssets {
 			EASYMDE_VERSION
 		);
 
-		if ( ! empty( $features['syntaxHighlight'] ) ) {
+		$mermaid_runtime = null;
+		if ( ! empty( $features['mermaid'] ) ) {
+			try {
+				$mermaid_runtime = $this->get_frontend_enhancement_asset(
+					'frontend/src/entrypoints/frontend-mermaid-runtime.ts',
+					'assets/build/frontend-mermaid/',
+					'easymde-mermaid',
+					false,
+					'frontend-mermaid'
+				);
+
+				wp_enqueue_script(
+					$mermaid_runtime['handle'],
+					Asset::url( $mermaid_runtime['path'] ),
+					array(),
+					$mermaid_runtime['version'],
+					true
+				);
+			} catch ( \RuntimeException $error ) {
+				if ( ! FrontendAssetContract::is_error( $error ) ) {
+					throw $error;
+				}
+
+				$mermaid_runtime               = null;
+				$features['mermaid']           = false;
+				$features['mermaidAssetError'] = FrontendAssetContract::error_code( $error );
+				$this->report_frontend_enhancement_asset_error( $error );
+			}
+		}
+
+		if ( ! empty( $features['syntaxHighlight'] ) || ! empty( $features['mermaidAssetError'] ) ) {
 			wp_enqueue_style(
 				'easymde-code-frame',
 				Asset::url( 'assets/css/frontend/code-frame.css' ),
@@ -143,7 +173,9 @@ final class FrontendAssets {
 				array( 'easymde-content' ),
 				EASYMDE_VERSION
 			);
+		}
 
+		if ( ! empty( $features['syntaxHighlight'] ) ) {
 			wp_enqueue_script(
 				'easymde-highlight',
 				Asset::url( 'assets/vendor/highlight/highlight.min.js' ),
@@ -212,25 +244,6 @@ final class FrontendAssets {
 				Asset::url( 'assets/css/frontend/toc.css' ),
 				array( 'easymde-content' ),
 				EASYMDE_VERSION
-			);
-		}
-
-		$mermaid_runtime = null;
-		if ( ! empty( $features['mermaid'] ) ) {
-			$mermaid_runtime = $this->get_frontend_enhancement_asset(
-				'frontend/src/entrypoints/frontend-mermaid-runtime.ts',
-				'assets/build/frontend-mermaid/',
-				'easymde-mermaid',
-				false,
-				'frontend-mermaid'
-			);
-
-			wp_enqueue_script(
-				$mermaid_runtime['handle'],
-				Asset::url( $mermaid_runtime['path'] ),
-				array(),
-				$mermaid_runtime['version'],
-				true
 			);
 		}
 
@@ -311,6 +324,7 @@ final class FrontendAssets {
 		);
 		$enhancement_url = $this->versioned_asset_url( $enhancements['path'] );
 		$mermaid_url     = null;
+		$mermaid_error   = null;
 		try {
 			$mermaid_runtime = $this->get_frontend_enhancement_asset(
 				'frontend/src/entrypoints/frontend-mermaid-runtime.ts',
@@ -321,9 +335,13 @@ final class FrontendAssets {
 			);
 			$mermaid_url     = $this->versioned_asset_url( $mermaid_runtime['path'] );
 		} catch ( \RuntimeException $error ) {
-			// Mermaid is optional. Preview reports the missing runtime only when a
-			// document actually requests Mermaid rendering.
-			$mermaid_url = null;
+			if ( ! FrontendAssetContract::is_error( $error ) ) {
+				throw $error;
+			}
+
+			$mermaid_url   = null;
+			$mermaid_error = FrontendAssetContract::error_code( $error );
+			$this->report_frontend_enhancement_asset_error( $error );
 		}
 
 		return array(
@@ -334,6 +352,7 @@ final class FrontendAssets {
 			'katexCssUrl'          => $this->versioned_asset_url( 'assets/vendor/katex/katex.min.css' ),
 			'katexScriptUrl'       => $this->versioned_asset_url( 'assets/vendor/katex/katex.min.js' ),
 			'mathRendererUrl'      => $enhancement_url,
+			'mermaidAssetError'    => $mermaid_error,
 			'mermaidScriptUrl'     => $mermaid_url,
 			'mermaidRendererUrl'   => $enhancement_url,
 			'highlightThemeLinkId' => 'easymde-highlight-theme-css',

@@ -26,6 +26,45 @@ function articleThemeAssociations() {
   );
 }
 
+function typoraDerivedCodeAssociations() {
+  return {
+    inkwell: 'inkwell-code',
+    'animal-island': 'animal-island-code',
+    'phycat-cherry': 'phycat-cherry-code',
+    'phycat-caramel': 'phycat-caramel-code',
+    'phycat-forest': 'phycat-forest-code',
+    'phycat-mint': 'phycat-mint-code',
+    'phycat-sky': 'phycat-sky-code',
+    'phycat-prussian': 'phycat-prussian-code',
+    'phycat-sakura': 'phycat-sakura-code',
+    'phycat-mauve': 'phycat-mauve-code',
+    mdmdt: 'mdmdt-code',
+    'dogschoice-pink': 'dogschoice-pink-code',
+    'bloom-petal': 'bloom-petal-code',
+    'bloom-mist': 'bloom-mist-code',
+    'bloom-verdant': 'bloom-verdant-code',
+    'bloom-stone': 'bloom-stone-code',
+    'bloom-wheat': 'bloom-wheat-code',
+    'bloom-ink': 'bloom-ink-code',
+    'bloom-amber': 'bloom-amber-code',
+    'bloom-lapis': 'bloom-lapis-code',
+    'bloom-ripple': 'bloom-ripple-code',
+    'bloom-cinnabar': 'bloom-cinnabar-code',
+    'bloom-sage': 'bloom-sage-code',
+    'bloom-spring': 'bloom-spring-code',
+    spring: 'spring-code'
+  };
+}
+
+function codeThemeMetadata() {
+  return Array.from(
+    source('src/Theme/CodeThemeRegistry.php').matchAll(
+      /=>\s*\$this->theme\(\s*'([^']+)'\s*,\s*__\(\s*'([^']+)'\s*,\s*'easymde'\s*\)\s*,\s*'([^']+\.css)'/g
+    ),
+    ([, id, label, assetPath]) => ({ id, label, assetPath })
+  );
+}
+
 function cssSelectors(css) {
   return Array.from(css.matchAll(/([^{}]+)\{[^{}]*\}/g), ([, selectors]) => (
     selectors.split(',').map((selector) => selector.trim())
@@ -54,12 +93,38 @@ test('every article theme declares a registered associated code theme', () => {
     articleThemes.find(({ id }) => 'fullstack-blue' === id)?.defaultCodeTheme,
     'fullstack-blue'
   );
+  const typoraAssociations = typoraDerivedCodeAssociations();
   assert.ok(
     articleThemes
-      .filter(({ id }) => 'fullstack-blue' !== id)
+      .filter(({ id }) => !typoraAssociations[id] && 'fullstack-blue' !== id)
       .every(({ defaultCodeTheme }) => 'atom-one-dark' === defaultCodeTheme),
-    'article themes with the same effective palette should reuse Atom One Dark'
+    'legacy article themes should continue to reuse Atom One Dark'
   );
+});
+
+test('Typora-derived article themes have unique registered default code palettes', () => {
+  const associations = typoraDerivedCodeAssociations();
+  const articleThemes = new Map(articleThemeAssociations().map((theme) => [theme.id, theme]));
+  const codeThemes = new Map(codeThemeMetadata().map((theme) => [theme.id, theme]));
+  const labels = codeThemeMetadata().map(({ label }) => label);
+  const css = source('assets/themes/code/typora-derived.css');
+  const signatures = new Set();
+
+  assert.equal(Object.keys(associations).length, 25);
+  assert.equal(new Set(labels).size, labels.length, 'code-theme labels must be unique');
+
+  for (const [articleId, codeId] of Object.entries(associations)) {
+    assert.equal(articleThemes.get(articleId)?.defaultCodeTheme, codeId, `${articleId} association`);
+    assert.equal(codeThemes.get(codeId)?.assetPath, 'assets/themes/code/typora-derived.css', `${codeId} asset`);
+
+    const scope = css.match(
+      new RegExp(`\\.easymde-rendered-content\\.easymde-code-theme-${codeId}\\s*\\{([^}]*)\\}`)
+    );
+    assert.ok(scope, `${codeId} should define an independent scope`);
+    const signature = scope[1].replace(/\s+/g, ' ').trim();
+    assert.ok(!signatures.has(signature), `${codeId} should not duplicate another palette`);
+    signatures.add(signature);
+  }
 });
 
 test('associated code-theme assets are independent from article-theme selectors', () => {

@@ -391,7 +391,8 @@
 .easymde-rendered-content.easymde-markdown-theme-spring h2:after{
     content: "";
     display: block;
-    width: 30rem;
+    width: min(30rem, 100%);
+    max-width: 100%;
     height: 2.5px;
     margin: 0.5rem auto 0.3rem;
     background: rgb(62, 161, 115);

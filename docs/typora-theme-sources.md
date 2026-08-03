@@ -44,6 +44,33 @@ CSS. Themes use the existing EasyMDE local/system font stack.
 
 The repository mapping remains in the source and repository columns while the
 EasyMDE menu uses Chinese-only article-theme labels.
+
+## Code-theme associations
+
+The article and code menus are separate. The 25 active Typora-derived article
+variants use one-to-one `*-code` defaults registered in `CodeThemeRegistry`:
+the code labels append `代码` to the Chinese article label so they cannot be
+confused with article themes. These IDs all point to the single owned adapter
+`assets/themes/code/typora-derived.css`, whose independently scoped blocks
+carry the source token palettes listed below. Reusing one CSS asset is only a
+packaging decision; the registry IDs, labels, CSS scopes, and palette
+signatures remain unique. The shared Mac frame still comes exclusively from
+`assets/css/frontend/code-frame.css`.
+
+| Article ID | Default code ID | Palette source |
+| --- | --- | --- |
+| `inkwell` | `inkwell-code` | Inkwell light semantic colors |
+| `animal-island` | `animal-island-code` | Animal Island light CodeMirror tokens |
+| `phycat-*` (8 variants) | matching `phycat-*-code` | Phycat line-code accent/background variables |
+| `mdmdt` | `mdmdt-code` | Mdmdt light CodeMirror tokens |
+| `dogschoice-pink` | `dogschoice-pink-code` | DogsChoice 七彩虹 pink code-block variables |
+| `bloom-*` (12 variants) | matching `bloom-*-code` | Bloom light syntax variables |
+| `spring` | `spring-code` | Spring light CodeMirror tokens |
+
+An explicit user-selected code theme remains authoritative when the article
+theme changes; automatic association only applies while the code choice is not
+explicit. No code-theme selector adds font, spacing, overflow, or frame
+geometry rules.
 Typora 1.10.8's macOS loader only applies basenames that contain no whitespace,
 ASCII uppercase letters, or parentheses, even when a rejected file is still
 listed in the menu. The native menu applies

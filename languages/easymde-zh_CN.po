@@ -15,1213 +15,1213 @@ msgstr ""
 "X-Generator: EasyMDE i18n script\n"
 "X-Domain: easymde\n"
 
-#: src/Admin/AdminAssets.php:47
+#: src/Admin/AdminAssets.php:49
 msgid ""
 "EasyMDE could not load the editor application. Reinstall EasyMDE or contact "
 "your site administrator."
 msgstr "EasyMDE 无法加载编辑器应用。请重新安装 EasyMDE，或联系您的站点管理员。"
 
-#: src/Admin/AdminAssets.php:312
+#: src/Admin/AdminAssets.php:347
 msgid "Auto save"
 msgstr "自动保存"
 
-#: src/Admin/AdminAssets.php:313
+#: src/Admin/AdminAssets.php:348
 msgid "Automatically save a local draft"
 msgstr "自动保存本地草稿"
 
-#: src/Admin/AdminAssets.php:314
+#: src/Admin/AdminAssets.php:349
 msgid "Auto save is enabled"
 msgstr "自动保存已开启"
 
-#: src/Admin/AdminAssets.php:315
+#: src/Admin/AdminAssets.php:350
 msgid "Article outline"
 msgstr "文章大纲"
 
-#: src/Admin/AdminAssets.php:316 src/Admin/AdminAssets.php:834
+#: src/Admin/AdminAssets.php:351 src/Admin/AdminAssets.php:819
 msgid "Cancel"
 msgstr "取消"
 
-#: src/Admin/AdminAssets.php:317 src/Admin/AdminAssets.php:800
+#: src/Admin/AdminAssets.php:352 src/Admin/AdminAssets.php:785
 msgid "Close"
 msgstr "关闭"
 
-#: src/Admin/AdminAssets.php:318
+#: src/Admin/AdminAssets.php:353
 msgid "Column"
 msgstr "列"
 
-#: src/Admin/AdminAssets.php:319
+#: src/Admin/AdminAssets.php:354
 msgid "Edit"
 msgstr "编辑"
 
-#: src/Admin/AdminAssets.php:320
+#: src/Admin/AdminAssets.php:355
 msgid "Edit mode"
 msgstr "编辑模式"
 
-#: src/Admin/AdminAssets.php:321
+#: src/Admin/AdminAssets.php:356
 msgid "Editor settings"
 msgstr "编辑器设置"
 
-#: src/Admin/AdminAssets.php:322
+#: src/Admin/AdminAssets.php:357
 msgid "Enter immersive writing"
 msgstr "进入沉浸写作"
 
-#: src/Admin/AdminAssets.php:323
+#: src/Admin/AdminAssets.php:358
 msgid "Expand"
 msgstr "展开"
 
-#: src/Admin/AdminAssets.php:324
+#: src/Admin/AdminAssets.php:359
 msgid "Exit immersive writing"
 msgstr "退出沉浸写作"
 
-#: src/Admin/AdminAssets.php:325
+#: src/Admin/AdminAssets.php:360
 msgid "Close outline"
 msgstr "收起大纲"
 
-#: src/Admin/AdminAssets.php:326
+#: src/Admin/AdminAssets.php:361
 msgid "History"
 msgstr "历史"
 
-#: src/Admin/AdminAssets.php:327
+#: src/Admin/AdminAssets.php:362
 msgid "No revisions are available."
 msgstr "暂无可用的修订版本。"
 
-#: src/Admin/AdminAssets.php:328
+#: src/Admin/AdminAssets.php:363
 msgid "Revisions could not be loaded."
 msgstr "无法加载修订版本。"
 
-#: src/Admin/AdminAssets.php:329
+#: src/Admin/AdminAssets.php:364
 msgid "Loading revisions..."
 msgstr "正在加载修订版本..."
 
-#: src/Admin/AdminAssets.php:330
+#: src/Admin/AdminAssets.php:365
 msgid "All"
 msgstr "全部"
 
-#: src/Admin/AdminAssets.php:331
+#: src/Admin/AdminAssets.php:366
 msgid "Revision history"
 msgstr "历史版本"
 
-#: src/Admin/AdminAssets.php:332
+#: src/Admin/AdminAssets.php:367
 msgid "Immersive writing"
 msgstr "沉浸写作"
 
-#: src/Admin/AdminAssets.php:333
+#: src/Admin/AdminAssets.php:368
 msgid "Insert"
 msgstr "插入"
 
-#: src/Admin/AdminAssets.php:334
+#: src/Admin/AdminAssets.php:369
 msgid "Insert table"
 msgstr "插入表格"
 
-#: src/Admin/AdminAssets.php:335
+#: src/Admin/AdminAssets.php:370
 msgid "Line"
 msgstr "行"
 
-#: src/Admin/AdminAssets.php:336
+#: src/Admin/AdminAssets.php:371
 msgid "Manual save"
 msgstr "手动保存"
 
-#: src/Admin/AdminAssets.php:337
+#: src/Admin/AdminAssets.php:372
 msgid "More actions"
 msgstr "更多操作"
 
-#: src/Admin/AdminAssets.php:338 src/Admin/AdminAssets.php:422
+#: src/Admin/AdminAssets.php:373 src/Admin/AdminAssets.php:457
 msgid "Markdown"
 msgstr "Markdown"
 
-#: src/Admin/AdminAssets.php:339
+#: src/Admin/AdminAssets.php:374
 msgid "No headings"
 msgstr "暂无标题"
 
-#: src/Admin/AdminAssets.php:340
+#: src/Admin/AdminAssets.php:375
 msgid "Outline"
 msgstr "大纲"
 
-#: src/Admin/AdminAssets.php:341
+#: src/Admin/AdminAssets.php:376
 msgid "Show heading navigation on the left"
 msgstr "左侧显示标题层级导航"
 
-#: src/Admin/AdminAssets.php:342 src/Admin/AdminAssets.php:421
+#: src/Admin/AdminAssets.php:377 src/Admin/AdminAssets.php:456
 msgid "Preview"
 msgstr "预览"
 
-#: src/Admin/AdminAssets.php:343
+#: src/Admin/AdminAssets.php:378
 msgid "Changes recorded"
 msgstr "更改已记录"
 
-#: src/Admin/AdminAssets.php:344
+#: src/Admin/AdminAssets.php:379
 msgid "Content loaded"
 msgstr "内容已载入"
 
-#: src/Admin/AdminAssets.php:345
+#: src/Admin/AdminAssets.php:380
 msgid "Editable"
 msgstr "可编辑"
 
-#: src/Admin/AdminAssets.php:346
+#: src/Admin/AdminAssets.php:381
 msgid "Visual article editor"
 msgstr "可视化文章编辑器"
 
-#: src/Admin/AdminAssets.php:347
+#: src/Admin/AdminAssets.php:382
 msgid "Lock as read only"
 msgstr "锁定为只读"
 
-#: src/Admin/AdminAssets.php:348
+#: src/Admin/AdminAssets.php:383
 msgid "Read only"
 msgstr "只读"
 
-#: src/Admin/AdminAssets.php:349
+#: src/Admin/AdminAssets.php:384
 msgid "Unlock and edit"
 msgstr "解除锁定并编辑"
 
-#: src/Admin/AdminAssets.php:350
+#: src/Admin/AdminAssets.php:385
 msgid "Preview mode"
 msgstr "预览模式"
 
-#: src/Admin/AdminAssets.php:351
+#: src/Admin/AdminAssets.php:386
 msgid "Publish article"
 msgstr "发布文章"
 
-#: src/Admin/AdminAssets.php:352
+#: src/Admin/AdminAssets.php:387
 msgid "Restore revision"
 msgstr "恢复修订版本"
 
-#: src/Admin/AdminAssets.php:353
+#: src/Admin/AdminAssets.php:388
 msgid ""
 "Unsaved changes will be lost when WordPress restores this revision. Continue?"
 msgstr "WordPress 恢复此修订版本时将丢失未保存的更改。是否继续？"
 
-#: src/Admin/AdminAssets.php:354
+#: src/Admin/AdminAssets.php:389
 msgid "Restore this revision"
 msgstr "恢复到这个版本"
 
-#: src/Admin/AdminAssets.php:355
+#: src/Admin/AdminAssets.php:390
 msgid "Resize article outline"
 msgstr "调整大纲宽度"
 
-#: src/Admin/AdminAssets.php:356
+#: src/Admin/AdminAssets.php:391
 msgid "Resize editor and Preview"
 msgstr "调整编辑区和预览区宽度"
 
-#: src/Admin/AdminAssets.php:357
+#: src/Admin/AdminAssets.php:392
 msgid "Saved"
 msgstr "已保存"
 
-#: src/Admin/AdminAssets.php:358
+#: src/Admin/AdminAssets.php:393
 msgid "Settings"
 msgstr "设置"
 
-#: src/Admin/AdminAssets.php:359
+#: src/Admin/AdminAssets.php:394
 msgid "Open outline"
 msgstr "展开大纲"
 
-#: src/Admin/AdminAssets.php:360
+#: src/Admin/AdminAssets.php:395
 msgid "Split"
 msgstr "分屏"
 
-#: src/Admin/AdminAssets.php:361
+#: src/Admin/AdminAssets.php:396
 msgid "Split mode"
 msgstr "分屏模式"
 
-#: src/Admin/AdminAssets.php:362
+#: src/Admin/AdminAssets.php:397
 msgid "Split preview"
 msgstr "分屏预览"
 
-#: src/Admin/AdminAssets.php:363
+#: src/Admin/AdminAssets.php:398
 msgid "Show live preview by default"
 msgstr "默认显示实时预览区域"
 
-#: src/Admin/AdminAssets.php:364
+#: src/Admin/AdminAssets.php:399
 msgid "Synchronized scrolling"
 msgstr "同步滚动"
 
-#: src/Admin/AdminAssets.php:365
+#: src/Admin/AdminAssets.php:400
 msgid "Keep the editor and preview in sync"
 msgstr "编辑区和预览区联动"
 
-#: src/Admin/AdminAssets.php:366
+#: src/Admin/AdminAssets.php:401
 msgid "Table"
 msgstr "表格"
 
-#: src/Admin/AdminAssets.php:367
+#: src/Admin/AdminAssets.php:402
 msgid "Columns"
 msgstr "列数"
 
-#: src/Admin/AdminAssets.php:368
+#: src/Admin/AdminAssets.php:403
 msgid "Rows"
 msgstr "行数"
 
-#: src/Admin/AdminAssets.php:369
+#: src/Admin/AdminAssets.php:404
 msgid "Theme"
 msgstr "主题"
 
-#: src/Admin/AdminAssets.php:370
+#: src/Admin/AdminAssets.php:405
 msgid "Theme settings"
 msgstr "主题设置"
 
-#: src/Admin/AdminAssets.php:371
+#: src/Admin/AdminAssets.php:406
 msgid "Add tags"
 msgstr "添加标签"
 
-#: src/Admin/AdminAssets.php:372
+#: src/Admin/AdminAssets.php:407
 msgid "Categories"
 msgstr "分类目录"
 
-#: src/Admin/AdminAssets.php:373
+#: src/Admin/AdminAssets.php:408
 msgid "Choose the sections this article belongs to."
 msgstr "选择文章归属的栏目。"
 
 #. translators: %s: Number of selected categories.
-#: src/Admin/AdminAssets.php:375
+#: src/Admin/AdminAssets.php:410
 #, php-format
 msgid "Selected: %s"
 msgstr "已选 %s 项"
 
-#: src/Admin/AdminAssets.php:376
+#: src/Admin/AdminAssets.php:411
 msgid "Close publish dialog"
 msgstr "关闭发布弹窗"
 
-#: src/Admin/AdminAssets.php:377
+#: src/Admin/AdminAssets.php:412
 msgid "Collapse"
 msgstr "收起"
 
-#: src/Admin/AdminAssets.php:378
+#: src/Admin/AdminAssets.php:413
 msgid "Continue adding..."
 msgstr "继续添加..."
 
-#: src/Admin/AdminAssets.php:379
+#: src/Admin/AdminAssets.php:414
 msgid "Excerpt"
 msgstr "摘要"
 
-#: src/Admin/AdminAssets.php:380
+#: src/Admin/AdminAssets.php:415
 msgid ""
 "Write a short excerpt for search results, article lists, and sharing "
 "previews..."
 msgstr "为搜索结果、文章列表和分享预览写一段简短摘要..."
 
-#: src/Admin/AdminAssets.php:381
+#: src/Admin/AdminAssets.php:416
 msgid "Featured image"
 msgstr "特色图片"
 
-#: src/Admin/AdminAssets.php:382
+#: src/Admin/AdminAssets.php:417
 msgid "Landscape images are recommended"
 msgstr "建议使用横向图片"
 
-#: src/Admin/AdminAssets.php:384
+#: src/Admin/AdminAssets.php:419
 msgid "Supports JPG, PNG, and WebP, max 5MB"
 msgstr "支持 JPG、PNG、WebP 格式，最大 5MB"
 
-#: src/Admin/AdminAssets.php:385
+#: src/Admin/AdminAssets.php:420
 msgid "Nothing is written to WordPress before submission."
 msgstr "提交前不会写入 WordPress。"
 
-#: src/Admin/AdminAssets.php:386
+#: src/Admin/AdminAssets.php:421
 msgid "Open the article page after publishing"
 msgstr "发布后打开文章页面"
 
-#: src/Admin/AdminAssets.php:387
+#: src/Admin/AdminAssets.php:422
 msgid ""
 "After submission, open the article page with the same article styling as the "
 "current Preview."
 msgstr "提交完成后跳转到文章页面，正文样式与当前预览一致。"
 
-#: src/Admin/AdminAssets.php:388
+#: src/Admin/AdminAssets.php:423
 msgid "Open the article page after updating"
 msgstr "更新后打开文章页面"
 
-#: src/Admin/AdminAssets.php:389
+#: src/Admin/AdminAssets.php:424
 msgid "Password"
 msgstr "密码"
 
-#: src/Admin/AdminAssets.php:390
+#: src/Admin/AdminAssets.php:425
 msgid "Enter access password"
 msgstr "输入访问密码"
 
-#: src/Admin/AdminAssets.php:391
+#: src/Admin/AdminAssets.php:426
 msgid "Enter an access password before submitting."
 msgstr "请输入访问密码后再提交。"
 
-#: src/Admin/AdminAssets.php:392
+#: src/Admin/AdminAssets.php:427
 msgid "Ready to publish"
 msgstr "准备发布"
 
-#: src/Admin/AdminAssets.php:393
+#: src/Admin/AdminAssets.php:428
 msgid "Private"
 msgstr "私密"
 
-#: src/Admin/AdminAssets.php:394
+#: src/Admin/AdminAssets.php:429
 msgid "Only site administrators and editors can view this article."
 msgstr "仅站点管理员和编辑可查看此文章。"
 
-#: src/Admin/AdminAssets.php:395
+#: src/Admin/AdminAssets.php:430
 msgid "Public"
 msgstr "公开"
 
-#: src/Admin/AdminAssets.php:396
+#: src/Admin/AdminAssets.php:431
 msgid ""
 "Confirm the article details to publish it to the current WordPress site."
 msgstr "确认文章信息后，将发布到当前 WordPress 站点。"
 
-#: src/Admin/AdminAssets.php:397
+#: src/Admin/AdminAssets.php:432
 msgid ""
 "WordPress did not accept the publish request. Check the page state and try "
 "again."
 msgstr "WordPress 未接受发布请求，请检查页面状态后重试。"
 
-#: src/Admin/AdminAssets.php:398
+#: src/Admin/AdminAssets.php:433
 msgid "Loading preview..."
 msgstr "加载预览中..."
 
-#: src/Admin/AdminAssets.php:399
+#: src/Admin/AdminAssets.php:434
 msgid "Publish options"
 msgstr "发布选项"
 
-#: src/Admin/AdminAssets.php:400
+#: src/Admin/AdminAssets.php:435
 msgid "Remove"
 msgstr "移除"
 
 #. translators: %s: Tag name.
-#: src/Admin/AdminAssets.php:402
+#: src/Admin/AdminAssets.php:437
 #, php-format
 msgid "Remove tag: %s"
 msgstr "移除标签 %s"
 
-#: src/Admin/AdminAssets.php:403
+#: src/Admin/AdminAssets.php:438
 msgid "Replace"
 msgstr "替换"
 
-#: src/Admin/AdminAssets.php:404
+#: src/Admin/AdminAssets.php:439
 msgid "Select featured image"
 msgstr "选择特色图片"
 
-#: src/Admin/AdminAssets.php:405
+#: src/Admin/AdminAssets.php:440
 msgid "Stick to the top of the blog"
 msgstr "置于首页顶端"
 
-#: src/Admin/AdminAssets.php:406
+#: src/Admin/AdminAssets.php:441
 msgid "Tags"
 msgstr "标签"
 
-#: src/Admin/AdminAssets.php:407
+#: src/Admin/AdminAssets.php:442
 msgid "Press Enter or comma to add a tag."
 msgstr "输入后按 Enter 或逗号添加。"
 
-#: src/Admin/AdminAssets.php:408
+#: src/Admin/AdminAssets.php:443
 msgid "Update article"
 msgstr "更新文章"
 
-#: src/Admin/AdminAssets.php:409
+#: src/Admin/AdminAssets.php:444
 msgid "Confirm these changes to update the current WordPress article."
 msgstr "确认本次修改后，将更新当前 WordPress 文章。"
 
-#: src/Admin/AdminAssets.php:410
+#: src/Admin/AdminAssets.php:445
 msgid "Update existing article"
 msgstr "更新已有文章"
 
-#: src/Admin/AdminAssets.php:411
+#: src/Admin/AdminAssets.php:446
 msgid "Visibility"
 msgstr "可见性"
 
-#: src/Admin/AdminAssets.php:412
+#: src/Admin/AdminAssets.php:447
 msgid "Article title"
 msgstr "文章标题"
 
-#: src/Admin/AdminAssets.php:413
+#: src/Admin/AdminAssets.php:448
 msgid "Unsaved"
 msgstr "未保存"
 
-#: src/Admin/AdminAssets.php:414
+#: src/Admin/AdminAssets.php:449
 msgid "View modes"
 msgstr "视图模式"
 
-#: src/Admin/AdminAssets.php:415 src/Support/ToolbarRegistry.php:291
+#: src/Admin/AdminAssets.php:450 src/Support/ToolbarRegistry.php:291
 msgid "Copy to WeChat"
 msgstr "复制到公众号"
 
-#: src/Admin/AdminAssets.php:416 src/Frontend/FrontendAssets.php:77
+#: src/Admin/AdminAssets.php:451 src/Frontend/FrontendAssets.php:105
 msgid "Copied"
 msgstr "已复制"
 
-#: src/Admin/AdminAssets.php:417
+#: src/Admin/AdminAssets.php:452
 msgid "Word count"
 msgstr "字数统计"
 
-#: src/Admin/AdminAssets.php:418
+#: src/Admin/AdminAssets.php:453
 msgid "Show words, characters, and reading time beside the title"
 msgstr "在文章标题旁显示词数、字符数与阅读时长"
 
-#: src/Admin/AdminAssets.php:579
+#: src/Admin/AdminAssets.php:564
 msgid "Not saved yet."
 msgstr "尚未保存。"
 
 #. translators: 1: display name of the last editor, 2: localized post modified date and time.
-#: src/Admin/AdminAssets.php:603
+#: src/Admin/AdminAssets.php:588
 #, php-format
 msgid "Last edited by %1$s on %2$s"
 msgstr "最后由 %1$s 编辑于 %2$s"
 
 #. translators: %s: localized post modified date and time.
-#: src/Admin/AdminAssets.php:611
+#: src/Admin/AdminAssets.php:596
 #, php-format
 msgid "Last edited on %s"
 msgstr "最后编辑于 %s"
 
-#: src/Admin/AdminAssets.php:628
+#: src/Admin/AdminAssets.php:613
 msgid "Primary color"
 msgstr "主色调"
 
-#: src/Admin/AdminAssets.php:629
+#: src/Admin/AdminAssets.php:614
 msgid "H1, list markers, and task checkmarks"
 msgstr "H1、列表标记、任务勾选"
 
-#: src/Admin/AdminAssets.php:634
+#: src/Admin/AdminAssets.php:619
 msgid "Heading color"
 msgstr "标题色"
 
-#: src/Admin/AdminAssets.php:635
+#: src/Admin/AdminAssets.php:620
 msgid "H2-H6, bold text, and definition terms"
 msgstr "H2–H6、粗体、定义项"
 
-#: src/Admin/AdminAssets.php:640
+#: src/Admin/AdminAssets.php:625
 msgid "Text color"
 msgstr "正文色"
 
-#: src/Admin/AdminAssets.php:641
+#: src/Admin/AdminAssets.php:626
 msgid "Paragraphs, lists, and table body"
 msgstr "段落、列表、表格正文"
 
-#: src/Admin/AdminAssets.php:646
+#: src/Admin/AdminAssets.php:631
 msgid "Muted color"
 msgstr "辅助色"
 
-#: src/Admin/AdminAssets.php:647
+#: src/Admin/AdminAssets.php:632
 msgid "Strikethrough, footnotes, and image captions"
 msgstr "删除线、脚注、图片说明"
 
-#: src/Admin/AdminAssets.php:652
+#: src/Admin/AdminAssets.php:637
 msgid "Link color"
 msgstr "链接色"
 
-#: src/Admin/AdminAssets.php:653
+#: src/Admin/AdminAssets.php:638
 msgid "Body links and footnote links"
 msgstr "正文链接与脚注链接"
 
-#: src/Admin/AdminAssets.php:658
+#: src/Admin/AdminAssets.php:643
 msgid "Background color"
 msgstr "内容背景"
 
-#: src/Admin/AdminAssets.php:659
+#: src/Admin/AdminAssets.php:644
 msgid "Article and content block base background"
 msgstr "文章与内容块基础背景"
 
-#: src/Admin/AdminAssets.php:664
+#: src/Admin/AdminAssets.php:649
 msgid "Border color"
 msgstr "边框色"
 
-#: src/Admin/AdminAssets.php:665
+#: src/Admin/AdminAssets.php:650
 msgid "Dividers, tables, and control borders"
 msgstr "分隔线、表格与控件边框"
 
-#: src/Admin/AdminAssets.php:670
+#: src/Admin/AdminAssets.php:655
 msgid "Highlight background"
 msgstr "高亮背景"
 
-#: src/Admin/AdminAssets.php:671
+#: src/Admin/AdminAssets.php:656
 msgid "Marked text and emphasized content"
 msgstr "标记文本与重点内容"
 
-#: src/Admin/AdminAssets.php:676
+#: src/Admin/AdminAssets.php:661
 msgid "Selection background"
 msgstr "选区背景"
 
-#: src/Admin/AdminAssets.php:677
+#: src/Admin/AdminAssets.php:662
 msgid "Selected article text"
 msgstr "文章文字选中状态"
 
-#: src/Admin/AdminAssets.php:682
+#: src/Admin/AdminAssets.php:667
 msgid "Quote accent"
 msgstr "引用强调色"
 
-#: src/Admin/AdminAssets.php:683
+#: src/Admin/AdminAssets.php:668
 msgid "Blockquote left border"
 msgstr "引用块左侧边线"
 
-#: src/Admin/AdminAssets.php:688
+#: src/Admin/AdminAssets.php:673
 msgid "Quote background"
 msgstr "引用背景"
 
-#: src/Admin/AdminAssets.php:689
+#: src/Admin/AdminAssets.php:674
 msgid "Blockquote content background"
 msgstr "引用块内容底色"
 
-#: src/Admin/AdminAssets.php:694
+#: src/Admin/AdminAssets.php:679
 msgid "Table header background"
 msgstr "表头背景"
 
-#: src/Admin/AdminAssets.php:695
+#: src/Admin/AdminAssets.php:680
 msgid "Table heading row background"
 msgstr "表格标题行底色"
 
-#: src/Admin/AdminAssets.php:700
+#: src/Admin/AdminAssets.php:685
 msgid "Table zebra stripes"
 msgstr "表格斑马纹"
 
-#: src/Admin/AdminAssets.php:701
+#: src/Admin/AdminAssets.php:686
 msgid "Even content row background"
 msgstr "偶数内容行底色"
 
-#: src/Admin/AdminAssets.php:706
+#: src/Admin/AdminAssets.php:691
 msgid "Inline code color"
 msgstr "行内代码色"
 
-#: src/Admin/AdminAssets.php:707
+#: src/Admin/AdminAssets.php:692
 msgid "Inline code and keyboard shortcut text"
 msgstr "行内代码与快捷键文字"
 
-#: src/Admin/AdminAssets.php:712
+#: src/Admin/AdminAssets.php:697
 msgid "Inline code background"
 msgstr "行内代码背景"
 
-#: src/Admin/AdminAssets.php:713
+#: src/Admin/AdminAssets.php:698
 msgid "Inline code and keyboard shortcut background"
 msgstr "行内代码与快捷键底色"
 
-#: src/Admin/AdminAssets.php:718
+#: src/Admin/AdminAssets.php:703
 msgid "Code text color"
 msgstr "代码正文色"
 
-#: src/Admin/AdminAssets.php:719
+#: src/Admin/AdminAssets.php:704
 msgid "Plain code and punctuation"
 msgstr "普通代码与标点"
 
-#: src/Admin/AdminAssets.php:724
+#: src/Admin/AdminAssets.php:709
 msgid "Code block background"
 msgstr "代码块背景"
 
-#: src/Admin/AdminAssets.php:725
+#: src/Admin/AdminAssets.php:710
 msgid "Code block and line number area"
 msgstr "代码块与行号区域"
 
-#: src/Admin/AdminAssets.php:730
+#: src/Admin/AdminAssets.php:715
 msgid "Keyword color"
 msgstr "关键字色"
 
-#: src/Admin/AdminAssets.php:731
+#: src/Admin/AdminAssets.php:716
 msgid "Keywords, functions, and booleans"
 msgstr "关键字、函数与布尔值"
 
-#: src/Admin/AdminAssets.php:736
+#: src/Admin/AdminAssets.php:721
 msgid "String color"
 msgstr "字符串色"
 
-#: src/Admin/AdminAssets.php:737
+#: src/Admin/AdminAssets.php:722
 msgid "Strings, property values, and numbers"
 msgstr "字符串、属性值与数字"
 
-#: src/Admin/AdminAssets.php:742
+#: src/Admin/AdminAssets.php:727
 msgid "Comment color"
 msgstr "注释色"
 
-#: src/Admin/AdminAssets.php:743
+#: src/Admin/AdminAssets.php:728
 msgid "Comments, line numbers, and auxiliary markers"
 msgstr "注释、行号与辅助标记"
 
-#: src/Admin/AdminAssets.php:748
+#: src/Admin/AdminAssets.php:733
 msgid "Information accent"
 msgstr "信息强调色"
 
-#: src/Admin/AdminAssets.php:749
+#: src/Admin/AdminAssets.php:734
 msgid "NOTE and information callout border"
 msgstr "NOTE 与信息提示边线"
 
-#: src/Admin/AdminAssets.php:754
+#: src/Admin/AdminAssets.php:739
 msgid "Information background"
 msgstr "信息背景"
 
-#: src/Admin/AdminAssets.php:755
+#: src/Admin/AdminAssets.php:740
 msgid "NOTE and information callout background"
 msgstr "NOTE 与信息提示底色"
 
-#: src/Admin/AdminAssets.php:760
+#: src/Admin/AdminAssets.php:745
 msgid "Success accent"
 msgstr "成功强调色"
 
-#: src/Admin/AdminAssets.php:761
+#: src/Admin/AdminAssets.php:746
 msgid "TIP, success, and completed states"
 msgstr "TIP、成功与完成状态"
 
-#: src/Admin/AdminAssets.php:766
+#: src/Admin/AdminAssets.php:751
 msgid "Success background"
 msgstr "成功背景"
 
-#: src/Admin/AdminAssets.php:767
+#: src/Admin/AdminAssets.php:752
 msgid "TIP and success callout background"
 msgstr "TIP 与成功提示底色"
 
-#: src/Admin/AdminAssets.php:772
+#: src/Admin/AdminAssets.php:757
 msgid "Warning accent"
 msgstr "警告强调色"
 
-#: src/Admin/AdminAssets.php:773
+#: src/Admin/AdminAssets.php:758
 msgid "WARNING callout border"
 msgstr "WARNING 警告边线"
 
-#: src/Admin/AdminAssets.php:778
+#: src/Admin/AdminAssets.php:763
 msgid "Warning background"
 msgstr "警告背景"
 
-#: src/Admin/AdminAssets.php:779
+#: src/Admin/AdminAssets.php:764
 msgid "WARNING callout background"
 msgstr "WARNING 警告底色"
 
-#: src/Admin/AdminAssets.php:784
+#: src/Admin/AdminAssets.php:769
 msgid "Danger accent"
 msgstr "危险强调色"
 
-#: src/Admin/AdminAssets.php:785
+#: src/Admin/AdminAssets.php:770
 msgid "CAUTION and error callout border"
 msgstr "CAUTION 与错误边线"
 
-#: src/Admin/AdminAssets.php:790
+#: src/Admin/AdminAssets.php:775
 msgid "Danger background"
 msgstr "危险背景"
 
-#: src/Admin/AdminAssets.php:791
+#: src/Admin/AdminAssets.php:776
 msgid "CAUTION and error callout background"
 msgstr "CAUTION 与错误底色"
 
-#: src/Admin/AdminAssets.php:798
+#: src/Admin/AdminAssets.php:783
 msgid "Create a personal article and code theme with live preview."
 msgstr "通过自定义 CSS 变量，打造属于你的专属主题效果"
 
-#: src/Admin/AdminAssets.php:799
+#: src/Admin/AdminAssets.php:784
 msgid "Close custom CSS theme"
 msgstr "关闭自定义 CSS 主题"
 
-#: src/Admin/AdminAssets.php:801
+#: src/Admin/AdminAssets.php:786
 msgid "Article theme name"
 msgstr "文章主题"
 
-#: src/Admin/AdminAssets.php:802
+#: src/Admin/AdminAssets.php:787
 msgid "Code theme name"
 msgstr "代码主题"
 
-#: src/Admin/AdminAssets.php:803
+#: src/Admin/AdminAssets.php:788
 msgid "Enter article theme name"
 msgstr "输入文章主题名称"
 
-#: src/Admin/AdminAssets.php:804
+#: src/Admin/AdminAssets.php:789
 msgid "Enter code theme name"
 msgstr "输入代码主题名称"
 
-#: src/Admin/AdminAssets.php:805
+#: src/Admin/AdminAssets.php:790
 msgid "Changes have not been applied"
 msgstr "未保存的修改"
 
-#: src/Admin/AdminAssets.php:806
+#: src/Admin/AdminAssets.php:791
 msgid "Enter a valid six-digit hex color"
 msgstr "请输入有效的六位十六进制颜色"
 
-#: src/Admin/AdminAssets.php:807
+#: src/Admin/AdminAssets.php:792
 msgid "Enter both theme names"
 msgstr "请输入两个主题名称"
 
-#: src/Admin/AdminAssets.php:808
+#: src/Admin/AdminAssets.php:793
 msgid "Modified style preview"
 msgstr "修改后的样式预览"
 
-#: src/Admin/AdminAssets.php:809
+#: src/Admin/AdminAssets.php:794
 msgid "Live"
 msgstr "实时预览"
 
-#: src/Admin/AdminAssets.php:810
+#: src/Admin/AdminAssets.php:795
 msgid "The preview updates with the selected colors."
 msgstr "此处将实时应用右侧变量的配色效果"
 
-#: src/Admin/AdminAssets.php:811
+#: src/Admin/AdminAssets.php:796
 msgid "Fix invalid CSS to update the live preview."
 msgstr "请修复无效 CSS 以更新实时预览。"
 
-#: src/Admin/AdminAssets.php:812
+#: src/Admin/AdminAssets.php:797
 msgid "Live preview is temporarily unavailable."
 msgstr "实时预览暂时不可用。"
 
-#: src/Admin/AdminAssets.php:813
+#: src/Admin/AdminAssets.php:798
 msgid "Theme variables"
 msgstr "主题变量"
 
-#: src/Admin/AdminAssets.php:814
+#: src/Admin/AdminAssets.php:799
 msgid "Theme variable categories"
 msgstr "主题变量类别"
 
 #. translators: %s: Custom CSS theme variable category label.
-#: src/Admin/AdminAssets.php:816
+#: src/Admin/AdminAssets.php:801
 #, php-format
 msgid "%s theme variables"
 msgstr "%s主题变量"
 
-#: src/Admin/AdminAssets.php:817 src/Admin/AdminAssets.php:831
+#: src/Admin/AdminAssets.php:802 src/Admin/AdminAssets.php:816
 msgid "Custom CSS code"
 msgstr "自定义 CSS 代码"
 
-#: src/Admin/AdminAssets.php:818
+#: src/Admin/AdminAssets.php:803
 msgid "Reset"
 msgstr "重置"
 
-#: src/Admin/AdminAssets.php:819
+#: src/Admin/AdminAssets.php:804
 msgid "Expand code editor"
 msgstr "展开代码编辑器"
 
-#: src/Admin/AdminAssets.php:820
+#: src/Admin/AdminAssets.php:805
 msgid "Shrink code editor"
 msgstr "收起代码编辑器"
 
-#: src/Admin/AdminAssets.php:821
+#: src/Admin/AdminAssets.php:806
 msgid "Back to variables"
 msgstr "返回变量"
 
-#: src/Admin/AdminAssets.php:822
+#: src/Admin/AdminAssets.php:807
 msgid "CSS target"
 msgstr "自定义 CSS 保存目标"
 
-#: src/Admin/AdminAssets.php:823
+#: src/Admin/AdminAssets.php:808
 msgid "Article CSS"
 msgstr "文章 CSS"
 
-#: src/Admin/AdminAssets.php:824
+#: src/Admin/AdminAssets.php:809
 msgid "Code CSS"
 msgstr "代码 CSS"
 
-#: src/Admin/AdminAssets.php:825
+#: src/Admin/AdminAssets.php:810
 msgid "These rules are applied to article content."
 msgstr "这些规则会应用到文章内容。"
 
-#: src/Admin/AdminAssets.php:826
+#: src/Admin/AdminAssets.php:811
 msgid "These rules are applied to code content."
 msgstr "这些规则会应用到代码内容。"
 
-#: src/Admin/AdminAssets.php:827
+#: src/Admin/AdminAssets.php:812
 msgid "Foundation"
 msgstr "基础"
 
-#: src/Admin/AdminAssets.php:828
+#: src/Admin/AdminAssets.php:813
 msgid "Blocks"
 msgstr "内容块"
 
-#: src/Admin/AdminAssets.php:829
+#: src/Admin/AdminAssets.php:814
 msgid "Code"
 msgstr "代码"
 
-#: src/Admin/AdminAssets.php:830
+#: src/Admin/AdminAssets.php:815
 msgid "Alerts"
 msgstr "提示"
 
-#: src/Admin/AdminAssets.php:832
+#: src/Admin/AdminAssets.php:817
 msgid "Add detailed CSS rules"
 msgstr "你可以手动输入 CSS 规则来自定义主题样式"
 
-#: src/Admin/AdminAssets.php:833
+#: src/Admin/AdminAssets.php:818
 msgid "Back to theme variables"
 msgstr "返回主题变量"
 
-#: src/Admin/AdminAssets.php:835
+#: src/Admin/AdminAssets.php:820
 msgid "Reset all"
 msgstr "重置"
 
-#: src/Admin/AdminAssets.php:836
+#: src/Admin/AdminAssets.php:821
 msgid "Apply theme"
 msgstr "应用主题"
 
-#: src/Admin/AdminAssets.php:837
+#: src/Admin/AdminAssets.php:822
 msgid "EasyMDE Blue"
 msgstr "EasyMDE 蓝调"
 
-#: src/Admin/AdminAssets.php:838
+#: src/Admin/AdminAssets.php:823
 msgid "EasyMDE Blue Code"
 msgstr "EasyMDE 蓝调代码"
 
 #. translators: %s: Custom CSS color variable label.
-#: src/Admin/AdminAssets.php:840
+#: src/Admin/AdminAssets.php:825
 #, php-format
 msgid "%s color picker"
 msgstr "%s拾色器"
 
-#: src/Admin/AdminAssets.php:841
+#: src/Admin/AdminAssets.php:826
 msgid "Current theme variables"
 msgstr "当前主题变量"
 
-#: src/Admin/AdminAssets.php:842
+#: src/Admin/AdminAssets.php:827
 msgid "Add custom rules below"
 msgstr "在下方添加自定义规则"
 
-#: src/Admin/AdminAssets.php:843
+#: src/Admin/AdminAssets.php:828
 msgid "Heading 1 preview sample"
 msgstr "一级标题 Heading 1"
 
-#: src/Admin/AdminAssets.php:844
+#: src/Admin/AdminAssets.php:829
 msgid "Heading 2 preview sample"
 msgstr "二级标题 Heading 2"
 
-#: src/Admin/AdminAssets.php:845
+#: src/Admin/AdminAssets.php:830
 msgid ""
 "This body text demonstrates the current theme typography, spacing, and "
 "layout."
 msgstr "这是正文文本示例，展示当前主题的文字效果、间距和排版样式。"
 
-#: src/Admin/AdminAssets.php:846
+#: src/Admin/AdminAssets.php:831
 msgid "Theme preview with"
 msgstr "这里包含"
 
-#: src/Admin/AdminAssets.php:847
+#: src/Admin/AdminAssets.php:832
 msgid "bold text"
 msgstr "粗体文本"
 
-#: src/Admin/AdminAssets.php:848
+#: src/Admin/AdminAssets.php:833
 msgid "italic text"
 msgstr "斜体文本"
 
-#: src/Admin/AdminAssets.php:849
+#: src/Admin/AdminAssets.php:834
 msgid "deleted text"
 msgstr "删除线"
 
-#: src/Admin/AdminAssets.php:850
+#: src/Admin/AdminAssets.php:835
 msgid "highlight"
 msgstr "高亮文本"
 
-#: src/Admin/AdminAssets.php:851
+#: src/Admin/AdminAssets.php:836
 msgid "inline code"
 msgstr "inline code"
 
-#: src/Admin/AdminAssets.php:852
+#: src/Admin/AdminAssets.php:837
 msgid "Theme preview"
 msgstr "这是注释"
 
-#: src/Admin/AdminAssets.php:853
+#: src/Admin/AdminAssets.php:838
 msgid "Blockquote and callout styling preview."
 msgstr "这是引用文本示例，展示引用块与提示内容的样式表现。"
 
-#: src/Admin/AdminAssets.php:854
+#: src/Admin/AdminAssets.php:839
 msgid "Unordered list item"
 msgstr "无序列表项"
 
-#: src/Admin/AdminAssets.php:855
+#: src/Admin/AdminAssets.php:840
 msgid "Completed task"
 msgstr "已完成任务"
 
-#: src/Admin/AdminAssets.php:856
+#: src/Admin/AdminAssets.php:841
 msgid "Ordered list item"
 msgstr "有序列表项"
 
-#: src/Admin/AdminAssets.php:857
+#: src/Admin/AdminAssets.php:842
 msgid "Second step"
 msgstr "第二个步骤"
 
-#: src/Admin/AdminAssets.php:858
+#: src/Admin/AdminAssets.php:843
 msgid "Header"
 msgstr "表头"
 
-#: src/Admin/AdminAssets.php:859
+#: src/Admin/AdminAssets.php:844
 msgid "Content"
 msgstr "内容"
 
-#: src/Admin/AdminAssets.php:860
+#: src/Admin/AdminAssets.php:845
 msgid "Link color preview"
 msgstr "这是链接示例，展示链接的颜色效果"
 
-#: src/Admin/AdminAssets.php:861
+#: src/Admin/AdminAssets.php:846
 msgid "NOTE"
 msgstr "NOTE"
 
-#: src/Admin/AdminAssets.php:862
+#: src/Admin/AdminAssets.php:847
 msgid "TIP"
 msgstr "TIP"
 
-#: src/Admin/AdminAssets.php:863
+#: src/Admin/AdminAssets.php:848
 msgid "WARNING"
 msgstr "WARNING"
 
-#: src/Admin/AdminAssets.php:864
+#: src/Admin/AdminAssets.php:849
 msgid "CAUTION"
 msgstr "CAUTION"
 
-#: src/Admin/AdminAssets.php:865
+#: src/Admin/AdminAssets.php:850
 msgid "Information"
 msgstr "信息提示"
 
-#: src/Admin/AdminAssets.php:866
+#: src/Admin/AdminAssets.php:851
 msgid "Success"
 msgstr "成功提示"
 
-#: src/Admin/AdminAssets.php:867
+#: src/Admin/AdminAssets.php:852
 msgid "Warning"
 msgstr "警告提示"
 
-#: src/Admin/AdminAssets.php:868
+#: src/Admin/AdminAssets.php:853
 msgid "Danger"
 msgstr "危险提示"
 
-#: src/Admin/AdminAssets.php:869
+#: src/Admin/AdminAssets.php:854
 msgid "Additional details"
 msgstr "折叠内容与补充说明"
 
-#: src/Admin/AdminAssets.php:870
+#: src/Admin/AdminAssets.php:855
 msgid "Longer supporting content can be previewed here."
 msgstr "可用于展示较长的补充信息。"
 
-#: src/Admin/AdminAssets.php:871
+#: src/Admin/AdminAssets.php:856
 msgid "Definition list"
 msgstr "定义列表"
 
-#: src/Admin/AdminAssets.php:872
+#: src/Admin/AdminAssets.php:857
 msgid "Used to explain terms or add structured details."
 msgstr "用于解释术语或补充结构化说明。"
 
-#: src/Admin/AdminAssets.php:873
+#: src/Admin/AdminAssets.php:858
 msgid "Tertiary heading and supporting content"
 msgstr "三级标题与补充内容"
 
-#: src/Admin/AdminAssets.php:874
+#: src/Admin/AdminAssets.php:859
 msgid ""
 "Images, mathematical formulas, and footnotes use the body text system. "
 "Example footnote"
 msgstr "图片说明、数学公式与脚注沿用正文体系。示例脚注"
 
-#: src/Admin/AdminAssets.php:875
+#: src/Admin/AdminAssets.php:860
 msgid "[1] Footnote and supporting text color sample."
 msgstr "[1] 这是脚注与辅助文字颜色示例。"
 
 #. translators: Separator between inline Custom CSS preview examples.
-#: src/Admin/AdminAssets.php:877
+#: src/Admin/AdminAssets.php:862
 msgctxt "inline Custom CSS preview separator"
 msgid ", "
 msgstr "、"
 
 #. translators: Conjunction before the keyboard shortcut in the inline Custom CSS preview.
-#: src/Admin/AdminAssets.php:879
+#: src/Admin/AdminAssets.php:864
 msgctxt "inline Custom CSS preview conjunction"
 msgid "and "
 msgstr "和"
 
 #. translators: Sentence-ending punctuation in the inline Custom CSS preview.
-#: src/Admin/AdminAssets.php:881
+#: src/Admin/AdminAssets.php:866
 msgctxt "inline Custom CSS preview sentence end"
 msgid "."
 msgstr "。"
 
-#: src/Admin/AdminAssets.php:887
+#: src/Admin/AdminAssets.php:872
 msgid "Markdown source"
 msgstr "Markdown 源文"
 
-#: src/Admin/AdminAssets.php:888
+#: src/Admin/AdminAssets.php:873
 msgid "Start writing Markdown to preview the article."
 msgstr "开始编写 Markdown 后将在此处预览文章。"
 
-#: src/Admin/AdminAssets.php:889
+#: src/Admin/AdminAssets.php:874
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr "预览失败。可以继续编写，保存不受影响。"
 
-#: src/Admin/AdminAssets.php:890
+#: src/Admin/AdminAssets.php:875
 msgid "Insert Media"
 msgstr "插入媒体"
 
-#: src/Admin/AdminAssets.php:891
+#: src/Admin/AdminAssets.php:876
 msgid "Markdown toolbar"
 msgstr "Markdown 工具栏"
 
-#: src/Admin/AdminAssets.php:892
+#: src/Admin/AdminAssets.php:877
 msgid "Undo"
 msgstr "撤销"
 
-#: src/Admin/AdminAssets.php:893
+#: src/Admin/AdminAssets.php:878
 msgid "Appearance"
 msgstr "外观"
 
-#: src/Admin/AdminAssets.php:894
+#: src/Admin/AdminAssets.php:879
 msgid "Font"
 msgstr "字体"
 
-#: src/Admin/AdminAssets.php:895
+#: src/Admin/AdminAssets.php:880
 msgid "Headings"
 msgstr "标题"
 
 #. translators: %s: Heading level from 1 through 6.
-#: src/Admin/AdminAssets.php:897
+#: src/Admin/AdminAssets.php:882
 #, php-format
 msgid "Heading %s"
 msgstr "标题 %s"
 
-#: src/Admin/AdminAssets.php:898
+#: src/Admin/AdminAssets.php:883
 msgid "Heading level"
 msgstr "标题级别"
 
-#: src/Admin/AdminAssets.php:899
+#: src/Admin/AdminAssets.php:884
 msgid "Article theme"
 msgstr "文章主题"
 
-#: src/Admin/AdminAssets.php:900
+#: src/Admin/AdminAssets.php:885
 msgid "Code theme"
 msgstr "代码主题"
 
-#: src/Admin/AdminAssets.php:901
+#: src/Admin/AdminAssets.php:886
 msgid "Custom CSS"
 msgstr "自定义 CSS"
 
-#: src/Admin/AdminAssets.php:902
+#: src/Admin/AdminAssets.php:887
 msgid "Custom CSS theme"
 msgstr "自定义 CSS 主题"
 
-#: src/Admin/AdminAssets.php:903
+#: src/Admin/AdminAssets.php:888
 msgid "Named custom CSS"
 msgstr "命名自定义 CSS"
 
-#: src/Admin/AdminAssets.php:904
+#: src/Admin/AdminAssets.php:889
 msgid "CSS name"
 msgstr "CSS 名称"
 
-#: src/Admin/AdminAssets.php:905
+#: src/Admin/AdminAssets.php:890
 msgid "Save CSS"
 msgstr "保存 CSS"
 
-#: src/Admin/AdminAssets.php:906
+#: src/Admin/AdminAssets.php:891
 msgid "Saved CSS."
 msgstr "CSS 已保存。"
 
-#: src/Admin/AdminAssets.php:907
+#: src/Admin/AdminAssets.php:892
 msgid "CSS save failed."
 msgstr "CSS 保存失败。"
 
-#: src/Admin/AdminAssets.php:908
+#: src/Admin/AdminAssets.php:893
 msgid "Custom font"
 msgstr "自定义字体"
 
-#: src/Admin/AdminAssets.php:909
+#: src/Admin/AdminAssets.php:894
 msgid "Windows font"
 msgstr "Windows 字体"
 
-#: src/Admin/AdminAssets.php:910
+#: src/Admin/AdminAssets.php:895
 msgid "Apple font"
 msgstr "苹果字体"
 
-#: src/Admin/AdminAssets.php:911
+#: src/Admin/AdminAssets.php:896
 msgid "Serif font"
 msgstr "衬线字体"
 
-#: src/Admin/AdminAssets.php:912
+#: src/Admin/AdminAssets.php:897
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
 msgstr "字体会在当前系统支持时按自定义、Windows、苹果和衬线后备的顺序应用。"
 
-#: src/Admin/AdminAssets.php:913
+#: src/Admin/AdminAssets.php:898
 msgid "Local draft saved"
 msgstr "本地草稿已保存"
 
-#: src/Admin/AdminAssets.php:914
+#: src/Admin/AdminAssets.php:899
 msgid "A newer local draft is available."
 msgstr "检测到更新的本地草稿。"
 
-#: src/Admin/AdminAssets.php:915
+#: src/Admin/AdminAssets.php:900
 msgid "Restore draft"
 msgstr "恢复草稿"
 
-#: src/Admin/AdminAssets.php:916
+#: src/Admin/AdminAssets.php:901
 msgid "Discard draft"
 msgstr "丢弃草稿"
 
-#: src/Admin/AdminAssets.php:917
+#: src/Admin/AdminAssets.php:902
 msgid "Draft restored."
 msgstr "草稿已恢复。"
 
-#: src/Admin/AdminAssets.php:918
+#: src/Admin/AdminAssets.php:903
 msgid "Draft discarded."
 msgstr "草稿已丢弃。"
 
-#: src/Admin/AdminAssets.php:919
+#: src/Admin/AdminAssets.php:904
 msgid "Local draft could not be read."
 msgstr "无法读取本地草稿。"
 
-#: src/Admin/AdminAssets.php:920
+#: src/Admin/AdminAssets.php:905
 msgid "Local draft could not be saved."
 msgstr "无法保存本地草稿。"
 
-#: src/Admin/AdminAssets.php:921
+#: src/Admin/AdminAssets.php:906
 msgid "Local draft could not be discarded."
 msgstr "无法丢弃本地草稿。"
 
-#: src/Admin/AdminAssets.php:922
+#: src/Admin/AdminAssets.php:907
 msgid "A different local draft was saved in another tab."
 msgstr "另一个标签页保存了不同的本地草稿。"
 
-#: src/Admin/AdminAssets.php:923 src/Frontend/FrontendAssets.php:75
+#: src/Admin/AdminAssets.php:908 src/Frontend/FrontendAssets.php:103
 msgid "Rendering failed."
 msgstr "渲染失败。"
 
-#: src/Admin/AdminAssets.php:924
+#: src/Admin/AdminAssets.php:909
 msgid "Copied preview for WeChat."
 msgstr "已复制当前预览，可直接粘贴到公众号编辑器。"
 
-#: src/Admin/AdminAssets.php:925
+#: src/Admin/AdminAssets.php:910
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr "复制到公众号失败，请在当前浏览器中重试。"
 
-#: src/Admin/AdminAssets.php:926
+#: src/Admin/AdminAssets.php:911
 msgid "Clipboard access is not available in this browser."
 msgstr "当前浏览器不支持剪贴板富文本复制。"
 
-#: src/Admin/AdminAssets.php:927
+#: src/Admin/AdminAssets.php:912
 msgid "Uploading pasted image..."
 msgstr "正在上传粘贴的图片..."
 
-#: src/Admin/AdminAssets.php:928
+#: src/Admin/AdminAssets.php:913
 msgid "Pasted image uploaded."
 msgstr "粘贴图片已上传。"
 
-#: src/Admin/AdminAssets.php:929
+#: src/Admin/AdminAssets.php:914
 msgid "Pasted image upload failed. Please use the media library instead."
 msgstr "粘贴图片上传失败。请改用媒体库。"
 
-#: src/Admin/AdminAssets.php:930
+#: src/Admin/AdminAssets.php:915
 msgid "Pasted image is too large for this site."
 msgstr "粘贴的图片超过了本站允许的大小。"
 
-#: src/Admin/AdminAssets.php:931
+#: src/Admin/AdminAssets.php:916
 msgid "Uploading dropped image..."
 msgstr "正在上传拖放的图片..."
 
-#: src/Admin/AdminAssets.php:932
+#: src/Admin/AdminAssets.php:917
 msgid "Dropped image uploaded."
 msgstr "拖放图片已上传。"
 
-#: src/Admin/AdminAssets.php:933
+#: src/Admin/AdminAssets.php:918
 msgid "Dropped image upload failed. Please use the media library instead."
 msgstr "拖放图片上传失败。请改用媒体库。"
 
-#: src/Admin/AdminAssets.php:934
+#: src/Admin/AdminAssets.php:919
 msgid "Dropped image is too large for this site."
 msgstr "拖放的图片超过了本站允许的大小。"
 
-#: src/Admin/AdminAssets.php:935
+#: src/Admin/AdminAssets.php:920
 msgid "alt text"
 msgstr "替代文本"
 
-#: src/Admin/AdminAssets.php:936
+#: src/Admin/AdminAssets.php:921
 msgid "image"
 msgstr "图片"
 
-#: src/Admin/AdminAssets.php:937
+#: src/Admin/AdminAssets.php:922
 msgid "The WordPress media library could not be opened."
 msgstr "无法打开 WordPress 媒体库。"
 
-#: src/Admin/AdminAssets.php:938
+#: src/Admin/AdminAssets.php:923
 msgid "link text"
 msgstr "链接文本"
 
 #. translators: %s: Locale-formatted Markdown character count.
-#: src/Admin/AdminAssets.php:940
+#: src/Admin/AdminAssets.php:925
 #, php-format
 msgid "Character count: %s"
 msgstr "字符统计：%s"
 
-#: src/Admin/AdminAssets.php:941 src/Rest/CustomCssController.php:154
+#: src/Admin/AdminAssets.php:926 src/Rest/CustomCssController.php:154
 msgid ""
 "A theme with this name already exists. Please choose another name and try "
 "again."
@@ -1280,15 +1280,15 @@ msgstr "macOS"
 msgid "Windows / Linux"
 msgstr "Windows / Linux"
 
-#: src/Frontend/FrontendAssets.php:76
+#: src/Frontend/FrontendAssets.php:104
 msgid "Copy code"
 msgstr "复制代码"
 
-#: src/Frontend/FrontendAssets.php:78
+#: src/Frontend/FrontendAssets.php:106
 msgid "Code copied"
 msgstr "代码已复制"
 
-#: src/Frontend/FrontendAssets.php:79
+#: src/Frontend/FrontendAssets.php:107
 msgid "Unable to copy code. Try again."
 msgstr "无法复制代码，请重试。"
 
@@ -1644,6 +1644,106 @@ msgstr "公众号风格"
 #: src/Theme/CodeThemeRegistry.php:23
 msgid "Terminal Noir"
 msgstr "终端夜色"
+
+#: src/Theme/CodeThemeRegistry.php:25
+msgid "墨砚代码"
+msgstr "墨砚代码"
+
+#: src/Theme/CodeThemeRegistry.php:26
+msgid "动物岛代码"
+msgstr "动物岛代码"
+
+#: src/Theme/CodeThemeRegistry.php:27
+msgid "樱桃猫代码"
+msgstr "樱桃猫代码"
+
+#: src/Theme/CodeThemeRegistry.php:28
+msgid "焦糖猫代码"
+msgstr "焦糖猫代码"
+
+#: src/Theme/CodeThemeRegistry.php:29
+msgid "森林猫代码"
+msgstr "森林猫代码"
+
+#: src/Theme/CodeThemeRegistry.php:30
+msgid "薄荷猫代码"
+msgstr "薄荷猫代码"
+
+#: src/Theme/CodeThemeRegistry.php:31
+msgid "天蓝猫代码"
+msgstr "天蓝猫代码"
+
+#: src/Theme/CodeThemeRegistry.php:32
+msgid "普鲁士猫代码"
+msgstr "普鲁士猫代码"
+
+#: src/Theme/CodeThemeRegistry.php:33
+msgid "樱花猫代码"
+msgstr "樱花猫代码"
+
+#: src/Theme/CodeThemeRegistry.php:34
+msgid "淡紫猫代码"
+msgstr "淡紫猫代码"
+
+#: src/Theme/CodeThemeRegistry.php:35
+msgid "Mdmdt 代码"
+msgstr "Mdmdt 代码"
+
+#: src/Theme/CodeThemeRegistry.php:36
+msgid "狗狗粉代码"
+msgstr "狗狗粉代码"
+
+#: src/Theme/CodeThemeRegistry.php:37
+msgid "花瓣代码"
+msgstr "花瓣代码"
+
+#: src/Theme/CodeThemeRegistry.php:38
+msgid "雾蓝代码"
+msgstr "雾蓝代码"
+
+#: src/Theme/CodeThemeRegistry.php:39
+msgid "草木代码"
+msgstr "草木代码"
+
+#: src/Theme/CodeThemeRegistry.php:40
+msgid "暖石代码"
+msgstr "暖石代码"
+
+#: src/Theme/CodeThemeRegistry.php:41
+msgid "麦穗代码"
+msgstr "麦穗代码"
+
+#: src/Theme/CodeThemeRegistry.php:42
+msgid "水墨代码"
+msgstr "水墨代码"
+
+#: src/Theme/CodeThemeRegistry.php:43
+msgid "琥珀代码"
+msgstr "琥珀代码"
+
+#: src/Theme/CodeThemeRegistry.php:44
+msgid "青金代码"
+msgstr "青金代码"
+
+#: src/Theme/CodeThemeRegistry.php:45
+msgid "涟漪代码"
+msgstr "涟漪代码"
+
+#: src/Theme/CodeThemeRegistry.php:46
+msgid "丹红代码"
+msgstr "丹红代码"
+
+#: src/Theme/CodeThemeRegistry.php:47
+msgid "鼠尾草代码"
+msgstr "鼠尾草代码"
+
+#: src/Theme/CodeThemeRegistry.php:48
+msgid "紫语代码"
+msgstr "紫语代码"
+
+#: src/Theme/CodeThemeRegistry.php:49
+msgid "春日代码"
+msgstr "春日代码"
 
 #: src/Theme/CustomCssPolicy.php:64
 msgid "Custom CSS is too large."

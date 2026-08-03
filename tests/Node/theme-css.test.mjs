@@ -423,6 +423,18 @@ test('Inkwell light keeps its scoped palette', () => {
   assert.doesNotMatch(light, /(?:^|[,{])\s*(?:html|body|:root)\s*(?:[,\{])/m);
 });
 
+test('Spring heading decoration remains contained in narrow preview panes', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/spring.css'), 'utf8');
+  const rule = cssRuleBodies(
+    css,
+    '.easymde-rendered-content.easymde-markdown-theme-spring h2:after'
+  ).at(-1);
+
+  assert.ok(rule);
+  assert.match(rule, /width:\s*min\(30rem,\s*100%\);/);
+  assert.match(rule, /max-width:\s*100%;/);
+});
+
 test('DogsChoice keeps the upstream 七彩虹 pink palette in a scoped adapter', () => {
   const css = readFileSync(join(repoRoot, 'assets/themes/article/dogschoice-pink.css'), 'utf8');
   const root = '.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink';

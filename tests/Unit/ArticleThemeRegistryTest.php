@@ -294,6 +294,9 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
             'vs2015' => 'assets/vendor/highlight/styles/vs2015.min.css',
             'terminal-noir' => 'assets/themes/code/terminal-noir.css',
             'fullstack-blue' => 'assets/themes/code/fullstack-blue.css',
+            'inkwell-code' => 'assets/themes/code/typora-derived.css',
+            'animal-island-code' => 'assets/themes/code/typora-derived.css',
+            'spring-code' => 'assets/themes/code/typora-derived.css',
         );
 
         foreach ($expected as $theme_id => $asset_path) {
@@ -314,6 +317,39 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
 
         $associations = array_column($article_themes, 'defaultCodeTheme', 'id');
         $this->assertSame('fullstack-blue', $associations['fullstack-blue']);
+        $typora_associations = array(
+            'inkwell' => 'inkwell-code',
+            'animal-island' => 'animal-island-code',
+            'phycat-cherry' => 'phycat-cherry-code',
+            'phycat-caramel' => 'phycat-caramel-code',
+            'phycat-forest' => 'phycat-forest-code',
+            'phycat-mint' => 'phycat-mint-code',
+            'phycat-sky' => 'phycat-sky-code',
+            'phycat-prussian' => 'phycat-prussian-code',
+            'phycat-sakura' => 'phycat-sakura-code',
+            'phycat-mauve' => 'phycat-mauve-code',
+            'mdmdt' => 'mdmdt-code',
+            'dogschoice-pink' => 'dogschoice-pink-code',
+            'bloom-petal' => 'bloom-petal-code',
+            'bloom-mist' => 'bloom-mist-code',
+            'bloom-verdant' => 'bloom-verdant-code',
+            'bloom-stone' => 'bloom-stone-code',
+            'bloom-wheat' => 'bloom-wheat-code',
+            'bloom-ink' => 'bloom-ink-code',
+            'bloom-amber' => 'bloom-amber-code',
+            'bloom-lapis' => 'bloom-lapis-code',
+            'bloom-ripple' => 'bloom-ripple-code',
+            'bloom-cinnabar' => 'bloom-cinnabar-code',
+            'bloom-sage' => 'bloom-sage-code',
+            'bloom-spring' => 'bloom-spring-code',
+            'spring' => 'spring-code',
+        );
+        foreach ($typora_associations as $article_id => $code_id) {
+            $this->assertSame($code_id, $associations[$article_id]);
+        }
+        foreach (array_keys($typora_associations) as $article_id) {
+            unset($associations[$article_id]);
+        }
         unset($associations['fullstack-blue']);
         $this->assertSame(array('atom-one-dark'), array_values(array_unique($associations)));
     }

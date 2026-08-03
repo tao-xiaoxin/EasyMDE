@@ -1,0 +1,528 @@
+/*
+ * Typora-derived code palettes for EasyMDE.
+ *
+ * These scopes adapt the selected light variants documented in
+ * docs/typora-theme-sources.md. The Mac code-frame geometry is deliberately
+ * owned by assets/css/frontend/code-frame.css; this file only supplies the
+ * syntax palette and inline code colors.
+ */
+
+.easymde-rendered-content.easymde-code-theme-inkwell-code {
+  --easymde-typora-code-bg: #f6f8fb;
+  --easymde-typora-code-text: #3d4852;
+  --easymde-typora-code-muted: #8896a4;
+  --easymde-typora-code-keyword: #c7254e;
+  --easymde-typora-code-string: #3b82c4;
+  --easymde-typora-code-number: #9c2c48;
+  --easymde-typora-code-blue: #1a2332;
+}
+
+.easymde-rendered-content.easymde-code-theme-animal-island-code {
+  --easymde-typora-code-bg: #efe9d6;
+  --easymde-typora-code-text: #725d42;
+  --easymde-typora-code-muted: #c4b89e;
+  --easymde-typora-code-keyword: #c94444;
+  --easymde-typora-code-string: #5a9e1e;
+  --easymde-typora-code-number: #dba90e;
+  --easymde-typora-code-blue: #11a89b;
+}
+
+.easymde-rendered-content.easymde-code-theme-phycat-cherry-code {
+  --easymde-typora-code-bg: #b16c6c25;
+  --easymde-typora-code-text: #333333;
+  --easymde-typora-code-muted: #9a0036;
+  --easymde-typora-code-keyword: #9a0000;
+  --easymde-typora-code-string: #aa1111;
+  --easymde-typora-code-number: #ffa6a6;
+  --easymde-typora-code-blue: #9a0036;
+}
+
+.easymde-rendered-content.easymde-code-theme-phycat-caramel-code {
+  --easymde-typora-code-bg: #fff7ed;
+  --easymde-typora-code-text: #78350f;
+  --easymde-typora-code-muted: #b45309;
+  --easymde-typora-code-keyword: #92400e;
+  --easymde-typora-code-string: #f59e0b;
+  --easymde-typora-code-number: #fbbf24;
+  --easymde-typora-code-blue: #b45309;
+}
+
+.easymde-rendered-content.easymde-code-theme-phycat-forest-code {
+  --easymde-typora-code-bg: #6cb19125;
+  --easymde-typora-code-text: #333333;
+  --easymde-typora-code-muted: #009a52;
+  --easymde-typora-code-keyword: #009a52;
+  --easymde-typora-code-string: #11aa63;
+  --easymde-typora-code-number: #80c3a4;
+  --easymde-typora-code-blue: #009a52;
+}
+
+.easymde-rendered-content.easymde-code-theme-phycat-mint-code {
+  --easymde-typora-code-bg: #7aeaf018;
+  --easymde-typora-code-text: #333333;
+  --easymde-typora-code-muted: #089ba3;
+  --easymde-typora-code-keyword: #089ba3;
+  --easymde-typora-code-string: #3db8bf;
+  --easymde-typora-code-number: #7aeaf0;
+  --easymde-typora-code-blue: #089ba3;
+}
+
+.easymde-rendered-content.easymde-code-theme-phycat-sky-code {
+  --easymde-typora-code-bg: #ebf5fb;
+  --easymde-typora-code-text: #2c3e50;
+  --easymde-typora-code-muted: #1a5276;
+  --easymde-typora-code-keyword: #1a5276;
+  --easymde-typora-code-string: #3498db;
+  --easymde-typora-code-number: #aed6f1;
+  --easymde-typora-code-blue: #2980b9;
+}
+
+.easymde-rendered-content.easymde-code-theme-phycat-prussian-code {
+  --easymde-typora-code-bg: #ebf5fa;
+  --easymde-typora-code-text: #003153;
+  --easymde-typora-code-muted: #0f3057;
+  --easymde-typora-code-keyword: #0f3057;
+  --easymde-typora-code-string: #1d4e89;
+  --easymde-typora-code-number: #6ba3cc;
+  --easymde-typora-code-blue: #003153;
+}
+
+.easymde-rendered-content.easymde-code-theme-phycat-sakura-code {
+  --easymde-typora-code-bg: #fce4ec;
+  --easymde-typora-code-text: #5e3a44;
+  --easymde-typora-code-muted: #c2185b;
+  --easymde-typora-code-keyword: #c2185b;
+  --easymde-typora-code-string: #ff7096;
+  --easymde-typora-code-number: #ffb7cd;
+  --easymde-typora-code-blue: #e91e63;
+}
+
+.easymde-rendered-content.easymde-code-theme-phycat-mauve-code {
+  --easymde-typora-code-bg: #f2eff9;
+  --easymde-typora-code-text: #4a235a;
+  --easymde-typora-code-muted: #5e35b1;
+  --easymde-typora-code-keyword: #5e35b1;
+  --easymde-typora-code-string: #a06eb4;
+  --easymde-typora-code-number: #d4b6e0;
+  --easymde-typora-code-blue: #6a3f7a;
+}
+
+.easymde-rendered-content.easymde-code-theme-mdmdt-code {
+  --easymde-typora-code-bg: rgb(250 250 252);
+  --easymde-typora-code-text: #000000;
+  --easymde-typora-code-muted: rgb(72 93 108 / 75%);
+  --easymde-typora-code-keyword: #bb59fd;
+  --easymde-typora-code-string: #02be74;
+  --easymde-typora-code-number: #f59102;
+  --easymde-typora-code-blue: #3876eb;
+}
+
+.easymde-rendered-content.easymde-code-theme-dogschoice-pink-code {
+  --easymde-typora-code-bg: #e4f3ff;
+  --easymde-typora-code-text: #000000;
+  --easymde-typora-code-muted: #768cce;
+  --easymde-typora-code-keyword: #f55066;
+  --easymde-typora-code-string: #8f00d2;
+  --easymde-typora-code-number: #224f94;
+  --easymde-typora-code-blue: #768cce;
+}
+
+.easymde-rendered-content.easymde-code-theme-bloom-petal-code {
+  --easymde-typora-code-bg: oklch(98% 0.01 350);
+  --easymde-typora-code-text: oklch(25% 0.02 354);
+  --easymde-typora-code-muted: rgb(120 120 125);
+  --easymde-typora-code-keyword: oklch(65% 0.2 350);
+  --easymde-typora-code-string: oklch(52% 0.12 140);
+  --easymde-typora-code-number: oklch(58% 0.12 40);
+  --easymde-typora-code-blue: oklch(48% 0.12 260);
+}
+
+.easymde-rendered-content.easymde-code-theme-bloom-mist-code {
+  --easymde-typora-code-bg: #ecf3f8;
+  --easymde-typora-code-text: #19232a;
+  --easymde-typora-code-muted: rgb(120 125 130);
+  --easymde-typora-code-keyword: #8843db;
+  --easymde-typora-code-string: #187f00;
+  --easymde-typora-code-number: #d53d00;
+  --easymde-typora-code-blue: #004fd6;
+}
+
+.easymde-rendered-content.easymde-code-theme-bloom-verdant-code {
+  --easymde-typora-code-bg: #ecf4ef;
+  --easymde-typora-code-text: #19251e;
+  --easymde-typora-code-muted: rgb(120 120 120);
+  --easymde-typora-code-keyword: #118659;
+  --easymde-typora-code-string: #4d9351;
+  --easymde-typora-code-number: #b07a20;
+  --easymde-typora-code-blue: #3c7ebe;
+}
+
+.easymde-rendered-content.easymde-code-theme-bloom-stone-code {
+  --easymde-typora-code-bg: #f8efee;
+  --easymde-typora-code-text: #2b1e1c;
+  --easymde-typora-code-muted: rgb(120 120 120);
+  --easymde-typora-code-keyword: #ab5637;
+  --easymde-typora-code-string: #4d9351;
+  --easymde-typora-code-number: #b07a20;
+  --easymde-typora-code-blue: #3c7ebe;
+}
+
+.easymde-rendered-content.easymde-code-theme-bloom-wheat-code {
+  --easymde-typora-code-bg: #f7f5f1;
+  --easymde-typora-code-text: #262118;
+  --easymde-typora-code-muted: rgb(124 118 104);
+  --easymde-typora-code-keyword: #956725;
+  --easymde-typora-code-string: #5d8943;
+  --easymde-typora-code-number: #ba673f;
+  --easymde-typora-code-blue: #2382ba;
+}
+
+.easymde-rendered-content.easymde-code-theme-bloom-ink-code {
+  --easymde-typora-code-bg: #f7f5f1;
+  --easymde-typora-code-text: #1a1813;
+  --easymde-typora-code-muted: rgb(120 118 112);
+  --easymde-typora-code-keyword: #323a50;
+  --easymde-typora-code-string: #31623d;
+  --easymde-typora-code-number: #8c482f;
+  --easymde-typora-code-blue: #194f81;
+}
+
+.easymde-rendered-content.easymde-code-theme-bloom-amber-code {
+  --easymde-typora-code-bg: #faf6f1;
+  --easymde-typora-code-text: #251e15;
+  --easymde-typora-code-muted: rgb(128 120 106);
+  --easymde-typora-code-keyword: #b16512;
+  --easymde-typora-code-string: #4c8141;
+  --easymde-typora-code-number: #b95c3a;
+  --easymde-typora-code-blue: #316ca5;
+}
+
+.easymde-rendered-content.easymde-code-theme-bloom-lapis-code {
+  --easymde-typora-code-bg: #f3f7fa;
+  --easymde-typora-code-text: #161e26;
+  --easymde-typora-code-muted: rgb(112 120 132);
+  --easymde-typora-code-keyword: #2e5ba6;
+  --easymde-typora-code-string: #397949;
+  --easymde-typora-code-number: #ab5637;
+  --easymde-typora-code-blue: #006aaa;
+}
+
+.easymde-rendered-content.easymde-code-theme-bloom-ripple-code {
+  --easymde-typora-code-bg: #ebf4f4;
+  --easymde-typora-code-text: #162525;
+  --easymde-typora-code-muted: rgb(120 130 130);
+  --easymde-typora-code-keyword: #0079ba;
+  --easymde-typora-code-string: #00946d;
+  --easymde-typora-code-number: #c45e39;
+  --easymde-typora-code-blue: #008fa8;
+}
+
+.easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code {
+  --easymde-typora-code-bg: #f8f4f3;
+  --easymde-typora-code-text: #2b1e1d;
+  --easymde-typora-code-muted: rgb(130 120 120);
+  --easymde-typora-code-keyword: #c53637;
+  --easymde-typora-code-string: #3f7932;
+  --easymde-typora-code-number: #b55f40;
+  --easymde-typora-code-blue: #335ca0;
+}
+
+.easymde-rendered-content.easymde-code-theme-bloom-sage-code {
+  --easymde-typora-code-bg: #f5f6ee;
+  --easymde-typora-code-text: #212318;
+  --easymde-typora-code-muted: rgb(125 120 115);
+  --easymde-typora-code-keyword: #70790e;
+  --easymde-typora-code-string: #3f7932;
+  --easymde-typora-code-number: #b65c4e;
+  --easymde-typora-code-blue: #335ca0;
+}
+
+.easymde-rendered-content.easymde-code-theme-bloom-spring-code {
+  --easymde-typora-code-bg: #f5f5f8;
+  --easymde-typora-code-text: #20202b;
+  --easymde-typora-code-muted: rgb(120 125 130);
+  --easymde-typora-code-keyword: #764be5;
+  --easymde-typora-code-string: #187f00;
+  --easymde-typora-code-number: #d53d00;
+  --easymde-typora-code-blue: #004fd6;
+}
+
+.easymde-rendered-content.easymde-code-theme-spring-code {
+  --easymde-typora-code-bg: #ffffff;
+  --easymde-typora-code-text: #282c34;
+  --easymde-typora-code-muted: #6a737d;
+  --easymde-typora-code-keyword: #222fa7;
+  --easymde-typora-code-string: #0264bf;
+  --easymde-typora-code-number: #3e19cf;
+  --easymde-typora-code-blue: #10623e;
+}
+
+:is(
+  .easymde-rendered-content.easymde-code-theme-inkwell-code,
+  .easymde-rendered-content.easymde-code-theme-animal-island-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-mdmdt-code,
+  .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-mist-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-verdant-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-stone-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-wheat-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-amber-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-lapis-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ripple-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
+  .easymde-rendered-content.easymde-code-theme-spring-code
+) .hljs {
+  background: var(--easymde-typora-code-bg);
+  color: var(--easymde-typora-code-text);
+}
+
+:is(
+  .easymde-rendered-content.easymde-code-theme-inkwell-code,
+  .easymde-rendered-content.easymde-code-theme-animal-island-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-mdmdt-code,
+  .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-mist-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-verdant-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-stone-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-wheat-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-amber-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-lapis-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ripple-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
+  .easymde-rendered-content.easymde-code-theme-spring-code
+) .hljs-comment,
+:is(
+  .easymde-rendered-content.easymde-code-theme-inkwell-code,
+  .easymde-rendered-content.easymde-code-theme-animal-island-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-mdmdt-code,
+  .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-mist-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-verdant-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-stone-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-wheat-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-amber-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-lapis-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ripple-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
+  .easymde-rendered-content.easymde-code-theme-spring-code
+) .hljs-quote {
+  color: var(--easymde-typora-code-muted);
+  font-style: italic;
+}
+
+:is(
+  .easymde-rendered-content.easymde-code-theme-inkwell-code,
+  .easymde-rendered-content.easymde-code-theme-animal-island-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-mdmdt-code,
+  .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-mist-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-verdant-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-stone-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-wheat-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-amber-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-lapis-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ripple-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
+  .easymde-rendered-content.easymde-code-theme-spring-code
+) :is(.hljs-keyword, .hljs-selector-tag, .hljs-subst, .hljs-name, .hljs-tag) {
+  color: var(--easymde-typora-code-keyword);
+  font-weight: 700;
+}
+
+:is(
+  .easymde-rendered-content.easymde-code-theme-inkwell-code,
+  .easymde-rendered-content.easymde-code-theme-animal-island-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-mdmdt-code,
+  .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-mist-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-verdant-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-stone-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-wheat-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-amber-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-lapis-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ripple-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
+  .easymde-rendered-content.easymde-code-theme-spring-code
+) :is(.hljs-string, .hljs-doctag) {
+  color: var(--easymde-typora-code-string);
+}
+
+:is(
+  .easymde-rendered-content.easymde-code-theme-inkwell-code,
+  .easymde-rendered-content.easymde-code-theme-animal-island-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-mdmdt-code,
+  .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-mist-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-verdant-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-stone-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-wheat-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-amber-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-lapis-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ripple-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
+  .easymde-rendered-content.easymde-code-theme-spring-code
+) :is(.hljs-number, .hljs-literal, .hljs-symbol) {
+  color: var(--easymde-typora-code-number);
+}
+
+:is(
+  .easymde-rendered-content.easymde-code-theme-inkwell-code,
+  .easymde-rendered-content.easymde-code-theme-animal-island-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-mdmdt-code,
+  .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-mist-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-verdant-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-stone-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-wheat-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-amber-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-lapis-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ripple-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
+  .easymde-rendered-content.easymde-code-theme-spring-code
+) :is(.hljs-title, .hljs-section, .hljs-type, .hljs-built_in, .hljs-variable, .hljs-attr, .hljs-attribute, .hljs-selector-class, .hljs-selector-id) {
+  color: var(--easymde-typora-code-blue);
+}
+
+:is(
+  .easymde-rendered-content.easymde-code-theme-inkwell-code,
+  .easymde-rendered-content.easymde-code-theme-animal-island-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-mdmdt-code,
+  .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-mist-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-verdant-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-stone-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-wheat-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-amber-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-lapis-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ripple-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
+  .easymde-rendered-content.easymde-code-theme-spring-code
+) :is(.hljs-emphasis, .hljs-strong, .hljs-link) {
+  color: var(--easymde-typora-code-text);
+}
+
+:is(
+  .easymde-rendered-content.easymde-code-theme-inkwell-code,
+  .easymde-rendered-content.easymde-code-theme-animal-island-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-mdmdt-code,
+  .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-mist-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-verdant-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-stone-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-wheat-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-amber-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-lapis-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ripple-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
+  .easymde-rendered-content.easymde-code-theme-spring-code
+) :is(.hljs-addition, .hljs-deletion) {
+  background: var(--easymde-typora-code-bg);
+}

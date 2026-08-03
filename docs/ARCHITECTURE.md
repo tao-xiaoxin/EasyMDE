@@ -166,9 +166,11 @@ disabled by bootstrap, EditorRoot does not schedule background preparation or
 fetch theme assets. Stable Preview notifications schedule
 one debounced preparation after the Preview settles; this may prewarm the
 Adapter's bounded same-origin theme-image cache (at most 32 entries). Each
-approved same-origin theme-image request has a ten-second abortable timeout;
-timeout evicts the pending cache entry and fails the preparation so a later
-copy may retry it. When
+approved same-origin theme-image request has a ten-second abortable timeout
+that remains active through fetch, response-body reads, and Data URL
+conversion; timeout evicts the pending cache entry and fails the preparation
+so a later copy may retry it. The browser adapter forwards the serializer-owned
+RequestInit signal unchanged. When
 approved theme-image preparation is still pending, the modern path passes
 deferred `Blob` Promises to one `ClipboardItem` and starts
 `navigator.clipboard.write` in the originating click task. When no approved

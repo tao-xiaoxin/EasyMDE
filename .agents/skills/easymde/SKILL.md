@@ -1053,9 +1053,11 @@ Feature boundaries:
   the Preview settles, which may prewarm approved `/assets/images/` data URLs
   before a user click. The cache is limited to 32 pending or resolved
   assets, and each fetched blob is size/type validated. Every approved
-  same-origin theme-image request has a ten-second abortable timeout; timeout
+  same-origin theme-image request has a ten-second abortable timeout that stays
+  active through fetch, response-body reads, and Data URL conversion; timeout
   evicts the pending cache entry and fails the preparation rather than leaving
-  serialization pending indefinitely. The modern Adapter must
+  serialization pending indefinitely. The browser adapter forwards the
+  serializer-owned RequestInit signal unchanged. The modern Adapter must
   not schedule background preparation when the bootstrap says WeChat export is
   disabled; unavailable features must not fetch theme assets or serialize a
   Preview. The connected plain-text measurement host uses the last non-zero

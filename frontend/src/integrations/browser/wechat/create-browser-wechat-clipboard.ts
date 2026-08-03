@@ -272,25 +272,26 @@ function dataUrlFromBlob(blob: Blob): Promise<string> {
 
 function fetchThemeImage(
   value: string,
-  runtime: BrowserWechatClipboardRuntime
-): Promise<Response> {
+  runtime: BrowserWechatClipboardRuntime,
+  processResponse: (response: Response) => Promise<string>
+): Promise<string> {
   if (!runtime.fetch) return Promise.reject(new Error('wechat-theme-image-fetch-unavailable'));
 
   const controller = 'function' === typeof AbortController
     ? new AbortController()
     : null;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let request: Promise<Response>;
+  let request: Promise<string>;
   try {
     request = Promise.resolve(runtime.fetch(
       value,
       controller ? { signal: controller.signal } : undefined
-    ));
+    )).then(processResponse);
   } catch (error: unknown) {
     return Promise.reject(error);
   }
 
-  const timeout = new Promise<Response>((_, reject) => {
+  const timeout = new Promise<string>((_, reject) => {
     timer = setTimeout(() => {
       controller?.abort();
       reject(new Error('wechat-theme-image-fetch-timeout'));
@@ -311,15 +312,14 @@ function materializeThemeImage(
   if (existing) return existing;
 
   let request: Promise<string>;
-  request = fetchThemeImage(value, runtime)
-    .then((response) => {
-      if (!response.ok) throw new Error('wechat-theme-image-fetch-failed');
-      const resolvedUrl = response.url || value;
-      if (!isThemeImageUrl(resolvedUrl, runtime.document)) {
-        throw new Error('wechat-theme-image-redirected');
-      }
-      return response.blob().then(dataUrlFromBlob);
-    })
+  request = fetchThemeImage(value, runtime, (response) => {
+    if (!response.ok) throw new Error('wechat-theme-image-fetch-failed');
+    const resolvedUrl = response.url || value;
+    if (!isThemeImageUrl(resolvedUrl, runtime.document)) {
+      throw new Error('wechat-theme-image-redirected');
+    }
+    return response.blob().then(dataUrlFromBlob);
+  })
     .catch((error: unknown) => {
       if (cache.get(value) === request) cache.delete(value);
       throw error;

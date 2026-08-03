@@ -2321,6 +2321,65 @@ describe('createBrowserWechatClipboard', () => {
     }
   });
 
+  it('keeps the theme-image timeout active while reading the response body', async () => {
+    vi.useFakeTimers();
+    const fetchStarted = deferred<void>();
+    const blobStarted = deferred<void>();
+    const pendingBlob = deferred<Blob>();
+    const abort = vi.fn();
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h1>Theme heading</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Theme heading' });
+    const imageUrl = new URL('/assets/images/cupid-busy-heart.png', document.baseURI).href;
+    const blob = vi.fn(() => {
+      blobStarted.resolve();
+      return pendingBlob.promise;
+    });
+    const fetch = vi.fn((_value: RequestInfo | URL, init?: RequestInit) => {
+      fetchStarted.resolve();
+      init?.signal?.addEventListener('abort', abort, { once: true });
+      return Promise.resolve({ ok: true, url: imageUrl, blob } as unknown as Response);
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if ('H1' === element.tagName && '::before' === pseudoElement) {
+          return declaration({
+            content: '""',
+            display: 'block',
+            width: '20px',
+            height: '20px',
+            background: `transparent url("${imageUrl}") 0 0 / 100% 100% no-repeat`,
+            'background-image': `url("${imageUrl}")`
+          });
+        }
+        return computedStyle(element, pseudoElement);
+      },
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: null,
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+
+    try {
+      const preparation = prepareClipboard(clipboard, preview);
+      await fetchStarted.promise;
+      await blobStarted.promise;
+      const rejected = expect(preparation).rejects.toThrow('wechat-theme-image-fetch-timeout');
+      await vi.advanceTimersByTimeAsync(10_000);
+      await rejected;
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(blob).toHaveBeenCalledOnce();
+      expect(abort).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('fails invalid theme-image responses without writing a partial payload', async () => {
     const preview = document.createElement('article');
     preview.setAttribute('data-easymde-preview-html-sink', '1');

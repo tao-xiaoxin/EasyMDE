@@ -128,7 +128,8 @@ modern write rejection without asynchronous legacy fallback, and an explicit
 failure result with sandbox cleanup. Its theme-image activation assertion verifies that modern
 `Clipboard.write` starts before a delayed approved image fetch resolves and
 that the deferred HTML payload still materializes; a stalled theme-image
-request aborts after the bounded timeout and fails preparation; repeating theme backgrounds
+request aborts after the bounded timeout, including when the response body
+stalls after headers arrive, and fails preparation; repeating theme backgrounds
 retain their materialized CSS declaration rather than flattening to one image;
 a mixed gradient/image background retains its non-image layer and its
 `background-repeat`/`background-position`/`background-size` longhands (including

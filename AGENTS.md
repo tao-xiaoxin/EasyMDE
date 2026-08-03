@@ -411,9 +411,11 @@ authority:
   restores the newest successful same-source payload (including one resolved
   by an older overlapping refresh), and changed source markup never reuses it.
   Approved same-origin
-  theme-image requests are bounded to ten seconds
-  and are aborted on timeout; the failed request is evicted from the cache so a
-  later copy can retry it. Background preparation failures are consumed by the
+  theme-image requests are bounded to ten seconds through fetch, response-body
+  reads, and Data URL conversion, and are aborted on timeout; the failed request
+  is evicted from the cache so a later copy can retry it. The browser adapter
+  forwards the serializer-owned RequestInit signal unchanged. Background
+  preparation failures are consumed by the
   next actual copy attempt and are not reported as copy failures while editing
   or viewing. If a legacy click finds no prepared entry after a transient
   preparation failure, it starts one background retry but returns failure for

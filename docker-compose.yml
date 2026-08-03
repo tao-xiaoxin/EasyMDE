@@ -114,3 +114,11 @@ services:
 volumes:
   wordpress_data:
   db_data:
+
+networks:
+  default:
+    name: ${EASYMDE_DOCKER_NETWORK:-easymde-typora-themes-net}
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${EASYMDE_DOCKER_SUBNET:-10.250.1.0/24}

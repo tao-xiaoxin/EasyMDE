@@ -36,10 +36,18 @@ export const bundledFrontendPackages = {
   crelt: 'DOM element construction used by CodeMirror view.',
   diff: 'Character-level change mapping used to preserve canonical Markdown during visual editing.',
   'lucide-react': 'Locked build-time icon nodes used by the ordinary and immersive editor interfaces.',
+  mermaid: 'Mermaid diagram rendering runtime compiled into the on-demand frontend bundle.',
   'style-mod': 'Scoped runtime style modules used by CodeMirror view.',
   turndown: 'Converts the editable Preview DOM into a visual Markdown change model.',
   'turndown-plugin-gfm': 'GFM table and task-list conversion for visual Markdown editing.',
   'w3c-keyname': 'Cross-browser keyboard key normalization used by CodeMirror view.'
+};
+
+const bundledFrontendLicensePaths = {
+  // Mermaid's package metadata declares MIT but does not ship a LICENSE file
+  // in the installed distribution. Keep the verified text in the repository
+  // so generated notices remain deterministic and fail closed when missing.
+  mermaid: 'scripts/vendor-licenses/mermaid-LICENSE'
 };
 
 function readJson(root, path) {
@@ -137,7 +145,10 @@ export function bundledFrontendRows(root = defaultRoot) {
 
 function bundledFrontendLicenseTexts(root = defaultRoot) {
   return Object.keys(bundledFrontendPackages).map((name) => {
-    const path = join(root, 'node_modules', name, 'LICENSE');
+    const path = join(
+      root,
+      bundledFrontendLicensePaths[name] || join('node_modules', name, 'LICENSE')
+    );
     if (!existsSync(path)) {
       throw new Error(`Missing bundled frontend package license for ${name}.`);
     }
@@ -172,13 +183,13 @@ export function renderNotices(root = defaultRoot) {
     '',
     table(frontendRows(root)),
     '',
-    'Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, and Mermaid retain license files under `assets/vendor/`.',
+    'Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js and KaTeX retain license files under `assets/vendor/`; Mermaid is compiled into its on-demand local frontend bundle.',
     '',
     '## Compiled Frontend Runtime Packages',
     '',
     table(bundledFrontendRows(root)),
     '',
-    'These packages are compiled into the production WordPress Editor entry. Their required license notices follow.',
+    'These packages are compiled into production browser bundles. Their required license notices follow.',
     '',
     bundledFrontendLicenseTexts(root).join('\n\n')
   ].join('\n')}\n`;

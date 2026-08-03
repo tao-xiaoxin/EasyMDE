@@ -168,9 +168,13 @@ describe('createBrowserPreviewEnhancementPort', () => {
     const unavailableRuntime: PreviewEnhancementBrowserRuntime = {
       ...runtime(enhance),
       hasKatex: () => !!document.getElementById('easymde-katex-js'),
-      hasMathRenderer: () => !!document.getElementById('easymde-math-renderer-js'),
+      hasMathRenderer: () => !!document.querySelector(
+        'script[data-easymde-loaded*="frontend-enhancements-fixture.js"]'
+      ),
       hasMermaid: () => !!document.getElementById('easymde-mermaid-js'),
-      hasMermaidRenderer: () => !!document.getElementById('easymde-mermaid-renderer-js')
+      hasMermaidRenderer: () => !!document.querySelector(
+        'script[data-easymde-loaded*="frontend-enhancements-fixture.js"]'
+      )
     };
     const port = createBrowserPreviewEnhancementPort(
       previewEnhancementBootstrapFixture,
@@ -188,10 +192,94 @@ describe('createBrowserPreviewEnhancementPort', () => {
     expect(document.querySelector('#easymde-katex-css')).not.toBeNull();
     expect(document.querySelector('#easymde-toc-css')).not.toBeNull();
     expect(document.querySelector('#easymde-katex-js')).not.toBeNull();
-    expect(document.querySelector('#easymde-math-renderer-js')).not.toBeNull();
+    expect(document.querySelector(
+      'script[data-easymde-loaded*="frontend-enhancements-fixture.js"]'
+    )).not.toBeNull();
     expect(document.querySelector('#easymde-mermaid-js')).not.toBeNull();
-    expect(document.querySelector('#easymde-mermaid-renderer-js')).not.toBeNull();
+    expect(document.querySelectorAll<HTMLScriptElement>(
+      'script[src*="frontend-enhancements-fixture.js"]'
+    )).toHaveLength(1);
     expect(enhance).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-associates a reused renderer URL and cancels the superseded alias', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    let rendererReady = false;
+    const mathRendererUrl = 'https://example.test/wp-content/plugins/easymde/assets/frontend-enhancements-math.js';
+    const mermaidRendererUrl = 'https://example.test/wp-content/plugins/easymde/assets/frontend-enhancements-mermaid.js';
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const bootstrap = {
+      ...previewEnhancementBootstrapFixture,
+      assets: {
+        ...previewEnhancementBootstrapFixture.assets,
+        mathRendererUrl,
+        mermaidRendererUrl
+      }
+    };
+    const port = createBrowserPreviewEnhancementPort(
+      bootstrap,
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(),
+          hasKatex: () => true,
+          hasMathRenderer: () => rendererReady,
+          hasMermaid: () => true,
+          hasMermaidRenderer: () => rendererReady
+        }
+      }
+    );
+
+    const math = port.enhance(
+      document.createElement('article'),
+      { math: true },
+      () => true,
+      context()
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const firstMermaid = port.enhance(
+      document.createElement('article'),
+      { mermaid: true },
+      () => true,
+      context()
+    );
+    void firstMermaid.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const staleMermaidScript = document.querySelector<HTMLScriptElement>(
+      '#easymde-mermaid-renderer-js'
+    );
+    bootstrap.assets.mermaidRendererUrl = mathRendererUrl;
+    const secondMermaid = port.enhance(
+      document.createElement('article'),
+      { mermaid: true },
+      () => true,
+      context()
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const mathScript = document.querySelector<HTMLScriptElement>(
+      '#easymde-math-renderer-js'
+    );
+    if (!mathScript || !staleMermaidScript) {
+      throw new Error('expected pending renderer scripts');
+    }
+
+    rendererReady = true;
+    mathScript.dispatchEvent(new Event('load'));
+    await expect(math).resolves.toBeUndefined();
+    await expect(secondMermaid).resolves.toBeUndefined();
+    await expect(firstMermaid).rejects.toThrowError('preview-enhancement-resource-stale');
+    expect(staleMermaidScript.isConnected).toBe(false);
+    expect(document.querySelectorAll(`script[src="${mathRendererUrl}"]`)).toHaveLength(1);
   });
 
   it('rejects failed assets, missing themes and rendered enhancement errors truthfully', async () => {
@@ -245,6 +333,89 @@ describe('createBrowserPreviewEnhancementPort', () => {
     )).rejects.toThrowError('preview-enhancement-render-failed');
   });
 
+  it('reports an unavailable optional Mermaid runtime when its bundle is absent', async () => {
+    const port = createBrowserPreviewEnhancementPort(
+      {
+        ...previewEnhancementBootstrapFixture,
+        assets: { ...previewEnhancementBootstrapFixture.assets, mermaidScriptUrl: null }
+      },
+      { documentRef: document, runtime: runtime() }
+    );
+
+    await expect(port.enhance(
+      document.createElement('article'),
+      { mermaid: true },
+      () => true,
+      context('github')
+    )).rejects.toThrowError('preview-enhancement-mermaid-runtime-unavailable');
+  });
+
+  it('downgrades a classified Mermaid asset failure to readable preview code and reports it', async () => {
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    autoLoadResources();
+    const port = createBrowserPreviewEnhancementPort(
+      {
+        ...previewEnhancementBootstrapFixture,
+        assets: {
+          ...previewEnhancementBootstrapFixture.assets,
+          mermaidAssetError: 'frontend-enhancement-frontend-mermaid-build-integrity-invalid',
+          mermaidScriptUrl: null
+        }
+      },
+      { documentRef: document, runtime: runtime(enhance) }
+    );
+
+    await expect(port.enhance(
+      document.createElement('article'),
+      { mermaid: true },
+      () => true,
+      context()
+    )).rejects.toThrowError('preview-enhancement-mermaid-asset-contract-failed');
+
+    expect(document.querySelector('#easymde-code-frame-css')).not.toBeNull();
+    expect(document.querySelector('#easymde-highlight-theme-css')).not.toBeNull();
+    expect(document.querySelector('#easymde-highlight-js')).toBeNull();
+
+    expect(enhance).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      {
+        assetErrors: { mermaid: 'frontend-enhancement-frontend-mermaid-build-integrity-invalid' },
+        features: { mermaid: false },
+        strings: { renderingFailed: 'Rendering failed.' }
+      }
+    );
+  });
+
+  it('does not forward a Mermaid asset error when Mermaid is not requested', async () => {
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    autoLoadResources();
+    const port = createBrowserPreviewEnhancementPort(
+      {
+        ...previewEnhancementBootstrapFixture,
+        assets: {
+          ...previewEnhancementBootstrapFixture.assets,
+          mermaidAssetError: 'frontend-enhancement-frontend-mermaid-build-integrity-invalid'
+        }
+      },
+      { documentRef: document, runtime: runtime(enhance) }
+    );
+
+    await port.enhance(
+      document.createElement('article'),
+      { syntaxHighlight: true, mermaid: false },
+      () => true,
+      context()
+    );
+
+    expect(enhance).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      {
+        features: { syntaxHighlight: true, mermaid: false },
+        strings: { renderingFailed: 'Rendering failed.' }
+      }
+    );
+  });
+
   it('removes a failed script and permits a later explicit preview retry', async () => {
     const append = document.head.appendChild.bind(document.head);
     let mermaidAttempts = 0;
@@ -252,7 +423,7 @@ describe('createBrowserPreviewEnhancementPort', () => {
       const result = append(node);
       if (node instanceof Element) appended.push(node);
       queueMicrotask(() => {
-        if (node instanceof HTMLScriptElement && 'easymde-mermaid-js' === node.id) {
+        if (node instanceof HTMLScriptElement && 'easymde-mermaid-renderer-js' === node.id) {
           mermaidAttempts += 1;
           node.dispatchEvent(new Event(1 === mermaidAttempts ? 'error' : 'load'));
           return;
@@ -277,7 +448,7 @@ describe('createBrowserPreviewEnhancementPort', () => {
       () => true,
       context()
     )).rejects.toThrowError('preview-enhancement-resource-load-failed');
-    expect(document.getElementById('easymde-mermaid-js')).toBeNull();
+    expect(document.getElementById('easymde-mermaid-renderer-js')).toBeNull();
 
     await expect(port.enhance(
       document.createElement('article'),

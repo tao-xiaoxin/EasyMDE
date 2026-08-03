@@ -122,27 +122,6 @@ export const frontendRuntimeAssets = [
       }
     ]
   },
-  {
-    id: 'mermaid',
-    displayName: 'Mermaid',
-    packageName: 'mermaid',
-    bundledPaths: 'assets/vendor/mermaid/mermaid.min.js',
-    purpose: 'Local diagram rendering script.',
-    noticeLocation: 'assets/vendor/mermaid/LICENSE',
-    managedRoot: 'assets/vendor/mermaid',
-    copies: [
-      {
-        source: 'node_modules/mermaid/dist/mermaid.min.js',
-        destination: 'assets/vendor/mermaid/mermaid.min.js',
-        type: 'file'
-      },
-      {
-        source: 'scripts/vendor-licenses/mermaid-LICENSE',
-        destination: 'assets/vendor/mermaid/LICENSE',
-        type: 'file'
-      }
-    ]
-  }
 ];
 
 function isRepositoryRelativePath(path) {

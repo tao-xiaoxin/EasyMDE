@@ -1415,6 +1415,23 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-editor.is-immersive-split .easymde-preview { padding: 34px 48px 60px; background: #fff; }
 .easymde-immersive-preview-canvas,
 .easymde-immersive-preview-page { display: contents; }
+.easymde-editor.is-immersive-split .easymde-immersive-preview-canvas {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+.easymde-editor.is-immersive-split .easymde-immersive-preview-page {
+    display: flex;
+    box-sizing: border-box;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    width: 100%;
+    max-width: 100%;
+}
 .easymde-editor.is-immersive-source .easymde-workspace { grid-template-columns: 1fr; grid-template-areas: "source"; }
 .easymde-editor.is-immersive-source .easymde-pane-preview { display: none; }
 .easymde-editor.is-immersive-preview .easymde-workspace { grid-template-columns: 1fr; grid-template-areas: "preview"; }
@@ -2233,7 +2250,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
 }
 
 .easymde-editor:not(.is-immersive) .easymde-rendered-content table {
+    box-sizing: border-box;
     width: 100%;
+    min-width: 0;
     max-width: 100%;
 }
 
@@ -2242,11 +2261,51 @@ body:has(.easymde-editor.is-immersive) .wrap {
  * remains the only scroll owner unless a theme explicitly needs local table
  * scrolling. */
 .easymde-editor.is-immersive-split .easymde-rendered-content table {
-    display: table;
+    box-sizing: border-box;
     width: 100%;
+    min-width: 0;
     max-width: 100%;
     table-layout: fixed;
-    overflow: visible;
+}
+
+/* Immersive preview has a separate paper wrapper, so its tables need the
+ * same intrinsic-width reset as the ordinary and split panes. */
+.easymde-editor.is-immersive-preview .easymde-rendered-content table {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* A few Typora themes intentionally use a paper-wide minimum or automatic
+ * table layout. In a narrow editor pane those rules make the table escape the
+ * article even though the article itself is correctly contained. Keep the
+ * theme colors and cell treatment, but let the editor own the table boundary. */
+.easymde-editor .easymde-rendered-content.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) table,
+.easymde-editor .easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) table {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    table-layout: fixed;
+}
+
+.easymde-editor .easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) :is(th, td) {
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+.easymde-editor .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink:not(.easymde-custom-css-active) table {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    table-layout: fixed;
+}
+
+.easymde-editor .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink:not(.easymde-custom-css-active) :is(th, td) {
+    overflow-wrap: anywhere;
+    white-space: normal;
 }
 
 .easymde-editor:not(.is-immersive) .easymde-rendered-content :is(th, td) {
@@ -2263,6 +2322,19 @@ body:has(.easymde-editor.is-immersive) .wrap {
 
 .easymde-editor.is-immersive-split .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
     overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+    /* Phycat's decorative 48px quote inset is attractive on a paper page but
+     * consumes the entire content box when three quotes are nested in a
+     * narrow split pane. Keep the decoration while making nested levels
+     * shrink with the available article width. */
+    .easymde-editor .easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) blockquote blockquote {
+        box-sizing: border-box;
+        max-width: 100%;
+        margin-inline: 0;
+        padding-inline: 12px;
+    }
 }
 
 .easymde-preview-react-root {

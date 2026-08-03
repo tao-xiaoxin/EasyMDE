@@ -1439,103 +1439,103 @@ msgid "Crimson focus"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:22
-msgid "墨砚（typora-theme-inkwell）"
+msgid "墨砚"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:23
-msgid "动物岛（typora-theme-animal-island）"
+msgid "动物岛"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:24
-msgid "樱桃猫（typora-theme-phycat）"
+msgid "樱桃猫"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:25
-msgid "焦糖猫（typora-theme-phycat）"
+msgid "焦糖猫"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:26
-msgid "森林猫（typora-theme-phycat）"
+msgid "森林猫"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:27
-msgid "薄荷猫（typora-theme-phycat）"
+msgid "薄荷猫"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:28
-msgid "天蓝猫（typora-theme-phycat）"
+msgid "天蓝猫"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:29
-msgid "普鲁士猫（typora-theme-phycat）"
+msgid "普鲁士猫"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:30
-msgid "樱花猫（typora-theme-phycat）"
+msgid "樱花猫"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:31
-msgid "淡紫猫（typora-theme-phycat）"
+msgid "淡紫猫"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:32
-msgid "Mdmdt 浅色（Mdmdt）"
+msgid "Mdmdt 浅色"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:33
-msgid "狗狗粉（DogsChoice）"
+msgid "狗狗粉"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:34
-msgid "花瓣（typora-Bloom-theme）"
+msgid "花瓣"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:35
-msgid "雾蓝（typora-Bloom-theme）"
+msgid "雾蓝"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:36
-msgid "草木（typora-Bloom-theme）"
+msgid "草木"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:37
-msgid "暖石（typora-Bloom-theme）"
+msgid "暖石"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:38
-msgid "麦穗（typora-Bloom-theme）"
+msgid "麦穗"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:39
-msgid "水墨（typora-Bloom-theme）"
+msgid "水墨"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:40
-msgid "琥珀（typora-Bloom-theme）"
+msgid "琥珀"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:41
-msgid "青金（typora-Bloom-theme）"
+msgid "青金"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:42
-msgid "涟漪（typora-Bloom-theme）"
+msgid "涟漪"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:43
-msgid "丹红（typora-Bloom-theme）"
+msgid "丹红"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:44
-msgid "鼠尾草（typora-Bloom-theme）"
+msgid "鼠尾草"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:45
-msgid "紫语（typora-Bloom-theme）"
+msgid "紫语"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:46
-msgid "春日（typora-spring-theme）"
+msgid "春日"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:47

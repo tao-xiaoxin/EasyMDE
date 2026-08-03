@@ -36,10 +36,49 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
         $registry = new ArticleThemeRegistry();
         $theme = $registry->get('dogschoice-pink');
 
-        $this->assertSame('狗狗粉（DogsChoice）', $theme['label']);
+        $this->assertSame('狗狗粉', $theme['label']);
         $this->assertSame('assets/themes/article/dogschoice-pink.css', $theme['asset_path']);
         $this->assertSame('easymde-markdown-theme-dogschoice-pink', $theme['class_name']);
         $this->assertSame('dogschoice-pink', $registry->sanitize_id('dogschoice-pink'));
+    }
+
+    public function test_typora_derived_article_theme_labels_are_chinese_only()
+    {
+        $expected = array(
+            'inkwell'         => '墨砚',
+            'animal-island'   => '动物岛',
+            'phycat-cherry'   => '樱桃猫',
+            'phycat-caramel'  => '焦糖猫',
+            'phycat-forest'   => '森林猫',
+            'phycat-mint'     => '薄荷猫',
+            'phycat-sky'      => '天蓝猫',
+            'phycat-prussian' => '普鲁士猫',
+            'phycat-sakura'   => '樱花猫',
+            'phycat-mauve'    => '淡紫猫',
+            'mdmdt'           => 'Mdmdt 浅色',
+            'dogschoice-pink' => '狗狗粉',
+            'bloom-petal'     => '花瓣',
+            'bloom-mist'      => '雾蓝',
+            'bloom-verdant'   => '草木',
+            'bloom-stone'     => '暖石',
+            'bloom-wheat'     => '麦穗',
+            'bloom-ink'       => '水墨',
+            'bloom-amber'     => '琥珀',
+            'bloom-lapis'     => '青金',
+            'bloom-ripple'    => '涟漪',
+            'bloom-cinnabar'  => '丹红',
+            'bloom-sage'      => '鼠尾草',
+            'bloom-spring'    => '紫语',
+            'spring'          => '春日',
+        );
+        $themes = array_column((new ArticleThemeRegistry())->for_script(), 'label', 'id');
+
+        foreach ($expected as $theme_id => $label) {
+            $this->assertArrayHasKey($theme_id, $themes);
+            $this->assertSame($label, $themes[$theme_id]);
+            $this->assertStringNotContainsString('（', $themes[$theme_id]);
+            $this->assertStringNotContainsString('(', $themes[$theme_id]);
+        }
     }
 
     public function test_crimson_focus_is_added_without_replacing_red_crimson()

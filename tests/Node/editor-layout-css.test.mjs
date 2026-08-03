@@ -703,6 +703,59 @@ test('collapsed immersive outline preserves the reference full-height rail', () 
   );
 });
 
+test('immersive split Preview gives display-contents surfaces an inline-size boundary', () => {
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-split \.easymde-immersive-preview-canvas\s*\{[^}]*display:\s*flex;[^}]*flex:\s*1 1 auto;[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor\.is-immersive-split \.easymde-immersive-preview-page\s*\{[^}]*display:\s*flex;[^}]*box-sizing:\s*border-box;[^}]*flex:\s*1 1 auto;[^}]*flex-direction:\s*column;[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*width:\s*100%;[^}]*max-width:\s*100%;/s
+  );
+  const splitTableRule = cssRule(
+    css,
+    '.easymde-editor.is-immersive-split .easymde-rendered-content table'
+  );
+  assertDeclaration(splitTableRule, 'width', '100%');
+  assertDeclaration(splitTableRule, 'max-width', '100%');
+  assertDeclaration(splitTableRule, 'table-layout', 'fixed');
+  assert.doesNotMatch(splitTableRule, /display:\s*table;/);
+  assert.doesNotMatch(splitTableRule, /overflow:\s*visible;/);
+});
+
+test('all preview table surfaces reset intrinsic theme widths', () => {
+  for (const selector of [
+    '.easymde-editor:not(.is-immersive) .easymde-rendered-content table',
+    '.easymde-editor.is-immersive-split .easymde-rendered-content table',
+    '.easymde-editor.is-immersive-preview .easymde-rendered-content table'
+  ]) {
+    const rule = cssRule(css, selector);
+    assertDeclaration(rule, 'box-sizing', 'border-box');
+    assertDeclaration(rule, 'width', '100%');
+    assertDeclaration(rule, 'min-width', '0');
+    assertDeclaration(rule, 'max-width', '100%');
+  }
+
+  const themeTableRule = cssRule(
+    css,
+    '.easymde-editor .easymde-rendered-content.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) table,\n.easymde-editor .easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) table'
+  );
+  assertDeclaration(themeTableRule, 'min-width', '0');
+  assertDeclaration(themeTableRule, 'table-layout', 'fixed');
+
+  const dogsChoiceTableRule = cssRule(
+    css,
+    '.easymde-editor .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink:not(.easymde-custom-css-active) table'
+  );
+  assertDeclaration(dogsChoiceTableRule, 'min-width', '0');
+  assertDeclaration(dogsChoiceTableRule, 'table-layout', 'fixed');
+
+  assert.match(
+    css,
+    /@media \(max-width:\s*760px\)[\s\S]*?\.easymde-editor \.easymde-rendered-content\[class\*="easymde-markdown-theme-phycat-"\]:not\(\.easymde-custom-css-active\) blockquote blockquote\s*\{[^}]*max-width:\s*100%;[^}]*margin-inline:\s*0;[^}]*padding-inline:\s*12px;/s
+  );
+});
+
 test('immersive outline and editor panes use the reference 16px card radius', () => {
   assert.match(
     css,

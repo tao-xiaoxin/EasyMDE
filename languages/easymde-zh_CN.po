@@ -1450,104 +1450,104 @@ msgid "Crimson focus"
 msgstr "墨绯"
 
 #: src/Theme/ArticleThemeRegistry.php:22
-msgid "墨砚（typora-theme-inkwell）"
-msgstr "墨砚（typora-theme-inkwell）"
+msgid "墨砚"
+msgstr "墨砚"
 
 #: src/Theme/ArticleThemeRegistry.php:23
-msgid "动物岛（typora-theme-animal-island）"
-msgstr "动物岛（typora-theme-animal-island）"
+msgid "动物岛"
+msgstr "动物岛"
 
 #: src/Theme/ArticleThemeRegistry.php:24
-msgid "樱桃猫（typora-theme-phycat）"
-msgstr "樱桃猫（typora-theme-phycat）"
+msgid "樱桃猫"
+msgstr "樱桃猫"
 
 #: src/Theme/ArticleThemeRegistry.php:25
-msgid "焦糖猫（typora-theme-phycat）"
-msgstr "焦糖猫（typora-theme-phycat）"
+msgid "焦糖猫"
+msgstr "焦糖猫"
 
 #: src/Theme/ArticleThemeRegistry.php:26
-msgid "森林猫（typora-theme-phycat）"
-msgstr "森林猫（typora-theme-phycat）"
+msgid "森林猫"
+msgstr "森林猫"
 
 #: src/Theme/ArticleThemeRegistry.php:27
-msgid "薄荷猫（typora-theme-phycat）"
-msgstr "薄荷猫（typora-theme-phycat）"
+msgid "薄荷猫"
+msgstr "薄荷猫"
 
 #: src/Theme/ArticleThemeRegistry.php:28
-msgid "天蓝猫（typora-theme-phycat）"
-msgstr "天蓝猫（typora-theme-phycat）"
+msgid "天蓝猫"
+msgstr "天蓝猫"
 
 #: src/Theme/ArticleThemeRegistry.php:29
-msgid "普鲁士猫（typora-theme-phycat）"
-msgstr "普鲁士猫（typora-theme-phycat）"
+msgid "普鲁士猫"
+msgstr "普鲁士猫"
 
 #: src/Theme/ArticleThemeRegistry.php:30
-msgid "樱花猫（typora-theme-phycat）"
-msgstr "樱花猫（typora-theme-phycat）"
+msgid "樱花猫"
+msgstr "樱花猫"
 
 #: src/Theme/ArticleThemeRegistry.php:31
-msgid "淡紫猫（typora-theme-phycat）"
-msgstr "淡紫猫（typora-theme-phycat）"
+msgid "淡紫猫"
+msgstr "淡紫猫"
 
 #: src/Theme/ArticleThemeRegistry.php:32
-msgid "Mdmdt 浅色（Mdmdt）"
-msgstr "Mdmdt 浅色（Mdmdt）"
+msgid "Mdmdt 浅色"
+msgstr "Mdmdt 浅色"
 
 #: src/Theme/ArticleThemeRegistry.php:33
-msgid "狗狗粉（DogsChoice）"
-msgstr "狗狗粉（DogsChoice）"
+msgid "狗狗粉"
+msgstr "狗狗粉"
 
 #: src/Theme/ArticleThemeRegistry.php:34
-msgid "花瓣（typora-Bloom-theme）"
-msgstr "花瓣（typora-Bloom-theme）"
+msgid "花瓣"
+msgstr "花瓣"
 
 #: src/Theme/ArticleThemeRegistry.php:35
-msgid "雾蓝（typora-Bloom-theme）"
-msgstr "雾蓝（typora-Bloom-theme）"
+msgid "雾蓝"
+msgstr "雾蓝"
 
 #: src/Theme/ArticleThemeRegistry.php:36
-msgid "草木（typora-Bloom-theme）"
-msgstr "草木（typora-Bloom-theme）"
+msgid "草木"
+msgstr "草木"
 
 #: src/Theme/ArticleThemeRegistry.php:37
-msgid "暖石（typora-Bloom-theme）"
-msgstr "暖石（typora-Bloom-theme）"
+msgid "暖石"
+msgstr "暖石"
 
 #: src/Theme/ArticleThemeRegistry.php:38
-msgid "麦穗（typora-Bloom-theme）"
-msgstr "麦穗（typora-Bloom-theme）"
+msgid "麦穗"
+msgstr "麦穗"
 
 #: src/Theme/ArticleThemeRegistry.php:39
-msgid "水墨（typora-Bloom-theme）"
-msgstr "水墨（typora-Bloom-theme）"
+msgid "水墨"
+msgstr "水墨"
 
 #: src/Theme/ArticleThemeRegistry.php:40
-msgid "琥珀（typora-Bloom-theme）"
-msgstr "琥珀（typora-Bloom-theme）"
+msgid "琥珀"
+msgstr "琥珀"
 
 #: src/Theme/ArticleThemeRegistry.php:41
-msgid "青金（typora-Bloom-theme）"
-msgstr "青金（typora-Bloom-theme）"
+msgid "青金"
+msgstr "青金"
 
 #: src/Theme/ArticleThemeRegistry.php:42
-msgid "涟漪（typora-Bloom-theme）"
-msgstr "涟漪（typora-Bloom-theme）"
+msgid "涟漪"
+msgstr "涟漪"
 
 #: src/Theme/ArticleThemeRegistry.php:43
-msgid "丹红（typora-Bloom-theme）"
-msgstr "丹红（typora-Bloom-theme）"
+msgid "丹红"
+msgstr "丹红"
 
 #: src/Theme/ArticleThemeRegistry.php:44
-msgid "鼠尾草（typora-Bloom-theme）"
-msgstr "鼠尾草（typora-Bloom-theme）"
+msgid "鼠尾草"
+msgstr "鼠尾草"
 
 #: src/Theme/ArticleThemeRegistry.php:45
-msgid "紫语（typora-Bloom-theme）"
-msgstr "紫语（typora-Bloom-theme）"
+msgid "紫语"
+msgstr "紫语"
 
 #: src/Theme/ArticleThemeRegistry.php:46
-msgid "春日（typora-spring-theme）"
-msgstr "春日（typora-spring-theme）"
+msgid "春日"
+msgstr "春日"
 
 #: src/Theme/ArticleThemeRegistry.php:47
 msgid "Lanqing"

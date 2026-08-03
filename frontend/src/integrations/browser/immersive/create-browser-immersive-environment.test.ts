@@ -165,7 +165,7 @@ describe('createBrowserImmersiveEnvironment', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
-  it('observes preview media and font layout changes and cleans up listeners', () => {
+  it('observes preview image layout changes and cleans up listeners', () => {
     const environment = createBrowserImmersiveEnvironment(document, faviconUrl);
     const surface = document.createElement('article');
     const image = document.createElement('img');

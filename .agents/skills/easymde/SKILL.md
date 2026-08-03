@@ -1029,7 +1029,9 @@ Feature boundaries:
   `document.execCommand('copy')` compatibility path must consume the same
   normalized HTML. The modern path writes `text/plain` from the connected
   normalized export surface captured for that same preparation, after removing
-  exporter whitespace markers and normalizing non-breaking spaces;
+  exporter whitespace markers and normalizing non-breaking spaces; its
+  off-screen measurement host uses the rendered Preview width so plain-text
+  line boundaries match the visible surface;
   the legacy path selects the same HTML and lets the destination derive visible
   plain text. Do not
   add a Markdown renderer, copy the CodeMirror/editor shell DOM, or maintain a
@@ -1050,7 +1052,10 @@ Feature boundaries:
   Copy: stable Preview notifications schedule one debounced preparation after
   the Preview settles, which may prewarm approved `/assets/images/` data URLs
   before a user click. The cache is limited to 32 pending or resolved
-  assets, and each fetched blob is size/type validated. The modern Adapter must
+  assets, and each fetched blob is size/type validated. Every approved
+  same-origin theme-image request has a ten-second abortable timeout; timeout
+  evicts the pending cache entry and fails the preparation rather than leaving
+  serialization pending indefinitely. The modern Adapter must
   still construct one `ClipboardItem` with deferred `Blob` payload Promises and call
   `navigator.clipboard.write` in the originating activation task, because a
   `fetch`/`FileReader` await can otherwise lose transient user activation. It
@@ -1066,8 +1071,16 @@ Feature boundaries:
   must not emit a partial URL or claim success when preparation fails. Window
   or viewport resize and immersive split-pane changes schedule the same
   debounced preparation so layout-only changes refresh the legacy payload;
-  background preparation failures are reported only by a later copy attempt,
-  not as copy failures during ordinary editing. Rapid immersive visual Markdown
+  while that replacement is pending, the last resolved payload may remain
+  available to legacy only when the source markup is unchanged; a successful
+  replacement supersedes it, a failed replacement restores the newest successful
+  same-source payload (including one resolved by an older overlapping refresh),
+  and changed source markup never reuses it; background preparation failures are reported
+  only by a later copy attempt,
+  not as copy failures during ordinary editing. If a legacy click finds no
+  prepared entry after a transient preparation failure, it starts one background
+  retry but returns failure for that click; a later click may use the retry only
+  after it resolves. Rapid immersive visual Markdown
   edits coalesce preparation, while the serializer
   compares the full current sink markup, including root `class`/`style`
   attributes, plus the current viewport, computed export styles,
@@ -1089,7 +1102,8 @@ Feature boundaries:
   The pipeline removes scripts, styles, controls, CSS classes, and source/editor
   transient attributes; keeps only valid fragment IDs and SVG-internal IDs;
   sanitizes URL/style values; preserves safe image `src`/`srcset` candidates and
-  link URLs; drops unsafe URLs and non-allowlisted CSS background URLs; and
+  link URLs; removes unsafe URLs and replaces non-allowlisted CSS background
+  URLs with `none` layer slots so safe layers remain aligned; and
   materializes same-origin
   `/assets/images/` background assets as bounded GIF/JPEG/PNG/WebP data images
   (at most 32 cache entries; each fetched source blob is limited by
@@ -1097,10 +1111,21 @@ Feature boundaries:
   their materialized `background` declaration instead of being flattened to one
   `<img>`. Generated theme-image `<img>` nodes
   retain their explicit background dimensions and are excluded from the
-  generic responsive `height:auto` media rule.
+  generic responsive `height:auto` media rule. Non-repeating multi-layer
+  backgrounds retain non-image layers such as gradients; every safe image layer
+  is materialized in source order with its matching size and position, and the
+  resulting overlays use isolated stacking levels rather than normal document
+  flow. When a materialized image is removed from copied CSS, the
+  `background-repeat`, `background-position`, and `background-size` longhands
+  are expanded using CSS's repeated-final-layer semantics and compacted by the
+  same layer indexes. A quoted pseudo-element with visible text keeps its
+  image as an isolated negative-level overlay behind the text; an empty
+  decoration may retain an in-flow image footprint.
   It preserves approved computed styles, including non-default flex sizing,
   quoted-literal pseudo decorations, code-frame geometry, table layout, and
-  KaTeX visual SVG geometry while removing KaTeX MathML. Exporter-owned
+  KaTeX visual SVG geometry while removing only the KaTeX `.katex-mathml`
+  tree. CSS `attr()`/counter-generated pseudo content is intentionally omitted.
+  Exporter-owned
   `aria-hidden` decoration and `leaf` markers are structural exceptions to the
   source transient-attribute rule.
   Mermaid HTML-label SVGs are a separate compatibility case: mark only Mermaid
@@ -1115,12 +1140,17 @@ Feature boundaries:
   fragment IDs along with ordinary URL attributes, and gives non-math SVG and
   media responsive bounds without changing an inline media element's computed
   display or margins. Non-root theme decoration nodes retain safe computed
-  dimensions, positioning, flex sizing, float, overflow, and
-  box-sizing while preview-root editor geometry remains excluded. Materialized
-  background overlays use an isolated negative stacking level so they remain
+  dimensions, relative/absolute positioning, flex sizing, float, overflow, and
+  box-sizing while preview-root editor geometry remains excluded. Fixed/sticky
+  positioning is never reactivated by a generated background overlay, and
+  offsets inert under static positioning are neutralized when the exporter
+  creates a relative containing block. Materialized background overlays use an
+  isolated negative stacking level so they remain
   behind copied text; computed `0%`, `50%`, and `100%` background positions are
-  normalized before composing centered image overlays. A theme-image fetch or
-  data conversion failure must fail the copy rather than emit a partial payload.
+  normalized before composing centered image overlays; single-token
+  `background-position` values use CSS's centered missing-axis default. A
+  theme-image fetch or data conversion failure must fail the copy rather than
+  emit a partial payload.
   Code lines must retain explicit line breaks and non-wrapping intrinsic line
   boxes. The `<pre>`/direct-`<code>` frame pair receives the horizontal
   overflow rules required by the destination; browser evidence must identify

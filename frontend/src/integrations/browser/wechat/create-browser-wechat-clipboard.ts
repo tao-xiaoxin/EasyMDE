@@ -13,7 +13,7 @@ const COPY_STYLE_PROPERTIES = [
   'border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style',
   'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
   'border-collapse', 'border-spacing', 'border-radius', 'background', 'background-color',
-  'background-image',
+  'background-image', 'background-position', 'background-repeat', 'background-size',
   'color', 'font', 'font-family', 'font-size', 'font-style', 'font-weight', 'line-height',
   'letter-spacing', 'word-spacing', 'font-variant', 'font-stretch', 'text-align',
   'text-decoration', 'text-transform', 'text-indent', 'text-shadow', 'white-space',
@@ -80,6 +80,7 @@ const SAFE_DATA_IMAGE = /^data:image\/(?:gif|jpe?g|png|webp);base64,[a-z\d+/=]+$
 const MAX_DATA_IMAGE_LENGTH = 4_000_000;
 const THEME_IMAGE_PATH = /\/assets\/images\/[a-z\d._/-]+\.(?:gif|jpe?g|png|webp)$/i;
 const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/gi;
+const HAS_CSS_URL = /url\s*\(/i;
 const DEFAULT_STYLE_VALUES: Record<string, Set<string>> = {
   'align-content': new Set(['normal', 'stretch']),
   'align-items': new Set(['normal', 'stretch']),
@@ -145,10 +146,21 @@ export type BrowserWechatClipboardRuntime = Readonly<{
 
 type BackgroundAssetCache = Map<string, Promise<string>>;
 const MAX_BACKGROUND_ASSET_CACHE_ENTRIES = 32;
+const THEME_IMAGE_FETCH_TIMEOUT_MS = 10_000;
+type ThemeImageLayer = Readonly<{
+  src: string;
+  layerIndex: number;
+}>;
 
 type SerializedClipboardPayload = Readonly<{
   html: string;
   text: string;
+}>;
+
+type PreparedClipboardFallback = Readonly<{
+  layoutSignature: string;
+  payload: SerializedClipboardPayload;
+  sourceMarkup: string;
 }>;
 
 type PreparedClipboardPayload = {
@@ -156,6 +168,7 @@ type PreparedClipboardPayload = {
   promise: Promise<SerializedClipboardPayload>;
   sourceMarkup: string;
   layoutSignature: string;
+  fallback: PreparedClipboardFallback | null;
 };
 type PreparedClipboardPayloadCache = WeakMap<HTMLElement, PreparedClipboardPayload>;
 
@@ -201,6 +214,38 @@ function dataUrlFromBlob(blob: Blob): Promise<string> {
   });
 }
 
+function fetchThemeImage(
+  value: string,
+  runtime: BrowserWechatClipboardRuntime
+): Promise<Response> {
+  if (!runtime.fetch) return Promise.reject(new Error('wechat-theme-image-fetch-unavailable'));
+
+  const controller = 'function' === typeof AbortController
+    ? new AbortController()
+    : null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let request: Promise<Response>;
+  try {
+    request = Promise.resolve(runtime.fetch(
+      value,
+      controller ? { signal: controller.signal } : undefined
+    ));
+  } catch (error: unknown) {
+    return Promise.reject(error);
+  }
+
+  const timeout = new Promise<Response>((_, reject) => {
+    timer = setTimeout(() => {
+      controller?.abort();
+      reject(new Error('wechat-theme-image-fetch-timeout'));
+    }, THEME_IMAGE_FETCH_TIMEOUT_MS);
+  });
+
+  return Promise.race([request, timeout]).finally(() => {
+    if (null !== timer) clearTimeout(timer);
+  });
+}
+
 function materializeThemeImage(
   value: string,
   runtime: BrowserWechatClipboardRuntime,
@@ -208,10 +253,9 @@ function materializeThemeImage(
 ): Promise<string> {
   const existing = cache.get(value);
   if (existing) return existing;
-  if (!runtime.fetch) return Promise.reject(new Error('wechat-theme-image-fetch-unavailable'));
 
   let request: Promise<string>;
-  request = runtime.fetch(value)
+  request = fetchThemeImage(value, runtime)
     .then((response) => {
       if (!response.ok) throw new Error('wechat-theme-image-fetch-failed');
       return response.blob().then(dataUrlFromBlob);
@@ -234,18 +278,32 @@ async function materializeBackgroundValue(
     return value;
   }
 
-  const matches = [...value.matchAll(CSS_URL)];
-  if (!matches.length) return value;
-  let materialized = value;
-  for (const match of matches) {
-    const source = (match[1] ?? match[2] ?? match[3] ?? '').trim();
-    if (!source || SAFE_DATA_IMAGE.test(source)) continue;
-    if (!isThemeImageUrl(source, runtime.document)) return value;
-    const resolved = new URL(source, runtime.document.baseURI).href;
-    const dataUrl = await materializeThemeImage(resolved, runtime, cache);
-    materialized = materialized.replace(match[0], `url("${dataUrl}")`);
+  const layers = splitBackgroundLayers(value);
+  const materializedLayers: string[] = [];
+  for (const layer of layers) {
+    const matches = [...layer.matchAll(CSS_URL)];
+    if (!matches.length) {
+      materializedLayers.push(layer);
+      continue;
+    }
+    let materialized = layer;
+    for (const match of matches) {
+      const source = (match[1] ?? match[2] ?? match[3] ?? '').trim();
+      if (!source || SAFE_DATA_IMAGE.test(source)) continue;
+      if (!isThemeImageUrl(source, runtime.document)) {
+        // Keep the layer slot so retained gradients and longhand lists remain
+        // aligned, while ensuring an unsupported URL cannot cross the paste
+        // boundary.
+        materialized = materialized.replace(match[0], 'none');
+        continue;
+      }
+      const resolved = new URL(source, runtime.document.baseURI).href;
+      const dataUrl = await materializeThemeImage(resolved, runtime, cache);
+      materialized = materialized.replace(match[0], `url("${dataUrl}")`);
+    }
+    materializedLayers.push(materialized);
   }
-  return materialized;
+  return materializedLayers.join(', ');
 }
 
 function hasOnlySafeDataImageUrls(value: string): boolean {
@@ -254,34 +312,181 @@ function hasOnlySafeDataImageUrls(value: string): boolean {
     && matches.every((match) => SAFE_DATA_IMAGE.test((match[1] ?? match[2] ?? match[3] ?? '').trim()));
 }
 
-function dataImageUrlsFromDeclarations(declarations: string[]): string[] {
-  const urls = new Set<string>();
-  declarations.forEach((declaration) => {
-    const separator = declaration.indexOf(':');
-    if (separator < 0 || !['background', 'background-image'].includes(declaration.slice(0, separator))) {
-      return;
+function splitBackgroundLayers(value: string): string[] {
+  const layers: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let quote: '"' | '\'' | null = null;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (escaped) {
+      escaped = false;
+      continue;
     }
+    if ('\\' === character) {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (character === quote) quote = null;
+      continue;
+    }
+    if ('"' === character || '\'' === character) {
+      quote = character;
+      continue;
+    }
+    if ('(' === character) {
+      depth += 1;
+      continue;
+    }
+    if (')' === character) {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (',' === character && 0 === depth) {
+      layers.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  layers.push(value.slice(start).trim());
+  return layers.filter(Boolean);
+}
+
+function dataImageUrls(value: string): string[] {
+  return [...value.matchAll(CSS_URL)]
+    .map((match) => (match[1] ?? match[2] ?? match[3] ?? '').trim())
+    .filter((url) => SAFE_DATA_IMAGE.test(url));
+}
+
+function dataImageLayers(value: string): ThemeImageLayer[] {
+  return splitBackgroundLayers(value).flatMap((layer, layerIndex) =>
+    dataImageUrls(layer).map((src) => ({ src, layerIndex }))
+  );
+}
+
+function dataImageLayersFromDeclarations(declarations: string[]): ThemeImageLayer[] {
+  // Computed `background-image` is the canonical layer list. The shorthand
+  // is a fallback for test/runtime implementations that expose only it.
+  let backgroundImageLayers: ThemeImageLayer[] | null = null;
+  let backgroundLayers: ThemeImageLayer[] = [];
+  for (const declaration of declarations) {
+    const separator = declaration.indexOf(':');
+    if (separator < 0) continue;
+    const property = declaration.slice(0, separator);
+    if (!['background', 'background-image'].includes(property)) continue;
+    const layers = dataImageLayers(declaration.slice(separator + 1));
+    if ('background-image' === property) {
+      backgroundImageLayers = layers;
+    } else {
+      backgroundLayers = layers;
+    }
+  }
+  if (null !== backgroundImageLayers && backgroundImageLayers.length > 0) {
+    return backgroundImageLayers;
+  }
+  return backgroundLayers;
+}
+
+function nonImageBackgroundLayers(value: string): string[] {
+  return splitBackgroundLayers(value).filter((layer) => !HAS_CSS_URL.test(layer));
+}
+
+function dataImageLayerIndexes(value: string): ReadonlySet<number> {
+  return new Set(
+    splitBackgroundLayers(value).flatMap((layer, layerIndex) =>
+      dataImageUrls(layer).length > 0 ? [layerIndex] : []
+    )
+  );
+}
+
+function backgroundImageLayerInfo(declarations: string[]): Readonly<{
+  layerCount: number;
+  removedLayerIndexes: ReadonlySet<number>;
+}> {
+  let backgroundImageValue: string | null = null;
+  let backgroundValue: string | null = null;
+  for (const declaration of declarations) {
+    const separator = declaration.indexOf(':');
+    if (separator < 0) continue;
+    const property = declaration.slice(0, separator);
     const value = declaration.slice(separator + 1);
-    [...value.matchAll(CSS_URL)].forEach((match) => {
-      const url = (match[1] ?? match[2] ?? match[3] ?? '').trim();
-      if (SAFE_DATA_IMAGE.test(url)) urls.add(url);
-    });
+    if ('background-image' === property) backgroundImageValue = value;
+    if ('background' === property) backgroundValue = value;
+  }
+  const source = backgroundImageValue && dataImageUrls(backgroundImageValue).length > 0
+    ? backgroundImageValue
+    : backgroundValue;
+  const layers = source ? splitBackgroundLayers(source) : [];
+  return {
+    layerCount: layers.length,
+    removedLayerIndexes: source ? dataImageLayerIndexes(source) : new Set<number>()
+  };
+}
+
+function compactBackgroundLonghandDeclarations(
+  declarations: string[],
+  layerCount: number,
+  removedLayerIndexes: ReadonlySet<number>
+): string[] {
+  if (!removedLayerIndexes.size || !layerCount) return declarations;
+  const longhands = new Set(['background-position', 'background-repeat', 'background-size']);
+  return declarations.flatMap((declaration) => {
+    const separator = declaration.indexOf(':');
+    if (separator < 0 || !longhands.has(declaration.slice(0, separator))) return [declaration];
+    const property = declaration.slice(0, separator);
+    const layers = splitBackgroundLayers(declaration.slice(separator + 1));
+    if (!layers.length) return [declaration];
+    // CSS repeats the last longhand layer when fewer values are supplied than
+    // background-image layers. Expand before removing materialized layers so
+    // the retained gradient/color layer keeps its original alignment.
+    const expanded = Array.from({ length: layerCount }, (_, index) =>
+      layers[Math.min(index, layers.length - 1)]
+    );
+    const compacted = expanded.filter((_, index) => !removedLayerIndexes.has(index));
+    return compacted.length ? [`${property}:${compacted.join(', ')}`] : [];
   });
-  return [...urls];
 }
 
 function removeDataImageBackgroundDeclarations(
   declarations: string[],
   preserveRepeatingBackground: boolean
 ): string[] {
-  return declarations.filter((declaration) => {
+  const hasBackgroundImageLayers = declarations.some((declaration) => {
+    const separator = declaration.indexOf(':');
+    return separator >= 0
+      && 'background-image' === declaration.slice(0, separator)
+      && dataImageUrls(declaration.slice(separator + 1)).length > 0;
+  });
+  const layerInfo = preserveRepeatingBackground
+    ? null
+    : backgroundImageLayerInfo(declarations);
+  let emittedBackgroundImageLayers = false;
+  const normalized = declarations.flatMap((declaration) => {
     const separator = declaration.indexOf(':');
     if (separator < 0 || !['background', 'background-image'].includes(declaration.slice(0, separator))) {
-      return true;
+      return [declaration];
     }
+    const property = declaration.slice(0, separator);
     const value = declaration.slice(separator + 1);
-    return preserveRepeatingBackground || !hasOnlySafeDataImageUrls(value);
+    if (preserveRepeatingBackground || !dataImageUrls(value).length) return [declaration];
+    const layers = nonImageBackgroundLayers(value);
+    if (!layers.length) return [];
+    if ('background-image' === property) {
+      emittedBackgroundImageLayers = true;
+      return [`background-image:${layers.join(',')}`];
+    }
+    if (hasBackgroundImageLayers || emittedBackgroundImageLayers) return [];
+    emittedBackgroundImageLayers = true;
+    return [`background-image:${layers.join(',')}`];
   });
+  return layerInfo
+    ? compactBackgroundLonghandDeclarations(
+      normalized,
+      layerInfo.layerCount,
+      layerInfo.removedLayerIndexes
+    )
+    : normalized;
 }
 
 function hasRepeatingBackground(computed: CSSStyleDeclaration): boolean {
@@ -294,59 +499,102 @@ function backgroundLength(value: string): string | null {
   return /^(?:0|(?:\d+(?:\.\d+)?)(?:px|em|rem|%|vw|vh))$/.test(value) ? value : null;
 }
 
-function backgroundImageSize(computed: CSSStyleDeclaration): Readonly<{ width: string | null; height: string | null }> {
-  const values = computed.getPropertyValue('background-size').trim().split(/\s+/).filter(Boolean);
+function backgroundImageSize(
+  computed: CSSStyleDeclaration,
+  index: number
+): Readonly<{ width: string | null; height: string | null }> {
+  const layers = splitBackgroundLayers(computed.getPropertyValue('background-size'));
+  const values = (layers[Math.min(index, Math.max(0, layers.length - 1))] ?? '')
+    .split(/\s+/)
+    .filter(Boolean);
   const width = backgroundLength(values[0] ?? '');
   const height = backgroundLength(values[1] ?? values[0] ?? '');
   return { width, height };
 }
 
+function backgroundImagePosition(computed: CSSStyleDeclaration, index: number): string[] {
+  const layers = splitBackgroundLayers(computed.getPropertyValue('background-position'));
+  const values = (layers[Math.min(index, Math.max(0, layers.length - 1))] ?? '')
+    .split(/\s+/)
+    .filter(Boolean);
+  if (1 !== values.length) return values;
+  // CSS treats a single position token as an X position with a centered Y
+  // axis, except for top/bottom which are Y positions with centered X.
+  const normalized = values[0]?.toLowerCase();
+  if ('top' === normalized || 'bottom' === normalized) return ['center', values[0] ?? 'center'];
+  return [values[0] ?? 'center', 'center'];
+}
+
 function appendThemeImages(
   clone: Element,
-  imageUrls: string[],
+  imageLayers: ThemeImageLayer[],
   computed: CSSStyleDeclaration,
   emptyDecoration: boolean
 ): void {
-  if (!imageUrls.length) return;
+  if (!imageLayers.length) return;
   const document = clone.ownerDocument;
-  const backgroundSize = backgroundImageSize(computed);
   const elementWidth = backgroundLength(computed.getPropertyValue('width'));
   const elementHeight = backgroundLength(computed.getPropertyValue('height'));
-  const imageWidth = emptyDecoration
-    ? elementWidth ?? backgroundSize.width
-    : backgroundSize.width ?? elementWidth;
-  const imageHeight = emptyDecoration
-    ? elementHeight ?? backgroundSize.height
-    : backgroundSize.height ?? elementHeight;
-  const position = computed.getPropertyValue('background-position').trim().split(/\s+/).filter(Boolean);
-  const positionX = backgroundPositionAxis(position[0] ?? '0%', 'x');
-  const positionY = backgroundPositionAxis(position[1] ?? '0%', 'y');
   const overlay = !emptyDecoration && Boolean(clone.textContent?.trim() || clone.children.length);
 
-  imageUrls.forEach((src, index) => {
+  imageLayers.forEach(({ src, layerIndex }, index) => {
     const image = document.createElement('img');
     image.setAttribute('src', src);
     THEME_IMAGE_CLONES.add(image);
+    const backgroundSize = backgroundImageSize(computed, layerIndex);
+    const imageWidth = emptyDecoration
+      ? elementWidth ?? backgroundSize.width
+      : backgroundSize.width ?? elementWidth;
+    const imageHeight = emptyDecoration
+      ? elementHeight ?? backgroundSize.height
+      : backgroundSize.height ?? elementHeight;
+    const position = backgroundImagePosition(computed, layerIndex);
+    const positionX = backgroundPositionAxis(position[0] ?? '0%', 'x');
+    const positionY = backgroundPositionAxis(position[1] ?? '0%', 'y');
     const declarations = ['display:block', 'max-width:100%'];
     if (imageWidth) declarations.push(`width:${imageWidth}`);
     if (imageHeight) declarations.push(`height:${imageHeight}`);
-    if (overlay) {
-      if ('static' === computed.getPropertyValue('position')) {
+    // A single empty-decoration image can remain in normal flow so it keeps
+    // the source decoration's intrinsic footprint. Once layers are present,
+    // every image must be an overlay so document flow cannot reorder or resize
+    // the background stack.
+    const positioned = overlay || imageLayers.length > 1 || index > 0;
+    if (positioned) {
+      const sourcePosition = computed.getPropertyValue('position').trim().toLowerCase();
+      const safeSourcePosition = ['relative', 'absolute'].includes(sourcePosition)
+        ? sourcePosition
+        : 'relative';
+      const neutralizeStaticOffsets = 'static' === sourcePosition || safeSourcePosition !== sourcePosition;
+      if ('static' === sourcePosition || neutralizeStaticOffsets) {
         appendDeclarations(clone, ['position:relative']);
       } else if (!clone.getAttribute('style')?.includes('position:')) {
-        appendDeclarations(clone, [`position:${computed.getPropertyValue('position')}`]);
+        appendDeclarations(clone, [`position:${safeSourcePosition}`]);
       }
       // Isolate the cloned element so a negative stacking level paints above
       // its background but below normal-flow text. This preserves the source
       // background-image semantics after materializing it as an <img> child.
       appendDeclarations(clone, ['isolation:isolate']);
-      declarations.push('position:absolute', 'z-index:-1', 'pointer-events:none');
+      if (neutralizeStaticOffsets) {
+        // `top`/`left` are inert for static nodes but become active when this
+        // exporter creates the relative containing block for an overlay.
+        // Fixed/sticky positioning is never portable into a pasted article.
+        appendDeclarations(clone, [
+          'top:auto',
+          'right:auto',
+          'bottom:auto',
+          'left:auto'
+        ]);
+      }
+      declarations.push(
+        'position:absolute',
+        `z-index:-${layerIndex + 1}`,
+        'pointer-events:none'
+      );
       const transforms: string[] = [];
       if ('center' === positionX) {
         declarations.push('left:50%');
         transforms.push('translateX(-50%)');
-      }
-      else if ('end' === positionX) declarations.push('right:0');
+      } else if ('end' === positionX) declarations.push('right:0');
       else if ('start' === positionX) declarations.push('left:0');
       else declarations.push(`left:${positionX}`);
       if ('center' === positionY) {
@@ -356,7 +604,6 @@ function appendThemeImages(
       else if ('start' === positionY) declarations.push('top:0');
       else declarations.push(`top:${positionY}`);
       if (transforms.length) declarations.push(`transform:${transforms.join(' ')}`);
-      if (index > 0) declarations.push('display:none');
       clone.insertBefore(image, clone.firstChild);
     } else {
       clone.appendChild(image);
@@ -552,7 +799,7 @@ async function addPseudoElement(
   // WeChat drops completely empty decoration spans during paste. A zero-size
   // whitespace marker keeps CSS-only decorations while remaining invisible.
   marker.textContent = content || ' ';
-  const imageUrls = dataImageUrlsFromDeclarations(declarations);
+  const imageLayers = dataImageLayersFromDeclarations(declarations);
   const preserveRepeatingBackground = hasRepeatingBackground(computed);
   const portableDeclarations = removeDataImageBackgroundDeclarations(
     declarations,
@@ -562,9 +809,9 @@ async function addPseudoElement(
   if (portableDeclarations.length) marker.setAttribute('style', portableDeclarations.join(';'));
   appendThemeImages(
     marker,
-    preserveRepeatingBackground ? [] : imageUrls,
+    preserveRepeatingBackground ? [] : imageLayers,
     computed,
-    true
+    !content
   );
   if ('PRE' === source.tagName && '::before' === pseudo && !content && /box-shadow:/.test(portableDeclarations.join(';'))) {
     MAC_FRAME_MARKERS.add(marker);
@@ -588,7 +835,7 @@ async function inlineStyles(
     return;
   }
   const declarations = await styleDeclarations(source, computed, false, root, runtime, cache);
-  const imageUrls = dataImageUrlsFromDeclarations(declarations);
+  const imageLayers = dataImageLayersFromDeclarations(declarations);
   const preserveRepeatingBackground = hasRepeatingBackground(computed);
   const portableDeclarations = removeDataImageBackgroundDeclarations(
     declarations,
@@ -623,7 +870,7 @@ async function inlineStyles(
   await addPseudoElement(source, clone, '::after', getComputedStyle, root, runtime, cache);
   appendThemeImages(
     clone,
-    preserveRepeatingBackground ? [] : imageUrls,
+    preserveRepeatingBackground ? [] : imageLayers,
     computed,
     !source.textContent?.trim() && !source.children.length
   );
@@ -1053,6 +1300,12 @@ function connectedPlainText(root: HTMLElement, source: HTMLElement): string {
     'pointer-events:none',
     'contain:layout'
   ].join(';');
+  const sourceRect = source.getBoundingClientRect();
+  const sourceWidth = sourceRect.width || source.clientWidth;
+  if (sourceWidth > 0) {
+    host.style.width = `${sourceWidth}px`;
+    host.style.maxWidth = `${sourceWidth}px`;
+  }
   document.body.append(host);
   host.append(textRoot);
   try {
@@ -1115,7 +1368,8 @@ function createPreparedClipboardPayload(
   preview: HTMLElement,
   runtime: BrowserWechatClipboardRuntime,
   backgroundAssetCache: BackgroundAssetCache,
-  preparedPayloads: PreparedClipboardPayloadCache
+  preparedPayloads: PreparedClipboardPayloadCache,
+  fallback: PreparedClipboardFallback | null
 ): PreparedClipboardPayload {
   let prepared: PreparedClipboardPayload;
   // Root class/style changes (font and article-theme controls) can change the
@@ -1127,13 +1381,48 @@ function createPreparedClipboardPayload(
   const promise = serializeClipboardPayload(preview, runtime, backgroundAssetCache)
     .then((payload) => {
       prepared.payload = payload;
+      const current = preparedPayloads.get(preview);
+      if (
+        current
+        && current !== prepared
+        && current.sourceMarkup === prepared.sourceMarkup
+      ) {
+        // A replacement may have started while this serialization was waiting
+        // on theme assets. Keep the most recent successful payload available
+        // to that replacement if its own preparation later fails.
+        current.fallback = {
+          layoutSignature: prepared.layoutSignature,
+          payload,
+          sourceMarkup: prepared.sourceMarkup
+        };
+      }
       return payload;
     })
     .catch((error: unknown) => {
-      if (preparedPayloads.get(preview) === prepared) preparedPayloads.delete(preview);
+      const current = preparedPayloads.get(preview);
+      if (current === prepared) {
+        const recovery = current.fallback;
+        if (recovery) {
+          preparedPayloads.set(preview, {
+            fallback: recovery,
+            layoutSignature: recovery.layoutSignature,
+            payload: recovery.payload,
+            promise: Promise.resolve(recovery.payload),
+            sourceMarkup: recovery.sourceMarkup
+          });
+        } else {
+          preparedPayloads.delete(preview);
+        }
+      }
       throw error;
     });
-  prepared = { payload: null, promise, sourceMarkup, layoutSignature };
+  prepared = {
+    fallback,
+    payload: null,
+    promise,
+    sourceMarkup,
+    layoutSignature
+  };
   preparedPayloads.set(preview, prepared);
   return prepared;
 }
@@ -1145,19 +1434,29 @@ function preparedClipboardPayload(
   preparedPayloads: PreparedClipboardPayloadCache,
   replace = false
 ): PreparedClipboardPayload {
+  const existing = preparedPayloads.get(preview);
   if (!replace) {
-    const existing = preparedPayloads.get(preview);
     if (
       existing
       && existing.sourceMarkup === preview.outerHTML
       && existing.layoutSignature === preparedLayoutSignature(preview, runtime)
     ) return existing;
   }
+  const fallback = existing
+    ? existing.payload
+      ? {
+        layoutSignature: existing.layoutSignature,
+        payload: existing.payload,
+        sourceMarkup: existing.sourceMarkup
+      }
+      : existing.fallback
+    : null;
   return createPreparedClipboardPayload(
     preview,
     runtime,
     backgroundAssetCache,
-    preparedPayloads
+    preparedPayloads,
+    fallback
   );
 }
 
@@ -1243,7 +1542,13 @@ export function createBrowserWechatClipboard(
           // ClipboardItem construction and write invocation still happen in
           // the originating click task. A payload prepared before that task
           // may therefore use the activation-safe compatibility path.
-          if (prepared.payload && legacyCopy(prepared.payload.html, runtime)) {
+          const currentMarkup = preview.outerHTML;
+          const fallback = prepared.payload
+            ? prepared.payload
+            : prepared.fallback?.sourceMarkup === currentMarkup
+              ? prepared.fallback.payload
+              : null;
+          if (fallback && legacyCopy(fallback.html, runtime)) {
             return { method: 'legacy', status: 'copied' };
           }
           return { code: 'wechat-copy-failed', status: 'failed' };
@@ -1279,14 +1584,33 @@ export function createBrowserWechatClipboard(
       // click before it resolves is a truthful failure and can be retried once
       // the next stable Preview notification has completed preparation.
       const prepared = preparedPayloads.get(preview);
-      if (
-        !prepared?.payload
-        || prepared.sourceMarkup !== preview.outerHTML
-        || prepared.layoutSignature !== preparedLayoutSignature(preview, runtime)
-      ) {
+      const currentMarkup = preview.outerHTML;
+      const currentLayoutSignature = preparedLayoutSignature(preview, runtime);
+      const payload = prepared?.payload
+        && prepared.sourceMarkup === currentMarkup
+        && prepared.layoutSignature === currentLayoutSignature
+        ? prepared.payload
+        : prepared?.fallback
+          && prepared.fallback.sourceMarkup === currentMarkup
+          ? prepared.fallback.payload
+          : null;
+      if (!payload) {
+        const current = preparedPayloads.get(preview);
+        const fallbackMatchesSource = current?.fallback?.sourceMarkup === currentMarkup;
+        const preparationIsPending = Boolean(current && !current.payload);
+        if (!preparationIsPending && (!current || !fallbackMatchesSource)) {
+          const retry = preparedClipboardPayload(
+            preview,
+            runtime,
+            backgroundAssetCache,
+            preparedPayloads,
+            true
+          );
+          void retry.promise.catch(() => undefined);
+        }
         return { code: 'wechat-copy-failed', status: 'failed' };
       }
-      if (legacyCopy(prepared.payload.html, runtime)) {
+      if (legacyCopy(payload.html, runtime)) {
         return { method: 'legacy', status: 'copied' };
       }
       return { code: 'wechat-clipboard-unsupported', status: 'failed' };

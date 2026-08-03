@@ -798,9 +798,11 @@ HTML snapshot. For a copy or rendering change:
   the same controlled viewport and from the exact current build; a screenshot
   from another draft, browser profile, session, or build is not current evidence.
 - Verify the single serializer's HTML in both modern Clipboard API and legacy
-  compatibility paths. Compare the payloads, then inspect pasted DOM for
-  removed KaTeX MathML, source classes/transient attributes, unsafe URLs, hidden
-  controls, exporter-owned structural markers, and the expected visual tree.
+  compatibility paths. Compare the payloads, then inspect pasted DOM for the
+  removed KaTeX `.katex-mathml` tree, source classes/transient attributes,
+  unsafe URLs, hidden controls, exporter-owned structural markers, and the
+  expected visual tree. Safe image `src`/`srcset` and link URLs may remain;
+  remote CSS backgrounds must not.
 - When approved theme images are present, delay one image request and verify
   that modern `Clipboard.write` starts while the originating user activation is
   still active; confirm deferred HTML and plain-text payloads resolve from the
@@ -811,6 +813,19 @@ HTML snapshot. For a copy or rendering change:
   `await` and then enter legacy. A synchronous `ClipboardItem` construction or
   `write()` invocation failure may use an already prepared payload through
   legacy in that same click task, and this branch must be covered separately.
+  During a layout-only replacement, verify that the last resolved payload stays
+  available to legacy while the source markup is unchanged, that a successful
+  replacement supersedes it, that a failed replacement restores the newest
+  successful same-source payload even when an older overlapping refresh
+  resolves first, and that changed source markup cannot reuse the older payload.
+  Verify modern plain-text extraction measures the connected export surface at
+  the rendered Preview width. If legacy has no prepared entry after a
+  transient preparation failure, verify that the first click starts one
+  background retry but still reports failure; only a later click may use the
+  retry after it resolves.
+  Also hold an approved theme-image request open long enough to verify the
+  ten-second abort timeout, cache eviction, and explicit copy failure; do not
+  treat a permanently pending asset request as a successful or silent state.
 - If immersive visual editing is involved, make several rapid edits before
   copying and verify that preparation is coalesced for the same surface; the
   copied payload must not remain from the moment immersive mode opened or an
@@ -822,9 +837,18 @@ HTML snapshot. For a copy or rendering change:
   float/overflow, and box sizing; verify that generated theme-image dimensions
   are not replaced by the generic `height:auto` rule, repeating theme backgrounds
   retain their materialized CSS declaration instead of flattening to one image,
+  mixed non-image background layers such as gradients remain intact, unsafe
+  background URLs become `none` slots instead of invalidating the declaration,
+  the `background-repeat`/`background-position`/`background-size` longhands
+  remain aligned after removed image layers are compacted, visible quoted
+  pseudo-element text keeps its image behind the text, every safe image layer
+  is materialized once with its source order, size, and position,
   and materialized images remain
   behind copied text, and computed percentage background positions preserve
-  centered overlays on both axes.
+  centered overlays on both axes, including CSS single-token position defaults;
+  verify fixed/sticky source decorations do
+  not regain that positioning in copied HTML and static-source offsets are
+  neutralized when an overlay creates a relative containing block.
 - Resize the browser viewport and, in immersive split mode, resize the source/
   Preview divider without changing the document. Verify that the debounced
   preparation refreshes the legacy payload and that a background preparation
@@ -852,8 +876,11 @@ HTML snapshot. For a copy or rendering change:
   WeChat page/editor shell separately before attributing its scrollbar to the
   copied article.
 - Inspect screenshots and computed geometry for headings, theme decorations,
-  images, code line breaks, tables, inline formulas, every display-formula
-  family, and both horizontal edges of at least one long code/formula case.
+  images, code line breaks, tables, inline formulas, and every display-formula
+  family listed in `docs/examples/markdown-full-capability-test.md` (integral,
+  limit/partial, matrix, equation system/piecewise, statistics, and
+  neural-network examples), plus both horizontal edges of at least one long
+  code/formula case.
   When Mermaid HTML labels are present, include a flowchart screenshot with
   multi-character non-ASCII labels and inspect the pasted DOM after WeChat's
   sanitizer has rewritten `foreignObject` children. Complete labels must remain

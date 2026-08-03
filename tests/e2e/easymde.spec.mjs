@@ -608,13 +608,16 @@ async function measureArticleThemeGeometry(
         .map((element) => {
           const style = getComputedStyle(element);
           const box = element.getBoundingClientRect();
-          const flexBasis = Number.parseFloat(style.flexBasis);
+          const flexBasisValue = style.flexBasis.trim();
+          const flexBasis = /^-?(?:\d+(?:\.\d+)?|\.\d+)px$/u.test(flexBasisValue)
+            ? Number.parseFloat(flexBasisValue)
+            : null;
 
           return {
             selector: `${element.tagName.toLowerCase()}.${element.className}`,
             width: box.width,
             height: box.height,
-            flexBasis: Number.isFinite(flexBasis) ? flexBasis : null
+            flexBasis
           };
         });
       const scrollElement = (element) => {
@@ -3453,34 +3456,43 @@ test.describe('EasyMDE editor workflows', () => {
     await page.addInitScript(() => {
       window.__easymdeClipboardWrites = [];
       window.__easymdeClipboardActivation = [];
+      window.__easymdeCupidBusyFetches = { scheduled: 0, released: 0 };
       const nativeFetch = window.fetch.bind(window);
       window.fetch = (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
         if (!url.includes('/assets/images/cupid-busy-heart.png')) {
           return nativeFetch(input, init);
         }
+        window.__easymdeCupidBusyFetches.scheduled += 1;
         return new Promise((resolve, reject) => {
-          window.setTimeout(() => nativeFetch(input, init).then(resolve, reject), 300);
+          window.setTimeout(() => {
+            window.__easymdeCupidBusyFetches.released += 1;
+            nativeFetch(input, init).then(resolve, reject);
+          }, 300);
         });
       };
-      Object.defineProperty(navigator, 'clipboard', {
+    });
+    await login(page, user);
+    const origin = new URL(page.url()).origin;
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+    await page.addInitScript(() => {
+      const clipboard = navigator.clipboard;
+      const nativeWrite = clipboard?.write?.bind(clipboard);
+      if (!clipboard || !nativeWrite) {
+        throw new Error('native-clipboard-write-unavailable');
+      }
+      Object.defineProperty(clipboard, 'write', {
         configurable: true,
-        value: {
-          write: async (items) => {
-            window.__easymdeClipboardActivation.push(
-              navigator.userActivation?.isActive === true
-            );
-            const item = items[0];
-            if (item && 'function' === typeof item.getType) {
-              await item.getType('text/html');
-              await item.getType('text/plain');
-            }
-            window.__easymdeClipboardWrites.push(items.length);
-          }
+        writable: true,
+        value: async (items) => {
+          window.__easymdeClipboardActivation.push(
+            navigator.userActivation?.isActive === true
+          );
+          await nativeWrite(items);
+          window.__easymdeClipboardWrites.push(items.length);
         }
       });
     });
-    await login(page, user);
     await openEasyMdeNewPost(page);
     const catalog = await editorThemeCatalog(page);
     const markdown = await canonicalMarkdownForPage(page);
@@ -3526,6 +3538,9 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('[data-easymde-command="' + copyCommand + '"]').click();
     await expect.poll(() => page.evaluate(() => window.__easymdeClipboardWrites.length)).toBe(1);
     expect(await page.evaluate(() => window.__easymdeClipboardActivation)).toEqual([true]);
+    await expect.poll(
+      () => page.evaluate(() => window.__easymdeCupidBusyFetches.released)
+    ).toBeGreaterThan(0);
     const editorMessageHost = page.locator(
       '.easymde-editor > .easymde-editor-message-alert-host'
     );
@@ -3566,7 +3581,6 @@ test.describe('EasyMDE editor workflows', () => {
     ).toEqual(wordpressFavicons);
     await expect(editorMessageHost.getByRole('status')).toBeVisible();
 
-    const origin = new URL(page.url()).origin;
     expectRuntimeAssetRequests(
       requests,
       ['codeFrameCss', 'highlightScript', 'highlightThemeCss', 'katexCss', 'katexFont', 'katexScript', 'mathCss', 'mathRenderer', 'mermaidRenderer', 'mermaidScript'],

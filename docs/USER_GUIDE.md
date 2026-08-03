@@ -78,9 +78,41 @@ The table of contents is generated from rendered headings and is inserted where 
 
 The **Copy to WeChat** action copies the current ready rendered preview as rich text. The modern Clipboard API writes normalized `text/html` and `text/plain` captured from the connected normalized export surface for the same preparation; plain text retains the Preview's paragraph and list line breaks, excludes removed editor/MathML nodes, and removes exporter-only whitespace markers. Approved theme images are prepared after a debounced stable Preview update in a shared local cache limited to 32 assets; window/viewport resizes and immersive split-pane changes schedule the same refresh so the legacy payload is not stale after a layout-only change. If an image or video is still loading or changing intrinsic size, the modern write starts during the click and resolves its deferred payload afterward. Repeating theme backgrounds retain their materialized CSS background instead of becoming one flattened image. Background preparation failures stay quiet while editing and are reported by the actual copy attempt. The older compatibility path is available only when that same normalized payload is already prepared and can be selected synchronously in the click task. A click while preparation is pending, an unavailable legacy path, or an asynchronously rejected modern write reports failure; a synchronous `ClipboardItem` or `write()` setup failure may use the prepared legacy payload in that same click task. EasyMDE never awaits and then falls back to legacy after activation is lost. Empty, loading, or failed previews are not copied. The export removes editor-only nodes, inlines portable computed styles, preserves theme decorations and the visible KaTeX tree without duplicate KaTeX MathML, and keeps code lines, tables, and long display formulas horizontally scrollable when they exceed the WeChat column; inline formulas remain non-wrapping. Responsive bounds do not turn inline images or videos into centered block elements, and generated theme-image dimensions are not overwritten by those bounds. Mermaid flowchart labels are kept as complete single-line labels even when WeChat rewrites SVG `foreignObject` styles; exporter-only invisible markers are removed from plain text. It does not add a vertical scroll container around the article or change the post.
 
+Approved theme-image requests are aborted after ten seconds; a timeout is
+reported as a copy failure and evicts the cached request for a later retry.
+
+Modern plain-text extraction measures the connected export surface at the
+rendered Preview width. If a legacy copy follows a transient preparation
+failure with no prepared entry, that click starts one background retry but
+still reports failure; a later click can use the retry after it resolves.
+
+For portability, safe image `src`/`srcset` and link URLs may remain in the
+copied HTML. Remote and non-allowlisted CSS background URLs become `none`
+layer slots rather than importing remote resources, so safe gradients/colors
+remain visible. Only same-origin
+`/assets/images/` GIF/JPEG/PNG/WebP backgrounds are materialized, with the
+same cache and source-size limits documented for administrators. Non-repeating
+backgrounds keep safe gradient/color layers; the `background-repeat`,
+`background-position`, and `background-size` longhands follow CSS's repeated
+final-layer semantics and stay aligned after image layers are removed; and
+multiple safe image layers keep their order and positioning after paste.
+Quoted pseudo-element text keeps its image behind the text, while empty
+decoration pseudo-elements may retain an in-flow image footprint.
+Pseudo-element
+content is copied only when it is a quoted literal; CSS `attr()` and counters
+are not portable. KaTeX MathML means the generated `.katex-mathml` tree here,
+not arbitrary MathML authored in Markdown.
+
 The layout observer reconciles inserted and removed Preview descendants; removed
 images, videos, SVGs, and foreignObjects stop notifying immediately, and sink teardown
 releases all remaining listeners and observers.
+
+During a layout-only refresh, the legacy compatibility path keeps the last
+resolved payload available until the replacement finishes, but only while the
+Preview source markup is unchanged. A successful replacement becomes current;
+a failed replacement restores the newest successful same-source payload, including
+one completed by an older overlapping refresh. Content or root-markup changes
+never copy the older payload.
 
 When editing the Preview directly in immersive mode, EasyMDE coalesces preparation
 after rapid accepted visual edits and refreshes after a stable Preview update,
@@ -91,12 +123,15 @@ font or theme-only changes cannot reuse stale output. Responsive viewport,
 computed-style, pseudo-element, and element-geometry changes also invalidate
 the prepared payload. Preview image/video load, error, metadata, and resize
 events, font loading completion/failure, and inserted descendants schedule the
-same refresh. Theme
-decoration dimensions,
-positioning, flex sizing, float/overflow, and box sizing are retained for
-non-root nodes; materialized background images remain behind copied text, and
-computed percentage background positions are normalized so centered image
-decorations remain centered after paste.
+  same refresh. Theme
+ decoration dimensions, relative/absolute positioning, flex sizing,
+ float/overflow, and box sizing are retained for non-root nodes. Fixed/sticky
+ positioning is not reactivated by copied image decorations, and offsets inert
+ under static positioning are cleared when an overlay containing block is
+ created. Materialized background images remain behind copied text, and
+ computed percentage background positions are normalized so centered image
+ decorations remain centered after paste; single-token background positions use
+ CSS's centered missing-axis default.
 The preparation observer follows the active ordinary or immersive Preview
 surface. If a theme or Custom CSS change exits immersive visual editing, the
 refresh is queued after that editor surface is disposed and the remaining

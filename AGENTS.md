@@ -390,7 +390,8 @@ authority:
   `execCommand` path consume the same normalized HTML; the modern path derives
   `text/plain` from the connected normalized export surface captured for that
   same preparation, while the legacy path selects the same HTML and lets the
-  destination derive visible plain text. Stable Preview
+  destination derive visible plain text; the modern plain-text measurement host
+  uses the rendered Preview width. Stable Preview
   notifications schedule one debounced preparation for the current sink after
   the Preview settles. The
   legacy path may consume it only when already resolved in the same user
@@ -399,8 +400,19 @@ authority:
   synchronous modern setup failure may use that prepared payload in the same
   task. Window/viewport and immersive split-layout changes schedule the same
   debounced preparation, so a layout-only change cannot strand a stale legacy
-  payload. Background preparation failures are consumed by the next actual
-  copy attempt and are not reported as copy failures while editing or viewing.
+  payload: while a replacement is pending, the last resolved payload remains
+  available to the synchronous legacy path only when the source markup is
+  unchanged; a successful replacement supersedes it, a failed replacement
+  restores the newest successful same-source payload (including one resolved
+  by an older overlapping refresh), and changed source markup never reuses it.
+  Approved same-origin
+  theme-image requests are bounded to ten seconds
+  and are aborted on timeout; the failed request is evicted from the cache so a
+  later copy can retry it. Background preparation failures are consumed by the
+  next actual copy attempt and are not reported as copy failures while editing
+  or viewing. If a legacy click finds no prepared entry after a transient
+  preparation failure, it starts one background retry but returns failure for
+  that click; a later click may use the retry only after it resolves.
   The browser environment also observes the current Preview sink's image/video
   load, error, metadata, and resize events, FontFaceSet loading
   completion/failure, ResizeObserver geometry, and inserted or removed
@@ -423,16 +435,31 @@ authority:
 - The serialized tree removes scripts, styles, controls, CSS classes, and
   source/editor transient attributes, retains only valid fragment IDs and
   SVG-internal IDs, sanitizes URL/style values, and materializes only bounded
-  same-origin `/assets/images/` background assets as safe data images. Repeating
+  same-origin `/assets/images/` GIF/JPEG/PNG/WebP background assets as safe data
+  images. Safe image `src`/`srcset` and link URLs may remain; non-allowlisted
+  CSS background URLs are replaced with `none` layer slots so safe gradients,
+  colors, and longhand layer alignment survive without importing remote
+  resources. Repeating
   theme backgrounds retain their materialized `background` declaration instead
   of being flattened to one `<img>`. Generated
   theme-image `<img>` nodes retain their explicit background dimensions and are
-  excluded from the generic responsive `height:auto` media rule. Safe image
-  `src`/`srcset` candidates and link URLs remain; unsafe URLs and
-  non-allowlisted CSS background URLs are dropped. KaTeX MathML is removed while
-  its visual tree, SVG geometry,
+  excluded from the generic responsive `height:auto` media rule. For a
+  non-repeating multi-layer background, non-image layers such as gradients are
+  retained and every safe image layer is materialized in its original order
+  with its corresponding size, position, and isolated stacking level. The
+  copied `background-repeat`, `background-position`, and `background-size`
+  longhands are expanded using CSS's repeated-final-layer semantics and
+  compacted by the same removed layer indexes, so they remain aligned with
+  retained layers. A quoted pseudo-element with visible text keeps its
+  materialized image as an isolated negative-level overlay behind that text;
+  empty decoration pseudo-elements may keep an in-flow image footprint. Safe
+  image `src`/`srcset`
+  candidates and link URLs remain; unsafe URLs are removed or replaced with
+  `none` layer slots. Only the KaTeX
+  `.katex-mathml` tree is removed while its visual tree, SVG geometry,
   quoted-literal pseudo-element decorations, and approved computed styles are
-  preserved. Exporter-owned `aria-hidden` decoration and `leaf` markers may
+  preserved; `attr()`/counter pseudo content is not portable. Exporter-owned
+  `aria-hidden` decoration and `leaf` markers may
   remain to preserve the copied visual tree.
 - Mermaid HTML-label diagrams are a special SVG compatibility boundary:
   Mermaid roots and their `foreignObject` labels receive visible overflow, and
@@ -446,11 +473,16 @@ authority:
   without changing an inline media element's computed display or margins,
   and code/KaTeX whitespace markers are removed from plain text. Non-root theme
   decoration nodes retain safe computed layout properties such as dimensions,
-  positioning, flex sizing, float, overflow, and box sizing; preview-root editor
-  geometry is still excluded. Materialized background-image overlays use an
-  isolated negative stacking level so they remain behind copied text; computed
+  relative/absolute positioning, flex sizing, float, overflow, and box sizing;
+  fixed/sticky positioning is never reactivated by a generated image overlay,
+  and offsets inert under static positioning are neutralized when the exporter
+  creates a relative containing block. Preview-root editor geometry is still
+  excluded. Materialized background-image overlays use an isolated negative
+  stacking level so they remain behind copied text; computed
   `0%`, `50%`, and `100%` positions normalize before centered axes compose both
-  translations instead of shifting or covering decorations in the pasted article.
+  translations; single-token `background-position` values follow CSS's missing-
+  axis defaults instead of being forced to the top edge. This prevents image
+  decorations from shifting or covering content in the pasted article.
 - Code lines, tables, and long display formulas may own horizontal overflow;
   their vertical overflow is hidden and their height remains content-driven.
   The exporter must not add a whole-article height or vertical scroll

@@ -142,10 +142,14 @@ that session passes it the current stable Preview sink. Both
 compatibility path receive the same normalized HTML. The modern path derives
 `text/plain` from the connected normalized export surface captured for that
 same preparation after removing exporter whitespace markers and normalizing
-non-breaking spaces; the legacy path selects the same HTML and lets the
-destination derive visible plain text. Stable Preview notifications schedule
+non-breaking spaces; the modern plain-text measurement host uses the rendered
+Preview width. The legacy path selects the same HTML and lets the destination
+derive visible plain text. Stable Preview notifications schedule
 one debounced preparation after the Preview settles; this may prewarm the
-Adapter's bounded same-origin theme-image cache (at most 32 entries). When
+Adapter's bounded same-origin theme-image cache (at most 32 entries). Each
+approved same-origin theme-image request has a ten-second abortable timeout;
+timeout evicts the pending cache entry and fails the preparation so a later
+copy may retry it. When
 preparation is still pending, the modern path passes deferred
 `Blob` Promises to one `ClipboardItem` and starts `navigator.clipboard.write` in
 the originating click task. Preparation retains one serialized HTML/plain-text
@@ -161,8 +165,15 @@ already resolved and calls `execCommand` synchronously in that same click task.
   plus the current viewport, computed export styles, pseudo-element styles, and
   element geometry is checked before reuse. Window/viewport resize and
   immersive split-pane changes schedule a refreshed payload, so layout-only
-  changes cannot strand a stale legacy copy. Background preparation failures
-  remain quiet until the actual copy attempt reports the failure. The browser
+  changes cannot strand a stale legacy copy: while a replacement is pending,
+  the last resolved payload remains available to the synchronous legacy path
+  only when the source markup is unchanged; a successful replacement
+  supersedes it, a failed replacement restores the newest successful
+  same-source payload (including one resolved by an older overlapping refresh),
+  and changed source markup never reuses it. Background preparation failures remain quiet until the
+  actual copy attempt reports the failure. When the legacy path has no prepared
+  entry after a transient failure, that click starts one background retry but
+  still returns failure; a later click may use it only after it resolves. The browser
   environment also observes the current sink's image/video load, error,
   metadata, and resize events, FontFaceSet loading completion/failure,
   ResizeObserver geometry, and inserted or removed descendants; those
@@ -190,24 +201,38 @@ KaTeX are not rewritten by this Mermaid-specific path.
 The serializer removes scripts, styles, interactive controls, CSS classes, and
 source/editor transient attributes; keeps only valid fragment IDs and
 SVG-internal IDs; sanitizes URL and style values; preserves safe image `src`,
-`srcset` candidates, and link URLs; drops unsafe URLs and non-allowlisted CSS
-background URLs; and
-materializes same-origin `/assets/images/` background assets as bounded
-GIF/JPEG/PNG/WebP data images (at most 32 cached assets; each fetched source
-blob is limited by `MAX_DATA_IMAGE_LENGTH` = 4,000,000). Repeating theme
+`srcset` candidates, and link URLs; removes unsafe URLs and replaces
+remote/non-allowlisted CSS background URLs with `none` layer slots; and
+materializes only same-origin `/assets/images/`
+GIF/JPEG/PNG/WebP background assets as bounded data images (at most 32 cached
+assets; each fetched source blob is limited by `MAX_DATA_IMAGE_LENGTH` =
+4,000,000). Repeating theme
 backgrounds retain their materialized `background` declaration rather than
 being flattened to one `<img>`. Generated theme-image
 `<img>` nodes retain their explicit background dimensions and are excluded from
-the generic responsive `height:auto` media rule. It preserves
+the generic responsive `height:auto` media rule. For non-repeating multi-layer
+backgrounds, non-image layers such as gradients remain in the copied CSS and
+each safe image layer becomes an isolated overlay with its original order,
+background size, and background position. The copied `background-repeat`,
+`background-position`, and `background-size` longhands are expanded according
+to CSS's repeated-final-layer semantics and compacted by the removed image
+indexes, so they remain aligned with retained layers. Quoted pseudo-elements
+with visible text use an isolated negative-level image overlay; empty
+decoration pseudo-elements may retain an in-flow image footprint. It preserves
 approved computed typography, borders, quoted-literal pseudo elements, theme
-  decorations, non-root decoration dimensions/positioning/flex sizing/float/
-  overflow and box sizing, non-math SVG responsiveness, media bounds without
-  changing inline media display or margins, and
-  KaTeX's visual SVG tree, but removes KaTeX MathML so WeChat cannot import two
-  competing formula trees. Materialized background-image overlays use an
+  decorations, non-root decoration dimensions/relative/absolute positioning/
+  flex sizing/float/overflow and box sizing, non-math SVG responsiveness, media bounds without
+  changing inline media display or margins, and KaTeX's visual SVG tree, but
+  removes only the `.katex-mathml` tree so WeChat cannot import two competing
+  formula trees. Non-literal pseudo content such as `attr()` and counters is
+  intentionally omitted. Materialized background-image overlays use an
   isolated negative stacking level so they remain behind copied text. Computed
   `0%`, `50%`, and `100%` background positions are normalized before composing
-  centered theme-image overlays. Exporter-owned `aria-hidden` decoration
+  centered theme-image overlays. Single-token `background-position` values use
+  CSS's centered missing-axis default. Fixed/sticky positioning is never reactivated
+  by a generated overlay, and offsets inert under static positioning are
+  neutralized when the exporter creates a relative containing block.
+  Exporter-owned `aria-hidden` decoration
 and `leaf` markers are structural exceptions to source transient-attribute
 removal. Article/div roots become portable sections and text leaves are wrapped
 for destination stability. Code frames encode line breaks explicitly and keep

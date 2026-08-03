@@ -123,20 +123,38 @@ parity, synchronous legacy preparation, synchronous modern setup fallback,
 modern write rejection without asynchronous legacy fallback, and an explicit
 failure result with sandbox cleanup. Its theme-image activation assertion verifies that modern
 `Clipboard.write` starts before a delayed approved image fetch resolves and
-that the deferred HTML payload still materializes; repeating theme backgrounds
+that the deferred HTML payload still materializes; a stalled theme-image
+request aborts after the bounded timeout and fails preparation; repeating theme backgrounds
 retain their materialized CSS declaration rather than flattening to one image;
+a mixed gradient/image background retains its non-image layer and its
+`background-repeat`/`background-position`/`background-size` longhands (including
+compaction when the image layer precedes the gradient), an unsafe URL in a
+mixed stack becomes a `none` slot without losing the safe gradient, visible
+quoted pseudo-element text keeps its image behind the text, and multiple safe
+`background-image` layers are all materialized with their source order,
+matching size/position, and visible stacking levels;
 a fast write followed by a
 failed deferred payload remains an explicit failure. Its Mermaid assertion covers
 complete non-ASCII labels in both payload paths; the modern `text/plain`
-assertion removes exporter-only markers.
+assertion removes exporter-only markers and its measurement host uses the
+rendered Preview width. Legacy retry coverage verifies that a transient
+preparation failure starts one background retry without claiming success for
+that first click.
 The Adapter and EditorRoot regressions also verify that immersive visual edits
   coalesce preparation and replace the prepared payload, root-only font/theme
   changes or responsive computed-style/geometry changes cannot reuse a stale
-  prepared payload, and ordinary non-root theme decorations retain
+  prepared payload, a layout-only replacement keeps the last stable legacy
+  payload until the new one succeeds when source markup is unchanged, failed
+  replacement restores the newest successful same-source payload even when an
+  older overlapping refresh resolves first, and ordinary non-root theme decorations retain
   dimensions/positioning/flex sizing/float/overflow/box-sizing, materialized
   theme-image dimensions are not overwritten by generic media bounds, and
 background images remain behind copied text, and computed percentage background
-positions compose both centered overlay transforms.
+positions compose both centered overlay transforms, including CSS single-token
+position defaults; a fixed/sticky source decoration must not reactivate that
+positioning in the copied payload, and
+static-source offsets must be neutralized when an overlay creates a relative
+containing block.
 The EditorRoot and layout-owner checks also cover viewport resize and immersive
 split-pane changes refreshing the debounced legacy payload, while background
 preparation rejection stays silent until the actual copy attempt. Browser
@@ -148,8 +166,8 @@ EditorRoot coverage also verifies that the observer is rebound when immersive
 visual Preview mounts, and that article-theme and Custom CSS changes refresh
 the legacy payload after visual-editor teardown even when the replacement
 Preview request is still pending.
-It does not yet prove the unsupported legacy result, theme-image fetch/data-conversion
-failure, or full
+It does not yet prove unsupported legacy results, non-2xx or invalid
+theme-image response/data-conversion failures, or full
 Selection/Focus/Scroll restoration on every failure path; add those cases
 before treating the boundary as fully covered. `npm run frontend:check` is the required full frontend gate;
 `npm run check:frontend-production` must compare the compiled admin entry

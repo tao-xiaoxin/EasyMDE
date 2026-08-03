@@ -202,6 +202,86 @@ describe('createBrowserPreviewEnhancementPort', () => {
     expect(enhance).toHaveBeenCalledTimes(1);
   });
 
+  it('re-associates a reused renderer URL and cancels the superseded alias', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    let rendererReady = false;
+    const mathRendererUrl = 'https://example.test/wp-content/plugins/easymde/assets/frontend-enhancements-math.js';
+    const mermaidRendererUrl = 'https://example.test/wp-content/plugins/easymde/assets/frontend-enhancements-mermaid.js';
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const bootstrap = {
+      ...previewEnhancementBootstrapFixture,
+      assets: {
+        ...previewEnhancementBootstrapFixture.assets,
+        mathRendererUrl,
+        mermaidRendererUrl
+      }
+    };
+    const port = createBrowserPreviewEnhancementPort(
+      bootstrap,
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(),
+          hasKatex: () => true,
+          hasMathRenderer: () => rendererReady,
+          hasMermaid: () => true,
+          hasMermaidRenderer: () => rendererReady
+        }
+      }
+    );
+
+    const math = port.enhance(
+      document.createElement('article'),
+      { math: true },
+      () => true,
+      context()
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const firstMermaid = port.enhance(
+      document.createElement('article'),
+      { mermaid: true },
+      () => true,
+      context()
+    );
+    void firstMermaid.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const staleMermaidScript = document.querySelector<HTMLScriptElement>(
+      '#easymde-mermaid-renderer-js'
+    );
+    bootstrap.assets.mermaidRendererUrl = mathRendererUrl;
+    const secondMermaid = port.enhance(
+      document.createElement('article'),
+      { mermaid: true },
+      () => true,
+      context()
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const mathScript = document.querySelector<HTMLScriptElement>(
+      '#easymde-math-renderer-js'
+    );
+    if (!mathScript || !staleMermaidScript) {
+      throw new Error('expected pending renderer scripts');
+    }
+
+    rendererReady = true;
+    mathScript.dispatchEvent(new Event('load'));
+    await expect(math).resolves.toBeUndefined();
+    await expect(secondMermaid).resolves.toBeUndefined();
+    await expect(firstMermaid).rejects.toThrowError('preview-enhancement-resource-stale');
+    expect(staleMermaidScript.isConnected).toBe(false);
+    expect(document.querySelectorAll(`script[src="${mathRendererUrl}"]`)).toHaveLength(1);
+  });
+
   it('rejects failed assets, missing themes and rendered enhancement errors truthfully', async () => {
     const append = document.head.appendChild.bind(document.head);
     vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {

@@ -7,7 +7,8 @@ import test from 'node:test';
 import {
   bundledFrontendPackages,
   composerRows,
-  frontendRows
+  frontendRows,
+  renderNotices
 } from '../../scripts/third-party-notices.mjs';
 
 const repoRoot = new URL('../..', import.meta.url).pathname;
@@ -59,4 +60,17 @@ test('compiled Markdown parser packages have explicit notice ownership', () => {
   assert.ok(Object.hasOwn(bundledFrontendPackages, '@codemirror/lang-markdown'));
   assert.ok(Object.hasOwn(bundledFrontendPackages, '@lezer/markdown'));
   assert.ok(Object.hasOwn(bundledFrontendPackages, 'mermaid'));
+});
+
+test('compiled frontend notices describe all production browser bundles', () => {
+  const notices = renderNotices(repoRoot);
+
+  assert.match(
+    notices,
+    /These packages are compiled into production browser bundles\. Their required license notices follow\./
+  );
+  assert.doesNotMatch(
+    notices,
+    /These packages are compiled into the production WordPress Editor entry\./
+  );
 });

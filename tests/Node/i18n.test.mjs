@@ -71,7 +71,7 @@ function collectFiles(path, predicate, files = []) {
 
 function productionText() {
 	return productionRoots
-		.flatMap((root) => collectFiles(root, (file) => /\.(?:php|js)$/.test(file)))
+		.flatMap((root) => collectFiles(root, (file) => /\.(?:php|js|ts)$/.test(file)))
 		.map((file) => readFileSync(file, "utf8"))
 		.join("\n");
 }

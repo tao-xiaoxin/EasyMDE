@@ -36,6 +36,7 @@ type StyleLoad = Readonly<{
 
 type ScriptLoad = Readonly<{
   cancel: () => void;
+  ids: Set<string>;
   loaded: () => boolean;
   promise: Promise<void>;
   script: HTMLScriptElement;
@@ -86,14 +87,6 @@ function createResourceLoader(documentRef: Document) {
 
   function loadScript(id: string, url: string, signal: AbortSignal): Promise<void> {
     if (disposed) return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
-    const cachedByUrl = scriptLoadsByUrl.get(url);
-    if (cachedByUrl?.script.isConnected) {
-      return waitForResource(cachedByUrl.promise, signal);
-    }
-    if (cachedByUrl) {
-      cachedByUrl.cancel();
-      scriptLoadsByUrl.delete(url);
-    }
     const cached = scriptLoads.get(id);
     if (cached?.url === url && cached.script.isConnected) {
       return waitForResource(cached.promise, signal);
@@ -107,6 +100,19 @@ function createResourceLoader(documentRef: Document) {
       }
       if (existing.dataset.easymdeLoaded === url) return Promise.resolve();
       return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
+    }
+
+    const cachedByUrl = scriptLoadsByUrl.get(url);
+    if (cachedByUrl?.script.isConnected) {
+      if (cached && cached !== cachedByUrl && !cached.loaded()) {
+        cached.cancel();
+      }
+      cachedByUrl.ids.add(id);
+      scriptLoads.set(id, cachedByUrl);
+      return waitForResource(cachedByUrl.promise, signal);
+    }
+    if (cachedByUrl) {
+      cachedByUrl.cancel();
     }
 
     const script = documentRef.createElement('script');
@@ -134,7 +140,9 @@ function createResourceLoader(documentRef: Document) {
       settled = true;
       cleanup();
       script.remove();
-      if (scriptLoads.get(id) === load) scriptLoads.delete(id);
+      for (const alias of load.ids) {
+        if (scriptLoads.get(alias) === load) scriptLoads.delete(alias);
+      }
       if (scriptLoadsByUrl.get(url) === load) scriptLoadsByUrl.delete(url);
       rejectLoad(resourceError(code));
     };
@@ -149,6 +157,7 @@ function createResourceLoader(documentRef: Document) {
     const handleError = () => fail('preview-enhancement-resource-load-failed');
     load = {
       cancel: () => fail('preview-enhancement-resource-stale'),
+      ids: new Set([id]),
       loaded: () => loaded,
       promise,
       script,

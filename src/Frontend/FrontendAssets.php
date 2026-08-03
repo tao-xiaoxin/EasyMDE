@@ -5,6 +5,7 @@ namespace EasyMDE\Frontend;
 use EasyMDE\Content\MarkdownFeatureDetector;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Support\Asset;
+use EasyMDE\Support\FrontendAssetContract;
 use EasyMDE\Theme\ThemeStateRepository;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -47,14 +48,14 @@ final class FrontendAssets {
 		$features    = $this->get_feature_config( $markdown );
 
 		try {
-			$this->enqueue_render_assets( $post_id, $markdown );
+			$features = $this->enqueue_render_assets( $post_id, $markdown );
 		} catch ( \RuntimeException $error ) {
-			if ( ! empty( $theme_state['scopedCustomCss'] ) ) {
-				wp_add_inline_style( 'easymde-article-theme', $theme_state['scopedCustomCss'] );
+			if ( ! FrontendAssetContract::is_error( $error ) ) {
+				throw $error;
 			}
 
-			if ( ! $this->is_frontend_enhancement_asset_error( $error ) ) {
-				throw $error;
+			if ( ! empty( $theme_state['scopedCustomCss'] ) ) {
+				wp_add_inline_style( 'easymde-article-theme', $theme_state['scopedCustomCss'] );
 			}
 
 			$this->report_frontend_enhancement_asset_error( $error );
@@ -75,7 +76,8 @@ final class FrontendAssets {
 				'frontend/src/entrypoints/frontend-bootstrap.ts',
 				'assets/build/frontend-bootstrap/',
 				'easymde-frontend',
-				false
+				false,
+				'frontend-bootstrap'
 			);
 		} catch ( \RuntimeException $error ) {
 			$this->report_frontend_enhancement_asset_error( $error );
@@ -152,22 +154,31 @@ final class FrontendAssets {
 		}
 
 		if ( ! empty( $features['codeCopy'] ) ) {
-			$code_copy_asset = $this->get_code_copy_asset();
+			try {
+				$code_copy_asset = $this->get_code_copy_asset();
 
-			wp_enqueue_style(
-				'easymde-code-copy',
-				Asset::url( 'assets/css/frontend/code-copy.css' ),
-				array( 'easymde-content' ),
-				EASYMDE_VERSION
-			);
+				wp_enqueue_style(
+					'easymde-code-copy',
+					Asset::url( 'assets/css/frontend/code-copy.css' ),
+					array( 'easymde-content' ),
+					EASYMDE_VERSION
+				);
 
-			wp_enqueue_script(
-				$code_copy_asset['handle'],
-				Asset::url( $code_copy_asset['path'] ),
-				$code_copy_asset['dependencies'],
-				$code_copy_asset['version'],
-				true
-			);
+				wp_enqueue_script(
+					$code_copy_asset['handle'],
+					Asset::url( $code_copy_asset['path'] ),
+					$code_copy_asset['dependencies'],
+					$code_copy_asset['version'],
+					true
+				);
+			} catch ( \RuntimeException $error ) {
+				if ( ! FrontendAssetContract::is_code_copy_error( $error ) ) {
+					throw $error;
+				}
+
+				$features['codeCopy'] = false;
+				$this->report_frontend_enhancement_asset_error( $error );
+			}
 		}
 
 		if ( ! empty( $features['math'] ) ) {
@@ -210,7 +221,8 @@ final class FrontendAssets {
 				'frontend/src/entrypoints/frontend-mermaid-runtime.ts',
 				'assets/build/frontend-mermaid/',
 				'easymde-mermaid',
-				false
+				false,
+				'frontend-mermaid'
 			);
 
 			wp_enqueue_script(
@@ -239,7 +251,8 @@ final class FrontendAssets {
 			'frontend/src/entrypoints/frontend-enhancements.ts',
 			'assets/build/frontend-enhancements/',
 			'easymde-enhancements',
-			false
+			false,
+			'frontend-enhancements'
 		);
 
 		wp_enqueue_script(
@@ -249,6 +262,8 @@ final class FrontendAssets {
 			$enhancements['version'],
 			true
 		);
+
+		return $features;
 	}
 
 	public function enqueue_editor_base_assets( $post_id = 0 ) {
@@ -272,7 +287,9 @@ final class FrontendAssets {
 		$enhancements = $this->get_frontend_enhancement_asset(
 			'frontend/src/entrypoints/frontend-enhancements.ts',
 			'assets/build/frontend-enhancements/',
-			'easymde-enhancements'
+			'easymde-enhancements',
+			true,
+			'frontend-enhancements'
 		);
 
 		wp_enqueue_script(
@@ -288,7 +305,9 @@ final class FrontendAssets {
 		$enhancements    = $this->get_frontend_enhancement_asset(
 			'frontend/src/entrypoints/frontend-enhancements.ts',
 			'assets/build/frontend-enhancements/',
-			'easymde-enhancements'
+			'easymde-enhancements',
+			true,
+			'frontend-enhancements'
 		);
 		$enhancement_url = $this->versioned_asset_url( $enhancements['path'] );
 		$mermaid_url     = null;
@@ -297,10 +316,10 @@ final class FrontendAssets {
 				'frontend/src/entrypoints/frontend-mermaid-runtime.ts',
 				'assets/build/frontend-mermaid/',
 				'easymde-mermaid',
-				// Preview receives this optional URL before feature detection; build/release checks own its bytes.
-				false
+				true,
+				'frontend-mermaid'
 			);
-			$mermaid_url = $this->versioned_asset_url( $mermaid_runtime['path'] );
+			$mermaid_url     = $this->versioned_asset_url( $mermaid_runtime['path'] );
 		} catch ( \RuntimeException $error ) {
 			// Mermaid is optional. Preview reports the missing runtime only when a
 			// document actually requests Mermaid rendering.
@@ -338,10 +357,11 @@ final class FrontendAssets {
 		return add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( $asset_path ) );
 	}
 
-	private function get_frontend_enhancement_asset( $entry_key, $build_dir, $expected_handle, $verify_integrity = true ) {
+	private function get_frontend_enhancement_asset( $entry_key, $build_dir, $expected_handle, $verify_integrity = true, $file_prefix = '' ) {
 		// Public enqueue paths use committed artifacts already checked by build/release gates; keep hashing out of visitor requests.
-		$build_dir     = trailingslashit( $build_dir );
-		$manifest_path = Asset::path( $build_dir . 'wordpress-manifest.json' );
+		$build_dir       = trailingslashit( $build_dir );
+		$filesystem_root = preg_match( '#^(?:[A-Za-z]:[\\\\/]|/)#', $build_dir ) ? $build_dir : Asset::path( $build_dir );
+		$manifest_path   = $filesystem_root . 'wordpress-manifest.json';
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads a local committed build manifest, never a remote URL.
 		$manifest_json = is_readable( $manifest_path ) ? file_get_contents( $manifest_path ) : false;
 		$manifest      = false === $manifest_json ? null : json_decode( $manifest_json, true );
@@ -364,14 +384,15 @@ final class FrontendAssets {
 			( $entry['handle'] ?? null ) !== $expected_handle
 			|| array() !== ( $entry['dependencies'] ?? null )
 			|| array() !== ( $entry['resources'] ?? null )
-			|| ! preg_match( '#^assets/frontend-(?:enhancements|bootstrap|mermaid)-[A-Za-z0-9_-]+\.js$#', $file )
+			|| '' === $file_prefix
+			|| ! preg_match( '#^assets/' . preg_quote( $file_prefix, '#' ) . '-[A-Za-z0-9_-]+\.js$#', $file )
 			|| preg_replace( '/\.js$/', '.asset.php', $file ) !== $asset
 		) {
 			throw new \RuntimeException( 'frontend-enhancement-manifest-invalid' );
 		}
 
-		$script_path   = Asset::path( $build_dir . $file );
-		$metadata_path = Asset::path( $build_dir . $asset );
+		$script_path   = $filesystem_root . $file;
+		$metadata_path = $filesystem_root . $asset;
 		if ( ! is_file( $script_path ) || ! is_readable( $metadata_path ) ) {
 			throw new \RuntimeException( 'frontend-enhancement-build-missing' );
 		}
@@ -402,10 +423,6 @@ final class FrontendAssets {
 			'dependencies' => $metadata['dependencies'],
 			'version'      => (string) $metadata['version'],
 		);
-	}
-
-	private function is_frontend_enhancement_asset_error( \RuntimeException $error ) {
-		return 0 === strpos( $error->getMessage(), 'frontend-enhancement-' );
 	}
 
 	private function report_frontend_enhancement_asset_error( \RuntimeException $error ) {

@@ -66,6 +66,24 @@ export function wordpressClassicMetadata({
       if (entry.fileName !== manifestEntry.file) {
         throw new Error('The completed Vite manifest does not match the built entry.');
       }
+      if (undefined !== manifestEntry.dynamicImports) {
+        if (
+          !Array.isArray(manifestEntry.dynamicImports)
+          || manifestEntry.dynamicImports.some((value) => 'string' !== typeof value)
+        ) {
+          throw new Error('Classic WordPress entries must declare string dynamic import paths.');
+        }
+
+        const unexpectedDynamicImports = manifestEntry.dynamicImports.filter(
+          (value) => value !== sourceEntry
+        );
+        if (unexpectedDynamicImports.length) {
+          throw new Error('Classic WordPress entries cannot declare dynamic imports.');
+        }
+
+        delete manifestEntry.dynamicImports;
+        writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      }
       const resources = manifestResourceField
         ? singleResourceList(
             manifestEntry[manifestResourceField],

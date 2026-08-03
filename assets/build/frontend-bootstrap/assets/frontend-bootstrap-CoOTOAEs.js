@@ -1,1 +1,0 @@
-(function(){var e=window;document.addEventListener(`DOMContentLoaded`,()=>{let t=e.EasyMDEFrontendConfig||{};e.EasyMDEEnhancements&&e.EasyMDEEnhancements.enhance(document,t)})})();

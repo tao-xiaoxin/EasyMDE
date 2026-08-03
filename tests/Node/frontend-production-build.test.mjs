@@ -55,6 +55,7 @@ before(() => {
 
 test('root package exposes the production frontend build and includes it in the frontend gate', () => {
   const packageJson = readJson(join(repoRoot, 'package.json'));
+  const packageLock = readJson(join(repoRoot, 'package-lock.json'));
 
   assert.equal(
     packageJson.scripts['build:frontend'],
@@ -68,6 +69,9 @@ test('root package exposes the production frontend build and includes it in the 
     packageJson.scripts['frontend:check'],
     'npm run icons:check && npm run lint:frontend && npm run typecheck:frontend && npm run test:frontend && npm run build:frontend-contract && npm run check:frontend-production'
   );
+  assert.equal(packageJson.dependencies.mermaid, '10.9.6');
+  assert.equal(packageLock.packages[''].dependencies.mermaid, '10.9.6');
+  assert.equal(packageLock.packages['node_modules/mermaid'].version, '10.9.6');
 });
 
 test('production build emits a separate self-contained TypeScript code-copy entry', () => {
@@ -166,6 +170,7 @@ test('production build emits shared enhancement, bootstrap, and Mermaid entries'
     const wordpressEntry = wordpressManifest.entries[entryKey];
 
     assert.equal(viteEntry.isEntry, true);
+    assert.equal(viteEntry.dynamicImports, undefined);
     assert.equal(wordpressEntry.handle, handle);
     assert.equal(wordpressEntry.file, viteEntry.file);
     assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
@@ -181,7 +186,9 @@ test('production build emits shared enhancement, bootstrap, and Mermaid entries'
   );
   assert.match(mermaidScript, /\.mermaid=/);
   assert.match(mermaidScript, /startOnLoad/);
+  assert.match(mermaidScript, /securityLevel:[`"']strict[`"']/);
   assert.doesNotMatch(mermaidScript, /assets\/vendor\/mermaid\/mermaid\.min\.js/);
+  assert.match(readFileSync(join(repoRoot, 'frontend/src/entrypoints/frontend-bootstrap.ts'), 'utf8'), /readyState/);
 });
 
 test('production comparison rejects stale or omitted committed runtime artifacts', () => {

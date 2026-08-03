@@ -56,7 +56,7 @@ Copied frontend assets are committed locally so the editor, preview, and fronten
 | turndown-plugin-gfm | 1.0.2 | https://registry.npmjs.org/turndown-plugin-gfm/-/turndown-plugin-gfm-1.0.2.tgz | MIT | GFM table and task-list conversion for visual Markdown editing. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | w3c-keyname | 2.2.8 | https://registry.npmjs.org/w3c-keyname/-/w3c-keyname-2.2.8.tgz | MIT | Cross-browser keyboard key normalization used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 
-These packages are compiled into the production WordPress Editor entry. Their required license notices follow.
+These packages are compiled into production browser bundles. Their required license notices follow.
 
 ### @codemirror/commands
 

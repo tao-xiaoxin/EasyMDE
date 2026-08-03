@@ -9,13 +9,21 @@ import {
 
 function runtime(): FrontendEnhancementWindow {
   const windowRef = Object.create(window) as FrontendEnhancementWindow;
-  delete windowRef.EasyMDEEnhancements;
-  delete windowRef.EasyMDEFrontendConfig;
-  delete windowRef.EasyMDEMathRenderer;
-  delete windowRef.EasyMDEMermaidRenderer;
-  delete windowRef.hljs;
-  delete windowRef.katex;
-  delete windowRef.mermaid;
+  for (const key of [
+    'EasyMDEEnhancements',
+    'EasyMDEFrontendConfig',
+    'EasyMDEMathRenderer',
+    'EasyMDEMermaidRenderer',
+    'hljs',
+    'katex',
+    'mermaid'
+  ] as const) {
+    Object.defineProperty(windowRef, key, {
+      configurable: true,
+      writable: true,
+      value: undefined
+    });
+  }
   return windowRef;
 }
 
@@ -62,15 +70,26 @@ describe('frontend enhancement runtime', () => {
 
   it('keeps Mermaid replacement and rendering failure markers unchanged', async () => {
     const root = document.createElement('article');
-    root.innerHTML = '<pre><code class="language-mermaid">graph TD; A--&gt;B;</code></pre>';
+    const maliciousSequence = 'sequenceDiagram\nA-&gt;&gt;B: &lt;img src=x onerror=alert(1)&gt;';
+    root.innerHTML = `<pre><code class="language-mermaid">${maliciousSequence}</code></pre>`;
     const windowRef = runtime();
+    const initialize = vi.fn();
     windowRef.mermaid = {
-      initialize: vi.fn(),
+      initialize,
       render: vi.fn().mockResolvedValue({ svg: '<svg aria-label="diagram"></svg>' })
     };
 
     await renderMermaidContent(root, { features: { mermaid: true } }, windowRef);
 
+    expect(initialize).toHaveBeenCalledWith({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: 'default'
+    });
+    expect(windowRef.mermaid.render).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('<img src=x onerror=alert(1)>')
+    );
     expect(root.querySelector('.easymde-mermaid svg')?.getAttribute('aria-label'))
       .toBe('diagram');
     expect(root.querySelector('pre')).toBeNull();

@@ -4,6 +4,7 @@ namespace EasyMDE\Admin;
 
 use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Support\Asset;
+use EasyMDE\Support\FrontendAssetContract;
 use EasyMDE\Support\ToolbarRegistry;
 use EasyMDE\Theme\ThemeStateRepository;
 
@@ -81,14 +82,14 @@ final class AdminAssets {
 		try {
 			$this->frontend_assets->enqueue_editor_base_assets( $post_id );
 		} catch ( \Throwable $error ) {
-			if ( ! $this->is_frontend_asset_error( $error ) ) {
+			if ( ! FrontendAssetContract::is_error( $error ) ) {
 				throw $error;
 			}
 
 			$this->react_editor_asset_error = true;
 			wp_trigger_error(
 				__METHOD__,
-				'EasyMDE frontend enhancement asset contract failed (frontend-enhancement-asset-invalid).',
+				'EasyMDE frontend enhancement asset contract failed (' . FrontendAssetContract::error_code( $error ) . ').',
 				E_USER_WARNING
 			);
 
@@ -100,14 +101,14 @@ final class AdminAssets {
 			try {
 				$root_bootstrap = $this->get_editor_root_bootstrap( $post_id, $screen->post_type );
 			} catch ( \Throwable $error ) {
-				if ( ! $this->is_frontend_asset_error( $error ) ) {
+				if ( ! FrontendAssetContract::is_error( $error ) ) {
 					throw $error;
 				}
 
 				$this->react_editor_asset_error = true;
 				wp_trigger_error(
 					__METHOD__,
-					'EasyMDE frontend enhancement asset contract failed (frontend-enhancement-asset-invalid).',
+					'EasyMDE frontend enhancement asset contract failed (' . FrontendAssetContract::error_code( $error ) . ').',
 					E_USER_WARNING
 				);
 
@@ -123,10 +124,6 @@ final class AdminAssets {
 				'before'
 			);
 		}
-	}
-
-	private function is_frontend_asset_error( \Throwable $error ) {
-		return 0 === strpos( $error->getMessage(), 'frontend-enhancement-' );
 	}
 
 	private function enqueue_react_editor_asset( $build_dir = '' ) {

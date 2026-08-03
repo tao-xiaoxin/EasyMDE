@@ -4,6 +4,7 @@ use EasyMDE\Content\MarkdownFeatureDetector;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Support\Asset;
+use EasyMDE\Support\FrontendAssetContract;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
 use EasyMDE\Theme\CustomCssPolicy;
@@ -116,6 +117,19 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertTrue($features['codeBlocks']);
         $this->assertTrue($features['syntaxHighlight']);
         $this->assertFalse($features['codeCopy']);
+    }
+
+    public function test_optional_code_copy_asset_errors_are_classified_without_hiding_core_asset_errors()
+    {
+        $code_copy_error = new RuntimeException('frontend-code-copy-build-missing');
+        $enhancement_error = new RuntimeException('frontend-enhancement-build-missing');
+        $unknown_error = new RuntimeException('unexpected-asset-failure');
+
+        $this->assertTrue(FrontendAssetContract::is_error($code_copy_error));
+        $this->assertTrue(FrontendAssetContract::is_code_copy_error($code_copy_error));
+        $this->assertTrue(FrontendAssetContract::is_error($enhancement_error));
+        $this->assertFalse(FrontendAssetContract::is_code_copy_error($enhancement_error));
+        $this->assertFalse(FrontendAssetContract::is_error($unknown_error));
     }
 
     public function test_code_frame_assets_follow_regular_code_features_not_legacy_meta()
@@ -251,7 +265,7 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $build_dir = $this->create_frontend_enhancement_build_directory();
         $script = 'assets/frontend-enhancements-test.js';
         $metadata = 'assets/frontend-enhancements-test.asset.php';
-        wp_mkdir_p(Asset::path('assets/build/' . $build_dir . '/assets'));
+        wp_mkdir_p($build_dir . '/assets');
 
         $manifest = array(
             'schemaVersion' => 1,
@@ -267,12 +281,12 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         );
 
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Writes isolated local test fixtures.
-        file_put_contents(Asset::path('assets/build/' . $build_dir . '/wordpress-manifest.json'), wp_json_encode($manifest));
+        file_put_contents($build_dir . '/wordpress-manifest.json', wp_json_encode($manifest));
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Writes isolated local test fixtures.
-        file_put_contents(Asset::path('assets/build/' . $build_dir . '/' . $script), 'console.log("tampered");');
+        file_put_contents($build_dir . '/' . $script, 'console.log("tampered");');
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Writes isolated local test fixtures.
         file_put_contents(
-            Asset::path('assets/build/' . $build_dir . '/' . $metadata),
+            $build_dir . '/' . $metadata,
             "<?php\nreturn array( 'dependencies' => array(), 'version' => '0000000000000000' );\n"
         );
 
@@ -286,11 +300,11 @@ final class FrontendAssetsTest extends WP_UnitTestCase
                 'easymde-enhancements'
             );
         } finally {
-            unlink(Asset::path('assets/build/' . $build_dir . '/' . $metadata));
-            unlink(Asset::path('assets/build/' . $build_dir . '/' . $script));
-            unlink(Asset::path('assets/build/' . $build_dir . '/wordpress-manifest.json'));
-            rmdir(Asset::path('assets/build/' . $build_dir . '/assets'));
-            rmdir(Asset::path('assets/build/' . $build_dir));
+            unlink($build_dir . '/' . $metadata);
+            unlink($build_dir . '/' . $script);
+            unlink($build_dir . '/wordpress-manifest.json');
+            rmdir($build_dir . '/assets');
+            rmdir($build_dir);
         }
     }
 
@@ -428,11 +442,12 @@ final class FrontendAssetsTest extends WP_UnitTestCase
 
     private function create_frontend_enhancement_build_directory()
     {
-        $temporary_file = wp_tempnam('easymde-frontend-enhancement-build', Asset::path('assets/build'));
+        $temporary_file = wp_tempnam('easymde-frontend-enhancement-build');
+        $this->assertNotEmpty($temporary_file);
         unlink($temporary_file);
-        mkdir($temporary_file);
+        $this->assertTrue(mkdir($temporary_file));
 
-        return basename($temporary_file);
+        return $temporary_file;
     }
 
     private function invoke_code_copy_asset_loader($build_dir)
@@ -456,6 +471,13 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $method = new ReflectionMethod(FrontendAssets::class, 'get_frontend_enhancement_asset');
         $method->setAccessible(true);
 
-        return $method->invoke($assets, $entry_key, 'assets/build/' . $build_dir . '/', $expected_handle);
+        return $method->invoke(
+            $assets,
+            $entry_key,
+            $build_dir,
+            $expected_handle,
+            true,
+            'frontend-enhancements'
+        );
     }
 }

@@ -189,7 +189,7 @@ export function renderNotices(root = defaultRoot) {
     '',
     table(bundledFrontendRows(root)),
     '',
-    'These packages are compiled into the production WordPress Editor entry. Their required license notices follow.',
+    'These packages are compiled into production browser bundles. Their required license notices follow.',
     '',
     bundledFrontendLicenseTexts(root).join('\n\n')
   ].join('\n')}\n`;

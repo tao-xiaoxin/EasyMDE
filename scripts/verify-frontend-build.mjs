@@ -517,58 +517,24 @@ export function compareFrontendProductionBuilds(
 	generatedRoot = productionCheckRoot,
 	committedRoot = productionSpec.outputRoot,
 ) {
-	validateFrontendProductionBuild(generatedRoot);
-	validateFrontendProductionBuild(committedRoot);
-
-	const generatedFiles = collectSpecFiles(
-		resolve(generatedRoot),
+	compareProductionBuild(
 		productionSpec,
+		generatedRoot,
+		committedRoot,
+		"production frontend",
 	);
-	const committedFiles = collectSpecFiles(
-		resolve(committedRoot),
-		productionSpec,
-	);
-	if (JSON.stringify(generatedFiles) !== JSON.stringify(committedFiles)) {
-		throw new Error(
-			"Committed production frontend artifacts are missing, stale, or unexpected. Run npm run build:frontend and review the generated files.",
-		);
-	}
-
-	for (const path of generatedFiles) {
-		const generated = readFileSync(join(generatedRoot, path));
-		const committed = readFileSync(join(committedRoot, path));
-		if (!generated.equals(committed)) {
-			throw new Error(
-				`Committed production frontend artifact is stale: ${path}. Run npm run build:frontend and review the generated files.`,
-			);
-		}
-	}
 }
 
 export function compareCodeCopyProductionBuilds(
 	generatedRoot = codeCopyProductionCheckRoot,
 	committedRoot = codeCopyProductionSpec.outputRoot,
 ) {
-	validateCodeCopyProductionBuild(generatedRoot);
-	validateCodeCopyProductionBuild(committedRoot);
-
-	const generatedFiles = collectFiles(resolve(generatedRoot));
-	const committedFiles = collectFiles(resolve(committedRoot));
-	if (JSON.stringify(generatedFiles) !== JSON.stringify(committedFiles)) {
-		throw new Error(
-			"Committed code-copy production artifacts are missing, stale, or unexpected. Run npm run build:frontend and review the generated files.",
-		);
-	}
-
-	for (const path of generatedFiles) {
-		const generated = readFileSync(join(generatedRoot, path));
-		const committed = readFileSync(join(committedRoot, path));
-		if (!generated.equals(committed)) {
-			throw new Error(
-				`Committed code-copy production artifact is stale: ${path}. Run npm run build:frontend and review the generated files.`,
-			);
-		}
-	}
+	compareProductionBuild(
+		codeCopyProductionSpec,
+		generatedRoot,
+		committedRoot,
+		"code-copy production",
+	);
 }
 
 function compareProductionBuild(spec, generatedRoot, committedRoot, label) {

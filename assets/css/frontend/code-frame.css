@@ -26,7 +26,8 @@
   z-index: 1;
 }
 
-.easymde-rendered-content.easymde-code-mac pre > code:not(.language-mermaid) {
+.easymde-rendered-content.easymde-code-mac pre > code:not(.language-mermaid),
+.easymde-rendered-content.easymde-code-mac pre[data-easymde-mermaid-fallback] > code.language-mermaid {
   box-sizing: border-box;
   display: block;
   max-width: 100%;

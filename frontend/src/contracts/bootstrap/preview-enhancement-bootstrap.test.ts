@@ -12,6 +12,15 @@ describe('parsePreviewEnhancementBootstrap', () => {
       .toEqual(previewEnhancementBootstrapFixture);
   });
 
+  it('keeps the optional Mermaid runtime absent without invalidating the editor bootstrap', () => {
+    const parsed = parsePreviewEnhancementBootstrap({
+      ...previewEnhancementBootstrapFixture,
+      assets: { ...previewEnhancementBootstrapFixture.assets, mermaidScriptUrl: null }
+    });
+
+    expect(parsed.assets.mermaidScriptUrl).toBeNull();
+  });
+
   it.each([
     {
       code: 'preview-enhancement-assets-invalid',

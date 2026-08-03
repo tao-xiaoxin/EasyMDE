@@ -119,6 +119,7 @@ test('frontend runtime preparation is explicit and uses only the Highlight.js pr
     )
   );
   assert.equal(Object.hasOwn(packageJson.dependencies, 'highlight.js'), false);
+  assert.equal(frontendRuntimeAssets.some((component) => component.id === 'mermaid'), false);
   assert.equal(Object.hasOwn(packageJson.scripts, 'postinstall'), false);
   assert.equal(packageJson.scripts['prepare:assets'], 'node scripts/copy-vendor-assets.mjs');
   assert.equal(packageJson.scripts['assets:check'], 'node scripts/copy-vendor-assets.mjs --check');

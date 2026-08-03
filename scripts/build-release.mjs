@@ -78,6 +78,9 @@ const baseRequirements = [
 ];
 const productionFrontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const codeCopyFrontendEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
+const frontendEnhancementsEntry = 'frontend/src/entrypoints/frontend-enhancements.ts';
+const frontendBootstrapEntry = 'frontend/src/entrypoints/frontend-bootstrap.ts';
+const frontendMermaidEntry = 'frontend/src/entrypoints/frontend-mermaid-runtime.ts';
 const productionFrontendBuilds = [
   {
     buildRoot: 'assets/build',
@@ -92,6 +95,27 @@ const productionFrontendBuilds = [
     entry: codeCopyFrontendEntry,
     filePattern: /^assets\/frontend-code-copy-[A-Za-z0-9_-]+\.js$/,
     handle: 'easymde-code-copy'
+  },
+  {
+    buildRoot: 'assets/build/frontend-enhancements',
+    dependencies: [],
+    entry: frontendEnhancementsEntry,
+    filePattern: /^assets\/frontend-enhancements-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-enhancements'
+  },
+  {
+    buildRoot: 'assets/build/frontend-bootstrap',
+    dependencies: [],
+    entry: frontendBootstrapEntry,
+    filePattern: /^assets\/frontend-bootstrap-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-frontend'
+  },
+  {
+    buildRoot: 'assets/build/frontend-mermaid',
+    dependencies: [],
+    entry: frontendMermaidEntry,
+    filePattern: /^assets\/frontend-mermaid-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-mermaid'
   }
 ];
 

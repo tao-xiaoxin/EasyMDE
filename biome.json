@@ -1,4 +1,7 @@
 {
+  "files": {
+    "includes": ["**", "!assets/build/**"]
+  },
   "javascript": {
     "jsxRuntime": "reactClassic"
   },

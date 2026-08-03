@@ -1439,102 +1439,162 @@ msgid "Crimson focus"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:22
-msgid "Inkwell"
+msgid "墨砚（typora-theme-inkwell）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:23
-msgid "Inkwell Dark"
+msgid "动物岛（typora-theme-animal-island）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:24
-msgid "Nocturne"
+msgid "樱桃猫（typora-theme-phycat）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:25
-msgid "Animal Island"
+msgid "焦糖猫（typora-theme-phycat）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:26
-msgid "Phycat Mint"
+msgid "森林猫（typora-theme-phycat）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:27
-msgid "OneDark"
+msgid "薄荷猫（typora-theme-phycat）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:28
-msgid "Mdmdt Light"
+msgid "天蓝猫（typora-theme-phycat）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:29
-msgid "Dog's Choice Pink"
+msgid "普鲁士猫（typora-theme-phycat）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:30
-msgid "Bloom Petal"
+msgid "樱花猫（typora-theme-phycat）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:31
-msgid "Spring"
+msgid "淡紫猫（typora-theme-phycat）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:32
-msgid "Lanqing"
+msgid "Mdmdt 浅色（Mdmdt）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:33
-msgid "Yamabuki"
+msgid "狗狗粉（DogsChoice）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:34
-msgid "Grid black"
+msgid "花瓣（typora-Bloom-theme）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:35
-msgid "Geek black"
+msgid "雾蓝（typora-Bloom-theme）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:36
-msgid "Rose purple"
+msgid "草木（typora-Bloom-theme）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:37
-msgid "Ningye purple"
+msgid "暖石（typora-Bloom-theme）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:38
-msgid "Tech blue"
+msgid "麦穗（typora-Bloom-theme）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:39
-msgid "Qingbi Liujin"
+msgid "水墨（typora-Bloom-theme）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:40
-msgid "Qinghe Zhusha"
+msgid "琥珀（typora-Bloom-theme）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:41
-msgid "Cute green"
+msgid "青金（typora-Bloom-theme）"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:42 src/Theme/CodeThemeRegistry.php:24
-msgid "Fullstack blue"
+#: src/Theme/ArticleThemeRegistry.php:42
+msgid "涟漪（typora-Bloom-theme）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:43
-msgid "Minimal black"
+msgid "丹红（typora-Bloom-theme）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:44
-msgid "Orange blue"
+msgid "鼠尾草（typora-Bloom-theme）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:45
-msgid "Frontend peak"
+msgid "紫语（typora-Bloom-theme）"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:46
+msgid "春日（typora-spring-theme）"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:47
+msgid "Lanqing"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:48
+msgid "Yamabuki"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:49
+msgid "Grid black"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:50
+msgid "Geek black"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:51
+msgid "Rose purple"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:52
+msgid "Ningye purple"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:53
+msgid "Tech blue"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:54
+msgid "Qingbi Liujin"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:55
+msgid "Qinghe Zhusha"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:56
+msgid "Cute green"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:57 src/Theme/CodeThemeRegistry.php:24
+msgid "Fullstack blue"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:58
+msgid "Minimal black"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:59
+msgid "Orange blue"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:60
+msgid "Frontend peak"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:61
 msgid "Cupid busy"
 msgstr ""
 

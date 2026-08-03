@@ -54,7 +54,7 @@ async function selectTheme(page, combobox, label) {
   await expect(combobox).toContainText(label);
 }
 
-test('matches the Inkwell README palettes across the full Markdown fixture', async ({ page }, testInfo) => {
+test('matches the Inkwell light palette across the full Markdown fixture', async ({ page }, testInfo) => {
   await login(page);
   await page.goto('/wp-admin/post-new.php');
   await expect(page.locator('#easymde-editor')).toBeVisible();
@@ -98,15 +98,6 @@ test('matches the Inkwell README palettes across the full Markdown fixture', asy
       table: 'rgb(241, 245, 249)',
       inlineCode: 'rgb(246, 248, 251)',
       inlineText: 'rgb(199, 37, 78)'
-    },
-    'inkwell-dark': {
-      background: 'rgb(26, 32, 48)',
-      text: 'rgb(196, 205, 216)',
-      heading: 'rgb(237, 241, 247)',
-      quote: 'rgb(30, 38, 54)',
-      table: 'rgb(34, 44, 60)',
-      inlineCode: 'rgb(36, 46, 66)',
-      inlineText: 'rgb(240, 160, 184)'
     }
   };
   const evidence = [];

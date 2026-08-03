@@ -919,7 +919,7 @@
 }
 
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-petal .on-focus-mode .easymde-rendered-content.easymde-markdown-theme-bloom-petal > *{
+.easymde-rendered-content.easymde-markdown-theme-bloom-petal.on-focus-mode > *{
     opacity: 0.15 !important;
     filter: blur(1px);
     transition:
@@ -927,13 +927,13 @@
         filter 0.5s ease;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-petal .on-focus-mode .easymde-rendered-content.easymde-markdown-theme-bloom-petal > .md-focus-element{
+.easymde-rendered-content.easymde-markdown-theme-bloom-petal.on-focus-mode > .md-focus-element{
     opacity: 1 !important;
     filter: blur(0);
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-petal .on-focus-mode .easymde-rendered-content.easymde-markdown-theme-bloom-petal .md-focus-element h1,
-.easymde-rendered-content.easymde-markdown-theme-bloom-petal .on-focus-mode .easymde-rendered-content.easymde-markdown-theme-bloom-petal .md-focus-element h2{
+.easymde-rendered-content.easymde-markdown-theme-bloom-petal.on-focus-mode .md-focus-element h1,
+.easymde-rendered-content.easymde-markdown-theme-bloom-petal.on-focus-mode .md-focus-element h2{
     border-bottom-color: var(--accent);
 }
 
@@ -1175,4 +1175,10 @@
 .easymde-rendered-content.easymde-markdown-theme-bloom-petal :not(pre) > code,
 .easymde-rendered-content.easymde-markdown-theme-bloom-petal :not(pre) > tt {
   font-family: var(--easymde-code-font-family);
+}
+
+
+/* easymde-bloom-surface-bloom-petal */
+.easymde-rendered-content.easymde-markdown-theme-bloom-petal {
+    background-color: var(--bg) !important;
 }

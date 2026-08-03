@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -408,9 +408,8 @@ test('shared code typography prefers the neutral Mac terminal font stack', () =>
   assert.doesNotMatch(css, /--easymde-code-font-family:[^;]*Operator Mono/);
 });
 
-test('Inkwell light and dark keep separate scoped palettes', () => {
+test('Inkwell light keeps its scoped palette', () => {
   const light = readFileSync(join(repoRoot, 'assets/themes/article/inkwell.css'), 'utf8');
-  const dark = readFileSync(join(repoRoot, 'assets/themes/article/inkwell-dark.css'), 'utf8');
 
   assert.equal(cssVariable(light, '--bg-color'), '#ffffff');
   assert.equal(cssVariable(light, '--text-color'), '#3d4852');
@@ -420,23 +419,35 @@ test('Inkwell light and dark keep separate scoped palettes', () => {
   assert.equal(cssVariable(light, '--code-bg'), '#f6f8fb');
   assert.equal(cssVariable(light, '--code-text'), '#c7254e');
   assert.equal(cssVariable(light, '--border-color'), '#e2e8f0');
-  assert.equal(cssVariable(dark, '--bg-color'), '#1a2030');
-  assert.equal(cssVariable(dark, '--text-color'), '#c4cdd8');
-  assert.equal(cssVariable(dark, '--heading-color'), '#edf1f7');
-  assert.equal(cssVariable(dark, '--heading-secondary'), '#a8b8cc');
-  assert.equal(cssVariable(dark, '--link-color'), '#6ba8e0');
-  assert.equal(cssVariable(dark, '--code-bg'), '#242e42');
-  assert.equal(cssVariable(dark, '--code-text'), '#f0a0b8');
-  assert.equal(cssVariable(dark, '--border-color'), '#2d3848');
-  assert.equal(cssVariable(dark, '--font-size-base'), '15px');
-  assert.equal(cssVariable(dark, '--line-height'), '1.75');
-  assert.match(dark, /\.easymde-rendered-content\.easymde-markdown-theme-inkwell-dark\s*\{/);
-  assert.doesNotMatch(dark, /(?:^|[,{])\s*(?:html|body|:root)\s*(?:[,\{])/m);
-  for (const token of ['#a78bfa', '#6ee7b7', '#64748b', '#fb923c', '#60a5fa', '#2dd4bf', '#22d3ee', '#fbbf24', '#f472b6', '#94a3b8']) {
-    assert.match(dark, new RegExp(token.replace('#', '\\#')), `${token} should be present in dark token palette`);
+  assert.match(light, /\.easymde-rendered-content\.easymde-markdown-theme-inkwell\s*\{/);
+  assert.doesNotMatch(light, /(?:^|[,{])\s*(?:html|body|:root)\s*(?:[,\{])/m);
+});
+
+test('Bloom focus-mode effects stay opt-in in EasyMDE adapters', () => {
+  const bloomFiles = readdirSync(join(repoRoot, 'assets/themes/article'))
+    .filter((name) => /^bloom-.*\.css$/.test(name));
+
+  assert.equal(bloomFiles.length, 12, 'all Bloom light variants should be present');
+
+  for (const file of bloomFiles) {
+    const css = readFileSync(join(repoRoot, 'assets/themes/article', file), 'utf8');
+    const rootMatch = css.match(/\.easymde-rendered-content\.easymde-markdown-theme-[a-z0-9-]+/);
+
+    assert.ok(rootMatch, `${file} should declare an EasyMDE root`);
+    const literalRoot = rootMatch[0].replaceAll('.', '\\.');
+
+    assert.doesNotMatch(
+      css,
+      new RegExp(`${literalRoot}\\s*>\\s*\\*`),
+      `${file} must not blur ordinary preview children`
+    );
+    assert.doesNotMatch(
+      css,
+      new RegExp(`${literalRoot}\\s*\\{\\s*background:\\s*transparent\\s*!important`),
+      `${file} must not clear the ordinary preview surface`
+    );
+    assert.match(css, new RegExp(`${literalRoot}\\.on-focus-mode`), `${file} focus rules should remain opt-in`);
   }
-  assert.ok(contrast('#c4cdd8', '#1a2030') >= 4.5, 'dark body text should meet AA contrast');
-  assert.ok(contrast('#edf1f7', '#1a2030') >= 4.5, 'dark headings should meet AA contrast');
 });
 
 test('Terminal Noir preserves the reference terminal palette and readable contrast', () => {

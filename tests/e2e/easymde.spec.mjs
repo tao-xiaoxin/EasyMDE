@@ -1748,7 +1748,7 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test('keeps every registered article theme contained across ordinary and immersive preview states', async ({ page }, testInfo) => {
-    test.setTimeout(10 * 60_000);
+    test.setTimeout(30 * 60_000);
 
     const user = testInfo.easymdeUser;
     await login(page, user);
@@ -2089,6 +2089,133 @@ test.describe('EasyMDE editor workflows', () => {
       .toBe(catalog.articleThemes.length);
     expect(mainFrameNavigations).toBe(0);
     expect(failures, failures.join('\n')).toEqual([]);
+  });
+
+  test('keeps newly added article themes within the ordinary preview boundary', async ({ page }, testInfo) => {
+    test.setTimeout(10 * 60_000);
+
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+
+    const catalog = await editorThemeCatalog(page);
+    const targets = catalog.articleThemes.filter(({ id }) => id !== 'default');
+    expect(targets).toHaveLength(catalog.articleThemes.length - 1);
+
+    const markdown = [
+      '# Ordinary preview boundary probe',
+      '',
+      'A long paragraph verifies wrapping without widening the split-pane preview: '
+        + '中文内容与 ordinary editing content should remain readable inside the available boundary. '
+        + 'x'.repeat(180),
+      '',
+      '| Name | Type | State |',
+      '| --- | --- | --- |',
+      '| Markdown | Renderer | Stable |',
+      '| Preview | Boundary | Checked |',
+      '',
+      '```js',
+      `const longValue = "${'x'.repeat(240)}";`,
+      'console.log(longValue);',
+      '```',
+      '',
+      '$$\\int_0^1 x^2 \\,dx = \\frac{1}{3}$$'
+    ].join('\n');
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Ordinary preview boundary probe');
+
+    const labels = await page.evaluate(() => ({
+      articleTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.articleTheme,
+      editorSettings: window.EasyMDEEditorRootBootstrap.strings.immersive.editorSettings
+    }));
+    const settingsTrigger = page.locator('.easymde-toolbar-section-secondary')
+      .getByRole('button', { name: labels.editorSettings, exact: true });
+    const preview = page.locator('.easymde-pane-preview article');
+    const measurements = [];
+
+    for (const width of [1200, 760, 680]) {
+      await page.setViewportSize({ width, height: 900 });
+
+      for (const { id, label } of targets) {
+        await settingsTrigger.click();
+        const settingsDialog = page.getByRole('dialog', {
+          name: labels.editorSettings
+        });
+        const articleSelect = settingsDialog.getByRole('combobox', {
+          name: labels.articleTheme,
+          exact: true
+        });
+        const previousPreviewSignature = await readyPreviewSignature(preview);
+        await selectOrdinaryOption(page, articleSelect, label);
+        await expect(preview).toHaveClass(
+          new RegExp(`easymde-markdown-theme-${id}`)
+        );
+        await waitForPreviewRefresh(
+          preview,
+          previousPreviewSignature,
+          `${id} ordinary preview refresh at ${width}px`
+        );
+        await page.keyboard.press('Escape');
+        await expect(settingsDialog).toHaveCount(0);
+
+        const geometry = await preview.evaluate((root) => {
+          const pane = root.closest('.easymde-pane-preview');
+          if (!(pane instanceof HTMLElement)) {
+            throw new Error('ordinary-preview-pane-unavailable');
+          }
+
+          const rootBox = root.getBoundingClientRect();
+          const paneBox = pane.getBoundingClientRect();
+          const contained = (element) => {
+            const box = element.getBoundingClientRect();
+            return box.left >= rootBox.left - 1
+              && box.right <= rootBox.right + 1;
+          };
+          const elementOverflow = (element) => element.scrollWidth - element.clientWidth;
+          const tables = [...root.querySelectorAll('table')];
+          const codeBlocks = [...root.querySelectorAll('pre')];
+          const mathBlocks = [...root.querySelectorAll('.easymde-math-block')];
+
+          return {
+            root: {
+              width: rootBox.width,
+              clientWidth: root.clientWidth,
+              scrollWidth: root.scrollWidth,
+              overflow: elementOverflow(root)
+            },
+            pane: {
+              width: paneBox.width,
+              clientWidth: pane.clientWidth,
+              scrollWidth: pane.scrollWidth,
+              overflow: elementOverflow(pane)
+            },
+            tables: tables.map((table) => ({
+              contained: contained(table),
+              overflow: elementOverflow(table)
+            })),
+            codeBlocks: codeBlocks.map((code) => ({
+              contained: contained(code),
+              overflow: elementOverflow(code)
+            })),
+            mathBlocks: mathBlocks.map((math) => ({
+              contained: contained(math),
+              overflow: elementOverflow(math)
+            }))
+          };
+        });
+
+        measurements.push({ id, width, ...geometry });
+      }
+    }
+
+    const failures = measurements.filter(({ root, pane, tables, codeBlocks, mathBlocks }) => (
+      root.overflow > 1
+      || pane.overflow > 1
+      || [...tables, ...codeBlocks, ...mathBlocks].some(({ contained }) => !contained)
+    ));
+    expect(failures, JSON.stringify(failures, null, 2)).toEqual([]);
+    await testInfo.attach('ordinary-theme-boundary-matrix.json', {
+      body: JSON.stringify(measurements, null, 2),
+      contentType: 'application/json'
+    });
   });
 
   test('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {

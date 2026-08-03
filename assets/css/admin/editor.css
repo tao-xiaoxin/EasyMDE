@@ -2238,12 +2238,15 @@ body:has(.easymde-editor.is-immersive) .wrap {
 }
 
 /* Immersive split panes can become narrower than a table's intrinsic width.
- * Keep the article root contained while preserving a local table scroll owner. */
+ * Keep native table geometry intact; cells wrap long values so the article
+ * remains the only scroll owner unless a theme explicitly needs local table
+ * scrolling. */
 .easymde-editor.is-immersive-split .easymde-rendered-content table {
-    display: block;
+    display: table;
     width: 100%;
     max-width: 100%;
-    overflow-x: auto;
+    table-layout: fixed;
+    overflow: visible;
 }
 
 .easymde-editor:not(.is-immersive) .easymde-rendered-content :is(th, td) {

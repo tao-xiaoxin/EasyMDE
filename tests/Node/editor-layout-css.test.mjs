@@ -294,6 +294,10 @@ test('ordinary Preview owns vertical scrolling and fits wide table content', () 
   );
   assert.match(
     css,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-preview\.easymde-rendered-content\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*min-width:\s*0;[^}]*max-width:\s*100%;[^}]*margin-inline:\s*0;/s
+  );
+  assert.match(
+    css,
     /\.easymde-editor:not\(\.is-immersive\) \.easymde-rendered-content table\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;/s
   );
   assert.doesNotMatch(

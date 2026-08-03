@@ -47,7 +47,7 @@ test('every article theme declares a registered associated code theme', () => {
   const codeThemes = registeredThemes('src/Theme/CodeThemeRegistry.php');
   const codeThemeIds = new Set(codeThemes.map(({ id }) => id));
 
-  assert.equal(articleThemes.length, 32);
+	assert.equal(articleThemes.length, 47);
   for (const theme of articleThemes) {
     assert.ok(codeThemeIds.has(theme.defaultCodeTheme), `${theme.defaultCodeTheme} should be registered`);
   }
@@ -118,14 +118,29 @@ test('registered article themes contain no block-code presentation selectors', (
 test('Typora-derived article themes stay locally scoped and offline-safe', () => {
   const typoraThemes = [
     'inkwell',
-    'inkwell-dark',
-    'nocturne',
     'animal-island',
+    'phycat-cherry',
+    'phycat-caramel',
+    'phycat-forest',
     'phycat-mint',
-    'onedark',
+    'phycat-sky',
+    'phycat-prussian',
+    'phycat-sakura',
+    'phycat-mauve',
     'mdmdt',
     'dogschoice-pink',
     'bloom-petal',
+    'bloom-mist',
+    'bloom-verdant',
+    'bloom-stone',
+    'bloom-wheat',
+    'bloom-ink',
+    'bloom-amber',
+    'bloom-lapis',
+    'bloom-ripple',
+    'bloom-cinnabar',
+    'bloom-sage',
+    'bloom-spring',
     'spring'
   ];
 

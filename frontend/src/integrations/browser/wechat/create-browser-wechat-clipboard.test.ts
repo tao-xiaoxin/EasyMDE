@@ -3539,76 +3539,94 @@ describe('createBrowserWechatClipboard', () => {
     const source = document.createElement('button');
     let copiedMarkup = '';
     const scrollTo = vi.fn();
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
     document.body.appendChild(source);
     source.focus();
-    Object.defineProperty(document, 'execCommand', {
-      configurable: true,
-      value: vi.fn(() => {
-        const sandbox = document.querySelector('.easymde-copy-sandbox') as HTMLElement | null;
-        copiedMarkup = sandbox?.innerHTML ?? '';
-        sandbox?.focus();
-        return true;
-      })
-    });
-    const execCommand = vi.spyOn(document, 'execCommand');
-    const clipboard = createBrowserWechatClipboard({
-      blob: Blob,
-      clipboardItem: null,
-      document,
-      getComputedStyle: computedStyle,
-      getSelection: window.getSelection.bind(window),
-      scrollTo,
-      write: null,
-      pageOffset: () => ({ x: 5, y: 8 })
-    });
+    try {
+      Object.defineProperty(document, 'execCommand', {
+        configurable: true,
+        value: vi.fn(() => {
+          const sandbox = document.querySelector('.easymde-copy-sandbox') as HTMLElement | null;
+          copiedMarkup = sandbox?.innerHTML ?? '';
+          sandbox?.focus();
+          return true;
+        })
+      });
+      const execCommand = vi.spyOn(document, 'execCommand');
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: null,
+        document,
+        getComputedStyle: computedStyle,
+        getSelection: window.getSelection.bind(window),
+        scrollTo,
+        write: null,
+        pageOffset: () => ({ x: 5, y: 8 })
+      });
 
-    const preview = readyPreview();
-    await prepareClipboard(clipboard, preview);
-    await expect(clipboard.copy(preview)).resolves.toEqual({
-      method: 'legacy',
-      status: 'copied'
-    });
-    expect(copiedMarkup).toContain('max-width:100%');
-    expect(copiedMarkup).not.toContain('data-easymde-');
-    expect(execCommand).toHaveBeenCalledWith('copy');
-    expect(document.querySelector('.easymde-copy-sandbox')).toBeNull();
-    expect(document.activeElement).toBe(source);
-    expect(scrollTo).toHaveBeenCalledWith(5, 8);
-    source.remove();
+      const preview = readyPreview();
+      await prepareClipboard(clipboard, preview);
+      await expect(clipboard.copy(preview)).resolves.toEqual({
+        method: 'legacy',
+        status: 'copied'
+      });
+      expect(copiedMarkup).toContain('max-width:100%');
+      expect(copiedMarkup).not.toContain('data-easymde-');
+      expect(execCommand).toHaveBeenCalledWith('copy');
+      expect(document.querySelector('.easymde-copy-sandbox')).toBeNull();
+      expect(document.activeElement).toBe(source);
+      expect(scrollTo).toHaveBeenCalledWith(5, 8);
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
+      }
+      source.remove();
+    }
   });
 
   it('falls back to the current payload when ClipboardItem setup rejects synchronously', async () => {
     let legacyHtml = '';
-    Object.defineProperty(document, 'execCommand', {
-      configurable: true,
-      value: vi.fn(() => {
-        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
-        return true;
-      })
-    });
-    class RejectingClipboardItem {
-      constructor(_payload: Record<string, Blob>) {
-        throw new TypeError('deferred clipboard items are unsupported');
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    try {
+      Object.defineProperty(document, 'execCommand', {
+        configurable: true,
+        value: vi.fn(() => {
+          legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+          return true;
+        })
+      });
+      class RejectingClipboardItem {
+        constructor(_payload: Record<string, Blob>) {
+          throw new TypeError('deferred clipboard items are unsupported');
+        }
+      }
+      const write = vi.fn(async () => undefined);
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: RejectingClipboardItem,
+        document,
+        getComputedStyle: computedStyle,
+        getSelection: window.getSelection.bind(window),
+        scrollTo: vi.fn(),
+        write,
+        pageOffset: () => ({ x: 0, y: 0 })
+      });
+
+      await expect(clipboard.copy(readyPreview())).resolves.toEqual({
+        method: 'legacy',
+        status: 'copied'
+      });
+      expect(write).not.toHaveBeenCalled();
+      expect(legacyHtml).toContain('Rendered');
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
       }
     }
-    const write = vi.fn(async () => undefined);
-    const clipboard = createBrowserWechatClipboard({
-      blob: Blob,
-      clipboardItem: RejectingClipboardItem,
-      document,
-      getComputedStyle: computedStyle,
-      getSelection: window.getSelection.bind(window),
-      scrollTo: vi.fn(),
-      write,
-      pageOffset: () => ({ x: 0, y: 0 })
-    });
-
-    await expect(clipboard.copy(readyPreview())).resolves.toEqual({
-      method: 'legacy',
-      status: 'copied'
-    });
-    expect(write).not.toHaveBeenCalled();
-    expect(legacyHtml).toContain('Rendered');
   });
 
   it('does not reuse a prepared payload after root-only style changes', async () => {

@@ -78,7 +78,10 @@ export function wordpressClassicMetadata({
           (value) => value !== sourceEntry
         );
         if (unexpectedDynamicImports.length) {
-          throw new Error('Classic WordPress entries cannot declare dynamic imports.');
+          throw new Error(
+            'Classic WordPress entries may only declare a self-referential dynamic import; '
+            + 'unexpected imports are not supported.'
+          );
         }
 
         delete manifestEntry.dynamicImports;

@@ -8,9 +8,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class FrontendAssetContract {
 
+	private const CODE_COPY_PREFIX = 'frontend-code-copy-';
+
 	private const ERROR_PREFIXES = array(
 		'frontend-enhancement-',
-		'frontend-code-copy-',
+		self::CODE_COPY_PREFIX,
 	);
 
 	public static function is_error( \Throwable $error ) {
@@ -20,7 +22,7 @@ final class FrontendAssetContract {
 	}
 
 	public static function is_code_copy_error( \Throwable $error ) {
-		return self::has_prefix( $error->getMessage(), array( 'frontend-code-copy-' ) );
+		return self::has_prefix( $error->getMessage(), array( self::CODE_COPY_PREFIX ) );
 	}
 
 	public static function error_code( \Throwable $error ) {

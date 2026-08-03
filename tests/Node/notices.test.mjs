@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import {
+  bundledFrontendRows,
   bundledFrontendPackages,
   composerRows,
   frontendRows,
@@ -69,6 +70,9 @@ test('compiled frontend notices describe all production browser bundles', () => 
     notices,
     /These packages are compiled into production browser bundles\. Their required license notices follow\./
   );
+  for (const { name } of bundledFrontendRows(repoRoot)) {
+    assert.ok(notices.includes(name), `missing notice row for ${name}`);
+  }
   assert.doesNotMatch(
     notices,
     /These packages are compiled into the production WordPress Editor entry\./

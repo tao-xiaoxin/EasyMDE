@@ -88,7 +88,7 @@ describe('frontend enhancement runtime', () => {
         features: {
           mermaid: false,
           syntaxHighlight: false,
-          mermaidAssetError: 'frontend-enhancement-build-integrity-invalid'
+          mermaidAssetError: 'frontend-enhancement-frontend-mermaid-build-integrity-invalid'
         }
       },
       windowRef
@@ -97,7 +97,7 @@ describe('frontend enhancement runtime', () => {
     const pre = root.querySelector('pre');
     expect(pre?.getAttribute('data-easymde-mermaid-fallback')).toBe('1');
     expect(pre?.getAttribute('data-easymde-mermaid-error'))
-      .toBe('frontend-enhancement-build-integrity-invalid');
+      .toBe('frontend-enhancement-frontend-mermaid-build-integrity-invalid');
     expect(pre?.classList.contains('easymde-render-error')).toBe(false);
   });
 

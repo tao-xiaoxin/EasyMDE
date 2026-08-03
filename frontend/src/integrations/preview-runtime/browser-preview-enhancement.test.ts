@@ -358,7 +358,7 @@ describe('createBrowserPreviewEnhancementPort', () => {
         ...previewEnhancementBootstrapFixture,
         assets: {
           ...previewEnhancementBootstrapFixture.assets,
-          mermaidAssetError: 'frontend-enhancement-build-integrity-invalid',
+          mermaidAssetError: 'frontend-enhancement-frontend-mermaid-build-integrity-invalid',
           mermaidScriptUrl: null
         }
       },
@@ -379,7 +379,7 @@ describe('createBrowserPreviewEnhancementPort', () => {
     expect(enhance).toHaveBeenCalledWith(
       expect.any(HTMLElement),
       {
-        assetErrors: { mermaid: 'frontend-enhancement-build-integrity-invalid' },
+        assetErrors: { mermaid: 'frontend-enhancement-frontend-mermaid-build-integrity-invalid' },
         features: { mermaid: false },
         strings: { renderingFailed: 'Rendering failed.' }
       }
@@ -394,7 +394,7 @@ describe('createBrowserPreviewEnhancementPort', () => {
         ...previewEnhancementBootstrapFixture,
         assets: {
           ...previewEnhancementBootstrapFixture.assets,
-          mermaidAssetError: 'frontend-enhancement-build-integrity-invalid'
+          mermaidAssetError: 'frontend-enhancement-frontend-mermaid-build-integrity-invalid'
         }
       },
       { documentRef: document, runtime: runtime(enhance) }

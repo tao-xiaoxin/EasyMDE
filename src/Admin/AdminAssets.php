@@ -5,6 +5,7 @@ namespace EasyMDE\Admin;
 use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Support\Asset;
 use EasyMDE\Support\FrontendAssetContract;
+use EasyMDE\Support\ManifestAssetResolver;
 use EasyMDE\Support\ToolbarRegistry;
 use EasyMDE\Theme\ThemeStateRepository;
 
@@ -523,66 +524,16 @@ final class AdminAssets {
 	}
 
 	private function get_react_editor_asset( $build_dir = '' ) {
-		$build_dir     = $build_dir ? trailingslashit( $build_dir ) : Asset::path( 'assets/build/' );
-		$manifest_path = $build_dir . 'wordpress-manifest.json';
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads a local committed build manifest, never a remote URL.
-		$manifest_json = is_readable( $manifest_path ) ? file_get_contents( $manifest_path ) : false;
-		$manifest      = false === $manifest_json ? null : json_decode( $manifest_json, true );
-		$entry_key     = 'frontend/src/entrypoints/admin-editor.tsx';
+		$build_dir = $build_dir ? $build_dir : 'assets/build/';
 
-		if (
-			! is_array( $manifest )
-			|| 1 !== ( $manifest['schemaVersion'] ?? null )
-			|| ! isset( $manifest['entries'] )
-			|| ! is_array( $manifest['entries'] )
-			|| array( $entry_key ) !== array_keys( $manifest['entries'] )
-			|| ! is_array( $manifest['entries'][ $entry_key ] )
-		) {
-			throw new \RuntimeException( 'react-editor-manifest-invalid' );
-		}
-
-		$entry = $manifest['entries'][ $entry_key ];
-		$file  = isset( $entry['file'] ) ? (string) $entry['file'] : '';
-		$asset = isset( $entry['asset'] ) ? (string) $entry['asset'] : '';
-		if (
-			'easymde-admin-editor-toolbar' !== ( $entry['handle'] ?? null )
-			|| array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ) !== ( $entry['dependencies'] ?? null )
-			|| array() !== ( $entry['resources'] ?? null )
-			|| ! preg_match( '#^assets/admin-editor-[A-Za-z0-9_-]+\.js$#', $file )
-			|| preg_replace( '/\.js$/', '.asset.php', $file ) !== $asset
-		) {
-			throw new \RuntimeException( 'react-editor-manifest-invalid' );
-		}
-
-		$script_path   = $build_dir . $file;
-		$metadata_path = $build_dir . $asset;
-		if ( ! is_file( $script_path ) || ! is_readable( $metadata_path ) ) {
-			throw new \RuntimeException( 'react-editor-build-missing' );
-		}
-
-		$metadata = require $metadata_path;
-		if (
-			! is_array( $metadata )
-			|| array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ) !== ( $metadata['dependencies'] ?? null )
-			|| ! isset( $metadata['version'] )
-			|| ! preg_match( '/^[a-f0-9]{16}$/', (string) $metadata['version'] )
-		) {
-			throw new \RuntimeException( 'react-editor-metadata-invalid' );
-		}
-
-		$script_hash = hash_file( 'sha256', $script_path );
-		if (
-			false === $script_hash
-			|| ! hash_equals( (string) $metadata['version'], substr( $script_hash, 0, 16 ) )
-		) {
-			throw new \RuntimeException( 'react-editor-build-integrity-invalid' );
-		}
-
-		return array(
-			'handle'       => 'easymde-admin-editor-toolbar',
-			'path'         => 'assets/build/' . $file,
-			'dependencies' => $metadata['dependencies'],
-			'version'      => (string) $metadata['version'],
+		return ManifestAssetResolver::resolve(
+			'frontend/src/entrypoints/admin-editor.tsx',
+			$build_dir,
+			'easymde-admin-editor-toolbar',
+			array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
+			'admin-editor',
+			true,
+			'react-editor-'
 		);
 	}
 

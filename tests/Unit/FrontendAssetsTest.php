@@ -122,7 +122,7 @@ final class FrontendAssetsTest extends WP_UnitTestCase
     public function test_optional_code_copy_asset_errors_are_classified_without_hiding_core_asset_errors()
     {
         $code_copy_error = new RuntimeException('frontend-code-copy-build-missing');
-        $enhancement_error = new RuntimeException('frontend-enhancement-build-missing');
+        $enhancement_error = new RuntimeException('frontend-enhancement-frontend-enhancements-build-missing');
         $unknown_error = new RuntimeException('unexpected-asset-failure');
 
         $this->assertTrue(FrontendAssetContract::is_error($code_copy_error));
@@ -292,7 +292,7 @@ final class FrontendAssetsTest extends WP_UnitTestCase
 
         try {
             $this->expectException(RuntimeException::class);
-            $this->expectExceptionMessage('frontend-enhancement-build-integrity-invalid');
+            $this->expectExceptionMessage('frontend-enhancement-frontend-enhancements-build-integrity-invalid');
 
             $this->invoke_frontend_enhancement_asset_loader(
                 $build_dir,

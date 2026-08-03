@@ -289,7 +289,7 @@ test('code-copy production comparison rejects stale or omitted committed runtime
   }
 });
 
-test('production validation rejects broad remote URLs and absolute build paths', () => {
+test('production validation rejects remote URLs and absolute paths but allows site-relative URLs', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
 
   for (const prohibited of [
@@ -310,6 +310,20 @@ test('production validation rejects broad remote URLs and absolute build paths',
     } finally {
       rmSync(generatedRoot, { recursive: true, force: true });
     }
+  }
+
+  const generatedRoot = mkdtempSync(join(tmpdir(), 'easymde-frontend-site-relative-'));
+  cpSync(outputRoot, generatedRoot, { recursive: true });
+
+  try {
+    const manifest = readJson(join(generatedRoot, 'manifest.json'));
+    appendFileSync(
+      join(generatedRoot, manifest[sourceEntry].file),
+      '\nconst previewPath = "/wp-json/easymde/v1/preview";\nconst stylesheet = "/wp-content/plugins/easymde/assets/frontend/code-frame.css";\n'
+    );
+    assert.doesNotThrow(() => validateFrontendProductionBuild(generatedRoot));
+  } finally {
+    rmSync(generatedRoot, { recursive: true, force: true });
   }
 });
 

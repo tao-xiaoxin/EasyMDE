@@ -87,8 +87,9 @@ Copy never uses a stale or disposed surface.
 EditorRoot marks these observer and snapshot notifications as background
 preparation. The adapter runs at most one full serialization per sink, retains
 only the latest request while it is active, and waits for a short quiet delay
-before replacing it. This keeps rapid split-pane keyboard changes responsive
-while preserving the full freshness checks used by Copy.
+before replacing it. Background style and geometry walks also yield to browser
+tasks periodically, keeping rapid split-pane keyboard changes responsive while
+preserving the full freshness checks used by Copy.
 Immersive visual edits coalesce preparation after rapid input, and later stable
 Preview notifications replace the prepared payload before another copy. The
 serializer compares the full sink markup, including root `class`/`style`

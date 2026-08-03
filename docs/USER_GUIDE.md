@@ -81,8 +81,9 @@ The **Copy to WeChat** action copies the current ready rendered preview as rich 
 Background preparation notifications are coalesced per Preview: one full
 serialization runs at a time, only the latest request is retained during that
 run, and a short quiet delay separates replacements. This protects keyboard
-resizing and rapid visual edits without relaxing the freshness checks used by
-Copy.
+resizing and rapid visual edits; its style and geometry walks periodically yield
+to browser tasks so the editor remains interactive without relaxing the
+freshness checks used by Copy.
 
 The copy contract removes source/editor transient attributes; exporter-owned
 `aria-hidden` decoration and `leaf` markers may remain as structural exceptions,

@@ -56,6 +56,7 @@ const MERMAID_LABEL_LAYOUT_DECLARATIONS = [
 const MERMAID_LABEL_WIDTH_SCALE = 1.5;
 const MERMAID_LABEL_WIDTH_GUTTER = 32;
 const BACKGROUND_PREPARATION_QUIET_DELAY_MS = 120;
+const BACKGROUND_SERIALIZATION_YIELD_BUDGET_MS = 8;
 
 const SAFE_DISPLAY_VALUES: Record<string, true> = {
   block: true,
@@ -201,6 +202,31 @@ type BackgroundPreparationState = {
   waiters: BackgroundPreparationWaiter[];
 };
 type BackgroundPreparationCache = WeakMap<HTMLElement, BackgroundPreparationState>;
+type SerializationYield = () => Promise<void>;
+
+function createSerializationYield(
+  runtime: BrowserWechatClipboardRuntime,
+  enabled: boolean
+): SerializationYield | null {
+  if (!enabled) return null;
+
+  let lastYieldAt = Date.now();
+  return () => {
+    if (Date.now() - lastYieldAt < BACKGROUND_SERIALIZATION_YIELD_BUDGET_MS) {
+      return Promise.resolve();
+    }
+    lastYieldAt = Date.now();
+
+    const browserWindow = runtime.document.defaultView;
+    return new Promise<void>((resolve) => {
+      if (browserWindow) {
+        browserWindow.setTimeout(resolve, 0);
+      } else {
+        setTimeout(resolve, 0);
+      }
+    });
+  };
+}
 
 function cacheBackgroundAsset(
   cache: BackgroundAssetCache,
@@ -976,7 +1002,8 @@ async function styleDeclarations(
   pseudoElement = false,
   root = false,
   runtime: BrowserWechatClipboardRuntime,
-  cache: BackgroundAssetCache
+  cache: BackgroundAssetCache,
+  yieldToBrowser: SerializationYield | null = null
 ): Promise<string[]> {
   const properties = [
     ...COPY_STYLE_PROPERTIES,
@@ -995,6 +1022,7 @@ async function styleDeclarations(
     if (keepStyle(property, portableValue, source, pseudoElement, root)) {
       declarations.push(`${property}:${portableValue}`);
     }
+    await yieldToBrowser?.();
   }
   return declarations;
 }
@@ -1077,11 +1105,20 @@ async function addPseudoElement(
   getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle'],
   root = false,
   runtime: BrowserWechatClipboardRuntime,
-  cache: BackgroundAssetCache
+  cache: BackgroundAssetCache,
+  yieldToBrowser: SerializationYield | null = null
 ): Promise<void> {
   const computed = getComputedStyle(source, pseudo);
   const content = pseudoContent(computed.getPropertyValue('content'));
-  const declarations = await styleDeclarations(source, computed, true, root, runtime, cache);
+  const declarations = await styleDeclarations(
+    source,
+    computed,
+    true,
+    root,
+    runtime,
+    cache,
+    yieldToBrowser
+  );
   if (null === content || (!content && !declarations.length)) return;
   const marker = clone.ownerDocument.createElement('span');
   marker.setAttribute('aria-hidden', 'true');
@@ -1160,7 +1197,8 @@ async function inlineStyles(
   root = false,
   runtime: BrowserWechatClipboardRuntime,
   cache: BackgroundAssetCache,
-  previewRoot: HTMLElement
+  previewRoot: HTMLElement,
+  yieldToBrowser: SerializationYield | null = null
 ): Promise<void> {
   if (!(source instanceof Element) || !(clone instanceof Element)) return;
   const computed = getComputedStyle(source);
@@ -1171,7 +1209,15 @@ async function inlineStyles(
     HIDDEN_NODES.add(clone);
     return;
   }
-  const declarations = await styleDeclarations(source, computed, false, root, runtime, cache);
+  const declarations = await styleDeclarations(
+    source,
+    computed,
+    false,
+    root,
+    runtime,
+    cache,
+    yieldToBrowser
+  );
   const imageLayers = dataImageLayersFromDeclarations(declarations);
   const preserveRepeatingBackground = hasRepeatingBackground(computed);
   const portableDeclarations = removeDataImageBackgroundDeclarations(
@@ -1216,12 +1262,32 @@ async function inlineStyles(
         false,
         runtime,
         cache,
-        previewRoot
+        previewRoot,
+        yieldToBrowser
       );
     }
   }
-  await addPseudoElement(source, clone, '::before', getComputedStyle, root, runtime, cache);
-  await addPseudoElement(source, clone, '::after', getComputedStyle, root, runtime, cache);
+  await addPseudoElement(
+    source,
+    clone,
+    '::before',
+    getComputedStyle,
+    root,
+    runtime,
+    cache,
+    yieldToBrowser
+  );
+  await addPseudoElement(
+    source,
+    clone,
+    '::after',
+    getComputedStyle,
+    root,
+    runtime,
+    cache,
+    yieldToBrowser
+  );
+  await yieldToBrowser?.();
   appendThemeImages(
     clone,
     preserveRepeatingBackground ? [] : imageLayers,
@@ -1865,7 +1931,8 @@ function finalizeMarkup(
 async function createMarkup(
   preview: HTMLElement,
   runtime: BrowserWechatClipboardRuntime,
-  cache: BackgroundAssetCache
+  cache: BackgroundAssetCache,
+  yieldToBrowser: SerializationYield | null = null
 ): Promise<HTMLElement> {
   const clone = preview.cloneNode(true) as HTMLElement;
   const fragmentIds = referencedFragmentIds(preview);
@@ -1877,7 +1944,8 @@ async function createMarkup(
     true,
     runtime,
     cache,
-    preview
+    preview,
+    yieldToBrowser
   );
   return finalizeMarkup(clone, fragmentIds, mathMlNodes);
 }
@@ -1977,9 +2045,10 @@ function connectedPlainText(root: HTMLElement, source: HTMLElement): string {
 async function serializeClipboardPayload(
   preview: HTMLElement,
   runtime: BrowserWechatClipboardRuntime,
-  cache: BackgroundAssetCache
+  cache: BackgroundAssetCache,
+  yieldToBrowser: SerializationYield | null = null
 ): Promise<SerializedClipboardPayload> {
-  const clone = await createMarkup(preview, runtime, cache);
+  const clone = await createMarkup(preview, runtime, cache, yieldToBrowser);
   return {
     html: clone.outerHTML,
     text: connectedPlainText(clone, preview)
@@ -2030,13 +2099,44 @@ function preparedLayoutSignature(
   ].join('\u0001');
 }
 
+async function preparedLayoutSignatureWithYield(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime,
+  yieldToBrowser: SerializationYield
+): Promise<string> {
+  const viewport = preview.ownerDocument.defaultView;
+  const viewportSignature = viewport
+    ? `${viewport.innerWidth}x${viewport.innerHeight}@${viewport.devicePixelRatio}`
+    : '';
+  const entries: string[] = [];
+  const elements = [preview, ...Array.from(preview.querySelectorAll('*'))];
+  for (const [index, element] of elements.entries()) {
+    const rect = element.getBoundingClientRect();
+    const computed = runtime.getComputedStyle(element);
+    const styles = PREPARED_STYLE_PROPERTIES
+      .map((property) => `${property}=${computed.getPropertyValue(property)}`)
+      .join(';');
+    const pseudoStyles = PREPARED_PSEUDO_ELEMENTS.map((pseudoElement) => {
+      const pseudo = runtime.getComputedStyle(element, pseudoElement);
+      return `${pseudoElement}:${PREPARED_STYLE_PROPERTIES
+        .map((property) => `${property}=${pseudo.getPropertyValue(property)}`)
+        .join(';')}`;
+    }).join('|');
+    entries.push(`${index}:${rect.width},${rect.height}:${styles}:${pseudoStyles}`);
+    await yieldToBrowser();
+  }
+
+  return [viewportSignature, ...entries].join('\u0001');
+}
+
 function createPreparedClipboardPayload(
   preview: HTMLElement,
   runtime: BrowserWechatClipboardRuntime,
   backgroundAssetCache: BackgroundAssetCache,
   preparedPayloads: PreparedClipboardPayloadCache,
   fallback: PreparedClipboardFallback | null,
-  sequence: number
+  sequence: number,
+  background = false
 ): PreparedClipboardPayload {
   let prepared: PreparedClipboardPayload;
   // Root class/style changes (font and article-theme controls) can change the
@@ -2044,13 +2144,28 @@ function createPreparedClipboardPayload(
   // breakpoints can also change computed styles and geometry without changing
   // the DOM, so keep both the full sink markup and a layout fingerprint.
   const sourceMarkup = preview.outerHTML;
-  const layoutSignature = preparedLayoutSignature(preview, runtime);
+  const yieldToBrowser = createSerializationYield(runtime, background);
+  const layoutSignature = background
+    ? ''
+    : preparedLayoutSignature(preview, runtime);
   // Keep normal preparation asynchronous. A synchronous full-Preview walk is
   // only justified inside the originating click task when a browser rejects
   // Promise-backed ClipboardItem values; doing it for every background refresh
   // can monopolize the main thread on Mermaid/KaTeX-heavy articles.
-  const promise = serializeClipboardPayload(preview, runtime, backgroundAssetCache)
-    .then((payload) => {
+  const promise = serializeClipboardPayload(
+    preview,
+    runtime,
+    backgroundAssetCache,
+    yieldToBrowser
+  )
+    .then(async (payload) => {
+      prepared.layoutSignature = background
+        ? await preparedLayoutSignatureWithYield(
+          preview,
+          runtime,
+          yieldToBrowser as SerializationYield
+        )
+        : layoutSignature;
       prepared.payload = payload;
       const current = preparedPayloads.get(preview);
       if (
@@ -2110,7 +2225,8 @@ function preparedClipboardPayload(
   backgroundAssetCache: BackgroundAssetCache,
   preparedPayloads: PreparedClipboardPayloadCache,
   nextSequence: () => number,
-  replace = false
+  replace = false,
+  background = false
 ): PreparedClipboardPayload {
   const existing = preparedPayloads.get(preview);
   if (!replace) {
@@ -2136,7 +2252,8 @@ function preparedClipboardPayload(
     backgroundAssetCache,
     preparedPayloads,
     fallback,
-    nextSequence()
+    nextSequence(),
+    background
   );
 }
 
@@ -2169,6 +2286,7 @@ function scheduleBackgroundPreparation(
         backgroundAssetCache,
         preparedPayloads,
         nextSequence,
+        true,
         true
       ).promise.then(() => undefined);
     } catch (error: unknown) {

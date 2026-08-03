@@ -157,7 +157,9 @@ image is pending; this keeps Mermaid/KaTeX-heavy Preview updates from blocking
 the editor main thread. EditorRoot background notifications are additionally
 coalesced per Preview: at most one full serialization runs at a time, only the
 latest request is retained while it runs, and a short quiet delay separates
-replacements. The adapter's synchronous serializer is covered only as
+replacements. Background style and geometry walks must periodically yield to a
+browser task so rapid theme or split-pane changes remain interactive. The
+synchronous serializer is covered only as
 the click-task fallback when `ClipboardItem` construction or `write()` throws
 synchronously and no current prepared payload exists. The focused tests must
 also preserve the negative case: a modern write rejection after an `await` never

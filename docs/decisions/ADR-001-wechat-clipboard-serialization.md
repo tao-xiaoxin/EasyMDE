@@ -233,7 +233,8 @@ request. The suite also covers CSS single-token and two-value keyword/offset
 background-position defaults, scroll-only geometry reuse, retry completion
 without fixed delays, and out-of-order preparation generations preserving the newest successful
 fallback. Non-2xx responses, invalid MIME/size, FileReader conversion errors,
-unsupported legacy results, and full Selection/Focus/Scroll restoration on
+unsupported legacy results, an asynchronous modern rejection followed by a
+successful legacy attempt, and full Selection/Focus/Scroll restoration on
 every failure path remain explicit follow-up cases; they must fail visibly and
 must not produce partial output. The companion
 session tests cover concurrent single-flight, unsupported results, and late

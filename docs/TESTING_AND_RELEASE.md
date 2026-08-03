@@ -194,13 +194,16 @@ EditorRoot coverage also verifies that the observer is rebound when immersive
 visual Preview mounts, and that article-theme and Custom CSS changes refresh
 the legacy payload after visual-editor teardown even when the replacement
 Preview request is still pending.
-It does not yet prove unsupported legacy results, non-2xx responses, invalid
+It does not yet prove an asynchronous modern-write rejection followed by a
+successful legacy copy, unsupported legacy results, non-2xx responses, invalid
 theme-image MIME/size responses, FileReader/data-conversion failures, or full
 Selection/Focus/Scroll restoration on every failure path; add those cases
 before treating the boundary as fully covered. The current Chromium E2E
-fixture does not by itself assert the complete HTML/plain-text payload or the
-sanitized pasted WeChat DOM; the authorized authenticated-browser check below
-is still required for those claims. `npm run frontend:check` is the required full frontend gate;
+fixture only proves the editor/session command path, the activation-safe
+modern write, and local runtime loading. Its Clipboard stub does not assert
+the complete `text/html`/`text/plain` payload, the sanitized pasted WeChat DOM,
+or a legacy fallback; the authorized authenticated-browser check below is
+still required for those claims. `npm run frontend:check` is the required full frontend gate;
 `npm run check:frontend-production` must compare the compiled admin entry
 containing the Adapter with the committed hashed runtime without rewriting it.
 
@@ -271,7 +274,8 @@ maintained in [the full-capability fixture](examples/markdown-full-capability-te
 inline expressions, integral, partial-derivative/limit, matrix, equation
 system, piecewise, statistics, neural-network, error-rate, and percentage
 forms. A screenshot of only one theme or two formula cards is not complete
-family coverage.
+family coverage. Keep this canonical list and the fixture synchronized when a
+new formula renderer or formula family is introduced.
 
 Translation maintenance commands are:
 

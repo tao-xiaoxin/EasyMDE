@@ -78,6 +78,11 @@ The table of contents is generated from rendered headings and is inserted where 
 
 The **Copy to WeChat** action copies the current ready rendered preview as rich text. The modern Clipboard API writes normalized `text/html` and `text/plain` captured from the connected normalized export surface for the same preparation; plain text retains the Preview's paragraph and list line breaks, normalizes non-breaking spaces, removes U+2060 exporter markers, excludes removed editor/KaTeX MathML nodes, and never includes source transient attributes. Approved theme images are prepared after a debounced stable Preview update in a shared local cache limited to 32 assets; window/viewport resizes and immersive split-pane changes schedule the same refresh so the legacy payload is not stale after a layout-only change. If an image or video is still loading or changing intrinsic size, the modern write starts during the click and resolves its deferred payload afterward. Repeating theme backgrounds retain their materialized CSS background instead of becoming one flattened image. Background preparation failures stay quiet while editing and are reported by the actual copy attempt. Stable background preparation remains asynchronous even when no approved theme image needs materialization, so Mermaid/KaTeX-heavy articles do not monopolize the editor main thread. If `ClipboardItem` construction or `write()` throws synchronously during the originating click and no current prepared payload exists, the adapter makes one synchronous serialization attempt for the activation-safe legacy path. If preparation really is pending on an approved image, legacy remains an explicit failure until a current payload is ready; an asynchronously rejected modern write is never followed by an activation-losing legacy attempt. Empty, loading, or failed previews are not copied. The export removes editor-only nodes, inlines portable computed styles, preserves theme decorations and the visible KaTeX tree without duplicate KaTeX MathML, and keeps code lines, tables, and long display formulas horizontally scrollable when they exceed the WeChat column; inline formulas remain non-wrapping. Responsive bounds do not turn inline images or videos into centered block elements, and generated theme-image dimensions are not overwritten by those bounds. Mermaid flowchart labels are kept as complete single-line labels even when WeChat rewrites SVG `foreignObject` styles; exporter-only invisible markers are removed from plain text. It does not add a vertical scroll container around the article or change the post.
 
+The copy contract removes source/editor transient attributes; exporter-owned
+`aria-hidden` decoration and `leaf` markers may remain as structural exceptions,
+and “KaTeX MathML” below means only the generated `.katex-mathml` fallback tree,
+not arbitrary MathML authored in Markdown.
+
 Mermaid flowchart labels use a centered width expansion and intrinsic label width
 before paste, so a wider WeChat font does not turn `用户请求` into a truncated
 label. The export retains hidden SVG definition subtrees used by visible clip paths,
@@ -101,6 +106,13 @@ still reports failure; a later click can use the retry after it resolves.
 Tables whose full-width behavior comes from the visible layout keep that
 classification when the immersive source view hides the Preview, so switching
 views does not narrow them during copy.
+
+The full-capability verification fixture covers inline expressions, integral,
+partial-derivative/limit, matrix, equation-system, piecewise, statistics,
+neural-network, error-rate, and percentage formulas. A real authenticated
+WeChat check compares the source Preview and pasted article for every registered
+article theme and its registry-owned default code theme; one theme screenshot or
+two formula cards is not complete parity evidence.
 
 For portability, safe image `src`/`srcset` and link URLs may remain in the
 copied HTML, including remote `<img>` URLs that the destination may choose to

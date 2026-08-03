@@ -221,7 +221,8 @@ diagrams, and KaTeX are not rewritten by this Mermaid-specific path.
 The serializer removes scripts, styles, interactive controls, CSS classes, and
 source/editor transient attributes; keeps only valid fragment IDs and
 SVG-internal IDs; sanitizes URL and style values; preserves safe image `src`,
-`srcset` candidates, and link URLs; removes unsafe URLs and replaces
+`srcset` candidates, and link URLs; remote `<img>`/`srcset` candidates may
+remain but are not fetched by the serializer; removes unsafe URLs and replaces
 remote/non-allowlisted CSS background URLs with `none` layer slots; and
 materializes only same-origin `/assets/images/`
 GIF/JPEG/PNG/WebP background assets as bounded data images (at most 32 cached
@@ -254,7 +255,9 @@ approved computed typography, borders, quoted-literal pseudo elements, theme
   formula trees. Hidden SVG `<defs>` subtrees are retained for visible
   clip-path/mask/gradient/filter references, while unrelated hidden nodes are
   removed. Non-literal pseudo content such as `attr()` and counters is
-  intentionally omitted. Materialized background-image overlays use an
+  intentionally omitted. KaTeX MathML in this contract means only the generated
+  `.katex-mathml` fallback tree; arbitrary MathML authored in Markdown is not
+  implicitly normalized. Materialized background-image overlays use an
   isolated negative stacking level so they remain behind copied text. Computed
   `0%`, `50%`, and `100%` background positions are normalized before composing
   centered theme-image overlays. Single-token `background-position` values use

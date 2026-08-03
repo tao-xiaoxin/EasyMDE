@@ -1565,12 +1565,9 @@ describe('createBrowserWechatClipboard', () => {
   });
 
   it('starts the Clipboard write while a theme image is still pending activation', async () => {
-    let resolveImage: ((response: Response) => void) | null = null;
     let activation = true;
     let activationAtWrite = false;
-    const imageResponse = new Promise<Response>((resolve) => {
-      resolveImage = resolve;
-    });
+    const pendingImage = deferred<Response>();
     class ClipboardItemStub {
       constructor(public payload: Record<string, Blob>) {}
     }
@@ -1584,7 +1581,7 @@ describe('createBrowserWechatClipboard', () => {
       blob: window.Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      fetch: vi.fn(() => imageResponse),
+      fetch: vi.fn(() => pendingImage.promise),
       getComputedStyle: (element, pseudoElement) => {
         if ('H1' === element.tagName && '::before' === pseudoElement) {
           return declaration({
@@ -1615,8 +1612,7 @@ describe('createBrowserWechatClipboard', () => {
     expect(writes).toHaveLength(1);
     expect(activationAtWrite).toBe(true);
     activation = false;
-    const resolvePendingImage = resolveImage as unknown as (response: Response) => void;
-    resolvePendingImage({
+    pendingImage.resolve({
       blob: async () => new window.Blob(['theme image'], { type: 'image/png' }),
       ok: true
     } as unknown as Response);

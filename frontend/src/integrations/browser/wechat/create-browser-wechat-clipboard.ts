@@ -2427,10 +2427,8 @@ export function createBrowserWechatClipboard(
           : null;
       if (!payload) {
         const current = preparedPayloads.get(preview);
-        const fallbackCanServe = current?.payload === null
-          && current.fallback?.sourceMarkup === currentMarkup;
         const preparationIsPending = Boolean(current && !current.payload);
-        if (!preparationIsPending && (!current || !fallbackCanServe)) {
+        if (!preparationIsPending) {
           const retry = preparedClipboardPayload(
             preview,
             runtime,

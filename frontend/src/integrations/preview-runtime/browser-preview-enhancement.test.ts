@@ -386,6 +386,36 @@ describe('createBrowserPreviewEnhancementPort', () => {
     );
   });
 
+  it('does not forward a Mermaid asset error when Mermaid is not requested', async () => {
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    autoLoadResources();
+    const port = createBrowserPreviewEnhancementPort(
+      {
+        ...previewEnhancementBootstrapFixture,
+        assets: {
+          ...previewEnhancementBootstrapFixture.assets,
+          mermaidAssetError: 'frontend-enhancement-build-integrity-invalid'
+        }
+      },
+      { documentRef: document, runtime: runtime(enhance) }
+    );
+
+    await port.enhance(
+      document.createElement('article'),
+      { syntaxHighlight: true, mermaid: false },
+      () => true,
+      context()
+    );
+
+    expect(enhance).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      {
+        features: { syntaxHighlight: true, mermaid: false },
+        strings: { renderingFailed: 'Rendering failed.' }
+      }
+    );
+  });
+
   it('removes a failed script and permits a later explicit preview retry', async () => {
     const append = document.head.appendChild.bind(document.head);
     let mermaidAttempts = 0;

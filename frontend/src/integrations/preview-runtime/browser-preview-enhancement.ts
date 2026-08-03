@@ -398,7 +398,7 @@ export function createBrowserPreviewEnhancementPort(
         throw resourceError('preview-enhancement-runtime-unavailable');
       }
       await enhancements.enhance(surface, {
-        ...(assets.mermaidAssetError
+        ...(mermaidAssetFailure
           ? { assetErrors: { mermaid: assets.mermaidAssetError } }
           : {}),
         features: fallbackFeatures,

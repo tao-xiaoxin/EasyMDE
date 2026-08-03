@@ -363,6 +363,7 @@ test('frontend validator does not treat an XML namespace prefix as a remote URL 
 test('frontend validator rejects cross-platform absolute local paths', () => {
   for (const absolutePath of [
     '/private/tmp/easymde-build/source.tsx',
+    'url(/Users/builder/easymde/source.css)',
     'C:\\Users\\builder\\easymde\\source.tsx'
   ]) {
     const root = copyBuildOutput();

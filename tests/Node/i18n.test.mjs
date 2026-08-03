@@ -31,7 +31,7 @@ const productionRoots = [
 	"src",
 	"templates",
 	"assets/js/admin",
-	"assets/js/frontend",
+	"frontend/src/integrations/preview-runtime",
 ];
 const translationFunctions = [
 	"__",
@@ -71,7 +71,7 @@ function collectFiles(path, predicate, files = []) {
 
 function productionText() {
 	return productionRoots
-		.flatMap((root) => collectFiles(root, (file) => /\.(?:php|js)$/.test(file)))
+		.flatMap((root) => collectFiles(root, (file) => /\.(?:php|js|ts)$/.test(file)))
 		.map((file) => readFileSync(file, "utf8"))
 		.join("\n");
 }
@@ -123,11 +123,11 @@ function jsAdminStringKeys() {
 function jsFrontendStringKeys() {
 	const keys = new Set();
 
-	collectFiles("assets/js/frontend", (file) => file.endsWith(".js")).forEach(
+	collectFiles("frontend/src/integrations/preview-runtime", (file) => file.endsWith(".ts")).forEach(
 		(file) => {
 			const source = readFileSync(file, "utf8");
 			for (const match of source.matchAll(
-				/getString\(\s*config\s*,\s*['"]([A-Za-z][A-Za-z0-9]*)['"]/g,
+				/stringValue\(\s*config\s*,\s*['"]([A-Za-z][A-Za-z0-9]*)['"]/g,
 			)) {
 				keys.add(match[1]);
 			}

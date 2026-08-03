@@ -97,7 +97,7 @@ npm test
 
 `npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production normal-editor and public code-copy comparisons. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
-The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds the Editor into `.cache/easymde-frontend-production-check/` and public code copy into `.cache/easymde-code-copy-production-check/`, validates both outputs, and compares each complete file set and its bytes with the committed `assets/build/` and `assets/build/code-copy/` runtimes without rewriting them. `npm run build:frontend` is the explicit maintainer command that regenerates both committed Vite/WordPress Manifest pairs, hashed scripts, and matching `.asset.php` dependency metadata. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The Editor entry retains the stable `easymde-admin-editor-toolbar` handle and declares the WordPress-owned `media-editor`, `wp-api-fetch`, `wp-element`, and `wp-hooks` runtimes it consumes. The independent public TypeScript entry retains the stable `easymde-code-copy` handle and has no WordPress script dependency.
+The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds the Editor, code-copy, shared frontend enhancements, DOM bootstrap, and Mermaid entries from `frontend/vite.mermaid.config.ts` into their `.cache/*-production-check/` directories, validates each output, and compares each complete file set and its bytes with the committed `assets/build/` runtimes without rewriting them. `npm run build:frontend` is the explicit maintainer command that regenerates all committed Vite/WordPress Manifest pairs, hashed scripts, and matching `.asset.php` dependency metadata. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The Editor entry retains the stable `easymde-admin-editor-toolbar` handle and declares the WordPress-owned `media-editor`, `wp-api-fetch`, `wp-element`, and `wp-hooks` runtimes it consumes. The independent public TypeScript entries retain the stable `easymde-code-copy`, `easymde-enhancements`, `easymde-frontend`, and `easymde-mermaid` handles and have no WordPress script dependency. The Mermaid entry is committed under `assets/build/frontend-mermaid/` and is validated through its manifest and complete byte-for-byte production comparison.
 
 Translation maintenance commands are:
 
@@ -136,8 +136,8 @@ npm run build:release
 - `dist/EasyMDE.zip`
 
 The release path never refreshes committed runtime assets. `npm run assets:check`
-and the release builder compare every manifest-owned Highlight.js, Mermaid,
-KaTeX, font, license, and notice destination with its declared local source;
+and the release builder compare every manifest-owned Highlight.js, KaTeX, font,
+license, and notice destination with its declared local source;
 npm-backed sources must also exist in the root dependency and lockfile
 metadata. Validation fails on missing, changed, or unexpected managed files.
 
@@ -152,7 +152,7 @@ The CI release package job also creates source snapshots from the checked-out tr
 
 Those source archives use `EasyMDE-<version>/` as their root directory. They are separate from the installable runtime plugin ZIP and are not consumed by Plugin Check or E2E.
 
-The installable plugin ZIP includes the committed Editor artifacts under `assets/build/` and the public code-copy artifacts under `assets/build/code-copy/`; it excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
+The installable plugin ZIP includes the committed Editor artifacts under `assets/build/`, the public code-copy artifacts under `assets/build/code-copy/`, the shared enhancement/bootstrap artifacts under `assets/build/frontend-enhancements/` and `assets/build/frontend-bootstrap/`, and the feature-gated Mermaid bundle under `assets/build/frontend-mermaid/`; it excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
 
 CI uploads the release outputs as separate Actions artifacts:
 
@@ -233,7 +233,10 @@ The current release package includes runtime plugin files such as:
 - `includes/`, `src/`, `templates/`, `assets/` including both manifest-backed
   production browser entries, `languages/`, and runtime `vendor/`.
 
-The package must include Composer runtime dependencies, local Highlight.js/Mermaid/KaTeX assets, KaTeX fonts, registered article and code themes, bundled language files, templates, source files, and generated third-party notices.
+The package must include Composer runtime dependencies, local Highlight.js and
+KaTeX assets, the manifest-backed Mermaid TypeScript bundle, KaTeX fonts,
+registered article and code themes, bundled language files, templates, source
+files, and generated third-party notices.
 
 The package must not ship local-only or development artifacts such as:
 

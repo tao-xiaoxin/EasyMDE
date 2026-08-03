@@ -10,7 +10,7 @@ const styleSource = readFileSync(
   'utf8'
 );
 const bootstrapSource = readFileSync(
-  join(repoRoot, 'assets/js/frontend/bootstrap.js'),
+  join(repoRoot, 'frontend/src/entrypoints/frontend-bootstrap.ts'),
   'utf8'
 );
 const frontendAssetsSource = readFileSync(
@@ -19,6 +19,7 @@ const frontendAssetsSource = readFileSync(
 );
 
 test('shared frontend bootstrap leaves code-copy ownership to its TypeScript entry', () => {
+  assert.match(bootstrapSource, /DOMContentLoaded/);
   assert.match(bootstrapSource, /EasyMDEEnhancements\.enhance\(document, config\)/);
   assert.doesNotMatch(bootstrapSource, /EasyMDECodeCopy|code-copy-owner-missing/);
 });

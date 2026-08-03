@@ -2211,6 +2211,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     min-width: 0;
     max-width: 100%;
     margin-inline: 0;
+    padding-inline: min(48px, max(8px, calc((100% - 80px) / 2)));
 }
 
 .easymde-editor:not(.is-immersive) .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active),
@@ -2236,11 +2237,28 @@ body:has(.easymde-editor.is-immersive) .wrap {
     max-width: 100%;
 }
 
+/* Immersive split panes can become narrower than a table's intrinsic width.
+ * Keep the article root contained while preserving a local table scroll owner. */
+.easymde-editor.is-immersive-split .easymde-rendered-content table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
 .easymde-editor:not(.is-immersive) .easymde-rendered-content :is(th, td) {
     overflow-wrap: anywhere;
 }
 
+.easymde-editor.is-immersive-split .easymde-rendered-content :is(th, td) {
+    overflow-wrap: anywhere;
+}
+
 .easymde-editor:not(.is-immersive) .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
+    overflow-wrap: anywhere;
+}
+
+.easymde-editor.is-immersive-split .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
     overflow-wrap: anywhere;
 }
 

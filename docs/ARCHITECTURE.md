@@ -156,9 +156,13 @@ copy may retry it. When
 approved theme-image preparation is still pending, the modern path passes
 deferred `Blob` Promises to one `ClipboardItem` and starts
 `navigator.clipboard.write` in the originating click task. When no approved
-theme image needs asynchronous materialization, the same normalized payload has
-a synchronous preparation path in the click task. Preparation retains one
-serialized HTML/plain-text payload for the current Preview sink; the legacy path
+theme image needs asynchronous materialization, the modern path still uses
+the asynchronous prepared payload; background preparation never performs a
+synchronous full-Preview serialization. If `ClipboardItem` construction or
+the `write()` invocation throws synchronously and no current prepared payload
+exists, the adapter may make one synchronous serialization attempt in that
+originating click task for the activation-safe legacy fallback. Preparation
+retains one serialized HTML/plain-text payload for the current Preview sink; the legacy path
 consumes it only when ready and calls `execCommand` synchronously in that same
 click task. A click before required asynchronous preparation completes, a modern
 write rejected after an await, or a payload that resolves after a fast write with

@@ -152,6 +152,13 @@ disabled WeChat export does not schedule background serialization or theme-image
 fetches. Legacy retry coverage verifies that a transient
 preparation failure starts one background retry without claiming success for
 that first click.
+The normal preparation path is intentionally asynchronous even when no theme
+image is pending; this keeps Mermaid/KaTeX-heavy Preview updates from blocking
+the editor main thread. The adapter's synchronous serializer is covered only as
+the click-task fallback when `ClipboardItem` construction or `write()` throws
+synchronously and no current prepared payload exists. The focused tests must
+also preserve the negative case: a modern write rejection after an `await` never
+crosses into legacy `execCommand`.
 The Adapter and EditorRoot regressions also verify that immersive visual edits
   coalesce preparation and replace the prepared payload, root-only font/theme
   changes or responsive computed-style/geometry changes cannot reuse a stale

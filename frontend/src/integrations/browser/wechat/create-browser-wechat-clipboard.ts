@@ -1987,10 +1987,11 @@ function createPreparedClipboardPayload(
   // the DOM, so keep both the full sink markup and a layout fingerprint.
   const sourceMarkup = preview.outerHTML;
   const layoutSignature = preparedLayoutSignature(preview, runtime);
-  const synchronousPayload = serializeClipboardPayloadSynchronously(preview, runtime);
-  const promise = (synchronousPayload
-    ? Promise.resolve(synchronousPayload)
-    : serializeClipboardPayload(preview, runtime, backgroundAssetCache))
+  // Keep normal preparation asynchronous. A synchronous full-Preview walk is
+  // only justified inside the originating click task when a browser rejects
+  // Promise-backed ClipboardItem values; doing it for every background refresh
+  // can monopolize the main thread on Mermaid/KaTeX-heavy articles.
+  const promise = serializeClipboardPayload(preview, runtime, backgroundAssetCache)
     .then((payload) => {
       prepared.payload = payload;
       const current = preparedPayloads.get(preview);
@@ -2034,7 +2035,7 @@ function createPreparedClipboardPayload(
     });
   prepared = {
     fallback,
-    payload: synchronousPayload,
+    payload: null,
     promise,
     sequence,
     sourceMarkup,
@@ -2176,7 +2177,7 @@ export function createBrowserWechatClipboard(
           // may therefore use the activation-safe compatibility path.
           const currentMarkup = preview.outerHTML;
           const currentLayoutSignature = preparedLayoutSignature(preview, runtime);
-          const fallback = prepared.payload
+          const preparedFallback = prepared.payload
             && prepared.sourceMarkup === currentMarkup
             && prepared.layoutSignature === currentLayoutSignature
             ? prepared.payload
@@ -2187,6 +2188,12 @@ export function createBrowserWechatClipboard(
             : !prepared.payload && prepared.fallback?.sourceMarkup === currentMarkup
               ? prepared.fallback.payload
               : null;
+          // If no background payload has completed yet, the compatibility
+          // path gets one synchronous attempt in the click task. A remote
+          // theme image deliberately returns null here; claiming success
+          // without its materialized asset would produce a partial paste.
+          const fallback = preparedFallback
+            ?? serializeClipboardPayloadSynchronously(preview, runtime);
           if (fallback && legacyCopy(fallback.html, runtime)) {
             return { method: 'legacy', status: 'copied' };
           }

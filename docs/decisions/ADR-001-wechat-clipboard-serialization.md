@@ -44,9 +44,13 @@ activation task. Preparation retains one serialized HTML/plain-text payload for
 the current Preview sink and binds each stable notification to the active
 ordinary or immersive surface. A hidden ordinary Preview refresh cannot cancel
 preparation for an editable visual surface. When no approved theme image needs
-asynchronous materialization, the same normalized payload is built
-synchronously in the copy task; the legacy path can then invoke `execCommand`
-without crossing an activation boundary. If approved image preparation is still
+asynchronous materialization, the modern path still consumes the asynchronous
+prepared payload; stable background preparation never performs a synchronous
+full-Preview serialization. If `ClipboardItem` construction or `write()`
+invocation throws synchronously and no current prepared payload exists, the
+adapter may make one synchronous serialization attempt in that same copy task
+so the activation-safe legacy path can invoke `execCommand` without crossing
+an activation boundary. If approved image preparation is still
 pending, modern Clipboard receives deferred Blob values and legacy remains an
 explicit failure until a prepared payload exists. If modern writing rejects
 after an await, the operation fails explicitly rather than entering legacy after
@@ -171,8 +175,9 @@ The normalized payload:
 
 The legacy path is a compatibility branch inside the same explicit user action,
 not a second renderer or a silent success. It consumes a payload prepared before
-the click or one produced synchronously in that click when no asynchronous theme
-asset is required; it never awaits theme-image work in the click handler. If
+the click. Only a synchronous `ClipboardItem`/`write()` setup failure with no
+current prepared payload may trigger one synchronous serialization attempt in
+that click task; it never awaits theme-image work in the click handler. If
 `ClipboardItem` construction or the `write()` call throws synchronously, that
 same click task may use the current prepared payload; a modern write rejection
 after an await remains a failure rather than an asynchronous legacy fallback.

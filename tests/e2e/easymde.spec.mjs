@@ -16,6 +16,7 @@ const fullCapabilityImage = readFileSync(
   new URL('../../docs/assets/easymde-logo-rounded.png', import.meta.url)
 );
 const longFixtureHeadingPrefix = '超长中英文标题用于验证狭窄预览容器';
+const WORDPRESS_SESSION_REFRESH_INTERVAL_MS = 2 * 60_000;
 const managedRuntimeAssets = [
   {
     key: 'codeFrameCss',
@@ -220,6 +221,54 @@ async function login(page, user) {
     form.requestSubmit(submit);
   }, user);
   await expect(page.locator('#wpadminbar')).toBeVisible();
+}
+
+async function refreshWordPressSession(page, user) {
+  await page.goto('/wp-admin/');
+  if (await page.locator('#wpadminbar').count()) return;
+  await login(page, user);
+}
+
+function startWordPressSessionKeepalive(page, user) {
+  let stopped = false;
+  let failure = null;
+  let activeRefresh = Promise.resolve();
+
+  const refresh = async () => {
+    if (stopped || failure) return;
+    let refreshPage = null;
+    try {
+      refreshPage = await page.context().newPage();
+      await refreshWordPressSession(refreshPage, user);
+    } catch (error) {
+      failure ??= error;
+    } finally {
+      if (refreshPage) {
+        try {
+          await refreshPage.close();
+        } catch (error) {
+          failure ??= error;
+        }
+      }
+    }
+  };
+
+  const timer = setInterval(() => {
+    activeRefresh = activeRefresh.then(refresh);
+  }, WORDPRESS_SESSION_REFRESH_INTERVAL_MS);
+
+  return {
+    async assertHealthy() {
+      await activeRefresh;
+      if (failure) throw failure;
+    },
+    async stop() {
+      stopped = true;
+      clearInterval(timer);
+      await activeRefresh;
+      if (failure) throw failure;
+    }
+  };
 }
 
 async function openEasyMdeNewPost(page) {
@@ -974,14 +1023,29 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test.afterEach(async ({}, testInfo) => {
-    runCleanupSteps([
-      ...(testInfo.easymdeTermIds ?? []).map((termId) => () => {
-        runWp(['term', 'delete', 'category', String(termId)]);
-      }),
-      ...(testInfo.easymdeUser
-        ? [() => deleteUserContent(testInfo.easymdeUser.id)]
-        : [])
-    ]);
+    const failures = [];
+    if (testInfo.easymdeStopSessionKeepalive) {
+      try {
+        await testInfo.easymdeStopSessionKeepalive();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    try {
+      runCleanupSteps([
+        ...(testInfo.easymdeTermIds ?? []).map((termId) => () => {
+          runWp(['term', 'delete', 'category', String(termId)]);
+        }),
+        ...(testInfo.easymdeUser
+          ? [() => deleteUserContent(testInfo.easymdeUser.id)]
+          : [])
+      ]);
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length) {
+      throw new AggregateError(failures, 'EasyMDE E2E cleanup failed.');
+    }
   });
 
   test('uses one React owner for ordinary and immersive editing', async ({ page }, testInfo) => {
@@ -1769,10 +1833,12 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test('keeps every registered article theme contained across ordinary and immersive preview states', async ({ page }, testInfo) => {
-    test.setTimeout(10 * 60_000);
+    test.setTimeout(15 * 60_000);
 
     const user = testInfo.easymdeUser;
     await login(page, user);
+    const sessionKeepalive = startWordPressSessionKeepalive(page, user);
+    testInfo.easymdeStopSessionKeepalive = sessionKeepalive.stop;
     await openEasyMdeNewPost(page);
 
     const catalog = await editorThemeCatalog(page);
@@ -1905,6 +1971,7 @@ test.describe('EasyMDE editor workflows', () => {
     };
 
     for (const { id, label, cssUrl, swatch } of catalog.articleThemes) {
+      await sessionKeepalive.assertHealthy();
       if (!swatch) {
         throw new Error(`${id}-article-theme-swatch-unavailable`);
       }
@@ -2122,7 +2189,7 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
-    test.setTimeout(240_000);
+    test.setTimeout(8 * 60_000);
     const user = testInfo.easymdeUser;
     const customThemeSuffix = randomUUID().slice(0, 8);
     const customName = 'E2E CSS ' + customThemeSuffix;
@@ -2131,6 +2198,8 @@ test.describe('EasyMDE editor workflows', () => {
     const customCss = 'p { color: rgb(1, 2, 3); }';
 
     await login(page, user);
+    const sessionKeepalive = startWordPressSessionKeepalive(page, user);
+    testInfo.easymdeStopSessionKeepalive = sessionKeepalive.stop;
     await openEasyMdeNewPost(page);
     const fixtureCatalog = await editorThemeCatalog(page);
     const markdown = canonicalMarkdownForSite(fixtureCatalog.localFixtureImage)
@@ -2324,6 +2393,7 @@ test.describe('EasyMDE editor workflows', () => {
     });
     let sharedGeometry;
     for (const { id, label, cssUrl, defaultCodeTheme } of catalog.articleThemes) {
+      await sessionKeepalive.assertHealthy();
       await selectOrdinaryOption(page, articleSelect, label);
       await expect(page.locator('.easymde-pane-preview article'))
         .toHaveClass(new RegExp('easymde-markdown-theme-' + id));
@@ -2382,6 +2452,7 @@ test.describe('EasyMDE editor workflows', () => {
       message: 'an explicit code theme should not change shared frame geometry'
     }).toEqual(sharedGeometry);
     for (const { id, label, cssUrl } of catalog.codeThemes) {
+      await sessionKeepalive.assertHealthy();
       await selectOrdinaryOption(page, codeSelect, label);
       await expect(page.locator('.easymde-pane-preview article'))
         .toHaveClass(new RegExp('easymde-code-theme-' + id));
@@ -2533,6 +2604,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(codeSelect).toContainText(terminalNoir.label);
     await expect(page.locator('body')).not.toContainText(removedCombinedName);
     for (const group of catalog.fontGroups) {
+      await sessionKeepalive.assertHealthy();
       const fontSelect = settingsDialog.locator(group.select).getByRole('combobox');
       for (const { id, label } of group.options) {
         await selectOrdinaryOption(page, fontSelect, label);

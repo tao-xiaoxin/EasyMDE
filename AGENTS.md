@@ -330,12 +330,15 @@ State-changing operations:
   deferred `ClipboardItem` payloads for the modern path and a shared prepared
   payload for the legacy path. Legacy `execCommand` must run synchronously in
   the originating click task after preparation has completed. When no approved
-  theme image needs asynchronous materialization, the adapter may complete the
-  same normalized preparation synchronously in that click task. A pending
-  asynchronous preparation or a rejected modern write must not cross an `await`
-  and then fall back to legacy. If `ClipboardItem` construction or the `write()`
-  call itself throws synchronously, the current prepared payload may use legacy
-  in that same click task; an asynchronous write rejection remains a failure.
+  theme image needs asynchronous materialization, the modern path still uses
+  the asynchronous prepared payload; background preparation must never perform
+  a synchronous full-Preview serialization. If `ClipboardItem` construction or
+  the `write()` call itself throws synchronously and no current prepared payload
+  is available, the adapter may make one synchronous serialization attempt in
+  that originating click task for the activation-safe legacy fallback. A
+  pending asynchronous preparation or a rejected modern write must not cross an
+  `await` and then fall back to legacy. An asynchronous write rejection remains
+  a failure.
   Modern copy reports success only after both the browser write and deferred
   payload resolve; fetch or conversion failure remains an explicit copy
   failure rather than partial success.

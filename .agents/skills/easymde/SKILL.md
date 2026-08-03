@@ -1065,9 +1065,14 @@ Feature boundaries:
   `navigator.clipboard.write` in the originating activation task when approved
   theme-image work is pending, because a `fetch`/`FileReader` await can otherwise
   lose transient user activation. When no asynchronous theme image is needed,
-  the same normalized payload has a synchronous preparation path for the click
-  task. The Adapter reports success only after both the browser write and deferred
-  payload resolve; a fast write must not hide a later serialization failure.
+  the modern path still uses the asynchronous prepared payload; background
+  preparation must not run the full Preview serializer synchronously. If
+  `ClipboardItem` construction or the `write()` invocation throws synchronously
+  and no current prepared payload is available, one synchronous serialization
+  attempt is permitted in that originating click task for the activation-safe
+  legacy fallback. The Adapter reports success only after both the browser write
+  and deferred payload resolve; a fast write must not hide a later serialization
+  failure.
   Preparation stores one serialized HTML/plain-text payload for the current
   stable Preview sink. The legacy path consumes a prepared payload synchronously
   in the originating click task; it must fail while approved image preparation

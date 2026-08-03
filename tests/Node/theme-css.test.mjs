@@ -423,6 +423,19 @@ test('Inkwell light keeps its scoped palette', () => {
   assert.doesNotMatch(light, /(?:^|[,{])\s*(?:html|body|:root)\s*(?:[,\{])/m);
 });
 
+test('DogsChoice keeps the upstream 七彩虹 pink palette in a scoped adapter', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/dogschoice-pink.css'), 'utf8');
+  const root = '.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink';
+
+  assert.match(css, new RegExp(`${root.replaceAll('.', '\\.')}`));
+  assert.equal(cssVariable(css, '--active-file-bg-color'), '#FAE8FF');
+  assert.equal(cssVariable(css, '--text-em-color'), '#f55066');
+  assert.equal(cssVariable(css, '--h1-background-color'), '#FFE8E8');
+  assert.equal(cssVariable(css, '--blockquote-bg-color'), '#E4FFEA');
+  assert.doesNotMatch(css, /(^|\n)\s*(?:html|body|:root)\s*\{/m);
+  assert.doesNotMatch(css, /dogs-(?:jidilan|yuanshanlv)\.css/);
+});
+
 test('Bloom focus-mode effects stay opt-in in EasyMDE adapters', () => {
   const bloomFiles = readdirSync(join(repoRoot, 'assets/themes/article'))
     .filter((name) => /^bloom-.*\.css$/.test(name));

@@ -31,6 +31,17 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
         $this->assertSame('qinghe-zhusha', $registry->sanitize_id('qinghe-zhusha'));
     }
 
+    public function test_dogschoice_qicaihong_theme_keeps_the_legacy_label_and_asset()
+    {
+        $registry = new ArticleThemeRegistry();
+        $theme = $registry->get('dogschoice-pink');
+
+        $this->assertSame('狗狗粉（DogsChoice）', $theme['label']);
+        $this->assertSame('assets/themes/article/dogschoice-pink.css', $theme['asset_path']);
+        $this->assertSame('easymde-markdown-theme-dogschoice-pink', $theme['class_name']);
+        $this->assertSame('dogschoice-pink', $registry->sanitize_id('dogschoice-pink'));
+    }
+
     public function test_crimson_focus_is_added_without_replacing_red_crimson()
     {
         $registry = new ArticleThemeRegistry();

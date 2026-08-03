@@ -18,8 +18,9 @@ This index points to the current technical docs. The root [README](../README.md)
 3. [Core Philosophy](CORE-PHILOSOPHY.md) for a non-normative mnemonic introduction.
 4. [Architecture](ARCHITECTURE.md) for the current implementation boundaries.
 5. [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md) for approved React target architecture and interface-design decisions.
-6. [Development](DEVELOPMENT.md) for Composer, npm assets, Docker, `.env`, and WordPress test-suite setup.
-7. [Testing and Release](TESTING_AND_RELEASE.md) for quality gates that apply when code, assets, release scripts, or packaging behavior change.
+6. [ADR-001: Portable WeChat Clipboard Serialization](decisions/ADR-001-wechat-clipboard-serialization.md) for the copy boundary and rejected alternatives.
+7. [Development](DEVELOPMENT.md) for Composer, npm assets, Docker, `.env`, and WordPress test-suite setup.
+8. [Testing and Release](TESTING_AND_RELEASE.md) for quality gates that apply when code, assets, release scripts, or packaging behavior change.
 
 **Maintainers Preparing Releases**
 
@@ -40,6 +41,7 @@ This index points to the current technical docs. The root [README](../README.md)
 - [Architecture](ARCHITECTURE.md)
 - [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md)
 - [Plugin Check Notes](PLUGIN_CHECK.md)
+- [ADR-001: Portable WeChat Clipboard Serialization](decisions/ADR-001-wechat-clipboard-serialization.md)
 - [Security Policy](../SECURITY.md)
 - [Upgrade Notes](../UPGRADING.md)
 - [Agent Instructions](../AGENTS.md)

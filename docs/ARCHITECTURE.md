@@ -149,9 +149,183 @@ Local Draft recovery uses the versioned
 500-millisecond latest-write scheduler, explicit read/write/discard failures,
 and cross-tab conflict handling. New-post identity comes from the stable PHP
 Bootstrap contract rather than WordPress's temporary auto-draft ID. WeChat
-export accepts only the current stable sanitized and enhanced Preview; Clipboard
-failure remains visible and temporary fallback DOM, Selection, Focus, and Scroll
-are cleaned up.
+export is invoked with only the current stable sanitized and enhanced Preview.
+The session/EditorRoot owns that source boundary; the Adapter serializes the
+HTMLElement it receives and does not establish a second document authority. The
+`createBrowserWechatClipboard` Adapter owns one clone-and-serialize pipeline;
+that session passes it the current stable Preview sink. Both
+`navigator.clipboard.write` and the legacy `document.execCommand('copy')`
+compatibility path receive the same normalized HTML. The modern path derives
+`text/plain` from the connected normalized export surface captured for that
+same preparation after removing exporter whitespace markers and normalizing
+non-breaking spaces; the modern plain-text measurement host uses the rendered
+Preview width, reusing the last non-zero rendered width while immersive source
+mode temporarily hides the Preview surface. The legacy path selects the same
+HTML and lets the destination derive visible plain text. When WeChat export is
+disabled by bootstrap, EditorRoot does not schedule background preparation or
+fetch theme assets. Stable Preview notifications schedule
+one debounced preparation after the Preview settles; this may prewarm the
+Adapter's bounded same-origin theme-image cache (at most 32 entries). Each
+approved same-origin theme-image request has a ten-second abortable timeout
+that remains active through fetch, response-body reads, and Data URL
+conversion; timeout evicts the pending cache entry and fails the preparation
+so a later copy may retry it. The browser adapter forwards the serializer-owned
+RequestInit signal unchanged. When
+approved theme-image preparation is still pending, the modern path passes
+deferred `Blob` Promises to one `ClipboardItem` and starts
+`navigator.clipboard.write` in the originating click task. When no approved
+theme image needs asynchronous materialization, the modern path still uses
+the asynchronous prepared payload; background preparation never performs a
+synchronous full-Preview serialization. If `ClipboardItem` construction or
+the `write()` invocation throws synchronously and no current prepared payload
+exists, the adapter may make one synchronous serialization attempt in that
+originating click task for the activation-safe legacy fallback. Preparation
+retains one serialized HTML/plain-text payload for the current Preview sink; the legacy path
+consumes it only when ready and calls `execCommand` synchronously in that same
+click task. A click before required asynchronous preparation completes, a modern
+write rejected after an await, or a payload that resolves after a fast write with
+an error is an explicit failure and never enters legacy asynchronously. A
+synchronous `ClipboardItem`/`write()` setup failure may use the current prepared
+payload through legacy in the same click task. Immersive visual edits coalesce
+  preparation, and later stable Preview notifications replace the prepared
+  payload; the full sink markup, including root `class`/`style` attributes,
+  plus the current viewport, computed export styles, pseudo-element styles, and
+  element geometry is checked before reuse. Window/viewport resize and
+  immersive split-pane changes schedule a refreshed payload, so layout-only
+  changes cannot strand a stale legacy copy: while a replacement is pending,
+  the last resolved payload remains available to the synchronous legacy path
+  only when the source markup is unchanged; a successful replacement
+  supersedes it, a failed replacement restores the newest successful
+  same-source payload (including one resolved by an older overlapping refresh),
+  and changed source markup never reuses it. Preparation generations are
+  monotonic, so an older completion cannot downgrade a newer successful
+  same-source fallback. The layout fingerprint ignores viewport-relative
+  `left`/`top`/`right`/`bottom` coordinates so ordinary page scrolling does not
+  invalidate a payload; dimensions and computed styles that affect wrapping still
+  invalidate it. Background preparation failures remain quiet until the
+  actual copy attempt reports the failure. When the legacy path has no prepared
+  entry after a transient failure, that click starts one background retry but
+  still returns failure; a later click may use it only after it resolves. The browser
+  environment also observes the current sink's image/video load, error,
+  metadata, and resize events, FontFaceSet loading completion/failure,
+  ResizeObserver geometry, and inserted or removed descendants; those
+  post-render layout changes schedule the same refresh, removed nodes are
+  unobserved immediately, and observers/listeners are cleaned up with the sink.
+  Font, theme,
+  or responsive layout changes cannot reuse stale HTML, and output from the
+  moment immersive mode opened or from an earlier edit is not reused.
+  The EditorRoot observes whichever Preview surface is currently active,
+  including the immersive visual surface. When a visual appearance or Custom CSS
+  update first tears down that runtime, the refreshed ordinary Preview snapshot
+  triggers preparation after cleanup, so legacy Copy never depends on a stale or
+  disposed element.
+  Stable Preview snapshot notifications target that same active surface; a
+  hidden ordinary Preview refresh cannot cancel preparation for the editable
+  visual surface.
+  EditorRoot marks these notifications as background preparation: the adapter
+  starts at most one full Preview serialization per sink, keeps only the latest
+  request while that serialization is active, and waits for a quiet turn before
+  replacing it. Background style and geometry walks also yield to browser tasks
+  periodically, so rapid immersive split-layout changes remain interactive
+  without weakening the full markup, viewport, style, pseudo-element, and
+  geometry freshness checks used by Copy.
+Copy is a browser compatibility output and never writes Markdown,
+`post_content`, metadata, revisions, or publication state.
+
+Mermaid flowcharts use SVG `foreignObject` labels whose preview dimensions are
+calculated with the preview font. WeChat can use a wider fallback font and
+also strips `white-space`, `word-break`, and `<nobr>` during paste. The shared
+serializer therefore scopes visible overflow and non-wrapping structure to
+Mermaid `foreignObject` labels, expands numeric label widths around the original
+center by at least 32px or 1.5x, and gives the XHTML label container intrinsic
+`max-content` sizing. It also inserts zero-width word-joiner markers; modern
+plain text removes those markers. This keeps the full label when the destination
+font is wider without moving the node's center. Ordinary SVG, ER/text
+diagrams, and KaTeX are not rewritten by this Mermaid-specific path.
+
+The serializer removes scripts, styles, interactive controls, CSS classes, and
+source/editor transient attributes; keeps only valid fragment IDs and
+SVG-internal IDs; sanitizes URL and style values; preserves safe image `src`,
+`srcset` candidates, and link URLs; remote `<img>`/`srcset` candidates may
+remain but are not fetched by the serializer; removes unsafe URLs and replaces
+remote/non-allowlisted CSS background URLs with `none` layer slots; and
+materializes only same-origin `/assets/images/`
+GIF/JPEG/PNG/WebP background assets as bounded data images (at most 32 cached
+assets; each fetched source blob is limited by `MAX_DATA_IMAGE_LENGTH` =
+4,000,000). Repeating theme
+backgrounds retain their materialized `background` declaration rather than
+being flattened to one `<img>`. Generated theme-image
+`<img>` nodes retain their explicit background dimensions and are excluded from
+generic media bounds. A single numeric `background-size` token maps to an
+explicit width with `height:auto`; a second numeric token remains the
+explicit height. Omitted or `auto` sizing remains intrinsic rather than being
+stretched to the host box, while `cover` and `contain` map to equivalent
+`object-fit` sizing. CSS edge-offset positions such as `right 12px bottom 6px`
+retain both edge and offset values. Materialized theme images use `max-width:none` so a fixed
+decoration wider than its host is not clamped by destination image defaults.
+For non-repeating multi-layer
+backgrounds, non-image layers such as gradients remain in the copied CSS and
+each safe image layer becomes an isolated overlay with its original order,
+background size, and background position. The copied `background-repeat`,
+`background-position`, and `background-size` longhands are expanded according
+to CSS's repeated-final-layer semantics and compacted by the removed image
+indexes, so they remain aligned with retained layers. Quoted pseudo-elements
+with visible text use an isolated negative-level image overlay; empty
+decoration pseudo-elements may retain an in-flow image footprint. It preserves
+approved computed typography, borders, quoted-literal pseudo elements, theme
+  decorations, non-root decoration dimensions/relative/absolute positioning/
+  flex sizing/float/overflow and box sizing, non-math SVG responsiveness, media bounds without
+  changing inline media display or margins, and KaTeX's visual SVG tree, but
+  removes only the `.katex-mathml` tree so WeChat cannot import two competing
+  formula trees. Hidden SVG `<defs>` subtrees are retained for visible
+  clip-path/mask/gradient/filter references, while unrelated hidden nodes are
+  removed. Non-literal pseudo content such as `attr()` and counters is
+  intentionally omitted. KaTeX MathML in this contract means only the generated
+  `.katex-mathml` fallback tree; arbitrary MathML authored in Markdown is not
+  implicitly normalized. Materialized background-image overlays use an
+  isolated negative stacking level so they remain behind copied text. Computed
+  `0%`, `50%`, and `100%` background positions are normalized before composing
+  centered theme-image overlays. Single-token `background-position` values use
+  CSS's centered missing-axis default. Two-value keyword/offset positions follow
+  CSS axis order (`left 10px` uses the vertical offset and `top 10px` uses the
+  horizontal offset); explicit edge offsets use the four-value form. Fixed/sticky positioning is never reactivated
+  by a generated overlay, and offsets inert under static positioning are
+  neutralized when the exporter creates a relative containing block.
+  Exporter-owned `aria-hidden` decoration
+and `leaf` markers are structural exceptions to source transient-attribute
+removal. Article/div roots become portable sections and text leaves are wrapped
+for destination stability. Code frames encode line breaks explicitly and keep
+each source line non-wrapping.
+Tables and display formulas are centered within the destination column and
+receive horizontal-overflow rules; inline formulas remain non-wrapping. Each
+copied table is placed in a real block scroll owner while the table keeps
+intrinsic `max-content` sizing, so short tables remain centered and wide rows
+scroll horizontally without relying on ignored overflow on `display:table`.
+When full-width behavior is derived from rendered geometry rather than a
+literal `width:100%`, the serializer caches the source table's last visible
+classification and reuses it while immersive source mode hides the Preview;
+a later visible pass replaces that classification.
+Theme table shims (`display:contents`, `container-type`, and `100cqi`
+pseudo-element geometry) are preserved. Task-list checkboxes retain checked
+state as disabled, attribute-minimized controls; arbitrary form controls are
+removed. The actual code/table/formula scroll owner must be checked in the
+destination, and no exporter wrapper may impose a whole-article height or
+vertical scrollbar, so a page-level WeChat scrollbar is not evidence of an
+article-level serializer defect.
+
+On failure, the Adapter reports the actual browser result. Its temporary
+fallback container, Selection, Focus, and Scroll are restored on every exit;
+the WeChat export session exposes an error and never claims a copy succeeded.
+`createWechatExportSession` is the single session owner shared by the ordinary
+and immersive surfaces. It checks the enabled/active state and the current
+Preview sink before invoking the Adapter, rejects empty/loading/error Preview
+states with `wechat-preview-unavailable`, coalesces concurrent requests, maps
+Adapter rejection to `wechat-copy-failed`, reports
+`wechat-clipboard-unsupported` separately, and suppresses late status after
+teardown. A failed same-origin theme-image fetch or conversion rejects the
+copy; it never publishes a partial payload.
+The decision rationale and rejected alternatives are in
+[ADR-001](decisions/ADR-001-wechat-clipboard-serialization.md).
 
 ## Service Wiring
 

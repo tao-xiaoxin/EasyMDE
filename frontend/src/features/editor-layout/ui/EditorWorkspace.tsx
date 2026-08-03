@@ -28,6 +28,7 @@ type OrdinaryEditorStatus = Readonly<{
 
 type EditorWorkspaceProps = Readonly<{
   direction: 'ltr' | 'rtl';
+  onLayoutChange?: () => void;
   ordinaryStatus?: OrdinaryEditorStatus;
   preview: ReactNode;
   splitResizable?: boolean;
@@ -62,6 +63,7 @@ function clampSplit(value: number): number {
  */
 export function EditorWorkspace({
   direction,
+  onLayoutChange,
   ordinaryStatus,
   preview,
   splitResizable = false,
@@ -75,6 +77,7 @@ export function EditorWorkspace({
   const [characterCount, setCharacterCount] = useState(() =>
     statusDocument ? writingCharacterCount(statusDocument.getValue()) : 0
   );
+  const previousSplitRef = useRef(split);
 
   useEffect(
     () => () => {
@@ -92,6 +95,12 @@ export function EditorWorkspace({
     publish();
     return statusDocument.subscribe(publish);
   }, [statusDocument]);
+
+  useEffect(() => {
+    if (!splitResizable || previousSplitRef.current === split) return;
+    previousSplitRef.current = split;
+    onLayoutChange?.();
+  }, [onLayoutChange, split, splitResizable]);
 
   const startResize = (event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault();

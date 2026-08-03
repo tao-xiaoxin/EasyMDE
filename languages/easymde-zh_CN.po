@@ -1454,6 +1454,10 @@ msgid "Inkwell"
 msgstr "墨砚"
 
 #: src/Theme/ArticleThemeRegistry.php:23
+msgid "Inkwell Dark"
+msgstr "墨砚深色"
+
+#: src/Theme/ArticleThemeRegistry.php:24
 msgid "Nocturne"
 msgstr "夜曲"
 

@@ -6,7 +6,8 @@ the editor shell or shared code-frame ownership.
 
 | EasyMDE ID | Typora file name (installed) | Upstream source revision | Selected variant | License / attribution |
 | --- | --- | --- | --- | --- |
-| `inkwell` | `墨砚（typora-theme-inkwell）` | `toxic-19/typora-theme-inkwell@a7d1be224725744c78532c6009e6d6ba54d7c274` | `inkwell.css` | MIT, toxic-19; notice at `assets/themes/article/licenses/inkwell-LICENSE` |
+| `inkwell` | `墨砚-typora-theme-inkwell` (loader-safe alias for `墨砚（typora-theme-inkwell）`) | `toxic-19/typora-theme-inkwell@a7d1be224725744c78532c6009e6d6ba54d7c274` | `inkwell.css` | MIT, toxic-19; notice at `assets/themes/article/licenses/inkwell-LICENSE` |
+| `inkwell-dark` | `墨砚深色-typora-theme-inkwell-dark` (loader-safe alias for `墨砚深色（typora-theme-inkwell-dark）`) | `toxic-19/typora-theme-inkwell@a7d1be224725744c78532c6009e6d6ba54d7c274` | `inkwell-dark.css` | MIT, toxic-19; notice at `assets/themes/article/licenses/inkwell-LICENSE` |
 | `nocturne` | `夜曲（typora-nocturne-theme）` | `suhan42/typora-nocturne-theme@88fdf2221137e7431b865ddbaeb5f0e8b3cb9c8a` | independent EasyMDE recreation of the documented dark palette | No repository license declaration found; upstream CSS is not copied |
 | `animal-island` | `动物岛（typora-theme-animal-island）` | `YanyingWei1997/typora-theme-animal-island@c5b013430d68a883db4cc3b8a6235d4c02a0e57e` | `animal-island.css` (light) | MIT, YanyingWei; notice at `assets/themes/article/licenses/animal-island-LICENSE` |
 | `phycat-mint` | `薄荷猫（typora-theme-phycat）` | `sumruler/typora-theme-phycat@b49f1fc6b193e333a3ebb186bbf1ae7f8fc21778` | `phycat-mint.css` + `phycat.light.css` | MIT, 徐继龙; notice at `assets/themes/article/licenses/phycat-LICENSE` |
@@ -15,6 +16,11 @@ the editor shell or shared code-frame ownership.
 | `dogschoice-pink` | `狗狗粉（dogs-choice）` | `dkheng/DogsChoice@0d686f858be543558364953f9e31d167d9af2263` | `dogs-qicaihong.css` pink/purple variant only | MIT, dkheng; notice at `assets/themes/article/licenses/dogschoice-LICENSE` |
 | `bloom-petal` | `花瓣（typora-bloom-theme）` | `webkubor/typora-Bloom-theme@3abbeefbcca5a00ea36cc3677b1105de5e2c8f48` | `root-petal.css` + `base-light.css` | README declares MIT; source notice at `assets/themes/article/licenses/bloom-LICENSE` |
 | `spring` | `春日（typora-spring-theme）` | `SprInec/typora-spring-theme@fb8bdaa6139d0649aba01aced459cd5b8b9d7227` | `spring.css` | MIT, SprInec; notice at `assets/themes/article/licenses/spring-LICENSE` |
+
+Typora's macOS loader silently ignores CSS files whose names contain fullwidth
+parentheses, even though it still lists the generated menu label. The two
+Inkwell files therefore use the loader-safe hyphen aliases shown above; their
+bytes remain exact copies of the upstream `inkwell.css` and `inkwell-dark.css`.
 
 Remote Google Fonts and other network imports were removed from the runtime
 CSS. Themes use the existing EasyMDE local/system font stack; OneDark retains

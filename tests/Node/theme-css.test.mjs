@@ -408,6 +408,37 @@ test('shared code typography prefers the neutral Mac terminal font stack', () =>
   assert.doesNotMatch(css, /--easymde-code-font-family:[^;]*Operator Mono/);
 });
 
+test('Inkwell light and dark keep separate scoped palettes', () => {
+  const light = readFileSync(join(repoRoot, 'assets/themes/article/inkwell.css'), 'utf8');
+  const dark = readFileSync(join(repoRoot, 'assets/themes/article/inkwell-dark.css'), 'utf8');
+
+  assert.equal(cssVariable(light, '--bg-color'), '#ffffff');
+  assert.equal(cssVariable(light, '--text-color'), '#3d4852');
+  assert.equal(cssVariable(light, '--heading-color'), '#1a2332');
+  assert.equal(cssVariable(light, '--heading-secondary'), '#2c3e50');
+  assert.equal(cssVariable(light, '--link-color'), '#3b82c4');
+  assert.equal(cssVariable(light, '--code-bg'), '#f6f8fb');
+  assert.equal(cssVariable(light, '--code-text'), '#c7254e');
+  assert.equal(cssVariable(light, '--border-color'), '#e2e8f0');
+  assert.equal(cssVariable(dark, '--bg-color'), '#1a2030');
+  assert.equal(cssVariable(dark, '--text-color'), '#c4cdd8');
+  assert.equal(cssVariable(dark, '--heading-color'), '#edf1f7');
+  assert.equal(cssVariable(dark, '--heading-secondary'), '#a8b8cc');
+  assert.equal(cssVariable(dark, '--link-color'), '#6ba8e0');
+  assert.equal(cssVariable(dark, '--code-bg'), '#242e42');
+  assert.equal(cssVariable(dark, '--code-text'), '#f0a0b8');
+  assert.equal(cssVariable(dark, '--border-color'), '#2d3848');
+  assert.equal(cssVariable(dark, '--font-size-base'), '15px');
+  assert.equal(cssVariable(dark, '--line-height'), '1.75');
+  assert.match(dark, /\.easymde-rendered-content\.easymde-markdown-theme-inkwell-dark\s*\{/);
+  assert.doesNotMatch(dark, /(?:^|[,{])\s*(?:html|body|:root)\s*(?:[,\{])/m);
+  for (const token of ['#a78bfa', '#6ee7b7', '#64748b', '#fb923c', '#60a5fa', '#2dd4bf', '#22d3ee', '#fbbf24', '#f472b6', '#94a3b8']) {
+    assert.match(dark, new RegExp(token.replace('#', '\\#')), `${token} should be present in dark token palette`);
+  }
+  assert.ok(contrast('#c4cdd8', '#1a2030') >= 4.5, 'dark body text should meet AA contrast');
+  assert.ok(contrast('#edf1f7', '#1a2030') >= 4.5, 'dark headings should meet AA contrast');
+});
+
 test('Terminal Noir preserves the reference terminal palette and readable contrast', () => {
   const css = readFileSync(join(repoRoot, 'assets/themes/code/terminal-noir.css'), 'utf8');
   const macFrameSelector = '.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac pre';

@@ -1443,94 +1443,98 @@ msgid "Inkwell"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:23
-msgid "Nocturne"
+msgid "Inkwell Dark"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:24
-msgid "Animal Island"
+msgid "Nocturne"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:25
-msgid "Phycat Mint"
+msgid "Animal Island"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:26
-msgid "OneDark"
+msgid "Phycat Mint"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:27
-msgid "Mdmdt Light"
+msgid "OneDark"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:28
-msgid "Dog's Choice Pink"
+msgid "Mdmdt Light"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:29
-msgid "Bloom Petal"
+msgid "Dog's Choice Pink"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:30
-msgid "Spring"
+msgid "Bloom Petal"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:31
-msgid "Lanqing"
+msgid "Spring"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:32
-msgid "Yamabuki"
+msgid "Lanqing"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:33
-msgid "Grid black"
+msgid "Yamabuki"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:34
-msgid "Geek black"
+msgid "Grid black"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:35
-msgid "Rose purple"
+msgid "Geek black"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:36
-msgid "Ningye purple"
+msgid "Rose purple"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:37
-msgid "Tech blue"
+msgid "Ningye purple"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:38
-msgid "Qingbi Liujin"
+msgid "Tech blue"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:39
-msgid "Qinghe Zhusha"
+msgid "Qingbi Liujin"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:40
+msgid "Qinghe Zhusha"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:41
 msgid "Cute green"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:41 src/Theme/CodeThemeRegistry.php:24
+#: src/Theme/ArticleThemeRegistry.php:42 src/Theme/CodeThemeRegistry.php:24
 msgid "Fullstack blue"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:42
+#: src/Theme/ArticleThemeRegistry.php:43
 msgid "Minimal black"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:43
+#: src/Theme/ArticleThemeRegistry.php:44
 msgid "Orange blue"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:44
+#: src/Theme/ArticleThemeRegistry.php:45
 msgid "Frontend peak"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:45
+#: src/Theme/ArticleThemeRegistry.php:46
 msgid "Cupid busy"
 msgstr ""
 

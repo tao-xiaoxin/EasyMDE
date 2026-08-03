@@ -20,6 +20,7 @@ final class ArticleThemeRegistry {
 			'blue-ying'       => $this->theme( 'blue-ying', __( 'Blue ying', 'easymde' ), 'assets/themes/article/blue-ying.css', 'atom-one-dark', true, '#5c9dff' ),
 			'crimson-focus'   => $this->theme( 'crimson-focus', __( 'Crimson focus', 'easymde' ), 'assets/themes/article/crimson-focus.css', 'atom-one-dark', true, '#e74c3c' ),
 			'inkwell'         => $this->theme( 'inkwell', __( 'Inkwell', 'easymde' ), 'assets/themes/article/inkwell.css', 'atom-one-dark', true, '#3b82c4' ),
+			'inkwell-dark'    => $this->theme( 'inkwell-dark', __( 'Inkwell Dark', 'easymde' ), 'assets/themes/article/inkwell-dark.css', 'atom-one-dark', true, '#6ba8e0' ),
 			'nocturne'        => $this->theme( 'nocturne', __( 'Nocturne', 'easymde' ), 'assets/themes/article/nocturne.css', 'atom-one-dark', true, '#b080ff' ),
 			'animal-island'   => $this->theme( 'animal-island', __( 'Animal Island', 'easymde' ), 'assets/themes/article/animal-island.css', 'atom-one-dark', true, '#19c8b9' ),
 			'phycat-mint'     => $this->theme( 'phycat-mint', __( 'Phycat Mint', 'easymde' ), 'assets/themes/article/phycat-mint.css', 'atom-one-dark', true, '#3db8bf' ),

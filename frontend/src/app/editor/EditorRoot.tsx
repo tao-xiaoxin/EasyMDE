@@ -699,7 +699,7 @@ export function EditorRoot(props: EditorRootProps) {
       // Preparation runs in the background so the compatibility copy path is
       // ready when requested. Its result is reported by the actual copy
       // operation; opening or editing a Preview is not a copy failure.
-      void prepare(surface).catch(() => undefined);
+      void prepare(surface, { background: true }).catch(() => undefined);
     },
     [props.wechatClipboard, props.wechatExport.enabled]
   );

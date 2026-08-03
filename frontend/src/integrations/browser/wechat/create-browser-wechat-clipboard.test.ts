@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { WechatClipboardPreparationOptions } from '../../../contracts/ports/wechat-clipboard-port';
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
 
 function readyPreview(): HTMLElement {
@@ -35,11 +36,12 @@ function deferred<T>(): Readonly<{
 
 function prepareClipboard(
   clipboard: ReturnType<typeof createBrowserWechatClipboard>,
-  preview: HTMLElement
+  preview: HTMLElement,
+  options?: WechatClipboardPreparationOptions
 ): Promise<void> {
   const prepare = clipboard.prepare;
   if (!prepare) throw new Error('clipboard preparation is unavailable');
-  return prepare(preview);
+  return prepare(preview, options);
 }
 
 describe('createBrowserWechatClipboard', () => {
@@ -1760,6 +1762,72 @@ describe('createBrowserWechatClipboard', () => {
         delete (document as unknown as { execCommand?: unknown }).execCommand;
       }
     }
+  });
+
+  it('serializes coalesced background refreshes one at a time', async () => {
+    const pendingA = deferred<Response>();
+    const pendingB = deferred<Response>();
+    const fetchStartedA = deferred<void>();
+    const fetchStartedB = deferred<void>();
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h1>Theme heading</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Theme heading' });
+    const imageUrlA = new URL('/assets/images/cupid-busy-heart-background-a.png', document.baseURI).href;
+    const imageUrlB = new URL('/assets/images/cupid-busy-heart-background-b.png', document.baseURI).href;
+    let includeDecoration: 'a' | 'b' = 'a';
+    const clipboard = createBrowserWechatClipboard({
+      blob: window.Blob,
+      clipboardItem: null,
+      document,
+      fetch: vi.fn((input) => {
+        if (String(input).includes('background-a')) {
+          fetchStartedA.resolve(undefined);
+          return pendingA.promise;
+        }
+        fetchStartedB.resolve(undefined);
+        return pendingB.promise;
+      }),
+      getComputedStyle: (element, pseudoElement) => {
+        if ('H1' === element.tagName && '::before' === pseudoElement) {
+          const imageUrl = 'a' === includeDecoration ? imageUrlA : imageUrlB;
+          return declaration({
+            content: '""',
+            display: 'block',
+            width: '20px',
+            height: '20px',
+            background: `transparent url("${imageUrl}") 0 0 / 100% 100% no-repeat`,
+            'background-image': `url("${imageUrl}")`
+          });
+        }
+        return computedStyle(element, pseudoElement);
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+
+    const first = prepareClipboard(clipboard, preview, { background: true });
+    await fetchStartedA.promise;
+    includeDecoration = 'b';
+    const second = prepareClipboard(clipboard, preview, { background: true });
+    let secondStarted = false;
+    void fetchStartedB.promise.then(() => { secondStarted = true; });
+    await Promise.resolve();
+    expect(secondStarted).toBe(false);
+
+    pendingA.resolve({
+      blob: async () => new window.Blob(['theme image A'], { type: 'image/png' }),
+      ok: true
+    } as unknown as Response);
+    await fetchStartedB.promise;
+    pendingB.resolve({
+      blob: async () => new window.Blob(['theme image B'], { type: 'image/png' }),
+      ok: true
+    } as unknown as Response);
+    await expect(first).resolves.toBeUndefined();
+    await expect(second).resolves.toBeUndefined();
   });
 
   it('uses the stable legacy payload when modern Clipboard setup fails during refresh', async () => {

@@ -431,6 +431,12 @@ authority:
   stale or disposed visual runtime. Stable Preview snapshot notifications use
   that same active surface; a hidden ordinary Preview refresh must not cancel or
   replace preparation scheduled for the currently editable visual surface.
+  EditorRoot marks these notifications as background preparation: the adapter
+  starts at most one full Preview serialization per sink, keeps only the latest
+  request while that serialization is active, and waits for a quiet turn before
+  replacing it. This prevents rapid immersive split-layout changes from
+  monopolizing the editor main thread without weakening the full markup,
+  viewport, style, pseudo-element, and geometry freshness checks used by Copy.
   This is a user-initiated compatibility attempt, not a second renderer or
   silent success. Immersive visual Preview edits coalesce preparation after
   rapid input, and the serializer compares the full current sink markup,

@@ -1,5 +1,6 @@
 import type {
   WechatClipboardPort,
+  WechatClipboardPreparationOptions,
   WechatClipboardResult
 } from '../../../contracts/ports/wechat-clipboard-port';
 
@@ -54,6 +55,7 @@ const MERMAID_LABEL_LAYOUT_DECLARATIONS = [
 ] as const;
 const MERMAID_LABEL_WIDTH_SCALE = 1.5;
 const MERMAID_LABEL_WIDTH_GUTTER = 32;
+const BACKGROUND_PREPARATION_QUIET_DELAY_MS = 120;
 
 const SAFE_DISPLAY_VALUES: Record<string, true> = {
   block: true,
@@ -188,6 +190,17 @@ type PreparedClipboardPayload = {
   recoveredAtLayoutSignature: string | null;
 };
 type PreparedClipboardPayloadCache = WeakMap<HTMLElement, PreparedClipboardPayload>;
+type BackgroundPreparationWaiter = Readonly<{
+  reject: (error: unknown) => void;
+  resolve: () => void;
+}>;
+type BackgroundPreparationState = {
+  active: Promise<void> | null;
+  requested: boolean;
+  timer: number | ReturnType<typeof setTimeout> | null;
+  waiters: BackgroundPreparationWaiter[];
+};
+type BackgroundPreparationCache = WeakMap<HTMLElement, BackgroundPreparationState>;
 
 function cacheBackgroundAsset(
   cache: BackgroundAssetCache,
@@ -2127,6 +2140,113 @@ function preparedClipboardPayload(
   );
 }
 
+function scheduleBackgroundPreparation(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime,
+  backgroundAssetCache: BackgroundAssetCache,
+  preparedPayloads: PreparedClipboardPayloadCache,
+  backgroundPreparations: BackgroundPreparationCache,
+  nextSequence: () => number,
+  state: BackgroundPreparationState,
+  delay: number
+): void {
+  if (state.timer !== null) return;
+  const browserWindow = runtime.document.defaultView;
+  state.timer = browserWindow
+    ? browserWindow.setTimeout(run, delay)
+    : setTimeout(run, delay);
+
+  function run(): void {
+    state.timer = null;
+    if (state.active || !state.requested) return;
+    state.requested = false;
+
+    let operation: Promise<void>;
+    try {
+      operation = preparedClipboardPayload(
+        preview,
+        runtime,
+        backgroundAssetCache,
+        preparedPayloads,
+        nextSequence,
+        true
+      ).promise.then(() => undefined);
+    } catch (error: unknown) {
+      finish(false, error);
+      return;
+    }
+
+    state.active = operation;
+    operation.then(
+      () => finish(true),
+      (error: unknown) => finish(false, error)
+    );
+  }
+
+  function finish(success: boolean, error?: unknown): void {
+    state.active = null;
+    if (state.requested) {
+      scheduleBackgroundPreparation(
+        preview,
+        runtime,
+        backgroundAssetCache,
+        preparedPayloads,
+        backgroundPreparations,
+        nextSequence,
+        state,
+        BACKGROUND_PREPARATION_QUIET_DELAY_MS
+      );
+      return;
+    }
+
+    const waiters = state.waiters.splice(0);
+    waiters.forEach((waiter) => {
+      if (success) waiter.resolve();
+      else waiter.reject(error);
+    });
+    if (!state.active && !state.requested && state.waiters.length === 0) {
+      backgroundPreparations.delete(preview);
+    }
+  }
+}
+
+function coalescedBackgroundPreparation(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime,
+  backgroundAssetCache: BackgroundAssetCache,
+  preparedPayloads: PreparedClipboardPayloadCache,
+  backgroundPreparations: BackgroundPreparationCache,
+  nextSequence: () => number
+): Promise<void> {
+  let state = backgroundPreparations.get(preview);
+  if (!state) {
+    state = {
+      active: null,
+      requested: false,
+      timer: null,
+      waiters: []
+    };
+    backgroundPreparations.set(preview, state);
+  }
+  state.requested = true;
+  const promise = new Promise<void>((resolve, reject) => {
+    state?.waiters.push({ reject, resolve });
+  });
+  if (!state.active && state.timer === null) {
+    scheduleBackgroundPreparation(
+      preview,
+      runtime,
+      backgroundAssetCache,
+      preparedPayloads,
+      backgroundPreparations,
+      nextSequence,
+      state,
+      0
+    );
+  }
+  return promise;
+}
+
 function legacyCopy(html: string, runtime: BrowserWechatClipboardRuntime): boolean {
   const selection = runtime.getSelection();
   const ranges = selection
@@ -2170,6 +2290,7 @@ export function createBrowserWechatClipboard(
 ): WechatClipboardPort {
   const backgroundAssetCache: BackgroundAssetCache = new Map();
   const preparedPayloads: PreparedClipboardPayloadCache = new WeakMap();
+  const backgroundPreparations: BackgroundPreparationCache = new WeakMap();
   let preparationSequence = 0;
   const nextPreparationSequence = (): number => {
     preparationSequence += 1;
@@ -2177,8 +2298,22 @@ export function createBrowserWechatClipboard(
   };
 
   return {
-    async prepare(preview: HTMLElement): Promise<void> {
+    async prepare(
+      preview: HTMLElement,
+      options: WechatClipboardPreparationOptions = {}
+    ): Promise<void> {
       if (!previewReady(preview)) return;
+      if (options.background) {
+        await coalescedBackgroundPreparation(
+          preview,
+          runtime,
+          backgroundAssetCache,
+          preparedPayloads,
+          backgroundPreparations,
+          nextPreparationSequence
+        );
+        return;
+      }
       await preparedClipboardPayload(
         preview,
         runtime,

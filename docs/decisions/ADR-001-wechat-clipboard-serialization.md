@@ -84,6 +84,11 @@ The EditorRoot binds that observer to the actual ordinary or immersive Preview
 surface. A theme or Custom CSS change that first exits visual editing waits for
 the refreshed ordinary Preview snapshot after visual runtime teardown, so legacy
 Copy never uses a stale or disposed surface.
+EditorRoot marks these observer and snapshot notifications as background
+preparation. The adapter runs at most one full serialization per sink, retains
+only the latest request while it is active, and waits for a short quiet delay
+before replacing it. This keeps rapid split-pane keyboard changes responsive
+while preserving the full freshness checks used by Copy.
 Immersive visual edits coalesce preparation after rapid input, and later stable
 Preview notifications replace the prepared payload before another copy. The
 serializer compares the full sink markup, including root `class`/`style`

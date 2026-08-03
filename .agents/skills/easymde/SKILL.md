@@ -1118,6 +1118,12 @@ Feature boundaries:
   Stable Preview snapshot notifications must use that same active surface, so a
   hidden ordinary Preview refresh cannot cancel preparation for the editable
   visual surface.
+  EditorRoot marks these notifications as background preparation: the adapter
+  starts at most one full Preview serialization per sink, keeps only the latest
+  request while that serialization is active, and waits for a quiet turn before
+  replacing it. This prevents rapid immersive split-layout changes from
+  monopolizing the editor main thread without weakening the full markup,
+  viewport, style, pseudo-element, and geometry freshness checks used by Copy.
   The pipeline removes scripts, styles, controls, CSS classes, and source/editor
   transient attributes; keeps only valid fragment IDs and SVG-internal IDs;
   sanitizes URL/style values; preserves safe image `src`/`srcset` candidates and

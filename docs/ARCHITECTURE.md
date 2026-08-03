@@ -204,6 +204,12 @@ payload through legacy in the same click task. Immersive visual edits coalesce
   Stable Preview snapshot notifications target that same active surface; a
   hidden ordinary Preview refresh cannot cancel preparation for the editable
   visual surface.
+  EditorRoot marks these notifications as background preparation: the adapter
+  starts at most one full Preview serialization per sink, keeps only the latest
+  request while that serialization is active, and waits for a quiet turn before
+  replacing it. This prevents rapid immersive split-layout changes from
+  monopolizing the editor main thread without weakening the full markup,
+  viewport, style, pseudo-element, and geometry freshness checks used by Copy.
 Copy is a browser compatibility output and never writes Markdown,
 `post_content`, metadata, revisions, or publication state.
 

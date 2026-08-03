@@ -1,22 +1,25 @@
 /*
- * Typora-derived code palettes for EasyMDE.
+ * Native Typora CodeMirror palettes adapted to EasyMDE Highlight.js.
  *
- * These scopes adapt the selected light variants documented in
- * docs/typora-theme-sources.md. The Mac code-frame geometry is deliberately
- * owned by assets/css/frontend/code-frame.css; this file only supplies the
- * syntax palette and inline code colors.
+ * The source evidence for every block lives in
+ * docs/typora-code-palette-sources.json. The shared Mac frame remains
+ * owned by assets/css/frontend/code-frame.css; this file only maps colors
+ * and token emphasis.
  */
 
 .easymde-rendered-content.easymde-code-theme-inkwell-code {
   --easymde-typora-code-bg: #f6f8fb;
   --easymde-typora-code-text: #3d4852;
-  --easymde-typora-code-muted: #8896a4;
-  --easymde-typora-code-keyword: #c7254e;
-  --easymde-typora-code-string: #3b82c4;
-  --easymde-typora-code-number: #9c2c48;
-  --easymde-typora-code-blue: #1a2332;
+  --easymde-typora-code-muted: #94a3b8;
+  --easymde-typora-code-keyword: #7c3aed;
+  --easymde-typora-code-string: #15803d;
+  --easymde-typora-code-number: #c2410c;
+  --easymde-typora-code-blue: #2563eb;
+  --easymde-typora-code-link: #3b82c4;
+  --easymde-typora-code-variable: #3d4852;
+  --easymde-typora-code-operator: #0d9488;
+  --easymde-typora-code-keyword-weight: 400;
 }
-
 .easymde-rendered-content.easymde-code-theme-animal-island-code {
   --easymde-typora-code-bg: #efe9d6;
   --easymde-typora-code-text: #725d42;
@@ -25,249 +28,240 @@
   --easymde-typora-code-string: #5a9e1e;
   --easymde-typora-code-number: #dba90e;
   --easymde-typora-code-blue: #11a89b;
+  --easymde-typora-code-link: #11a89b;
+  --easymde-typora-code-variable: #794f27;
+  --easymde-typora-code-operator: #794f27;
+  --easymde-typora-code-keyword-weight: 700;
 }
 
-.easymde-rendered-content.easymde-code-theme-phycat-cherry-code {
-  --easymde-typora-code-bg: #b16c6c25;
-  --easymde-typora-code-text: #333333;
-  --easymde-typora-code-muted: #9a0036;
-  --easymde-typora-code-keyword: #9a0000;
-  --easymde-typora-code-string: #aa1111;
-  --easymde-typora-code-number: #ffa6a6;
-  --easymde-typora-code-blue: #9a0036;
-}
-
-.easymde-rendered-content.easymde-code-theme-phycat-caramel-code {
-  --easymde-typora-code-bg: #fff7ed;
-  --easymde-typora-code-text: #78350f;
-  --easymde-typora-code-muted: #b45309;
-  --easymde-typora-code-keyword: #92400e;
-  --easymde-typora-code-string: #f59e0b;
-  --easymde-typora-code-number: #fbbf24;
-  --easymde-typora-code-blue: #b45309;
-}
-
-.easymde-rendered-content.easymde-code-theme-phycat-forest-code {
-  --easymde-typora-code-bg: #6cb19125;
-  --easymde-typora-code-text: #333333;
-  --easymde-typora-code-muted: #009a52;
-  --easymde-typora-code-keyword: #009a52;
-  --easymde-typora-code-string: #11aa63;
-  --easymde-typora-code-number: #80c3a4;
-  --easymde-typora-code-blue: #009a52;
-}
-
-.easymde-rendered-content.easymde-code-theme-phycat-mint-code {
-  --easymde-typora-code-bg: #7aeaf018;
-  --easymde-typora-code-text: #333333;
-  --easymde-typora-code-muted: #089ba3;
-  --easymde-typora-code-keyword: #089ba3;
-  --easymde-typora-code-string: #3db8bf;
-  --easymde-typora-code-number: #7aeaf0;
-  --easymde-typora-code-blue: #089ba3;
-}
-
-.easymde-rendered-content.easymde-code-theme-phycat-sky-code {
-  --easymde-typora-code-bg: #ebf5fb;
-  --easymde-typora-code-text: #2c3e50;
-  --easymde-typora-code-muted: #1a5276;
-  --easymde-typora-code-keyword: #1a5276;
-  --easymde-typora-code-string: #3498db;
-  --easymde-typora-code-number: #aed6f1;
-  --easymde-typora-code-blue: #2980b9;
-}
-
-.easymde-rendered-content.easymde-code-theme-phycat-prussian-code {
-  --easymde-typora-code-bg: #ebf5fa;
-  --easymde-typora-code-text: #003153;
-  --easymde-typora-code-muted: #0f3057;
-  --easymde-typora-code-keyword: #0f3057;
-  --easymde-typora-code-string: #1d4e89;
-  --easymde-typora-code-number: #6ba3cc;
-  --easymde-typora-code-blue: #003153;
-}
-
-.easymde-rendered-content.easymde-code-theme-phycat-sakura-code {
-  --easymde-typora-code-bg: #fce4ec;
-  --easymde-typora-code-text: #5e3a44;
-  --easymde-typora-code-muted: #c2185b;
-  --easymde-typora-code-keyword: #c2185b;
-  --easymde-typora-code-string: #ff7096;
-  --easymde-typora-code-number: #ffb7cd;
-  --easymde-typora-code-blue: #e91e63;
-}
-
-.easymde-rendered-content.easymde-code-theme-phycat-mauve-code {
-  --easymde-typora-code-bg: #f2eff9;
-  --easymde-typora-code-text: #4a235a;
-  --easymde-typora-code-muted: #5e35b1;
-  --easymde-typora-code-keyword: #5e35b1;
-  --easymde-typora-code-string: #a06eb4;
-  --easymde-typora-code-number: #d4b6e0;
-  --easymde-typora-code-blue: #6a3f7a;
+.easymde-rendered-content.easymde-code-theme-phycat-code {
+  --easymde-typora-code-bg: #f8f8f8;
+  --easymde-typora-code-text: #4f5467;
+  --easymde-typora-code-muted: #9a9a9a;
+  --easymde-typora-code-keyword: #a626a4;
+  --easymde-typora-code-string: #50a14f;
+  --easymde-typora-code-number: #1694b6;
+  --easymde-typora-code-blue: #c18401;
+  --easymde-typora-code-link: #e46918;
+  --easymde-typora-code-variable: #b92121;
+  --easymde-typora-code-operator: #0abe00;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-mdmdt-code {
-  --easymde-typora-code-bg: rgb(250 250 252);
-  --easymde-typora-code-text: #000000;
-  --easymde-typora-code-muted: rgb(72 93 108 / 75%);
+  --easymde-typora-code-bg: rgb(236, 236, 238);
+  --easymde-typora-code-text: #2f479f;
+  --easymde-typora-code-muted: rgba(72, 93, 108, 0.75);
   --easymde-typora-code-keyword: #bb59fd;
   --easymde-typora-code-string: #02be74;
   --easymde-typora-code-number: #f59102;
   --easymde-typora-code-blue: #3876eb;
+  --easymde-typora-code-link: #f59102;
+  --easymde-typora-code-variable: #f4395d;
+  --easymde-typora-code-operator: #40d7ec;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code {
   --easymde-typora-code-bg: #e4f3ff;
-  --easymde-typora-code-text: #000000;
-  --easymde-typora-code-muted: #768cce;
-  --easymde-typora-code-keyword: #f55066;
-  --easymde-typora-code-string: #8f00d2;
-  --easymde-typora-code-number: #224f94;
-  --easymde-typora-code-blue: #768cce;
+  --easymde-typora-code-text: #333333;
+  --easymde-typora-code-muted: #333333;
+  --easymde-typora-code-keyword: #333333;
+  --easymde-typora-code-string: #333333;
+  --easymde-typora-code-number: #333333;
+  --easymde-typora-code-blue: #333333;
+  --easymde-typora-code-link: #768cce;
+  --easymde-typora-code-variable: #333333;
+  --easymde-typora-code-operator: #333333;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-bloom-petal-code {
-  --easymde-typora-code-bg: oklch(98% 0.01 350);
-  --easymde-typora-code-text: oklch(25% 0.02 354);
-  --easymde-typora-code-muted: rgb(120 120 125);
-  --easymde-typora-code-keyword: oklch(65% 0.2 350);
-  --easymde-typora-code-string: oklch(52% 0.12 140);
-  --easymde-typora-code-number: oklch(58% 0.12 40);
-  --easymde-typora-code-blue: oklch(48% 0.12 260);
+  --easymde-typora-code-bg: #faeef3;
+  --easymde-typora-code-text: #2a1e22;
+  --easymde-typora-code-muted: rgb(120 120 125 / 55%);
+  --easymde-typora-code-keyword: #e24ea0;
+  --easymde-typora-code-string: #3f7932;
+  --easymde-typora-code-number: #b55f40;
+  --easymde-typora-code-blue: #335ca0;
+  --easymde-typora-code-link: #2a1e22;
+  --easymde-typora-code-variable: #2a1e22;
+  --easymde-typora-code-operator: #2a1e22;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-bloom-mist-code {
-  --easymde-typora-code-bg: #ecf3f8;
+  --easymde-typora-code-bg: #e5ecf1;
   --easymde-typora-code-text: #19232a;
-  --easymde-typora-code-muted: rgb(120 125 130);
+  --easymde-typora-code-muted: rgb(120 125 130 / 55%);
   --easymde-typora-code-keyword: #8843db;
   --easymde-typora-code-string: #187f00;
   --easymde-typora-code-number: #d53d00;
   --easymde-typora-code-blue: #004fd6;
+  --easymde-typora-code-link: #19232a;
+  --easymde-typora-code-variable: #19232a;
+  --easymde-typora-code-operator: #19232a;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-bloom-verdant-code {
-  --easymde-typora-code-bg: #ecf4ef;
+  --easymde-typora-code-bg: #e6ede9;
   --easymde-typora-code-text: #19251e;
-  --easymde-typora-code-muted: rgb(120 120 120);
+  --easymde-typora-code-muted: rgb(120 120 120 / 55%);
   --easymde-typora-code-keyword: #118659;
   --easymde-typora-code-string: #4d9351;
   --easymde-typora-code-number: #b07a20;
   --easymde-typora-code-blue: #3c7ebe;
+  --easymde-typora-code-link: #19251e;
+  --easymde-typora-code-variable: #19251e;
+  --easymde-typora-code-operator: #19251e;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-bloom-stone-code {
-  --easymde-typora-code-bg: #f8efee;
+  --easymde-typora-code-bg: #f2e9e7;
   --easymde-typora-code-text: #2b1e1c;
-  --easymde-typora-code-muted: rgb(120 120 120);
+  --easymde-typora-code-muted: rgb(120 120 120 / 55%);
   --easymde-typora-code-keyword: #ab5637;
   --easymde-typora-code-string: #4d9351;
   --easymde-typora-code-number: #b07a20;
   --easymde-typora-code-blue: #3c7ebe;
+  --easymde-typora-code-link: #2b1e1c;
+  --easymde-typora-code-variable: #2b1e1c;
+  --easymde-typora-code-operator: #2b1e1c;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-bloom-wheat-code {
-  --easymde-typora-code-bg: #f7f5f1;
+  --easymde-typora-code-bg: #f1eee9;
   --easymde-typora-code-text: #262118;
-  --easymde-typora-code-muted: rgb(124 118 104);
+  --easymde-typora-code-muted: rgb(124 118 104 / 55%);
   --easymde-typora-code-keyword: #956725;
   --easymde-typora-code-string: #5d8943;
   --easymde-typora-code-number: #ba673f;
   --easymde-typora-code-blue: #2382ba;
+  --easymde-typora-code-link: #262118;
+  --easymde-typora-code-variable: #262118;
+  --easymde-typora-code-operator: #262118;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-bloom-ink-code {
-  --easymde-typora-code-bg: #f7f5f1;
+  --easymde-typora-code-bg: #f0eeea;
   --easymde-typora-code-text: #1a1813;
-  --easymde-typora-code-muted: rgb(120 118 112);
+  --easymde-typora-code-muted: rgb(120 118 112 / 55%);
   --easymde-typora-code-keyword: #323a50;
   --easymde-typora-code-string: #31623d;
   --easymde-typora-code-number: #8c482f;
   --easymde-typora-code-blue: #194f81;
+  --easymde-typora-code-link: #1a1813;
+  --easymde-typora-code-variable: #1a1813;
+  --easymde-typora-code-operator: #1a1813;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-bloom-amber-code {
-  --easymde-typora-code-bg: #faf6f1;
+  --easymde-typora-code-bg: #f4f0e9;
   --easymde-typora-code-text: #251e15;
-  --easymde-typora-code-muted: rgb(128 120 106);
+  --easymde-typora-code-muted: rgb(128 120 106 / 55%);
   --easymde-typora-code-keyword: #b16512;
   --easymde-typora-code-string: #4c8141;
   --easymde-typora-code-number: #b95c3a;
   --easymde-typora-code-blue: #316ca5;
+  --easymde-typora-code-link: #251e15;
+  --easymde-typora-code-variable: #251e15;
+  --easymde-typora-code-operator: #251e15;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-bloom-lapis-code {
-  --easymde-typora-code-bg: #f3f7fa;
+  --easymde-typora-code-bg: #ecf1f5;
   --easymde-typora-code-text: #161e26;
-  --easymde-typora-code-muted: rgb(112 120 132);
+  --easymde-typora-code-muted: rgb(112 120 132 / 55%);
   --easymde-typora-code-keyword: #2e5ba6;
   --easymde-typora-code-string: #397949;
   --easymde-typora-code-number: #ab5637;
   --easymde-typora-code-blue: #006aaa;
+  --easymde-typora-code-link: #161e26;
+  --easymde-typora-code-variable: #161e26;
+  --easymde-typora-code-operator: #161e26;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-bloom-ripple-code {
-  --easymde-typora-code-bg: #ebf4f4;
+  --easymde-typora-code-bg: #e4eded;
   --easymde-typora-code-text: #162525;
-  --easymde-typora-code-muted: rgb(120 130 130);
+  --easymde-typora-code-muted: rgb(120 130 130 / 55%);
   --easymde-typora-code-keyword: #0079ba;
   --easymde-typora-code-string: #00946d;
   --easymde-typora-code-number: #c45e39;
   --easymde-typora-code-blue: #008fa8;
+  --easymde-typora-code-link: #162525;
+  --easymde-typora-code-variable: #162525;
+  --easymde-typora-code-operator: #162525;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code {
-  --easymde-typora-code-bg: #f8f4f3;
+  --easymde-typora-code-bg: #f2eded;
   --easymde-typora-code-text: #2b1e1d;
-  --easymde-typora-code-muted: rgb(130 120 120);
+  --easymde-typora-code-muted: rgb(130 120 120 / 55%);
   --easymde-typora-code-keyword: #c53637;
   --easymde-typora-code-string: #3f7932;
   --easymde-typora-code-number: #b55f40;
   --easymde-typora-code-blue: #335ca0;
+  --easymde-typora-code-link: #2b1e1d;
+  --easymde-typora-code-variable: #2b1e1d;
+  --easymde-typora-code-operator: #2b1e1d;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-bloom-sage-code {
-  --easymde-typora-code-bg: #f5f6ee;
+  --easymde-typora-code-bg: #eeefe8;
   --easymde-typora-code-text: #212318;
-  --easymde-typora-code-muted: rgb(125 120 115);
+  --easymde-typora-code-muted: rgb(125 120 115 / 55%);
   --easymde-typora-code-keyword: #70790e;
   --easymde-typora-code-string: #3f7932;
   --easymde-typora-code-number: #b65c4e;
   --easymde-typora-code-blue: #335ca0;
+  --easymde-typora-code-link: #212318;
+  --easymde-typora-code-variable: #212318;
+  --easymde-typora-code-operator: #212318;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-bloom-spring-code {
-  --easymde-typora-code-bg: #f5f5f8;
+  --easymde-typora-code-bg: #eeeef2;
   --easymde-typora-code-text: #20202b;
-  --easymde-typora-code-muted: rgb(120 125 130);
+  --easymde-typora-code-muted: rgb(120 125 130 / 55%);
   --easymde-typora-code-keyword: #764be5;
   --easymde-typora-code-string: #187f00;
   --easymde-typora-code-number: #d53d00;
   --easymde-typora-code-blue: #004fd6;
+  --easymde-typora-code-link: #20202b;
+  --easymde-typora-code-variable: #20202b;
+  --easymde-typora-code-operator: #20202b;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 .easymde-rendered-content.easymde-code-theme-spring-code {
   --easymde-typora-code-bg: #ffffff;
-  --easymde-typora-code-text: #282c34;
+  --easymde-typora-code-text: #2f4f4f;
   --easymde-typora-code-muted: #6a737d;
   --easymde-typora-code-keyword: #222fa7;
   --easymde-typora-code-string: #0264bf;
   --easymde-typora-code-number: #3e19cf;
   --easymde-typora-code-blue: #10623e;
+  --easymde-typora-code-link: #1565c0;
+  --easymde-typora-code-variable: #239d37;
+  --easymde-typora-code-operator: #006400;
+  --easymde-typora-code-keyword-weight: 400;
 }
 
 :is(
   .easymde-rendered-content.easymde-code-theme-inkwell-code,
   .easymde-rendered-content.easymde-code-theme-animal-island-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-code,
   .easymde-rendered-content.easymde-code-theme-mdmdt-code,
   .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
   .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
@@ -291,14 +285,7 @@
 :is(
   .easymde-rendered-content.easymde-code-theme-inkwell-code,
   .easymde-rendered-content.easymde-code-theme-animal-island-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-code,
   .easymde-rendered-content.easymde-code-theme-mdmdt-code,
   .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
   .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
@@ -318,14 +305,7 @@
 :is(
   .easymde-rendered-content.easymde-code-theme-inkwell-code,
   .easymde-rendered-content.easymde-code-theme-animal-island-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-code,
   .easymde-rendered-content.easymde-code-theme-mdmdt-code,
   .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
   .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
@@ -349,14 +329,7 @@
 :is(
   .easymde-rendered-content.easymde-code-theme-inkwell-code,
   .easymde-rendered-content.easymde-code-theme-animal-island-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-code,
   .easymde-rendered-content.easymde-code-theme-mdmdt-code,
   .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
   .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
@@ -374,20 +347,13 @@
   .easymde-rendered-content.easymde-code-theme-spring-code
 ) :is(.hljs-keyword, .hljs-selector-tag, .hljs-subst, .hljs-name, .hljs-tag) {
   color: var(--easymde-typora-code-keyword);
-  font-weight: 700;
+  font-weight: var(--easymde-typora-code-keyword-weight);
 }
 
 :is(
   .easymde-rendered-content.easymde-code-theme-inkwell-code,
   .easymde-rendered-content.easymde-code-theme-animal-island-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-code,
   .easymde-rendered-content.easymde-code-theme-mdmdt-code,
   .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
   .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
@@ -410,14 +376,7 @@
 :is(
   .easymde-rendered-content.easymde-code-theme-inkwell-code,
   .easymde-rendered-content.easymde-code-theme-animal-island-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-code,
   .easymde-rendered-content.easymde-code-theme-mdmdt-code,
   .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
   .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
@@ -440,14 +399,7 @@
 :is(
   .easymde-rendered-content.easymde-code-theme-inkwell-code,
   .easymde-rendered-content.easymde-code-theme-animal-island-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-code,
   .easymde-rendered-content.easymde-code-theme-mdmdt-code,
   .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
   .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
@@ -463,21 +415,14 @@
   .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
   .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
   .easymde-rendered-content.easymde-code-theme-spring-code
-) :is(.hljs-title, .hljs-section, .hljs-type, .hljs-built_in, .hljs-variable, .hljs-attr, .hljs-attribute, .hljs-selector-class, .hljs-selector-id) {
+) :is(.hljs-title, .hljs-section, .hljs-type, .hljs-built_in, .hljs-attr, .hljs-attribute, .hljs-selector-class, .hljs-selector-id) {
   color: var(--easymde-typora-code-blue);
 }
 
 :is(
   .easymde-rendered-content.easymde-code-theme-inkwell-code,
   .easymde-rendered-content.easymde-code-theme-animal-island-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-code,
   .easymde-rendered-content.easymde-code-theme-mdmdt-code,
   .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
   .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
@@ -493,21 +438,14 @@
   .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
   .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
   .easymde-rendered-content.easymde-code-theme-spring-code
-) :is(.hljs-emphasis, .hljs-strong, .hljs-link) {
-  color: var(--easymde-typora-code-text);
+) .hljs-variable {
+  color: var(--easymde-typora-code-variable);
 }
 
 :is(
   .easymde-rendered-content.easymde-code-theme-inkwell-code,
   .easymde-rendered-content.easymde-code-theme-animal-island-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-cherry-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-caramel-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-forest-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mint-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sky-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-prussian-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-sakura-code,
-  .easymde-rendered-content.easymde-code-theme-phycat-mauve-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-code,
   .easymde-rendered-content.easymde-code-theme-mdmdt-code,
   .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
   .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
@@ -523,6 +461,52 @@
   .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
   .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
   .easymde-rendered-content.easymde-code-theme-spring-code
-) :is(.hljs-addition, .hljs-deletion) {
-  background: var(--easymde-typora-code-bg);
+) .hljs-operator {
+  color: var(--easymde-typora-code-operator);
+}
+
+:is(
+  .easymde-rendered-content.easymde-code-theme-inkwell-code,
+  .easymde-rendered-content.easymde-code-theme-animal-island-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-code,
+  .easymde-rendered-content.easymde-code-theme-mdmdt-code,
+  .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-mist-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-verdant-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-stone-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-wheat-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-amber-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-lapis-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ripple-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
+  .easymde-rendered-content.easymde-code-theme-spring-code
+) .hljs-link {
+  color: var(--easymde-typora-code-link);
+}
+
+:is(
+  .easymde-rendered-content.easymde-code-theme-inkwell-code,
+  .easymde-rendered-content.easymde-code-theme-animal-island-code,
+  .easymde-rendered-content.easymde-code-theme-phycat-code,
+  .easymde-rendered-content.easymde-code-theme-mdmdt-code,
+  .easymde-rendered-content.easymde-code-theme-dogschoice-pink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-petal-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-mist-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-verdant-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-stone-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-wheat-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ink-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-amber-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-lapis-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-ripple-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-cinnabar-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-sage-code,
+  .easymde-rendered-content.easymde-code-theme-bloom-spring-code,
+  .easymde-rendered-content.easymde-code-theme-spring-code
+) :is(.hljs-emphasis, .hljs-strong) {
+  color: var(--easymde-typora-code-text);
 }

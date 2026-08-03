@@ -30,14 +30,14 @@ function typoraDerivedCodeAssociations() {
   return {
     inkwell: 'inkwell-code',
     'animal-island': 'animal-island-code',
-    'phycat-cherry': 'phycat-cherry-code',
-    'phycat-caramel': 'phycat-caramel-code',
-    'phycat-forest': 'phycat-forest-code',
-    'phycat-mint': 'phycat-mint-code',
-    'phycat-sky': 'phycat-sky-code',
-    'phycat-prussian': 'phycat-prussian-code',
-    'phycat-sakura': 'phycat-sakura-code',
-    'phycat-mauve': 'phycat-mauve-code',
+    'phycat-cherry': 'phycat-code',
+    'phycat-caramel': 'phycat-code',
+    'phycat-forest': 'phycat-code',
+    'phycat-mint': 'phycat-code',
+    'phycat-sky': 'phycat-code',
+    'phycat-prussian': 'phycat-code',
+    'phycat-sakura': 'phycat-code',
+    'phycat-mauve': 'phycat-code',
     mdmdt: 'mdmdt-code',
     'dogschoice-pink': 'dogschoice-pink-code',
     'bloom-petal': 'bloom-petal-code',
@@ -65,6 +65,10 @@ function codeThemeMetadata() {
   );
 }
 
+function typoraCodePaletteSources() {
+  return JSON.parse(source('docs/typora-code-palette-sources.json'));
+}
+
 function cssSelectors(css) {
   return Array.from(css.matchAll(/([^{}]+)\{[^{}]*\}/g), ([, selectors]) => (
     selectors.split(',').map((selector) => selector.trim())
@@ -85,7 +89,7 @@ test('every article theme declares a registered associated code theme', () => {
   const codeThemes = registeredThemes('src/Theme/CodeThemeRegistry.php');
   const codeThemeIds = new Set(codeThemes.map(({ id }) => id));
 
-	assert.equal(articleThemes.length, 47);
+  assert.equal(articleThemes.length, 47);
   for (const theme of articleThemes) {
     assert.ok(codeThemeIds.has(theme.defaultCodeTheme), `${theme.defaultCodeTheme} should be registered`);
   }
@@ -109,14 +113,18 @@ test('Typora-derived article themes have unique registered default code palettes
   const labels = codeThemeMetadata().map(({ label }) => label);
   const css = source('assets/themes/code/typora-derived.css');
   const signatures = new Set();
+  const associatedCodeIds = new Set(Object.values(associations));
 
   assert.equal(Object.keys(associations).length, 25);
   assert.equal(new Set(labels).size, labels.length, 'code-theme labels must be unique');
+  assert.equal(associatedCodeIds.size, 18, 'native-equivalent palettes must share one code theme');
 
   for (const [articleId, codeId] of Object.entries(associations)) {
     assert.equal(articleThemes.get(articleId)?.defaultCodeTheme, codeId, `${articleId} association`);
     assert.equal(codeThemes.get(codeId)?.assetPath, 'assets/themes/code/typora-derived.css', `${codeId} asset`);
+  }
 
+  for (const codeId of associatedCodeIds) {
     const scope = css.match(
       new RegExp(`\\.easymde-rendered-content\\.easymde-code-theme-${codeId}\\s*\\{([^}]*)\\}`)
     );
@@ -124,6 +132,32 @@ test('Typora-derived article themes have unique registered default code palettes
     const signature = scope[1].replace(/\s+/g, ' ').trim();
     assert.ok(!signatures.has(signature), `${codeId} should not duplicate another palette`);
     signatures.add(signature);
+  }
+});
+
+test('every native Typora code palette is source-backed and mapped to EasyMDE tokens', () => {
+  const sources = typoraCodePaletteSources();
+  const associations = typoraDerivedCodeAssociations();
+  const associatedCodeIds = new Set(Object.values(associations));
+  const css = source('assets/themes/code/typora-derived.css');
+
+  assert.equal(sources.version, 1);
+  assert.deepEqual(new Set(Object.keys(sources.themes)), associatedCodeIds);
+
+  for (const [codeId, evidence] of Object.entries(sources.themes)) {
+    assert.ok(evidence.nativeFile, `${codeId} needs a native Typora source file`);
+    assert.ok(evidence.nativeSelectors?.length > 0, `${codeId} needs native selector evidence`);
+    assert.ok(evidence.notes, `${codeId} needs an adaptation note`);
+    assert.ok(evidence.palette && Object.keys(evidence.palette).length >= 8, `${codeId} needs a complete palette`);
+
+    const scope = css.match(
+      new RegExp(`\\.easymde-rendered-content\\.easymde-code-theme-${codeId}\\s*\\{([^}]*)\\}`)
+    );
+    assert.ok(scope, `${codeId} needs a CSS palette scope`);
+    for (const [property, value] of Object.entries(evidence.palette)) {
+      const escapedValue = value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+      assert.match(scope[1], new RegExp(`${property}\\s*:\\s*${escapedValue}\\s*;`), `${codeId} ${property}`);
+    }
   }
 });
 

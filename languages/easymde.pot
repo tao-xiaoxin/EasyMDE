@@ -1643,94 +1643,66 @@ msgid "动物岛代码"
 msgstr ""
 
 #: src/Theme/CodeThemeRegistry.php:27
-msgid "樱桃猫代码"
+msgid "Phycat 代码"
 msgstr ""
 
 #: src/Theme/CodeThemeRegistry.php:28
-msgid "焦糖猫代码"
-msgstr ""
-
-#: src/Theme/CodeThemeRegistry.php:29
-msgid "森林猫代码"
-msgstr ""
-
-#: src/Theme/CodeThemeRegistry.php:30
-msgid "薄荷猫代码"
-msgstr ""
-
-#: src/Theme/CodeThemeRegistry.php:31
-msgid "天蓝猫代码"
-msgstr ""
-
-#: src/Theme/CodeThemeRegistry.php:32
-msgid "普鲁士猫代码"
-msgstr ""
-
-#: src/Theme/CodeThemeRegistry.php:33
-msgid "樱花猫代码"
-msgstr ""
-
-#: src/Theme/CodeThemeRegistry.php:34
-msgid "淡紫猫代码"
-msgstr ""
-
-#: src/Theme/CodeThemeRegistry.php:35
 msgid "Mdmdt 代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:36
+#: src/Theme/CodeThemeRegistry.php:29
 msgid "狗狗粉代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:37
+#: src/Theme/CodeThemeRegistry.php:30
 msgid "花瓣代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:38
+#: src/Theme/CodeThemeRegistry.php:31
 msgid "雾蓝代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:39
+#: src/Theme/CodeThemeRegistry.php:32
 msgid "草木代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:40
+#: src/Theme/CodeThemeRegistry.php:33
 msgid "暖石代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:41
+#: src/Theme/CodeThemeRegistry.php:34
 msgid "麦穗代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:42
+#: src/Theme/CodeThemeRegistry.php:35
 msgid "水墨代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:43
+#: src/Theme/CodeThemeRegistry.php:36
 msgid "琥珀代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:44
+#: src/Theme/CodeThemeRegistry.php:37
 msgid "青金代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:45
+#: src/Theme/CodeThemeRegistry.php:38
 msgid "涟漪代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:46
+#: src/Theme/CodeThemeRegistry.php:39
 msgid "丹红代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:47
+#: src/Theme/CodeThemeRegistry.php:40
 msgid "鼠尾草代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:48
+#: src/Theme/CodeThemeRegistry.php:41
 msgid "紫语代码"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:49
+#: src/Theme/CodeThemeRegistry.php:42
 msgid "春日代码"
 msgstr ""
 

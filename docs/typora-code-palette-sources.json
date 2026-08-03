@@ -1,0 +1,311 @@
+{
+  "version": 1,
+  "themes": {
+    "inkwell-code": {
+      "nativeFile": "墨砚-typora-theme-inkwell.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-link"],
+      "notes": "浅色 Inkwell 的 fenced CodeMirror palette；EasyMDE Highlight.js selectors are mapped from the native .cm-* rules.",
+      "palette": {
+        "--easymde-typora-code-bg": "#f6f8fb",
+        "--easymde-typora-code-text": "#3d4852",
+        "--easymde-typora-code-muted": "#94a3b8",
+        "--easymde-typora-code-keyword": "#7c3aed",
+        "--easymde-typora-code-string": "#15803d",
+        "--easymde-typora-code-number": "#c2410c",
+        "--easymde-typora-code-blue": "#2563eb",
+        "--easymde-typora-code-link": "#3b82c4",
+        "--easymde-typora-code-variable": "#3d4852",
+        "--easymde-typora-code-operator": "#0d9488"
+      }
+    },
+    "animal-island-code": {
+      "nativeFile": "动物岛-typora-theme-animal-island.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-link"],
+      "notes": "Animal Island light fenced palette; inline-code colors are owned by the article theme and are intentionally not copied into the code theme.",
+      "palette": {
+        "--easymde-typora-code-bg": "#efe9d6",
+        "--easymde-typora-code-text": "#725d42",
+        "--easymde-typora-code-muted": "#c4b89e",
+        "--easymde-typora-code-keyword": "#c94444",
+        "--easymde-typora-code-string": "#5a9e1e",
+        "--easymde-typora-code-number": "#dba90e",
+        "--easymde-typora-code-blue": "#11a89b",
+        "--easymde-typora-code-link": "#11a89b",
+        "--easymde-typora-code-variable": "#794f27",
+        "--easymde-typora-code-operator": "#794f27"
+      }
+    },
+    "phycat-code": {
+      "nativeFile": "phycat/phycat.light.css",
+      "nativeSelectors": [".cm-s-inner.CodeMirror", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-link"],
+      "notes": "All eight retained light Phycat wrappers import this same fenced palette; their article-specific inline-code colors therefore do not create duplicate code themes.",
+      "palette": {
+        "--easymde-typora-code-bg": "#f8f8f8",
+        "--easymde-typora-code-text": "#4f5467",
+        "--easymde-typora-code-muted": "#9a9a9a",
+        "--easymde-typora-code-keyword": "#a626a4",
+        "--easymde-typora-code-string": "#50a14f",
+        "--easymde-typora-code-number": "#1694b6",
+        "--easymde-typora-code-blue": "#c18401",
+        "--easymde-typora-code-link": "#e46918",
+        "--easymde-typora-code-variable": "#b92121",
+        "--easymde-typora-code-operator": "#0abe00"
+      }
+    },
+    "mdmdt-code": {
+      "nativeFile": "mdmdt-浅色-mdmdt.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Mdmdt light uses bg-color2 for fenced blocks and CodeMirror token colors; its fenced .cm-link is absent, so the source-mode link color is used as the closest explicit link token.",
+      "palette": {
+        "--easymde-typora-code-bg": "rgb(236, 236, 238)",
+        "--easymde-typora-code-text": "#2f479f",
+        "--easymde-typora-code-muted": "rgba(72, 93, 108, 0.75)",
+        "--easymde-typora-code-keyword": "#bb59fd",
+        "--easymde-typora-code-string": "#02be74",
+        "--easymde-typora-code-number": "#f59102",
+        "--easymde-typora-code-blue": "#3876eb",
+        "--easymde-typora-code-link": "#f59102",
+        "--easymde-typora-code-variable": "#f4395d",
+        "--easymde-typora-code-operator": "#40d7ec"
+      }
+    },
+    "dogschoice-pink-code": {
+      "nativeFile": "狗狗粉-dogs-choice.css",
+      "nativeSelectors": [".md-fences", "code", "a"],
+      "notes": "DogsChoice 七彩虹粉色 has no native CodeMirror or Highlight.js token rules. The adapter keeps its fenced surface, body text inheritance, and link color; syntax tokens remain neutral instead of inventing colors.",
+      "palette": {
+        "--easymde-typora-code-bg": "#e4f3ff",
+        "--easymde-typora-code-text": "#333333",
+        "--easymde-typora-code-muted": "#333333",
+        "--easymde-typora-code-keyword": "#333333",
+        "--easymde-typora-code-string": "#333333",
+        "--easymde-typora-code-number": "#333333",
+        "--easymde-typora-code-blue": "#333333",
+        "--easymde-typora-code-link": "#768cce",
+        "--easymde-typora-code-variable": "#333333",
+        "--easymde-typora-code-operator": "#333333"
+      }
+    },
+    "bloom-petal-code": {
+      "nativeFile": "花瓣-typora-bloom-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Bloom light code variables are resolved from the installed theme; light fenced links have no dedicated native rule and inherit the base ink color.",
+      "palette": {
+        "--easymde-typora-code-bg": "#faeef3",
+        "--easymde-typora-code-text": "#2a1e22",
+        "--easymde-typora-code-muted": "rgb(120 120 125 / 55%)",
+        "--easymde-typora-code-keyword": "#e24ea0",
+        "--easymde-typora-code-string": "#3f7932",
+        "--easymde-typora-code-number": "#b55f40",
+        "--easymde-typora-code-blue": "#335ca0",
+        "--easymde-typora-code-link": "#2a1e22",
+        "--easymde-typora-code-variable": "#2a1e22",
+        "--easymde-typora-code-operator": "#2a1e22"
+      }
+    },
+    "bloom-mist-code": {
+      "nativeFile": "雾蓝-typora-bloom-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Bloom light code variables are resolved from the installed theme; light fenced links inherit the base ink color.",
+      "palette": {
+        "--easymde-typora-code-bg": "#e5ecf1",
+        "--easymde-typora-code-text": "#19232a",
+        "--easymde-typora-code-muted": "rgb(120 125 130 / 55%)",
+        "--easymde-typora-code-keyword": "#8843db",
+        "--easymde-typora-code-string": "#187f00",
+        "--easymde-typora-code-number": "#d53d00",
+        "--easymde-typora-code-blue": "#004fd6",
+        "--easymde-typora-code-link": "#19232a",
+        "--easymde-typora-code-variable": "#19232a",
+        "--easymde-typora-code-operator": "#19232a"
+      }
+    },
+    "bloom-verdant-code": {
+      "nativeFile": "草木-typora-bloom-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Bloom light code variables are resolved from the installed theme; light fenced links inherit the base ink color.",
+      "palette": {
+        "--easymde-typora-code-bg": "#e6ede9",
+        "--easymde-typora-code-text": "#19251e",
+        "--easymde-typora-code-muted": "rgb(120 120 120 / 55%)",
+        "--easymde-typora-code-keyword": "#118659",
+        "--easymde-typora-code-string": "#4d9351",
+        "--easymde-typora-code-number": "#b07a20",
+        "--easymde-typora-code-blue": "#3c7ebe",
+        "--easymde-typora-code-link": "#19251e",
+        "--easymde-typora-code-variable": "#19251e",
+        "--easymde-typora-code-operator": "#19251e"
+      }
+    },
+    "bloom-stone-code": {
+      "nativeFile": "暖石-typora-bloom-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Bloom light code variables are resolved from the installed theme; light fenced links inherit the base ink color.",
+      "palette": {
+        "--easymde-typora-code-bg": "#f2e9e7",
+        "--easymde-typora-code-text": "#2b1e1c",
+        "--easymde-typora-code-muted": "rgb(120 120 120 / 55%)",
+        "--easymde-typora-code-keyword": "#ab5637",
+        "--easymde-typora-code-string": "#4d9351",
+        "--easymde-typora-code-number": "#b07a20",
+        "--easymde-typora-code-blue": "#3c7ebe",
+        "--easymde-typora-code-link": "#2b1e1c",
+        "--easymde-typora-code-variable": "#2b1e1c",
+        "--easymde-typora-code-operator": "#2b1e1c"
+      }
+    },
+    "bloom-wheat-code": {
+      "nativeFile": "麦穗-typora-bloom-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Bloom light code variables are resolved from the installed theme; light fenced links inherit the base ink color.",
+      "palette": {
+        "--easymde-typora-code-bg": "#f1eee9",
+        "--easymde-typora-code-text": "#262118",
+        "--easymde-typora-code-muted": "rgb(124 118 104 / 55%)",
+        "--easymde-typora-code-keyword": "#956725",
+        "--easymde-typora-code-string": "#5d8943",
+        "--easymde-typora-code-number": "#ba673f",
+        "--easymde-typora-code-blue": "#2382ba",
+        "--easymde-typora-code-link": "#262118",
+        "--easymde-typora-code-variable": "#262118",
+        "--easymde-typora-code-operator": "#262118"
+      }
+    },
+    "bloom-ink-code": {
+      "nativeFile": "水墨-typora-bloom-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Bloom light code variables are resolved from the installed theme; light fenced links inherit the base ink color.",
+      "palette": {
+        "--easymde-typora-code-bg": "#f0eeea",
+        "--easymde-typora-code-text": "#1a1813",
+        "--easymde-typora-code-muted": "rgb(120 118 112 / 55%)",
+        "--easymde-typora-code-keyword": "#323a50",
+        "--easymde-typora-code-string": "#31623d",
+        "--easymde-typora-code-number": "#8c482f",
+        "--easymde-typora-code-blue": "#194f81",
+        "--easymde-typora-code-link": "#1a1813",
+        "--easymde-typora-code-variable": "#1a1813",
+        "--easymde-typora-code-operator": "#1a1813"
+      }
+    },
+    "bloom-amber-code": {
+      "nativeFile": "琥珀-typora-bloom-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Bloom light code variables are resolved from the installed theme; light fenced links inherit the base ink color.",
+      "palette": {
+        "--easymde-typora-code-bg": "#f4f0e9",
+        "--easymde-typora-code-text": "#251e15",
+        "--easymde-typora-code-muted": "rgb(128 120 106 / 55%)",
+        "--easymde-typora-code-keyword": "#b16512",
+        "--easymde-typora-code-string": "#4c8141",
+        "--easymde-typora-code-number": "#b95c3a",
+        "--easymde-typora-code-blue": "#316ca5",
+        "--easymde-typora-code-link": "#251e15",
+        "--easymde-typora-code-variable": "#251e15",
+        "--easymde-typora-code-operator": "#251e15"
+      }
+    },
+    "bloom-lapis-code": {
+      "nativeFile": "青金-typora-bloom-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Bloom light code variables are resolved from the installed theme; light fenced links inherit the base ink color.",
+      "palette": {
+        "--easymde-typora-code-bg": "#ecf1f5",
+        "--easymde-typora-code-text": "#161e26",
+        "--easymde-typora-code-muted": "rgb(112 120 132 / 55%)",
+        "--easymde-typora-code-keyword": "#2e5ba6",
+        "--easymde-typora-code-string": "#397949",
+        "--easymde-typora-code-number": "#ab5637",
+        "--easymde-typora-code-blue": "#006aaa",
+        "--easymde-typora-code-link": "#161e26",
+        "--easymde-typora-code-variable": "#161e26",
+        "--easymde-typora-code-operator": "#161e26"
+      }
+    },
+    "bloom-ripple-code": {
+      "nativeFile": "涟漪-typora-bloom-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Bloom light code variables are resolved from the installed theme; light fenced links inherit the base ink color.",
+      "palette": {
+        "--easymde-typora-code-bg": "#e4eded",
+        "--easymde-typora-code-text": "#162525",
+        "--easymde-typora-code-muted": "rgb(120 130 130 / 55%)",
+        "--easymde-typora-code-keyword": "#0079ba",
+        "--easymde-typora-code-string": "#00946d",
+        "--easymde-typora-code-number": "#c45e39",
+        "--easymde-typora-code-blue": "#008fa8",
+        "--easymde-typora-code-link": "#162525",
+        "--easymde-typora-code-variable": "#162525",
+        "--easymde-typora-code-operator": "#162525"
+      }
+    },
+    "bloom-cinnabar-code": {
+      "nativeFile": "丹红-typora-bloom-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Bloom light code variables are resolved from the installed theme; light fenced links inherit the base ink color.",
+      "palette": {
+        "--easymde-typora-code-bg": "#f2eded",
+        "--easymde-typora-code-text": "#2b1e1d",
+        "--easymde-typora-code-muted": "rgb(130 120 120 / 55%)",
+        "--easymde-typora-code-keyword": "#c53637",
+        "--easymde-typora-code-string": "#3f7932",
+        "--easymde-typora-code-number": "#b55f40",
+        "--easymde-typora-code-blue": "#335ca0",
+        "--easymde-typora-code-link": "#2b1e1d",
+        "--easymde-typora-code-variable": "#2b1e1d",
+        "--easymde-typora-code-operator": "#2b1e1d"
+      }
+    },
+    "bloom-sage-code": {
+      "nativeFile": "鼠尾草-typora-bloom-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Bloom light code variables are resolved from the installed theme; light fenced links inherit the base ink color.",
+      "palette": {
+        "--easymde-typora-code-bg": "#eeefe8",
+        "--easymde-typora-code-text": "#212318",
+        "--easymde-typora-code-muted": "rgb(125 120 115 / 55%)",
+        "--easymde-typora-code-keyword": "#70790e",
+        "--easymde-typora-code-string": "#3f7932",
+        "--easymde-typora-code-number": "#b65c4e",
+        "--easymde-typora-code-blue": "#335ca0",
+        "--easymde-typora-code-link": "#212318",
+        "--easymde-typora-code-variable": "#212318",
+        "--easymde-typora-code-operator": "#212318"
+      }
+    },
+    "bloom-spring-code": {
+      "nativeFile": "紫语-typora-bloom-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-def"],
+      "notes": "Bloom light code variables are resolved from the installed theme; light fenced links inherit the base ink color.",
+      "palette": {
+        "--easymde-typora-code-bg": "#eeeef2",
+        "--easymde-typora-code-text": "#20202b",
+        "--easymde-typora-code-muted": "rgb(120 125 130 / 55%)",
+        "--easymde-typora-code-keyword": "#764be5",
+        "--easymde-typora-code-string": "#187f00",
+        "--easymde-typora-code-number": "#d53d00",
+        "--easymde-typora-code-blue": "#004fd6",
+        "--easymde-typora-code-link": "#20202b",
+        "--easymde-typora-code-variable": "#20202b",
+        "--easymde-typora-code-operator": "#20202b"
+      }
+    },
+    "spring-code": {
+      "nativeFile": "春日-typora-spring-theme.css",
+      "nativeSelectors": [".md-fences", ".cm-keyword", ".cm-string", ".cm-comment", ".cm-number", ".cm-link"],
+      "notes": "Spring fenced CodeMirror palette; the native inline code color remains article-owned and the Mac frame remains shared by EasyMDE.",
+      "palette": {
+        "--easymde-typora-code-bg": "#ffffff",
+        "--easymde-typora-code-text": "#2f4f4f",
+        "--easymde-typora-code-muted": "#6a737d",
+        "--easymde-typora-code-keyword": "#222fa7",
+        "--easymde-typora-code-string": "#0264bf",
+        "--easymde-typora-code-number": "#3e19cf",
+        "--easymde-typora-code-blue": "#10623e",
+        "--easymde-typora-code-link": "#1565c0",
+        "--easymde-typora-code-variable": "#239d37",
+        "--easymde-typora-code-operator": "#006400"
+      }
+    }
+  }
+}

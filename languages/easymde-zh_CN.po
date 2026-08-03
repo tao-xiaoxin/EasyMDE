@@ -1654,42 +1654,14 @@ msgid "动物岛代码"
 msgstr "动物岛代码"
 
 #: src/Theme/CodeThemeRegistry.php:27
-msgid "樱桃猫代码"
-msgstr "樱桃猫代码"
+msgid "Phycat 代码"
+msgstr "Phycat 代码"
 
 #: src/Theme/CodeThemeRegistry.php:28
-msgid "焦糖猫代码"
-msgstr "焦糖猫代码"
-
-#: src/Theme/CodeThemeRegistry.php:29
-msgid "森林猫代码"
-msgstr "森林猫代码"
-
-#: src/Theme/CodeThemeRegistry.php:30
-msgid "薄荷猫代码"
-msgstr "薄荷猫代码"
-
-#: src/Theme/CodeThemeRegistry.php:31
-msgid "天蓝猫代码"
-msgstr "天蓝猫代码"
-
-#: src/Theme/CodeThemeRegistry.php:32
-msgid "普鲁士猫代码"
-msgstr "普鲁士猫代码"
-
-#: src/Theme/CodeThemeRegistry.php:33
-msgid "樱花猫代码"
-msgstr "樱花猫代码"
-
-#: src/Theme/CodeThemeRegistry.php:34
-msgid "淡紫猫代码"
-msgstr "淡紫猫代码"
-
-#: src/Theme/CodeThemeRegistry.php:35
 msgid "Mdmdt 代码"
 msgstr "Mdmdt 代码"
 
-#: src/Theme/CodeThemeRegistry.php:36
+#: src/Theme/CodeThemeRegistry.php:29
 msgid "狗狗粉代码"
 msgstr "狗狗粉代码"
 

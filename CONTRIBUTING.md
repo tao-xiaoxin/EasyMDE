@@ -801,7 +801,9 @@ HTML snapshot. For a copy or rendering change:
   compatibility paths. Compare the payloads, then inspect pasted DOM for the
   removed KaTeX `.katex-mathml` tree, source classes/transient attributes,
   unsafe URLs, hidden controls, exporter-owned structural markers, and the
-  expected visual tree. Safe image `src`/`srcset` and link URLs may remain;
+  expected visual tree. Hidden SVG `<defs>` subtrees referenced by visible
+  clip-path/mask/gradient/filter attributes must remain. Safe image
+  `src`/`srcset` and link URLs may remain;
   remote CSS backgrounds must not.
 - When approved theme images are present, delay one image request and verify
   that modern `Clipboard.write` starts while the originating user activation is
@@ -809,17 +811,25 @@ HTML snapshot. For a copy or rendering change:
   shared cache and that a fast write cannot report success when that payload
   later rejects. Confirm legacy compatibility succeeds only after preparation
   has completed and invokes `execCommand` synchronously in the originating
-  click task; a pending preparation or rejected modern write must not cross an
-  `await` and then enter legacy. A synchronous `ClipboardItem` construction or
-  `write()` invocation failure may use an already prepared payload through
-  legacy in that same click task, and this branch must be covered separately.
+  click task; a pending approved image or rejected modern write must not cross
+  an `await` and then enter legacy. A synchronous `ClipboardItem` construction
+  or `write()` invocation failure may use the current payload when synchronous
+  preparation completed in that same click task; a pending approved image still
+  fails until preparation resolves. Cover both branches separately.
   During a layout-only replacement, verify that the last resolved payload stays
   available to legacy while the source markup is unchanged, that a successful
   replacement supersedes it, that a failed replacement restores the newest
   successful same-source payload even when an older overlapping refresh
   resolves first, and that changed source markup cannot reuse the older payload.
+  Preparation generations must be monotonic so an older completion cannot
+  downgrade a newer successful fallback; a scroll-only change in viewport
+  coordinates must not invalidate a payload when dimensions and computed
+  layout are unchanged.
   Verify modern plain-text extraction measures the connected export surface at
-  the rendered Preview width. If legacy has no prepared entry after a
+  the rendered Preview width, and reuses the last non-zero visible Preview
+  width when immersive source mode hides the surface. When WeChat export is
+  disabled, verify that no background preparation or approved theme-image
+  request starts. If legacy has no prepared entry after a
   transient preparation failure, verify that the first click starts one
   background retry but still reports failure; only a later click may use the
   retry after it resolves.
@@ -835,7 +845,9 @@ HTML snapshot. For a copy or rendering change:
   unchanged and verify that the prepared payload is invalidated before copying.
   Check non-root theme decoration dimensions, positioning, flex sizing,
   float/overflow, and box sizing; verify that generated theme-image dimensions
-  are not replaced by the generic `height:auto` rule, repeating theme backgrounds
+  are not replaced by generic media bounds, that a single numeric
+  `background-size` keeps its missing axis automatic, and that a fixed
+  decoration wider than its host is not clamped, repeating theme backgrounds
   retain their materialized CSS declaration instead of flattening to one image,
   mixed non-image background layers such as gradients remain intact, unsafe
   background URLs become `none` slots instead of invalidating the declaration,
@@ -846,6 +858,9 @@ HTML snapshot. For a copy or rendering change:
   and materialized images remain
   behind copied text, and computed percentage background positions preserve
   centered overlays on both axes, including CSS single-token position defaults;
+  verify omitted/`auto` background sizing remains intrinsic, `cover`/`contain`
+  map to equivalent `object-fit` sizing, and four-token edge offsets such as
+  `right 12px bottom 6px` preserve both edge and offset values;
   verify fixed/sticky source decorations do
   not regain that positioning in copied HTML and static-source offsets are
   neutralized when an overlay creates a relative containing block.
@@ -874,7 +889,11 @@ HTML snapshot. For a copy or rendering change:
   long content may scroll horizontally, but it must not create a nested
   vertical axis or an exporter-imposed whole-article height. Measure the
   WeChat page/editor shell separately before attributing its scrollbar to the
-  copied article.
+  copied article. Tables must use the generated block wrapper as their only
+  horizontal owner, preserve built-in theme `display:contents`/
+  `container-type`/`100cqi` shims, and keep short intrinsic tables centered.
+  Verify task-list checkboxes retain checked state as disabled, attribute-
+  minimized controls and that arbitrary form controls are absent.
 - Inspect screenshots and computed geometry for headings, theme decorations,
   images, code line breaks, tables, inline formulas, and every display-formula
   family listed in `docs/examples/markdown-full-capability-test.md` (integral,

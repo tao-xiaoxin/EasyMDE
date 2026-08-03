@@ -29,8 +29,11 @@ Both the modern `navigator.clipboard.write` path and the legacy
 path writes `text/plain` from the connected normalized export surface captured
 for that same preparation after removing exporter whitespace markers and
 normalizing non-breaking spaces; its off-screen measurement host uses the
-rendered Preview width. The legacy path selects that same HTML and lets the
-destination derive visible plain text.
+rendered Preview width and reuses the last non-zero visible width while
+immersive source mode hides that surface. The legacy path selects that same
+HTML and lets the destination derive visible plain text. EditorRoot does not
+schedule background preparation or theme-image fetches when bootstrap disables
+WeChat export.
 
 Stable Preview notifications schedule one debounced preparation after the
 Preview settles; this may prewarm the bounded same-origin theme-image cache
@@ -38,11 +41,16 @@ shared by preparation and Copy (at most 32 entries). If an approved image
 is still pending at the click, the modern path supplies deferred `Blob` Promises to one
 `ClipboardItem` and starts `navigator.clipboard.write` in the originating
 activation task. Preparation retains one serialized HTML/plain-text payload for
-the current Preview sink. The legacy path consumes that payload only when it is
-already resolved and invokes `execCommand` synchronously in the originating
-click task. If preparation is pending, or if modern writing rejects after an
-await, the operation fails explicitly rather than entering legacy after the
-activation window. Copy reports success only after both the browser write and
+the current Preview sink and binds each stable notification to the active
+ordinary or immersive surface. A hidden ordinary Preview refresh cannot cancel
+preparation for an editable visual surface. When no approved theme image needs
+asynchronous materialization, the same normalized payload is built
+synchronously in the copy task; the legacy path can then invoke `execCommand`
+without crossing an activation boundary. If approved image preparation is still
+pending, modern Clipboard receives deferred Blob values and legacy remains an
+explicit failure until a prepared payload exists. If modern writing rejects
+after an await, the operation fails explicitly rather than entering legacy after
+the activation window. Copy reports success only after both the browser write and
 deferred HTML/plain-text payload resolve; preparation or conversion failures
 never produce partial output.
 Window/viewport resize and immersive split-pane changes schedule a refreshed
@@ -51,7 +59,11 @@ replacement, the last resolved payload remains available to legacy only when
 the source markup is unchanged; a successful replacement supersedes it, a
 failed replacement restores the newest successful same-source payload,
 including one resolved by an older overlapping refresh, and changed source
-markup never reuses it.
+markup never reuses it. Preparation generations are monotonic: an older
+completion cannot overwrite a newer successful same-source fallback. The
+layout fingerprint ignores viewport-relative `left`/`top`/`right`/`bottom`
+coordinates so ordinary page scrolling does not invalidate a payload, while
+dimensions and computed styles that can change wrapping still do.
 Background preparation failures remain quiet until the actual copy attempt
 reports the failure. If legacy has no prepared entry after a transient
 preparation failure, that click starts one background retry but still returns
@@ -65,10 +77,9 @@ ResizeObserver geometry, and inserted or removed descendants; these post-render
 layout changes schedule the same refresh, removed nodes are unobserved
 immediately, and the observers are cleaned up with the Preview sink.
 The EditorRoot binds that observer to the actual ordinary or immersive Preview
-surface. A theme or Custom CSS change that first exits visual editing records a
-Root-owned appearance revision and prepares the surviving Preview after visual
-runtime teardown, so legacy Copy never uses a disposed surface or waits for an
-unrelated edit.
+surface. A theme or Custom CSS change that first exits visual editing waits for
+the refreshed ordinary Preview snapshot after visual runtime teardown, so legacy
+Copy never uses a stale or disposed surface.
 Immersive visual edits coalesce preparation after rapid input, and later stable
 Preview notifications replace the prepared payload before another copy. The
 serializer compares the full sink markup, including root `class`/`style`
@@ -96,7 +107,9 @@ The normalized payload:
   bounded to 32 cache entries and by the fetched source blob limit
   `MAX_DATA_IMAGE_LENGTH` = 4,000,000;
   safe image `src`/`srcset`
-  candidates and link URLs remain while unsafe URLs are removed. The copied
+  candidates and link URLs remain while unsafe URLs are removed. Remote
+  `<img>`/`srcset` candidates are retained but are not fetched by the
+  serializer. The copied
   `background-repeat`, `background-position`, and `background-size` longhands
   are expanded using CSS's repeated-final-layer semantics and compacted by the
   removed image indexes so they stay aligned with retained layers;
@@ -108,16 +121,26 @@ The normalized payload:
   theme decoration dimensions/relative/absolute positioning/flex sizing/float/overflow and box
   sizing, code-frame geometry, table structure, responsive non-math SVG and
   media bounds without changing inline media display or margins, and KaTeX's
-  visual SVG geometry while removing only the `.katex-mathml` tree; materialized
+  visual SVG geometry while removing only the `.katex-mathml` tree; hidden SVG
+  `<defs>` subtrees remain for visible clip-path/mask/gradient/filter
+  references, while unrelated hidden nodes are removed; materialized
   background images use an isolated
   negative stacking level so they remain behind copied text; computed `0%`,
   `50%`, and `100%` background positions are normalized before composing
   centered theme-image overlays; single-token `background-position` values use
-  CSS's centered missing-axis default; fixed/sticky positioning is never reactivated
+  CSS's centered missing-axis default. Two-value keyword/offset positions follow
+  CSS axis order (`left 10px` uses the vertical offset and `top 10px` uses the
+  horizontal offset); explicit edge offsets retain the four-value form.
+  Fixed/sticky positioning is never reactivated
   by a generated overlay, and offsets inert under static positioning are
   neutralized when the exporter creates a relative containing block; generated theme-image `<img>` nodes retain
-  their explicit background dimensions and are excluded from the generic
-  responsive `height:auto` media rule;
+  their explicit background dimensions and are excluded from generic media
+  bounds. A single numeric `background-size` token keeps its missing axis
+  automatic; omitted or `auto` sizing remains intrinsic rather than inheriting
+  the host box, while `cover` and `contain` map to equivalent `object-fit`
+  sizing. CSS edge-offset positions such as `right 12px bottom 6px` retain
+  both edge and offset values. Materialized theme images use an unconstrained
+  max width so fixed decorations wider than their host remain complete;
   exporter-owned `aria-hidden` decoration and `leaf` markers remain as
   structural exceptions;
 - treats Mermaid HTML-label SVGs as a destination-font compatibility boundary:
@@ -131,17 +154,27 @@ The normalized payload:
   fragment IDs together with ordinary URL attributes;
 - encodes code line breaks explicitly and keeps each source line non-wrapping;
 - centers tables and display formulas in the destination column and applies
-  horizontal-overflow rules to code, table, and formula frame boundaries;
-  browser evidence identifies the actual owner and rejects nested vertical
-  scrolling;
+  horizontal-overflow rules to code, table, and formula frame boundaries. Each
+  table is wrapped in a real block scroll owner and retains intrinsic
+  `max-content` sizing; `display:table` is never treated as the scroll owner.
+  For tables whose full-width state is inferred from rendered geometry, the
+  serializer retains the source table's last visible classification while
+  immersive source mode hides the Preview pane; the next visible layout pass
+  refreshes that classification.
+  Theme table shims (`display:contents`, `container-type`, and `100cqi`
+  pseudo-element geometry) remain intact. Task-list checkboxes retain checked
+  state as disabled, attribute-minimized controls while arbitrary form
+  controls are removed. Browser evidence identifies the actual owner and
+  rejects nested vertical scrolling;
 - keeps card height content-driven and does not create an article-wide height or
   vertical scroll container.
 
 The legacy path is a compatibility branch inside the same explicit user action,
-not a second renderer or a silent success. It consumes only an already-prepared
-payload and never performs asynchronous serialization in the click handler. If
+not a second renderer or a silent success. It consumes a payload prepared before
+the click or one produced synchronously in that click when no asynchronous theme
+asset is required; it never awaits theme-image work in the click handler. If
 `ClipboardItem` construction or the `write()` call throws synchronously, that
-same click task may use the prepared legacy payload; a modern write rejection
+same click task may use the current prepared payload; a modern write rejection
 after an await remains a failure rather than an asynchronous legacy fallback.
 Clipboard failure remains a failure; temporary fallback DOM, Selection, Focus,
 and Scroll are restored on every exit.
@@ -181,12 +214,17 @@ All runtime assets remain local; no remote executable resource is introduced.
 
 The focused serializer tests cover unsafe input, pseudo elements, theme-image
 materialization, delayed modern Clipboard activation, Mermaid non-ASCII label
-preservation, code line preservation, table/formula horizontal overflow, KaTeX
-MathML removal, modern/legacy HTML parity, synchronous legacy preparation,
+preservation, code line preservation, intrinsic table scroll-owner and
+theme-shim behavior, task-list checkbox state, table/formula horizontal overflow, KaTeX
+MathML removal, modern/legacy HTML parity, synchronous legacy preparation for
+payloads without remote theme images, synchronous modern setup fallback,
 rejection without asynchronous legacy fallback, deferred payload failure after
 a fast write, and an explicit failure result with sandbox cleanup. The timeout
 and cache-eviction regression covers a permanently pending approved image
-request. Non-2xx responses, invalid MIME/size, FileReader conversion errors,
+request. The suite also covers CSS single-token and two-value keyword/offset
+background-position defaults, scroll-only geometry reuse, retry completion
+without fixed delays, and out-of-order preparation generations preserving the newest successful
+fallback. Non-2xx responses, invalid MIME/size, FileReader conversion errors,
 unsupported legacy results, and full Selection/Focus/Scroll restoration on
 every failure path remain explicit follow-up cases; they must fail visibly and
 must not produce partial output. The companion

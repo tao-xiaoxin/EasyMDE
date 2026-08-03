@@ -2343,6 +2343,40 @@ describe('EditorRoot', () => {
     );
   });
 
+  it('keeps WeChat preparation bound to the active visual Preview after a render refresh', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Original paragraph';
+    props.submissionField.defaultValue = 'Original paragraph';
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: '<p>Original paragraph</p>' as SafePreviewHtml
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+    preparation.mockClear();
+
+    visualEditor.innerHTML = '<p>Rendered visual edit</p>';
+    fireEvent.input(visualEditor);
+
+    await waitFor(() => expect(preparation).toHaveBeenCalled());
+    expect(preparation.mock.calls.at(-1)?.[0]).toBe(visualEditor);
+    view.unmount();
+  });
+
   it('coalesces WeChat preparation during rapid immersive visual edits', async () => {
     const props = fixture();
     props.submissionField.value = 'Original paragraph';
@@ -4690,6 +4724,7 @@ describe('EditorRoot', () => {
   });
 
   it('re-prepares WeChat after an immersive article theme change', async () => {
+    const pendingPreview = deferred<PreviewResponse>();
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
     const prepare = props.wechatClipboard.prepare;
@@ -4703,24 +4738,38 @@ describe('EditorRoot', () => {
     await waitFor(() => expect(preparation).toHaveBeenCalled());
     const callsBeforeThemeChange = preparation.mock.calls.length;
 
-    // Keep the new Preview request unresolved so this assertion proves the
-    // appearance mutation itself refreshes the prepared legacy payload.
+    // Keep the refreshed Preview unresolved until explicitly completed. The
+    // old ordinary DOM must not be prepared while this request is pending.
     vi.mocked(props.previewPort.render).mockImplementation(
-      () => new Promise(() => undefined)
+      () => pendingPreview.promise
     );
     fireEvent.click(view.getByRole('button', { name: '主题' }));
     fireEvent.click(view.getByRole('button', { name: 'Article theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(preparation.mock.calls.length).toBe(callsBeforeThemeChange);
+    await act(async () => {
+      pendingPreview.resolve({
+        features: {},
+        html: '<p>Theme Preview</p>' as SafePreviewHtml
+      });
+    });
     await waitFor(() =>
       expect(preparation.mock.calls.length).toBeGreaterThan(
         callsBeforeThemeChange
       )
     );
+    expect(preparation.mock.calls.at(-1)?.[0]).toBe(
+      view.container.querySelector('[data-easymde-preview-html-sink]')
+    );
     view.unmount();
   });
 
   it('re-prepares WeChat after an immersive Custom CSS save', async () => {
+    const pendingPreview = deferred<PreviewResponse>();
     const props = fixture();
     const savedSnapshot = {
       customCss: [{
@@ -4758,7 +4807,7 @@ describe('EditorRoot', () => {
     const callsBeforeSave = preparation.mock.calls.length;
 
     vi.mocked(props.previewPort.render).mockImplementation(
-      () => new Promise(() => undefined)
+      () => pendingPreview.promise
     );
     fireEvent.click(view.getByRole('button', { name: '主题' }));
     fireEvent.click(view.getByRole('button', { name: 'Custom CSS theme' }));
@@ -4774,8 +4823,21 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: 'Apply theme' }));
 
     await waitFor(() => expect(appearancePort.saveCustomCss).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(preparation.mock.calls.length).toBe(callsBeforeSave);
+    await act(async () => {
+      pendingPreview.resolve({
+        features: {},
+        html: '<p>Custom CSS Preview</p>' as SafePreviewHtml
+      });
+    });
     await waitFor(() =>
       expect(preparation.mock.calls.length).toBeGreaterThan(callsBeforeSave)
+    );
+    expect(preparation.mock.calls.at(-1)?.[0]).toBe(
+      view.container.querySelector('[data-easymde-preview-html-sink]')
     );
     view.unmount();
   });
@@ -4791,6 +4853,25 @@ describe('EditorRoot', () => {
     expect(props.onFailure).not.toHaveBeenCalledWith(
       'wechat-theme-image-prepare-failed'
     );
+    view.unmount();
+  });
+
+  it('does not prepare WeChat in the background when export is disabled', async () => {
+    const props = fixture();
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const view = render(
+      <EditorRoot
+        {...props}
+        wechatExport={{ ...props.wechatExport, enabled: false }}
+      />
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(props.getPreviewLayoutObservationCount()).toBe(0);
     view.unmount();
   });
 

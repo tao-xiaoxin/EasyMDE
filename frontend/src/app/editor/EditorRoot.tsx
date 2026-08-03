@@ -467,7 +467,6 @@ export function EditorRoot(props: EditorRootProps) {
   });
   const [previewRuntimeGeneration, setPreviewRuntimeGeneration] = useState(0);
   const [previewRefreshRevision, setPreviewRefreshRevision] = useState(0);
-  const [wechatAppearanceRevision, setWechatAppearanceRevision] = useState(0);
   const [previewSurfaceStatus, setPreviewSurfaceStatus] =
     useState<PreviewSurfaceStatus>('loading');
   const [visualPreviewSnapshot, setVisualPreviewSnapshot] = useState<
@@ -696,18 +695,18 @@ export function EditorRoot(props: EditorRootProps) {
   const prepareWechatPreview = useCallback(
     (surface: HTMLElement | null) => {
       const prepare = props.wechatClipboard.prepare;
-      if (!surface || !prepare) return;
+      if (!props.wechatExport.enabled || !surface || !prepare) return;
       // Preparation runs in the background so the compatibility copy path is
       // ready when requested. Its result is reported by the actual copy
       // operation; opening or editing a Preview is not a copy failure.
       void prepare(surface).catch(() => undefined);
     },
-    [props.wechatClipboard]
+    [props.wechatClipboard, props.wechatExport.enabled]
   );
   const scheduleWechatPreviewPreparation = useCallback(
     (surface: HTMLElement | null) => {
       const prepare = props.wechatClipboard.prepare;
-      if (!surface || !prepare) return;
+      if (!props.wechatExport.enabled || !surface || !prepare) return;
       cancelScheduledWechatPreparation();
       const cancel = props.immersiveEnvironment.schedule(() => {
         scheduledWechatPreparationRef.current = null;
@@ -719,23 +718,34 @@ export function EditorRoot(props: EditorRootProps) {
       cancelScheduledWechatPreparation,
       prepareWechatPreview,
       props.immersiveEnvironment,
-      props.wechatClipboard
+      props.wechatClipboard,
+      props.wechatExport.enabled
     ]
   );
   const scheduleCurrentWechatPreviewPreparation = useCallback(() => {
-    scheduleWechatPreviewPreparation(
-      visualEditorRuntimeRef.current?.surface
-        ?? previewRuntimeRef.current?.surface
-        ?? null
-    );
+    const surface = visualPreviewEditingRef.current
+      ? visualEditorRuntimeRef.current?.surface
+      : previewRuntimeRef.current?.surface;
+    scheduleWechatPreviewPreparation(surface ?? null);
   }, [scheduleWechatPreviewPreparation]);
   useEffect(() => {
+    if (!props.wechatExport.enabled || !props.wechatClipboard.prepare) {
+      return undefined;
+    }
     const unsubscribe = props.immersiveEnvironment.subscribeResize(
       scheduleCurrentWechatPreviewPreparation
     );
     return unsubscribe;
-  }, [props.immersiveEnvironment, scheduleCurrentWechatPreviewPreparation]);
+  }, [
+    props.immersiveEnvironment,
+    props.wechatClipboard,
+    props.wechatExport.enabled,
+    scheduleCurrentWechatPreviewPreparation
+  ]);
   useEffect(() => {
+    if (!props.wechatExport.enabled || !props.wechatClipboard.prepare) {
+      return undefined;
+    }
     const surface =
       visualEditorSurface ?? previewRuntimeRef.current?.surface ?? null;
     if (!surface) return undefined;
@@ -747,6 +757,8 @@ export function EditorRoot(props: EditorRootProps) {
     previewRuntimeGeneration,
     visualEditorSurface,
     props.immersiveEnvironment,
+    props.wechatClipboard,
+    props.wechatExport.enabled,
     scheduleCurrentWechatPreviewPreparation
   ]);
   useEffect(() => {
@@ -776,11 +788,9 @@ export function EditorRoot(props: EditorRootProps) {
       // A source edit can produce several Preview snapshots in one typing
       // burst. Defer the expensive export walk until the surface is stable so
       // ordinary editing does not serialize the whole article on every render.
-      scheduleWechatPreviewPreparation(
-        previewRuntimeRef.current?.surface ?? null
-      );
+      scheduleCurrentWechatPreviewPreparation();
     },
-    [scheduleWechatPreviewPreparation]
+    [scheduleCurrentWechatPreviewPreparation]
   );
   const handlePreviewStatusChange = useCallback(
     (status: PreviewSurfaceStatus) => {
@@ -914,9 +924,7 @@ export function EditorRoot(props: EditorRootProps) {
         if (defaults) {
           fontControlsSessionRef.current?.replaceState(defaults);
         }
-        if (visualPreviewWasEditing) {
-          setWechatAppearanceRevision((revision) => revision + 1);
-        } else {
+        if (!visualPreviewWasEditing) {
           schedulePreview(true);
         }
       },
@@ -948,9 +956,7 @@ export function EditorRoot(props: EditorRootProps) {
           };
           documentSession?.replaceSubmissionState(submissionStateRef.current);
           previewAppearanceRef.current = result.snapshot.state;
-          if (visualPreviewWasEditing) {
-            setWechatAppearanceRevision((revision) => revision + 1);
-          } else {
+          if (!visualPreviewWasEditing) {
             schedulePreview(true);
           }
         }
@@ -1502,14 +1508,6 @@ export function EditorRoot(props: EditorRootProps) {
     previewRuntimeGeneration,
     schedulePreview,
     visualPreviewEditing
-  ]);
-
-  useLayoutEffect(() => {
-    if (0 === wechatAppearanceRevision) return;
-    scheduleCurrentWechatPreviewPreparation();
-  }, [
-    scheduleCurrentWechatPreviewPreparation,
-    wechatAppearanceRevision
   ]);
 
   return (

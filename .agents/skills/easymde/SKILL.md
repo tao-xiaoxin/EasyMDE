@@ -1056,18 +1056,25 @@ Feature boundaries:
   same-origin theme-image request has a ten-second abortable timeout; timeout
   evicts the pending cache entry and fails the preparation rather than leaving
   serialization pending indefinitely. The modern Adapter must
-  still construct one `ClipboardItem` with deferred `Blob` payload Promises and call
-  `navigator.clipboard.write` in the originating activation task, because a
-  `fetch`/`FileReader` await can otherwise lose transient user activation. It
-  reports success only after both the browser write and deferred payload resolve;
-  a fast write must not hide a later serialization failure.
+  not schedule background preparation when the bootstrap says WeChat export is
+  disabled; unavailable features must not fetch theme assets or serialize a
+  Preview. The connected plain-text measurement host uses the last non-zero
+  rendered Preview width when the current surface is hidden by immersive source
+  mode, so mode changes do not flatten visible line boundaries.
+  The modern path constructs one `ClipboardItem` with deferred `Blob` payload Promises and calls
+  `navigator.clipboard.write` in the originating activation task when approved
+  theme-image work is pending, because a `fetch`/`FileReader` await can otherwise
+  lose transient user activation. When no asynchronous theme image is needed,
+  the same normalized payload has a synchronous preparation path for the click
+  task. The Adapter reports success only after both the browser write and deferred
+  payload resolve; a fast write must not hide a later serialization failure.
   Preparation stores one serialized HTML/plain-text payload for the current
-  stable Preview sink. The legacy path consumes that already-resolved payload
-  synchronously in the originating click task; it must fail while preparation
+  stable Preview sink. The legacy path consumes a prepared payload synchronously
+  in the originating click task; it must fail while approved image preparation
   is pending, must not await theme-image work from the click handler, and must
   not be entered after an asynchronous modern-write rejection. If
   `ClipboardItem` construction or `write()` invocation throws synchronously,
-  the same click task may use an already prepared payload through legacy. It
+  the same click task may use the current prepared payload through legacy. It
   must not emit a partial URL or claim success when preparation fails. Window
   or viewport resize and immersive split-pane changes schedule the same
   debounced preparation so layout-only changes refresh the legacy payload;
@@ -1075,7 +1082,11 @@ Feature boundaries:
   available to legacy only when the source markup is unchanged; a successful
   replacement supersedes it, a failed replacement restores the newest successful
   same-source payload (including one resolved by an older overlapping refresh),
-  and changed source markup never reuses it; background preparation failures are reported
+  and changed source markup never reuses it. Preparation generations are
+  monotonic, so an older completion cannot downgrade a newer successful
+  fallback. Scroll-only viewport-coordinate changes do not invalidate a payload
+  when dimensions and computed layout remain unchanged; wrapping-sensitive
+  dimensions and styles still invalidate it. Background preparation failures are reported
   only by a later copy attempt,
   not as copy failures during ordinary editing. If a legacy click finds no
   prepared entry after a transient preparation failure, it starts one background
@@ -1096,9 +1107,12 @@ Feature boundaries:
   down.
   The observer must follow the actual active copy surface when immersive visual
   Preview mounts or replaces the ordinary Preview owner. If an appearance or
-  Custom CSS mutation first exits visual editing, increment a Root-owned
-  refresh revision and prepare the surviving Preview surface after the visual
-  runtime cleanup; do not leave a timer attached to the disposed runtime.
+  Custom CSS mutation first exits visual editing, wait for the refreshed ordinary
+  Preview snapshot after the visual runtime cleanup; do not leave a timer
+  attached to the disposed runtime.
+  Stable Preview snapshot notifications must use that same active surface, so a
+  hidden ordinary Preview refresh cannot cancel preparation for the editable
+  visual surface.
   The pipeline removes scripts, styles, controls, CSS classes, and source/editor
   transient attributes; keeps only valid fragment IDs and SVG-internal IDs;
   sanitizes URL/style values; preserves safe image `src`/`srcset` candidates and
@@ -1111,7 +1125,14 @@ Feature boundaries:
   their materialized `background` declaration instead of being flattened to one
   `<img>`. Generated theme-image `<img>` nodes
   retain their explicit background dimensions and are excluded from the
-  generic responsive `height:auto` media rule. Non-repeating multi-layer
+  generic media bounds. A single numeric `background-size` token keeps its
+  missing axis automatic; omitted or `auto` sizing remains intrinsic rather
+  than inheriting the host box, while `cover` and `contain` map to equivalent
+  `object-fit` sizing. CSS edge-offset positions such as
+  `right 12px bottom 6px` retain both edge and offset values. Materialized
+  theme images use an unconstrained max width so fixed decorations wider than
+  their host are not clamped.
+  Non-repeating multi-layer
   backgrounds retain non-image layers such as gradients; every safe image layer
   is materialized in source order with its matching size and position, and the
   resulting overlays use isolated stacking levels rather than normal document
@@ -1124,7 +1145,9 @@ Feature boundaries:
   It preserves approved computed styles, including non-default flex sizing,
   quoted-literal pseudo decorations, code-frame geometry, table layout, and
   KaTeX visual SVG geometry while removing only the KaTeX `.katex-mathml`
-  tree. CSS `attr()`/counter-generated pseudo content is intentionally omitted.
+  tree. Hidden SVG `<defs>` subtrees remain available to visible
+  clip-path/mask/gradient/filter references; unrelated hidden nodes are
+  removed. CSS `attr()`/counter-generated pseudo content is intentionally omitted.
   Exporter-owned
   `aria-hidden` decoration and `leaf` markers are structural exceptions to the
   source transient-attribute rule.
@@ -1148,18 +1171,31 @@ Feature boundaries:
   isolated negative stacking level so they remain
   behind copied text; computed `0%`, `50%`, and `100%` background positions are
   normalized before composing centered image overlays; single-token
-  `background-position` values use CSS's centered missing-axis default. A
+  `background-position` values use CSS's centered missing-axis default. Two-value
+  keyword/offset positions follow CSS axis order (`left 10px` uses the vertical
+  offset and `top 10px` uses the horizontal offset); explicit edge offsets use
+  the four-value form. A
   theme-image fetch or data conversion failure must fail the copy rather than
   emit a partial payload.
   Code lines must retain explicit line breaks and non-wrapping intrinsic line
   boxes. The `<pre>`/direct-`<code>` frame pair receives the horizontal
   overflow rules required by the destination; browser evidence must identify
   the actual owner and reject nested vertical scrolling. Tables and display
-  formulas are centered in the destination column and may scroll horizontally;
-  inline formulas remain non-wrapping. No exporter wrapper may create a
-  whole-article height constraint. A page-level WeChat scrollbar is outside
-  this Adapter's ownership and must be diagnosed from the current session
-  before changing export code.
+  formulas are centered in the destination column and may scroll horizontally.
+  The serializer gives each table a real block scroll owner and keeps the table
+  intrinsic (`max-content`) so short tables center while wide rows scroll only
+  on that owner; `display:table` must never be treated as the scroll owner.
+  A geometry-derived full-width table decision is cached per source table after
+  a visible layout pass and reused while immersive source mode hides the
+  Preview pane, so a hidden geometry read cannot narrow a previously full-width
+  table. A later visible layout pass replaces that decision.
+  Built-in theme table shims (`display:contents`, `container-type`, and `cqi`
+  pseudo-element geometry) remain intact, and task-list checkboxes retain their
+  checked state as disabled, attribute-minimized controls while arbitrary form
+  controls are removed. Inline formulas remain non-wrapping. No exporter
+  wrapper may create a whole-article height constraint. A page-level WeChat
+  scrollbar is outside this Adapter's ownership and must be diagnosed from
+  the current session before changing export code.
   Clipboard rejection is a failure; a rejected modern write is not an
   invitation to cross an asynchronous boundary into legacy `execCommand`.
   The legacy compatibility attempt is part of the same explicit user action,

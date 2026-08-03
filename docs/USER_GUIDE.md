@@ -76,18 +76,33 @@ The table of contents is generated from rendered headings and is inserted where 
 
 ## Copy To WeChat
 
-The **Copy to WeChat** action copies the current ready rendered preview as rich text. The modern Clipboard API writes normalized `text/html` and `text/plain` captured from the connected normalized export surface for the same preparation; plain text retains the Preview's paragraph and list line breaks, excludes removed editor/MathML nodes, and removes exporter-only whitespace markers. Approved theme images are prepared after a debounced stable Preview update in a shared local cache limited to 32 assets; window/viewport resizes and immersive split-pane changes schedule the same refresh so the legacy payload is not stale after a layout-only change. If an image or video is still loading or changing intrinsic size, the modern write starts during the click and resolves its deferred payload afterward. Repeating theme backgrounds retain their materialized CSS background instead of becoming one flattened image. Background preparation failures stay quiet while editing and are reported by the actual copy attempt. The older compatibility path is available only when that same normalized payload is already prepared and can be selected synchronously in the click task. A click while preparation is pending, an unavailable legacy path, or an asynchronously rejected modern write reports failure; a synchronous `ClipboardItem` or `write()` setup failure may use the prepared legacy payload in that same click task. EasyMDE never awaits and then falls back to legacy after activation is lost. Empty, loading, or failed previews are not copied. The export removes editor-only nodes, inlines portable computed styles, preserves theme decorations and the visible KaTeX tree without duplicate KaTeX MathML, and keeps code lines, tables, and long display formulas horizontally scrollable when they exceed the WeChat column; inline formulas remain non-wrapping. Responsive bounds do not turn inline images or videos into centered block elements, and generated theme-image dimensions are not overwritten by those bounds. Mermaid flowchart labels are kept as complete single-line labels even when WeChat rewrites SVG `foreignObject` styles; exporter-only invisible markers are removed from plain text. It does not add a vertical scroll container around the article or change the post.
+The **Copy to WeChat** action copies the current ready rendered preview as rich text. The modern Clipboard API writes normalized `text/html` and `text/plain` captured from the connected normalized export surface for the same preparation; plain text retains the Preview's paragraph and list line breaks, normalizes non-breaking spaces, removes U+2060 exporter markers, excludes removed editor/KaTeX MathML nodes, and never includes source transient attributes. Approved theme images are prepared after a debounced stable Preview update in a shared local cache limited to 32 assets; window/viewport resizes and immersive split-pane changes schedule the same refresh so the legacy payload is not stale after a layout-only change. If an image or video is still loading or changing intrinsic size, the modern write starts during the click and resolves its deferred payload afterward. Repeating theme backgrounds retain their materialized CSS background instead of becoming one flattened image. Background preparation failures stay quiet while editing and are reported by the actual copy attempt. When no approved theme image needs asynchronous materialization, the adapter can build the same normalized payload synchronously in the click task, so the compatibility path remains available even on browsers that reject deferred `ClipboardItem` values. If preparation really is pending on an approved image, legacy remains an explicit failure until a current payload is ready; an asynchronously rejected modern write is never followed by an activation-losing legacy attempt. Empty, loading, or failed previews are not copied. The export removes editor-only nodes, inlines portable computed styles, preserves theme decorations and the visible KaTeX tree without duplicate KaTeX MathML, and keeps code lines, tables, and long display formulas horizontally scrollable when they exceed the WeChat column; inline formulas remain non-wrapping. Responsive bounds do not turn inline images or videos into centered block elements, and generated theme-image dimensions are not overwritten by those bounds. Mermaid flowchart labels are kept as complete single-line labels even when WeChat rewrites SVG `foreignObject` styles; exporter-only invisible markers are removed from plain text. It does not add a vertical scroll container around the article or change the post.
+
+The export retains hidden SVG definition subtrees used by visible clip paths,
+masks, gradients, and filters while removing unrelated hidden nodes. Tables are
+centered at their intrinsic width inside a dedicated horizontal scroll region;
+the table itself is not used as a `display:table` scroll owner. Theme table
+layout shims and container-query decoration geometry remain in the copied HTML.
+Markdown task-list checkboxes keep their checked/unchecked appearance as
+disabled read-only controls, while unrelated form controls are removed.
 
 Approved theme-image requests are aborted after ten seconds; a timeout is
 reported as a copy failure and evicts the cached request for a later retry.
 
 Modern plain-text extraction measures the connected export surface at the
-rendered Preview width. If a legacy copy follows a transient preparation
+rendered Preview width and reuses the last non-zero visible Preview width when
+immersive source mode hides that surface. When WeChat export is disabled by the
+site configuration, EasyMDE does not pre-serialize the Preview or fetch theme
+images in the background. If a legacy copy follows a transient preparation
 failure with no prepared entry, that click starts one background retry but
 still reports failure; a later click can use the retry after it resolves.
+Tables whose full-width behavior comes from the visible layout keep that
+classification when the immersive source view hides the Preview, so switching
+views does not narrow them during copy.
 
 For portability, safe image `src`/`srcset` and link URLs may remain in the
-copied HTML. Remote and non-allowlisted CSS background URLs become `none`
+copied HTML, including remote `<img>` URLs that the destination may choose to
+load. Remote and non-allowlisted CSS background URLs become `none`
 layer slots rather than importing remote resources, so safe gradients/colors
 remain visible. Only same-origin
 `/assets/images/` GIF/JPEG/PNG/WebP backgrounds are materialized, with the
@@ -96,6 +111,10 @@ backgrounds keep safe gradient/color layers; the `background-repeat`,
 `background-position`, and `background-size` longhands follow CSS's repeated
 final-layer semantics and stay aligned after image layers are removed; and
 multiple safe image layers keep their order and positioning after paste.
+When a theme omits `background-size` or uses `auto`, the copied decoration
+keeps the image's intrinsic size instead of stretching to the heading box;
+`cover` and `contain` preserve their equivalent object-fit behavior. CSS edge
+offsets such as `right 12px bottom 6px` retain both offsets.
 Quoted pseudo-element text keeps its image behind the text, while empty
 decoration pseudo-elements may retain an in-flow image footprint.
 Pseudo-element
@@ -128,21 +147,32 @@ events, font loading completion/failure, and inserted descendants schedule the
  float/overflow, and box sizing are retained for non-root nodes. Fixed/sticky
  positioning is not reactivated by copied image decorations, and offsets inert
  under static positioning are cleared when an overlay containing block is
- created. Materialized background images remain behind copied text, and
+  created. Materialized background images remain behind copied text, preserve
+  CSS single-token `background-size` aspect ratios, and are not clamped to a
+  narrower host, and
  computed percentage background positions are normalized so centered image
  decorations remain centered after paste; single-token background positions use
- CSS's centered missing-axis default.
+ CSS's centered missing-axis default. Two-value keyword/offset positions follow
+ CSS axis order (`left 10px` places the offset on the vertical axis and
+ `top 10px` on the horizontal axis); explicit edge offsets retain the four-value
+ form such as `right 12px bottom 6px`.
 The preparation observer follows the active ordinary or immersive Preview
 surface. If a theme or Custom CSS change exits immersive visual editing, the
 refresh is queued after that editor surface is disposed and the remaining
 Preview surface is ready; it never copies a disposed surface.
+Stable Preview refresh notifications use the same active surface, so a hidden
+ordinary Preview update cannot replace preparation for the editable visual
+surface during a copy.
 
 Modern copy is successful only after both the browser write and its deferred
 HTML/plain-text payload resolve; a later theme-image or serialization failure
-therefore remains an explicit copy failure. Browser support and permissions
-vary. If the selected copy path fails, the editor shows an error message and
-leaves the post content unchanged. Repeated clicks while a copy is pending
-share one operation, and leaving the editor suppresses late success messages.
+therefore remains an explicit copy failure. When no asynchronous theme image is
+needed, the normalized payload is built synchronously in the click task so a
+browser that rejects deferred `ClipboardItem` values can use the same legacy
+HTML without an activation-losing await. Browser support and permissions vary.
+If the selected copy path fails, the editor shows an error message and leaves
+the post content unchanged. Repeated clicks while a copy is pending share one
+operation, and leaving the editor suppresses late success messages.
 
 ## Revisions And Deactivation
 

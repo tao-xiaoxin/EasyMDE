@@ -118,8 +118,12 @@ rejection, pseudo-element and same-origin theme-image portability, repeating
 theme-background preservation, inline media
 layout preservation with responsive bounds, Mermaid `foreignObject` label
 overflow and non-wrapping markers, KaTeX visual-tree and KaTeX MathML behavior,
-explicit code line breaks, table/formula horizontal overflow, modern/legacy HTML
-parity, synchronous legacy preparation, synchronous modern setup fallback,
+hidden SVG definition preservation for visible clip-path/gradient references,
+explicit code line breaks, intrinsic centered tables with a dedicated scroll
+owner, theme table `display:contents`/container-query shims, task-list checkbox
+state preservation, table/formula horizontal overflow, modern/legacy HTML
+parity, synchronous legacy preparation for payloads without remote theme
+images, synchronous modern setup fallback,
 modern write rejection without asynchronous legacy fallback, and an explicit
 failure result with sandbox cleanup. Its theme-image activation assertion verifies that modern
 `Clipboard.write` starts before a delayed approved image fetch resolves and
@@ -132,12 +136,20 @@ compaction when the image layer precedes the gradient), an unsafe URL in a
 mixed stack becomes a `none` slot without losing the safe gradient, visible
 quoted pseudo-element text keeps its image behind the text, and multiple safe
 `background-image` layers are all materialized with their source order,
-matching size/position, and visible stacking levels;
+matching size/position, and visible stacking levels. Two-value keyword/offset
+positions verify CSS axis order (`left 10px` versus `top 10px`);
 a fast write followed by a
 failed deferred payload remains an explicit failure. Its Mermaid assertion covers
 complete non-ASCII labels in both payload paths; the modern `text/plain`
 assertion removes exporter-only markers and its measurement host uses the
-rendered Preview width. Legacy retry coverage verifies that a transient
+rendered Preview width, including reuse of the last visible width when
+immersive source mode hides the Preview. The table regression also copies once
+while visible and again after the Preview pane is hidden, verifying that the
+last visible geometry-derived full-width decision is retained. EditorRoot
+coverage verifies that stable Preview refreshes keep preparation bound to the
+active visual surface rather than a hidden ordinary sink, and that a
+disabled WeChat export does not schedule background serialization or theme-image
+fetches. Legacy retry coverage verifies that a transient
 preparation failure starts one background retry without claiming success for
 that first click.
 The Adapter and EditorRoot regressions also verify that immersive visual edits
@@ -146,10 +158,19 @@ The Adapter and EditorRoot regressions also verify that immersive visual edits
   prepared payload, a layout-only replacement keeps the last stable legacy
   payload until the new one succeeds when source markup is unchanged, failed
   replacement restores the newest successful same-source payload even when an
-  older overlapping refresh resolves first, and ordinary non-root theme decorations retain
+  older overlapping refresh resolves first, and an older completion cannot
+  downgrade a newer successful same-source fallback because preparation
+  generations are monotonic. Scroll-only viewport-coordinate changes reuse the
+  prepared payload while dimensions and computed layout remain unchanged.
+  Ordinary non-root theme decorations retain
   dimensions/positioning/flex sizing/float/overflow/box-sizing, materialized
-  theme-image dimensions are not overwritten by generic media bounds, and
-background images remain behind copied text, and computed percentage background
+  theme-image dimensions are not overwritten by generic media bounds; a
+  single numeric `background-size` token keeps the missing height automatic,
+  omitted or `auto` sizing keeps the image intrinsic, `cover`/`contain` map to
+  `object-fit`, and materialized theme images are not clamped to their host
+  width. Four-token edge offsets such as `right 12px bottom 6px` retain both
+  edge and offset values.
+  Background images remain behind copied text, and computed percentage background
 positions compose both centered overlay transforms, including CSS single-token
 position defaults; a fixed/sticky source decoration must not reactivate that
 positioning in the copied payload, and
@@ -166,10 +187,13 @@ EditorRoot coverage also verifies that the observer is rebound when immersive
 visual Preview mounts, and that article-theme and Custom CSS changes refresh
 the legacy payload after visual-editor teardown even when the replacement
 Preview request is still pending.
-It does not yet prove unsupported legacy results, non-2xx or invalid
-theme-image response/data-conversion failures, or full
+It does not yet prove unsupported legacy results, non-2xx responses, invalid
+theme-image MIME/size responses, FileReader/data-conversion failures, or full
 Selection/Focus/Scroll restoration on every failure path; add those cases
-before treating the boundary as fully covered. `npm run frontend:check` is the required full frontend gate;
+before treating the boundary as fully covered. The current Chromium E2E
+fixture does not by itself assert the complete HTML/plain-text payload or the
+sanitized pasted WeChat DOM; the authorized authenticated-browser check below
+is still required for those claims. `npm run frontend:check` is the required full frontend gate;
 `npm run check:frontend-production` must compare the compiled admin entry
 containing the Adapter with the committed hashed runtime without rewriting it.
 
@@ -193,8 +217,13 @@ record whether the destination strips CSS/`nobr` and confirm the zero-width
 marker path keeps labels on one line. Measure card, code, table, and formula
 `clientWidth`,
 `scrollWidth`, `scrollTop`, and `overflow-x/y`; expected long content has one
-horizontal owner and no exporter-created article-wide vertical owner. Check
-that `.katex-mathml`, source CSS classes/transient attributes, unsafe URLs,
+horizontal owner and no exporter-created article-wide vertical owner. For every
+table, assert that the generated block wrapper owns horizontal overflow and
+that the intrinsic table does not; include at least one built-in theme with
+`display:contents`, `container-type`, and its `100cqi` pseudo-element shim.
+Verify task-list checkboxes preserve checked state without names/values and are
+disabled, while arbitrary controls are absent. Check that `.katex-mathml`,
+source CSS classes/transient attributes, unsafe URLs,
 hidden controls, and remote executable resources are absent; exporter-owned
 `aria-hidden`/`leaf` markers are expected structural exceptions. A page-level scrollbar
 must be measured at the WeChat document/editor shell separately; it is not a

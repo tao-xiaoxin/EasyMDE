@@ -329,11 +329,13 @@ State-changing operations:
   user-activation task. Asynchronous approved theme-image materialization uses
   deferred `ClipboardItem` payloads for the modern path and a shared prepared
   payload for the legacy path. Legacy `execCommand` must run synchronously in
-  the originating click task after preparation has completed; a pending
-  preparation or a rejected modern write must not cross an `await` and then
-  fall back to legacy. If `ClipboardItem` construction or the `write()` call
-  itself throws synchronously, an already prepared payload may use legacy in
-  that same click task; an asynchronous write rejection remains a failure.
+  the originating click task after preparation has completed. When no approved
+  theme image needs asynchronous materialization, the adapter may complete the
+  same normalized preparation synchronously in that click task. A pending
+  asynchronous preparation or a rejected modern write must not cross an `await`
+  and then fall back to legacy. If `ClipboardItem` construction or the `write()`
+  call itself throws synchronously, the current prepared payload may use legacy
+  in that same click task; an asynchronous write rejection remains a failure.
   Modern copy reports success only after both the browser write and deferred
   payload resolve; fetch or conversion failure remains an explicit copy
   failure rather than partial success.
@@ -421,9 +423,11 @@ authority:
   removed when the sink changes or the Root is torn down.
   The observer follows the actual active copy surface when immersive visual
   Preview mounts or replaces the ordinary Preview surface. Appearance and
-  Custom CSS changes that first leave visual editing increment a Root-owned
-  refresh revision; its post-unmount layout effect prepares the surviving
-  Preview surface instead of scheduling work against a disposed visual runtime.
+  Custom CSS changes that first leave visual editing wait for the refreshed
+  ordinary Preview snapshot before preparing it; preparation never reads the
+  stale or disposed visual runtime. Stable Preview snapshot notifications use
+  that same active surface; a hidden ordinary Preview refresh must not cancel or
+  replace preparation scheduled for the currently editable visual surface.
   This is a user-initiated compatibility attempt, not a second renderer or
   silent success. Immersive visual Preview edits coalesce preparation after
   rapid input, and the serializer compares the full current sink markup,
@@ -444,6 +448,11 @@ authority:
   of being flattened to one `<img>`. Generated
   theme-image `<img>` nodes retain their explicit background dimensions and are
   excluded from the generic responsive `height:auto` media rule. For a
+  background with omitted or `auto` sizing, the generated image keeps its
+  intrinsic dimensions rather than inheriting the decorated element's box;
+  `cover` and `contain` use equivalent `object-fit` sizing. CSS edge-offset
+  positions such as `right 12px bottom 6px` preserve both edge and offset
+  values when materialized. For a
   non-repeating multi-layer background, non-image layers such as gradients are
   retained and every safe image layer is materialized in its original order
   with its corresponding size, position, and isolated stacking level. The
@@ -477,11 +486,18 @@ authority:
   fixed/sticky positioning is never reactivated by a generated image overlay,
   and offsets inert under static positioning are neutralized when the exporter
   creates a relative containing block. Preview-root editor geometry is still
-  excluded. Materialized background-image overlays use an isolated negative
+  excluded. Geometry-derived full-width table classification is retained per
+  source table from its last visible layout; when immersive source mode hides
+  the Preview pane, that classification is reused instead of silently changing
+  the table to intrinsic `max-content` sizing, and a later visible layout
+  refresh replaces it. Materialized background-image overlays use an isolated negative
   stacking level so they remain behind copied text; computed
   `0%`, `50%`, and `100%` positions normalize before centered axes compose both
   translations; single-token `background-position` values follow CSS's missing-
-  axis defaults instead of being forced to the top edge. This prevents image
+  axis defaults instead of being forced to the top edge. Two-value
+  keyword/offset positions follow CSS axis order (`left 10px` uses the vertical
+  offset and `top 10px` uses the horizontal offset); explicit edge offsets use
+  the four-value form. This prevents image
   decorations from shifting or covering content in the pasted article.
 - Code lines, tables, and long display formulas may own horizontal overflow;
   their vertical overflow is hidden and their height remains content-driven.

@@ -14,6 +14,7 @@ const COPY_STYLE_PROPERTIES = [
   'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
   'border-collapse', 'border-spacing', 'border-radius', 'background', 'background-color',
   'background-image', 'background-position', 'background-repeat', 'background-size',
+  'container-type',
   'color', 'font', 'font-family', 'font-size', 'font-style', 'font-weight', 'line-height',
   'letter-spacing', 'word-spacing', 'font-variant', 'font-stretch', 'text-align',
   'text-decoration', 'text-transform', 'text-indent', 'text-shadow', 'white-space',
@@ -62,6 +63,7 @@ const SAFE_DISPLAY_VALUES: Record<string, true> = {
   flex: true,
   'list-item': true,
   table: true,
+  contents: true,
   'table-caption': true,
   'table-cell': true,
   'table-column': true,
@@ -71,6 +73,10 @@ const SAFE_DISPLAY_VALUES: Record<string, true> = {
   'table-row': true,
   'table-row-group': true
 };
+const SVG_DEFINITION_TAGS = new Set([
+  'clippath', 'filter', 'lineargradient', 'marker', 'mask', 'pattern',
+  'radialgradient', 'symbol'
+]);
 
 const TRANSIENT_ATTRIBUTE = /^(?:aria-|data-|on|contenteditable$|role$|tabindex$|spellcheck$|draggable$)/i;
 const UNSAFE_STYLE_VALUE = /(?:url\s*\(|expression\s*\(|(?:java|vb)script\s*:|@(?:import|charset|font-face)|(?:-moz-binding|behavior)\s*:|--[a-z])/i;
@@ -87,6 +93,7 @@ const DEFAULT_STYLE_VALUES: Record<string, Set<string>> = {
   'align-self': new Set(['auto']),
   'box-shadow': new Set(['none']),
   'column-gap': new Set(['normal', '0px']),
+  'container-type': new Set(['normal']),
   'display': new Set(),
   'flex-basis': new Set(['auto']),
   'flex-direction': new Set(['row']),
@@ -117,6 +124,11 @@ const MERMAID_SVG_ROOTS = new WeakSet<Element>();
 const MERMAID_FOREIGN_OBJECTS = new WeakSet<Element>();
 const THEME_IMAGE_CLONES = new WeakSet<Element>();
 const HIDDEN_NODES = new WeakSet<Element>();
+const TASK_LIST_CHECKBOX_CLONES = new WeakSet<Element>();
+const FULL_WIDTH_TABLE_CLONES = new WeakSet<Element>();
+const FULL_WIDTH_TABLE_SOURCE_LAYOUT = new WeakMap<Element, boolean>();
+const FULL_WIDTH_TABLE_ROOT_LAYOUT = new WeakMap<HTMLElement, Map<number, boolean>>();
+const PREVIEW_MEASUREMENT_WIDTHS = new WeakMap<HTMLElement, number>();
 
 const PREPARED_STYLE_PROPERTIES = [...new Set([
   ...COPY_STYLE_PROPERTIES,
@@ -160,15 +172,18 @@ type SerializedClipboardPayload = Readonly<{
 type PreparedClipboardFallback = Readonly<{
   layoutSignature: string;
   payload: SerializedClipboardPayload;
+  sequence: number;
   sourceMarkup: string;
 }>;
 
 type PreparedClipboardPayload = {
   payload: SerializedClipboardPayload | null;
   promise: Promise<SerializedClipboardPayload>;
+  sequence: number;
   sourceMarkup: string;
   layoutSignature: string;
   fallback: PreparedClipboardFallback | null;
+  recoveredAtLayoutSignature: string | null;
 };
 type PreparedClipboardPayloadCache = WeakMap<HTMLElement, PreparedClipboardPayload>;
 
@@ -258,6 +273,10 @@ function materializeThemeImage(
   request = fetchThemeImage(value, runtime)
     .then((response) => {
       if (!response.ok) throw new Error('wechat-theme-image-fetch-failed');
+      const resolvedUrl = response.url || value;
+      if (!isThemeImageUrl(resolvedUrl, runtime.document)) {
+        throw new Error('wechat-theme-image-redirected');
+      }
       return response.blob().then(dataUrlFromBlob);
     })
     .catch((error: unknown) => {
@@ -300,6 +319,38 @@ async function materializeBackgroundValue(
       const resolved = new URL(source, runtime.document.baseURI).href;
       const dataUrl = await materializeThemeImage(resolved, runtime, cache);
       materialized = materialized.replace(match[0], `url("${dataUrl}")`);
+    }
+    materializedLayers.push(materialized);
+  }
+  return materializedLayers.join(', ');
+}
+
+function materializeBackgroundValueSynchronously(
+  property: string,
+  value: string,
+  runtime: BrowserWechatClipboardRuntime
+): string | null {
+  if (!['background', 'background-image'].includes(property) || !value.includes('url(')) {
+    return value;
+  }
+
+  const layers = splitBackgroundLayers(value);
+  const materializedLayers: string[] = [];
+  for (const layer of layers) {
+    const matches = [...layer.matchAll(CSS_URL)];
+    if (!matches.length) {
+      materializedLayers.push(layer);
+      continue;
+    }
+    let materialized = layer;
+    for (const match of matches) {
+      const source = (match[1] ?? match[2] ?? match[3] ?? '').trim();
+      if (!source || SAFE_DATA_IMAGE.test(source)) continue;
+      // An approved same-origin theme image needs fetch/FileReader work. A
+      // synchronous compatibility copy must not emit it as a remote URL or
+      // claim that the decoration survived before preparation completes.
+      if (isThemeImageUrl(source, runtime.document)) return null;
+      materialized = materialized.replace(match[0], 'none');
     }
     materializedLayers.push(materialized);
   }
@@ -499,30 +550,122 @@ function backgroundLength(value: string): string | null {
   return /^(?:0|(?:\d+(?:\.\d+)?)(?:px|em|rem|%|vw|vh))$/.test(value) ? value : null;
 }
 
+type BackgroundImageSize = Readonly<{
+  fit: 'contain' | 'cover' | null;
+  height: string | null;
+  width: string | null;
+}>;
+
 function backgroundImageSize(
   computed: CSSStyleDeclaration,
   index: number
-): Readonly<{ width: string | null; height: string | null }> {
+): BackgroundImageSize {
   const layers = splitBackgroundLayers(computed.getPropertyValue('background-size'));
   const values = (layers[Math.min(index, Math.max(0, layers.length - 1))] ?? '')
     .split(/\s+/)
     .filter(Boolean);
+  const mode = values[0]?.toLowerCase();
+  if ('cover' === mode || 'contain' === mode) {
+    return { fit: mode, height: '100%', width: '100%' };
+  }
   const width = backgroundLength(values[0] ?? '');
-  const height = backgroundLength(values[1] ?? values[0] ?? '');
-  return { width, height };
+  // CSS treats a single background-size token as an explicit width with an
+  // automatic height. Do not duplicate it onto the second axis: the
+  // materialized image must keep its intrinsic aspect ratio.
+  const height = backgroundLength(values[1] ?? '');
+  return { fit: null, width, height };
 }
 
-function backgroundImagePosition(computed: CSSStyleDeclaration, index: number): string[] {
+type BackgroundImagePosition = Readonly<{
+  x: string;
+  xOffset: string | null;
+  y: string;
+  yOffset: string | null;
+}>;
+
+const HORIZONTAL_POSITION_KEYWORDS = new Set(['left', 'center', 'right']);
+const VERTICAL_POSITION_KEYWORDS = new Set(['top', 'center', 'bottom']);
+const BACKGROUND_POSITION_OFFSET = /^-?(?:0|\d+(?:\.\d+)?)(?:px|em|rem|%|vw|vh)$/;
+
+function isBackgroundPositionOffset(value: string): boolean {
+  return BACKGROUND_POSITION_OFFSET.test(value.trim().toLowerCase());
+}
+
+function backgroundImagePosition(
+  computed: CSSStyleDeclaration,
+  index: number
+): BackgroundImagePosition {
   const layers = splitBackgroundLayers(computed.getPropertyValue('background-position'));
   const values = (layers[Math.min(index, Math.max(0, layers.length - 1))] ?? '')
     .split(/\s+/)
     .filter(Boolean);
-  if (1 !== values.length) return values;
+  const fallback: BackgroundImagePosition = {
+    x: values[0] ?? '0%',
+    xOffset: null,
+    y: values[1] ?? '0%',
+    yOffset: null
+  };
+  if (0 === values.length) return fallback;
   // CSS treats a single position token as an X position with a centered Y
   // axis, except for top/bottom which are Y positions with centered X.
   const normalized = values[0]?.toLowerCase();
-  if ('top' === normalized || 'bottom' === normalized) return ['center', values[0] ?? 'center'];
-  return [values[0] ?? 'center', 'center'];
+  if (1 === values.length) {
+    if ('top' === normalized || 'bottom' === normalized) {
+      return { x: 'center', xOffset: null, y: values[0] ?? 'center', yOffset: null };
+    }
+    return { x: values[0] ?? 'center', xOffset: null, y: 'center', yOffset: null };
+  }
+
+  const first = values[0]?.toLowerCase() ?? '';
+  const second = values[1] ?? '';
+  const third = values[2]?.toLowerCase() ?? '';
+  const fourth = values[3] ?? '';
+  if (
+    HORIZONTAL_POSITION_KEYWORDS.has(first)
+    && isBackgroundPositionOffset(second)
+    && VERTICAL_POSITION_KEYWORDS.has(third)
+  ) {
+    return {
+      x: first,
+      xOffset: second,
+      y: third,
+      yOffset: isBackgroundPositionOffset(fourth) ? fourth : null
+    };
+  }
+  if (
+    VERTICAL_POSITION_KEYWORDS.has(first)
+    && isBackgroundPositionOffset(second)
+    && HORIZONTAL_POSITION_KEYWORDS.has(third)
+  ) {
+    return {
+      x: third,
+      xOffset: isBackgroundPositionOffset(fourth) ? fourth : null,
+      y: first,
+      yOffset: second
+    };
+  }
+  // In the two-value form, a keyword followed by a length is a horizontal
+  // or vertical position followed by the other axis's length. Offset pairs
+  // use the explicit four-value `left 10px top 20px` form below.
+  if (HORIZONTAL_POSITION_KEYWORDS.has(first) && isBackgroundPositionOffset(second)) {
+    return { x: first, xOffset: null, y: second, yOffset: null };
+  }
+  if (VERTICAL_POSITION_KEYWORDS.has(first) && isBackgroundPositionOffset(second)) {
+    return { x: second, xOffset: null, y: first, yOffset: null };
+  }
+  if (isBackgroundPositionOffset(first) && VERTICAL_POSITION_KEYWORDS.has(second.toLowerCase())) {
+    return { x: first, xOffset: null, y: second, yOffset: null };
+  }
+  if (isBackgroundPositionOffset(first) && HORIZONTAL_POSITION_KEYWORDS.has(second.toLowerCase())) {
+    return { x: second, xOffset: null, y: first, yOffset: null };
+  }
+  if (HORIZONTAL_POSITION_KEYWORDS.has(first) && VERTICAL_POSITION_KEYWORDS.has(second.toLowerCase())) {
+    return { x: first, xOffset: null, y: second, yOffset: null };
+  }
+  if (VERTICAL_POSITION_KEYWORDS.has(first) && HORIZONTAL_POSITION_KEYWORDS.has(second.toLowerCase())) {
+    return { x: second, xOffset: null, y: first, yOffset: null };
+  }
+  return fallback;
 }
 
 function appendThemeImages(
@@ -533,8 +676,6 @@ function appendThemeImages(
 ): void {
   if (!imageLayers.length) return;
   const document = clone.ownerDocument;
-  const elementWidth = backgroundLength(computed.getPropertyValue('width'));
-  const elementHeight = backgroundLength(computed.getPropertyValue('height'));
   const overlay = !emptyDecoration && Boolean(clone.textContent?.trim() || clone.children.length);
 
   imageLayers.forEach(({ src, layerIndex }, index) => {
@@ -542,23 +683,20 @@ function appendThemeImages(
     image.setAttribute('src', src);
     THEME_IMAGE_CLONES.add(image);
     const backgroundSize = backgroundImageSize(computed, layerIndex);
-    const imageWidth = emptyDecoration
-      ? elementWidth ?? backgroundSize.width
-      : backgroundSize.width ?? elementWidth;
-    const imageHeight = emptyDecoration
-      ? elementHeight ?? backgroundSize.height
-      : backgroundSize.height ?? elementHeight;
     const position = backgroundImagePosition(computed, layerIndex);
-    const positionX = backgroundPositionAxis(position[0] ?? '0%', 'x');
-    const positionY = backgroundPositionAxis(position[1] ?? '0%', 'y');
-    const declarations = ['display:block', 'max-width:100%'];
-    if (imageWidth) declarations.push(`width:${imageWidth}`);
-    if (imageHeight) declarations.push(`height:${imageHeight}`);
+    const positionX = backgroundPositionAxis(position.x, 'x');
+    const positionY = backgroundPositionAxis(position.y, 'y');
+    const declarations = ['display:block', 'max-width:none!important'];
+    if (backgroundSize.width) declarations.push(`width:${backgroundSize.width}`);
+    if (backgroundSize.height) declarations.push(`height:${backgroundSize.height}`);
+    else if (backgroundSize.width) declarations.push('height:auto');
+    if (!backgroundSize.width && backgroundSize.height) declarations.push('width:auto');
+    if (backgroundSize.fit) declarations.push(`object-fit:${backgroundSize.fit}`);
     // A single empty-decoration image can remain in normal flow so it keeps
     // the source decoration's intrinsic footprint. Once layers are present,
     // every image must be an overlay so document flow cannot reorder or resize
     // the background stack.
-    const positioned = overlay || imageLayers.length > 1 || index > 0;
+    const positioned = overlay || imageLayers.length > 1 || index > 0 || Boolean(backgroundSize.fit);
     if (positioned) {
       const sourcePosition = computed.getPropertyValue('position').trim().toLowerCase();
       const safeSourcePosition = ['relative', 'absolute'].includes(sourcePosition)
@@ -592,17 +730,43 @@ function appendThemeImages(
       );
       const transforms: string[] = [];
       if ('center' === positionX) {
-        declarations.push('left:50%');
+        declarations.push(
+          position.xOffset ? `left:calc(50% + ${position.xOffset})` : 'left:50%'
+        );
         transforms.push('translateX(-50%)');
-      } else if ('end' === positionX) declarations.push('right:0');
-      else if ('start' === positionX) declarations.push('left:0');
-      else declarations.push(`left:${positionX}`);
+      } else if ('end' === positionX) {
+        declarations.push(`right:${position.xOffset ?? '0'}`);
+      } else if ('start' === positionX) {
+        declarations.push(`left:${position.xOffset ?? '0'}`);
+      } else {
+        declarations.push(`left:${positionX}`);
+        if (isBackgroundPositionPercentage(positionX)) {
+          // CSS background percentages are applied to the remaining free
+          // space (container size minus image size), not the container origin.
+          // Match that equation with an absolute left plus the inverse image
+          // percentage in the transform.
+          transforms.push(
+            `translateX(${negateBackgroundPositionPercentage(positionX)})`
+          );
+        }
+      }
       if ('center' === positionY) {
-        declarations.push('top:50%');
+        declarations.push(
+          position.yOffset ? `top:calc(50% + ${position.yOffset})` : 'top:50%'
+        );
         transforms.push('translateY(-50%)');
-      } else if ('end' === positionY) declarations.push('bottom:0');
-      else if ('start' === positionY) declarations.push('top:0');
-      else declarations.push(`top:${positionY}`);
+      } else if ('end' === positionY) {
+        declarations.push(`bottom:${position.yOffset ?? '0'}`);
+      } else if ('start' === positionY) {
+        declarations.push(`top:${position.yOffset ?? '0'}`);
+      } else {
+        declarations.push(`top:${positionY}`);
+        if (isBackgroundPositionPercentage(positionY)) {
+          transforms.push(
+            `translateY(${negateBackgroundPositionPercentage(positionY)})`
+          );
+        }
+      }
       if (transforms.length) declarations.push(`transform:${transforms.join(' ')}`);
       clone.insertBefore(image, clone.firstChild);
     } else {
@@ -620,6 +784,17 @@ function backgroundPositionAxis(value: string, axis: 'x' | 'y'): 'center' | 'sta
   if (('x' === axis && 'right' === normalized) || ('y' === axis && 'bottom' === normalized)
     || /^100(?:\.0+)?%$/.test(normalized)) return 'end';
   return value;
+}
+
+const BACKGROUND_POSITION_PERCENTAGE = /^-?(?:0|\d+(?:\.\d+)?)%$/;
+
+function isBackgroundPositionPercentage(value: string): boolean {
+  return BACKGROUND_POSITION_PERCENTAGE.test(value.trim());
+}
+
+function negateBackgroundPositionPercentage(value: string): string {
+  const normalized = value.trim();
+  return normalized.startsWith('-') ? normalized.slice(1) : `-${normalized}`;
 }
 
 function keepStyle(
@@ -640,6 +815,7 @@ function keepStyle(
     && hasOnlySafeDataImageUrls(value);
   if (UNSAFE_STYLE_VALUE.test(value) && !svgFragmentUrl && !safeDataImageStyle) return false;
   if ('display' === property && true !== SAFE_DISPLAY_VALUES[value]) return false;
+  if ('container-type' === property && !['normal', 'size', 'inline-size', 'style'].includes(value)) return false;
   if ('float' === property && !['none', 'left', 'right', 'inline-start', 'inline-end'].includes(value)) return false;
   if ('clear' === property && !['none', 'left', 'right', 'both', 'inline-start', 'inline-end'].includes(value)) return false;
   if ('position' === property && !['static', 'relative', 'absolute'].includes(value)) return false;
@@ -648,7 +824,7 @@ function keepStyle(
     return false;
   }
   if (pseudoElement && ['width', 'height'].includes(property)) {
-    const match = /^(\d+(?:\.\d+)?)(?:px|em|rem|%)$/.exec(value);
+    const match = /^(\d+(?:\.\d+)?)(?:px|em|rem|%|cqi|cqw|cqb|cqh|cqmin|cqmax)$/.exec(value);
     const limit = 'width' === property ? 320 : 120;
     if (!match || Number(match[1]) > limit) return false;
   }
@@ -705,6 +881,13 @@ function isSvgElement(source: Element): boolean {
   return Boolean(source.closest('svg'));
 }
 
+function isSvgDefinition(source: Element): boolean {
+  const localName = source.localName.toLowerCase();
+  return 'defs' === localName
+    || Boolean(source.closest('defs'))
+    || SVG_DEFINITION_TAGS.has(localName);
+}
+
 function isMermaidSvgRoot(source: Element): boolean {
   return 'svg' === source.localName.toLowerCase() && Boolean(source.closest('.easymde-mermaid'));
 }
@@ -712,6 +895,64 @@ function isMermaidSvgRoot(source: Element): boolean {
 function isMermaidForeignObject(source: Element): boolean {
   return 'foreignobject' === source.localName.toLowerCase()
     && Boolean(source.closest('.easymde-mermaid'));
+}
+
+function isTaskListCheckbox(source: Element): boolean {
+  return 'INPUT' === source.tagName
+    && 'checkbox' === source.getAttribute('type')?.toLowerCase()
+    && Boolean(source.matches('.easymde-task-checkbox')
+      || source.closest('.task-list-item, .task-list'));
+}
+
+function isFullWidthTable(source: Element, computed: CSSStyleDeclaration): boolean {
+  const computedWidth = computed.getPropertyValue('width').trim();
+  if (/^100(?:\.0+)?%$/.test(computedWidth)) return true;
+  const tableWidth = source.getBoundingClientRect().width;
+  const parentWidth = source.parentElement?.getBoundingClientRect().width ?? 0;
+  return tableWidth > 0 && parentWidth > 0 && tableWidth >= parentWidth - 1;
+}
+
+function isDisplayNoneInAncestor(
+  source: Element,
+  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle']
+): boolean {
+  let current: Element | null = source.parentElement;
+  while (current) {
+    if ('none' === getComputedStyle(current).getPropertyValue('display').trim()) {
+      return true;
+    }
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function fullWidthTableLayout(
+  source: Element,
+  computed: CSSStyleDeclaration,
+  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle'],
+  previewRoot: HTMLElement
+): boolean {
+  const hidden = isDisplayNoneInAncestor(source, getComputedStyle);
+  const tableIndex = Array.from(previewRoot.querySelectorAll('table'))
+    .indexOf(source as HTMLTableElement);
+  if (hidden) {
+    const cached = FULL_WIDTH_TABLE_SOURCE_LAYOUT.get(source);
+    if (cached !== undefined) return cached;
+    const rootLayout = FULL_WIDTH_TABLE_ROOT_LAYOUT.get(previewRoot);
+    const cachedRootLayout = rootLayout?.get(tableIndex);
+    if (cachedRootLayout !== undefined) return cachedRootLayout;
+  }
+  const current = isFullWidthTable(source, computed);
+  if (!hidden) {
+    FULL_WIDTH_TABLE_SOURCE_LAYOUT.set(source, current);
+    let rootLayout = FULL_WIDTH_TABLE_ROOT_LAYOUT.get(previewRoot);
+    if (!rootLayout) {
+      rootLayout = new Map();
+      FULL_WIDTH_TABLE_ROOT_LAYOUT.set(previewRoot, rootLayout);
+    }
+    if (tableIndex >= 0) rootLayout.set(tableIndex, current);
+  }
+  return current;
 }
 
 async function styleDeclarations(
@@ -736,6 +977,39 @@ async function styleDeclarations(
   for (const property of properties) {
     const value = computed.getPropertyValue(property);
     const portableValue = await materializeBackgroundValue(property, value, runtime, cache);
+    if (keepStyle(property, portableValue, source, pseudoElement, root)) {
+      declarations.push(`${property}:${portableValue}`);
+    }
+  }
+  return declarations;
+}
+
+function styleDeclarationsSynchronously(
+  source: Element,
+  computed: CSSStyleDeclaration,
+  pseudoElement: boolean,
+  root: boolean,
+  runtime: BrowserWechatClipboardRuntime
+): string[] | null {
+  const properties = [
+    ...COPY_STYLE_PROPERTIES,
+    ...(isSvgElement(source) ? SVG_STYLE_PROPERTIES : []),
+    ...(supportsSpecialLayout(source)
+      ? SPECIAL_LAYOUT_PROPERTIES
+      : root
+        ? []
+        : ORDINARY_LAYOUT_PROPERTIES),
+    ...(pseudoElement ? ['width', 'height'] : [])
+  ];
+  const declarations: string[] = [];
+  for (const property of properties) {
+    const value = computed.getPropertyValue(property);
+    const portableValue = materializeBackgroundValueSynchronously(
+      property,
+      value,
+      runtime
+    );
+    if (null === portableValue) return null;
     if (keepStyle(property, portableValue, source, pseudoElement, root)) {
       declarations.push(`${property}:${portableValue}`);
     }
@@ -820,17 +1094,65 @@ async function addPseudoElement(
   else clone.appendChild(marker);
 }
 
+function addPseudoElementSynchronously(
+  source: Element,
+  clone: Element,
+  pseudo: '::before' | '::after',
+  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle'],
+  root: boolean,
+  runtime: BrowserWechatClipboardRuntime
+): boolean {
+  const computed = getComputedStyle(source, pseudo);
+  const content = pseudoContent(computed.getPropertyValue('content'));
+  const declarations = styleDeclarationsSynchronously(
+    source,
+    computed,
+    true,
+    root,
+    runtime
+  );
+  if (null === declarations) return false;
+  if (null === content || (!content && !declarations.length)) return true;
+  const marker = clone.ownerDocument.createElement('span');
+  marker.setAttribute('aria-hidden', 'true');
+  marker.textContent = content || ' ';
+  const imageLayers = dataImageLayersFromDeclarations(declarations);
+  const preserveRepeatingBackground = hasRepeatingBackground(computed);
+  const portableDeclarations = removeDataImageBackgroundDeclarations(
+    declarations,
+    preserveRepeatingBackground
+  );
+  if (!content) portableDeclarations.push('font-size:0');
+  if (portableDeclarations.length) marker.setAttribute('style', portableDeclarations.join(';'));
+  appendThemeImages(
+    marker,
+    preserveRepeatingBackground ? [] : imageLayers,
+    computed,
+    !content
+  );
+  if ('PRE' === source.tagName && '::before' === pseudo && !content && /box-shadow:/.test(portableDeclarations.join(';'))) {
+    MAC_FRAME_MARKERS.add(marker);
+  }
+  if ('::before' === pseudo) clone.insertBefore(marker, clone.firstChild);
+  else clone.appendChild(marker);
+  return true;
+}
+
 async function inlineStyles(
   source: Node,
   clone: Node,
   getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle'],
   root = false,
   runtime: BrowserWechatClipboardRuntime,
-  cache: BackgroundAssetCache
+  cache: BackgroundAssetCache,
+  previewRoot: HTMLElement
 ): Promise<void> {
   if (!(source instanceof Element) || !(clone instanceof Element)) return;
   const computed = getComputedStyle(source);
-  if (!root && 'none' === computed.getPropertyValue('display')) {
+  // SVG definition trees are commonly hidden by design, but visible shapes
+  // still reference them through clip-path, mask, gradient, and filter URLs.
+  // Preserve those reusable resources while removing unrelated hidden nodes.
+  if (!root && 'none' === computed.getPropertyValue('display') && !isSvgDefinition(source)) {
     HIDDEN_NODES.add(clone);
     return;
   }
@@ -847,6 +1169,13 @@ async function inlineStyles(
   if (source.matches('.easymde-math-block')) MATH_BLOCK_ROOTS.add(clone);
   if (isMermaidSvgRoot(source)) MERMAID_SVG_ROOTS.add(clone);
   if (isMermaidForeignObject(source)) MERMAID_FOREIGN_OBJECTS.add(clone);
+  if (isTaskListCheckbox(source)) TASK_LIST_CHECKBOX_CLONES.add(clone);
+  if (
+    'TABLE' === source.tagName
+    && fullWidthTableLayout(source, computed, runtime.getComputedStyle, previewRoot)
+  ) {
+    FULL_WIDTH_TABLE_CLONES.add(clone);
+  }
   if (isKaTeXVisualNode(source)) {
     KATEX_VISUAL_NODES.add(clone);
     // WeChat applies `white-space:pre-wrap` and `overflow-wrap:break-word`
@@ -864,7 +1193,17 @@ async function inlineStyles(
   removeTransientAttributes(clone);
   for (const [index, child] of Array.from(source.childNodes).entries()) {
     const cloneChild = clone.childNodes.item(index);
-    if (cloneChild) await inlineStyles(child, cloneChild, getComputedStyle, false, runtime, cache);
+    if (cloneChild) {
+      await inlineStyles(
+        child,
+        cloneChild,
+        getComputedStyle,
+        false,
+        runtime,
+        cache,
+        previewRoot
+      );
+    }
   }
   await addPseudoElement(source, clone, '::before', getComputedStyle, root, runtime, cache);
   await addPseudoElement(source, clone, '::after', getComputedStyle, root, runtime, cache);
@@ -874,6 +1213,90 @@ async function inlineStyles(
     computed,
     !source.textContent?.trim() && !source.children.length
   );
+}
+
+function inlineStylesSynchronously(
+  source: Node,
+  clone: Node,
+  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle'],
+  root: boolean,
+  runtime: BrowserWechatClipboardRuntime,
+  previewRoot: HTMLElement
+): boolean {
+  if (!(source instanceof Element) || !(clone instanceof Element)) return true;
+  const computed = getComputedStyle(source);
+  if (!root && 'none' === computed.getPropertyValue('display') && !isSvgDefinition(source)) {
+    HIDDEN_NODES.add(clone);
+    return true;
+  }
+  const declarations = styleDeclarationsSynchronously(
+    source,
+    computed,
+    false,
+    root,
+    runtime
+  );
+  if (null === declarations) return false;
+  const imageLayers = dataImageLayersFromDeclarations(declarations);
+  const preserveRepeatingBackground = hasRepeatingBackground(computed);
+  const portableDeclarations = removeDataImageBackgroundDeclarations(
+    declarations,
+    preserveRepeatingBackground
+  );
+  if (portableDeclarations.length) clone.setAttribute('style', portableDeclarations.join(';'));
+  else clone.removeAttribute('style');
+  if (source.matches('.katex')) KATEX_VISUAL_ROOTS.add(clone);
+  if (source.matches('.easymde-math-block')) MATH_BLOCK_ROOTS.add(clone);
+  if (isMermaidSvgRoot(source)) MERMAID_SVG_ROOTS.add(clone);
+  if (isMermaidForeignObject(source)) MERMAID_FOREIGN_OBJECTS.add(clone);
+  if (isTaskListCheckbox(source)) TASK_LIST_CHECKBOX_CLONES.add(clone);
+  if (
+    'TABLE' === source.tagName
+    && fullWidthTableLayout(source, computed, runtime.getComputedStyle, previewRoot)
+  ) {
+    FULL_WIDTH_TABLE_CLONES.add(clone);
+  }
+  if (isKaTeXVisualNode(source)) {
+    KATEX_VISUAL_NODES.add(clone);
+    appendDeclarations(clone, [...KATEX_VISUAL_LAYOUT_DECLARATIONS], true);
+    if (!source.childNodes.length && !source.textContent) clone.textContent = '\u2060';
+  }
+  clone.removeAttribute('class');
+  removeTransientAttributes(clone);
+  for (const [index, child] of Array.from(source.childNodes).entries()) {
+    const cloneChild = clone.childNodes.item(index);
+    if (cloneChild && !inlineStylesSynchronously(
+      child,
+      cloneChild,
+      getComputedStyle,
+      false,
+      runtime,
+      previewRoot
+    )) return false;
+  }
+  if (!addPseudoElementSynchronously(
+    source,
+    clone,
+    '::before',
+    getComputedStyle,
+    root,
+    runtime
+  )) return false;
+  if (!addPseudoElementSynchronously(
+    source,
+    clone,
+    '::after',
+    getComputedStyle,
+    root,
+    runtime
+  )) return false;
+  appendThemeImages(
+    clone,
+    preserveRepeatingBackground ? [] : imageLayers,
+    computed,
+    !source.textContent?.trim() && !source.children.length
+  );
+  return true;
 }
 
 function normalizeStructure(clone: HTMLElement): HTMLElement {
@@ -909,6 +1332,51 @@ function appendDeclarations(element: Element, declarations: string[], important 
     ? declarations.map((declaration) => declaration.endsWith('!important') ? declaration : `${declaration}!important`)
     : declarations;
   element.setAttribute('style', [existing, ...normalized].filter(Boolean).join(';'));
+}
+
+function wrapTableScrollOwners(root: HTMLElement): void {
+  const document = root.ownerDocument;
+  root.querySelectorAll('table').forEach((table) => {
+    const parent = table.parentElement;
+    if (!parent) return;
+    const wrapper = document.createElement('section');
+    appendDeclarations(wrapper, [
+      'display:block',
+      'width:100%',
+      'max-width:100%',
+      'min-width:0',
+      'margin-left:auto',
+      'margin-right:auto',
+      'overflow-x:auto',
+      'overflow-y:hidden',
+      '-webkit-overflow-scrolling:touch',
+      'box-sizing:border-box',
+      'text-align:center'
+    ], true);
+    parent.insertBefore(wrapper, table);
+    wrapper.appendChild(table);
+    appendDeclarations(table, FULL_WIDTH_TABLE_CLONES.has(table)
+      ? [
+        'width:100%',
+        'max-width:100%',
+        'min-width:0',
+        'margin-left:0',
+        'margin-right:0',
+        'overflow:visible',
+        'overflow-x:visible',
+        'overflow-y:visible'
+      ]
+      : [
+        'width:max-content',
+        'max-width:none',
+        'min-width:0',
+        'margin-left:auto',
+        'margin-right:auto',
+        'overflow:visible',
+        'overflow-x:visible',
+        'overflow-y:visible'
+      ], true);
+  });
 }
 
 function normalizeCodeFrames(root: HTMLElement): void {
@@ -1039,7 +1507,6 @@ function normalizeMathBlocks(root: HTMLElement): void {
 function wrapCodeLines(root: HTMLElement): void {
   root.querySelectorAll('pre > code').forEach((code) => {
     const document = code.ownerDocument;
-    const fragment = document.createDocumentFragment();
     const createLine = (): HTMLElement => {
       const line = document.createElement('nobr');
       appendDeclarations(line, [
@@ -1053,17 +1520,49 @@ function wrapCodeLines(root: HTMLElement): void {
       ], true);
       return line;
     };
-    let line = createLine();
 
+    // Highlight.js can keep a multiline comment or string inside one token
+    // span. Split nested breaks into cloned token segments before wrapping
+    // logical lines, otherwise only direct code children become scroll-safe.
+    const splitNode = (node: Node): Node[][] => {
+      if (node instanceof Text) {
+        return (node.nodeValue ?? '').split(/\r?\n/).map((value) => [document.createTextNode(value)]);
+      }
+      if (!(node instanceof Element)) return [[node.cloneNode(true)]];
+      if ('BR' === node.tagName) return [[], []];
+      const segments: Node[][] = [[]];
+      Array.from(node.childNodes).forEach((child) => {
+        if (child instanceof Element && 'BR' === child.tagName) {
+          segments.push([]);
+          return;
+        }
+        const childSegments = splitNode(child);
+        segments[segments.length - 1]?.push(...(childSegments[0] ?? []));
+        childSegments.slice(1).forEach((segment) => { segments.push(segment); });
+      });
+      return segments.map((segment) => {
+        const clone = node.cloneNode(false) as Element;
+        clone.append(...segment);
+        return [clone];
+      });
+    };
+    const lines: Node[][] = [[]];
     Array.from(code.childNodes).forEach((node) => {
       if (node instanceof Element && 'BR' === node.tagName) {
-        fragment.append(line, node);
-        line = createLine();
+        lines.push([]);
         return;
       }
-      line.append(node);
+      const segments = splitNode(node);
+      lines[lines.length - 1]?.push(...(segments[0] ?? []));
+      segments.slice(1).forEach((segment) => { lines.push(segment); });
     });
-    fragment.append(line);
+    const fragment = document.createDocumentFragment();
+    lines.forEach((nodes, index) => {
+      const line = createLine();
+      line.append(...nodes);
+      fragment.append(line);
+      if (index < lines.length - 1) fragment.append(document.createElement('br'));
+    });
     code.replaceChildren(fragment);
   });
 }
@@ -1183,22 +1682,11 @@ function previewReady(preview: HTMLElement): boolean {
     && 'true' !== preview.getAttribute('aria-busy');
 }
 
-async function createMarkup(
-  preview: HTMLElement,
-  runtime: BrowserWechatClipboardRuntime,
-  cache: BackgroundAssetCache
-): Promise<HTMLElement> {
-  const clone = preview.cloneNode(true) as HTMLElement;
-  const fragmentIds = referencedFragmentIds(preview);
-  const mathMlNodes = findKaTeXMathMl(clone);
-  await inlineStyles(
-    preview,
-    clone,
-    runtime.getComputedStyle,
-    true,
-    runtime,
-    cache
-  );
+function finalizeMarkup(
+  clone: HTMLElement,
+  fragmentIds: Set<string>,
+  mathMlNodes: Set<Element>
+): HTMLElement {
   mathMlNodes.forEach((element) => {
     element.remove();
   });
@@ -1206,8 +1694,18 @@ async function createMarkup(
   clone.querySelectorAll('*').forEach((element) => {
     if (HIDDEN_NODES.has(element)) element.remove();
   });
-  clone.querySelectorAll('script, style, button, input, textarea, select, option, form, iframe, object, embed').forEach((node) => {
+  clone.querySelectorAll('script, style, button, textarea, select, option, form, iframe, object, embed').forEach((node) => {
     node.remove();
+  });
+  clone.querySelectorAll('input').forEach((input) => {
+    if (!TASK_LIST_CHECKBOX_CLONES.has(input)) {
+      input.remove();
+      return;
+    }
+    input.removeAttribute('id');
+    input.removeAttribute('name');
+    input.removeAttribute('value');
+    input.setAttribute('disabled', '');
   });
   normalizeMathBlocks(clone);
   const normalized = normalizeStructure(clone);
@@ -1249,20 +1747,54 @@ async function createMarkup(
   wrapMermaidLabelContents(normalized);
   preserveMermaidLabelWhitespace(normalized);
   normalized.querySelectorAll('table').forEach((element) => {
-    appendDeclarations(element, [
-      'display:table',
-      'inline-size:auto',
-      'max-width:100%',
-      'min-width:0',
-      'margin-left:auto',
-      'margin-right:auto',
-      'table-layout:auto',
-      'border-collapse:collapse',
-      'overflow-x:auto',
-      'overflow-y:hidden',
-      'box-sizing:border-box'
-    ], true);
+    // The destination editor owns the scroll container. Keep the theme's table
+    // display mode and intrinsic sizing, then wrap it in a real block scroll
+    // owner because overflow on display:table is ignored by browsers.
+    const preservesBlockScroll = 'block' === element.style.display;
+    const preservesFullWidth = FULL_WIDTH_TABLE_CLONES.has(element);
+    appendDeclarations(element, preservesFullWidth
+      ? [
+        preservesBlockScroll ? 'display:block' : 'display:table',
+        'width:100%',
+        'max-width:100%',
+        'min-width:0',
+        'margin-left:0',
+        'margin-right:0',
+        ...(preservesBlockScroll ? [] : ['table-layout:auto', 'border-collapse:collapse']),
+        'overflow:visible',
+        'overflow-x:visible',
+        'overflow-y:visible',
+        'box-sizing:border-box'
+      ]
+      : preservesBlockScroll
+      ? [
+        'display:block',
+        'min-width:0',
+        'width:max-content',
+        'max-width:none',
+        'margin-left:auto',
+        'margin-right:auto',
+        'overflow:visible',
+        'overflow-x:visible',
+        'overflow-y:visible',
+        'box-sizing:border-box'
+      ]
+      : [
+        'display:table',
+        'width:max-content',
+        'max-width:none',
+        'min-width:0',
+        'margin-left:auto',
+        'margin-right:auto',
+        'table-layout:auto',
+        'border-collapse:collapse',
+        'overflow:visible',
+        'overflow-x:visible',
+        'overflow-y:visible',
+        'box-sizing:border-box'
+      ], true);
   });
+  wrapTableScrollOwners(normalized);
   normalizeCodeFrames(normalized);
   materializeCodeLineBreaks(normalized);
   wrapCodeLines(normalized);
@@ -1272,8 +1804,69 @@ async function createMarkup(
   return normalized;
 }
 
+async function createMarkup(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime,
+  cache: BackgroundAssetCache
+): Promise<HTMLElement> {
+  const clone = preview.cloneNode(true) as HTMLElement;
+  const fragmentIds = referencedFragmentIds(preview);
+  const mathMlNodes = findKaTeXMathMl(clone);
+  await inlineStyles(
+    preview,
+    clone,
+    runtime.getComputedStyle,
+    true,
+    runtime,
+    cache,
+    preview
+  );
+  return finalizeMarkup(clone, fragmentIds, mathMlNodes);
+}
+
+function createMarkupSynchronously(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime
+): HTMLElement | null {
+  const clone = preview.cloneNode(true) as HTMLElement;
+  const fragmentIds = referencedFragmentIds(preview);
+  const mathMlNodes = findKaTeXMathMl(clone);
+  if (!inlineStylesSynchronously(
+    preview,
+    clone,
+    runtime.getComputedStyle,
+    true,
+    runtime,
+    preview
+  )) return null;
+  return finalizeMarkup(clone, fragmentIds, mathMlNodes);
+}
+
 function normalizedPlainText(value: string): string {
   return value.replaceAll('\u2060', '').replaceAll('\u00a0', ' ');
+}
+
+function previewMeasurementWidth(source: HTMLElement): number | null {
+  const rectWidth = source.getBoundingClientRect().width;
+  const visibleWidth = rectWidth || source.clientWidth || source.offsetWidth;
+  if (visibleWidth > 0) {
+    PREVIEW_MEASUREMENT_WIDTHS.set(source, visibleWidth);
+    return visibleWidth;
+  }
+
+  // Immersive source mode hides the Preview pane with `display:none`, so its
+  // live geometry is zero even though the user can still invoke Copy. Reuse
+  // the last visible Preview width to keep plain-text soft wrapping stable
+  // across the mode transition instead of letting an auto-sized host flatten
+  // all line boundaries.
+  const lastVisibleWidth = PREVIEW_MEASUREMENT_WIDTHS.get(source);
+  if (lastVisibleWidth && lastVisibleWidth > 0) return lastVisibleWidth;
+
+  const viewport = source.ownerDocument.defaultView;
+  const documentWidth = source.ownerDocument.documentElement.clientWidth;
+  const viewportWidth = viewport?.innerWidth ?? 0;
+  const fallbackWidth = documentWidth || viewportWidth;
+  return fallbackWidth > 0 ? fallbackWidth : null;
 }
 
 function connectedPlainText(root: HTMLElement, source: HTMLElement): string {
@@ -1300,9 +1893,8 @@ function connectedPlainText(root: HTMLElement, source: HTMLElement): string {
     'pointer-events:none',
     'contain:layout'
   ].join(';');
-  const sourceRect = source.getBoundingClientRect();
-  const sourceWidth = sourceRect.width || source.clientWidth;
-  if (sourceWidth > 0) {
+  const sourceWidth = previewMeasurementWidth(source);
+  if (sourceWidth) {
     host.style.width = `${sourceWidth}px`;
     host.style.maxWidth = `${sourceWidth}px`;
   }
@@ -1336,6 +1928,18 @@ async function serializeClipboardPayload(
   };
 }
 
+function serializeClipboardPayloadSynchronously(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime
+): SerializedClipboardPayload | null {
+  const clone = createMarkupSynchronously(preview, runtime);
+  if (!clone) return null;
+  return {
+    html: clone.outerHTML,
+    text: connectedPlainText(clone, preview)
+  };
+}
+
 function preparedLayoutSignature(
   preview: HTMLElement,
   runtime: BrowserWechatClipboardRuntime
@@ -1359,7 +1963,11 @@ function preparedLayoutSignature(
           .map((property) => `${property}=${pseudo.getPropertyValue(property)}`)
           .join(';')}`;
       }).join('|');
-      return `${index}:${rect.left},${rect.top},${rect.width},${rect.height},${rect.right},${rect.bottom}:${styles}:${pseudoStyles}`;
+      // `left`/`top`/`right`/`bottom` are viewport-relative and change when
+      // the user scrolls, even though the exported markup and layout did not.
+      // Only retain dimensions here; they can affect wrapping and image/text
+      // geometry without invalidating a prepared payload on ordinary scroll.
+      return `${index}:${rect.width},${rect.height}:${styles}:${pseudoStyles}`;
     })
   ].join('\u0001');
 }
@@ -1369,7 +1977,8 @@ function createPreparedClipboardPayload(
   runtime: BrowserWechatClipboardRuntime,
   backgroundAssetCache: BackgroundAssetCache,
   preparedPayloads: PreparedClipboardPayloadCache,
-  fallback: PreparedClipboardFallback | null
+  fallback: PreparedClipboardFallback | null,
+  sequence: number
 ): PreparedClipboardPayload {
   let prepared: PreparedClipboardPayload;
   // Root class/style changes (font and article-theme controls) can change the
@@ -1378,7 +1987,10 @@ function createPreparedClipboardPayload(
   // the DOM, so keep both the full sink markup and a layout fingerprint.
   const sourceMarkup = preview.outerHTML;
   const layoutSignature = preparedLayoutSignature(preview, runtime);
-  const promise = serializeClipboardPayload(preview, runtime, backgroundAssetCache)
+  const synchronousPayload = serializeClipboardPayloadSynchronously(preview, runtime);
+  const promise = (synchronousPayload
+    ? Promise.resolve(synchronousPayload)
+    : serializeClipboardPayload(preview, runtime, backgroundAssetCache))
     .then((payload) => {
       prepared.payload = payload;
       const current = preparedPayloads.get(preview);
@@ -1386,6 +1998,7 @@ function createPreparedClipboardPayload(
         current
         && current !== prepared
         && current.sourceMarkup === prepared.sourceMarkup
+        && (!current.fallback || current.fallback.sequence < prepared.sequence)
       ) {
         // A replacement may have started while this serialization was waiting
         // on theme assets. Keep the most recent successful payload available
@@ -1393,6 +2006,7 @@ function createPreparedClipboardPayload(
         current.fallback = {
           layoutSignature: prepared.layoutSignature,
           payload,
+          sequence: prepared.sequence,
           sourceMarkup: prepared.sourceMarkup
         };
       }
@@ -1408,7 +2022,9 @@ function createPreparedClipboardPayload(
             layoutSignature: recovery.layoutSignature,
             payload: recovery.payload,
             promise: Promise.resolve(recovery.payload),
-            sourceMarkup: recovery.sourceMarkup
+            sequence: prepared.sequence,
+            sourceMarkup: recovery.sourceMarkup,
+            recoveredAtLayoutSignature: prepared.layoutSignature
           });
         } else {
           preparedPayloads.delete(preview);
@@ -1418,10 +2034,12 @@ function createPreparedClipboardPayload(
     });
   prepared = {
     fallback,
-    payload: null,
+    payload: synchronousPayload,
     promise,
+    sequence,
     sourceMarkup,
-    layoutSignature
+    layoutSignature,
+    recoveredAtLayoutSignature: null
   };
   preparedPayloads.set(preview, prepared);
   return prepared;
@@ -1432,6 +2050,7 @@ function preparedClipboardPayload(
   runtime: BrowserWechatClipboardRuntime,
   backgroundAssetCache: BackgroundAssetCache,
   preparedPayloads: PreparedClipboardPayloadCache,
+  nextSequence: () => number,
   replace = false
 ): PreparedClipboardPayload {
   const existing = preparedPayloads.get(preview);
@@ -1447,6 +2066,7 @@ function preparedClipboardPayload(
       ? {
         layoutSignature: existing.layoutSignature,
         payload: existing.payload,
+        sequence: existing.sequence,
         sourceMarkup: existing.sourceMarkup
       }
       : existing.fallback
@@ -1456,7 +2076,8 @@ function preparedClipboardPayload(
     runtime,
     backgroundAssetCache,
     preparedPayloads,
-    fallback
+    fallback,
+    nextSequence()
   );
 }
 
@@ -1503,6 +2124,11 @@ export function createBrowserWechatClipboard(
 ): WechatClipboardPort {
   const backgroundAssetCache: BackgroundAssetCache = new Map();
   const preparedPayloads: PreparedClipboardPayloadCache = new WeakMap();
+  let preparationSequence = 0;
+  const nextPreparationSequence = (): number => {
+    preparationSequence += 1;
+    return preparationSequence;
+  };
 
   return {
     async prepare(preview: HTMLElement): Promise<void> {
@@ -1512,6 +2138,7 @@ export function createBrowserWechatClipboard(
         runtime,
         backgroundAssetCache,
         preparedPayloads,
+        nextPreparationSequence,
         true
       ).promise;
     },
@@ -1525,27 +2152,39 @@ export function createBrowserWechatClipboard(
           preview,
           runtime,
           backgroundAssetCache,
-          preparedPayloads
+          preparedPayloads,
+          nextPreparationSequence
         );
         const payload = prepared.promise;
-        const htmlBlob = payload.then(({ html }) =>
-          new runtime.blob([html], { type: 'text/html' })
-        );
-        const textBlob = payload.then(({ text }) =>
-          new runtime.blob([text], { type: 'text/plain' })
+        const htmlBlob = prepared.payload
+          ? new runtime.blob([prepared.payload.html], { type: 'text/html' })
+          : payload.then(({ html }) =>
+            new runtime.blob([html], { type: 'text/html' })
+          );
+        const textBlob = prepared.payload
+          ? new runtime.blob([prepared.payload.text], { type: 'text/plain' })
+          : payload.then(({ text }) =>
+            new runtime.blob([text], { type: 'text/plain' })
         );
         const observeBlobRejections = (): void => {
-          void htmlBlob.catch(() => undefined);
-          void textBlob.catch(() => undefined);
+          if (htmlBlob instanceof Promise) void htmlBlob.catch(() => undefined);
+          if (textBlob instanceof Promise) void textBlob.catch(() => undefined);
         };
         const fallbackAfterSynchronousModernFailure = (): WechatClipboardResult => {
           // ClipboardItem construction and write invocation still happen in
           // the originating click task. A payload prepared before that task
           // may therefore use the activation-safe compatibility path.
           const currentMarkup = preview.outerHTML;
+          const currentLayoutSignature = preparedLayoutSignature(preview, runtime);
           const fallback = prepared.payload
+            && prepared.sourceMarkup === currentMarkup
+            && prepared.layoutSignature === currentLayoutSignature
             ? prepared.payload
-            : prepared.fallback?.sourceMarkup === currentMarkup
+            : prepared.payload
+              && prepared.recoveredAtLayoutSignature === currentLayoutSignature
+              && prepared.fallback?.sourceMarkup === currentMarkup
+              ? prepared.payload
+            : !prepared.payload && prepared.fallback?.sourceMarkup === currentMarkup
               ? prepared.fallback.payload
               : null;
           if (fallback && legacyCopy(fallback.html, runtime)) {
@@ -1590,20 +2229,27 @@ export function createBrowserWechatClipboard(
         && prepared.sourceMarkup === currentMarkup
         && prepared.layoutSignature === currentLayoutSignature
         ? prepared.payload
-        : prepared?.fallback
+        : prepared?.payload
+          && prepared.recoveredAtLayoutSignature === currentLayoutSignature
+          && prepared.fallback?.sourceMarkup === currentMarkup
+          ? prepared.payload
+        : prepared && prepared.payload === null
+          && prepared.fallback
           && prepared.fallback.sourceMarkup === currentMarkup
           ? prepared.fallback.payload
           : null;
       if (!payload) {
         const current = preparedPayloads.get(preview);
-        const fallbackMatchesSource = current?.fallback?.sourceMarkup === currentMarkup;
+        const fallbackCanServe = current?.payload === null
+          && current.fallback?.sourceMarkup === currentMarkup;
         const preparationIsPending = Boolean(current && !current.payload);
-        if (!preparationIsPending && (!current || !fallbackMatchesSource)) {
+        if (!preparationIsPending && (!current || !fallbackCanServe)) {
           const retry = preparedClipboardPayload(
             preview,
             runtime,
             backgroundAssetCache,
             preparedPayloads,
+            nextPreparationSequence,
             true
           );
           void retry.promise.catch(() => undefined);

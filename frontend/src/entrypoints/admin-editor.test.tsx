@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseEditorRootBootstrap } from '../contracts/bootstrap/editor-root-bootstrap';
 import { createBrowserLocalDraftStorage } from '../integrations/browser/local-drafts/browser-local-draft-storage';
+import { createBrowserWechatClipboard } from '../integrations/browser/wechat/create-browser-wechat-clipboard';
 import { mountAdminEditor } from './admin-editor';
 
 vi.hoisted(() => {
@@ -293,6 +294,58 @@ describe('mountAdminEditor', () => {
     expect(
       nativeEditor?.classList.contains('easymde-native-editor-hidden')
     ).toBe(false);
+  });
+
+  it('forwards the clipboard fetch RequestInit, including its abort signal', async () => {
+    const render = vi.fn();
+    const unmount = vi.fn();
+    vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+    const originalFetch = window.fetch;
+    const windowFetch = vi.fn(
+      (_input: RequestInfo | URL, _init?: RequestInit) =>
+        Promise.resolve({} as Response)
+    );
+    Object.defineProperty(window, 'fetch', {
+      configurable: true,
+      writable: true,
+      value: windowFetch
+    });
+
+    try {
+      mountAdminEditor(bootstrap, {
+        document,
+        failureMessage: 'Editor failed',
+        window,
+        wordpress: {
+          apiFetch: Object.assign(vi.fn(), {
+            nonceMiddleware: { nonce: 'nonce' }
+          }),
+          hooks: { addAction: vi.fn(), removeAction: vi.fn() }
+        }
+      });
+
+      const fetchAdapter = vi.mocked(createBrowserWechatClipboard).mock
+        .calls[0]?.[0]?.fetch;
+      expect(fetchAdapter).toEqual(expect.any(Function));
+      const signal = new AbortController().signal;
+      const init: RequestInit = {
+        credentials: 'same-origin',
+        signal
+      };
+
+      await fetchAdapter?.('/assets/images/theme.png', init);
+
+      expect(windowFetch).toHaveBeenCalledWith(
+        '/assets/images/theme.png',
+        init
+      );
+    } finally {
+      Object.defineProperty(window, 'fetch', {
+        configurable: true,
+        writable: true,
+        value: originalFetch
+      });
+    }
   });
 
   it('reports a prevented native publish as unsuccessful', () => {

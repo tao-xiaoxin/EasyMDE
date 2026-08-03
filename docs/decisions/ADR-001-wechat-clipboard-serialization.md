@@ -149,10 +149,13 @@ The normalized payload:
   structural exceptions;
 - treats Mermaid HTML-label SVGs as a destination-font compatibility boundary:
   only Mermaid roots and their `foreignObject` labels receive visible overflow,
-  semantic non-wrapping structure, and zero-width word-joiner markers. WeChat
-  may remove the label CSS and `<nobr>` while sanitizing the paste, so the
-  marker path is required for complete labels; modern `text/plain` removes the
-  markers and ordinary SVG/KaTeX paths remain unchanged;
+  semantic non-wrapping structure, and zero-width word-joiner markers. Numeric
+  label boxes expand around their original center by at least 32px or 1.5x and
+  their XHTML label containers use intrinsic `max-content` sizing because the
+  destination font may be wider than the Preview font. WeChat may remove the
+  label CSS and `<nobr>` while sanitizing the paste, so the marker path is
+  required for complete labels; modern `text/plain` removes the markers and
+  ordinary SVG/KaTeX paths remain unchanged;
 - normalizes article/div roots to portable section structure, wraps text leaves,
   preserves code and KaTeX whitespace markers, and sanitizes `srcset` and
   fragment IDs together with ordinary URL attributes;
@@ -219,7 +222,7 @@ All runtime assets remain local; no remote executable resource is introduced.
 
 The focused serializer tests cover unsafe input, pseudo elements, theme-image
 materialization, delayed modern Clipboard activation, Mermaid non-ASCII label
-preservation, code line preservation, intrinsic table scroll-owner and
+preservation plus center-preserving width expansion, code line preservation, intrinsic table scroll-owner and
 theme-shim behavior, task-list checkbox state, table/formula horizontal overflow, KaTeX
 MathML removal, modern/legacy HTML parity, synchronous legacy preparation for
 payloads without remote theme images, synchronous modern setup fallback,

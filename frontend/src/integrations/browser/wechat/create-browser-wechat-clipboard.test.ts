@@ -3267,10 +3267,29 @@ describe('createBrowserWechatClipboard', () => {
       return style.includes('overflow:visible!important')
         && style.includes('overflow-x:visible!important')
         && style.includes('overflow-y:visible!important')
+        && style.includes('min-width:max-content!important')
+        && style.includes('max-width:none!important')
         && style.includes('white-space:nowrap!important')
         && style.includes('word-break:normal!important')
         && style.includes('overflow-wrap:normal!important');
     })).toBe(true);
+    const originalGeometry = [
+      { width: 64, x: 78 },
+      { width: 101.875, x: 59 },
+      { width: 96, x: 62 },
+      { width: 72, x: 74 }
+    ];
+    [...modernHolder.querySelectorAll('foreignObject')].forEach((element, index) => {
+      const original = originalGeometry[index];
+      if (!original) {
+        throw new Error(`Missing Mermaid geometry fixture at index ${index}.`);
+      }
+      const width = Number.parseFloat(element.getAttribute('width') ?? '');
+      const x = Number.parseFloat(element.getAttribute('x') ?? '');
+      expect(width).toBeGreaterThanOrEqual(original.width * 1.5);
+      expect(x + width / 2).toBeCloseTo(original.x + original.width / 2, 5);
+      expect(element.firstElementChild?.getAttribute('style')).toContain('width:max-content!important');
+    });
     expect([...modernHolder.querySelectorAll('foreignObject')].every((element) => {
       const label = element.querySelector('nobr');
       return label?.textContent === element.textContent;

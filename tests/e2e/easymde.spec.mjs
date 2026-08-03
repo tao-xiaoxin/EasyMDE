@@ -16,7 +16,7 @@ const fullCapabilityImage = readFileSync(
   new URL('../../docs/assets/easymde-logo-rounded.png', import.meta.url)
 );
 const longFixtureHeadingPrefix = '超长中英文标题用于验证狭窄预览容器';
-const WORDPRESS_SESSION_REFRESH_INTERVAL_MS = 2 * 60_000;
+const WORDPRESS_SESSION_REFRESH_INTERVAL_MS = 60_000;
 const managedRuntimeAssets = [
   {
     key: 'codeFrameCss',
@@ -223,10 +223,68 @@ async function login(page, user) {
   await expect(page.locator('#wpadminbar')).toBeVisible();
 }
 
-async function refreshWordPressSession(page, user) {
-  await page.goto('/wp-admin/');
-  if (await page.locator('#wpadminbar').count()) return;
-  await login(page, user);
+async function pulseWordPressHeartbeat(page) {
+  const responsePromise = page.waitForResponse((response) => {
+    if ('POST' !== response.request().method()) return false;
+    let pathname;
+    try {
+      pathname = new URL(response.url()).pathname;
+    } catch {
+      return false;
+    }
+    if (!pathname.endsWith('/wp-admin/admin-ajax.php')) return false;
+    return /(?:^|&)action=heartbeat(?:&|$)/.test(
+      response.request().postData() ?? ''
+    );
+  }, { timeout: 15_000 });
+  const heartbeatAvailable = await page.evaluate(() => {
+    const heartbeat = globalThis.wp?.heartbeat;
+    if (!heartbeat
+      || 'function' !== typeof heartbeat.connectNow
+      || 'function' !== typeof heartbeat.disableSuspend) {
+      return false;
+    }
+
+    // A long browser assertion can leave Heartbeat in its suspended state.
+    // Resume it on the original editor page before requesting the pulse;
+    // opening another page would suspend this page and hide the real failure.
+    heartbeat.disableSuspend();
+    document.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    heartbeat.connectNow();
+    return true;
+  });
+  if (!heartbeatAvailable) {
+    throw new Error('wordpress-heartbeat-unavailable');
+  }
+  const response = await responsePromise;
+  if (!response.ok()) {
+    throw new Error(`wordpress-heartbeat-http-${response.status()}`);
+  }
+  const payload = await response.json();
+  const data = payload?.data;
+  if (!data || 'object' !== typeof data || Array.isArray(data)) {
+    throw new Error('wordpress-heartbeat-response-invalid');
+  }
+  if ('boolean' !== typeof data['wp-auth-check']) {
+    throw new Error('wordpress-heartbeat-auth-state-missing');
+  }
+  return data['wp-auth-check'];
+}
+
+async function reauthenticateWordPressSession(page, user) {
+  const authCheck = page.locator('#wp-auth-check-wrap');
+  await expect(authCheck).toBeVisible({ timeout: 15_000 });
+  const frame = page.frameLocator('#wp-auth-check-frame');
+  const username = frame.locator('#user_login');
+  const password = frame.locator('#user_pass');
+  const submit = frame.locator('#wp-submit');
+  await expect(username).toBeVisible();
+  await expect(password).toBeVisible();
+  await expect(submit).toBeEnabled();
+  await username.fill(user.username);
+  await password.fill(user.password);
+  await submit.click();
+  await expect(authCheck).toBeHidden({ timeout: 15_000 });
 }
 
 function startWordPressSessionKeepalive(page, user) {
@@ -236,20 +294,16 @@ function startWordPressSessionKeepalive(page, user) {
 
   const refresh = async () => {
     if (stopped || failure) return;
-    let refreshPage = null;
     try {
-      refreshPage = await page.context().newPage();
-      await refreshWordPressSession(refreshPage, user);
-    } catch (error) {
-      failure ??= error;
-    } finally {
-      if (refreshPage) {
-        try {
-          await refreshPage.close();
-        } catch (error) {
-          failure ??= error;
+      const authenticated = await pulseWordPressHeartbeat(page);
+      if (!authenticated) {
+        await reauthenticateWordPressSession(page, user);
+        if (!await pulseWordPressHeartbeat(page)) {
+          throw new Error('wordpress-heartbeat-auth-refresh-failed');
         }
       }
+    } catch (error) {
+      failure ??= error;
     }
   };
 

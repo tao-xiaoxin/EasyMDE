@@ -1159,10 +1159,13 @@ Feature boundaries:
   Mermaid HTML-label SVGs are a separate compatibility case: mark only Mermaid
   roots and their `foreignObject` labels, make their overflow visible, and
   preserve one-line label text with `<nobr>` plus zero-width word-joiner
-  markers. The modern `text/plain` path strips those markers. Do not apply
-  this to ordinary SVG or KaTeX, and do not rely on `white-space` alone because
-  WeChat removes that declaration while sanitizing pasted `foreignObject`
-  content.
+  markers. Expand numeric label boxes around their original center by at least
+  32px or 1.5x and give their XHTML label containers `max-content` sizing; the
+  Preview font and WeChat fallback font are not guaranteed to have the same
+  glyph metrics. The modern `text/plain` path strips those markers. Do not
+  apply this to ordinary SVG or KaTeX, and do not rely on `white-space` alone
+  because WeChat removes that declaration while sanitizing pasted
+  `foreignObject` content.
   It normalizes article/div roots to portable section structure, wraps text
   leaves, preserves code and KaTeX whitespace markers, sanitizes `srcset` and
   fragment IDs along with ordinary URL attributes, and gives non-math SVG and

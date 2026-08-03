@@ -214,6 +214,18 @@ and truthful status messages. The Chromium coverage in
 WeChat commands against the same stable Preview and confirm that local runtime
 assets remain the only loaded executable resources.
 
+The two long Chromium theme matrices keep the original editor page alive through
+WordPress's supported `wp.heartbeat.disableSuspend()` and
+`wp.heartbeat.connectNow()` APIs. The helper resumes a previously suspended
+Heartbeat with a real user-activity event, waits for the actual response, and
+verifies its authentication state on that same page so its editor DOM and
+Preview state are preserved. If the response reports an expired session, the
+helper completes WordPress's existing `#wp-auth-check-frame` interim login on
+that same page and verifies a second authenticated pulse; missing fields,
+failed reauthentication, or unavailable Heartbeat are explicit test failures.
+It never opens an auxiliary login page that could suspend the editor and mask
+the failure behind an auth-check overlay.
+
 When the copy boundary or any theme/Preview enhancement changes, run a fresh
 real-browser check in an explicitly authorized local authenticated WordPress
 and WeChat session using the synthetic full-capability fixture. Capture source
@@ -221,7 +233,10 @@ Preview and pasted WeChat screenshots at the same viewport, then inspect the
 payload and pasted DOM. For Mermaid, verify complete labels in at least one
 HTML-label flowchart and one non-`foreignObject` diagram (for example ER/text);
 record whether the destination strips CSS/`nobr` and confirm the zero-width
-marker path keeps labels on one line. Measure card, code, table, and formula
+marker path keeps labels on one line. Before and after paste, record every
+numeric `foreignObject` width/x pair and verify that the label center is stable
+while its width satisfies the exporter gutter/scale contract; inspect the
+complete visible label text, not only the SVG markup. Measure card, code, table, and formula
 `clientWidth`,
 `scrollWidth`, `scrollTop`, and `overflow-x/y`; expected long content has one
 horizontal owner and no exporter-created article-wide vertical owner. For every
@@ -235,7 +250,9 @@ hidden controls, and remote executable resources are absent; exporter-owned
 `aria-hidden`/`leaf` markers are expected structural exceptions. A page-level scrollbar
 must be measured at the WeChat document/editor shell separately; it is not a
 copy regression unless the current pasted article itself owns that scroll.
-Compare both Clipboard API and legacy compatibility results, including equal
+The Chromium E2E Clipboard stub proves command/session behavior and local asset
+loading, but not the final WeChat DOM. Focused Adapter tests compare both
+Clipboard API and legacy compatibility results, including equal
 visible `text/plain` after exporter-marker removal, restore/failure
 states, and visual geometry for headings, theme decorations, images, code,
 tables, inline formulas, every display-formula family, and both edges of a

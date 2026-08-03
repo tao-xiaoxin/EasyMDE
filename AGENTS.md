@@ -476,10 +476,13 @@ authority:
 - Mermaid HTML-label diagrams are a special SVG compatibility boundary:
   Mermaid roots and their `foreignObject` labels receive visible overflow, and
   label contents are made non-wrapping with semantic `<nobr>` structure plus
-  zero-width word-joiner markers. WeChat may remove label CSS and `<nobr>` while
-  sanitizing pasted SVG; the markers preserve one-line labels and are removed
-  from the modern `text/plain` payload. This rule is scoped to Mermaid
-  `foreignObject` labels and must not alter ordinary SVG or KaTeX geometry.
+  zero-width word-joiner markers. Numeric label boxes are expanded around their
+  original center (at least 32px or 1.5x) and their XHTML label containers use
+  intrinsic `max-content` sizing, so a wider WeChat fallback font cannot clip a
+  final CJK glyph. WeChat may remove label CSS and `<nobr>` while sanitizing
+  pasted SVG; the markers preserve one-line labels and are removed from the
+  modern `text/plain` payload. This rule is scoped to Mermaid `foreignObject`
+  labels and must not alter ordinary SVG or KaTeX geometry.
 - Article/div roots are normalized to portable sections, text leaves are wrapped
   for destination stability, non-math SVG and media receive responsive bounds
   without changing an inline media element's computed display or margins,

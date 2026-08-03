@@ -52,6 +52,8 @@ const MERMAID_LABEL_LAYOUT_DECLARATIONS = [
   'word-break:normal',
   'overflow-wrap:normal'
 ] as const;
+const MERMAID_LABEL_WIDTH_SCALE = 1.5;
+const MERMAID_LABEL_WIDTH_GUTTER = 32;
 
 const SAFE_DISPLAY_VALUES: Record<string, true> = {
   block: true,
@@ -1434,6 +1436,48 @@ function wrapMermaidLabelContents(root: HTMLElement): void {
   });
 }
 
+function expandMermaidLabelGeometry(root: HTMLElement): void {
+  root.querySelectorAll('foreignObject').forEach((element) => {
+    if (!MERMAID_FOREIGN_OBJECTS.has(element)) return;
+
+    const width = Number.parseFloat(element.getAttribute('width') ?? '');
+    const x = Number.parseFloat(element.getAttribute('x') ?? '');
+    if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(x)) return;
+
+    // Mermaid sizes foreignObject boxes using the preview font. WeChat can
+    // substitute a wider fallback font and clip the final CJK glyph even when
+    // the copied SVG declares visible overflow. Expand around the original
+    // center so the label remains aligned with its node while the destination
+    // owns enough inline space for its actual font metrics.
+    const expandedWidth = Math.max(
+      width * MERMAID_LABEL_WIDTH_SCALE,
+      width + MERMAID_LABEL_WIDTH_GUTTER
+    );
+    const expandedX = x - (expandedWidth - width) / 2;
+    element.setAttribute('x', String(expandedX));
+    element.setAttribute('width', String(expandedWidth));
+    appendDeclarations(element, [
+      `width:${expandedWidth}px`,
+      'min-width:max-content',
+      'max-width:none',
+      'overflow:visible',
+      'overflow-x:visible',
+      'overflow-y:visible'
+    ], true);
+
+    const label = element.firstElementChild;
+    if (!label) return;
+    appendDeclarations(label, [
+      'width:max-content',
+      'min-width:max-content',
+      'max-width:none',
+      'overflow:visible',
+      'overflow-x:visible',
+      'overflow-y:visible'
+    ], true);
+  });
+}
+
 function preserveMermaidLabelWhitespace(root: HTMLElement): void {
   root.querySelectorAll('foreignObject').forEach((element) => {
     if (!MERMAID_FOREIGN_OBJECTS.has(element)) return;
@@ -1745,6 +1789,7 @@ function finalizeMarkup(
     ], true);
   });
   wrapMermaidLabelContents(normalized);
+  expandMermaidLabelGeometry(normalized);
   preserveMermaidLabelWhitespace(normalized);
   normalized.querySelectorAll('table').forEach((element) => {
     // The destination editor owns the scroll container. Keep the theme's table

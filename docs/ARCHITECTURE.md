@@ -211,9 +211,12 @@ Mermaid flowcharts use SVG `foreignObject` labels whose preview dimensions are
 calculated with the preview font. WeChat can use a wider fallback font and
 also strips `white-space`, `word-break`, and `<nobr>` during paste. The shared
 serializer therefore scopes visible overflow and non-wrapping structure to
-Mermaid `foreignObject` labels and inserts zero-width word-joiner markers;
-modern plain text removes those markers. Ordinary SVG, ER/text diagrams, and
-KaTeX are not rewritten by this Mermaid-specific path.
+Mermaid `foreignObject` labels, expands numeric label widths around the original
+center by at least 32px or 1.5x, and gives the XHTML label container intrinsic
+`max-content` sizing. It also inserts zero-width word-joiner markers; modern
+plain text removes those markers. This keeps the full label when the destination
+font is wider without moving the node's center. Ordinary SVG, ER/text
+diagrams, and KaTeX are not rewritten by this Mermaid-specific path.
 
 The serializer removes scripts, styles, interactive controls, CSS classes, and
 source/editor transient attributes; keeps only valid fragment IDs and

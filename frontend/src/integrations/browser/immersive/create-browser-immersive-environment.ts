@@ -99,12 +99,136 @@ export function createBrowserImmersiveEnvironment(
         documentRef.querySelector('.easymde-toolbar-popover:not([hidden])')
       );
     },
+    now() {
+      const browserWindow = documentRef.defaultView;
+      if (!browserWindow) {
+        throw new Error('immersive-window-unavailable');
+      }
+      return browserWindow.Date.now();
+    },
     schedule(callback, delay) {
       const timer = documentRef.defaultView?.setTimeout(callback, delay);
       if (undefined === timer) {
         throw new Error('immersive-window-unavailable');
       }
       return () => documentRef.defaultView?.clearTimeout(timer);
+    },
+    subscribeResize(listener) {
+      const browserWindow = documentRef.defaultView;
+      if (!browserWindow) throw new Error('immersive-window-unavailable');
+      browserWindow.addEventListener('resize', listener);
+      browserWindow.visualViewport?.addEventListener('resize', listener);
+      return () => {
+        browserWindow.removeEventListener('resize', listener);
+        browserWindow.visualViewport?.removeEventListener('resize', listener);
+      };
+    },
+    observePreviewLayout(surface, listener) {
+      const browserWindow = documentRef.defaultView;
+      if (!browserWindow) throw new Error('immersive-window-unavailable');
+      if (surface.ownerDocument !== documentRef) {
+        throw new Error('immersive-preview-surface-invalid');
+      }
+
+      const cleanups: Array<() => void> = [];
+      let active = true;
+      const mediaCleanups = new Map<HTMLImageElement | HTMLVideoElement, () => void>();
+      const observedResizeElements = new Set<Element>();
+      const observeMedia = (media: HTMLImageElement | HTMLVideoElement) => {
+        if (!active || mediaCleanups.has(media)) return;
+        const events = 'VIDEO' === media.tagName
+          ? ['load', 'error', 'loadedmetadata', 'loadeddata', 'canplay', 'resize']
+          : ['load', 'error'];
+        events.forEach((event) => {
+          media.addEventListener(event, listener);
+        });
+        mediaCleanups.set(media, () => {
+          events.forEach((event) => {
+            media.removeEventListener(event, listener);
+          });
+        });
+      };
+      const unobserveMedia = (media: HTMLImageElement | HTMLVideoElement) => {
+        mediaCleanups.get(media)?.();
+        mediaCleanups.delete(media);
+      };
+      const resizeObserverConstructor = browserWindow.ResizeObserver;
+      const resizeObserver = resizeObserverConstructor
+        ? new resizeObserverConstructor(() => listener())
+        : null;
+      const observeResizeElement = (element: Element) => {
+        if (!resizeObserver || observedResizeElements.has(element)) return;
+        resizeObserver.observe(element);
+        observedResizeElements.add(element);
+      };
+      const unobserveResizeElement = (element: Element) => {
+        if (!resizeObserver || !observedResizeElements.has(element)) return;
+        resizeObserver.unobserve(element);
+        observedResizeElements.delete(element);
+      };
+      const reconcileObservedNodes = (notify: boolean) => {
+        if (!active) return;
+        const currentMedia = new Set(
+          surface.querySelectorAll<HTMLImageElement | HTMLVideoElement>('img, video')
+        );
+        mediaCleanups.forEach((_, media) => {
+          if (!currentMedia.has(media)) unobserveMedia(media);
+        });
+        currentMedia.forEach(observeMedia);
+
+        const currentResizeElements = new Set<Element>([
+          surface,
+          ...surface.querySelectorAll<HTMLElement>('img, video, svg, foreignObject')
+        ]);
+        observedResizeElements.forEach((element) => {
+          if (!currentResizeElements.has(element)) {
+            unobserveResizeElement(element);
+          }
+        });
+        currentResizeElements.forEach(observeResizeElement);
+        if (notify) listener();
+      };
+      if (resizeObserver) {
+        reconcileObservedNodes(false);
+        cleanups.push(() => resizeObserver.disconnect());
+      } else {
+        surface
+          .querySelectorAll<HTMLImageElement | HTMLVideoElement>('img, video')
+          .forEach(observeMedia);
+      }
+      cleanups.push(() => {
+        mediaCleanups.forEach((cleanup) => {
+          cleanup();
+        });
+        mediaCleanups.clear();
+        observedResizeElements.clear();
+      });
+
+      const fonts = documentRef.fonts;
+      if (fonts) {
+        fonts.addEventListener('loadingdone', listener);
+        fonts.addEventListener('loadingerror', listener);
+        cleanups.push(() => {
+          fonts.removeEventListener('loadingdone', listener);
+          fonts.removeEventListener('loadingerror', listener);
+        });
+      }
+
+      const mutationObserverConstructor = browserWindow.MutationObserver;
+      const mutationObserver = mutationObserverConstructor
+        ? new mutationObserverConstructor(() => reconcileObservedNodes(true))
+        : null;
+      if (mutationObserver) {
+        mutationObserver.observe(surface, { childList: true, subtree: true });
+        cleanups.push(() => mutationObserver.disconnect());
+      }
+
+      return () => {
+        active = false;
+        cleanups.forEach((cleanup) => {
+          cleanup();
+        });
+      };
     },
     subscribeKeydown(listener) {
       documentRef.addEventListener('keydown', listener);

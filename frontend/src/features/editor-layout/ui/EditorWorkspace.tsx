@@ -1,4 +1,10 @@
-import { createElement, useEffect, useRef, useState } from '@wordpress/element';
+import {
+  Fragment,
+  createElement,
+  useEffect,
+  useRef,
+  useState
+} from '@wordpress/element';
 import type {
   CSSProperties,
   KeyboardEvent,
@@ -6,8 +12,24 @@ import type {
   ReactNode
 } from 'react';
 
+import { resolveLocalDraftLocale } from '../../../contracts/bootstrap/local-drafts-bootstrap';
+
+type OrdinaryStatusDocument = Readonly<{
+  getValue: () => string;
+  subscribe: (listener: () => void) => () => void;
+}>;
+
+type OrdinaryEditorStatus = Readonly<{
+  document: OrdinaryStatusDocument;
+  lastEdited: string;
+  locale: string;
+  wordCountTemplate: string;
+}>;
+
 type EditorWorkspaceProps = Readonly<{
   direction: 'ltr' | 'rtl';
+  onLayoutChange?: () => void;
+  ordinaryStatus?: OrdinaryEditorStatus;
   preview: ReactNode;
   splitResizable?: boolean;
   splitResizeLabel?: string;
@@ -17,6 +39,16 @@ type EditorWorkspaceProps = Readonly<{
 const DEFAULT_SPLIT = 50;
 const MIN_SPLIT = 20;
 const MAX_SPLIT = 80;
+
+function writingCharacterCount(markdown: string): number {
+  return markdown.length;
+}
+
+function formatCount(template: string, count: string): string {
+  return template.replace(/%%|%(?:1\$)?s/g, (placeholder) =>
+    '%%' === placeholder ? '%' : count
+  );
+}
 
 function clampSplit(value: number): number {
   return Math.max(MIN_SPLIT, Math.min(MAX_SPLIT, value));
@@ -31,6 +63,8 @@ function clampSplit(value: number): number {
  */
 export function EditorWorkspace({
   direction,
+  onLayoutChange,
+  ordinaryStatus,
   preview,
   splitResizable = false,
   splitResizeLabel = '',
@@ -39,6 +73,11 @@ export function EditorWorkspace({
   const [split, setSplit] = useState(DEFAULT_SPLIT);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const releaseDragRef = useRef<(() => void) | null>(null);
+  const statusDocument = ordinaryStatus?.document;
+  const [characterCount, setCharacterCount] = useState(() =>
+    statusDocument ? writingCharacterCount(statusDocument.getValue()) : 0
+  );
+  const previousSplitRef = useRef(split);
 
   useEffect(
     () => () => {
@@ -46,6 +85,22 @@ export function EditorWorkspace({
     },
     []
   );
+
+  useEffect(() => {
+    if (!statusDocument) return undefined;
+    const publish = () =>
+      setCharacterCount(
+        writingCharacterCount(statusDocument.getValue())
+      );
+    publish();
+    return statusDocument.subscribe(publish);
+  }, [statusDocument]);
+
+  useEffect(() => {
+    if (!splitResizable || previousSplitRef.current === split) return;
+    previousSplitRef.current = split;
+    onLayoutChange?.();
+  }, [onLayoutChange, split, splitResizable]);
 
   const startResize = (event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault();
@@ -96,7 +151,7 @@ export function EditorWorkspace({
       } as CSSProperties)
     : undefined;
 
-  return (
+  const workspace = (
     <div
       ref={workspaceRef}
       className={`easymde-workspace${splitResizable ? ' is-split-resizable' : ''}`}
@@ -120,5 +175,27 @@ export function EditorWorkspace({
       ) : null}
       {preview}
     </div>
+  );
+
+  const count = ordinaryStatus
+    ? new Intl.NumberFormat(
+        resolveLocalDraftLocale(ordinaryStatus.locale)
+      ).format(characterCount)
+    : '';
+
+  return (
+    <Fragment>
+      {workspace}
+      {ordinaryStatus ? (
+        <footer className="easymde-editor-status-bar">
+          <span className="easymde-editor-word-count">
+            {formatCount(ordinaryStatus.wordCountTemplate, count)}
+          </span>
+          <span className="easymde-editor-last-edited">
+            {ordinaryStatus.lastEdited}
+          </span>
+        </footer>
+      ) : null}
+    </Fragment>
   );
 }

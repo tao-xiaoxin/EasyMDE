@@ -20,6 +20,7 @@ import {
 	compileJsCatalog,
 	compileMo,
 	makePot,
+	normalizePotSourceReferences,
 	parsePoEntries,
 } from "../../scripts/i18n.mjs";
 
@@ -30,7 +31,7 @@ const productionRoots = [
 	"src",
 	"templates",
 	"assets/js/admin",
-	"assets/js/frontend",
+	"frontend/src/integrations/preview-runtime",
 ];
 const translationFunctions = [
 	"__",
@@ -70,7 +71,7 @@ function collectFiles(path, predicate, files = []) {
 
 function productionText() {
 	return productionRoots
-		.flatMap((root) => collectFiles(root, (file) => /\.(?:php|js)$/.test(file)))
+		.flatMap((root) => collectFiles(root, (file) => /\.(?:php|js|ts)$/.test(file)))
 		.map((file) => readFileSync(file, "utf8"))
 		.join("\n");
 }
@@ -122,11 +123,11 @@ function jsAdminStringKeys() {
 function jsFrontendStringKeys() {
 	const keys = new Set();
 
-	collectFiles("assets/js/frontend", (file) => file.endsWith(".js")).forEach(
+	collectFiles("frontend/src/integrations/preview-runtime", (file) => file.endsWith(".ts")).forEach(
 		(file) => {
 			const source = readFileSync(file, "utf8");
 			for (const match of source.matchAll(
-				/getString\(\s*config\s*,\s*['"]([A-Za-z][A-Za-z0-9]*)['"]/g,
+				/stringValue\(\s*config\s*,\s*['"]([A-Za-z][A-Za-z0-9]*)['"]/g,
 			)) {
 				keys.add(match[1]);
 			}
@@ -135,6 +136,15 @@ function jsFrontendStringKeys() {
 
 	return keys;
 }
+
+test("POT source references normalize Windows path separators", () => {
+	assert.equal(
+		normalizePotSourceReferences(
+			'#: src\\Admin\\Editor.php:18 templates\\admin\\editor.php:7\nmsgid "Editor"\n',
+		),
+		'#: src/Admin/Editor.php:18 templates/admin/editor.php:7\nmsgid "Editor"\n',
+	);
+});
 
 function phpTranslationCallPattern() {
 	const singleQuoted = "'(?:\\\\.|[^'\\\\])*'";
@@ -395,6 +405,36 @@ __('Enter theme name…', 'easymde');
 			entries.some((entry) => "Enter theme name" === entry.msgid),
 			false,
 		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("POT generation uses portable source reference paths", () => {
+	const root = makeTempRoot();
+
+	try {
+		writeText(
+			root,
+			"easymde.php",
+			`<?php
+/**
+ * Plugin Name: EasyMDE
+ * Version: 0.1.8
+ */
+`,
+		);
+		writeText(
+			root,
+			"src/Admin/Nested.php",
+			"<?php __('Portable reference', 'easymde');\n",
+		);
+		mkdirSync(join(root, "languages"), { recursive: true });
+		makePot({ root });
+
+		const pot = readFileSync(join(root, "languages/easymde.pot"), "utf8");
+		assert.match(pot, /^#: src\/Admin\/Nested\.php:1$/m);
+		assert.doesNotMatch(pot, /^#: .*\\/m);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

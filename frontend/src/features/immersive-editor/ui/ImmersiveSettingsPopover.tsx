@@ -64,7 +64,7 @@ export function ImmersiveSettingsPopover({
   useEffect(() => {
     if (open && position && focusFirstItemRef.current) {
       panelRef.current
-        ?.querySelector<HTMLInputElement>('input[type="checkbox"]')
+        ?.querySelector<HTMLButtonElement>('button[role="checkbox"]')
         ?.focus();
       focusFirstItemRef.current = false;
     }
@@ -158,30 +158,40 @@ export function ImmersiveSettingsPopover({
                   </button>
                 </header>
                 <div className="easymde-immersive-settings-list">
-                  {items.map((item) => (
-                    <label
-                      key={item.key}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={settings[item.key]}
+                  {items.map((item) => {
+                    const checked = settings[item.key];
+                    const descriptionId = `immersive-setting-${item.key}-description`;
+                    return (
+                      // biome-ignore lint/a11y/useSemanticElements: The reference UI exposes each setting row as a checkbox button.
+                      <button
+                        key={item.key}
+                        type="button"
+                        role="checkbox"
+                        aria-checked={checked}
                         aria-label={item.label}
-                        onChange={(event) =>
+                        aria-describedby={descriptionId}
+                        onClick={() =>
                           onChange({
                             ...settings,
-                            [item.key]: event.currentTarget.checked
+                            [item.key]: !checked
                           })
                         }
-                      />
-                      <span className="easymde-immersive-settings-check" aria-hidden="true">
-                        {settings[item.key] ? <Check size={20} strokeWidth={2.8} /> : null}
-                      </span>
-                      <span>
-                        <strong>{item.label}</strong>
-                        <small>{item.description}</small>
-                      </span>
-                    </label>
-                  ))}
+                      >
+                        <span
+                          className="easymde-immersive-settings-check"
+                          aria-hidden="true"
+                        >
+                          {checked ? (
+                            <Check size={20} strokeWidth={2.8} />
+                          ) : null}
+                        </span>
+                        <span>
+                          <strong>{item.label}</strong>
+                          <small id={descriptionId}>{item.description}</small>
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </section>
             </Fragment>,

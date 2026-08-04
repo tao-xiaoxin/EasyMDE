@@ -30,7 +30,7 @@ services:
       WORDPRESS_LOCALE: ${WORDPRESS_LOCALE:-zh_CN}
       WORDPRESS_SITE_URL: ${WORDPRESS_SITE_URL:-http://localhost:8088}
       WORDPRESS_SITE_TITLE: ${WORDPRESS_SITE_TITLE:-EasyMDE Test}
-      WORDPRESS_ADMIN_USER: ${WORDPRESS_ADMIN_USER:-admin}
+      WORDPRESS_ADMIN_USER: ${WORDPRESS_ADMIN_USER:?Set WORDPRESS_ADMIN_USER in .env}
       WORDPRESS_ADMIN_PASSWORD: ${WORDPRESS_ADMIN_PASSWORD:?Set WORDPRESS_ADMIN_PASSWORD in .env}
       WORDPRESS_ADMIN_EMAIL: ${WORDPRESS_ADMIN_EMAIL:-admin@example.test}
       WP_CLI_CACHE_DIR: /tmp/wp-cli-cache
@@ -72,6 +72,11 @@ services:
         wp core update-db --allow-root;
         wp language core install "$${WORDPRESS_LOCALE}" --activate --allow-root;
         wp option update WPLANG "$${WORDPRESS_LOCALE}" --allow-root;
+        if wp user get "$${WORDPRESS_ADMIN_USER}" --field=ID --allow-root >/dev/null 2>&1; then
+          wp user update "$${WORDPRESS_ADMIN_USER}" --user_pass="$${WORDPRESS_ADMIN_PASSWORD}" --user_email="$${WORDPRESS_ADMIN_EMAIL}" --role=administrator --allow-root;
+        else
+          wp user create "$${WORDPRESS_ADMIN_USER}" "$${WORDPRESS_ADMIN_EMAIL}" --user_pass="$${WORDPRESS_ADMIN_PASSWORD}" --role=administrator --allow-root;
+        fi;
         wp user meta update "$${WORDPRESS_ADMIN_USER}" locale "$${WORDPRESS_LOCALE}" --allow-root;
         wp plugin activate easymde --allow-root;
         wp rewrite structure "/%postname%/" --allow-root;

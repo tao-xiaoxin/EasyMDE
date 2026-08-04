@@ -28,11 +28,15 @@
   box-sizing: border-box;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha > *:first-child {
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha > :not(pre):first-child {
   margin-top: 0 !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha > *:last-child {
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha > h1:first-child {
+  margin-top: 30px !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha > :not(pre):last-child {
   margin-bottom: 0 !important;
 }
 
@@ -68,7 +72,8 @@
 
 .easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha h1 {
   color: var(--easymde-qinghe-green);
-  font-size: 28px;
+  font-size: 24px;
+  line-height: 1.25;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha h2 {
@@ -101,8 +106,7 @@
 .easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha ul,
 .easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha ol,
 .easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha dl,
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha li,
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre {
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha li {
   margin: 15px 0;
 }
 
@@ -136,13 +140,13 @@
   padding-left: 30px;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha ul :first-child,
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha ol :first-child {
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha ul :not(pre):first-child,
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha ol :not(pre):first-child {
   margin-top: 0;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha ul :last-child,
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha ol :last-child {
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha ul :not(pre):last-child,
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha ol :not(pre):last-child {
   margin-bottom: 0;
 }
 
@@ -153,11 +157,11 @@
   color: var(--easymde-qinghe-muted);
 }
 
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha blockquote > :first-child {
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha blockquote > :not(pre):first-child {
   margin-top: 0;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha blockquote > :last-child {
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha blockquote > :not(pre):last-child {
   margin-bottom: 0;
 }
 
@@ -225,13 +229,13 @@
   font-weight: bold;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha table tr th :first-child,
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha table tr td :first-child {
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha table tr th :not(pre):first-child,
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha table tr td :not(pre):first-child {
   margin-top: 0;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha table tr th :last-child,
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha table tr td :last-child {
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha table tr th :not(pre):last-child,
+.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha table tr td :not(pre):last-child {
   margin-bottom: 0;
 }
 
@@ -248,60 +252,6 @@
   overflow-wrap: anywhere;
   word-break: normal;
   white-space: normal;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre {
-  margin: 15px 0;
-  padding: 6px 10px;
-  border: 1px solid var(--easymde-qinghe-border);
-  border-radius: 3px;
-  background-color: var(--easymde-qinghe-soft);
-  color: var(--easymde-qinghe-text);
-  font-size: 13px;
-  line-height: 19px;
-  overflow: auto;
-  overflow-wrap: normal;
-  word-break: normal;
-  box-shadow: none;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre::before {
-  display: none;
-  content: none;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha.easymde-code-mac pre {
-  padding-top: 6px;
-  border-radius: 3px;
-  box-shadow: none;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha.easymde-code-mac pre::before {
-  display: none;
-  content: none;
-  background: none;
-  box-shadow: none;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre code,
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre tt {
-  display: block;
-  margin: 0;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  font-family: var(--easymde-code-font-family);
-  font-size: 13px;
-  line-height: 19px;
-  overflow: visible;
-  white-space: pre;
-  word-break: normal;
-  overflow-wrap: normal;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre code:not(.hljs),
-.easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha pre tt {
-  background: transparent;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-qinghe-zhusha img {

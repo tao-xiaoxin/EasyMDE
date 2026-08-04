@@ -265,21 +265,6 @@ public mdnice themeId 51. */
   text-align: center;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-tech-blue pre {
-  margin: 10px 0;
-  padding: 0;
-  border-radius: 5px;
-  box-shadow: rgba(0, 0, 0, 0.55) 0 2px 10px;
-  text-align: left;
-  background: rgba(0, 0, 0, 0);
-  overflow-x: auto;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-tech-blue pre code {
-  font-family: var(--easymde-code-font-family);
-  letter-spacing: 0;
-}
-
 .easymde-rendered-content.easymde-markdown-theme-tech-blue table {
   width: 100%;
   margin: 10px 0;
@@ -326,6 +311,25 @@ public mdnice themeId 51. */
   margin-bottom: 0;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-tech-blue pre code.hljs span {
-  line-height: 26px;
+.easymde-rendered-content.easymde-markdown-theme-tech-blue table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-tech-blue table > thead,
+.easymde-rendered-content.easymde-markdown-theme-tech-blue table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-tech-blue table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-tech-blue table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
 }

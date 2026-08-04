@@ -1,7 +1,10 @@
+.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac pre {
+  --easymde-code-frame-background: #0d1017;
+
+  background: #0d1017;
+}
+
 .easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac pre code.hljs {
-  display: block;
-  overflow-x: auto;
-  padding: 16px;
   color: #cad1d9;
   background: #0d1017;
 }

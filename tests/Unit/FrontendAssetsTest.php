@@ -4,6 +4,7 @@ use EasyMDE\Content\MarkdownFeatureDetector;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Support\Asset;
+use EasyMDE\Support\FrontendAssetContract;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
 use EasyMDE\Theme\CustomCssPolicy;
@@ -32,9 +33,7 @@ final class FrontendAssetsTest extends WP_UnitTestCase
             'easymde-code-copy',
             'easymde-highlight',
             'easymde-katex',
-            'easymde-math-renderer',
             'easymde-mermaid',
-            'easymde-mermaid-renderer',
         ) as $handle) {
             wp_dequeue_script($handle);
             wp_deregister_script($handle);
@@ -118,6 +117,19 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertTrue($features['codeBlocks']);
         $this->assertTrue($features['syntaxHighlight']);
         $this->assertFalse($features['codeCopy']);
+    }
+
+    public function test_optional_code_copy_asset_errors_are_classified_without_hiding_core_asset_errors()
+    {
+        $code_copy_error = new RuntimeException('frontend-code-copy-build-missing');
+        $enhancement_error = new RuntimeException('frontend-enhancement-frontend-enhancements-build-missing');
+        $unknown_error = new RuntimeException('unexpected-asset-failure');
+
+        $this->assertTrue(FrontendAssetContract::is_error($code_copy_error));
+        $this->assertTrue(FrontendAssetContract::is_code_copy_error($code_copy_error));
+        $this->assertTrue(FrontendAssetContract::is_error($enhancement_error));
+        $this->assertFalse(FrontendAssetContract::is_code_copy_error($enhancement_error));
+        $this->assertFalse(FrontendAssetContract::is_error($unknown_error));
     }
 
     public function test_code_frame_assets_follow_regular_code_features_not_legacy_meta()
@@ -248,6 +260,54 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         }
     }
 
+    public function test_frontend_enhancement_asset_loading_rejects_a_tampered_production_script()
+    {
+        $build_dir = $this->create_frontend_enhancement_build_directory();
+        $script = 'assets/frontend-enhancements-test.js';
+        $metadata = 'assets/frontend-enhancements-test.asset.php';
+        wp_mkdir_p($build_dir . '/assets');
+
+        $manifest = array(
+            'schemaVersion' => 1,
+            'entries' => array(
+                'frontend/src/entrypoints/frontend-enhancements.ts' => array(
+                    'handle' => 'easymde-enhancements',
+                    'file' => $script,
+                    'asset' => $metadata,
+                    'dependencies' => array(),
+                    'resources' => array(),
+                ),
+            ),
+        );
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Writes isolated local test fixtures.
+        file_put_contents($build_dir . '/wordpress-manifest.json', wp_json_encode($manifest));
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Writes isolated local test fixtures.
+        file_put_contents($build_dir . '/' . $script, 'console.log("tampered");');
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Writes isolated local test fixtures.
+        file_put_contents(
+            $build_dir . '/' . $metadata,
+            "<?php\nreturn array( 'dependencies' => array(), 'version' => '0000000000000000' );\n"
+        );
+
+        try {
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessage('frontend-enhancement-frontend-enhancements-build-integrity-invalid');
+
+            $this->invoke_frontend_enhancement_asset_loader(
+                $build_dir,
+                'frontend/src/entrypoints/frontend-enhancements.ts',
+                'easymde-enhancements'
+            );
+        } finally {
+            unlink($build_dir . '/' . $metadata);
+            unlink($build_dir . '/' . $script);
+            unlink($build_dir . '/wordpress-manifest.json');
+            rmdir($build_dir . '/assets');
+            rmdir($build_dir);
+        }
+    }
+
     public function test_editor_base_assets_do_not_enqueue_optional_preview_runtimes()
     {
         $post_id = self::factory()->post->create(array('post_type' => 'post'));
@@ -263,9 +323,7 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertTrue(wp_script_is('easymde-enhancements', 'enqueued'));
         $this->assertFalse(wp_script_is('easymde-highlight', 'enqueued'));
         $this->assertFalse(wp_script_is('easymde-katex', 'enqueued'));
-        $this->assertFalse(wp_script_is('easymde-math-renderer', 'enqueued'));
         $this->assertFalse(wp_script_is('easymde-mermaid', 'enqueued'));
-        $this->assertFalse(wp_script_is('easymde-mermaid-renderer', 'enqueued'));
         $this->assertFalse(wp_script_is('easymde-code-copy', 'enqueued'));
         $this->assertSame(array(), wp_scripts()->registered['easymde-enhancements']->deps);
     }
@@ -286,13 +344,22 @@ final class FrontendAssetsTest extends WP_UnitTestCase
             true
         );
         $code_copy_entry = $code_copy_manifest['entries']['frontend/src/entrypoints/frontend-code-copy.ts'];
+        $enhancements_manifest = json_decode(
+            file_get_contents(Asset::path('assets/build/frontend-enhancements/wordpress-manifest.json')),
+            true
+        );
+        $enhancements_entry = $enhancements_manifest['entries']['frontend/src/entrypoints/frontend-enhancements.ts'];
+        $mermaid_manifest = json_decode(
+            file_get_contents(Asset::path('assets/build/frontend-mermaid/wordpress-manifest.json')),
+            true
+        );
+        $mermaid_entry = $mermaid_manifest['entries']['frontend/src/entrypoints/frontend-mermaid-runtime.ts'];
 
         $expected_scripts = array(
             'easymde-highlight' => 'assets/vendor/highlight/highlight.min.js',
             'easymde-katex' => 'assets/vendor/katex/katex.min.js',
-            'easymde-math-renderer' => 'assets/js/frontend/math.js',
-            'easymde-mermaid' => 'assets/vendor/mermaid/mermaid.min.js',
-            'easymde-mermaid-renderer' => 'assets/js/frontend/mermaid.js',
+            'easymde-mermaid' => 'assets/build/frontend-mermaid/' . $mermaid_entry['file'],
+            'easymde-enhancements' => 'assets/build/frontend-enhancements/' . $enhancements_entry['file'],
             'easymde-code-copy' => 'assets/build/code-copy/' . $code_copy_entry['file'],
         );
         $expected_styles = array(
@@ -373,6 +440,16 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         return $temporary_file;
     }
 
+    private function create_frontend_enhancement_build_directory()
+    {
+        $temporary_file = wp_tempnam('easymde-frontend-enhancement-build');
+        $this->assertNotEmpty($temporary_file);
+        unlink($temporary_file);
+        $this->assertTrue(mkdir($temporary_file));
+
+        return $temporary_file;
+    }
+
     private function invoke_code_copy_asset_loader($build_dir)
     {
         $assets = new FrontendAssets(
@@ -383,5 +460,24 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $method->setAccessible(true);
 
         return $method->invoke($assets, $build_dir);
+    }
+
+    private function invoke_frontend_enhancement_asset_loader($build_dir, $entry_key, $expected_handle)
+    {
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+        $method = new ReflectionMethod(FrontendAssets::class, 'get_frontend_enhancement_asset');
+        $method->setAccessible(true);
+
+        return $method->invoke(
+            $assets,
+            $entry_key,
+            $build_dir,
+            $expected_handle,
+            true,
+            'frontend-enhancements'
+        );
     }
 }

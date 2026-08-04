@@ -9,7 +9,7 @@ import {
 const bootstrap = {
   options: {
     customFonts: [
-      { id: 'none', label: 'No custom font', fontFamily: '' },
+      { id: 'none', label: 'None', fontFamily: '' },
       { id: 'optima', label: 'Optima', fontFamily: '"Optima", Arial' }
     ],
     windowsFonts: [

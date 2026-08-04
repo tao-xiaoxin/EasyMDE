@@ -39,9 +39,11 @@ npm install
 ```
 
 Highlight.js, Mermaid, KaTeX, and Lucide are build-time npm dependencies, not
-remote runtime dependencies. The plugin serves their committed runtime files
-from its local asset tree; normal npm installation does not rewrite those
-files.
+remote runtime dependencies. The plugin serves local committed runtime files
+and compiled bundles from its asset tree; normal npm installation does not
+rewrite those files. Mermaid is compiled into the feature-gated
+`assets/build/frontend-mermaid/` bundle rather than copied as a standalone
+vendor script.
 
 When the locked package version or runtime-asset selection intentionally
 changes, refresh the committed copies explicitly:

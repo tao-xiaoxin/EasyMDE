@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "entries": {
+    "frontend/src/entrypoints/frontend-mermaid-runtime.ts": {
+      "handle": "easymde-mermaid",
+      "file": "assets/frontend-mermaid-BJbzCYXm.js",
+      "asset": "assets/frontend-mermaid-BJbzCYXm.asset.php",
+      "dependencies": [],
+      "resources": []
+    }
+  }
+}

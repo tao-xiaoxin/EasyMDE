@@ -6,7 +6,8 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
-  rmSync
+  rmSync,
+  writeFileSync
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -17,10 +18,14 @@ import test, { before } from 'node:test';
 import {
   compareCodeCopyProductionBuilds,
   compareFrontendProductionBuilds,
-  compareSettingsProductionBuilds,
+  compareFrontendBootstrapProductionBuilds,
+  compareFrontendEnhancementsProductionBuilds,
+  compareFrontendMermaidProductionBuilds,
+  validateFrontendBootstrapProductionBuild,
+  validateFrontendEnhancementsProductionBuild,
+  validateFrontendMermaidProductionBuild,
   validateCodeCopyProductionBuild,
-  validateFrontendProductionBuild,
-  validateSettingsProductionBuild
+  validateFrontendProductionBuild
 } from '../../scripts/verify-frontend-build.mjs';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -30,9 +35,12 @@ const sourceEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const codeCopyOutputRoot = join(repoRoot, '.cache/easymde-code-copy-production-check');
 const committedCodeCopyOutputRoot = join(repoRoot, 'assets/build/code-copy');
 const codeCopySourceEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
-const settingsOutputRoot = join(repoRoot, '.cache/easymde-settings-production-check');
-const committedSettingsOutputRoot = join(repoRoot, 'assets/build/settings-center');
-const settingsSourceEntry = 'frontend/src/entrypoints/settings-center.tsx';
+const enhancementsOutputRoot = join(repoRoot, '.cache/easymde-frontend-enhancements-production-check');
+const committedEnhancementsOutputRoot = join(repoRoot, 'assets/build/frontend-enhancements');
+const bootstrapOutputRoot = join(repoRoot, '.cache/easymde-frontend-bootstrap-production-check');
+const committedBootstrapOutputRoot = join(repoRoot, 'assets/build/frontend-bootstrap');
+const mermaidOutputRoot = join(repoRoot, '.cache/easymde-frontend-mermaid-production-check');
+const committedMermaidOutputRoot = join(repoRoot, 'assets/build/frontend-mermaid');
 let buildResult;
 
 function readJson(path) {
@@ -48,45 +56,23 @@ before(() => {
 
 test('root package exposes the production frontend build and includes it in the frontend gate', () => {
   const packageJson = readJson(join(repoRoot, 'package.json'));
+  const packageLock = readJson(join(repoRoot, 'package-lock.json'));
 
   assert.equal(
     packageJson.scripts['build:frontend'],
-    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.code-copy.config.ts && vite build --config frontend/vite.settings.config.ts && node scripts/verify-frontend-build.mjs --production'
+    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.code-copy.config.ts && vite build --config frontend/vite.enhancements.config.ts && vite build --config frontend/vite.bootstrap.config.ts && vite build --config frontend/vite.mermaid.config.ts && node scripts/verify-frontend-build.mjs --production'
   );
   assert.equal(
     packageJson.scripts['check:frontend-production'],
-    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && vite build --mode easymde-check --config frontend/vite.settings.config.ts && node scripts/verify-frontend-build.mjs --production-check'
+    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && vite build --mode easymde-check --config frontend/vite.enhancements.config.ts && vite build --mode easymde-check --config frontend/vite.bootstrap.config.ts && vite build --mode easymde-check --config frontend/vite.mermaid.config.ts && node scripts/verify-frontend-build.mjs --production-check'
   );
   assert.equal(
     packageJson.scripts['frontend:check'],
-    'npm run lint:frontend && npm run typecheck:frontend && npm run test:frontend && npm run build:frontend-contract && npm run check:frontend-production'
+    'npm run icons:check && npm run lint:frontend && npm run typecheck:frontend && npm run test:frontend && npm run build:frontend-contract && npm run check:frontend-production'
   );
-});
-
-test('production build emits one independent WordPress settings-center React entry', () => {
-  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
-  assert.equal(existsSync(settingsOutputRoot), true);
-
-  const viteManifest = readJson(join(settingsOutputRoot, 'manifest.json'));
-  const wordpressManifest = readJson(join(settingsOutputRoot, 'wordpress-manifest.json'));
-  const viteEntry = viteManifest[settingsSourceEntry];
-  const wordpressEntry = wordpressManifest.entries[settingsSourceEntry];
-
-  assert.equal(wordpressManifest.schemaVersion, 1);
-  assert.equal(viteEntry.isEntry, true);
-  assert.match(viteEntry.file, /^assets\/settings-center-[a-zA-Z0-9_-]+\.js$/);
-  assert.equal(wordpressEntry.handle, 'easymde-admin-settings-center');
-  assert.equal(wordpressEntry.file, viteEntry.file);
-  assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
-  assert.deepEqual(wordpressEntry.dependencies, ['wp-element']);
-  assert.deepEqual(wordpressEntry.resources, []);
-
-  const script = readFileSync(join(settingsOutputRoot, viteEntry.file), 'utf8');
-  assert.match(script, /wp\.element/);
-  assert.match(script, /EasyMDESettingsCenterBootstrap/);
-  assert.doesNotMatch(script, /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/);
-  assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
-  validateSettingsProductionBuild(settingsOutputRoot);
+  assert.equal(packageJson.dependencies.mermaid, '10.9.6');
+  assert.equal(packageLock.packages[''].dependencies.mermaid, '10.9.6');
+  assert.equal(packageLock.packages['node_modules/mermaid'].version, '10.9.6');
 });
 
 test('production build emits a separate self-contained TypeScript code-copy entry', () => {
@@ -171,6 +157,71 @@ test('production build emits one self-contained WordPress editor React entry', (
   assert.equal(readdirSync(outputRoot).some((name) => name.endsWith('.map')), false);
 });
 
+test('production build emits shared enhancement, bootstrap, and Mermaid entries', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+
+  for (const [root, entryKey, handle, validator] of [
+    [enhancementsOutputRoot, 'frontend/src/entrypoints/frontend-enhancements.ts', 'easymde-enhancements', validateFrontendEnhancementsProductionBuild],
+    [bootstrapOutputRoot, 'frontend/src/entrypoints/frontend-bootstrap.ts', 'easymde-frontend', validateFrontendBootstrapProductionBuild],
+    [mermaidOutputRoot, 'frontend/src/entrypoints/frontend-mermaid-runtime.ts', 'easymde-mermaid', validateFrontendMermaidProductionBuild]
+  ]) {
+    const viteManifest = readJson(join(root, 'manifest.json'));
+    const wordpressManifest = readJson(join(root, 'wordpress-manifest.json'));
+    const viteEntry = viteManifest[entryKey];
+    const wordpressEntry = wordpressManifest.entries[entryKey];
+
+    assert.equal(viteEntry.isEntry, true);
+    assert.equal(viteEntry.dynamicImports, undefined);
+    assert.equal(wordpressEntry.handle, handle);
+    assert.equal(wordpressEntry.file, viteEntry.file);
+    assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
+    assert.deepEqual(wordpressEntry.dependencies, []);
+    assert.deepEqual(wordpressEntry.resources, []);
+    validator(root);
+  }
+
+  const mermaidManifest = readJson(join(mermaidOutputRoot, 'manifest.json'));
+  const mermaidScript = readFileSync(
+    join(mermaidOutputRoot, mermaidManifest['frontend/src/entrypoints/frontend-mermaid-runtime.ts'].file),
+    'utf8'
+  );
+  const enhancementsManifest = readJson(join(enhancementsOutputRoot, 'manifest.json'));
+  const enhancementsScript = readFileSync(
+    join(enhancementsOutputRoot, enhancementsManifest['frontend/src/entrypoints/frontend-enhancements.ts'].file),
+    'utf8'
+  );
+  assert.match(mermaidScript, /\.mermaid=/);
+  assert.match(mermaidScript, /startOnLoad/);
+  assert.match(enhancementsScript, /securityLevel:[`"']strict[`"']/);
+  assert.doesNotMatch(mermaidScript, /assets\/vendor\/mermaid\/mermaid\.min\.js/);
+  assert.match(readFileSync(join(repoRoot, 'frontend/src/entrypoints/frontend-bootstrap.ts'), 'utf8'), /readyState/);
+});
+
+test('Frontend enhancements validation rejects a weakened Mermaid security level', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+
+  const weakenedRoot = mkdtempSync(join(tmpdir(), 'easymde-enhancements-weakened-'));
+  const manifest = readJson(join(enhancementsOutputRoot, 'manifest.json'));
+  const scriptPath = join(weakenedRoot, manifest['frontend/src/entrypoints/frontend-enhancements.ts'].file);
+  cpSync(enhancementsOutputRoot, weakenedRoot, { recursive: true });
+
+  try {
+    const script = readFileSync(scriptPath, 'utf8');
+    const weakenedScript = script.replace(
+      /securityLevel:[`"']strict[`"']/,
+      'securityLevel:"loose"'
+    );
+    assert.notEqual(weakenedScript, script);
+    writeFileSync(scriptPath, weakenedScript);
+    assert.throws(
+      () => validateFrontendEnhancementsProductionBuild(weakenedRoot),
+      /Built script does not reference the Mermaid strict security level/
+    );
+  } finally {
+    rmSync(weakenedRoot, { recursive: true, force: true });
+  }
+});
+
 test('production comparison rejects stale or omitted committed runtime artifacts', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
 
@@ -199,6 +250,13 @@ test('production comparison rejects stale or omitted committed runtime artifacts
     rmSync(generatedRoot, { recursive: true, force: true });
     rmSync(committedRoot, { recursive: true, force: true });
   }
+});
+
+test('enhancement and bootstrap comparisons reject stale committed artifacts', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+  compareFrontendEnhancementsProductionBuilds(enhancementsOutputRoot, committedEnhancementsOutputRoot);
+  compareFrontendBootstrapProductionBuilds(bootstrapOutputRoot, committedBootstrapOutputRoot);
+  compareFrontendMermaidProductionBuilds(mermaidOutputRoot, committedMermaidOutputRoot);
 });
 
 test('code-copy production comparison rejects stale or omitted committed runtime artifacts', () => {
@@ -231,34 +289,13 @@ test('code-copy production comparison rejects stale or omitted committed runtime
   }
 });
 
-test('settings-center production comparison rejects stale committed runtime artifacts', () => {
-  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
-
-  const generatedRoot = mkdtempSync(join(tmpdir(), 'easymde-settings-generated-'));
-  const committedRoot = mkdtempSync(join(tmpdir(), 'easymde-settings-committed-'));
-  cpSync(settingsOutputRoot, generatedRoot, { recursive: true });
-  cpSync(settingsOutputRoot, committedRoot, { recursive: true });
-
-  try {
-    const manifest = readJson(join(committedRoot, 'manifest.json'));
-    const entry = manifest[settingsSourceEntry];
-    appendFileSync(join(committedRoot, entry.file), '\nstale runtime\n');
-    assert.throws(
-      () => compareSettingsProductionBuilds(generatedRoot, committedRoot),
-      /Committed settings-center production artifact is stale/
-    );
-  } finally {
-    rmSync(generatedRoot, { recursive: true, force: true });
-    rmSync(committedRoot, { recursive: true, force: true });
-  }
-});
-
-test('production validation rejects broad remote URLs and absolute build paths', () => {
+test('production validation rejects remote URLs and absolute paths but allows site-relative URLs', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
 
   for (const prohibited of [
     'const remote = "https://[::1]/runtime.js";',
-    'const buildFile = "/srv/ci/workspace/runtime.js";'
+    'const buildFile = "/srv/ci/workspace/runtime.js";',
+    'const stylesheet = "url(/Users/builder/easymde/source.css)";'
   ]) {
     const generatedRoot = mkdtempSync(join(tmpdir(), 'easymde-frontend-unsafe-'));
     cpSync(outputRoot, generatedRoot, { recursive: true });
@@ -274,6 +311,20 @@ test('production validation rejects broad remote URLs and absolute build paths',
       rmSync(generatedRoot, { recursive: true, force: true });
     }
   }
+
+  const generatedRoot = mkdtempSync(join(tmpdir(), 'easymde-frontend-site-relative-'));
+  cpSync(outputRoot, generatedRoot, { recursive: true });
+
+  try {
+    const manifest = readJson(join(generatedRoot, 'manifest.json'));
+    appendFileSync(
+      join(generatedRoot, manifest[sourceEntry].file),
+      '\nconst previewPath = "/wp-json/easymde/v1/preview";\nconst stylesheet = "/wp-content/plugins/easymde/assets/frontend/code-frame.css";\n'
+    );
+    assert.doesNotThrow(() => validateFrontendProductionBuild(generatedRoot));
+  } finally {
+    rmSync(generatedRoot, { recursive: true, force: true });
+  }
 });
 
 test('production frontend artifacts are eligible for version control', () => {
@@ -285,10 +336,6 @@ test('production frontend artifacts are eligible for version control', () => {
     join(committedCodeCopyOutputRoot, 'wordpress-manifest.json')
   );
   const codeCopyEntry = codeCopyWordpressManifest.entries[codeCopySourceEntry];
-  const settingsWordpressManifest = readJson(
-    join(committedSettingsOutputRoot, 'wordpress-manifest.json')
-  );
-  const settingsEntry = settingsWordpressManifest.entries[settingsSourceEntry];
   const paths = [
     'assets/build/manifest.json',
     'assets/build/wordpress-manifest.json',
@@ -297,11 +344,7 @@ test('production frontend artifacts are eligible for version control', () => {
     'assets/build/code-copy/manifest.json',
     'assets/build/code-copy/wordpress-manifest.json',
     `assets/build/code-copy/${codeCopyEntry.file}`,
-    `assets/build/code-copy/${codeCopyEntry.asset}`,
-    'assets/build/settings-center/manifest.json',
-    'assets/build/settings-center/wordpress-manifest.json',
-    `assets/build/settings-center/${settingsEntry.file}`,
-    `assets/build/settings-center/${settingsEntry.asset}`
+    `assets/build/code-copy/${codeCopyEntry.asset}`
   ];
   const result = spawnSync('git', ['check-ignore', '--no-index', ...paths], {
     cwd: repoRoot,

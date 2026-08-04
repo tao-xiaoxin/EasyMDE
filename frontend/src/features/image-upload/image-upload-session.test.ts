@@ -37,13 +37,25 @@ function transferEvent(
   return event;
 }
 
-function setup(uploadResult: Promise<ImageUploadResult>) {
+function operationIdSequence() {
+  let sequence = 0;
+  return () => `image-upload-${++sequence}`;
+}
+
+function setup(
+  uploadResult: Promise<ImageUploadResult>,
+  nextOperationId = operationIdSequence()
+) {
   let snapshot: ImageUploadDocumentSnapshot = {
     selection: { direction: 'none', end: 5, start: 5 },
     value: 'Hello world'
   };
   const target = document.createElement('div');
-  const statuses: Array<{ message: string; type: string }> = [];
+  const statuses: Array<{
+    message: string;
+    operationId: string;
+    type: string;
+  }> = [];
   const diagnostics: string[] = [];
   const focus = vi.fn();
   const cleanup = createImageUploadSession({
@@ -56,6 +68,7 @@ function setup(uploadResult: Promise<ImageUploadResult>) {
     },
     enabled: true,
     maxBytes: 1024,
+    nextOperationId,
     onDiagnostic: (code) => diagnostics.push(code),
     onStatus: (status) => statuses.push(status),
     postId: 17,
@@ -95,8 +108,16 @@ describe('createImageUploadSession', () => {
       .toBe('Hello![screen shot](https://example.test/image.png) world');
     expect(session.focus).toHaveBeenCalledOnce();
     expect(session.statuses).toEqual([
-      { message: 'Paste uploading', type: 'info' },
-      { message: 'Paste uploaded', type: 'success' }
+      {
+        message: 'Paste uploading',
+        operationId: 'image-upload-1',
+        type: 'info'
+      },
+      {
+        message: 'Paste uploaded',
+        operationId: 'image-upload-1',
+        type: 'success'
+      }
     ]);
   });
 
@@ -143,7 +164,11 @@ describe('createImageUploadSession', () => {
     })));
     await vi.waitFor(() => expect(failed.statuses).toHaveLength(2));
     expect(failed.getSnapshot().value).toBe('Hello world');
-    expect(failed.statuses[1]).toEqual({ message: 'Paste failed', type: 'error' });
+    expect(failed.statuses[1]).toEqual({
+      message: 'Paste failed',
+      operationId: 'image-upload-1',
+      type: 'error'
+    });
   });
 
   it('rejects oversized images before upload and ignores completion after teardown', async () => {
@@ -151,7 +176,11 @@ describe('createImageUploadSession', () => {
     oversized.target.dispatchEvent(transferEvent('paste', new File([new Uint8Array(2048)], 'large.png', {
       type: 'image/png'
     })));
-    expect(oversized.statuses).toEqual([{ message: 'Paste too large', type: 'error' }]);
+    expect(oversized.statuses).toEqual([{
+      message: 'Paste too large',
+      operationId: 'image-upload-1',
+      type: 'error'
+    }]);
 
     let resolveUpload: (value: ImageUploadResult) => void = () => undefined;
     const pending = setup(new Promise((resolve) => {
@@ -165,5 +194,76 @@ describe('createImageUploadSession', () => {
     await vi.waitFor(() => expect(pending.diagnostics)
       .toContain('image-upload-completed-after-teardown'));
     expect(pending.getSnapshot().value).toBe('Hello world');
+  });
+
+  it('keeps concurrent upload statuses bound to distinct operation IDs', async () => {
+    const pending: Array<(value: ImageUploadResult) => void> = [];
+    let snapshot: ImageUploadDocumentSnapshot = {
+      selection: { direction: 'none', end: 5, start: 5 },
+      value: 'Hello world'
+    };
+    const statuses: Array<{
+      message: string;
+      operationId: string;
+      type: string;
+    }> = [];
+    const target = document.createElement('div');
+    createImageUploadSession({
+      document: {
+        applyTextChange: (value) => {
+          snapshot = value;
+        },
+        focus: vi.fn(),
+        getSnapshot: () => snapshot
+      },
+      enabled: true,
+      maxBytes: 1024,
+      nextOperationId: operationIdSequence(),
+      onDiagnostic: vi.fn(),
+      onStatus: (status) => statuses.push(status),
+      postId: 17,
+      strings,
+      target,
+      upload: {
+        upload: () =>
+          new Promise((resolve) => {
+            pending.push(resolve);
+          })
+      }
+    });
+
+    target.dispatchEvent(transferEvent(
+      'paste',
+      new File(['a'], 'a.png', { type: 'image/png' })
+    ));
+    target.dispatchEvent(transferEvent(
+      'paste',
+      new File(['b'], 'b.png', { type: 'image/png' })
+    ));
+    expect(statuses.map(({ operationId }) => operationId)).toEqual([
+      'image-upload-1',
+      'image-upload-2'
+    ]);
+
+    pending[1]?.({ code: 'request-failed', status: 'failed' });
+    pending[0]?.({
+      alt: 'a',
+      status: 'uploaded',
+      url: 'https://example.test/a.png'
+    });
+    await vi.waitFor(() => expect(statuses).toHaveLength(4));
+
+    expect(statuses.slice(2)).toEqual([
+      {
+        message: 'Paste failed',
+        operationId: 'image-upload-2',
+        type: 'error'
+      },
+      {
+        message: 'Paste uploaded',
+        operationId: 'image-upload-1',
+        type: 'success'
+      }
+    ]);
   });
 });

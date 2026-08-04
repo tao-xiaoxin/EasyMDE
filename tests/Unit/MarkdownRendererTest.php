@@ -91,4 +91,48 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringNotContainsString('class="content"', $html);
         $this->assertStringNotContainsString('class="footnote-ref"', $html);
     }
+
+    public function test_crimson_focus_wraps_tables_and_images_for_narrow_preview_surfaces()
+    {
+        $html = MarkdownRenderer::render(
+            "![Crimson caption](https://example.test/crimson.png)\n\n" .
+            "| Name | Value |\n| --- | --- |\n| One | Two |",
+            'crimson-focus'
+        );
+
+        $this->assertStringContainsString('<section class="table-container"><table>', $html);
+        $this->assertStringNotContainsString('<table>', str_replace('<section class="table-container"><table>', '', $html));
+        $this->assertStringContainsString('<figure><img', $html);
+        $this->assertStringContainsString('<figcaption>Crimson caption</figcaption>', $html);
+    }
+
+    public function test_crimson_focus_marks_task_lists_for_theme_css_fallback()
+    {
+        $mixed = MarkdownRenderer::render(
+            "- [ ] Todo\n- Plain item",
+            'crimson-focus'
+        );
+        $this->assertStringContainsString('<ul class="contains-task-list">', $mixed);
+        $this->assertStringContainsString('<li class="task-list-item"><input', $mixed);
+        $this->assertStringContainsString('type="checkbox"', $mixed);
+        $this->assertStringContainsString('Plain item', $mixed);
+        $this->assertStringNotContainsString('onclick=', $mixed);
+
+        $loose_mixed = MarkdownRenderer::render(
+            "- [ ] Todo\n\n- Plain item",
+            'crimson-focus'
+        );
+        $this->assertStringContainsString('<ul class="contains-task-list">', $loose_mixed);
+        $this->assertStringContainsString('<li class="task-list-item">', $loose_mixed);
+        $this->assertStringContainsString('<p><input', $loose_mixed);
+        $this->assertStringContainsString('Todo</p>', $loose_mixed);
+
+        $all_tasks = MarkdownRenderer::render(
+            "- [ ] Todo\n- [x] Done",
+            'crimson-focus'
+        );
+        $this->assertStringContainsString('<ul class="task-list">', $all_tasks);
+        $this->assertSame( 2, substr_count( $all_tasks, 'class="task-list-item"' ) );
+        $this->assertStringContainsString('<input checked disabled type="checkbox">', $all_tasks);
+    }
 }

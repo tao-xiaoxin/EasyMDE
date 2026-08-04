@@ -674,7 +674,7 @@ export function ImmersiveEditor({
           setTableOpen(true);
         }}
       />
-      {settings.outline && 'preview' !== mode ? (
+      {settings.outline ? (
         <ImmersiveOutline
           activeIndex={activeOutline}
           direction={direction}

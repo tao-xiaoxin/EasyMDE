@@ -5,9 +5,11 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import {
+  bundledFrontendRows,
   bundledFrontendPackages,
   composerRows,
-  frontendRows
+  frontendRows,
+  renderNotices
 } from '../../scripts/third-party-notices.mjs';
 
 const repoRoot = new URL('../..', import.meta.url).pathname;
@@ -58,4 +60,21 @@ test('Composer runtime notices fail when a package lacks a purpose mapping', () 
 test('compiled Markdown parser packages have explicit notice ownership', () => {
   assert.ok(Object.hasOwn(bundledFrontendPackages, '@codemirror/lang-markdown'));
   assert.ok(Object.hasOwn(bundledFrontendPackages, '@lezer/markdown'));
+  assert.ok(Object.hasOwn(bundledFrontendPackages, 'mermaid'));
+});
+
+test('compiled frontend notices describe all production browser bundles', () => {
+  const notices = renderNotices(repoRoot);
+
+  assert.match(
+    notices,
+    /These packages are compiled into production browser bundles\. Their required license notices follow\./
+  );
+  for (const { name } of bundledFrontendRows(repoRoot)) {
+    assert.ok(notices.includes(name), `missing notice row for ${name}`);
+  }
+  assert.doesNotMatch(
+    notices,
+    /These packages are compiled into the production WordPress Editor entry\./
+  );
 });

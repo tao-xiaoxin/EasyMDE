@@ -173,8 +173,7 @@
 	text-align: left;
 }
 
-.easymde-settings-center__sidebar nav button[data-nav-id="shortcuts"],
-.easymde-settings-center__sidebar nav button[data-nav-id="ai"] {
+.easymde-settings-center__sidebar nav button[data-nav-id="shortcuts"] {
 	transform: translateY(-4px);
 }
 
@@ -461,6 +460,50 @@
 	background: #fff;
 }
 
+.easymde-settings-center__save-bar {
+	position: sticky;
+	top: 237px;
+	z-index: 19;
+	display: flex;
+	min-height: 48px;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 16px;
+	padding: 8px 37px 0 34px;
+	background: #fdfdfe;
+	color: #667696;
+	font-size: 13px;
+}
+
+.easymde-settings-center__save-bar > span {
+	margin-right: auto;
+}
+
+.easymde-settings-center__save-bar > button {
+	min-width: 128px;
+	padding: 9px 17px;
+	border-radius: 7px;
+	background: #0867f4;
+	color: #fff;
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 1.25;
+}
+
+.easymde-settings-center__save-bar > button:hover:not(:disabled) {
+	background: #0759d2;
+}
+
+.easymde-settings-center__save-bar > button:focus-visible {
+	outline: 2px solid #7da9ff;
+	outline-offset: 2px;
+}
+
+.easymde-settings-center__save-bar > button:disabled {
+	background: #a6b9d8;
+	cursor: not-allowed;
+}
 .easymde-settings-center__content-scale {
 	width: 100%;
 	zoom: .9;

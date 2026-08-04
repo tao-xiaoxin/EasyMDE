@@ -3,54 +3,46 @@ import type { ReactNode } from 'react';
 
 import { ChevronDown, Code2, Puzzle } from '../../generated/lucide-icons';
 import type { SettingsCenterBootstrap } from '../../contracts/bootstrap/settings-center-bootstrap';
+import type { MarkdownSettings } from '../../contracts/settings-center-settings';
 import { SettingsRow, SettingsToggle } from './SettingsControls';
 import { EditPencilIcon, GeneralIcon } from './settings-center-icons';
+type MarkdownSettingsDraft = MarkdownSettings;
 
 type Strings = SettingsCenterBootstrap['strings'];
+type SelectOption = Readonly<{ value: string; label: string }>;
 
-type MarkdownSettingsDraft = {
-  livePreview: boolean;
-  wordWrap: boolean;
-  lineNumbers: boolean;
-  fixedToolbar: boolean;
-  editorTheme: string;
-  editorFontSize: string;
-  editorFont: string;
-  githubFlavor: boolean;
-  smartPunctuation: boolean;
-  tableAlignment: string;
-  codeTheme: string;
-  codeLineNumbers: string;
-  taskLists: boolean;
-  emoji: boolean;
-  math: boolean;
-  htmlRendering: boolean;
-  tableExtension: boolean;
-  footnotes: boolean;
-  definitionLists: boolean;
-  toc: boolean;
-  imageSizeSyntax: boolean;
-  pasteAsMarkdown: boolean;
-  lineEnding: string;
-  unorderedMarker: string;
-  orderedStart: string;
-  blockquoteStyle: string;
+const LEGACY_MARKDOWN_VALUE_ALIASES: Readonly<Record<string, string>> = {
+  'Follow System': 'system', Light: 'light', Dark: 'dark',
+  'System Default': 'system', Monospace: 'monospace', 'Source Han Sans': 'source-han-sans',
+  'Auto align by content': 'auto', 'Align left': 'left', 'Align center': 'center',
+  'Follow editor': 'follow-editor', Show: 'show', Hide: 'hide', LF: 'lf', CRLF: 'crlf',
+  Standard: 'standard', Spaced: 'spaced'
 };
 
-function createDefaultSettings(strings: Strings): MarkdownSettingsDraft {
+function normalizeMarkdownValue(
+  value: string,
+  options: ReadonlyArray<SelectOption>,
+  fallback: string
+): string {
+  const legacyValue = LEGACY_MARKDOWN_VALUE_ALIASES[value] ?? value;
+  return options.find((option) => option.value === legacyValue || option.label === value)?.value ?? fallback;
+}
+
+
+function createDefaultSettings(): MarkdownSettingsDraft {
   return {
     livePreview: true,
     wordWrap: true,
     lineNumbers: false,
     fixedToolbar: true,
-    editorTheme: strings.automaticFollowSystem,
+    editorTheme: 'system',
     editorFontSize: '14px',
-    editorFont: strings.systemDefault,
+    editorFont: 'system',
     githubFlavor: true,
     smartPunctuation: true,
-    tableAlignment: strings.autoAlignByContent,
-    codeTheme: strings.lightCodeTheme,
-    codeLineNumbers: strings.show,
+    tableAlignment: 'auto',
+    codeTheme: 'light',
+    codeLineNumbers: 'show',
     taskLists: true,
     emoji: true,
     math: true,
@@ -61,10 +53,10 @@ function createDefaultSettings(strings: Strings): MarkdownSettingsDraft {
     toc: false,
     imageSizeSyntax: true,
     pasteAsMarkdown: true,
-    lineEnding: strings.automaticFollowSystem,
+    lineEnding: 'system',
     unorderedMarker: '-',
     orderedStart: '1',
-    blockquoteStyle: strings.standardBlockquote
+    blockquoteStyle: 'standard'
   };
 }
 
@@ -76,12 +68,12 @@ function MarkdownSelect({
 }: {
   label: string;
   onChange: (value: string) => void;
-  options: ReadonlyArray<string>;
+  options: ReadonlyArray<SelectOption>;
   value: string;
 }) {
   return <div className="easymde-settings-center__compact-select">
     <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
-      {options.map((option) => <option key={option} value={option}>{option}</option>)}
+      {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
     </select>
     <ChevronDown size={15} />
   </div>;
@@ -101,14 +93,71 @@ function MarkdownRow({
   </SettingsRow>;
 }
 
-export function MarkdownSettingsPage({ strings }: { strings: Strings }) {
-  const [settings, setSettings] = useState<MarkdownSettingsDraft>(() => createDefaultSettings(strings));
+export function MarkdownSettingsPage({
+  onChange,
+  settings: externalSettings,
+  strings
+}: {
+  onChange?: (settings: MarkdownSettingsDraft) => void;
+  settings?: MarkdownSettingsDraft;
+  strings: Strings;
+}) {
+  const editorThemeOptions: ReadonlyArray<SelectOption> = [
+    { value: 'system', label: strings.automaticFollowSystem },
+    { value: 'light', label: strings.light },
+    { value: 'dark', label: strings.dark }
+  ];
+  const editorFontSizeOptions: ReadonlyArray<SelectOption> =
+    ['12px', '13px', '14px', '15px', '16px', '18px'].map((value) => ({ value, label: value }));
+  const editorFontOptions: ReadonlyArray<SelectOption> = [
+    { value: 'system', label: strings.systemDefault },
+    { value: 'monospace', label: strings.monospaceFont },
+    { value: 'source-han-sans', label: strings.sourceHanSans }
+  ];
+  const tableAlignmentOptions: ReadonlyArray<SelectOption> = [
+    { value: 'auto', label: strings.autoAlignByContent },
+    { value: 'left', label: strings.alignLeft },
+    { value: 'center', label: strings.alignCenter }
+  ];
+  const codeThemeOptions: ReadonlyArray<SelectOption> = [
+    { value: 'light', label: strings.lightCodeTheme },
+    { value: 'dark', label: strings.darkCodeTheme },
+    { value: 'follow-editor', label: strings.followEditor }
+  ];
+  const codeLineNumberOptions: ReadonlyArray<SelectOption> = [
+    { value: 'show', label: strings.show },
+    { value: 'hide', label: strings.hide }
+  ];
+  const lineEndingOptions: ReadonlyArray<SelectOption> = [
+    { value: 'system', label: strings.automaticFollowSystem },
+    { value: 'lf', label: 'LF' },
+    { value: 'crlf', label: 'CRLF' }
+  ];
+  const blockquoteOptions: ReadonlyArray<SelectOption> = [
+    { value: 'standard', label: strings.standardBlockquote },
+    { value: 'spaced', label: strings.spacedBlockquote }
+  ];
+  const [localSettings, setLocalSettings] = useState<MarkdownSettingsDraft>(() => createDefaultSettings());
+  const rawSettings = externalSettings ?? localSettings;
+  const settings: MarkdownSettingsDraft = {
+    ...rawSettings,
+    editorTheme: normalizeMarkdownValue(rawSettings.editorTheme, editorThemeOptions, 'system'),
+    editorFontSize: normalizeMarkdownValue(rawSettings.editorFontSize, editorFontSizeOptions, '14px'),
+    editorFont: normalizeMarkdownValue(rawSettings.editorFont, editorFontOptions, 'system'),
+    tableAlignment: normalizeMarkdownValue(rawSettings.tableAlignment, tableAlignmentOptions, 'auto'),
+    codeTheme: normalizeMarkdownValue(rawSettings.codeTheme, codeThemeOptions, 'light'),
+    codeLineNumbers: normalizeMarkdownValue(rawSettings.codeLineNumbers, codeLineNumberOptions, 'show'),
+    lineEnding: normalizeMarkdownValue(rawSettings.lineEnding, lineEndingOptions, 'system'),
+    blockquoteStyle: normalizeMarkdownValue(rawSettings.blockquoteStyle, blockquoteOptions, 'standard')
+  };
 
   function setValue<K extends keyof MarkdownSettingsDraft>(
     key: K,
     value: MarkdownSettingsDraft[K]
   ) {
-    setSettings((current) => ({ ...current, [key]: value }));
+    const next = { ...settings, [key]: value };
+    if (onChange) onChange(next);
+    else setLocalSettings(next);
   }
 
   return <div className="easymde-settings-center__markdown-page">
@@ -126,17 +175,17 @@ export function MarkdownSettingsPage({ strings }: { strings: Strings }) {
       </MarkdownRow>)}
       <MarkdownRow label={strings.editorTheme}>
         <MarkdownSelect label={strings.editorTheme} value={settings.editorTheme}
-          options={[strings.automaticFollowSystem, strings.light, strings.dark]}
+          options={editorThemeOptions}
           onChange={(value) => setValue('editorTheme', value)} />
       </MarkdownRow>
       <MarkdownRow label={strings.editorFontSize}>
         <MarkdownSelect label={strings.editorFontSize} value={settings.editorFontSize}
-          options={['12px', '13px', '14px', '15px', '16px', '18px']}
+          options={editorFontSizeOptions}
           onChange={(value) => setValue('editorFontSize', value)} />
       </MarkdownRow>
       <MarkdownRow label={strings.editorFont}>
         <MarkdownSelect label={strings.editorFont} value={settings.editorFont}
-          options={[strings.systemDefault, strings.monospaceFont, strings.sourceHanSans]}
+          options={editorFontOptions}
           onChange={(value) => setValue('editorFont', value)} />
       </MarkdownRow>
     </section>
@@ -153,17 +202,17 @@ export function MarkdownSettingsPage({ strings }: { strings: Strings }) {
       </MarkdownRow>)}
       <MarkdownRow label={strings.tableAlignment}>
         <MarkdownSelect label={strings.tableAlignment} value={settings.tableAlignment}
-          options={[strings.autoAlignByContent, strings.alignLeft, strings.alignCenter]}
+          options={tableAlignmentOptions}
           onChange={(value) => setValue('tableAlignment', value)} />
       </MarkdownRow>
       <MarkdownRow label={strings.codeBlockTheme}>
         <MarkdownSelect label={strings.codeBlockTheme} value={settings.codeTheme}
-          options={[strings.lightCodeTheme, strings.darkCodeTheme, strings.followEditor]}
+          options={codeThemeOptions}
           onChange={(value) => setValue('codeTheme', value)} />
       </MarkdownRow>
       <MarkdownRow label={strings.codeBlockLineNumbers}>
         <MarkdownSelect label={strings.codeBlockLineNumbers} value={settings.codeLineNumbers}
-          options={[strings.show, strings.hide]}
+          options={codeLineNumberOptions}
           onChange={(value) => setValue('codeLineNumbers', value)} />
       </MarkdownRow>
       {([
@@ -201,7 +250,7 @@ export function MarkdownSettingsPage({ strings }: { strings: Strings }) {
       </MarkdownRow>
       <MarkdownRow label={strings.defaultLineEnding}>
         <MarkdownSelect label={strings.defaultLineEnding} value={settings.lineEnding}
-          options={[strings.automaticFollowSystem, 'LF', 'CRLF']}
+          options={lineEndingOptions}
           onChange={(value) => setValue('lineEnding', value)} />
       </MarkdownRow>
       <MarkdownRow label={strings.unorderedListMarker}>
@@ -216,7 +265,7 @@ export function MarkdownSettingsPage({ strings }: { strings: Strings }) {
       </MarkdownRow>
       <MarkdownRow label={strings.blockquoteIndentStyle}>
         <MarkdownSelect label={strings.blockquoteIndentStyle} value={settings.blockquoteStyle}
-          options={[strings.standardBlockquote, strings.spacedBlockquote]}
+          options={blockquoteOptions}
           onChange={(value) => setValue('blockquoteStyle', value)} />
       </MarkdownRow>
     </section>

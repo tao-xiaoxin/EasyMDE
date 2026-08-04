@@ -6,6 +6,10 @@ import {
   SETTINGS_CENTER_STRING_KEYS,
   type SettingsCenterBootstrap
 } from '../contracts/bootstrap/settings-center-bootstrap';
+import {
+  SETTINGS_CENTER_DEFAULT_SETTINGS,
+  SETTINGS_CENTER_TEST_SETTINGS
+} from '../test/settings-center-settings-fixture';
 import { mountSettingsCenter } from './settings-center';
 
 vi.hoisted(() => {
@@ -26,6 +30,7 @@ function bootstrap(): SettingsCenterBootstrap {
   return {
     schemaVersion: 2,
     closeUrl: `${origin}/wp-admin/options-general.php?page=easymde`,
+    api: { settingsUrl: `${origin}/wp-json/easymde/v1/settings`, nonce: 'test-nonce' },
     assets: {
       brandMarkUrl: `${origin}/plugin/brand.png`,
       headerIllustrationUrl: `${origin}/plugin/header.png`,
@@ -36,13 +41,9 @@ function bootstrap(): SettingsCenterBootstrap {
         domain: 'https://img.example.test',
         backupDomain: 'https://backup.example.test'
       },
-      ai: {
-        provider: 'OpenAI',
-        endpoint: 'https://api.example.test/v1',
-        apiKey: 'example-api-key',
-        model: 'gpt-4.1-mini'
-      }
     },
+    settings: SETTINGS_CENTER_TEST_SETTINGS,
+    defaultSettings: SETTINGS_CENTER_DEFAULT_SETTINGS,
     strings: Object.fromEntries(
       SETTINGS_CENTER_STRING_KEYS.map((key) => [key, key])
     ) as SettingsCenterBootstrap['strings']

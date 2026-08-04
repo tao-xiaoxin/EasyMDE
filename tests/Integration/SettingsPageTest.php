@@ -124,17 +124,19 @@ final class SettingsPageTest extends WP_UnitTestCase
         );
         $this->assertSame('EasyMDE', $bootstrap['strings']['brandName']);
         $this->assertSame('General Settings', $bootstrap['strings']['general']);
-        $this->assertSame('https://img.example.com', $bootstrap['drafts']['images']['domain']);
-        $this->assertSame('OpenAI', $bootstrap['drafts']['ai']['provider']);
+        $this->assertSame('', $bootstrap['drafts']['images']['domain']);
         $this->assertArrayNotHasKey('testingConnection', $bootstrap['strings']);
-        $this->assertArrayHasKey('connected', $bootstrap['strings']);
-        $this->assertArrayHasKey('lastTest', $bootstrap['strings']);
+        $this->assertArrayHasKey('pendingTest', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('connected', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('lastTest', $bootstrap['strings']);
         $this->assertArrayHasKey('promptManagement', $bootstrap['strings']);
         $this->assertArrayHasKey('transferExportConfiguration', $bootstrap['strings']);
         $this->assertArrayHasKey('transferConfigurationManagement', $bootstrap['strings']);
         $this->assertArrayHasKey('transferIntegrationPendingNotice', $bootstrap['strings']);
         $this->assertArrayHasKey('aboutVersionInformation', $bootstrap['strings']);
         $this->assertArrayHasKey('aboutPluginIntroduction', $bootstrap['strings']);
+        $this->assertArrayHasKey('saveSettings', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('ai', $bootstrap['drafts']);
         $this->assertGreaterThan(209, count($bootstrap['strings']));
     }
 
@@ -146,7 +148,7 @@ final class SettingsPageTest extends WP_UnitTestCase
         $settings_page->enqueue_assets('settings_page_easymde');
         $this->assertFalse(wp_script_is('easymde-admin-settings-center', 'enqueued'));
 
-        $settings_page->enqueue_assets('toplevel_page_easymde-settings-center');
+        $settings_page->enqueue_assets('toplevel_page_easymde/settings/general');
 
         $this->assertTrue(wp_script_is('easymde-admin-settings-center', 'enqueued'));
         $this->assertTrue(wp_style_is('easymde-admin-settings-center', 'enqueued'));

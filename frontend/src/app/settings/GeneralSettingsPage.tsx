@@ -3,28 +3,12 @@ import type { ReactNode } from 'react';
 
 import { ChevronDown } from '../../generated/lucide-icons';
 import type { SettingsCenterBootstrap } from '../../contracts/bootstrap/settings-center-bootstrap';
+import type { GeneralSettings } from '../../contracts/settings-center-settings';
 import { matchesSettingsQuery, SettingsRow, SettingsToggle } from './SettingsControls';
 import { DocumentIcon, EditPencilIcon, SlidersIcon } from './settings-center-icons';
+type Draft = GeneralSettings;
 
 type Strings = SettingsCenterBootstrap['strings'];
-type Draft = {
-  interfaceLanguage: string;
-  editingMode: string;
-  autoFocusEditor: boolean;
-  showLineNumbers: boolean;
-  syntaxHighlight: boolean;
-  statusBarMode: string;
-  autoSave: boolean;
-  autoSaveInterval: string;
-  syncScroll: boolean;
-  cleanPastedContent: boolean;
-  smartListRecognition: boolean;
-  defaultCategory: string;
-  publishVisibility: string;
-  openPreviewAfterPublish: boolean;
-  summaryMode: string;
-  featuredImagePlaceholder: boolean;
-};
 
 const DEFAULT_DRAFT: Draft = {
   interfaceLanguage: 'zh-CN', editingMode: 'live-preview', autoFocusEditor: true,
@@ -81,19 +65,26 @@ function SettingsSection({ children, icon: Icon, title }: {
 
 export function GeneralSettingsPage({
   embedded = false,
+  onChange,
   query,
   searchEmptyIllustrationUrl,
+  settings,
   strings: s
 }: {
   embedded?: boolean;
+  onChange?: (settings: Draft) => void;
   query: string;
   searchEmptyIllustrationUrl: string;
+  settings?: Draft;
   strings: Strings;
 }) {
-  const [draft, setDraft] = useState<Draft>(DEFAULT_DRAFT);
+  const [localDraft, setLocalDraft] = useState<Draft>(DEFAULT_DRAFT);
+  const draft = settings ?? localDraft;
   const normalizedQuery = query.trim().toLowerCase();
   const setValue = <Key extends keyof Draft>(key: Key, value: Draft[Key]) => {
-    setDraft((current) => ({ ...current, [key]: value }));
+    const next = { ...draft, [key]: value };
+    if (onChange) onChange(next);
+    else setLocalDraft(next);
   };
 
   if (normalizedQuery && !matchesGeneralSettingsQuery(normalizedQuery, s)) {

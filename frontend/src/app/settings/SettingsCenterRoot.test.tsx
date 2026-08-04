@@ -7,12 +7,18 @@ import {
   SETTINGS_CENTER_STRING_KEYS,
   type SettingsCenterBootstrap
 } from '../../contracts/bootstrap/settings-center-bootstrap';
+import type { SettingsCenterSettings } from '../../contracts/settings-center-settings';
+import {
+  SETTINGS_CENTER_DEFAULT_SETTINGS,
+  SETTINGS_CENTER_TEST_SETTINGS
+} from '../../test/settings-center-settings-fixture';
 import { SettingsCenterRoot } from './SettingsCenterRoot';
 
 function bootstrap(): SettingsCenterBootstrap {
   return {
     schemaVersion: 2,
     closeUrl: '/wp-admin/options-general.php?page=easymde',
+    api: { settingsUrl: '/wp-json/easymde/v1/settings', nonce: 'test-nonce' },
     assets: {
       brandMarkUrl: '/plugin/brand.png',
       headerIllustrationUrl: '/plugin/header.png',
@@ -23,13 +29,9 @@ function bootstrap(): SettingsCenterBootstrap {
         domain: 'https://img.example.test',
         backupDomain: 'https://backup.example.test'
       },
-      ai: {
-        provider: 'OpenAI',
-        endpoint: 'https://api.example.test/v1',
-        apiKey: 'example-api-key',
-        model: 'gpt-4.1-mini'
-      }
     },
+    settings: SETTINGS_CENTER_TEST_SETTINGS,
+    defaultSettings: SETTINGS_CENTER_DEFAULT_SETTINGS,
     strings: {
       ...Object.fromEntries(SETTINGS_CENTER_STRING_KEYS.map((key) => [key, key])),
       editPrompt: 'editPrompt %s',
@@ -61,15 +63,15 @@ describe('SettingsCenterRoot global search', () => {
       name: 'searchSettings'
     });
 
-    await user.type(search, 'promptManagement');
+    await user.type(search, 'tableAlignment');
 
-    const result = await screen.findByRole('button', { name: 'promptManagement' });
-    expect(screen.getByRole('button', { name: 'ai' }).getAttribute('aria-current'))
+    const result = await screen.findByRole('button', { name: 'tableAlignment' });
+    expect(screen.getByRole('button', { name: 'markdown' }).getAttribute('aria-current'))
       .toBe('page');
     await user.click(result);
 
     expect(search.value).toBe('');
-    expect(screen.getByRole('heading', { name: 'promptManagement' })).not.toBeNull();
+    expect(screen.getByText('tableAlignment')).not.toBeNull();
   });
 
   it('reports no results only after searching the complete settings index', async () => {
@@ -103,8 +105,8 @@ describe('SettingsCenterRoot global search', () => {
       .mockImplementation(() => undefined);
     const { unmount } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-    await user.type(screen.getByRole('searchbox', { name: 'searchSettings' }), 'promptManagement');
-    await user.click(await screen.findByRole('button', { name: 'promptManagement' }));
+    await user.type(screen.getByRole('searchbox', { name: 'searchSettings' }), 'tableAlignment');
+    await user.click(await screen.findByRole('button', { name: 'tableAlignment' }));
     expect(requestAnimationFrame).toHaveBeenCalledOnce();
 
     unmount();
@@ -183,8 +185,7 @@ describe('SettingsCenterRoot images section', () => {
     expect(screen.getByRole('textbox', { name: 'backupBucket' })).not.toBeNull();
   });
 
-  it('reproduces the session-only image-host connection states', async () => {
-    const user = userEvent.setup();
+  it('shows pending image-host connection states without claiming a result', () => {
     render(<SettingsCenterRoot bootstrap={bootstrap()} />);
     const imagesSection = screen.getByRole('heading', { name: 'imageHostService' })
       .closest('[data-settings-section="images"]');
@@ -198,17 +199,11 @@ describe('SettingsCenterRoot images section', () => {
       name: 'testBackupConnection'
     });
 
-    expect(primaryTest.disabled).toBe(false);
-    expect(backupTest.disabled).toBe(false);
-    expect(images.getAllByText('connected')).toHaveLength(2);
-    expect(images.getByText('lastTest')).not.toBeNull();
-
-    await user.click(primaryTest);
     expect(primaryTest.disabled).toBe(true);
-    expect(images.getByText('testing')).not.toBeNull();
-    await waitFor(() => expect(images.getAllByText('connected')).toHaveLength(2), {
-      timeout: 1_000
-    });
+    expect(backupTest.disabled).toBe(true);
+    expect(images.getAllByText('pendingTest')).toHaveLength(2);
+    expect(images.queryByText('connected')).toBeNull();
+    expect(images.queryByText('lastTest')).toBeNull();
   });
 
   it('edits the filename rule from presets and upload formats locally', async () => {
@@ -224,87 +219,31 @@ describe('SettingsCenterRoot images section', () => {
     await user.click(gif);
     expect((gif as HTMLInputElement).checked).toBe(false);
   });
+  it('uses stable IDs instead of translated labels for persisted selects', async () => {
+    const user = userEvent.setup();
+    render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+    const service = screen.getByRole<HTMLSelectElement>('combobox', {
+      name: 'selectImageHostService'
+    });
+    const theme = screen.getByRole<HTMLSelectElement>('combobox', { name: 'editorTheme' });
+
+    expect(service.value).toBe('cloudflare-r2');
+    expect(theme.value).toBe('system');
+    await user.selectOptions(service, 'aliyun-oss');
+    await user.selectOptions(theme, 'dark');
+    expect(service.value).toBe('aliyun-oss');
+    expect(theme.value).toBe('dark');
+  });
 });
 
-describe('SettingsCenterRoot AI section', () => {
-  it('renders the complete AI groups after Images in the continuous settings card', () => {
+
+describe('SettingsCenterRoot Markdown section', () => {
+  it('renders every Markdown group after Images in the continuous settings card', () => {
     const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
     const sections = Array.from(container.querySelectorAll('[data-settings-section]'));
 
     expect(sections.slice(0, 4).map((section) => section.getAttribute('data-settings-section')))
-      .toEqual(['general', 'shortcuts', 'images', 'ai']);
-    expect(screen.getByRole('heading', { name: 'aiServiceConfiguration' })).not.toBeNull();
-    expect(screen.getByRole('heading', { name: 'aiAutocomplete' })).not.toBeNull();
-    expect(screen.getByRole('heading', { name: 'writingAssistance' })).not.toBeNull();
-    expect(screen.getByRole('heading', { name: 'generationPreferences' })).not.toBeNull();
-    expect(screen.getByRole('heading', { name: 'promptManagement' })).not.toBeNull();
-  });
-
-  it('keeps AI service and autocomplete controls in browser-session state', async () => {
-    const user = userEvent.setup();
-    render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-    const apiKey = screen.getByLabelText<HTMLInputElement>('aiApiKey');
-    const autoComplete = screen.getByRole('switch', { name: 'enableAiAutocomplete' });
-    const trigger = screen.getByRole<HTMLSelectElement>('combobox', { name: 'completionTrigger' });
-
-    expect(apiKey.type).toBe('password');
-    await user.click(screen.getByRole('button', { name: 'showAiApiKey' }));
-    expect(apiKey.type).toBe('text');
-    expect(autoComplete.getAttribute('aria-checked')).toBe('true');
-    await user.click(autoComplete);
-    await user.selectOptions(trigger, 'completionTriggerShortcut');
-    await user.click(screen.getByRole('button', { name: 'restoreAutocompleteDefaults' }));
-    expect(autoComplete.getAttribute('aria-checked')).toBe('true');
-    expect(trigger.value).toBe('completionTriggerTab');
-  });
-
-  it('renders connection feedback outside the scaled settings sections', async () => {
-    const user = userEvent.setup();
-    const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-    const aiSection = container.querySelector('[data-settings-section="ai"]');
-    const overlayRoot = container.querySelector('[data-settings-overlay-root]');
-    if (!(aiSection instanceof HTMLElement) || !(overlayRoot instanceof HTMLElement)) {
-      throw new Error('settings-center-overlay-structure-missing');
-    }
-
-    await user.click(within(aiSection).getByRole('button', { name: 'testConnection' }));
-    const feedback = within(overlayRoot).getByRole('status');
-
-    expect(aiSection.contains(feedback)).toBe(false);
-    expect(feedback.textContent).toContain('aiConnectionTesting');
-    await waitFor(() => expect(feedback.textContent).toContain('aiConnectionSuccess'), {
-      timeout: 1_000
-    });
-  });
-
-  it('duplicates, deletes, and validates prompts without persisting them', async () => {
-    const user = userEvent.setup();
-    render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-
-    expect(screen.getAllByText('defaultPromptTitleName')).toHaveLength(1);
-    await user.click(screen.getByRole('button', { name: 'duplicatePrompt defaultPromptTitleName' }));
-    expect(screen.getByText('defaultPromptTitleName promptCopySuffix')).not.toBeNull();
-    await user.click(screen.getByRole('button', {
-      name: 'deletePrompt defaultPromptTitleName promptCopySuffix'
-    }));
-    expect(screen.getByRole('dialog', { name: 'deletePromptTitle' })).not.toBeNull();
-    await user.click(screen.getByRole('button', { name: 'confirmDelete' }));
-    expect(screen.queryByText('defaultPromptTitleName promptCopySuffix')).toBeNull();
-
-    await user.click(screen.getByRole('button', { name: 'createPrompt' }));
-    expect(screen.getByRole('dialog', { name: 'createPromptTitle' })).not.toBeNull();
-    await user.click(screen.getByRole('button', { name: 'savePrompt' }));
-    expect(screen.getByRole('alert').textContent).toContain('promptNameAndContentRequired');
-  });
-});
-
-describe('SettingsCenterRoot Markdown section', () => {
-  it('renders every Markdown group after AI in the continuous settings card', () => {
-    const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-    const sections = Array.from(container.querySelectorAll('[data-settings-section]'));
-
-    expect(sections.slice(0, 5).map((section) => section.getAttribute('data-settings-section')))
-      .toEqual(['general', 'shortcuts', 'images', 'ai', 'markdown']);
+      .toEqual(['general', 'shortcuts', 'images', 'markdown']);
     expect(screen.getByRole('heading', { name: 'markdownEditorSettings' })).not.toBeNull();
     expect(screen.getByRole('heading', { name: 'markdownParsingRendering' })).not.toBeNull();
     expect(screen.getByRole('heading', { name: 'markdownExtensions' })).not.toBeNull();
@@ -334,146 +273,14 @@ describe('SettingsCenterRoot Markdown section', () => {
   });
 });
 
-describe('SettingsCenterRoot Sync section', () => {
-  it('renders the complete Sync groups after Markdown instead of a placeholder', () => {
-    const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-    const sections = Array.from(container.querySelectorAll('[data-settings-section]'));
-
-    expect(sections.slice(0, 6).map((section) => section.getAttribute('data-settings-section')))
-      .toEqual(['general', 'shortcuts', 'images', 'ai', 'markdown', 'sync']);
-    expect(screen.getByRole('heading', { name: /syncBrowserExtensionConnection/ })).not.toBeNull();
-    expect(screen.getByRole('heading', { name: 'syncPlatformStatus' })).not.toBeNull();
-    expect(screen.getByRole('heading', { name: 'syncNotification' })).not.toBeNull();
-    expect(screen.getByRole('heading', { name: 'syncGroupBotNotifications' })).not.toBeNull();
-    expect(screen.getByRole('heading', { name: 'syncHistory' })).not.toBeNull();
-    expect(screen.getByText('syncTemplatePreviewTitle')).not.toBeNull();
-    expect(screen.getByText('syncTemplatePreviewBody')).not.toBeNull();
-  });
-
-  it('keeps Sync notification controls and feedback in browser-session state', async () => {
-    const user = userEvent.setup();
-    const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-    const syncSection = container.querySelector('[data-settings-section="sync"]');
-    const overlayRoot = container.querySelector('[data-settings-overlay-root]');
-    if (!(syncSection instanceof HTMLElement) || !(overlayRoot instanceof HTMLElement)) {
-      throw new Error('settings-center-sync-structure-missing');
-    }
-    const sync = within(syncSection);
-    const browserNotifications = sync.getByRole('switch', { name: 'syncBrowserNotification' });
-
-    expect(browserNotifications.getAttribute('aria-checked')).toBe('true');
-    await user.click(browserNotifications);
-    expect(browserNotifications.getAttribute('aria-checked')).toBe('false');
-
-    await user.click(sync.getByRole('button', { name: 'syncCheckConnection' }));
-    const feedback = within(overlayRoot).getByRole('status');
-    expect(syncSection.contains(feedback)).toBe(false);
-    expect(feedback.textContent).toContain('syncStatusesChecked');
-  });
-
-  it('preserves translated history-summary placeholder segments', () => {
-    const data = bootstrap();
-    render(<SettingsCenterRoot bootstrap={{
-      ...data,
-      strings: {
-        ...data.strings,
-        syncHistorySummary: '共 %1$s 条，第 %2$s / %3$s 页'
-      }
-    }} />);
-
-    const summary = screen.getByText('共 25 条，第 1 / 3 页');
-    expect(Array.from(summary.childNodes, (node) => node.textContent)).toEqual([
-      '共 ',
-      '25',
-      ' 条，第 ',
-      '1',
-      ' / ',
-      '3',
-      ' 页'
-    ]);
-  });
-
-  it('opens the extension connection dialog and restores trigger focus', async () => {
-    const user = userEvent.setup();
-    const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-    const overlayRoot = container.querySelector('[data-settings-overlay-root]');
-    if (!(overlayRoot instanceof HTMLElement)) throw new Error('settings-center-overlay-missing');
-    const trigger = screen.getByRole('button', { name: 'syncOpenExtensionSettings' });
-
-    await user.click(trigger);
-    const dialog = within(overlayRoot).getByRole('dialog', {
-      name: 'syncExtensionDialogTitle'
-    });
-    expect(within(dialog).getByText('syncAuthorizedPlatforms')).not.toBeNull();
-    expect(within(dialog).getAllByText('syncLoggedIn')).toHaveLength(3);
-
-    await user.keyboard('{Escape}');
-    await waitFor(() => expect(document.activeElement).toBe(trigger));
-  });
-
-  it('opens platform management, updates authorization, and restores trigger focus', async () => {
-    const user = userEvent.setup();
-    const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-    const overlayRoot = container.querySelector('[data-settings-overlay-root]');
-    if (!(overlayRoot instanceof HTMLElement)) throw new Error('settings-center-overlay-missing');
-    const trigger = screen.getByRole('button', { name: 'syncMoreActions 知乎' });
-
-    await user.click(trigger);
-    const dialog = within(overlayRoot).getByRole('dialog', {
-      name: 'syncPlatformDialogTitle 知乎'
-    });
-    expect(within(dialog).getByText('syncCheckCurrentAuthorization')).not.toBeNull();
-    expect(within(dialog).getByText('syncViewPlatformHistory')).not.toBeNull();
-    expect(within(dialog).getByText('syncRevokeAuthorization')).not.toBeNull();
-
-    await user.click(within(dialog).getByRole('button', { name: 'syncRevokeAuthorization' }));
-    expect(within(overlayRoot).getByRole('status').textContent)
-      .toContain('syncPlatformRevoked 知乎');
-    await waitFor(() => expect(document.activeElement).toBe(trigger));
-
-    await user.click(trigger);
-    expect(within(overlayRoot).getByRole('dialog', {
-      name: 'syncPlatformDialogTitle 知乎'
-    })).not.toBeNull();
-    await user.keyboard('{Escape}');
-    await waitFor(() => expect(document.activeElement).toBe(trigger));
-  });
-
-  it('opens history details, reports unavailable article links, and restores focus', async () => {
-    const user = userEvent.setup();
-    const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-    const overlayRoot = container.querySelector('[data-settings-overlay-root]');
-    if (!(overlayRoot instanceof HTMLElement)) throw new Error('settings-center-overlay-missing');
-    const trigger = screen.getAllByRole('button', { name: 'syncViewDetails' })[0];
-    if (!trigger) throw new Error('settings-center-sync-history-trigger-missing');
-
-    await user.click(trigger);
-    const dialog = within(overlayRoot).getByRole('dialog', {
-      name: 'syncHistoryDetailTitle'
-    });
-    expect(within(dialog).getByRole('region', { name: 'syncResultSummary' })).not.toBeNull();
-    expect(within(dialog).getByText('syncTargetPlatformCount 5')).not.toBeNull();
-    const articleLinks = within(dialog).getAllByRole('button', { name: 'syncViewArticle' });
-    expect(articleLinks).toHaveLength(5);
-    const firstArticleLink = articleLinks[0];
-    if (!firstArticleLink) throw new Error('settings-center-sync-article-link-missing');
-
-    await user.click(firstArticleLink);
-    expect(within(overlayRoot).getByRole('status').textContent)
-      .toContain('syncArticleLinkPending');
-
-    await user.keyboard('{Escape}');
-    await waitFor(() => expect(document.activeElement).toBe(trigger));
-  });
-});
 
 describe('SettingsCenterRoot Transfer section', () => {
-  it('renders the complete Transfer groups after Sync instead of a placeholder', () => {
+  it('renders the complete Transfer groups after Markdown instead of a placeholder', () => {
     const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
     const sections = Array.from(container.querySelectorAll('[data-settings-section]'));
 
-    expect(sections.slice(0, 7).map((section) => section.getAttribute('data-settings-section')))
-      .toEqual(['general', 'shortcuts', 'images', 'ai', 'markdown', 'sync', 'transfer']);
+    expect(sections.slice(0, 5).map((section) => section.getAttribute('data-settings-section')))
+      .toEqual(['general', 'shortcuts', 'images', 'markdown', 'transfer']);
     expect(screen.getByRole('heading', { name: 'transferExportConfiguration' })).not.toBeNull();
     expect(screen.getByRole('heading', { name: 'transferImportConfiguration' })).not.toBeNull();
     expect(screen.getByRole('heading', { name: 'transferConfigurationManagement' })).not.toBeNull();
@@ -503,12 +310,65 @@ describe('SettingsCenterRoot Transfer section', () => {
       .toContain('transferFileSelectedNotice settings.json');
   });
 
-  it('opens the reset dialog and reports the unconnected mutation truthfully', async () => {
+  it('exports the current draft and imports a validated configuration into the draft', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+    const transferSection = container.querySelector('[data-settings-section="transfer"]');
+    if (!(transferSection instanceof HTMLElement)) throw new Error('settings-center-transfer-section-missing');
+    const transfer = within(transferSection);
+    const fileInput = transfer.getByLabelText<HTMLInputElement>('transferChooseConfigurationFile');
+    const createObjectUrl = vi.fn((value: Blob) => {
+      void value;
+      return 'blob:settings-center';
+    });
+    const revokeObjectUrl = vi.fn();
+    const originalCreateObjectUrl = URL.createObjectURL;
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectUrl });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+
+    try {
+      await user.click(transfer.getByRole('button', { name: /transferExportConfiguration/ }));
+      expect(within(container).getByRole('status').textContent).toContain('transferExportSuccess');
+      const calls = createObjectUrl.mock.calls as ReadonlyArray<Readonly<[Blob]>>;
+      const firstCall = calls[0];
+      if (!firstCall) throw new Error('settings-center-export-blob-missing');
+      const exported = JSON.parse(await firstCall[0].text()) as {
+        schemaVersion: number;
+        settings: SettingsCenterSettings;
+      };
+      expect(exported.schemaVersion).toBe(1);
+      expect(exported.settings.general.autoFocusEditor).toBe(true);
+      expect(click).toHaveBeenCalledOnce();
+
+      const imported = {
+        ...bootstrap().settings,
+        general: { ...bootstrap().settings.general, autoFocusEditor: false }
+      };
+      await user.upload(fileInput, new File([
+        JSON.stringify({ schemaVersion: 1, settings: imported })
+      ], 'import.json', { type: 'application/json' }));
+      await user.click(transfer.getByRole('button', { name: 'transferConfirmImport' }));
+      await waitFor(() => expect(screen.getByRole('switch', { name: 'autoFocusEditor' })
+        .getAttribute('aria-checked')).toBe('false'));
+      expect(within(container).getByRole('status').textContent).toContain('transferImportApplied');
+    } finally {
+      Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: originalCreateObjectUrl });
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevokeObjectUrl });
+      click.mockRestore();
+    }
+  });
+
+  it('resets the browser draft to defaults and reports the applied change', async () => {
     const user = userEvent.setup();
     const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
     const overlayRoot = container.querySelector('[data-settings-overlay-root]');
     if (!(overlayRoot instanceof HTMLElement)) throw new Error('settings-center-overlay-missing');
 
+    const autoFocus = screen.getByRole('switch', { name: 'autoFocusEditor' });
+    await user.click(autoFocus);
+    expect(autoFocus.getAttribute('aria-checked')).toBe('false');
     await user.click(screen.getByRole('button', { name: /transferResetCurrentConfiguration/ }));
     const dialog = within(overlayRoot).getByRole('dialog', {
       name: 'transferResetCurrentConfiguration'
@@ -516,8 +376,9 @@ describe('SettingsCenterRoot Transfer section', () => {
     expect(within(dialog).getByText('transferResetWarning')).not.toBeNull();
 
     await user.click(within(dialog).getByRole('button', { name: 'transferConfirmReset' }));
-    const feedback = within(overlayRoot).getByRole('status');
-    expect(feedback.textContent).toContain('transferIntegrationPendingNotice');
+    expect(autoFocus.getAttribute('aria-checked')).toBe('true');
+    expect(within(overlayRoot).getByRole('status').textContent)
+      .toContain('transferResetApplied');
   });
 
   it('shows truthful storage and configuration checks in operation dialogs', async () => {
@@ -549,7 +410,7 @@ describe('SettingsCenterRoot Transfer section', () => {
       name: 'transferConfigurationStatusCheck'
     });
     expect(within(statusDialog).getByText('transferCheckBootstrap')).not.toBeNull();
-    expect(within(statusDialog).getByText('transferCheckPersistencePending')).not.toBeNull();
+    expect(within(statusDialog).getByText('transferCheckPersistenceReady')).not.toBeNull();
   });
 });
 
@@ -559,7 +420,7 @@ describe('SettingsCenterRoot About section', () => {
     const sections = Array.from(container.querySelectorAll('[data-settings-section]'));
 
     expect(sections.map((section) => section.getAttribute('data-settings-section')))
-      .toEqual(['general', 'shortcuts', 'images', 'ai', 'markdown', 'sync', 'transfer', 'about']);
+      .toEqual(['general', 'shortcuts', 'images', 'markdown', 'transfer', 'about']);
     expect(screen.getByRole('heading', { name: 'aboutVersionInformation' })).not.toBeNull();
     expect(screen.getByRole('heading', { name: 'aboutCoreCapabilities' })).not.toBeNull();
     expect(screen.getByRole('heading', { name: 'aboutResourcesSupport' })).not.toBeNull();
@@ -602,5 +463,25 @@ describe('SettingsCenterRoot About section', () => {
     expect(within(changelogDialog).getByText('vaboutVersion017')).not.toBeNull();
     await user.click(within(changelogDialog).getByRole('button', { name: 'aboutClose' }));
     await waitFor(() => expect(document.activeElement).toBe(changelog));
+  });
+});
+
+describe('SettingsCenterRoot persistence', () => {
+  it('saves edited settings through WordPress and reports completion', async () => {
+    const user = userEvent.setup();
+    const fetch = vi.spyOn(window, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ settings: bootstrap().settings })
+    } as Response);
+    render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+
+    await user.click(screen.getByRole('switch', { name: 'autoFocusEditor' }));
+    const save = screen.getByRole<HTMLButtonElement>('button', { name: 'saveSettings' });
+    expect(save.disabled).toBe(false);
+    await user.click(save);
+
+    await waitFor(() => expect(screen.getByText('settingsSaved')).not.toBeNull());
+    expect(fetch).toHaveBeenCalledOnce();
+    fetch.mockRestore();
   });
 });

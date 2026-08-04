@@ -1,3 +1,4 @@
+import type { SettingsCenterApi, SettingsCenterSettings } from '../settings-center-settings';
 export const SETTINGS_CENTER_STRING_KEYS = [
   'brandName', 'settingsCenter', 'settingsNavigation', 'helpTitle', 'helpDescription',
   'openDocumentation', 'closeSettingsCenter', 'searchSettings', 'searchSettingsPlaceholder',
@@ -25,7 +26,8 @@ export const SETTINGS_CENTER_STRING_KEYS = [
   'headingOne', 'headingTwo', 'quote', 'unorderedList', 'orderedList',
   'showShortcutHints', 'showShortcutHintsDescription', 'detectShortcutConflicts',
   'detectShortcutConflictsDescription', 'customShortcutSuggestions',
-  'customShortcutSuggestionsDescription',
+  'customShortcutSuggestionsDescription', 'saveSettings', 'savingSettings',
+  'settingsSaved', 'settingsSaveFailed', 'settingsUnsavedChanges',
   'imageHostService', 'selectImageHostService', 'cloudflareR2', 'aliyunOss',
   'tencentCloudCos', 'customUpload', 'bucket', 'customDomain', 'accessKey', 'secretKey',
   'showSecret', 'hideSecret', 'fileNameRule', 'fileNameRuleDescription',
@@ -35,7 +37,7 @@ export const SETTINGS_CENTER_STRING_KEYS = [
   'monthVariable', 'dayVariable', 'fullDateVariable', 'uploadTimeVariable',
   'postIdVariable', 'fileMd5Variable', 'uuidVariable', 'originalNameVariable',
   'extensionVariable', 'insertFileNameVariable', 'examplePreview', 'enterFileNameRule',
-  'connectionStatus', 'pendingTest', 'testing', 'connected', 'lastTest', 'testConnection',
+  'connectionStatus', 'pendingTest', 'testConnection',
   'backupImageHost',
   'backupImageHostDescription',
   'enableBackupImageHost', 'enableBackupImageHostDescription', 'backupImageHostService',
@@ -184,7 +186,11 @@ export const SETTINGS_CENTER_STRING_KEYS = [
   'transferCheckImageDraft', 'transferCheckImageDraftReady',
   'transferCheckImageDraftIncomplete', 'transferCheckAiDraft',
   'transferCheckAiDraftReady', 'transferCheckAiDraftIncomplete',
-  'transferCheckPersistence', 'transferCheckPersistencePending',
+  'transferCheckPersistence', 'transferCheckPersistencePending', 'transferCheckPersistenceReady',
+  'transferCheckPersistenceUnavailable', 'transferExportSuccess', 'transferExportFailed',
+  'transferImportInvalid', 'transferImportApplied', 'transferResetApplied',
+  'transferLocalCacheCleared', 'transferLocalCacheClearFailed',
+  'transferOperationUnavailable',
   'aboutVersionInformation', 'aboutCurrentVersion', 'aboutCurrentVersionValue',
   'aboutCheckUpdates', 'aboutRenderEngine', 'aboutRenderEngineValue',
   'aboutCompatibleVersion', 'aboutCompatibleVersionValue', 'aboutPhpRequirement',
@@ -213,6 +219,7 @@ export type SettingsCenterStringKey = (typeof SETTINGS_CENTER_STRING_KEYS)[numbe
 export type SettingsCenterBootstrap = Readonly<{
   schemaVersion: 2;
   closeUrl: string;
+  api: SettingsCenterApi;
   assets: Readonly<{
     brandMarkUrl: string;
     headerIllustrationUrl: string;
@@ -223,15 +230,34 @@ export type SettingsCenterBootstrap = Readonly<{
       domain: string;
       backupDomain: string;
     }>;
-    ai: Readonly<{
-      provider: string;
-      endpoint: string;
-      apiKey: string;
-      model: string;
-    }>;
   }>;
+  settings: SettingsCenterSettings;
+  defaultSettings: SettingsCenterSettings;
   strings: Readonly<Record<SettingsCenterStringKey, string>>;
 }>;
+
+function parseSettingsStringFields(
+  root: Record<string, unknown>,
+  section: 'general' | 'images' | 'markdown',
+  keys: ReadonlyArray<string>
+): Record<string, unknown> {
+  const value = parseObject(root[section], `settings-center-${section}-settings-invalid`);
+  for (const key of keys) {
+    if (typeof value[key] !== 'string') throw new Error(`settings-center-${section}-${key}-invalid`);
+  }
+  return value;
+}
+
+function parseSettingsBooleanFields(
+  value: Record<string, unknown>,
+  section: string,
+  keys: ReadonlyArray<string>
+): void {
+  for (const key of keys) {
+    if (typeof value[key] !== 'boolean') throw new Error(`settings-center-${section}-${key}-invalid`);
+  }
+}
+
 
 function parseObject(value: unknown, code: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -249,6 +275,75 @@ function parseString(value: unknown, code: string): string {
   return value;
 }
 
+function parsePossiblyEmptyString(value: unknown, code: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(code);
+  }
+
+  return value;
+}
+
+export function parseSettingsCenterSettings(value: unknown): SettingsCenterSettings {
+  const root = parseObject(value, 'settings-center-settings-invalid');
+  if (!Number.isInteger(root.revision) || (root.revision as number) < 0) {
+    throw new Error('settings-center-revision-invalid');
+  }
+
+  const general = parseSettingsStringFields(root, 'general', [
+    'interfaceLanguage', 'editingMode', 'statusBarMode', 'autoSaveInterval',
+    'defaultCategory', 'publishVisibility', 'summaryMode'
+  ]);
+  parseSettingsBooleanFields(general, 'general', [
+    'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll',
+    'cleanPastedContent', 'smartListRecognition', 'openPreviewAfterPublish',
+    'featuredImagePlaceholder'
+  ]);
+
+  const images = parseSettingsStringFields(root, 'images', [
+    'service', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule',
+    'backupService', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey',
+    'backupFailureMode', 'insertFormat', 'altSource', 'captionMode'
+  ]);
+  parseSettingsBooleanFields(images, 'images', [
+    'backupEnabled', 'backupSameObjectKey', 'insertMarkdown', 'compressImages',
+    'preserveFileName', 'copyUrl', 'featuredPlaceholder'
+  ]);
+  const uploadFormats = parseObject(images.uploadFormats, 'settings-center-images-upload-formats-invalid');
+  for (const format of ['jpg', 'png', 'webp', 'gif']) {
+    if (typeof uploadFormats[format] !== 'boolean') {
+      throw new Error(`settings-center-images-upload-format-${format}-invalid`);
+    }
+  }
+
+  const markdown = parseSettingsStringFields(root, 'markdown', [
+    'editorTheme', 'editorFontSize', 'editorFont', 'tableAlignment', 'codeTheme',
+    'codeLineNumbers', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle'
+  ]);
+  parseSettingsBooleanFields(markdown, 'markdown', [
+    'livePreview', 'wordWrap', 'lineNumbers', 'fixedToolbar', 'githubFlavor',
+    'smartPunctuation', 'taskLists', 'emoji', 'math', 'htmlRendering', 'tableExtension',
+    'footnotes', 'definitionLists', 'toc', 'imageSizeSyntax', 'pasteAsMarkdown'
+  ]);
+
+  const shortcuts = parseObject(root.shortcuts, 'settings-center-shortcuts-settings-invalid');
+  parseSettingsBooleanFields(shortcuts, 'shortcuts', [
+    'showHints', 'detectConflicts', 'showSuggestions'
+  ]);
+  const shortcutValues = parseObject(shortcuts.values, 'settings-center-shortcut-values-invalid');
+  for (const id of [
+    'save', 'bold', 'italic', 'link', 'image', 'heading-one', 'heading-two', 'quote',
+    'unordered-list', 'ordered-list'
+  ]) {
+    const shortcut = parseObject(shortcutValues[id], `settings-center-shortcut-${id}-invalid`);
+    if (typeof shortcut.windows !== 'string' || typeof shortcut.mac !== 'string') {
+      throw new Error(`settings-center-shortcut-${id}-invalid`);
+    }
+  }
+
+  return root as unknown as SettingsCenterSettings;
+}
+
+
 export function parseSettingsCenterBootstrap(value: unknown): SettingsCenterBootstrap {
   const root = parseObject(value, 'settings-center-bootstrap-invalid');
   if (root.schemaVersion !== 2) {
@@ -258,7 +353,7 @@ export function parseSettingsCenterBootstrap(value: unknown): SettingsCenterBoot
   const assets = parseObject(root.assets, 'settings-center-assets-invalid');
   const drafts = parseObject(root.drafts, 'settings-center-drafts-invalid');
   const imageDraft = parseObject(drafts.images, 'settings-center-images-draft-invalid');
-  const aiDraft = parseObject(drafts.ai, 'settings-center-ai-draft-invalid');
+  const api = parseObject(root.api, 'settings-center-api-invalid');
   const sourceStrings = parseObject(root.strings, 'settings-center-strings-invalid');
   const strings = {} as Record<SettingsCenterStringKey, string>;
 
@@ -299,28 +394,14 @@ export function parseSettingsCenterBootstrap(value: unknown): SettingsCenterBoot
     strings.promptPaginationSummary.includes(placeholder))) {
     throw new Error('settings-center-promptPaginationSummary-template-invalid');
   }
-  if (!['%1$s', '%2$s'].every((placeholder) =>
-    strings.aiConnectionSuccess.includes(placeholder))) {
-    throw new Error('settings-center-aiConnectionSuccess-template-invalid');
-  }
-  if ((strings.aiConnectionTesting.match(/%s/g) ?? []).length !== 1) {
-    throw new Error('settings-center-aiConnectionTesting-template-invalid');
-  }
-  for (const key of [
-    'syncPlatformDialogTitle', 'syncPlatformRevoked', 'syncTargetPlatformCount'
-  ] as const) {
-    if ((strings[key].match(/%s/g) ?? []).length !== 1) {
-      throw new Error(`settings-center-${key}-template-invalid`);
-    }
-  }
-  if (!['%1$s', '%2$s', '%3$s'].every((placeholder) =>
-    strings.syncHistorySummary.includes(placeholder))) {
-    throw new Error('settings-center-syncHistorySummary-template-invalid');
-  }
 
   return {
     schemaVersion: 2,
     closeUrl: parseString(root.closeUrl, 'settings-center-close-url-invalid'),
+    api: {
+      settingsUrl: parseString(api.settingsUrl, 'settings-center-api-url-invalid'),
+      nonce: parseString(api.nonce, 'settings-center-api-nonce-invalid')
+    },
     assets: {
       brandMarkUrl: parseString(assets.brandMarkUrl, 'settings-center-brand-url-invalid'),
       headerIllustrationUrl: parseString(
@@ -334,19 +415,15 @@ export function parseSettingsCenterBootstrap(value: unknown): SettingsCenterBoot
     },
     drafts: {
       images: {
-        domain: parseString(imageDraft.domain, 'settings-center-images-domain-invalid'),
-        backupDomain: parseString(
+        domain: parsePossiblyEmptyString(imageDraft.domain, 'settings-center-images-domain-invalid'),
+        backupDomain: parsePossiblyEmptyString(
           imageDraft.backupDomain,
           'settings-center-images-backup-domain-invalid'
         )
-      },
-      ai: {
-        provider: parseString(aiDraft.provider, 'settings-center-ai-provider-invalid'),
-        endpoint: parseString(aiDraft.endpoint, 'settings-center-ai-endpoint-invalid'),
-        apiKey: parseString(aiDraft.apiKey, 'settings-center-ai-api-key-invalid'),
-        model: parseString(aiDraft.model, 'settings-center-ai-model-invalid')
       }
     },
+    settings: parseSettingsCenterSettings(root.settings),
+    defaultSettings: parseSettingsCenterSettings(root.defaultSettings),
     strings
   };
 }

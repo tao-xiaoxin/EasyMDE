@@ -1,42 +1,15 @@
 import { createElement, useEffect, useRef, useState } from '@wordpress/element';
 
-import { ChevronDown, Copy, Eye, Info, RefreshCcw } from '../../generated/lucide-icons';
+import { ChevronDown, Copy, Eye, Info } from '../../generated/lucide-icons';
 import type {
   SettingsCenterBootstrap,
   SettingsCenterStringKey
 } from '../../contracts/bootstrap/settings-center-bootstrap';
+import type { ImageSettings, ImageUploadFormat } from '../../contracts/settings-center-settings';
 import { SettingsRow, SettingsToggle } from './SettingsControls';
 import { DocumentIcon, ImageLibraryIcon, SlidersIcon } from './settings-center-icons';
+type ImageSettingsDraft = ImageSettings;
 
-type UploadFormat = 'jpg' | 'png' | 'webp' | 'gif';
-
-type ImageSettingsDraft = {
-  service: string;
-  bucket: string;
-  domain: string;
-  accessKey: string;
-  secretKey: string;
-  fileNameRule: string;
-  backupEnabled: boolean;
-  backupService: string;
-  backupBucket: string;
-  backupDomain: string;
-  backupAccessKey: string;
-  backupSecretKey: string;
-  backupSameObjectKey: boolean;
-  backupFailureMode: string;
-  insertMarkdown: boolean;
-  compressImages: boolean;
-  preserveFileName: boolean;
-  copyUrl: boolean;
-  retryCount: string;
-  maxImageSize: string;
-  uploadFormats: Record<UploadFormat, boolean>;
-  insertFormat: string;
-  altSource: string;
-  captionMode: string;
-  featuredPlaceholder: boolean;
-};
 
 const FILE_NAME_RULE_PRESETS: ReadonlyArray<Readonly<{
   label: SettingsCenterStringKey;
@@ -67,7 +40,7 @@ const FILE_NAME_RULE_VARIABLES: ReadonlyArray<Readonly<{
 ];
 
 const UPLOAD_FORMAT_OPTIONS: ReadonlyArray<Readonly<{
-  key: UploadFormat;
+  key: ImageUploadFormat;
   label: SettingsCenterStringKey;
   accessibleLabel: SettingsCenterStringKey;
 }>> = [
@@ -76,6 +49,25 @@ const UPLOAD_FORMAT_OPTIONS: ReadonlyArray<Readonly<{
   { key: 'webp', label: 'uploadFormatWebp', accessibleLabel: 'allowUploadWebp' },
   { key: 'gif', label: 'uploadFormatGif', accessibleLabel: 'allowUploadGif' }
 ];
+type SelectOption = Readonly<{ value: string; label: string }>;
+
+const LEGACY_IMAGE_VALUE_ALIASES: Readonly<Record<string, string>> = {
+  'Cloudflare R2': 'cloudflare-r2', 'Aliyun OSS': 'aliyun-oss',
+  'Tencent Cloud COS': 'tencent-cos', 'Custom Upload': 'custom',
+  'Qiniu Kodo': 'qiniu-kodo',
+  'Return primary URL on backup failure': 'return-primary-url',
+  'Fail entire upload': 'fail-upload', 'Do not retry': 'none',
+  'Retry once': 'once', 'Retry twice': 'twice', 'Retry three times': 'three-times',
+  'Original image size': 'original', '1920px': '1920', '2560px': '2560', '3840px': '3840',
+  'Markdown image': 'markdown', 'HTML image': 'html', 'URL only': 'url',
+  'Use file name': 'filename', 'Leave empty': 'empty', 'Fill on upload': 'upload',
+  'Do not insert': 'none'
+};
+
+function normalizeImageValue(value: string, options: ReadonlyArray<SelectOption>, fallback: string): string {
+  const legacyValue = LEGACY_IMAGE_VALUE_ALIASES[value] ?? value;
+  return options.find((option) => option.value === legacyValue || option.label === value)?.value ?? fallback;
+}
 
 function renderFileNameRuleExample(rule: string): string {
   const replacements: Readonly<Record<string, string>> = {
@@ -105,12 +97,12 @@ function CompactSelect({
 }: {
   label: string;
   onChange: (value: string) => void;
-  options: ReadonlyArray<string>;
+  options: ReadonlyArray<SelectOption>;
   value: string;
 }) {
   return <div className="easymde-settings-center__compact-select">
     <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
-      {options.map((option) => <option key={option}>{option}</option>)}
+      {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
     </select>
     <ChevronDown size={15} />
   </div>;
@@ -257,99 +249,126 @@ function ConnectionStatusRow({
   buttonLabel,
   label,
   minHeight,
-  showLastTest = false,
   strings
 }: {
   buttonLabel: string;
   label: string;
   minHeight: 70 | 76;
-  showLastTest?: boolean;
   strings: SettingsCenterBootstrap['strings'];
 }) {
-  const [testing, setTesting] = useState(false);
-  const timeoutRef = useRef<number | null>(null);
-  useEffect(() => () => {
-    if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
-  }, []);
-
-  const testConnection = () => {
-    if (testing) return;
-    setTesting(true);
-    timeoutRef.current = window.setTimeout(() => {
-      timeoutRef.current = null;
-      setTesting(false);
-    }, 650);
-  };
-
   return <SettingsRow label={label} minHeight={minHeight}>
     <div className="easymde-settings-center__connection-row">
-      <span className="easymde-settings-center__connection-status"
-        data-state={testing ? 'testing' : 'connected'}>
-        <span />{testing ? strings.testing : strings.connected}
+      <span className="easymde-settings-center__connection-status" data-state="pending">
+        <span />{strings.pendingTest}
       </span>
-      {showLastTest ? <span className="easymde-settings-center__last-test">
-        {`${strings.lastTest} `}<span>2025-05-13 12:34</span>
-      </span> : null}
-      <button type="button" disabled={testing} onClick={testConnection}>
-        {testing ? <RefreshCcw className="easymde-settings-center__connection-spinner"
-          size={15} /> : null}
-        {buttonLabel}
-      </button>
+      <button type="button" disabled>{buttonLabel}</button>
     </div>
   </SettingsRow>;
 }
 
 export function ImagesSettingsPage({
   draft,
+  onChange,
+  settings: externalSettings,
   strings
 }: {
   draft: SettingsCenterBootstrap['drafts']['images'];
+  onChange?: (settings: ImageSettingsDraft) => void;
+  settings?: ImageSettingsDraft;
   strings: SettingsCenterBootstrap['strings'];
 }) {
-  const [settings, setSettings] = useState<ImageSettingsDraft>(() => ({
-    service: strings.cloudflareR2,
+  const imageHostOptions: ReadonlyArray<SelectOption> = [
+    { value: 'cloudflare-r2', label: strings.cloudflareR2 },
+    { value: 'aliyun-oss', label: strings.aliyunOss },
+    { value: 'tencent-cos', label: strings.tencentCloudCos },
+    { value: 'custom', label: strings.customUpload }
+  ];
+  const backupHostOptions: ReadonlyArray<SelectOption> = [
+    { value: 'qiniu-kodo', label: strings.qiniuKodo }, ...imageHostOptions
+  ];
+  const backupFailureOptions: ReadonlyArray<SelectOption> = [
+    { value: 'return-primary-url', label: strings.returnPrimaryUrlOnBackupFailure },
+    { value: 'fail-upload', label: strings.failEntireUpload }
+  ];
+  const retryOptions: ReadonlyArray<SelectOption> = [
+    { value: 'none', label: strings.doNotRetry },
+    { value: 'once', label: strings.retryOnce },
+    { value: 'twice', label: strings.retryTwice },
+    { value: 'three-times', label: strings.retryThreeTimes }
+  ];
+  const maxImageSizeOptions: ReadonlyArray<SelectOption> = [
+    { value: 'original', label: strings.originalImageSize },
+    { value: '1920', label: strings.imageSize1920 },
+    { value: '2560', label: strings.imageSize2560 },
+    { value: '3840', label: strings.imageSize3840 }
+  ];
+  const insertFormatOptions: ReadonlyArray<SelectOption> = [
+    { value: 'markdown', label: strings.markdownImage },
+    { value: 'html', label: strings.htmlImage },
+    { value: 'url', label: strings.urlOnly }
+  ];
+  const altSourceOptions: ReadonlyArray<SelectOption> = [
+    { value: 'filename', label: strings.useFileName },
+    { value: 'empty', label: strings.leaveEmpty },
+    { value: 'upload', label: strings.fillOnUpload }
+  ];
+  const captionModeOptions: ReadonlyArray<SelectOption> = [
+    { value: 'none', label: strings.doNotInsert },
+    { value: 'filename', label: strings.useFileName },
+    { value: 'upload', label: strings.fillOnUpload }
+  ];
+  const [localSettings, setLocalSettings] = useState<ImageSettingsDraft>(() => ({
+    service: 'cloudflare-r2',
     bucket: 'easymde-assets',
     domain: draft.domain,
-    accessKey: 'easymde-access-key-example',
-    secretKey: 'easymde-secret-key-example',
+    accessKey: '',
+    secretKey: '',
     fileNameRule: '{date}/{uuid}.{ext}',
     backupEnabled: true,
-    backupService: strings.qiniuKodo,
+    backupService: 'qiniu-kodo',
     backupBucket: 'easymde-backup',
     backupDomain: draft.backupDomain,
-    backupAccessKey: 'easymde-backup-access-key-example',
-    backupSecretKey: 'easymde-backup-secret-key-example',
+    backupAccessKey: '',
+    backupSecretKey: '',
     backupSameObjectKey: true,
-    backupFailureMode: strings.returnPrimaryUrlOnBackupFailure,
+    backupFailureMode: 'return-primary-url',
     insertMarkdown: true,
     compressImages: true,
     preserveFileName: false,
     copyUrl: false,
-    retryCount: strings.retryTwice,
-    maxImageSize: strings.imageSize2560,
+    retryCount: 'twice',
+    maxImageSize: '2560',
     uploadFormats: { jpg: true, png: true, webp: true, gif: true },
-    insertFormat: strings.markdownImage,
-    altSource: strings.useFileName,
-    captionMode: strings.doNotInsert,
+    insertFormat: 'markdown',
+    altSource: 'filename',
+    captionMode: 'none',
     featuredPlaceholder: true
   }));
+  const rawSettings = externalSettings ?? localSettings;
+  const settings: ImageSettingsDraft = {
+    ...rawSettings,
+    service: normalizeImageValue(rawSettings.service, imageHostOptions, 'cloudflare-r2'),
+    backupService: normalizeImageValue(rawSettings.backupService, backupHostOptions, 'qiniu-kodo'),
+    backupFailureMode: normalizeImageValue(
+      rawSettings.backupFailureMode, backupFailureOptions, 'return-primary-url'
+    ),
+    retryCount: normalizeImageValue(rawSettings.retryCount, retryOptions, 'twice'),
+    maxImageSize: normalizeImageValue(rawSettings.maxImageSize, maxImageSizeOptions, '2560'),
+    insertFormat: normalizeImageValue(rawSettings.insertFormat, insertFormatOptions, 'markdown'),
+    altSource: normalizeImageValue(rawSettings.altSource, altSourceOptions, 'filename'),
+    captionMode: normalizeImageValue(rawSettings.captionMode, captionModeOptions, 'none')
+  };
+  const selectedFormats = UPLOAD_FORMAT_OPTIONS
+    .filter(({ key }) => settings.uploadFormats[key])
+    .map(({ label }) => strings[label]);
   function setValue<K extends keyof ImageSettingsDraft>(
     key: K,
     value: ImageSettingsDraft[K]
   ) {
-    setSettings((current) => ({ ...current, [key]: value }));
+    const next = { ...settings, [key]: value };
+    if (onChange) onChange(next);
+    else setLocalSettings(next);
   }
-
-  const imageHostOptions = [
-    strings.cloudflareR2,
-    strings.aliyunOss,
-    strings.tencentCloudCos,
-    strings.customUpload
-  ];
-  const backupHostOptions = [strings.qiniuKodo, ...imageHostOptions];
-  const selectedFormats = UPLOAD_FORMAT_OPTIONS
-    .filter(({ key }) => settings.uploadFormats[key])
-    .map(({ label }) => strings[label]);
 
   return <div className="easymde-settings-center__images-page">
     <section className="easymde-settings-center__image-group is-host-service">
@@ -383,7 +402,7 @@ export function ImagesSettingsPage({
         </div>
         <div className="easymde-settings-center__connection-divider">
           <ConnectionStatusRow label={strings.connectionStatus}
-            buttonLabel={strings.testConnection} minHeight={76} showLastTest strings={strings} />
+            buttonLabel={strings.testConnection} minHeight={76} strings={strings} />
         </div>
       </div>
     </section>
@@ -430,7 +449,7 @@ export function ImagesSettingsPage({
           description={strings.backupFailureHandlingDescription}>
           <CompactSelect label={strings.backupFailureHandling}
             value={settings.backupFailureMode}
-            options={[strings.returnPrimaryUrlOnBackupFailure, strings.failEntireUpload]}
+            options={backupFailureOptions}
             onChange={(value) => setValue('backupFailureMode', value)} />
         </ImageBehaviorRow>
         <div className="easymde-settings-center__backup-connection-divider">
@@ -462,12 +481,12 @@ export function ImagesSettingsPage({
       </ImageBehaviorRow>
       <ImageBehaviorRow label={strings.retryFailedUpload}>
         <CompactSelect label={strings.retryFailedUpload} value={settings.retryCount}
-          options={[strings.doNotRetry, strings.retryOnce, strings.retryTwice, strings.retryThreeTimes]}
+          options={retryOptions}
           onChange={(value) => setValue('retryCount', value)} />
       </ImageBehaviorRow>
       <ImageBehaviorRow label={strings.maximumImageSize}>
         <CompactSelect label={strings.maximumImageSize} value={settings.maxImageSize}
-          options={[strings.originalImageSize, strings.imageSize1920, strings.imageSize2560, strings.imageSize3840]}
+          options={maxImageSizeOptions}
           onChange={(value) => setValue('maxImageSize', value)} />
       </ImageBehaviorRow>
       <SettingsRow label={strings.allowedUploadFormats}
@@ -492,17 +511,17 @@ export function ImagesSettingsPage({
       <h2><DocumentIcon size={25} />{strings.defaultInsertion}</h2>
       <ImageBehaviorRow label={strings.defaultInsertFormat}>
         <CompactSelect label={strings.defaultInsertFormat} value={settings.insertFormat}
-          options={[strings.markdownImage, strings.htmlImage, strings.urlOnly]}
+          options={insertFormatOptions}
           onChange={(value) => setValue('insertFormat', value)} />
       </ImageBehaviorRow>
       <ImageBehaviorRow label={strings.altTextSource}>
         <CompactSelect label={strings.altTextSource} value={settings.altSource}
-          options={[strings.useFileName, strings.leaveEmpty, strings.fillOnUpload]}
+          options={altSourceOptions}
           onChange={(value) => setValue('altSource', value)} />
       </ImageBehaviorRow>
       <ImageBehaviorRow label={strings.imageTitleField}>
         <CompactSelect label={strings.imageTitleField} value={settings.captionMode}
-          options={[strings.doNotInsert, strings.useFileName, strings.fillOnUpload]}
+          options={captionModeOptions}
           onChange={(value) => setValue('captionMode', value)} />
       </ImageBehaviorRow>
       <ImageBehaviorRow label={strings.imageFeaturedPlaceholder}

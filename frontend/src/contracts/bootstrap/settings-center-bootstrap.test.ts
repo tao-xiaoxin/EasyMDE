@@ -4,11 +4,15 @@ import {
   parseSettingsCenterBootstrap,
   SETTINGS_CENTER_STRING_KEYS
 } from './settings-center-bootstrap';
-
+import {
+  SETTINGS_CENTER_DEFAULT_SETTINGS,
+  SETTINGS_CENTER_TEST_SETTINGS
+} from '../../test/settings-center-settings-fixture';
 function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
   return {
     schemaVersion: 2,
     closeUrl: '/wp-admin/options-general.php?page=easymde',
+    api: { settingsUrl: '/wp-json/easymde/v1/settings', nonce: 'test-nonce' },
     assets: {
       brandMarkUrl: '/plugin/brand.png',
       headerIllustrationUrl: '/plugin/header.png',
@@ -18,14 +22,10 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
       images: {
         domain: 'https://img.example.test',
         backupDomain: 'https://backup.example.test'
-      },
-      ai: {
-        provider: 'OpenAI',
-        endpoint: 'https://api.example.test/v1',
-        apiKey: 'example-api-key',
-        model: 'gpt-4.1-mini'
       }
     },
+    settings: SETTINGS_CENTER_TEST_SETTINGS,
+    defaultSettings: SETTINGS_CENTER_DEFAULT_SETTINGS,
     strings: {
       ...Object.fromEntries(SETTINGS_CENTER_STRING_KEYS.map((key) => [key, key])),
       searchPageDescription: 'Only settings matching "%s" are shown.',
@@ -104,25 +104,6 @@ describe('parseSettingsCenterBootstrap', () => {
     );
   });
 
-  it('rejects a Sync history summary missing a positional placeholder', () => {
-    const value = bootstrap();
-    value.strings.syncHistorySummary = 'A total of %1$s entries, page %2$s';
-    expect(() => parseSettingsCenterBootstrap(value)).toThrow(
-      'settings-center-syncHistorySummary-template-invalid'
-    );
-  });
-
-  it.each([
-    'syncPlatformDialogTitle',
-    'syncPlatformRevoked',
-    'syncTargetPlatformCount'
-  ] as const)('rejects an invalid Sync template for %s', (key) => {
-    const value = bootstrap();
-    value.strings[key] = 'Missing platform placeholder';
-    expect(() => parseSettingsCenterBootstrap(value)).toThrow(
-      `settings-center-${key}-template-invalid`
-    );
-  });
 
   it('rejects an invalid selected Transfer file template', () => {
     const value = bootstrap();
@@ -141,5 +122,15 @@ describe('parseSettingsCenterBootstrap', () => {
     expect(() => parseSettingsCenterBootstrap(value)).toThrow(
       `settings-center-${key}-template-invalid`
     );
+  });
+  it('accepts empty optional image domains from the live defaults', () => {
+    const value = bootstrap();
+    value.drafts.images.domain = '';
+    value.drafts.images.backupDomain = '';
+
+    expect(parseSettingsCenterBootstrap(value).drafts.images).toEqual({
+      domain: '',
+      backupDomain: ''
+    });
   });
 });

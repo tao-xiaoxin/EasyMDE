@@ -5,24 +5,16 @@ import type {
   SettingsCenterBootstrap,
   SettingsCenterStringKey
 } from '../../contracts/bootstrap/settings-center-bootstrap';
+import type {
+  ShortcutId,
+  ShortcutValue,
+  ShortcutValues,
+  ShortcutsSettings
+} from '../../contracts/settings-center-settings';
 import { SettingsRow, SettingsToggle } from './SettingsControls';
 import { KeyboardIcon, SlidersIcon } from './settings-center-icons';
 
 type Strings = SettingsCenterBootstrap['strings'];
-type ShortcutId =
-  | 'save'
-  | 'bold'
-  | 'italic'
-  | 'link'
-  | 'image'
-  | 'ai'
-  | 'heading-one'
-  | 'heading-two'
-  | 'quote'
-  | 'unordered-list'
-  | 'ordered-list';
-type ShortcutValue = Readonly<{ windows: string; mac: string }>;
-type ShortcutValues = Readonly<Record<ShortcutId, ShortcutValue>>;
 type ShortcutRow = Readonly<{
   id: ShortcutId;
   label: SettingsCenterStringKey;
@@ -39,7 +31,6 @@ const DEFAULT_SHORTCUTS: ShortcutValues = {
   italic: { windows: 'Ctrl+I', mac: 'Cmd+I' },
   link: { windows: 'Ctrl+K', mac: 'Cmd+K' },
   image: { windows: 'Ctrl+Shift+I', mac: 'Cmd+Ctrl+I' },
-  ai: { windows: 'Ctrl+Alt+A', mac: 'Cmd+Option+A' },
   'heading-one': { windows: 'Ctrl+1', mac: 'Cmd+1' },
   'heading-two': { windows: 'Ctrl+2', mac: 'Cmd+2' },
   quote: { windows: 'Ctrl+Shift+Q', mac: 'Cmd+Option+Q' },
@@ -57,7 +48,6 @@ const SHORTCUT_GROUPS: ReadonlyArray<ShortcutGroup> = [
       { id: 'italic', label: 'italic' },
       { id: 'link', label: 'insertLink' },
       { id: 'image', label: 'insertImage' },
-      { id: 'ai', label: 'openAiAssistant' }
     ]
   },
   {
@@ -120,20 +110,36 @@ function ShortcutCard({
   </section>;
 }
 
-export function ShortcutsSettingsPage({ strings: s }: { strings: Strings }) {
-  const [values, setValues] = useState<ShortcutValues>(DEFAULT_SHORTCUTS);
-  const [showHints, setShowHints] = useState(true);
-  const [detectConflicts, setDetectConflicts] = useState(true);
-  const [showSuggestions, setShowSuggestions] = useState(true);
+export function ShortcutsSettingsPage({
+  onChange,
+  settings: externalSettings,
+  strings: s
+}: {
+  onChange?: (settings: ShortcutsSettings) => void;
+  settings?: ShortcutsSettings;
+  strings: Strings;
+}) {
+  const [localSettings, setLocalSettings] = useState<ShortcutsSettings>(() => ({
+    values: DEFAULT_SHORTCUTS,
+    showHints: true,
+    detectConflicts: true,
+    showSuggestions: true
+  }));
+  const settings = externalSettings ?? localSettings;
+  const values = settings.values;
+  const update = (next: ShortcutsSettings) => {
+    if (onChange) onChange(next);
+    else setLocalSettings(next);
+  };
   const updateShortcut = (
     id: ShortcutId,
     platform: keyof ShortcutValue,
     value: string
   ) => {
-    setValues((current) => ({
-      ...current,
-      [id]: { ...current[id], [platform]: value }
-    }));
+    update({ ...settings, values: {
+      ...values,
+      [id]: { ...values[id], [platform]: value }
+    }});
   };
 
   return <div className="easymde-settings-center__shortcuts-settings">
@@ -144,22 +150,22 @@ export function ShortcutsSettingsPage({ strings: s }: { strings: Strings }) {
         strings={s}
         values={values}
         onChange={updateShortcut}
-        onReset={index === 0 ? () => setValues(DEFAULT_SHORTCUTS) : undefined}
+        onReset={index === 0 ? () => update({ ...settings, values: DEFAULT_SHORTCUTS }) : undefined}
       />)}
     </div>
     <section className="easymde-settings-center__shortcut-behavior">
       <h2><SlidersIcon size={25} />{s.shortcutBehavior}</h2>
       <SettingsRow label={s.showShortcutHints} description={s.showShortcutHintsDescription}>
-        <SettingsToggle label={s.showShortcutHints} checked={showHints}
-          onChange={() => setShowHints((current) => !current)} />
+        <SettingsToggle label={s.showShortcutHints} checked={settings.showHints}
+          onChange={() => update({ ...settings, showHints: !settings.showHints })} />
       </SettingsRow>
       <SettingsRow label={s.detectShortcutConflicts} description={s.detectShortcutConflictsDescription}>
-        <SettingsToggle label={s.detectShortcutConflicts} checked={detectConflicts}
-          onChange={() => setDetectConflicts((current) => !current)} />
+        <SettingsToggle label={s.detectShortcutConflicts} checked={settings.detectConflicts}
+          onChange={() => update({ ...settings, detectConflicts: !settings.detectConflicts })} />
       </SettingsRow>
       <SettingsRow label={s.customShortcutSuggestions} description={s.customShortcutSuggestionsDescription}>
-        <SettingsToggle label={s.customShortcutSuggestions} checked={showSuggestions}
-          onChange={() => setShowSuggestions((current) => !current)} />
+        <SettingsToggle label={s.customShortcutSuggestions} checked={settings.showSuggestions}
+          onChange={() => update({ ...settings, showSuggestions: !settings.showSuggestions })} />
       </SettingsRow>
     </section>
   </div>;

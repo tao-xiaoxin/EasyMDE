@@ -19,7 +19,11 @@ import {
   Upload,
   X
 } from '../../generated/lucide-icons';
-import type { SettingsCenterBootstrap } from '../../contracts/bootstrap/settings-center-bootstrap';
+import {
+  parseSettingsCenterSettings,
+  type SettingsCenterBootstrap
+} from '../../contracts/bootstrap/settings-center-bootstrap';
+import type { SettingsCenterSettings } from '../../contracts/settings-center-settings';
 
 type Strings = SettingsCenterBootstrap['strings'];
 type DialogKind = 'reset' | 'clear-cache' | 'directory' | 'status';
@@ -32,6 +36,56 @@ type ConfigurationCheck = Readonly<{
 function createExportFileName(date = new Date()): string {
   const pad = (value: number) => String(value).padStart(2, '0');
   return `easymde-config-${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function getLocalStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function canUseLocalStorage(): boolean {
+  const storage = getLocalStorage();
+  if (!storage) return false;
+  const key = 'easymde:settings-center:status-check';
+  try {
+    storage.setItem(key, '1');
+    storage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearEasyMdeLocalCache(): boolean {
+  const storage = getLocalStorage();
+  if (!storage) return false;
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key?.startsWith('easymde:')) keys.push(key);
+    }
+    keys.forEach((key) => { storage.removeItem(key); });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readImportedSettings(file: File): Promise<SettingsCenterSettings> {
+  if (file.size > 1024 * 1024) throw new Error('settings-center-transfer-import-too-large');
+  const parsed: unknown = JSON.parse(await file.text());
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('settings-center-transfer-import-invalid');
+  }
+  const payload = parsed as Record<string, unknown>;
+  if (payload.schemaVersion !== 1) {
+    throw new Error('settings-center-transfer-import-version-invalid');
+  }
+  return parseSettingsCenterSettings(payload.settings);
 }
 
 function TransferDialog({
@@ -128,14 +182,21 @@ function TransferDialog({
 
 export function TransferSettingsPage({
   overlayRoot,
-  bootstrap
+  bootstrap,
+  settings,
+  defaultSettings,
+  onSettingsChange
 }: {
   overlayRoot: HTMLElement | null;
   bootstrap: SettingsCenterBootstrap;
+  settings: SettingsCenterSettings;
+  defaultSettings: SettingsCenterSettings;
+  onSettingsChange: (settings: SettingsCenterSettings) => void;
 }) {
   const { assets, drafts, strings } = bootstrap;
   const [exportFileName, setExportFileName] = useState(createExportFileName);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
@@ -156,9 +217,6 @@ export function TransferSettingsPage({
     dialogTriggerRef.current = null;
   }, [dialog]);
 
-  const showIntegrationPending = () => {
-    setFeedback(strings.transferIntegrationPendingNotice);
-  };
   const selectImportFile = (file: File | null) => {
     setImportFile(file);
     setFeedback(file
@@ -169,17 +227,61 @@ export function TransferSettingsPage({
     dialogTriggerRef.current = trigger;
     setDialog(kind);
   };
+  const resetSettings = () => {
+    onSettingsChange({ ...defaultSettings, revision: settings.revision });
+    setFeedback(strings.transferResetApplied);
+  };
+  const clearLocalCache = () => {
+    setFeedback(clearEasyMdeLocalCache()
+      ? strings.transferLocalCacheCleared
+      : strings.transferLocalCacheClearFailed);
+  };
   const confirmDialog = () => {
+    if ('reset' === dialog) resetSettings();
+    if ('clear-cache' === dialog) clearLocalCache();
     setDialog(null);
-    showIntegrationPending();
+  };
+  const exportConfiguration = () => {
+    try {
+      if (typeof URL.createObjectURL !== 'function') throw new Error('settings-center-transfer-export-unavailable');
+      const baseName = (exportFileName.trim() || createExportFileName())
+        .replace(/\.json$/i, '')
+        .replace(/[^a-zA-Z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || createExportFileName();
+      const blob = new Blob([
+        JSON.stringify({ schemaVersion: 1, settings }, null, 2)
+      ], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${baseName}.json`;
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setFeedback(strings.transferExportSuccess);
+    } catch {
+      setFeedback(strings.transferExportFailed);
+    }
+  };
+  const importConfiguration = async () => {
+    if (!importFile || importing) return;
+    setImporting(true);
+    try {
+      const imported = await readImportedSettings(importFile);
+      onSettingsChange({ ...imported, revision: settings.revision });
+      setImportFile(null);
+      if (importFileRef.current) importFileRef.current.value = '';
+      setFeedback(strings.transferImportApplied);
+    } catch {
+      setFeedback(strings.transferImportInvalid);
+    } finally {
+      setImporting(false);
+    }
   };
   const imageDraftReady = Boolean(drafts.images.domain.trim());
-  const aiDraftReady = Boolean(
-    drafts.ai.provider.trim()
-    && drafts.ai.endpoint.trim()
-    && drafts.ai.apiKey.trim()
-    && drafts.ai.model.trim()
-  );
+  const persistenceReady = canUseLocalStorage();
   const configurationChecks: ReadonlyArray<ConfigurationCheck> = [
     {
       label: strings.transferCheckBootstrap,
@@ -203,20 +305,16 @@ export function TransferSettingsPage({
         : strings.transferCheckImageDraftIncomplete
     },
     {
-      label: strings.transferCheckAiDraft,
-      valid: aiDraftReady,
-      detail: aiDraftReady
-        ? strings.transferCheckAiDraftReady
-        : strings.transferCheckAiDraftIncomplete
-    },
-    {
       label: strings.transferCheckPersistence,
-      valid: false,
-      detail: strings.transferCheckPersistencePending
+      valid: persistenceReady,
+      detail: persistenceReady
+        ? strings.transferCheckPersistenceReady
+        : strings.transferCheckPersistenceUnavailable
     }
   ];
   const copyStorageLocation = async () => {
     try {
+      if (!navigator.clipboard?.writeText) throw new Error('settings-center-transfer-clipboard-unavailable');
       await navigator.clipboard.writeText(strings.transferStorageLocationValue);
       setFeedback(strings.transferStorageLocationCopied);
     } catch {
@@ -253,7 +351,7 @@ export function TransferSettingsPage({
               onChange={(event) => setExportFileName(event.target.value)} />
             <span>.json</span>
           </div>
-          <button type="button" onClick={showIntegrationPending}>
+          <button type="button" onClick={exportConfiguration}>
             <Download size={17} />{strings.transferExportConfiguration}
           </button>
         </div>
@@ -273,8 +371,8 @@ export function TransferSettingsPage({
             <span className="easymde-settings-center__transfer-file-chip">
               <CircleCheck size={16} /><span>{importFile.name}</span>
             </span>
-            <button type="button" onClick={showIntegrationPending}>
-              {strings.transferConfirmImport}
+            <button type="button" disabled={importing} onClick={() => { void importConfiguration(); }}>
+              {importing ? strings.savingSettings : strings.transferConfirmImport}
             </button>
           </Fragment> : null}
         </div>

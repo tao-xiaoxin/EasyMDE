@@ -6,6 +6,7 @@ use EasyMDE\Content\MarkdownRenderer;
 use EasyMDE\Support\Asset;
 use EasyMDE\Support\Options;
 use EasyMDE\Support\ToolbarRegistry;
+use EasyMDE\Support\SettingsCenterRepository;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -15,10 +16,12 @@ final class SettingsPage {
 
 	private $toolbar_registry;
 	private $options;
+	private $settings_center_repository;
 
-	public function __construct( ToolbarRegistry $toolbar_registry, Options $options ) {
-		$this->toolbar_registry = $toolbar_registry;
-		$this->options          = $options;
+	public function __construct( ToolbarRegistry $toolbar_registry, Options $options, ?SettingsCenterRepository $settings_center_repository = null ) {
+		$this->toolbar_registry           = $toolbar_registry;
+		$this->options                    = $options;
+		$this->settings_center_repository = $settings_center_repository ? $settings_center_repository : new SettingsCenterRepository( $options, $toolbar_registry );
 	}
 
 	public function register_hooks() {
@@ -32,7 +35,7 @@ final class SettingsPage {
 			__( 'EasyMDE Settings Center', 'easymde' ),
 			__( 'EasyMDE Settings', 'easymde' ),
 			'manage_options',
-			'easymde-settings-center',
+			'easymde/settings/general',
 			array( $this, 'render_settings_center' ),
 			'dashicons-admin-settings',
 			81
@@ -71,7 +74,7 @@ final class SettingsPage {
 			return;
 		}
 
-		if ( 'toplevel_page_easymde-settings-center' !== $hook || ! current_user_can( 'manage_options' ) ) {
+		if ( 'toplevel_page_easymde/settings/general' !== $hook || ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
 
@@ -135,29 +138,30 @@ final class SettingsPage {
 
 		require EASYMDE_PLUGIN_DIR . 'templates/admin/settings-center.php';
 	}
-
 	private function get_settings_center_bootstrap() {
+		$settings = $this->settings_center_repository->get_settings();
+
 		return array(
-			'schemaVersion' => 2,
-			'closeUrl'      => admin_url( 'options-general.php?page=easymde' ),
-			'assets'        => array(
+			'schemaVersion'   => 2,
+			'closeUrl'        => admin_url( 'options-general.php?page=easymde' ),
+			'api'             => array(
+				'settingsUrl' => rest_url( 'easymde/v1/settings' ),
+				'nonce'       => wp_create_nonce( 'wp_rest' ),
+			),
+			'assets'          => array(
 				'brandMarkUrl'               => Asset::url( 'assets/images/settings-center/brand-icon-clean.png' ),
 				'headerIllustrationUrl'      => Asset::url( 'assets/images/settings-center/header-illustration.png' ),
 				'searchEmptyIllustrationUrl' => Asset::url( 'assets/images/settings-center/search-empty-illustration.png' ),
 			),
-			'drafts'        => array(
+			'drafts'          => array(
 				'images' => array(
-					'domain'       => 'https://img.example.com',
-					'backupDomain' => 'https://backup.example.com',
-				),
-				'ai'     => array(
-					'provider' => 'OpenAI',
-					'endpoint' => 'https://api.openai.com/v1',
-					'apiKey'   => 'sk-easymde-example-api-key',
-					'model'    => 'gpt-4.1-mini',
+					'domain'       => $settings['images']['domain'],
+					'backupDomain' => $settings['images']['backupDomain'],
 				),
 			),
-			'strings'       => $this->get_settings_center_strings(),
+			'defaultSettings' => $this->settings_center_repository->get_default_settings(),
+			'settings'        => $settings,
+			'strings'         => $this->get_settings_center_strings(),
 		);
 	}
 
@@ -275,6 +279,11 @@ final class SettingsPage {
 			'detectShortcutConflictsDescription'           => __( 'Automatically warn and highlight when shortcut conflicts are detected.', 'easymde' ),
 			'customShortcutSuggestions'                    => __( 'Custom Shortcut Suggestions', 'easymde' ),
 			'customShortcutSuggestionsDescription'         => __( 'Clearing an input and saving restores that item\'s default shortcut.', 'easymde' ),
+			'saveSettings'                                 => __( 'Save Settings', 'easymde' ),
+			'savingSettings'                               => __( 'Saving…', 'easymde' ),
+			'settingsSaved'                                => __( 'Settings saved.', 'easymde' ),
+			'settingsSaveFailed'                           => __( 'Settings could not be saved. Try again.', 'easymde' ),
+			'settingsUnsavedChanges'                       => __( 'Unsaved changes', 'easymde' ),
 			'imageHostService'                             => __( 'Image Host Service', 'easymde' ),
 			'selectImageHostService'                       => __( 'Select Image Host Service', 'easymde' ),
 			'cloudflareR2'                                 => __( 'Cloudflare R2', 'easymde' ),
@@ -314,9 +323,6 @@ final class SettingsPage {
 			'enterFileNameRule'                            => __( 'Enter a file name rule', 'easymde' ),
 			'connectionStatus'                             => __( 'Connection Status', 'easymde' ),
 			'pendingTest'                                  => __( 'Pending Test', 'easymde' ),
-			'testing'                                      => __( 'Testing', 'easymde' ),
-			'connected'                                    => __( 'Connected', 'easymde' ),
-			'lastTest'                                     => __( 'Last Test', 'easymde' ),
 			'testConnection'                               => __( 'Test Connection', 'easymde' ),
 			'backupImageHost'                              => __( 'Backup Image Host', 'easymde' ),
 			'backupImageHostDescription'                   => __( 'Reference dual-write upload flow: after the primary image host succeeds, continue writing to backup storage. By default, backup failures do not affect the primary URL.', 'easymde' ),
@@ -792,6 +798,16 @@ final class SettingsPage {
 			'transferCheckAiDraftIncomplete'               => __( 'Provider, endpoint, model, or API key is missing from the session draft.', 'easymde' ),
 			'transferCheckPersistence'                     => __( 'WordPress Settings Persistence', 'easymde' ),
 			'transferCheckPersistencePending'              => __( 'Server-side settings persistence is intentionally not connected in this UI phase.', 'easymde' ),
+			'transferCheckPersistenceReady'                => __( 'The WordPress settings endpoint is available for the current administrator.', 'easymde' ),
+			'transferCheckPersistenceUnavailable'          => __( 'The browser could not verify the local settings operation.', 'easymde' ),
+			'transferExportSuccess'                        => __( 'The configuration file was downloaded.', 'easymde' ),
+			'transferExportFailed'                         => __( 'The configuration file could not be downloaded.', 'easymde' ),
+			'transferImportInvalid'                        => __( 'The selected configuration file is invalid or incompatible.', 'easymde' ),
+			'transferImportApplied'                        => __( 'The configuration was imported into the unsaved draft.', 'easymde' ),
+			'transferResetApplied'                         => __( 'The settings draft was reset to the default configuration.', 'easymde' ),
+			'transferLocalCacheCleared'                    => __( 'EasyMDE local browser cache was cleared.', 'easymde' ),
+			'transferLocalCacheClearFailed'                => __( 'EasyMDE local browser cache could not be cleared.', 'easymde' ),
+			'transferOperationUnavailable'                 => __( 'This browser operation is unavailable.', 'easymde' ),
 			'aboutVersionInformation'                      => __( 'Version Information', 'easymde' ),
 			'aboutCurrentVersion'                          => __( 'Current Version', 'easymde' ),
 			'aboutCurrentVersionValue'                     => __( '0.1.8', 'easymde' ),
@@ -941,8 +957,11 @@ final class SettingsPage {
 			'toolbar_layout' => 'hybrid-icons',
 			'shortcuts'      => $this->get_default_shortcuts(),
 		);
-		$errors    = array();
-		$seen      = array(
+		if ( isset( $current['settings_center'] ) && is_array( $current['settings_center'] ) ) {
+			$sanitized['settings_center'] = $current['settings_center'];
+		}
+		$errors = array();
+		$seen   = array(
 			'win' => array(),
 			'mac' => array(),
 		);

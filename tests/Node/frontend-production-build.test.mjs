@@ -21,15 +21,20 @@ import {
   compareFrontendBootstrapProductionBuilds,
   compareFrontendEnhancementsProductionBuilds,
   compareFrontendMermaidProductionBuilds,
+  compareSettingsProductionBuilds,
   validateFrontendBootstrapProductionBuild,
   validateFrontendEnhancementsProductionBuild,
   validateFrontendMermaidProductionBuild,
   validateCodeCopyProductionBuild,
-  validateFrontendProductionBuild
+  validateFrontendProductionBuild,
+  validateSettingsProductionBuild
 } from '../../scripts/verify-frontend-build.mjs';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const outputRoot = join(repoRoot, '.cache/easymde-frontend-production-check');
+const settingsOutputRoot = join(repoRoot, '.cache/easymde-settings-production-check');
+const committedSettingsOutputRoot = join(repoRoot, 'assets/build/settings-center');
+const settingsSourceEntry = 'frontend/src/entrypoints/settings-center.tsx';
 const committedOutputRoot = join(repoRoot, 'assets/build');
 const sourceEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const codeCopyOutputRoot = join(repoRoot, '.cache/easymde-code-copy-production-check');
@@ -60,11 +65,11 @@ test('root package exposes the production frontend build and includes it in the 
 
   assert.equal(
     packageJson.scripts['build:frontend'],
-    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.code-copy.config.ts && vite build --config frontend/vite.enhancements.config.ts && vite build --config frontend/vite.bootstrap.config.ts && vite build --config frontend/vite.mermaid.config.ts && node scripts/verify-frontend-build.mjs --production'
+    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.code-copy.config.ts && vite build --config frontend/vite.settings.config.ts && vite build --config frontend/vite.enhancements.config.ts && vite build --config frontend/vite.bootstrap.config.ts && vite build --config frontend/vite.mermaid.config.ts && node scripts/verify-frontend-build.mjs --production'
   );
   assert.equal(
     packageJson.scripts['check:frontend-production'],
-    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && vite build --mode easymde-check --config frontend/vite.enhancements.config.ts && vite build --mode easymde-check --config frontend/vite.bootstrap.config.ts && vite build --mode easymde-check --config frontend/vite.mermaid.config.ts && node scripts/verify-frontend-build.mjs --production-check'
+    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && vite build --mode easymde-check --config frontend/vite.settings.config.ts && vite build --mode easymde-check --config frontend/vite.enhancements.config.ts && vite build --mode easymde-check --config frontend/vite.bootstrap.config.ts && vite build --mode easymde-check --config frontend/vite.mermaid.config.ts && node scripts/verify-frontend-build.mjs --production-check'
   );
   assert.equal(
     packageJson.scripts['frontend:check'],
@@ -101,6 +106,31 @@ test('production build emits a separate self-contained TypeScript code-copy entr
   validateCodeCopyProductionBuild(codeCopyOutputRoot);
 });
 
+test('production build emits one independent WordPress settings-center React entry', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+  assert.equal(existsSync(settingsOutputRoot), true);
+
+  const viteManifest = readJson(join(settingsOutputRoot, 'manifest.json'));
+  const wordpressManifest = readJson(join(settingsOutputRoot, 'wordpress-manifest.json'));
+  const viteEntry = viteManifest[settingsSourceEntry];
+  const wordpressEntry = wordpressManifest.entries[settingsSourceEntry];
+
+  assert.equal(wordpressManifest.schemaVersion, 1);
+  assert.equal(viteEntry.isEntry, true);
+  assert.match(viteEntry.file, /^assets\/settings-center-[a-zA-Z0-9_-]+\.js$/);
+  assert.equal(wordpressEntry.handle, 'easymde-admin-settings-center');
+  assert.equal(wordpressEntry.file, viteEntry.file);
+  assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
+  assert.deepEqual(wordpressEntry.dependencies, ['wp-element']);
+  assert.deepEqual(wordpressEntry.resources, []);
+
+  const script = readFileSync(join(settingsOutputRoot, viteEntry.file), 'utf8');
+  assert.match(script, /wp\.element/);
+  assert.match(script, /EasyMDESettingsCenterBootstrap/);
+  assert.doesNotMatch(script, /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/);
+  assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
+  validateSettingsProductionBuild(settingsOutputRoot);
+});
 test('production build emits one self-contained WordPress editor React entry', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
   assert.equal(existsSync(outputRoot), true);
@@ -257,6 +287,7 @@ test('enhancement and bootstrap comparisons reject stale committed artifacts', (
   compareFrontendEnhancementsProductionBuilds(enhancementsOutputRoot, committedEnhancementsOutputRoot);
   compareFrontendBootstrapProductionBuilds(bootstrapOutputRoot, committedBootstrapOutputRoot);
   compareFrontendMermaidProductionBuilds(mermaidOutputRoot, committedMermaidOutputRoot);
+  compareSettingsProductionBuilds(settingsOutputRoot, committedSettingsOutputRoot);
 });
 
 test('code-copy production comparison rejects stale or omitted committed runtime artifacts', () => {
@@ -329,7 +360,6 @@ test('production validation rejects remote URLs and absolute paths but allows si
 
 test('production frontend artifacts are eligible for version control', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
-
   const wordpressManifest = readJson(join(committedOutputRoot, 'wordpress-manifest.json'));
   const wordpressEntry = wordpressManifest.entries[sourceEntry];
   const codeCopyWordpressManifest = readJson(

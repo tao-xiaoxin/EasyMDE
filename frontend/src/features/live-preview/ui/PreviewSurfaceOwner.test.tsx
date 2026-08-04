@@ -17,8 +17,7 @@ import {
 
 const messages = {
   empty: 'Start writing Markdown to preview the article.',
-  error: 'Preview failed. Please keep writing; saving is not affected.',
-  rendering: 'Rendering preview...'
+  error: 'Preview failed. Please keep writing; saving is not affected.'
 };
 
 const request = (markdown: string, signature = markdown): PreviewRequest => ({
@@ -42,6 +41,20 @@ function deferred<T>() {
 
 function safeHtml(value: string): SafePreviewHtml {
   return value as SafePreviewHtml;
+}
+
+function visualSourceMarkerCount(surface: HTMLElement): number {
+  const walker = surface.ownerDocument.createTreeWalker(
+    surface,
+    NodeFilter.SHOW_COMMENT
+  );
+  let count = 0;
+  while (walker.nextNode()) {
+    if ('easymde-visual-markdown-source' === walker.currentNode.nodeValue) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 function setup(options?: {
@@ -194,7 +207,7 @@ describe('PreviewSurfaceOwner', () => {
     expect(paperHtmlChanges).toEqual([safeHtml('')]);
   });
 
-  it('preserves a non-empty loading request when leaving empty paper mode', () => {
+  it('keeps a non-empty initial request visually quiet when leaving empty paper mode', () => {
     const statuses: PreviewSurfaceStatus[] = [];
     const current = setup({
       initialHtml: '',
@@ -207,7 +220,12 @@ describe('PreviewSurfaceOwner', () => {
       current.setEmptyMode('message');
     });
 
-    expect(current.surface.textContent).toBe(messages.rendering);
+    expect(current.surface.textContent).toBe('');
+    expect(
+      current.surface.querySelector('.easymde-preview-pending')
+    ).toBeNull();
+    expect(current.surface.querySelector('[role="status"]')).toBeNull();
+    expect(current.surface.getAttribute('aria-busy')).toBe('true');
     expect(statuses.at(-1)).toBe('loading');
     expect(current.surface.textContent).not.toBe(messages.empty);
   });
@@ -244,7 +262,7 @@ describe('PreviewSurfaceOwner', () => {
     expect(surface.getAttribute('aria-busy')).toBe('true');
     expect(surface.getAttribute('data-easymde-preview-refreshing')).toBe('1');
     expect(surface.textContent).toContain('Initial preview');
-    expect(surface.textContent).not.toContain(messages.rendering);
+    expect(surface.querySelector('[role="status"]')).toBeNull();
   });
 
   it('renders accessible empty and error states without reporting readiness', async () => {
@@ -305,6 +323,51 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface.getAttribute('aria-busy')).toBe('false');
     expect(current.surface.easymdePreviewSignature).toBe('current-signature');
     expect(statuses.at(-1)).toBe('ready');
+  });
+
+  it('restores identical server HTML before enhancing a newer response', async () => {
+    const enhancementInputs: string[] = [];
+    const current = setup({
+      initialHtml: '',
+      enhance: async (surface) => {
+        const code = surface.querySelector('pre > code');
+        if (!(code instanceof HTMLElement)) throw new Error('code missing');
+        enhancementInputs.push(code.innerHTML);
+        code.classList.add('hljs');
+        code.dataset.highlighted = 'yes';
+        code.dataset.easymdeHighlighted = '1';
+        code.innerHTML = '<span class="hljs-keyword">const</span> value = 1;';
+      }
+    });
+    const html = safeHtml('<pre><code class="language-js">const value = 1;</code></pre>');
+
+    act(() => current.session.schedule(request('```js\nconst value = 1;\n```', 'first'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({
+        features: { syntaxHighlight: true },
+        html
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => current.session.schedule({
+      ...request('```js\nconst value = 1;\n```', 'second'),
+      codeTheme: 'github'
+    }, true));
+    await act(async () => {
+      current.responses[1]?.resolve({
+        features: { syntaxHighlight: true },
+        html
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(enhancementInputs).toEqual([
+      'const value = 1;',
+      'const value = 1;'
+    ]);
   });
 
   it('hands enhanced Preview markup to visual editing with Markdown sources attached', async () => {
@@ -435,6 +498,34 @@ describe('PreviewSurfaceOwner', () => {
     ).toBe('flowchart TD\nC-->D');
   });
 
+  it('removes visual source markers when enhanced output no longer matches its source', async () => {
+    const current = setup({
+      enhance: async (surface) => {
+        surface.querySelector('.easymde-math')?.replaceWith(
+          document.createElement('p')
+        );
+      },
+      initialHtml: ''
+    });
+
+    act(() => {
+      current.session.schedule(request('$x$', 'mismatched'), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        features: { math: true },
+        html: safeHtml('<span class="easymde-math">$x$</span>')
+      });
+      await Promise.resolve();
+    });
+
+    expect(visualSourceMarkerCount(current.surface)).toBe(0);
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    expect(current.onDiagnostic).toHaveBeenCalledWith(
+      'preview-enhancement-failed'
+    );
+  });
+
   it('reports empty and failed states instead of retaining a stale ready status', async () => {
     const statuses: PreviewSurfaceStatus[] = [];
     const current = setup({
@@ -468,17 +559,19 @@ describe('PreviewSurfaceOwner', () => {
     });
     await act(async () => {
       current.responses[0]?.resolve({
-        html: safeHtml('<p>First</p>'),
+        html: safeHtml('<span class="easymde-math">$first$</span>'),
         features: { math: true }
       });
       await Promise.resolve();
     });
+    expect(visualSourceMarkerCount(current.surface)).toBe(1);
     const firstIsCurrent = enhance.mock.calls[0]?.[2];
     expect(firstIsCurrent?.()).toBe(true);
     act(() => {
       current.session.schedule(request('# Second', 'second'), true);
     });
     expect(firstIsCurrent?.()).toBe(false);
+    expect(visualSourceMarkerCount(current.surface)).toBe(0);
     await act(async () => {
       current.responses[1]?.resolve({ html: safeHtml('<p>Second</p>'), features: {} });
       await Promise.resolve();

@@ -38,7 +38,7 @@ const productionSpec = {
 	resourceHasManifestRecord: false,
 	resourceReferencedByScript: false,
 	label: "production build",
-	ignoredOutputPrefixes: ["code-copy/", "settings-center/"],
+	ignoredOutputPrefixes: ["code-copy/", "frontend-enhancements/", "frontend-bootstrap/", "frontend-mermaid/", "settings-center/"],
 	requiredRuntimePatterns: [
 		{ pattern: /\bwp\.element\b/, label: "WordPress element runtime" },
 		{ pattern: /\bwp\.i18n\b/, label: "WordPress i18n runtime" },
@@ -65,22 +65,82 @@ const codeCopyProductionCheckRoot = join(
 	repositoryRoot,
 	".cache/easymde-code-copy-production-check",
 );
+const enhancementsProductionSpec = {
+	outputRoot: join(repositoryRoot, "assets/build/frontend-enhancements"),
+	sourceEntry: "frontend/src/entrypoints/frontend-enhancements.ts",
+	expectedHandle: "easymde-enhancements",
+	expectedDependencies: [],
+	resourceField: null,
+	expectedResourceCount: 0,
+	resourceHasManifestRecord: false,
+	resourceReferencedByScript: false,
+	label: "frontend enhancements production build",
+	requiredRuntimePatterns: [
+		{ pattern: /EasyMDEEnhancements/, label: "shared frontend enhancements" },
+		{ pattern: /EasyMDEMathRenderer/, label: "Math renderer" },
+		{ pattern: /EasyMDEMermaidRenderer/, label: "Mermaid renderer" },
+		{
+			pattern: /securityLevel:[`"']strict[`"']/,
+			label: "Mermaid strict security level",
+		},
+	],
+};
+const enhancementsProductionCheckRoot = join(
+	repositoryRoot,
+	".cache/easymde-frontend-enhancements-production-check",
+);
+const bootstrapProductionSpec = {
+	outputRoot: join(repositoryRoot, "assets/build/frontend-bootstrap"),
+	sourceEntry: "frontend/src/entrypoints/frontend-bootstrap.ts",
+	expectedHandle: "easymde-frontend",
+	expectedDependencies: [],
+	resourceField: null,
+	expectedResourceCount: 0,
+	resourceHasManifestRecord: false,
+	resourceReferencedByScript: false,
+	label: "frontend bootstrap production build",
+	requiredRuntimePattern: /DOMContentLoaded/,
+	requiredRuntimeLabel: "frontend DOM bootstrap",
+};
+const bootstrapProductionCheckRoot = join(
+	repositoryRoot,
+	".cache/easymde-frontend-bootstrap-production-check",
+);
+const mermaidProductionSpec = {
+	outputRoot: join(repositoryRoot, "assets/build/frontend-mermaid"),
+	sourceEntry: "frontend/src/entrypoints/frontend-mermaid-runtime.ts",
+	expectedHandle: "easymde-mermaid",
+	expectedDependencies: [],
+	resourceField: null,
+	expectedResourceCount: 0,
+	resourceHasManifestRecord: false,
+	resourceReferencedByScript: false,
+	label: "frontend Mermaid runtime production build",
+	requiredRuntimePatterns: [
+		{ pattern: /\.mermaid=/, label: "Mermaid browser runtime" },
+		{ pattern: /startOnLoad/, label: "Mermaid configuration" },
+	],
+};
+const mermaidProductionCheckRoot = join(
+	repositoryRoot,
+	".cache/easymde-frontend-mermaid-production-check",
+);
 const settingsProductionSpec = {
-  outputRoot: join(repositoryRoot, 'assets/build/settings-center'),
-  sourceEntry: 'frontend/src/entrypoints/settings-center.tsx',
-  expectedHandle: 'easymde-admin-settings-center',
-  expectedDependencies: ['wp-element'],
-  resourceField: null,
-  expectedResourceCount: 0,
-  resourceHasManifestRecord: false,
-  resourceReferencedByScript: false,
-  label: 'settings-center production build',
-  requiredRuntimePattern: /EasyMDESettingsCenterBootstrap/,
-  requiredRuntimeLabel: 'settings-center bootstrap'
+	outputRoot: join(repositoryRoot, "assets/build/settings-center"),
+	sourceEntry: "frontend/src/entrypoints/settings-center.tsx",
+	expectedHandle: "easymde-admin-settings-center",
+	expectedDependencies: ["wp-element"],
+	resourceField: null,
+	expectedResourceCount: 0,
+	resourceHasManifestRecord: false,
+	resourceReferencedByScript: false,
+	label: "settings-center production build",
+	requiredRuntimePattern: /EasyMDESettingsCenterBootstrap/,
+	requiredRuntimeLabel: "settings-center bootstrap",
 };
 const settingsProductionCheckRoot = join(
-  repositoryRoot,
-  '.cache/easymde-settings-production-check'
+	repositoryRoot,
+	".cache/easymde-settings-production-check",
 );
 const forbiddenContent = [
 	{
@@ -91,7 +151,7 @@ const forbiddenContent = [
 	{ pattern: /https?:\/\//i, label: "remote runtime URL" },
 	{
 		pattern:
-			/(?:file:\/\/\/|(?:^|[\s"'=:(])\/(?:Users|home|private|tmp|var|Volumes|workspace|workspaces|root|mnt|opt|srv|etc|usr)(?:\/|["'\s])|(?:^|[\r\n"'=:(])\/(?!\/)(?:[A-Za-z0-9._~%+-]+\/){2,}[A-Za-z0-9._~%+-]+|\b[A-Za-z]:[\\/]|\\\\[A-Za-z0-9._-]+\\[A-Za-z0-9$._-]+)/m,
+		/(?:file:\/\/\/|(?:^|[\s"'=:(])\/(?:Users|home|private|tmp|var|Volumes|workspace|workspaces|root|mnt|opt|srv|etc|usr)(?:\/|["'\s])|\b[A-Za-z]:[\\/](?:[A-Za-z0-9._~%+-]+[\\/])+|\\\\[A-Za-z0-9._-]+\\[A-Za-z0-9$._-]+)/m,
 		label: "absolute local path",
 	},
 	{ pattern: /sourceMappingURL=/, label: "source map reference" },
@@ -112,6 +172,18 @@ const nonFetchingXmlNamespaceDeclarations = [
 	/\s+xmlns:xlink\s*=\s*(["'])http:\/\/www\.w3\.org\/1999\/xlink\1/g,
 ];
 const nonFetchingMarkdownUrlPlaceholders = /\]\(https?:\/\/\)/gi;
+const nonFetchingSchemaUrlLiterals = [
+	/(["'`])http:\/\/www\.w3\.org\/1999\/xhtml\1/g,
+	/(["'`])http:\/\/www\.w3\.org\/1999\/xlink\1/g,
+	/(["'`])http:\/\/www\.w3\.org\/XML\/1998\/namespace\1/g,
+	/(["'`])http:\/\/www\.w3\.org\/2000\/xmlns\/\1/g,
+	/(["'`])http:\/\/www\.w3\.org\/1998\/Math\/MathML\1/g,
+	/(["'`])http:\/\/www\.w3\.org\/2001\/XMLSchema#[A-Za-z]+\1/g,
+	/(["'`])http:\/\/www\.eclipse\.org\/elk\/ElkGraph\1/g,
+	/(["'`])http:\/\/\/org\/eclipse\/emf\/ecore\/util\/ExtendedMetaData\1/g,
+	/(["'`])http:\/\/www\.eclipse\.org\/emf\/2002\/Ecore\1/g,
+	/(["'`])http:\/\/www\.eclipse\.org\/emf\/2003\/XMLType\1/g,
+];
 const nonFetchingSvgNamespaceLiteral =
 	/(["'`])http:\/\/www\.w3\.org\/2000\/svg\1/g;
 
@@ -183,6 +255,9 @@ function assertSafeProductionText(source, label) {
 	}
 	source = source.replace(nonFetchingMarkdownUrlPlaceholders, "");
 	source = source.replace(nonFetchingSvgNamespaceLiteral, "");
+	for (const literal of nonFetchingSchemaUrlLiterals) {
+		source = source.replace(literal, "");
+	}
 
 	for (const forbidden of forbiddenContent) {
 		if (forbidden.pattern.test(source)) {
@@ -441,56 +516,63 @@ export function validateCodeCopyProductionBuild(
 	return validateBuild(codeCopyProductionSpec, outputRoot);
 }
 
-export function validateSettingsProductionBuild(
-  outputRoot = settingsProductionSpec.outputRoot
+export function validateFrontendEnhancementsProductionBuild(
+	outputRoot = enhancementsProductionSpec.outputRoot,
 ) {
-  return validateBuild(settingsProductionSpec, outputRoot);
+	return validateBuild(enhancementsProductionSpec, outputRoot);
+}
+
+export function validateFrontendBootstrapProductionBuild(
+	outputRoot = bootstrapProductionSpec.outputRoot,
+) {
+	return validateBuild(bootstrapProductionSpec, outputRoot);
+}
+
+export function validateFrontendMermaidProductionBuild(
+	outputRoot = mermaidProductionSpec.outputRoot,
+) {
+	return validateBuild(mermaidProductionSpec, outputRoot);
+}
+
+export function validateSettingsProductionBuild(
+	outputRoot = settingsProductionSpec.outputRoot,
+) {
+	return validateBuild(settingsProductionSpec, outputRoot);
 }
 
 export function compareFrontendProductionBuilds(
 	generatedRoot = productionCheckRoot,
 	committedRoot = productionSpec.outputRoot,
 ) {
-	validateFrontendProductionBuild(generatedRoot);
-	validateFrontendProductionBuild(committedRoot);
-
-	const generatedFiles = collectSpecFiles(
-		resolve(generatedRoot),
+	compareProductionBuild(
 		productionSpec,
+		generatedRoot,
+		committedRoot,
+		"production frontend",
 	);
-	const committedFiles = collectSpecFiles(
-		resolve(committedRoot),
-		productionSpec,
-	);
-	if (JSON.stringify(generatedFiles) !== JSON.stringify(committedFiles)) {
-		throw new Error(
-			"Committed production frontend artifacts are missing, stale, or unexpected. Run npm run build:frontend and review the generated files.",
-		);
-	}
-
-	for (const path of generatedFiles) {
-		const generated = readFileSync(join(generatedRoot, path));
-		const committed = readFileSync(join(committedRoot, path));
-		if (!generated.equals(committed)) {
-			throw new Error(
-				`Committed production frontend artifact is stale: ${path}. Run npm run build:frontend and review the generated files.`,
-			);
-		}
-	}
 }
 
 export function compareCodeCopyProductionBuilds(
 	generatedRoot = codeCopyProductionCheckRoot,
 	committedRoot = codeCopyProductionSpec.outputRoot,
 ) {
-	validateCodeCopyProductionBuild(generatedRoot);
-	validateCodeCopyProductionBuild(committedRoot);
+	compareProductionBuild(
+		codeCopyProductionSpec,
+		generatedRoot,
+		committedRoot,
+		"code-copy production",
+	);
+}
 
-	const generatedFiles = collectFiles(resolve(generatedRoot));
-	const committedFiles = collectFiles(resolve(committedRoot));
+function compareProductionBuild(spec, generatedRoot, committedRoot, label) {
+	validateBuild(spec, generatedRoot);
+	validateBuild(spec, committedRoot);
+
+	const generatedFiles = collectSpecFiles(resolve(generatedRoot), spec);
+	const committedFiles = collectSpecFiles(resolve(committedRoot), spec);
 	if (JSON.stringify(generatedFiles) !== JSON.stringify(committedFiles)) {
 		throw new Error(
-			"Committed code-copy production artifacts are missing, stale, or unexpected. Run npm run build:frontend and review the generated files.",
+			`Committed ${label} artifacts are missing, stale, or unexpected. Run npm run build:frontend and review the generated files.`,
 		);
 	}
 
@@ -499,36 +581,58 @@ export function compareCodeCopyProductionBuilds(
 		const committed = readFileSync(join(committedRoot, path));
 		if (!generated.equals(committed)) {
 			throw new Error(
-				`Committed code-copy production artifact is stale: ${path}. Run npm run build:frontend and review the generated files.`,
+				`Committed ${label} artifact is stale: ${path}. Run npm run build:frontend and review the generated files.`,
 			);
 		}
 	}
+}
+
+export function compareFrontendEnhancementsProductionBuilds(
+	generatedRoot = enhancementsProductionCheckRoot,
+	committedRoot = enhancementsProductionSpec.outputRoot,
+) {
+	compareProductionBuild(
+		enhancementsProductionSpec,
+		generatedRoot,
+		committedRoot,
+		"frontend enhancements production build",
+	);
+}
+
+export function compareFrontendBootstrapProductionBuilds(
+	generatedRoot = bootstrapProductionCheckRoot,
+	committedRoot = bootstrapProductionSpec.outputRoot,
+) {
+	compareProductionBuild(
+		bootstrapProductionSpec,
+		generatedRoot,
+		committedRoot,
+		"frontend bootstrap production build",
+	);
+}
+
+export function compareFrontendMermaidProductionBuilds(
+	generatedRoot = mermaidProductionCheckRoot,
+	committedRoot = mermaidProductionSpec.outputRoot,
+) {
+	compareProductionBuild(
+		mermaidProductionSpec,
+		generatedRoot,
+		committedRoot,
+		"frontend Mermaid runtime production build",
+	);
 }
 
 export function compareSettingsProductionBuilds(
 	generatedRoot = settingsProductionCheckRoot,
 	committedRoot = settingsProductionSpec.outputRoot,
 ) {
-	validateSettingsProductionBuild(generatedRoot);
-	validateSettingsProductionBuild(committedRoot);
-
-	const generatedFiles = collectFiles(resolve(generatedRoot));
-	const committedFiles = collectFiles(resolve(committedRoot));
-	if (JSON.stringify(generatedFiles) !== JSON.stringify(committedFiles)) {
-		throw new Error(
-			"Committed settings-center production artifacts are missing, stale, or unexpected. Run npm run build:frontend and review the generated files.",
-		);
-	}
-
-	for (const path of generatedFiles) {
-		const generated = readFileSync(join(generatedRoot, path));
-		const committed = readFileSync(join(committedRoot, path));
-		if (!generated.equals(committed)) {
-			throw new Error(
-				`Committed settings-center production artifact is stale: ${path}. Run npm run build:frontend and review the generated files.`,
-			);
-		}
-	}
+	compareProductionBuild(
+		settingsProductionSpec,
+		generatedRoot,
+		committedRoot,
+		"settings-center production build",
+	);
 }
 
 if (
@@ -539,6 +643,9 @@ if (
 		if (process.argv.includes("--production-check")) {
 			compareFrontendProductionBuilds();
 			compareCodeCopyProductionBuilds();
+			compareFrontendEnhancementsProductionBuilds();
+			compareFrontendBootstrapProductionBuilds();
+			compareFrontendMermaidProductionBuilds();
 			compareSettingsProductionBuilds();
 			console.log(
 				"Committed frontend production build matches the validated source build.",
@@ -546,6 +653,9 @@ if (
 		} else if (process.argv.includes("--production")) {
 			validateFrontendProductionBuild();
 			validateCodeCopyProductionBuild();
+			validateFrontendEnhancementsProductionBuild();
+			validateFrontendBootstrapProductionBuild();
+			validateFrontendMermaidProductionBuild();
 			validateSettingsProductionBuild();
 			console.log("Frontend production build is valid.");
 		} else {

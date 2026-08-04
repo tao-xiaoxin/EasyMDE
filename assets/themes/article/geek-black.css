@@ -171,23 +171,6 @@
   border-top: 1px solid black;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-geek-black pre {
-  margin-top: 10px;
-  margin-bottom: 10px;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-geek-black pre code {
-  display: -webkit-box;
-  font-family: var(--easymde-code-font-family);
-  border-radius: 0px;
-  font-size: 12px;
-  -webkit-overflow-scrolling: touch;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-geek-black pre code span {
-  line-height: 26px;
-}
-
 .easymde-rendered-content.easymde-markdown-theme-geek-black p code,
 .easymde-rendered-content.easymde-markdown-theme-geek-black li code {
   font-size: 14px;
@@ -259,73 +242,6 @@
 .easymde-rendered-content.easymde-markdown-theme-geek-black table tr th:nth-of-type(n),
 .easymde-rendered-content.easymde-markdown-theme-geek-black table tr td:nth-of-type(n) {
   min-width:85px;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-geek-black .code-snippet__fix {
-  word-wrap: break-word !important;
-  font-size: 14px;
-  margin: 10px 0;
-  display: block;
-  color: #333;
-  position: relative;
-  background-color: rgba(0,0,0,0.03);
-  border: 1px solid #f0f0f0;
-  border-radius: 2px;
-  display: flex;
-  line-height: 20px;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-geek-black .code-snippet__fix pre {
-  margin-bottom: 10px;
-  margin-top: 0px;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-geek-black .code-snippet__fix .code-snippet__line-index {
-  counter-reset: line;
-  flex-shrink: 0;
-  height: 100%;
-  padding: 1em;
-  list-style-type: none;
-  padding: 16px;
-  margin: 0;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-geek-black .code-snippet__fix .code-snippet__line-index li {
-  list-style-type: none;
-  text-align: right;
-  line-height: 26px;
-  color: black;
-  margin: 0;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-geek-black .code-snippet__fix .code-snippet__line-index li::before {
-  min-width: 1.5em;
-  text-align: right;
-  left: -2.5em;
-  counter-increment: line;
-  content: counter(line);
-  display: inline;
-  color: rgba(0,0,0,0.3);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-geek-black .code-snippet__fix pre {
-  overflow-x: auto;
-  padding: 16px;
-  padding-left: 0;
-  white-space: normal;
-  flex: 1;
-  -webkit-overflow-scrolling: touch;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-geek-black .code-snippet__fix code {
-  text-align: left;
-  font-size: 14px;
-  display: block;
-  white-space: pre;
-  display: flex;
-  position: relative;
-  font-family: var(--easymde-code-font-family);
-  padding: 0px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-geek-black .footnote-word {
@@ -475,7 +391,7 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-geek-black h1 {
-  margin-top: -0.46em;
+  margin-top: 30px;
   margin-bottom: 0.1em;
   border-bottom: 2px solid rgb(198, 196, 196);
   box-sizing: border-box;
@@ -492,7 +408,8 @@
 
 .easymde-rendered-content.easymde-markdown-theme-geek-black h2 {
   margin: 10px auto;
-  height: 40px;
+  min-height: 40px;
+  height: auto;
   background-color: rgb(251, 251, 251);
   border-bottom: 1px solid rgb(246, 246, 246);
   overflow: hidden;
@@ -503,7 +420,10 @@
   margin-left: -10px;
   display: inline-block;
   width: auto;
-  height: 40px;
+  max-width: 100%;
+  min-height: 40px;
+  height: auto;
+  box-sizing: border-box;
   background-color: rgb(33, 33, 34);
   border-bottom-right-radius:100px;
   color: rgb(255, 255, 255);
@@ -511,6 +431,7 @@
   padding-left: 30px;
   line-height: 40px;
   font-size: 16px;
+  overflow-wrap: anywhere;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-geek-black h3 {
@@ -587,4 +508,27 @@
 
 .easymde-rendered-content.easymde-markdown-theme-geek-black .footnote-ref {
   color: rgb(239, 112, 96);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-geek-black table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-geek-black table > thead,
+.easymde-rendered-content.easymde-markdown-theme-geek-black table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-geek-black table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-geek-black table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
 }

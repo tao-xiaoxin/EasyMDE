@@ -4,6 +4,8 @@ namespace EasyMDE\Admin;
 
 use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Support\Asset;
+use EasyMDE\Support\FrontendAssetContract;
+use EasyMDE\Support\ManifestAssetResolver;
 use EasyMDE\Support\ToolbarRegistry;
 use EasyMDE\Theme\ThemeStateRepository;
 
@@ -78,14 +80,47 @@ final class AdminAssets {
 			array( 'easymde-admin-toolbar', 'easymde-admin-popover' ),
 			$this->get_static_asset_version( 'assets/css/admin/editor.css' )
 		);
-		$this->frontend_assets->enqueue_editor_base_assets( $post_id );
+		try {
+			$this->frontend_assets->enqueue_editor_base_assets( $post_id );
+		} catch ( \Throwable $error ) {
+			if ( ! FrontendAssetContract::is_error( $error ) ) {
+				throw $error;
+			}
+
+			$this->react_editor_asset_error = true;
+			wp_trigger_error(
+				__METHOD__,
+				'EasyMDE frontend enhancement asset contract failed (' . FrontendAssetContract::error_code( $error ) . ').',
+				E_USER_WARNING
+			);
+
+			return;
+		}
 
 		wp_enqueue_media();
 		if ( $this->enqueue_react_editor_asset() ) {
+			try {
+				$root_bootstrap = $this->get_editor_root_bootstrap( $post_id, $screen->post_type );
+			} catch ( \Throwable $error ) {
+				if ( ! FrontendAssetContract::is_error( $error ) ) {
+					throw $error;
+				}
+
+				wp_dequeue_script( 'easymde-admin-editor-toolbar' );
+				$this->react_editor_asset_error = true;
+				wp_trigger_error(
+					__METHOD__,
+					'EasyMDE frontend enhancement asset contract failed (' . FrontendAssetContract::error_code( $error ) . ').',
+					E_USER_WARNING
+				);
+
+				return;
+			}
+
 			wp_add_inline_script(
 				'easymde-admin-editor-toolbar',
 				'window.EasyMDEEditorRootBootstrap = ' . wp_json_encode(
-					$this->get_editor_root_bootstrap( $post_id, $screen->post_type ),
+					$root_bootstrap,
 					JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
 				) . ';',
 				'before'
@@ -150,10 +185,11 @@ final class AdminAssets {
 
 			if ( ! $has_selected_item && '' !== trim( $theme_state['customCss'] ) ) {
 				$custom_css[] = array(
-					'id'        => $theme_state['customCssId'],
-					'name'      => $strings['customCssTheme'],
-					'css'       => $theme_state['customCss'],
-					'scopedCss' => $theme_state['scopedCustomCss'],
+					'id'               => $theme_state['customCssId'],
+					'articleThemeName' => $strings['customCssTheme'],
+					'codeThemeName'    => $strings['customCssTheme'],
+					'css'              => $theme_state['customCss'],
+					'scopedCss'        => $theme_state['scopedCustomCss'],
 				);
 			}
 		}
@@ -175,25 +211,30 @@ final class AdminAssets {
 				'strings' => array( 'editorLabel' => $strings['editorLabel'] ),
 			),
 			'appearance'         => array(
-				'articleThemes' => $theme_options['markdownThemes'],
-				'codeThemes'    => $theme_options['codeThemes'],
-				'customCss'     => $custom_css,
-				'state'         => array(
+				'articleThemes'      => $theme_options['markdownThemes'],
+				'canManageCustomCss' => current_user_can( 'unfiltered_html' ),
+				'codeThemeExplicit'  => $theme_options['codeThemeExplicit'],
+				'codeThemes'         => $theme_options['codeThemes'],
+				'customCss'          => $custom_css,
+				'customCssVariables' => $this->get_custom_css_variables(),
+				'state'              => array(
 					'markdownTheme' => $theme_state['markdownTheme'],
 					'codeTheme'     => $theme_state['codeTheme'],
 					'customCssId'   => $theme_state['customCssId'],
 				),
-				'strings'       => array(
-					'appearance'     => $strings['appearance'],
-					'articleTheme'   => $strings['articleTheme'],
-					'codeTheme'      => $strings['codeTheme'],
-					'customCss'      => $strings['customCss'],
-					'customCssTheme' => $strings['customCssTheme'],
-					'cssName'        => $strings['cssName'],
-					'saveCss'        => $strings['saveCss'],
-					'cssSaved'       => $strings['cssSaved'],
-					'cssSaveFailed'  => $strings['cssSaveFailed'],
-					'namedCustomCss' => $strings['namedCustomCss'],
+				'strings'            => array(
+					'appearance'       => $strings['appearance'],
+					'articleTheme'     => $strings['articleTheme'],
+					'codeTheme'        => $strings['codeTheme'],
+					'customCss'        => $strings['customCss'],
+					'customCssTheme'   => $strings['customCssTheme'],
+					'cssName'          => $strings['cssName'],
+					'saveCss'          => $strings['saveCss'],
+					'cssSaved'         => $strings['cssSaved'],
+					'cssSaveFailed'    => $strings['cssSaveFailed'],
+					'cssNameDuplicate' => $strings['cssNameDuplicate'],
+					'namedCustomCss'   => $strings['namedCustomCss'],
+					'customCssDialog'  => $this->get_custom_css_dialog_strings(),
 				),
 			),
 			'fonts'              => array(
@@ -233,6 +274,10 @@ final class AdminAssets {
 			),
 			'layout'             => array(
 				'direction' => is_rtl() ? 'rtl' : 'ltr',
+				'status'    => array(
+					'lastEdited' => $this->get_last_edited_label( $post_id ),
+					'wordCount'  => $strings['wordCount'],
+				),
 			),
 			'localDrafts'        => array(
 				'enabled'          => true,
@@ -266,9 +311,8 @@ final class AdminAssets {
 				'features'  => (object) array(),
 				'html'      => '',
 				'messages'  => array(
-					'empty'     => $strings['previewEmpty'],
-					'error'     => $strings['previewError'],
-					'rendering' => $strings['previewRendering'],
+					'empty' => $strings['previewEmpty'],
+					'error' => $strings['previewError'],
 				),
 				'postId'    => absint( $post_id ),
 				'signature' => '',
@@ -287,6 +331,7 @@ final class AdminAssets {
 					'headingLevel'       => $strings['headingLevel'],
 					'headings'           => $strings['headings'],
 					'linkText'           => $strings['linkText'],
+					'undo'               => $strings['undo'],
 				),
 			),
 			'wechatExport'       => array(
@@ -479,66 +524,16 @@ final class AdminAssets {
 	}
 
 	private function get_react_editor_asset( $build_dir = '' ) {
-		$build_dir     = $build_dir ? trailingslashit( $build_dir ) : Asset::path( 'assets/build/' );
-		$manifest_path = $build_dir . 'wordpress-manifest.json';
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads a local committed build manifest, never a remote URL.
-		$manifest_json = is_readable( $manifest_path ) ? file_get_contents( $manifest_path ) : false;
-		$manifest      = false === $manifest_json ? null : json_decode( $manifest_json, true );
-		$entry_key     = 'frontend/src/entrypoints/admin-editor.tsx';
+		$build_dir = $build_dir ? $build_dir : 'assets/build/';
 
-		if (
-			! is_array( $manifest )
-			|| 1 !== ( $manifest['schemaVersion'] ?? null )
-			|| ! isset( $manifest['entries'] )
-			|| ! is_array( $manifest['entries'] )
-			|| array( $entry_key ) !== array_keys( $manifest['entries'] )
-			|| ! is_array( $manifest['entries'][ $entry_key ] )
-		) {
-			throw new \RuntimeException( 'react-editor-manifest-invalid' );
-		}
-
-		$entry = $manifest['entries'][ $entry_key ];
-		$file  = isset( $entry['file'] ) ? (string) $entry['file'] : '';
-		$asset = isset( $entry['asset'] ) ? (string) $entry['asset'] : '';
-		if (
-			'easymde-admin-editor-toolbar' !== ( $entry['handle'] ?? null )
-			|| array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ) !== ( $entry['dependencies'] ?? null )
-			|| array() !== ( $entry['resources'] ?? null )
-			|| ! preg_match( '#^assets/admin-editor-[A-Za-z0-9_-]+\.js$#', $file )
-			|| preg_replace( '/\.js$/', '.asset.php', $file ) !== $asset
-		) {
-			throw new \RuntimeException( 'react-editor-manifest-invalid' );
-		}
-
-		$script_path   = $build_dir . $file;
-		$metadata_path = $build_dir . $asset;
-		if ( ! is_file( $script_path ) || ! is_readable( $metadata_path ) ) {
-			throw new \RuntimeException( 'react-editor-build-missing' );
-		}
-
-		$metadata = require $metadata_path;
-		if (
-			! is_array( $metadata )
-			|| array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ) !== ( $metadata['dependencies'] ?? null )
-			|| ! isset( $metadata['version'] )
-			|| ! preg_match( '/^[a-f0-9]{16}$/', (string) $metadata['version'] )
-		) {
-			throw new \RuntimeException( 'react-editor-metadata-invalid' );
-		}
-
-		$script_hash = hash_file( 'sha256', $script_path );
-		if (
-			false === $script_hash
-			|| ! hash_equals( (string) $metadata['version'], substr( $script_hash, 0, 16 ) )
-		) {
-			throw new \RuntimeException( 'react-editor-build-integrity-invalid' );
-		}
-
-		return array(
-			'handle'       => 'easymde-admin-editor-toolbar',
-			'path'         => 'assets/build/' . $file,
-			'dependencies' => $metadata['dependencies'],
-			'version'      => (string) $metadata['version'],
+		return ManifestAssetResolver::resolve(
+			'frontend/src/entrypoints/admin-editor.tsx',
+			$build_dir,
+			'easymde-admin-editor-toolbar',
+			array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
+			'admin-editor',
+			true,
+			'react-editor-'
 		);
 	}
 
@@ -564,6 +559,45 @@ final class AdminAssets {
 		);
 	}
 
+	private function get_last_edited_label( $post_id ) {
+		if ( ! $post_id ) {
+			return __( 'Not saved yet.', 'easymde' );
+		}
+
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			throw new \RuntimeException( 'editor-status-post-unavailable' );
+		}
+
+		$editor_id = absint( get_post_meta( $post_id, '_edit_last', true ) );
+		$editor    = get_userdata( $editor_id );
+
+		$modified = get_post_modified_time(
+			get_option( 'date_format' ) . ' ' . get_option( 'time_format' ),
+			false,
+			$post,
+			true
+		);
+		if ( ! is_string( $modified ) || '' === $modified ) {
+			throw new \RuntimeException( 'editor-status-modified-time-unavailable' );
+		}
+
+		if ( $editor ) {
+			return sprintf(
+				/* translators: 1: display name of the last editor, 2: localized post modified date and time. */
+				__( 'Last edited by %1$s on %2$s', 'easymde' ),
+				$editor->display_name,
+				$modified
+			);
+		}
+
+		return sprintf(
+			/* translators: %s: localized post modified date and time. */
+			__( 'Last edited on %s', 'easymde' ),
+			$modified
+		);
+	}
+
 	private function get_image_upload_config() {
 		return array(
 			'enabled'  => current_user_can( 'upload_files' ),
@@ -571,14 +605,276 @@ final class AdminAssets {
 		);
 	}
 
+	private function get_custom_css_variables() {
+		return array(
+			array(
+				'id'          => 'primaryColor',
+				'category'    => 'foundation',
+				'label'       => __( 'Primary color', 'easymde' ),
+				'description' => __( 'H1, list markers, and task checkmarks', 'easymde' ),
+			),
+			array(
+				'id'          => 'headingColor',
+				'category'    => 'foundation',
+				'label'       => __( 'Heading color', 'easymde' ),
+				'description' => __( 'H2-H6, bold text, and definition terms', 'easymde' ),
+			),
+			array(
+				'id'          => 'textColor',
+				'category'    => 'foundation',
+				'label'       => __( 'Text color', 'easymde' ),
+				'description' => __( 'Paragraphs, lists, and table body', 'easymde' ),
+			),
+			array(
+				'id'          => 'mutedColor',
+				'category'    => 'foundation',
+				'label'       => __( 'Muted color', 'easymde' ),
+				'description' => __( 'Strikethrough, footnotes, and image captions', 'easymde' ),
+			),
+			array(
+				'id'          => 'linkColor',
+				'category'    => 'foundation',
+				'label'       => __( 'Link color', 'easymde' ),
+				'description' => __( 'Body links and footnote links', 'easymde' ),
+			),
+			array(
+				'id'          => 'backgroundColor',
+				'category'    => 'foundation',
+				'label'       => __( 'Background color', 'easymde' ),
+				'description' => __( 'Article and content block base background', 'easymde' ),
+			),
+			array(
+				'id'          => 'borderColor',
+				'category'    => 'foundation',
+				'label'       => __( 'Border color', 'easymde' ),
+				'description' => __( 'Dividers, tables, and control borders', 'easymde' ),
+			),
+			array(
+				'id'          => 'emphasisBackground',
+				'category'    => 'blocks',
+				'label'       => __( 'Highlight background', 'easymde' ),
+				'description' => __( 'Marked text and emphasized content', 'easymde' ),
+			),
+			array(
+				'id'          => 'selectionBackground',
+				'category'    => 'blocks',
+				'label'       => __( 'Selection background', 'easymde' ),
+				'description' => __( 'Selected article text', 'easymde' ),
+			),
+			array(
+				'id'          => 'quoteColor',
+				'category'    => 'blocks',
+				'label'       => __( 'Quote accent', 'easymde' ),
+				'description' => __( 'Blockquote left border', 'easymde' ),
+			),
+			array(
+				'id'          => 'quoteBackground',
+				'category'    => 'blocks',
+				'label'       => __( 'Quote background', 'easymde' ),
+				'description' => __( 'Blockquote content background', 'easymde' ),
+			),
+			array(
+				'id'          => 'tableHeaderBackground',
+				'category'    => 'blocks',
+				'label'       => __( 'Table header background', 'easymde' ),
+				'description' => __( 'Table heading row background', 'easymde' ),
+			),
+			array(
+				'id'          => 'tableStripeBackground',
+				'category'    => 'blocks',
+				'label'       => __( 'Table zebra stripes', 'easymde' ),
+				'description' => __( 'Even content row background', 'easymde' ),
+			),
+			array(
+				'id'          => 'inlineCodeColor',
+				'category'    => 'code',
+				'label'       => __( 'Inline code color', 'easymde' ),
+				'description' => __( 'Inline code and keyboard shortcut text', 'easymde' ),
+			),
+			array(
+				'id'          => 'inlineCodeBackground',
+				'category'    => 'code',
+				'label'       => __( 'Inline code background', 'easymde' ),
+				'description' => __( 'Inline code and keyboard shortcut background', 'easymde' ),
+			),
+			array(
+				'id'          => 'codeBlockTextColor',
+				'category'    => 'code',
+				'label'       => __( 'Code text color', 'easymde' ),
+				'description' => __( 'Plain code and punctuation', 'easymde' ),
+			),
+			array(
+				'id'          => 'codeBlockBackground',
+				'category'    => 'code',
+				'label'       => __( 'Code block background', 'easymde' ),
+				'description' => __( 'Code block and line number area', 'easymde' ),
+			),
+			array(
+				'id'          => 'codeKeywordColor',
+				'category'    => 'code',
+				'label'       => __( 'Keyword color', 'easymde' ),
+				'description' => __( 'Keywords, functions, and booleans', 'easymde' ),
+			),
+			array(
+				'id'          => 'codeStringColor',
+				'category'    => 'code',
+				'label'       => __( 'String color', 'easymde' ),
+				'description' => __( 'Strings, property values, and numbers', 'easymde' ),
+			),
+			array(
+				'id'          => 'codeCommentColor',
+				'category'    => 'code',
+				'label'       => __( 'Comment color', 'easymde' ),
+				'description' => __( 'Comments, line numbers, and auxiliary markers', 'easymde' ),
+			),
+			array(
+				'id'          => 'infoColor',
+				'category'    => 'alerts',
+				'label'       => __( 'Information accent', 'easymde' ),
+				'description' => __( 'NOTE and information callout border', 'easymde' ),
+			),
+			array(
+				'id'          => 'infoBackground',
+				'category'    => 'alerts',
+				'label'       => __( 'Information background', 'easymde' ),
+				'description' => __( 'NOTE and information callout background', 'easymde' ),
+			),
+			array(
+				'id'          => 'successColor',
+				'category'    => 'alerts',
+				'label'       => __( 'Success accent', 'easymde' ),
+				'description' => __( 'TIP, success, and completed states', 'easymde' ),
+			),
+			array(
+				'id'          => 'successBackground',
+				'category'    => 'alerts',
+				'label'       => __( 'Success background', 'easymde' ),
+				'description' => __( 'TIP and success callout background', 'easymde' ),
+			),
+			array(
+				'id'          => 'warningColor',
+				'category'    => 'alerts',
+				'label'       => __( 'Warning accent', 'easymde' ),
+				'description' => __( 'WARNING callout border', 'easymde' ),
+			),
+			array(
+				'id'          => 'warningBackground',
+				'category'    => 'alerts',
+				'label'       => __( 'Warning background', 'easymde' ),
+				'description' => __( 'WARNING callout background', 'easymde' ),
+			),
+			array(
+				'id'          => 'dangerColor',
+				'category'    => 'alerts',
+				'label'       => __( 'Danger accent', 'easymde' ),
+				'description' => __( 'CAUTION and error callout border', 'easymde' ),
+			),
+			array(
+				'id'          => 'dangerBackground',
+				'category'    => 'alerts',
+				'label'       => __( 'Danger background', 'easymde' ),
+				'description' => __( 'CAUTION and error callout background', 'easymde' ),
+			),
+		);
+	}
+
+	private function get_custom_css_dialog_strings() {
+		return array(
+			'description'                  => __( 'Create a personal article and code theme with live preview.', 'easymde' ),
+			'close'                        => __( 'Close custom CSS theme', 'easymde' ),
+			'closeTitle'                   => __( 'Close', 'easymde' ),
+			'articleThemeName'             => __( 'Article theme name', 'easymde' ),
+			'codeThemeName'                => __( 'Code theme name', 'easymde' ),
+			'articleNamePlaceholder'       => __( 'Enter article theme name', 'easymde' ),
+			'codeNamePlaceholder'          => __( 'Enter code theme name', 'easymde' ),
+			'unsavedChanges'               => __( 'Changes have not been applied', 'easymde' ),
+			'invalidColor'                 => __( 'Enter a valid six-digit hex color', 'easymde' ),
+			'missingName'                  => __( 'Enter both theme names', 'easymde' ),
+			'previewTitle'                 => __( 'Modified style preview', 'easymde' ),
+			'livePreview'                  => __( 'Live', 'easymde' ),
+			'previewHelp'                  => __( 'The preview updates with the selected colors.', 'easymde' ),
+			'previewInvalid'               => __( 'Fix invalid CSS to update the live preview.', 'easymde' ),
+			'previewUnavailable'           => __( 'Live preview is temporarily unavailable.', 'easymde' ),
+			'themeVariables'               => __( 'Theme variables', 'easymde' ),
+			'themeVariableCategories'      => __( 'Theme variable categories', 'easymde' ),
+			/* translators: %s: Custom CSS theme variable category label. */
+			'themeVariablePanelLabel'      => __( '%s theme variables', 'easymde' ),
+			'customCssCodeTitle'           => __( 'Custom CSS code', 'easymde' ),
+			'reset'                        => __( 'Reset', 'easymde' ),
+			'expandCode'                   => __( 'Expand code editor', 'easymde' ),
+			'shrinkCode'                   => __( 'Shrink code editor', 'easymde' ),
+			'backToVariables'              => __( 'Back to variables', 'easymde' ),
+			'saveTarget'                   => __( 'CSS target', 'easymde' ),
+			'articleCss'                   => __( 'Article CSS', 'easymde' ),
+			'codeCss'                      => __( 'Code CSS', 'easymde' ),
+			'articleCssHelp'               => __( 'These rules are applied to article content.', 'easymde' ),
+			'codeCssHelp'                  => __( 'These rules are applied to code content.', 'easymde' ),
+			'foundationCategory'           => __( 'Foundation', 'easymde' ),
+			'blocksCategory'               => __( 'Blocks', 'easymde' ),
+			'codeCategory'                 => __( 'Code', 'easymde' ),
+			'alertsCategory'               => __( 'Alerts', 'easymde' ),
+			'customCssCode'                => __( 'Custom CSS code', 'easymde' ),
+			'customCssCodeHelp'            => __( 'Add detailed CSS rules', 'easymde' ),
+			'backToThemeVariables'         => __( 'Back to theme variables', 'easymde' ),
+			'cancel'                       => __( 'Cancel', 'easymde' ),
+			'resetAll'                     => __( 'Reset all', 'easymde' ),
+			'applyCustomTheme'             => __( 'Apply theme', 'easymde' ),
+			'defaultArticleName'           => __( 'EasyMDE Blue', 'easymde' ),
+			'defaultCodeName'              => __( 'EasyMDE Blue Code', 'easymde' ),
+			/* translators: %s: Custom CSS color variable label. */
+			'colorPickerLabel'             => __( '%s color picker', 'easymde' ),
+			'currentThemeVariablesComment' => __( 'Current theme variables', 'easymde' ),
+			'addCustomRulesComment'        => __( 'Add custom rules below', 'easymde' ),
+			'previewHeadingOne'            => __( 'Heading 1 preview sample', 'easymde' ),
+			'previewHeadingTwo'            => __( 'Heading 2 preview sample', 'easymde' ),
+			'previewBodyText'              => __( 'This body text demonstrates the current theme typography, spacing, and layout.', 'easymde' ),
+			'previewParagraph'             => __( 'Theme preview with', 'easymde' ),
+			'previewBoldText'              => __( 'bold text', 'easymde' ),
+			'previewItalicText'            => __( 'italic text', 'easymde' ),
+			'previewDeletedText'           => __( 'deleted text', 'easymde' ),
+			'previewHighlight'             => __( 'highlight', 'easymde' ),
+			'previewInlineCode'            => __( 'inline code', 'easymde' ),
+			'previewCodeComment'           => __( 'Theme preview', 'easymde' ),
+			'previewBlockquote'            => __( 'Blockquote and callout styling preview.', 'easymde' ),
+			'previewUnorderedItem'         => __( 'Unordered list item', 'easymde' ),
+			'previewCompletedTask'         => __( 'Completed task', 'easymde' ),
+			'previewOrderedItem'           => __( 'Ordered list item', 'easymde' ),
+			'previewSecondStep'            => __( 'Second step', 'easymde' ),
+			'previewTableHeader'           => __( 'Header', 'easymde' ),
+			'previewTableContent'          => __( 'Content', 'easymde' ),
+			'previewLink'                  => __( 'Link color preview', 'easymde' ),
+			'previewNoteLabel'             => __( 'NOTE', 'easymde' ),
+			'previewTipLabel'              => __( 'TIP', 'easymde' ),
+			'previewWarningLabel'          => __( 'WARNING', 'easymde' ),
+			'previewCautionLabel'          => __( 'CAUTION', 'easymde' ),
+			'previewInformation'           => __( 'Information', 'easymde' ),
+			'previewSuccess'               => __( 'Success', 'easymde' ),
+			'previewWarning'               => __( 'Warning', 'easymde' ),
+			'previewDanger'                => __( 'Danger', 'easymde' ),
+			'previewDetails'               => __( 'Additional details', 'easymde' ),
+			'previewDetailsContent'        => __( 'Longer supporting content can be previewed here.', 'easymde' ),
+			'previewDefinitionTerm'        => __( 'Definition list', 'easymde' ),
+			'previewDefinitionDescription' => __( 'Used to explain terms or add structured details.', 'easymde' ),
+			'previewSupplementalHeading'   => __( 'Tertiary heading and supporting content', 'easymde' ),
+			'previewSupplementalText'      => __( 'Images, mathematical formulas, and footnotes use the body text system. Example footnote', 'easymde' ),
+			'previewFootnote'              => __( '[1] Footnote and supporting text color sample.', 'easymde' ),
+			/* translators: Separator between inline Custom CSS preview examples. */
+			'previewInlineSeparator'       => _x( ', ', 'inline Custom CSS preview separator', 'easymde' ),
+			/* translators: Conjunction before the keyboard shortcut in the inline Custom CSS preview. */
+			'previewInlineConjunction'     => _x( 'and ', 'inline Custom CSS preview conjunction', 'easymde' ),
+			/* translators: Sentence-ending punctuation in the inline Custom CSS preview. */
+			'previewSentenceEnd'           => _x( '.', 'inline Custom CSS preview sentence end', 'easymde' ),
+		);
+	}
+
 	private function get_strings() {
 		return array(
 			'editorLabel'           => __( 'Markdown source', 'easymde' ),
 			'previewEmpty'          => __( 'Start writing Markdown to preview the article.', 'easymde' ),
-			'previewRendering'      => __( 'Rendering preview...', 'easymde' ),
 			'previewError'          => __( 'Preview failed. Please keep writing; saving is not affected.', 'easymde' ),
 			'insertMedia'           => __( 'Insert Media', 'easymde' ),
 			'markdownToolbar'       => __( 'Markdown toolbar', 'easymde' ),
+			'undo'                  => __( 'Undo', 'easymde' ),
 			'appearance'            => __( 'Appearance', 'easymde' ),
 			'font'                  => __( 'Font', 'easymde' ),
 			'headings'              => __( 'Headings', 'easymde' ),
@@ -625,6 +921,9 @@ final class AdminAssets {
 			'mediaDefaultAlt'       => __( 'image', 'easymde' ),
 			'mediaPickerFailed'     => __( 'The WordPress media library could not be opened.', 'easymde' ),
 			'linkText'              => __( 'link text', 'easymde' ),
+			/* translators: %s: Locale-formatted Markdown character count. */
+			'wordCount'             => __( 'Character count: %s', 'easymde' ),
+			'cssNameDuplicate'      => __( 'A theme with this name already exists. Please choose another name and try again.', 'easymde' ),
 		);
 	}
 

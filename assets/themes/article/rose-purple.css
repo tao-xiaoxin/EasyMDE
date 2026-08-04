@@ -171,23 +171,6 @@
   border-top: 1px solid black;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-rose-purple pre {
-  margin-top: 10px;
-  margin-bottom: 10px;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-rose-purple pre code {
-  display: -webkit-box;
-  font-family: var(--easymde-code-font-family);
-  border-radius: 0px;
-  font-size: 12px;
-  -webkit-overflow-scrolling: touch;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-rose-purple pre code span {
-  line-height: 26px;
-}
-
 .easymde-rendered-content.easymde-markdown-theme-rose-purple p code,
 .easymde-rendered-content.easymde-markdown-theme-rose-purple li code {
   font-size: 14px;
@@ -259,73 +242,6 @@
 .easymde-rendered-content.easymde-markdown-theme-rose-purple table tr th:nth-of-type(n),
 .easymde-rendered-content.easymde-markdown-theme-rose-purple table tr td:nth-of-type(n) {
   min-width:85px;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-rose-purple .code-snippet__fix {
-  word-wrap: break-word !important;
-  font-size: 14px;
-  margin: 10px 0;
-  display: block;
-  color: #333;
-  position: relative;
-  background-color: rgba(0,0,0,0.03);
-  border: 1px solid #f0f0f0;
-  border-radius: 2px;
-  display: flex;
-  line-height: 20px;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-rose-purple .code-snippet__fix pre {
-  margin-bottom: 10px;
-  margin-top: 0px;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-rose-purple .code-snippet__fix .code-snippet__line-index {
-  counter-reset: line;
-  flex-shrink: 0;
-  height: 100%;
-  padding: 1em;
-  list-style-type: none;
-  padding: 16px;
-  margin: 0;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-rose-purple .code-snippet__fix .code-snippet__line-index li {
-  list-style-type: none;
-  text-align: right;
-  line-height: 26px;
-  color: black;
-  margin: 0;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-rose-purple .code-snippet__fix .code-snippet__line-index li::before {
-  min-width: 1.5em;
-  text-align: right;
-  left: -2.5em;
-  counter-increment: line;
-  content: counter(line);
-  display: inline;
-  color: rgba(0,0,0,0.3);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-rose-purple .code-snippet__fix pre {
-  overflow-x: auto;
-  padding: 16px;
-  padding-left: 0;
-  white-space: normal;
-  flex: 1;
-  -webkit-overflow-scrolling: touch;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-rose-purple .code-snippet__fix code {
-  text-align: left;
-  font-size: 14px;
-  display: block;
-  white-space: pre;
-  display: flex;
-  position: relative;
-  font-family: var(--easymde-code-font-family);
-  padding: 0px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple .footnote-word {
@@ -469,7 +385,7 @@
   word-spacing: 0em;
   box-sizing: border-box;
   width: 650px;
-  max-width: none !important;
+  max-width: none;
   padding: 0 10px;
   background-color: rgba(0, 0, 0, 0);
   background-image: linear-gradient(90deg, rgba(50, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0) 6.76%), linear-gradient(360deg, rgba(50, 0, 0, 0.05) 0%, rgba(249, 247, 252, 0) 9.46%);
@@ -479,6 +395,11 @@
   word-break: break-word;
   overflow-wrap: break-word;
   text-align: left;
+}
+
+.easymde-pane-preview .easymde-rendered-content.easymde-markdown-theme-rose-purple {
+  width: 100%;
+  max-width: 650px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-rose-purple p {
@@ -686,11 +607,6 @@
   color: rgb(89, 89, 89);
 }
 
-.easymde-rendered-content.easymde-markdown-theme-rose-purple .code-snippet__fix {
-  background: #f7f7f7;
-  border-radius: 2px;
-}
-
 .easymde-rendered-content.easymde-markdown-theme-rose-purple table {
   display: table;
   width: auto;
@@ -833,4 +749,33 @@
     margin-left: calc((100% - (100vw - 50px)) / 2);
     margin-right: calc((100% - (100vw - 50px)) / 2);
   }
+
+  .easymde-pane-preview .easymde-rendered-content.easymde-markdown-theme-rose-purple {
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+  }
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table > thead,
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-rose-purple table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
 }

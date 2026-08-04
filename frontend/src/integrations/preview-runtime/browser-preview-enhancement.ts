@@ -6,6 +6,7 @@ type SharedEnhancements = Readonly<{
   enhance: (
     surface: HTMLElement,
     config: Readonly<{
+      assetErrors?: Readonly<{ mermaid?: string }>;
       features: PreviewFeatures;
       strings: Readonly<{ renderingFailed: string }>;
     }>
@@ -36,6 +37,7 @@ type StyleLoad = Readonly<{
 
 type ScriptLoad = Readonly<{
   cancel: () => void;
+  ids: Set<string>;
   loaded: () => boolean;
   promise: Promise<void>;
   script: HTMLScriptElement;
@@ -74,6 +76,7 @@ function waitForResource(promise: Promise<void>, signal: AbortSignal): Promise<v
 
 function createResourceLoader(documentRef: Document) {
   const scriptLoads = new Map<string, ScriptLoad>();
+  const scriptLoadsByUrl = new Map<string, ScriptLoad>();
   const styleLoads = new Map<string, StyleLoad>();
   let disposed = false;
 
@@ -98,6 +101,19 @@ function createResourceLoader(documentRef: Document) {
       }
       if (existing.dataset.easymdeLoaded === url) return Promise.resolve();
       return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
+    }
+
+    const cachedByUrl = scriptLoadsByUrl.get(url);
+    if (cachedByUrl?.script.isConnected) {
+      if (cached && cached !== cachedByUrl && !cached.loaded()) {
+        cached.cancel();
+      }
+      cachedByUrl.ids.add(id);
+      scriptLoads.set(id, cachedByUrl);
+      return waitForResource(cachedByUrl.promise, signal);
+    }
+    if (cachedByUrl) {
+      cachedByUrl.cancel();
     }
 
     const script = documentRef.createElement('script');
@@ -125,7 +141,10 @@ function createResourceLoader(documentRef: Document) {
       settled = true;
       cleanup();
       script.remove();
-      if (scriptLoads.get(id) === load) scriptLoads.delete(id);
+      for (const alias of load.ids) {
+        if (scriptLoads.get(alias) === load) scriptLoads.delete(alias);
+      }
+      if (scriptLoadsByUrl.get(url) === load) scriptLoadsByUrl.delete(url);
       rejectLoad(resourceError(code));
     };
     const handleLoad = () => {
@@ -139,12 +158,14 @@ function createResourceLoader(documentRef: Document) {
     const handleError = () => fail('preview-enhancement-resource-load-failed');
     load = {
       cancel: () => fail('preview-enhancement-resource-stale'),
+      ids: new Set([id]),
       loaded: () => loaded,
       promise,
       script,
       url
     };
     scriptLoads.set(id, load);
+    scriptLoadsByUrl.set(url, load);
     script.addEventListener('load', handleLoad);
     script.addEventListener('error', handleError);
     timer = setTimeout(handleError, RESOURCE_LOAD_TIMEOUT_MS);
@@ -273,6 +294,7 @@ function createResourceLoader(documentRef: Document) {
       if (!load.loaded()) load.cancel();
     }
     scriptLoads.clear();
+    scriptLoadsByUrl.clear();
     styleLoads.clear();
   }
 
@@ -308,6 +330,15 @@ export function createBrowserPreviewEnhancementPort(
     ]);
   }
 
+  async function prepareMermaidFallback(codeTheme: string, signal: AbortSignal): Promise<void> {
+    const theme = bootstrap.codeThemes.find(({ id }) => id === codeTheme);
+    if (!theme) throw resourceError('preview-enhancement-code-theme-missing');
+    await Promise.all([
+      loader.loadStylesheet(assets.codeFrameLinkId, assets.codeFrameCssUrl, signal),
+      loader.loadStylesheet(assets.highlightThemeLinkId, theme.cssUrl, signal)
+    ]);
+  }
+
   async function prepareMath(signal: AbortSignal): Promise<void> {
     await Promise.all([
       loader.loadStylesheet(assets.mathCssLinkId, assets.mathCssUrl, signal),
@@ -320,8 +351,12 @@ export function createBrowserPreviewEnhancementPort(
   }
 
   async function prepareMermaid(signal: AbortSignal): Promise<void> {
+    const mermaidScriptUrl = assets.mermaidScriptUrl;
+    if (!mermaidScriptUrl) {
+      throw resourceError('preview-enhancement-mermaid-runtime-unavailable');
+    }
     await loadRuntime(options.runtime.hasMermaid, () =>
-      loader.loadScript('easymde-mermaid-js', assets.mermaidScriptUrl, signal));
+      loader.loadScript('easymde-mermaid-js', mermaidScriptUrl, signal));
     await loadRuntime(options.runtime.hasMermaidRenderer, () =>
       loader.loadScript('easymde-mermaid-renderer-js', assets.mermaidRendererUrl, signal));
   }
@@ -330,19 +365,26 @@ export function createBrowserPreviewEnhancementPort(
     dispose: loader.dispose,
     async enhance(surface, features, isCurrent, context) {
       if (!isCurrent() || context.signal.aborted) return;
+      const mermaidAssetFailure = !!assets.mermaidAssetError && !!features.mermaid;
+      const fallbackFeatures = mermaidAssetFailure
+        ? { ...features, mermaid: false }
+        : features;
       const tasks: Promise<void>[] = [];
       const hasExecutableEnhancement = !!(
-        features.syntaxHighlight
-        || features.math
-        || features.mermaid
+        fallbackFeatures.syntaxHighlight
+        || fallbackFeatures.math
+        || fallbackFeatures.mermaid
+        || mermaidAssetFailure
       );
 
-      if (features.syntaxHighlight) {
+      if (fallbackFeatures.syntaxHighlight) {
         tasks.push(prepareHighlight(context.codeTheme, context.signal));
+      } else if (mermaidAssetFailure) {
+        tasks.push(prepareMermaidFallback(context.codeTheme, context.signal));
       }
-      if (features.math) tasks.push(prepareMath(context.signal));
-      if (features.mermaid) tasks.push(prepareMermaid(context.signal));
-      if (features.toc) {
+      if (fallbackFeatures.math) tasks.push(prepareMath(context.signal));
+      if (fallbackFeatures.mermaid) tasks.push(prepareMermaid(context.signal));
+      if (fallbackFeatures.toc) {
         tasks.push(
           loader.loadStylesheet(assets.tocCssLinkId, assets.tocCssUrl, context.signal)
         );
@@ -356,12 +398,18 @@ export function createBrowserPreviewEnhancementPort(
         throw resourceError('preview-enhancement-runtime-unavailable');
       }
       await enhancements.enhance(surface, {
-        features,
+        ...(mermaidAssetFailure
+          ? { assetErrors: { mermaid: assets.mermaidAssetError } }
+          : {}),
+        features: fallbackFeatures,
         strings: bootstrap.strings
       });
       if (!isCurrent() || context.signal.aborted) return;
       if (surface.querySelector('.easymde-render-error')) {
         throw resourceError('preview-enhancement-render-failed');
+      }
+      if (mermaidAssetFailure) {
+        throw resourceError('preview-enhancement-mermaid-asset-contract-failed');
       }
     }
   };

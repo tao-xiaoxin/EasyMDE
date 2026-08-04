@@ -31,6 +31,19 @@ export const frontendRuntimeAssets = [
     ].map(([source, destination, type]) => ({ source, destination, type }))
   },
   {
+    id: 'inter-variable-font',
+    displayName: 'Inter variable font',
+    packageName: '@fontsource-variable/inter',
+    bundledPaths: 'assets/vendor/fonts/inter-variable/',
+    purpose: 'Local reference-matched font for immersive Custom CSS tabs.',
+    noticeLocation: 'assets/vendor/fonts/inter-variable/LICENSE',
+    managedRoot: 'assets/vendor/fonts/inter-variable',
+    copies: [
+      ['node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2', 'assets/vendor/fonts/inter-variable/inter-latin-wght-normal.woff2', 'file'],
+      ['node_modules/@fontsource-variable/inter/LICENSE', 'assets/vendor/fonts/inter-variable/LICENSE', 'file']
+    ].map(([source, destination, type]) => ({ source, destination, type }))
+  },
+  {
     id: 'jetbrains-mono-font',
     displayName: 'JetBrains Mono font',
     packageName: '@fontsource/jetbrains-mono',
@@ -53,6 +66,7 @@ export const frontendRuntimeAssets = [
     noticeLocation: 'assets/vendor/fonts/lora/LICENSE',
     managedRoot: 'assets/vendor/fonts/lora',
     copies: [
+      ['node_modules/@fontsource/lora/files/lora-latin-400-normal.woff2', 'assets/vendor/fonts/lora/lora-latin-400-normal.woff2', 'file'],
       ['node_modules/@fontsource/lora/files/lora-latin-600-normal.woff2', 'assets/vendor/fonts/lora/lora-latin-600-normal.woff2', 'file'],
       ['node_modules/@fontsource/lora/LICENSE', 'assets/vendor/fonts/lora/LICENSE', 'file']
     ].map(([source, destination, type]) => ({ source, destination, type }))
@@ -108,27 +122,6 @@ export const frontendRuntimeAssets = [
       }
     ]
   },
-  {
-    id: 'mermaid',
-    displayName: 'Mermaid',
-    packageName: 'mermaid',
-    bundledPaths: 'assets/vendor/mermaid/mermaid.min.js',
-    purpose: 'Local diagram rendering script.',
-    noticeLocation: 'assets/vendor/mermaid/LICENSE',
-    managedRoot: 'assets/vendor/mermaid',
-    copies: [
-      {
-        source: 'node_modules/mermaid/dist/mermaid.min.js',
-        destination: 'assets/vendor/mermaid/mermaid.min.js',
-        type: 'file'
-      },
-      {
-        source: 'scripts/vendor-licenses/mermaid-LICENSE',
-        destination: 'assets/vendor/mermaid/LICENSE',
-        type: 'file'
-      }
-    ]
-  }
 ];
 
 function isRepositoryRelativePath(path) {

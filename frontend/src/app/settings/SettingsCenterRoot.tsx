@@ -1,18 +1,14 @@
 import { createElement, useEffect, useMemo, useRef, useState } from '@wordpress/element';
 
-import { ChevronRight, X } from '../../generated/lucide-icons';
+import { CheckCircle2, ChevronRight, X } from '../../generated/lucide-icons';
 import type { SettingsCenterBootstrap, SettingsCenterStringKey } from '../../contracts/bootstrap/settings-center-bootstrap';
 import { AboutSettingsPage } from './AboutSettingsPage';
-import { AiSettingsPage } from './AiSettingsPage';
 import { GeneralSettingsPage } from './GeneralSettingsPage';
-import { ImagesSettingsPage } from './ImagesSettingsPage';
-import { MarkdownSettingsPage } from './MarkdownSettingsPage';
+import { PendingSettingsPage } from './PendingSettingsPage';
 import { ShortcutsSettingsPage } from './ShortcutsSettingsPage';
-import { SyncSettingsPage } from './SyncSettingsPage';
-import { TransferSettingsPage } from './TransferSettingsPage';
-import { AboutIcon, AiSparkIcon, ArticleSyncIcon, GeneralIcon, ImageLibraryIcon, ImportExportIcon, KeyboardIcon, MarkdownIcon, SearchIcon } from './settings-center-icons';
+import { AboutIcon, GeneralIcon, ImageLibraryIcon, ImportExportIcon, KeyboardIcon, MarkdownIcon, SearchIcon } from './settings-center-icons';
 
-type NavId = 'general' | 'shortcuts' | 'images' | 'ai' | 'markdown' | 'sync' | 'transfer' | 'about';
+type NavId = 'general' | 'shortcuts' | 'images' | 'markdown' | 'transfer' | 'about';
 type Icon = typeof GeneralIcon;
 type SearchItem = Readonly<{
   key: string;
@@ -41,9 +37,7 @@ const NAV_ITEMS: ReadonlyArray<Readonly<{
   { id: 'general', label: 'general', description: 'generalDescription', icon: GeneralIcon },
   { id: 'shortcuts', label: 'shortcuts', description: 'shortcutsDescription', icon: KeyboardIcon },
   { id: 'images', label: 'images', description: 'imagesDescription', icon: ImageLibraryIcon },
-  { id: 'ai', label: 'ai', description: 'aiDescription', icon: AiSparkIcon },
   { id: 'markdown', label: 'markdown', description: 'markdownDescription', icon: MarkdownIcon },
-  { id: 'sync', label: 'sync', description: 'syncDescription', icon: ArticleSyncIcon },
   { id: 'transfer', label: 'transfer', title: 'transferPageTitle', description: 'transferDescription', icon: ImportExportIcon },
   { id: 'about', label: 'about', description: 'aboutDescription', icon: AboutIcon }
 ];
@@ -352,37 +346,39 @@ export function SettingsCenterRoot({ bootstrap }: { bootstrap: SettingsCenterBoo
               <section id="settings-section-general" data-settings-section="general"
                 ref={(element) => { sectionRefs.current.general = element; }}
                 className="easymde-settings-center__settings-section">
-                <GeneralSettingsPage embedded query="" searchEmptyIllustrationUrl={bootstrap.assets.searchEmptyIllustrationUrl} strings={strings} />
+                <GeneralSettingsPage
+                  embedded
+                  optionKey={bootstrap.settings.optionKey}
+                  query=""
+                  searchEmptyIllustrationUrl={bootstrap.assets.searchEmptyIllustrationUrl}
+                  settings={bootstrap.settings}
+                  strings={strings}
+                />
               </section>
               <section id="settings-section-shortcuts" data-settings-section="shortcuts"
                 ref={(element) => { sectionRefs.current.shortcuts = element; }}
                 className="easymde-settings-center__settings-section">
-                <ShortcutsSettingsPage strings={strings} />
+                <ShortcutsSettingsPage
+                  commands={bootstrap.commands}
+                  optionKey={bootstrap.settings.optionKey}
+                  settings={bootstrap.settings}
+                  strings={strings}
+                />
               </section>
               <section id="settings-section-images" data-settings-section="images"
                 ref={(element) => { sectionRefs.current.images = element; }}
                 className="easymde-settings-center__settings-section">
-                <ImagesSettingsPage draft={bootstrap.drafts.images} strings={strings} />
-              </section>
-              <section id="settings-section-ai" data-settings-section="ai"
-                ref={(element) => { sectionRefs.current.ai = element; }}
-                className="easymde-settings-center__settings-section">
-                <AiSettingsPage draft={bootstrap.drafts.ai} overlayRoot={overlayRoot} strings={strings} />
+                <PendingSettingsPage description={strings.imagesDescription} strings={strings} title={strings.images} />
               </section>
               <section id="settings-section-markdown" data-settings-section="markdown"
                 ref={(element) => { sectionRefs.current.markdown = element; }}
                 className="easymde-settings-center__settings-section">
-                <MarkdownSettingsPage strings={strings} />
-              </section>
-              <section id="settings-section-sync" data-settings-section="sync"
-                ref={(element) => { sectionRefs.current.sync = element; }}
-                className="easymde-settings-center__settings-section">
-                <SyncSettingsPage overlayRoot={overlayRoot} strings={strings} />
+                <PendingSettingsPage description={strings.markdownDescription} strings={strings} title={strings.markdown} />
               </section>
               <section id="settings-section-transfer" data-settings-section="transfer"
                 ref={(element) => { sectionRefs.current.transfer = element; }}
                 className="easymde-settings-center__settings-section">
-                <TransferSettingsPage overlayRoot={overlayRoot} bootstrap={bootstrap} />
+                <PendingSettingsPage description={strings.transferDescription} strings={strings} title={strings.transferPageTitle} />
               </section>
               <section id="settings-section-about" data-settings-section="about"
                 ref={(element) => { sectionRefs.current.about = element; }}
@@ -394,6 +390,12 @@ export function SettingsCenterRoot({ bootstrap }: { bootstrap: SettingsCenterBoo
         </div>
       </main>
     </div>
+    <footer className="easymde-settings-center__action-bar">
+      <a href={bootstrap.closeUrl} className="easymde-settings-center__cancel-action">{strings.cancel}</a>
+      <button type="submit" className="easymde-settings-center__save-action">
+        <CheckCircle2 size={17} />{strings.saveSettings}
+      </button>
+    </footer>
     <div ref={setOverlayRoot} data-settings-overlay-root="" />
   </div>;
 }

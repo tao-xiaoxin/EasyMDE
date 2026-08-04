@@ -74,7 +74,7 @@ test('root package exposes independent frontend type-check, component-test, and 
   );
   assert.equal(
     packageJson.scripts['frontend:check'],
-    'npm run lint:frontend && npm run typecheck:frontend && npm run test:frontend && npm run build:frontend-contract && npm run check:frontend-production'
+    'npm run icons:check && npm run lint:frontend && npm run typecheck:frontend && npm run test:frontend && npm run build:frontend-contract && npm run check:frontend-production'
   );
   assert.equal(packageJson.devDependencies.vite, '8.1.5');
   assert.equal(packageJson.devDependencies.typescript, '7.0.2');
@@ -363,6 +363,7 @@ test('frontend validator does not treat an XML namespace prefix as a remote URL 
 test('frontend validator rejects cross-platform absolute local paths', () => {
   for (const absolutePath of [
     '/private/tmp/easymde-build/source.tsx',
+    'url(/Users/builder/easymde/source.css)',
     'C:\\Users\\builder\\easymde\\source.tsx'
   ]) {
     const root = copyBuildOutput();

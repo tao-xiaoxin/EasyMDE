@@ -20,7 +20,6 @@ import {
   Pencil,
   RefreshCcw,
   Shield,
-  Sparkles,
   Star,
   X
 } from '../../generated/lucide-icons';
@@ -172,7 +171,6 @@ export function AboutSettingsPage({
     { icon: Pencil, label: strings.aboutMarkdownPreview },
     { icon: Code2, label: strings.aboutCodeHighlighting },
     { icon: ImageLibraryIcon, label: strings.aboutImageUpload },
-    { icon: Sparkles, label: strings.aboutAiAssistance },
     { icon: KeyboardIcon, label: strings.aboutShortcutWorkflow },
     { icon: ImportExportIcon, label: strings.aboutConfigurationMigration }
   ];
@@ -250,7 +248,6 @@ export function AboutSettingsPage({
           strings.aboutTagMarkdown,
           strings.aboutTagLivePreview,
           strings.aboutTagImages,
-          strings.aboutTagAi,
           strings.aboutTagShortcuts
         ].map((tag) => <span key={tag}>{tag}</span>)}
       </div>

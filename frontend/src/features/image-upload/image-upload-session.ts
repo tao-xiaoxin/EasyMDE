@@ -10,6 +10,7 @@ export type ImageUploadSource = 'drop' | 'paste';
 
 export type ImageUploadStatus = Readonly<{
   message: string;
+  operationId: string;
   type: 'error' | 'info' | 'success';
 }>;
 
@@ -17,6 +18,7 @@ type CreateImageUploadSessionOptions = Readonly<{
   document: ImageUploadDocumentPort;
   enabled: boolean;
   maxBytes: number;
+  nextOperationId: () => string;
   onDiagnostic: (code: string) => void;
   onStatus: (status: ImageUploadStatus) => void;
   postId: number;
@@ -115,6 +117,7 @@ export function createImageUploadSession({
   document,
   enabled,
   maxBytes,
+  nextOperationId,
   onDiagnostic,
   onStatus,
   postId,
@@ -129,13 +132,18 @@ export function createImageUploadSession({
     file: File,
     source: ImageUploadSource
   ): Promise<void> => {
+    const operationId = nextOperationId();
+    const reportStatus = (
+      message: string,
+      type: ImageUploadStatus['type']
+    ) => onStatus({ message, operationId, type });
     event.preventDefault();
     const dropTransfer = 'drop' === source ? (event as DragEvent).dataTransfer : null;
     if (dropTransfer) {
       dropTransfer.dropEffect = 'copy';
     }
     if (file.size > maxBytes) {
-      onStatus({ message: statusMessage(strings, source, 'TooLarge'), type: 'error' });
+      reportStatus(statusMessage(strings, source, 'TooLarge'), 'error');
       return;
     }
 
@@ -144,11 +152,11 @@ export function createImageUploadSession({
       initial = documentSnapshot(document);
     } catch {
       onDiagnostic('image-upload-document-snapshot-invalid');
-      onStatus({ message: statusMessage(strings, source, 'Failed'), type: 'error' });
+      reportStatus(statusMessage(strings, source, 'Failed'), 'error');
       return;
     }
 
-    onStatus({ message: statusMessage(strings, source, 'Uploading'), type: 'info' });
+    reportStatus(statusMessage(strings, source, 'Uploading'), 'info');
     try {
       const result = await upload.upload({
         altText: defaultAltFromFile(file, strings.defaultAlt),
@@ -160,7 +168,7 @@ export function createImageUploadSession({
         return;
       }
       if ('failed' === result.status) {
-        onStatus({ message: statusMessage(strings, source, 'Failed'), type: 'error' });
+        reportStatus(statusMessage(strings, source, 'Failed'), 'error');
         return;
       }
 
@@ -173,11 +181,11 @@ export function createImageUploadSession({
         value: current.value.slice(0, selection.start) + markdown + current.value.slice(selection.end)
       });
       document.focus();
-      onStatus({ message: statusMessage(strings, source, 'Uploaded'), type: 'success' });
+      reportStatus(statusMessage(strings, source, 'Uploaded'), 'success');
     } catch {
       if (active) {
         onDiagnostic('image-upload-operation-failed');
-        onStatus({ message: statusMessage(strings, source, 'Failed'), type: 'error' });
+        reportStatus(statusMessage(strings, source, 'Failed'), 'error');
       }
     }
   };

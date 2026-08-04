@@ -8,7 +8,7 @@ const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
 const productionPaths = [
   'assets/css/admin/editor.css',
-  'assets/js/frontend/code-highlight.js',
+  'frontend/src/integrations/preview-runtime/frontend-enhancement-runtime.ts',
   'frontend/src/app/editor/EditorRoot.tsx',
   'src/Admin/AdminAssets.php',
   'src/Content/MarkdownFeatureDetector.php',

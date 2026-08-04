@@ -3,6 +3,12 @@ export type AppearanceOption = Readonly<{
   fontDefaults?: FontDefaults;
   id: string;
   label: string;
+  usesThemeFontFamily?: boolean;
+}>;
+
+export type ArticleThemeOption = AppearanceOption & Readonly<{
+  defaultCodeTheme: string;
+  swatch?: string;
 }>;
 
 export type FontDefaults = Readonly<{
@@ -14,7 +20,8 @@ export type FontDefaults = Readonly<{
 
 export type CustomCssItem = Readonly<{
   id: string;
-  name: string;
+  articleThemeName: string;
+  codeThemeName: string;
   css: string;
   scopedCss: string;
 }>;
@@ -35,18 +42,152 @@ export type AppearanceStrings = Readonly<{
   articleTheme: string;
   codeTheme: string;
   customCss: string;
+  customCssDialog: CustomCssDialogStrings;
   customCssTheme: string;
   cssName: string;
   saveCss: string;
   cssSaved: string;
   cssSaveFailed: string;
+  cssNameDuplicate: string;
   namedCustomCss: string;
 }>;
 
+const CUSTOM_CSS_DIALOG_STRING_KEYS = [
+  'description',
+  'close',
+  'closeTitle',
+  'articleThemeName',
+  'codeThemeName',
+  'articleNamePlaceholder',
+  'codeNamePlaceholder',
+  'unsavedChanges',
+  'invalidColor',
+  'missingName',
+  'previewTitle',
+  'livePreview',
+  'previewHelp',
+  'previewInvalid',
+  'previewUnavailable',
+  'themeVariables',
+  'themeVariableCategories',
+  'themeVariablePanelLabel',
+  'customCssCodeTitle',
+  'reset',
+  'expandCode',
+  'shrinkCode',
+  'backToVariables',
+  'saveTarget',
+  'articleCss',
+  'codeCss',
+  'articleCssHelp',
+  'codeCssHelp',
+  'foundationCategory',
+  'blocksCategory',
+  'codeCategory',
+  'alertsCategory',
+  'customCssCode',
+  'customCssCodeHelp',
+  'backToThemeVariables',
+  'cancel',
+  'resetAll',
+  'applyCustomTheme',
+  'defaultArticleName',
+  'defaultCodeName',
+  'colorPickerLabel',
+  'currentThemeVariablesComment',
+  'addCustomRulesComment',
+  'previewHeadingOne',
+  'previewHeadingTwo',
+  'previewBodyText',
+  'previewParagraph',
+  'previewBoldText',
+  'previewItalicText',
+  'previewDeletedText',
+  'previewHighlight',
+  'previewInlineCode',
+  'previewCodeComment',
+  'previewBlockquote',
+  'previewUnorderedItem',
+  'previewCompletedTask',
+  'previewOrderedItem',
+  'previewSecondStep',
+  'previewTableHeader',
+  'previewTableContent',
+  'previewLink',
+  'previewNoteLabel',
+  'previewTipLabel',
+  'previewWarningLabel',
+  'previewCautionLabel',
+  'previewInformation',
+  'previewSuccess',
+  'previewWarning',
+  'previewDanger',
+  'previewDetails',
+  'previewDetailsContent',
+  'previewDefinitionTerm',
+  'previewDefinitionDescription',
+  'previewSupplementalHeading',
+  'previewSupplementalText',
+  'previewFootnote',
+  'previewInlineSeparator',
+  'previewInlineConjunction',
+  'previewSentenceEnd'
+] as const;
+
+export type CustomCssDialogStringKey =
+  typeof CUSTOM_CSS_DIALOG_STRING_KEYS[number];
+
+export type CustomCssDialogStrings = Readonly<
+  Record<CustomCssDialogStringKey, string>
+>;
+
+export type CustomCssVariable = Readonly<{
+  category: 'foundation' | 'blocks' | 'code' | 'alerts';
+  description: string;
+  id: string;
+  label: string;
+}>;
+
+export const CUSTOM_CSS_VARIABLE_IDS = [
+  'primaryColor',
+  'headingColor',
+  'textColor',
+  'mutedColor',
+  'linkColor',
+  'backgroundColor',
+  'borderColor',
+  'emphasisBackground',
+  'selectionBackground',
+  'quoteColor',
+  'quoteBackground',
+  'tableHeaderBackground',
+  'tableStripeBackground',
+  'inlineCodeColor',
+  'inlineCodeBackground',
+  'codeBlockTextColor',
+  'codeBlockBackground',
+  'codeKeywordColor',
+  'codeStringColor',
+  'codeCommentColor',
+  'infoColor',
+  'infoBackground',
+  'successColor',
+  'successBackground',
+  'warningColor',
+  'warningBackground',
+  'dangerColor',
+  'dangerBackground'
+] as const;
+
+export type CustomCssVariableId = typeof CUSTOM_CSS_VARIABLE_IDS[number];
+
 export type AppearanceBootstrap = Readonly<{
-  articleThemes: ReadonlyArray<AppearanceOption>;
+  articleThemes: ReadonlyArray<ArticleThemeOption>;
+  canManageCustomCss: boolean;
+  codeThemeExplicit: boolean;
   codeThemes: ReadonlyArray<AppearanceOption>;
   customCss: ReadonlyArray<CustomCssItem>;
+  customCssVariables: ReadonlyArray<CustomCssVariable>;
   state: AppearanceState;
   strings: AppearanceStrings;
 }>;
@@ -81,7 +222,20 @@ function requiredString(value: unknown, code: string, maxLength = 512): string {
   return value;
 }
 
-function requiredUnboundedString(value: unknown, code: string): string {
+function optionalHexColor(value: unknown, code: string): string | undefined {
+  if (undefined === value) {
+    return undefined;
+  }
+
+  const color = requiredString(value, code, 7);
+  if (!/^#[0-9a-f]{6}$/i.test(color)) {
+    throw new AppearanceBootstrapError(code);
+  }
+
+  return color;
+}
+
+function customCssThemeName(value: unknown, code: string): string {
   if ('string' !== typeof value || '' === value.trim()) {
     throw new AppearanceBootstrapError(code);
   }
@@ -124,12 +278,43 @@ function parseOptions(value: unknown): ReadonlyArray<AppearanceOption> {
       serifFont: identifier(defaults.serifFont, 'invalid-appearance-font-defaults'),
       windowsFont: identifier(defaults.windowsFont, 'invalid-appearance-font-defaults')
     } : undefined;
+    if (undefined !== option.usesThemeFontFamily && true !== option.usesThemeFontFamily) {
+      throw new AppearanceBootstrapError('invalid-appearance-theme-font-family');
+    }
+    const usesThemeFontFamily = true === option.usesThemeFontFamily;
 
     return {
       id,
       label: requiredString(option.label, 'invalid-appearance-option-label'),
       ...(cssUrl ? { cssUrl } : {}),
-      ...(fontDefaults ? { fontDefaults } : {})
+      ...(fontDefaults ? { fontDefaults } : {}),
+      ...(usesThemeFontFamily ? { usesThemeFontFamily: true } : {})
+    };
+  });
+}
+
+function parseArticleOptions(
+  value: unknown,
+  codeThemes: ReadonlyArray<AppearanceOption>
+): ReadonlyArray<ArticleThemeOption> {
+  const options = parseOptions(value);
+
+  return options.map((option, index) => {
+    const source = objectValue((value as ReadonlyArray<unknown>)[index], 'invalid-appearance-option');
+    const defaultCodeTheme = undefined === source.defaultCodeTheme
+      ? 'atom-one-dark'
+      : identifier(source.defaultCodeTheme, 'invalid-associated-code-theme');
+
+    if (!codeThemes.some(({ id }) => id === defaultCodeTheme)) {
+      throw new AppearanceBootstrapError('invalid-associated-code-theme');
+    }
+
+    const swatch = optionalHexColor(source.swatch, 'invalid-article-theme-swatch');
+
+    return {
+      ...option,
+      defaultCodeTheme,
+      ...(swatch ? { swatch } : {})
     };
   });
 }
@@ -156,7 +341,14 @@ function parseCustomCss(value: unknown): ReadonlyArray<CustomCssItem> {
 
     return {
       id,
-      name: requiredUnboundedString(item.name, 'invalid-custom-css-name'),
+      articleThemeName: customCssThemeName(
+        item.articleThemeName,
+        'invalid-custom-css-article-theme-name'
+      ),
+      codeThemeName: customCssThemeName(
+        item.codeThemeName,
+        'invalid-custom-css-code-theme-name'
+      ),
       css: item.css,
       scopedCss: item.scopedCss
     };
@@ -194,7 +386,10 @@ function parseState(
 
 function parseStrings(value: unknown): AppearanceStrings {
   const strings = objectValue(value, 'invalid-appearance-strings');
-  const requiredKeys: ReadonlyArray<keyof AppearanceStrings> = [
+  const requiredKeys: ReadonlyArray<Exclude<
+    keyof AppearanceStrings,
+    'customCssDialog'
+  >> = [
     'appearance',
     'articleTheme',
     'codeTheme',
@@ -204,27 +399,99 @@ function parseStrings(value: unknown): AppearanceStrings {
     'saveCss',
     'cssSaved',
     'cssSaveFailed',
+    'cssNameDuplicate',
     'namedCustomCss'
   ];
-  const result = {} as Record<keyof AppearanceStrings, string>;
+  const result = {} as Record<
+    Exclude<keyof AppearanceStrings, 'customCssDialog'>,
+    string
+  >;
 
   for (const key of requiredKeys) {
     result[key] = requiredString(strings[key], 'invalid-appearance-string');
   }
 
-  return result;
+  const dialog = objectValue(
+    strings.customCssDialog,
+    'invalid-custom-css-dialog-strings'
+  );
+  const customCssDialog = {} as Record<CustomCssDialogStringKey, string>;
+  for (const key of CUSTOM_CSS_DIALOG_STRING_KEYS) {
+    customCssDialog[key] = requiredString(
+      dialog[key],
+      'invalid-custom-css-dialog-string'
+    );
+  }
+
+  return { ...result, customCssDialog };
+}
+
+function parseCustomCssVariables(value: unknown): ReadonlyArray<CustomCssVariable> {
+  if (!Array.isArray(value) || 0 === value.length) {
+    throw new AppearanceBootstrapError('invalid-custom-css-variables');
+  }
+
+  const ids = new Set<string>();
+  const variables = value.map((entry) => {
+    const variable = objectValue(entry, 'invalid-custom-css-variable');
+    const id = requiredString(
+      variable.id,
+      'invalid-custom-css-variable-id',
+      64
+    );
+    if (!CUSTOM_CSS_VARIABLE_IDS.includes(id as CustomCssVariableId)) {
+      throw new AppearanceBootstrapError('invalid-custom-css-variable-id');
+    }
+    if (ids.has(id)) {
+      throw new AppearanceBootstrapError('duplicate-custom-css-variable-id');
+    }
+    ids.add(id);
+    const category = requiredString(
+      variable.category,
+      'invalid-custom-css-variable-category'
+    );
+    if (!['foundation', 'blocks', 'code', 'alerts'].includes(category)) {
+      throw new AppearanceBootstrapError('invalid-custom-css-variable-category');
+    }
+
+    return {
+      id,
+      category: category as CustomCssVariable['category'],
+      label: requiredString(
+        variable.label,
+        'invalid-custom-css-variable-label'
+      ),
+      description: requiredString(
+        variable.description,
+        'invalid-custom-css-variable-description'
+      )
+    };
+  });
+  if (ids.size !== CUSTOM_CSS_VARIABLE_IDS.length) {
+    throw new AppearanceBootstrapError('invalid-custom-css-variables');
+  }
+  return variables;
 }
 
 export function parseAppearanceBootstrap(value: unknown): AppearanceBootstrap {
   const bootstrap = objectValue(value, 'invalid-appearance-bootstrap');
-  const articleThemes = parseOptions(bootstrap.articleThemes);
   const codeThemes = parseOptions(bootstrap.codeThemes);
+  const articleThemes = parseArticleOptions(bootstrap.articleThemes, codeThemes);
   const customCss = parseCustomCss(bootstrap.customCss);
+  if ('boolean' !== typeof bootstrap.canManageCustomCss) {
+    throw new AppearanceBootstrapError('invalid-custom-css-capability');
+  }
+  if ('boolean' !== typeof bootstrap.codeThemeExplicit) {
+    throw new AppearanceBootstrapError('invalid-code-theme-explicit-state');
+  }
 
   return {
     articleThemes,
+    canManageCustomCss: bootstrap.canManageCustomCss,
+    codeThemeExplicit: bootstrap.codeThemeExplicit,
     codeThemes,
     customCss,
+    customCssVariables: parseCustomCssVariables(bootstrap.customCssVariables),
     state: parseState(bootstrap.state, articleThemes, codeThemes),
     strings: parseStrings(bootstrap.strings)
   };

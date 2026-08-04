@@ -34,6 +34,15 @@ const excludedReleaseSegments = new Set([
   'test',
   'tests'
 ]);
+const javaScriptTranslationCatalogRequirements = [
+  {
+    path: 'languages/easymde-zh_CN-easymde-admin-editor-toolbar.json',
+    type: 'file'
+  }
+];
+const managedJavaScriptTranslationCatalogs = new Set(
+  javaScriptTranslationCatalogRequirements.map(({ path }) => path)
+);
 const excludedReleaseFiles = new Set([
   '.DS_Store',
   '.editorconfig',
@@ -65,10 +74,13 @@ const baseRequirements = [
   { path: 'languages/easymde.pot', type: 'file' },
   { path: 'languages/easymde-zh_CN.po', type: 'file' },
   { path: 'languages/easymde-zh_CN.mo', type: 'file' },
-  { path: 'languages/easymde-zh_CN-easymde-admin-editor-toolbar.json', type: 'file' }
+  ...javaScriptTranslationCatalogRequirements
 ];
 const productionFrontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const codeCopyFrontendEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
+const frontendEnhancementsEntry = 'frontend/src/entrypoints/frontend-enhancements.ts';
+const frontendBootstrapEntry = 'frontend/src/entrypoints/frontend-bootstrap.ts';
+const frontendMermaidEntry = 'frontend/src/entrypoints/frontend-mermaid-runtime.ts';
 const settingsFrontendEntry = 'frontend/src/entrypoints/settings-center.tsx';
 const productionFrontendBuilds = [
   {
@@ -86,6 +98,27 @@ const productionFrontendBuilds = [
     handle: 'easymde-code-copy'
   },
   {
+    buildRoot: 'assets/build/frontend-enhancements',
+    dependencies: [],
+    entry: frontendEnhancementsEntry,
+    filePattern: /^assets\/frontend-enhancements-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-enhancements'
+  },
+  {
+    buildRoot: 'assets/build/frontend-bootstrap',
+    dependencies: [],
+    entry: frontendBootstrapEntry,
+    filePattern: /^assets\/frontend-bootstrap-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-frontend'
+  },
+  {
+    buildRoot: 'assets/build/frontend-mermaid',
+    dependencies: [],
+    entry: frontendMermaidEntry,
+    filePattern: /^assets\/frontend-mermaid-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-mermaid'
+  },
+  {
     buildRoot: 'assets/build/settings-center',
     dependencies: ['wp-element'],
     entry: settingsFrontendEntry,
@@ -98,11 +131,9 @@ const runtimeSupportAssetPaths = [
   'assets/images/cupid-busy-h2-prefix.png',
   'assets/images/cupid-busy-heart.png',
   'assets/images/easymde-editor-icon.png',
-  'assets/images/fullstack-blue-code-window.svg',
   'assets/images/fullstack-blue-h2.png',
   'assets/images/fullstack-blue-h3.png',
-  'assets/images/fullstack-blue-h4.png',
-  'assets/images/tech-blue-code-window.svg'
+  'assets/images/fullstack-blue-h4.png'
 ];
 
 export const packagePaths = [
@@ -152,6 +183,32 @@ function walkFiles(dir, callback) {
     if (stat.isFile()) {
       callback(child);
     }
+  }
+}
+
+function assertManagedJavaScriptTranslationCatalogs(root) {
+  const languagesRoot = fromRoot(root, 'languages');
+  if (!existsSync(languagesRoot)) return;
+  const unexpectedPaths = [];
+
+  walkFiles(languagesRoot, (file) => {
+    const path = relative(root, file).split(/[\\/]+/).join('/');
+    if (
+      path.endsWith('.json')
+      && !managedJavaScriptTranslationCatalogs.has(path)
+    ) {
+      unexpectedPaths.push(path);
+    }
+  });
+
+  if (unexpectedPaths.length) {
+    throw new Error(
+      [
+        'Release build found unexpected JavaScript translation catalogs:',
+        ...unexpectedPaths.sort().map((path) => `- ${path}`),
+        'Remove stale catalogs or register the current catalog as a managed release asset.'
+      ].join('\n')
+    );
   }
 }
 
@@ -497,6 +554,7 @@ function productionFrontendRequirements(root) {
 }
 
 export function collectReleaseRequirements(root = defaultRoot) {
+  assertManagedJavaScriptTranslationCatalogs(root);
   return uniqueRequirements([
     ...packagePaths.map((path) => ({
       path,

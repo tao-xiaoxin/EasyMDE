@@ -63,8 +63,10 @@ import type { RevisionPort } from '../../contracts/ports/revision-port';
 import type { ScrollSyncPort } from '../../contracts/ports/scroll-sync-port';
 import type { ToolbarShortcutsPort } from '../../contracts/ports/toolbar-shortcuts-port';
 import type { WechatClipboardPort } from '../../contracts/ports/wechat-clipboard-port';
+import { buildFontStack } from '../../domain/font-stack';
 import {
   AppearanceControls,
+  type AppearanceNotification,
   type AppearanceControlsSession
 } from '../../features/appearance/ui/AppearanceControls';
 import {
@@ -75,6 +77,10 @@ import {
   FontControls,
   type FontControlsSession
 } from '../../features/font-controls/ui/FontControls';
+import {
+  OrdinaryEditorSettings,
+  type OrdinaryEditorSettingsSession
+} from '../../features/editor-settings/ui/OrdinaryEditorSettings';
 import {
   createImageUploadSession,
   type ImageUploadStatus
@@ -100,7 +106,10 @@ import {
   type EditorToolbarSession,
   type ToolbarPlatform
 } from '../../features/toolbar/ui/EditorToolbar';
-import { createWechatExportSession } from '../../features/wechat-export/wechat-export-session';
+import {
+  createWechatExportSession,
+  type WechatExportStatus
+} from '../../features/wechat-export/wechat-export-session';
 import {
   ImmersiveEditor,
   ImmersiveToggleIcon
@@ -113,13 +122,18 @@ import {
 } from '../../features/immersive-editor/ui/ImmersiveVisualEditor';
 import type { ImmersiveViewMode } from '../../features/immersive-editor/immersive-editor';
 import { openFeaturedImagePicker } from '../../features/immersive-editor/open-featured-image-picker';
+import {
+  EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS,
+  EditorMessageAlert
+} from '../../shared/ui/EditorMessageAlert';
+import type { EditorMessageAlertType } from '../../shared/ui/EditorMessageAlert';
 
-type EditorStatus = Readonly<
-  ImageUploadStatus & {
-    owner: 'editor' | 'local-draft';
-    surface: 'immersive' | 'ordinary';
-  }
->;
+type EditorStatus = Readonly<{
+  id: string;
+  message: string;
+  owner: 'editor' | 'local-draft';
+  type: EditorMessageAlertType;
+}>;
 
 export type EditorRootProps = Readonly<{
   appearance: AppearanceBootstrap;
@@ -184,7 +198,7 @@ type ActiveToolbarProps = Readonly<{
   executeExternalCommand: EditorRootProps['executeExternalCommand'];
   platform: ToolbarPlatform;
   prepareToolbarShortcuts: EditorRootProps['prepareToolbarShortcuts'];
-  onPopoverOpen: () => void;
+  onPopoverOpen: (focusTarget?: HTMLElement) => void;
   onReady: (session: EditorToolbarSession) => void;
   session: EditorDocumentSession;
   toolbar: ToolbarBootstrap;
@@ -202,6 +216,7 @@ const WECHAT_ICON_PATHS = [
   'M17,10.4L17,10.4C17,10.4,17,10.4,17,10.4c0.4-0.3,0.7-0.5,1.1-0.8c0,0,0,0,0.1,0c0.4-0.2,0.8-0.4,1.1-0.7 c0,0,0.1,0,0.1-0.1c0.8-0.4,1.6-0.7,2.4-1c0.1,0,0.1,0,0.2-0.1c0.4-0.1,0.8-0.3,1.2-0.4c0,0,0.1,0,0.1,0c0.4-0.1,0.8-0.2,1.2-0.2 c0.1,0,0.1,0,0.2,0C25.3,7,25.7,7,26.1,7c0.1,0,0.2,0,0.3,0c0.4,0,0.9-0.1,1.3-0.1c0.5,0,1,0,1.5,0.1c0.1,0,0.1,0,0.2,0 c0.5,0,0.9,0.1,1.4,0.2c0.1,0,0.2,0,0.2,0c0.5,0.1,0.9,0.2,1.3,0.3c0.1,0,0.1,0,0.2,0.1C33,7.7,33.5,7.8,33.9,8 c-0.2-0.4-0.4-0.7-0.4-0.7C30.6,2.7,25.8,0,20.6,0c-3.1,0-7.9,1.1-11.5,5.4c-2.4,2.9-3.2,6.3-2.7,9.7c0.3,2.3,1.6,5.4,3.5,7.3 C10.6,17.5,13.2,13.2,17,10.4z',
   'M20.6,30.9c-1.3,0-2.6-0.2-3.8-0.4c-0.1,0-0.3,0-0.5,0c-0.4,0-0.7,0.1-1,0.3l-4,2.6 c-0.1,0.1-0.2,0.1-0.4,0.1c-0.3,0-0.6-0.3-0.7-0.6c0-0.2,0-0.3,0.1-0.5c0-0.1,0.4-2,0.7-3.2c0-0.1,0.1-0.3,0-0.4 c0-0.4-0.2-0.8-0.6-1c-4.3-2.9-7.2-7.5-7.8-12.2c-1.1,1.7-1.6,3-2.2,5c-2.1,7.3,2.5,16,9.9,18.4c8.6,2.8,16.7-0.3,19.5-7.6 c0.3-0.9,0.7-2.4,0.8-3.6C27.7,29.9,24.6,30.9,20.6,30.9z'
 ] as const;
+const WECHAT_PREPARATION_DEBOUNCE_MS = 180;
 
 function WechatIcon() {
   return (
@@ -273,6 +288,7 @@ function ActiveToolbar({
   toolbar,
   variant = 'default'
 }: ActiveToolbarProps) {
+  const [canUndo, setCanUndo] = useState(() => session.document.canUndo());
   const commandSessionRef = useRef<ReturnType<
     typeof createToolbarCommandSession
   > | null>(null);
@@ -326,13 +342,22 @@ function ActiveToolbar({
   }, [executeCommand, editorRoot, prepareToolbarShortcuts]);
 
   useEffect(() => () => commandSession.dispose(), [commandSession]);
+  useEffect(
+    () =>
+      session.document.subscribe(() => {
+        setCanUndo(session.document.canUndo());
+      }),
+    [session]
+  );
   return (
     <EditorToolbar
       bootstrap={toolbar}
+      canUndo={canUndo}
       platform={platform}
       executeCommand={executeCommand}
       onPopoverOpen={onPopoverOpen}
       onReady={onReady}
+      undo={session.document.undo}
       variant={variant}
     />
   );
@@ -389,53 +414,31 @@ function mediaPickerFailureCode(error: unknown): string {
     : 'media-picker-operation-failed';
 }
 
-function fontStack(
-  bootstrap: FontControlsBootstrap,
-  state: FontControlsBootstrap['state']
-): string {
-  const selections = [
-    [bootstrap.options.customFonts, state.customFont],
-    [bootstrap.options.windowsFonts, state.windowsFont],
-    [bootstrap.options.appleFonts, state.appleFont],
-    [bootstrap.options.serifOptions, state.serifFont]
-  ] as const;
-  const seen = new Set<string>();
-  const parts: string[] = [];
-  for (const [options, selected] of selections) {
-    const family = options.find(({ id }) => id === selected)?.fontFamily ?? '';
-    for (const part of family
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean)) {
-      const key = part.toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        parts.push(part);
-      }
-    }
-  }
-  return parts.join(', ');
-}
-
 export function EditorRoot(props: EditorRootProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const immersiveToggleRef = useRef<HTMLButtonElement>(null);
   const restoreImmersiveFocusRef = useRef(false);
   const appearanceSessionRef = useRef<AppearanceControlsSession | null>(null);
   const fontControlsSessionRef = useRef<FontControlsSession | null>(null);
+  const ordinarySettingsSessionRef =
+    useRef<OrdinaryEditorSettingsSession | null>(null);
   const toolbarSessionRef = useRef<EditorToolbarSession | null>(null);
   const previewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
   const visualEditorRuntimeRef =
     useRef<ImmersiveVisualEditorRuntime | null>(null);
   const scheduledPreviewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
+  const scheduledWechatPreparationRef = useRef<(() => void) | null>(null);
   const previewRevisionRef = useRef(0);
   const previewAppearanceRef = useRef(props.appearance.state);
+  const codeThemeExplicitRef = useRef(props.appearance.codeThemeExplicit);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
   const featuredImageOperationRef = useRef<Promise<NativeFeaturedImage | null> | null>(null);
+  const imageUploadOperationSequenceRef = useRef(0);
   const rootActiveRef = useRef(true);
   const initialSubmissionStateRef = useRef({
     ...props.appearance.state,
+    codeThemeExplicit: props.appearance.codeThemeExplicit,
     ...props.fonts.state
   });
   const submissionStateRef = useRef(initialSubmissionStateRef.current);
@@ -447,7 +450,21 @@ export function EditorRoot(props: EditorRootProps) {
     );
   const [draftCandidate, setDraftCandidate] = useState(false);
   const [draftUnreadable, setDraftUnreadable] = useState(false);
-  const [editorStatus, setEditorStatus] = useState<EditorStatus | null>(null);
+  const [editorStatusState, setEditorStatusState] = useState<{
+    focused: boolean;
+    status: EditorStatus | null;
+  }>({ focused: false, status: null });
+  const editorStatus = editorStatusState.status;
+  const editorStatusFocused = editorStatusState.focused;
+  const editorStatusTimerRef = useRef<{
+    deadline: number | null;
+    remaining: number;
+    status: EditorStatus | null;
+  }>({
+    deadline: null,
+    remaining: EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS,
+    status: null
+  });
   const [previewRuntimeGeneration, setPreviewRuntimeGeneration] = useState(0);
   const [previewRefreshRevision, setPreviewRefreshRevision] = useState(0);
   const [previewSurfaceStatus, setPreviewSurfaceStatus] =
@@ -462,16 +479,30 @@ export function EditorRoot(props: EditorRootProps) {
   const visualPreviewEditingRef = useRef(visualPreviewEditing);
   visualPreviewEditingRef.current = visualPreviewEditing;
   const [visualPreviewChanged, setVisualPreviewChanged] = useState(false);
-  const [appearanceState, setAppearanceState] = useState(
-    props.appearance.state
+  const [appearanceSnapshot, setAppearanceSnapshot] = useState(() => ({
+    customCss: props.appearance.customCss,
+    state: props.appearance.state
+  }));
+  const appearanceState = appearanceSnapshot.state;
+  const [codeThemeExplicit, setCodeThemeExplicit] = useState(
+    props.appearance.codeThemeExplicit
+  );
+  const currentAppearance = useMemo<AppearanceBootstrap>(
+    () => ({
+      ...props.appearance,
+      ...appearanceSnapshot,
+      codeThemeExplicit
+    }),
+    [appearanceSnapshot, codeThemeExplicit, props.appearance]
   );
   const [fontState, setFontState] = useState(props.fonts.state);
+  const currentFonts = useMemo<FontControlsBootstrap>(
+    () => ({ ...props.fonts, state: fontState }),
+    [fontState, props.fonts]
+  );
   const [immersive, setImmersive] = useState(false);
   const immersiveRef = useRef(immersive);
   immersiveRef.current = immersive;
-  const wechatStatusSurfaceOverrideRef = useRef<
-    EditorStatus['surface'] | null
-  >(null);
   const [immersiveMode, setImmersiveMode] =
     useState<ImmersiveViewMode>(() =>
       'loaded' === immersivePreferences.status &&
@@ -481,6 +512,7 @@ export function EditorRoot(props: EditorRootProps) {
     );
   const immersiveModeRef = useRef(immersiveMode);
   immersiveModeRef.current = immersiveMode;
+  const previousWechatLayoutRef = useRef({ immersive, mode: immersiveMode });
   const [localDraftsEnabled, setLocalDraftsEnabled] = useState(() =>
     'loaded' === immersivePreferences.status
       ? immersivePreferences.preferences.autoSave
@@ -500,51 +532,112 @@ export function EditorRoot(props: EditorRootProps) {
   }, [immersivePreferences, props.onFailure]);
   const [cursorPosition, setCursorPosition] = useState({ column: 1, line: 1 });
   const sessionSnapshot = useEditorSession(props.sessionPort);
-  const setOwnedEditorStatus = useCallback(
-    (status: ImageUploadStatus) =>
-      setEditorStatus({
-        ...status,
-        owner: 'editor',
-        surface: immersiveRef.current ? 'immersive' : 'ordinary'
+  const publishEditorStatus = useCallback(
+    (nextStatus: EditorStatus) =>
+      setEditorStatusState((currentState) => {
+        const next =
+          'error' === currentState.status?.type &&
+          currentState.status.id !== nextStatus.id &&
+          'error' !== nextStatus.type
+            ? currentState.status
+            : nextStatus;
+        return next === currentState.status
+          ? currentState
+          : { ...currentState, status: next };
       }),
+    []
+  );
+  const setImageUploadStatus = useCallback(
+    (status: ImageUploadStatus) => {
+      publishEditorStatus({
+        ...status,
+        id: status.operationId,
+        owner: 'editor'
+      });
+    },
+    [publishEditorStatus]
+  );
+  const nextImageUploadOperationId = useCallback(
+    () => `image-upload-${++imageUploadOperationSequenceRef.current}`,
     []
   );
   const setWechatStatus = useCallback(
-    (status: ImageUploadStatus) => {
-      const requestedSurface =
-        wechatStatusSurfaceOverrideRef.current ??
-        (immersiveRef.current ? 'immersive' : 'ordinary');
-      setEditorStatus({
+    (status: WechatExportStatus) => {
+      publishEditorStatus({
         ...status,
-        owner: 'editor',
-        surface:
-          'immersive' === requestedSurface &&
-          !immersiveRef.current &&
-          'error' === status.type
-            ? 'ordinary'
-            : requestedSurface
+        id: 'wechat-export',
+        owner: 'editor'
       });
+    },
+    [publishEditorStatus]
+  );
+  const setLocalDraftStatus = useCallback(
+    (status: LocalDraftSessionStatus) => {
+      if (immersiveRef.current && 'saved' === status.code) return;
+      publishEditorStatus({
+        ...status,
+        id: 'local-draft',
+        owner: 'local-draft'
+      });
+    },
+    [publishEditorStatus]
+  );
+  useEffect(() => {
+    const timerState = editorStatusTimerRef.current;
+    if (!editorStatus) {
+      timerState.deadline = null;
+      timerState.remaining = EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS;
+      timerState.status = null;
+      return undefined;
+    }
+    if (timerState.status !== editorStatus) {
+      timerState.deadline = null;
+      timerState.remaining = EDITOR_MESSAGE_ALERT_AUTO_DISMISS_MS;
+      timerState.status = editorStatus;
+    }
+    if (editorStatusFocused) return undefined;
+
+    const scheduledStatus = editorStatus;
+    const delay = timerState.remaining;
+    timerState.deadline = props.immersiveEnvironment.now() + delay;
+    const cancel = props.immersiveEnvironment.schedule(() => {
+      timerState.deadline = null;
+      timerState.remaining = 0;
+      setEditorStatusState((currentState) =>
+        currentState.status === scheduledStatus
+          ? { focused: false, status: null }
+          : currentState
+      );
+    }, delay);
+    return () => {
+      cancel();
+      if (
+        timerState.status === scheduledStatus &&
+        null !== timerState.deadline
+      ) {
+        timerState.remaining = Math.max(
+          0,
+          timerState.deadline - props.immersiveEnvironment.now()
+        );
+        timerState.deadline = null;
+      }
+    };
+  }, [editorStatus, editorStatusFocused, props.immersiveEnvironment]);
+  const setAppearanceNotification = useCallback(
+    (notification: AppearanceNotification) =>
+      publishEditorStatus({ ...notification, owner: 'editor' }),
+    [publishEditorStatus]
+  );
+  const dismissAppearanceNotification = useCallback(
+    (id: AppearanceNotification['id']) => {
+      setEditorStatusState((currentState) =>
+        id === currentState.status?.id
+          ? { focused: false, status: null }
+          : currentState
+      );
     },
     []
   );
-  const setLocalDraftStatus = useCallback(
-    (status: LocalDraftSessionStatus) =>
-      setEditorStatus({
-        ...status,
-        owner: 'local-draft',
-        surface: immersiveRef.current ? 'immersive' : 'ordinary'
-      }),
-    []
-  );
-  useEffect(() => {
-    if ('ordinary' !== editorStatus?.surface) return undefined;
-    const scheduledStatus = editorStatus;
-    return props.immersiveEnvironment.schedule(() => {
-      setEditorStatus((currentStatus) =>
-        currentStatus === scheduledStatus ? null : currentStatus
-      );
-    }, 3200);
-  }, [editorStatus, props.immersiveEnvironment]);
   const protectedOperationError = useCallback(
     (operation: EditorSessionOperation) => {
       const error = protectedEditorOperationError(
@@ -595,6 +688,87 @@ export function EditorRoot(props: EditorRootProps) {
     previewRuntimeRef.current = runtime;
     setPreviewRuntimeGeneration((generation) => generation + 1);
   }, []);
+  const cancelScheduledWechatPreparation = useCallback(() => {
+    scheduledWechatPreparationRef.current?.();
+    scheduledWechatPreparationRef.current = null;
+  }, []);
+  const prepareWechatPreview = useCallback(
+    (surface: HTMLElement | null) => {
+      const prepare = props.wechatClipboard.prepare;
+      if (!props.wechatExport.enabled || !surface || !prepare) return;
+      // Preparation runs in the background so the compatibility copy path is
+      // ready when requested. Its result is reported by the actual copy
+      // operation; opening or editing a Preview is not a copy failure.
+      void prepare(surface, { background: true }).catch(() => undefined);
+    },
+    [props.wechatClipboard, props.wechatExport.enabled]
+  );
+  const scheduleWechatPreviewPreparation = useCallback(
+    (surface: HTMLElement | null) => {
+      const prepare = props.wechatClipboard.prepare;
+      if (!props.wechatExport.enabled || !surface || !prepare) return;
+      cancelScheduledWechatPreparation();
+      const cancel = props.immersiveEnvironment.schedule(() => {
+        scheduledWechatPreparationRef.current = null;
+        prepareWechatPreview(surface);
+      }, WECHAT_PREPARATION_DEBOUNCE_MS);
+      scheduledWechatPreparationRef.current = cancel;
+    },
+    [
+      cancelScheduledWechatPreparation,
+      prepareWechatPreview,
+      props.immersiveEnvironment,
+      props.wechatClipboard,
+      props.wechatExport.enabled
+    ]
+  );
+  const scheduleCurrentWechatPreviewPreparation = useCallback(() => {
+    const surface = visualPreviewEditingRef.current
+      ? visualEditorRuntimeRef.current?.surface
+      : previewRuntimeRef.current?.surface;
+    scheduleWechatPreviewPreparation(surface ?? null);
+  }, [scheduleWechatPreviewPreparation]);
+  useEffect(() => {
+    if (!props.wechatExport.enabled || !props.wechatClipboard.prepare) {
+      return undefined;
+    }
+    const unsubscribe = props.immersiveEnvironment.subscribeResize(
+      scheduleCurrentWechatPreviewPreparation
+    );
+    return unsubscribe;
+  }, [
+    props.immersiveEnvironment,
+    props.wechatClipboard,
+    props.wechatExport.enabled,
+    scheduleCurrentWechatPreviewPreparation
+  ]);
+  useEffect(() => {
+    if (!props.wechatExport.enabled || !props.wechatClipboard.prepare) {
+      return undefined;
+    }
+    const surface =
+      visualEditorSurface ?? previewRuntimeRef.current?.surface ?? null;
+    if (!surface) return undefined;
+    return props.immersiveEnvironment.observePreviewLayout(
+      surface,
+      scheduleCurrentWechatPreviewPreparation
+    );
+  }, [
+    previewRuntimeGeneration,
+    visualEditorSurface,
+    props.immersiveEnvironment,
+    props.wechatClipboard,
+    props.wechatExport.enabled,
+    scheduleCurrentWechatPreviewPreparation
+  ]);
+  useEffect(() => {
+    const previous = previousWechatLayoutRef.current;
+    if (previous.immersive === immersive && previous.mode === immersiveMode) {
+      return;
+    }
+    previousWechatLayoutRef.current = { immersive, mode: immersiveMode };
+    scheduleCurrentWechatPreviewPreparation();
+  }, [immersive, immersiveMode, scheduleCurrentWechatPreviewPreparation]);
   const handlePreviewDispose = useCallback((runtime: PreviewSurfaceRuntime) => {
     if (previewRuntimeRef.current === runtime) {
       previewRuntimeRef.current = null;
@@ -611,8 +785,12 @@ export function EditorRoot(props: EditorRootProps) {
         revision: (current?.revision ?? 0) + 1,
         signature
       }));
+      // A source edit can produce several Preview snapshots in one typing
+      // burst. Defer the expensive export walk until the surface is stable so
+      // ordinary editing does not serialize the whole article on every render.
+      scheduleCurrentWechatPreviewPreparation();
     },
-    []
+    [scheduleCurrentWechatPreviewPreparation]
   );
   const handlePreviewStatusChange = useCallback(
     (status: PreviewSurfaceStatus) => {
@@ -625,21 +803,25 @@ export function EditorRoot(props: EditorRootProps) {
     (runtime: ImmersiveVisualEditorRuntime) => {
       visualEditorRuntimeRef.current = runtime;
       setVisualEditorSurface(runtime.surface);
+      cancelScheduledWechatPreparation();
+      prepareWechatPreview(runtime.surface);
     },
-    []
+    [cancelScheduledWechatPreparation, prepareWechatPreview]
   );
   const handleVisualEditorDispose = useCallback(
     (runtime: ImmersiveVisualEditorRuntime) => {
+      cancelScheduledWechatPreparation();
       if (visualEditorRuntimeRef.current === runtime) {
         visualEditorRuntimeRef.current = null;
         if (rootActiveRef.current) setVisualEditorSurface(null);
       }
     },
-    []
+    [cancelScheduledWechatPreparation]
   );
-  const closeForToolbar = useCallback(() => {
+  const closeForToolbar = useCallback((focusTarget?: HTMLElement) => {
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
+    ordinarySettingsSessionRef.current?.close(focusTarget);
   }, []);
   const schedulePreviewMarkdown = useCallback(
     (markdown: string, immediate = false): string => {
@@ -669,16 +851,23 @@ export function EditorRoot(props: EditorRootProps) {
     (code: string) => {
       props.onFailure(code);
       setPreviewSurfaceStatus('error');
-      setOwnedEditorStatus({
+      publishEditorStatus({
+        id: 'visual-preview',
         message: props.preview.messages.error,
+        owner: 'editor',
         type: 'error'
       });
     },
-    [props.onFailure, props.preview.messages.error, setOwnedEditorStatus]
+    [props.onFailure, props.preview.messages.error, publishEditorStatus]
   );
   const handleVisualMarkdownChange = useCallback(
-    () => setVisualPreviewChanged(true),
-    []
+    () => {
+      setVisualPreviewChanged(true);
+      scheduleWechatPreviewPreparation(
+        visualEditorRuntimeRef.current?.surface ?? null
+      );
+    },
+    [scheduleWechatPreviewPreparation]
   );
   const handleVisualPendingChange = useCallback((pending: boolean) => {
     if (rootActiveRef.current) setVisualPreviewPending(pending);
@@ -713,14 +902,19 @@ export function EditorRoot(props: EditorRootProps) {
   }, [leaveVisualPreview]);
   const appearancePort = useMemo<AppearancePort>(
     () => ({
-      applyState: (state) => {
+      applyState: (state, codeThemeExplicit) => {
         const visualPreviewWasEditing = visualPreviewEditingRef.current;
-        if (visualPreviewWasEditing && !prepareSourceMutation()) return;
-        props.appearancePort.applyState(state);
-        setAppearanceState(state);
+        if (visualPreviewWasEditing && !prepareSourceMutation()) {
+          throw new Error('visual-editor-source-sync-failed');
+        }
+        props.appearancePort.applyState(state, codeThemeExplicit);
+        codeThemeExplicitRef.current = codeThemeExplicit;
+        setCodeThemeExplicit(codeThemeExplicit);
+        setAppearanceSnapshot((snapshot) => ({ ...snapshot, state }));
         submissionStateRef.current = {
           ...submissionStateRef.current,
-          ...state
+          ...state,
+          codeThemeExplicit
         };
         documentSession?.replaceSubmissionState(submissionStateRef.current);
         previewAppearanceRef.current = state;
@@ -737,19 +931,25 @@ export function EditorRoot(props: EditorRootProps) {
       closeOtherPopovers: () => {
         toolbarSessionRef.current?.closePopovers();
         fontControlsSessionRef.current?.close();
+        ordinarySettingsSessionRef.current?.close();
         props.appearancePort.closeOtherPopovers();
       },
+      previewCustomCss: (css, signal) =>
+        props.appearancePort.previewCustomCss(css, signal),
       saveCustomCss: async (input) => {
         const sessionError = protectedOperationError('authenticated');
         if (sessionError) throw sessionError;
+        const visualPreviewWasEditing = visualPreviewEditingRef.current;
+        if (visualPreviewWasEditing && !prepareSourceMutation()) {
+          throw new Error('visual-editor-source-sync-failed');
+        }
         const result = await props.appearancePort.saveCustomCss(input);
         if ('saved' === result.status) {
-          const visualPreviewWasEditing = visualPreviewEditingRef.current;
-          if (visualPreviewWasEditing && !prepareSourceMutation()) {
-            return result;
-          }
-          props.appearancePort.applyState(result.snapshot.state);
-          setAppearanceState(result.snapshot.state);
+          props.appearancePort.applyState(
+            result.snapshot.state,
+            codeThemeExplicitRef.current
+          );
+          setAppearanceSnapshot(result.snapshot);
           submissionStateRef.current = {
             ...submissionStateRef.current,
             ...result.snapshot.state
@@ -782,14 +982,24 @@ export function EditorRoot(props: EditorRootProps) {
           ...state
         };
         documentSession?.replaceSubmissionState(submissionStateRef.current);
+        scheduleWechatPreviewPreparation(
+          visualEditorRuntimeRef.current?.surface
+          ?? previewRuntimeRef.current?.surface
+          ?? null
+        );
       },
       closeOtherPopovers: () => {
         toolbarSessionRef.current?.closePopovers();
         appearanceSessionRef.current?.close();
+        ordinarySettingsSessionRef.current?.close();
         props.fontControlsPort.closeOtherPopovers();
       }
     }),
-    [documentSession, props.fontControlsPort]
+    [
+      documentSession,
+      props.fontControlsPort,
+      scheduleWechatPreviewPreparation
+    ]
   );
   const handleAppearanceReady = useCallback(
     (session: AppearanceControlsSession) => {
@@ -800,6 +1010,12 @@ export function EditorRoot(props: EditorRootProps) {
   const handleFontControlsReady = useCallback(
     (session: FontControlsSession) => {
       fontControlsSessionRef.current = session;
+    },
+    []
+  );
+  const handleOrdinarySettingsReady = useCallback(
+    (session: OrdinaryEditorSettingsSession) => {
+      ordinarySettingsSessionRef.current = session;
     },
     []
   );
@@ -826,8 +1042,10 @@ export function EditorRoot(props: EditorRootProps) {
             return;
           }
           props.onFailure(mediaPickerFailureCode(error));
-          setOwnedEditorStatus({
+          publishEditorStatus({
+            id: 'media-picker',
             message: props.mediaPickerFailureMessage,
+            owner: 'editor',
             type: 'error'
           });
         })
@@ -844,7 +1062,7 @@ export function EditorRoot(props: EditorRootProps) {
       props.mediaPickerFrame,
       props.onFailure,
       protectedOperationError,
-      setOwnedEditorStatus
+      publishEditorStatus
     ]
   );
   const imageUploadPort = useMemo<ImageUploadPort>(
@@ -1001,13 +1219,19 @@ export function EditorRoot(props: EditorRootProps) {
     } else if ('missing' === preferences.status) {
       setImmersiveMode('split');
     }
-    setEditorStatus(null);
+    setEditorStatusState((currentState) => ({
+      focused: false,
+      status:
+        'local-draft' === currentState.status?.owner &&
+        'error' !== currentState.status.type
+          ? null
+          : currentState.status
+    }));
     immersiveRef.current = true;
     setImmersive(true);
   }, [closeForToolbar, props.immersivePreferencesPort]);
   const exitImmersive = useCallback(() => {
     if (!prepareSourceMutation()) return;
-    setEditorStatus(null);
     immersiveRef.current = false;
     setImmersive(false);
   }, [prepareSourceMutation]);
@@ -1017,12 +1241,7 @@ export function EditorRoot(props: EditorRootProps) {
     setImmersiveMode(mode);
   }, [prepareSourceMutation]);
   const copyWechatFromImmersive = useCallback(async () => {
-    wechatStatusSurfaceOverrideRef.current = 'immersive';
-    try {
-      return 'copied' === (await wechatSession.copy()).status;
-    } finally {
-      wechatStatusSurfaceOverrideRef.current = null;
-    }
+    return 'copied' === (await wechatSession.copy()).status;
   }, [wechatSession]);
 
   useEffect(() => {
@@ -1038,7 +1257,20 @@ export function EditorRoot(props: EditorRootProps) {
     documentSession.document.focus();
     return releaseFocusBoundary;
   }, [documentSession, immersive, props.immersiveEnvironment]);
-  const previewFontStack = fontStack(props.fonts, fontState);
+  const activeArticleTheme = props.appearance.articleThemes.find(
+    ({ id }) => id === appearanceState.markdownTheme
+  );
+  const previewFontStack = buildFontStack(
+    props.fonts.options,
+    fontState,
+    activeArticleTheme?.usesThemeFontFamily
+      ? 'var(--easymde-theme-font-family, sans-serif)'
+      : ''
+  );
+  const usesCrimsonThemeDefaults =
+    'crimson-focus' === appearanceState.markdownTheme &&
+    'theme-default' === fontState.serifFont &&
+    Boolean(previewFontStack);
   const previewClassName = [
     'easymde-preview',
     'easymde-rendered-content',
@@ -1049,7 +1281,8 @@ export function EditorRoot(props: EditorRootProps) {
     'custom' === appearanceState.markdownTheme
       ? 'easymde-custom-css-active'
       : '',
-    previewFontStack ? 'easymde-font-overrides' : ''
+    previewFontStack ? 'easymde-font-overrides' : '',
+    usesCrimsonThemeDefaults ? 'easymde-theme-default-fonts' : ''
   ]
     .filter(Boolean)
     .join(' ');
@@ -1069,6 +1302,10 @@ export function EditorRoot(props: EditorRootProps) {
   }, []);
 
   useEffect(() => () => wechatSession.dispose(), [wechatSession]);
+  useEffect(
+    () => () => cancelScheduledWechatPreparation(),
+    [cancelScheduledWechatPreparation]
+  );
 
   useEffect(() => {
     if (!documentSession) {
@@ -1140,8 +1377,9 @@ export function EditorRoot(props: EditorRootProps) {
         : canonicalDocument,
       enabled: props.imageUpload.enabled,
       maxBytes: props.imageUpload.maxBytes,
+      nextOperationId: nextImageUploadOperationId,
       onDiagnostic: props.onFailure,
-      onStatus: setOwnedEditorStatus,
+      onStatus: setImageUploadStatus,
       postId: props.imageUpload.postId,
       strings: props.imageUpload.strings,
       target: visualEditorSurface
@@ -1153,8 +1391,9 @@ export function EditorRoot(props: EditorRootProps) {
     props.imageUpload,
     imageUploadPort,
     leaveVisualPreview,
+    nextImageUploadOperationId,
     props.onFailure,
-    setOwnedEditorStatus,
+    setImageUploadStatus,
     visualEditorSurface,
     visualPreviewEditing
   ]);
@@ -1306,25 +1545,28 @@ export function EditorRoot(props: EditorRootProps) {
           restoreRevision={restoreRevision}
           scrollSyncEnabled={scrollSyncEnabled}
           styleControls={
-            <Fragment>
-              <AppearanceControls
-                bootstrap={props.appearance}
-                onFailure={() =>
-                  props.onFailure('react-editor-appearance-failed')
-                }
-                onReady={handleAppearanceReady}
-                port={appearancePort}
-                immersiveLabel={props.immersiveStrings.theme}
-                immersiveTitle={props.immersiveStrings.themeSettings}
-                variant="immersive"
-              />
-              <FontControls
-                bootstrap={props.fonts}
-                onFailure={() => props.onFailure('react-editor-fonts-failed')}
-                onReady={handleFontControlsReady}
-                port={fontControlsPort}
-                variant="immersive"
-              />
+              <Fragment>
+                <AppearanceControls
+                  bootstrap={currentAppearance}
+                  messageAlertTimer={props.immersiveEnvironment}
+                  onFailure={() =>
+                    props.onFailure('react-editor-appearance-failed')
+                  }
+                  onNotification={setAppearanceNotification}
+                  onNotificationDismiss={dismissAppearanceNotification}
+                  onReady={handleAppearanceReady}
+                  port={appearancePort}
+                  immersiveLabel={props.immersiveStrings.theme}
+                  immersiveTitle={props.immersiveStrings.themeSettings}
+                  variant="immersive"
+                />
+                <FontControls
+                  bootstrap={currentFonts}
+                  onFailure={() => props.onFailure('react-editor-fonts-failed')}
+                  onReady={handleFontControlsReady}
+                  port={fontControlsPort}
+                  variant="immersive"
+                />
             </Fragment>
           }
           toolbar={
@@ -1411,31 +1653,51 @@ export function EditorRoot(props: EditorRootProps) {
             >
               <ImmersiveToggleIcon />
             </button>
-            <FontControls
-              bootstrap={props.fonts}
-              onFailure={() => props.onFailure('react-editor-fonts-failed')}
-              onReady={handleFontControlsReady}
-              port={fontControlsPort}
-            />
-            <AppearanceControls
-              bootstrap={props.appearance}
-              onFailure={() =>
-                props.onFailure('react-editor-appearance-failed')
-              }
-              onReady={handleAppearanceReady}
-              port={appearancePort}
+            <OrdinaryEditorSettings
+              appearance={currentAppearance}
+              appearancePort={appearancePort}
+              fonts={currentFonts}
+              fontControlsPort={fontControlsPort}
+              label={props.immersiveStrings.editorSettings}
+              messageAlertTimer={props.immersiveEnvironment}
+              onAppearanceReady={handleAppearanceReady}
+              onFailure={props.onFailure}
+              onNotification={setAppearanceNotification}
+              onNotificationDismiss={dismissAppearanceNotification}
+              onFontControlsReady={handleFontControlsReady}
+              onOpen={() => {
+                toolbarSessionRef.current?.closePopovers();
+                props.appearancePort.closeOtherPopovers();
+                props.fontControlsPort.closeOtherPopovers();
+              }}
+              onReady={handleOrdinarySettingsReady}
             />
           </div>
         </div>
       ) : null}
-      {!immersive &&
-      editorStatus &&
-      'ordinary' === editorStatus.surface ? (
-        <div
-          className={`easymde-editor-flash is-${editorStatus.type}`}
-          aria-live="polite"
-        >
-          {editorStatus.message}
+      {editorStatus ? (
+        <div className="easymde-editor-message-alert-host">
+          <EditorMessageAlert
+            closeLabel={props.immersiveStrings.close}
+            message={editorStatus.message}
+            onDismiss={() => {
+              setEditorStatusState((currentState) => ({
+                focused: false,
+                status:
+                  currentState.status === editorStatus
+                    ? null
+                    : currentState.status
+              }));
+            }}
+            onFocusChange={(focused) => {
+              setEditorStatusState((currentState) =>
+                currentState.focused === focused
+                  ? currentState
+                  : { ...currentState, focused }
+              );
+            }}
+            type={editorStatus.type}
+          />
         </div>
       ) : null}
       {!immersive && draftCandidate ? (
@@ -1470,6 +1732,17 @@ export function EditorRoot(props: EditorRootProps) {
       ) : null}
       <EditorWorkspace
         direction={props.layout.direction}
+        onLayoutChange={scheduleCurrentWechatPreviewPreparation}
+        {...(!immersive && documentSession
+          ? {
+              ordinaryStatus: {
+                document: documentSession.document,
+                lastEdited: props.layout.status.lastEdited,
+                locale: props.localDrafts.locale,
+                wordCountTemplate: props.layout.status.wordCount
+              }
+            }
+          : {})}
         splitResizable={immersive && 'split' === immersiveMode}
         splitResizeLabel={props.immersiveStrings.resizeSplit}
         source={
@@ -1477,9 +1750,9 @@ export function EditorRoot(props: EditorRootProps) {
             className="easymde-pane easymde-pane-source"
             data-easymde-document-owner="react"
           >
-            <header className="easymde-pane-header">
-              <span>{immersive ? props.immersiveStrings.markdown.toUpperCase() : props.labels.source}</span>
-              {immersive ? (
+            {immersive ? (
+              <header className="easymde-pane-header">
+                <span>{props.immersiveStrings.markdown.toUpperCase()}</span>
                 <span
                   className="easymde-immersive-more-actions"
                   aria-hidden="true"
@@ -1487,8 +1760,8 @@ export function EditorRoot(props: EditorRootProps) {
                 >
                   <MoreHorizontal size={14} strokeWidth={2} />
                 </span>
-              ) : null}
-            </header>
+              </header>
+            ) : null}
             <div className="easymde-source easymde-source-react">
               <EditorDocumentSource
                 editorLabel={props.document.editorLabel}
@@ -1502,26 +1775,15 @@ export function EditorRoot(props: EditorRootProps) {
                 <span>
                   {`${props.immersiveStrings.line} ${cursorPosition.line}, ${props.immersiveStrings.column} ${cursorPosition.column}`}
                 </span>
-                {editorStatus &&
-                'immersive' === editorStatus.surface &&
-                'error' === editorStatus.type ? (
-                  <span
-                    className="easymde-immersive-status-error"
-                    role="alert"
-                  >
-                    {editorStatus.message}
-                  </span>
-                ) : (
-                  <span>
-                    {props.immersiveStrings.markdown}
-                    {localDraftsEnabled ? (
-                      <span className="easymde-immersive-autosave-state">
-                        <span aria-hidden="true" />
-                        {props.immersiveStrings.autoSaveEnabled}
-                      </span>
-                    ) : null}
-                  </span>
-                )}
+                <span>
+                  {props.immersiveStrings.markdown}
+                  {localDraftsEnabled ? (
+                    <span className="easymde-immersive-autosave-state">
+                      <span aria-hidden="true" />
+                      {props.immersiveStrings.autoSaveEnabled}
+                    </span>
+                  ) : null}
+                </span>
               </footer>
             ) : null}
           </section>
@@ -1537,7 +1799,7 @@ export function EditorRoot(props: EditorRootProps) {
             changed={visualPreviewChanged}
             editable={visualPreviewEditing}
             hasSnapshot={null !== visualPreviewSnapshot}
-            ordinaryLabel={props.labels.preview}
+            ordinaryLabel={immersive ? props.labels.preview : null}
             onToggleEditable={() => {
               if (visualPreviewEditing) {
                 prepareSourceMutation();
@@ -1550,10 +1812,10 @@ export function EditorRoot(props: EditorRootProps) {
               setVisualPreviewEditing(true);
             }}
             status={previewSurfaceStatus}
-                statusMessages={{
-                  empty: props.preview.messages.empty,
-                  error: props.preview.messages.error
-                }}
+            statusMessages={{
+              empty: props.preview.messages.empty,
+              error: props.preview.messages.error
+            }}
             strings={props.immersiveStrings}
           >
             <PreviewSurfaceOwner

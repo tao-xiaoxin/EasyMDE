@@ -9,6 +9,8 @@ export type PreviewEnhancementFailureCode =
   | 'preview-enhancement-code-theme-missing'
   | 'preview-enhancement-document-head-missing'
   | 'preview-enhancement-failed'
+  | 'preview-enhancement-mermaid-asset-contract-failed'
+  | 'preview-enhancement-mermaid-runtime-unavailable'
   | 'preview-enhancement-render-failed'
   | 'preview-enhancement-resource-conflict'
   | 'preview-enhancement-resource-load-failed'
@@ -19,6 +21,8 @@ const failureCodes: ReadonlySet<string> = new Set<PreviewEnhancementFailureCode>
   'preview-enhancement-code-theme-missing',
   'preview-enhancement-document-head-missing',
   'preview-enhancement-failed',
+  'preview-enhancement-mermaid-asset-contract-failed',
+  'preview-enhancement-mermaid-runtime-unavailable',
   'preview-enhancement-render-failed',
   'preview-enhancement-resource-conflict',
   'preview-enhancement-resource-load-failed',

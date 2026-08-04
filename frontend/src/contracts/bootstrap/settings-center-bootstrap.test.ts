@@ -9,22 +9,24 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
   return {
     schemaVersion: 2,
     closeUrl: '/wp-admin/options-general.php?page=easymde',
+    settings: {
+      optionKey: 'easymde_editor_settings',
+      toolbarLayout: 'hybrid-icons',
+      shortcuts: {
+        bold: { win: 'Ctrl+B', mac: 'Cmd+B' }
+      }
+    },
+    commands: [{
+      id: 'bold',
+      label: 'Bold',
+      group: 'format',
+      defaultShortcutWin: 'Ctrl+B',
+      defaultShortcutMac: 'Cmd+B'
+    }],
     assets: {
       brandMarkUrl: '/plugin/brand.png',
       headerIllustrationUrl: '/plugin/header.png',
       searchEmptyIllustrationUrl: '/plugin/search-empty.png'
-    },
-    drafts: {
-      images: {
-        domain: 'https://img.example.test',
-        backupDomain: 'https://backup.example.test'
-      },
-      ai: {
-        provider: 'OpenAI',
-        endpoint: 'https://api.example.test/v1',
-        apiKey: 'example-api-key',
-        model: 'gpt-4.1-mini'
-      }
     },
     strings: {
       ...Object.fromEntries(SETTINGS_CENTER_STRING_KEYS.map((key) => [key, key])),
@@ -43,12 +45,6 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
       promptDuplicated: 'Duplicated %s',
       promptDeleted: 'Deleted %s',
       promptImportSuccess: 'Imported %s prompts',
-      aiConnectionSuccess: '%1$s connection is normal; model %2$s is available.',
-      aiConnectionTesting: 'Testing %s connection...',
-      syncPlatformDialogTitle: '%s Platform Management',
-      syncPlatformRevoked: '%s authorization revoked',
-      syncTargetPlatformCount: '%s target platforms',
-      syncHistorySummary: 'A total of %1$s entries, page %2$s of %3$s',
       transferFileSelectedNotice: 'Selected %s',
       transferChecksSummary: '%s key configuration items checked',
       transferChecksPassed: '%s items passed',
@@ -58,8 +54,12 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 }
 
 describe('parseSettingsCenterBootstrap', () => {
-  it('accepts exactly one search-query placeholder', () => {
-    expect(parseSettingsCenterBootstrap(bootstrap()).strings.noSearchResults).toContain('%s');
+  it('accepts real editor settings and commands', () => {
+    const parsed = parseSettingsCenterBootstrap(bootstrap());
+
+    expect(parsed.settings.optionKey).toBe('easymde_editor_settings');
+    expect(parsed.settings.shortcuts.bold?.win).toBe('Ctrl+B');
+    expect(parsed.commands[0]?.id).toBe('bold');
   });
 
   it.each(['No matching settings found', '%s %s'])(
@@ -93,6 +93,22 @@ describe('parseSettingsCenterBootstrap', () => {
     }
   );
 
+  it('rejects a toolbar layout that the PHP owner does not support', () => {
+    const value = bootstrap();
+    value.settings.toolbarLayout = 'custom';
+    expect(() => parseSettingsCenterBootstrap(value)).toThrow(
+      'settings-center-toolbar-layout-unsupported'
+    );
+  });
+
+  it('rejects a malformed shortcut value', () => {
+    const value = bootstrap();
+    value.settings.shortcuts.bold = { win: 'Ctrl+B', mac: undefined as unknown as string };
+    expect(() => parseSettingsCenterBootstrap(value)).toThrow(
+      'settings-center-shortcut-bold-mac-invalid'
+    );
+  });
+
   it.each([
     ['insertFileNameVariable', 'Insert variable'],
     ['currentAllowedUploads', '%s %s']
@@ -104,38 +120,11 @@ describe('parseSettingsCenterBootstrap', () => {
     );
   });
 
-  it('rejects a Sync history summary missing a positional placeholder', () => {
-    const value = bootstrap();
-    value.strings.syncHistorySummary = 'A total of %1$s entries, page %2$s';
-    expect(() => parseSettingsCenterBootstrap(value)).toThrow(
-      'settings-center-syncHistorySummary-template-invalid'
-    );
-  });
-
   it.each([
-    'syncPlatformDialogTitle',
-    'syncPlatformRevoked',
-    'syncTargetPlatformCount'
-  ] as const)('rejects an invalid Sync template for %s', (key) => {
-    const value = bootstrap();
-    value.strings[key] = 'Missing platform placeholder';
-    expect(() => parseSettingsCenterBootstrap(value)).toThrow(
-      `settings-center-${key}-template-invalid`
-    );
-  });
-
-  it('rejects an invalid selected Transfer file template', () => {
-    const value = bootstrap();
-    value.strings.transferFileSelectedNotice = 'Selected configuration file';
-    expect(() => parseSettingsCenterBootstrap(value)).toThrow(
-      'settings-center-transferFileSelectedNotice-template-invalid'
-    );
-  });
-
-  it.each([
+    'transferFileSelectedNotice',
     'transferChecksSummary',
     'transferChecksPassed'
-  ] as const)('rejects an invalid Transfer check template for %s', (key) => {
+  ] as const)('rejects an invalid Transfer template for %s', (key) => {
     const value = bootstrap();
     value.strings[key] = 'Missing count';
     expect(() => parseSettingsCenterBootstrap(value)).toThrow(

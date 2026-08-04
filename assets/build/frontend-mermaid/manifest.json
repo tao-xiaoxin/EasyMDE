@@ -1,0 +1,8 @@
+{
+  "frontend/src/entrypoints/frontend-mermaid-runtime.ts": {
+    "file": "assets/frontend-mermaid-BJbzCYXm.js",
+    "name": "frontend-mermaid-runtime",
+    "src": "frontend/src/entrypoints/frontend-mermaid-runtime.ts",
+    "isEntry": true
+  }
+}

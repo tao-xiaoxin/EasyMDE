@@ -1,6 +1,6 @@
 import { createElement } from '@wordpress/element';
-import { fireEvent, render } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { act, fireEvent, render } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import { EditorWorkspace } from './EditorWorkspace';
 
@@ -25,6 +25,66 @@ describe('EditorWorkspace', () => {
     expect(view.container.querySelector('.easymde-editor-status-bar')).toBeNull();
     expect(view.queryByRole('navigation', { name: 'Outline' })).toBeNull();
     expect(view.queryByRole('button', { name: 'Writing statistics' })).toBeNull();
+  });
+
+  it('adds a restrained ordinary footer with a live Markdown character count and WordPress edit history', () => {
+    let value = 'Hello 世界\n\nNext line';
+    const listeners = new Set<() => void>();
+    const document = {
+      getValue: () => value,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }
+    };
+    const view = render(
+      <EditorWorkspace
+        direction="ltr"
+        ordinaryStatus={{
+          document,
+          lastEdited: 'Last edited by Editor on July 27, 2026 at 10:00',
+          locale: 'en_US',
+          wordCountTemplate: 'Character count: %s'
+        }}
+        source={<section>Source</section>}
+        preview={<section>Preview</section>}
+      />
+    );
+
+    const count = view.getByText('Character count: 19');
+    expect(count).toBeTruthy();
+    expect(count.getAttribute('aria-live')).toBeNull();
+    expect(
+      view.getByText('Last edited by Editor on July 27, 2026 at 10:00')
+    ).toBeTruthy();
+    expect(view.container.querySelector('.easymde-workspace-shell')).toBeNull();
+    expect(count.previousElementSibling).toBeNull();
+    expect(
+      count
+        .closest('footer')
+        ?.previousElementSibling?.classList.contains('easymde-workspace')
+    ).toBe(true);
+
+    value = ' \n\t';
+    act(() => {
+      for (const listener of listeners) listener();
+    });
+    expect(view.getByText('Character count: 3')).toBeTruthy();
+  });
+
+  it('does not add the ordinary status owner to the immersive resizable workspace', () => {
+    const view = render(
+      <EditorWorkspace
+        direction="ltr"
+        splitResizable
+        splitResizeLabel="Resize editor and Preview"
+        source={<section>Source</section>}
+        preview={<section>Preview</section>}
+      />
+    );
+
+    expect(view.container.querySelector('.easymde-workspace-shell')).toBeNull();
+    expect(view.container.querySelector('.easymde-editor-status-bar')).toBeNull();
   });
 
   it('keeps WordPress direction on the single React layout owner', () => {
@@ -83,6 +143,26 @@ describe('EditorWorkspace', () => {
     expect(separator.getAttribute('aria-valuenow')).toBe('79');
     fireEvent.keyDown(separator, { key: 'Home' });
     expect(separator.getAttribute('aria-valuenow')).toBe('50');
+  });
+
+  it('notifies the Preview owner after a split layout change', () => {
+    const onLayoutChange = vi.fn();
+    const view = render(
+      <EditorWorkspace
+        direction="ltr"
+        onLayoutChange={onLayoutChange}
+        splitResizable
+        splitResizeLabel="Resize editor and Preview"
+        source={<section>Source</section>}
+        preview={<section>Preview</section>}
+      />
+    );
+    const separator = view.getByRole('separator', {
+      name: 'Resize editor and Preview'
+    });
+
+    fireEvent.keyDown(separator, { key: 'ArrowRight' });
+    expect(onLayoutChange).toHaveBeenCalledOnce();
   });
 
   it('does not render the split divider outside immersive split mode', () => {

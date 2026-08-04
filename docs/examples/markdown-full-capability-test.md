@@ -18,6 +18,8 @@
 
 ###### 六级标题 Heading 6
 
+## 超长中英文标题用于验证狭窄预览容器中的正常换行、完整可读性以及主题前后缀装饰仍然保持可见 This intentionally long bilingual heading verifies wrapping and complete readability without clipping in narrow preview panes
+
 ---
 
 ## 2. 文本样式
@@ -268,76 +270,80 @@ ORDER BY total_amount DESC;
 
 ## 9. 数学公式
 
+本节是微信公众号复制验证的公式矩阵，必须保留并逐项核对：行内公式、
+积分、偏导与极限、矩阵、方程组、分段函数、统计公式、神经网络前向传播，
+以及第 24 节综合示例中的错误率和百分比公式。新增或修正公式时，先补入
+对应族，再用同一份文档检查预览与粘贴结果，不能只验证单张截图。
+
 ### 行内公式
 
 爱因斯坦质能方程：$E = mc^2$
 
-圆的面积：$S = pi r^2$
+圆的面积：$S = \pi r^2$
 
-概率归一化：$sum_{i=1}^{n} p_i = 1$
+概率归一化：$\sum_{i=1}^{n} p_i = 1$
 
 ### 独立公式
 
 $$
-int_a^b f(x),dx = F(b) - F(a)
+\int_a^b f(x)\,dx = F(b) - F(a)
 $$
 
 $$
-frac{partial}{partial x} f(x, y)
-===================================
-
-lim_{Delta x to 0}
-frac{f(x+Delta x, y)-f(x, y)}{Delta x}
+\frac{\partial}{\partial x} f(x, y)
+=
+\lim_{\Delta x \to 0}
+\frac{f(x+\Delta x, y)-f(x, y)}{\Delta x}
 $$
 
 ### 矩阵
 
 $$
 A =
-begin{bmatrix}
-1 & 2 & 3 
-4 & 5 & 6 
+\begin{bmatrix}
+1 & 2 & 3 \\
+4 & 5 & 6 \\
 7 & 8 & 9
-end{bmatrix}
+\end{bmatrix}
 $$
 
 ### 方程组
 
 $$
-begin{cases}
-x + y = 10 
+\begin{cases}
+x + y = 10 \\\
 2x - y = 5
-end{cases}
+\end{cases}
 $$
 
 ### 分段函数
 
 $$
 f(x) =
-begin{cases}
-x^2, & x geq 0 
+\begin{cases}
+x^2, & x \geq 0 \\\
 -x^2, & x < 0
-end{cases}
+\end{cases}
 $$
 
 ### 常见统计公式
 
 $$
-mu = frac{1}{n}sum_{i=1}^{n}x_i
+\mu = \frac{1}{n}\sum_{i=1}^{n}x_i
 $$
 
 $$
-sigma = sqrt{frac{1}{n}sum_{i=1}^{n}(x_i-mu)^2}
+\sigma = \sqrt{\frac{1}{n}\sum_{i=1}^{n}(x_i-\mu)^2}
 $$
 
 ### 神经网络前向传播
 
 $$
-mathbf{h} = sigma(mathbf{W}mathbf{x} + mathbf{b})
+\mathbf{h} = \sigma(\mathbf{W}\mathbf{x} + \mathbf{b})
 $$
 
 $$
-hat{y} = text{softmax}(mathbf{W}_omathbf{h}+mathbf{b}_o)
+\hat{y} = \text{softmax}(\mathbf{W}_o\mathbf{h}+\mathbf{b}_o)
 $$
 
 ---
@@ -640,17 +646,16 @@ xychart-beta
 ### 错误率计算
 
 $$
-text{Error Rate}
-=================
-
-frac{text{Failed Requests}}{text{Total Requests}}
-times 100%
+\text{Error Rate}
+=
+\frac{\text{Failed Requests}}{\text{Total Requests}}
+\times 100\%
 $$
 
 例如：
 
 $$
-frac{12}{10000} times 100% = 0.12%
+\frac{12}{10000} \times 100\% = 0.12\%
 $$
 
 ---

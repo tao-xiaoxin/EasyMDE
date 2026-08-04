@@ -94,10 +94,16 @@
   font-weight: 500;
 }
 
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy > h1:first-child {
+  margin-top: 30px;
+}
+
 .easymde-rendered-content.easymde-markdown-theme-cupid-busy h1 .content {
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
   justify-content: center;
+  min-width: 0;
   margin: 0;
   padding: 10px;
   color: rgb(255, 255, 255);
@@ -111,6 +117,7 @@
   letter-spacing: 0;
   text-align: left;
   text-indent: 0;
+  overflow-wrap: anywhere;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-cupid-busy h1 .prefix {
@@ -119,6 +126,7 @@
 
 .easymde-rendered-content.easymde-markdown-theme-cupid-busy h1 .suffix {
   display: block;
+  flex: 0 0 20px;
   position: relative;
   width: 20px;
   height: 20px;
@@ -141,6 +149,7 @@
 
 .easymde-rendered-content.easymde-markdown-theme-cupid-busy h2 .prefix {
   display: block;
+  flex: 0 0 35px;
   position: relative;
   width: 35px;
   height: 35px;
@@ -158,7 +167,9 @@
 
 .easymde-rendered-content.easymde-markdown-theme-cupid-busy h2 .content {
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
+  min-width: 0;
   margin: 0;
   padding: 0;
   color: rgb(130, 127, 196);
@@ -171,10 +182,12 @@
   letter-spacing: 0;
   text-align: left;
   text-indent: 0;
+  overflow-wrap: anywhere;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-cupid-busy h2 .suffix {
   display: block;
+  flex: 0 0 15px;
   position: relative;
   width: 15px;
   height: 15px;
@@ -310,16 +323,27 @@
   font-size: 0.92em;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-cupid-busy pre {
-  max-width: 100%;
-  overflow-x: auto;
-}
-
 .easymde-rendered-content.easymde-markdown-theme-cupid-busy table {
-  display: table;
+  display: block;
   width: 100%;
   max-width: 100%;
   overflow-x: auto;
+  container-type: inline-size;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy table > thead,
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy table > tbody,
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy table > tfoot {
+  display: contents;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-cupid-busy table::before {
+  display: table-caption;
+  width: 100cqi;
+  height: 0;
+  padding: 0;
+  border: 0;
+  content: "";
 }
 
 .easymde-rendered-content.easymde-markdown-theme-cupid-busy table tr th,
@@ -345,9 +369,5 @@
   .easymde-rendered-content.easymde-markdown-theme-cupid-busy .block-3 {
     padding-right: 20px;
     padding-left: 20px;
-  }
-
-  .easymde-rendered-content.easymde-markdown-theme-cupid-busy pre {
-    overflow-x: auto;
   }
 }

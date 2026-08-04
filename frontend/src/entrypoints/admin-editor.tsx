@@ -226,6 +226,10 @@ export function mountAdminEditor(
       '#easymde-code-theme-field',
       'appearance-native-fields-unavailable'
     ),
+    codeThemeExplicit: input(
+      '#easymde-code-theme-explicit-field',
+      'appearance-native-fields-unavailable'
+    ),
     customCssId: input(
       '#easymde-custom-css-id-field',
       'appearance-native-fields-unavailable'
@@ -400,7 +404,8 @@ export function mountAdminEditor(
       blob: Blob,
       clipboardItem: clipboardItem(windowRef),
       document: documentRef,
-      getComputedStyle: (element) => windowRef.getComputedStyle(element),
+      fetch: (input, init) => windowRef.fetch(input, init),
+      getComputedStyle: (element, pseudoElement) => windowRef.getComputedStyle(element, pseudoElement),
       getSelection: () => windowRef.getSelection(),
       pageOffset: () => ({ x: windowRef.scrollX, y: windowRef.scrollY }),
       scrollTo: (x, y) => windowRef.scrollTo(x, y),

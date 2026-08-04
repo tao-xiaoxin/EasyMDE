@@ -5,6 +5,8 @@ namespace EasyMDE\Frontend;
 use EasyMDE\Content\MarkdownFeatureDetector;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Support\Asset;
+use EasyMDE\Support\FrontendAssetContract;
+use EasyMDE\Support\ManifestAssetResolver;
 use EasyMDE\Theme\ThemeStateRepository;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -46,7 +48,20 @@ final class FrontendAssets {
 		$theme_state = $this->theme_state_repository->get_theme_state( $post_id );
 		$features    = $this->get_feature_config( $markdown );
 
-		$this->enqueue_render_assets( $post_id, $markdown );
+		try {
+			$features = $this->enqueue_render_assets( $post_id, $markdown );
+		} catch ( \RuntimeException $error ) {
+			if ( ! FrontendAssetContract::is_error( $error ) ) {
+				throw $error;
+			}
+
+			if ( ! empty( $theme_state['scopedCustomCss'] ) ) {
+				wp_add_inline_style( 'easymde-article-theme', $theme_state['scopedCustomCss'] );
+			}
+
+			$this->report_frontend_enhancement_asset_error( $error );
+			return;
+		}
 
 		if ( ! empty( $theme_state['scopedCustomCss'] ) ) {
 			wp_add_inline_style( 'easymde-article-theme', $theme_state['scopedCustomCss'] );
@@ -57,11 +72,24 @@ final class FrontendAssets {
 			$dependencies[] = 'easymde-code-copy';
 		}
 
+		try {
+			$bootstrap_asset = $this->get_frontend_enhancement_asset(
+				'frontend/src/entrypoints/frontend-bootstrap.ts',
+				'assets/build/frontend-bootstrap/',
+				'easymde-frontend',
+				false,
+				'frontend-bootstrap'
+			);
+		} catch ( \RuntimeException $error ) {
+			$this->report_frontend_enhancement_asset_error( $error );
+			return;
+		}
+
 		wp_enqueue_script(
-			'easymde-frontend',
-			Asset::url( 'assets/js/frontend/bootstrap.js' ),
+			$bootstrap_asset['handle'],
+			Asset::url( $bootstrap_asset['path'] ),
 			$dependencies,
-			EASYMDE_VERSION,
+			$bootstrap_asset['version'],
 			true
 		);
 
@@ -102,7 +130,37 @@ final class FrontendAssets {
 			EASYMDE_VERSION
 		);
 
-		if ( ! empty( $features['syntaxHighlight'] ) ) {
+		$mermaid_runtime = null;
+		if ( ! empty( $features['mermaid'] ) ) {
+			try {
+				$mermaid_runtime = $this->get_frontend_enhancement_asset(
+					'frontend/src/entrypoints/frontend-mermaid-runtime.ts',
+					'assets/build/frontend-mermaid/',
+					'easymde-mermaid',
+					false,
+					'frontend-mermaid'
+				);
+
+				wp_enqueue_script(
+					$mermaid_runtime['handle'],
+					Asset::url( $mermaid_runtime['path'] ),
+					array(),
+					$mermaid_runtime['version'],
+					true
+				);
+			} catch ( \RuntimeException $error ) {
+				if ( ! FrontendAssetContract::is_error( $error ) ) {
+					throw $error;
+				}
+
+				$mermaid_runtime               = null;
+				$features['mermaid']           = false;
+				$features['mermaidAssetError'] = FrontendAssetContract::error_code( $error );
+				$this->report_frontend_enhancement_asset_error( $error );
+			}
+		}
+
+		if ( ! empty( $features['syntaxHighlight'] ) || ! empty( $features['mermaidAssetError'] ) ) {
 			wp_enqueue_style(
 				'easymde-code-frame',
 				Asset::url( 'assets/css/frontend/code-frame.css' ),
@@ -116,7 +174,9 @@ final class FrontendAssets {
 				array( 'easymde-content' ),
 				EASYMDE_VERSION
 			);
+		}
 
+		if ( ! empty( $features['syntaxHighlight'] ) ) {
 			wp_enqueue_script(
 				'easymde-highlight',
 				Asset::url( 'assets/vendor/highlight/highlight.min.js' ),
@@ -127,22 +187,31 @@ final class FrontendAssets {
 		}
 
 		if ( ! empty( $features['codeCopy'] ) ) {
-			$code_copy_asset = $this->get_code_copy_asset();
+			try {
+				$code_copy_asset = $this->get_code_copy_asset();
 
-			wp_enqueue_style(
-				'easymde-code-copy',
-				Asset::url( 'assets/css/frontend/code-copy.css' ),
-				array( 'easymde-content' ),
-				EASYMDE_VERSION
-			);
+				wp_enqueue_style(
+					'easymde-code-copy',
+					Asset::url( 'assets/css/frontend/code-copy.css' ),
+					array( 'easymde-content' ),
+					EASYMDE_VERSION
+				);
 
-			wp_enqueue_script(
-				$code_copy_asset['handle'],
-				Asset::url( $code_copy_asset['path'] ),
-				$code_copy_asset['dependencies'],
-				$code_copy_asset['version'],
-				true
-			);
+				wp_enqueue_script(
+					$code_copy_asset['handle'],
+					Asset::url( $code_copy_asset['path'] ),
+					$code_copy_asset['dependencies'],
+					$code_copy_asset['version'],
+					true
+				);
+			} catch ( \RuntimeException $error ) {
+				if ( ! FrontendAssetContract::is_code_copy_error( $error ) ) {
+					throw $error;
+				}
+
+				$features['codeCopy'] = false;
+				$this->report_frontend_enhancement_asset_error( $error );
+			}
 		}
 
 		if ( ! empty( $features['math'] ) ) {
@@ -168,13 +237,6 @@ final class FrontendAssets {
 				true
 			);
 
-			wp_enqueue_script(
-				'easymde-math-renderer',
-				Asset::url( 'assets/js/frontend/math.js' ),
-				array( 'easymde-katex' ),
-				EASYMDE_VERSION,
-				true
-			);
 		}
 
 		if ( ! empty( $features['toc'] ) ) {
@@ -186,44 +248,36 @@ final class FrontendAssets {
 			);
 		}
 
-		if ( ! empty( $features['mermaid'] ) ) {
-			wp_enqueue_script(
-				'easymde-mermaid',
-				Asset::url( 'assets/vendor/mermaid/mermaid.min.js' ),
-				array(),
-				EASYMDE_VERSION,
-				true
-			);
-
-			wp_enqueue_script(
-				'easymde-mermaid-renderer',
-				Asset::url( 'assets/js/frontend/mermaid.js' ),
-				array( 'easymde-mermaid' ),
-				EASYMDE_VERSION,
-				true
-			);
-		}
-
 		$dependencies = array();
 		if ( ! empty( $features['syntaxHighlight'] ) ) {
 			$dependencies[] = 'easymde-highlight';
 		}
 
 		if ( ! empty( $features['math'] ) ) {
-			$dependencies[] = 'easymde-math-renderer';
+			$dependencies[] = 'easymde-katex';
 		}
 
-		if ( ! empty( $features['mermaid'] ) ) {
-			$dependencies[] = 'easymde-mermaid-renderer';
+		if ( ! empty( $mermaid_runtime ) ) {
+			$dependencies[] = $mermaid_runtime['handle'];
 		}
+
+		$enhancements = $this->get_frontend_enhancement_asset(
+			'frontend/src/entrypoints/frontend-enhancements.ts',
+			'assets/build/frontend-enhancements/',
+			'easymde-enhancements',
+			false,
+			'frontend-enhancements'
+		);
 
 		wp_enqueue_script(
 			'easymde-enhancements',
-			Asset::url( 'assets/js/frontend/code-highlight.js' ),
+			Asset::url( $enhancements['path'] ),
 			$dependencies,
-			EASYMDE_VERSION,
+			$enhancements['version'],
 			true
 		);
+
+		return $features;
 	}
 
 	public function enqueue_editor_base_assets( $post_id = 0 ) {
@@ -244,16 +298,53 @@ final class FrontendAssets {
 			EASYMDE_VERSION
 		);
 
-		wp_enqueue_script(
+		$enhancements = $this->get_frontend_enhancement_asset(
+			'frontend/src/entrypoints/frontend-enhancements.ts',
+			'assets/build/frontend-enhancements/',
 			'easymde-enhancements',
-			Asset::url( 'assets/js/frontend/code-highlight.js' ),
+			true,
+			'frontend-enhancements'
+		);
+
+		wp_enqueue_script(
+			$enhancements['handle'],
+			Asset::url( $enhancements['path'] ),
 			array(),
-			EASYMDE_VERSION,
+			$enhancements['version'],
 			true
 		);
 	}
 
 	public function get_editor_preview_assets() {
+		$enhancements    = $this->get_frontend_enhancement_asset(
+			'frontend/src/entrypoints/frontend-enhancements.ts',
+			'assets/build/frontend-enhancements/',
+			'easymde-enhancements',
+			true,
+			'frontend-enhancements'
+		);
+		$enhancement_url = $this->versioned_asset_url( $enhancements['path'] );
+		$mermaid_url     = null;
+		$mermaid_error   = null;
+		try {
+			$mermaid_runtime = $this->get_frontend_enhancement_asset(
+				'frontend/src/entrypoints/frontend-mermaid-runtime.ts',
+				'assets/build/frontend-mermaid/',
+				'easymde-mermaid',
+				true,
+				'frontend-mermaid'
+			);
+			$mermaid_url     = $this->versioned_asset_url( $mermaid_runtime['path'] );
+		} catch ( \RuntimeException $error ) {
+			if ( ! FrontendAssetContract::is_error( $error ) ) {
+				throw $error;
+			}
+
+			$mermaid_url   = null;
+			$mermaid_error = FrontendAssetContract::error_code( $error );
+			$this->report_frontend_enhancement_asset_error( $error );
+		}
+
 		return array(
 			'codeFrameCssUrl'      => $this->versioned_asset_url( 'assets/css/frontend/code-frame.css' ),
 			'highlightScriptUrl'   => $this->versioned_asset_url( 'assets/vendor/highlight/highlight.min.js' ),
@@ -261,9 +352,10 @@ final class FrontendAssets {
 			'tocCssUrl'            => $this->versioned_asset_url( 'assets/css/frontend/toc.css' ),
 			'katexCssUrl'          => $this->versioned_asset_url( 'assets/vendor/katex/katex.min.css' ),
 			'katexScriptUrl'       => $this->versioned_asset_url( 'assets/vendor/katex/katex.min.js' ),
-			'mathRendererUrl'      => $this->versioned_asset_url( 'assets/js/frontend/math.js' ),
-			'mermaidScriptUrl'     => $this->versioned_asset_url( 'assets/vendor/mermaid/mermaid.min.js' ),
-			'mermaidRendererUrl'   => $this->versioned_asset_url( 'assets/js/frontend/mermaid.js' ),
+			'mathRendererUrl'      => $enhancement_url,
+			'mermaidAssetError'    => $mermaid_error,
+			'mermaidScriptUrl'     => $mermaid_url,
+			'mermaidRendererUrl'   => $enhancement_url,
 			'highlightThemeLinkId' => 'easymde-highlight-theme-css',
 			'codeFrameLinkId'      => 'easymde-code-frame-css',
 			'mathCssLinkId'        => 'easymde-math-css',
@@ -285,67 +377,37 @@ final class FrontendAssets {
 		return add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( $asset_path ) );
 	}
 
+	private function get_frontend_enhancement_asset( $entry_key, $build_dir, $expected_handle, $verify_integrity = true, $file_prefix = '' ) {
+		return ManifestAssetResolver::resolve(
+			$entry_key,
+			$build_dir,
+			$expected_handle,
+			array(),
+			$file_prefix,
+			$verify_integrity,
+			'frontend-enhancement-' . $file_prefix . '-'
+		);
+	}
+
+	private function report_frontend_enhancement_asset_error( \RuntimeException $error ) {
+		wp_trigger_error(
+			__METHOD__,
+			'EasyMDE frontend enhancement asset contract failed (' . $error->getMessage() . ').',
+			E_USER_WARNING
+		);
+	}
+
 	private function get_code_copy_asset( $build_dir = '' ) {
-		$build_dir     = $build_dir ? trailingslashit( $build_dir ) : Asset::path( 'assets/build/code-copy/' );
-		$manifest_path = $build_dir . 'wordpress-manifest.json';
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reads a local committed build manifest, never a remote URL.
-		$manifest_json = is_readable( $manifest_path ) ? file_get_contents( $manifest_path ) : false;
-		$manifest      = false === $manifest_json ? null : json_decode( $manifest_json, true );
-		$entry_key     = 'frontend/src/entrypoints/frontend-code-copy.ts';
+		$build_dir = $build_dir ? $build_dir : 'assets/build/code-copy/';
 
-		if (
-			! is_array( $manifest )
-			|| 1 !== ( $manifest['schemaVersion'] ?? null )
-			|| ! isset( $manifest['entries'] )
-			|| ! is_array( $manifest['entries'] )
-			|| array( $entry_key ) !== array_keys( $manifest['entries'] )
-			|| ! is_array( $manifest['entries'][ $entry_key ] )
-		) {
-			throw new \RuntimeException( 'frontend-code-copy-manifest-invalid' );
-		}
-
-		$entry = $manifest['entries'][ $entry_key ];
-		$file  = isset( $entry['file'] ) ? (string) $entry['file'] : '';
-		$asset = isset( $entry['asset'] ) ? (string) $entry['asset'] : '';
-		if (
-			'easymde-code-copy' !== ( $entry['handle'] ?? null )
-			|| array() !== ( $entry['dependencies'] ?? null )
-			|| array() !== ( $entry['resources'] ?? null )
-			|| ! preg_match( '#^assets/frontend-code-copy-[A-Za-z0-9_-]+\.js$#', $file )
-			|| preg_replace( '/\.js$/', '.asset.php', $file ) !== $asset
-		) {
-			throw new \RuntimeException( 'frontend-code-copy-manifest-invalid' );
-		}
-
-		$script_path   = $build_dir . $file;
-		$metadata_path = $build_dir . $asset;
-		if ( ! is_file( $script_path ) || ! is_readable( $metadata_path ) ) {
-			throw new \RuntimeException( 'frontend-code-copy-build-missing' );
-		}
-
-		$metadata = require $metadata_path;
-		if (
-			! is_array( $metadata )
-			|| array() !== ( $metadata['dependencies'] ?? null )
-			|| ! isset( $metadata['version'] )
-			|| ! preg_match( '/^[a-f0-9]{16}$/', (string) $metadata['version'] )
-		) {
-			throw new \RuntimeException( 'frontend-code-copy-metadata-invalid' );
-		}
-
-		$script_hash = hash_file( 'sha256', $script_path );
-		if (
-			false === $script_hash
-			|| ! hash_equals( (string) $metadata['version'], substr( $script_hash, 0, 16 ) )
-		) {
-			throw new \RuntimeException( 'frontend-code-copy-build-integrity-invalid' );
-		}
-
-		return array(
-			'handle'       => 'easymde-code-copy',
-			'path'         => 'assets/build/code-copy/' . $file,
-			'dependencies' => $metadata['dependencies'],
-			'version'      => (string) $metadata['version'],
+		return ManifestAssetResolver::resolve(
+			'frontend/src/entrypoints/frontend-code-copy.ts',
+			$build_dir,
+			'easymde-code-copy',
+			array(),
+			'frontend-code-copy',
+			true,
+			'frontend-code-copy-'
 		);
 	}
 }

@@ -7,6 +7,7 @@ import { createEditorDocumentSession } from './editor-document-session';
 const submissionState = {
   appleFont: 'system',
   codeTheme: 'dark',
+  codeThemeExplicit: false,
   customCssId: '',
   customFont: 'none',
   markdownTheme: 'default',
@@ -73,6 +74,7 @@ describe('createEditorDocumentSession', () => {
     for (const [key, value] of Object.entries({
       appleFont: 'alternate-apple',
       codeTheme: 'light',
+      codeThemeExplicit: true,
       customCssId: 'custom-1',
       customFont: 'optima',
       markdownTheme: 'newsprint',

@@ -25,13 +25,13 @@ Composer packages are bundled under `vendor/` in the release ZIP after `composer
 | Name | Version | Source | License | Purpose | Bundled in ZIP | Notice location |
 | --- | --- | --- | --- | --- | --- | --- |
 | Inter font | 5.3.0 | https://registry.npmjs.org/@fontsource/inter/-/inter-5.3.0.tgz | OFL-1.1 | Local immersive-editor interface font. | Yes, copied to assets/vendor/fonts/inter/ | assets/vendor/fonts/inter/LICENSE |
+| Inter variable font | 5.3.0 | https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz | OFL-1.1 | Local reference-matched font for immersive Custom CSS tabs. | Yes, copied to assets/vendor/fonts/inter-variable/ | assets/vendor/fonts/inter-variable/LICENSE |
 | JetBrains Mono font | 5.3.0 | https://registry.npmjs.org/@fontsource/jetbrains-mono/-/jetbrains-mono-5.3.0.tgz | OFL-1.1 | Local immersive-editor source and statistics font. | Yes, copied to assets/vendor/fonts/jetbrains-mono/ | assets/vendor/fonts/jetbrains-mono/LICENSE |
 | Lora font | 5.3.0 | https://registry.npmjs.org/@fontsource/lora/-/lora-5.3.0.tgz | OFL-1.1 | Local immersive Preview heading font. | Yes, copied to assets/vendor/fonts/lora/ | assets/vendor/fonts/lora/LICENSE |
 | Highlight.js CDN assets | 11.11.1 | https://registry.npmjs.org/@highlightjs/cdn-assets/-/cdn-assets-11.11.1.tgz | BSD-3-Clause | Local syntax highlighting script and bundled Highlight.js code themes. | Yes, copied to assets/vendor/highlight/highlight.min.js, assets/vendor/highlight/styles/*.css | assets/vendor/highlight/LICENSE |
 | KaTeX | 0.16.47 | https://registry.npmjs.org/katex/-/katex-0.16.47.tgz | MIT | Local math rendering script, stylesheet, and fonts. | Yes, copied to assets/vendor/katex/katex.min.js, assets/vendor/katex/katex.min.css, assets/vendor/katex/fonts/ | assets/vendor/katex/LICENSE |
-| Mermaid | 10.9.6 | https://registry.npmjs.org/mermaid/-/mermaid-10.9.6.tgz | MIT | Local diagram rendering script. | Yes, copied to assets/vendor/mermaid/mermaid.min.js | assets/vendor/mermaid/LICENSE |
 
-Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js, KaTeX, and Mermaid retain license files under `assets/vendor/`.
+Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js and KaTeX retain license files under `assets/vendor/`; Mermaid is compiled into its on-demand local frontend bundle.
 
 ## Compiled Frontend Runtime Packages
 
@@ -49,13 +49,14 @@ Copied frontend assets are committed locally so the editor, preview, and fronten
 | @marijn/find-cluster-break | 1.0.3 | https://registry.npmjs.org/@marijn/find-cluster-break/-/find-cluster-break-1.0.3.tgz | MIT | Unicode grapheme boundary handling used by CodeMirror state. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | crelt | 1.0.7 | https://registry.npmjs.org/crelt/-/crelt-1.0.7.tgz | MIT | DOM element construction used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | diff | 5.2.2 | https://registry.npmjs.org/diff/-/diff-5.2.2.tgz | BSD-3-Clause | Character-level change mapping used to preserve canonical Markdown during visual editing. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
-| lucide-react | 0.487.0 | https://registry.npmjs.org/lucide-react/-/lucide-react-0.487.0.tgz | ISC | Locked build-time icon nodes used by the immersive editor interface. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| lucide-react | 0.487.0 | https://registry.npmjs.org/lucide-react/-/lucide-react-0.487.0.tgz | ISC | Locked build-time icon nodes used by the ordinary and immersive editor interfaces. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| mermaid | 10.9.6 | https://registry.npmjs.org/mermaid/-/mermaid-10.9.6.tgz | MIT | Mermaid diagram rendering runtime compiled into the on-demand frontend bundle. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | style-mod | 4.1.3 | https://registry.npmjs.org/style-mod/-/style-mod-4.1.3.tgz | MIT | Scoped runtime style modules used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | turndown | 7.2.4 | https://registry.npmjs.org/turndown/-/turndown-7.2.4.tgz | MIT | Converts the editable Preview DOM into a visual Markdown change model. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | turndown-plugin-gfm | 1.0.2 | https://registry.npmjs.org/turndown-plugin-gfm/-/turndown-plugin-gfm-1.0.2.tgz | MIT | GFM table and task-list conversion for visual Markdown editing. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | w3c-keyname | 2.2.8 | https://registry.npmjs.org/w3c-keyname/-/w3c-keyname-2.2.8.tgz | MIT | Cross-browser keyboard key normalization used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 
-These packages are compiled into the production WordPress Editor entry. Their required license notices follow.
+These packages are compiled into production browser bundles. Their required license notices follow.
 
 ### @codemirror/commands
 
@@ -393,6 +394,32 @@ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
+### mermaid
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2014 - 2022 Knut Sveidqvist
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ### style-mod

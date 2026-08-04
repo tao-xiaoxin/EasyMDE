@@ -53,7 +53,6 @@ The editor includes article themes such as:
 * Default
 * Orange Heart
 * Chazi Purple
-* Nenqing Green
 * Green Vitality
 * Red Crimson
 * Blue Ying

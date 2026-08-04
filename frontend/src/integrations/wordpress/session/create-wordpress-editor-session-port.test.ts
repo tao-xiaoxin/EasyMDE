@@ -21,6 +21,7 @@ function fixture() {
     <input id="easymde-enabled-field" value="1">
     <input id="easymde-markdown-theme-field" value="newsprint">
     <input id="easymde-code-theme-field" value="github">
+    <input id="easymde-code-theme-explicit-field" value="0">
     <input id="easymde-custom-css-id-field" value="">
     <input id="easymde-custom-font-field" value="inter">
     <input id="easymde-windows-font-field" value="microsoft-yahei">
@@ -37,6 +38,7 @@ function fixture() {
     autosaveFields: {
       appleFont: form.querySelector('#easymde-apple-font-field') as HTMLInputElement,
       codeTheme: form.querySelector('#easymde-code-theme-field') as HTMLInputElement,
+      codeThemeExplicit: form.querySelector('#easymde-code-theme-explicit-field') as HTMLInputElement,
       content: form.querySelector('#content') as HTMLTextAreaElement,
       customCssId: form.querySelector('#easymde-custom-css-id-field') as HTMLInputElement,
       customFont: form.querySelector('#easymde-custom-font-field') as HTMLInputElement,
@@ -109,6 +111,7 @@ describe('createWordPressEditorSessionPort', () => {
       _easymde_markdown: '# Unsaved Markdown',
       _easymde_markdown_theme: 'newsprint',
       _easymde_code_theme: 'github',
+      _easymde_code_theme_explicit: '0',
       _easymde_custom_css_id: '',
       _easymde_custom_font: 'inter',
       _easymde_windows_font: 'microsoft-yahei',
@@ -285,6 +288,7 @@ describe('createWordPressEditorSessionPort', () => {
       autosaveFields: {
         appleFont: document.createElement('input'),
         codeTheme: document.createElement('input'),
+        codeThemeExplicit: document.createElement('input'),
         content: document.createElement('textarea'),
         customCssId: document.createElement('input'),
         customFont: document.createElement('input'),
@@ -312,6 +316,7 @@ describe('createWordPressEditorSessionPort', () => {
       autosaveFields: {
         appleFont: document.createElement('input'),
         codeTheme: document.createElement('input'),
+        codeThemeExplicit: document.createElement('input'),
         content: document.createElement('textarea'),
         customCssId: document.createElement('input'),
         customFont: document.createElement('input'),

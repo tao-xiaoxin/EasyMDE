@@ -26,22 +26,24 @@ function bootstrap(): SettingsCenterBootstrap {
   return {
     schemaVersion: 2,
     closeUrl: `${origin}/wp-admin/options-general.php?page=easymde`,
+    settings: {
+      optionKey: 'easymde_editor_settings',
+      toolbarLayout: 'hybrid-icons',
+      shortcuts: {
+        bold: { win: 'Ctrl+B', mac: 'Cmd+B' }
+      }
+    },
+    commands: [{
+      id: 'bold',
+      label: 'Bold',
+      group: 'format',
+      defaultShortcutWin: 'Ctrl+B',
+      defaultShortcutMac: 'Cmd+B'
+    }],
     assets: {
       brandMarkUrl: `${origin}/plugin/brand.png`,
       headerIllustrationUrl: `${origin}/plugin/header.png`,
       searchEmptyIllustrationUrl: `${origin}/plugin/search-empty.png`
-    },
-    drafts: {
-      images: {
-        domain: 'https://img.example.test',
-        backupDomain: 'https://backup.example.test'
-      },
-      ai: {
-        provider: 'OpenAI',
-        endpoint: 'https://api.example.test/v1',
-        apiKey: 'example-api-key',
-        model: 'gpt-4.1-mini'
-      }
     },
     strings: Object.fromEntries(
       SETTINGS_CENTER_STRING_KEYS.map((key) => [key, key])

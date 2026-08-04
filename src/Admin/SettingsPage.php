@@ -13,6 +13,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class SettingsPage {
 
+	private const SETTINGS_CENTER_PAGE = 'easymde/settings/general';
+
 	private $toolbar_registry;
 	private $options;
 
@@ -32,7 +34,7 @@ final class SettingsPage {
 			__( 'EasyMDE Settings Center', 'easymde' ),
 			__( 'EasyMDE Settings', 'easymde' ),
 			'manage_options',
-			'easymde-settings-center',
+			self::SETTINGS_CENTER_PAGE,
 			array( $this, 'render_settings_center' ),
 			'dashicons-admin-settings',
 			81
@@ -71,7 +73,7 @@ final class SettingsPage {
 			return;
 		}
 
-		if ( 'toplevel_page_easymde-settings-center' !== $hook || ! current_user_can( 'manage_options' ) ) {
+		if ( 'toplevel_page_' . self::SETTINGS_CENTER_PAGE !== $hook || ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
 
@@ -137,25 +139,41 @@ final class SettingsPage {
 	}
 
 	private function get_settings_center_bootstrap() {
+		$editor_settings = $this->get_editor_settings();
+		$commands        = array();
+
+		foreach ( $this->toolbar_registry->get_commands_for_script() as $command ) {
+			if ( ! is_array( $command ) || empty( $command['id'] ) || empty( $command['label'] ) ) {
+				continue;
+			}
+
+			$command_id = sanitize_key( $command['id'] );
+			if ( '' === $command_id ) {
+				continue;
+			}
+
+			$commands[] = array(
+				'id'                 => $command_id,
+				'label'              => (string) $command['label'],
+				'group'              => isset( $command['group'] ) ? sanitize_key( $command['group'] ) : 'default',
+				'defaultShortcutWin' => isset( $command['defaultShortcutWin'] ) ? (string) $command['defaultShortcutWin'] : '',
+				'defaultShortcutMac' => isset( $command['defaultShortcutMac'] ) ? (string) $command['defaultShortcutMac'] : '',
+			);
+		}
+
 		return array(
 			'schemaVersion' => 2,
 			'closeUrl'      => admin_url( 'options-general.php?page=easymde' ),
+			'settings'      => array(
+				'optionKey'    => $this->options->editor_settings_key(),
+				'toolbarLayout' => isset( $editor_settings['toolbar_layout'] ) ? (string) $editor_settings['toolbar_layout'] : 'hybrid-icons',
+				'shortcuts'    => isset( $editor_settings['shortcuts'] ) && is_array( $editor_settings['shortcuts'] ) ? $editor_settings['shortcuts'] : array(),
+			),
+			'commands'      => $commands,
 			'assets'        => array(
 				'brandMarkUrl'               => Asset::url( 'assets/images/settings-center/brand-icon-clean.png' ),
 				'headerIllustrationUrl'      => Asset::url( 'assets/images/settings-center/header-illustration.png' ),
 				'searchEmptyIllustrationUrl' => Asset::url( 'assets/images/settings-center/search-empty-illustration.png' ),
-			),
-			'drafts'        => array(
-				'images' => array(
-					'domain'       => 'https://img.example.com',
-					'backupDomain' => 'https://backup.example.com',
-				),
-				'ai'     => array(
-					'provider' => 'OpenAI',
-					'endpoint' => 'https://api.openai.com/v1',
-					'apiKey'   => 'sk-easymde-example-api-key',
-					'model'    => 'gpt-4.1-mini',
-				),
 			),
 			'strings'       => $this->get_settings_center_strings(),
 		);
@@ -201,6 +219,9 @@ final class SettingsPage {
 			'aboutDescription'                             => __( 'Learn about the EasyMDE plugin, version status, and related resources.', 'easymde' ),
 			'sectionPending'                               => __( 'This settings section is not connected yet.', 'easymde' ),
 			'sectionPendingDescription'                    => __( 'Its real WordPress data interface will be connected in a later step.', 'easymde' ),
+			'toolbarLayout'                                => __( 'Toolbar layout', 'easymde' ),
+			'toolbarLayoutDescription'                     => __( 'The current editor toolbar layout is managed by the EasyMDE editor runtime.', 'easymde' ),
+			'hybridIconToolbar'                            => __( 'Hybrid icon toolbar', 'easymde' ),
 			'basePreferences'                              => __( 'Basic Preferences', 'easymde' ),
 			'editorBehavior'                               => __( 'Editor Behavior', 'easymde' ),
 			'documentDefaults'                             => __( 'Document Defaults', 'easymde' ),
@@ -259,6 +280,7 @@ final class SettingsPage {
 			'windowsLinux'                                 => __( 'Windows / Linux', 'easymde' ),
 			'macOS'                                        => __( 'macOS', 'easymde' ),
 			'saveArticle'                                  => __( 'Save Article', 'easymde' ),
+			'saveSettings'                                 => __( 'Save settings', 'easymde' ),
 			'bold'                                         => __( 'Bold', 'easymde' ),
 			'italic'                                       => __( 'Italic', 'easymde' ),
 			'insertLink'                                   => __( 'Insert Link', 'easymde' ),

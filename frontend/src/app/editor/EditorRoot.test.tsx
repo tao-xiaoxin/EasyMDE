@@ -20,6 +20,10 @@ import type {
   EditorSessionPort,
   EditorSessionStatus
 } from '../../contracts/ports/editor-session-port';
+import {
+  customCssDialogStrings,
+  customCssVariables
+} from '../../test/fixtures/appearance-bootstrap';
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
 import { createWordPressNativeSubmissionPort } from '../../integrations/wordpress/native-form/wordpress-native-submission';
 import { EditorRoot, type EditorRootProps } from './EditorRoot';
@@ -50,6 +54,9 @@ function fixture(): EditorRootProps &
     shortcutBinding: PreparedToolbarShortcutBinding;
     sessionAutosave: () => EditorSessionAutosavePreparationResult;
     sessionEmit: (status: EditorSessionStatus) => void;
+    getPreviewLayoutObservationCount: () => number;
+    triggerResize: () => void;
+    triggerPreviewLayout: () => void;
   }> {
   const submissionField = document.createElement('textarea');
   const titleField = document.createElement('input');
@@ -88,6 +95,9 @@ function fixture(): EditorRootProps &
   const sessionAutosaveListeners = new Set<
     () => EditorSessionAutosavePreparationResult
   >();
+  let resizeListener: (() => void) | null = null;
+  let previewLayoutListener: (() => void) | null = null;
+  let previewLayoutObservationCount = 0;
   let sessionSnapshot = { status: 'ready' as EditorSessionStatus };
   const sessionPort: EditorSessionPort = {
     getSnapshot: () => sessionSnapshot,
@@ -104,14 +114,17 @@ function fixture(): EditorRootProps &
   return {
     appearance: {
       articleThemes: [
-        { id: 'default', label: 'Default' },
-        { id: 'newsprint', label: 'Newsprint' }
+        { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
+        { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'atom-one-dark' }
       ],
+      canManageCustomCss: true,
+      codeThemeExplicit: false,
       codeThemes: [
         { id: 'atom-one-dark', label: 'Atom One Dark' },
         { id: 'github', label: 'GitHub' }
       ],
       customCss: [],
+      customCssVariables,
       state: {
         codeTheme: 'atom-one-dark',
         customCssId: '',
@@ -123,9 +136,11 @@ function fixture(): EditorRootProps &
         codeTheme: 'Code theme',
         cssName: 'CSS name',
         cssSaveFailed: 'CSS save failed',
+        cssNameDuplicate: 'A theme with this name already exists',
         cssSaved: 'CSS saved',
         customCss: 'Custom CSS',
         customCssTheme: 'Custom CSS theme',
+        customCssDialog: customCssDialogStrings,
         namedCustomCss: 'Named CSS',
         saveCss: 'Save CSS'
       }
@@ -133,6 +148,10 @@ function fixture(): EditorRootProps &
     appearancePort: {
       applyState: vi.fn(),
       closeOtherPopovers: vi.fn(),
+      previewCustomCss: vi.fn().mockResolvedValue({
+        scopedCss: '',
+        status: 'ready'
+      }),
       saveCustomCss: vi
         .fn()
         .mockResolvedValue({ status: 'failed', code: 'synthetic' })
@@ -280,9 +299,23 @@ function fixture(): EditorRootProps &
       activateFavicon: vi.fn(() => vi.fn()),
       activateFocusBoundary: vi.fn(() => vi.fn()),
       hasOpenToolbarPopover: () => false,
+      now: () => Date.now(),
       schedule: (callback, delay) => {
         const timer = window.setTimeout(callback, delay);
         return () => window.clearTimeout(timer);
+      },
+      subscribeResize: (listener) => {
+        resizeListener = listener;
+        return () => {
+          if (resizeListener === listener) resizeListener = null;
+        };
+      },
+      observePreviewLayout: (_surface, listener) => {
+        previewLayoutObservationCount += 1;
+        previewLayoutListener = listener;
+        return () => {
+          if (previewLayoutListener === listener) previewLayoutListener = null;
+        };
       },
       subscribeKeydown: (listener) => {
         document.addEventListener('keydown', listener);
@@ -327,7 +360,13 @@ function fixture(): EditorRootProps &
         url: 'https://example.test/upload.png'
       } satisfies ImageUploadResult)
     },
-    layout: { direction: 'ltr' },
+    layout: {
+      direction: 'ltr',
+      status: {
+        lastEdited: 'Last edited by Editor on July 27, 2026 at 10:00',
+        wordCount: 'Character count: %s'
+      }
+    },
     localDraftStorage,
     localDrafts: {
       enabled: true,
@@ -394,7 +433,7 @@ function fixture(): EditorRootProps &
     preview: {
       features: {},
       html: '<p>Initial</p>' as SafePreviewHtml,
-      messages: { empty: 'Empty', error: 'Failed', rendering: 'Rendering' },
+      messages: { empty: 'Empty', error: 'Failed' },
       postId: 7,
       signature: 'initial'
     },
@@ -440,6 +479,9 @@ function fixture(): EditorRootProps &
       sessionSnapshot = { status };
       for (const listener of sessionListeners) listener();
     },
+    getPreviewLayoutObservationCount: () => previewLayoutObservationCount,
+    triggerResize: () => resizeListener?.(),
+    triggerPreviewLayout: () => previewLayoutListener?.(),
     sessionPort,
     shortcutBinding,
     submissionField,
@@ -478,10 +520,12 @@ function fixture(): EditorRootProps &
       headingLevelLabel: 'Heading level',
       headingsLabel: 'Headings',
       linkText: 'link text',
-      shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } }
+      shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } },
+      undoLabel: 'Undo'
     },
     wechatClipboard: {
-      copy: vi.fn().mockResolvedValue({ method: 'clipboard', status: 'copied' })
+      copy: vi.fn().mockResolvedValue({ method: 'clipboard', status: 'copied' }),
+      prepare: vi.fn().mockResolvedValue(undefined)
     },
     wechatExport: {
       enabled: true,
@@ -528,6 +572,9 @@ describe('EditorRoot', () => {
     expect(props.submissionField.hidden).toBe(true);
     expect(props.onDocumentOwnerChange).toHaveBeenCalledWith(true);
     expect(view.container.querySelector('.cm-editor')).not.toBeNull();
+    expect(
+      view.container.querySelectorAll('.easymde-pane-header')
+    ).toHaveLength(0);
     await waitFor(() =>
       expect(props.previewPort.render).toHaveBeenCalledTimes(1)
     );
@@ -584,8 +631,7 @@ describe('EditorRoot', () => {
       'Image',
       'Copy to WeChat',
       '进入沉浸写作',
-      'Font',
-      'Appearance'
+      '编辑器设置'
     ]);
     expect(
       toolbar.querySelectorAll(
@@ -629,6 +675,9 @@ describe('EditorRoot', () => {
       view.container.querySelectorAll('.easymde-pane-preview')
     ).toHaveLength(1);
     expect(
+      view.container.querySelectorAll('.easymde-pane-header')
+    ).toHaveLength(2);
+    expect(
       view.container.querySelector(
         '.easymde-pane-preview [data-easymde-preview-html-sink]'
       )
@@ -671,12 +720,23 @@ describe('EditorRoot', () => {
     ).toBeNull();
     expect(
       view.queryByRole('complementary', { name: '文章大纲' })
-    ).toBeNull();
-    expect(view.queryByRole('button', { name: '收起大纲' })).toBeNull();
-    expect(view.queryByRole('button', { name: '展开大纲' })).toBeNull();
+    ).not.toBeNull();
+    expect(view.getAllByRole('button', { name: '收起大纲' })).toHaveLength(2);
     expect(
       view.queryByRole('separator', { name: '调整大纲宽度' })
+    ).not.toBeNull();
+    const previewHideOutline = view.getAllByRole('button', {
+      name: '收起大纲'
+    })[0];
+    if (!previewHideOutline) throw new Error('preview-outline-close-unavailable');
+    fireEvent.click(previewHideOutline);
+    expect(
+      view.queryByRole('complementary', { name: '文章大纲' })
     ).toBeNull();
+    fireEvent.click(view.getByRole('button', { name: '展开大纲' }));
+    expect(
+      view.queryByRole('complementary', { name: '文章大纲' })
+    ).not.toBeNull();
     expect(
       view.container.querySelectorAll('[data-easymde-preview-html-sink]')
     ).toHaveLength(1);
@@ -722,7 +782,7 @@ describe('EditorRoot', () => {
     ).toHaveLength(1);
     expect(
       view.queryByRole('complementary', { name: '文章大纲' })
-    ).toBeNull();
+    ).not.toBeNull();
     expect(props.enhancementPort.dispose).not.toHaveBeenCalled();
     fireEvent.click(view.getByRole('button', { name: 'Image' }));
     expect(props.mediaPickerFrame?.open).toHaveBeenCalledTimes(1);
@@ -1921,9 +1981,13 @@ describe('EditorRoot', () => {
     expect(
       view.queryByRole('textbox', { name: '可视化文章编辑器' })
     ).toBeNull();
+    const messageHost = view.container.querySelector(
+      '.easymde-editor-message-alert-host'
+    );
+    expect(messageHost).not.toBeNull();
     expect(
-      view.queryByText('paste' === source ? 'Paste uploaded' : 'Drop uploaded')
-    ).toBeNull();
+      within(messageHost as HTMLElement).getByRole('status').textContent
+    ).toContain('paste' === source ? 'Paste uploaded' : 'Drop uploaded');
   }
   );
 
@@ -1944,7 +2008,8 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
     expect(props.appearancePort.applyState).toHaveBeenCalledWith(
-      expect.objectContaining({ markdownTheme: 'newsprint' })
+      expect.objectContaining({ markdownTheme: 'newsprint' }),
+      false
     );
     expect(
       view.queryByRole('textbox', { name: '可视化文章编辑器' })
@@ -1961,6 +2026,84 @@ describe('EditorRoot', () => {
         .querySelector('[data-easymde-preview-html-sink]')
         ?.classList.contains('easymde-markdown-theme-newsprint')
     ).toBe(true);
+  });
+
+  it('rejects explicit code-theme intent when visual Preview cannot synchronize', async () => {
+    const props = fixture();
+    const codeThemeExplicitField = document.createElement('input');
+    codeThemeExplicitField.value = '0';
+    const appearance = {
+      ...props.appearance,
+      codeThemes: [
+        ...props.appearance.codeThemes,
+        { id: 'terminal-noir', label: 'Terminal Noir' }
+      ]
+    };
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      (_state, explicit) => {
+        codeThemeExplicitField.value = explicit ? '1' : '0';
+      }
+    );
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    visualEditor.innerHTML = '<div class="easymde-mermaid"></div>';
+
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    const codeTheme = view.getByRole('button', { name: 'Code theme' });
+    fireEvent.click(codeTheme);
+    fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+
+    expect(props.appearancePort.applyState).not.toHaveBeenCalled();
+    expect(codeThemeExplicitField.value).toBe('0');
+    expect(codeTheme.textContent).toContain('Atom One Dark');
+  });
+
+  it('rejects a saved Custom CSS snapshot when visual Preview cannot synchronize', async () => {
+    const props = fixture();
+    vi.mocked(props.appearancePort.saveCustomCss).mockResolvedValue({
+      status: 'saved',
+      snapshot: {
+        customCss: [{
+          id: 'saved-css',
+          articleThemeName: 'Saved Article',
+          codeThemeName: 'Saved Code',
+          css: '.saved { color: green; }',
+          scopedCss: '.easymde-rendered-content .saved { color: green; }'
+        }],
+        state: {
+          markdownTheme: 'custom',
+          codeTheme: 'atom-one-dark',
+          customCssId: 'saved-css'
+        }
+      }
+    });
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    visualEditor.innerHTML = '<div class="easymde-mermaid"></div>';
+
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Custom CSS theme' }));
+    fireEvent.click(view.getByRole('button', { name: 'Apply theme' }));
+
+    await view.findByText('CSS save failed');
+    expect(props.appearancePort.saveCustomCss).not.toHaveBeenCalled();
+    expect(props.appearancePort.applyState).not.toHaveBeenCalled();
+    expect(props.onFailure).toHaveBeenCalledWith(
+      'react-editor-appearance-failed'
+    );
+    expect(view.queryByText('CSS saved')).toBeNull();
   });
 
   it('keeps the Preview owner and paper alive when entering Preview mode', async () => {
@@ -2177,6 +2320,10 @@ describe('EditorRoot', () => {
     const paragraph = visualEditor.querySelector('p');
     if (!paragraph) throw new Error('missing visual copy test paragraph');
     paragraph.textContent = 'Edited paragraph';
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+    const preparationCallsBeforeEdit = preparation.mock.calls.length;
     fireEvent.input(visualEditor);
 
     fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
@@ -2186,8 +2333,96 @@ describe('EditorRoot', () => {
     );
     expect(props.wechatClipboard.copy).toHaveBeenCalledWith(visualEditor);
     await waitFor(() =>
+      expect(
+        preparation.mock.calls.slice(preparationCallsBeforeEdit)
+          .some(([surface]) => surface === visualEditor)
+      ).toBe(true)
+    );
+    await waitFor(() =>
       expect(props.submissionField.value).toBe('Edited paragraph')
     );
+  });
+
+  it('keeps WeChat preparation bound to the active visual Preview after a render refresh', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Original paragraph';
+    props.submissionField.defaultValue = 'Original paragraph';
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: '<p>Original paragraph</p>' as SafePreviewHtml
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+    preparation.mockClear();
+
+    visualEditor.innerHTML = '<p>Rendered visual edit</p>';
+    fireEvent.input(visualEditor);
+
+    await waitFor(() => expect(preparation).toHaveBeenCalled());
+    expect(preparation.mock.calls.at(-1)?.[0]).toBe(visualEditor);
+    view.unmount();
+  });
+
+  it('coalesces WeChat preparation during rapid immersive visual edits', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Original paragraph';
+    props.submissionField.defaultValue = 'Original paragraph';
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: '<p>Original paragraph</p>' as SafePreviewHtml
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+    const preparationCallsBeforeEdit = preparation.mock.calls.length;
+
+    vi.useFakeTimers();
+    try {
+      visualEditor.innerHTML = '<p>Rapid edit 1</p>';
+      fireEvent.input(visualEditor);
+      act(() => vi.advanceTimersByTime(100));
+      visualEditor.innerHTML = '<p>Rapid edit 2</p>';
+      fireEvent.input(visualEditor);
+      act(() => vi.advanceTimersByTime(100));
+      visualEditor.innerHTML = '<p>Rapid edit 3</p>';
+      fireEvent.input(visualEditor);
+
+      expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit);
+      act(() => vi.advanceTimersByTime(179));
+      expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit);
+      act(() => vi.advanceTimersByTime(1));
+      expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit + 1);
+      expect(preparation.mock.calls.at(-1)?.[0]).toBe(visualEditor);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('restores generated blocks when a visual selection deletes a read-only region', async () => {
@@ -2575,7 +2810,7 @@ describe('EditorRoot', () => {
       within(dialog).getByRole('alert').textContent
     ).toBe('WordPress 未接受发布请求，请检查页面状态后重试。');
     expect(
-      view.container.querySelector('.easymde-editor-flash')
+      view.container.querySelector('.easymde-editor-message-alert-host')
     ).toBeNull();
   });
 
@@ -3081,16 +3316,16 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(view.getByRole('button', { name: '已复制' })).not.toBeNull()
     );
+    expect(view.getByRole('status').textContent).toContain('Copied');
     expect(
-      view.container.querySelector('.easymde-editor-flash')
-    ).toBeNull();
-    expect(view.queryByText('Copied')).toBeNull();
+      view.container.querySelector('.easymde-editor-message-alert-host')
+    ).not.toBeNull();
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     expect(view.getByRole('dialog', { name: '编辑器设置' })).not.toBeNull();
     for (const name of ['文章大纲', '字数统计', '分屏预览', '自动保存', '同步滚动']) {
       expect(
-        (view.getByRole('checkbox', { name }) as HTMLInputElement).checked
-      ).toBe(true);
+        view.getByRole('checkbox', { name }).getAttribute('aria-checked')
+      ).toBe('true');
     }
     expect(view.queryByText(/AI/u)).toBeNull();
   });
@@ -3138,7 +3373,7 @@ describe('EditorRoot', () => {
     });
   });
 
-  it('does not resurrect immersive-only feedback after leaving the reference surface', async () => {
+  it('keeps unified operation feedback stable while leaving immersive mode', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
@@ -3149,10 +3384,10 @@ describe('EditorRoot', () => {
     );
     fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
 
-    expect(view.queryByText('Copied')).toBeNull();
+    expect(view.getByRole('status').textContent).toContain('Copied');
     expect(
-      view.container.querySelector('.easymde-editor-flash')
-    ).toBeNull();
+      view.container.querySelector('.easymde-editor-message-alert-host')
+    ).not.toBeNull();
   });
 
   it('keeps a late immersive clipboard failure visible after returning to the ordinary editor', async () => {
@@ -3178,11 +3413,11 @@ describe('EditorRoot', () => {
 
     expect(view.getByText('Copy failed')).not.toBeNull();
     expect(
-      view.container.querySelector('.easymde-editor-flash')
+      view.container.querySelector('.easymde-editor-message-alert-host')
     ).not.toBeNull();
   });
 
-  it('keeps immersive operation failures in the existing status bar without a floating message', async () => {
+  it('renders immersive operation failures in the shared top alert', async () => {
     const props = fixture();
     vi.mocked(props.wechatClipboard.copy).mockResolvedValue({
       code: 'wechat-copy-failed',
@@ -3196,14 +3431,14 @@ describe('EditorRoot', () => {
       expect(view.getByRole('alert').textContent).toBe('Copy failed')
     );
     expect(
-      view.container.querySelector('.easymde-editor-flash')
-    ).toBeNull();
+      view.container.querySelector('.easymde-editor-message-alert-host')
+    ).not.toBeNull();
 
     fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
-    expect(view.queryByText('Copy failed')).toBeNull();
+    expect(view.getByRole('alert').textContent).toBe('Copy failed');
   });
 
-  it('expires ordinary feedback after 3200ms without letting a stale timer clear newer feedback', async () => {
+  it('expires ordinary feedback after 3000ms without letting a stale timer clear newer feedback', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
     await view.findByRole('button', { name: 'Copy to WeChat' });
@@ -3217,7 +3452,7 @@ describe('EditorRoot', () => {
       expect(view.getByText('Copied')).not.toBeNull();
 
       act(() => {
-        vi.advanceTimersByTime(3199);
+        vi.advanceTimersByTime(2999);
       });
       expect(view.getByText('Copied')).not.toBeNull();
 
@@ -3231,12 +3466,159 @@ describe('EditorRoot', () => {
       expect(view.getByText('Copied')).not.toBeNull();
 
       act(() => {
-        vi.advanceTimersByTime(3199);
+        vi.advanceTimersByTime(2999);
       });
       expect(view.queryByText('Copied')).toBeNull();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('does not let a stale close action clear newer feedback queued in the same turn', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const copy = await view.findByRole('button', { name: 'Copy to WeChat' });
+
+    fireEvent.click(copy);
+    await waitFor(() => expect(view.getByText('Copied')).not.toBeNull());
+    const staleClose = view.getByRole('button', { name: '关闭' });
+    const source = view.container.querySelector('.cm-content');
+    expect(source).not.toBeNull();
+
+    act(() => {
+      source?.dispatchEvent(imageTransferEvent(
+        'paste',
+        new File(['x'.repeat(1025)], 'too-large.png', { type: 'image/png' })
+      ));
+      staleClose.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(view.getByRole('alert').textContent).toBe('Paste too large');
+  });
+
+  it('resumes replacement feedback expiry after a focused stale close restores focus', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const copy = await view.findByRole('button', { name: 'Copy to WeChat' });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(copy);
+        await Promise.resolve();
+      });
+      const staleClose = view.getByRole('button', { name: '关闭' });
+      const source = view.container.querySelector('.cm-content');
+      expect(source).not.toBeNull();
+      copy.focus();
+      staleClose.focus();
+
+      act(() => {
+        source?.dispatchEvent(imageTransferEvent(
+          'paste',
+          new File(['x'.repeat(1025)], 'too-large.png', { type: 'image/png' })
+        ));
+        staleClose.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      expect(view.getByRole('alert').textContent).toBe('Paste too large');
+      expect(document.activeElement).toBe(copy);
+      act(() => {
+        vi.advanceTimersByTime(3000);
+      });
+      expect(view.queryByRole('alert')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resumes auto-dismiss with only the remaining time after focus leaves', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    await view.findByRole('button', { name: 'Copy to WeChat' });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(view.getByRole('button', { name: 'Copy to WeChat' }));
+        await Promise.resolve();
+      });
+      const close = view.getByRole('button', { name: '关闭' });
+
+      act(() => {
+        vi.advanceTimersByTime(2500);
+      });
+      fireEvent.focus(close);
+
+      act(() => {
+        vi.advanceTimersByTime(6000);
+      });
+      expect(view.getByText('Copied')).not.toBeNull();
+
+      fireEvent.blur(close);
+      act(() => {
+        vi.advanceTimersByTime(499);
+      });
+      expect(view.getByText('Copied')).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(view.queryByText('Copied')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('automatically dismisses an error after 3000ms', async () => {
+    const props = fixture();
+    vi.mocked(props.wechatClipboard.copy).mockResolvedValue({
+      code: 'wechat-copy-failed',
+      status: 'failed'
+    });
+    const view = render(<EditorRoot {...props} />);
+    const copy = await view.findByRole('button', { name: 'Copy to WeChat' });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(copy);
+        await Promise.resolve();
+      });
+      expect(view.getByRole('alert').textContent).toBe('Copy failed');
+
+      act(() => {
+        vi.advanceTimersByTime(2999);
+      });
+      expect(view.getByRole('alert').textContent).toBe('Copy failed');
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(view.queryByRole('alert')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let unrelated success feedback overwrite an error before auto-dismiss', async () => {
+    const props = fixture();
+    vi.mocked(props.wechatClipboard.copy).mockResolvedValue({
+      code: 'wechat-copy-failed',
+      status: 'failed'
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: 'Copy to WeChat' }));
+    await waitFor(() =>
+      expect(view.getByRole('alert').textContent).toBe('Copy failed')
+    );
+
+    fireEvent.click(view.getByRole('button', { name: 'Bold' }));
+    await waitFor(() =>
+      expect(props.localDraftStorage.write).toHaveBeenCalledOnce()
+    );
+    expect(view.getByRole('alert').textContent).toBe('Copy failed');
   });
 
   it('matches the reference 1800ms immersive copy-feedback duration', async () => {
@@ -3366,13 +3748,15 @@ describe('EditorRoot', () => {
 
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     expect(
-      (view.getByRole('checkbox', { name: '自动保存' }) as HTMLInputElement)
-        .checked
-    ).toBe(false);
+      view
+        .getByRole('checkbox', { name: '自动保存' })
+        .getAttribute('aria-checked')
+    ).toBe('false');
     expect(
-      (view.getByRole('checkbox', { name: '同步滚动' }) as HTMLInputElement)
-        .checked
-    ).toBe(false);
+      view
+        .getByRole('checkbox', { name: '同步滚动' })
+        .getAttribute('aria-checked')
+    ).toBe('false');
     expect(
       view.container
         .querySelector('.easymde-editor')
@@ -3558,7 +3942,7 @@ describe('EditorRoot', () => {
     }
   });
 
-  it('keeps exactly one React toolbar popover open', async () => {
+  it('closes ordinary Settings when the heading menu opens and runs its command', async () => {
     const props = fixture();
     const toolbar = {
       ...props.toolbar,
@@ -3576,25 +3960,18 @@ describe('EditorRoot', () => {
       ]
     } as const;
     const view = render(<EditorRoot {...props} toolbar={toolbar} />);
-    const heading = view.getByRole('button', { name: 'Headings' });
-    const appearance = view.getByRole('button', { name: 'Appearance' });
-    const fonts = view.getByRole('button', { name: 'Font' });
+    const headings = view.getByRole('button', { name: 'Headings' });
+    const settings = view.getByRole('button', { name: '编辑器设置' });
 
-    fireEvent.click(heading);
-    expect(heading.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(settings);
+    expect(settings.getAttribute('aria-expanded')).toBe('true');
 
-    fireEvent.click(appearance);
-    expect(heading.getAttribute('aria-expanded')).toBe('false');
-    expect(appearance.getAttribute('aria-expanded')).toBe('true');
-
-    fireEvent.click(fonts);
-    expect(appearance.getAttribute('aria-expanded')).toBe('false');
-    expect(fonts.getAttribute('aria-expanded')).toBe('true');
-
-    fireEvent.click(appearance);
-    expect(fonts.getAttribute('aria-expanded')).toBe('false');
-    expect(appearance.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(appearance);
+    fireEvent.mouseDown(headings);
+    fireEvent.click(headings, { detail: 1 });
+    expect(settings.getAttribute('aria-expanded')).toBe('false');
+    const headingItem = view.getByRole('menuitem', { name: 'Heading 1' });
+    expect(document.activeElement).toBe(headings);
+    fireEvent.click(headingItem);
   });
 
   it('renders Preview from the current Appearance state', async () => {
@@ -3604,10 +3981,9 @@ describe('EditorRoot', () => {
       expect(props.previewPort.render).toHaveBeenCalledTimes(1)
     );
 
-    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
-    fireEvent.change(view.getByLabelText('Article theme'), {
-      target: { value: 'theme:newsprint' }
-    });
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
     await waitFor(() => {
       expect(props.previewPort.render).toHaveBeenLastCalledWith(
@@ -3616,14 +3992,232 @@ describe('EditorRoot', () => {
       );
     });
 
-    fireEvent.change(view.getByLabelText('Code theme'), {
-      target: { value: 'github' }
-    });
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
     await waitFor(() => {
       expect(
         vi.mocked(props.enhancementPort.enhance).mock.calls.at(-1)?.[3]
       ).toEqual(expect.objectContaining({ codeTheme: 'github' }));
     });
+  });
+
+  it('preserves an explicit code theme when Appearance remounts in immersive mode', async () => {
+    const props = fixture();
+    const codeThemeExplicitField = document.createElement('input');
+    codeThemeExplicitField.value = '0';
+    const appearance = {
+      ...props.appearance,
+      articleThemes: props.appearance.articleThemes.map((theme) => ({
+        ...theme,
+        defaultCodeTheme: 'newsprint' === theme.id
+          ? 'github'
+          : theme.defaultCodeTheme
+      })),
+      codeThemes: [
+        ...props.appearance.codeThemes,
+        { id: 'terminal-noir', label: 'Terminal Noir' }
+      ]
+    };
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      (_state, explicit) => {
+        codeThemeExplicitField.value = explicit ? '1' : '0';
+      }
+    );
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+    expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        codeTheme: 'terminal-noir',
+        markdownTheme: 'newsprint'
+      }),
+      true
+    );
+    expect(codeThemeExplicitField.value).toBe('1');
+  });
+
+  it('preserves an explicit code theme when Appearance remounts in ordinary mode', async () => {
+    const props = fixture();
+    const codeThemeExplicitField = document.createElement('input');
+    codeThemeExplicitField.value = '0';
+    const appearance = {
+      ...props.appearance,
+      articleThemes: props.appearance.articleThemes.map((theme) => ({
+        ...theme,
+        defaultCodeTheme: 'newsprint' === theme.id
+          ? 'github'
+          : theme.defaultCodeTheme
+      })),
+      codeThemes: [
+        ...props.appearance.codeThemes,
+        { id: 'terminal-noir', label: 'Terminal Noir' }
+      ]
+    };
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      (_state, explicit) => {
+        codeThemeExplicitField.value = explicit ? '1' : '0';
+      }
+    );
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+    expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        codeTheme: 'terminal-noir',
+        markdownTheme: 'newsprint'
+      }),
+      true
+    );
+    expect(codeThemeExplicitField.value).toBe('1');
+  });
+
+  it('preserves a named CSS theme saved in immersive mode after returning to the ordinary editor', async () => {
+    const props = fixture();
+    const savedSnapshot = {
+      customCss: [
+        {
+          articleThemeName: 'Writer Article',
+          codeThemeName: 'Writer Code',
+          css: '.note { color: navy; }',
+          id: 'writer-css',
+          scopedCss: '.easymde-rendered-content .note { color: navy; }'
+        }
+      ],
+      state: {
+        codeTheme: 'atom-one-dark',
+        customCssId: 'writer-css',
+        markdownTheme: 'custom'
+      }
+    } as const;
+    const appearancePort = {
+      ...props.appearancePort,
+      saveCustomCss: vi.fn().mockResolvedValue({
+        snapshot: savedSnapshot,
+        status: 'saved' as const
+      })
+    };
+    const view = render(
+      <EditorRoot {...props} appearancePort={appearancePort} />
+    );
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Custom CSS theme' }));
+    fireEvent.change(view.getByRole('textbox', {
+      name: 'Article theme name'
+    }), {
+      target: { value: 'Writer Article' }
+    });
+    fireEvent.click(view.getByRole('button', { name: /Custom CSS code/ }));
+    fireEvent.change(view.getByRole('textbox', { name: 'Custom CSS code' }), {
+      target: { value: '.note { color: navy; }' }
+    });
+    fireEvent.click(view.getByRole('button', { name: 'Apply theme' }));
+    await waitFor(() => {
+      expect(appearancePort.saveCustomCss).toHaveBeenCalledOnce();
+      expect(appearancePort.saveCustomCss).toHaveBeenCalledWith(
+        expect.objectContaining({
+          articleThemeName: 'Writer Article',
+          codeThemeName: 'EasyMDE Blue Code'
+        })
+      );
+      expect(
+        view.queryByRole('dialog', { name: 'Custom CSS theme' })
+      ).toBeNull();
+    });
+
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+
+    const articleTheme = view.getByRole('combobox', {
+      name: 'Article theme'
+    });
+    expect(articleTheme.textContent).toContain('Writer Article');
+    fireEvent.click(articleTheme);
+    expect(
+      view.getByRole('option', { name: 'Writer Article' }).getAttribute(
+        'aria-selected'
+      )
+    ).toBe('true');
+  });
+
+  it('carries an ordinary appearance choice into immersive mode', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+
+    expect(
+      view.getByRole('button', { name: 'Article theme' }).textContent
+    ).toContain('Newsprint');
+  });
+
+  it('carries an ordinary font choice into immersive mode', async () => {
+    const props = fixture();
+    const fonts = {
+      ...props.fonts,
+      options: {
+        ...props.fonts.options,
+        customFonts: [
+          ...props.fonts.options.customFonts,
+          {
+            fontFamily: 'Optima, sans-serif',
+            id: 'optima',
+            label: 'Optima'
+          }
+        ]
+      }
+    };
+    const view = render(<EditorRoot {...props} fonts={fonts} />);
+
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+    const preparationCallsBeforeFontChange = preparation.mock.calls.length;
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Custom font' }));
+    fireEvent.click(view.getByRole('option', { name: 'Optima' }));
+    await waitFor(() =>
+      expect(
+        preparation.mock.calls.slice(preparationCallsBeforeFontChange).some(
+          ([surface]) => surface === view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+        )
+      ).toBe(true)
+    );
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: 'Font' }));
+
+    expect(
+      view.getByRole('button', { name: 'Custom font' }).textContent
+    ).toContain('Optima');
   });
 
   it('applies theme classes and theme font defaults to the single Preview sink', async () => {
@@ -3639,6 +4233,7 @@ describe('EditorRoot', () => {
                 serifFont: 'on',
                 windowsFont: 'segoe-ui'
               },
+              defaultCodeTheme: theme.defaultCodeTheme,
               id: 'newsprint',
               label: 'Newsprint'
             }
@@ -3686,10 +4281,9 @@ describe('EditorRoot', () => {
       <EditorRoot {...props} appearance={appearance} fonts={fonts} />
     );
 
-    fireEvent.click(view.getByRole('button', { name: 'Appearance' }));
-    fireEvent.change(view.getByLabelText('Article theme'), {
-      target: { value: 'theme:newsprint' }
-    });
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
     await waitFor(() => {
       expect(props.fontControlsPort.applyState).toHaveBeenCalledWith(
@@ -3852,6 +4446,44 @@ describe('EditorRoot', () => {
     expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves an upload error when the upload session remounts', async () => {
+    const props = fixture();
+    let uploadCount = 0;
+    vi.mocked(props.imageUploadPort.upload).mockImplementation(() => {
+      uploadCount += 1;
+      if (1 === uploadCount) {
+        return Promise.resolve({ code: 'request-failed', status: 'failed' });
+      }
+      return new Promise(() => undefined);
+    });
+    const view = render(<EditorRoot {...props} />);
+    const source = view.container.querySelector('.cm-content');
+    expect(source).not.toBeNull();
+
+    source?.dispatchEvent(imageTransferEvent(
+      'paste',
+      new File(['first'], 'first.png', { type: 'image/png' })
+    ));
+    await waitFor(() => expect(view.getByText('Paste failed')).not.toBeNull());
+
+    view.rerender(
+      <EditorRoot
+        {...props}
+        imageUpload={{ ...props.imageUpload }}
+      />
+    );
+    source?.dispatchEvent(imageTransferEvent(
+      'paste',
+      new File(['second'], 'second.png', { type: 'image/png' })
+    ));
+
+    await waitFor(() =>
+      expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(2)
+    );
+    expect(view.getByText('Paste failed')).not.toBeNull();
+    expect(view.queryByText('Paste uploading')).toBeNull();
+  });
+
   it('restores an available local draft and releases its storage subscription', async () => {
     const props = fixture();
     const unsubscribe = vi.fn();
@@ -3926,6 +4558,45 @@ describe('EditorRoot', () => {
     expect(view.queryByText('Local draft saved 12:34')).toBeNull();
   });
 
+  it('keeps local draft failures visible in the immersive surface', async () => {
+    const props = fixture();
+    vi.mocked(props.localDraftStorage.write).mockReturnValue({
+      code: 'local-draft-write-failed',
+      status: 'failed'
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: 'Bold' }));
+
+    await waitFor(() =>
+      expect(view.getByRole('alert').textContent).toBe(
+        props.localDrafts.strings.saveFailed
+      )
+    );
+  });
+
+  it('does not clear an existing local draft failure when entering immersive mode', async () => {
+    const props = fixture();
+    vi.mocked(props.localDraftStorage.write).mockReturnValue({
+      code: 'local-draft-write-failed',
+      status: 'failed'
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: 'Bold' }));
+    await waitFor(() =>
+      expect(view.getByRole('alert').textContent).toBe(
+        props.localDrafts.strings.saveFailed
+      )
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.getByRole('alert').textContent).toBe(
+      props.localDrafts.strings.saveFailed
+    );
+  });
+
   it('schedules local drafts from the document owner without depending on native bridge events', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
@@ -3972,6 +4643,236 @@ describe('EditorRoot', () => {
       'copywechat',
       expect.anything()
     );
+  });
+
+  it('re-prepares the WeChat payload after a browser resize', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+
+    await waitFor(() => expect(preparation).toHaveBeenCalled());
+    const callsBeforeResize = preparation.mock.calls.length;
+    act(() => props.triggerResize());
+
+    await waitFor(() =>
+      expect(preparation.mock.calls.length).toBeGreaterThan(callsBeforeResize)
+    );
+    view.unmount();
+  });
+
+  it('re-prepares the WeChat payload after preview media or font layout changes', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+
+    await waitFor(() => expect(preparation).toHaveBeenCalled());
+    const callsBeforeLayoutChange = preparation.mock.calls.length;
+    act(() => props.triggerPreviewLayout());
+
+    await waitFor(() =>
+      expect(preparation.mock.calls.length).toBeGreaterThan(callsBeforeLayoutChange)
+    );
+    view.unmount();
+  });
+
+  it('re-prepares the WeChat payload after immersive layout mode changes', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+
+    await waitFor(() => expect(preparation).toHaveBeenCalled());
+    const callsBeforeImmersive = preparation.mock.calls.length;
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    await waitFor(() =>
+      expect(preparation.mock.calls.length).toBeGreaterThan(callsBeforeImmersive)
+    );
+
+    const callsBeforePreview = preparation.mock.calls.length;
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() =>
+      expect(preparation.mock.calls.length).toBeGreaterThan(callsBeforePreview)
+    );
+    view.unmount();
+  });
+
+  it('rebinds WeChat layout observation when the immersive visual Preview mounts', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(props.getPreviewLayoutObservationCount()).toBeGreaterThan(0)
+    );
+    const observationsBeforeVisualPreview =
+      props.getPreviewLayoutObservationCount();
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+
+    await waitFor(() =>
+      expect(props.getPreviewLayoutObservationCount()).toBeGreaterThan(
+        observationsBeforeVisualPreview
+      )
+    );
+    view.unmount();
+  });
+
+  it('re-prepares WeChat after an immersive article theme change', async () => {
+    const pendingPreview = deferred<PreviewResponse>();
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    await waitFor(() => expect(preparation).toHaveBeenCalled());
+    const callsBeforeThemeChange = preparation.mock.calls.length;
+
+    // Keep the refreshed Preview unresolved until explicitly completed. The
+    // old ordinary DOM must not be prepared while this request is pending.
+    vi.mocked(props.previewPort.render).mockImplementation(
+      () => pendingPreview.promise
+    );
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(preparation.mock.calls.length).toBe(callsBeforeThemeChange);
+    await act(async () => {
+      pendingPreview.resolve({
+        features: {},
+        html: '<p>Theme Preview</p>' as SafePreviewHtml
+      });
+    });
+    await waitFor(() =>
+      expect(preparation.mock.calls.length).toBeGreaterThan(
+        callsBeforeThemeChange
+      )
+    );
+    expect(preparation.mock.calls.at(-1)?.[0]).toBe(
+      view.container.querySelector('[data-easymde-preview-html-sink]')
+    );
+    view.unmount();
+  });
+
+  it('re-prepares WeChat after an immersive Custom CSS save', async () => {
+    const pendingPreview = deferred<PreviewResponse>();
+    const props = fixture();
+    const savedSnapshot = {
+      customCss: [{
+        articleThemeName: 'Writer Article',
+        codeThemeName: 'Writer Code',
+        css: '.note { color: navy; }',
+        id: 'writer-css',
+        scopedCss: '.easymde-rendered-content .note { color: navy; }'
+      }],
+      state: {
+        codeTheme: 'atom-one-dark',
+        customCssId: 'writer-css',
+        markdownTheme: 'custom'
+      }
+    } as const;
+    const appearancePort = {
+      ...props.appearancePort,
+      saveCustomCss: vi.fn().mockResolvedValue({
+        snapshot: savedSnapshot,
+        status: 'saved' as const
+      })
+    };
+    const view = render(
+      <EditorRoot {...props} appearancePort={appearancePort} />
+    );
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    await waitFor(() => expect(preparation).toHaveBeenCalled());
+    const callsBeforeSave = preparation.mock.calls.length;
+
+    vi.mocked(props.previewPort.render).mockImplementation(
+      () => pendingPreview.promise
+    );
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Custom CSS theme' }));
+    fireEvent.change(view.getByRole('textbox', {
+      name: 'Article theme name'
+    }), {
+      target: { value: 'Writer Article' }
+    });
+    fireEvent.click(view.getByRole('button', { name: /Custom CSS code/ }));
+    fireEvent.change(view.getByRole('textbox', { name: 'Custom CSS code' }), {
+      target: { value: '.note { color: navy; }' }
+    });
+    fireEvent.click(view.getByRole('button', { name: 'Apply theme' }));
+
+    await waitFor(() => expect(appearancePort.saveCustomCss).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(preparation.mock.calls.length).toBe(callsBeforeSave);
+    await act(async () => {
+      pendingPreview.resolve({
+        features: {},
+        html: '<p>Custom CSS Preview</p>' as SafePreviewHtml
+      });
+    });
+    await waitFor(() =>
+      expect(preparation.mock.calls.length).toBeGreaterThan(callsBeforeSave)
+    );
+    expect(preparation.mock.calls.at(-1)?.[0]).toBe(
+      view.container.querySelector('[data-easymde-preview-html-sink]')
+    );
+    view.unmount();
+  });
+
+  it('does not report background WeChat preparation as a copy failure', async () => {
+    const props = fixture();
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    vi.mocked(prepare).mockRejectedValue(new Error('theme image unavailable'));
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() => expect(prepare).toHaveBeenCalled());
+    expect(props.onFailure).not.toHaveBeenCalledWith(
+      'wechat-theme-image-prepare-failed'
+    );
+    view.unmount();
+  });
+
+  it('does not prepare WeChat in the background when export is disabled', async () => {
+    const props = fixture();
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const view = render(
+      <EditorRoot
+        {...props}
+        wechatExport={{ ...props.wechatExport, enabled: false }}
+      />
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(props.getPreviewLayoutObservationCount()).toBe(0);
+    view.unmount();
   });
 
   it('activates synchronized scrolling once and disposes it with the Root', async () => {

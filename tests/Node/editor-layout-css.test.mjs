@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const css = readFileSync(new URL('../../assets/css/admin/editor.css', import.meta.url), 'utf8');
+const frontendCss = readFileSync(new URL('../../assets/css/frontend/base.css', import.meta.url), 'utf8');
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -308,6 +309,24 @@ test('ordinary Preview owns vertical scrolling and fits wide table content', () 
     css,
     /\.easymde-editor:not\(\.is-immersive\) \.easymde-rendered-content :is\(th, td\)\s*\{[^}]*overflow-wrap:\s*anywhere;/s
   );
+});
+
+test('shared Mermaid surfaces own their intrinsic SVG boundary', () => {
+  const mermaidRuleMatch = frontendCss.match(
+    /\.easymde-rendered-content \.easymde-mermaid,[\s\S]*?\.wp-block-post-content \.easymde-mermaid\s*\{(?<body>[^}]*)\}/
+  );
+  assert.ok(mermaidRuleMatch?.groups?.body, 'Missing shared Mermaid boundary rule');
+  const mermaidRule = mermaidRuleMatch.groups.body;
+  assert.match(mermaidRule, /box-sizing:\s*border-box;/);
+  assert.match(mermaidRule, /display:\s*block;/);
+  assert.match(mermaidRule, /min-width:\s*0;/);
+  assert.match(mermaidRule, /max-width:\s*100%;/);
+  assert.match(mermaidRule, /overflow:\s*auto;/);
+  const mermaidSvgRule = cssRule(frontendCss, '.easymde-mermaid svg');
+  assert.match(mermaidSvgRule, /display:\s*block;/);
+  assert.match(mermaidSvgRule, /margin-inline:\s*auto;/);
+  assert.match(mermaidSvgRule, /max-width:\s*100%;/);
+  assert.match(mermaidSvgRule, /height:\s*auto;/);
 });
 
 test('ordinary Preview provides an editorial reading rhythm without changing immersive Preview', () => {

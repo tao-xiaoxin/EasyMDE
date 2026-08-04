@@ -3,7 +3,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { WechatClipboardPreparationOptions } from '../../../contracts/ports/wechat-clipboard-port';
-import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
+import {
+  CLIPBOARD_WRITE_TIMEOUT_MS,
+  createBrowserWechatClipboard
+} from './create-browser-wechat-clipboard';
 
 function readyPreview(): HTMLElement {
   const preview = document.createElement('article');
@@ -2507,6 +2510,39 @@ describe('createBrowserWechatClipboard', () => {
       } else {
         delete (document as unknown as { execCommand?: unknown }).execCommand;
       }
+    }
+  });
+
+  it('fails a stalled modern write instead of keeping the copy session pending', async () => {
+    vi.useFakeTimers();
+    const write = vi.fn(() => new Promise<void>(() => {}));
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write,
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+    const copy = clipboard.copy(readyPreview());
+    const result = Promise.race([
+      copy,
+      new Promise((resolve) => {
+        setTimeout(() => resolve({ code: 'test-harness-timeout', status: 'failed' }), CLIPBOARD_WRITE_TIMEOUT_MS);
+      })
+    ]);
+
+    try {
+      await vi.advanceTimersByTimeAsync(CLIPBOARD_WRITE_TIMEOUT_MS);
+      await expect(result).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      expect(write).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
     }
   });
 

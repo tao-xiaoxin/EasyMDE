@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const css = readFileSync(new URL('../../assets/css/admin/editor.css', import.meta.url), 'utf8');
 const frontendCss = readFileSync(new URL('../../assets/css/frontend/base.css', import.meta.url), 'utf8');
+const frontendAssetsPhp = readFileSync(new URL('../../src/Frontend/FrontendAssets.php', import.meta.url), 'utf8');
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -327,6 +328,29 @@ test('shared Mermaid surfaces own their intrinsic SVG boundary', () => {
   assert.match(mermaidSvgRule, /margin-inline:\s*auto;/);
   assert.match(mermaidSvgRule, /max-width:\s*100%;/);
   assert.match(mermaidSvgRule, /height:\s*auto;/);
+});
+
+test('Mdmdt preview leaves programmatic outline scrolling immediate', () => {
+  const mdmdtRule = cssRule(
+    frontendCss,
+    '.easymde-rendered-content.easymde-markdown-theme-mdmdt'
+  );
+  assert.match(mdmdtRule, /scroll-behavior:\s*auto\s*!important;/);
+});
+
+test('editor and render styles invalidate the base CSS cache when it changes', () => {
+  assert.equal(
+    (frontendAssetsPhp.match(/Asset::url\(\s*'assets\/css\/frontend\/base\.css'/g) ?? []).length,
+    2
+  );
+  assert.equal(
+    (frontendAssetsPhp.match(/\$this->get_static_asset_version\(\s*'assets\/css\/frontend\/base\.css'/g) ?? []).length,
+    2
+  );
+  assert.match(
+    frontendAssetsPhp,
+    /private function get_static_asset_version\(\s*\$asset_path\s*\)[\s\S]*?hash_file\(\s*'sha256'\s*,\s*\$path\s*\)[\s\S]*?substr\(\s*\$hash\s*,\s*0\s*,\s*16\s*\)/
+  );
 });
 
 test('ordinary Preview provides an editorial reading rhythm without changing immersive Preview', () => {

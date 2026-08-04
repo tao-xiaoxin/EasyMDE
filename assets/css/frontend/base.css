@@ -54,6 +54,11 @@
   overflow-wrap: break-word;
 }
 
+/* EasyMDE owns this scroll surface for outline/preview synchronization. */
+.easymde-rendered-content.easymde-markdown-theme-mdmdt {
+  scroll-behavior: auto !important;
+}
+
 .easymde-rendered-content.easymde-font-overrides,
 .easymde-rendered-content.easymde-font-overrides p,
 .easymde-rendered-content.easymde-font-overrides blockquote,

@@ -369,6 +369,40 @@ test('Geek Black changes only its final H1 top rhythm', () => {
   assert.doesNotMatch(css, /margin-top:\s*-0\.46em;/);
 });
 
+test('Cupid Busy keeps heading decorations at their declared sizes', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/cupid-busy.css'), 'utf8');
+  const h1Content = cssRuleBodies(
+    css,
+    '.easymde-rendered-content.easymde-markdown-theme-cupid-busy h1 .content'
+  )[0];
+  const h2Content = cssRuleBodies(
+    css,
+    '.easymde-rendered-content.easymde-markdown-theme-cupid-busy h2 .content'
+  )[0];
+  const h1Suffix = cssRuleBodies(
+    css,
+    '.easymde-rendered-content.easymde-markdown-theme-cupid-busy h1 .suffix'
+  )[0];
+  const h2Prefix = cssRuleBodies(
+    css,
+    '.easymde-rendered-content.easymde-markdown-theme-cupid-busy h2 .prefix'
+  )[0];
+  const h2Suffix = cssRuleBodies(
+    css,
+    '.easymde-rendered-content.easymde-markdown-theme-cupid-busy h2 .suffix'
+  )[0];
+
+  assert.match(h1Content, /flex:\s*1 1 auto;/);
+  assert.match(h1Content, /min-width:\s*0;/);
+  assert.match(h1Content, /overflow-wrap:\s*anywhere;/);
+  assert.match(h2Content, /flex:\s*1 1 auto;/);
+  assert.match(h2Content, /min-width:\s*0;/);
+  assert.match(h2Content, /overflow-wrap:\s*anywhere;/);
+  assert.match(h1Suffix, /flex:\s*0 0 20px;/);
+  assert.match(h2Prefix, /flex:\s*0 0 35px;/);
+  assert.match(h2Suffix, /flex:\s*0 0 15px;/);
+});
+
 test('Nenqing Green is removed from the built-in article theme surface', () => {
   const registry = readFileSync(join(repoRoot, 'src/Theme/ArticleThemeRegistry.php'), 'utf8');
   const editorCss = readFileSync(join(repoRoot, 'assets/css/admin/editor.css'), 'utf8');

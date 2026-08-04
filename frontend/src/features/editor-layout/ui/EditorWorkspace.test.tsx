@@ -1,6 +1,6 @@
 import { createElement } from '@wordpress/element';
 import { act, fireEvent, render } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { EditorWorkspace } from './EditorWorkspace';
 
@@ -143,6 +143,26 @@ describe('EditorWorkspace', () => {
     expect(separator.getAttribute('aria-valuenow')).toBe('79');
     fireEvent.keyDown(separator, { key: 'Home' });
     expect(separator.getAttribute('aria-valuenow')).toBe('50');
+  });
+
+  it('notifies the Preview owner after a split layout change', () => {
+    const onLayoutChange = vi.fn();
+    const view = render(
+      <EditorWorkspace
+        direction="ltr"
+        onLayoutChange={onLayoutChange}
+        splitResizable
+        splitResizeLabel="Resize editor and Preview"
+        source={<section>Source</section>}
+        preview={<section>Preview</section>}
+      />
+    );
+    const separator = view.getByRole('separator', {
+      name: 'Resize editor and Preview'
+    });
+
+    fireEvent.keyDown(separator, { key: 'ArrowRight' });
+    expect(onLayoutChange).toHaveBeenCalledOnce();
   });
 
   it('does not render the split divider outside immersive split mode', () => {

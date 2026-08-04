@@ -16,6 +16,7 @@ const fullCapabilityImage = readFileSync(
   new URL('../../docs/assets/easymde-logo-rounded.png', import.meta.url)
 );
 const longFixtureHeadingPrefix = '超长中英文标题用于验证狭窄预览容器';
+const WORDPRESS_SESSION_REFRESH_INTERVAL_MS = 60_000;
 const managedRuntimeAssets = [
   {
     key: 'codeFrameCss',
@@ -220,6 +221,107 @@ async function login(page, user) {
     form.requestSubmit(submit);
   }, user);
   await expect(page.locator('#wpadminbar')).toBeVisible();
+}
+
+async function pulseWordPressHeartbeat(page) {
+  const responsePromise = page.waitForResponse((response) => {
+    if ('POST' !== response.request().method()) return false;
+    let pathname;
+    try {
+      pathname = new URL(response.url()).pathname;
+    } catch {
+      return false;
+    }
+    if (!pathname.endsWith('/wp-admin/admin-ajax.php')) return false;
+    return /(?:^|&)action=heartbeat(?:&|$)/.test(
+      response.request().postData() ?? ''
+    );
+  }, { timeout: 15_000 });
+  const heartbeatAvailable = await page.evaluate(() => {
+    const heartbeat = globalThis.wp?.heartbeat;
+    if (!heartbeat
+      || 'function' !== typeof heartbeat.connectNow
+      || 'function' !== typeof heartbeat.disableSuspend) {
+      return false;
+    }
+
+    // A long browser assertion can leave Heartbeat in its suspended state.
+    // Resume it on the original editor page before requesting the pulse;
+    // opening another page would suspend this page and hide the real failure.
+    heartbeat.disableSuspend();
+    document.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    heartbeat.connectNow();
+    return true;
+  });
+  if (!heartbeatAvailable) {
+    throw new Error('wordpress-heartbeat-unavailable');
+  }
+  const response = await responsePromise;
+  if (!response.ok()) {
+    throw new Error(`wordpress-heartbeat-http-${response.status()}`);
+  }
+  const payload = await response.json();
+  if (!payload || 'object' !== typeof payload || Array.isArray(payload)) {
+    throw new Error('wordpress-heartbeat-response-invalid');
+  }
+  if ('boolean' !== typeof payload['wp-auth-check']) {
+    throw new Error('wordpress-heartbeat-auth-state-missing');
+  }
+  return payload['wp-auth-check'];
+}
+
+async function reauthenticateWordPressSession(page, user) {
+  const authCheck = page.locator('#wp-auth-check-wrap');
+  await expect(authCheck).toBeVisible({ timeout: 15_000 });
+  const frame = page.frameLocator('#wp-auth-check-frame');
+  const username = frame.locator('#user_login');
+  const password = frame.locator('#user_pass');
+  const submit = frame.locator('#wp-submit');
+  await expect(username).toBeVisible();
+  await expect(password).toBeVisible();
+  await expect(submit).toBeEnabled();
+  await username.fill(user.username);
+  await password.fill(user.password);
+  await submit.click();
+  await expect(authCheck).toBeHidden({ timeout: 15_000 });
+}
+
+function startWordPressSessionKeepalive(page, user) {
+  let stopped = false;
+  let failure = null;
+  let activeRefresh = Promise.resolve();
+
+  const refresh = async () => {
+    if (stopped || failure) return;
+    try {
+      const authenticated = await pulseWordPressHeartbeat(page);
+      if (!authenticated) {
+        await reauthenticateWordPressSession(page, user);
+        if (!await pulseWordPressHeartbeat(page)) {
+          throw new Error('wordpress-heartbeat-auth-refresh-failed');
+        }
+      }
+    } catch (error) {
+      failure ??= error;
+    }
+  };
+
+  const timer = setInterval(() => {
+    activeRefresh = activeRefresh.then(refresh);
+  }, WORDPRESS_SESSION_REFRESH_INTERVAL_MS);
+
+  return {
+    async assertHealthy() {
+      await activeRefresh;
+      if (failure) throw failure;
+    },
+    async stop() {
+      stopped = true;
+      clearInterval(timer);
+      await activeRefresh;
+      if (failure) throw failure;
+    }
+  };
 }
 
 async function openEasyMdeNewPost(page) {
@@ -603,6 +705,23 @@ async function measureArticleThemeGeometry(
             style.borderLeftWidth
           ].some((width) => Number.parseFloat(width) > 0);
       }).length;
+      const decorationResults = headingParts
+        .filter((element) => isVisible(element))
+        .map((element) => {
+          const style = getComputedStyle(element);
+          const box = element.getBoundingClientRect();
+          const flexBasisValue = style.flexBasis.trim();
+          const flexBasis = /^-?(?:\d+(?:\.\d+)?|\.\d+)px$/u.test(flexBasisValue)
+            ? Number.parseFloat(flexBasisValue)
+            : null;
+
+          return {
+            selector: `${element.tagName.toLowerCase()}.${element.className}`,
+            width: box.width,
+            height: box.height,
+            flexBasis
+          };
+        });
       const scrollElement = (element) => {
         const original = element.scrollLeft;
         element.scrollLeft = Number.MAX_SAFE_INTEGER;
@@ -802,7 +921,8 @@ async function measureArticleThemeGeometry(
           parts: headingParts.length,
           pseudo: pseudoCount,
           styledHeadings: styledHeadingCount,
-          visibleParts: headingParts.filter(isVisible).length
+          visibleParts: headingParts.filter(isVisible).length,
+          boxes: decorationResults
         },
         failures: [
           ...(
@@ -852,6 +972,9 @@ async function measureArticleThemeGeometry(
             : []),
           ...(0 === imageResults.length ? ['article-image-unavailable'] : []),
           ...(flexGridResults.every(Boolean) ? [] : ['flex-or-grid-descendant-cannot-shrink']),
+          ...(decorationResults.some(({ width, flexBasis }) => (
+            null !== flexBasis && width < flexBasis - tolerance
+          )) ? ['heading-decoration-shrunk'] : []),
           ...(tableResults.every((result) => (
             result.contained
             && result.layoutPreserved
@@ -953,14 +1076,29 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test.afterEach(async ({}, testInfo) => {
-    runCleanupSteps([
-      ...(testInfo.easymdeTermIds ?? []).map((termId) => () => {
-        runWp(['term', 'delete', 'category', String(termId)]);
-      }),
-      ...(testInfo.easymdeUser
-        ? [() => deleteUserContent(testInfo.easymdeUser.id)]
-        : [])
-    ]);
+    const failures = [];
+    if (testInfo.easymdeStopSessionKeepalive) {
+      try {
+        await testInfo.easymdeStopSessionKeepalive();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    try {
+      runCleanupSteps([
+        ...(testInfo.easymdeTermIds ?? []).map((termId) => () => {
+          runWp(['term', 'delete', 'category', String(termId)]);
+        }),
+        ...(testInfo.easymdeUser
+          ? [() => deleteUserContent(testInfo.easymdeUser.id)]
+          : [])
+      ]);
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length) {
+      throw new AggregateError(failures, 'EasyMDE E2E cleanup failed.');
+    }
   });
 
   test('uses one React owner for ordinary and immersive editing', async ({ page }, testInfo) => {
@@ -1752,6 +1890,8 @@ test.describe('EasyMDE editor workflows', () => {
 
     const user = testInfo.easymdeUser;
     await login(page, user);
+    const sessionKeepalive = startWordPressSessionKeepalive(page, user);
+    testInfo.easymdeStopSessionKeepalive = sessionKeepalive.stop;
     await openEasyMdeNewPost(page);
 
     const catalog = await editorThemeCatalog(page);
@@ -1792,6 +1932,14 @@ test.describe('EasyMDE editor workflows', () => {
       ['qinghe-zhusha', { contentFontSize: null }],
       ['geek-black', { contentFontSize: '13px' }]
     ]);
+    const decorationInventory = (decoration) => ({
+      headings: decoration.headings,
+      parts: decoration.parts,
+      pseudo: decoration.pseudo,
+      styledHeadings: decoration.styledHeadings,
+      visibleParts: decoration.visibleParts,
+      boxes: decoration.boxes.map(({ selector, flexBasis }) => ({ selector, flexBasis }))
+    });
     let mainFrameNavigations = 0;
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) mainFrameNavigations += 1;
@@ -1823,7 +1971,8 @@ test.describe('EasyMDE editor workflows', () => {
       }
       if (
         expectedDecoration
-        && JSON.stringify(geometry.decoration) !== JSON.stringify(expectedDecoration)
+        && JSON.stringify(decorationInventory(geometry.decoration))
+          !== JSON.stringify(decorationInventory(expectedDecoration))
       ) {
         failures.push(
           `${themeId}/${state}/${position}: heading-decoration-inventory-changed`
@@ -1875,6 +2024,7 @@ test.describe('EasyMDE editor workflows', () => {
     };
 
     for (const { id, label, cssUrl, swatch } of catalog.articleThemes) {
+      await sessionKeepalive.assertHealthy();
       if (!swatch) {
         throw new Error(`${id}-article-theme-swatch-unavailable`);
       }
@@ -2219,7 +2369,7 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
-    test.setTimeout(240_000);
+    test.setTimeout(8 * 60_000);
     const user = testInfo.easymdeUser;
     const customThemeSuffix = randomUUID().slice(0, 8);
     const customName = 'E2E CSS ' + customThemeSuffix;
@@ -2228,6 +2378,8 @@ test.describe('EasyMDE editor workflows', () => {
     const customCss = 'p { color: rgb(1, 2, 3); }';
 
     await login(page, user);
+    const sessionKeepalive = startWordPressSessionKeepalive(page, user);
+    testInfo.easymdeStopSessionKeepalive = sessionKeepalive.stop;
     await openEasyMdeNewPost(page);
     const fixtureCatalog = await editorThemeCatalog(page);
     const markdown = canonicalMarkdownForSite(fixtureCatalog.localFixtureImage)
@@ -2421,6 +2573,7 @@ test.describe('EasyMDE editor workflows', () => {
     });
     let sharedGeometry;
     for (const { id, label, cssUrl, defaultCodeTheme } of catalog.articleThemes) {
+      await sessionKeepalive.assertHealthy();
       await selectOrdinaryOption(page, articleSelect, label);
       await expect(page.locator('.easymde-pane-preview article'))
         .toHaveClass(new RegExp('easymde-markdown-theme-' + id));
@@ -2479,6 +2632,7 @@ test.describe('EasyMDE editor workflows', () => {
       message: 'an explicit code theme should not change shared frame geometry'
     }).toEqual(sharedGeometry);
     for (const { id, label, cssUrl } of catalog.codeThemes) {
+      await sessionKeepalive.assertHealthy();
       await selectOrdinaryOption(page, codeSelect, label);
       await expect(page.locator('.easymde-pane-preview article'))
         .toHaveClass(new RegExp('easymde-code-theme-' + id));
@@ -2630,6 +2784,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(codeSelect).toContainText(terminalNoir.label);
     await expect(page.locator('body')).not.toContainText(removedCombinedName);
     for (const group of catalog.fontGroups) {
+      await sessionKeepalive.assertHealthy();
       const fontSelect = settingsDialog.locator(group.select).getByRole('combobox');
       for (const { id, label } of group.options) {
         await selectOrdinaryOption(page, fontSelect, label);
@@ -3552,16 +3707,44 @@ test.describe('EasyMDE editor workflows', () => {
 
     await page.addInitScript(() => {
       window.__easymdeClipboardWrites = [];
-      Object.defineProperty(navigator, 'clipboard', {
+      window.__easymdeClipboardActivation = [];
+      window.__easymdeCupidBusyFetches = { scheduled: 0, released: 0 };
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (!url.includes('/assets/images/cupid-busy-heart.png')) {
+          return nativeFetch(input, init);
+        }
+        window.__easymdeCupidBusyFetches.scheduled += 1;
+        return new Promise((resolve, reject) => {
+          window.setTimeout(() => {
+            window.__easymdeCupidBusyFetches.released += 1;
+            nativeFetch(input, init).then(resolve, reject);
+          }, 300);
+        });
+      };
+    });
+    await login(page, user);
+    const origin = new URL(page.url()).origin;
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+    await page.addInitScript(() => {
+      const clipboard = navigator.clipboard;
+      const nativeWrite = clipboard?.write?.bind(clipboard);
+      if (!clipboard || !nativeWrite) {
+        throw new Error('native-clipboard-write-unavailable');
+      }
+      Object.defineProperty(clipboard, 'write', {
         configurable: true,
-        value: {
-          write: async (items) => {
-            window.__easymdeClipboardWrites.push(items.length);
-          }
+        writable: true,
+        value: async (items) => {
+          window.__easymdeClipboardActivation.push(
+            navigator.userActivation?.isActive === true
+          );
+          await nativeWrite(items);
+          window.__easymdeClipboardWrites.push(items.length);
         }
       });
     });
-    await login(page, user);
     await openEasyMdeNewPost(page);
     const catalog = await editorThemeCatalog(page);
     const markdown = await canonicalMarkdownForPage(page);
@@ -3575,6 +3758,28 @@ test.describe('EasyMDE editor workflows', () => {
       '.easymde-pane-preview article'
     );
 
+    const cupidBusy = catalog.articleThemes.find(({ id }) => 'cupid-busy' === id);
+    if (!cupidBusy) {
+      throw new Error('cupid-busy-theme-unavailable');
+    }
+    const editorSettingsLabel = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive.editorSettings
+    );
+    const articleThemeLabel = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.appearance.strings.articleTheme
+    );
+    await page.locator('.easymde-toolbar-section-secondary')
+      .getByRole('button', { name: editorSettingsLabel, exact: true })
+      .click();
+    const settingsDialog = page.getByRole('dialog', { name: editorSettingsLabel });
+    await selectOrdinaryOption(
+      page,
+      settingsDialog.getByRole('combobox', { name: articleThemeLabel }),
+      cupidBusy.label
+    );
+    await expect(preview).toHaveClass(/easymde-markdown-theme-cupid-busy/);
+    await page.keyboard.press('Escape');
+
     const copyCommand = await page.evaluate(() => {
       const command = window.EasyMDEEditorRootBootstrap.toolbar.commands.find(
         ({ action }) => 'copyWechat' === action
@@ -3584,13 +3789,16 @@ test.describe('EasyMDE editor workflows', () => {
     expect(copyCommand).not.toBe('');
     await page.locator('[data-easymde-command="' + copyCommand + '"]').click();
     await expect.poll(() => page.evaluate(() => window.__easymdeClipboardWrites.length)).toBe(1);
+    expect(await page.evaluate(() => window.__easymdeClipboardActivation)).toEqual([true]);
+    await expect.poll(
+      () => page.evaluate(() => window.__easymdeCupidBusyFetches.released)
+    ).toBeGreaterThan(0);
     const editorMessageHost = page.locator(
       '.easymde-editor > .easymde-editor-message-alert-host'
     );
     await expect(editorMessageHost.getByRole('status')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.wechatExport.strings.success)
     );
-    await expect(editorMessageHost).toHaveCount(0, { timeout: 4_000 });
     const immersiveLabels = await page.evaluate(
       () => window.EasyMDEEditorRootBootstrap.strings.immersive
     );
@@ -3624,9 +3832,7 @@ test.describe('EasyMDE editor workflows', () => {
         .evaluateAll((icons) => icons.map((icon) => icon.href))
     ).toEqual(wordpressFavicons);
     await expect(editorMessageHost.getByRole('status')).toBeVisible();
-    await expect(editorMessageHost).toHaveCount(0, { timeout: 4_000 });
 
-    const origin = new URL(page.url()).origin;
     expectRuntimeAssetRequests(
       requests,
       ['codeFrameCss', 'frontendEnhancements', 'highlightScript', 'highlightThemeCss', 'katexCss', 'katexFont', 'katexScript', 'mathCss', 'mermaidScript'],

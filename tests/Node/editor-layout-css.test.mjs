@@ -330,6 +330,27 @@ test('shared Mermaid surfaces own their intrinsic SVG boundary', () => {
   assert.match(mermaidSvgRule, /height:\s*auto;/);
 });
 
+test('Mermaid HTML labels do not inherit article line-height into clipped foreignObjects', () => {
+  const foreignObjectRule = cssRule(frontendCss, '.easymde-mermaid foreignObject');
+  assert.match(foreignObjectRule, /overflow:\s*visible\s*!important;/);
+
+  const labelRule = cssRule(frontendCss, '.easymde-mermaid foreignObject > div');
+  assert.match(labelRule, /display:\s*block\s*!important;/);
+  assert.match(labelRule, /line-height:\s*normal\s*!important;/);
+  assert.match(labelRule, /letter-spacing:\s*normal\s*!important;/);
+  assert.match(labelRule, /overflow:\s*visible\s*!important;/);
+  assert.match(labelRule, /white-space:\s*nowrap\s*!important;/);
+  assert.match(labelRule, /word-spacing:\s*normal\s*!important;/);
+
+  const labelDescendantRule = cssRule(
+    frontendCss,
+    '.easymde-mermaid foreignObject > div *'
+  );
+  assert.match(labelDescendantRule, /letter-spacing:\s*normal\s*!important;/);
+  assert.match(labelDescendantRule, /line-height:\s*normal\s*!important;/);
+  assert.match(labelDescendantRule, /word-spacing:\s*normal\s*!important;/);
+});
+
 test('Mdmdt preview leaves programmatic outline scrolling immediate', () => {
   const mdmdtRule = cssRule(
     frontendCss,

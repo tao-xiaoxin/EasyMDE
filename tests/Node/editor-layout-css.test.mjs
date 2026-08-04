@@ -312,6 +312,18 @@ test('ordinary Preview owns vertical scrolling and fits wide table content', () 
   );
 });
 
+test('Phycat paper adapters do not import the Typora sidebar offset', () => {
+  const selector =
+    '.easymde-editor .easymde-preview.easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active)';
+  const rule = cssRule(css, selector);
+  assertDeclaration(rule, 'box-sizing', 'border-box');
+  assertDeclaration(rule, 'width', '100%');
+  assertDeclaration(rule, 'min-width', '0');
+  assertDeclaration(rule, 'max-width', '100%');
+  assertDeclaration(rule, 'margin-block', '10px');
+  assertDeclaration(rule, 'margin-inline', '0');
+});
+
 test('shared Mermaid surfaces own their intrinsic SVG boundary', () => {
   const mermaidRuleMatch = frontendCss.match(
     /\.easymde-rendered-content \.easymde-mermaid,[\s\S]*?\.wp-block-post-content \.easymde-mermaid\s*\{(?<body>[^}]*)\}/

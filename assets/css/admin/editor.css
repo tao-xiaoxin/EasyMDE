@@ -2295,6 +2295,18 @@ body:has(.easymde-editor.is-immersive) .wrap {
     white-space: normal;
 }
 
+/* Phycat carries Typora's optional export-sidebar paper offset. The EasyMDE
+ * article is already inside its own paper/page boundary, so that offset would
+ * consume the preview track and leave only a narrow right-hand column. */
+.easymde-editor .easymde-preview.easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    margin-block: 10px;
+    margin-inline: 0;
+}
+
 .easymde-editor .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink:not(.easymde-custom-css-active) table {
     box-sizing: border-box;
     width: 100%;

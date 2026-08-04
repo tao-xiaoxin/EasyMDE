@@ -1,3 +1,4 @@
+import type { SettingsCenterApi, SettingsCenterSettings } from '../settings-center-settings';
 export const SETTINGS_CENTER_STRING_KEYS = [
   'brandName', 'settingsCenter', 'settingsNavigation', 'helpTitle', 'helpDescription',
   'openDocumentation', 'closeSettingsCenter', 'searchSettings', 'searchSettingsPlaceholder',
@@ -6,7 +7,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
   'markdown', 'sync', 'transfer', 'about', 'generalDescription', 'shortcutsDescription',
   'imagesDescription', 'aiDescription', 'markdownDescription', 'syncDescription',
   'transferDescription', 'transferPageTitle', 'aboutDescription', 'sectionPending', 'sectionPendingDescription',
-  'toolbarLayout', 'toolbarLayoutDescription', 'hybridIconToolbar',
   'basePreferences', 'editorBehavior', 'documentDefaults', 'interfaceLanguage',
   'defaultEditingMode', 'autoFocusEditor', 'autoFocusEditorDescription', 'showLineNumbers',
   'showLineNumbersDescription', 'syntaxHighlight', 'syntaxHighlightDescription',
@@ -22,11 +22,12 @@ export const SETTINGS_CENTER_STRING_KEYS = [
   'passwordProtected', 'summary55', 'summary100', 'manualSummary',
   'commonShortcuts', 'headingAndFormatting', 'shortcutBehavior',
   'restoreDefaultShortcuts', 'shortcutFunction', 'windowsLinux', 'macOS',
-  'saveArticle', 'saveSettings', 'bold', 'italic', 'insertLink', 'insertImage', 'openAiAssistant',
+  'saveArticle', 'bold', 'italic', 'insertLink', 'insertImage', 'openAiAssistant',
   'headingOne', 'headingTwo', 'quote', 'unorderedList', 'orderedList',
   'showShortcutHints', 'showShortcutHintsDescription', 'detectShortcutConflicts',
   'detectShortcutConflictsDescription', 'customShortcutSuggestions',
-  'customShortcutSuggestionsDescription',
+  'customShortcutSuggestionsDescription', 'saveSettings', 'savingSettings',
+  'settingsSaved', 'settingsSaveFailed', 'settingsUnsavedChanges',
   'imageHostService', 'selectImageHostService', 'cloudflareR2', 'aliyunOss',
   'tencentCloudCos', 'customUpload', 'bucket', 'customDomain', 'accessKey', 'secretKey',
   'showSecret', 'hideSecret', 'fileNameRule', 'fileNameRuleDescription',
@@ -36,7 +37,7 @@ export const SETTINGS_CENTER_STRING_KEYS = [
   'monthVariable', 'dayVariable', 'fullDateVariable', 'uploadTimeVariable',
   'postIdVariable', 'fileMd5Variable', 'uuidVariable', 'originalNameVariable',
   'extensionVariable', 'insertFileNameVariable', 'examplePreview', 'enterFileNameRule',
-  'connectionStatus', 'pendingTest', 'testing', 'connected', 'lastTest', 'testConnection',
+  'connectionStatus', 'pendingTest', 'testConnection',
   'backupImageHost',
   'backupImageHostDescription',
   'enableBackupImageHost', 'enableBackupImageHostDescription', 'backupImageHostService',
@@ -185,7 +186,11 @@ export const SETTINGS_CENTER_STRING_KEYS = [
   'transferCheckImageDraft', 'transferCheckImageDraftReady',
   'transferCheckImageDraftIncomplete', 'transferCheckAiDraft',
   'transferCheckAiDraftReady', 'transferCheckAiDraftIncomplete',
-  'transferCheckPersistence', 'transferCheckPersistencePending',
+  'transferCheckPersistence', 'transferCheckPersistencePending', 'transferCheckPersistenceReady',
+  'transferCheckPersistenceUnavailable', 'transferExportSuccess', 'transferExportFailed',
+  'transferImportInvalid', 'transferImportApplied', 'transferResetApplied',
+  'transferLocalCacheCleared', 'transferLocalCacheClearFailed',
+  'transferOperationUnavailable',
   'aboutVersionInformation', 'aboutCurrentVersion', 'aboutCurrentVersionValue',
   'aboutCheckUpdates', 'aboutRenderEngine', 'aboutRenderEngineValue',
   'aboutCompatibleVersion', 'aboutCompatibleVersionValue', 'aboutPhpRequirement',
@@ -211,35 +216,48 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 
 export type SettingsCenterStringKey = (typeof SETTINGS_CENTER_STRING_KEYS)[number];
 
-export type SettingsCenterCommand = Readonly<{
-  id: string;
-  label: string;
-  group: string;
-  defaultShortcutWin: string;
-  defaultShortcutMac: string;
-}>;
-
-export type SettingsCenterShortcut = Readonly<{
-  win: string;
-  mac: string;
-}>;
-
 export type SettingsCenterBootstrap = Readonly<{
   schemaVersion: 2;
   closeUrl: string;
-  settings: Readonly<{
-    optionKey: string;
-    toolbarLayout: 'hybrid-icons';
-    shortcuts: Readonly<Record<string, SettingsCenterShortcut>>;
-  }>;
-  commands: ReadonlyArray<SettingsCenterCommand>;
+  api: SettingsCenterApi;
   assets: Readonly<{
     brandMarkUrl: string;
     headerIllustrationUrl: string;
     searchEmptyIllustrationUrl: string;
   }>;
+  drafts: Readonly<{
+    images: Readonly<{
+      domain: string;
+      backupDomain: string;
+    }>;
+  }>;
+  settings: SettingsCenterSettings;
+  defaultSettings: SettingsCenterSettings;
   strings: Readonly<Record<SettingsCenterStringKey, string>>;
 }>;
+
+function parseSettingsStringFields(
+  root: Record<string, unknown>,
+  section: 'general' | 'images' | 'markdown',
+  keys: ReadonlyArray<string>
+): Record<string, unknown> {
+  const value = parseObject(root[section], `settings-center-${section}-settings-invalid`);
+  for (const key of keys) {
+    if (typeof value[key] !== 'string') throw new Error(`settings-center-${section}-${key}-invalid`);
+  }
+  return value;
+}
+
+function parseSettingsBooleanFields(
+  value: Record<string, unknown>,
+  section: string,
+  keys: ReadonlyArray<string>
+): void {
+  for (const key of keys) {
+    if (typeof value[key] !== 'boolean') throw new Error(`settings-center-${section}-${key}-invalid`);
+  }
+}
+
 
 function parseObject(value: unknown, code: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -257,13 +275,74 @@ function parseString(value: unknown, code: string): string {
   return value;
 }
 
-function parseStringValue(value: unknown, code: string): string {
+function parsePossiblyEmptyString(value: unknown, code: string): string {
   if (typeof value !== 'string') {
     throw new Error(code);
   }
 
   return value;
 }
+
+export function parseSettingsCenterSettings(value: unknown): SettingsCenterSettings {
+  const root = parseObject(value, 'settings-center-settings-invalid');
+  if (!Number.isInteger(root.revision) || (root.revision as number) < 0) {
+    throw new Error('settings-center-revision-invalid');
+  }
+
+  const general = parseSettingsStringFields(root, 'general', [
+    'interfaceLanguage', 'editingMode', 'statusBarMode', 'autoSaveInterval',
+    'defaultCategory', 'publishVisibility', 'summaryMode'
+  ]);
+  parseSettingsBooleanFields(general, 'general', [
+    'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll',
+    'cleanPastedContent', 'smartListRecognition', 'openPreviewAfterPublish',
+    'featuredImagePlaceholder'
+  ]);
+
+  const images = parseSettingsStringFields(root, 'images', [
+    'service', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule',
+    'backupService', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey',
+    'backupFailureMode', 'insertFormat', 'altSource', 'captionMode'
+  ]);
+  parseSettingsBooleanFields(images, 'images', [
+    'backupEnabled', 'backupSameObjectKey', 'insertMarkdown', 'compressImages',
+    'preserveFileName', 'copyUrl', 'featuredPlaceholder'
+  ]);
+  const uploadFormats = parseObject(images.uploadFormats, 'settings-center-images-upload-formats-invalid');
+  for (const format of ['jpg', 'png', 'webp', 'gif']) {
+    if (typeof uploadFormats[format] !== 'boolean') {
+      throw new Error(`settings-center-images-upload-format-${format}-invalid`);
+    }
+  }
+
+  const markdown = parseSettingsStringFields(root, 'markdown', [
+    'editorTheme', 'editorFontSize', 'editorFont', 'tableAlignment', 'codeTheme',
+    'codeLineNumbers', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle'
+  ]);
+  parseSettingsBooleanFields(markdown, 'markdown', [
+    'livePreview', 'wordWrap', 'lineNumbers', 'fixedToolbar', 'githubFlavor',
+    'smartPunctuation', 'taskLists', 'emoji', 'math', 'htmlRendering', 'tableExtension',
+    'footnotes', 'definitionLists', 'toc', 'imageSizeSyntax', 'pasteAsMarkdown'
+  ]);
+
+  const shortcuts = parseObject(root.shortcuts, 'settings-center-shortcuts-settings-invalid');
+  parseSettingsBooleanFields(shortcuts, 'shortcuts', [
+    'showHints', 'detectConflicts', 'showSuggestions'
+  ]);
+  const shortcutValues = parseObject(shortcuts.values, 'settings-center-shortcut-values-invalid');
+  for (const id of [
+    'save', 'bold', 'italic', 'link', 'image', 'heading-one', 'heading-two', 'quote',
+    'unordered-list', 'ordered-list'
+  ]) {
+    const shortcut = parseObject(shortcutValues[id], `settings-center-shortcut-${id}-invalid`);
+    if (typeof shortcut.windows !== 'string' || typeof shortcut.mac !== 'string') {
+      throw new Error(`settings-center-shortcut-${id}-invalid`);
+    }
+  }
+
+  return root as unknown as SettingsCenterSettings;
+}
+
 
 export function parseSettingsCenterBootstrap(value: unknown): SettingsCenterBootstrap {
   const root = parseObject(value, 'settings-center-bootstrap-invalid');
@@ -272,36 +351,9 @@ export function parseSettingsCenterBootstrap(value: unknown): SettingsCenterBoot
   }
 
   const assets = parseObject(root.assets, 'settings-center-assets-invalid');
-  const settings = parseObject(root.settings, 'settings-center-settings-invalid');
-  const sourceShortcuts = parseObject(settings.shortcuts, 'settings-center-shortcuts-invalid');
-  const sourceCommands = root.commands;
-  if (!Array.isArray(sourceCommands)) {
-    throw new Error('settings-center-commands-invalid');
-  }
-  const commands = sourceCommands.map((value, index) => {
-    const command = parseObject(value, `settings-center-command-${index}-invalid`);
-    return {
-      id: parseString(command.id, `settings-center-command-${index}-id-invalid`),
-      label: parseString(command.label, `settings-center-command-${index}-label-invalid`),
-      group: parseString(command.group, `settings-center-command-${index}-group-invalid`),
-      defaultShortcutWin: parseStringValue(
-        command.defaultShortcutWin,
-        `settings-center-command-${index}-default-win-invalid`
-      ),
-      defaultShortcutMac: parseStringValue(
-        command.defaultShortcutMac,
-        `settings-center-command-${index}-default-mac-invalid`
-      )
-    };
-  });
-  const shortcuts: Record<string, SettingsCenterShortcut> = {};
-  for (const [commandId, value] of Object.entries(sourceShortcuts)) {
-    const shortcut = parseObject(value, `settings-center-shortcut-${commandId}-invalid`);
-    shortcuts[commandId] = {
-      win: parseStringValue(shortcut.win, `settings-center-shortcut-${commandId}-win-invalid`),
-      mac: parseStringValue(shortcut.mac, `settings-center-shortcut-${commandId}-mac-invalid`)
-    };
-  }
+  const drafts = parseObject(root.drafts, 'settings-center-drafts-invalid');
+  const imageDraft = parseObject(drafts.images, 'settings-center-images-draft-invalid');
+  const api = parseObject(root.api, 'settings-center-api-invalid');
   const sourceStrings = parseObject(root.strings, 'settings-center-strings-invalid');
   const strings = {} as Record<SettingsCenterStringKey, string>;
 
@@ -342,20 +394,14 @@ export function parseSettingsCenterBootstrap(value: unknown): SettingsCenterBoot
     strings.promptPaginationSummary.includes(placeholder))) {
     throw new Error('settings-center-promptPaginationSummary-template-invalid');
   }
-  const toolbarLayout = parseString(settings.toolbarLayout, 'settings-center-toolbar-layout-invalid');
-  if (toolbarLayout !== 'hybrid-icons') {
-    throw new Error('settings-center-toolbar-layout-unsupported');
-  }
 
   return {
     schemaVersion: 2,
     closeUrl: parseString(root.closeUrl, 'settings-center-close-url-invalid'),
-    settings: {
-      optionKey: parseString(settings.optionKey, 'settings-center-option-key-invalid'),
-      toolbarLayout,
-      shortcuts
+    api: {
+      settingsUrl: parseString(api.settingsUrl, 'settings-center-api-url-invalid'),
+      nonce: parseString(api.nonce, 'settings-center-api-nonce-invalid')
     },
-    commands,
     assets: {
       brandMarkUrl: parseString(assets.brandMarkUrl, 'settings-center-brand-url-invalid'),
       headerIllustrationUrl: parseString(
@@ -367,6 +413,17 @@ export function parseSettingsCenterBootstrap(value: unknown): SettingsCenterBoot
         'settings-center-search-empty-url-invalid'
       )
     },
+    drafts: {
+      images: {
+        domain: parsePossiblyEmptyString(imageDraft.domain, 'settings-center-images-domain-invalid'),
+        backupDomain: parsePossiblyEmptyString(
+          imageDraft.backupDomain,
+          'settings-center-images-backup-domain-invalid'
+        )
+      }
+    },
+    settings: parseSettingsCenterSettings(root.settings),
+    defaultSettings: parseSettingsCenterSettings(root.defaultSettings),
     strings
   };
 }

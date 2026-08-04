@@ -24,4 +24,8 @@ final class Options {
 
 		return is_array( $stored ) ? $stored : array();
 	}
+
+	public function update_editor_settings( array $settings ) {
+		return update_option( self::EDITOR_SETTINGS, $settings, false );
+	}
 }

@@ -32,6 +32,9 @@ import {
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const outputRoot = join(repoRoot, '.cache/easymde-frontend-production-check');
+const settingsOutputRoot = join(repoRoot, '.cache/easymde-settings-production-check');
+const committedSettingsOutputRoot = join(repoRoot, 'assets/build/settings-center');
+const settingsSourceEntry = 'frontend/src/entrypoints/settings-center.tsx';
 const committedOutputRoot = join(repoRoot, 'assets/build');
 const sourceEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const codeCopyOutputRoot = join(repoRoot, '.cache/easymde-code-copy-production-check');
@@ -43,9 +46,6 @@ const bootstrapOutputRoot = join(repoRoot, '.cache/easymde-frontend-bootstrap-pr
 const committedBootstrapOutputRoot = join(repoRoot, 'assets/build/frontend-bootstrap');
 const mermaidOutputRoot = join(repoRoot, '.cache/easymde-frontend-mermaid-production-check');
 const committedMermaidOutputRoot = join(repoRoot, 'assets/build/frontend-mermaid');
-const settingsOutputRoot = join(repoRoot, '.cache/easymde-settings-production-check');
-const committedSettingsOutputRoot = join(repoRoot, 'assets/build/settings-center');
-const settingsSourceEntry = 'frontend/src/entrypoints/settings-center.tsx';
 let buildResult;
 
 function readJson(path) {
@@ -106,6 +106,31 @@ test('production build emits a separate self-contained TypeScript code-copy entr
   validateCodeCopyProductionBuild(codeCopyOutputRoot);
 });
 
+test('production build emits one independent WordPress settings-center React entry', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+  assert.equal(existsSync(settingsOutputRoot), true);
+
+  const viteManifest = readJson(join(settingsOutputRoot, 'manifest.json'));
+  const wordpressManifest = readJson(join(settingsOutputRoot, 'wordpress-manifest.json'));
+  const viteEntry = viteManifest[settingsSourceEntry];
+  const wordpressEntry = wordpressManifest.entries[settingsSourceEntry];
+
+  assert.equal(wordpressManifest.schemaVersion, 1);
+  assert.equal(viteEntry.isEntry, true);
+  assert.match(viteEntry.file, /^assets\/settings-center-[a-zA-Z0-9_-]+\.js$/);
+  assert.equal(wordpressEntry.handle, 'easymde-admin-settings-center');
+  assert.equal(wordpressEntry.file, viteEntry.file);
+  assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
+  assert.deepEqual(wordpressEntry.dependencies, ['wp-element']);
+  assert.deepEqual(wordpressEntry.resources, []);
+
+  const script = readFileSync(join(settingsOutputRoot, viteEntry.file), 'utf8');
+  assert.match(script, /wp\.element/);
+  assert.match(script, /EasyMDESettingsCenterBootstrap/);
+  assert.doesNotMatch(script, /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/);
+  assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
+  validateSettingsProductionBuild(settingsOutputRoot);
+});
 test('production build emits one self-contained WordPress editor React entry', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
   assert.equal(existsSync(outputRoot), true);
@@ -339,7 +364,6 @@ test('production validation rejects remote URLs and absolute paths but allows si
 
 test('production frontend artifacts are eligible for version control', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
-
   const wordpressManifest = readJson(join(committedOutputRoot, 'wordpress-manifest.json'));
   const wordpressEntry = wordpressManifest.entries[sourceEntry];
   const codeCopyWordpressManifest = readJson(

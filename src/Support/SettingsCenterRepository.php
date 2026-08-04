@@ -1,0 +1,574 @@
+<?php
+
+namespace EasyMDE\Support;
+
+use WP_Error;
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+final class SettingsCenterRepository {
+
+	private $options;
+	private $toolbar_registry;
+
+	public function __construct( Options $options, ToolbarRegistry $toolbar_registry ) {
+		$this->options          = $options;
+		$this->toolbar_registry = $toolbar_registry;
+	}
+
+	public function get_settings() {
+		$defaults = $this->get_defaults();
+		$stored   = $this->options->get_editor_settings();
+		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
+			? $stored['settings_center']
+			: array();
+		if ( empty( $settings ) && isset( $stored['shortcuts'] ) && is_array( $stored['shortcuts'] ) ) {
+			foreach ( $defaults['shortcuts']['values'] as $center_id => $shortcut ) {
+				$command_id = $this->shortcut_command_id( $center_id );
+				if ( ! $command_id || ! isset( $stored['shortcuts'][ $command_id ] ) || ! is_array( $stored['shortcuts'][ $command_id ] ) ) {
+					continue;
+				}
+				$legacy = $stored['shortcuts'][ $command_id ];
+				if ( array_key_exists( 'win', $legacy ) ) {
+					$settings['shortcuts']['values'][ $center_id ]['windows'] = (string) $legacy['win'];
+				}
+				if ( array_key_exists( 'mac', $legacy ) ) {
+					$settings['shortcuts']['values'][ $center_id ]['mac'] = (string) $legacy['mac'];
+				}
+			}
+		}
+
+		$settings = $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
+		foreach ( array( 'accessKey', 'secretKey', 'backupAccessKey', 'backupSecretKey' ) as $secret_key ) {
+			$settings['images'][ $secret_key ] = '';
+		}
+		$settings['revision'] = $this->revision_from_stored( $stored );
+
+		return $settings;
+	}
+	public function get_default_settings() {
+		$settings = $this->normalize_enum_settings( $this->get_defaults() );
+		foreach ( array( 'accessKey', 'secretKey', 'backupAccessKey', 'backupSecretKey' ) as $secret_key ) {
+			$settings['images'][ $secret_key ] = '';
+		}
+		$settings['revision'] = 0;
+
+		return $settings;
+	}
+
+	public function get_revision() {
+		return $this->revision_from_stored( $this->options->get_editor_settings() );
+	}
+
+	public function update_settings( $input ) {
+		if ( ! is_array( $input ) ) {
+			return new WP_Error(
+				'easymde_settings_invalid_payload',
+				__( 'The settings payload is invalid.', 'easymde' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$stored           = $this->options->get_editor_settings();
+		$current_revision = $this->revision_from_stored( $stored );
+		if ( array_key_exists( 'revision', $input ) && absint( $input['revision'] ) !== $current_revision ) {
+			return new WP_Error(
+				'easymde_settings_conflict',
+				__( 'Settings could not be saved. Try again.', 'easymde' ),
+				array( 'status' => 409 )
+			);
+		}
+		$stored_settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
+			? $stored['settings_center']
+			: array();
+		$settings        = $this->sanitize_settings( $input, $stored_settings );
+		if ( is_wp_error( $settings ) ) {
+			return $settings;
+		}
+
+		$stored['settings_center']          = $settings;
+		$stored['version']                  = $this->options->editor_settings_version();
+		$stored['settings_center_revision'] = $current_revision + 1;
+		$stored['shortcuts']                = isset( $stored['shortcuts'] ) && is_array( $stored['shortcuts'] )
+			? $stored['shortcuts']
+			: array();
+
+		foreach ( $settings['shortcuts']['values'] as $center_id => $shortcut ) {
+			$command_id = $this->shortcut_command_id( $center_id );
+			if ( ! $command_id ) {
+				continue;
+			}
+
+			$stored['shortcuts'][ $command_id ] = array(
+				'win' => $shortcut['windows'],
+				'mac' => $shortcut['mac'],
+			);
+		}
+
+		if ( ! $this->options->update_editor_settings( $stored ) || $this->get_revision() !== $current_revision + 1 ) {
+			return new WP_Error(
+				'easymde_settings_persistence_failed',
+				__( 'Settings could not be saved. Try again.', 'easymde' ),
+				array( 'status' => 500 )
+			);
+		}
+
+		return $this->get_settings();
+	}
+
+	private function revision_from_stored( array $stored ) {
+		return isset( $stored['settings_center_revision'] ) && is_numeric( $stored['settings_center_revision'] )
+			? max( 0, absint( $stored['settings_center_revision'] ) )
+			: 0;
+	}
+
+	private function get_defaults() {
+		$shortcuts = array();
+		foreach ( $this->toolbar_registry->get_command_registry() as $command_id => $command ) {
+			$center_id = $this->center_shortcut_id( $command_id );
+			if ( ! $center_id ) {
+				continue;
+			}
+
+			$shortcuts[ $center_id ] = array(
+				'windows' => isset( $command['defaultShortcutWin'] ) ? (string) $command['defaultShortcutWin'] : '',
+				'mac'     => isset( $command['defaultShortcutMac'] ) ? (string) $command['defaultShortcutMac'] : '',
+			);
+		}
+
+		return array(
+			'general'   => array(
+				'interfaceLanguage'        => 'en-US',
+				'editingMode'              => 'live-preview',
+				'autoFocusEditor'          => true,
+				'showLineNumbers'          => true,
+				'syntaxHighlight'          => true,
+				'statusBarMode'            => 'words-reading-time',
+				'autoSave'                 => true,
+				'autoSaveInterval'         => '60',
+				'syncScroll'               => true,
+				'cleanPastedContent'       => true,
+				'smartListRecognition'     => true,
+				'defaultCategory'          => 'none',
+				'publishVisibility'        => 'public',
+				'openPreviewAfterPublish'  => true,
+				'summaryMode'              => 'auto-55',
+				'featuredImagePlaceholder' => true,
+			),
+			'images'    => array(
+				'service'             => 'cloudflare-r2',
+				'bucket'              => 'easymde-assets',
+				'domain'              => '',
+				'accessKey'           => '',
+				'secretKey'           => '',
+				'fileNameRule'        => '{date}/{uuid}.{ext}',
+				'backupEnabled'       => false,
+				'backupService'       => 'qiniu-kodo',
+				'backupBucket'        => 'easymde-backup',
+				'backupDomain'        => '',
+				'backupAccessKey'     => '',
+				'backupSecretKey'     => '',
+				'backupSameObjectKey' => true,
+				'backupFailureMode'   => 'return-primary-url',
+				'insertMarkdown'      => true,
+				'compressImages'      => true,
+				'preserveFileName'    => false,
+				'copyUrl'             => false,
+				'retryCount'          => 'twice',
+				'maxImageSize'        => '2560',
+				'uploadFormats'       => array(
+					'jpg'  => true,
+					'png'  => true,
+					'webp' => true,
+					'gif'  => true,
+				),
+				'insertFormat'        => 'markdown',
+				'altSource'           => 'filename',
+				'captionMode'         => 'none',
+				'featuredPlaceholder' => true,
+			),
+			'markdown'  => array(
+				'livePreview'      => true,
+				'wordWrap'         => true,
+				'lineNumbers'      => false,
+				'fixedToolbar'     => true,
+				'editorTheme'      => 'system',
+				'editorFontSize'   => '14px',
+				'editorFont'       => 'system',
+				'githubFlavor'     => true,
+				'smartPunctuation' => true,
+				'tableAlignment'   => 'auto',
+				'codeTheme'        => 'light',
+				'codeLineNumbers'  => 'show',
+				'taskLists'        => true,
+				'emoji'            => true,
+				'math'             => true,
+				'htmlRendering'    => false,
+				'tableExtension'   => true,
+				'footnotes'        => true,
+				'definitionLists'  => true,
+				'toc'              => false,
+				'imageSizeSyntax'  => true,
+				'pasteAsMarkdown'  => true,
+				'lineEnding'       => 'system',
+				'unorderedMarker'  => '-',
+				'orderedStart'     => '1',
+				'blockquoteStyle'  => 'standard',
+			),
+			'shortcuts' => array(
+				'values'          => $shortcuts,
+				'showHints'       => true,
+				'detectConflicts' => true,
+				'showSuggestions' => true,
+			),
+		);
+	}
+
+	private function merge_settings( array $defaults, array $stored ) {
+		$result = $defaults;
+		foreach ( $defaults as $section => $section_defaults ) {
+			if ( ! isset( $stored[ $section ] ) || ! is_array( $stored[ $section ] ) ) {
+				continue;
+			}
+
+			foreach ( $section_defaults as $key => $default ) {
+				if ( 'shortcuts' === $section && 'values' === $key ) {
+					if ( ! is_array( $stored[ $section ][ $key ] ?? null ) ) {
+						continue;
+					}
+					foreach ( $default as $shortcut_id => $shortcut_default ) {
+						if ( isset( $stored[ $section ][ $key ][ $shortcut_id ] ) && is_array( $stored[ $section ][ $key ][ $shortcut_id ] ) ) {
+							$result[ $section ][ $key ][ $shortcut_id ] = array_merge(
+								$shortcut_default,
+								$stored[ $section ][ $key ][ $shortcut_id ]
+							);
+						}
+					}
+					continue;
+				}
+
+				if ( array_key_exists( $key, $stored[ $section ] ) && gettype( $stored[ $section ][ $key ] ) === gettype( $default ) ) {
+					$result[ $section ][ $key ] = $stored[ $section ][ $key ];
+				}
+			}
+		}
+
+		return $result;
+	}
+
+	private function sanitize_settings( array $input, array $stored_settings = array() ) {
+		$settings = $this->merge_settings( $this->get_defaults(), $input );
+		$settings = $this->normalize_enum_settings( $settings );
+
+		foreach ( $settings['general'] as $key => $value ) {
+			$settings['general'][ $key ] = is_bool( $value ) ? $value : $this->bounded_text( $value, 80 );
+		}
+		foreach ( $settings['markdown'] as $key => $value ) {
+			$settings['markdown'][ $key ] = is_bool( $value ) ? $value : $this->bounded_text( $value, 120 );
+		}
+		foreach ( $settings['images'] as $key => $value ) {
+			if ( in_array( $key, array( 'accessKey', 'secretKey', 'backupAccessKey', 'backupSecretKey' ), true ) ) {
+				$submitted = trim( (string) $value );
+				if ( '' === $submitted && isset( $stored_settings['images'] ) && is_array( $stored_settings['images'] ) && array_key_exists( $key, $stored_settings['images'] ) ) {
+					$value = $stored_settings['images'][ $key ];
+				}
+				$settings['images'][ $key ] = $this->bounded_text( $value, 255 );
+			} elseif ( 'uploadFormats' === $key ) {
+				foreach ( $settings['images']['uploadFormats'] as $format => $enabled ) {
+					$settings['images']['uploadFormats'][ $format ] = (bool) $enabled;
+				}
+			} elseif ( 'domain' === $key || 'backupDomain' === $key ) {
+				$settings['images'][ $key ] = $this->sanitize_domain( $value );
+			} elseif ( is_bool( $value ) ) {
+				$settings['images'][ $key ] = $value;
+			} else {
+				$settings['images'][ $key ] = $this->bounded_text( $value, 160 );
+			}
+		}
+
+		foreach ( $settings['shortcuts']['values'] as $shortcut_id => $shortcut ) {
+			foreach ( array( 'windows', 'mac' ) as $platform ) {
+				$normalized = $this->normalize_shortcut( $shortcut[ $platform ], 'mac' === $platform );
+				if ( false === $normalized ) {
+					return new WP_Error(
+						'easymde_settings_invalid_shortcut',
+						__( 'One or more shortcut values are invalid.', 'easymde' ),
+						array( 'status' => 400 )
+					);
+				}
+				$settings['shortcuts']['values'][ $shortcut_id ][ $platform ] = $normalized;
+			}
+		}
+		$settings['shortcuts']['showHints']       = (bool) $settings['shortcuts']['showHints'];
+		$settings['shortcuts']['detectConflicts'] = (bool) $settings['shortcuts']['detectConflicts'];
+		$settings['shortcuts']['showSuggestions'] = (bool) $settings['shortcuts']['showSuggestions'];
+
+		return $settings;
+	}
+	private function normalize_enum_settings( array $settings ) {
+		$defaults = array(
+			'images'   => array(
+				'service'           => 'cloudflare-r2',
+				'backupService'     => 'qiniu-kodo',
+				'backupFailureMode' => 'return-primary-url',
+				'retryCount'        => 'twice',
+				'maxImageSize'      => '2560',
+				'insertFormat'      => 'markdown',
+				'altSource'         => 'filename',
+				'captionMode'       => 'none',
+			),
+			'markdown' => array(
+				'editorTheme'     => 'system',
+				'editorFont'      => 'system',
+				'tableAlignment'  => 'auto',
+				'codeTheme'       => 'light',
+				'codeLineNumbers' => 'show',
+				'lineEnding'      => 'system',
+				'blockquoteStyle' => 'standard',
+			),
+		);
+		$aliases  = array(
+			'images'   => array(
+				'service'           => array(
+					'cloudflare-r2'     => 'cloudflare-r2',
+					'Cloudflare R2'     => 'cloudflare-r2',
+					'aliyun-oss'        => 'aliyun-oss',
+					'Aliyun OSS'        => 'aliyun-oss',
+					'tencent-cos'       => 'tencent-cos',
+					'Tencent Cloud COS' => 'tencent-cos',
+					'custom'            => 'custom',
+					'Custom Upload'     => 'custom',
+				),
+				'backupService'     => array(
+					'qiniu-kodo'        => 'qiniu-kodo',
+					'Qiniu Kodo'        => 'qiniu-kodo',
+					'cloudflare-r2'     => 'cloudflare-r2',
+					'Cloudflare R2'     => 'cloudflare-r2',
+					'aliyun-oss'        => 'aliyun-oss',
+					'Aliyun OSS'        => 'aliyun-oss',
+					'tencent-cos'       => 'tencent-cos',
+					'Tencent Cloud COS' => 'tencent-cos',
+					'custom'            => 'custom',
+					'Custom Upload'     => 'custom',
+				),
+				'backupFailureMode' => array(
+					'return-primary-url'                   => 'return-primary-url',
+					'Return primary URL on backup failure' => 'return-primary-url',
+					'fail-upload'                          => 'fail-upload',
+					'Fail entire upload'                   => 'fail-upload',
+				),
+				'retryCount'        => array(
+					'none'              => 'none',
+					'Do not retry'      => 'none',
+					'once'              => 'once',
+					'Retry once'        => 'once',
+					'twice'             => 'twice',
+					'Retry twice'       => 'twice',
+					'three-times'       => 'three-times',
+					'Retry three times' => 'three-times',
+				),
+				'maxImageSize'      => array(
+					'original'            => 'original',
+					'Original image size' => 'original',
+					'1920'                => '1920',
+					'1920px'              => '1920',
+					'2560'                => '2560',
+					'2560px'              => '2560',
+					'3840'                => '3840',
+					'3840px'              => '3840',
+				),
+				'insertFormat'      => array(
+					'markdown'       => 'markdown',
+					'Markdown image' => 'markdown',
+					'html'           => 'html',
+					'HTML image'     => 'html',
+					'url'            => 'url',
+					'URL only'       => 'url',
+				),
+				'altSource'         => array(
+					'filename'       => 'filename',
+					'Use file name'  => 'filename',
+					'empty'          => 'empty',
+					'Leave empty'    => 'empty',
+					'upload'         => 'upload',
+					'Fill on upload' => 'upload',
+				),
+				'captionMode'       => array(
+					'none'           => 'none',
+					'Do not insert'  => 'none',
+					'filename'       => 'filename',
+					'Use file name'  => 'filename',
+					'upload'         => 'upload',
+					'Fill on upload' => 'upload',
+				),
+			),
+			'markdown' => array(
+				'editorTheme'     => array(
+					'system'        => 'system',
+					'Follow System' => 'system',
+					'light'         => 'light',
+					'Light'         => 'light',
+					'dark'          => 'dark',
+					'Dark'          => 'dark',
+				),
+				'editorFont'      => array(
+					'system'          => 'system',
+					'System Default'  => 'system',
+					'monospace'       => 'monospace',
+					'Monospace'       => 'monospace',
+					'source-han-sans' => 'source-han-sans',
+					'Source Han Sans' => 'source-han-sans',
+				),
+				'tableAlignment'  => array(
+					'auto'                  => 'auto',
+					'Auto align by content' => 'auto',
+					'left'                  => 'left',
+					'Align left'            => 'left',
+					'center'                => 'center',
+					'Align center'          => 'center',
+				),
+				'codeTheme'       => array(
+					'light'         => 'light',
+					'Light'         => 'light',
+					'dark'          => 'dark',
+					'Dark'          => 'dark',
+					'follow-editor' => 'follow-editor',
+					'Follow editor' => 'follow-editor',
+				),
+				'codeLineNumbers' => array(
+					'show' => 'show',
+					'Show' => 'show',
+					'hide' => 'hide',
+					'Hide' => 'hide',
+				),
+				'lineEnding'      => array(
+					'system'        => 'system',
+					'Follow System' => 'system',
+					'lf'            => 'lf',
+					'LF'            => 'lf',
+					'crlf'          => 'crlf',
+					'CRLF'          => 'crlf',
+				),
+				'blockquoteStyle' => array(
+					'standard' => 'standard',
+					'Standard' => 'standard',
+					'spaced'   => 'spaced',
+					'Spaced'   => 'spaced',
+				),
+			),
+		);
+
+		foreach ( $aliases as $section => $section_aliases ) {
+			foreach ( $section_aliases as $key => $value_aliases ) {
+				if ( ! isset( $settings[ $section ][ $key ] ) ) {
+					continue;
+				}
+				$value                        = (string) $settings[ $section ][ $key ];
+				$settings[ $section ][ $key ] = isset( $value_aliases[ $value ] )
+					? $value_aliases[ $value ]
+					: $defaults[ $section ][ $key ];
+			}
+		}
+
+		return $settings;
+	}
+
+
+	private function bounded_text( $value, $length ) {
+		return mb_substr( sanitize_text_field( (string) $value ), 0, $length );
+	}
+
+	private function sanitize_domain( $value ) {
+		$value = trim( (string) $value );
+		if ( '' === $value ) {
+			return '';
+		}
+		$url = esc_url_raw( $value, array( 'http', 'https' ) );
+		return is_string( $url ) ? mb_substr( $url, 0, 255 ) : '';
+	}
+
+	private function normalize_shortcut( $value, $is_mac ) {
+		$value = trim( (string) $value );
+		if ( '' === $value ) {
+			return '';
+		}
+		$parts = preg_split( '/\s*\+\s*/', $value );
+		if ( ! is_array( $parts ) || count( $parts ) < 2 || count( $parts ) > 4 ) {
+			return false;
+		}
+		$modifiers = array();
+		$key       = '';
+		foreach ( $parts as $part ) {
+			$part  = trim( (string) $part );
+			$lower = strtolower( $part );
+			if ( in_array( $lower, array( 'mod', 'ctrl', 'control', 'cmd', 'command', 'alt', 'option', 'shift', 'meta' ), true ) ) {
+				if ( in_array( $lower, array( 'mod', 'cmd', 'command', 'meta' ), true ) ) {
+					$canonical = $is_mac ? 'Cmd' : ( 'mod' === $lower ? 'Ctrl' : 'Meta' );
+				} elseif ( in_array( $lower, array( 'alt', 'option' ), true ) ) {
+					$canonical = $is_mac ? 'Option' : 'Alt';
+				} elseif ( 'shift' === $lower ) {
+					$canonical = 'Shift';
+				} else {
+					$canonical = 'Ctrl';
+				}
+				if ( in_array( $canonical, $modifiers, true ) ) {
+					return false;
+				}
+				$modifiers[] = $canonical;
+				continue;
+			}
+			if ( '' !== $key || ! preg_match( '/^[A-Za-z0-9`\[\]\\;\'\/,\.\-=]+$/', $part ) ) {
+				return false;
+			}
+			$key = strtoupper( $part );
+		}
+		if ( '' === $key || ( $is_mac && ! in_array( 'Cmd', $modifiers, true ) ) || ( ! $is_mac && ! in_array( 'Ctrl', $modifiers, true ) ) ) {
+			return false;
+		}
+		$order                = $is_mac ? array( 'Cmd', 'Ctrl', 'Option', 'Shift' ) : array( 'Ctrl', 'Alt', 'Shift', 'Meta' );
+		$normalized_modifiers = array();
+		foreach ( $order as $modifier ) {
+			if ( in_array( $modifier, $modifiers, true ) ) {
+				$normalized_modifiers[] = $modifier;
+			}
+		}
+		return implode( '+', array_merge( $normalized_modifiers, array( $key ) ) );
+	}
+
+	private function center_shortcut_id( $command_id ) {
+		$map = array(
+			'savepost'      => 'save',
+			'bold'          => 'bold',
+			'italic'        => 'italic',
+			'link'          => 'link',
+			'image'         => 'image',
+			'heading1'      => 'heading-one',
+			'heading2'      => 'heading-two',
+			'quote'         => 'quote',
+			'unorderedlist' => 'unordered-list',
+			'orderedlist'   => 'ordered-list',
+		);
+		return isset( $map[ $command_id ] ) ? $map[ $command_id ] : false;
+	}
+
+	private function shortcut_command_id( $center_id ) {
+		$map        = array(
+			'save'           => 'savepost',
+			'bold'           => 'bold',
+			'italic'         => 'italic',
+			'link'           => 'link',
+			'image'          => 'image',
+			'heading-one'    => 'heading1',
+			'heading-two'    => 'heading2',
+			'quote'          => 'quote',
+			'unordered-list' => 'unorderedlist',
+			'ordered-list'   => 'orderedlist',
+		);
+		$command_id = isset( $map[ $center_id ] ) ? $map[ $center_id ] : '';
+		return '' !== $command_id && isset( $this->toolbar_registry->get_command_registry()[ $command_id ] )
+			? $command_id
+			: false;
+	}
+}

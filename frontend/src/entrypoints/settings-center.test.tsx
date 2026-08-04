@@ -6,6 +6,10 @@ import {
   SETTINGS_CENTER_STRING_KEYS,
   type SettingsCenterBootstrap
 } from '../contracts/bootstrap/settings-center-bootstrap';
+import {
+  SETTINGS_CENTER_DEFAULT_SETTINGS,
+  SETTINGS_CENTER_TEST_SETTINGS
+} from '../test/settings-center-settings-fixture';
 import { mountSettingsCenter } from './settings-center';
 
 vi.hoisted(() => {
@@ -26,25 +30,20 @@ function bootstrap(): SettingsCenterBootstrap {
   return {
     schemaVersion: 2,
     closeUrl: `${origin}/wp-admin/options-general.php?page=easymde`,
-    settings: {
-      optionKey: 'easymde_editor_settings',
-      toolbarLayout: 'hybrid-icons',
-      shortcuts: {
-        bold: { win: 'Ctrl+B', mac: 'Cmd+B' }
-      }
-    },
-    commands: [{
-      id: 'bold',
-      label: 'Bold',
-      group: 'format',
-      defaultShortcutWin: 'Ctrl+B',
-      defaultShortcutMac: 'Cmd+B'
-    }],
+    api: { settingsUrl: `${origin}/wp-json/easymde/v1/settings`, nonce: 'test-nonce' },
     assets: {
       brandMarkUrl: `${origin}/plugin/brand.png`,
       headerIllustrationUrl: `${origin}/plugin/header.png`,
       searchEmptyIllustrationUrl: `${origin}/plugin/search-empty.png`
     },
+    drafts: {
+      images: {
+        domain: 'https://img.example.test',
+        backupDomain: 'https://backup.example.test'
+      },
+    },
+    settings: SETTINGS_CENTER_TEST_SETTINGS,
+    defaultSettings: SETTINGS_CENTER_DEFAULT_SETTINGS,
     strings: Object.fromEntries(
       SETTINGS_CENTER_STRING_KEYS.map((key) => [key, key])
     ) as SettingsCenterBootstrap['strings']

@@ -1,15 +1,19 @@
 import { createElement, useEffect, useMemo, useRef, useState } from '@wordpress/element';
 
-import { CheckCircle2, ChevronRight, X } from '../../generated/lucide-icons';
+import { ChevronRight, X } from '../../generated/lucide-icons';
 import type { SettingsCenterBootstrap, SettingsCenterStringKey } from '../../contracts/bootstrap/settings-center-bootstrap';
+import type { SettingsCenterSettings } from '../../contracts/settings-center-settings';
+import { createWordPressSettingsPort } from '../../integrations/wordpress/settings/create-wordpress-settings-port';
 import { AboutSettingsPage } from './AboutSettingsPage';
 import { GeneralSettingsPage } from './GeneralSettingsPage';
-import { PendingSettingsPage } from './PendingSettingsPage';
+import { ImagesSettingsPage } from './ImagesSettingsPage';
+import { MarkdownSettingsPage } from './MarkdownSettingsPage';
 import { ShortcutsSettingsPage } from './ShortcutsSettingsPage';
+import { TransferSettingsPage } from './TransferSettingsPage';
 import { AboutIcon, GeneralIcon, ImageLibraryIcon, ImportExportIcon, KeyboardIcon, MarkdownIcon, SearchIcon } from './settings-center-icons';
-
 type NavId = 'general' | 'shortcuts' | 'images' | 'markdown' | 'transfer' | 'about';
 type Icon = typeof GeneralIcon;
+
 type SearchItem = Readonly<{
   key: string;
   kind: 'group' | 'setting';
@@ -48,9 +52,13 @@ function formatSinglePlaceholderParts(template: string, value: string): Readonly
     .filter((part) => part !== '')
     .map((part) => part === '%s' ? value : part);
 }
-
 export function SettingsCenterRoot({ bootstrap }: { bootstrap: SettingsCenterBootstrap }) {
   const [activeTab, setActiveTab] = useState<NavId>('general');
+  const [settings, setSettings] = useState<SettingsCenterSettings>(bootstrap.settings);
+  const settingsRef = useRef<SettingsCenterSettings>(bootstrap.settings);
+  const [savedSettings, setSavedSettings] = useState<SettingsCenterSettings>(bootstrap.settings);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const saveControllerRef = useRef<AbortController | null>(null);
   const [query, setQuery] = useState('');
   const [searchItems, setSearchItems] = useState<ReadonlyArray<SearchItem>>([]);
   const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null);
@@ -205,6 +213,7 @@ export function SettingsCenterRoot({ bootstrap }: { bootstrap: SettingsCenterBoo
     if (windowRef && searchNavigationFrameRef.current !== null) {
       windowRef.cancelAnimationFrame(searchNavigationFrameRef.current);
     }
+    saveControllerRef.current?.abort();
   }, []);
 
   const handleSettingsScroll = () => {
@@ -261,6 +270,56 @@ export function SettingsCenterRoot({ bootstrap }: { bootstrap: SettingsCenterBoo
     scheduleScrollToTarget(item.tabId, item.targetId);
   };
 
+  const settingsPort = useMemo(
+    () => createWordPressSettingsPort(bootstrap.api),
+    [bootstrap.api]
+  );
+  const settingsDirty = JSON.stringify(settings) !== JSON.stringify(savedSettings);
+  const updateSettingsSection = <Key extends keyof SettingsCenterSettings>(
+    key: Key,
+    value: SettingsCenterSettings[Key]
+  ) => {
+    setSettings((currentSettings) => {
+      const nextSettings = { ...currentSettings, [key]: value };
+      settingsRef.current = nextSettings;
+      return nextSettings;
+    });
+    setSaveStatus((status) => 'saving' === status ? status : 'idle');
+  };
+  const replaceSettingsDraft = (nextSettings: SettingsCenterSettings) => {
+    settingsRef.current = nextSettings;
+    setSettings(nextSettings);
+    setSaveStatus('idle');
+  };
+  const saveSettings = async () => {
+    if (!settingsDirty || 'saving' === saveStatus) return;
+    saveControllerRef.current?.abort();
+    const controller = new AbortController();
+    const requestedSettings = settings;
+    saveControllerRef.current = controller;
+    setSaveStatus('saving');
+    try {
+      const saved = await settingsPort.save(requestedSettings, controller.signal);
+      if (controller.signal.aborted) return;
+      const currentSettingsUnchanged = JSON.stringify(settingsRef.current) === JSON.stringify(requestedSettings);
+      setSavedSettings(saved);
+      if (currentSettingsUnchanged) {
+        settingsRef.current = saved;
+        setSettings(saved);
+      } else {
+        const nextSettings = { ...settingsRef.current, revision: saved.revision };
+        settingsRef.current = nextSettings;
+        setSettings(nextSettings);
+      }
+      setSaveStatus(currentSettingsUnchanged ? 'saved' : 'idle');
+    } catch {
+      if (!controller.signal.aborted) setSaveStatus('error');
+    } finally {
+      if (saveControllerRef.current === controller) saveControllerRef.current = null;
+    }
+  };
+
+
   return <div ref={scrollContainerRef} onScroll={handleSettingsScroll}
     className="easymde-settings-center">
     <div className="easymde-settings-center__frame">
@@ -301,6 +360,17 @@ export function SettingsCenterRoot({ bootstrap }: { bootstrap: SettingsCenterBoo
               {query ? <button type="button" aria-label={strings.clearSearch} onClick={() => setQuery('')}><X size={17} /></button> : null}
             </div>
           </div>
+        </div>
+        <div className="easymde-settings-center__save-bar" aria-live="polite">
+          <span>{'error' === saveStatus
+            ? strings.settingsSaveFailed
+            : 'saved' === saveStatus
+              ? strings.settingsSaved
+              : settingsDirty ? strings.settingsUnsavedChanges : ''}</span>
+          <button type="button" aria-busy={'saving' === saveStatus} disabled={!settingsDirty || 'saving' === saveStatus}
+            onClick={() => { void saveSettings(); }}>
+            {'saving' === saveStatus ? strings.savingSettings : strings.saveSettings}
+          </button>
         </div>
         <div className="easymde-settings-center__content-scale">
           <div className="easymde-settings-center__content">
@@ -346,39 +416,33 @@ export function SettingsCenterRoot({ bootstrap }: { bootstrap: SettingsCenterBoo
               <section id="settings-section-general" data-settings-section="general"
                 ref={(element) => { sectionRefs.current.general = element; }}
                 className="easymde-settings-center__settings-section">
-                <GeneralSettingsPage
-                  embedded
-                  optionKey={bootstrap.settings.optionKey}
-                  query=""
-                  searchEmptyIllustrationUrl={bootstrap.assets.searchEmptyIllustrationUrl}
-                  settings={bootstrap.settings}
-                  strings={strings}
-                />
+                <GeneralSettingsPage embedded query="" searchEmptyIllustrationUrl={bootstrap.assets.searchEmptyIllustrationUrl}
+                  settings={settings.general} onChange={(value) => updateSettingsSection('general', value)} strings={strings} />
               </section>
               <section id="settings-section-shortcuts" data-settings-section="shortcuts"
                 ref={(element) => { sectionRefs.current.shortcuts = element; }}
                 className="easymde-settings-center__settings-section">
-                <ShortcutsSettingsPage
-                  commands={bootstrap.commands}
-                  optionKey={bootstrap.settings.optionKey}
-                  settings={bootstrap.settings}
-                  strings={strings}
-                />
+                <ShortcutsSettingsPage settings={settings.shortcuts}
+                  onChange={(value) => updateSettingsSection('shortcuts', value)} strings={strings} />
               </section>
               <section id="settings-section-images" data-settings-section="images"
                 ref={(element) => { sectionRefs.current.images = element; }}
                 className="easymde-settings-center__settings-section">
-                <PendingSettingsPage description={strings.imagesDescription} strings={strings} title={strings.images} />
+                <ImagesSettingsPage draft={bootstrap.drafts.images} settings={settings.images}
+                  onChange={(value) => updateSettingsSection('images', value)} strings={strings} />
               </section>
               <section id="settings-section-markdown" data-settings-section="markdown"
                 ref={(element) => { sectionRefs.current.markdown = element; }}
                 className="easymde-settings-center__settings-section">
-                <PendingSettingsPage description={strings.markdownDescription} strings={strings} title={strings.markdown} />
+                <MarkdownSettingsPage settings={settings.markdown}
+                  onChange={(value) => updateSettingsSection('markdown', value)} strings={strings} />
               </section>
               <section id="settings-section-transfer" data-settings-section="transfer"
                 ref={(element) => { sectionRefs.current.transfer = element; }}
                 className="easymde-settings-center__settings-section">
-                <PendingSettingsPage description={strings.transferDescription} strings={strings} title={strings.transferPageTitle} />
+                <TransferSettingsPage overlayRoot={overlayRoot} bootstrap={bootstrap}
+                  settings={settings} defaultSettings={bootstrap.defaultSettings}
+                  onSettingsChange={replaceSettingsDraft} />
               </section>
               <section id="settings-section-about" data-settings-section="about"
                 ref={(element) => { sectionRefs.current.about = element; }}
@@ -390,12 +454,6 @@ export function SettingsCenterRoot({ bootstrap }: { bootstrap: SettingsCenterBoo
         </div>
       </main>
     </div>
-    <footer className="easymde-settings-center__action-bar">
-      <a href={bootstrap.closeUrl} className="easymde-settings-center__cancel-action">{strings.cancel}</a>
-      <button type="submit" className="easymde-settings-center__save-action">
-        <CheckCircle2 size={17} />{strings.saveSettings}
-      </button>
-    </footer>
     <div ref={setOverlayRoot} data-settings-overlay-root="" />
   </div>;
 }

@@ -56,6 +56,14 @@ final class Capabilities {
 			: $this->forbidden( 'easymde_rest_cannot_manage_custom_css' );
 	}
 
+	public function can_manage_settings( WP_REST_Request $request ) {
+		unset( $request );
+
+		return current_user_can( 'manage_options' )
+			? true
+			: $this->forbidden( 'easymde_rest_cannot_manage_settings' );
+	}
+
 	public function can_delete_custom_css( WP_REST_Request $request ) {
 		return $this->can_manage_custom_css( $request );
 	}

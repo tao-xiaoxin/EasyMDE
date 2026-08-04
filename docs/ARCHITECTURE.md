@@ -486,8 +486,12 @@ Current routes:
 - `DELETE /easymde/v1/custom-css/{id}`
 - `GET /easymde/v1/posts/{post_id}/revisions`
 - `GET /easymde/v1/posts/{post_id}/revisions/{revision_id}`
+- `GET /easymde/v1/settings`
+- `POST /easymde/v1/settings`
 
 Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Pasted-image media uploads require `upload_files`; when a `post_id` is present they also require `current_user_can( 'edit_post', $post_id )`, and without a `post_id` they require `edit_posts`. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
+
+Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including toolbar shortcut mappings.
 
 Preview Markdown payloads are capped at 1 MiB. EasyMDE media uploads accept local JPEG, PNG, GIF, and WebP image files only; remote image-provider uploads are not part of the REST surface.
 

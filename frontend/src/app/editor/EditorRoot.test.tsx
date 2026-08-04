@@ -660,6 +660,12 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(view.getByRole('button', { name: '进入沉浸写作' })).not.toBeNull()
     );
+    expect(
+      view.container.querySelector('.easymde-immersive-preview-canvas')
+    ).toBeNull();
+    expect(
+      view.container.querySelector('.easymde-immersive-preview-page')
+    ).toBeNull();
 
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
     expect(view.getByRole('region', { name: '沉浸写作' })).not.toBeNull();
@@ -697,8 +703,11 @@ describe('EditorRoot', () => {
       previewPane?.querySelector('.easymde-immersive-preview-canvas')
     ).not.toBeNull();
     expect(
+      previewPane?.querySelector('.easymde-immersive-preview-page')
+    ).toBeNull();
+    expect(
       previewPane?.querySelector(
-        '.easymde-immersive-preview-page > [data-easymde-preview-html-sink]'
+        ':scope > .easymde-immersive-preview-canvas > [data-easymde-preview-html-sink]'
       )
     ).not.toBeNull();
     const previewSink = previewPane?.querySelector<HTMLElement>(
@@ -818,7 +827,7 @@ describe('EditorRoot', () => {
     expect(view.queryByText('Rendering')).toBeNull();
     expect(
       view.container.querySelector(
-        '.easymde-immersive-preview-page [data-easymde-preview-html-sink]'
+        '.easymde-pane-preview > .easymde-immersive-preview-canvas > [data-easymde-preview-html-sink]'
       )?.textContent
     ).toContain('Initial');
   });

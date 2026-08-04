@@ -779,14 +779,23 @@ test('collapsed immersive outline preserves the reference full-height rail', () 
   );
 });
 
-test('immersive split Preview gives display-contents surfaces an inline-size boundary', () => {
-  assert.match(
+test('immersive split Preview clips its canvas while the article owns scrolling', () => {
+  const splitCanvasRule = cssRule(
     css,
-    /\.easymde-editor\.is-immersive-split \.easymde-immersive-preview-canvas\s*\{[^}]*display:\s*flex;[^}]*flex:\s*1 1 auto;[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s
+    '.easymde-editor.is-immersive-split .easymde-immersive-preview-canvas'
   );
-  assert.match(
+  assertDeclaration(splitCanvasRule, 'overflow', 'hidden');
+
+  const splitArticleRule = cssRule(
     css,
-    /\.easymde-editor\.is-immersive-split \.easymde-immersive-preview-page\s*\{[^}]*display:\s*flex;[^}]*box-sizing:\s*border-box;[^}]*flex:\s*1 1 auto;[^}]*flex-direction:\s*column;[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*width:\s*100%;[^}]*max-width:\s*100%;/s
+    '.easymde-editor.is-immersive-split .easymde-immersive-preview-canvas > .easymde-preview'
+  );
+  assertDeclaration(splitArticleRule, 'overflow-y', 'auto');
+
+  assert.doesNotMatch(
+    css,
+    /\.easymde-immersive-preview-page\b/s,
+    'immersive preview uses a canvas wrapper without a page wrapper'
   );
   const splitTableRule = cssRule(
     css,
@@ -843,44 +852,26 @@ test('immersive outline and editor panes use the reference 16px card radius', ()
   );
 });
 
-test('immersive Preview mode owns the reference canvas and article page geometry', () => {
-  assert.match(
+test('immersive Preview mode keeps article geometry on the preview pane', () => {
+  const previewContentRule = cssRule(
     css,
-    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-canvas\s*\{[^}]*display:\s*block;[^}]*overflow-y:\s*auto;[^}]*padding:\s*28px 20px;[^}]*border:\s*0 solid rgba\(15, 23, 42, \.07\);[^}]*background:\s*#fff;[^}]*color:\s*#0f172a;[^}]*font-size:\s*15px;[^}]*font-weight:\s*400;/s
+    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview'
   );
-  assert.match(
-    css,
-    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page\s*\{[^}]*box-sizing:\s*border-box;[^}]*max-width:\s*760px;[^}]*min-height:\s*680px;[^}]*margin:\s*0 auto;[^}]*padding:\s*36px 40px;[^}]*border:\s*0;[^}]*background:\s*#fff;[^}]*box-shadow:\s*0 8px 28px rgba\(15, 23, 42, \.06\);[^}]*color:\s*#0f172a;[^}]*font-size:\s*15px;[^}]*font-weight:\s*400;/s
-  );
-  assert.match(
-    css,
-    /\.easymde-editor\.is-immersive-preview\s+:where\(\.easymde-preview\)\s*\{[^}]*background-image:\s*none;/s,
-    'immersive Preview must remove the shared editor grid while preserving later theme-owned backgrounds'
-  );
-  const immersivePreviewContentRule = cssRule(
-    css,
-    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active)'
-  );
-  assertDeclaration(immersivePreviewContentRule, 'background', '#fff');
-  assertDeclaration(immersivePreviewContentRule, 'background-image', 'none');
-  const readonlyPreviewPageRule = cssRule(
-    css,
-    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page:has(> .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor))'
-  );
-  assertDeclaration(readonlyPreviewPageRule, 'padding', '0');
+  assertDeclaration(previewContentRule, 'box-sizing', 'border-box');
+  assertDeclaration(previewContentRule, 'max-width', '760px');
+  assertDeclaration(previewContentRule, 'min-height', '680px');
+  assertDeclaration(previewContentRule, 'margin', '0 auto');
+  assertDeclaration(previewContentRule, 'padding', '36px 40px');
+  assertDeclaration(previewContentRule, 'overflow', 'visible');
   const readonlyPreviewContentRule = cssRule(
     css,
-    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor)'
+    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active)'
   );
-  assertDeclaration(readonlyPreviewContentRule, 'padding', '36px 40px');
-  const editablePreviewPageRule = cssRule(
-    css,
-    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page:has(> .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor)'
-  );
-  assertDeclaration(editablePreviewPageRule, 'padding', '0');
+  assertDeclaration(readonlyPreviewContentRule, 'background', '#fff');
+  assertDeclaration(readonlyPreviewContentRule, 'background-image', 'none');
   const editablePreviewContentRule = cssRule(
     css,
-    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor'
+    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor'
   );
   assertDeclaration(editablePreviewContentRule, 'width', '100%');
   assertDeclaration(editablePreviewContentRule, 'max-width', 'none');
@@ -889,7 +880,7 @@ test('immersive Preview mode owns the reference canvas and article page geometry
   assertDeclaration(
     cssRule(
       desktopImmersivePreview,
-      '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor)'
+      '.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor)'
     ),
     'padding',
     '45px 52.5px'
@@ -897,7 +888,7 @@ test('immersive Preview mode owns the reference canvas and article page geometry
   assertDeclaration(
     cssRule(
       desktopImmersivePreview,
-      '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor'
+      '.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor'
     ),
     'padding',
     '45px 52.5px'
@@ -906,7 +897,7 @@ test('immersive Preview mode owns the reference canvas and article page geometry
   assertDeclaration(
     cssRule(
       mobileImmersivePreview,
-      '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor)'
+      '.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor)'
     ),
     'padding',
     '28px 24px'
@@ -914,14 +905,10 @@ test('immersive Preview mode owns the reference canvas and article page geometry
   assertDeclaration(
     cssRule(
       mobileImmersivePreview,
-      '.easymde-editor.is-immersive-preview .easymde-immersive-preview-page > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor'
+      '.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor'
     ),
     'padding',
     '28px 24px'
-  );
-  assert.doesNotMatch(
-    css,
-    /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page > \.easymde-preview\s*\{/
   );
   assert.match(
     css,
@@ -935,17 +922,41 @@ test('immersive Preview mode owns the reference canvas and article page geometry
     css,
     /\.easymde-editor\.is-immersive-preview \.easymde-immersive-visual-editor\s*\{[^}]*outline:\s*0;[^}]*cursor:\s*text;[^}]*caret-color:\s*var\(--accent, #4c6ef5\);/s
   );
-  assert.match(
+});
+
+test('immersive pure Preview delegates scrolling to its canvas', () => {
+  const previewSurfaceRule = cssRule(
     css,
-    /@media \(min-width:\s*640px\)\s*\{[^}]*\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-canvas\s*\{[^}]*padding:\s*26\.25px 37\.5px;/s
+    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface'
   );
-  assert.match(
+  assertDeclaration(previewSurfaceRule, 'overflow', 'hidden');
+
+  const previewHeaderRule = cssRule(
     css,
-    /@media \(min-width:\s*640px\)\s*\{[\s\S]*?\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page\s*\{[^}]*padding:\s*45px 52\.5px;/s
+    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-pane-header'
   );
-  assert.match(
+  assertDeclaration(previewHeaderRule, 'position', 'sticky');
+
+  const previewContentRule = cssRule(
     css,
-    /@media \(max-width:\s*760px\)\s*\{[\s\S]*?\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-page\s*\{[^}]*padding:\s*28px 24px;[^}]*min-height:\s*520px;/s
+    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview'
+  );
+  assertDeclaration(previewContentRule, 'display', 'block');
+  assertDeclaration(previewContentRule, 'flex', '0 0 auto');
+  assert.match(previewContentRule, /height:\s*auto\s*!important;/s);
+  assertDeclaration(previewContentRule, 'max-width', '760px');
+  assertDeclaration(previewContentRule, 'overflow', 'visible');
+
+  const previewCanvasRule = cssRule(
+    css,
+    '.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas'
+  );
+  assertDeclaration(previewCanvasRule, 'overflow-y', 'auto');
+
+  assert.doesNotMatch(
+    css,
+    /\.easymde-editor:not\(\.is-immersive\)[^{]*\.easymde-immersive-preview-(?:canvas|page)/s,
+    'ordinary editor mode must not style an immersive canvas or page'
   );
 });
 

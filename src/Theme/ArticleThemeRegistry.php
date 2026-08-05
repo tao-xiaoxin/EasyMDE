@@ -47,7 +47,6 @@ final class ArticleThemeRegistry {
 			'lanqing'         => $this->theme( 'lanqing', __( 'Lanqing', 'easymde' ), 'assets/themes/article/lanqing.css', 'atom-one-dark', true, '#009688' ),
 			'yamabuki'        => $this->theme( 'yamabuki', __( 'Yamabuki', 'easymde' ), 'assets/themes/article/yamabuki.css', 'atom-one-dark', true, '#ffb11b' ),
 			'grid-black'      => $this->theme( 'grid-black', __( 'Grid black', 'easymde' ), 'assets/themes/article/grid-black.css', 'atom-one-dark', true, '#212122' ),
-			'geek-black'      => $this->theme( 'geek-black', __( 'Geek black', 'easymde' ), 'assets/themes/article/geek-black.css', 'atom-one-dark', true, '#212122' ),
 			'rose-purple'     => $this->theme( 'rose-purple', __( 'Rose purple', 'easymde' ), 'assets/themes/article/rose-purple.css', 'atom-one-dark', true, '#916dd5' ),
 			'ningye-purple'   => $this->theme( 'ningye-purple', __( 'Ningye purple', 'easymde' ), 'assets/themes/article/ningye-purple.css', 'atom-one-dark', true, '#916dd5' ),
 			'tech-blue'       => $this->theme( 'tech-blue', __( 'Tech blue', 'easymde' ), 'assets/themes/article/tech-blue.css', 'atom-one-dark', true, '#0e88eb' ),

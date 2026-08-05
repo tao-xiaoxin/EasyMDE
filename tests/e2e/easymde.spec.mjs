@@ -880,12 +880,8 @@ async function measureArticleThemeGeometry(
       const topMeaningfulBox = topMeaningful?.getBoundingClientRect();
       const editor = root.closest('[data-easymde-editor-owner="react"]');
       const immersiveCanvas = root.closest('.easymde-immersive-preview-canvas');
-      const immersivePage = root.closest('.easymde-immersive-preview-page');
       const immersiveCanvasStyle = immersiveCanvas
         ? getComputedStyle(immersiveCanvas)
-        : null;
-      const immersivePageStyle = immersivePage
-        ? getComputedStyle(immersivePage)
         : null;
       const articleStyle = getComputedStyle(root);
       const usesSharedImmersiveGrid = articleStyle.backgroundImage.includes(
@@ -898,12 +894,9 @@ async function measureArticleThemeGeometry(
       const isImmersiveSplit = editor?.classList.contains('is-immersive-split');
       const surfaces = {
         canvasBackground: immersiveCanvasStyle?.backgroundColor ?? null,
-        canvasDisplay: immersiveCanvasStyle?.display ?? null,
-        pageBackground: immersivePageStyle?.backgroundColor ?? null,
-        pageDisplay: immersivePageStyle?.display ?? null,
-        pageBorderWidth: immersivePageStyle?.borderTopWidth ?? null,
-        pageBorderStyle: immersivePageStyle?.borderTopStyle ?? null,
-        pageBorderColor: immersivePageStyle?.borderTopColor ?? null,
+        canvasOverflowY: immersiveCanvasStyle?.overflowY ?? null,
+        articleIsDirectCanvasChild: root.parentElement === immersiveCanvas,
+        articleBorderTopLeftRadius: articleStyle.borderTopLeftRadius,
         articleBackgroundImage: articleStyle.backgroundImage,
         articleUsesSharedImmersiveGrid: usesSharedImmersiveGrid,
         expectedThemeBackgroundImage,
@@ -996,14 +989,20 @@ async function measureArticleThemeGeometry(
           ),
           ...(
             isImmersivePreview
-            && 'rgb(255, 255, 255)' !== surfaces.pageBackground
-              ? [`immersive-preview-page-background-${surfaces.pageBackground}`]
+            && (!immersiveCanvas || !surfaces.articleIsDirectCanvasChild)
+              ? ['immersive-preview-paper-not-direct-canvas-child']
               : []
           ),
           ...(
             isImmersivePreview
-            && ('0px' !== surfaces.pageBorderWidth || 'none' !== surfaces.pageBorderStyle)
-              ? [`immersive-preview-page-border-${surfaces.pageBorderWidth}-${surfaces.pageBorderStyle}-${surfaces.pageBorderColor}`]
+            && '48px' !== surfaces.articleBorderTopLeftRadius
+              ? [`immersive-preview-paper-radius-${surfaces.articleBorderTopLeftRadius}`]
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && 'auto' !== surfaces.canvasOverflowY
+              ? [`immersive-preview-canvas-scroll-owner-${surfaces.canvasOverflowY}`]
               : []
           ),
           ...(
@@ -1017,23 +1016,6 @@ async function measureArticleThemeGeometry(
             && null !== surfaces.expectedThemeBackgroundImage
             && surfaces.articleBackgroundImage !== surfaces.expectedThemeBackgroundImage
               ? ['immersive-preview-theme-owned-background-not-preserved']
-              : []
-          ),
-          ...(
-            isImmersivePreview
-            && immersiveCanvas
-            && immersivePage
-            && 'none' !== surfaces.canvasDisplay
-            && 'none' !== surfaces.pageDisplay
-            && 'contents' !== surfaces.canvasDisplay
-            && 'contents' !== surfaces.pageDisplay
-            && (() => {
-              const canvasBox = immersiveCanvas.getBoundingClientRect();
-              const pageBox = immersivePage.getBoundingClientRect();
-              return pageBox.left < canvasBox.left - tolerance
-                || pageBox.right > canvasBox.right + tolerance;
-            })()
-              ? ['immersive-preview-page-outside-canvas']
               : []
           ),
           ...(
@@ -1929,8 +1911,7 @@ test.describe('EasyMDE editor workflows', () => {
     let expectedThemeBackgroundImage = null;
     const headingRhythmContracts = new Map([
       ['qingbi-liujin', { contentFontSize: null }],
-      ['qinghe-zhusha', { contentFontSize: null }],
-      ['geek-black', { contentFontSize: '13px' }]
+      ['qinghe-zhusha', { contentFontSize: null }]
     ]);
     const decorationInventory = (decoration) => ({
       headings: decoration.headings,
@@ -2143,7 +2124,7 @@ test.describe('EasyMDE editor workflows', () => {
         await expect(editorOwner).toHaveClass(new RegExp(mode[1]));
         if ('is-immersive-preview' === mode[1]) {
           const immersivePreview = page.locator(
-            '.easymde-immersive-preview-page .easymde-preview'
+            '.easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview'
           );
           await expect(immersivePreview).toBeVisible();
           if (!await previewContainsThemeSwatch(immersivePreview, expectedSwatch)) {

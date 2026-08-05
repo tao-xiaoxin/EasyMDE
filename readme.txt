@@ -59,7 +59,6 @@ The editor includes article themes such as:
 * Lanqing
 * Yamabuki
 * Grid Black
-* Geek Black
 * Rose Purple
 * Ningye Purple
 * Tech Blue

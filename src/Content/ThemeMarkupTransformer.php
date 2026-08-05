@@ -65,7 +65,7 @@ final class ThemeMarkupTransformer {
 		$uses_markdown2html_markup = self::theme_uses_markdown2html_markup( $theme );
 		$uses_image_figures        = self::theme_uses_image_figures( $theme );
 		$uses_table_container      = self::theme_uses_table_container( $theme );
-		$uses_task_list_markup     = 'crimson-focus' === $theme;
+		$uses_task_list_markup     = false !== stripos( $html, '<input' );
 
 		if ( ! $uses_markdown2html_markup && ! $uses_image_figures && ! $uses_table_container && ! $uses_task_list_markup ) {
 			return $html;
@@ -177,7 +177,6 @@ final class ThemeMarkupTransformer {
 				'lanqing',
 				'yamabuki',
 				'grid-black',
-				'geek-black',
 				'rose-purple',
 				'ningye-purple',
 				'tech-blue',

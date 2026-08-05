@@ -356,17 +356,17 @@ test('Crimson focus follows the reference light surface and preserves code-theme
   assert.equal(cssVariable(css, '--easymde-crimson-focus-heading'), '#0f172a');
 });
 
-test('Geek Black changes only its final H1 top rhythm', () => {
-  const css = readFileSync(join(repoRoot, 'assets/themes/article/geek-black.css'), 'utf8');
-  const selector = '.easymde-rendered-content.easymde-markdown-theme-geek-black h1';
-  const h1Rules = cssRuleBodies(css, selector);
-  const fontRule = h1Rules.find((body) => /font-size:\s*24px;/.test(body));
-  const finalH1Rule = h1Rules.at(-1);
+test('the retired black article theme has no source or release ownership', () => {
+  const retiredThemeId = ['geek', 'black'].join('-');
+  const registry = readFileSync(join(repoRoot, 'src/Theme/ArticleThemeRegistry.php'), 'utf8');
+  const transformer = readFileSync(join(repoRoot, 'src/Content/ThemeMarkupTransformer.php'), 'utf8');
 
-  assert.ok(fontRule);
-  assert.ok(finalH1Rule);
-  assert.match(finalH1Rule, /margin-top:\s*30px;/);
-  assert.doesNotMatch(css, /margin-top:\s*-0\.46em;/);
+  assert.doesNotMatch(registry, new RegExp(`['"]${retiredThemeId}['"]`));
+  assert.doesNotMatch(transformer, new RegExp(`['"]${retiredThemeId}['"]`));
+  assert.equal(
+    existsSync(join(repoRoot, `assets/themes/article/${retiredThemeId}.css`)),
+    false
+  );
 });
 
 test('Cupid Busy keeps heading decorations at their declared sizes', () => {

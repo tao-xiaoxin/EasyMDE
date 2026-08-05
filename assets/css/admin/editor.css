@@ -1543,6 +1543,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     padding: 36px 40px;
     overflow: visible;
     border: 0;
+    border-radius: 48px;
     background: #fff;
     box-shadow: 0 8px 28px rgba(15, 23, 42, .06);
     color: #0f172a;

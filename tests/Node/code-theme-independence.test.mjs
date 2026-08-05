@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -88,8 +88,18 @@ test('every article theme declares a registered associated code theme', () => {
   const articleThemes = articleThemeAssociations();
   const codeThemes = registeredThemes('src/Theme/CodeThemeRegistry.php');
   const codeThemeIds = new Set(codeThemes.map(({ id }) => id));
+  const registeredArticleAssets = articleThemes
+    .map(({ assetPath }) => assetPath.replace('assets/themes/article/', ''))
+    .sort();
+  const articleAssets = readdirSync(join(repoRoot, 'assets/themes/article'))
+    .filter((entry) => entry.endsWith('.css'))
+    .sort();
 
-  assert.equal(articleThemes.length, 47);
+  assert.deepEqual(
+    registeredArticleAssets,
+    articleAssets,
+    'the registry must own exactly the shipped article theme stylesheets'
+  );
   for (const theme of articleThemes) {
     assert.ok(codeThemeIds.has(theme.defaultCodeTheme), `${theme.defaultCodeTheme} should be registered`);
   }

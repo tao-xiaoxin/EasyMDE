@@ -31,14 +31,36 @@ final class MarkdownRenderer {
 
 		$converter = new GithubFlavoredMarkdownConverter(
 			array(
-				'html_input'              => 'strip',
+				// Raw HTML is constrained by the allowlist below. It must reach KSES
+				// so supported semantic elements such as details/summary survive.
+				'html_input'              => 'allow',
 				'allow_unsafe_links'      => false,
 				'max_nesting_level'       => self::MAX_NESTING_LEVEL,
 				'max_delimiters_per_line' => self::MAX_DELIMITERS_PER_LINE,
+				'disallowed_raw_html'     => array(
+					'disallowed_tags' => array(
+						'title',
+						'textarea',
+						'style',
+						'xmp',
+						'iframe',
+						'noembed',
+						'noframes',
+						'script',
+						'plaintext',
+						'button',
+						'fieldset',
+						'form',
+						'input',
+						'option',
+						'optgroup',
+						'select',
+					),
+				),
 			)
 		);
 
-		$html = self::restore_math( self::sanitize_rendered_html( (string) $converter->convert( $markdown ), $theme, 'crimson-focus' === $theme ), $math );
+		$html = self::restore_math( self::sanitize_rendered_html( (string) $converter->convert( $markdown ), $theme, true, false ), $math );
 
 		return self::post_process_html( $html, $theme );
 	}
@@ -127,13 +149,32 @@ final class MarkdownRenderer {
 		$html = TocGenerator::add_heading_ids_and_toc( $html );
 		$html = ThemeMarkupTransformer::transform( $html, $theme );
 
-		return self::sanitize_rendered_html( $html, $theme, 'crimson-focus' === $theme );
+		return self::sanitize_rendered_html( $html, $theme, true, true );
 	}
 
-	private static function sanitize_rendered_html( $html, $theme, $allow_task_inputs = false ) {
+	private static function sanitize_rendered_html( $html, $theme, $allow_task_inputs = false, $require_task_list_context = false ) {
 		$allowed_html = wp_kses_allowed_html( 'post' );
+		$disallowed_form_elements = array(
+			'button',
+			'fieldset',
+			'form',
+			'input',
+			'option',
+			'optgroup',
+			'select',
+			'textarea',
+		);
 
-		if ( $allow_task_inputs && 'crimson-focus' === $theme ) {
+		foreach ( $disallowed_form_elements as $element ) {
+			unset( $allowed_html[ $element ] );
+		}
+
+		$allowed_html['details'] = array(
+			'open' => true,
+		);
+		$allowed_html['summary'] = array();
+
+		if ( $allow_task_inputs ) {
 			$allowed_html['input'] = array(
 				'class'    => true,
 				'checked'  => true,
@@ -142,6 +183,128 @@ final class MarkdownRenderer {
 			);
 		}
 
-		return wp_kses( $html, $allowed_html );
+		return self::retain_disabled_task_checkboxes( wp_kses( $html, $allowed_html ), $require_task_list_context );
+	}
+
+	private static function retain_disabled_task_checkboxes( $html, $require_task_list_context ) {
+		$html = (string) $html;
+
+		if ( false === stripos( $html, '<input' ) ) {
+			return $html;
+		}
+
+		if ( ! class_exists( '\\DOMDocument' ) ) {
+			throw new RuntimeException( 'The DOM extension is required to sanitize rendered Markdown inputs.' );
+		}
+
+		$document              = new \DOMDocument( '1.0', 'UTF-8' );
+		$previous_libxml_state = libxml_use_internal_errors( true );
+
+		try {
+			$loaded = $document->loadHTML(
+				'<?xml encoding="UTF-8"><div id="easymde-task-list-fragment">' . $html . '</div>',
+				LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+			);
+		} finally {
+			libxml_clear_errors();
+			libxml_use_internal_errors( $previous_libxml_state );
+		}
+
+		if ( ! $loaded ) {
+			throw new RuntimeException( 'Unable to parse rendered Markdown input elements.' );
+		}
+
+		$fragment = $document->getElementById( 'easymde-task-list-fragment' );
+		if ( ! $fragment instanceof \DOMElement ) {
+			throw new RuntimeException( 'Unable to locate the rendered Markdown fragment while sanitizing input elements.' );
+		}
+
+		$inputs = array();
+		foreach ( $fragment->getElementsByTagName( 'input' ) as $input ) {
+			$inputs[] = $input;
+		}
+
+		foreach ( $inputs as $input ) {
+			$is_allowed_checkbox = self::is_disabled_checkbox( $input )
+				&& ( ! $require_task_list_context || self::is_task_list_checkbox( $input ) );
+
+			if ( ! $is_allowed_checkbox ) {
+				$parent = $input->parentNode;
+				if ( null === $parent ) {
+					throw new RuntimeException( 'Unable to remove a disallowed rendered Markdown input element.' );
+				}
+
+				$parent->removeChild( $input );
+				continue;
+			}
+
+			$checked = $input->hasAttribute( 'checked' );
+			$attribute_names = array();
+			foreach ( $input->attributes as $attribute ) {
+				$attribute_names[] = $attribute->name;
+			}
+
+			foreach ( $attribute_names as $attribute_name ) {
+				$input->removeAttribute( $attribute_name );
+			}
+
+			if ( $checked ) {
+				$input->setAttribute( 'checked', '' );
+			}
+
+			$input->setAttribute( 'disabled', '' );
+			$input->setAttribute( 'type', 'checkbox' );
+		}
+
+		$sanitized_html = '';
+		foreach ( $fragment->childNodes as $node ) {
+			$node_html = $document->saveHTML( $node );
+			if ( false === $node_html ) {
+				throw new RuntimeException( 'Unable to serialize rendered Markdown after sanitizing input elements.' );
+			}
+
+			$sanitized_html .= $node_html;
+		}
+
+		return $sanitized_html;
+	}
+
+	private static function is_disabled_checkbox( \DOMElement $input ) {
+		return 'checkbox' === strtolower( $input->getAttribute( 'type' ) ) && $input->hasAttribute( 'disabled' );
+	}
+
+	private static function is_task_list_checkbox( \DOMElement $input ) {
+		if ( ! self::is_disabled_checkbox( $input ) ) {
+			return false;
+		}
+
+		$list_item = $input->parentNode;
+		while ( $list_item instanceof \DOMElement && ! self::is_task_list_item( $list_item ) ) {
+			$list_item = $list_item->parentNode;
+		}
+
+		if ( ! $list_item instanceof \DOMElement ) {
+			return false;
+		}
+
+		return $list_item->parentNode instanceof \DOMElement && self::is_task_list( $list_item->parentNode );
+	}
+
+	private static function is_task_list_item( \DOMElement $element ) {
+		return 'li' === strtolower( $element->tagName ) && self::has_css_class( $element, 'task-list-item' );
+	}
+
+	private static function is_task_list( \DOMElement $element ) {
+		return in_array( strtolower( $element->tagName ), array( 'ul', 'ol' ), true )
+			&& ( self::has_css_class( $element, 'task-list' ) || self::has_css_class( $element, 'contains-task-list' ) );
+	}
+
+	private static function has_css_class( \DOMElement $element, $class_name ) {
+		$classes = explode(
+			' ',
+			str_replace( array( "\t", "\n", "\f", "\r" ), ' ', trim( $element->getAttribute( 'class' ) ) )
+		);
+
+		return in_array( $class_name, $classes, true );
 	}
 }

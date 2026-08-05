@@ -1551,50 +1551,46 @@ msgid "Grid black"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:50
-msgid "Geek black"
-msgstr ""
-
-#: src/Theme/ArticleThemeRegistry.php:51
 msgid "Rose purple"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:52
+#: src/Theme/ArticleThemeRegistry.php:51
 msgid "Ningye purple"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:53
+#: src/Theme/ArticleThemeRegistry.php:52
 msgid "Tech blue"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:54
+#: src/Theme/ArticleThemeRegistry.php:53
 msgid "Qingbi Liujin"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:55
+#: src/Theme/ArticleThemeRegistry.php:54
 msgid "Qinghe Zhusha"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:56
+#: src/Theme/ArticleThemeRegistry.php:55
 msgid "Cute green"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:57 src/Theme/CodeThemeRegistry.php:24
+#: src/Theme/ArticleThemeRegistry.php:56 src/Theme/CodeThemeRegistry.php:24
 msgid "Fullstack blue"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:58
+#: src/Theme/ArticleThemeRegistry.php:57
 msgid "Minimal black"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:59
+#: src/Theme/ArticleThemeRegistry.php:58
 msgid "Orange blue"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:60
+#: src/Theme/ArticleThemeRegistry.php:59
 msgid "Frontend peak"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:61
+#: src/Theme/ArticleThemeRegistry.php:60
 msgid "Cupid busy"
 msgstr ""
 

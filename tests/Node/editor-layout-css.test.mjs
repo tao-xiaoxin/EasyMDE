@@ -862,6 +862,7 @@ test('immersive Preview mode keeps article geometry on the preview pane', () => 
   assertDeclaration(previewContentRule, 'min-height', '680px');
   assertDeclaration(previewContentRule, 'margin', '0 auto');
   assertDeclaration(previewContentRule, 'padding', '36px 40px');
+  assertDeclaration(previewContentRule, 'border-radius', '48px');
   assertDeclaration(previewContentRule, 'overflow', 'visible');
   const readonlyPreviewContentRule = cssRule(
     css,
@@ -952,6 +953,11 @@ test('immersive pure Preview delegates scrolling to its canvas', () => {
     '.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas'
   );
   assertDeclaration(previewCanvasRule, 'overflow-y', 'auto');
+  assert.doesNotMatch(
+    previewCanvasRule,
+    /border-radius:\s*(?!0(?:px)?;)/,
+    'the existing canvas must not become a second rounded paper surface'
+  );
 
   assert.doesNotMatch(
     css,

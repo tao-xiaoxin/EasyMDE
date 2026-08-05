@@ -120,6 +120,17 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
         $this->assertSame('default', $registry->get('md2html-normal')['id']);
     }
 
+    public function test_retired_black_theme_is_not_registered_and_falls_back_to_default()
+    {
+        $theme_id = implode('-', array('geek', 'black'));
+        $registry = new ArticleThemeRegistry();
+        $themes = array_column($registry->for_script(), null, 'id');
+
+        $this->assertArrayNotHasKey($theme_id, $themes);
+        $this->assertSame('default', $registry->sanitize_id($theme_id));
+        $this->assertSame('default', $registry->get($theme_id)['id']);
+    }
+
     public function test_third_party_can_re_register_removed_md2html_normal_theme()
     {
         $callback = static function ($themes) {
@@ -310,7 +321,7 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
     {
         $article_themes = (new ArticleThemeRegistry())->for_script();
         $code_themes = array_column((new CodeThemeRegistry())->for_script(), null, 'id');
-        $this->assertCount(47, $article_themes);
+        $this->assertCount(46, $article_themes);
         foreach ($article_themes as $article_theme) {
             $this->assertArrayHasKey($article_theme['defaultCodeTheme'], $code_themes);
         }
@@ -368,15 +379,32 @@ final class ArticleThemeRegistryTest extends WP_UnitTestCase
                 'crimson-focus'  => '#e74c3c',
                 'inkwell'         => '#3b82c4',
                 'animal-island'   => '#19c8b9',
+                'phycat-cherry'   => '#aa1111',
+                'phycat-caramel'  => '#f59e0b',
+                'phycat-forest'   => '#11aa63',
                 'phycat-mint'     => '#3db8bf',
+                'phycat-sky'      => '#3498db',
+                'phycat-prussian' => '#1d4e89',
+                'phycat-sakura'   => '#ff7096',
+                'phycat-mauve'    => '#a06eb4',
                 'mdmdt'           => '#3e69d7',
                 'dogschoice-pink' => '#f55066',
-                'bloom-petal'     => '#e8859b',
+                'bloom-petal'     => '#e63f9f',
+                'bloom-mist'      => '#34698c',
+                'bloom-verdant'   => '#3d7055',
+                'bloom-stone'     => '#82564f',
+                'bloom-wheat'     => '#947d53',
+                'bloom-ink'       => '#a74639',
+                'bloom-amber'     => '#b77b29',
+                'bloom-lapis'     => '#2f62ac',
+                'bloom-ripple'    => '#009c9c',
+                'bloom-cinnabar'  => '#c53637',
+                'bloom-sage'      => '#848e38',
+                'bloom-spring'    => '#877deb',
                 'spring'          => '#3ea173',
                 'lanqing'        => '#009688',
                 'yamabuki'       => '#ffb11b',
                 'grid-black'     => '#212122',
-                'geek-black'     => '#212122',
                 'rose-purple'    => '#916dd5',
                 'ningye-purple'  => '#916dd5',
                 'tech-blue'      => '#0e88eb',

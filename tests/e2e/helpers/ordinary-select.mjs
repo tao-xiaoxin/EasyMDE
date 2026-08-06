@@ -11,6 +11,7 @@ export async function selectOrdinaryOption(page, combobox, optionLabel) {
   }
 
   const options = page.locator(`[id=${JSON.stringify(listboxId)}] [role="option"]`);
+  await expect(options.first()).toBeAttached();
   const optionLabels = (await options.allTextContents()).map((label) => label.trim());
   const optionIndex = optionLabels.indexOf(optionLabel);
   if (-1 === optionIndex) {

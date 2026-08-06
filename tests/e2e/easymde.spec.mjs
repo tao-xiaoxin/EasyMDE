@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import { selectOrdinaryOption } from './helpers/ordinary-select.mjs';
+import { collectPreviewRequestOutcomes } from './helpers/preview-request-evidence.mjs';
 import { runCleanupSteps } from './support/run-cleanup-steps.mjs';
 
 const wpPath = process.env.EASYMDE_E2E_WP_PATH;
@@ -91,163 +92,6 @@ function collectRuntimeAssetRequests(page) {
   });
 
   return requests;
-}
-
-function collectPreviewRequestOutcomes(page) {
-  const outcomes = [];
-  const outcomeByRequest = new WeakMap();
-  const settledByOutcome = new WeakMap();
-  const settleByOutcome = new WeakMap();
-  const previewPath = '/wp-json/easymde/v1/preview';
-
-  page.on('request', (request) => {
-    const pathname = new URL(request.url()).pathname;
-    if ('POST' !== request.method() || !pathname.endsWith(previewPath)) {
-      return;
-    }
-
-    let payload;
-    const payloadText = request.postData();
-    let parseError = null;
-    try {
-      payload = request.postDataJSON();
-    } catch (error) {
-      parseError = error instanceof Error ? error.message : String(error);
-    }
-
-    const outcome = {
-      markdownTheme:
-        payload && 'object' === typeof payload && 'string' === typeof payload.markdown_theme
-          ? payload.markdown_theme
-          : null,
-      payloadDigest: 'string' === typeof payloadText
-        ? createHash('sha256').update(payloadText).digest('hex')
-        : null,
-      status: null,
-      failure: null,
-      parseError,
-      responseErrorCode: null,
-      responseBodyError: null,
-      responseParseError: null
-    };
-    let settle;
-    const settled = new Promise((resolve) => {
-      settle = resolve;
-    });
-    outcomes.push(outcome);
-    outcomeByRequest.set(request, outcome);
-    settledByOutcome.set(outcome, settled);
-    settleByOutcome.set(outcome, settle);
-  });
-
-  page.on('response', async (response) => {
-    const outcome = outcomeByRequest.get(response.request());
-    if (!outcome) {
-      return;
-    }
-
-    outcome.status = response.status();
-    try {
-      const responseBody = await response.body();
-      if (!response.ok()) {
-        const body = JSON.parse(responseBody.toString('utf8'));
-        outcome.responseErrorCode =
-          body && 'object' === typeof body && 'string' === typeof body.code
-            ? body.code
-            : null;
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      if (response.ok()) {
-        outcome.responseBodyError = errorMessage;
-      } else {
-        outcome.responseParseError = errorMessage;
-      }
-    } finally {
-      settleByOutcome.get(outcome)?.();
-    }
-  });
-
-  page.on('requestfailed', (request) => {
-    const outcome = outcomeByRequest.get(request);
-    if (outcome) {
-      outcome.failure = request.failure()?.errorText ?? 'unknown-request-failure';
-      settleByOutcome.get(outcome)?.();
-    }
-  });
-
-  return {
-    get length() {
-      return outcomes.length;
-    },
-    async evidence(startIndex, markdownTheme) {
-      let observed = [];
-      let stabilized = false;
-      for (let attempt = 0; attempt < 10; attempt += 1) {
-        const observedEnd = outcomes.length;
-        observed = outcomes.slice(startIndex, observedEnd);
-        await Promise.all(observed.map((outcome) => settledByOutcome.get(outcome)));
-        await page.evaluate(() => new Promise((resolve) => {
-          requestAnimationFrame(() => requestAnimationFrame(resolve));
-        }));
-        if (outcomes.length === observedEnd) {
-          stabilized = true;
-          break;
-        }
-      }
-      if (!stabilized) {
-        throw new Error('preview-request-evidence-did-not-stabilize');
-      }
-
-      const invalid = observed.filter(
-        ({
-          markdownTheme: observedTheme,
-          payloadDigest,
-          parseError,
-          responseBodyError,
-          responseParseError
-        }) => (
-          parseError
-          || responseBodyError
-          || responseParseError
-          || null === observedTheme
-          || null === payloadDigest
-        )
-      );
-      const nonTarget = observed.filter(
-        ({ markdownTheme: observedTheme }) => observedTheme !== markdownTheme
-      );
-      const target = observed.filter(
-        ({ markdownTheme: observedTheme }) => observedTheme === markdownTheme
-      );
-      const successful = target.filter(
-        ({ status, failure }) => (
-          null === failure
-          && null !== status
-          && status >= 200
-          && status < 300
-        )
-      );
-      const failed = target.filter((outcome) => !successful.includes(outcome));
-      const nonceRetries = failed.filter(
-        ({ failure, responseErrorCode, status }) => (
-          null === failure
-          && 403 === status
-          && 'rest_cookie_invalid_nonce' === responseErrorCode
-        )
-      );
-
-      return {
-        observed,
-        invalid,
-        nonTarget,
-        target,
-        successful,
-        failed,
-        nonceRetries
-      };
-    }
-  };
 }
 
 function expectRuntimeAssetRequests(requests, expectedKeys, origin) {
@@ -1839,19 +1683,32 @@ test.describe('EasyMDE editor workflows', () => {
     const imageUploadRequests = [];
     const browserErrors = [];
     const failedRequests = [];
+    const cancelledPreviewRequests = [];
 
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) browserErrors.push(message.text());
     });
     page.on('pageerror', (error) => browserErrors.push(error.message));
     page.on('requestfailed', (request) => {
-      if ('net::ERR_ABORTED' === request.failure()?.errorText) {
+      const pathname = new URL(request.url()).pathname;
+      const isManagedRequest =
+        pathname.includes('/wp-content/plugins/easymde/')
+        || pathname.includes('/wp-json/easymde/');
+      if (!isManagedRequest) {
         return;
       }
-      const pathname = new URL(request.url()).pathname;
-      if (pathname.includes('/wp-content/plugins/easymde/') || pathname.includes('/wp-json/easymde/')) {
-        failedRequests.push(pathname);
+
+      const errorText = request.failure()?.errorText ?? 'unknown-request-failure';
+      const isPreviewCancellation =
+        'net::ERR_ABORTED' === errorText
+        && 'POST' === request.method()
+        && pathname.endsWith('/wp-json/easymde/v1/preview');
+      if (isPreviewCancellation) {
+        cancelledPreviewRequests.push({ method: request.method(), pathname });
+        return;
       }
+
+      failedRequests.push({ errorText, method: request.method(), pathname });
     });
 
     page.on('request', (request) => {
@@ -2010,6 +1867,12 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(sourceEditor).toBeFocused();
     expect(imageUploadRequests).toHaveLength(2);
     expect(await page.evaluate(() => typeof window.EasyMDEImagePaste)).toBe('undefined');
+    if (cancelledPreviewRequests.length) {
+      await testInfo.attach('cancelled-preview-requests', {
+        body: JSON.stringify(cancelledPreviewRequests, null, 2),
+        contentType: 'application/json'
+      });
+    }
     expect(browserErrors.filter((message) => !message.includes('status of 415'))).toEqual([]);
     expect(browserErrors.filter((message) => message.includes('status of 415'))).toHaveLength(1);
     expect(failedRequests).toEqual([]);
@@ -2337,21 +2200,13 @@ test.describe('EasyMDE editor workflows', () => {
             })
         );
       }
-      const retryIsValid =
-        !sameMarkupProfile
-        && 1 === requestEvidence.nonceRetries.length
-        && 1 === requestEvidence.successful.length
-        && 1 === requestEvidence.failed.length
-        && requestEvidence.nonceRetries[0].payloadDigest
-          === requestEvidence.successful[0].payloadDigest
-        && requestEvidence.observed.indexOf(requestEvidence.nonceRetries[0]) + 1
-          === requestEvidence.observed.indexOf(requestEvidence.successful[0])
-        && requestEvidence.observed.length === requestEvidence.target.length
-        && requestEvidence.target.indexOf(requestEvidence.nonceRetries[0])
-          < requestEvidence.target.indexOf(requestEvidence.successful[0]);
       if (
         (sameMarkupProfile && requestEvidence.target.length)
-        || (!sameMarkupProfile && requestEvidence.failed.length && !retryIsValid)
+        || (
+          !sameMarkupProfile
+          && requestEvidence.failed.length
+          && !requestEvidence.nonceRetryIsValid
+        )
       ) {
         failures.push(
           `${id}/ordinary-1200/top: unexpected-preview-request-failure-`
@@ -2656,21 +2511,13 @@ test.describe('EasyMDE editor workflows', () => {
               })
           );
         }
-        const retryIsValid =
-          !sameMarkupProfile
-          && 1 === requestEvidence.nonceRetries.length
-          && 1 === requestEvidence.successful.length
-          && 1 === requestEvidence.failed.length
-          && requestEvidence.nonceRetries[0].payloadDigest
-            === requestEvidence.successful[0].payloadDigest
-          && requestEvidence.observed.indexOf(requestEvidence.nonceRetries[0]) + 1
-            === requestEvidence.observed.indexOf(requestEvidence.successful[0])
-          && requestEvidence.observed.length === requestEvidence.target.length
-          && requestEvidence.target.indexOf(requestEvidence.nonceRetries[0])
-            < requestEvidence.target.indexOf(requestEvidence.successful[0]);
         if (
           (sameMarkupProfile && requestEvidence.target.length)
-          || (!sameMarkupProfile && requestEvidence.failed.length && !retryIsValid)
+          || (
+            !sameMarkupProfile
+            && requestEvidence.failed.length
+            && !requestEvidence.nonceRetryIsValid
+          )
         ) {
           requestFailures.push(
             `${id}/${width}:unexpected-preview-request-failure-`

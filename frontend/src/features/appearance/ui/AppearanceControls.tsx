@@ -445,6 +445,15 @@ export function AppearanceControls({
     nextState: AppearanceState,
     nextCodeThemeExplicit = codeThemeExplicitRef.current
   ): boolean => {
+    const currentState = snapshotRef.current.state;
+    if (
+      currentState.markdownTheme === nextState.markdownTheme
+      && currentState.codeTheme === nextState.codeTheme
+      && currentState.customCssId === nextState.customCssId
+      && codeThemeExplicitRef.current === nextCodeThemeExplicit
+    ) {
+      return true;
+    }
     try {
       port.applyState(nextState, nextCodeThemeExplicit);
     } catch {

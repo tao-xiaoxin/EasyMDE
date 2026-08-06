@@ -223,6 +223,30 @@ test('registered article themes contain no block-code presentation selectors', (
   }
 });
 
+test('Typora-derived adapters keep inline code article-owned without fenced selectors', () => {
+  const typoraThemes = Object.keys(typoraDerivedCodeAssociations());
+
+  for (const theme of typoraThemes) {
+    const css = source(`assets/themes/article/${theme}.css`);
+    const root = `.easymde-rendered-content.easymde-markdown-theme-${theme}`;
+    const selectors = cssSelectors(css);
+    const inlineCodeSelectors = selectors.filter((selector) => (
+      selector.startsWith(`${root} :not(pre) > code`)
+    ));
+
+    assert.ok(inlineCodeSelectors.length > 0, `${theme} should expose a scoped inline-code selector`);
+    assert.ok(
+      inlineCodeSelectors.every((selector) => selector.includes(':not(pre)')),
+      `${theme} inline-code selectors must exclude fenced code`
+    );
+    assert.deepEqual(
+      selectors.filter(blockCodeSelector),
+      [],
+      `${theme} must leave fenced-code presentation to the independent code theme/frame`
+    );
+  }
+});
+
 test('Typora-derived article themes stay locally scoped and offline-safe', () => {
   const typoraThemes = [
     'inkwell',

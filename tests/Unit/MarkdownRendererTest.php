@@ -62,8 +62,8 @@ final class MarkdownRendererTest extends WP_UnitTestCase
             'qingbi-liujin'
         );
 
-        $this->assertStringContainsString('<section class="table-container"><table>', $html);
-        $this->assertStringNotContainsString('<section class="easymde-table-container"><table>', $html);
+        $this->assertStringContainsString('<section class="table-container easymde-table-container"><table>', $html);
+        $this->assertSame( 1, substr_count( $html, '<section class="table-container easymde-table-container">' ) );
         $this->assertStringContainsString('<figure><img', $html);
         $this->assertStringContainsString('src="https://example.test/qingbi.png"', $html);
         $this->assertStringContainsString('alt="Qingbi caption"', $html);
@@ -84,8 +84,8 @@ final class MarkdownRendererTest extends WP_UnitTestCase
             'qinghe-zhusha'
         );
 
-        $this->assertStringContainsString('<section class="easymde-table-container"><table>', $html);
-        $this->assertStringNotContainsString('<section class="table-container"><table>', $html);
+        $this->assertStringContainsString('<section class="table-container easymde-table-container"><table>', $html);
+        $this->assertSame( 1, substr_count( $html, '<section class="table-container easymde-table-container">' ) );
         $this->assertStringContainsString('<figure><img', $html);
         $this->assertStringContainsString('src="https://example.test/qinghe.png"', $html);
         $this->assertStringContainsString('alt="Qinghe caption"', $html);
@@ -104,10 +104,51 @@ final class MarkdownRendererTest extends WP_UnitTestCase
             'crimson-focus'
         );
 
-        $this->assertStringContainsString('<section class="table-container"><table>', $html);
-        $this->assertStringNotContainsString('<table>', str_replace('<section class="table-container"><table>', '', $html));
+        $this->assertStringContainsString('<section class="table-container easymde-table-container"><table>', $html);
+        $this->assertSame( 1, substr_count( $html, '<section class="table-container easymde-table-container">' ) );
+        $this->assertStringNotContainsString('<table>', str_replace('<section class="table-container easymde-table-container"><table>', '', $html));
         $this->assertStringContainsString('<figure><img', $html);
         $this->assertStringContainsString('<figcaption>Crimson caption</figcaption>', $html);
+    }
+
+    public function test_wraps_bare_tables_once_with_both_compatibility_classes()
+    {
+        $html = MarkdownRenderer::render(
+            "| Name | Value |\n| --- | --- |\n| One | Two |",
+            'default'
+        );
+
+        $this->assertSame( 1, substr_count( $html, '<section class="table-container easymde-table-container">' ) );
+        $this->assertSame( 1, substr_count( $html, '<table>' ) );
+        $this->assertStringNotContainsString('<section class="table-container"><table>', $html);
+        $this->assertStringNotContainsString('<section class="easymde-table-container"><table>', $html);
+    }
+
+    /**
+     * A theme may provide either legacy wrapper class. Preserve it and add the
+     * shared compatibility class without introducing a nested scroll owner.
+     *
+     * @dataProvider table_wrapper_class_provider
+     */
+    public function test_does_not_double_wrap_existing_table_compatibility_wrapper( $class_name )
+    {
+        $html = MarkdownRenderer::render(
+            '<section class="' . $class_name . '"><table><thead><tr><th>Name</th></tr></thead><tbody><tr><td>One</td></tr></tbody></table></section>',
+            'default'
+        );
+
+        $this->assertSame( 1, substr_count( $html, '<table>' ) );
+        $this->assertSame( 1, substr_count( $html, '<section' ) );
+        $this->assertSame( 1, substr_count( $html, '<section class="table-container easymde-table-container">' ) );
+        $this->assertStringNotContainsString('<section class="table-container easymde-table-container"><section', $html);
+    }
+
+    public static function table_wrapper_class_provider()
+    {
+        return array(
+            array( 'table-container' ),
+            array( 'easymde-table-container' ),
+        );
     }
 
     public function test_crimson_focus_marks_task_lists_for_theme_css_fallback()

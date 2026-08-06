@@ -292,16 +292,6 @@
     --source-cm-atom-color: #777777;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-spring{
-    background-color: var(--content-write-bg-color);
-    max-width: 1200px;
-    min-width: 0;
-    width: 100%;
-    margin: 0 auto;
-    padding-bottom: 7.5rem;
-    overflow: overlay;
-}
-
 .easymde-rendered-content.easymde-markdown-theme-spring p{
     word-spacing: 0.1rem;
     line-height: 1.9rem;
@@ -395,7 +385,7 @@
     max-width: 100%;
     height: 2.5px;
     margin: 0.5rem auto 0.3rem;
-    background: rgb(62, 161, 115);
+    background: var(--write-h2-after-bg);
     border-radius: 10px;
     transform: scaleX(0);
     transition: transform 0.4s ease, background 0.4s ease;
@@ -1117,6 +1107,27 @@
 }
 
 
+/* inline code */
+.easymde-rendered-content.easymde-markdown-theme-spring :not(pre) > code{
+    background-color: var(--code-bg-color);
+    color: var(--code-color);
+    font-family: var(--easymde-code-font-family);
+    font-size: 1rem;
+    font-weight: 550;
+    margin: 0 2px;
+    padding: 3px 3px 1px;
+    border-radius: 7px;
+    transition: all 0.3s ease;
+    z-index: -1;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring :not(pre) > code:hover{
+    background-color: var(--code-hover-bg-color);
+    font-weight: calc(550 + 150 * var(--code-hover-effect) * var(--use-dynamic-effect));
+    padding: 3px 3px calc(1px + 2px * var(--code-hover-effect) * var(--use-dynamic-effect));
+}
+
+
 .easymde-rendered-content.easymde-markdown-theme-spring h1 code,
 .easymde-rendered-content.easymde-markdown-theme-spring h2 code,
 .easymde-rendered-content.easymde-markdown-theme-spring h3 code,
@@ -1330,52 +1341,6 @@
 .easymde-rendered-content.easymde-markdown-theme-spring .cm-s-inner .cm-quote{
     color: #3503a8;
     font-style: italic;
-}
-
-
-.easymde-rendered-content.easymde-markdown-theme-spring::-webkit-scrollbar{
-    width: 8px;
-    height: 8px;
-    background-color: transparent;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring::-webkit-scrollbar:hover{
-    background-color: transparent;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring::-webkit-scrollbar-track{
-    background: transparent;
-    border-radius: 0;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring::-webkit-scrollbar-thumb{
-    background: var(--scrollbar-thumb-bg);
-    border-radius: 1px;
-    border: 1.5px solid var(--scrollbar-border);
-    backdrop-filter: var(--scrollbar-blur);
-    -webkit-backdrop-filter: var(--scrollbar-blur);
-    box-shadow:
-        0 2px 4px rgba(0, 0, 0, 0.1),
-        inset 0 1px 0 rgba(255, 255, 255, 0.2);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    min-height: 30px;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring::-webkit-scrollbar-thumb:hover{
-    background: var(--scrollbar-thumb-hover-bg);
-    border-color: var(--scrollbar-border-hover);
-    box-shadow:
-        0 4px 12px rgba(0, 0, 0, 0.15),
-        inset 0 1px 0 rgba(255, 255, 255, 0.3);
-    transform: scale(1.02);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring::-webkit-scrollbar-thumb:active{
-    background: var(--scrollbar-thumb-active-bg);
-    transform: scale(0.98);
-    box-shadow:
-        0 1px 4px rgba(0, 0, 0, 0.2),
-        inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 
@@ -1614,12 +1579,6 @@
 }
 
 @media print{
-    .easymde-rendered-content.easymde-markdown-theme-spring{
-        zoom: 70%;
-        margin: 0rem 1rem;
-        padding: 1rem;
-    }
-
     .easymde-rendered-content.easymde-markdown-theme-spring table,
 .easymde-rendered-content.easymde-markdown-theme-spring .md-table-fig .md-table{
         border: none;
@@ -1702,10 +1661,6 @@
 }
 
 @media only screen and (min-width: 1400px){
-    .easymde-rendered-content.easymde-markdown-theme-spring{
-        max-width: 1024px;
-    }
-
     .easymde-rendered-content.easymde-markdown-theme-spring hr{
         position: relative;
         margin: 2rem auto;
@@ -1718,10 +1673,6 @@
 }
 
 @media only screen and (min-width: 1800px){
-    .easymde-rendered-content.easymde-markdown-theme-spring{
-        max-width: 1200px;
-    }
-
     .easymde-rendered-content.easymde-markdown-theme-spring hr{
         position: relative;
         margin: 2rem auto;

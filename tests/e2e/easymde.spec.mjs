@@ -638,12 +638,19 @@ async function measureArticleThemeGeometry(
       if (!(pane instanceof HTMLElement)) {
         throw new Error('theme-preview-pane-unavailable');
       }
+      const previewCanvas = root.closest('.easymde-immersive-preview-canvas');
+      if (!(previewCanvas instanceof HTMLElement)) {
+        throw new Error('theme-preview-canvas-unavailable');
+      }
 
-      const maximumScrollTop = Math.max(0, root.scrollHeight - root.clientHeight);
+      const maximumScrollTop = Math.max(
+        0,
+        previewCanvas.scrollHeight - previewCanvas.clientHeight
+      );
       const targetScrollTop = 'top' === scrollPosition
         ? 0
         : ('middle' === scrollPosition ? maximumScrollTop / 2 : maximumScrollTop);
-      root.scrollTop = targetScrollTop;
+      previewCanvas.scrollTop = targetScrollTop;
 
       const rootBox = root.getBoundingClientRect();
       const paneBox = pane.getBoundingClientRect();
@@ -872,17 +879,14 @@ async function measureArticleThemeGeometry(
                 return childBox.width <= box.width + tolerance;
               });
         });
-      const actualScrollTop = root.scrollTop;
+      const actualScrollTop = previewCanvas.scrollTop;
       const scrollPositionValid = Math.abs(actualScrollTop - targetScrollTop) <= tolerance;
       const placeholderVisible = Array.from(
         document.querySelectorAll('.easymde-preview-pending')
       ).some(isVisible);
       const topMeaningfulBox = topMeaningful?.getBoundingClientRect();
       const editor = root.closest('[data-easymde-editor-owner="react"]');
-      const immersiveCanvas = root.closest('.easymde-immersive-preview-canvas');
-      const immersiveCanvasStyle = immersiveCanvas
-        ? getComputedStyle(immersiveCanvas)
-        : null;
+      const immersiveCanvasStyle = getComputedStyle(previewCanvas);
       const articleStyle = getComputedStyle(root);
       const usesSharedImmersiveGrid = articleStyle.backgroundImage.includes(
         'rgba(247, 250, 252, 0.92)'
@@ -892,12 +896,18 @@ async function measureArticleThemeGeometry(
       const paneStyle = getComputedStyle(pane);
       const isImmersivePreview = editor?.classList.contains('is-immersive-preview');
       const isImmersiveSplit = editor?.classList.contains('is-immersive-split');
+      const isOrdinary = editor && !editor.classList.contains('is-immersive');
       const surfaces = {
         canvasBackground: immersiveCanvasStyle?.backgroundColor ?? null,
         canvasOverflowY: immersiveCanvasStyle?.overflowY ?? null,
-        articleIsDirectCanvasChild: root.parentElement === immersiveCanvas,
+        canvasPadding: immersiveCanvasStyle?.padding ?? null,
+        articleIsDirectCanvasChild: root.parentElement === previewCanvas,
         articleBorderTopLeftRadius: articleStyle.borderTopLeftRadius,
+        articleBackgroundColor: articleStyle.backgroundColor,
         articleBackgroundImage: articleStyle.backgroundImage,
+        articleBoxShadow: articleStyle.boxShadow,
+        articleMaxWidth: articleStyle.maxWidth,
+        articleMinHeight: articleStyle.minHeight,
         articleUsesSharedImmersiveGrid: usesSharedImmersiveGrid,
         expectedThemeBackgroundImage,
         paneBackground: paneStyle.backgroundColor,
@@ -983,14 +993,48 @@ async function measureArticleThemeGeometry(
           ...(placeholderVisible ? ['preview-placeholder-visible'] : []),
           ...(
             isImmersivePreview
-            && 'rgb(255, 255, 255)' !== surfaces.canvasBackground
+            && 'rgb(246, 246, 248)' !== surfaces.canvasBackground
               ? [`immersive-preview-canvas-background-${surfaces.canvasBackground}`]
               : []
           ),
           ...(
             isImmersivePreview
-            && (!immersiveCanvas || !surfaces.articleIsDirectCanvasChild)
+            && !surfaces.articleIsDirectCanvasChild
               ? ['immersive-preview-paper-not-direct-canvas-child']
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && '28px 20px' !== surfaces.canvasPadding
+              ? [`immersive-preview-canvas-padding-${surfaces.canvasPadding}`]
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && 'rgb(255, 255, 255)' !== surfaces.articleBackgroundColor
+              ? [`immersive-preview-paper-background-${surfaces.articleBackgroundColor}`]
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && '760px' !== surfaces.articleMaxWidth
+              ? [`immersive-preview-paper-max-width-${surfaces.articleMaxWidth}`]
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && 'rgba(15, 23, 42, 0.06) 0px 8px 28px 0px'
+              !== surfaces.articleBoxShadow
+              ? [`immersive-preview-paper-shadow-${surfaces.articleBoxShadow}`]
+              : []
+          ),
+          ...(
+            isImmersivePreview
+            && (
+              (window.innerWidth <= 760 && '520px' !== surfaces.articleMinHeight)
+              || (window.innerWidth > 760 && '680px' !== surfaces.articleMinHeight)
+            )
+              ? [`immersive-preview-paper-min-height-${surfaces.articleMinHeight}`]
               : []
           ),
           ...(
@@ -1012,16 +1056,28 @@ async function measureArticleThemeGeometry(
               : []
           ),
           ...(
-            isImmersivePreview
-            && null !== surfaces.expectedThemeBackgroundImage
+            null !== surfaces.expectedThemeBackgroundImage
             && surfaces.articleBackgroundImage !== surfaces.expectedThemeBackgroundImage
-              ? ['immersive-preview-theme-owned-background-not-preserved']
+              ? ['theme-owned-background-not-preserved']
               : []
           ),
           ...(
             isImmersiveSplit
             && 'rgb(255, 255, 255)' !== surfaces.paneBackground
               ? [`immersive-split-pane-background-${surfaces.paneBackground}`]
+              : []
+          ),
+          ...(
+            (isOrdinary || isImmersiveSplit)
+            && (
+              'rgb(255, 255, 255)' !== surfaces.canvasBackground
+              || '0px' !== surfaces.canvasPadding
+              || 'rgb(255, 255, 255)' !== surfaces.articleBackgroundColor
+              || '0px' !== surfaces.articleBorderTopLeftRadius
+              || 'none' !== surfaces.articleBoxShadow
+              || 'none' !== surfaces.articleMaxWidth
+            )
+              ? [`continuous-preview-surface-invalid-${JSON.stringify(surfaces)}`]
               : []
           )
         ],
@@ -2200,6 +2256,19 @@ test.describe('EasyMDE editor workflows', () => {
           id,
           'immersive-680-outline-hidden-ratio-50',
           position
+        );
+      }
+      await page.getByRole('button', {
+        name: labels.immersive.previewMode,
+        exact: true
+      }).click();
+      await expect(editorOwner).toHaveClass(/is-immersive-preview/);
+      for (const position of ['top', 'middle', 'bottom']) {
+        await recordGeometry(
+          id,
+          'immersive-preview-680',
+          position,
+          desktopDecoration
         );
       }
       await page.setViewportSize({ width: 1200, height: 900 });

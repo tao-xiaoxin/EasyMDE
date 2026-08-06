@@ -216,6 +216,7 @@ final class AdminAssets {
 				'codeThemeExplicit'  => $theme_options['codeThemeExplicit'],
 				'codeThemes'         => $theme_options['codeThemes'],
 				'customCss'          => $custom_css,
+				'customMarkupProfile' => $theme_options['customMarkupProfile'],
 				'customCssVariables' => $this->get_custom_css_variables(),
 				'state'              => array(
 					'markdownTheme' => $theme_state['markdownTheme'],

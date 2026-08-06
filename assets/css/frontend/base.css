@@ -7,7 +7,8 @@
     min-width: 0;
     max-width: 100%;
     margin: 1.25em 0;
-    overflow: auto;
+    overflow-x: auto;
+    overflow-y: visible;
     text-align: center;
 }
 
@@ -18,26 +19,29 @@
     height: auto;
 }
 
-/* Mermaid sizes foreignObject labels before the selected article theme is
- * applied. Prevent inherited article leading and SVG's default clipping from
- * cutting the lower half of the HTML label glyphs. */
-.easymde-mermaid foreignObject {
-    overflow: visible !important;
+/* This geometry must match the Mermaid themeCSS used while foreignObject
+ * labels are measured. It prevents article themes from changing fixed SVG
+ * label boxes after the diagram is inserted. */
+.easymde-mermaid .node .label,
+.easymde-mermaid .node .label *,
+.easymde-mermaid .edgeLabel,
+.easymde-mermaid .edgeLabel *,
+.easymde-mermaid foreignObject > div,
+.easymde-mermaid foreignObject > div * {
+    box-sizing: border-box !important;
+    font-family: "trebuchet ms", verdana, arial, sans-serif !important;
+    font-size: 16px !important;
+    font-weight: 400 !important;
+    line-height: 20px !important;
+    letter-spacing: normal !important;
+    word-spacing: normal !important;
+    white-space: nowrap !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
 .easymde-mermaid foreignObject > div {
-    display: block !important;
-    line-height: normal !important;
-    letter-spacing: normal !important;
-    overflow: visible !important;
-    white-space: nowrap !important;
-    word-spacing: normal !important;
-}
-
-.easymde-mermaid foreignObject > div * {
-    letter-spacing: normal !important;
-    line-height: normal !important;
-    word-spacing: normal !important;
+    display: table-cell !important;
 }
 
 .easymde-render-error {

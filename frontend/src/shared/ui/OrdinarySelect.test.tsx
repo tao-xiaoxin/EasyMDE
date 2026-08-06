@@ -331,6 +331,27 @@ describe('OrdinarySelect', () => {
     expect(onChange).not.toHaveBeenCalledWith('red');
   });
 
+  it('closes without committing when the selected option is chosen again', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <OrdinarySelect
+        label="Article theme"
+        onChange={onChange}
+        options={options}
+        value="red"
+      />
+    );
+    const trigger = screen.getByRole('combobox', { name: 'Article theme' });
+
+    await user.click(trigger);
+    await user.click(screen.getByRole('option', { name: 'Red' }));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it('closes on Escape or Tab while preserving the current value', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

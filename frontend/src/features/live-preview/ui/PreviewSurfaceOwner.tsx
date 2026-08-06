@@ -120,6 +120,14 @@ function surfaceStatus(state: PreviewSurfaceState): PreviewSurfaceStatus {
   return 'ready' === state.phase ? 'ready' : 'failed' === state.phase ? 'error' : 'loading';
 }
 
+function previewScrollCanvas(surface: HTMLElement): HTMLElement {
+  const canvas = surface.parentElement;
+  if (!canvas?.classList.contains('easymde-immersive-preview-canvas')) {
+    throw new Error('preview-scroll-canvas-missing');
+  }
+  return canvas;
+}
+
 type VisualMarkdownSourceMarker = Readonly<{
   kind: 'math' | 'mermaid';
   marker: Comment;
@@ -190,7 +198,9 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 
   function captureScroll(): void {
     if (surfaceRef.current) {
-      scrollSnapshotRef.current = props.scrollPort.capture(surfaceRef.current);
+      scrollSnapshotRef.current = props.scrollPort.capture(
+        previewScrollCanvas(surfaceRef.current)
+      );
     }
   }
 
@@ -341,7 +351,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     const snapshot = scrollSnapshotRef.current;
     if (surface && snapshot) {
       scrollSnapshotRef.current = null;
-      props.scrollPort.restore(surface, snapshot);
+      props.scrollPort.restore(previewScrollCanvas(surface), snapshot);
     }
   }, [state]);
 

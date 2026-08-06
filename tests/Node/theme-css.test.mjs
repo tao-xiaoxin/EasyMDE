@@ -43,6 +43,338 @@ function cssRuleSelectors(source) {
   return selectors;
 }
 
+function cssRuleBodyMatching(source, selector, predicate = () => true) {
+  const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+  let match;
+
+  while ((match = rulePattern.exec(source)) !== null) {
+    const selectors = match[1]
+      .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+      .split(',')
+      .map((item) => item.trim());
+    if (selectors.includes(selector) && predicate(match[2])) return match[2];
+  }
+
+  return undefined;
+}
+
+function escapedRegExp(value) {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+}
+
+function scopedArticleRoot(theme) {
+  return `.easymde-rendered-content.easymde-markdown-theme-${theme}`;
+}
+
+function assertInlineCodeRule(theme, selectorSuffix, declarations) {
+  const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+  const selector = `${scopedArticleRoot(theme)} ${selectorSuffix}`;
+  const body = cssRuleBodyMatching(css, selector, (candidate) => (
+    declarations.every((declaration) => declaration.test(candidate))
+  ));
+
+  assert.ok(body, `${theme} should preserve the pinned inline-code rule ${selectorSuffix}`);
+  return css;
+}
+
+const TYPORA_ARTICLE_THEME_IDS = Object.freeze([
+  'inkwell',
+  'animal-island',
+  'phycat-cherry',
+  'phycat-caramel',
+  'phycat-forest',
+  'phycat-mint',
+  'phycat-sky',
+  'phycat-prussian',
+  'phycat-sakura',
+  'phycat-mauve',
+  'mdmdt',
+  'dogschoice-pink',
+  'bloom-petal',
+  'bloom-mist',
+  'bloom-verdant',
+  'bloom-stone',
+  'bloom-wheat',
+  'bloom-ink',
+  'bloom-amber',
+  'bloom-lapis',
+  'bloom-ripple',
+  'bloom-cinnabar',
+  'bloom-sage',
+  'bloom-spring',
+  'spring'
+]);
+
+const ROOT_FRAME_PROPERTY_PATTERNS = Object.freeze([
+  /^(?:width|min-width|max-width|height|min-height|max-height)$/,
+  /^(?:margin|padding|border|background|outline|overflow|scroll-padding|scroll-behavior)(?:-|$)/,
+  /^(?:box-shadow|position|z-index|inset|top|right|bottom|left)$/
+]);
+
+const ROOT_PSEUDO_SELECTORS = Object.freeze(['::before', '::after', ':before', ':after']);
+const NESTED_CSS_AT_RULES = /^(?:@media|@supports|@container|@layer|@document|@scope)\b/i;
+
+function stripCssComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+function findCssBlockEnd(source, openingBrace) {
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+
+  for (let index = openingBrace; index < source.length; index += 1) {
+    const character = source[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '{') {
+      depth += 1;
+    } else if (character === '}') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+
+  throw new Error(`Unclosed CSS block starting at offset ${openingBrace}`);
+}
+
+function findCssStatement(source, start, end) {
+  let quote = null;
+  let escaped = false;
+  let parentheses = 0;
+  let brackets = 0;
+
+  for (let index = start; index < end; index += 1) {
+    const character = source[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '(') {
+      parentheses += 1;
+    } else if (character === ')') {
+      parentheses = Math.max(0, parentheses - 1);
+    } else if (character === '[') {
+      brackets += 1;
+    } else if (character === ']') {
+      brackets = Math.max(0, brackets - 1);
+    } else if (parentheses === 0 && brackets === 0 && character === '{') {
+      return { kind: 'block', index };
+    } else if (parentheses === 0 && brackets === 0 && character === ';') {
+      return { kind: 'statement', index };
+    }
+  }
+
+  return undefined;
+}
+
+function splitCssSelectors(prelude) {
+  const selectors = [];
+  let start = 0;
+  let quote = null;
+  let escaped = false;
+  let parentheses = 0;
+  let brackets = 0;
+
+  for (let index = 0; index < prelude.length; index += 1) {
+    const character = prelude[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '(') {
+      parentheses += 1;
+    } else if (character === ')') {
+      parentheses = Math.max(0, parentheses - 1);
+    } else if (character === '[') {
+      brackets += 1;
+    } else if (character === ']') {
+      brackets = Math.max(0, brackets - 1);
+    } else if (character === ',' && parentheses === 0 && brackets === 0) {
+      selectors.push(prelude.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  const finalSelector = prelude.slice(start).trim();
+  if (finalSelector) selectors.push(finalSelector);
+  return selectors;
+}
+
+function parseCssRules(source) {
+  const css = stripCssComments(source);
+  const rules = [];
+
+  function walk(start, end, atRules = []) {
+    let position = start;
+
+    while (position < end) {
+      while (position < end && /[\s;]/.test(css[position])) position += 1;
+      if (position >= end) break;
+
+      const statement = findCssStatement(css, position, end);
+      if (!statement) break;
+
+      const prelude = css.slice(position, statement.index).trim();
+      if (statement.kind === 'statement') {
+        position = statement.index + 1;
+        continue;
+      }
+
+      const blockEnd = findCssBlockEnd(css, statement.index);
+      if (prelude.startsWith('@')) {
+        if (NESTED_CSS_AT_RULES.test(prelude)) {
+          walk(statement.index + 1, blockEnd, [...atRules, prelude]);
+        }
+      } else if (prelude) {
+        rules.push({
+          atRules,
+          body: css.slice(statement.index + 1, blockEnd),
+          selectors: splitCssSelectors(prelude)
+        });
+      }
+      position = blockEnd + 1;
+    }
+  }
+
+  walk(0, css.length);
+  return rules;
+}
+
+function splitCssDeclarations(body) {
+  const declarations = [];
+  let start = 0;
+  let quote = null;
+  let escaped = false;
+  let parentheses = 0;
+  let brackets = 0;
+
+  function addDeclaration(segment) {
+    const match = segment.match(/^\s*([a-zA-Z_][\w-]*)\s*:/);
+    if (!match) return;
+    declarations.push({
+      property: match[1].toLowerCase(),
+      value: segment.slice(match[0].length).trim()
+    });
+  }
+
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '(') {
+      parentheses += 1;
+    } else if (character === ')') {
+      parentheses = Math.max(0, parentheses - 1);
+    } else if (character === '[') {
+      brackets += 1;
+    } else if (character === ']') {
+      brackets = Math.max(0, brackets - 1);
+    } else if (character === ';' && parentheses === 0 && brackets === 0) {
+      addDeclaration(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+
+  addDeclaration(body.slice(start));
+  return declarations;
+}
+
+function normalizeCssSelector(selector) {
+  return selector.replace(/\s+/g, ' ').trim();
+}
+
+function isRootFrameProperty(property) {
+  return ROOT_FRAME_PROPERTY_PATTERNS.some((pattern) => pattern.test(property));
+}
+
+function rootPseudoSelector(root, selector) {
+  const normalized = normalizeCssSelector(selector);
+  return ROOT_PSEUDO_SELECTORS.some((pseudo) => normalized === `${root}${pseudo}`);
+}
+
+function rootOwnershipViolations(source, root) {
+  const violations = [];
+
+  for (const rule of parseCssRules(source)) {
+    for (const selector of rule.selectors) {
+      const normalizedSelector = normalizeCssSelector(selector);
+      if (normalizedSelector !== root && !rootPseudoSelector(root, normalizedSelector)) continue;
+
+      for (const declaration of splitCssDeclarations(rule.body)) {
+        if (normalizedSelector === root && isRootFrameProperty(declaration.property)) {
+          violations.push({
+            atRules: rule.atRules,
+            property: declaration.property,
+            selector: normalizedSelector
+          });
+        }
+        if (rootPseudoSelector(root, normalizedSelector) && (
+          declaration.property === 'content' || isRootFrameProperty(declaration.property)
+        )) {
+          violations.push({
+            atRules: rule.atRules,
+            property: declaration.property,
+            selector: normalizedSelector
+          });
+        }
+      }
+    }
+  }
+
+  return violations;
+}
+
+function rootPseudoRules(source, root) {
+  return parseCssRules(source).flatMap((rule) => rule.selectors
+    .map(normalizeCssSelector)
+    .filter((selector) => rootPseudoSelector(root, selector)));
+}
+
 function targetsCodeFrame(selector) {
   const normalizedSelector = selector
     .replaceAll(/:not\(\s*pre\s*\)/g, '')
@@ -467,6 +799,327 @@ test('Spring heading decoration remains contained in narrow preview panes', () =
   assert.ok(rule);
   assert.match(rule, /width:\s*min\(30rem,\s*100%\);/);
   assert.match(rule, /max-width:\s*100%;/);
+  assert.match(
+    rule,
+    /background:\s*var\(--write-h2-after-bg\);/,
+    'Spring H2 decoration should retain the source gradient variable'
+  );
+});
+
+test('Typora-derived adapters preserve their pinned scoped inline-code rules', () => {
+  assertInlineCodeRule('animal-island', ':not(pre) > code', [
+    /font-family:\s*var\(--ai-mono\);/,
+    /font-size:\s*0\.9em;/,
+    /color:\s*var\(--ai-primary-active\);/,
+    /background:\s*var\(--ai-primary-bg\);/,
+    /padding:\s*2px 8px;/,
+    /border:\s*1\.5px solid #cdeeea;/,
+    /border-radius:\s*6px;/
+  ]);
+  assertInlineCodeRule('mdmdt', ':not(pre) > code', [
+    /border-radius:\s*4px;/,
+    /background:\s*var\(--color-1-0-a\);/,
+    /padding:\s*3px 5px;/,
+    /color:\s*var\(--text-code\);/,
+    /font-size:\s*14px;/,
+    /box-decoration-break:\s*clone;/
+  ]);
+  assertInlineCodeRule('dogschoice-pink', ':not(pre) > code', [
+    /color:\s*var\(--code-inline--color\);/,
+    /background-color:\s*var\(--code-inline-bg-color\);/,
+    /padding:\s*2px;/,
+    /font-size:\s*95%;/,
+    /display:\s*inline;/,
+    /vertical-align:\s*middle;/
+  ]);
+  assertInlineCodeRule('spring', ':not(pre) > code', [
+    /background-color:\s*var\(--code-bg-color\);/,
+    /color:\s*var\(--code-color\);/,
+    /font-size:\s*1rem;/,
+    /font-weight:\s*550;/,
+    /margin:\s*0 2px;/,
+    /padding:\s*3px 3px 1px;/,
+    /border-radius:\s*7px;/
+  ]);
+
+  const phycatThemes = {
+    'phycat-cherry': ':not(pre) > code:not(.md-fencescode)',
+    'phycat-caramel': ':not(pre) > code:not(.md-fencescode)',
+    'phycat-forest': ':not(pre) > code:not(.md-fencescode)',
+    'phycat-mint': ':not(pre) > code:not(.md-fencescode)',
+    'phycat-sky': ':not(pre) > code',
+    'phycat-prussian': ':not(pre) > code',
+    'phycat-sakura': ':not(pre) > code',
+    'phycat-mauve': ':not(pre) > code'
+  };
+  for (const [theme, selector] of Object.entries(phycatThemes)) {
+    assertInlineCodeRule(theme, selector, [
+      /font-family:\s*var\(--easymde-code-font-family\);/,
+      /font-size:\s*\.9em;/,
+      /letter-spacing:\s*\.5px;/,
+      /padding:\s*5px 5px;/,
+      /margin:\s*0 2px;/,
+      /border-radius:\s*6px;/,
+      /vertical-align:\s*middle;/
+    ]);
+  }
+
+  const bloomThemes = [
+    'bloom-petal',
+    'bloom-mist',
+    'bloom-verdant',
+    'bloom-stone',
+    'bloom-wheat',
+    'bloom-ink',
+    'bloom-amber',
+    'bloom-lapis',
+    'bloom-ripple',
+    'bloom-cinnabar',
+    'bloom-sage',
+    'bloom-spring'
+  ];
+  for (const theme of bloomThemes) {
+    assertInlineCodeRule(theme, ':not(pre) > code', [
+      /font-size:\s*0\.88em;/,
+      /padding:\s*0\.2em 0\.45em;/,
+      /border-radius:\s*7px;/,
+      /background:\s*rgba\(var\(--accent-rgb\), 0\.14\);/,
+      /color:\s*var\(--accent\);/,
+      /font-weight:\s*600;/,
+      /border:\s*1px solid rgba\(var\(--accent-rgb\), 0\.32\);/
+    ]);
+  }
+});
+
+test('Mdmdt retains the pinned nested-list rhythm', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/mdmdt.css'), 'utf8');
+  const root = scopedArticleRoot('mdmdt');
+  const expected = [
+    [`${root} ul`, /padding-left:\s*36px;/],
+    [`${root} ol`, /padding-left:\s*40px;/],
+    [`${root} ol ol`, /margin-left:\s*-7px;/],
+    [`${root} ol > li > ul`, /margin-left:\s*-7px;/],
+    [`${root} ul > li > ol`, /margin-left:\s*-2px;/],
+    [`${root} ul > li > p`, /margin:\s*0 0 0 -2px;/],
+    [`${root} ol > li > p`, /margin:\s*0 0 0 -6px;/],
+    [`${root} ul > .task-list-item > input`, /margin-left:\s*-22px;/],
+    [`${root} li`, /margin-top:\s*6px;/],
+    [`${root} li > p`, /margin:\s*-5px 0;/]
+  ];
+
+  for (const [selector, declaration] of expected) {
+    assert.ok(
+      cssRuleBodyMatching(css, selector, (body) => declaration.test(body)),
+      `Mdmdt should keep ${selector} ${declaration}`
+    );
+  }
+  assert.doesNotMatch(
+    css,
+    new RegExp(`${escapedRegExp(root)} ul\\s*,\\s*${escapedRegExp(root)} ul\\s*\\{`),
+    'Mdmdt must not reintroduce the duplicate broad-list override'
+  );
+});
+
+test('Bloom retains source heading tracking and Petal release alert colors', () => {
+  const bloomThemes = [
+    'bloom-petal',
+    'bloom-mist',
+    'bloom-verdant',
+    'bloom-stone',
+    'bloom-wheat',
+    'bloom-ink',
+    'bloom-amber',
+    'bloom-lapis',
+    'bloom-ripple',
+    'bloom-cinnabar',
+    'bloom-sage',
+    'bloom-spring'
+  ];
+
+  for (const theme of bloomThemes) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const root = scopedArticleRoot(theme);
+    const rootPattern = escapedRegExp(root);
+    const headingGroup = css.match(
+      new RegExp(
+        `${rootPattern} h1\\s*,\\s*${rootPattern} h2\\s*,\\s*${rootPattern} h3\\s*,\\s*${rootPattern} h4\\s*,\\s*${rootPattern} h5\\s*,\\s*${rootPattern} h6\\s*\\{([^}]*)\\}`,
+        's'
+      )
+    );
+    assert.ok(headingGroup, `${theme} should define the shared heading group`);
+    assert.match(headingGroup[1], /letter-spacing:\s*-0\.015em;/, `${theme} heading tracking`);
+
+    const h1Rule = cssRuleBodyMatching(
+      css,
+      `${root} h1`,
+      (body) => /font-size:\s*2\.25em;/.test(body)
+    );
+    assert.ok(h1Rule, `${theme} should define its h1 rule`);
+    assert.match(h1Rule, /letter-spacing:\s*-0\.02em;/, `${theme} h1 tracking`);
+  }
+
+  const petal = readFileSync(join(repoRoot, 'assets/themes/article/bloom-petal.css'), 'utf8');
+  assert.match(
+    petal,
+    /\.easymde-rendered-content\.easymde-markdown-theme-bloom-petal h1\s*\{[^}]*border-bottom:\s*1px solid rgba\(var\(--accent-rgb\), 0\.3\);/s,
+    'Bloom Petal h1 border should retain the release alpha color'
+  );
+  const alertColors = {
+    note: ['#eae9f2', '#cbd6e8'],
+    tip: ['#edeeea', '#d3e1d4'],
+    warning: ['#f8eae3', '#efdac5'],
+    important: ['#efe8f8', '#d8d3f6'],
+    caution: ['#f4e0e1', '#e7c2c2']
+  };
+  for (const [kind, [background, border]] of Object.entries(alertColors)) {
+    const rule = petal.match(
+      new RegExp(
+        `${escapedRegExp(scopedArticleRoot('bloom-petal'))} blockquote\\[data-type="alert-${kind}"\\]\\s*,\\s*${escapedRegExp(scopedArticleRoot('bloom-petal'))} \\.md-alert-${kind}\\s*\\{([^}]*)\\}`,
+        's'
+      )
+    );
+    assert.ok(rule, `Bloom Petal should define the pinned ${kind} alert adapter`);
+    assert.match(rule[1], new RegExp(`background:\\s*${background}\\s*!important;`));
+    assert.match(rule[1], new RegExp(`border-color:\\s*${border}\\s*!important;`));
+  }
+});
+
+test('Typora-derived article roots delegate frame geometry to the owning preview surface', () => {
+  assert.equal(TYPORA_ARTICLE_THEME_IDS.length, 25);
+  const failures = [];
+
+  for (const theme of TYPORA_ARTICLE_THEME_IDS) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const root = scopedArticleRoot(theme);
+    const rootRules = parseCssRules(css).filter((rule) => rule.selectors
+      .map(normalizeCssSelector)
+      .includes(root));
+    const violations = rootOwnershipViolations(css, root);
+    const pseudoRules = rootPseudoRules(css, root);
+
+    if (rootRules.length === 0 || violations.length > 0 || pseudoRules.length > 0) {
+      failures.push({
+        theme,
+        violations,
+        pseudoRules,
+        hasExactRootRule: rootRules.length > 0
+      });
+    }
+  }
+
+  assert.deepEqual(failures, [], `article root contract failures: ${JSON.stringify(failures)}`);
+});
+
+test('Rose Purple owns the article-scoped 20px light-gray grid while Ningye Purple remains plain', () => {
+  const exactRootDeclarations = (css, root) => parseCssRules(css).flatMap((rule) => {
+    if (!rule.selectors.map(normalizeCssSelector).includes(root)) return [];
+    return splitCssDeclarations(rule.body);
+  });
+  const valuesFor = (declarations, property) => declarations
+    .filter((declaration) => declaration.property === property)
+    .map((declaration) => declaration.value.replace(/\s+/g, ' '));
+
+  const roseTheme = 'rose-purple';
+  const roseRoot = scopedArticleRoot(roseTheme);
+  const roseCss = readFileSync(join(repoRoot, `assets/themes/article/${roseTheme}.css`), 'utf8');
+  const roseDeclarations = exactRootDeclarations(roseCss, roseRoot);
+  const roseRootRule = cssRuleBodyMatching(
+    roseCss,
+    roseRoot,
+    (body) => body.includes('background-image:')
+  );
+
+  assert.ok(roseRootRule, 'Rose Purple must define its own article grid rule');
+  assert.deepEqual(
+    valuesFor(roseDeclarations, 'background-image'),
+    [
+      'linear-gradient(90deg, rgba(50, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0) 6.76%), linear-gradient(360deg, rgba(50, 0, 0, 0.05) 0%, rgba(249, 247, 252, 0) 9.46%)'
+    ],
+    'Rose Purple must have exactly one root background-image declaration'
+  );
+  assert.deepEqual(valuesFor(roseDeclarations, 'background-size'), ['20px 20px, 20px 20px']);
+  assert.deepEqual(valuesFor(roseDeclarations, 'background-repeat'), ['repeat, repeat']);
+  assert.deepEqual(valuesFor(roseDeclarations, 'background-position'), ['0% 0%']);
+  assert.deepEqual(
+    valuesFor(roseDeclarations, 'background'),
+    [],
+    'Rose Purple must not use a root background shorthand that can erase its grid'
+  );
+  assert.equal(
+    rootPseudoRules(roseCss, roseRoot).length,
+    0,
+    'the grid must not be implemented by a root pseudo-element'
+  );
+
+  const ningyeTheme = 'ningye-purple';
+  const ningyeRoot = scopedArticleRoot(ningyeTheme);
+  const ningyeCss = readFileSync(join(repoRoot, `assets/themes/article/${ningyeTheme}.css`), 'utf8');
+  const ningyeDeclarations = exactRootDeclarations(ningyeCss, ningyeRoot);
+  assert.deepEqual(
+    valuesFor(ningyeDeclarations, 'background-image'),
+    ['none'],
+    'Ningye Purple must have exactly one root background-image declaration'
+  );
+  assert.deepEqual(
+    valuesFor(ningyeDeclarations, 'background'),
+    [],
+    'Ningye Purple must not use a root background shorthand that can add a grid'
+  );
+  assert.deepEqual(
+    ningyeDeclarations.filter((declaration) => (
+      declaration.property === 'background-size'
+      || declaration.property === 'background-repeat'
+      || declaration.property === 'background-position'
+    )),
+    [],
+    'Ningye Purple must not carry grid geometry on any exact root rule'
+  );
+});
+
+test('article-root geometry contract catches root frames without rejecting nested decorations', () => {
+  const root = scopedArticleRoot('contract-fixture');
+  const invalidFixture = `
+    @media (max-width: 640px) {
+      ${root} {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 24px;
+        background: #eeeeee;
+        border-left: 4px solid #d9d9d9;
+        box-shadow: 0 4px 12px rgb(0 0 0 / 20%);
+      }
+      ${root}::before {
+        content: "rail";
+        position: absolute;
+        width: 8px;
+        background: #eeeeee;
+      }
+      ${root} blockquote {
+        border-left: 3px solid #e74c3c;
+      }
+    }
+  `;
+  const violations = rootOwnershipViolations(invalidFixture, root);
+
+  assert.ok(violations.some(({ property }) => property === 'max-width'));
+  assert.ok(violations.some(({ property }) => property === 'margin'));
+  assert.ok(violations.some(({ property }) => property === 'padding'));
+  assert.ok(violations.some(({ property }) => property === 'background'));
+  assert.ok(violations.some(({ property }) => property === 'border-left'));
+  assert.ok(violations.some(({ property }) => property === 'box-shadow'));
+  assert.ok(violations.some(({ selector }) => selector.endsWith('::before')));
+  assert.equal(
+    violations.some(({ selector }) => selector === `${root} blockquote`),
+    false,
+    'nested blockquote decorations must remain theme-owned'
+  );
+
+  const validFixture = `${root} blockquote { border-left: 3px solid #e74c3c; }`;
+  assert.deepEqual(
+    rootOwnershipViolations(validFixture, root),
+    [],
+    'nested blockquote decoration should not count as root geometry'
+  );
 });
 
 test('DogsChoice keeps the upstream 七彩虹 pink palette in a scoped adapter', () => {

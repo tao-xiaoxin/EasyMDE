@@ -20,17 +20,20 @@ const bootstrap = {
       id: 'default',
       label: 'Default',
       defaultCodeTheme: 'atom-one-dark',
+      markupProfile: 'common-v1',
       swatch: '#1d2327'
     },
     {
       id: 'newsprint',
       label: 'Newsprint',
       defaultCodeTheme: 'fullstack-blue',
+      markupProfile: 'common-v1',
       swatch: '#3c70c6'
     }
   ],
   canManageCustomCss: true,
   codeThemeExplicit: false,
+  customMarkupProfile: 'common-v1',
   codeThemes: [
     { id: 'atom-one-dark', label: 'Atom One Dark' },
     { id: 'github', label: 'GitHub' },
@@ -87,6 +90,16 @@ describe('parseAppearanceBootstrap', () => {
       articleThemeName,
       codeThemeName
     });
+  });
+
+  it('rejects an invalid article markup profile at the bootstrap boundary', () => {
+    expect(() => parseAppearanceBootstrap({
+      ...bootstrap,
+      articleThemes: [{
+        ...bootstrap.articleThemes[0],
+        markupProfile: 'not valid'
+      }]
+    })).toThrowError('invalid-article-theme-markup-profile');
   });
 
   it('rejects the removed single-name Custom CSS contract', () => {

@@ -10,38 +10,12 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-phycat-forest {
-    max-width: var(--max-width);
-    margin: 0 auto;
-    padding: 15px;
     line-height: 2.25;
     color: #000;
     letter-spacing: 1.1px;
     word-break: break-word;
     word-wrap: break-word;
-    text-align: left;
-    position: relative;
-    z-index: 0
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-forest::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    pointer-events: none;
-    z-index: -1;
-    background-color: var(--element-color);
-    opacity: .12;
-    -webkit-mask-image: var(--bg-style);
-    mask-image: var(--bg-style);
-    -webkit-mask-size: 20px 20px;
-    mask-size: 20px 20px;
-    -webkit-mask-repeat: repeat;
-    mask-repeat: repeat;
-    -webkit-mask-position: center;
-    mask-position: center
+    text-align: left
 }
 
 .easymde-rendered-content.easymde-markdown-theme-phycat-forest p {
@@ -1833,12 +1807,6 @@
     animation: outline-twinkle 1.5s infinite alternate
 }
 
-@media screen {
-    .easymde-rendered-content.easymde-markdown-theme-phycat-forest.typora-export {
-        background-color: transparent
-    }
-}
-
 .easymde-rendered-content.easymde-markdown-theme-phycat-forest .typora-export-sidebar {
     position: fixed;
     margin-top: 0 !important;
@@ -1866,42 +1834,11 @@
     scrollbar-width: none
 }
 
-.easymde-rendered-content.easymde-markdown-theme-phycat-forest {
-    margin: 20px auto;
-    max-width: 950px;
-    width: 90%;
-    min-height: calc(100vh - 40px);
-    background-color: #fff;
-    border-radius: 20px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, .1);
-    padding: 60px 80px
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-forest {
-    margin-left: 350px;
-    margin-right: 20px;
-    margin-top: 10px;
-    margin-bottom: 10px;
-    width: auto;
-    max-width: none;
-    min-height: calc(100vh - 20px)
-}
-
 @media screen and (max-width:1200px) {
     .easymde-rendered-content.easymde-markdown-theme-phycat-forest .typora-export-sidebar {
         display: none
     }
 
-    .easymde-rendered-content.easymde-markdown-theme-phycat-forest,
-.easymde-rendered-content.easymde-markdown-theme-phycat-forest {
-        margin: 0;
-        border-radius: 0;
-        width: 100%;
-        max-width: 100%;
-        box-shadow: none;
-        padding: 20px;
-        min-height: 100vh
-    }
 }
 
 @media print {
@@ -1910,42 +1847,9 @@
         size: A4
     }
 
-    .easymde-rendered-content.easymde-markdown-theme-phycat-forest {
-        background-color: transparent !important
-    }
-
-    .easymde-rendered-content.easymde-markdown-theme-phycat-forest {
-        margin: 0 !important;
-        width: 100% !important
-    }
-
-    .easymde-rendered-content.easymde-markdown-theme-phycat-forest {
-        margin: 0 auto !important;
-        padding: 0 !important;
-        width: 100% !important;
-        max-width: 100% !important;
-        border: none !important;
-        box-shadow: none !important;
-        background: 0 0 !important
-    }
-
     .easymde-rendered-content.easymde-markdown-theme-phycat-forest * {
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important
-    }
-
-    .easymde-rendered-content.easymde-markdown-theme-phycat-forest::before {
-        display: block !important;
-        opacity: .1 !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100% !important;
-        height: 100% !important;
-        -webkit-mask-image: var(--bg-style) !important;
-        mask-image: var(--bg-style) !important;
-        background-color: var(--element-color) !important;
-        pointer-events: none;
-        z-index: -1
     }
 
     .easymde-rendered-content.easymde-markdown-theme-phycat-forest p {
@@ -2200,4 +2104,25 @@
   --primary-color: #008145;
 
   --rawblock-edit-panel-bd:var(--element-color-soo-shallow);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-phycat-forest :not(pre) > code:not(.md-fencescode) {
+    font-family: var(--easymde-code-font-family);
+    font-size: .9em;
+    letter-spacing: .5px;
+    color: var(--element-color-linecode);
+    background-color: var(--element-color-linecode-background);
+    padding: 5px 5px;
+    margin: 0 2px;
+    border-radius: 6px;
+    vertical-align: middle;
+    transition: all .2s cubic-bezier(.34, 1.56, .64, 1)
+}
+
+.easymde-rendered-content.easymde-markdown-theme-phycat-forest :not(pre) > code:not(.md-fencescode):hover {
+    background-color: var(--element-color);
+    color: #fff;
+    transform: scale(1.05);
+    box-shadow: 0 4px 10px var(--element-color-so-shallow);
+    text-decoration: none
 }

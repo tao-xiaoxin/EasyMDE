@@ -16,23 +16,7 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
-    max-width: 860px;
-      margin: 0 auto;
-      padding: 30px;
-    padding-bottom: 100px;
     color: var(--main-text-color);
-}
-
-@media only screen and (min-width: 1400px){
-    .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
-        max-width: 1024px;
-    }
-}
-
-@media only screen and (min-width: 1800px){
-    .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
-        max-width: 1200px;
-    }
 }
 
 .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink > ul:first-child,
@@ -54,6 +38,15 @@
 .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink em{
     font-style: italic;
     color: var(--text-em-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink :not(pre) > code{
+    color: var(--code-inline--color);
+    background-color: var(--code-inline-bg-color);
+    padding: 2px;
+    font-size: 95%;
+    display: inline;
+    vertical-align: middle;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h1,

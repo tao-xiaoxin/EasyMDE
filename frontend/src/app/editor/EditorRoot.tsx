@@ -87,7 +87,10 @@ import {
 } from '../../features/image-upload/image-upload-session';
 import { EditorWorkspace } from '../../features/editor-layout/ui/EditorWorkspace';
 import { useEditorSession } from '../../features/editor-session/use-editor-session';
-import type { PreviewEnhancementPort } from '../../features/live-preview/ports/preview-enhancement-port';
+import {
+  previewEnhancementFailureCode,
+  type PreviewEnhancementPort
+} from '../../features/live-preview/ports/preview-enhancement-port';
 import type { PreviewScrollPort } from '../../features/live-preview/ports/preview-scroll-port';
 import {
   PreviewSurfaceOwner,
@@ -379,6 +382,14 @@ function previewRequest(
   };
 }
 
+function previewScrollCanvas(surface: HTMLElement): HTMLElement {
+  const canvas = surface.parentElement;
+  if (!canvas?.classList.contains('easymde-immersive-preview-canvas')) {
+    throw new Error('preview-scroll-canvas-missing');
+  }
+  return canvas;
+}
+
 function documentPort(
   session: EditorDocumentSession,
   isActive: () => boolean
@@ -414,6 +425,20 @@ function mediaPickerFailureCode(error: unknown): string {
     : 'media-picker-operation-failed';
 }
 
+function articleMarkupProfile(
+  bootstrap: AppearanceBootstrap,
+  state: AppearanceState
+): string {
+  if ('custom' === state.markdownTheme) return bootstrap.customMarkupProfile;
+  const theme = bootstrap.articleThemes.find(
+    ({ id }) => id === state.markdownTheme
+  );
+  if (!theme) {
+    throw new Error('appearance-article-theme-markup-profile-missing');
+  }
+  return theme.markupProfile;
+}
+
 export function EditorRoot(props: EditorRootProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const immersiveToggleRef = useRef<HTMLButtonElement>(null);
@@ -430,6 +455,12 @@ export function EditorRoot(props: EditorRootProps) {
   const scheduledWechatPreparationRef = useRef<(() => void) | null>(null);
   const previewRevisionRef = useRef(0);
   const previewAppearanceRef = useRef(props.appearance.state);
+  const previewRefreshPendingRef = useRef(false);
+  const codeThemePreparationRef = useRef<{
+    controller: AbortController;
+    generation: number;
+  } | null>(null);
+  const codeThemePreparationGenerationRef = useRef(0);
   const codeThemeExplicitRef = useRef(props.appearance.codeThemeExplicit);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
@@ -486,6 +517,9 @@ export function EditorRoot(props: EditorRootProps) {
   const appearanceState = appearanceSnapshot.state;
   const [codeThemeExplicit, setCodeThemeExplicit] = useState(
     props.appearance.codeThemeExplicit
+  );
+  const [renderedCodeTheme, setRenderedCodeTheme] = useState(
+    props.appearance.state.codeTheme
   );
   const currentAppearance = useMemo<AppearanceBootstrap>(
     () => ({
@@ -795,6 +829,7 @@ export function EditorRoot(props: EditorRootProps) {
   const handlePreviewStatusChange = useCallback(
     (status: PreviewSurfaceStatus) => {
       setPreviewSurfaceStatus(status);
+      if ('ready' === status) previewRefreshPendingRef.current = false;
       if ('empty' === status) setVisualPreviewSnapshot(null);
     },
     []
@@ -882,6 +917,7 @@ export function EditorRoot(props: EditorRootProps) {
     setVisualPreviewEditing(false);
     setVisualPreviewPending(false);
     setVisualPreviewChanged(false);
+    previewRefreshPendingRef.current = true;
     setPreviewRefreshRevision((revision) => revision + 1);
     return true;
   }, []);
@@ -903,6 +939,10 @@ export function EditorRoot(props: EditorRootProps) {
   const appearancePort = useMemo<AppearancePort>(
     () => ({
       applyState: (state, codeThemeExplicit) => {
+        const previousState = previewAppearanceRef.current;
+        const markupChanged =
+          articleMarkupProfile(props.appearance, previousState)
+          !== articleMarkupProfile(props.appearance, state);
         const visualPreviewWasEditing = visualPreviewEditingRef.current;
         if (visualPreviewWasEditing && !prepareSourceMutation()) {
           throw new Error('visual-editor-source-sync-failed');
@@ -925,7 +965,12 @@ export function EditorRoot(props: EditorRootProps) {
           fontControlsSessionRef.current?.replaceState(defaults);
         }
         if (!visualPreviewWasEditing) {
-          schedulePreview(true);
+          if (markupChanged) {
+            previewRefreshPendingRef.current = true;
+            schedulePreview(true);
+          } else {
+            scheduleCurrentWechatPreviewPreparation();
+          }
         }
       },
       closeOtherPopovers: () => {
@@ -945,6 +990,10 @@ export function EditorRoot(props: EditorRootProps) {
         }
         const result = await props.appearancePort.saveCustomCss(input);
         if ('saved' === result.status) {
+          const previousState = previewAppearanceRef.current;
+          const markupChanged =
+            articleMarkupProfile(props.appearance, previousState)
+            !== articleMarkupProfile(props.appearance, result.snapshot.state);
           props.appearancePort.applyState(
             result.snapshot.state,
             codeThemeExplicitRef.current
@@ -957,7 +1006,12 @@ export function EditorRoot(props: EditorRootProps) {
           documentSession?.replaceSubmissionState(submissionStateRef.current);
           previewAppearanceRef.current = result.snapshot.state;
           if (!visualPreviewWasEditing) {
-            schedulePreview(true);
+            if (markupChanged) {
+              previewRefreshPendingRef.current = true;
+              schedulePreview(true);
+            } else {
+              scheduleCurrentWechatPreviewPreparation();
+            }
           }
         }
         return result;
@@ -969,6 +1023,7 @@ export function EditorRoot(props: EditorRootProps) {
       props.appearancePort,
       prepareSourceMutation,
       protectedOperationError,
+      scheduleCurrentWechatPreviewPreparation,
       schedulePreview
     ]
   );
@@ -1250,6 +1305,60 @@ export function EditorRoot(props: EditorRootProps) {
     immersiveToggleRef.current?.focus();
   }, [immersive]);
 
+  useEffect(() => {
+    if (
+      visualPreviewEditing
+      || 'ready' !== previewSurfaceStatus
+      || previewRefreshPendingRef.current
+      || renderedCodeTheme === appearanceState.codeTheme
+    ) {
+      return undefined;
+    }
+
+    codeThemePreparationRef.current?.controller.abort();
+    const controller = new AbortController();
+    const generation = ++codeThemePreparationGenerationRef.current;
+    codeThemePreparationRef.current = { controller, generation };
+
+    void props.enhancementPort.prepareCodeTheme({
+      codeTheme: appearanceState.codeTheme,
+      signal: controller.signal
+    }).then(
+      () => {
+        const current = codeThemePreparationRef.current;
+        if (
+          !rootActiveRef.current
+          || controller.signal.aborted
+          || current?.generation !== generation
+        ) {
+          return;
+        }
+        setRenderedCodeTheme(appearanceState.codeTheme);
+        scheduleCurrentWechatPreviewPreparation();
+      },
+      (error: unknown) => {
+        const current = codeThemePreparationRef.current;
+        if (
+          controller.signal.aborted
+          || current?.generation !== generation
+        ) {
+          return;
+        }
+        props.onFailure(previewEnhancementFailureCode(error));
+      }
+    );
+
+    return () => controller.abort();
+  }, [
+    appearanceState.codeTheme,
+    previewSurfaceStatus,
+    props.enhancementPort,
+    props.onFailure,
+    renderedCodeTheme,
+    scheduleCurrentWechatPreviewPreparation,
+    visualPreviewEditing
+  ]);
+
   useLayoutEffect(() => {
     if (!immersive || !documentSession || !rootRef.current) return;
     const releaseFocusBoundary =
@@ -1276,7 +1385,7 @@ export function EditorRoot(props: EditorRootProps) {
     'easymde-rendered-content',
     'easymde-code-mac',
     `easymde-markdown-theme-${appearanceState.markdownTheme}`,
-    `easymde-code-theme-${appearanceState.codeTheme}`,
+    `easymde-code-theme-${renderedCodeTheme}`,
     visualPreviewEditing ? 'easymde-immersive-visual-editor' : '',
     'custom' === appearanceState.markdownTheme
       ? 'easymde-custom-css-active'
@@ -1462,13 +1571,15 @@ export function EditorRoot(props: EditorRootProps) {
       return;
     }
     const binding = props.scrollSyncPort.prepareBinding({
-      preview: previewRuntime.surface,
+      preview: previewScrollCanvas(previewRuntime.surface),
       source: documentSession.document.getScrollElement()
     });
     binding.activate();
     return () => binding.dispose();
   }, [
     documentSession,
+    immersive,
+    immersiveMode,
     previewRuntimeGeneration,
     props.scrollSyncPort,
     scrollSyncEnabled

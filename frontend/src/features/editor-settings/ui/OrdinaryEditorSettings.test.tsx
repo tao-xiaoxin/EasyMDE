@@ -51,11 +51,22 @@ function emitIntersection(
 
 const appearance: AppearanceBootstrap = {
   articleThemes: [
-    { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
-    { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'atom-one-dark' }
+    {
+      id: 'default',
+      label: 'Default',
+      defaultCodeTheme: 'atom-one-dark',
+      markupProfile: 'common-v1'
+    },
+    {
+      id: 'newsprint',
+      label: 'Newsprint',
+      defaultCodeTheme: 'atom-one-dark',
+      markupProfile: 'common-v1'
+    }
   ],
   canManageCustomCss: true,
   codeThemeExplicit: false,
+  customMarkupProfile: 'common-v1',
   codeThemes: [
     { id: 'atom-one-dark', label: 'Atom One Dark' },
     { id: 'github', label: 'GitHub' }

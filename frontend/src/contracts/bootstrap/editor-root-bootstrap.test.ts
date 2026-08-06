@@ -13,10 +13,12 @@ function validBootstrap() {
       articleThemes: [{
         id: 'default',
         label: 'Default',
-        defaultCodeTheme: 'atom-one-dark'
+        defaultCodeTheme: 'atom-one-dark',
+        markupProfile: 'common-v1'
       }],
       canManageCustomCss: true,
       codeThemeExplicit: false,
+      customMarkupProfile: 'common-v1',
       codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
       customCss: [],
       customCssVariables,
@@ -353,7 +355,8 @@ describe('parseEditorRootBootstrap', () => {
               },
               id: 'default',
               label: 'Default',
-              defaultCodeTheme: 'atom-one-dark'
+              defaultCodeTheme: 'atom-one-dark',
+              markupProfile: 'common-v1'
             }
           ]
         }

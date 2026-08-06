@@ -1412,17 +1412,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-autosave-state { display: flex; align-items: center; gap: 5px; }
 .easymde-immersive-statusbar .easymde-immersive-status-error { min-width: 0; overflow: hidden; color: #b32d2e; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .easymde-immersive-autosave-state > span { width: 6px; height: 6px; border-radius: 50%; background: #10b981; }
-.easymde-editor.is-immersive-split .easymde-preview { padding: 34px 48px 60px; background: #fff; }
-.easymde-editor.is-immersive-split .easymde-immersive-preview-canvas {
-    display: flex;
-    flex: 1 1 auto;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-}
-.easymde-editor.is-immersive-split .easymde-immersive-preview-canvas > .easymde-preview {
-    overflow-y: auto;
-}
 .easymde-editor.is-immersive-source .easymde-workspace { grid-template-columns: 1fr; grid-template-areas: "source"; }
 .easymde-editor.is-immersive-source .easymde-pane-preview { display: none; }
 .easymde-editor.is-immersive-preview .easymde-workspace { grid-template-columns: 1fr; grid-template-areas: "preview"; }
@@ -1511,54 +1500,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
     outline: 2px solid #93b4ff;
     outline-offset: 2px;
 }
-.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas {
-    display: block;
-    min-height: 0;
-    flex: 1 1 auto;
-    overflow-y: auto;
-    padding: 28px 20px;
-    border: 0 solid rgba(15, 23, 42, .07);
-    background: #fff;
-    color: #0f172a;
-    font-size: 15px;
-    font-weight: 400;
-}
 .easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas::-webkit-scrollbar { width: 8px; }
 .easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas::-webkit-scrollbar-thumb {
     border-radius: 8px;
     background: #d8dde6;
-}
-.easymde-editor.is-immersive-preview :where(.easymde-preview) {
-    background-image: none;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview {
-    flex: 0 0 auto;
-    display: block;
-    box-sizing: border-box;
-    width: 100%;
-    height: auto !important;
-    max-width: 760px;
-    min-height: 680px;
-    margin: 0 auto;
-    padding: 36px 40px;
-    overflow: visible;
-    border: 0;
-    border-radius: 48px;
-    background: #fff;
-    box-shadow: 0 8px 28px rgba(15, 23, 42, .06);
-    color: #0f172a;
-    font-size: 15px;
-    font-weight: 400;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) {
-    background: #fff;
-    background-image: none;
-    padding: 36px 40px;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor {
-    width: 100%;
-    max-width: none;
-    padding: 36px 40px;
 }
 .easymde-editor.is-immersive-preview .easymde-immersive-visual-editor {
     outline: 0;
@@ -1589,30 +1534,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-editor.is-immersive-preview .easymde-immersive-visual-editor .markdown-inline-applied {
         animation: none;
     }
-}
-@media (min-width: 640px) {
-    .easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview {
-        padding: 45px 52.5px;
-    }
-    .easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor {
-        padding: 45px 52.5px;
-    }
-    .easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor) {
-        padding: 45px 52.5px;
-    }
-}
-@media (max-width: 760px) {
-    .easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview {
-        padding: 28px 24px;
-        min-height: 520px;
-    }
-    .easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview.easymde-markdown-theme-crimson-focus.easymde-immersive-visual-editor {
-        padding: 28px 24px;
-    }
-    .easymde-editor.is-immersive-preview .easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active):not(.easymde-immersive-visual-editor) {
-        padding: 28px 24px;
-    }
-
 }
 .easymde-editor.is-immersive:not(.is-immersive-source):not(.is-immersive-preview) > .easymde-workspace { gap: 14px; }
 
@@ -2194,125 +2115,18 @@ body:has(.easymde-editor.is-immersive) .wrap {
     overflow-x: hidden;
     padding-block: 0;
     padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
-    background-image: none;
     scroll-padding-block: 0;
     scroll-padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
 }
 
-/* Typora-derived paper rules must not expand the ordinary split-pane track. */
-.easymde-editor:not(.is-immersive) .easymde-preview.easymde-rendered-content {
+.easymde-editor .easymde-rendered-content :is(.table-container, .easymde-table-container) {
+    display: block;
     box-sizing: border-box;
     width: 100%;
     min-width: 0;
     max-width: 100%;
-    margin-inline: 0;
-}
-
-/* The same containment applies while immersive split panes are resized. */
-.easymde-editor.is-immersive-split .easymde-preview.easymde-rendered-content {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    margin-inline: 0;
-    padding-inline: min(48px, max(8px, calc((100% - 80px) / 2)));
-}
-
-.easymde-editor:not(.is-immersive) .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active),
-.easymde-editor.is-immersive-split .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) {
-    box-sizing: border-box;
-    width: 100%;
-    max-width: none;
-    margin-inline: 0;
-    padding: 36px max(20px, calc((100% - 576px) / 2)) 48px;
-    background: #fff;
-    background-image: none;
-}
-
-@media (max-width: 782px) {
-    .easymde-editor:not(.is-immersive) .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active),
-    .easymde-editor.is-immersive-split .easymde-preview.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) {
-        padding: 28px max(20px, calc((100% - 576px) / 2)) 36px;
-    }
-}
-
-.easymde-editor:not(.is-immersive) .easymde-rendered-content table {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-}
-
-/* Immersive split panes can become narrower than a table's intrinsic width.
- * Keep native table geometry intact; cells wrap long values so the article
- * remains the only scroll owner unless a theme explicitly needs local table
- * scrolling. */
-.easymde-editor.is-immersive-split .easymde-rendered-content table {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    table-layout: fixed;
-}
-
-/* Immersive preview has a separate paper wrapper, so its tables need the
- * same intrinsic-width reset as the ordinary and split panes. */
-.easymde-editor.is-immersive-preview .easymde-rendered-content table {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-}
-
-/* A few Typora themes intentionally use a paper-wide minimum or automatic
- * table layout. In a narrow editor pane those rules make the table escape the
- * article even though the article itself is correctly contained. Keep the
- * theme colors and cell treatment, but let the editor own the table boundary. */
-.easymde-editor .easymde-rendered-content.easymde-markdown-theme-crimson-focus:not(.easymde-custom-css-active) table,
-.easymde-editor .easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) table {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    table-layout: fixed;
-}
-
-.easymde-editor .easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) :is(th, td) {
-    overflow-wrap: anywhere;
-    white-space: normal;
-}
-
-/* Phycat carries Typora's optional export-sidebar paper offset. The EasyMDE
- * article is already inside its own paper/page boundary, so that offset would
- * consume the preview track and leave only a narrow right-hand column. */
-.easymde-editor .easymde-preview.easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    margin-block: 10px;
-    margin-inline: 0;
-}
-
-.easymde-editor .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink:not(.easymde-custom-css-active) table {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    table-layout: fixed;
-}
-
-.easymde-editor .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink:not(.easymde-custom-css-active) :is(th, td) {
-    overflow-wrap: anywhere;
-    white-space: normal;
-}
-
-.easymde-editor:not(.is-immersive) .easymde-rendered-content :is(th, td) {
-    overflow-wrap: anywhere;
-}
-
-.easymde-editor.is-immersive-split .easymde-rendered-content :is(th, td) {
-    overflow-wrap: anywhere;
+    overflow-x: auto;
+    overflow-y: hidden;
 }
 
 .easymde-editor:not(.is-immersive) .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
@@ -2421,11 +2235,91 @@ body:has(.easymde-editor.is-immersive) .wrap {
     color: #111827;
     font-size: 16px;
     line-height: 1.72;
-    background:
-        linear-gradient(0deg, rgba(247, 250, 252, 0.92), rgba(247, 250, 252, 0.92)),
-        linear-gradient(90deg, rgba(226, 232, 240, 0.45) 1px, transparent 1px),
-        linear-gradient(rgba(226, 232, 240, 0.45) 1px, transparent 1px);
-    background-size: auto, 24px 24px, 24px 24px;
+    background-color: #fff;
+}
+
+/* The preview pane owns one structural scroll canvas in every editor mode.
+ * Only pure Preview paints that canvas as a frame around an inset paper. */
+.easymde-editor .easymde-pane-preview > .easymde-immersive-preview-canvas {
+    display: flex;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    align-items: flex-start;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.easymde-editor .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+    display: block;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    height: auto !important;
+    overflow: visible;
+    border: 0;
+    background-color: #fff;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas {
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 0;
+    background: #fff;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+    width: 100%;
+    max-width: none;
+    min-height: 100%;
+    margin: 0;
+    padding: 22px 28px 28px;
+    border-radius: 0;
+    background-color: #fff;
+    box-shadow: none;
+}
+
+.easymde-editor.is-immersive-split .easymde-pane-preview > .easymde-immersive-preview-canvas {
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 0;
+    background: #fff;
+}
+
+.easymde-editor.is-immersive-split .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+    width: 100%;
+    max-width: none;
+    min-height: 100%;
+    margin: 0;
+    padding: 22px 28px 28px;
+    border-radius: 0;
+    background-color: #fff;
+    box-shadow: none;
+}
+
+.easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas {
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 28px 20px;
+    background: #f6f6f8;
+}
+
+.easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+    display: block;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    width: 100%;
+    height: auto !important;
+    max-width: 760px;
+    min-height: 680px;
+    margin: 0 auto;
+    padding: 36px 40px;
+    overflow: visible;
+    border-radius: 48px;
+    background-color: #fff;
+    box-shadow: 0 8px 28px rgba(15, 23, 42, .06);
 }
 
 .easymde-copy-sandbox {
@@ -2533,6 +2427,25 @@ body:has(.easymde-editor.is-immersive) .wrap {
         max-height: 58vh;
     }
 
+    .easymde-editor:not(.is-immersive) .easymde-pane-preview,
+    .easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas {
+        height: 420px;
+        min-height: 360px;
+        max-height: 58vh;
+    }
+
+    .easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+        height: auto !important;
+        min-height: 680px;
+        max-height: none;
+    }
+
+}
+
+@media (min-width: 640px) {
+    .easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+        padding: 45px 52.5px;
+    }
 }
 
 @media (max-width: 782px) {
@@ -2596,13 +2509,13 @@ body:has(.easymde-editor.is-immersive) .wrap {
         text-align: start;
     }
 
-    .easymde-editor:not(.is-immersive) .easymde-preview {
-        padding-block: 0;
-        padding-inline: 5px;
-        scroll-padding-block: 0;
-        scroll-padding-inline: 5px;
-    }
+}
 
+@media (max-width: 760px) {
+    .easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+        min-height: 520px;
+        padding: 28px 24px;
+    }
 }
 
 @media (max-width: 1080px) {

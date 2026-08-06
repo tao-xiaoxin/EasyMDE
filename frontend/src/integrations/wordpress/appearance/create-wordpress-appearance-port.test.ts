@@ -17,10 +17,12 @@ function fixture() {
       cssUrl: `${assetBaseUrl}assets/themes/article/default.css`,
       id: 'default',
       label: 'Default',
-      defaultCodeTheme: 'atom-one-dark'
+      defaultCodeTheme: 'atom-one-dark',
+      markupProfile: 'common-v1'
     }],
     canManageCustomCss: true,
     codeThemeExplicit: false,
+    customMarkupProfile: 'common-v1',
     codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
     customCss: [{
       articleThemeName: 'Writer Article',
@@ -232,8 +234,8 @@ describe('createWordPressAppearancePort', () => {
 
   it.each([
     { customCssUrl: 'https://remote.test/custom-css' },
-    { bootstrap: { ...fixture().bootstrap, articleThemes: [{ cssUrl: 'https://remote.test/theme.css', id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' }] } },
-    { bootstrap: { ...fixture().bootstrap, articleThemes: [{ cssUrl: `${assetBaseUrl}%2e%2e/%2e%2e/escape.css`, id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' }] } }
+    { bootstrap: { ...fixture().bootstrap, articleThemes: [{ cssUrl: 'https://remote.test/theme.css', id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark', markupProfile: 'common-v1' }] } },
+    { bootstrap: { ...fixture().bootstrap, articleThemes: [{ cssUrl: `${assetBaseUrl}%2e%2e/%2e%2e/escape.css`, id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark', markupProfile: 'common-v1' }] } }
   ])('rejects remote or escaping runtime URLs', (override) => {
     expect(() => createWordPressAppearancePort({ ...fixture(), ...override }))
       .toThrowError();

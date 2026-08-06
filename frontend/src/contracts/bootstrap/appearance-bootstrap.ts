@@ -8,6 +8,7 @@ export type AppearanceOption = Readonly<{
 
 export type ArticleThemeOption = AppearanceOption & Readonly<{
   defaultCodeTheme: string;
+  markupProfile: string;
   swatch?: string;
 }>;
 
@@ -187,6 +188,7 @@ export type AppearanceBootstrap = Readonly<{
   codeThemeExplicit: boolean;
   codeThemes: ReadonlyArray<AppearanceOption>;
   customCss: ReadonlyArray<CustomCssItem>;
+  customMarkupProfile: string;
   customCssVariables: ReadonlyArray<CustomCssVariable>;
   state: AppearanceState;
   strings: AppearanceStrings;
@@ -304,6 +306,10 @@ function parseArticleOptions(
     const defaultCodeTheme = undefined === source.defaultCodeTheme
       ? 'atom-one-dark'
       : identifier(source.defaultCodeTheme, 'invalid-associated-code-theme');
+    const markupProfile = identifier(
+      source.markupProfile,
+      'invalid-article-theme-markup-profile'
+    );
 
     if (!codeThemes.some(({ id }) => id === defaultCodeTheme)) {
       throw new AppearanceBootstrapError('invalid-associated-code-theme');
@@ -314,6 +320,7 @@ function parseArticleOptions(
     return {
       ...option,
       defaultCodeTheme,
+      markupProfile,
       ...(swatch ? { swatch } : {})
     };
   });
@@ -491,6 +498,10 @@ export function parseAppearanceBootstrap(value: unknown): AppearanceBootstrap {
     codeThemeExplicit: bootstrap.codeThemeExplicit,
     codeThemes,
     customCss,
+    customMarkupProfile: identifier(
+      bootstrap.customMarkupProfile,
+      'invalid-custom-markup-profile'
+    ),
     customCssVariables: parseCustomCssVariables(bootstrap.customCssVariables),
     state: parseState(bootstrap.state, articleThemes, codeThemes),
     strings: parseStrings(bootstrap.strings)

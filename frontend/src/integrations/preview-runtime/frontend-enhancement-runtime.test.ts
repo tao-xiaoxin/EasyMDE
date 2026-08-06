@@ -135,8 +135,25 @@ describe('frontend enhancement runtime', () => {
     expect(initialize).toHaveBeenCalledWith({
       startOnLoad: false,
       securityLevel: 'strict',
-      theme: 'default'
+      theme: 'default',
+      fontFamily: '"trebuchet ms", verdana, arial, sans-serif',
+      fontSize: 16,
+      flowchart: {
+        diagramPadding: 12
+      },
+      themeCSS: expect.stringContaining('font-weight: 400 !important;')
     });
+    const initialization = initialize.mock.calls[0]?.[0];
+    expect(initialization?.themeCSS).toContain('box-sizing: border-box !important;');
+    expect(initialization?.themeCSS).toContain('font-family: "trebuchet ms", verdana, arial, sans-serif !important;');
+    expect(initialization?.themeCSS).toContain('font-size: 16px !important;');
+    expect(initialization?.themeCSS).toContain('line-height: 20px !important;');
+    expect(initialization?.themeCSS).toContain('letter-spacing: normal !important;');
+    expect(initialization?.themeCSS).toContain('word-spacing: normal !important;');
+    expect(initialization?.themeCSS).toContain('white-space: nowrap !important;');
+    expect(initialization?.themeCSS).toContain('margin: 0 !important;');
+    expect(initialization?.themeCSS).toContain('padding: 0 !important;');
+    expect(initialization?.themeCSS).toContain('display: table-cell !important;');
     expect(windowRef.mermaid.render).toHaveBeenCalledWith(
       expect.any(String),
       expect.stringContaining('<img src=x onerror=alert(1)>')

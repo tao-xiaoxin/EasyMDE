@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class ThemeMarkupTransformer {
 
 	public static function normalize_markdown( $markdown, $theme ) {
-		if ( 'cupid-busy' !== sanitize_key( (string) $theme ) ) {
+		if ( 'cupid-busy-v1' !== self::markup_profile( $theme ) ) {
 			return $markdown;
 		}
 
@@ -60,14 +60,65 @@ final class ThemeMarkupTransformer {
 		return implode( "\n", $normalized );
 	}
 
+	public static function markup_profile( $theme ) {
+		$theme = sanitize_key( (string) $theme );
+
+		if ( 'cupid-busy' === $theme ) {
+			return 'cupid-busy-v1';
+		}
+		if ( in_array( $theme, array( 'red-crimson', 'yamabuki', 'rose-purple', 'ningye-purple' ), true ) ) {
+			return $theme . '-v1';
+		}
+		if ( in_array( $theme, array( 'qingbi-liujin', 'qinghe-zhusha', 'crimson-focus' ), true ) ) {
+			return 'image-figures-v1';
+		}
+		if (
+			in_array(
+				$theme,
+				array(
+					'md2html-normal',
+					'orange-heart',
+					'chazi-purple',
+					'green-vitality',
+					'blue-ying',
+					'lanqing',
+					'grid-black',
+					'tech-blue',
+					'cute-green',
+					'fullstack-blue',
+					'minimal-black',
+					'orange-blue',
+					'frontend-peak',
+				),
+				true
+			)
+		) {
+			return 'markdown2html-v1';
+		}
+
+		return 'common-v1';
+	}
+
 	public static function transform( $html, $theme ) {
 		$theme                     = sanitize_key( (string) $theme );
-		$uses_markdown2html_markup = self::theme_uses_markdown2html_markup( $theme );
-		$uses_image_figures        = self::theme_uses_image_figures( $theme );
-		$uses_table_container      = self::theme_uses_table_container( $theme );
+		$markup_profile            = self::markup_profile( $theme );
+		$uses_markdown2html_markup = in_array(
+			$markup_profile,
+			array(
+				'markdown2html-v1',
+				'red-crimson-v1',
+				'yamabuki-v1',
+				'rose-purple-v1',
+				'ningye-purple-v1',
+				'cupid-busy-v1',
+			),
+			true
+		);
+		$uses_image_figures        = 'image-figures-v1' === $markup_profile;
+		$has_tables                = false !== stripos( $html, '<table' );
 		$uses_task_list_markup     = false !== stripos( $html, '<input' );
 
-		if ( ! $uses_markdown2html_markup && ! $uses_image_figures && ! $uses_table_container && ! $uses_task_list_markup ) {
+		if ( ! $uses_markdown2html_markup && ! $uses_image_figures && ! $has_tables && ! $uses_task_list_markup ) {
 			return $html;
 		}
 
@@ -89,7 +140,7 @@ final class ThemeMarkupTransformer {
 			)
 		)
 			|| ( $uses_image_figures && false !== stripos( $html, '<img' ) )
-			|| ( $uses_table_container && false !== stripos( $html, '<table' ) );
+			|| $has_tables;
 		$needs_markup = $needs_markup || ( $uses_task_list_markup && false !== stripos( $html, '<input' ) );
 
 		if ( ! $needs_markup ) {
@@ -120,7 +171,7 @@ final class ThemeMarkupTransformer {
 		}
 
 		if ( $uses_markdown2html_markup ) {
-			if ( 'cupid-busy' === $theme ) {
+			if ( 'cupid-busy-v1' === $markup_profile ) {
 				self::wrap_cupid_busy_containers( $document, $root );
 				self::apply_mdnice_image_dimensions( $root );
 				self::restore_unparsed_strong_markers( $document, $root );
@@ -129,17 +180,15 @@ final class ThemeMarkupTransformer {
 			self::wrap_theme_headings( $document, $root );
 			self::wrap_theme_list_items( $document, $root );
 			self::wrap_theme_images( $document, $root );
-			if ( 'rose-purple' === $theme ) {
+			if ( 'rose-purple-v1' === $markup_profile ) {
 				self::add_rose_purple_blockquote_marks( $document, $root );
 				$footnotes = self::convert_theme_links_to_footnotes( $document, $root, 'Reference', true, false );
-			} elseif ( 'red-crimson' === $theme ) {
+			} elseif ( 'red-crimson-v1' === $markup_profile ) {
 				self::add_red_crimson_blockquote_markup( $document, $root );
-				self::wrap_theme_tables( $document, $root );
 				$footnotes = self::convert_theme_links_to_footnotes( $document, $root, '参考资料', false, true );
-			} elseif ( 'ningye-purple' === $theme ) {
-				self::wrap_theme_tables( $document, $root );
+			} elseif ( 'ningye-purple-v1' === $markup_profile ) {
 				$footnotes = self::convert_theme_links_to_footnotes( $document, $root, 'Reference', true, false, '参考资料' );
-			} elseif ( 'yamabuki' === $theme ) {
+			} elseif ( 'yamabuki-v1' === $markup_profile ) {
 				$footnotes = self::convert_theme_links_to_footnotes( $document, $root, '参考资料', false, true );
 				self::wrap_theme_links( $document, $root );
 			} else {
@@ -151,52 +200,16 @@ final class ThemeMarkupTransformer {
 			self::wrap_theme_images( $document, $root );
 		}
 
-		if ( $uses_table_container ) {
-			$container_class = 'qinghe-zhusha' === $theme ? 'easymde-table-container' : 'table-container';
-			self::wrap_theme_tables( $document, $root, $container_class );
+		if ( $has_tables ) {
+			self::wrap_tables( $document, $root );
 		}
 
 		$html = self::inner_html( $root, $document );
-		if ( in_array( $theme, array( 'red-crimson', 'rose-purple', 'yamabuki', 'ningye-purple' ), true ) ) {
+		if ( in_array( $markup_profile, array( 'red-crimson-v1', 'rose-purple-v1', 'yamabuki-v1', 'ningye-purple-v1' ), true ) ) {
 			$html = self::normalize_rose_purple_blockquote_marks( $html ) . $footnotes;
 		}
 
 		return $html;
-	}
-
-	private static function theme_uses_markdown2html_markup( $theme ) {
-		return in_array(
-			$theme,
-			array(
-				'md2html-normal',
-				'orange-heart',
-				'chazi-purple',
-				'green-vitality',
-				'red-crimson',
-				'blue-ying',
-				'lanqing',
-				'yamabuki',
-				'grid-black',
-				'rose-purple',
-				'ningye-purple',
-				'tech-blue',
-				'cute-green',
-				'fullstack-blue',
-				'minimal-black',
-				'orange-blue',
-				'frontend-peak',
-				'cupid-busy',
-			),
-			true
-		);
-	}
-
-	private static function theme_uses_image_figures( $theme ) {
-		return in_array( $theme, array( 'qingbi-liujin', 'qinghe-zhusha', 'crimson-focus' ), true );
-	}
-
-	private static function theme_uses_table_container( $theme ) {
-		return in_array( $theme, array( 'qingbi-liujin', 'qinghe-zhusha', 'crimson-focus' ), true );
 	}
 
 	private static function add_crimson_focus_task_list_classes( DOMElement $root ) {
@@ -432,27 +445,44 @@ final class ThemeMarkupTransformer {
 		}
 	}
 
-	private static function wrap_theme_tables( DOMDocument $document, DOMElement $root, $container_class = 'table-container' ) {
-		$container_class = sanitize_html_class( (string) $container_class );
-		if ( '' === $container_class ) {
-			$container_class = 'table-container';
-		}
-
+	private static function wrap_tables( DOMDocument $document, DOMElement $root ) {
 		$tables = iterator_to_array( $root->getElementsByTagName( 'table' ) );
 		foreach ( $tables as $table ) {
-			if (
-				! ( $table instanceof DOMElement )
-				|| self::element_has_ancestor_class( $table, 'table-container' )
-				|| self::element_has_ancestor_class( $table, 'easymde-table-container' )
-			) {
+			if ( ! ( $table instanceof DOMElement ) ) {
+				continue;
+			}
+
+			$existing_container = self::table_container_ancestor( $table );
+			if ( $existing_container ) {
+				$classes = preg_split( '/\s+/', trim( (string) $existing_container->getAttribute( 'class' ) ) );
+				$classes = array_values( array_diff( array_filter( $classes ), array( 'table-container', 'easymde-table-container' ) ) );
+				$classes = array_merge( array( 'table-container', 'easymde-table-container' ), $classes );
+				$existing_container->setAttribute( 'class', implode( ' ', $classes ) );
 				continue;
 			}
 
 			$container = $document->createElement( 'section' );
-			$container->setAttribute( 'class', $container_class );
+			$container->setAttribute( 'class', 'table-container easymde-table-container' );
 			$table->parentNode->insertBefore( $container, $table );
 			$container->appendChild( $table );
 		}
+	}
+
+	private static function table_container_ancestor( DOMElement $table ) {
+		$parent = $table->parentNode;
+		while ( $parent instanceof DOMElement ) {
+			$classes = preg_split( '/\s+/', (string) $parent->getAttribute( 'class' ) );
+			if (
+				in_array( 'table-container', $classes, true )
+				|| in_array( 'easymde-table-container', $classes, true )
+			) {
+				return $parent;
+			}
+
+			$parent = $parent->parentNode;
+		}
+
+		return null;
 	}
 
 	private static function wrap_theme_links( DOMDocument $document, DOMElement $root ) {

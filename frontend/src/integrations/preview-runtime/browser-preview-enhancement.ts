@@ -1,6 +1,9 @@
 import type { PreviewEnhancementBootstrap } from '../../contracts/bootstrap/preview-enhancement-bootstrap';
 import type { PreviewFeatures } from '../../contracts/ports/preview-request';
-import type { PreviewEnhancementPort } from '../../features/live-preview/ports/preview-enhancement-port';
+import type {
+  PreviewEnhancementContext,
+  PreviewEnhancementPort
+} from '../../features/live-preview/ports/preview-enhancement-port';
 
 type SharedEnhancements = Readonly<{
   enhance: (
@@ -319,23 +322,30 @@ export function createBrowserPreviewEnhancementPort(
   const loader = createResourceLoader(options.documentRef);
   const assets = bootstrap.assets;
 
-  async function prepareHighlight(codeTheme: string, signal: AbortSignal): Promise<void> {
-    const theme = bootstrap.codeThemes.find(({ id }) => id === codeTheme);
+  async function prepareCodeTheme(
+    context: PreviewEnhancementContext
+  ): Promise<void> {
+    const theme = bootstrap.codeThemes.find(({ id }) => id === context.codeTheme);
     if (!theme) throw resourceError('preview-enhancement-code-theme-missing');
     await Promise.all([
-      loader.loadStylesheet(assets.codeFrameLinkId, assets.codeFrameCssUrl, signal),
-      loader.loadStylesheet(assets.highlightThemeLinkId, theme.cssUrl, signal),
-      loadRuntime(options.runtime.hasHighlight, () =>
-        loader.loadScript('easymde-highlight-js', assets.highlightScriptUrl, signal))
+      loader.loadStylesheet(
+        assets.codeFrameLinkId,
+        assets.codeFrameCssUrl,
+        context.signal
+      ),
+      loader.loadStylesheet(
+        assets.highlightThemeLinkId,
+        theme.cssUrl,
+        context.signal
+      )
     ]);
   }
 
-  async function prepareMermaidFallback(codeTheme: string, signal: AbortSignal): Promise<void> {
-    const theme = bootstrap.codeThemes.find(({ id }) => id === codeTheme);
-    if (!theme) throw resourceError('preview-enhancement-code-theme-missing');
+  async function prepareHighlight(codeTheme: string, signal: AbortSignal): Promise<void> {
     await Promise.all([
-      loader.loadStylesheet(assets.codeFrameLinkId, assets.codeFrameCssUrl, signal),
-      loader.loadStylesheet(assets.highlightThemeLinkId, theme.cssUrl, signal)
+      prepareCodeTheme({ codeTheme, signal }),
+      loadRuntime(options.runtime.hasHighlight, () =>
+        loader.loadScript('easymde-highlight-js', assets.highlightScriptUrl, signal))
     ]);
   }
 
@@ -363,6 +373,7 @@ export function createBrowserPreviewEnhancementPort(
 
   return {
     dispose: loader.dispose,
+    prepareCodeTheme,
     async enhance(surface, features, isCurrent, context) {
       if (!isCurrent() || context.signal.aborted) return;
       const mermaidAssetFailure = !!assets.mermaidAssetError && !!features.mermaid;
@@ -380,7 +391,7 @@ export function createBrowserPreviewEnhancementPort(
       if (fallbackFeatures.syntaxHighlight) {
         tasks.push(prepareHighlight(context.codeTheme, context.signal));
       } else if (mermaidAssetFailure) {
-        tasks.push(prepareMermaidFallback(context.codeTheme, context.signal));
+        tasks.push(prepareCodeTheme(context));
       }
       if (fallbackFeatures.math) tasks.push(prepareMath(context.signal));
       if (fallbackFeatures.mermaid) tasks.push(prepareMermaid(context.signal));

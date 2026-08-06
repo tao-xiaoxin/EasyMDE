@@ -134,7 +134,7 @@ A--&gt;B</code></pre>
         <img src="https://example.test/image.png" alt="Theme image">
         <figcaption>Theme image</figcaption>
       </figure>
-      <section class="table-container">
+      <section class="table-container easymde-table-container">
         <table>
           <thead><tr><th>Name</th></tr></thead>
           <tbody><tr><td>EasyMDE</td></tr></tbody>

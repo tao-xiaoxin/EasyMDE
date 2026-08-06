@@ -101,6 +101,25 @@ describe('createBrowserPreviewEnhancementPort', () => {
       .toContain('/assets/vendor/highlight/styles/atom-one-dark.min.css');
   });
 
+  it('prepares a code theme without executing document enhancements', async () => {
+    const enhance = vi.fn();
+    autoLoadResources();
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      { documentRef: document, runtime: runtime(enhance) }
+    );
+
+    await port.prepareCodeTheme({
+      codeTheme: 'github',
+      signal: new AbortController().signal
+    });
+
+    expect(document.querySelector('#easymde-code-frame-css')).not.toBeNull();
+    expect(document.querySelector<HTMLLinkElement>('#easymde-highlight-theme-css')?.href)
+      .toContain('/assets/vendor/highlight/styles/github.min.css');
+    expect(enhance).not.toHaveBeenCalled();
+  });
+
   it('keeps only the latest code theme and settles superseded out-of-order loads', async () => {
     const port = createBrowserPreviewEnhancementPort(
       {

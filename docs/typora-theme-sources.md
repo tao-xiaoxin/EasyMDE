@@ -17,11 +17,12 @@ the editor shell or shared code-frame ownership.
 ## Complete variant matrix
 
 The first table keeps the repository-level source and license audit. This
-matrix is the complete selectable inventory, including every light, dark, and
-named color variant. EasyMDE article-theme labels are Chinese-only; repository
-names remain in the repository column for auditability. Typora filenames are
-loader-safe aliases; the native loader replaces hyphens with spaces and
-title-cases the repository part.
+matrix is the complete selectable inventory of the retained light and named
+color variants. Dark, night, automatic, and other variants explicitly removed
+from the product inventory are excluded. EasyMDE article-theme labels are
+Chinese-only; repository names remain in the repository column for
+auditability. Typora filenames are loader-safe aliases; the native loader
+replaces hyphens with spaces and title-cases the repository part.
 
 | Repository | EasyMDE IDs and audit labels | Upstream variant files | Installed Typora files |
 | --- | --- | --- | --- |

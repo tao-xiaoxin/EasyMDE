@@ -14,8 +14,18 @@ type KatexRuntime = Readonly<{
 
 type MermaidRenderResult = Readonly<{ svg: string }>;
 
+type MermaidInitializationOptions = Readonly<{
+  startOnLoad: boolean;
+  securityLevel: string;
+  theme: string;
+  fontFamily: string;
+  fontSize: number;
+  flowchart: Readonly<{ diagramPadding: number }>;
+  themeCSS: string;
+}>;
+
 type MermaidRuntime = Readonly<{
-  initialize: (options: Readonly<{ startOnLoad: boolean; securityLevel: string; theme: string }>) => void;
+  initialize: (options: MermaidInitializationOptions) => void;
   render: (id: string, source: string) => Promise<MermaidRenderResult>;
 }>;
 
@@ -36,6 +46,30 @@ export type FrontendEnhancementWindow = Window & {
 };
 
 let mermaidRenderIndex = 0;
+
+const MERMAID_LABEL_FONT_FAMILY = '"trebuchet ms", verdana, arial, sans-serif';
+const MERMAID_LABEL_GEOMETRY_CSS = `
+.node .label,
+.node .label *,
+.edgeLabel,
+.edgeLabel *,
+foreignObject > div,
+foreignObject > div * {
+  box-sizing: border-box !important;
+  font-family: ${MERMAID_LABEL_FONT_FAMILY} !important;
+  font-size: 16px !important;
+  font-weight: 400 !important;
+  line-height: 20px !important;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+  white-space: nowrap !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+foreignObject > div {
+  display: table-cell !important;
+}`;
 
 function property(value: unknown, key: string): unknown {
   if (
@@ -197,7 +231,13 @@ function initializeMermaid(windowRef: FrontendEnhancementWindow): boolean {
   windowRef.mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
-    theme: 'default'
+    theme: 'default',
+    fontFamily: MERMAID_LABEL_FONT_FAMILY,
+    fontSize: 16,
+    flowchart: {
+      diagramPadding: 12
+    },
+    themeCSS: MERMAID_LABEL_GEOMETRY_CSS
   });
 
   return true;

@@ -58,24 +58,16 @@
 }
 
 .easymde-rendered-content.easymde-markdown-theme-mdmdt{
-  height: 100vh;
-  background-color: var(--bg-color);
   font-size: 16px !important;
   color: var(--text-color);
   -webkit-font-smoothing: antialiased;
-  scroll-behavior: smooth;
-  scroll-padding: 14px;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-mdmdt{
-  margin: 0;
-  padding: 0;
   font-size: 16px;
   line-height: 1.6;
   letter-spacing: 0.6px;
   font-family: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", Arial, "Helvetica Neue", Helvetica, sans-serif;
-  background: var(--bg-color);
-  overflow-x: hidden;
 }
 .easymde-rendered-content.easymde-markdown-theme-mdmdt .os-windows{
   font-family: "Microsoft YaHei UI", "Microsoft YaHei", Arial, "Helvetica Neue", Helvetica, sans-serif;
@@ -86,27 +78,6 @@
   -webkit-tab-size: 4;
   -moz-tab-size: 4;
   -o-tab-size: 4;
-}
-
-
-.easymde-rendered-content.easymde-markdown-theme-mdmdt::-webkit-scrollbar,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt::-webkit-scrollbar{
-  width: 8px !important;
-  height: 8px !important;
-}
-.easymde-rendered-content.easymde-markdown-theme-mdmdt::-webkit-scrollbar-thumb,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt::-webkit-scrollbar-thumb{
-  border-radius: 4px !important;
-  background: var(--border-color) !important;
-}
-.easymde-rendered-content.easymde-markdown-theme-mdmdt::-webkit-scrollbar-track,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt::-webkit-scrollbar-track{
-  background: var(--bg-color2) !important;
-}
-.easymde-rendered-content.easymde-markdown-theme-mdmdt,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt*{
-  scrollbar-color: var(--border-color) var(--bg-color2) !important;
-  scrollbar-width: thin !important;
 }
 
 
@@ -462,6 +433,16 @@
   padding: 16px;
   transition: padding .3s linear;
   -webkit-transition: padding .3s linear;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-mdmdt :not(pre) > code{
+  border-radius: 4px;
+  background: var(--color-1-0-a);
+  padding: 3px 5px;
+  color: var(--text-code);
+  font-size: 14px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 .easymde-rendered-content.easymde-markdown-theme-mdmdt h1 code{
   font-size: 26px;
@@ -874,15 +855,6 @@
 }
 
 
-.easymde-rendered-content.easymde-markdown-theme-mdmdt{
-  margin: 0 auto;
-  width: 100%;
-  max-width: 1424px;
-  min-width: 300px;
-  padding: 32px 112px;
-  overflow: auto;
-
-}
 .easymde-rendered-content.easymde-markdown-theme-mdmdt > *:first-child{
   margin-top: 0;
 }
@@ -1451,36 +1423,6 @@
 .easymde-rendered-content.easymde-markdown-theme-mdmdt .cm-s-inner .cm-header,
 .easymde-rendered-content.easymde-markdown-theme-mdmdt .cm-s-inner.cm-header{color: #401df1;}
 
-
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ul,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ul{
-  padding-left: 34px;
-}
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ol,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ol{
-  padding-left: 36px;
-}
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ul ul,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ol ol,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ul > li > ol,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ol > li > ul,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ul ul,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ol ol,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ul > li > ol,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ol > li > ul{
-  margin-left: 0;
-}
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ul > li > p{
-  margin: 0;
-}
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ol > li > p,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ol > li > p{
-  margin: 0 0 0 -2px;
-}
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ul > .task-list-item > input,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt ul > .task-list-item > input{
-  margin-left: -22px;
-}
 .easymde-rendered-content.easymde-markdown-theme-mdmdt .long-btn{
   border-radius: 8px !important;
 }
@@ -2197,9 +2139,6 @@
   margin: 0 auto;
   justify-content: center;
 }
-.easymde-rendered-content.easymde-markdown-theme-mdmdt{
-  margin: 0;
-}
 
 
 .easymde-rendered-content.easymde-markdown-theme-mdmdt #typora-sidebar{
@@ -2313,13 +2252,6 @@
 }
 
 
-@media screen and (min-width: 1921px){
-  .easymde-rendered-content.easymde-markdown-theme-mdmdt{
-    max-width: 1312px;
-    padding-right: 0;
-  }
-}
-
 @media screen and (min-width: 1725px){
   .easymde-rendered-content.easymde-markdown-theme-mdmdt .outline-content{
     padding-left: 5px;
@@ -2327,13 +2259,6 @@
 }
 
 @media screen and (max-width: 1724px){
-  .easymde-rendered-content.easymde-markdown-theme-mdmdt{
-    max-width: 1672px;
-  }
-  .easymde-rendered-content.easymde-markdown-theme-mdmdt,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt{
-    padding: 32px 96px;
-  }
   .easymde-rendered-content.easymde-markdown-theme-mdmdt .typora-export-sidebar,
 .easymde-rendered-content.easymde-markdown-theme-mdmdt .typora-export-sidebar > .outline-content{
     width: 280px;
@@ -2341,13 +2266,6 @@
 }
 
 @media screen and (max-width: 1440px){
-  .easymde-rendered-content.easymde-markdown-theme-mdmdt{
-    max-width: 1620px;
-  }
-  .easymde-rendered-content.easymde-markdown-theme-mdmdt,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt{
-    padding: 32px 80px;
-  }
   .easymde-rendered-content.easymde-markdown-theme-mdmdt .typora-export-sidebar,
 .easymde-rendered-content.easymde-markdown-theme-mdmdt .typora-export-sidebar > .outline-content{
     width: 260px;
@@ -2359,10 +2277,6 @@
 .easymde-rendered-content.easymde-markdown-theme-mdmdt .typora-export-sidebar > .outline-content{
     width: 240px;
   }
-  .easymde-rendered-content.easymde-markdown-theme-mdmdt,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt{
-    padding: 32px 80px;
-  }
 }
 
 @media screen and (max-width: 992px){
@@ -2370,19 +2284,11 @@
 .easymde-rendered-content.easymde-markdown-theme-mdmdt .typora-export-sidebar > .outline-content{
     display: block !important;
   }
-  .easymde-rendered-content.easymde-markdown-theme-mdmdt,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt{
-    padding: 32px 60px;
-  }
 }
 
 @media screen and (max-width: 768px){
   .easymde-rendered-content.easymde-markdown-theme-mdmdt .typora-export-sidebar{
     display: none !important;
-  }
-  .easymde-rendered-content.easymde-markdown-theme-mdmdt,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt{
-    padding: 32px;
   }
   .easymde-rendered-content.easymde-markdown-theme-mdmdt h1.md-focus::before,
 .easymde-rendered-content.easymde-markdown-theme-mdmdt h2.md-focus::before,
@@ -2402,29 +2308,9 @@
 
 
 @media print{
-  .easymde-rendered-content.easymde-markdown-theme-mdmdt,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt .typora-export-content{
-    margin: 0 !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    height: auto !important;
-    padding: 0 !important;
-    border: none !important;
-  }
   .easymde-rendered-content.easymde-markdown-theme-mdmdt .typora-export-sidebar{
     display: none !important;
     width: 0 !important;
-  }
-  .easymde-rendered-content.easymde-markdown-theme-mdmdt::-webkit-scrollbar{
-    width: 0 !important;
-    height: 0 !important;
-  }
-  .easymde-rendered-content.easymde-markdown-theme-mdmdt,
-.easymde-rendered-content.easymde-markdown-theme-mdmdt*{
-    scrollbar-width: none !important;
   }
   .easymde-rendered-content.easymde-markdown-theme-mdmdt table,
 .easymde-rendered-content.easymde-markdown-theme-mdmdt img,

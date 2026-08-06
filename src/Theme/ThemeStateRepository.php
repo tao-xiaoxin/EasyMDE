@@ -3,6 +3,7 @@
 namespace EasyMDE\Theme;
 
 use EasyMDE\Content\PostDocument;
+use EasyMDE\Content\ThemeMarkupTransformer;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -36,6 +37,7 @@ final class ThemeStateRepository {
 			'markdownThemes'    => $this->get_article_themes_for_script(),
 			'codeThemes'        => $this->code_themes->for_script(),
 			'codeThemeExplicit' => $code_theme_explicit,
+			'customMarkupProfile' => ThemeMarkupTransformer::markup_profile( 'custom' ),
 			'fontOptions'       => $this->get_font_options(),
 			'customCss'         => array_values( array_map( array( $this, 'format_custom_css_item' ), $library ) ),
 			'state'             => $state,
@@ -676,6 +678,7 @@ final class ThemeStateRepository {
 		$themes = $this->article_themes->for_script();
 
 		foreach ( $themes as &$theme ) {
+			$theme['markupProfile'] = ThemeMarkupTransformer::markup_profile( $theme['id'] );
 			$theme['defaultCodeTheme'] = $this->sanitize_code_theme_id(
 				isset( $theme['defaultCodeTheme'] ) ? $theme['defaultCodeTheme'] : 'atom-one-dark'
 			);

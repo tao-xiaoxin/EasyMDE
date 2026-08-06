@@ -51,10 +51,7 @@ export function ImmersivePreviewSurface({
           : strings.previewContentLoaded
         : null;
   const previewContent = (
-    <div
-      className={active ? 'easymde-immersive-preview-canvas' : undefined}
-      style={active ? undefined : { display: 'contents' }}
-    >
+    <div className="easymde-immersive-preview-canvas">
       {children}
     </div>
   );

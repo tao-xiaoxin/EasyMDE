@@ -114,11 +114,22 @@ function fixture(): EditorRootProps &
   return {
     appearance: {
       articleThemes: [
-        { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
-        { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'atom-one-dark' }
+        {
+          id: 'default',
+          label: 'Default',
+          defaultCodeTheme: 'atom-one-dark',
+          markupProfile: 'common-v1'
+        },
+        {
+          id: 'newsprint',
+          label: 'Newsprint',
+          defaultCodeTheme: 'atom-one-dark',
+          markupProfile: 'common-v1'
+        }
       ],
       canManageCustomCss: true,
       codeThemeExplicit: false,
+      customMarkupProfile: 'common-v1',
       codeThemes: [
         { id: 'atom-one-dark', label: 'Atom One Dark' },
         { id: 'github', label: 'GitHub' }
@@ -159,7 +170,8 @@ function fixture(): EditorRootProps &
     document: { editorLabel: 'Markdown source' },
     enhancementPort: {
       dispose: vi.fn(),
-      enhance: vi.fn().mockResolvedValue(undefined)
+      enhance: vi.fn().mockResolvedValue(undefined),
+      prepareCodeTheme: vi.fn().mockResolvedValue(undefined)
     },
     executeExternalCommand: vi.fn(),
     fontControlsPort: { applyState: vi.fn(), closeOtherPopovers: vi.fn() },
@@ -660,9 +672,25 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(view.getByRole('button', { name: '进入沉浸写作' })).not.toBeNull()
     );
-    expect(
-      view.container.querySelector('.easymde-immersive-preview-canvas')
-    ).toBeNull();
+    const assertPreviewPaperFrame = (pane: Element | null) => {
+      expect(pane).not.toBeNull();
+      expect(
+        pane?.querySelectorAll(':scope > .easymde-immersive-preview-canvas')
+      ).toHaveLength(1);
+      expect(
+        pane?.querySelectorAll(
+          ':scope > .easymde-immersive-preview-canvas > [data-easymde-preview-html-sink]'
+        )
+      ).toHaveLength(1);
+      expect(
+        pane?.querySelectorAll(
+          ':scope > .easymde-immersive-preview-canvas .easymde-immersive-preview-canvas'
+        )
+      ).toHaveLength(0);
+    };
+    assertPreviewPaperFrame(
+      view.container.querySelector('.easymde-pane-preview')
+    );
     expect(
       view.container.querySelector('.easymde-immersive-preview-page')
     ).toBeNull();
@@ -688,6 +716,9 @@ describe('EditorRoot', () => {
         '.easymde-pane-preview [data-easymde-preview-html-sink]'
       )
     ).not.toBeNull();
+    assertPreviewPaperFrame(
+      view.container.querySelector('.easymde-pane-preview')
+    );
 
     fireEvent.click(view.getByRole('button', { name: '预览' }));
     expect(
@@ -699,17 +730,10 @@ describe('EditorRoot', () => {
     expect(
       previewPane?.classList.contains('easymde-immersive-preview-surface')
     ).toBe(true);
-    expect(
-      previewPane?.querySelector('.easymde-immersive-preview-canvas')
-    ).not.toBeNull();
+    assertPreviewPaperFrame(previewPane);
     expect(
       previewPane?.querySelector('.easymde-immersive-preview-page')
     ).toBeNull();
-    expect(
-      previewPane?.querySelector(
-        ':scope > .easymde-immersive-preview-canvas > [data-easymde-preview-html-sink]'
-      )
-    ).not.toBeNull();
     const previewSink = previewPane?.querySelector<HTMLElement>(
       '[data-easymde-preview-html-sink]'
     );
@@ -3736,7 +3760,8 @@ describe('EditorRoot', () => {
     expect(view.queryByRole('complementary', { name: '文章大纲' })).toBeNull();
     expect(view.container.querySelector('.easymde-immersive-stats')).toBeNull();
     expect(view.queryByText('自动保存已开启')).toBeNull();
-    expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledOnce();
+    expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledTimes(4);
+    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(4);
     expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(6);
   });
 
@@ -3983,9 +4008,131 @@ describe('EditorRoot', () => {
     fireEvent.click(headingItem);
   });
 
-  it('renders Preview from the current Appearance state', async () => {
+  it('reuses Preview HTML for equivalent article markup and prepares code CSS without enhancing', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+    const renderCount = vi.mocked(props.previewPort.render).mock.calls.length;
+    const enhanceCount = vi.mocked(props.enhancementPort.enhance).mock.calls.length;
+    const sink = view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+    await waitFor(() => expect(
+      view.container
+        .querySelector('[data-easymde-preview-html-sink]')
+        ?.classList.contains('easymde-markdown-theme-newsprint')
+    ).toBe(true));
+    expect(view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    )).toBe(sink);
+    expect(props.previewPort.render).toHaveBeenCalledTimes(renderCount);
+
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+    await waitFor(() =>
+      expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledWith(
+        expect.objectContaining({
+          codeTheme: 'github',
+          signal: expect.any(AbortSignal)
+        })
+      )
+    );
+    expect(props.previewPort.render).toHaveBeenCalledTimes(renderCount);
+    expect(props.enhancementPort.enhance).toHaveBeenCalledTimes(enhanceCount);
+  });
+
+  it('keeps the rendered code theme when code CSS preparation fails', async () => {
+    const props = fixture();
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockRejectedValue(
+      new Error('preview-enhancement-resource-load-failed')
+    );
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'preview-enhancement-resource-load-failed'
+      )
+    );
+    const sink = view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    );
+    expect(sink?.classList.contains(
+      'easymde-code-theme-atom-one-dark'
+    )).toBe(true);
+    expect(sink?.classList.contains('easymde-code-theme-github')).toBe(false);
+  });
+
+  it('cancels superseded code CSS preparation and commits only the latest theme', async () => {
+    const props = fixture();
+    const github = deferred<void>();
+    const terminal = deferred<void>();
+    const signals = new Map<string, AbortSignal>();
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockImplementation(
+      ({ codeTheme, signal }) => {
+        signals.set(codeTheme, signal);
+        return 'github' === codeTheme ? github.promise : terminal.promise;
+      }
+    );
+    const appearance = {
+      ...props.appearance,
+      codeThemes: [
+        ...props.appearance.codeThemes,
+        { id: 'terminal-noir', label: 'Terminal Noir' }
+      ]
+    };
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+    const renderCount = vi.mocked(props.previewPort.render).mock.calls.length;
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+    await waitFor(() => expect(signals.has('github')).toBe(true));
+
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+    await waitFor(() => expect(signals.has('terminal-noir')).toBe(true));
+    expect(signals.get('github')?.aborted).toBe(true);
+
+    await act(async () => github.resolve());
+    expect(view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    )?.classList.contains('easymde-code-theme-github')).toBe(false);
+
+    await act(async () => terminal.resolve());
+    await waitFor(() => expect(view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    )?.classList.contains('easymde-code-theme-terminal-noir')).toBe(true));
+    expect(props.previewPort.render).toHaveBeenCalledTimes(renderCount);
+  });
+
+  it('rerenders Preview when the article markup profile changes', async () => {
+    const props = fixture();
+    const appearance = {
+      ...props.appearance,
+      articleThemes: props.appearance.articleThemes.map((theme) => ({
+        ...theme,
+        markupProfile:
+          'newsprint' === theme.id ? 'markdown2html-v1' : 'common-v1'
+      }))
+    };
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
     await waitFor(() =>
       expect(props.previewPort.render).toHaveBeenCalledTimes(1)
     );
@@ -3999,14 +4146,6 @@ describe('EditorRoot', () => {
         expect.objectContaining({ markdownTheme: 'newsprint' }),
         expect.any(AbortSignal)
       );
-    });
-
-    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
-    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
-    await waitFor(() => {
-      expect(
-        vi.mocked(props.enhancementPort.enhance).mock.calls.at(-1)?.[3]
-      ).toEqual(expect.objectContaining({ codeTheme: 'github' }));
     });
   });
 
@@ -4244,7 +4383,8 @@ describe('EditorRoot', () => {
               },
               defaultCodeTheme: theme.defaultCodeTheme,
               id: 'newsprint',
-              label: 'Newsprint'
+              label: 'Newsprint',
+              markupProfile: theme.markupProfile
             }
           : theme
       )
@@ -4884,7 +5024,7 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
-  it('activates synchronized scrolling once and disposes it with the Root', async () => {
+  it('binds synchronized scrolling to the preview canvas and disposes it with the Root', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
 
@@ -4893,7 +5033,7 @@ describe('EditorRoot', () => {
     );
     expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledWith({
       preview: view.container.querySelector(
-        '[data-easymde-preview-html-sink="1"]'
+        '.easymde-immersive-preview-canvas'
       ),
       source: view.container.querySelector('.cm-scroller')
     });
@@ -4901,5 +5041,33 @@ describe('EditorRoot', () => {
     view.unmount();
     expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(1);
     expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('rebinds a single canvas scroll owner across ordinary, split and preview modes', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() =>
+      expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(1)
+    );
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    await waitFor(() =>
+      expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(2)
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() =>
+      expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(3)
+    );
+
+    expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledTimes(3);
+    for (const [options] of vi.mocked(props.scrollSyncPort.prepareBinding).mock.calls) {
+      expect(options.preview).toBe(
+        view.container.querySelector('.easymde-immersive-preview-canvas')
+      );
+    }
+    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(2);
+
+    view.unmount();
+    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(3);
   });
 });

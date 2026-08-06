@@ -59,29 +59,13 @@
 
 
 .easymde-rendered-content.easymde-markdown-theme-animal-island{
-    font-size: 16px;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island,
-.easymde-rendered-content.easymde-markdown-theme-animal-island{
-    background-color: var(--ai-bg-app);
-    font-family: var(--ai-font);
-    color: var(--ai-text-body);
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    letter-spacing: 0.01em;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island{
-    max-width: 860px;
-    margin: 30px auto 60px;
-    padding: 52px 64px 96px;
-    background-color: var(--ai-bg-paper);
-    border-radius: var(--ai-radius-lg);
-    box-shadow: var(--ai-shadow-card);
     line-height: 1.75;
     font-size: 16px;
     color: var(--ai-text-body);
+    font-family: var(--ai-font);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: 0.01em;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-animal-island > *:first-child{
@@ -319,7 +303,8 @@
 }
 
 
-.easymde-rendered-content.easymde-markdown-theme-animal-island tt{
+.easymde-rendered-content.easymde-markdown-theme-animal-island :not(pre) > code,
+.easymde-rendered-content.easymde-markdown-theme-animal-island :not(pre) > tt{
     font-family: var(--ai-mono);
     font-size: 0.9em;
     color: var(--ai-primary-active);
@@ -668,37 +653,7 @@
 }
 
 
-.easymde-rendered-content.easymde-markdown-theme-animal-island::-webkit-scrollbar{
-    width: 10px;
-    height: 10px;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island::-webkit-scrollbar-track{
-    background: var(--ai-bg-app);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island::-webkit-scrollbar-thumb{
-    background: var(--ai-border-light);
-    border-radius: var(--ai-radius-pill);
-    border: 2px solid var(--ai-bg-app);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island::-webkit-scrollbar-thumb:hover{
-    background: var(--ai-primary);
-}
-
-
 @media print{
-    .easymde-rendered-content.easymde-markdown-theme-animal-island,
-.easymde-rendered-content.easymde-markdown-theme-animal-island{
-        background: white;
-    }
-    .easymde-rendered-content.easymde-markdown-theme-animal-island{
-        box-shadow: none;
-        background: white;
-        max-width: 100%;
-        padding: 0;
-    }
     .easymde-rendered-content.easymde-markdown-theme-animal-island blockquote,
 .easymde-rendered-content.easymde-markdown-theme-animal-island table{
         box-shadow: none;

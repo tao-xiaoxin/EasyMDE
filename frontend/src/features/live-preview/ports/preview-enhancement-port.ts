@@ -40,6 +40,7 @@ export function previewEnhancementFailureCode(error: unknown): PreviewEnhancemen
 export type PreviewEnhancementPort = Readonly<{
   dispose?: () => void;
   prepareCodeTheme: (context: PreviewEnhancementContext) => Promise<void>;
+  syncCodeFrameBackgrounds: (surface: HTMLElement) => void;
   enhance: (
     surface: HTMLElement,
     features: PreviewFeatures,

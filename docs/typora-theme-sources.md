@@ -9,9 +9,9 @@ the editor shell or shared code-frame ownership.
 | `inkwell` | `墨砚-typora-theme-inkwell` | `toxic-19/typora-theme-inkwell@a7d1be224725744c78532c6009e6d6ba54d7c274` | `inkwell.css` | MIT, toxic-19; notice at `assets/themes/article/licenses/inkwell-LICENSE` |
 | `animal-island` | `动物岛-typora-theme-animal-island` | `YanyingWei1997/typora-theme-animal-island@c5b013430d68a883db4cc3b8a6235d4c02a0e57e` | `animal-island.css` (light) | MIT, YanyingWei; notice at `assets/themes/article/licenses/animal-island-LICENSE` |
 | `phycat-mint` | `薄荷猫-typora-theme-phycat` | `sumruler/typora-theme-phycat@b49f1fc6b193e333a3ebb186bbf1ae7f8fc21778` | `phycat-mint.css`; the bundled `phycat/phycat.light.css` resource is installed beside it for the native theme | MIT, 徐继龙; notice at `assets/themes/article/licenses/phycat-LICENSE` |
-| `mdmdt` | `mdmdt-浅色-mdmdt` | `cayxc/Mdmdt@a2f7d357144e38670727e876243a7fe58df2e848` | `mdmdt-light.css` | Apache-2.0, cayxc; notice at `assets/themes/article/licenses/mdmdt-LICENSE` |
+| `mdmdt` | `mdmdt-浅色-mdmdt` | `cayxc/Mdmdt@a2f7d357144e38670727e876243a7fe58df2e848` | `mdmdt-light.css` | Apache-2.0; verbatim upstream license retains `Copyright [cayxc]`; upstream supplies no NOTICE |
 | `dogschoice-pink` | `狗狗粉-dogs-choice` | `dkheng/DogsChoice@0d686f858be543558364953f9e31d167d9af2263` | `dogs-qicaihong.css`（上游“七彩虹”粉/紫配色） only | MIT, dkheng; notice at `assets/themes/article/licenses/dogschoice-LICENSE` |
-| `bloom-petal` | `花瓣-typora-bloom-theme` | `webkubor/typora-Bloom-theme@3abbeefbcca5a00ea36cc3677b1105de5e2c8f48` | built release `bloom-petal.css` (the `root-petal.css` + `base-light.css` light variant) | README declares MIT; source notice at `assets/themes/article/licenses/bloom-LICENSE` |
+| `bloom-petal` | `花瓣-typora-bloom-theme` | `webkubor/typora-Bloom-theme@3abbeefbcca5a00ea36cc3677b1105de5e2c8f48` | built release `bloom-petal.css` (the `root-petal.css` + `base-light.css` light variant) | MIT; license notice refreshed verbatim from upstream `f50ed7584a4492fb2d5b258db83ef4849665be0f`; upstream supplies no NOTICE |
 | `spring` | `春日-typora-spring-theme` | `SprInec/typora-spring-theme@fb8bdaa6139d0649aba01aced459cd5b8b9d7227` | `spring.css` | MIT, SprInec; notice at `assets/themes/article/licenses/spring-LICENSE` |
 
 ## Complete variant matrix

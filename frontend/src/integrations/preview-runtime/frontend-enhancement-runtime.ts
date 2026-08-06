@@ -32,6 +32,7 @@ type MermaidRuntime = Readonly<{
 export type FrontendEnhancementWindow = Window & {
   EasyMDEEnhancements?: Readonly<{
     enhance: (root: ParentNode, config: FrontendEnhancementConfig) => Promise<void>;
+    syncCodeFrameBackgrounds: (root: ParentNode) => void;
   }>;
   EasyMDEFrontendConfig?: FrontendEnhancementConfig;
   EasyMDEMathRenderer?: Readonly<{
@@ -125,17 +126,11 @@ function mathText(element: HTMLElement): string {
   return normalizeMathTex(value);
 }
 
-function syncCodeFrameBackgrounds(
+export function syncCodeFrameBackgrounds(
   root: ParentNode,
-  config: FrontendEnhancementConfig,
   windowRef: FrontendEnhancementWindow
 ): void {
-  const codeBlocks = [
-    ...root.querySelectorAll('pre > code:not(.language-mermaid)'),
-    ...(!featureEnabled(config, 'mermaid')
-      ? root.querySelectorAll('pre > code.language-mermaid')
-      : [])
-  ];
+  const codeBlocks = root.querySelectorAll('pre > code.hljs');
 
   codeBlocks.forEach((element) => {
     if (!(element instanceof HTMLElement) || !element.parentElement) {
@@ -180,7 +175,7 @@ function highlightCode(
     windowRef.hljs.highlightElement(element);
     element.dataset.easymdeHighlighted = '1';
   });
-  syncCodeFrameBackgrounds(root, config, windowRef);
+  syncCodeFrameBackgrounds(root, windowRef);
 }
 
 function markMermaidAssetFailure(root: ParentNode, config: FrontendEnhancementConfig): void {

@@ -14,6 +14,7 @@ type SharedEnhancements = Readonly<{
       strings: Readonly<{ renderingFailed: string }>;
     }>
   ) => Promise<unknown> | unknown;
+  syncCodeFrameBackgrounds: (surface: HTMLElement) => void;
 }>;
 
 export type PreviewEnhancementBrowserRuntime = Readonly<{
@@ -374,6 +375,13 @@ export function createBrowserPreviewEnhancementPort(
   return {
     dispose: loader.dispose,
     prepareCodeTheme,
+    syncCodeFrameBackgrounds(surface) {
+      const enhancements = options.runtime.getEnhancements();
+      if (!enhancements) {
+        throw resourceError('preview-enhancement-runtime-unavailable');
+      }
+      enhancements.syncCodeFrameBackgrounds(surface);
+    },
     async enhance(surface, features, isCurrent, context) {
       if (!isCurrent() || context.signal.aborted) return;
       const mermaidAssetFailure = !!assets.mermaidAssetError && !!features.mermaid;

@@ -11,6 +11,14 @@ const fullCapabilityMarkdown = readFileSync(
   new URL('../../docs/examples/markdown-full-capability-test.md', import.meta.url),
   'utf8'
 );
+const fullCapabilityImage = readFileSync(
+  new URL('../../docs/assets/easymde-logo-rounded.png', import.meta.url)
+);
+const expectedMermaidCount =
+  fullCapabilityMarkdown.match(/^```mermaid$/gmu)?.length ?? 0;
+if (expectedMermaidCount <= 0) {
+  throw new Error('full-capability-mermaid-fixture-empty');
+}
 
 function requiredEnvironment(name) {
   const value = process.env[name];
@@ -32,9 +40,16 @@ async function login(page) {
   await expect(page.locator('#wpadminbar')).toBeVisible();
 }
 
-async function waitForPreview(preview) {
+async function waitForPreviewIdle(preview) {
   await expect(preview).toHaveAttribute('aria-busy', 'false');
   await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
+}
+
+async function waitForFullCapabilityPreview(preview) {
+  await waitForPreviewIdle(preview);
+  await expect(preview.locator('.easymde-mermaid svg')).toHaveCount(
+    expectedMermaidCount
+  );
   await expect(preview.locator('.easymde-mermaid svg').first()).toBeVisible();
 }
 
@@ -83,9 +98,7 @@ async function scrollToMermaid(page, mode, index) {
   await page.locator('.easymde-pane-preview article').evaluate((root, args) => {
     const svg = root.querySelectorAll('.easymde-mermaid svg')[args.index];
     if (!(svg instanceof SVGElement)) throw new Error('audit-mermaid-svg-unavailable');
-    const owner = 'pure' === args.mode
-      ? root.closest('.easymde-immersive-preview-canvas')
-      : root;
+    const owner = root.closest('.easymde-immersive-preview-canvas');
     if (!(owner instanceof HTMLElement)) throw new Error('audit-scroll-owner-unavailable');
     const ownerBox = owner.getBoundingClientRect();
     const svgBox = svg.getBoundingClientRect();
@@ -116,22 +129,24 @@ function caseEvidence(root, { mode }) {
     const canvases = editor ? editor.querySelectorAll('.easymde-immersive-preview-canvas').length : -1;
     const documentOverflow = document.documentElement.scrollWidth - document.documentElement.clientWidth;
     const paneOverflow = pane instanceof HTMLElement ? pane.scrollWidth - pane.clientWidth : Number.NaN;
-    const owner = 'pure' === mode ? canvas : root;
+    const owner = canvas;
 
     if (!(pane instanceof HTMLElement)) failures.push(failure('preview-pane-unavailable', 'article'));
     if (!(owner instanceof HTMLElement)) failures.push(failure('expected-scroll-owner-unavailable', 'article'));
     if (documentOverflow > geometryTolerance) failures.push(failure('document-horizontal-overflow', 'html', { overflow: documentOverflow }));
     if (paneOverflow > geometryTolerance) failures.push(failure('pane-horizontal-overflow', '.easymde-pane-preview', { overflow: paneOverflow }));
     if (root.scrollWidth - root.clientWidth > geometryTolerance) failures.push(failure('article-horizontal-overflow', 'article', { scrollWidth: root.scrollWidth, clientWidth: root.clientWidth }));
-    if ('ordinary' === mode && (canvas || pageWrappers !== 0)) failures.push(failure('ordinary-immersive-wrapper-present', 'article', { canvas: Boolean(canvas), pageWrappers }));
-    if ('split' === mode && (canvas || pageWrappers !== 0)) failures.push(failure('split-immersive-wrapper-present', 'article', { canvas: Boolean(canvas), pageWrappers }));
+    if (1 !== canvases || 0 !== pageWrappers || !(canvas instanceof HTMLElement)) {
+      failures.push(failure('preview-hierarchy-invalid', 'article', { mode, canvases, pageWrappers }));
+    }
+    if (rootStyle.overflowY !== 'visible') {
+      failures.push(failure('article-must-not-scroll', 'article', { mode, overflowY: rootStyle.overflowY }));
+    }
+    if (canvas instanceof HTMLElement && !['auto', 'scroll'].includes(style(canvas).overflowY)) {
+      failures.push(failure('canvas-must-scroll', '.easymde-immersive-preview-canvas', { mode, ...style(canvas) }));
+    }
     if ('pure' === mode) {
-      if (1 !== canvases || 0 !== pageWrappers || !(canvas instanceof HTMLElement)) failures.push(failure('pure-preview-hierarchy-invalid', 'article', { canvases, pageWrappers }));
       if (!near(Number.parseFloat(getComputedStyle(root).borderTopLeftRadius), 48)) failures.push(failure('pure-article-radius-invalid', 'article', { borderTopLeftRadius: getComputedStyle(root).borderTopLeftRadius }));
-      if (rootStyle.overflowY !== 'visible') failures.push(failure('pure-article-must-not-scroll', 'article', { overflowY: rootStyle.overflowY }));
-      if (canvas instanceof HTMLElement && !['auto', 'scroll'].includes(style(canvas).overflowY)) failures.push(failure('pure-canvas-must-scroll', '.easymde-immersive-preview-canvas', style(canvas)));
-    } else if (!['auto', 'scroll'].includes(rootStyle.overflowY)) {
-      failures.push(failure(`${mode}-article-must-scroll`, 'article', rootStyle));
     }
 
     const verticalOwners = [];
@@ -139,15 +154,27 @@ function caseEvidence(root, { mode }) {
       if (!(element instanceof HTMLElement)) continue;
       const computed = getComputedStyle(element);
       if (element.scrollHeight > element.clientHeight + geometryTolerance && ['auto', 'scroll'].includes(computed.overflowY)) {
-        verticalOwners.push({ selector: element === root ? 'article' : element.className || element.tagName.toLowerCase(), box: box(element) });
+        verticalOwners.push({
+          element,
+          selector: element === root ? 'article' : element.className || element.tagName.toLowerCase(),
+          box: box(element)
+        });
       }
     }
     const ownerElement = owner instanceof HTMLElement ? owner : null;
-    const unexpectedOwners = verticalOwners.filter(({ selector }) => {
-      if ('pure' === mode) return selector !== 'easymde-immersive-preview-canvas';
-      return selector !== 'article';
-    });
-    if (unexpectedOwners.length) failures.push(failure('unexpected-nested-vertical-scroll-owner', 'article', { unexpectedOwners, verticalOwners }));
+    const unexpectedOwners = verticalOwners
+      .filter(({ element }) => element !== ownerElement)
+      .map(({ element: _element, ...evidence }) => evidence);
+    const verticalOwnerEvidence = verticalOwners.map(
+      ({ element: _element, ...evidence }) => evidence
+    );
+    if (unexpectedOwners.length) {
+      failures.push(failure(
+        'unexpected-nested-vertical-scroll-owner',
+        'article',
+        { unexpectedOwners, verticalOwners: verticalOwnerEvidence }
+      ));
+    }
 
     const keyElements = [
       ['heading', 'h1, h2, h3, h4, h5, h6'], ['paragraph', 'p'], ['blockquote', 'blockquote'],
@@ -210,7 +237,7 @@ function caseEvidence(root, { mode }) {
       mode, failures, root: { box: rootBox, scrollWidth: root.scrollWidth, clientWidth: root.clientWidth, scrollHeight: root.scrollHeight, clientHeight: root.clientHeight, style: rootStyle },
       canvas: canvas instanceof HTMLElement ? { box: box(canvas), scrollHeight: canvas.scrollHeight, clientHeight: canvas.clientHeight, style: style(canvas) } : null,
       surface: surface instanceof HTMLElement ? { box: box(surface), style: style(surface) } : null,
-      wrappers: { canvases, pageWrappers }, documentOverflow, paneOverflow, verticalOwners, mermaid
+      wrappers: { canvases, pageWrappers }, documentOverflow, paneOverflow, verticalOwners: verticalOwnerEvidence, mermaid
     };
 }
 
@@ -228,10 +255,33 @@ test('audits all registered article themes in ordinary, immersive split, and pur
   await page.goto(postUrl);
   await expect(page.locator('[data-easymde-editor-owner="react"]')).toBeVisible();
   const preview = page.locator('.easymde-pane-preview article');
-  await waitForPreview(preview);
-  await page.locator('.easymde-source-react .cm-content').fill(fullCapabilityMarkdown);
-  await expect(page.locator('#easymde-source')).toHaveValue(fullCapabilityMarkdown);
-  await waitForPreview(preview);
+  await waitForPreviewIdle(preview);
+  const fixtureImageUrl = new URL(
+    '/easymde-e2e-fixtures/markdown-full-capability-image.png',
+    page.url()
+  ).href;
+  await page.route(fixtureImageUrl, (route) => route.fulfill({
+    status: 200,
+    contentType: 'image/png',
+    body: fullCapabilityImage
+  }));
+  const localCapabilityMarkdown = fullCapabilityMarkdown.replace(
+    /https:\/\/raw\.githubusercontent\.com\/tao-xiaoxin\/EasyMDE\/main\/docs\/assets\/easymde-logo-rounded\.png/g,
+    fixtureImageUrl
+  );
+  await page.locator('.easymde-source-react .cm-content').fill(localCapabilityMarkdown);
+  await expect(page.locator('#easymde-source')).toHaveValue(localCapabilityMarkdown);
+  await waitForFullCapabilityPreview(preview);
+  await expect.poll(() => preview.locator('img').evaluateAll(
+    (images) => images.every(
+      (image) => image instanceof HTMLImageElement
+        && image.complete
+        && image.naturalWidth > 0
+        && image.naturalHeight > 0
+    )
+  ), {
+    message: 'the local full-capability fixture images should load'
+  }).toBe(true);
   const bootstrap = await page.evaluate(() => window.EasyMDEEditorRootBootstrap);
   const themes = bootstrap.appearance.articleThemes.map(({ id, label, cssUrl }) => ({ id, label, cssUrl }));
   expect(themes).toHaveLength(46);
@@ -246,7 +296,7 @@ test('audits all registered article themes in ordinary, immersive split, and pur
       await expect(link).toHaveAttribute('href', theme.cssUrl);
       for (const mode of ['ordinary', 'split', 'pure']) {
         await setMode(page, mode, labels);
-        await waitForPreview(preview);
+        await waitForFullCapabilityPreview(preview);
         await expect(preview).toHaveClass(new RegExp(`easymde-markdown-theme-${theme.id}`));
         const evidence = await preview.evaluate(caseEvidence, { mode });
         const caseName = `${safeName(theme.id)}-${mode}`;

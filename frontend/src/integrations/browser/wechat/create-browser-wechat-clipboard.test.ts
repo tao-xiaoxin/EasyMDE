@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { WechatClipboardPreparationOptions } from '../../../contracts/ports/wechat-clipboard-port';
 import {
-  CLIPBOARD_WRITE_TIMEOUT_MS,
+  CLIPBOARD_COMMIT_TIMEOUT_MS,
   createBrowserWechatClipboard
 } from './create-browser-wechat-clipboard';
 
@@ -2513,7 +2513,43 @@ describe('createBrowserWechatClipboard', () => {
     }
   });
 
-  it('fails a stalled modern write instead of keeping the copy session pending', async () => {
+  it('waits for a delayed modern write instead of misclassifying it as failed', async () => {
+    vi.useFakeTimers();
+    let resolveWrite: (() => void) | undefined;
+    const write = vi.fn(() => new Promise<void>((resolve) => {
+      resolveWrite = resolve;
+    }));
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write,
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+    const copy = clipboard.copy(readyPreview());
+    let settled = false;
+    copy.finally(() => {
+      settled = true;
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(2_501);
+      expect(settled).toBe(false);
+      resolveWrite?.();
+      await expect(copy).resolves.toEqual({
+        method: 'clipboard',
+        status: 'copied'
+      });
+      expect(write).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails a modern write that remains stalled after payload preparation', async () => {
     vi.useFakeTimers();
     const write = vi.fn(() => new Promise<void>(() => {}));
     const clipboard = createBrowserWechatClipboard({
@@ -2526,17 +2562,11 @@ describe('createBrowserWechatClipboard', () => {
       write,
       pageOffset: () => ({ x: 0, y: 0 })
     });
-    const copy = clipboard.copy(readyPreview());
-    const result = Promise.race([
-      copy,
-      new Promise((resolve) => {
-        setTimeout(() => resolve({ code: 'test-harness-timeout', status: 'failed' }), CLIPBOARD_WRITE_TIMEOUT_MS);
-      })
-    ]);
 
     try {
-      await vi.advanceTimersByTimeAsync(CLIPBOARD_WRITE_TIMEOUT_MS);
-      await expect(result).resolves.toEqual({
+      const copy = clipboard.copy(readyPreview());
+      await vi.advanceTimersByTimeAsync(CLIPBOARD_COMMIT_TIMEOUT_MS);
+      await expect(copy).resolves.toEqual({
         code: 'wechat-copy-failed',
         status: 'failed'
       });

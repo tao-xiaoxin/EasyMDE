@@ -171,7 +171,8 @@ function fixture(): EditorRootProps &
     enhancementPort: {
       dispose: vi.fn(),
       enhance: vi.fn().mockResolvedValue(undefined),
-      prepareCodeTheme: vi.fn().mockResolvedValue(undefined)
+      prepareCodeTheme: vi.fn().mockResolvedValue(undefined),
+      syncCodeFrameBackgrounds: vi.fn()
     },
     executeExternalCommand: vi.fn(),
     fontControlsPort: { applyState: vi.fn(), closeOtherPopovers: vi.fn() },
@@ -4044,6 +4045,11 @@ describe('EditorRoot', () => {
         })
       )
     );
+    await waitFor(() =>
+      expect(props.enhancementPort.syncCodeFrameBackgrounds).toHaveBeenCalledWith(
+        sink
+      )
+    );
     expect(props.previewPort.render).toHaveBeenCalledTimes(renderCount);
     expect(props.enhancementPort.enhance).toHaveBeenCalledTimes(enhanceCount);
   });
@@ -4114,11 +4120,18 @@ describe('EditorRoot', () => {
     expect(view.container.querySelector(
       '[data-easymde-preview-html-sink]'
     )?.classList.contains('easymde-code-theme-github')).toBe(false);
+    expect(props.enhancementPort.syncCodeFrameBackgrounds).not.toHaveBeenCalled();
 
     await act(async () => terminal.resolve());
     await waitFor(() => expect(view.container.querySelector(
       '[data-easymde-preview-html-sink]'
     )?.classList.contains('easymde-code-theme-terminal-noir')).toBe(true));
+    await waitFor(() =>
+      expect(props.enhancementPort.syncCodeFrameBackgrounds).toHaveBeenCalledWith(
+        view.container.querySelector('[data-easymde-preview-html-sink]')
+      )
+    );
+    expect(props.enhancementPort.syncCodeFrameBackgrounds).toHaveBeenCalledTimes(1);
     expect(props.previewPort.render).toHaveBeenCalledTimes(renderCount);
   });
 

@@ -25,6 +25,7 @@ test('local WordPress login credentials have one ignored environment owner', () 
   const compose = source('docker-compose.yml');
   const playwrightConfig = source('playwright.config.mjs');
   const e2e = source('tests/e2e/easymde.spec.mjs');
+  const inkwellE2e = source('tests/e2e/inkwell.spec.mjs');
   const releaseSetup = source('scripts/setup-wordpress-release.sh');
   const workflow = source('.github/workflows/ci.yml');
   const pluginCheckJob = workflowJob(workflow, 'plugin-check', 'e2e');
@@ -46,6 +47,10 @@ test('local WordPress login credentials have one ignored environment owner', () 
   assert.match(e2e, /requiredEnvironment\('WORDPRESS_ADMIN_USER'\)/);
   assert.match(e2e, /requiredEnvironment\('WORDPRESS_ADMIN_PASSWORD'\)/);
   assert.doesNotMatch(e2e, /adminPassword\s*=\s*['"]/);
+  assert.match(inkwellE2e, /requiredEnvironment\('WORDPRESS_ADMIN_USER'\)/);
+  assert.match(inkwellE2e, /requiredEnvironment\('WORDPRESS_ADMIN_PASSWORD'\)/);
+  assert.doesNotMatch(inkwellE2e, /WORDPRESS_ADMIN_(?:USER|PASSWORD)\s*\|\|/);
+  assert.doesNotMatch(inkwellE2e, /admin(?:User|Password)\s*=\s*['"]/);
 
   assert.match(releaseSetup, /WORDPRESS_ADMIN_USER:\?Set WORDPRESS_ADMIN_USER in \.env/);
   assert.match(releaseSetup, /WORDPRESS_ADMIN_PASSWORD:\?Set WORDPRESS_ADMIN_PASSWORD in \.env/);

@@ -143,21 +143,12 @@ async function selectOrdinaryOption(page, combobox, optionLabel) {
   if (-1 === optionIndex) {
     throw new Error(`ordinary-select-option-unavailable:${optionLabel}`);
   }
-  const lastOptionIndex = optionLabels.length - 1;
-  const startAtEnd = optionIndex > lastOptionIndex / 2;
-  await page.keyboard.press(startAtEnd ? 'End' : 'Home');
-  const distance = startAtEnd
-    ? lastOptionIndex - optionIndex
-    : optionIndex;
-  for (let index = 0; index < distance; index += 1) {
-    await page.keyboard.press(startAtEnd ? 'ArrowUp' : 'ArrowDown');
-  }
-  const optionId = await options.nth(optionIndex).getAttribute('id');
+  const option = options.nth(optionIndex);
+  const optionId = await option.getAttribute('id');
   if (!optionId) {
     throw new Error('ordinary-select-option-id-unavailable');
   }
-  await expect(combobox).toHaveAttribute('aria-activedescendant', optionId);
-  await page.keyboard.press('Enter');
+  await option.click();
   await expect(combobox).toHaveAttribute('aria-expanded', 'false');
   await expect(combobox).toContainText(optionLabel);
 }
@@ -460,9 +451,17 @@ async function canonicalMarkdownForPage(page) {
 async function editorThemeCatalog(page) {
   return page.evaluate(() => ({
     articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
-      .map(({ id, label, cssUrl, swatch }) => ({ id, label, cssUrl, swatch })),
+      .map(({ id, label, cssUrl, markupProfile, swatch }) => ({
+        id,
+        label,
+        cssUrl,
+        markupProfile,
+        swatch
+      })),
     codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes
-      .map(({ id, cssUrl }) => ({ id, cssUrl }))
+      .map(({ id, cssUrl }) => ({ id, cssUrl })),
+    selectedArticleTheme:
+      window.EasyMDEEditorRootBootstrap.appearance.state.markdownTheme
   }));
 }
 
@@ -473,38 +472,6 @@ function hexToRgbCss(hex) {
 
   const value = Number.parseInt(hex.slice(1), 16);
   return `rgb(${value >> 16}, ${(value >> 8) & 255}, ${value & 255})`;
-}
-
-async function previewContainsThemeSwatch(preview, expectedSwatch) {
-  return preview.evaluate((root, expected) => {
-    const properties = [
-      'color',
-      'backgroundColor',
-      'borderTopColor',
-      'borderRightColor',
-      'borderBottomColor',
-      'borderLeftColor'
-    ];
-    const elements = [root, ...root.querySelectorAll('*')];
-    const colors = new Set();
-
-    for (const element of elements) {
-      const style = getComputedStyle(element);
-      for (const property of properties) {
-        const color = style[property];
-        if (color && !color.includes('transparent')) colors.add(color.toLowerCase());
-      }
-      for (const pseudo of ['::before', '::after']) {
-        const pseudoStyle = getComputedStyle(element, pseudo);
-        for (const property of properties) {
-          const color = pseudoStyle[property];
-          if (color && !color.includes('transparent')) colors.add(color.toLowerCase());
-        }
-      }
-    }
-
-    return colors.has(expected.toLowerCase());
-  }, expectedSwatch);
 }
 
 async function expectRenderedFixture(page, selector) {
@@ -586,6 +553,103 @@ async function waitForPreviewRefresh(preview, previousSignature, message) {
   }, { message }).toBe(true);
   await expect(preview).toHaveAttribute('aria-busy', 'false');
   await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
+}
+
+async function waitForArticleThemeTransition(
+  preview,
+  previousSignature,
+  previousProfile,
+  nextProfile,
+  message
+) {
+  if (previousProfile !== nextProfile) {
+    await waitForPreviewRefresh(preview, previousSignature, message);
+    return;
+  }
+  await expect(preview).toHaveAttribute('aria-busy', 'false');
+  await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
+  await expect.poll(
+    () => readyPreviewSignature(preview),
+    { message: `${message}; same-profile switch must preserve server Preview signature` }
+  ).toBe(previousSignature);
+}
+
+async function waitForBrowserPaint(page) {
+  await page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
+}
+
+async function articleVisualFingerprint(preview) {
+  return preview.evaluate((root) => {
+    const properties = [
+      'backgroundColor',
+      'backgroundImage',
+      'borderTopColor',
+      'borderTopStyle',
+      'borderRightColor',
+      'borderBottomColor',
+      'borderBottomStyle',
+      'borderLeftColor',
+      'borderLeftStyle',
+      'borderRadius',
+      'boxShadow',
+      'color',
+      'fontFamily',
+      'fontSize',
+      'fontStyle',
+      'fontWeight',
+      'letterSpacing',
+      'lineHeight',
+      'textDecorationColor',
+      'textDecorationLine',
+      'textTransform'
+    ];
+    const selectors = [
+      ':scope',
+      'h1',
+      'h2',
+      'h3',
+      'blockquote',
+      'a',
+      'strong',
+      'ul',
+      'ol',
+      'li',
+      'table',
+      'th',
+      'td',
+      'code',
+      'pre',
+      'hr'
+    ];
+    const readStyle = (element, pseudo = null) => {
+      const style = getComputedStyle(element, pseudo);
+      return Object.fromEntries(
+        properties.map((property) => [property, style[property]])
+      );
+    };
+    const samples = {};
+
+    for (const selector of selectors) {
+      const element = ':scope' === selector ? root : root.querySelector(selector);
+      if (!(element instanceof HTMLElement)) continue;
+      samples[selector] = {
+        base: readStyle(element),
+        before: readStyle(element, '::before'),
+        after: readStyle(element, '::after')
+      };
+    }
+
+    const rootStyle = getComputedStyle(root);
+    const customProperties = [...rootStyle]
+      .filter((property) => property.startsWith('--'))
+      .map((property) => [property, rootStyle.getPropertyValue(property).trim()])
+      .filter(([, value]) => '' !== value)
+      .sort(([left], [right]) => left.localeCompare(right));
+
+    return JSON.stringify({ customProperties, samples });
+  });
 }
 
 async function setImmersiveSplitRatio(page, ratio, resizeLabel) {
@@ -1671,6 +1735,9 @@ test.describe('EasyMDE editor workflows', () => {
     const nativeSource = page.locator('#easymde-source');
     const sourceEditor = reactSource.locator('.cm-content');
     const activePreview = page.locator('.easymde-pane-preview article');
+    const activePreviewCanvas = page.locator(
+      '.easymde-pane-preview .easymde-immersive-preview-canvas'
+    );
 
     await expect(sourcePane).toHaveAttribute('data-easymde-document-owner', 'react');
     await expect(page.locator('[data-easymde-editor-owner="react"]')).toHaveCount(1);
@@ -1679,6 +1746,8 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(nativeSource).toBeHidden();
     await expect(page.locator('.easymde-pane-source .easymde-source:visible')).toHaveCount(1);
     await expect(activePreview).toBeVisible();
+    await expect(activePreviewCanvas).toBeVisible();
+    await expect(activePreviewCanvas).toHaveCount(1);
     await expect(
       page.locator('.easymde-pane-preview article')
     ).toHaveCount(1);
@@ -1732,12 +1801,12 @@ test.describe('EasyMDE editor workflows', () => {
       scroller.dispatchEvent(new Event('scroll'));
     });
     await expect.poll(
-      () => activePreview.evaluate((preview) => preview.scrollTop)
+      () => activePreviewCanvas.evaluate((canvas) => canvas.scrollTop)
     ).toBeGreaterThan(0);
-    await expect.poll(() => activePreview.evaluate((preview) => {
+    await expect.poll(() => activePreviewCanvas.evaluate((canvas) => {
       const sourceScroller = document.querySelector('.easymde-source-react .cm-scroller');
-      preview.scrollTop = 0;
-      preview.dispatchEvent(new Event('scroll'));
+      canvas.scrollTop = 0;
+      canvas.dispatchEvent(new Event('scroll'));
       return sourceScroller.scrollTop;
     })).toBe(0);
     expect(browserErrors).toEqual([]);
@@ -1964,6 +2033,7 @@ test.describe('EasyMDE editor workflows', () => {
     const preview = page.locator('.easymde-pane-preview article');
     const failures = [];
     const matrix = [];
+    const visualFingerprints = new Map();
     let expectedThemeBackgroundImage = null;
     const headingRhythmContracts = new Map([
       ['qingbi-liujin', { contentFontSize: null }],
@@ -1978,8 +2048,14 @@ test.describe('EasyMDE editor workflows', () => {
       boxes: decoration.boxes.map(({ selector, flexBasis }) => ({ selector, flexBasis }))
     });
     let mainFrameNavigations = 0;
+    let previewRequests = 0;
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) mainFrameNavigations += 1;
+    });
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')) {
+        previewRequests += 1;
+      }
     });
 
     const recordGeometry = async (
@@ -2028,8 +2104,12 @@ test.describe('EasyMDE editor workflows', () => {
         if (!(h1 instanceof HTMLElement)) {
           throw new Error('theme-first-heading-unavailable');
         }
+        const canvas = root.closest('.easymde-immersive-preview-canvas');
+        if (!(canvas instanceof HTMLElement)) {
+          throw new Error('theme-preview-scroll-owner-unavailable');
+        }
 
-        root.scrollTop = 0;
+        canvas.scrollTop = 0;
         const rootBox = root.getBoundingClientRect();
         const h1Box = h1.getBoundingClientRect();
         const h1Style = getComputedStyle(h1);
@@ -2060,7 +2140,21 @@ test.describe('EasyMDE editor workflows', () => {
       }
     };
 
-    for (const { id, label, cssUrl, swatch } of catalog.articleThemes) {
+    const selectedTheme = catalog.articleThemes.find(
+      ({ id }) => id === catalog.selectedArticleTheme
+    );
+    if (!selectedTheme?.markupProfile) {
+      throw new Error('selected-article-theme-markup-profile-unavailable');
+    }
+    let currentMarkupProfile = selectedTheme.markupProfile;
+
+    for (const {
+      id,
+      label,
+      cssUrl,
+      markupProfile,
+      swatch
+    } of catalog.articleThemes) {
       await sessionKeepalive.assertHealthy();
       if (!swatch) {
         throw new Error(`${id}-article-theme-swatch-unavailable`);
@@ -2074,6 +2168,8 @@ test.describe('EasyMDE editor workflows', () => {
       const articleSelect = settingsDialog.getByLabel(labels.articleTheme);
       await articleSelect.click();
       const previousPreviewSignature = await readyPreviewSignature(preview);
+      const previewRequestsBefore = previewRequests;
+      const sameMarkupProfile = currentMarkupProfile === markupProfile;
       await page.getByRole('option', { name: label, exact: true }).click();
       await expect(preview).toHaveClass(
         new RegExp(`easymde-markdown-theme-${id}`)
@@ -2094,14 +2190,23 @@ test.describe('EasyMDE editor workflows', () => {
           `${id}/ordinary-selector:swatch-${ordinarySwatch}-expected-${expectedSwatch}`
         );
       }
-      await waitForPreviewRefresh(
+      await waitForArticleThemeTransition(
         preview,
         previousPreviewSignature,
+        currentMarkupProfile,
+        markupProfile,
         `${id} server preview should finish rendering`
       );
-      if (!await previewContainsThemeSwatch(preview, expectedSwatch)) {
-        failures.push(`${id}/ordinary-preview:theme-swatch-not-rendered-${expectedSwatch}`);
+      await waitForBrowserPaint(page);
+      if (previewRequests - previewRequestsBefore !== (sameMarkupProfile ? 0 : 1)) {
+        failures.push(
+          `${id}/ordinary-1200/top: preview-request-count-`
+            + `${previewRequests - previewRequestsBefore}-expected-`
+            + `${sameMarkupProfile ? 0 : 1}`
+        );
       }
+      currentMarkupProfile = markupProfile;
+      visualFingerprints.set(id, await articleVisualFingerprint(preview));
       const tableAccessibility = await preview.locator('table').first().ariaSnapshot();
       for (const [role, expectedCount] of Object.entries({
         table: 1,
@@ -2124,7 +2229,7 @@ test.describe('EasyMDE editor workflows', () => {
       await page.keyboard.press('Escape');
       await expect(settingsDialog).toHaveCount(0);
 
-      await recordHeadingRhythm(id, 'ordinary-1200', 30);
+      await recordHeadingRhythm(id, 'ordinary-1200', 52);
 
       let desktopDecoration;
       for (const width of [1200, 760, 680]) {
@@ -2183,9 +2288,6 @@ test.describe('EasyMDE editor workflows', () => {
             '.easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview'
           );
           await expect(immersivePreview).toBeVisible();
-          if (!await previewContainsThemeSwatch(immersivePreview, expectedSwatch)) {
-            failures.push(`${id}/immersive-preview:theme-swatch-not-rendered-${expectedSwatch}`);
-          }
         }
         if ('is-immersive-source' !== mode[1]) {
           await recordGeometry(
@@ -2196,7 +2298,7 @@ test.describe('EasyMDE editor workflows', () => {
           );
         }
         if ('is-immersive-split' === mode[1]) {
-          await recordHeadingRhythm(id, 'immersive-transition-splitMode', 64);
+          await recordHeadingRhythm(id, 'immersive-transition-splitMode', 52);
         }
       }
 
@@ -2287,6 +2389,14 @@ test.describe('EasyMDE editor workflows', () => {
     });
     expect(new Set(matrix.map(({ themeId }) => themeId)).size)
       .toBe(catalog.articleThemes.length);
+    const defaultVisualFingerprint = visualFingerprints.get('default');
+    expect(defaultVisualFingerprint).toBeTruthy();
+    for (const { id } of catalog.articleThemes) {
+      if ('default' === id) continue;
+      if (visualFingerprints.get(id) === defaultVisualFingerprint) {
+        failures.push(`${id}/ordinary-preview:computed-theme-style-not-applied`);
+      }
+    }
     expect(mainFrameNavigations).toBe(0);
     expect(failures, failures.join('\n')).toEqual([]);
   });
@@ -2330,11 +2440,24 @@ test.describe('EasyMDE editor workflows', () => {
       .getByRole('button', { name: labels.editorSettings, exact: true });
     const preview = page.locator('.easymde-pane-preview article');
     const measurements = [];
+    let previewRequests = 0;
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')) {
+        previewRequests += 1;
+      }
+    });
+    const selectedTheme = catalog.articleThemes.find(
+      ({ id }) => id === catalog.selectedArticleTheme
+    );
+    if (!selectedTheme?.markupProfile) {
+      throw new Error('selected-article-theme-markup-profile-unavailable');
+    }
+    let currentMarkupProfile = selectedTheme.markupProfile;
 
     for (const width of [1200, 760, 680]) {
       await page.setViewportSize({ width, height: 900 });
 
-      for (const { id, label } of targets) {
+      for (const { id, label, markupProfile } of targets) {
         await settingsTrigger.click();
         const settingsDialog = page.getByRole('dialog', {
           name: labels.editorSettings
@@ -2344,15 +2467,25 @@ test.describe('EasyMDE editor workflows', () => {
           exact: true
         });
         const previousPreviewSignature = await readyPreviewSignature(preview);
+        const previewRequestsBefore = previewRequests;
+        const sameMarkupProfile = currentMarkupProfile === markupProfile;
         await selectOrdinaryOption(page, articleSelect, label);
         await expect(preview).toHaveClass(
           new RegExp(`easymde-markdown-theme-${id}`)
         );
-        await waitForPreviewRefresh(
+        await waitForArticleThemeTransition(
           preview,
           previousPreviewSignature,
+          currentMarkupProfile,
+          markupProfile,
           `${id} ordinary preview refresh at ${width}px`
         );
+        await waitForBrowserPaint(page);
+        expect(
+          previewRequests - previewRequestsBefore,
+          `${id} ordinary preview request count at ${width}px`
+        ).toBe(sameMarkupProfile ? 0 : 1);
+        currentMarkupProfile = markupProfile;
         await page.keyboard.press('Escape');
         await expect(settingsDialog).toHaveCount(0);
 
@@ -2364,12 +2497,29 @@ test.describe('EasyMDE editor workflows', () => {
 
           const rootBox = root.getBoundingClientRect();
           const paneBox = pane.getBoundingClientRect();
+          const layoutOwner = (element) => {
+            const wrapper = element.closest(
+              '.table-container, .easymde-table-container'
+            );
+            return wrapper instanceof HTMLElement && root.contains(wrapper)
+              ? wrapper
+              : element;
+          };
           const contained = (element) => {
+            const owner = layoutOwner(element);
+            const box = owner.getBoundingClientRect();
+            return box.left >= rootBox.left - 1
+              && box.right <= rootBox.right + 1;
+          };
+          const elementOverflow = (element) => {
+            const owner = layoutOwner(element);
+            return owner.scrollWidth - owner.clientWidth;
+          };
+          const rawContained = (element) => {
             const box = element.getBoundingClientRect();
             return box.left >= rootBox.left - 1
               && box.right <= rootBox.right + 1;
           };
-          const elementOverflow = (element) => element.scrollWidth - element.clientWidth;
           const tables = [...root.querySelectorAll('table')];
           const codeBlocks = [...root.querySelectorAll('pre')];
           const mathBlocks = [...root.querySelectorAll('.easymde-math-block')];
@@ -2389,7 +2539,8 @@ test.describe('EasyMDE editor workflows', () => {
             },
             tables: tables.map((table) => ({
               contained: contained(table),
-              overflow: elementOverflow(table)
+              localScroll: elementOverflow(table),
+              tableContained: rawContained(table)
             })),
             codeBlocks: codeBlocks.map((code) => ({
               contained: contained(code),

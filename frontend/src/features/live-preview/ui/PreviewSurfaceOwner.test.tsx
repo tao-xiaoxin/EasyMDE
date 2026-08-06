@@ -77,6 +77,7 @@ function setup(options?: {
   });
   const enhancementPort: PreviewEnhancementPort = {
     prepareCodeTheme: vi.fn().mockResolvedValue(undefined),
+    syncCodeFrameBackgrounds: vi.fn(),
     enhance: options?.enhance ?? vi.fn().mockResolvedValue(undefined)
   };
   const onDiagnostic = options?.onDiagnostic ?? vi.fn();

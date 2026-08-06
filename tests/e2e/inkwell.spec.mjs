@@ -1,8 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 
-const adminUser = process.env.WORDPRESS_ADMIN_USER || 'admin';
-const adminPassword = process.env.WORDPRESS_ADMIN_PASSWORD || 'admin';
+function requiredEnvironment(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} must be set in the root .env or process environment.`);
+  }
+  return value;
+}
+
+const adminUser = requiredEnvironment('WORDPRESS_ADMIN_USER');
+const adminPassword = requiredEnvironment('WORDPRESS_ADMIN_PASSWORD');
 const fixtureMarkdown = readFileSync(
   new URL('../../docs/examples/markdown-full-capability-test.md', import.meta.url),
   'utf8'

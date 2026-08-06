@@ -461,6 +461,7 @@ export function EditorRoot(props: EditorRootProps) {
     generation: number;
   } | null>(null);
   const codeThemePreparationGenerationRef = useRef(0);
+  const codeThemeFrameSyncPendingRef = useRef<string | null>(null);
   const codeThemeExplicitRef = useRef(props.appearance.codeThemeExplicit);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
@@ -1333,8 +1334,8 @@ export function EditorRoot(props: EditorRootProps) {
         ) {
           return;
         }
+        codeThemeFrameSyncPendingRef.current = appearanceState.codeTheme;
         setRenderedCodeTheme(appearanceState.codeTheme);
-        scheduleCurrentWechatPreviewPreparation();
       },
       (error: unknown) => {
         const current = codeThemePreparationRef.current;
@@ -1357,6 +1358,27 @@ export function EditorRoot(props: EditorRootProps) {
     renderedCodeTheme,
     scheduleCurrentWechatPreviewPreparation,
     visualPreviewEditing
+  ]);
+
+  useLayoutEffect(() => {
+    if (codeThemeFrameSyncPendingRef.current !== renderedCodeTheme) return;
+    codeThemeFrameSyncPendingRef.current = null;
+    const surface = previewRuntimeRef.current?.surface;
+    if (!surface) {
+      props.onFailure('preview-enhancement-runtime-unavailable');
+      return;
+    }
+    try {
+      props.enhancementPort.syncCodeFrameBackgrounds(surface);
+      scheduleCurrentWechatPreviewPreparation();
+    } catch (error) {
+      props.onFailure(previewEnhancementFailureCode(error));
+    }
+  }, [
+    props.enhancementPort,
+    props.onFailure,
+    renderedCodeTheme,
+    scheduleCurrentWechatPreviewPreparation
   ]);
 
   useLayoutEffect(() => {

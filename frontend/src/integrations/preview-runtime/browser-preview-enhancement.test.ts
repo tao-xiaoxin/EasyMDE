@@ -9,10 +9,11 @@ import {
 const appended: Element[] = [];
 
 function runtime(
-  enhance = vi.fn().mockResolvedValue(undefined)
+  enhance = vi.fn().mockResolvedValue(undefined),
+  syncCodeFrameBackgrounds = vi.fn()
 ): PreviewEnhancementBrowserRuntime {
   return {
-    getEnhancements: () => ({ enhance }),
+    getEnhancements: () => ({ enhance, syncCodeFrameBackgrounds }),
     hasHighlight: () => true,
     hasKatex: () => true,
     hasMathRenderer: () => true,
@@ -118,6 +119,22 @@ describe('createBrowserPreviewEnhancementPort', () => {
     expect(document.querySelector<HTMLLinkElement>('#easymde-highlight-theme-css')?.href)
       .toContain('/assets/vendor/highlight/styles/github.min.css');
     expect(enhance).not.toHaveBeenCalled();
+  });
+
+  it('forwards lightweight code-frame background synchronization', () => {
+    const syncCodeFrameBackgrounds = vi.fn();
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      {
+        documentRef: document,
+        runtime: runtime(undefined, syncCodeFrameBackgrounds)
+      }
+    );
+    const surface = document.createElement('article');
+
+    port.syncCodeFrameBackgrounds(surface);
+
+    expect(syncCodeFrameBackgrounds).toHaveBeenCalledWith(surface);
   });
 
   it('keeps only the latest code theme and settles superseded out-of-order loads', async () => {

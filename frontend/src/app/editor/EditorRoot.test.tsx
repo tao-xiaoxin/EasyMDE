@@ -4155,6 +4155,7 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
     await waitFor(() => {
+      expect(props.previewPort.render).toHaveBeenCalledTimes(2);
       expect(props.previewPort.render).toHaveBeenLastCalledWith(
         expect.objectContaining({ markdownTheme: 'newsprint' }),
         expect.any(AbortSignal)

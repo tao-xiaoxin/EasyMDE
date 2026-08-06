@@ -893,7 +893,7 @@ msgstr "inline code"
 
 #: src/Admin/AdminAssets.php:837
 msgid "Theme preview"
-msgstr "这是注释"
+msgstr "主题预览"
 
 #: src/Admin/AdminAssets.php:838
 msgid "Blockquote and callout styling preview."

@@ -375,6 +375,42 @@ function rootPseudoRules(source, root) {
     .filter((selector) => rootPseudoSelector(root, selector)));
 }
 
+function registeredArticleThemes() {
+  const registry = readFileSync(join(repoRoot, 'src/Theme/ArticleThemeRegistry.php'), 'utf8');
+
+  return Array.from(
+    registry.matchAll(
+      /=>\s*\$this->theme\(\s*'([^']+)'[\s\S]*?'(assets\/themes\/article\/[^']+\.css)'/g
+    ),
+    ([, id, assetPath]) => ({ id, assetPath })
+  );
+}
+
+function selectorPreludeFailures(css, dom) {
+  const element = dom.window.document.createElement('div');
+  const failures = [];
+
+  for (const rule of parseCssRules(css)) {
+    for (const selector of rule.selectors) {
+      const normalized = normalizeCssSelector(selector);
+      if (!normalized || /\/\*|\*\//.test(normalized)) {
+        failures.push({ selector: normalized, reason: 'comment-marker-in-selector-prelude' });
+        continue;
+      }
+
+      try {
+        element.matches(normalized);
+      } catch (error) {
+        // jsdom does not expose Firefox's selection pseudo-element, although it is valid CSS.
+        if (normalized.endsWith('::-moz-selection')) continue;
+        failures.push({ reason: String(error.message), selector: normalized });
+      }
+    }
+  }
+
+  return failures;
+}
+
 function targetsCodeFrame(selector) {
   const normalizedSelector = selector
     .replaceAll(/:not\(\s*pre\s*\)/g, '')
@@ -776,16 +812,38 @@ test('shared code typography prefers the neutral Mac terminal font stack', () =>
 
 test('Inkwell light keeps its scoped palette', () => {
   const light = readFileSync(join(repoRoot, 'assets/themes/article/inkwell.css'), 'utf8');
+  const root = scopedArticleRoot('inkwell');
+  const rootPalette = cssRuleBodyMatching(
+    light,
+    root,
+    (body) => /--text-color:\s*#3d4852;/.test(body)
+  );
+  const palette = [
+    ['--text-color', '#3d4852'],
+    ['--heading-color', '#1a2332'],
+    ['--heading-secondary', '#2c3e50'],
+    ['--link-color', '#3b82c4'],
+    ['--code-bg', '#f6f8fb'],
+    ['--code-text', '#c7254e'],
+    ['--border-color', '#e2e8f0']
+  ];
 
-  assert.equal(cssVariable(light, '--bg-color'), '#ffffff');
-  assert.equal(cssVariable(light, '--text-color'), '#3d4852');
-  assert.equal(cssVariable(light, '--heading-color'), '#1a2332');
-  assert.equal(cssVariable(light, '--heading-secondary'), '#2c3e50');
-  assert.equal(cssVariable(light, '--link-color'), '#3b82c4');
-  assert.equal(cssVariable(light, '--code-bg'), '#f6f8fb');
-  assert.equal(cssVariable(light, '--code-text'), '#c7254e');
-  assert.equal(cssVariable(light, '--border-color'), '#e2e8f0');
-  assert.match(light, /\.easymde-rendered-content\.easymde-markdown-theme-inkwell\s*\{/);
+  assert.ok(rootPalette, 'Inkwell light palette must be declared on its scoped article root');
+  const dom = new JSDOM(
+    `<style>${light}</style><div class="easymde-rendered-content easymde-markdown-theme-inkwell"></div>`
+  );
+  const renderedRoot = dom.window.document.querySelector(root);
+  const computedRoot = dom.window.getComputedStyle(renderedRoot);
+
+  assert.ok(renderedRoot, 'Inkwell light root should match a rendered preview element');
+  for (const [name, expected] of palette) {
+    assert.equal(cssVariable(rootPalette, name), expected, `${name} should stay on the Inkwell root`);
+    assert.equal(
+      computedRoot.getPropertyValue(name).trim(),
+      expected,
+      `${name} should be reachable from the rendered Inkwell root`
+    );
+  }
   assert.doesNotMatch(light, /(?:^|[,{])\s*(?:html|body|:root)\s*(?:[,\{])/m);
 });
 
@@ -1010,6 +1068,39 @@ test('Typora-derived article roots delegate frame geometry to the owning preview
   assert.deepEqual(failures, [], `article root contract failures: ${JSON.stringify(failures)}`);
 });
 
+test('registered article CSS has valid selector preludes and reachable scoped roots', () => {
+  const themes = registeredArticleThemes();
+  const dom = new JSDOM('<!doctype html><div></div>');
+  const failures = [];
+
+  assert.ok(themes.length > 0, 'article theme registry should expose CSS assets');
+
+  for (const { id, assetPath } of themes) {
+    const css = readFileSync(join(repoRoot, assetPath), 'utf8');
+    const root = scopedArticleRoot(id);
+    const parsedRules = parseCssRules(css);
+    const rootRules = parsedRules.filter((rule) => rule.selectors
+      .map(normalizeCssSelector)
+      .includes(root));
+    const selectorFailures = selectorPreludeFailures(css, dom);
+
+    if (selectorFailures.length > 0 || rootRules.length === 0) {
+      failures.push({
+        assetPath,
+        id,
+        rootReachable: rootRules.length > 0,
+        selectorFailures
+      });
+    }
+  }
+
+  assert.deepEqual(
+    failures,
+    [],
+    `registered article CSS selector contract failures: ${JSON.stringify(failures)}`
+  );
+});
+
 test('Rose Purple owns the article-scoped 20px light-gray grid while Ningye Purple remains plain', () => {
   const exactRootDeclarations = (css, root) => parseCssRules(css).flatMap((rule) => {
     if (!rule.selectors.map(normalizeCssSelector).includes(root)) return [];
@@ -1127,7 +1218,7 @@ test('DogsChoice keeps the upstream 七彩虹 pink palette in a scoped adapter',
   const root = '.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink';
 
   assert.match(css, new RegExp(`${root.replaceAll('.', '\\.')}`));
-  assert.equal(cssVariable(css, '--active-file-bg-color'), '#FAE8FF');
+  assert.equal(cssVariable(css, '--img-border-color'), '#FFE8F7');
   assert.equal(cssVariable(css, '--text-em-color'), '#f55066');
   assert.equal(cssVariable(css, '--h1-background-color'), '#FFE8E8');
   assert.equal(cssVariable(css, '--blockquote-bg-color'), '#E4FFEA');
@@ -1143,10 +1234,11 @@ test('Bloom focus-mode effects stay opt-in in EasyMDE adapters', () => {
 
   for (const file of bloomFiles) {
     const css = readFileSync(join(repoRoot, 'assets/themes/article', file), 'utf8');
-    const rootMatch = css.match(/\.easymde-rendered-content\.easymde-markdown-theme-[a-z0-9-]+/);
+    const themeId = file.replace(/\.css$/, '');
+    const root = scopedArticleRoot(themeId);
 
-    assert.ok(rootMatch, `${file} should declare an EasyMDE root`);
-    const literalRoot = rootMatch[0].replaceAll('.', '\\.');
+    assert.ok(css.includes(root), `${file} should declare its own EasyMDE root`);
+    const literalRoot = escapedRegExp(root);
 
     assert.doesNotMatch(
       css,

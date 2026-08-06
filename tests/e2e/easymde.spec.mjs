@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
+import { selectOrdinaryOption } from './helpers/ordinary-select.mjs';
 import { runCleanupSteps } from './support/run-cleanup-steps.mjs';
 
 const wpPath = process.env.EASYMDE_E2E_WP_PATH;
@@ -92,6 +93,163 @@ function collectRuntimeAssetRequests(page) {
   return requests;
 }
 
+function collectPreviewRequestOutcomes(page) {
+  const outcomes = [];
+  const outcomeByRequest = new WeakMap();
+  const settledByOutcome = new WeakMap();
+  const settleByOutcome = new WeakMap();
+  const previewPath = '/wp-json/easymde/v1/preview';
+
+  page.on('request', (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if ('POST' !== request.method() || !pathname.endsWith(previewPath)) {
+      return;
+    }
+
+    let payload;
+    const payloadText = request.postData();
+    let parseError = null;
+    try {
+      payload = request.postDataJSON();
+    } catch (error) {
+      parseError = error instanceof Error ? error.message : String(error);
+    }
+
+    const outcome = {
+      markdownTheme:
+        payload && 'object' === typeof payload && 'string' === typeof payload.markdown_theme
+          ? payload.markdown_theme
+          : null,
+      payloadDigest: 'string' === typeof payloadText
+        ? createHash('sha256').update(payloadText).digest('hex')
+        : null,
+      status: null,
+      failure: null,
+      parseError,
+      responseErrorCode: null,
+      responseBodyError: null,
+      responseParseError: null
+    };
+    let settle;
+    const settled = new Promise((resolve) => {
+      settle = resolve;
+    });
+    outcomes.push(outcome);
+    outcomeByRequest.set(request, outcome);
+    settledByOutcome.set(outcome, settled);
+    settleByOutcome.set(outcome, settle);
+  });
+
+  page.on('response', async (response) => {
+    const outcome = outcomeByRequest.get(response.request());
+    if (!outcome) {
+      return;
+    }
+
+    outcome.status = response.status();
+    try {
+      const responseBody = await response.body();
+      if (!response.ok()) {
+        const body = JSON.parse(responseBody.toString('utf8'));
+        outcome.responseErrorCode =
+          body && 'object' === typeof body && 'string' === typeof body.code
+            ? body.code
+            : null;
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (response.ok()) {
+        outcome.responseBodyError = errorMessage;
+      } else {
+        outcome.responseParseError = errorMessage;
+      }
+    } finally {
+      settleByOutcome.get(outcome)?.();
+    }
+  });
+
+  page.on('requestfailed', (request) => {
+    const outcome = outcomeByRequest.get(request);
+    if (outcome) {
+      outcome.failure = request.failure()?.errorText ?? 'unknown-request-failure';
+      settleByOutcome.get(outcome)?.();
+    }
+  });
+
+  return {
+    get length() {
+      return outcomes.length;
+    },
+    async evidence(startIndex, markdownTheme) {
+      let observed = [];
+      let stabilized = false;
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const observedEnd = outcomes.length;
+        observed = outcomes.slice(startIndex, observedEnd);
+        await Promise.all(observed.map((outcome) => settledByOutcome.get(outcome)));
+        await page.evaluate(() => new Promise((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
+        }));
+        if (outcomes.length === observedEnd) {
+          stabilized = true;
+          break;
+        }
+      }
+      if (!stabilized) {
+        throw new Error('preview-request-evidence-did-not-stabilize');
+      }
+
+      const invalid = observed.filter(
+        ({
+          markdownTheme: observedTheme,
+          payloadDigest,
+          parseError,
+          responseBodyError,
+          responseParseError
+        }) => (
+          parseError
+          || responseBodyError
+          || responseParseError
+          || null === observedTheme
+          || null === payloadDigest
+        )
+      );
+      const nonTarget = observed.filter(
+        ({ markdownTheme: observedTheme }) => observedTheme !== markdownTheme
+      );
+      const target = observed.filter(
+        ({ markdownTheme: observedTheme }) => observedTheme === markdownTheme
+      );
+      const successful = target.filter(
+        ({ status, failure }) => (
+          null === failure
+          && null !== status
+          && status >= 200
+          && status < 300
+        )
+      );
+      const failed = target.filter((outcome) => !successful.includes(outcome));
+      const nonceRetries = failed.filter(
+        ({ failure, responseErrorCode, status }) => (
+          null === failure
+          && 403 === status
+          && 'rest_cookie_invalid_nonce' === responseErrorCode
+        )
+      );
+
+      return {
+        observed,
+        invalid,
+        nonTarget,
+        target,
+        successful,
+        failed,
+        nonceRetries
+      };
+    }
+  };
+}
+
 function expectRuntimeAssetRequests(requests, expectedKeys, origin) {
   const managedRequests = requests.filter(({ key }) => null !== key);
 
@@ -126,31 +284,6 @@ function runWp(args, options = {}) {
   }
 
   return result.stdout.trim();
-}
-
-async function selectOrdinaryOption(page, combobox, optionLabel) {
-  await combobox.focus();
-  await expect(combobox).toBeFocused();
-  await page.keyboard.press('Enter');
-  await expect(combobox).toHaveAttribute('aria-expanded', 'true');
-  const listboxId = await combobox.getAttribute('aria-controls');
-  if (!listboxId) {
-    throw new Error('ordinary-select-listbox-owner-unavailable');
-  }
-  const options = page.locator(`[id=${JSON.stringify(listboxId)}] [role="option"]`);
-  const optionLabels = (await options.allTextContents()).map((label) => label.trim());
-  const optionIndex = optionLabels.indexOf(optionLabel);
-  if (-1 === optionIndex) {
-    throw new Error(`ordinary-select-option-unavailable:${optionLabel}`);
-  }
-  const option = options.nth(optionIndex);
-  const optionId = await option.getAttribute('id');
-  if (!optionId) {
-    throw new Error('ordinary-select-option-id-unavailable');
-  }
-  await option.click();
-  await expect(combobox).toHaveAttribute('aria-expanded', 'false');
-  await expect(combobox).toContainText(optionLabel);
 }
 
 function testSlug(testInfo) {
@@ -2048,16 +2181,10 @@ test.describe('EasyMDE editor workflows', () => {
       boxes: decoration.boxes.map(({ selector, flexBasis }) => ({ selector, flexBasis }))
     });
     let mainFrameNavigations = 0;
-    let previewRequests = 0;
+    const previewRequests = collectPreviewRequestOutcomes(page);
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) mainFrameNavigations += 1;
     });
-    page.on('request', (request) => {
-      if (new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')) {
-        previewRequests += 1;
-      }
-    });
-
     const recordGeometry = async (
       themeId,
       state,
@@ -2166,11 +2293,10 @@ test.describe('EasyMDE editor workflows', () => {
         name: labels.editorSettings
       });
       const articleSelect = settingsDialog.getByLabel(labels.articleTheme);
-      await articleSelect.click();
       const previousPreviewSignature = await readyPreviewSignature(preview);
-      const previewRequestsBefore = previewRequests;
+      const previewRequestsBefore = previewRequests.length;
       const sameMarkupProfile = currentMarkupProfile === markupProfile;
-      await page.getByRole('option', { name: label, exact: true }).click();
+      await selectOrdinaryOption(page, articleSelect, label);
       await expect(preview).toHaveClass(
         new RegExp(`easymde-markdown-theme-${id}`)
       );
@@ -2198,11 +2324,46 @@ test.describe('EasyMDE editor workflows', () => {
         `${id} server preview should finish rendering`
       );
       await waitForBrowserPaint(page);
-      if (previewRequests - previewRequestsBefore !== (sameMarkupProfile ? 0 : 1)) {
+      const requestEvidence = await previewRequests.evidence(
+        previewRequestsBefore,
+        id
+      );
+      if (requestEvidence.invalid.length || requestEvidence.nonTarget.length) {
         failures.push(
-          `${id}/ordinary-1200/top: preview-request-count-`
-            + `${previewRequests - previewRequestsBefore}-expected-`
-            + `${sameMarkupProfile ? 0 : 1}`
+          `${id}/ordinary-1200/top: preview-request-payload-invalid-`
+            + JSON.stringify({
+              invalid: requestEvidence.invalid,
+              nonTarget: requestEvidence.nonTarget
+            })
+        );
+      }
+      const retryIsValid =
+        !sameMarkupProfile
+        && 1 === requestEvidence.nonceRetries.length
+        && 1 === requestEvidence.successful.length
+        && 1 === requestEvidence.failed.length
+        && requestEvidence.nonceRetries[0].payloadDigest
+          === requestEvidence.successful[0].payloadDigest
+        && requestEvidence.observed.indexOf(requestEvidence.nonceRetries[0]) + 1
+          === requestEvidence.observed.indexOf(requestEvidence.successful[0])
+        && requestEvidence.observed.length === requestEvidence.target.length
+        && requestEvidence.target.indexOf(requestEvidence.nonceRetries[0])
+          < requestEvidence.target.indexOf(requestEvidence.successful[0]);
+      if (
+        (sameMarkupProfile && requestEvidence.target.length)
+        || (!sameMarkupProfile && requestEvidence.failed.length && !retryIsValid)
+      ) {
+        failures.push(
+          `${id}/ordinary-1200/top: unexpected-preview-request-failure-`
+            + JSON.stringify(requestEvidence.target)
+        );
+      }
+      if (requestEvidence.successful.length !== (sameMarkupProfile ? 0 : 1)) {
+        failures.push(
+          `${id}/ordinary-1200/top: preview-success-count-`
+            + `${requestEvidence.successful.length}-expected-`
+            + `${sameMarkupProfile ? 0 : 1}-observed-`
+            + JSON.stringify(requestEvidence.observed)
         );
       }
       currentMarkupProfile = markupProfile;
@@ -2445,12 +2606,8 @@ test.describe('EasyMDE editor workflows', () => {
       .getByRole('button', { name: labels.editorSettings, exact: true });
     const preview = page.locator('.easymde-pane-preview article');
     const measurements = [];
-    let previewRequests = 0;
-    page.on('request', (request) => {
-      if (new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')) {
-        previewRequests += 1;
-      }
-    });
+    const requestFailures = [];
+    const previewRequests = collectPreviewRequestOutcomes(page);
     const selectedTheme = catalog.articleThemes.find(
       ({ id }) => id === catalog.selectedArticleTheme
     );
@@ -2472,7 +2629,7 @@ test.describe('EasyMDE editor workflows', () => {
           exact: true
         });
         const previousPreviewSignature = await readyPreviewSignature(preview);
-        const previewRequestsBefore = previewRequests;
+        const previewRequestsBefore = previewRequests.length;
         const sameMarkupProfile = currentMarkupProfile === markupProfile;
         await selectOrdinaryOption(page, articleSelect, label);
         await expect(preview).toHaveClass(
@@ -2486,10 +2643,47 @@ test.describe('EasyMDE editor workflows', () => {
           `${id} ordinary preview refresh at ${width}px`
         );
         await waitForBrowserPaint(page);
-        expect(
-          previewRequests - previewRequestsBefore,
-          `${id} ordinary preview request count at ${width}px`
-        ).toBe(sameMarkupProfile ? 0 : 1);
+        const requestEvidence = await previewRequests.evidence(
+          previewRequestsBefore,
+          id
+        );
+        if (requestEvidence.invalid.length || requestEvidence.nonTarget.length) {
+          requestFailures.push(
+            `${id}/${width}:invalid-preview-request-`
+              + JSON.stringify({
+                invalid: requestEvidence.invalid,
+                nonTarget: requestEvidence.nonTarget
+              })
+          );
+        }
+        const retryIsValid =
+          !sameMarkupProfile
+          && 1 === requestEvidence.nonceRetries.length
+          && 1 === requestEvidence.successful.length
+          && 1 === requestEvidence.failed.length
+          && requestEvidence.nonceRetries[0].payloadDigest
+            === requestEvidence.successful[0].payloadDigest
+          && requestEvidence.observed.indexOf(requestEvidence.nonceRetries[0]) + 1
+            === requestEvidence.observed.indexOf(requestEvidence.successful[0])
+          && requestEvidence.observed.length === requestEvidence.target.length
+          && requestEvidence.target.indexOf(requestEvidence.nonceRetries[0])
+            < requestEvidence.target.indexOf(requestEvidence.successful[0]);
+        if (
+          (sameMarkupProfile && requestEvidence.target.length)
+          || (!sameMarkupProfile && requestEvidence.failed.length && !retryIsValid)
+        ) {
+          requestFailures.push(
+            `${id}/${width}:unexpected-preview-request-failure-`
+              + JSON.stringify(requestEvidence.target)
+          );
+        }
+        if (requestEvidence.successful.length !== (sameMarkupProfile ? 0 : 1)) {
+          requestFailures.push(
+            `${id}/${width}:preview-success-count-${requestEvidence.successful.length}`
+              + `-expected-${sameMarkupProfile ? 0 : 1}-observed-`
+              + JSON.stringify(requestEvidence.observed)
+          );
+        }
         currentMarkupProfile = markupProfile;
         await page.keyboard.press('Escape');
         await expect(settingsDialog).toHaveCount(0);
@@ -2558,7 +2752,12 @@ test.describe('EasyMDE editor workflows', () => {
           };
         });
 
-        measurements.push({ id, width, ...geometry });
+        measurements.push({
+          id,
+          width,
+          previewRequests: requestEvidence.observed,
+          ...geometry
+        });
       }
     }
 
@@ -2567,11 +2766,14 @@ test.describe('EasyMDE editor workflows', () => {
       || pane.overflow > 1
       || [...tables, ...codeBlocks, ...mathBlocks].some(({ contained }) => !contained)
     ));
-    expect(failures, JSON.stringify(failures, null, 2)).toEqual([]);
     await testInfo.attach('ordinary-theme-boundary-matrix.json', {
       body: JSON.stringify(measurements, null, 2),
       contentType: 'application/json'
     });
+    expect(
+      [...requestFailures, ...failures],
+      JSON.stringify({ requestFailures, failures }, null, 2)
+    ).toEqual([]);
   });
 
   test('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
@@ -2928,7 +3130,8 @@ test.describe('EasyMDE editor workflows', () => {
     const customCodeOption = page.getByRole('listbox', { name: labels.codeTheme })
       .getByRole('option', { name: customCodeName, exact: true });
     await expect(customCodeOption).toHaveAttribute('aria-selected', 'false');
-    await customCodeOption.click();
+    await page.keyboard.press('Escape');
+    await selectOrdinaryOption(page, codeSelect, customCodeName);
     await expect(codeSelect).toContainText(customCodeName);
     await expect(codeSelect).not.toContainText(customName);
     await expect(page.locator('body')).not.toContainText(removedCombinedName);

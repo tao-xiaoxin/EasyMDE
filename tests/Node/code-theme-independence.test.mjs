@@ -69,19 +69,309 @@ function typoraCodePaletteSources() {
   return JSON.parse(source('docs/typora-code-palette-sources.json'));
 }
 
+function stripCssComments(css) {
+  return css.replaceAll(/\/\*[\s\S]*?\*\//g, '');
+}
+
+function findCssBlockEnd(css, openingBrace) {
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+
+  for (let index = openingBrace; index < css.length; index += 1) {
+    const character = css[index];
+
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = null;
+      continue;
+    }
+
+    if (character === '"' || character === "'") quote = character;
+    else if (character === '{') depth += 1;
+    else if (character === '}') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+
+  throw new Error(`Unclosed CSS block starting at offset ${openingBrace}`);
+}
+
+function splitCssList(value, delimiter) {
+  const parts = [];
+  let start = 0;
+  let quote = null;
+  let escaped = false;
+  let parentheses = 0;
+  let brackets = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = null;
+      continue;
+    }
+
+    if (character === '"' || character === "'") quote = character;
+    else if (character === '(') parentheses += 1;
+    else if (character === ')') parentheses = Math.max(0, parentheses - 1);
+    else if (character === '[') brackets += 1;
+    else if (character === ']') brackets = Math.max(0, brackets - 1);
+    else if (character === delimiter && parentheses === 0 && brackets === 0) {
+      parts.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  const finalPart = value.slice(start).trim();
+  if (finalPart) parts.push(finalPart);
+  return parts;
+}
+
+function cssRules(sourceCss) {
+  const css = stripCssComments(sourceCss);
+  const rules = [];
+
+  function walk(start, end) {
+    let position = start;
+
+    while (position < end) {
+      while (position < end && /[\s;]/.test(css[position])) position += 1;
+      if (position >= end) break;
+
+      let quote = null;
+      let escaped = false;
+      let parentheses = 0;
+      let brackets = 0;
+      let openingBrace = -1;
+      let statementEnd = -1;
+
+      for (let index = position; index < end; index += 1) {
+        const character = css[index];
+
+        if (quote) {
+          if (escaped) escaped = false;
+          else if (character === '\\') escaped = true;
+          else if (character === quote) quote = null;
+          continue;
+        }
+
+        if (character === '"' || character === "'") quote = character;
+        else if (character === '(') parentheses += 1;
+        else if (character === ')') parentheses = Math.max(0, parentheses - 1);
+        else if (character === '[') brackets += 1;
+        else if (character === ']') brackets = Math.max(0, brackets - 1);
+        else if (parentheses === 0 && brackets === 0 && character === '{') {
+          openingBrace = index;
+          break;
+        } else if (parentheses === 0 && brackets === 0 && character === ';') {
+          statementEnd = index;
+          break;
+        }
+      }
+
+      if (statementEnd >= 0 && (openingBrace < 0 || statementEnd < openingBrace)) {
+        position = statementEnd + 1;
+        continue;
+      }
+      if (openingBrace < 0) break;
+
+      const prelude = css.slice(position, openingBrace).trim();
+      const blockEnd = findCssBlockEnd(css, openingBrace);
+      if (/^@(?:media|supports|container|layer|document|scope)\b/i.test(prelude)) {
+        walk(openingBrace + 1, blockEnd);
+      } else if (!prelude.startsWith('@')) {
+        rules.push({
+          body: css.slice(openingBrace + 1, blockEnd),
+          selectors: splitCssList(prelude, ',')
+        });
+        // Native CSS nesting places complete rules inside a style rule. Walk
+        // those blocks too so ownership checks cannot be bypassed with `&`.
+        walk(openingBrace + 1, blockEnd);
+      }
+      position = blockEnd + 1;
+    }
+  }
+
+  walk(0, css.length);
+  return rules;
+}
+
+function cssDeclarations(body) {
+  return splitCssList(body, ';').flatMap((segment) => {
+    const match = segment.match(/^\s*(--[\w-]+|[a-zA-Z_][\w-]*)\s*:/);
+    if (!match) return [];
+    const property = match[1];
+    return [{
+      property: property.startsWith('--') ? property : property.toLowerCase(),
+      value: segment.slice(match[0].length).trim()
+    }];
+  });
+}
+
 function cssSelectors(css) {
-  return Array.from(css.matchAll(/([^{}]+)\{[^{}]*\}/g), ([, selectors]) => (
-    selectors.split(',').map((selector) => selector.trim())
-  )).flat();
+  return cssRules(css).flatMap(({ selectors }) => selectors);
+}
+
+function normalizeSelector(selector) {
+  return selector.replaceAll(/\s+/g, ' ').trim();
+}
+
+function withoutFunctionalPseudoClass(selector, pseudoClass) {
+  const marker = `:${pseudoClass}(`;
+  let result = '';
+  let position = 0;
+
+  while (position < selector.length) {
+    const start = selector.toLowerCase().indexOf(marker, position);
+    if (start < 0) return result + selector.slice(position);
+
+    result += selector.slice(position, start);
+    let depth = 1;
+    let quote = null;
+    let escaped = false;
+    let end = start + marker.length;
+
+    for (; end < selector.length && depth > 0; end += 1) {
+      const character = selector[end];
+
+      if (quote) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === quote) quote = null;
+        continue;
+      }
+
+      if (character === '"' || character === "'") quote = character;
+      else if (character === '(') depth += 1;
+      else if (character === ')') depth -= 1;
+    }
+
+    if (depth > 0) throw new Error(`Unclosed :${pseudoClass}() in selector: ${selector}`);
+    position = end;
+  }
+
+  return result;
+}
+
+const BLOOM_FOCUS_HOOK_THEMES = new Set([
+  'bloom-petal',
+  'bloom-mist',
+  'bloom-verdant',
+  'bloom-stone',
+  'bloom-wheat',
+  'bloom-ink',
+  'bloom-amber',
+  'bloom-lapis',
+  'bloom-ripple',
+  'bloom-cinnabar',
+  'bloom-sage',
+  'bloom-spring'
+]);
+
+function unreachableTyporaClasses(selector, themeId) {
+  const positiveSelector = withoutFunctionalPseudoClass(normalizeSelector(selector), 'not');
+  const classes = Array.from(
+    positiveSelector.matchAll(/\.((?:md)-[\w-]+)/gi),
+    ([, className]) => className.toLowerCase()
+  );
+
+  return Array.from(new Set(classes.filter((className) => {
+    if ('md-focus-element' === className) {
+      return !(
+        BLOOM_FOCUS_HOOK_THEMES.has(themeId)
+        && /\.on-focus-mode\b/.test(positiveSelector)
+      );
+    }
+    return !/^md-alert(?:-[\w-]+)?$/.test(className);
+  })));
+}
+
+function legacyMathAdapterSelector(selector) {
+  const positiveSelector = withoutFunctionalPseudoClass(normalizeSelector(selector), 'not');
+
+  return /\.MathJax(?:\b|[_-])/i.test(positiveSelector)
+    || /(^|[\s>+~])mjx-container(?=$|[\s>+~:.[#])/i.test(positiveSelector);
 }
 
 function blockCodeSelector(selector) {
-  const normalizedSelector = selector.replaceAll(':not(pre)', '');
-  const inlineOnly = /(?:(?:p|li|h[1-6]) code|:not\(pre\)\s*>\s*code)/.test(selector);
-  const codeElement = /(^|[\s>+~])code(?=$|[\s>+~:.[#])/.test(normalizedSelector);
+  const normalizedSelector = normalizeSelector(selector);
+  const positiveSelector = normalizedSelector
+    .replaceAll(/:not\(\s*pre\s*\)/gi, '')
+    .replaceAll(/:not\(\s*\.md-fencescode\s*\)/gi, '');
+  const inlineOnly = /(?:^|[\s>+~])(?:p|li|h[1-6])(?:[.#:[\][\]\w-]*)?\s+(?:[^,{]+\s+)?code(?=$|[\s>+~:.[#])/i
+    .test(normalizedSelector)
+    || /:not\(\s*pre\s*\)\s*>\s*code(?=$|[\s>+~:.[#])/i.test(normalizedSelector)
+    || /\.md-alert(?:-[\w-]+)?\s+code(?=$|[\s>+~:.[#])/i.test(normalizedSelector);
+  const codeElement = /(^|[\s,(>+~])code(?=$|[\s,)>+~:.[#])/i.test(positiveSelector);
 
-  return /(^|[\s>+~])pre(?=$|[\s>+~:.[#])|\.hljs(?:-|\b)|\.code-snippet__fix\b/.test(normalizedSelector)
+  return /#typora-source\b/i.test(positiveSelector)
+    || /\.CodeMirror(?:-[\w-]+)?\b/i.test(positiveSelector)
+    || /\.cm-[\w-]+\b/i.test(positiveSelector)
+    || /\.md-fences(?:-[\w-]+)?\b/i.test(positiveSelector)
+    || /\.hljs(?:-[\w-]+)?\b/i.test(positiveSelector)
+    || /\.code-snippet__(?:fix|line-index)\b/i.test(positiveSelector)
+    || /\[\s*mdtype\s*=\s*["']?fences["']?\s*\]/i.test(positiveSelector)
+    || /(^|[\s,(>+~])pre(?=$|[\s,)>+~:.[#])/i.test(positiveSelector)
     || (codeElement && !inlineOnly);
+}
+
+const FENCED_CODE_ONLY_VARIABLE = /^--(?:cm-s-inner-linenumber-color|code-fences(?:-[\w-]+)?|codeblock-bg-color|color-cm-keyword|code-(?:bg|text|ink|muted-rgb|dot-(?:red|yellow|green)|token-(?:keyword|string|number|blue)))$/;
+
+function referencedCustomProperties(value) {
+  return Array.from(
+    value.matchAll(/var\(\s*(--[\w-]+)/g),
+    ([, variable]) => variable
+  );
+}
+
+function unconsumedFencedCodeVariables(css) {
+  const rules = cssRules(css);
+  const declarations = rules.flatMap(({ body }) => cssDeclarations(body));
+  const consumers = new Set(
+    declarations.flatMap(({ value }) => referencedCustomProperties(value))
+  );
+
+  return Array.from(new Set(
+    declarations
+      .map(({ property }) => property)
+      .filter((property) => FENCED_CODE_ONLY_VARIABLE.test(property) && !consumers.has(property))
+  )).sort();
+}
+
+function orphanCustomProperties(css) {
+  const declarations = cssRules(css).flatMap(({ body }) => cssDeclarations(body));
+  const dependencies = new Map();
+  const live = [];
+
+  for (const declaration of declarations) {
+    const references = referencedCustomProperties(declaration.value);
+    if (declaration.property.startsWith('--')) {
+      const existing = dependencies.get(declaration.property) ?? new Set();
+      for (const reference of references) existing.add(reference);
+      dependencies.set(declaration.property, existing);
+    } else {
+      live.push(...references);
+    }
+  }
+
+  const reachable = new Set();
+  while (live.length > 0) {
+    const variable = live.pop();
+    if (reachable.has(variable) || !dependencies.has(variable)) continue;
+
+    reachable.add(variable);
+    live.push(...dependencies.get(variable));
+  }
+
+  return Array.from(dependencies.keys())
+    .filter((variable) => !reachable.has(variable))
+    .sort();
 }
 
 test('every article theme declares a registered associated code theme', () => {
@@ -211,7 +501,71 @@ test('Fullstack Blue preserves its distinct token palette without content rewrit
   assert.doesNotMatch(css, /font-family|font-size|line-height|letter-spacing|padding-top|border-radius|box-shadow/);
 });
 
-test('registered article themes contain no block-code presentation selectors', () => {
+test('article code ownership classifier rejects legacy fenced selectors without rejecting inline code', () => {
+  const fencedSelectors = cssSelectors(`
+    @media (min-width: 40rem) {
+      .theme #typora-source .cm-keyword,
+      .theme .CodeMirror-gutters,
+      .theme .md-fences,
+      .theme pre,
+      .theme pre > code.hljs,
+      .theme .hljs-string,
+      .theme [mdtype="fences"] .code-tooltip,
+      .theme .code-snippet__fix {
+        color: red;
+      }
+    }
+  `);
+  const inlineSelectors = cssSelectors(`
+    .theme :not(pre) > code:not(.md-fencescode),
+    .theme p code,
+    .theme li code:hover,
+    .theme h6 code,
+    .theme .md-alert-tip code {
+      color: red;
+    }
+  `);
+
+  assert.ok(fencedSelectors.every(blockCodeSelector));
+  assert.ok(inlineSelectors.every((selector) => !blockCodeSelector(selector)));
+  assert.deepEqual(
+    unconsumedFencedCodeVariables(`
+      .theme {
+        --code-token-keyword: red;
+        --code-fences-bg-color: black;
+        --code-inline-bg-color: pink;
+      }
+      .theme :not(pre) > code {
+        background: var(--code-inline-bg-color);
+      }
+    `),
+    ['--code-fences-bg-color', '--code-token-keyword']
+  );
+});
+
+test('article code ownership classifier traverses CSS nesting and functional pseudo classes', () => {
+  const selectors = cssSelectors(`
+    .theme {
+      color: black;
+
+      & :is(pre, .preview-fallback),
+      & :where(code.hljs),
+      &:has(> pre) {
+        color: red;
+      }
+    }
+  `);
+
+  assert.deepEqual(selectors, [
+    '.theme',
+    '& :is(pre, .preview-fallback)',
+    '& :where(code.hljs)',
+    '&:has(> pre)'
+  ]);
+  assert.ok(selectors.slice(1).every(blockCodeSelector));
+});
+
+test('registered article themes contain no fenced-code, token, or frame selectors', () => {
   const themes = registeredThemes('src/Theme/ArticleThemeRegistry.php');
 
   assert.ok(themes.length > 0, 'article themes should be discovered from the registry');
@@ -220,6 +574,148 @@ test('registered article themes contain no block-code presentation selectors', (
     const blockSelectors = selectors.filter(blockCodeSelector);
 
     assert.deepEqual(blockSelectors, [], `${theme.id} should not own block-code presentation`);
+  }
+});
+
+test('registered article themes contain no unconsumed fenced-code palette variables', () => {
+  const themes = registeredThemes('src/Theme/ArticleThemeRegistry.php');
+
+  assert.ok(themes.length > 0, 'article themes should be discovered from the registry');
+  for (const theme of themes) {
+    assert.deepEqual(
+      unconsumedFencedCodeVariables(source(theme.assetPath)),
+      [],
+      `${theme.id} should not retain an unconsumed fenced-code palette`
+    );
+  }
+});
+
+test('article custom-property graph preserves consumed chains and rejects entire orphan trees', () => {
+  const css = `
+    .theme {
+      --live-root: var(--live-middle);
+      --live-middle: var(--live-leaf);
+      --live-leaf: #123456;
+      --orphan-root: var(--orphan-leaf);
+      --orphan-leaf: #abcdef;
+      --orphan-cycle-a: var(--orphan-cycle-b);
+      --orphan-cycle-b: var(--orphan-cycle-a);
+      --Case-Sensitive: #ffffff;
+      --case-sensitive: #000000;
+      color: var(--live-root);
+      background: var(--case-sensitive);
+    }
+  `;
+
+  assert.deepEqual(orphanCustomProperties(css), [
+    '--Case-Sensitive',
+    '--orphan-cycle-a',
+    '--orphan-cycle-b',
+    '--orphan-leaf',
+    '--orphan-root'
+  ]);
+});
+
+test('registered article themes contain no orphan custom-property dependency trees', () => {
+  const themes = registeredThemes('src/Theme/ArticleThemeRegistry.php');
+
+  assert.ok(themes.length > 0, 'article themes should be discovered from the registry');
+  for (const theme of themes) {
+    assert.deepEqual(
+      orphanCustomProperties(source(theme.assetPath)),
+      [],
+      `${theme.id} custom properties must reach a non-custom declaration`
+    );
+  }
+});
+
+test('legacy math classifier rejects MathJax adapters and preserves current KaTeX DOM', () => {
+  const legacySelectors = [
+    '.theme .MathJax',
+    '.theme .MathJax_Display > span',
+    '.theme .mathjax-preview',
+    '.theme mjx-container[display="true"]'
+  ];
+  const currentSelectors = [
+    '.theme .easymde-math-block',
+    '.theme .easymde-math-inline',
+    '.theme .katex',
+    '.theme .katex-display'
+  ];
+
+  assert.ok(legacySelectors.every(legacyMathAdapterSelector));
+  assert.ok(currentSelectors.every((selector) => !legacyMathAdapterSelector(selector)));
+});
+
+test('registered article themes contain no legacy MathJax adapter selectors', () => {
+  const themes = registeredThemes('src/Theme/ArticleThemeRegistry.php');
+
+  assert.ok(themes.length > 0, 'article themes should be discovered from the registry');
+  for (const theme of themes) {
+    assert.deepEqual(
+      cssSelectors(source(theme.assetPath)).filter(legacyMathAdapterSelector),
+      [],
+      `${theme.id} should target only the current EasyMDE KaTeX DOM`
+    );
+  }
+});
+
+test('Typora DOM classifier rejects unreachable positive md classes and preserves real article branches', () => {
+  const unreachableSelectors = [
+    '.theme .md-task-list-item > input',
+    '.theme .md-list-item',
+    '.theme .md-toc .md-toc-item.md-toc-h2',
+    '.theme .md-math-block',
+    '.theme .md-mathjax-midline',
+    '.theme .md-diagram',
+    '.theme h3.md-focus',
+    '.theme .md-link .md-def-url',
+    '.theme .md-image > .md-image-src-span',
+    '.theme .md-meta',
+    '.theme .md-tag',
+    '.theme .md-footnote',
+    '.theme .md-table-fig .md-table',
+    '.theme .md-content .md-before',
+    '.theme .md-fencescode',
+    '.theme .md-future-editor-wrapper',
+    '.theme.on-focus-mode > .md-focus-element'
+  ];
+  const reachableSelectors = [
+    '.theme a:not(.md-toc-inner):hover',
+    '.theme :not(pre) > code:not(.md-fencescode)',
+    '.theme .easymde-toc a',
+    '.theme .task-list-item input',
+    '.theme blockquote.md-alert-note',
+    '.theme .md-alert-title-icon',
+    '.theme table > tbody',
+    '.theme .footnote-ref',
+    '.easymde-rendered-content.easymde-markdown-theme-bloom-petal.on-focus-mode > .md-focus-element',
+    '.easymde-rendered-content.easymde-markdown-theme-bloom-petal.on-focus-mode .md-focus-element h2'
+  ];
+
+  for (const selector of unreachableSelectors) {
+    assert.notDeepEqual(unreachableTyporaClasses(selector, 'inkwell'), [], selector);
+  }
+  for (const selector of reachableSelectors) {
+    assert.deepEqual(unreachableTyporaClasses(selector, 'bloom-petal'), [], selector);
+  }
+});
+
+test('registered article themes contain no unreachable positive Typora md selectors', () => {
+  const themes = registeredThemes('src/Theme/ArticleThemeRegistry.php');
+
+  assert.ok(themes.length > 0, 'article themes should be discovered from the registry');
+  for (const theme of themes) {
+    const violations = cssSelectors(source(theme.assetPath)).flatMap((selector) => {
+      const classes = unreachableTyporaClasses(selector, theme.id);
+      return classes.length > 0 ? [{ classes, selector }] : [];
+    });
+
+    assert.deepEqual(
+      violations,
+      [],
+      `${theme.id} should target only reachable EasyMDE or standard article DOM`
+    );
   }
 });
 
@@ -235,10 +731,6 @@ test('Typora-derived adapters keep inline code article-owned without fenced sele
     ));
 
     assert.ok(inlineCodeSelectors.length > 0, `${theme} should expose a scoped inline-code selector`);
-    assert.ok(
-      inlineCodeSelectors.every((selector) => selector.includes(':not(pre)')),
-      `${theme} inline-code selectors must exclude fenced code`
-    );
     assert.deepEqual(
       selectors.filter(blockCodeSelector),
       [],
@@ -248,33 +740,7 @@ test('Typora-derived adapters keep inline code article-owned without fenced sele
 });
 
 test('Typora-derived article themes stay locally scoped and offline-safe', () => {
-  const typoraThemes = [
-    'inkwell',
-    'animal-island',
-    'phycat-cherry',
-    'phycat-caramel',
-    'phycat-forest',
-    'phycat-mint',
-    'phycat-sky',
-    'phycat-prussian',
-    'phycat-sakura',
-    'phycat-mauve',
-    'mdmdt',
-    'dogschoice-pink',
-    'bloom-petal',
-    'bloom-mist',
-    'bloom-verdant',
-    'bloom-stone',
-    'bloom-wheat',
-    'bloom-ink',
-    'bloom-amber',
-    'bloom-lapis',
-    'bloom-ripple',
-    'bloom-cinnabar',
-    'bloom-sage',
-    'bloom-spring',
-    'spring'
-  ];
+  const typoraThemes = Object.keys(typoraDerivedCodeAssociations());
 
   for (const theme of typoraThemes) {
     const css = source(`assets/themes/article/${theme}.css`);

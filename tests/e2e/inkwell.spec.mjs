@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
+import { selectOrdinaryOption } from './helpers/ordinary-select.mjs';
 
 function requiredEnvironment(name) {
   const value = process.env[name];
@@ -37,29 +38,6 @@ async function login(page) {
     form.requestSubmit(submit);
   }, { username: adminUser, password: adminPassword });
   await expect(page.locator('#wpadminbar')).toBeVisible();
-}
-
-async function selectTheme(page, combobox, label) {
-  await combobox.focus();
-  await page.keyboard.press('Enter');
-  await expect(combobox).toHaveAttribute('aria-expanded', 'true');
-  const listboxId = await combobox.getAttribute('aria-controls');
-  if (!listboxId) throw new Error('Inkwell theme listbox is unavailable.');
-
-  const options = page.locator(`[id=${JSON.stringify(listboxId)}] [role="option"]`);
-  const labels = (await options.allTextContents()).map((item) => item.trim());
-  const index = labels.indexOf(label);
-  if (-1 === index) throw new Error(`Inkwell theme option is unavailable: ${label}`);
-
-  await page.keyboard.press(index > (labels.length - 1) / 2 ? 'End' : 'Home');
-  const startAtEnd = index > (labels.length - 1) / 2;
-  const distance = startAtEnd ? labels.length - 1 - index : index;
-  for (let step = 0; step < distance; step += 1) {
-    await page.keyboard.press(startAtEnd ? 'ArrowUp' : 'ArrowDown');
-  }
-  await page.keyboard.press('Enter');
-  await expect(combobox).toHaveAttribute('aria-expanded', 'false');
-  await expect(combobox).toContainText(label);
 }
 
 test('matches the Inkwell light palette across the full Markdown fixture', async ({ page }, testInfo) => {
@@ -116,7 +94,11 @@ test('matches the Inkwell light palette across the full Markdown fixture', async
     await page.setViewportSize({ width: 1200, height: 900 });
     await trigger.click();
     const dialog = page.getByRole('dialog', { name: strings.editorSettings });
-    await selectTheme(page, dialog.getByRole('combobox', { name: strings.articleTheme, exact: true }), registeredTheme.label);
+    await selectOrdinaryOption(
+      page,
+      dialog.getByRole('combobox', { name: strings.articleTheme, exact: true }),
+      registeredTheme.label
+    );
     await expect(preview).toHaveClass(new RegExp(`easymde-markdown-theme-${id}`));
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
@@ -163,11 +145,18 @@ test('matches the Inkwell light palette across the full Markdown fixture', async
     });
 
     await page.setViewportSize({ width: 680, height: 900 });
-    const narrow = await preview.evaluate((root) => ({
-      clientWidth: root.clientWidth,
-      scrollWidth: root.scrollWidth,
-      paneScrollWidth: root.closest('.easymde-pane-preview')?.scrollWidth ?? -1
-    }));
+    const narrow = await preview.evaluate((root) => {
+      const pane = root.closest('.easymde-pane-preview');
+      if (!(pane instanceof HTMLElement)) {
+        throw new Error('inkwell-preview-pane-unavailable');
+      }
+
+      return {
+        clientWidth: root.clientWidth,
+        scrollWidth: root.scrollWidth,
+        paneScrollWidth: pane.scrollWidth
+      };
+    });
     evidence.push({ id, width: 680, ...narrow });
     expect(narrow.scrollWidth).toBe(narrow.clientWidth);
     expect(narrow.paneScrollWidth).toBeLessThanOrEqual(narrow.clientWidth + 1);

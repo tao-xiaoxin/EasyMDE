@@ -7,7 +7,6 @@
 .easymde-rendered-content.easymde-markdown-theme-animal-island{
 
     --ai-primary:          #19c8b9;
-    --ai-primary-hover:    #3dd4c6;
     --ai-primary-active:   #11a89b;
     --ai-primary-bg:       #e6f9f6;
 
@@ -20,32 +19,23 @@
 
 
     --ai-bg-app:           #faf9f3;
-    --ai-bg-paper:         #ffffff;
     --ai-bg-soft:          #efe9d6;
-    --ai-bg-input:         #f7f5ec;
 
 
-    --ai-border:           #a89c83;
     --ai-border-light:     #c9bea4;
     --ai-border-soft:      #d8cdb2;
 
 
-    --ai-success:          #6fba2c;
     --ai-warning:          #f5c31c;
-    --ai-error:            #e05a5a;
     --ai-focus-yellow:     #ffcc00;
 
 
-    --ai-shadow-button:    #bdaea0;
     --ai-shadow-input:     #d4c9b4;
     --ai-shadow-card:      0 3px 10px 0 rgba(61, 52, 40, 0.10);
-    --ai-shadow-large:     0 8px 24px 0 rgba(61, 52, 40, 0.14);
     --ai-shadow-deep:      0 4px 10px rgba(107, 92, 67, 0.32);
 
 
-    --ai-radius-sm:        12px;
     --ai-radius:           18px;
-    --ai-radius-lg:        24px;
     --ai-radius-pill:      999px;
 
 
@@ -247,41 +237,6 @@
 }
 
 
-.easymde-rendered-content.easymde-markdown-theme-animal-island .md-task-list-item > input{
-    -webkit-appearance: none;
-    appearance: none;
-    width: 18px;
-    height: 18px;
-    margin-right: 8px;
-    vertical-align: -3px;
-    background: var(--ai-bg-input);
-    border: 2.5px solid var(--ai-border-light);
-    border-radius: 6px;
-    box-shadow: 0 2px 0 0 var(--ai-shadow-input);
-    cursor: pointer;
-    transition: all 0.15s;
-    position: relative;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .md-task-list-item > input:checked{
-    background: var(--ai-success);
-    border-color: var(--ai-success);
-    box-shadow: 0 2px 0 0 #5a9e1e;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .md-task-list-item > input:checked::after{
-    content: "";
-    position: absolute;
-    left: 4px;
-    top: 0px;
-    width: 5px;
-    height: 10px;
-    border: solid white;
-    border-width: 0 2.5px 2.5px 0;
-    transform: rotate(45deg);
-}
-
-
 .easymde-rendered-content.easymde-markdown-theme-animal-island blockquote{
     margin: 1em 0;
     padding: 12px 20px;
@@ -312,12 +267,6 @@
     padding: 2px 8px;
     border: 1.5px solid #cdeeea;
     border-radius: 6px;
-}
-
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .MathJax,
-.easymde-rendered-content.easymde-markdown-theme-animal-island mjx-container{
-    color: var(--ai-text-main);
 }
 
 
@@ -383,274 +332,18 @@
 }
 
 
-.easymde-rendered-content.easymde-markdown-theme-animal-island .md-footnote{
-    background: var(--ai-primary-bg);
-    color: var(--ai-primary-active);
-    border-radius: 6px;
-    padding: 1px 6px;
-    font-weight: 700;
-}
-
-
 .easymde-rendered-content.easymde-markdown-theme-animal-island::selection{
     background: var(--ai-focus-yellow);
     color: var(--ai-text-main);
 }
 
-.easymde-rendered-content.easymde-markdown-theme-animal-island .md-focus-container{
-    outline: none;
-}
-
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .sidebar,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-sidebar,
-.easymde-rendered-content.easymde-markdown-theme-animal-island .sidebar-content,
-.easymde-rendered-content.easymde-markdown-theme-animal-island .sidebar-content-content,
-.easymde-rendered-content.easymde-markdown-theme-animal-island .sidebar-tabs{
-    background-color: var(--ai-bg-app) !important;
-    color: var(--ai-text-body) !important;
-    font-family: var(--ai-font);
-    border-right: 1.5px solid var(--ai-border-soft);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .sidebar-tabs .sidebar-tab{
-    color: var(--ai-text-secondary);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .sidebar-tabs .sidebar-tab.active{
-    color: var(--ai-primary-active);
-    border-bottom: 3px solid var(--ai-primary);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .outline-item,
-.easymde-rendered-content.easymde-markdown-theme-animal-island .file-list-item{
-    border-radius: var(--ai-radius-sm);
-    margin: 2px 6px;
-    padding: 6px 10px;
-    color: var(--ai-text-body);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .outline-item:hover,
-.easymde-rendered-content.easymde-markdown-theme-animal-island .file-list-item:hover{
-    background: var(--ai-bg-soft) !important;
-    color: var(--ai-text-main) !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .outline-active,
-.easymde-rendered-content.easymde-markdown-theme-animal-island .file-list-item-selected{
-    background: var(--ai-primary-bg) !important;
-    color: var(--ai-primary-active) !important;
-    font-weight: 700;
-}
-
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .searchpanel-search-option-btn{
-    background: var(--ai-bg-input);
-    border: 2px solid var(--ai-border-light);
-    border-radius: var(--ai-radius-sm);
-}
-
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-quick-open{
-    background: var(--ai-bg-app) !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-quick-open-input,
-.easymde-rendered-content.easymde-markdown-theme-animal-island .searchpanel-search-input,
-.easymde-rendered-content.easymde-markdown-theme-animal-island input[type="text"],
-.easymde-rendered-content.easymde-markdown-theme-animal-island input[type="search"]{
-    background: var(--ai-bg-input);
-    border: 2.5px solid var(--ai-border-light) !important;
-    border-radius: var(--ai-radius);
-    box-shadow: 0 3px 0 0 var(--ai-shadow-input);
-    color: var(--ai-text-body);
-    padding: 6px 12px;
-    transition: all 0.15s;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-quick-open-input:focus,
-.easymde-rendered-content.easymde-markdown-theme-animal-island input[type="text"]:focus{
-    border-color: var(--ai-primary) !important;
-    box-shadow: 0 3px 0 0 var(--ai-primary-active);
-    outline: none;
-}
-
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island button,
-.easymde-rendered-content.easymde-markdown-theme-animal-island .btn,
-.easymde-rendered-content.easymde-markdown-theme-animal-island .export-item{
-    background: white;
-    border: 2px solid var(--ai-border-light);
-    border-radius: var(--ai-radius-sm);
-    box-shadow: 0 3px 0 0 var(--ai-shadow-button);
-    color: var(--ai-text-main);
-    font-weight: 700;
-    padding: 4px 12px;
-    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island button:hover{
-    transform: translateY(-1px);
-    box-shadow: 0 4px 0 0 var(--ai-shadow-button);
-    background: var(--ai-bg-soft);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island button:active{
-    transform: translateY(2px);
-    box-shadow: 0 1px 0 0 var(--ai-shadow-button);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island button.primary,
-.easymde-rendered-content.easymde-markdown-theme-animal-island .btn-primary{
-    background: var(--ai-primary);
-    color: white;
-    border-color: var(--ai-primary-active);
-    box-shadow: 0 3px 0 0 var(--ai-primary-active);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island button.primary:hover{
-    background: var(--ai-primary-hover);
-    box-shadow: 0 4px 0 0 var(--ai-primary-active);
-}
-
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island footer,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #footer{
+.easymde-rendered-content.easymde-markdown-theme-animal-island footer{
     background: var(--ai-bg-app);
     color: var(--ai-text-secondary);
     border-top: 2px dashed var(--ai-border-soft);
     font-family: var(--ai-font);
 }
 
-.easymde-rendered-content.easymde-markdown-theme-animal-island .footer-item-info{
-    color: var(--ai-text-muted);
-}
-
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source{
-    font-family: var(--ai-mono) !important;
-    background: var(--ai-bg-paper) !important;
-    color: var(--ai-text-body) !important;
-}
-
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-header,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-header-1,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-header-2,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-header-3,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-header-4,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-header-5,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-header-6{
-    color: var(--ai-text-main) !important;
-    font-weight: 800;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-formatting,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-formatting-header,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-formatting-list,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-formatting-quote,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-formatting-code,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-formatting-code-block{
-    color: var(--ai-primary-active) !important;
-    opacity: 0.9;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-formatting-strong,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-strong{
-    color: var(--ai-text-main) !important;
-    font-weight: 800;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-formatting-em,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-em{
-    color: #c97d1c !important;
-    font-style: italic;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-link,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-formatting-link,
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-formatting-link-string{
-    color: var(--ai-primary-active) !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-url{
-    color: var(--ai-text-secondary) !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-quote{
-    color: var(--ai-text-secondary) !important;
-    font-style: italic;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-comment{
-    color: var(--ai-text-disabled) !important;
-    font-style: italic;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-meta{ color: var(--ai-text-muted) !important; }
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-string{ color: #5a9e1e !important; }
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-tag{ color: #c94444 !important; }
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-keyword{ color: #c94444 !important; }
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-number{ color: #dba90e !important; }
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-variable{ color: var(--ai-text-body) !important; }
-.easymde-rendered-content.easymde-markdown-theme-animal-island #typora-source .cm-def{ color: var(--ai-primary-active) !important; }
-
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .popover-title{
-    background: var(--ai-primary-bg);
-    color: var(--ai-primary-active);
-    border-radius: var(--ai-radius-sm) var(--ai-radius-sm) 0 0;
-    font-weight: 800;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .popover{
-    background: var(--ai-bg-paper);
-    border: 2px solid var(--ai-border-light);
-    border-radius: var(--ai-radius);
-    box-shadow: var(--ai-shadow-large);
-    color: var(--ai-text-body);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .popover.bottom > .arrow:after{ border-bottom-color: var(--ai-bg-paper); }
-.easymde-rendered-content.easymde-markdown-theme-animal-island .popover.top > .arrow:after{ border-top-color: var(--ai-bg-paper); }
-.easymde-rendered-content.easymde-markdown-theme-animal-island .popover.left > .arrow:after{ border-left-color: var(--ai-bg-paper); }
-.easymde-rendered-content.easymde-markdown-theme-animal-island .popover.right > .arrow:after{ border-right-color: var(--ai-bg-paper); }
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .tip,
-.easymde-rendered-content.easymde-markdown-theme-animal-island .tooltip{
-    background: var(--ai-text-main);
-    color: white;
-    border-radius: var(--ai-radius-sm);
-    box-shadow: var(--ai-shadow-card);
-    font-family: var(--ai-font);
-}
-
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .auto-suggest-container,
-.easymde-rendered-content.easymde-markdown-theme-animal-island .dropdown-menu{
-    background: var(--ai-bg-paper);
-    border: 2px solid var(--ai-border-light);
-    border-radius: var(--ai-radius);
-    box-shadow: var(--ai-shadow-large);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .dropdown-menu > li > a{
-    color: var(--ai-text-body);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .dropdown-menu > li > a:hover{
-    background: var(--ai-primary-bg);
-    color: var(--ai-primary-active);
-}
-
-
-.easymde-rendered-content.easymde-markdown-theme-animal-island .modal-content{
-    background: var(--ai-bg-paper);
-    border: 2px solid var(--ai-border-light);
-    border-radius: var(--ai-radius-lg);
-    box-shadow: var(--ai-shadow-large);
-    color: var(--ai-text-body);
-}
 
 
 @media print{

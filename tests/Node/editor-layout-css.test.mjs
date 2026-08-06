@@ -397,14 +397,19 @@ test('Mdmdt preview leaves programmatic outline scrolling immediate', () => {
 });
 
 test('editor and render styles invalidate the base CSS cache when it changes', () => {
-  assert.equal(
-    (frontendAssetsPhp.match(/Asset::url\(\s*'assets\/css\/frontend\/base\.css'/g) ?? []).length,
-    2
-  );
-  assert.equal(
-    (frontendAssetsPhp.match(/\$this->get_static_asset_version\(\s*'assets\/css\/frontend\/base\.css'/g) ?? []).length,
-    2
-  );
+  const baseStyleEnqueues = Array.from(
+    frontendAssetsPhp.matchAll(/wp_enqueue_style\([\s\S]*?\n\s*\);/g),
+    ([call]) => call
+  ).filter((call) => /Asset::url\(\s*'assets\/css\/frontend\/base\.css'/.test(call));
+
+  assert.ok(baseStyleEnqueues.length > 0, 'base.css should be enqueued at least once');
+  for (const call of baseStyleEnqueues) {
+    assert.match(
+      call,
+      /\$this->get_static_asset_version\(\s*'assets\/css\/frontend\/base\.css'\s*\)/,
+      'every base.css enqueue call must carry its own hash version'
+    );
+  }
   assert.match(
     frontendAssetsPhp,
     /private function get_static_asset_version\(\s*\$asset_path\s*\)[\s\S]*?hash_file\(\s*'sha256'\s*,\s*\$path\s*\)[\s\S]*?substr\(\s*\$hash\s*,\s*0\s*,\s*16\s*\)/

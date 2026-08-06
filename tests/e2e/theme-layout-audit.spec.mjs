@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
+import { selectOrdinaryOption } from './helpers/ordinary-select.mjs';
 
 const reportRoot = resolve(process.cwd(), 'test-results/theme-layout-audit');
 const auditPhase = process.env.EASYMDE_THEME_AUDIT_PHASE || 'initial';
@@ -65,8 +66,7 @@ async function chooseTheme(page, theme) {
   await trigger.click();
   const dialog = page.getByRole('dialog', { name: labels.editorSettings });
   const select = dialog.getByRole('combobox', { name: labels.articleTheme, exact: true });
-  await select.click();
-  await page.getByRole('option', { name: theme.label, exact: true }).click();
+  await selectOrdinaryOption(page, select, theme.label);
   await expect(page.locator('.easymde-pane-preview article')).toHaveClass(
     new RegExp(`easymde-markdown-theme-${theme.id}`)
   );
@@ -150,8 +150,13 @@ function caseEvidence(root, { mode }) {
     }
 
     const verticalOwners = [];
-    for (let element = root; element instanceof HTMLElement; element = element.parentElement) {
-      if (!(element instanceof HTMLElement)) continue;
+    const verticalOwnerWalkStop =
+      canvas instanceof HTMLElement ? canvas.parentElement : root.parentElement;
+    for (
+      let element = root;
+      element instanceof HTMLElement && element !== verticalOwnerWalkStop;
+      element = element.parentElement
+    ) {
       const computed = getComputedStyle(element);
       if (element.scrollHeight > element.clientHeight + geometryTolerance && ['auto', 'scroll'].includes(computed.overflowY)) {
         verticalOwners.push({
@@ -252,7 +257,12 @@ test('audits all registered article themes in ordinary, immersive split, and pur
   page.on('pageerror', (error) => browserErrors.push(`pageerror:${String(error.message).slice(0, 300)}`));
 
   await login(page);
-  await page.goto(postUrl);
+  const postResponse = await page.goto(postUrl);
+  if (!postResponse || !postResponse.ok()) {
+    throw new Error(
+      `theme-audit-post-unavailable:${postResponse?.status() ?? 'no-response'}`
+    );
+  }
   await expect(page.locator('[data-easymde-editor-owner="react"]')).toBeVisible();
   const preview = page.locator('.easymde-pane-preview article');
   await waitForPreviewIdle(preview);
@@ -287,15 +297,23 @@ test('audits all registered article themes in ordinary, immersive split, and pur
   expect(themes).toHaveLength(46);
   const labels = bootstrap.strings.immersive;
   const link = page.locator('#easymde-article-theme-css');
-  const report = { phase: auditPhase, themes, cases: [], startedAt: new Date().toISOString() };
+  const report = {
+    phase: auditPhase,
+    themes,
+    cases: [],
+    setupBrowserErrors: [...browserErrors],
+    startedAt: new Date().toISOString()
+  };
 
   try {
     for (const theme of themes) {
-      await setMode(page, 'ordinary', labels);
-      await chooseTheme(page, theme);
-      await expect(link).toHaveAttribute('href', theme.cssUrl);
       for (const mode of ['ordinary', 'split', 'pure']) {
+        const caseErrorStart = browserErrors.length;
         await setMode(page, mode, labels);
+        if ('ordinary' === mode) {
+          await chooseTheme(page, theme);
+          await expect(link).toHaveAttribute('href', theme.cssUrl);
+        }
         await waitForFullCapabilityPreview(preview);
         await expect(preview).toHaveClass(new RegExp(`easymde-markdown-theme-${theme.id}`));
         const evidence = await preview.evaluate(caseEvidence, { mode });
@@ -303,20 +321,31 @@ test('audits all registered article themes in ordinary, immersive split, and pur
         const diagramIndex = mode === 'ordinary' ? 0 : 1;
         await scrollToMermaid(page, mode, diagramIndex);
         await page.screenshot({ path: resolve(reportRoot, `${auditPhase}-${caseName}.png`), fullPage: false });
-        report.cases.push({ theme: theme.id, mode, ...evidence, browserErrors: [...browserErrors] });
+        report.cases.push({
+          theme: theme.id,
+          mode,
+          ...evidence,
+          browserErrors: browserErrors.slice(caseErrorStart)
+        });
       }
     }
   } finally {
     report.finishedAt = new Date().toISOString();
     report.caseCount = report.cases.length;
-    report.failureCount = report.cases.reduce((count, item) => count + item.failures.length + item.browserErrors.length, 0);
+    report.failureCount =
+      report.setupBrowserErrors.length
+      + report.cases.reduce(
+        (count, item) => count + item.failures.length + item.browserErrors.length,
+        0
+      );
     writeFileSync(resolve(reportRoot, `${auditPhase}-report.json`), `${JSON.stringify(report, null, 2)}\n`);
   }
 
-  expect(report.cases).toHaveLength(138);
+  expect(report.cases).toHaveLength(themes.length * 3);
   const failures = report.cases.flatMap((item) => [
     ...item.failures.map((failure) => `${item.theme}/${item.mode}/${failure.reason}/${failure.selector}`),
     ...item.browserErrors.map((error) => `${item.theme}/${item.mode}/${error}`)
   ]);
+  failures.unshift(...report.setupBrowserErrors.map((error) => `setup/${error}`));
   expect(failures, failures.join('\n')).toEqual([]);
 });

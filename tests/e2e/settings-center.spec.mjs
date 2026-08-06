@@ -41,16 +41,22 @@ test('keeps the settings save action clickable after scrolling', async ({ page }
   await expect(page.locator('.easymde-settings-center')).toBeVisible();
 
   const scrollContainer = page.locator('.easymde-settings-center');
-  const autoFocus = page.getByRole('switch', { name: '自动聚焦编辑器' });
+  const shortcutInput = page.locator(
+    '[data-settings-section="shortcuts"] .easymde-settings-center__shortcut-row',
+  ).first().locator('input').first();
   const saveButton = page.locator('.easymde-settings-center__save-bar > button');
-  const initialValue = await autoFocus.getAttribute('aria-checked');
+  const saveStatus = page.locator('[data-save-status]');
+  const initialValue = await shortcutInput.inputValue();
+  const changedValue = 'Ctrl+Alt+Shift+E';
+
+  await expect(shortcutInput).toBeEnabled();
 
   try {
+    await shortcutInput.fill(changedValue);
     await scrollContainer.evaluate((element) => {
       element.scrollTop = 58;
       element.dispatchEvent(new Event('scroll', { bubbles: true }));
     });
-    await autoFocus.click();
     await expect(saveButton).toBeEnabled();
     await expect.poll(async () => saveButton.evaluate((button) => {
       const bounds = button.getBoundingClientRect();
@@ -62,14 +68,52 @@ test('keeps the settings save action clickable after scrolling', async ({ page }
 
     await saveButton.click();
     await expect(saveButton).toBeDisabled();
-    await expect(page.locator('.easymde-settings-center__save-bar > span')).toHaveText('设置已保存。');
+    await expect(saveStatus).toHaveAttribute('data-save-status', 'saved');
+
+    await page.reload();
+    await expect(page.locator('.easymde-settings-center')).toBeVisible();
+    await expect(page.locator(
+      '[data-settings-section="shortcuts"] .easymde-settings-center__shortcut-row',
+    ).first().locator('input').first()).toHaveValue(changedValue);
   } finally {
-    const currentValue = await autoFocus.getAttribute('aria-checked');
+    const currentValue = await shortcutInput.inputValue();
     if (currentValue !== initialValue) {
-      await autoFocus.click();
+      await shortcutInput.fill(initialValue);
       await expect(saveButton).toBeEnabled();
       await saveButton.click();
       await expect(saveButton).toBeDisabled();
+      await expect(saveStatus).toHaveAttribute('data-save-status', 'saved');
     }
   }
+});
+
+test('keeps the mobile settings center bounded and unavailable settings non-saveable', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await page.goto('/wp-admin/admin.php?page=easymde/settings/general');
+
+  const settingsCenter = page.locator('.easymde-settings-center');
+  const saveButton = settingsCenter.locator('.easymde-settings-center__save-bar > button');
+  const generalSection = settingsCenter.locator('[data-settings-section="general"]');
+  const nav = settingsCenter.locator('.easymde-settings-center__sidebar nav');
+
+  await expect(settingsCenter).toBeVisible();
+  await expect.poll(async () => settingsCenter.evaluate((element) => (
+    element.scrollWidth - element.clientWidth
+  ))).toBeLessThanOrEqual(1);
+  await expect.poll(async () => page.evaluate(() => (
+    document.documentElement.scrollWidth - document.documentElement.clientWidth
+  ))).toBeLessThanOrEqual(1);
+
+  const navIds = await nav.locator('button[data-nav-id]').evaluateAll((buttons) => (
+    buttons.map((button) => button.getAttribute('data-nav-id'))
+  ));
+  expect(navIds).not.toContain('ai-comments');
+  expect(navIds).not.toContain('ai-settings');
+  expect(navIds).not.toContain('article-sync');
+  await expect(nav).not.toContainText(/AI|comment|评论|article\s*sync|文章同步/i);
+
+  await expect(generalSection.locator('fieldset[disabled]')).toHaveCount(1);
+  await expect(generalSection.locator('[role="switch"]').first()).toBeDisabled();
+  await expect(saveButton).toBeDisabled();
 });

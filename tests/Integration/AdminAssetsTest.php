@@ -2,11 +2,11 @@
 
 use EasyMDE\Admin\AdminAssets;
 use EasyMDE\Admin\PostModeController;
-use EasyMDE\Admin\SettingsPage;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Support\Asset;
 use EasyMDE\Support\Options;
+use EasyMDE\Support\SettingsCenterRepository;
 use EasyMDE\Support\ToolbarRegistry;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
@@ -35,7 +35,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			new FrontendAssets( $post_document, $theme_state_repository ),
 			$theme_state_repository,
 			$toolbar_registry,
-			new SettingsPage( $toolbar_registry, new Options() )
+			new SettingsCenterRepository( new Options(), $toolbar_registry )
 		);
 		$reflection                = new ReflectionClass( AdminAssets::class );
 		$this->get_react_editor_asset = $reflection->getMethod( 'get_react_editor_asset' );
@@ -98,6 +98,30 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( rest_url( 'easymde/v1/media' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
+	}
+
+	public function test_editor_root_bootstrap_consumes_saved_settings_center_shortcuts() {
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'shortcuts' => array(
+					'bold' => array(
+						'win' => 'Ctrl+Shift+B',
+						'mac' => 'Cmd+Shift+B',
+					),
+				),
+			),
+			false
+		);
+		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+		$settings   = $repository->get_settings();
+		$settings['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+B';
+		$this->assertNotWPError( $repository->update_settings( $settings ) );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
+
+		$this->assertSame( 'Ctrl+Alt+B', $bootstrap['toolbar']['shortcuts']['bold']['win'] );
+		$this->assertSame( 'Cmd+Shift+B', get_option( Options::EDITOR_SETTINGS )['shortcuts']['bold']['mac'] );
 	}
 
 	public function test_editor_status_uses_the_last_editor_and_localized_modified_time() {
@@ -692,6 +716,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	public function tear_down() {
 		remove_all_actions( 'admin_enqueue_scripts' );
 		remove_all_actions( 'admin_notices' );
+		delete_option( Options::EDITOR_SETTINGS );
 		wp_cache_flush();
 
 		parent::tear_down();

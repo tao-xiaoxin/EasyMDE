@@ -18,29 +18,25 @@ final class SettingsCenterRepository {
 		$this->toolbar_registry = $toolbar_registry;
 	}
 
-	public function get_settings() {
-		$defaults = $this->get_defaults();
-		$stored   = $this->options->get_editor_settings();
-		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
+	public function get_settings( $refresh_cache = false ) {
+		$defaults             = $this->get_defaults();
+		$stored               = $this->options->get_editor_settings( $refresh_cache );
+		$settings             = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
 			? $stored['settings_center']
 			: array();
-		if ( empty( $settings ) && isset( $stored['shortcuts'] ) && is_array( $stored['shortcuts'] ) ) {
-			foreach ( $defaults['shortcuts']['values'] as $center_id => $shortcut ) {
-				$command_id = $this->shortcut_command_id( $center_id );
-				if ( ! $command_id || ! isset( $stored['shortcuts'][ $command_id ] ) || ! is_array( $stored['shortcuts'][ $command_id ] ) ) {
-					continue;
-				}
-				$legacy = $stored['shortcuts'][ $command_id ];
-				if ( array_key_exists( 'win', $legacy ) ) {
-					$settings['shortcuts']['values'][ $center_id ]['windows'] = (string) $legacy['win'];
-				}
-				if ( array_key_exists( 'mac', $legacy ) ) {
-					$settings['shortcuts']['values'][ $center_id ]['mac'] = (string) $legacy['mac'];
-				}
-			}
-		}
+		$legacy_shortcut_mode = empty( $settings ) && isset( $stored['shortcuts'] ) && is_array( $stored['shortcuts'] );
+		$settings             = $this->merge_legacy_shortcuts_into_settings( $settings, $stored );
 
 		$settings = $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
+		foreach ( $settings['shortcuts']['values'] as $center_id => $shortcut ) {
+			foreach ( array( 'windows', 'mac' ) as $platform ) {
+				$normalized = $this->normalize_shortcut( $shortcut[ $platform ], 'mac' === $platform );
+				if ( false === $normalized || ( $legacy_shortcut_mode && '' === $normalized ) ) {
+					$normalized = $defaults['shortcuts']['values'][ $center_id ][ $platform ];
+				}
+				$settings['shortcuts']['values'][ $center_id ][ $platform ] = $normalized;
+			}
+		}
 		foreach ( array( 'accessKey', 'secretKey', 'backupAccessKey', 'backupSecretKey' ) as $secret_key ) {
 			$settings['images'][ $secret_key ] = '';
 		}
@@ -48,6 +44,7 @@ final class SettingsCenterRepository {
 
 		return $settings;
 	}
+
 	public function get_default_settings() {
 		$settings = $this->normalize_enum_settings( $this->get_defaults() );
 		foreach ( array( 'accessKey', 'secretKey', 'backupAccessKey', 'backupSecretKey' ) as $secret_key ) {
@@ -58,12 +55,45 @@ final class SettingsCenterRepository {
 		return $settings;
 	}
 
-	public function get_revision() {
-		return $this->revision_from_stored( $this->options->get_editor_settings() );
+	public function get_revision( $refresh_cache = false ) {
+		return $this->revision_from_stored( $this->options->get_editor_settings( $refresh_cache ) );
 	}
 
-	public function update_settings( $input ) {
-		if ( ! is_array( $input ) ) {
+	public function get_shortcut_config_for_script() {
+		$settings  = $this->get_settings();
+		$stored    = $this->options->get_editor_settings();
+		$registry  = $this->toolbar_registry->get_command_registry();
+		$shortcuts = array();
+
+		foreach ( $registry as $command_id => $command ) {
+			$center_id = $this->center_shortcut_id( $command_id );
+			if ( $center_id && isset( $settings['shortcuts']['values'][ $center_id ] ) ) {
+				$shortcuts[ $command_id ] = array(
+					'win' => $settings['shortcuts']['values'][ $center_id ]['windows'],
+					'mac' => $settings['shortcuts']['values'][ $center_id ]['mac'],
+				);
+				continue;
+			}
+
+			if ( isset( $stored['shortcuts'][ $command_id ] ) && is_array( $stored['shortcuts'][ $command_id ] ) ) {
+				$shortcuts[ $command_id ] = array(
+					'win' => isset( $stored['shortcuts'][ $command_id ]['win'] ) ? (string) $stored['shortcuts'][ $command_id ]['win'] : '',
+					'mac' => isset( $stored['shortcuts'][ $command_id ]['mac'] ) ? (string) $stored['shortcuts'][ $command_id ]['mac'] : '',
+				);
+				continue;
+			}
+
+			$shortcuts[ $command_id ] = array(
+				'win' => isset( $command['defaultShortcutWin'] ) ? (string) $command['defaultShortcutWin'] : '',
+				'mac' => isset( $command['defaultShortcutMac'] ) ? (string) $command['defaultShortcutMac'] : '',
+			);
+		}
+
+		return $shortcuts;
+	}
+
+	public function update_settings( $input, $reset_secrets = false ) {
+		if ( ! is_array( $input ) || ! array_key_exists( 'revision', $input ) || ! is_int( $input['revision'] ) || $input['revision'] < 0 ) {
 			return new WP_Error(
 				'easymde_settings_invalid_payload',
 				__( 'The settings payload is invalid.', 'easymde' ),
@@ -71,28 +101,28 @@ final class SettingsCenterRepository {
 			);
 		}
 
-		$stored           = $this->options->get_editor_settings();
-		$current_revision = $this->revision_from_stored( $stored );
-		if ( array_key_exists( 'revision', $input ) && absint( $input['revision'] ) !== $current_revision ) {
-			return new WP_Error(
-				'easymde_settings_conflict',
-				__( 'Settings could not be saved. Try again.', 'easymde' ),
-				array( 'status' => 409 )
-			);
+		$expected = $this->options->get_editor_settings_snapshot();
+		if ( null === $expected ) {
+			return $this->persistence_error();
 		}
-		$stored_settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
-			? $stored['settings_center']
-			: array();
-		$settings        = $this->sanitize_settings( $input, $stored_settings );
+		$stored           = is_array( $expected ) ? $expected : array();
+		$current_revision = $this->revision_from_stored( $stored );
+		if ( $input['revision'] !== $current_revision ) {
+			return $this->conflict_error();
+		}
+
+		$stored_settings = $this->stored_settings_for_write( $stored );
+		$settings        = $this->sanitize_settings( $input, $stored_settings, (bool) $reset_secrets );
 		if ( is_wp_error( $settings ) ) {
 			return $settings;
 		}
 
-		$stored['settings_center']          = $settings;
-		$stored['version']                  = $this->options->editor_settings_version();
-		$stored['settings_center_revision'] = $current_revision + 1;
-		$stored['shortcuts']                = isset( $stored['shortcuts'] ) && is_array( $stored['shortcuts'] )
-			? $stored['shortcuts']
+		$next                             = $stored;
+		$next['settings_center']          = $settings;
+		$next['version']                  = $this->options->editor_settings_version();
+		$next['settings_center_revision'] = $current_revision + 1;
+		$next['shortcuts']                = isset( $next['shortcuts'] ) && is_array( $next['shortcuts'] )
+			? $next['shortcuts']
 			: array();
 
 		foreach ( $settings['shortcuts']['values'] as $center_id => $shortcut ) {
@@ -101,22 +131,210 @@ final class SettingsCenterRepository {
 				continue;
 			}
 
-			$stored['shortcuts'][ $command_id ] = array(
+			$next['shortcuts'][ $command_id ] = array(
 				'win' => $shortcut['windows'],
 				'mac' => $shortcut['mac'],
 			);
 		}
 
-		if ( ! $this->options->update_editor_settings( $stored ) || $this->get_revision() !== $current_revision + 1 ) {
-			return new WP_Error(
-				'easymde_settings_persistence_failed',
-				__( 'Settings could not be saved. Try again.', 'easymde' ),
-				array( 'status' => 500 )
-			);
+		if ( ! $this->options->compare_and_swap_editor_settings( $expected, $next ) ) {
+			return $this->options->last_compare_and_swap_was_conflict()
+				? $this->conflict_error()
+				: $this->persistence_error();
 		}
 
-		return $this->get_settings();
+		return $this->get_settings( true );
 	}
+
+	public function sync_legacy_shortcuts( array $settings, array $legacy_shortcuts ) {
+		if ( ! isset( $settings['shortcuts']['values'] ) || ! is_array( $settings['shortcuts']['values'] ) ) {
+			return $settings;
+		}
+
+		foreach ( $legacy_shortcuts as $command_id => $values ) {
+			$center_id = $this->center_shortcut_id( $command_id );
+			if ( ! $center_id || ! is_array( $values ) || ! isset( $settings['shortcuts']['values'][ $center_id ] ) ) {
+				continue;
+			}
+			foreach ( array(
+				'win' => 'windows',
+				'mac' => 'mac',
+			) as $legacy_platform => $platform ) {
+				if ( array_key_exists( $legacy_platform, $values ) ) {
+					$settings['shortcuts']['values'][ $center_id ][ $platform ] = (string) $values[ $legacy_platform ];
+				}
+			}
+		}
+
+		return $settings;
+	}
+	public function update_legacy_shortcuts( $input_shortcuts, $expected ) {
+		if ( ! is_array( $input_shortcuts ) ) {
+			return $this->invalid_payload_error();
+		}
+
+		if ( null === $expected ) {
+			return $this->persistence_error();
+		}
+
+		$stored_snapshot = $this->options->get_editor_settings_snapshot();
+		if ( null === $stored_snapshot ) {
+			return $this->persistence_error();
+		}
+		if ( $stored_snapshot !== $expected ) {
+			return $this->conflict_error();
+		}
+
+		$stored = is_array( $stored_snapshot ) ? $stored_snapshot : array();
+
+		$registry               = $this->toolbar_registry->get_command_registry();
+		$next                   = $stored;
+		$next['version']        = $this->options->editor_settings_version();
+		$next['toolbar_layout'] = 'hybrid-icons';
+		$next['shortcuts']      = isset( $stored['shortcuts'] ) && is_array( $stored['shortcuts'] )
+			? $stored['shortcuts']
+			: array();
+		$center_settings        = $this->normalize_enum_settings(
+			$this->merge_settings( $this->get_defaults(), $this->stored_settings_for_write( $stored ) )
+		);
+		$center_changed         = false;
+		$seen                   = array(
+			'win' => array(),
+			'mac' => array(),
+		);
+
+		foreach ( $registry as $command_id => $command ) {
+			$center_id = $this->center_shortcut_id( $command_id );
+			$values    = isset( $input_shortcuts[ $command_id ] ) && is_array( $input_shortcuts[ $command_id ] )
+				? $input_shortcuts[ $command_id ]
+				: array();
+			$legacy    = isset( $next['shortcuts'][ $command_id ] ) && is_array( $next['shortcuts'][ $command_id ] )
+				? $next['shortcuts'][ $command_id ]
+				: array();
+
+			foreach ( array( 'win', 'mac' ) as $platform ) {
+				$raw_value  = array_key_exists( $platform, $values )
+					? $values[ $platform ]
+					: ( isset( $legacy[ $platform ] ) ? $legacy[ $platform ] : ( 'mac' === $platform ? $command['defaultShortcutMac'] : $command['defaultShortcutWin'] ) );
+				$normalized = $this->normalize_shortcut( $raw_value, 'mac' === $platform );
+				if ( false === $normalized ) {
+					return new WP_Error(
+						'easymde_settings_invalid_shortcut',
+						__( 'One or more shortcut values are invalid.', 'easymde' ),
+						array( 'status' => 400 )
+					);
+				}
+				if ( '' !== $normalized ) {
+					if ( isset( $seen[ $platform ][ $normalized ] ) ) {
+						return new WP_Error(
+							'easymde_settings_invalid_shortcut',
+							__( 'One or more shortcut values are invalid.', 'easymde' ),
+							array( 'status' => 400 )
+						);
+					}
+					$seen[ $platform ][ $normalized ] = $command_id;
+				}
+				$next['shortcuts'][ $command_id ][ $platform ] = $normalized;
+				if ( $center_id && $normalized !== $center_settings['shortcuts']['values'][ $center_id ][ 'mac' === $platform ? 'mac' : 'windows' ] ) {
+					$center_settings['shortcuts']['values'][ $center_id ][ 'mac' === $platform ? 'mac' : 'windows' ] = $normalized;
+					$center_changed = true;
+				}
+			}
+		}
+
+		if ( $center_changed ) {
+			$next['settings_center']          = $center_settings;
+			$next['settings_center_revision'] = $this->revision_from_stored( $stored ) + 1;
+			foreach ( $center_settings['shortcuts']['values'] as $center_id => $shortcut ) {
+				$command_id = $this->shortcut_command_id( $center_id );
+				if ( ! $command_id ) {
+					continue;
+				}
+				$next['shortcuts'][ $command_id ] = array(
+					'win' => $shortcut['windows'],
+					'mac' => $shortcut['mac'],
+				);
+			}
+		}
+
+		if ( $next === $stored ) {
+			return $this->get_settings( true );
+		}
+
+		if ( ! $this->options->compare_and_swap_editor_settings( $stored_snapshot, $next ) ) {
+			return $this->options->last_compare_and_swap_was_conflict()
+				? $this->conflict_error()
+				: $this->persistence_error();
+		}
+
+		return $this->get_settings( true );
+	}
+
+	private function stored_settings_for_write( array $stored ) {
+		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
+			? $stored['settings_center']
+			: array();
+
+		return $this->merge_legacy_shortcuts_into_settings( $settings, $stored );
+	}
+
+	private function merge_legacy_shortcuts_into_settings( array $settings, array $stored ) {
+		if ( ! isset( $stored['shortcuts'] ) || ! is_array( $stored['shortcuts'] ) ) {
+			return $settings;
+		}
+
+		if ( ! isset( $settings['shortcuts'] ) || ! is_array( $settings['shortcuts'] ) ) {
+			$settings['shortcuts'] = array();
+		}
+		if ( ! isset( $settings['shortcuts']['values'] ) || ! is_array( $settings['shortcuts']['values'] ) ) {
+			$settings['shortcuts']['values'] = array();
+		}
+
+		foreach ( $stored['shortcuts'] as $command_id => $values ) {
+			$center_id = $this->center_shortcut_id( $command_id );
+			if ( ! $center_id || ! is_array( $values ) ) {
+				continue;
+			}
+			if ( ! isset( $settings['shortcuts']['values'][ $center_id ] ) || ! is_array( $settings['shortcuts']['values'][ $center_id ] ) ) {
+				$settings['shortcuts']['values'][ $center_id ] = array();
+			}
+			foreach ( array(
+				'win' => 'windows',
+				'mac' => 'mac',
+			) as $legacy_platform => $platform ) {
+				if ( ! array_key_exists( $platform, $settings['shortcuts']['values'][ $center_id ] ) && array_key_exists( $legacy_platform, $values ) ) {
+					$settings['shortcuts']['values'][ $center_id ][ $platform ] = (string) $values[ $legacy_platform ];
+				}
+			}
+		}
+
+		return $settings;
+	}
+
+	private function invalid_payload_error() {
+		return new WP_Error(
+			'easymde_settings_invalid_payload',
+			__( 'The settings payload is invalid.', 'easymde' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	private function conflict_error() {
+		return new WP_Error(
+			'easymde_settings_conflict',
+			__( 'Settings could not be saved. Try again.', 'easymde' ),
+			array( 'status' => 409 )
+		);
+	}
+
+	private function persistence_error() {
+		return new WP_Error(
+			'easymde_settings_persistence_failed',
+			__( 'Settings could not be saved. Try again.', 'easymde' ),
+			array( 'status' => 500 )
+		);
+	}
+
 
 	private function revision_from_stored( array $stored ) {
 		return isset( $stored['settings_center_revision'] ) && is_numeric( $stored['settings_center_revision'] )
@@ -140,7 +358,7 @@ final class SettingsCenterRepository {
 
 		return array(
 			'general'   => array(
-				'interfaceLanguage'        => 'en-US',
+				'interfaceLanguage'        => 'zh-CN',
 				'editingMode'              => 'live-preview',
 				'autoFocusEditor'          => true,
 				'showLineNumbers'          => true,
@@ -258,8 +476,16 @@ final class SettingsCenterRepository {
 		return $result;
 	}
 
-	private function sanitize_settings( array $input, array $stored_settings = array() ) {
-		$settings = $this->merge_settings( $this->get_defaults(), $input );
+	private function sanitize_settings( array $input, array $stored_settings = array(), $reset_secrets = false ) {
+		$defaults = $this->get_defaults();
+		$base     = $this->merge_settings( $defaults, $stored_settings );
+		$settings = $this->merge_settings( $base, $input );
+		if ( isset( $input['images']['uploadFormats'] ) && is_array( $input['images']['uploadFormats'] ) ) {
+			$settings['images']['uploadFormats'] = array_merge(
+				$base['images']['uploadFormats'],
+				$input['images']['uploadFormats']
+			);
+		}
 		$settings = $this->normalize_enum_settings( $settings );
 
 		foreach ( $settings['general'] as $key => $value ) {
@@ -271,13 +497,15 @@ final class SettingsCenterRepository {
 		foreach ( $settings['images'] as $key => $value ) {
 			if ( in_array( $key, array( 'accessKey', 'secretKey', 'backupAccessKey', 'backupSecretKey' ), true ) ) {
 				$submitted = trim( (string) $value );
-				if ( '' === $submitted && isset( $stored_settings['images'] ) && is_array( $stored_settings['images'] ) && array_key_exists( $key, $stored_settings['images'] ) ) {
+				if ( ! $reset_secrets && '' === $submitted && isset( $stored_settings['images'] ) && is_array( $stored_settings['images'] ) && array_key_exists( $key, $stored_settings['images'] ) ) {
 					$value = $stored_settings['images'][ $key ];
 				}
 				$settings['images'][ $key ] = $this->bounded_text( $value, 255 );
 			} elseif ( 'uploadFormats' === $key ) {
-				foreach ( $settings['images']['uploadFormats'] as $format => $enabled ) {
-					$settings['images']['uploadFormats'][ $format ] = (bool) $enabled;
+				foreach ( $this->get_defaults()['images']['uploadFormats'] as $format => $enabled ) {
+					$settings['images']['uploadFormats'][ $format ] = isset( $settings['images']['uploadFormats'][ $format ] )
+						? (bool) $settings['images']['uploadFormats'][ $format ]
+						: (bool) $enabled;
 				}
 			} elseif ( 'domain' === $key || 'backupDomain' === $key ) {
 				$settings['images'][ $key ] = $this->sanitize_domain( $value );
@@ -477,7 +705,9 @@ final class SettingsCenterRepository {
 
 
 	private function bounded_text( $value, $length ) {
-		return mb_substr( sanitize_text_field( (string) $value ), 0, $length );
+		$value = sanitize_text_field( (string) $value );
+
+		return function_exists( 'mb_substr' ) ? mb_substr( $value, 0, $length ) : substr( $value, 0, $length );
 	}
 
 	private function sanitize_domain( $value ) {
@@ -485,8 +715,16 @@ final class SettingsCenterRepository {
 		if ( '' === $value ) {
 			return '';
 		}
+		$parts = wp_parse_url( $value );
+		if ( ! is_array( $parts ) || ! isset( $parts['scheme'], $parts['host'] ) || isset( $parts['user'], $parts['pass'], $parts['query'], $parts['fragment'] ) ) {
+			return '';
+		}
+		if ( ! in_array( strtolower( (string) $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
+			return '';
+		}
 		$url = esc_url_raw( $value, array( 'http', 'https' ) );
-		return is_string( $url ) ? mb_substr( $url, 0, 255 ) : '';
+
+		return is_string( $url ) ? $this->bounded_text( $url, 255 ) : '';
 	}
 
 	private function normalize_shortcut( $value, $is_mac ) {
@@ -519,10 +757,13 @@ final class SettingsCenterRepository {
 				$modifiers[] = $canonical;
 				continue;
 			}
-			if ( '' !== $key || ! preg_match( '/^[A-Za-z0-9`\[\]\\;\'\/,\.\-=]+$/', $part ) ) {
+			if ( '' !== $key ) {
 				return false;
 			}
-			$key = strtoupper( $part );
+			$key = $this->normalize_shortcut_key( $part );
+			if ( false === $key ) {
+				return false;
+			}
 		}
 		if ( '' === $key || ( $is_mac && ! in_array( 'Cmd', $modifiers, true ) ) || ( ! $is_mac && ! in_array( 'Ctrl', $modifiers, true ) ) ) {
 			return false;
@@ -536,6 +777,38 @@ final class SettingsCenterRepository {
 		}
 		return implode( '+', array_merge( $normalized_modifiers, array( $key ) ) );
 	}
+
+	private function normalize_shortcut_key( $value ) {
+		$value   = trim( (string) $value );
+		$special = array(
+			'space'      => 'Space',
+			'enter'      => 'Enter',
+			'return'     => 'Enter',
+			'escape'     => 'Escape',
+			'esc'        => 'Escape',
+			'tab'        => 'Tab',
+			'backspace'  => 'Backspace',
+			'delete'     => 'Delete',
+			'insert'     => 'Insert',
+			'home'       => 'Home',
+			'end'        => 'End',
+			'pageup'     => 'PageUp',
+			'pagedown'   => 'PageDown',
+			'arrowup'    => 'ArrowUp',
+			'arrowdown'  => 'ArrowDown',
+			'arrowleft'  => 'ArrowLeft',
+			'arrowright' => 'ArrowRight',
+		);
+		$lower   = strtolower( $value );
+		if ( isset( $special[ $lower ] ) ) {
+			return $special[ $lower ];
+		}
+		if ( preg_match( '/^F(?:[1-9]|1[0-2])$/i', $value ) ) {
+			return strtoupper( $value );
+		}
+		return preg_match( '/^[A-Za-z0-9`\[\]\\;\'\/,\.\-=]+$/', $value ) ? strtoupper( $value ) : false;
+	}
+
 
 	private function center_shortcut_id( $command_id ) {
 		$map = array(

@@ -1,47 +1,224 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SETTINGS_CENTER_TEST_SETTINGS } from '../../../test/settings-center-settings-fixture';
-import { createWordPressSettingsPort } from './create-wordpress-settings-port';
+import { SETTINGS_CENTER_TEST_SETTINGS } from "../../../test/settings-center-settings-fixture";
+import { createWordPressSettingsPort } from "./create-wordpress-settings-port";
 
-describe('createWordPressSettingsPort', () => {
-  it('posts settings through the same-origin REST contract and returns the saved state', async () => {
-    const fetchLike = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(init?.method).toBe('POST');
-      expect(init?.credentials).toBe('same-origin');
-      expect(new Headers(init?.headers).get('X-WP-Nonce')).toBe('test-nonce');
-      expect(JSON.parse(String(init?.body))).toEqual({ settings: SETTINGS_CENTER_TEST_SETTINGS });
-      return {
-        ok: true,
-        json: async () => ({ settings: SETTINGS_CENTER_TEST_SETTINGS })
-      } as Response;
-    });
-    const port = createWordPressSettingsPort({
-      settingsUrl: '/wp-json/easymde/v1/settings',
-      nonce: 'test-nonce'
-    }, fetchLike);
+beforeEach(() => {
+	vi.stubGlobal("window", {
+		location: new URL("https://example.test/wp-admin/options.php"),
+	});
+});
 
-    await expect(port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal))
-      .resolves.toEqual(SETTINGS_CENTER_TEST_SETTINGS);
-    expect(fetchLike).toHaveBeenCalledOnce();
-  });
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
+describe("createWordPressSettingsPort", () => {
+	it("posts settings through the same-origin REST contract and returns the saved state", async () => {
+		const fetchLike = vi.fn(
+			async (_input: RequestInfo | URL, init?: RequestInit) => {
+				expect(init?.method).toBe("POST");
+				expect(init?.credentials).toBe("same-origin");
+				expect(new Headers(init?.headers).get("X-WP-Nonce")).toBe("test-nonce");
+				expect(new Headers(init?.headers).get("X-EasyMDE-Settings-Nonce")).toBe(
+					"test-action-nonce",
+				);
+				expect(JSON.parse(String(init?.body))).toEqual({
+					settings: SETTINGS_CENTER_TEST_SETTINGS,
+				});
+				return {
+					ok: true,
+					json: async () => ({ settings: SETTINGS_CENTER_TEST_SETTINGS }),
+				} as Response;
+			},
+		);
+		const port = createWordPressSettingsPort(
+			{
+				settingsUrl: "/wp-json/easymde/v1/settings",
+				actionNonce: "test-action-nonce",
+				nonce: "test-nonce",
+			},
+			fetchLike,
+		);
 
-  it('rejects cross-origin endpoints before making a request', () => {
-    expect(() => createWordPressSettingsPort({
-      settingsUrl: 'https://settings.example.test/wp-json/easymde/v1/settings',
-      nonce: 'test-nonce'
-    }, vi.fn())).toThrow('settings-center-api-transport-invalid');
-  });
+		await expect(
+			port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal),
+		).resolves.toEqual(SETTINGS_CENTER_TEST_SETTINGS);
+		expect(fetchLike).toHaveBeenCalledOnce();
+	});
 
-  it('reports a failed server response instead of claiming persistence', async () => {
-    const port = createWordPressSettingsPort({
-      settingsUrl: '/wp-json/easymde/v1/settings',
-      nonce: 'test-nonce'
-    }, vi.fn(async () => ({
-      ok: false,
-      json: async () => ({ code: 'easymde_settings_invalid_payload' })
-    } as Response)));
+	it("loads settings through the same-origin REST contract", async () => {
+		const fetchLike = vi.fn(
+			async (_input: RequestInfo | URL, init?: RequestInit) => {
+				expect(init?.method).toBe("GET");
+				expect(init?.credentials).toBe("same-origin");
+				expect(new Headers(init?.headers).get("X-WP-Nonce")).toBe("test-nonce");
+				expect(new Headers(init?.headers).get("X-EasyMDE-Settings-Nonce")).toBe(
+					"test-action-nonce",
+				);
+				return {
+					ok: true,
+					json: async () => ({ settings: SETTINGS_CENTER_TEST_SETTINGS }),
+				} as Response;
+			},
+		);
+		const port = createWordPressSettingsPort(
+			{
+				settingsUrl: "/wp-json/easymde/v1/settings",
+				actionNonce: "test-action-nonce",
+				nonce: "test-nonce",
+			},
+			fetchLike,
+		);
 
-    await expect(port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal))
-      .rejects.toThrow('settings-center-save-rejected');
-  });
+		await expect(port.get(new AbortController().signal)).resolves.toEqual(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		);
+		expect(fetchLike).toHaveBeenCalledOnce();
+	});
+
+	it("preserves abort errors while loading settings", async () => {
+		const abort = new DOMException("aborted", "AbortError");
+		const port = createWordPressSettingsPort(
+			{
+				settingsUrl: "/wp-json/easymde/v1/settings",
+				actionNonce: "test-action-nonce",
+				nonce: "test-nonce",
+			},
+			vi.fn(async () => {
+				throw abort;
+			}),
+		);
+
+		await expect(port.get(new AbortController().signal)).rejects.toBe(abort);
+	});
+	it("sends an explicit secret reset request only when requested", async () => {
+		const fetchLike = vi.fn(
+			async (_input: RequestInfo | URL, init?: RequestInit) => {
+				expect(JSON.parse(String(init?.body))).toEqual({
+					settings: SETTINGS_CENTER_TEST_SETTINGS,
+					resetSecrets: true,
+				});
+				return {
+					ok: true,
+					json: async () => ({ settings: SETTINGS_CENTER_TEST_SETTINGS }),
+				} as Response;
+			},
+		);
+		const port = createWordPressSettingsPort(
+			{
+				settingsUrl: "/wp-json/easymde/v1/settings",
+				actionNonce: "test-action-nonce",
+				nonce: "test-nonce",
+			},
+			fetchLike,
+		);
+
+		await expect(
+			port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal, {
+				resetSecrets: true,
+			}),
+		).resolves.toEqual(SETTINGS_CENTER_TEST_SETTINGS);
+	});
+
+	it("rejects cross-origin endpoints before making a request", () => {
+		expect(() =>
+			createWordPressSettingsPort(
+				{
+					settingsUrl:
+						"https://settings.example.test/wp-json/easymde/v1/settings",
+					actionNonce: "test-action-nonce",
+					nonce: "test-nonce",
+				},
+				vi.fn(),
+			),
+		).toThrow("settings-center-api-transport-invalid");
+	});
+	it("allows same-origin HTTP endpoints in the documented local environment", async () => {
+		vi.stubGlobal("window", {
+			location: new URL("http://example.test/wp-admin/options.php"),
+		});
+		const port = createWordPressSettingsPort(
+			{
+				settingsUrl: "/wp-json/easymde/v1/settings",
+				actionNonce: "test-action-nonce",
+				nonce: "test-nonce",
+			},
+			vi.fn(
+				async () =>
+					({
+						ok: true,
+						json: async () => ({ settings: SETTINGS_CENTER_TEST_SETTINGS }),
+					}) as Response,
+			),
+		);
+
+		await expect(
+			port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal),
+		).resolves.toEqual(SETTINGS_CENTER_TEST_SETTINGS);
+	});
+
+	it("reports a failed server response instead of claiming persistence", async () => {
+		const port = createWordPressSettingsPort(
+			{
+				settingsUrl: "/wp-json/easymde/v1/settings",
+				actionNonce: "test-action-nonce",
+				nonce: "test-nonce",
+			},
+			vi.fn(
+				async () =>
+					({
+						ok: false,
+						json: async () => ({ code: "easymde_settings_invalid_payload" }),
+					}) as Response,
+			),
+		);
+
+		await expect(
+			port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal),
+		).rejects.toThrow("settings-center-save-rejected");
+	});
+
+	it("returns a distinct conflict when the server rejects a stale revision", async () => {
+		const port = createWordPressSettingsPort(
+			{
+				settingsUrl: "/wp-json/easymde/v1/settings",
+				actionNonce: "test-action-nonce",
+				nonce: "test-nonce",
+			},
+			vi.fn(
+				async () =>
+					({
+						ok: false,
+						status: 409,
+						json: async () => ({ code: "easymde_settings_conflict" }),
+					}) as Response,
+			),
+		);
+
+		await expect(
+			port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal),
+		).rejects.toThrow("settings-center-save-conflict");
+	});
+
+	it("rejects a malformed saved settings payload", async () => {
+		const port = createWordPressSettingsPort(
+			{
+				settingsUrl: "/wp-json/easymde/v1/settings",
+				actionNonce: "test-action-nonce",
+				nonce: "test-nonce",
+			},
+			vi.fn(
+				async () =>
+					({
+						ok: true,
+						status: 200,
+						json: async () => ({ settings: { revision: 1 } }),
+					}) as Response,
+			),
+		);
+
+		await expect(
+			port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal),
+		).rejects.toThrow("settings-center-save-response-invalid");
+	});
 });

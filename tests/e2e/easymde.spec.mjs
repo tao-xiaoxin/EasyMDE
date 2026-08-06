@@ -2392,8 +2392,13 @@ test.describe('EasyMDE editor workflows', () => {
     const defaultVisualFingerprint = visualFingerprints.get('default');
     expect(defaultVisualFingerprint).toBeTruthy();
     for (const { id } of catalog.articleThemes) {
+      const fingerprint = visualFingerprints.get(id);
+      if (!fingerprint) {
+        failures.push(`${id}/ordinary-preview:visual-fingerprint-missing`);
+        continue;
+      }
       if ('default' === id) continue;
-      if (visualFingerprints.get(id) === defaultVisualFingerprint) {
+      if (fingerprint === defaultVisualFingerprint) {
         failures.push(`${id}/ordinary-preview:computed-theme-style-not-applied`);
       }
     }

@@ -153,7 +153,7 @@ final class MarkdownRenderer {
 	}
 
 	private static function sanitize_rendered_html( $html, $theme, $allow_task_inputs = false, $require_task_list_context = false ) {
-		$allowed_html = wp_kses_allowed_html( 'post' );
+		$allowed_html             = wp_kses_allowed_html( 'post' );
 		$disallowed_form_elements = array(
 			'button',
 			'fieldset',
@@ -229,6 +229,7 @@ final class MarkdownRenderer {
 				&& ( ! $require_task_list_context || self::is_task_list_checkbox( $input ) );
 
 			if ( ! $is_allowed_checkbox ) {
+				// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- Native DOM API property.
 				$parent = $input->parentNode;
 				if ( null === $parent ) {
 					throw new RuntimeException( 'Unable to remove a disallowed rendered Markdown input element.' );
@@ -238,7 +239,7 @@ final class MarkdownRenderer {
 				continue;
 			}
 
-			$checked = $input->hasAttribute( 'checked' );
+			$checked         = $input->hasAttribute( 'checked' );
 			$attribute_names = array();
 			foreach ( $input->attributes as $attribute ) {
 				$attribute_names[] = $attribute->name;
@@ -257,6 +258,7 @@ final class MarkdownRenderer {
 		}
 
 		$sanitized_html = '';
+		// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- Native DOM API property.
 		foreach ( $fragment->childNodes as $node ) {
 			$node_html = $document->saveHTML( $node );
 			if ( false === $node_html ) {
@@ -278,8 +280,10 @@ final class MarkdownRenderer {
 			return false;
 		}
 
+		// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- Native DOM API property.
 		$list_item = $input->parentNode;
 		while ( $list_item instanceof \DOMElement && ! self::is_task_list_item( $list_item ) ) {
+			// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- Native DOM API property.
 			$list_item = $list_item->parentNode;
 		}
 
@@ -287,14 +291,17 @@ final class MarkdownRenderer {
 			return false;
 		}
 
+		// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- Native DOM API property.
 		return $list_item->parentNode instanceof \DOMElement && self::is_task_list( $list_item->parentNode );
 	}
 
 	private static function is_task_list_item( \DOMElement $element ) {
+		// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- Native DOM API property.
 		return 'li' === strtolower( $element->tagName ) && self::has_css_class( $element, 'task-list-item' );
 	}
 
 	private static function is_task_list( \DOMElement $element ) {
+		// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- Native DOM API property.
 		return in_array( strtolower( $element->tagName ), array( 'ul', 'ol' ), true )
 			&& ( self::has_css_class( $element, 'task-list' ) || self::has_css_class( $element, 'contains-task-list' ) );
 	}

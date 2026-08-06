@@ -49,6 +49,134 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertNotEmpty($with_legacy_value['shortcuts']);
     }
 
+    public function test_legacy_settings_save_preserves_settings_center_state()
+    {
+        $stored = array(
+            'version' => '0.1.8',
+            'settings_center' => array(
+                'general' => array('autoSave' => false),
+            ),
+        );
+        update_option(Options::EDITOR_SETTINGS, $stored);
+
+        $sanitized = $this->settings_page()->sanitize_editor_settings(array());
+
+        $invalid = $this->settings_page()->sanitize_editor_settings(
+            array('shortcuts' => array('savepost' => array('win' => 'S')))
+        );
+
+        $this->assertSame($stored['settings_center'], $invalid['settings_center']);
+
+        $this->assertSame($stored['settings_center'], $sanitized['settings_center']);
+    }
+
+    public function test_legacy_settings_save_preserves_center_revision_and_syncs_submitted_shortcuts()
+    {
+        update_option(
+            Options::EDITOR_SETTINGS,
+            array(
+                'version' => '0.1.8',
+                'settings_center' => array(
+                    'shortcuts' => array(
+                        'values' => array(
+                            'save' => array(
+                                'windows' => 'Ctrl+S',
+                                'mac'     => 'Cmd+S',
+                            ),
+                        ),
+                    ),
+                ),
+                'settings_center_revision' => 4,
+                'shortcuts' => array(
+                    'savepost' => array(
+                        'win' => 'Ctrl+S',
+                        'mac' => 'Cmd+S',
+                    ),
+                ),
+            )
+        );
+
+        $sanitized = $this->settings_page()->sanitize_editor_settings(
+            array(
+                'shortcuts' => array(
+                    'savepost' => array(
+                        'win' => 'Ctrl+Shift+S',
+                        'mac' => 'Cmd+Shift+S',
+                    ),
+                ),
+            )
+        );
+
+        $this->assertSame( 5, $sanitized['settings_center_revision'] );
+        $this->assertSame( 'Ctrl+Shift+S', $sanitized['settings_center']['shortcuts']['values']['save']['windows'] );
+        $this->assertSame( 'Cmd+Shift+S', $sanitized['settings_center']['shortcuts']['values']['save']['mac'] );
+    }
+
+    public function test_legacy_settings_api_stale_snapshot_cannot_overwrite_a_newer_center_save()
+    {
+        $page = $this->settings_page();
+        $page->register_hooks();
+        $repository = new \EasyMDE\Support\SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+
+        try {
+            $legacy_value = $page->sanitize_editor_settings(
+                array(
+                    'shortcuts' => array(
+                        'savepost' => array(
+                            'win' => 'Ctrl+Shift+S',
+                            'mac' => 'Cmd+Shift+S',
+                        ),
+                    ),
+                )
+            );
+            $newer = $repository->get_settings();
+            $newer['general']['autoSave'] = false;
+            $this->assertIsArray( $repository->update_settings( $newer ) );
+            $before = get_option( Options::EDITOR_SETTINGS );
+
+            update_option( Options::EDITOR_SETTINGS, $legacy_value, false );
+
+            $after = get_option( Options::EDITOR_SETTINGS );
+            $this->assertSame( $before, $after );
+            $this->assertFalse( $after['settings_center']['general']['autoSave'] );
+            $this->assertSame( 'Ctrl+S', $after['shortcuts']['savepost']['win'] );
+        } finally {
+            remove_filter( 'pre_update_option_' . Options::EDITOR_SETTINGS, array( $page, 'intercept_legacy_settings_update' ), 10 );
+        }
+    }
+
+    public function test_legacy_settings_api_write_uses_repository_revision_and_cas()
+    {
+        $page = $this->settings_page();
+        $page->register_hooks();
+
+        try {
+            $legacy_value = $page->sanitize_editor_settings(
+                array(
+                    'shortcuts' => array(
+                        'savepost' => array(
+                            'win' => 'Ctrl+Shift+S',
+                            'mac' => 'Cmd+Shift+S',
+                        ),
+                    ),
+                )
+            );
+
+            update_option( Options::EDITOR_SETTINGS, $legacy_value, false );
+
+            $stored = get_option( Options::EDITOR_SETTINGS );
+            $this->assertSame( 1, $stored['settings_center_revision'] );
+            $this->assertSame( 'Ctrl+Shift+S', $stored['shortcuts']['savepost']['win'] );
+            $this->assertSame( 'Cmd+Shift+S', $stored['shortcuts']['savepost']['mac'] );
+            $this->assertSame(
+                'Ctrl+Shift+S',
+                $stored['settings_center']['shortcuts']['values']['save']['windows']
+            );
+        } finally {
+            remove_filter( 'pre_update_option_' . Options::EDITOR_SETTINGS, array( $page, 'intercept_legacy_settings_update' ), 10 );
+        }
+    }
+
     public function test_settings_page_does_not_render_legacy_spellcheck_control_or_mutate_option()
     {
         $stored = array(
@@ -125,6 +253,7 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertSame('EasyMDE', $bootstrap['strings']['brandName']);
         $this->assertSame('General Settings', $bootstrap['strings']['general']);
         $this->assertSame('', $bootstrap['drafts']['images']['domain']);
+        $this->assertNotEmpty( $bootstrap['api']['actionNonce'] );
         $this->assertArrayNotHasKey('testingConnection', $bootstrap['strings']);
         $this->assertArrayHasKey('pendingTest', $bootstrap['strings']);
         $this->assertArrayNotHasKey('connected', $bootstrap['strings']);
@@ -137,7 +266,28 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertArrayHasKey('aboutPluginIntroduction', $bootstrap['strings']);
         $this->assertArrayHasKey('saveSettings', $bootstrap['strings']);
         $this->assertArrayNotHasKey('ai', $bootstrap['drafts']);
-        $this->assertGreaterThan(209, count($bootstrap['strings']));
+        $required_string_keys = array(
+            'brandName', 'settingsCenter', 'settingsNavigation', 'helpTitle', 'helpDescription',
+            'openDocumentation', 'closeSettingsCenter', 'searchSettings', 'searchSettingsPlaceholder',
+            'clearSearch', 'searchPageTitle', 'searchPageDescription', 'searchResults',
+            'searchResultCount', 'noSearchResults', 'noSearchResultsDescription', 'general',
+            'shortcuts', 'images', 'markdown', 'transfer', 'about', 'generalDescription',
+            'shortcutsDescription', 'imagesDescription', 'markdownDescription', 'transferDescription',
+            'transferPageTitle', 'aboutDescription', 'sectionPending', 'sectionPendingDescription',
+            'saveSettings', 'savingSettings', 'settingsSaved', 'settingsSaveFailed',
+            'settingsUnsavedChanges', 'pendingTest', 'currentAllowedUploads', 'insertFileNameVariable',
+            'transferExportConfiguration', 'transferConfigurationManagement', 'transferIntegrationPendingNotice',
+            'transferFileSelectedNotice', 'transferChecksSummary', 'transferChecksPassed',
+            'aboutVersionInformation', 'aboutPluginIntroduction', 'editPrompt', 'duplicatePrompt',
+            'deletePrompt', 'promptCategoryEmpty', 'deletePromptConfirmation', 'promptCreated',
+            'promptSaved', 'promptDuplicated', 'promptDeleted', 'promptImportSuccess',
+            'aboutVersionInformation', 'aboutPluginIntroduction',
+        );
+        foreach ( $required_string_keys as $key ) {
+            $this->assertArrayHasKey( $key, $bootstrap['strings'] );
+            $this->assertIsString( $bootstrap['strings'][ $key ] );
+            $this->assertNotSame( '', $bootstrap['strings'][ $key ] );
+        }
     }
 
     public function test_settings_center_assets_load_only_on_the_independent_screen()

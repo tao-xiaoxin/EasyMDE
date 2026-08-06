@@ -67,12 +67,14 @@ function ShortcutCard({
   group,
   onChange,
   onReset,
+  onResetValue,
   strings: s,
   values
 }: {
   group: ShortcutGroup;
   onChange: (id: ShortcutId, platform: keyof ShortcutValue, value: string) => void;
   onReset: (() => void) | undefined;
+  onResetValue: (id: ShortcutId, platform: keyof ShortcutValue) => void;
   strings: Strings;
   values: ShortcutValues;
 }) {
@@ -102,25 +104,30 @@ function ShortcutCard({
         data-setting-group={s[group.title]}>
         <span>{s[row.label]}</span>
         <input aria-label={`${s[row.label]} ${s.windowsLinux}`} value={value.windows}
-          onChange={(event) => onChange(row.id, 'windows', event.target.value)} />
+          onChange={(event) => onChange(row.id, 'windows', event.target.value)}
+          onBlur={() => onResetValue(row.id, 'windows')} />
         <input aria-label={`${s[row.label]} ${s.macOS}`} value={value.mac}
-          onChange={(event) => onChange(row.id, 'mac', event.target.value)} />
+          onChange={(event) => onChange(row.id, 'mac', event.target.value)}
+          onBlur={() => onResetValue(row.id, 'mac')} />
       </div>;
     })}
   </section>;
 }
 
 export function ShortcutsSettingsPage({
+  defaultValues,
   onChange,
   settings: externalSettings,
   strings: s
 }: {
+  defaultValues?: ShortcutValues;
   onChange?: (settings: ShortcutsSettings) => void;
   settings?: ShortcutsSettings;
   strings: Strings;
 }) {
+  const resetValues = defaultValues ?? DEFAULT_SHORTCUTS;
   const [localSettings, setLocalSettings] = useState<ShortcutsSettings>(() => ({
-    values: DEFAULT_SHORTCUTS,
+    values: resetValues,
     showHints: true,
     detectConflicts: true,
     showSuggestions: true
@@ -141,16 +148,32 @@ export function ShortcutsSettingsPage({
       [id]: { ...values[id], [platform]: value }
     }});
   };
+  const resetShortcut = (id: ShortcutId, platform: keyof ShortcutValue) => {
+    if (values[id][platform].trim() === '') {
+      update({ ...settings, values: {
+        ...values,
+        [id]: { ...values[id], [platform]: resetValues[id][platform] }
+      }});
+    }
+  };
+  const resetGroup = (group: ShortcutGroup) => {
+    const nextValues = { ...values };
+    group.rows.forEach(({ id }) => {
+      nextValues[id] = resetValues[id];
+    });
+    update({ ...settings, values: nextValues });
+  };
 
   return <div className="easymde-settings-center__shortcuts-settings">
     <div className="easymde-settings-center__shortcut-groups">
-      {SHORTCUT_GROUPS.map((group, index) => <ShortcutCard
+      {SHORTCUT_GROUPS.map((group) => <ShortcutCard
         key={group.title}
         group={group}
         strings={s}
         values={values}
         onChange={updateShortcut}
-        onReset={index === 0 ? () => update({ ...settings, values: DEFAULT_SHORTCUTS }) : undefined}
+        onResetValue={resetShortcut}
+        onReset={() => resetGroup(group)}
       />)}
     </div>
     <section className="easymde-settings-center__shortcut-behavior">

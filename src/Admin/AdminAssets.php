@@ -6,6 +6,7 @@ use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Support\Asset;
 use EasyMDE\Support\FrontendAssetContract;
 use EasyMDE\Support\ManifestAssetResolver;
+use EasyMDE\Support\SettingsCenterRepository;
 use EasyMDE\Support\ToolbarRegistry;
 use EasyMDE\Theme\ThemeStateRepository;
 
@@ -18,7 +19,7 @@ final class AdminAssets {
 	private $frontend_assets;
 	private $theme_state_repository;
 	private $toolbar_registry;
-	private $settings_page;
+	private $settings_center_repository;
 	private $react_editor_asset_error = false;
 
 	public function __construct(
@@ -26,13 +27,13 @@ final class AdminAssets {
 		FrontendAssets $frontend_assets,
 		ThemeStateRepository $theme_state_repository,
 		ToolbarRegistry $toolbar_registry,
-		SettingsPage $settings_page
+		SettingsCenterRepository $settings_center_repository
 	) {
-		$this->post_mode_controller   = $post_mode_controller;
-		$this->frontend_assets        = $frontend_assets;
-		$this->theme_state_repository = $theme_state_repository;
-		$this->toolbar_registry       = $toolbar_registry;
-		$this->settings_page          = $settings_page;
+		$this->post_mode_controller       = $post_mode_controller;
+		$this->frontend_assets            = $frontend_assets;
+		$this->theme_state_repository     = $theme_state_repository;
+		$this->toolbar_registry           = $toolbar_registry;
+		$this->settings_center_repository = $settings_center_repository;
 	}
 
 	public function register_hooks() {
@@ -325,7 +326,7 @@ final class AdminAssets {
 			),
 			'toolbar'            => array(
 				'commands'  => $this->toolbar_registry->get_commands_for_script(),
-				'shortcuts' => $this->settings_page->get_shortcut_config_for_script(),
+				'shortcuts' => $this->settings_center_repository->get_shortcut_config_for_script(),
 				'strings'   => array(
 					'headingLabelFormat' => $strings['headingLabelFormat'],
 					'headingLevel'       => $strings['headingLevel'],

@@ -102,7 +102,7 @@ final class Plugin {
 			$settings_page,
 			$post_mode_controller,
 			new EditorScreen( $post_document, $post_mode_controller, $theme_state_repository ),
-			new AdminAssets( $post_mode_controller, $frontend_assets, $theme_state_repository, $this->toolbar_registry, $settings_page ),
+			new AdminAssets( $post_mode_controller, $frontend_assets, $theme_state_repository, $this->toolbar_registry, $settings_center_repository ),
 			new EditorSaveHandler( $post_document, $theme_state_repository ),
 			$frontend_assets,
 			new ContentFilter( $post_document, $theme_state_repository ),

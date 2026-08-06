@@ -83,6 +83,20 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame($legacy, get_option(Options::EDITOR_SETTINGS));
     }
 
+    public function test_get_shortcut_config_for_script_maps_center_values_and_keeps_unmanaged_defaults()
+    {
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+        $settings = $repository->get_settings();
+        $settings['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+B';
+        $repository->update_settings($settings);
+
+        $shortcuts = $repository->get_shortcut_config_for_script();
+
+        $this->assertSame('Ctrl+Alt+B', $shortcuts['bold']['win']);
+        $this->assertSame('Cmd+B', $shortcuts['bold']['mac']);
+        $this->assertSame('Alt+Shift+5', $shortcuts['strike']['win']);
+    }
+
     public function test_save_preserves_existing_secrets_and_accepts_explicit_replacements()
     {
         update_option(
@@ -150,21 +164,80 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertFalse($repository->get_settings()['general']['autoSave']);
     }
 
+    public function test_compare_and_swap_rejects_a_case_only_concurrent_snapshot()
+    {
+        $options = new Options();
+        update_option(
+            Options::EDITOR_SETTINGS,
+            array( 'case_marker' => 'lowercase' ),
+            false
+        );
+        $expected = $options->get_editor_settings_snapshot();
+        $current  = $expected;
+        $current['case_marker'] = 'LOWERCASE';
+        update_option( Options::EDITOR_SETTINGS, $current, false );
+
+        $next                = $expected;
+        $next['case_marker'] = 'replacement';
+
+        $this->assertFalse( $options->compare_and_swap_editor_settings( $expected, $next ) );
+        $this->assertTrue( $options->last_compare_and_swap_was_conflict() );
+        $this->assertSame( $current, get_option( Options::EDITOR_SETTINGS ) );
+    }
+
+    public function test_unchanged_legacy_shortcuts_are_a_no_op()
+    {
+        $registry = new ToolbarRegistry();
+        $registry->register_toolbar_button(
+            'strike',
+            array(
+                'defaultShortcutWin' => 'Ctrl+Alt+5',
+                'defaultShortcutMac' => 'Cmd+Alt+5',
+            )
+        );
+        $options   = new Options();
+        $shortcuts = array();
+        foreach ( $registry->get_command_registry() as $command_id => $command ) {
+            $shortcuts[ $command_id ] = array(
+                'win' => $command['defaultShortcutWin'],
+                'mac' => $command['defaultShortcutMac'],
+            );
+        }
+        $stored = array(
+            'version'        => $options->editor_settings_version(),
+            'toolbar_layout' => 'hybrid-icons',
+            'shortcuts'      => $shortcuts,
+        );
+        update_option( Options::EDITOR_SETTINGS, $stored, false );
+        $expected   = $options->get_editor_settings_snapshot();
+        $repository = new SettingsCenterRepository( $options, $registry );
+
+        $result = $repository->update_legacy_shortcuts( $shortcuts, $expected );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 0, $result['revision'] );
+        $this->assertSame( $stored, get_option( Options::EDITOR_SETTINGS ) );
+    }
+
     public function test_option_write_failure_is_reported_as_an_error()
     {
         $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+        $settings   = $repository->get_settings();
+        $this->assertIsArray($repository->update_settings($settings));
         $settings = $repository->get_settings();
-        add_filter(
-            'pre_update_option_' . Options::EDITOR_SETTINGS,
-            function ($value, $old_value) {
-                return $old_value;
-            },
-            10,
-            2
-        );
 
-        $result = $repository->update_settings($settings);
-        remove_all_filters('pre_update_option_' . Options::EDITOR_SETTINGS, 10);
+        global $wpdb;
+        $options_table = $wpdb->options;
+        $wpdb->suppress_errors(true);
+        $wpdb->options = $options_table . '_missing';
+
+        try {
+            $result = $repository->update_settings($settings);
+        } finally {
+            $wpdb->options = $options_table;
+            $wpdb->suppress_errors(false);
+            wp_cache_flush();
+        }
 
         $this->assertWPError($result);
         $this->assertSame('easymde_settings_persistence_failed', $result->get_error_code());
@@ -216,6 +289,7 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $settings['general']['autoSave'] = false;
 
         $request = new WP_REST_Request('POST', '/easymde/v1/settings');
+        $request->set_header('X-EasyMDE-Settings-Nonce', wp_create_nonce('easymde_update_settings'));
         $request->set_body_params(array('settings' => $settings));
         $response = rest_do_request($request);
 

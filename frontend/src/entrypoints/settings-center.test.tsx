@@ -30,11 +30,23 @@ function bootstrap(): SettingsCenterBootstrap {
   return {
     schemaVersion: 2,
     closeUrl: `${origin}/wp-admin/options-general.php?page=easymde`,
-    api: { settingsUrl: `${origin}/wp-json/easymde/v1/settings`, nonce: 'test-nonce' },
+    api: {
+      settingsUrl: `${origin}/wp-json/easymde/v1/settings`,
+      nonce: 'test-nonce',
+      actionNonce: 'test-action-nonce'
+    },
     assets: {
       brandMarkUrl: `${origin}/plugin/brand.png`,
       headerIllustrationUrl: `${origin}/plugin/header.png`,
       searchEmptyIllustrationUrl: `${origin}/plugin/search-empty.png`
+    },
+    links: {
+      projectUrl: 'https://github.com/tao-xiaoxin/EasyMDE',
+      documentationUrl: 'https://github.com/tao-xiaoxin/EasyMDE#readme',
+      releasesUrl: 'https://github.com/tao-xiaoxin/EasyMDE/releases',
+      issuesUrl: 'https://github.com/tao-xiaoxin/EasyMDE/issues',
+      securityUrl: 'https://github.com/tao-xiaoxin/EasyMDE/security/policy',
+      licenseUrl: 'https://github.com/tao-xiaoxin/EasyMDE/blob/main/LICENSE'
     },
     drafts: {
       images: {

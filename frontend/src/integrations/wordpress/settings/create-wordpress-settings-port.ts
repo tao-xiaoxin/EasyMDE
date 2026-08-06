@@ -1,68 +1,145 @@
-import type { SettingsCenterApi, SettingsCenterSettings } from '../../../contracts/settings-center-settings';
+import { parseSettingsCenterSettings } from "../../../contracts/bootstrap/settings-center-bootstrap";
+import type {
+	SettingsCenterApi,
+	SettingsCenterSettings,
+} from "../../../contracts/settings-center-settings";
 
 export type SettingsCenterSettingsPort = Readonly<{
-  save(settings: SettingsCenterSettings, signal: AbortSignal): Promise<SettingsCenterSettings>;
+	get(signal: AbortSignal): Promise<SettingsCenterSettings>;
+	save(
+		settings: SettingsCenterSettings,
+		signal: AbortSignal,
+		options?: Readonly<{ resetSecrets?: boolean }>,
+	): Promise<SettingsCenterSettings>;
 }>;
 
-type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+type FetchLike = (
+	input: RequestInfo | URL,
+	init?: RequestInit,
+) => Promise<Response>;
 
-function validSettings(value: unknown): value is SettingsCenterSettings {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return Number.isInteger(record.revision)
-    && (record.revision as number) >= 0
-    && ['general', 'images', 'markdown', 'shortcuts'].every((section) => (
-      Boolean(record[section])
-      && typeof record[section] === 'object'
-      && !Array.isArray(record[section])
-    ));
+function isAbortError(error: unknown): boolean {
+	return (
+		(error instanceof Error && error.name === "AbortError") ||
+		(typeof DOMException !== "undefined" &&
+			error instanceof DOMException &&
+			error.name === "AbortError")
+	);
+}
+
+function parseResponseSettings(
+	value: unknown,
+	code: string,
+): SettingsCenterSettings {
+	try {
+		return parseSettingsCenterSettings(value);
+	} catch {
+		throw new Error(code);
+	}
+}
+
+async function requestSettings(
+	endpoint: URL,
+	actionNonce: string,
+	nonce: string,
+	fetchLike: FetchLike,
+	signal: AbortSignal,
+	init: RequestInit,
+	errorPrefix: "get" | "save",
+): Promise<SettingsCenterSettings> {
+	let response: Response;
+	try {
+		response = await fetchLike(endpoint, {
+			...init,
+			credentials: "same-origin",
+			headers: {
+				"X-WP-Nonce": nonce,
+				"X-EasyMDE-Settings-Nonce": actionNonce,
+				...(init.headers ?? {}),
+			},
+			signal,
+		});
+	} catch (error) {
+		if (signal.aborted || isAbortError(error)) throw error;
+		throw new Error(`settings-center-${errorPrefix}-network-failed`);
+	}
+
+	if (!response.ok) {
+		if ("save" === errorPrefix && response.status === 409) {
+			throw new Error("settings-center-save-conflict");
+		}
+		throw new Error(`settings-center-${errorPrefix}-rejected`);
+	}
+
+	let payload: unknown;
+	try {
+		payload = await response.json();
+	} catch (error) {
+		if (signal.aborted || isAbortError(error)) throw error;
+		throw new Error(`settings-center-${errorPrefix}-response-invalid`);
+	}
+	if (signal.aborted) {
+		throw signal.reason ?? new Error(`settings-center-${errorPrefix}-aborted`);
+	}
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+		throw new Error(`settings-center-${errorPrefix}-response-invalid`);
+	}
+
+	return parseResponseSettings(
+		(payload as Record<string, unknown>).settings,
+		`settings-center-${errorPrefix}-response-invalid`,
+	);
 }
 
 export function createWordPressSettingsPort(
-  api: SettingsCenterApi,
-  fetchLike: FetchLike = window.fetch.bind(window)
+	api: SettingsCenterApi,
+	fetchLike: FetchLike = window.fetch.bind(window),
 ): SettingsCenterSettingsPort {
-  let endpoint: URL;
-  try {
-    endpoint = new URL(api.settingsUrl, window.location.href);
-  } catch {
-    throw new Error('settings-center-api-url-invalid');
-  }
-  if (endpoint.origin !== window.location.origin || !api.nonce) {
-    throw new Error('settings-center-api-transport-invalid');
-  }
+	let endpoint: URL;
+	try {
+		endpoint = new URL(api.settingsUrl, window.location.href);
+	} catch {
+		throw new Error("settings-center-api-url-invalid");
+	}
+	if (
+		endpoint.origin !== window.location.origin ||
+		!api.nonce ||
+		!api.actionNonce
+	) {
+		throw new Error("settings-center-api-transport-invalid");
+	}
 
-  return {
-    async save(settings, signal) {
-      let response: Response;
-      try {
-        response = await fetchLike(endpoint, {
-          body: JSON.stringify({ settings }),
-          credentials: 'same-origin',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-WP-Nonce': api.nonce
-          },
-          method: 'POST',
-          signal
-        });
-      } catch (error) {
-        if (signal.aborted) throw error;
-        throw new Error('settings-center-save-network-failed');
-      }
-      let payload: unknown;
-      try {
-        payload = await response.json();
-      } catch {
-        throw new Error('settings-center-save-response-invalid');
-      }
-      if (!response.ok) throw new Error('settings-center-save-rejected');
-      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-        throw new Error('settings-center-save-response-invalid');
-      }
-      const saved = (payload as Record<string, unknown>).settings;
-      if (!validSettings(saved)) throw new Error('settings-center-save-response-invalid');
-      return saved;
-    }
-  };
+	return {
+		get(signal) {
+			return requestSettings(
+				endpoint,
+				api.actionNonce,
+				api.nonce,
+				fetchLike,
+				signal,
+				{
+					method: "GET",
+				},
+				"get",
+			);
+		},
+		save(settings, signal, options) {
+			const requestPayload = options?.resetSecrets
+				? { settings, resetSecrets: true }
+				: { settings };
+			return requestSettings(
+				endpoint,
+				api.actionNonce,
+				api.nonce,
+				fetchLike,
+				signal,
+				{
+					body: JSON.stringify(requestPayload),
+					headers: { "Content-Type": "application/json" },
+					method: "POST",
+				},
+				"save",
+			);
+		},
+	};
 }

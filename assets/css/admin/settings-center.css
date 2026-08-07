@@ -56,7 +56,7 @@
 	position: relative;
 	display: flex;
 	width: 100%;
-	min-width: 0;
+	min-width: 1100px;
 	max-width: 1448px;
 	min-height: 100vh;
 	margin: 0 auto;
@@ -151,6 +151,8 @@
 	display: flex;
 	flex-direction: column;
 	gap: 9px;
+	transform: scale(.96);
+	transform-origin: top left;
 }
 
 .easymde-settings-center__sidebar nav button {
@@ -226,6 +228,8 @@
 	left: 16.5px;
 	height: 96px;
 	padding: 10px 12px;
+	transform: scale(.96);
+	transform-origin: bottom left;
 	border: 1px solid #d9e5fa;
 	border-radius: 9px;
 	background: linear-gradient(135deg, #fbfdff 0%, #f4f8ff 100%);
@@ -496,8 +500,14 @@
 	background: #a6b9d8;
 	cursor: not-allowed;
 }
+
+.easymde-settings-center__save-bar.is-hidden {
+	display: none;
+}
+
 .easymde-settings-center__content-scale {
 	width: 100%;
+	zoom: .9;
 }
 
 .easymde-settings-center__unavailable {
@@ -513,32 +523,6 @@
 .easymde-settings-center__unavailable-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
 .easymde-settings-center__unavailable-fields :is(button, input, select) { cursor: not-allowed; }
 .easymde-settings-center__transfer-unavailable-notice { margin: 20px 36px 0; color: #657695; font-size: 14px; }
-
-@media (max-width: 768px) {
-	.easymde-settings-center__frame { display: block; overflow: visible; }
-	.easymde-settings-center__sidebar { position: relative; width: 100%; height: auto; max-height: none; padding: 16px; }
-	.easymde-settings-center__sidebar::after { right: 0; top: auto; width: 100%; height: 1px; }
-	.easymde-settings-center__brand-wrap, .easymde-settings-center__sidebar nav { position: static; }
-	.easymde-settings-center__brand-wrap { justify-content: flex-start; height: 66px; }
-	.easymde-settings-center__sidebar nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; transform: none; }
-	.easymde-settings-center__sidebar nav button { height: 42px; transform: none; font-size: 14px; }
-	.easymde-settings-center__help { display: none; }
-	.easymde-settings-center__sticky-header { height: auto; position: relative; }
-	.easymde-settings-center__header-scale { width: 100%; }
-	.easymde-settings-center__header-scale header { height: 176px; padding: 82px 20px 0; }
-	.easymde-settings-center__header-scale header > div { top: 82px; left: 20px; right: 20px; }
-	.easymde-settings-center__header-scale header > img { height: 176px; opacity: .45; }
-	.easymde-settings-center__header-scale h1 { font-size: 28px; line-height: 34px; }
-	.easymde-settings-center__search { margin: 0 20px 12px; }
-	.easymde-settings-center__save-bar { position: sticky; top: 0; padding: 8px 20px; }
-	.easymde-settings-center__content { padding: 0 14px 24px; }
-	.easymde-settings-center__row, .easymde-settings-center__file-name-details { grid-template-columns: 1fr; gap: 10px; }
-	.easymde-settings-center__row-label { padding-left: 0; }
-	.easymde-settings-center__row-control, .easymde-settings-center__select-wrap, .easymde-settings-center__connection-row { width: 100%; }
-	.easymde-settings-center__section-body, .easymde-settings-center__shortcut-card, .easymde-settings-center__shortcut-behavior, .easymde-settings-center__about-group { padding-left: 18px; padding-right: 18px; }
-	.easymde-settings-center__shortcut-table-heading, .easymde-settings-center__shortcut-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-	.easymde-settings-center__shortcut-table-heading > span:first-child, .easymde-settings-center__shortcut-row > span { grid-column: 1 / -1; }
-}
 
 .easymde-settings-center__content {
 	padding: 0 37px 30px 34px;
@@ -2000,6 +1984,252 @@
 	border-radius: 10px;
 	background: #fff;
 	box-shadow: 0 24px 72px rgba(18, 34, 67, .26);
+}
+
+.easymde-settings-center__transfer-dialog > header {
+	display: flex;
+	min-height: 72px;
+	align-items: center;
+	padding: 0 22px;
+	border-color: #e3e8ef;
+	border-bottom-width: 1px;
+}
+
+.easymde-settings-center__transfer-dialog > header > span {
+	display: grid;
+	width: 38px;
+	height: 38px;
+	flex: none;
+	place-items: center;
+	border-radius: 8px;
+	background: #eef4ff;
+	color: #0867f4;
+}
+
+.easymde-settings-center__transfer-dialog > header > span.is-destructive {
+	background: #fff2f2;
+	color: #dc3540;
+}
+
+.easymde-settings-center__transfer-dialog > header > div {
+	min-width: 0;
+	margin-left: 13px;
+}
+
+.easymde-settings-center__transfer-dialog > header h2 {
+	color: #111d38;
+	font-size: 18.5px;
+	font-weight: 700;
+}
+
+.easymde-settings-center__transfer-dialog > header p {
+	overflow: hidden;
+	margin-top: 2px;
+	color: #71809f;
+	font-size: 14px;
+	line-height: 21px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.easymde-settings-center__transfer-dialog > header > button {
+	display: grid;
+	width: 34px;
+	height: 34px;
+	flex: none;
+	margin-left: auto;
+	padding: 0;
+	place-items: center;
+	border-radius: 6px;
+	color: #526582;
+	cursor: pointer;
+	font-weight: 500;
+}
+
+.easymde-settings-center__transfer-dialog > header > button:hover {
+	background: #f2f5f9;
+	color: #17233f;
+}
+
+.easymde-settings-center__transfer-dialog-body {
+	min-height: 0;
+	overflow-y: auto;
+	padding: 20px 22px;
+}
+
+.easymde-settings-center__transfer-warning {
+	padding: 13px 14px;
+	border: 1px solid #ffd7da;
+	border-radius: 7px;
+	background: #fff8f8;
+	color: #8f3540;
+	font-size: 14px;
+	line-height: 21px;
+}
+
+.easymde-settings-center__transfer-pending-state {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 13px 14px;
+	border: 1px solid #cfe0fa;
+	border-radius: 7px;
+	background: #f8fbff;
+	color: #245da9;
+}
+
+.easymde-settings-center__transfer-pending-state > svg {
+	flex: none;
+	margin-top: 1px;
+}
+
+.easymde-settings-center__transfer-pending-state p {
+	font-size: 14px;
+	line-height: 21px;
+}
+
+.easymde-settings-center__transfer-directory > p {
+	color: #657695;
+	font-size: 14px;
+	line-height: 21px;
+}
+
+.easymde-settings-center__transfer-directory > div {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-top: 15px;
+	padding: 12px 13px;
+	border: 1px solid #dce3ed;
+	border-radius: 7px;
+	background: #f8fafc;
+}
+
+.easymde-settings-center__transfer-directory code {
+	min-width: 0;
+	flex: 1;
+	color: #304667;
+	font-size: 14px;
+	overflow-wrap: anywhere;
+}
+
+.easymde-settings-center__transfer-directory button {
+	display: inline-flex;
+	height: 34px;
+	flex: none;
+	align-items: center;
+	gap: 7px;
+	padding: 0 11px;
+	border: 1px solid #cfe0fa;
+	border-radius: 6px;
+	background: #fff;
+	color: #0867f4;
+	cursor: pointer;
+	font-size: 13px;
+	font-weight: 500;
+}
+
+.easymde-settings-center__transfer-directory button:hover {
+	background: #f4f8ff;
+}
+
+.easymde-settings-center__transfer-status-checks > div {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 14px;
+	color: #657695;
+	font-size: 14px;
+}
+
+.easymde-settings-center__transfer-status-checks > div strong {
+	color: #e43b45;
+	font-weight: 600;
+}
+
+.easymde-settings-center__transfer-status-checks > section {
+	border-color: #e5e9ef;
+	border-top-width: 1px;
+	border-bottom-width: 1px;
+}
+
+.easymde-settings-center__transfer-status-checks > section > div {
+	display: flex;
+	min-height: 62px;
+	align-items: flex-start;
+	gap: 11px;
+	padding: 12px 0;
+}
+
+.easymde-settings-center__transfer-status-checks > section > div:not(:last-child) {
+	border-color: #e5e9ef;
+	border-bottom-width: 1px;
+}
+
+.easymde-settings-center__transfer-status-checks > section svg {
+	flex: none;
+	margin-top: 2px;
+	color: #16ad55;
+}
+
+.easymde-settings-center__transfer-status-checks > section svg.is-invalid {
+	color: #e43b45;
+}
+
+.easymde-settings-center__transfer-status-checks > section strong,
+.easymde-settings-center__transfer-status-checks > section small {
+	display: block;
+}
+
+.easymde-settings-center__transfer-status-checks > section strong {
+	color: #17233f;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.easymde-settings-center__transfer-status-checks > section small {
+	margin-top: 4px;
+	color: #657695;
+	font-size: 13px;
+	line-height: 19px;
+}
+
+.easymde-settings-center__transfer-dialog > footer {
+	display: flex;
+	min-height: 66px;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 10px;
+	padding: 0 22px;
+	border-color: #e3e8ef;
+	border-top-width: 1px;
+	background: #fbfcfe;
+}
+
+.easymde-settings-center__transfer-dialog > footer button {
+	height: 38px;
+	padding: 0 18px;
+	border: 1px solid #d4dce8;
+	border-radius: 7px;
+	background: #fff;
+	color: #17233f;
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 500;
+}
+
+.easymde-settings-center__transfer-dialog > footer button:hover {
+	background: #f6f8fb;
+}
+
+.easymde-settings-center__transfer-dialog > footer button + button {
+	border: 0;
+	background: #dc3540;
+	color: #fff;
+}
+
+.easymde-settings-center__transfer-dialog > footer button + button:hover {
+	background: #c92c36;
 }
 
 .easymde-settings-center__about-dialog > footer .is-primary-action {

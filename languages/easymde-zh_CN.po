@@ -1264,19 +1264,19 @@ msgstr "EasyMDE"
 
 #: src/Admin/SettingsCenterStrings.php:14 src/Admin/SettingsPage.php:59
 msgid "Settings Center"
-msgstr "设置中心"
+msgstr "配置中心"
 
 #: src/Admin/SettingsCenterStrings.php:15
 msgid "Settings center navigation"
-msgstr "设置中心导航"
+msgstr "配置中心导航"
 
 #: src/Admin/SettingsCenterStrings.php:16
 msgid "Help"
-msgstr "帮助"
+msgstr "使用帮助"
 
 #: src/Admin/SettingsCenterStrings.php:17
 msgid "Documentation, FAQs, and usage guides"
-msgstr "文档、常见问题和使用指南"
+msgstr "文档、常见问题与使用指南"
 
 #: src/Admin/SettingsCenterStrings.php:18
 msgid "View documentation"
@@ -1284,7 +1284,7 @@ msgstr "查看文档"
 
 #: src/Admin/SettingsCenterStrings.php:19
 msgid "Close settings center"
-msgstr "关闭设置中心"
+msgstr "关闭配置中心"
 
 #: src/Admin/SettingsCenterStrings.php:20
 msgid "Search all settings"
@@ -1292,7 +1292,7 @@ msgstr "搜索所有设置"
 
 #: src/Admin/SettingsCenterStrings.php:21
 msgid "Search all plugin settings..."
-msgstr "搜索插件的所有设置……"
+msgstr "搜索全部插件配置项..."
 
 #: src/Admin/SettingsCenterStrings.php:22
 msgid "Clear search"
@@ -1334,11 +1334,11 @@ msgstr "常规设置"
 
 #: src/Admin/SettingsCenterStrings.php:34
 msgid "Keyboard Shortcuts"
-msgstr "键盘快捷键"
+msgstr "快捷键设置"
 
 #: src/Admin/SettingsCenterStrings.php:35
 msgid "Image Hosting"
-msgstr "图床托管"
+msgstr "图床设置"
 
 #: src/Admin/SettingsCenterStrings.php:36
 msgid "Markdown Settings"
@@ -1355,29 +1355,29 @@ msgstr "关于我们"
 #: src/Admin/SettingsCenterStrings.php:39
 msgid ""
 "Configure EasyMDE basic behavior and interface preferences in WordPress."
-msgstr "在 WordPress 中配置 EasyMDE 的基本行为和界面偏好。"
+msgstr "配置 EasyMDE 在 WordPress 中的基础行为和界面偏好。"
 
 #: src/Admin/SettingsCenterStrings.php:40
 msgid "Configure shortcuts for common actions on Windows, Linux, and macOS."
-msgstr "配置 Windows、Linux 和 macOS 上常用操作的快捷键。"
+msgstr "配置常用操作的快捷键，支持 Windows / Linux 与 macOS。"
 
 #: src/Admin/SettingsCenterStrings.php:41
 msgid ""
 "Configure image upload and storage services, including common hosts and "
 "custom upload solutions."
-msgstr "配置图片上传和存储服务，包括常见图床和自定义上传方案。"
+msgstr "配置图片上传与存储服务，支持常见图床与自定义上传方案。"
 
 #: src/Admin/SettingsCenterStrings.php:42
 msgid ""
 "Customize Markdown editor behavior and rendering for a more comfortable "
 "writing experience."
-msgstr "自定义 Markdown 编辑器行为和渲染方式，获得更舒适的写作体验。"
+msgstr "自定义 Markdown 编辑器的行为和渲染方式，打造更舒适的写作体验。"
 
 #: src/Admin/SettingsCenterStrings.php:43
 msgid ""
 "Export plugin settings to a local file or import them for migration and "
 "backup."
-msgstr "将插件设置导出到本地文件，或导入设置用于迁移和备份。"
+msgstr "将当前插件配置导出为本地文件，或从配置文件导入以迁移和备份您的设置。"
 
 #: src/Admin/SettingsCenterStrings.php:44
 msgid "Import / Export Configuration"
@@ -1385,7 +1385,7 @@ msgstr "导入 / 导出配置"
 
 #: src/Admin/SettingsCenterStrings.php:45
 msgid "Learn about the EasyMDE plugin, version status, and related resources."
-msgstr "了解 EasyMDE 插件、版本状态和相关资源。"
+msgstr "了解 EasyMDE 插件信息、版本状态与相关资源。"
 
 #: src/Admin/SettingsCenterStrings.php:46
 msgid "This settings section is not connected yet."
@@ -1397,7 +1397,7 @@ msgstr "真实的 WordPress 数据接口将在后续步骤中接入。"
 
 #: src/Admin/SettingsCenterStrings.php:48
 msgid "Basic Preferences"
-msgstr "基本偏好"
+msgstr "基础偏好"
 
 #: src/Admin/SettingsCenterStrings.php:49
 msgid "Editor Behavior"
@@ -1421,7 +1421,7 @@ msgstr "自动聚焦编辑器"
 
 #: src/Admin/SettingsCenterStrings.php:54
 msgid "Automatically focus the editor when creating a new article"
-msgstr "创建新文章时自动聚焦编辑器"
+msgstr "在新建文章时自动聚焦到编辑器"
 
 #: src/Admin/SettingsCenterStrings.php:55
 msgid "Show Line Numbers"
@@ -1449,7 +1449,7 @@ msgstr "自动保存"
 
 #: src/Admin/SettingsCenterStrings.php:61
 msgid "Periodically save content to prevent accidental loss"
-msgstr "定期保存内容，防止意外丢失"
+msgstr "定期自动保存内容，防止意外丢失"
 
 #: src/Admin/SettingsCenterStrings.php:62
 msgid "Auto Save Interval"
@@ -1457,19 +1457,19 @@ msgstr "自动保存间隔"
 
 #: src/Admin/SettingsCenterStrings.php:63
 msgid "Synchronized Scrolling (Preview and Editor)"
-msgstr "同步滚动（预览和编辑器）"
+msgstr "同步滚动（预览与编辑）"
 
 #: src/Admin/SettingsCenterStrings.php:64
 msgid "Synchronize scrolling between the preview and editor areas"
-msgstr "同步预览区和编辑器区域的滚动"
+msgstr "在预览与编辑区域间同步滚动"
 
 #: src/Admin/SettingsCenterStrings.php:65
 msgid "Clean Pasted Content"
-msgstr "清理粘贴内容"
+msgstr "粘贴内容清理"
 
 #: src/Admin/SettingsCenterStrings.php:66
 msgid "Automatically remove unnecessary formatting when pasting"
-msgstr "粘贴时自动移除不必要的格式"
+msgstr "粘贴时自动清理多余格式"
 
 #: src/Admin/SettingsCenterStrings.php:67
 msgid "Smart List Recognition"
@@ -1477,7 +1477,7 @@ msgstr "智能列表识别"
 
 #: src/Admin/SettingsCenterStrings.php:68
 msgid "Convert - or 1. to a list automatically"
-msgstr "自动将 - 或 1. 转换为列表"
+msgstr "输入 - 或 1. 自动转换为列表"
 
 #: src/Admin/SettingsCenterStrings.php:69
 msgid "Default Category Behavior"
@@ -1510,7 +1510,7 @@ msgstr "特色图片占位提示"
 
 #: src/Admin/SettingsCenterStrings.php:76
 msgid "Show a placeholder prompt when no featured image is set"
-msgstr "未设置特色图片时显示占位提示"
+msgstr "在没有特色图片时显示占位提示"
 
 #: src/Admin/SettingsCenterStrings.php:77
 msgid "Simplified Chinese"

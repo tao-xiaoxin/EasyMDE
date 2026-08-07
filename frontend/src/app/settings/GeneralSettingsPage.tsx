@@ -7,7 +7,6 @@ import {
 	matchesSettingsQuery,
 	SettingsRow,
 	SettingsToggle,
-	UnavailableSettingsNotice,
 } from "./SettingsControls";
 import {
 	DocumentIcon,
@@ -166,155 +165,154 @@ export function GeneralSettingsPage({
 					: "easymde-settings-center__sections"
 			}
 		>
-				<SettingsSection icon={SlidersIcon} title={s.basePreferences}>
-					<fieldset disabled className="easymde-settings-center__unavailable-fields">
-						<SettingsRow label={s.interfaceLanguage} query={normalizedQuery}>
-							<NativeSelect
-								label={s.interfaceLanguage}
-								value={draft.interfaceLanguage}
-								onChange={(value) => setValue("interfaceLanguage", value)}
-								options={[
-									["zh-CN", s.simplifiedChinese],
-									["zh-TW", s.traditionalChinese],
-									["en-US", s.english],
-								]}
-							/>
-						</SettingsRow>
-					</fieldset>
-					<SettingsRow label={s.defaultEditingMode} query={normalizedQuery}>
+			<SettingsSection icon={SlidersIcon} title={s.basePreferences}>
+				<fieldset
+					disabled
+					className="easymde-settings-center__unavailable-fields"
+				>
+					<SettingsRow label={s.interfaceLanguage} query={normalizedQuery}>
 						<NativeSelect
-							label={s.defaultEditingMode}
-							value={draft.editingMode}
-							onChange={(value) => setValue("editingMode", value)}
+							label={s.interfaceLanguage}
+							value={draft.interfaceLanguage}
+							onChange={(value) => setValue("interfaceLanguage", value)}
 							options={[
-								["live-preview", s.livePreview],
-								["source", s.sourceEditing],
-								["preview", s.previewOnly],
+								["zh-CN", s.simplifiedChinese],
+								["zh-TW", s.traditionalChinese],
+								["en-US", s.english],
 							]}
 						/>
 					</SettingsRow>
-					<SettingsRow
+				</fieldset>
+				<SettingsRow label={s.defaultEditingMode} query={normalizedQuery}>
+					<NativeSelect
+						label={s.defaultEditingMode}
+						value={draft.editingMode}
+						onChange={(value) => setValue("editingMode", value)}
+						options={[
+							["live-preview", s.livePreview],
+							["source", s.sourceEditing],
+							["preview", s.previewOnly],
+						]}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label={s.autoFocusEditor}
+					description={s.autoFocusEditorDescription}
+					query={normalizedQuery}
+				>
+					<SettingsToggle
 						label={s.autoFocusEditor}
-						description={s.autoFocusEditorDescription}
-						query={normalizedQuery}
-					>
-						<SettingsToggle
-							label={s.autoFocusEditor}
-							checked={draft.autoFocusEditor}
-							onChange={() =>
-								setValue("autoFocusEditor", !draft.autoFocusEditor)
-							}
-						/>
-					</SettingsRow>
-					<SettingsRow
+						checked={draft.autoFocusEditor}
+						onChange={() => setValue("autoFocusEditor", !draft.autoFocusEditor)}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label={s.showLineNumbers}
+					description={s.showLineNumbersDescription}
+					query={normalizedQuery}
+				>
+					<SettingsToggle
 						label={s.showLineNumbers}
-						description={s.showLineNumbersDescription}
-						query={normalizedQuery}
-					>
-						<SettingsToggle
-							label={s.showLineNumbers}
-							checked={draft.showLineNumbers}
-							onChange={() =>
-								setValue("showLineNumbers", !draft.showLineNumbers)
-							}
-						/>
-					</SettingsRow>
-					<SettingsRow
+						checked={draft.showLineNumbers}
+						onChange={() => setValue("showLineNumbers", !draft.showLineNumbers)}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label={s.syntaxHighlight}
+					description={s.syntaxHighlightDescription}
+					query={normalizedQuery}
+				>
+					<SettingsToggle
 						label={s.syntaxHighlight}
-						description={s.syntaxHighlightDescription}
+						checked={draft.syntaxHighlight}
+						onChange={() => setValue("syntaxHighlight", !draft.syntaxHighlight)}
+					/>
+				</SettingsRow>
+				<SettingsRow label={s.statusBarDisplay} query={normalizedQuery}>
+					<NativeSelect
+						label={s.statusBarDisplay}
+						value={draft.statusBarMode}
+						onChange={(value) => setValue("statusBarMode", value)}
+						options={[
+							["words-reading-time", s.wordsAndReadingTime],
+							["words", s.wordsOnly],
+							["hidden", s.hiddenStatusBar],
+						]}
+					/>
+				</SettingsRow>
+			</SettingsSection>
+			<SettingsSection icon={EditPencilIcon} title={s.editorBehavior}>
+				<SettingsRow
+					label={s.autoSave}
+					description={s.autoSaveDescription}
+					query={normalizedQuery}
+				>
+					<SettingsToggle
+						label={s.autoSave}
+						checked={draft.autoSave}
+						onChange={() => setValue("autoSave", !draft.autoSave)}
+					/>
+				</SettingsRow>
+				<SettingsRow label={s.autoSaveInterval} query={normalizedQuery}>
+					<NativeSelect
+						label={s.autoSaveInterval}
+						value={draft.autoSaveInterval}
+						onChange={(value) => setValue("autoSaveInterval", value)}
+						options={[
+							["30", s.seconds30],
+							["60", s.seconds60],
+							["120", s.minutes2],
+							["300", s.minutes5],
+						]}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label={s.syncScroll}
+					description={s.syncScrollDescription}
+					query={normalizedQuery}
+				>
+					<SettingsToggle
+						label={s.syncScroll}
+						checked={draft.syncScroll}
+						onChange={() => setValue("syncScroll", !draft.syncScroll)}
+					/>
+				</SettingsRow>
+				<fieldset
+					disabled
+					className="easymde-settings-center__unavailable-fields"
+				>
+					<SettingsRow
+						label={s.cleanPastedContent}
+						description={s.cleanPastedContentDescription}
 						query={normalizedQuery}
 					>
 						<SettingsToggle
-							label={s.syntaxHighlight}
-							checked={draft.syntaxHighlight}
+							label={s.cleanPastedContent}
+							checked={draft.cleanPastedContent}
 							onChange={() =>
-								setValue("syntaxHighlight", !draft.syntaxHighlight)
+								setValue("cleanPastedContent", !draft.cleanPastedContent)
 							}
 						/>
 					</SettingsRow>
-					<SettingsRow label={s.statusBarDisplay} query={normalizedQuery}>
-						<NativeSelect
-							label={s.statusBarDisplay}
-							value={draft.statusBarMode}
-							onChange={(value) => setValue("statusBarMode", value)}
-							options={[
-								["words-reading-time", s.wordsAndReadingTime],
-								["words", s.wordsOnly],
-								["hidden", s.hiddenStatusBar],
-							]}
-						/>
-					</SettingsRow>
-				</SettingsSection>
-				<SettingsSection icon={EditPencilIcon} title={s.editorBehavior}>
 					<SettingsRow
-						label={s.autoSave}
-						description={s.autoSaveDescription}
+						label={s.smartListRecognition}
+						description={s.smartListRecognitionDescription}
 						query={normalizedQuery}
 					>
 						<SettingsToggle
-							label={s.autoSave}
-							checked={draft.autoSave}
-							onChange={() => setValue("autoSave", !draft.autoSave)}
-						/>
-					</SettingsRow>
-					<SettingsRow label={s.autoSaveInterval} query={normalizedQuery}>
-						<NativeSelect
-							label={s.autoSaveInterval}
-							value={draft.autoSaveInterval}
-							onChange={(value) => setValue("autoSaveInterval", value)}
-							options={[
-								["30", s.seconds30],
-								["60", s.seconds60],
-								["120", s.minutes2],
-								["300", s.minutes5],
-							]}
-						/>
-					</SettingsRow>
-					<SettingsRow
-						label={s.syncScroll}
-						description={s.syncScrollDescription}
-						query={normalizedQuery}
-					>
-						<SettingsToggle
-							label={s.syncScroll}
-							checked={draft.syncScroll}
-							onChange={() => setValue("syncScroll", !draft.syncScroll)}
-						/>
-					</SettingsRow>
-					<fieldset disabled className="easymde-settings-center__unavailable-fields">
-						<SettingsRow
-							label={s.cleanPastedContent}
-							description={s.cleanPastedContentDescription}
-							query={normalizedQuery}
-						>
-							<SettingsToggle
-								label={s.cleanPastedContent}
-								checked={draft.cleanPastedContent}
-								onChange={() =>
-									setValue("cleanPastedContent", !draft.cleanPastedContent)
-								}
-							/>
-						</SettingsRow>
-						<SettingsRow
 							label={s.smartListRecognition}
-							description={s.smartListRecognitionDescription}
-							query={normalizedQuery}
-						>
-							<SettingsToggle
-								label={s.smartListRecognition}
-								checked={draft.smartListRecognition}
-								onChange={() =>
-									setValue("smartListRecognition", !draft.smartListRecognition)
-								}
-							/>
-						</SettingsRow>
-					</fieldset>
-				</SettingsSection>
-				<UnavailableSettingsNotice
-					label={s.settingsUnavailable}
-					description={s.settingsUnavailableDescription}
-				/>
-				<fieldset disabled className="easymde-settings-center__unavailable-fields">
+							checked={draft.smartListRecognition}
+							onChange={() =>
+								setValue("smartListRecognition", !draft.smartListRecognition)
+							}
+						/>
+					</SettingsRow>
+				</fieldset>
+			</SettingsSection>
+			<fieldset
+				disabled
+				className="easymde-settings-center__unavailable-fields"
+			>
 				<SettingsSection icon={DocumentIcon} title={s.documentDefaults}>
 					<SettingsRow label={s.defaultCategory} query={normalizedQuery}>
 						<NativeSelect
@@ -388,7 +386,7 @@ export function GeneralSettingsPage({
 						/>
 					</SettingsRow>
 				</SettingsSection>
-				</fieldset>
+			</fieldset>
 		</div>
 	);
 }

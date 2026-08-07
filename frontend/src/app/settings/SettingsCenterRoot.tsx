@@ -107,8 +107,7 @@ const NAV_ITEMS: ReadonlyArray<
 	},
 ];
 
-const SETTINGS_SCROLL_ACTIVATION_LINE = 252;
-const SETTINGS_SCROLL_OFFSET = 246;
+const SETTINGS_SAVE_CONFIRMATION_DURATION = 2000;
 export function SettingsCenterRoot({
 	bootstrap,
 }: {
@@ -135,6 +134,8 @@ export function SettingsCenterRoot({
 	const [searchItems, setSearchItems] = useState<ReadonlyArray<SearchItem>>([]);
 	const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
+	const stickyHeaderRef = useRef<HTMLDivElement>(null);
+	const saveBarRef = useRef<HTMLDivElement>(null);
 	const sectionRefs = useRef<Partial<Record<NavId, HTMLElement | null>>>({});
 	const searchIndexSignatureRef = useRef("");
 	const searchNavigationFrameRef = useRef<number | null>(null);
@@ -327,12 +328,53 @@ export function SettingsCenterRoot({
 		[],
 	);
 
+	useEffect(() => {
+		if ("saved" !== saveStatus) return;
+		const windowRef = scrollContainerRef.current?.ownerDocument.defaultView;
+		if (!windowRef)
+			throw new Error("settings-center-save-confirmation-window-missing");
+		const timeout = windowRef.setTimeout(() => {
+			setSaveStatus((status) => ("saved" === status ? "idle" : status));
+		}, SETTINGS_SAVE_CONFIRMATION_DURATION);
+		return () => windowRef.clearTimeout(timeout);
+	}, [saveStatus]);
+
+	const navigationViewportTop = (container: HTMLDivElement) => {
+		const stickyHeader = stickyHeaderRef.current;
+		if (!stickyHeader)
+			throw new Error("settings-center-navigation-header-missing");
+		let viewportTop = Math.max(
+			container.getBoundingClientRect().top,
+			stickyHeader.getBoundingClientRect().bottom,
+		);
+		if (saveBarVisible) {
+			const saveBar = saveBarRef.current;
+			if (!saveBar)
+				throw new Error("settings-center-navigation-save-bar-missing");
+			viewportTop = Math.max(
+				viewportTop,
+				saveBar.getBoundingClientRect().bottom,
+			);
+		}
+		return viewportTop;
+	};
+
+	const scrollTargetIntoView = (
+		container: HTMLDivElement,
+		target: HTMLElement,
+	) => {
+		const targetTop =
+			container.scrollTop +
+			target.getBoundingClientRect().top -
+			navigationViewportTop(container);
+		container.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
+	};
+
 	const handleSettingsScroll = () => {
 		if (normalizedQuery) return;
 		const container = scrollContainerRef.current;
 		if (!container) throw new Error("settings-center-scroll-container-missing");
-		const activationLine =
-			SETTINGS_SCROLL_ACTIVATION_LINE + (saveBarVisible ? 43 : 0);
+		const activationLine = navigationViewportTop(container);
 		let visibleTab: NavId = "general";
 		for (const item of NAV_ITEMS) {
 			const section = sectionRefs.current[item.id];
@@ -364,11 +406,7 @@ export function SettingsCenterRoot({
 					throw new Error(
 						`settings-center-navigation-target-${targetId}-missing`,
 					);
-				const targetTop =
-					container.scrollTop +
-					target.getBoundingClientRect().top -
-					(SETTINGS_SCROLL_OFFSET + (saveBarVisible ? 43 : 0));
-				container.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
+				scrollTargetIntoView(container, target);
 			});
 		});
 	};
@@ -384,11 +422,7 @@ export function SettingsCenterRoot({
 		const section = sectionRefs.current[id];
 		if (!container || !section)
 			throw new Error(`settings-center-section-${id}-unavailable`);
-		const targetTop =
-			container.scrollTop +
-			section.getBoundingClientRect().top -
-			(SETTINGS_SCROLL_OFFSET + (saveBarVisible ? 43 : 0));
-		container.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
+		scrollTargetIntoView(container, section);
 		setActiveTab(id);
 	};
 
@@ -621,7 +655,10 @@ export function SettingsCenterRoot({
 					</section>
 				</aside>
 				<main>
-					<div className="easymde-settings-center__sticky-header">
+					<div
+						ref={stickyHeaderRef}
+						className="easymde-settings-center__sticky-header"
+					>
 						<div className="easymde-settings-center__header-scale">
 							<header>
 								<img src={bootstrap.assets.headerIllustrationUrl} alt="" />
@@ -658,6 +695,7 @@ export function SettingsCenterRoot({
 						</div>
 					</div>
 					<div
+						ref={saveBarRef}
 						className={`easymde-settings-center__save-bar${saveBarVisible ? "" : " is-hidden"}`}
 						aria-live="polite"
 					>

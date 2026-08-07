@@ -1578,7 +1578,7 @@ msgstr "密码保护"
 
 #: src/Admin/SettingsCenterStrings.php:95
 msgid "Automatically Extract (First 55 Characters)"
-msgstr "自动提取（前 55 个字符）"
+msgstr "自动提取（前 55 字）"
 
 #: src/Admin/SettingsCenterStrings.php:96
 msgid "Automatically Extract (First 100 Characters)"
@@ -1594,7 +1594,7 @@ msgstr "常用快捷键"
 
 #: src/Admin/SettingsCenterStrings.php:99
 msgid "Headings and Formatting"
-msgstr "标题和格式"
+msgstr "标题与格式"
 
 #: src/Admin/SettingsCenterStrings.php:100
 msgid "Shortcut Behavior"

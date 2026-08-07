@@ -39,11 +39,15 @@ test('keeps the EasyMDE menu logo inside the native icon slot', async ({ page })
   await login(page);
   await page.goto('/wp-admin/profile.php');
 
-  const menuItem = page.locator('#toplevel_page_easymde-settings-general');
+  const menuItem = page.locator('#toplevel_page_easymde');
   const iconSlot = menuItem.locator('> a > .wp-menu-image');
   const logo = iconSlot.locator('img');
 
   await expect(menuItem).toBeVisible();
+  await expect(menuItem.locator('> a')).toHaveAttribute(
+    'href',
+    /admin\.php\?page=easymde&route=\/general_setting$/u,
+  );
   await expect(logo).toHaveAttribute('src', /assets\/images\/easymde-editor-icon\.png$/u);
   await expect.poll(async () => {
     const slot = await iconSlot.boundingBox();
@@ -69,7 +73,7 @@ test('opens the native plugin updates list from the EasyMDE submenu', async ({ p
   await login(page);
   await page.goto('/wp-admin/profile.php');
 
-  const menuItem = page.locator('#toplevel_page_easymde-settings-general');
+  const menuItem = page.locator('#toplevel_page_easymde');
   await menuItem.hover();
   const updatesLink = menuItem.locator('.wp-submenu a[href*="plugins.php?plugin_status=upgrade"]');
 
@@ -80,9 +84,45 @@ test('opens the native plugin updates list from the EasyMDE submenu', async ({ p
   await expect(page.locator('.subsubsub a.current')).toContainText('可供更新');
 });
 
-test('keeps the settings save action clickable after scrolling', async ({ page }) => {
+test('opens the settings center through the explicit General route', async ({ page }) => {
+  await login(page);
+  await page.goto('/wp-admin/profile.php');
+
+  const menuItem = page.locator('#toplevel_page_easymde');
+  await menuItem.locator('> a').click();
+  await expect(page).toHaveURL(/\/wp-admin\/admin\.php\?page=easymde&route=(?:%2F|\/)general_setting$/iu);
+  await expect(page.locator('.easymde-settings-center')).toBeVisible();
+});
+
+test('redirects the former Settings Center URL to the explicit General route', async ({ page }) => {
   await login(page);
   await page.goto('/wp-admin/admin.php?page=easymde/settings/general');
+
+  await expect(page).toHaveURL(/\/wp-admin\/admin\.php\?page=easymde&route=(?:%2F|\/)general_setting$/iu);
+  await expect(page.locator('.easymde-settings-center')).toBeVisible();
+});
+
+test('rejects an unsupported settings center route explicitly', async ({ page }) => {
+  await login(page);
+  const response = await page.goto('/wp-admin/admin.php?page=easymde&route=/unsupported');
+
+  expect(response?.status()).toBe(404);
+  await expect(page.locator('body')).toContainText(/settings route is not supported|不支持此 EasyMDE 设置路由/iu);
+});
+
+test('keeps the former Options URL on the isolated legacy screen', async ({ page }) => {
+  await login(page);
+  await page.goto('/wp-admin/options-general.php?page=easymde');
+
+  await expect(page).toHaveURL(/\/wp-admin\/options-general\.php\?page=easymde-legacy$/u);
+  await expect(page.locator('.wrap > h1')).toHaveText('EasyMDE');
+  await expect(page.locator('.easymde-settings-shortcuts')).toBeVisible();
+  await expect(page.locator('.easymde-settings-center')).toHaveCount(0);
+});
+
+test('keeps the settings save action clickable after scrolling', async ({ page }) => {
+  await login(page);
+  await page.goto('/wp-admin/admin.php?page=easymde&route=/general_setting');
   await expect(page.locator('.easymde-settings-center')).toBeVisible();
 
   const scrollContainer = page.locator('.easymde-settings-center');
@@ -135,7 +175,7 @@ test('keeps the settings save action clickable after scrolling', async ({ page }
 test('keeps the mobile settings center bounded and unavailable settings non-saveable', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);
-  await page.goto('/wp-admin/admin.php?page=easymde/settings/general');
+  await page.goto('/wp-admin/admin.php?page=easymde&route=/general_setting');
 
   const settingsCenter = page.locator('.easymde-settings-center');
   const saveButton = settingsCenter.locator('.easymde-settings-center__save-bar > button');

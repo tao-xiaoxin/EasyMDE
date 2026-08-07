@@ -1246,13 +1246,13 @@ msgstr ""
 msgid "You are not allowed to create this EasyMDE post."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:13 src/Admin/SettingsPage.php:40
-#: src/Admin/SettingsPage.php:68 src/Admin/SettingsPage.php:69
+#: src/Admin/SettingsCenterStrings.php:13 src/Admin/SettingsPage.php:49
+#: src/Admin/SettingsPage.php:78 src/Admin/SettingsPage.php:79
 #: templates/admin/settings-page.php:13
 msgid "EasyMDE"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:14 src/Admin/SettingsPage.php:50
+#: src/Admin/SettingsCenterStrings.php:14 src/Admin/SettingsPage.php:59
 msgid "Settings Center"
 msgstr ""
 
@@ -1598,12 +1598,12 @@ msgstr ""
 msgid "Function"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:103 src/Admin/SettingsPage.php:502
+#: src/Admin/SettingsCenterStrings.php:103 src/Admin/SettingsPage.php:637
 #: templates/admin/settings-page.php:61
 msgid "Windows / Linux"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:104 src/Admin/SettingsPage.php:502
+#: src/Admin/SettingsCenterStrings.php:104 src/Admin/SettingsPage.php:637
 #: templates/admin/settings-page.php:62
 msgid "macOS"
 msgstr ""
@@ -2949,20 +2949,25 @@ msgstr ""
 msgid "Close About Feedback"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:39 src/Admin/SettingsPage.php:49
+#: src/Admin/SettingsPage.php:48 src/Admin/SettingsPage.php:58
+#: src/Admin/SettingsPage.php:173
 msgid "EasyMDE Settings Center"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:60
+#: src/Admin/SettingsPage.php:70
 msgid "EasyMDE Updates"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:61
+#: src/Admin/SettingsPage.php:71
 msgid "Updates"
 msgstr ""
 
+#: src/Admin/SettingsPage.php:172
+msgid "The EasyMDE settings route is not supported."
+msgstr ""
+
 #. translators: 1: toolbar command label, 2: platform label.
-#: src/Admin/SettingsPage.php:336
+#: src/Admin/SettingsPage.php:471
 #, php-format
 msgid ""
 "Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or "
@@ -2970,7 +2975,7 @@ msgid ""
 msgstr ""
 
 #. translators: 1: first toolbar command label, 2: second toolbar command label, 3: shortcut, 4: platform label.
-#: src/Admin/SettingsPage.php:353
+#: src/Admin/SettingsPage.php:488
 #, php-format
 msgid "Shortcut conflict: %1$s and %2$s both use %3$s on %4$s."
 msgstr ""

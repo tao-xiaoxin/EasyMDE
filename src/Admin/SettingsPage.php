@@ -14,6 +14,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class SettingsPage {
 
+	private const SETTINGS_CENTER_PAGE_SLUG        = 'easymde';
+	private const SETTINGS_CENTER_ROUTE            = '/general_setting';
+	private const LEGACY_SETTINGS_PAGE_SLUG        = 'easymde-legacy';
+	private const LEGACY_SETTINGS_CENTER_PAGE_SLUG = 'easymde/settings/general';
+
 	private $toolbar_registry;
 	private $options;
 	private $settings_center_repository;
@@ -28,13 +33,17 @@ final class SettingsPage {
 
 	public function register_hooks() {
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
+		add_action( 'admin_menu', array( $this, 'redirect_legacy_settings_pages' ), 0 );
 		add_action( 'admin_menu', array( $this, 'register_admin_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
+		add_action( 'load-toplevel_page_' . self::SETTINGS_CENTER_PAGE_SLUG, array( $this, 'enforce_settings_center_route' ) );
+		add_filter( 'submenu_file', array( $this, 'filter_settings_center_submenu_file' ), 10, 2 );
 		add_filter( 'pre_update_option_' . $this->options->editor_settings_key(), array( $this, 'intercept_legacy_settings_update' ), 10, 3 );
 	}
 
 	public function register_admin_menu() {
-		$settings_page_slug = 'easymde/settings/general';
+		$settings_page_slug = self::SETTINGS_CENTER_PAGE_SLUG;
+		$route_menu_slug    = $settings_page_slug . '&route=' . self::SETTINGS_CENTER_ROUTE;
 		add_menu_page(
 			__( 'EasyMDE Settings Center', 'easymde' ),
 			__( 'EasyMDE', 'easymde' ),
@@ -49,9 +58,10 @@ final class SettingsPage {
 			__( 'EasyMDE Settings Center', 'easymde' ),
 			__( 'Settings Center', 'easymde' ),
 			'manage_options',
-			$settings_page_slug,
+			$route_menu_slug,
 			array( $this, 'render_settings_center' )
 		);
+		$this->promote_settings_center_route_submenu( $settings_page_slug, $route_menu_slug );
 
 		$update_capability = $this->get_update_page_capability();
 		if ( '' !== $update_capability ) {
@@ -68,9 +78,118 @@ final class SettingsPage {
 			__( 'EasyMDE', 'easymde' ),
 			__( 'EasyMDE', 'easymde' ),
 			'manage_options',
-			'easymde',
+			self::LEGACY_SETTINGS_PAGE_SLUG,
 			array( $this, 'render' )
 		);
+	}
+
+	/**
+	 * Keep old Settings Center and Options URLs working after the Settings
+	 * Center claims the canonical `easymde` page slug for `admin.php`.
+	 */
+	public function redirect_legacy_settings_pages() {
+		global $pagenow;
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only legacy URL compatibility redirect.
+		$page = isset( $_GET['page'] ) ? wp_unslash( $_GET['page'] ) : '';
+		if ( self::LEGACY_SETTINGS_CENTER_PAGE_SLUG === $page ) {
+			wp_safe_redirect( $this->get_settings_center_url() );
+			exit;
+		}
+
+		if ( 'options-general.php' !== $pagenow || 'easymde' !== $page ) {
+			return;
+		}
+
+		wp_safe_redirect(
+			add_query_arg(
+				'page',
+				self::LEGACY_SETTINGS_PAGE_SLUG,
+				admin_url( 'options-general.php' )
+			)
+		);
+		exit;
+	}
+
+	/**
+	 * Keep the top-level menu on the canonical page slug while making its first
+	 * submenu link the explicit Settings Center route.
+	 *
+	 * WordPress automatically inserts the parent item before a first submenu
+	 * whose slug differs from the parent. Removing that synthetic item lets the
+	 * core menu renderer emit `admin.php?page=easymde&route=/general_setting`,
+	 * while the top-level `easymde` page hook remains the execution owner.
+	 */
+	private function promote_settings_center_route_submenu( $parent_slug, $route_menu_slug ) {
+		global $submenu;
+
+		if ( empty( $submenu[ $parent_slug ] ) ) {
+			return;
+		}
+
+		$route_item  = null;
+		$route_index = null;
+		foreach ( $submenu[ $parent_slug ] as $index => $item ) {
+			if ( $route_menu_slug === $item[2] ) {
+				$route_item  = $item;
+				$route_index = $index;
+				break;
+			}
+		}
+
+		if ( null === $route_item || null === $route_index ) {
+			return;
+		}
+
+		array_splice( $submenu[ $parent_slug ], $route_index, 1 );
+		foreach ( $submenu[ $parent_slug ] as $index => $item ) {
+			if ( $parent_slug === $item[2] ) {
+				array_splice( $submenu[ $parent_slug ], $index, 1 );
+				break;
+			}
+		}
+
+		array_unshift( $submenu[ $parent_slug ], $route_item );
+	}
+
+	/**
+	 * Redirect direct legacy/no-route visits to the explicit General route and
+	 * fail clearly when a caller supplies an unsupported route.
+	 */
+	public function enforce_settings_center_route() {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only route selection for an admin screen.
+		$route = isset( $_GET['route'] ) ? wp_unslash( $_GET['route'] ) : null;
+		if ( self::SETTINGS_CENTER_ROUTE === $route ) {
+			return;
+		}
+
+		if ( null === $route || '' === $route ) {
+			wp_safe_redirect( $this->get_settings_center_url() );
+			exit;
+		}
+
+		wp_die(
+			esc_html__( 'The EasyMDE settings route is not supported.', 'easymde' ),
+			esc_html__( 'EasyMDE Settings Center', 'easymde' ),
+			array(
+				'response'  => 404,
+				'back_link' => true,
+			)
+		);
+	}
+
+	public function filter_settings_center_submenu_file( $submenu_file, $parent_file ) {
+		if ( self::SETTINGS_CENTER_PAGE_SLUG !== $parent_file ) {
+			return $submenu_file;
+		}
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only route selection for menu highlighting.
+		$route = isset( $_GET['route'] ) ? wp_unslash( $_GET['route'] ) : null;
+		if ( self::SETTINGS_CENTER_ROUTE === $route ) {
+			return self::SETTINGS_CENTER_PAGE_SLUG . '&route=' . self::SETTINGS_CENTER_ROUTE;
+		}
+
+		return $submenu_file;
 	}
 
 	private function get_update_page_capability() {
@@ -99,7 +218,7 @@ final class SettingsPage {
 			);
 		}
 
-		if ( 'settings_page_easymde' === $hook ) {
+		if ( 'settings_page_' . self::LEGACY_SETTINGS_PAGE_SLUG === $hook ) {
 			wp_enqueue_style(
 				'easymde-admin-settings',
 				Asset::url( 'assets/css/admin/settings.css' ),
@@ -110,7 +229,7 @@ final class SettingsPage {
 			return;
 		}
 
-		if ( 'toplevel_page_easymde/settings/general' !== $hook || ! current_user_can( 'manage_options' ) ) {
+		if ( 'toplevel_page_' . self::SETTINGS_CENTER_PAGE_SLUG !== $hook || ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
 
@@ -174,6 +293,17 @@ final class SettingsPage {
 
 		require EASYMDE_PLUGIN_DIR . 'templates/admin/settings-center.php';
 	}
+
+	private function get_settings_center_url() {
+		return add_query_arg(
+			array(
+				'page'  => self::SETTINGS_CENTER_PAGE_SLUG,
+				'route' => self::SETTINGS_CENTER_ROUTE,
+			),
+			admin_url( 'admin.php' )
+		);
+	}
+
 	private function get_settings_center_bootstrap() {
 		$settings = $this->settings_center_repository->get_settings();
 

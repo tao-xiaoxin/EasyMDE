@@ -331,7 +331,8 @@ export function SettingsCenterRoot({
 		if (normalizedQuery) return;
 		const container = scrollContainerRef.current;
 		if (!container) throw new Error("settings-center-scroll-container-missing");
-		const activationLine = SETTINGS_SCROLL_ACTIVATION_LINE;
+		const activationLine =
+			SETTINGS_SCROLL_ACTIVATION_LINE + (saveBarVisible ? 43 : 0);
 		let visibleTab: NavId = "general";
 		for (const item of NAV_ITEMS) {
 			const section = sectionRefs.current[item.id];
@@ -366,7 +367,7 @@ export function SettingsCenterRoot({
 				const targetTop =
 					container.scrollTop +
 					target.getBoundingClientRect().top -
-					SETTINGS_SCROLL_OFFSET;
+					(SETTINGS_SCROLL_OFFSET + (saveBarVisible ? 43 : 0));
 				container.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
 			});
 		});
@@ -386,7 +387,7 @@ export function SettingsCenterRoot({
 		const targetTop =
 			container.scrollTop +
 			section.getBoundingClientRect().top -
-			SETTINGS_SCROLL_OFFSET;
+			(SETTINGS_SCROLL_OFFSET + (saveBarVisible ? 43 : 0));
 		container.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
 		setActiveTab(id);
 	};
@@ -402,6 +403,11 @@ export function SettingsCenterRoot({
 	const settingsDirty =
 		resetSecretsRef.current ||
 		JSON.stringify(settings) !== JSON.stringify(savedSettings);
+	const saveBarVisible =
+		settingsDirty ||
+		"idle" !== saveStatus ||
+		saveConflict ||
+		transferMutationUnavailable;
 	const updateSettingsSection = <Key extends keyof SettingsCenterSettings>(
 		key: Key,
 		value: SettingsCenterSettings[Key],
@@ -651,7 +657,10 @@ export function SettingsCenterRoot({
 							</div>
 						</div>
 					</div>
-					<div className="easymde-settings-center__save-bar" aria-live="polite">
+					<div
+						className={`easymde-settings-center__save-bar${saveBarVisible ? "" : " is-hidden"}`}
+						aria-live="polite"
+					>
 						<span data-save-status={saveStatus}>
 							{"error" === saveStatus
 								? "conflict" === saveError

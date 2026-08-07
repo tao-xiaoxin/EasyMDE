@@ -307,6 +307,35 @@ final class SettingsPageTest extends WP_UnitTestCase
         );
     }
 
+    public function test_admin_menu_uses_the_stable_settings_route_local_logo_and_native_updates_page()
+    {
+        wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+        $settings_page_slug = 'easymde/settings/general';
+
+        $this->settings_page()->register_admin_menu();
+
+        global $menu, $submenu;
+        $menu_item = $this->find_menu_item( $menu, $settings_page_slug );
+        $this->assertSame( 'EasyMDE', $menu_item[0] );
+        $this->assertStringContainsString( '/assets/images/easymde-editor-icon.png', $menu_item[6] );
+        $this->assertArrayHasKey( $settings_page_slug, $submenu );
+        $this->assertSame( $settings_page_slug, $submenu[ $settings_page_slug ][0][2] );
+        $this->assertSame( 'manage_options', $submenu[ $settings_page_slug ][0][1] );
+        $this->assertSame( 'update-core.php', $submenu[ $settings_page_slug ][1][2] );
+        $this->assertSame( 'update_core', $submenu[ $settings_page_slug ][1][1] );
+    }
+
+    private function find_menu_item( array $menu, $slug )
+    {
+        foreach ( $menu as $item ) {
+            if ( isset( $item[2] ) && $slug === $item[2] ) {
+                return $item;
+            }
+        }
+
+        $this->fail( 'Expected WordPress admin menu item was not registered.' );
+    }
+
     private function settings_page()
     {
         return new SettingsPage(new ToolbarRegistry(), new Options());

@@ -2173,6 +2173,21 @@ body:has(.easymde-editor.is-immersive) .wrap {
     grid-area: preview;
 }
 
+.easymde-workspace.is-mode-source {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "source";
+}
+
+.easymde-workspace.is-mode-source .easymde-pane-preview,
+.easymde-workspace.is-mode-preview .easymde-pane-source {
+    display: none;
+}
+
+.easymde-workspace.is-mode-preview {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "preview";
+}
+
 .easymde-source,
 .easymde-preview,
 .easymde-preview-react-root {

@@ -1,5 +1,7 @@
 import { createElement, useLayoutEffect, useRef } from '@wordpress/element';
 
+import type { EditorRootSettingsBootstrap } from '../../../contracts/bootstrap/editor-root-bootstrap';
+
 import {
   createCodeMirrorDocumentSession
 } from '../adapters/code-mirror-document-session';
@@ -17,6 +19,7 @@ export type { EditorDocumentSession } from '../editor-document-session';
 type EditorDocumentSourceProps = Readonly<{
   editorLabel: string;
   onReady: (session: EditorDocumentSession) => void;
+  settings: EditorRootSettingsBootstrap;
   submissionField: HTMLTextAreaElement;
   titleField: HTMLInputElement | null;
 }>;
@@ -24,6 +27,7 @@ type EditorDocumentSourceProps = Readonly<{
 export function EditorDocumentSource({
   editorLabel,
   onReady,
+  settings,
   submissionField,
   titleField
 }: EditorDocumentSourceProps) {
@@ -37,7 +41,9 @@ export function EditorDocumentSource({
     const documentSession = createCodeMirrorDocumentSession({
       container: hostRef.current,
       label: editorLabel,
-      submissionField
+      lineNumbers: settings.general.showLineNumbers,
+      submissionField,
+      syntaxHighlight: settings.general.syntaxHighlight
     });
     let titleSession: NativeTitleSession;
     let editorSession: EditorDocumentSession;
@@ -77,7 +83,7 @@ export function EditorDocumentSource({
         }
       }
     };
-  }, [editorLabel, onReady, submissionField, titleField]);
+  }, [editorLabel, onReady, settings, submissionField, titleField]);
 
   return (
     <div

@@ -304,6 +304,7 @@ export function mountAdminEditor(
       nonce: bootstrap.imageUpload.nonce,
       siteUrl: windowRef.location.href
     }),
+    isNewPost: bootstrap.wordpress.isNewPost,
     immersiveEnvironment: createBrowserImmersiveEnvironment(
       documentRef,
       new URL(
@@ -397,6 +398,7 @@ export function mountAdminEditor(
       hooks: runtime.wordpress.hooks,
       namespace: 'easymde/editor-root'
     }),
+    settings: bootstrap.settings,
     submissionField,
     titleField,
     toolbar: bootstrap.toolbar,

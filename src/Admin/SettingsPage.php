@@ -34,15 +34,35 @@ final class SettingsPage {
 	}
 
 	public function register_admin_menu() {
+		$settings_page_slug = 'easymde/settings/general';
 		add_menu_page(
 			__( 'EasyMDE Settings Center', 'easymde' ),
-			__( 'EasyMDE Settings', 'easymde' ),
+			__( 'EasyMDE', 'easymde' ),
 			'manage_options',
-			'easymde/settings/general',
+			$settings_page_slug,
 			array( $this, 'render_settings_center' ),
-			'dashicons-admin-settings',
+			Asset::url( 'assets/images/easymde-editor-icon.png' ),
 			81
 		);
+		add_submenu_page(
+			$settings_page_slug,
+			__( 'EasyMDE Settings Center', 'easymde' ),
+			__( 'Settings Center', 'easymde' ),
+			'manage_options',
+			$settings_page_slug,
+			array( $this, 'render_settings_center' )
+		);
+
+		$update_capability = $this->get_update_page_capability();
+		if ( '' !== $update_capability ) {
+			add_submenu_page(
+				$settings_page_slug,
+				__( 'EasyMDE Updates', 'easymde' ),
+				__( 'Updates', 'easymde' ),
+				$update_capability,
+				'update-core.php'
+			);
+		}
 
 		add_options_page(
 			__( 'EasyMDE', 'easymde' ),
@@ -51,6 +71,14 @@ final class SettingsPage {
 			'easymde',
 			array( $this, 'render' )
 		);
+	}
+
+	private function get_update_page_capability() {
+		if ( current_user_can( 'update_core' ) ) {
+			return 'update_core';
+		}
+
+		return current_user_can( 'update_plugins' ) ? 'update_plugins' : '';
 	}
 
 	public function register_settings() {

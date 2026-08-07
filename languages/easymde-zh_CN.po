@@ -2976,6 +2976,14 @@ msgstr "EasyMDE 设置中心"
 msgid "EasyMDE Settings"
 msgstr "EasyMDE 设置"
 
+#: src/Admin/SettingsPage.php:60
+msgid "EasyMDE Updates"
+msgstr "EasyMDE 更新"
+
+#: src/Admin/SettingsPage.php:61
+msgid "Updates"
+msgstr "更新"
+
 #. translators: 1: toolbar command label, 2: platform label.
 #: src/Admin/SettingsPage.php:308
 #, php-format

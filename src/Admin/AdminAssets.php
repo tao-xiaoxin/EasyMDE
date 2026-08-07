@@ -101,7 +101,11 @@ final class AdminAssets {
 		wp_enqueue_media();
 		if ( $this->enqueue_react_editor_asset() ) {
 			try {
-				$root_bootstrap = $this->get_editor_root_bootstrap( $post_id, $screen->post_type );
+				$root_bootstrap = $this->get_editor_root_bootstrap(
+					$post_id,
+					$screen->post_type,
+					'post-new.php' === $hook
+				);
 			} catch ( \Throwable $error ) {
 				if ( ! FrontendAssetContract::is_error( $error ) ) {
 					throw $error;
@@ -166,7 +170,7 @@ final class AdminAssets {
 		return true;
 	}
 
-	private function get_editor_root_bootstrap( $post_id, $post_type = '' ) {
+	private function get_editor_root_bootstrap( $post_id, $post_type = '', $is_new_post = false ) {
 		$nonce         = wp_create_nonce( 'wp_rest' );
 		$strings       = $this->get_strings();
 		$storage       = $this->get_storage_config( $post_id );
@@ -196,6 +200,7 @@ final class AdminAssets {
 		}
 
 		$preview_assets = $this->frontend_assets->get_editor_preview_assets();
+		$settings       = $this->settings_center_repository->get_settings();
 		$code_themes    = array_map(
 			static function ( $theme ) {
 				return array(
@@ -272,6 +277,9 @@ final class AdminAssets {
 					'pasteUploaded'  => $strings['imagePasteUploaded'],
 					'pasteUploading' => $strings['imagePasteUploading'],
 				),
+			),
+			'settings'           => array(
+				'general' => $settings['general'],
 			),
 			'layout'             => array(
 				'direction' => is_rtl() ? 'rtl' : 'ltr',
@@ -460,6 +468,7 @@ final class AdminAssets {
 			),
 			'wordpress'          => array(
 				'customCssUrl'      => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
+				'isNewPost'         => (bool) $is_new_post || 0 === absint( $post_id ) || 'auto-draft' === get_post_status( $post_id ),
 				'nonce'             => $nonce,
 				'previewUrl'        => esc_url_raw( rest_url( 'easymde/v1/preview' ) ),
 				'publishCategories' => $this->get_publish_categories( $post_type ),

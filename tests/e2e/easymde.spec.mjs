@@ -2155,7 +2155,10 @@ test.describe('EasyMDE editor workflows', () => {
       const settingsDialog = page.getByRole('dialog', {
         name: labels.editorSettings
       });
-      const articleSelect = settingsDialog.getByLabel(labels.articleTheme);
+      const articleSelect = settingsDialog.getByRole('combobox', {
+        name: labels.articleTheme,
+        exact: true
+      });
       const previousPreviewSignature = await readyPreviewSignature(preview);
       const previewRequestsBefore = previewRequests.length;
       const sameMarkupProfile = currentMarkupProfile === markupProfile;
@@ -2705,7 +2708,10 @@ test.describe('EasyMDE editor workflows', () => {
     ).toHaveCount(0);
     await settingsTrigger.click();
     const settingsDialog = page.getByRole('dialog', { name: labels.editorSettings });
-    await expect(settingsDialog.getByLabel(labels.articleTheme)).toBeFocused();
+    await expect(settingsDialog.getByRole('combobox', {
+      name: labels.articleTheme,
+      exact: true
+    })).toBeFocused();
     expect(await settingsDialog.evaluate((panel, trigger) => (
       panel.parentElement === trigger.parentElement
       && panel.parentElement?.classList.contains('easymde-toolbar-popover-anchor')

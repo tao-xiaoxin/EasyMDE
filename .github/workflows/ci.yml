@@ -433,7 +433,7 @@ jobs:
       matrix:
         suite:
           - core
-          - theme-matrix
+          - theme_matrix
           - visual
     env:
       WORDPRESS_ADMIN_USER: easymde-ci-admin
@@ -527,7 +527,7 @@ jobs:
               npx playwright test tests/e2e/easymde.spec.mjs \
                 --grep-invert 'keeps every registered article theme contained|keeps newly added article themes within the ordinary preview boundary'
               ;;
-            theme-matrix)
+            theme_matrix)
               npx playwright test tests/e2e/easymde.spec.mjs \
                 --grep 'keeps every registered article theme contained|keeps newly added article themes within the ordinary preview boundary'
               ;;

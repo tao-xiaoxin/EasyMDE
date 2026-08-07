@@ -29,7 +29,7 @@ function bootstrap(): SettingsCenterBootstrap {
   const origin = window.location.origin;
   return {
     schemaVersion: 2,
-    closeUrl: `${origin}/wp-admin/options-general.php?page=easymde`,
+    closeUrl: `${origin}/wp-admin/options-general.php`,
     api: {
       settingsUrl: `${origin}/wp-json/easymde/v1/settings`,
       nonce: 'test-nonce',
@@ -89,7 +89,7 @@ describe('mountSettingsCenter', () => {
   it('rejects cross-origin navigation', () => {
     vi.mocked(parseSettingsCenterBootstrap).mockReturnValue({
       ...bootstrap(),
-      closeUrl: 'https://invalid.test/wp-admin/options-general.php?page=easymde'
+      closeUrl: 'https://invalid.test/wp-admin/options-general.php'
     });
 
     expect(() => mountSettingsCenter({}, { document, window })).toThrow(

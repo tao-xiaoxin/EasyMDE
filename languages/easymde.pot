@@ -1246,13 +1246,11 @@ msgstr ""
 msgid "You are not allowed to create this EasyMDE post."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:13 src/Admin/SettingsPage.php:49
-#: src/Admin/SettingsPage.php:78 src/Admin/SettingsPage.php:79
-#: templates/admin/settings-page.php:13
+#: src/Admin/SettingsCenterStrings.php:13 src/Admin/SettingsPage.php:35
 msgid "EasyMDE"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:14 src/Admin/SettingsPage.php:59
+#: src/Admin/SettingsCenterStrings.php:14 src/Admin/SettingsPage.php:45
 msgid "Settings Center"
 msgstr ""
 
@@ -1598,13 +1596,11 @@ msgstr ""
 msgid "Function"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:103 src/Admin/SettingsPage.php:637
-#: templates/admin/settings-page.php:61
+#: src/Admin/SettingsCenterStrings.php:103
 msgid "Windows / Linux"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:104 src/Admin/SettingsPage.php:637
-#: templates/admin/settings-page.php:62
+#: src/Admin/SettingsCenterStrings.php:104
 msgid "macOS"
 msgstr ""
 
@@ -1688,8 +1684,8 @@ msgid "Settings saved."
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:124
-#: src/Support/SettingsCenterRepository.php:325
-#: src/Support/SettingsCenterRepository.php:333
+#: src/Support/SettingsCenterRepository.php:193
+#: src/Support/SettingsCenterRepository.php:201
 msgid "Settings could not be saved. Try again."
 msgstr ""
 
@@ -2949,35 +2945,21 @@ msgstr ""
 msgid "Close About Feedback"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:48 src/Admin/SettingsPage.php:58
-#: src/Admin/SettingsPage.php:173
+#: src/Admin/SettingsPage.php:34 src/Admin/SettingsPage.php:44
+#: src/Admin/SettingsPage.php:127
 msgid "EasyMDE Settings Center"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:70
+#: src/Admin/SettingsPage.php:56
 msgid "EasyMDE Updates"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:71
+#: src/Admin/SettingsPage.php:57
 msgid "Updates"
 msgstr ""
 
-#: src/Admin/SettingsPage.php:172
+#: src/Admin/SettingsPage.php:126
 msgid "The EasyMDE settings route is not supported."
-msgstr ""
-
-#. translators: 1: toolbar command label, 2: platform label.
-#: src/Admin/SettingsPage.php:471
-#, php-format
-msgid ""
-"Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or "
-"Command+Option+C."
-msgstr ""
-
-#. translators: 1: first toolbar command label, 2: second toolbar command label, 3: shortcut, 4: platform label.
-#: src/Admin/SettingsPage.php:488
-#, php-format
-msgid "Shortcut conflict: %1$s and %2$s both use %3$s on %4$s."
 msgstr ""
 
 #: src/Frontend/FrontendAssets.php:104
@@ -3048,7 +3030,6 @@ msgstr ""
 #: src/Rest/SettingsController.php:81 src/Rest/SettingsController.php:124
 #: src/Rest/SettingsController.php:341
 #: src/Support/SettingsCenterRepository.php:99
-#: src/Support/SettingsCenterRepository.php:317
 msgid "The settings payload is invalid."
 msgstr ""
 
@@ -3060,9 +3041,7 @@ msgstr ""
 msgid "The settings payload is too large."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:223
-#: src/Support/SettingsCenterRepository.php:231
-#: src/Support/SettingsCenterRepository.php:525
+#: src/Support/SettingsCenterRepository.php:393
 msgid "One or more shortcut values are invalid."
 msgstr ""
 
@@ -3349,76 +3328,6 @@ msgstr ""
 
 #: templates/admin/editor-shell.php:31
 msgid "EasyMDE requires JavaScript to edit Markdown on this screen."
-msgstr ""
-
-#: templates/admin/settings-page.php:14
-msgid ""
-"EasyMDE adds a scoped split-pane Markdown editor to supported post editing "
-"screens."
-msgstr ""
-
-#: templates/admin/settings-page.php:20
-msgid "Supported post types"
-msgstr ""
-
-#: templates/admin/settings-page.php:24
-msgid "Server renderer"
-msgstr ""
-
-#: templates/admin/settings-page.php:28
-msgid "league/commonmark is active."
-msgstr ""
-
-#: templates/admin/settings-page.php:29
-msgid ""
-"league/commonmark is required but unavailable. Install Composer dependencies "
-"before rendering or saving EasyMDE Markdown."
-msgstr ""
-
-#: templates/admin/settings-page.php:34
-msgid "Admin behavior"
-msgstr ""
-
-#: templates/admin/settings-page.php:35
-msgid "No activation redirect and no unrelated admin-page redirect."
-msgstr ""
-
-#: templates/admin/settings-page.php:38
-msgid "Toolbar layout"
-msgstr ""
-
-#: templates/admin/settings-page.php:39
-msgid "Hybrid icon toolbar"
-msgstr ""
-
-#: templates/admin/settings-page.php:42
-msgid "Current preset"
-msgstr ""
-
-#: templates/admin/settings-page.php:43
-msgid "Typora-inspired shortcuts"
-msgstr ""
-
-#: templates/admin/settings-page.php:53
-msgid "Shortcut settings"
-msgstr ""
-
-#: templates/admin/settings-page.php:54
-msgid "Typora-inspired defaults are active unless overridden below."
-msgstr ""
-
-#: templates/admin/settings-page.php:55
-msgid "Use the current Typora-inspired default by leaving the field blank."
-msgstr ""
-
-#: templates/admin/settings-page.php:60
-msgid "Command"
-msgstr ""
-
-#. translators: %s: default keyboard shortcut.
-#: templates/admin/settings-page.php:93 templates/admin/settings-page.php:107
-#, php-format
-msgid "Default: %s"
 msgstr ""
 
 #. translators: %s: Locale-formatted character count.

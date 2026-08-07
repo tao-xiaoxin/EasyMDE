@@ -95,7 +95,7 @@ final class Plugin {
 		$this->toolbar_registry = new ToolbarRegistry();
 
 		$settings_center_repository = new SettingsCenterRepository( $options, $this->toolbar_registry );
-		$settings_page              = new SettingsPage( $this->toolbar_registry, $options, $settings_center_repository );
+		$settings_page              = new SettingsPage( $settings_center_repository );
 		$frontend_assets            = new FrontendAssets( $post_document, $theme_state_repository, $feature_detector );
 
 		$modules = array(

@@ -14,15 +14,15 @@ final class I18nTest extends WP_UnitTestCase
         unload_textdomain('easymde');
 
         $this->assertTrue(load_textdomain('easymde', EASYMDE_PLUGIN_DIR . 'languages/easymde-zh_CN.mo'));
-        $this->assertSame('快捷键设置', translate('Shortcut settings', 'easymde'));
+        $this->assertSame('配置中心', translate('Settings Center', 'easymde'));
         $this->assertSame('青碧流金', translate('Qingbi Liujin', 'easymde'));
     }
 
-    public function test_en_us_does_not_receive_legacy_runtime_chinese_replacements()
+    public function test_en_us_does_not_receive_runtime_chinese_replacements()
     {
         unload_textdomain('easymde');
 
-        $this->assertSame('Shortcut settings', translate('Shortcut settings', 'easymde'));
+        $this->assertSame('Settings Center', translate('Settings Center', 'easymde'));
         $this->assertFalse(has_filter('gettext_easymde'));
     }
 }

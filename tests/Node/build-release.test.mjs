@@ -94,11 +94,6 @@ function createAssetSourceFiles(root) {
   );
   writeText(
     root,
-    'src/Admin/SettingsPage.php',
-    "<?php\nAsset::url( 'assets/css/admin/settings.css' );\n"
-  );
-  writeText(
-    root,
     'src/Frontend/FrontendAssets.php',
     [
     '<?php',

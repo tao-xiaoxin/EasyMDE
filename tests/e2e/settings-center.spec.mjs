@@ -65,6 +65,21 @@ test('keeps the EasyMDE menu logo inside the native icon slot', async ({ page })
   await expect(menuItem.locator('.wp-submenu')).toBeVisible();
 });
 
+test('opens the native plugin updates list from the EasyMDE submenu', async ({ page }) => {
+  await login(page);
+  await page.goto('/wp-admin/profile.php');
+
+  const menuItem = page.locator('#toplevel_page_easymde-settings-general');
+  await menuItem.hover();
+  const updatesLink = menuItem.locator('.wp-submenu a[href*="plugins.php?plugin_status=upgrade"]');
+
+  await expect(updatesLink).toHaveText('更新');
+  await updatesLink.click();
+  await expect(page).toHaveURL(/\/wp-admin\/plugins\.php\?plugin_status=upgrade$/u);
+  await expect(page.locator('#wpbody-content h1')).toHaveText('插件');
+  await expect(page.locator('.subsubsub a.current')).toContainText('可供更新');
+});
+
 test('keeps the settings save action clickable after scrolling', async ({ page }) => {
   await login(page);
   await page.goto('/wp-admin/admin.php?page=easymde/settings/general');

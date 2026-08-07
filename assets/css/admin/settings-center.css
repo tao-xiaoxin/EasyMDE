@@ -21,7 +21,8 @@
 	position: fixed;
 	inset: 0;
 	z-index: 100000;
-	overflow: auto;
+	overflow-x: auto;
+	overflow-y: auto;
 	background: #fdfefe;
 	color: #101a34;
 	font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -363,10 +364,10 @@
 
 .easymde-settings-center__header-scale h1 {
 	color: #101b38;
-	font-size: 31px;
+	font-size: 34px;
 	font-weight: 700;
-	letter-spacing: -.5px;
-	line-height: 38px;
+	letter-spacing: -.55px;
+	line-height: 42px;
 }
 
 .easymde-settings-center__header-scale header p {
@@ -521,6 +522,8 @@
 
 .easymde-settings-center__unavailable p { margin-top: 3px; }
 .easymde-settings-center__unavailable-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.easymde-settings-center__unavailable-fields:disabled { opacity: 1; }
+.easymde-settings-center__unavailable-fields:disabled :is(button, input, select, textarea) { opacity: 1; color: inherit; }
 .easymde-settings-center__unavailable-fields :is(button, input, select) { cursor: not-allowed; }
 .easymde-settings-center__transfer-unavailable-notice { margin: 20px 36px 0; color: #657695; font-size: 14px; }
 

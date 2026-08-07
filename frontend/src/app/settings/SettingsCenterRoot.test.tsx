@@ -72,6 +72,61 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 describe("SettingsCenterRoot global search", () => {
+	it("scrolls implemented tabs within the settings container using measured sticky offsets", async () => {
+		const user = userEvent.setup();
+		const windowScrollTo = vi.spyOn(window, "scrollTo");
+		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const settingsRoot = container.firstElementChild;
+		const stickyHeader = container.querySelector(
+			".easymde-settings-center__sticky-header",
+		);
+		const saveBar = container.querySelector(
+			".easymde-settings-center__save-bar",
+		);
+		const markdown = container.querySelector("#settings-section-markdown");
+		if (
+			!(settingsRoot instanceof HTMLDivElement) ||
+			!(stickyHeader instanceof HTMLDivElement) ||
+			!(saveBar instanceof HTMLDivElement) ||
+			!(markdown instanceof HTMLElement)
+		)
+			throw new Error("settings-center-scroll-test-target-missing");
+
+		Object.defineProperty(settingsRoot, "scrollTop", {
+			configurable: true,
+			value: 100,
+			writable: true,
+		});
+		const scrollTo = vi.fn();
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: scrollTo,
+		});
+		Object.defineProperty(settingsRoot, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({ bottom: 900, top: 100 }),
+		});
+		Object.defineProperty(stickyHeader, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({ bottom: 336, top: 100 }),
+		});
+		Object.defineProperty(saveBar, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({ bottom: 384, top: 336 }),
+		});
+		Object.defineProperty(markdown, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({ bottom: 1120, top: 1100 }),
+		});
+
+		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("button", { name: "markdown" }));
+
+		expect(scrollTo).toHaveBeenCalledWith({ top: 816, behavior: "auto" });
+		expect(windowScrollTo).not.toHaveBeenCalled();
+		windowScrollTo.mockRestore();
+	});
+
 	it("indexes and opens results from sections beyond General", async () => {
 		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
@@ -935,6 +990,40 @@ describe("SettingsCenterRoot persistence", () => {
 		);
 		expect(fetch).toHaveBeenCalledOnce();
 		fetch.mockRestore();
+	});
+
+	it("returns the successful save status to idle after a bounded acknowledgement", async () => {
+		const user = userEvent.setup();
+		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+			ok: true,
+			json: async () => ({ settings: bootstrap().settings }),
+		} as Response);
+		try {
+			render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+
+			await user.click(
+				screen.getByRole("switch", { name: "autoFocusEditor" }),
+			);
+			await user.click(
+				screen.getByRole<HTMLButtonElement>("button", {
+					name: "saveSettings",
+				}),
+			);
+			await waitFor(() =>
+				expect(screen.getByText("settingsSaved")).not.toBeNull(),
+			);
+			await waitFor(
+				() => expect(screen.queryByText("settingsSaved")).toBeNull(),
+				{ timeout: 3000 },
+			);
+			expect(
+				screen.getByRole<HTMLButtonElement>("button", {
+					name: "saveSettings",
+				}).disabled,
+			).toBe(true);
+		} finally {
+			fetch.mockRestore();
+		}
 	});
 
 	it("offers the latest server state after a save conflict", async () => {

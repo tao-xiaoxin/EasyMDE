@@ -3062,7 +3062,7 @@ test.describe('EasyMDE editor workflows', () => {
       await sessionKeepalive.assertHealthy();
       const fontSelect = settingsDialog.locator(group.select).getByRole('combobox');
       for (const { id, label } of group.options) {
-        await selectOrdinaryOption(page, fontSelect, label);
+        await selectOrdinaryOption(page, fontSelect, label, { strategy: 'keyboard' });
         await expect(page.locator(group.field)).toHaveValue(id);
         const expectedFontStack = await page.evaluate(() => {
           const options = window.EasyMDEEditorRootBootstrap.fonts.options;

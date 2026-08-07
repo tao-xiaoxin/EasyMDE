@@ -127,6 +127,23 @@ export function collectPreviewRequestOutcomes(page) {
         payload && 'object' === typeof payload && 'string' === typeof payload.markdown_theme
           ? payload.markdown_theme
           : null,
+      codeTheme:
+        payload && 'object' === typeof payload && 'string' === typeof payload.code_theme
+          ? payload.code_theme
+          : null,
+      customCssId:
+        payload && 'object' === typeof payload && 'string' === typeof payload.custom_css_id
+          ? payload.custom_css_id
+          : null,
+      markdownLength:
+        payload && 'object' === typeof payload && 'string' === typeof payload.markdown
+          ? payload.markdown.length
+          : null,
+      postId:
+        payload && 'object' === typeof payload
+        && (('string' === typeof payload.post_id) || ('number' === typeof payload.post_id))
+          ? String(payload.post_id)
+          : null,
       payloadDigest: 'string' === typeof payloadText
         ? createHash('sha256').update(payloadText).digest('hex')
         : null,

@@ -442,6 +442,31 @@ async function editorThemeCatalog(page) {
   }));
 }
 
+function articleThemesForE2ESuite(articleThemes) {
+  const suite = process.env.EASYMDE_E2E_SUITE;
+  if (!['theme_matrix_a', 'theme_matrix_b'].includes(suite)) {
+    return articleThemes;
+  }
+
+  const defaultTheme = articleThemes.find(({ id }) => id === 'default');
+  const targets = articleThemes.filter(({ id }) => id !== 'default');
+  if (!defaultTheme || !targets.length) {
+    throw new Error('theme-matrix-partition-requires-default-and-target-themes');
+  }
+
+  const midpoint = Math.ceil(targets.length / 2);
+  const selectedTargets = 'theme_matrix_a' === suite
+    ? targets.slice(0, midpoint)
+    : targets.slice(midpoint);
+  if (!selectedTargets.length) {
+    throw new Error(`theme-matrix-partition-empty:${suite}`);
+  }
+
+  return 'theme_matrix_a' === suite
+    ? [defaultTheme, ...selectedTargets]
+    : selectedTargets;
+}
+
 function hexToRgbCss(hex) {
   if (!/^#[0-9a-f]{6}$/i.test(hex)) {
     throw new Error(`article-theme-swatch-invalid:${hex}`);
@@ -2017,6 +2042,7 @@ test.describe('EasyMDE editor workflows', () => {
     await openEasyMdeNewPost(page);
 
     const catalog = await editorThemeCatalog(page);
+    const articleThemes = articleThemesForE2ESuite(catalog.articleThemes);
     const markdown = await canonicalMarkdownForPage(page);
     const previewRequests = collectPreviewRequestOutcomes(page);
     await fillMarkdownAndWaitForPreview(
@@ -2161,13 +2187,17 @@ test.describe('EasyMDE editor workflows', () => {
     }
     let currentMarkupProfile = selectedTheme.markupProfile;
 
+    if (!articleThemes.some(({ id }) => id === 'default')) {
+      visualFingerprints.set('default', await articleVisualFingerprint(preview));
+    }
+
     for (const {
       id,
       label,
       cssUrl,
       markupProfile,
       swatch
-    } of catalog.articleThemes) {
+    } of articleThemes) {
       await sessionKeepalive.assertHealthy();
       if (!swatch) {
         throw new Error(`${id}-article-theme-swatch-unavailable`);
@@ -2420,10 +2450,10 @@ test.describe('EasyMDE editor workflows', () => {
       contentType: 'application/json'
     });
     expect(new Set(matrix.map(({ themeId }) => themeId)).size)
-      .toBe(catalog.articleThemes.length);
+      .toBe(articleThemes.length);
     const defaultVisualFingerprint = visualFingerprints.get('default');
     expect(defaultVisualFingerprint).toBeTruthy();
-    for (const { id } of catalog.articleThemes) {
+    for (const { id } of articleThemes) {
       const fingerprint = visualFingerprints.get(id);
       if (!fingerprint) {
         failures.push(`${id}/ordinary-preview:visual-fingerprint-missing`);
@@ -2445,8 +2475,12 @@ test.describe('EasyMDE editor workflows', () => {
     await openEasyMdeNewPost(page);
 
     const catalog = await editorThemeCatalog(page);
-    const targets = catalog.articleThemes.filter(({ id }) => id !== 'default');
-    expect(targets).toHaveLength(catalog.articleThemes.length - 1);
+    const articleThemes = articleThemesForE2ESuite(catalog.articleThemes);
+    const targets = articleThemes.filter(({ id }) => id !== 'default');
+    const expectedTargetCount = articleThemes.some(({ id }) => id === 'default')
+      ? articleThemes.length - 1
+      : articleThemes.length;
+    expect(targets).toHaveLength(expectedTargetCount);
 
     const markdown = [
       '# Ordinary preview boundary probe',

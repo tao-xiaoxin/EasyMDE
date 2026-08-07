@@ -28,11 +28,13 @@ function WeChatGlyph() {
 }
 
 export function ImmersiveToolbar({
+  autoSaveAllowed = true,
   historyAvailable,
   mode,
   settings,
   strings,
   styleControls,
+  syncScrollAllowed = true,
   toolbar,
   wechatCopied,
   onCopyWechat,
@@ -42,11 +44,13 @@ export function ImmersiveToolbar({
   onSettingsChange,
   onTable
 }: Readonly<{
+  autoSaveAllowed?: boolean;
   historyAvailable: boolean;
   mode: ImmersiveViewMode;
   settings: ImmersiveSettings;
   strings: ImmersiveStrings;
   styleControls: ReactNode;
+  syncScrollAllowed?: boolean;
   toolbar: ReactNode;
   wechatCopied: boolean;
   onCopyWechat: () => void;
@@ -118,8 +122,10 @@ export function ImmersiveToolbar({
         </button>
         {styleControls}
         <ImmersiveSettingsPopover
+          autoSaveAllowed={autoSaveAllowed}
           settings={settings}
           strings={strings}
+          syncScrollAllowed={syncScrollAllowed}
           onChange={onSettingsChange}
         />
       </div>

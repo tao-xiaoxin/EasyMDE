@@ -28,8 +28,10 @@ type OrdinaryEditorStatus = Readonly<{
 
 type EditorWorkspaceProps = Readonly<{
   direction: 'ltr' | 'rtl';
+  mode?: string;
   onLayoutChange?: () => void;
   ordinaryStatus?: OrdinaryEditorStatus;
+  statusBarMode?: string;
   preview: ReactNode;
   splitResizable?: boolean;
   splitResizeLabel?: string;
@@ -63,8 +65,10 @@ function clampSplit(value: number): number {
  */
 export function EditorWorkspace({
   direction,
+  mode = 'live-preview',
   onLayoutChange,
   ordinaryStatus,
+  statusBarMode = 'words-reading-time',
   preview,
   splitResizable = false,
   splitResizeLabel = '',
@@ -154,7 +158,7 @@ export function EditorWorkspace({
   const workspace = (
     <div
       ref={workspaceRef}
-      className={`easymde-workspace${splitResizable ? ' is-split-resizable' : ''}`}
+      className={`easymde-workspace is-mode-${mode}${splitResizable ? ' is-split-resizable' : ''}`}
       data-easymde-layout-owner="react"
       dir={direction}
       style={style}
@@ -186,14 +190,22 @@ export function EditorWorkspace({
   return (
     <Fragment>
       {workspace}
-      {ordinaryStatus ? (
+      {ordinaryStatus && 'hidden' !== statusBarMode ? (
         <footer className="easymde-editor-status-bar">
-          <span className="easymde-editor-word-count">
-            {formatCount(ordinaryStatus.wordCountTemplate, count)}
-          </span>
-          <span className="easymde-editor-last-edited">
-            {ordinaryStatus.lastEdited}
-          </span>
+          {'words' === statusBarMode ? (
+            <span className="easymde-editor-word-count">
+              {formatCount(ordinaryStatus.wordCountTemplate, count)}
+            </span>
+          ) : (
+            <Fragment>
+              <span className="easymde-editor-word-count">
+                {formatCount(ordinaryStatus.wordCountTemplate, count)}
+              </span>
+              <span className="easymde-editor-last-edited">
+                {ordinaryStatus.lastEdited}
+              </span>
+            </Fragment>
+          )}
         </footer>
       ) : null}
     </Fragment>

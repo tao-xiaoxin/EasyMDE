@@ -537,6 +537,15 @@ final class SettingsCenterRepository {
 	}
 	private function normalize_enum_settings( array $settings ) {
 		$defaults = array(
+			'general'  => array(
+				'interfaceLanguage' => 'zh-CN',
+				'editingMode'       => 'live-preview',
+				'statusBarMode'     => 'words-reading-time',
+				'autoSaveInterval'  => '60',
+				'defaultCategory'   => 'none',
+				'publishVisibility' => 'public',
+				'summaryMode'       => 'auto-55',
+			),
 			'images'   => array(
 				'service'           => 'cloudflare-r2',
 				'backupService'     => 'qiniu-kodo',
@@ -558,6 +567,43 @@ final class SettingsCenterRepository {
 			),
 		);
 		$aliases  = array(
+			'general'  => array(
+				'interfaceLanguage' => array(
+					'zh-CN' => 'zh-CN',
+					'zh-TW' => 'zh-TW',
+					'en-US' => 'en-US',
+				),
+				'editingMode'       => array(
+					'live-preview' => 'live-preview',
+					'source'       => 'source',
+					'preview'      => 'preview',
+				),
+				'statusBarMode'     => array(
+					'words-reading-time' => 'words-reading-time',
+					'words'              => 'words',
+					'hidden'             => 'hidden',
+				),
+				'autoSaveInterval'  => array(
+					'30'  => '30',
+					'60'  => '60',
+					'120' => '120',
+					'300' => '300',
+				),
+				'defaultCategory'   => array(
+					'none'    => 'none',
+					'current' => 'current',
+				),
+				'publishVisibility' => array(
+					'public'   => 'public',
+					'private'  => 'private',
+					'password' => 'password',
+				),
+				'summaryMode'       => array(
+					'auto-55'  => 'auto-55',
+					'auto-100' => 'auto-100',
+					'manual'   => 'manual',
+				),
+			),
 			'images'   => array(
 				'service'           => array(
 					'cloudflare-r2'     => 'cloudflare-r2',

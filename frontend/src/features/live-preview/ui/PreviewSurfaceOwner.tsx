@@ -62,6 +62,7 @@ type PreviewSurfaceOwnerProps = Readonly<{
   contentEditable?: boolean;
   emptyMode?: 'message' | 'paper';
   enhancementPort: PreviewEnhancementPort;
+  featureOverrides?: PreviewFeatures;
   initial: Readonly<{
     codeTheme?: string;
     features: PreviewFeatures;
@@ -85,11 +86,15 @@ type PreviewSurfaceOwnerProps = Readonly<{
 }>;
 
 function initialState(props: PreviewSurfaceOwnerProps): PreviewSurfaceState {
+  const features = {
+    ...props.initial.features,
+    ...props.featureOverrides
+  };
   if (!props.initial.html.trim()) {
     if ('paper' === props.emptyMode) {
       return {
         codeTheme: props.initial.codeTheme ?? '',
-        features: props.initial.features,
+        features,
         generation: 0,
         html: props.initial.html,
         htmlRevision: 0,
@@ -103,7 +108,7 @@ function initialState(props: PreviewSurfaceOwnerProps): PreviewSurfaceState {
   }
   return {
     codeTheme: props.initial.codeTheme ?? '',
-    features: props.initial.features,
+    features,
     generation: 0,
     html: props.initial.html,
     htmlRevision: 0,
@@ -258,7 +263,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     }
     setState({
       codeTheme: requestState.request.codeTheme,
-      features: requestState.response.features,
+      features: {
+        ...requestState.response.features,
+        ...props.featureOverrides
+      },
       generation,
       html: requestState.response.html,
       htmlRevision: generation,
@@ -412,7 +420,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       controller.abort();
       removeVisualMarkdownSourceMarkers(visualSources);
     };
-  }, [state, props.enhancementPort]);
+  }, [state, props.enhancementPort, props.featureOverrides]);
 
   const busy = 'loading' === state.kind || ('html' === state.kind && ('enhancing' === state.phase || 'loading' === state.phase));
   const failed = 'html' === state.kind && 'failed' === state.phase;

@@ -51,6 +51,7 @@ import type {
 export type { ImmersiveStrings } from './immersive-editor-ui-types';
 
 type Props = Readonly<{
+  autoSaveAllowed?: boolean;
   direction: 'ltr' | 'rtl';
   documentSession: EditorDocumentSession;
   environment: ImmersiveEnvironmentPort;
@@ -68,6 +69,7 @@ type Props = Readonly<{
   localDraftsEnabled: boolean;
   mode: ImmersiveViewMode;
   scrollSyncEnabled: boolean;
+  syncScrollAllowed?: boolean;
   onLocalDraftsEnabledChange: (enabled: boolean) => void;
   readPublishSnapshot: () => NativePublishSnapshot;
   onConfirmPublish: (
@@ -456,6 +458,7 @@ export function ImmersiveEditor({
   localDraftsEnabled,
   mode,
   scrollSyncEnabled,
+  autoSaveAllowed = true,
   onCopyWechat,
   onBeforeSourceMutation,
   onExit,
@@ -466,7 +469,8 @@ export function ImmersiveEditor({
   onSelectFeaturedImage,
   onScrollSyncEnabledChange,
   onViewModeChange,
-  strings
+  strings,
+  syncScrollAllowed = true
 }: Props) {
   const [markdown, setMarkdown] = useState(() =>
     documentSession.document.getValue()
@@ -483,14 +487,21 @@ export function ImmersiveEditor({
   const [publishSnapshot, setPublishSnapshot] =
     useState<NativePublishSnapshot | null>(null);
   const [initialPublishSnapshot] = useState(readPublishSnapshot);
-  const [initialSettings] = useState<ImmersiveSettings>(() => ({
-    autoSave: localDraftsEnabled,
-    outline: true,
-    splitPreview: true,
-    syncScroll: scrollSyncEnabled,
-    wordCount: true,
-    ...(initialPreferences ?? {})
-  }));
+  const [initialSettings] = useState<ImmersiveSettings>(() => {
+    const settings = {
+      autoSave: localDraftsEnabled,
+      outline: true,
+      splitPreview: true,
+      syncScroll: scrollSyncEnabled,
+      wordCount: true,
+      ...(initialPreferences ?? {})
+    };
+    return {
+      ...settings,
+      autoSave: autoSaveAllowed && settings.autoSave,
+      syncScroll: syncScrollAllowed && settings.syncScroll
+    };
+  });
   const [settings, setSettings] = useState(initialSettings);
   const restoredOwnerSettingsRef = useRef(false);
 
@@ -558,14 +569,19 @@ export function ImmersiveEditor({
     onViewModeChange(next);
   };
   const changeSettings = (next: ImmersiveSettings) => {
-    setSettings(next);
-    const result = immersivePreferencesPort.write(next);
+    const constrained = {
+      ...next,
+      autoSave: autoSaveAllowed && next.autoSave,
+      syncScroll: syncScrollAllowed && next.syncScroll
+    };
+    setSettings(constrained);
+    const result = immersivePreferencesPort.write(constrained);
     if ('unavailable' === result.status) onFailure(result.code);
-    if (next.autoSave !== settings.autoSave) {
-      onLocalDraftsEnabledChange(next.autoSave);
+    if (constrained.autoSave !== settings.autoSave) {
+      onLocalDraftsEnabledChange(constrained.autoSave);
     }
-    if (next.syncScroll !== settings.syncScroll) {
-      onScrollSyncEnabledChange(next.syncScroll);
+    if (constrained.syncScroll !== settings.syncScroll) {
+      onScrollSyncEnabledChange(constrained.syncScroll);
     }
     if (next.splitPreview !== settings.splitPreview) {
       changeMode(next.splitPreview ? 'split' : 'source');
@@ -654,11 +670,13 @@ export function ImmersiveEditor({
         onTitleChange={changeTitle}
       />
       <ImmersiveToolbar
+        autoSaveAllowed={autoSaveAllowed}
         historyAvailable={null !== revisionPort}
         mode={mode}
         settings={settings}
         strings={strings}
         styleControls={styleControls}
+        syncScrollAllowed={syncScrollAllowed}
         toolbar={toolbar}
         wechatCopied={wechatCopied}
         onCopyWechat={copyWechat}

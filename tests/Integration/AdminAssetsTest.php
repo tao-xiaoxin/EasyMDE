@@ -92,6 +92,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertArrayHasKey( 'wechatExport', $bootstrap );
 		$this->assertArrayHasKey( 'wordpress', $bootstrap );
 		$this->assertArrayHasKey( 'publishCategories', $bootstrap['wordpress'] );
+		$this->assertFalse( $bootstrap['wordpress']['isNewPost'] );
 		$this->assertSame( rest_url( 'easymde/v1/preview' ), $bootstrap['wordpress']['previewUrl'] );
 		$this->assertArrayNotHasKey( 'revisionAdminUrl', $bootstrap['wordpress'] );
 		$this->assertSame( rest_url( 'easymde/v1/posts/' ), $bootstrap['wordpress']['revisionsUrl'] );
@@ -193,6 +194,22 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
 
 		$this->assertSame( 'Not saved yet.', $bootstrap['layout']['status']['lastEdited'] );
+		$this->assertTrue( $bootstrap['wordpress']['isNewPost'] );
+	}
+
+	public function test_auto_draft_bootstrap_is_marked_as_a_new_post_even_with_a_nonzero_id() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create(
+			array(
+				'post_author' => $user_id,
+				'post_status' => 'auto-draft',
+			)
+		);
+		wp_set_current_user( $user_id );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id, 'post' );
+
+		$this->assertTrue( $bootstrap['wordpress']['isNewPost'] );
 	}
 
 	public function test_new_post_bootstrap_exposes_the_post_category_tree_without_a_post_id() {

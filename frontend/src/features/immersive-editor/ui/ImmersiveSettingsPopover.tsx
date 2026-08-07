@@ -21,12 +21,16 @@ import type {
 type Position = Readonly<{ right: number; tailRight: number; top: number }>;
 
 export function ImmersiveSettingsPopover({
+  autoSaveAllowed = true,
   settings,
   strings,
+  syncScrollAllowed = true,
   onChange
 }: Readonly<{
+  autoSaveAllowed?: boolean;
   settings: ImmersiveSettings;
   strings: ImmersiveStrings;
+  syncScrollAllowed?: boolean;
   onChange: (settings: ImmersiveSettings) => void;
 }>) {
   const [open, setOpen] = useState(false);
@@ -96,14 +100,15 @@ export function ImmersiveSettingsPopover({
 
   const items: ReadonlyArray<Readonly<{
     description: string;
+    disabled?: boolean;
     key: keyof ImmersiveSettings;
     label: string;
   }>> = [
     { key: 'outline', label: strings.articleOutline, description: strings.outlineDescription },
     { key: 'wordCount', label: strings.wordCount, description: strings.wordCountDescription },
     { key: 'splitPreview', label: strings.splitPreview, description: strings.splitPreviewDescription },
-    { key: 'autoSave', label: strings.autoSave, description: strings.autoSaveDescription },
-    { key: 'syncScroll', label: strings.syncScroll, description: strings.syncScrollDescription }
+    { key: 'autoSave', label: strings.autoSave, description: strings.autoSaveDescription, disabled: !autoSaveAllowed },
+    { key: 'syncScroll', label: strings.syncScroll, description: strings.syncScrollDescription, disabled: !syncScrollAllowed }
   ];
   const portalRoot = triggerRef.current?.closest<HTMLElement>(
     '[data-easymde-editor-owner="react"]'
@@ -166,16 +171,18 @@ export function ImmersiveSettingsPopover({
                       <button
                         key={item.key}
                         type="button"
+                        disabled={item.disabled}
                         role="checkbox"
                         aria-checked={checked}
                         aria-label={item.label}
                         aria-describedby={descriptionId}
-                        onClick={() =>
+                        onClick={() => {
+                          if (item.disabled) return;
                           onChange({
                             ...settings,
                             [item.key]: !checked
-                          })
-                        }
+                          });
+                        }}
                       >
                         <span
                           className="easymde-immersive-settings-check"

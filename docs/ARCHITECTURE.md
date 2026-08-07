@@ -345,6 +345,29 @@ The decision rationale and rejected alternatives are in
 
 Admin HTML is prepared by PHP services and rendered by templates under `templates/admin/`. Templates should receive prepared data and avoid owning business rules.
 
+The Settings Center is registered by `EasyMDE\\Admin\\SettingsPage` at the
+stable `easymde/settings/general` route. Its top-level WordPress menu label is
+`EasyMDE` and uses the local `assets/images/easymde-editor-icon.png`; the
+submenu keeps the Settings Center route and exposes WordPress's native
+`update-core.php` page when the current user can update core or plugins. The
+React Settings Center reads and writes through `SettingsCenterRepository` and
+the protected `easymde/v1/settings` route. Only General settings with an
+implemented editor owner are enabled; unsupported fields stay explicitly
+disabled instead of reporting a persistence success that has no runtime
+consumer.
+
+The supported General runtime settings are passed from `AdminAssets` through
+the validated Editor Root bootstrap and consumed by the Editor Root's
+document source, workspace layout, Preview feature overrides, focus behavior,
+and local-draft session. This keeps WordPress settings authoritative while
+leaving browser-session immersive preferences as a separate presentation
+override. When the server temporarily disables immersive auto-save or
+synchronized scrolling, a loaded browser preference is preserved for a later
+re-enable rather than being rewritten as false by an unrelated immersive
+setting change. The bootstrap marks both `post-new.php` and nonzero
+`auto-draft` contexts as new documents so the auto-focus preference cannot
+focus an existing post.
+
 ## Editor Mode
 
 EasyMDE editor mode is scoped to supported post types, `post` and `page` by default. The supported post type list can be filtered with `easymde_supported_post_types`.

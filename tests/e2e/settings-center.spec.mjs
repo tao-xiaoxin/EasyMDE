@@ -113,7 +113,8 @@ test('keeps the mobile settings center bounded and unavailable settings non-save
   expect(navIds).not.toContain('article-sync');
   await expect(nav).not.toContainText(/AI|comment|评论|article\s*sync|文章同步/i);
 
-  await expect(generalSection.locator('fieldset[disabled]')).toHaveCount(1);
-  await expect(generalSection.locator('[role="switch"]').first()).toBeDisabled();
+  await expect(generalSection.locator('fieldset[disabled]')).toHaveCount(3);
+  await expect(generalSection.locator('[role="switch"]').first()).toBeEnabled();
+  await expect(generalSection.locator('fieldset[disabled] select').first()).toBeDisabled();
   await expect(saveButton).toBeDisabled();
 });

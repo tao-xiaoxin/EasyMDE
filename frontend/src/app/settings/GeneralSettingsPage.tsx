@@ -166,27 +166,21 @@ export function GeneralSettingsPage({
 					: "easymde-settings-center__sections"
 			}
 		>
-			<UnavailableSettingsNotice
-				label={s.settingsUnavailable}
-				description={s.settingsUnavailableDescription}
-			/>
-			<fieldset
-				disabled
-				className="easymde-settings-center__unavailable-fields"
-			>
 				<SettingsSection icon={SlidersIcon} title={s.basePreferences}>
-					<SettingsRow label={s.interfaceLanguage} query={normalizedQuery}>
-						<NativeSelect
-							label={s.interfaceLanguage}
-							value={draft.interfaceLanguage}
-							onChange={(value) => setValue("interfaceLanguage", value)}
-							options={[
-								["zh-CN", s.simplifiedChinese],
-								["zh-TW", s.traditionalChinese],
-								["en-US", s.english],
-							]}
-						/>
-					</SettingsRow>
+					<fieldset disabled className="easymde-settings-center__unavailable-fields">
+						<SettingsRow label={s.interfaceLanguage} query={normalizedQuery}>
+							<NativeSelect
+								label={s.interfaceLanguage}
+								value={draft.interfaceLanguage}
+								onChange={(value) => setValue("interfaceLanguage", value)}
+								options={[
+									["zh-CN", s.simplifiedChinese],
+									["zh-TW", s.traditionalChinese],
+									["en-US", s.english],
+								]}
+							/>
+						</SettingsRow>
+					</fieldset>
 					<SettingsRow label={s.defaultEditingMode} query={normalizedQuery}>
 						<NativeSelect
 							label={s.defaultEditingMode}
@@ -287,33 +281,40 @@ export function GeneralSettingsPage({
 							onChange={() => setValue("syncScroll", !draft.syncScroll)}
 						/>
 					</SettingsRow>
-					<SettingsRow
-						label={s.cleanPastedContent}
-						description={s.cleanPastedContentDescription}
-						query={normalizedQuery}
-					>
-						<SettingsToggle
+					<fieldset disabled className="easymde-settings-center__unavailable-fields">
+						<SettingsRow
 							label={s.cleanPastedContent}
-							checked={draft.cleanPastedContent}
-							onChange={() =>
-								setValue("cleanPastedContent", !draft.cleanPastedContent)
-							}
-						/>
-					</SettingsRow>
-					<SettingsRow
-						label={s.smartListRecognition}
-						description={s.smartListRecognitionDescription}
-						query={normalizedQuery}
-					>
-						<SettingsToggle
+							description={s.cleanPastedContentDescription}
+							query={normalizedQuery}
+						>
+							<SettingsToggle
+								label={s.cleanPastedContent}
+								checked={draft.cleanPastedContent}
+								onChange={() =>
+									setValue("cleanPastedContent", !draft.cleanPastedContent)
+								}
+							/>
+						</SettingsRow>
+						<SettingsRow
 							label={s.smartListRecognition}
-							checked={draft.smartListRecognition}
-							onChange={() =>
-								setValue("smartListRecognition", !draft.smartListRecognition)
-							}
-						/>
-					</SettingsRow>
+							description={s.smartListRecognitionDescription}
+							query={normalizedQuery}
+						>
+							<SettingsToggle
+								label={s.smartListRecognition}
+								checked={draft.smartListRecognition}
+								onChange={() =>
+									setValue("smartListRecognition", !draft.smartListRecognition)
+								}
+							/>
+						</SettingsRow>
+					</fieldset>
 				</SettingsSection>
+				<UnavailableSettingsNotice
+					label={s.settingsUnavailable}
+					description={s.settingsUnavailableDescription}
+				/>
+				<fieldset disabled className="easymde-settings-center__unavailable-fields">
 				<SettingsSection icon={DocumentIcon} title={s.documentDefaults}>
 					<SettingsRow label={s.defaultCategory} query={normalizedQuery}>
 						<NativeSelect
@@ -387,7 +388,7 @@ export function GeneralSettingsPage({
 						/>
 					</SettingsRow>
 				</SettingsSection>
-			</fieldset>
+				</fieldset>
 		</div>
 	);
 }

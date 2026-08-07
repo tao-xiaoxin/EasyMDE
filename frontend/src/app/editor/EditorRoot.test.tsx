@@ -381,6 +381,7 @@ function fixture(): EditorRootProps &
         url: 'https://example.test/upload.png'
       } satisfies ImageUploadResult)
     },
+    isNewPost: false,
     layout: {
       direction: 'ltr',
       status: {
@@ -504,6 +505,26 @@ function fixture(): EditorRootProps &
     triggerResize: () => resizeListener?.(),
     triggerPreviewLayout: () => previewLayoutListener?.(),
     sessionPort,
+    settings: {
+      general: {
+        autoFocusEditor: true,
+        autoSave: true,
+        autoSaveInterval: '0.5',
+        cleanPastedContent: true,
+        defaultCategory: 'none',
+        editingMode: 'live-preview',
+        featuredImagePlaceholder: true,
+        interfaceLanguage: 'en-US',
+        openPreviewAfterPublish: true,
+        publishVisibility: 'public',
+        showLineNumbers: true,
+        smartListRecognition: true,
+        statusBarMode: 'words-reading-time',
+        summaryMode: 'auto-55',
+        syncScroll: true,
+        syntaxHighlight: true
+      }
+    },
     shortcutBinding,
     submissionField,
     titleField,
@@ -583,6 +604,29 @@ afterEach(() => {
 });
 
 describe('EditorRoot', () => {
+  it('focuses new posts only when the administrator enables editor autofocus', async () => {
+    const existingProps = fixture();
+    const sentinel = document.createElement('button');
+    sentinel.type = 'button';
+    sentinel.textContent = 'Focus sentinel';
+    document.body.append(sentinel);
+    sentinel.focus();
+    const existingView = render(<EditorRoot {...existingProps} />);
+
+    expect(document.activeElement).toBe(sentinel);
+    existingView.unmount();
+
+    const newProps = { ...fixture(), isNewPost: true };
+    sentinel.focus();
+    const newView = render(<EditorRoot {...newProps} />);
+
+    await waitFor(() =>
+      expect(document.activeElement?.closest('.cm-editor')).not.toBeNull()
+    );
+    newView.unmount();
+    sentinel.remove();
+  });
+
   it('composes source, toolbar and preview under one React owner', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
@@ -3908,6 +3952,56 @@ describe('EditorRoot', () => {
     expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(6);
   });
 
+  it('keeps disabled server settings authoritative over immersive preferences', async () => {
+    const baseProps = fixture();
+    vi.mocked(baseProps.immersivePreferencesPort.read).mockReturnValue({
+      preferences: {
+        autoSave: true,
+        outline: true,
+        splitPreview: true,
+        syncScroll: true,
+        wordCount: true
+      },
+      status: 'loaded'
+    });
+    const props = {
+      ...baseProps,
+      settings: {
+        general: {
+          ...baseProps.settings.general,
+          autoSave: false,
+          syncScroll: false
+        }
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+
+    const autoSave = view.getByRole('checkbox', { name: '自动保存' });
+    const syncScroll = view.getByRole('checkbox', { name: '同步滚动' });
+    expect(autoSave.getAttribute('aria-checked')).toBe('false');
+    expect(syncScroll.getAttribute('aria-checked')).toBe('false');
+    expect((autoSave as HTMLButtonElement).disabled).toBe(true);
+    expect((syncScroll as HTMLButtonElement).disabled).toBe(true);
+    expect(props.scrollSyncPort.prepareBinding).not.toHaveBeenCalled();
+    expect(baseProps.immersivePreferencesPort.write).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByRole('checkbox', { name: '文章大纲' }));
+    expect(baseProps.immersivePreferencesPort.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        autoSave: true,
+        outline: false,
+        syncScroll: true
+      })
+    );
+
+    fireEvent.click(autoSave);
+    fireEvent.click(syncScroll);
+    expect(baseProps.immersivePreferencesPort.write).toHaveBeenCalledTimes(1);
+  });
+
   it('applies restored immersive preferences to the existing draft and scroll owners', async () => {
     const props = fixture();
     vi.mocked(props.immersivePreferencesPort.read).mockReturnValue({
@@ -3977,7 +4071,7 @@ describe('EditorRoot', () => {
         .querySelector('.easymde-editor')
         ?.classList.contains('is-immersive-split')
     ).toBe(true);
-    expect(props.immersivePreferencesPort.read).toHaveBeenCalledTimes(3);
+    expect(props.immersivePreferencesPort.read).toHaveBeenCalledTimes(5);
     expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(2);
   });
 

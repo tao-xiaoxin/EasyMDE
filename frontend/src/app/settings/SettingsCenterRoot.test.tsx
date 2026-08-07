@@ -656,7 +656,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 			throw new Error("settings-center-overlay-missing");
 
 		const autoFocus = screen.getByRole("switch", { name: "autoFocusEditor" });
-		expect(autoFocus.matches(":disabled")).toBe(true);
+		expect(autoFocus.matches(":disabled")).toBe(false);
 		const resetTrigger = screen.getByRole("button", {
 			name: /transferResetCurrentConfiguration/,
 		});
@@ -864,12 +864,15 @@ describe("SettingsCenterRoot About section", () => {
 });
 
 describe("SettingsCenterRoot persistence", () => {
-	it("does not enable saving for unavailable setting fields", () => {
+	it("enables owner-backed controls while keeping unsupported fields unavailable", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		expect(
 			screen
 				.getByRole("switch", { name: "autoFocusEditor" })
 				.matches(":disabled"),
+		).toBe(false);
+		expect(
+			screen.getByRole("combobox", { name: "interfaceLanguage" }).matches(":disabled"),
 		).toBe(true);
 		expect(
 			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" })
@@ -877,7 +880,42 @@ describe("SettingsCenterRoot persistence", () => {
 		).toBe(true);
 	});
 
-	it.skip("saves edited settings through WordPress and reports completion", async () => {
+	it("changes an owner-backed dropdown and sends the selected value", async () => {
+		const user = userEvent.setup();
+		const payloadRef = { current: null as Record<string, unknown> | null };
+		const fetch = vi.spyOn(window, "fetch").mockImplementation(async (_input, init) => {
+			payloadRef.current = JSON.parse(String(init?.body)) as Record<string, unknown>;
+			return {
+				ok: true,
+				json: async () => ({
+					settings: {
+						...bootstrap().settings,
+						revision: bootstrap().settings.revision + 1,
+						general: {
+							...bootstrap().settings.general,
+							statusBarMode: "hidden",
+						},
+					},
+				}),
+			} as Response;
+		});
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+
+		const select = screen.getByRole<HTMLSelectElement>("combobox", {
+			name: "statusBarDisplay",
+		});
+		await user.selectOptions(select, "hidden");
+		expect(select.value).toBe("hidden");
+		await user.click(screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" }));
+
+		await waitFor(() => expect(screen.getByText("settingsSaved")).not.toBeNull());
+		if (!payloadRef.current) throw new Error("settings-save-payload-missing");
+		const general = payloadRef.current.settings as Record<string, unknown>;
+		expect((general.general as Record<string, unknown>).statusBarMode).toBe("hidden");
+		fetch.mockRestore();
+	});
+
+	it("saves edited owner-backed settings through WordPress and reports completion", async () => {
 		const user = userEvent.setup();
 		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
 			ok: true,
@@ -899,7 +937,7 @@ describe("SettingsCenterRoot persistence", () => {
 		fetch.mockRestore();
 	});
 
-	it.skip("offers the latest server state after a save conflict", async () => {
+	it("offers the latest server state after a save conflict", async () => {
 		const user = userEvent.setup();
 		const latestSettings = {
 			...bootstrap().settings,
@@ -946,7 +984,7 @@ describe("SettingsCenterRoot persistence", () => {
 		fetch.mockRestore();
 	});
 
-	it.skip("reports save failures without claiming completion", async () => {
+	it("reports save failures without claiming completion", async () => {
 		const user = userEvent.setup();
 		const fetch = vi
 			.spyOn(window, "fetch")
@@ -960,7 +998,7 @@ describe("SettingsCenterRoot persistence", () => {
 		await user.click(save);
 
 		await waitFor(() =>
-			expect(screen.getByText("settingsSaveFailed")).not.toBeNull(),
+			 expect(screen.getByText("settingsSaveNetworkFailed")).not.toBeNull(),
 		);
 		expect(screen.queryByText("settingsSaved")).toBeNull();
 		expect(save.disabled).toBe(false);

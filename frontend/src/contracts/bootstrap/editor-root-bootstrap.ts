@@ -4,6 +4,7 @@ import {
   type SafePreviewHtml
 } from '../ports/preview-request';
 import type { NativePublishCategory } from '../ports/native-publish-port';
+import type { GeneralSettings } from '../settings-center-settings';
 import {
   parseAppearanceBootstrap,
   type AppearanceBootstrap
@@ -64,10 +65,15 @@ export type EditorRootPreviewBootstrap = Readonly<{
 
 export type EditorRootWordPressBootstrap = Readonly<{
   customCssUrl: string;
+  isNewPost: boolean;
   nonce: string;
   previewUrl: string;
   publishCategories: ReadonlyArray<NativePublishCategory>;
   revisionsUrl: string;
+}>;
+
+export type EditorRootSettingsBootstrap = Readonly<{
+  general: GeneralSettings;
 }>;
 
 export type EditorRootBootstrap = Readonly<{
@@ -76,6 +82,7 @@ export type EditorRootBootstrap = Readonly<{
   document: DocumentSourceBootstrap;
   fonts: FontControlsBootstrap;
   imageUpload: ImageUploadBootstrap;
+  settings: EditorRootSettingsBootstrap;
   immersiveStrings: Readonly<{
     autoSave: string;
     autoSaveDescription: string;
@@ -300,6 +307,9 @@ function parseLocalDrafts(value: unknown): EditorRootLocalDraftsBootstrap {
 
 function parseWordPress(value: unknown): EditorRootWordPressBootstrap {
   const wordpress = objectValue(value, 'editor-root-wordpress-invalid');
+  if ('boolean' !== typeof wordpress.isNewPost) {
+    throw new EditorRootBootstrapError('editor-root-wordpress-invalid');
+  }
   return {
     customCssUrl: boundedString(
       wordpress.customCssUrl,
@@ -308,6 +318,7 @@ function parseWordPress(value: unknown): EditorRootWordPressBootstrap {
         maxLength: 4096
       }
     ),
+    isNewPost: wordpress.isNewPost,
     nonce: boundedString(wordpress.nonce, 'editor-root-wordpress-invalid'),
     publishCategories: parsePublishCategories(wordpress.publishCategories),
     previewUrl: boundedString(
@@ -360,6 +371,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   let appearance: AppearanceBootstrap;
   let fonts: FontControlsBootstrap;
   let imageUpload: ImageUploadBootstrap;
+  let settings: EditorRootSettingsBootstrap;
   let layout: EditorLayoutBootstrap;
   let localDrafts: EditorRootLocalDraftsBootstrap;
   let mediaPicker: MediaPickerBootstrap;
@@ -395,6 +407,57 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     imageUpload = parseImageUploadBootstrap(bootstrap.imageUpload);
   } catch {
     throw new EditorRootBootstrapError('editor-root-image-upload-invalid');
+  }
+  try {
+    const settingsValue = objectValue(
+      bootstrap.settings,
+      'editor-root-settings-invalid'
+    );
+    const general = objectValue(
+      settingsValue.general,
+      'editor-root-settings-invalid'
+    );
+    const stringFields = [
+      'interfaceLanguage',
+      'editingMode',
+      'statusBarMode',
+      'autoSaveInterval',
+      'defaultCategory',
+      'publishVisibility',
+      'summaryMode'
+    ] as const;
+    const booleanFields = [
+      'autoFocusEditor',
+      'showLineNumbers',
+      'syntaxHighlight',
+      'autoSave',
+      'syncScroll',
+      'cleanPastedContent',
+      'smartListRecognition',
+      'openPreviewAfterPublish',
+      'featuredImagePlaceholder'
+    ] as const;
+    const allowedValues: Readonly<Record<string, ReadonlySet<string>>> = {
+      autoSaveInterval: new Set(['30', '60', '120', '300']),
+      defaultCategory: new Set(['none', 'current']),
+      editingMode: new Set(['live-preview', 'source', 'preview']),
+      interfaceLanguage: new Set(['zh-CN', 'zh-TW', 'en-US']),
+      publishVisibility: new Set(['public', 'private', 'password']),
+      statusBarMode: new Set(['words-reading-time', 'words', 'hidden']),
+      summaryMode: new Set(['auto-55', 'auto-100', 'manual'])
+    };
+    if (
+      stringFields.some((key) => 'string' !== typeof general[key])
+      || booleanFields.some((key) => 'boolean' !== typeof general[key])
+      || stringFields.some(
+        (key) => !allowedValues[key]?.has(general[key] as string)
+      )
+    ) {
+      throw new Error('editor-root-settings-invalid');
+    }
+    settings = { general: general as unknown as GeneralSettings };
+  } catch {
+    throw new EditorRootBootstrapError('editor-root-settings-invalid');
   }
   try {
     layout = parseEditorLayoutBootstrap(bootstrap.layout);
@@ -437,6 +500,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     document,
     fonts,
     imageUpload,
+    settings,
     immersiveStrings: Object.fromEntries(
       [
         'autoSave',

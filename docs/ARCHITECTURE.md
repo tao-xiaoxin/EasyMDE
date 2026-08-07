@@ -346,16 +346,21 @@ The decision rationale and rejected alternatives are in
 Admin HTML is prepared by PHP services and rendered by templates under `templates/admin/`. Templates should receive prepared data and avoid owning business rules.
 
 The Settings Center is registered by `EasyMDE\\Admin\\SettingsPage` at the
-stable `easymde/settings/general` route. Its top-level WordPress menu label is
-`EasyMDE` and uses the local `assets/images/easymde-editor-icon.png`; the
-submenu keeps the Settings Center route and exposes WordPress's native plugin
-updates list at `plugins.php?plugin_status=upgrade` when the current user can
-update plugins. The React Settings Center reads and writes through
+canonical WordPress URL `admin.php?page=easymde&route=/general_setting`. Its
+top-level WordPress menu uses the valid `easymde` page slug, labels the entry
+`EasyMDE`, and uses the local `assets/images/easymde-editor-icon.png`; its first
+submenu item owns the explicit General route and it exposes WordPress's native
+plugin updates list at `plugins.php?plugin_status=upgrade` when the current user
+can update plugins. The React Settings Center reads and writes through
 `SettingsCenterRepository` and
 the protected `easymde/v1/settings` route. Only General settings with an
 implemented editor owner are enabled; unsupported fields stay explicitly
 disabled instead of reporting a persistence success that has no runtime
-consumer.
+consumer. The legacy Options screen uses the internal `easymde-legacy` slug so
+it cannot collide with the canonical `easymde` page hook; its former
+`options-general.php?page=easymde` URL redirects explicitly to that screen, and
+the former `admin.php?page=easymde/settings/general` entry redirects to the
+canonical General route.
 
 The supported General runtime settings are passed from `AdminAssets` through
 the validated Editor Root bootstrap and consumed by the Editor Root's

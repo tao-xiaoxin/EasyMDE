@@ -94,6 +94,15 @@ final class SettingsPage {
 	}
 
 	public function enqueue_assets( $hook ) {
+		if ( current_user_can( 'manage_options' ) ) {
+			wp_enqueue_style(
+				'easymde-admin-menu',
+				Asset::url( 'assets/css/admin/menu.css' ),
+				array(),
+				$this->get_static_asset_version( 'assets/css/admin/menu.css' )
+			);
+		}
+
 		if ( 'settings_page_easymde' === $hook ) {
 			wp_enqueue_style(
 				'easymde-admin-settings',

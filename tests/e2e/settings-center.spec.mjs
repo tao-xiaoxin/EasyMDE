@@ -35,6 +35,36 @@ async function login(page) {
   await expect(page.locator('#wpadminbar')).toBeVisible();
 }
 
+test('keeps the EasyMDE menu logo inside the native icon slot', async ({ page }) => {
+  await login(page);
+  await page.goto('/wp-admin/profile.php');
+
+  const menuItem = page.locator('#toplevel_page_easymde-settings-general');
+  const iconSlot = menuItem.locator('> a > .wp-menu-image');
+  const logo = iconSlot.locator('img');
+
+  await expect(menuItem).toBeVisible();
+  await expect(logo).toHaveAttribute('src', /assets\/images\/easymde-editor-icon\.png$/u);
+  await expect.poll(async () => {
+    const slot = await iconSlot.boundingBox();
+    const image = await logo.boundingBox();
+    if (!slot || !image) {
+      return false;
+    }
+
+    return image.width <= 20
+      && image.height <= 20
+      && image.x >= slot.x
+      && image.y >= slot.y
+      && image.x + image.width <= slot.x + slot.width
+      && image.y + image.height <= slot.y + slot.height;
+  }).toBe(true);
+
+  await menuItem.hover();
+  await expect(menuItem).toHaveClass(/opensub/u);
+  await expect(menuItem.locator('.wp-submenu')).toBeVisible();
+});
+
 test('keeps the settings save action clickable after scrolling', async ({ page }) => {
   await login(page);
   await page.goto('/wp-admin/admin.php?page=easymde/settings/general');

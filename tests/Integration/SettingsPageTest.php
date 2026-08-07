@@ -9,6 +9,7 @@ final class SettingsPageTest extends WP_UnitTestCase
     public function tear_down()
     {
         delete_option(Options::EDITOR_SETTINGS);
+        wp_dequeue_style('easymde-admin-menu');
         wp_dequeue_script('easymde-admin-settings-center');
         wp_dequeue_style('easymde-admin-settings-center');
         wp_set_current_user(0);
@@ -294,6 +295,9 @@ final class SettingsPageTest extends WP_UnitTestCase
     {
         wp_set_current_user(self::factory()->user->create(array('role' => 'administrator')));
         $settings_page = $this->settings_page();
+
+        $settings_page->enqueue_assets('profile.php');
+        $this->assertTrue(wp_style_is('easymde-admin-menu', 'enqueued'));
 
         $settings_page->enqueue_assets('settings_page_easymde');
         $this->assertFalse(wp_script_is('easymde-admin-settings-center', 'enqueued'));

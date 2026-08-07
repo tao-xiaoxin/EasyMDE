@@ -1057,11 +1057,6 @@
         size: A4
     }
 
-    .easymde-rendered-content.easymde-markdown-theme-phycat-mint*{
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important
-    }
-
     .easymde-rendered-content.easymde-markdown-theme-phycat-mint p{
         line-height: 1.5rem
     }

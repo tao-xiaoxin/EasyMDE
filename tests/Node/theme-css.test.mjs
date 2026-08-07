@@ -397,6 +397,10 @@ function selectorPreludeFailures(css, dom) {
         failures.push({ selector: normalized, reason: 'comment-marker-in-selector-prelude' });
         continue;
       }
+      if (/[.#][-_a-zA-Z0-9]+\*/.test(normalized)) {
+        failures.push({ selector: normalized, reason: 'unseparated-universal-selector' });
+        continue;
+      }
 
       try {
         element.matches(normalized);

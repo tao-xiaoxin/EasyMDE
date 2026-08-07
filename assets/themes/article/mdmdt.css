@@ -46,14 +46,6 @@
   letter-spacing: 0.6px;
   font-family: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", Arial, "Helvetica Neue", Helvetica, sans-serif;
 }
-.easymde-rendered-content.easymde-markdown-theme-mdmdt*{
-  tab-size: 4;
-  -webkit-tab-size: 4;
-  -moz-tab-size: 4;
-  -o-tab-size: 4;
-}
-
-
 .easymde-rendered-content.easymde-markdown-theme-mdmdt h1,
 .easymde-rendered-content.easymde-markdown-theme-mdmdt h2,
 .easymde-rendered-content.easymde-markdown-theme-mdmdt h3,

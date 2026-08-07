@@ -336,9 +336,10 @@ Admin HTML is prepared by PHP services and rendered by templates under `template
 The Settings Center is registered by `EasyMDE\\Admin\\SettingsPage` at the
 stable `easymde/settings/general` route. Its top-level WordPress menu label is
 `EasyMDE` and uses the local `assets/images/easymde-editor-icon.png`; the
-submenu keeps the Settings Center route and exposes WordPress's native
-`update-core.php` page when the current user can update core or plugins. The
-React Settings Center reads and writes through `SettingsCenterRepository` and
+submenu keeps the Settings Center route and exposes WordPress's native plugin
+updates list at `plugins.php?plugin_status=upgrade` when the current user can
+update plugins. The React Settings Center reads and writes through
+`SettingsCenterRepository` and
 the protected `easymde/v1/settings` route. Only General settings with an
 implemented editor owner are enabled; unsupported fields stay explicitly
 disabled instead of reporting a persistence success that has no runtime

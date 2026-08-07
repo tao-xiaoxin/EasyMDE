@@ -311,7 +311,7 @@ final class SettingsPageTest extends WP_UnitTestCase
         );
     }
 
-    public function test_admin_menu_uses_the_stable_settings_route_local_logo_and_native_updates_page()
+    public function test_admin_menu_uses_the_stable_settings_route_local_logo_and_native_plugin_updates_page()
     {
         wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
         $settings_page_slug = 'easymde/settings/general';
@@ -325,8 +325,8 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertArrayHasKey( $settings_page_slug, $submenu );
         $this->assertSame( $settings_page_slug, $submenu[ $settings_page_slug ][0][2] );
         $this->assertSame( 'manage_options', $submenu[ $settings_page_slug ][0][1] );
-        $this->assertSame( 'update-core.php', $submenu[ $settings_page_slug ][1][2] );
-        $this->assertSame( 'update_core', $submenu[ $settings_page_slug ][1][1] );
+        $this->assertSame( 'plugins.php?plugin_status=upgrade', $submenu[ $settings_page_slug ][1][2] );
+        $this->assertSame( 'update_plugins', $submenu[ $settings_page_slug ][1][1] );
     }
 
     private function find_menu_item( array $menu, $slug )

@@ -60,7 +60,7 @@ final class SettingsPage {
 				__( 'EasyMDE Updates', 'easymde' ),
 				__( 'Updates', 'easymde' ),
 				$update_capability,
-				'update-core.php'
+				'plugins.php?plugin_status=upgrade'
 			);
 		}
 
@@ -74,10 +74,6 @@ final class SettingsPage {
 	}
 
 	private function get_update_page_capability() {
-		if ( current_user_can( 'update_core' ) ) {
-			return 'update_core';
-		}
-
 		return current_user_can( 'update_plugins' ) ? 'update_plugins' : '';
 	}
 

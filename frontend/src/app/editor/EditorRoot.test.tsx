@@ -4163,6 +4163,38 @@ describe('EditorRoot', () => {
     });
   });
 
+  it('does not let a late native bridge event duplicate an article theme refresh', async () => {
+    const props = fixture();
+    const appearance = {
+      ...props.appearance,
+      articleThemes: props.appearance.articleThemes.map((theme) => ({
+        ...theme,
+        markupProfile:
+          'newsprint' === theme.id ? 'markdown2html-v1' : 'common-v1'
+      }))
+    };
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(2)
+    );
+
+    vi.useFakeTimers();
+    try {
+      props.submissionField.dispatchEvent(new Event('input', { bubbles: true }));
+      act(() => vi.advanceTimersByTime(180));
+      expect(props.previewPort.render).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('preserves an explicit code theme when Appearance remounts in immersive mode', async () => {
     const props = fixture();
     const codeThemeExplicitField = document.createElement('input');

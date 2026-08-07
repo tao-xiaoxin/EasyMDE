@@ -879,9 +879,12 @@ export function EditorRoot(props: EditorRootProps) {
   );
   const schedulePreview = useCallback(
     (immediate = false) => {
-      schedulePreviewMarkdown(props.submissionField.value, immediate);
+      schedulePreviewMarkdown(
+        documentSession?.document.getValue() ?? props.submissionField.value,
+        immediate
+      );
     },
-    [props.submissionField, schedulePreviewMarkdown]
+    [documentSession, props.submissionField, schedulePreviewMarkdown]
   );
   const handleVisualFailure = useCallback(
     (code: string) => {
@@ -1609,19 +1612,23 @@ export function EditorRoot(props: EditorRootProps) {
 
   useLayoutEffect(() => {
     const runtime = previewRuntimeRef.current;
-    if (!runtime || visualPreviewEditing) return;
-    const handleInput = () => schedulePreview(false);
-    props.submissionField.addEventListener('input', handleInput);
+    if (!runtime || !documentSession || visualPreviewEditing) return;
+    // CodeMirror is the canonical document source. The hidden WordPress
+    // field remains synchronized for submission, but its bridge input event
+    // must not be a second Preview trigger: a late bridge event can race an
+    // immediate theme transition and submit two different Markdown values.
+    const unsubscribeDocument = documentSession.document.subscribe(() => {
+      schedulePreview(false);
+    });
     if (scheduledPreviewRuntimeRef.current !== runtime) {
       scheduledPreviewRuntimeRef.current = runtime;
       schedulePreview(true);
     }
 
-    return () =>
-      props.submissionField.removeEventListener('input', handleInput);
+    return unsubscribeDocument;
   }, [
+    documentSession,
     previewRuntimeGeneration,
-    props.submissionField,
     schedulePreview,
     visualPreviewEditing
   ]);

@@ -17,7 +17,7 @@ import { SettingsCenterRoot } from "./SettingsCenterRoot";
 function bootstrap(): SettingsCenterBootstrap {
 	return {
 		schemaVersion: 2,
-		closeUrl: "/wp-admin/options-general.php?page=easymde",
+		closeUrl: "/wp-admin/options-general.php",
 		api: {
 			settingsUrl: "/wp-json/easymde/v1/settings",
 			actionNonce: "test-action-nonce",

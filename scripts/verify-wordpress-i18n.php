@@ -54,9 +54,9 @@ add_filter( 'locale', $zh_cn_locale, 999 );
 add_filter( 'determine_locale', $zh_cn_locale, 999 );
 easymde_verify_i18n_unload_for_reload( 'easymde' );
 
-$translated = __( 'Shortcut settings', 'easymde' );
-if ( '快捷键设置' !== $translated ) {
-	easymde_verify_i18n_fail( 'Bundled zh_CN MO did not translate "Shortcut settings"; got: ' . $translated );
+$translated = __( 'Settings Center', 'easymde' );
+if ( '配置中心' !== $translated ) {
+	easymde_verify_i18n_fail( 'Bundled zh_CN MO did not translate "Settings Center"; got: ' . $translated );
 }
 
 if ( ! is_textdomain_loaded( 'easymde' ) ) {
@@ -74,8 +74,8 @@ $en_us_locale = function () {
 add_filter( 'locale', $en_us_locale, 999 );
 add_filter( 'determine_locale', $en_us_locale, 999 );
 
-$english = __( 'Shortcut settings', 'easymde' );
-if ( 'Shortcut settings' !== $english ) {
+$english = __( 'Settings Center', 'easymde' );
+if ( 'Settings Center' !== $english ) {
 	easymde_verify_i18n_fail( 'en_US unexpectedly received a translated EasyMDE string; got: ' . $english );
 }
 

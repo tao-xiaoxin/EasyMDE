@@ -2,6 +2,7 @@
 
 use EasyMDE\Admin\SettingsPage;
 use EasyMDE\Support\Options;
+use EasyMDE\Support\SettingsCenterRepository;
 use EasyMDE\Support\ToolbarRegistry;
 
 final class SettingsPageTest extends WP_UnitTestCase
@@ -15,187 +16,6 @@ final class SettingsPageTest extends WP_UnitTestCase
         wp_set_current_user(0);
 
         parent::tear_down();
-    }
-
-    public function test_active_editor_settings_schema_ignores_legacy_spellcheck_value_without_writing()
-    {
-        $stored = array(
-            'version' => '0.1.8',
-            'toolbar_layout' => 'hybrid-icons',
-            'spellcheck_enabled' => 1,
-        );
-        update_option(Options::EDITOR_SETTINGS, $stored);
-
-        $settings = $this->settings_page()->get_editor_settings();
-
-        $this->assertArrayNotHasKey('spellcheck_enabled', $settings);
-        $this->assertSame('hybrid-icons', $settings['toolbar_layout']);
-        $this->assertNotEmpty($settings['shortcuts']);
-        $this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
-    }
-
-    public function test_sanitize_editor_settings_discards_legacy_spellcheck_value_without_changing_shortcuts()
-    {
-        $settings_page = $this->settings_page();
-
-        $with_legacy_value = $settings_page->sanitize_editor_settings(
-            array(
-                'spellcheck_enabled' => '1',
-            )
-        );
-        $without_legacy_value = $settings_page->sanitize_editor_settings(array());
-
-        $this->assertArrayNotHasKey('spellcheck_enabled', $with_legacy_value);
-        $this->assertSame($without_legacy_value, $with_legacy_value);
-        $this->assertNotEmpty($with_legacy_value['shortcuts']);
-    }
-
-    public function test_legacy_settings_save_preserves_settings_center_state()
-    {
-        $stored = array(
-            'version' => '0.1.8',
-            'settings_center' => array(
-                'general' => array('autoSave' => false),
-            ),
-        );
-        update_option(Options::EDITOR_SETTINGS, $stored);
-
-        $sanitized = $this->settings_page()->sanitize_editor_settings(array());
-
-        $invalid = $this->settings_page()->sanitize_editor_settings(
-            array('shortcuts' => array('savepost' => array('win' => 'S')))
-        );
-
-        $this->assertSame($stored['settings_center'], $invalid['settings_center']);
-
-        $this->assertSame($stored['settings_center'], $sanitized['settings_center']);
-    }
-
-    public function test_legacy_settings_save_preserves_center_revision_and_syncs_submitted_shortcuts()
-    {
-        update_option(
-            Options::EDITOR_SETTINGS,
-            array(
-                'version' => '0.1.8',
-                'settings_center' => array(
-                    'shortcuts' => array(
-                        'values' => array(
-                            'save' => array(
-                                'windows' => 'Ctrl+S',
-                                'mac'     => 'Cmd+S',
-                            ),
-                        ),
-                    ),
-                ),
-                'settings_center_revision' => 4,
-                'shortcuts' => array(
-                    'savepost' => array(
-                        'win' => 'Ctrl+S',
-                        'mac' => 'Cmd+S',
-                    ),
-                ),
-            )
-        );
-
-        $sanitized = $this->settings_page()->sanitize_editor_settings(
-            array(
-                'shortcuts' => array(
-                    'savepost' => array(
-                        'win' => 'Ctrl+Shift+S',
-                        'mac' => 'Cmd+Shift+S',
-                    ),
-                ),
-            )
-        );
-
-        $this->assertSame( 5, $sanitized['settings_center_revision'] );
-        $this->assertSame( 'Ctrl+Shift+S', $sanitized['settings_center']['shortcuts']['values']['save']['windows'] );
-        $this->assertSame( 'Cmd+Shift+S', $sanitized['settings_center']['shortcuts']['values']['save']['mac'] );
-    }
-
-    public function test_legacy_settings_api_stale_snapshot_cannot_overwrite_a_newer_center_save()
-    {
-        $page = $this->settings_page();
-        $page->register_hooks();
-        $repository = new \EasyMDE\Support\SettingsCenterRepository( new Options(), new ToolbarRegistry() );
-
-        try {
-            $legacy_value = $page->sanitize_editor_settings(
-                array(
-                    'shortcuts' => array(
-                        'savepost' => array(
-                            'win' => 'Ctrl+Shift+S',
-                            'mac' => 'Cmd+Shift+S',
-                        ),
-                    ),
-                )
-            );
-            $newer = $repository->get_settings();
-            $newer['general']['autoSave'] = false;
-            $this->assertIsArray( $repository->update_settings( $newer ) );
-            $before = get_option( Options::EDITOR_SETTINGS );
-
-            update_option( Options::EDITOR_SETTINGS, $legacy_value, false );
-
-            $after = get_option( Options::EDITOR_SETTINGS );
-            $this->assertSame( $before, $after );
-            $this->assertFalse( $after['settings_center']['general']['autoSave'] );
-            $this->assertSame( 'Ctrl+S', $after['shortcuts']['savepost']['win'] );
-        } finally {
-            remove_filter( 'pre_update_option_' . Options::EDITOR_SETTINGS, array( $page, 'intercept_legacy_settings_update' ), 10 );
-        }
-    }
-
-    public function test_legacy_settings_api_write_uses_repository_revision_and_cas()
-    {
-        $page = $this->settings_page();
-        $page->register_hooks();
-
-        try {
-            $legacy_value = $page->sanitize_editor_settings(
-                array(
-                    'shortcuts' => array(
-                        'savepost' => array(
-                            'win' => 'Ctrl+Shift+S',
-                            'mac' => 'Cmd+Shift+S',
-                        ),
-                    ),
-                )
-            );
-
-            update_option( Options::EDITOR_SETTINGS, $legacy_value, false );
-
-            $stored = get_option( Options::EDITOR_SETTINGS );
-            $this->assertSame( 1, $stored['settings_center_revision'] );
-            $this->assertSame( 'Ctrl+Shift+S', $stored['shortcuts']['savepost']['win'] );
-            $this->assertSame( 'Cmd+Shift+S', $stored['shortcuts']['savepost']['mac'] );
-            $this->assertSame(
-                'Ctrl+Shift+S',
-                $stored['settings_center']['shortcuts']['values']['save']['windows']
-            );
-        } finally {
-            remove_filter( 'pre_update_option_' . Options::EDITOR_SETTINGS, array( $page, 'intercept_legacy_settings_update' ), 10 );
-        }
-    }
-
-    public function test_settings_page_does_not_render_legacy_spellcheck_control_or_mutate_option()
-    {
-        $stored = array(
-            'version' => '0.1.8',
-            'toolbar_layout' => 'hybrid-icons',
-            'spellcheck_enabled' => '1',
-        );
-        update_option(Options::EDITOR_SETTINGS, $stored);
-        wp_set_current_user(self::factory()->user->create(array('role' => 'administrator')));
-
-        ob_start();
-        $this->settings_page()->render();
-        $output = ob_get_clean();
-
-        $this->assertStringNotContainsString('easymde-spellcheck-enabled', $output);
-        $this->assertStringNotContainsString('Enable browser spellcheck in the Markdown editor', $output);
-        $this->assertStringContainsString('Shortcut settings', $output);
-        $this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
     }
 
     public function test_settings_center_renders_an_independent_root_without_writing_settings()
@@ -236,7 +56,7 @@ final class SettingsPageTest extends WP_UnitTestCase
 
         $this->assertSame(2, $bootstrap['schemaVersion']);
         $this->assertSame(
-            admin_url('options-general.php?page=easymde'),
+            admin_url('options-general.php'),
             $bootstrap['closeUrl']
         );
         $this->assertStringContainsString(
@@ -291,7 +111,7 @@ final class SettingsPageTest extends WP_UnitTestCase
         }
     }
 
-    public function test_settings_center_assets_load_only_on_the_independent_screen()
+    public function test_settings_center_assets_load_only_on_the_canonical_screen()
     {
         wp_set_current_user(self::factory()->user->create(array('role' => 'administrator')));
         $settings_page = $this->settings_page();
@@ -299,7 +119,7 @@ final class SettingsPageTest extends WP_UnitTestCase
         $settings_page->enqueue_assets('profile.php');
         $this->assertTrue(wp_style_is('easymde-admin-menu', 'enqueued'));
 
-        $settings_page->enqueue_assets('settings_page_easymde-legacy');
+        $settings_page->enqueue_assets('settings_page_unregistered');
         $this->assertFalse(wp_script_is('easymde-admin-settings-center', 'enqueued'));
 
         $settings_page->enqueue_assets('toplevel_page_easymde');
@@ -330,6 +150,23 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertSame( 'update_plugins', $submenu[ $settings_page_slug ][1][1] );
     }
 
+    public function test_admin_menu_does_not_register_the_removed_legacy_options_page()
+    {
+        wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+
+        $this->settings_page()->register_admin_menu();
+
+        global $submenu;
+        $legacy_items = array_filter(
+            isset( $submenu['options-general.php'] ) ? $submenu['options-general.php'] : array(),
+            static function ( $item ) {
+                return isset( $item[2] ) && 'easymde-legacy' === $item[2];
+            }
+        );
+
+        $this->assertSame( array(), array_values( $legacy_items ) );
+    }
+
     private function find_menu_item( array $menu, $slug )
     {
         foreach ( $menu as $item ) {
@@ -343,6 +180,9 @@ final class SettingsPageTest extends WP_UnitTestCase
 
     private function settings_page()
     {
-        return new SettingsPage(new ToolbarRegistry(), new Options());
+        $options = new Options();
+        $toolbar_registry = new ToolbarRegistry();
+
+        return new SettingsPage(new SettingsCenterRepository($options, $toolbar_registry));
     }
 }

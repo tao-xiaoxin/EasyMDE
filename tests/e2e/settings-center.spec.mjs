@@ -42,6 +42,28 @@ async function login(page) {
 	await expect(page.locator("#wpadminbar")).toBeVisible();
 }
 
+async function expectRemovedSettingsPage(
+	page,
+	path,
+	{ status, message, assertNoOptionsForm = true },
+) {
+	const response = await page.goto(path);
+
+	expect(response?.status()).toBe(status);
+	expect(page.url()).toContain(path);
+	await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
+	if (assertNoOptionsForm) {
+		await expect(page.locator('form[action="options.php"]')).toHaveCount(0);
+	}
+	await expect(page.locator(".easymde-settings-shortcuts")).toHaveCount(0);
+	await expect(page.locator('script[src*="settings-center"]')).toHaveCount(0);
+	await expect(page.locator('link[href*="settings-center"]')).toHaveCount(0);
+	await expect(page.locator('link[href*="/assets/css/admin/settings.css"]')).toHaveCount(0);
+	if (message) {
+		await expect(page.locator("body")).toContainText(message);
+	}
+}
+
 test("keeps the EasyMDE menu logo inside the native icon slot", async ({
 	page,
 }) => {
@@ -120,16 +142,19 @@ test("opens the settings center through the explicit General route", async ({
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 });
 
-test("redirects the former Settings Center URL to the explicit General route", async ({
+test("rejects the removed Settings Center URL without loading its form or assets", async ({
 	page,
 }) => {
 	await login(page);
-	await page.goto("/wp-admin/admin.php?page=easymde/settings/general");
-
-	await expect(page).toHaveURL(
-		/\/wp-admin\/admin\.php\?page=easymde&route=(?:%2F|\/)general_setting$/iu,
+	await expectRemovedSettingsPage(
+		page,
+		"/wp-admin/admin.php?page=easymde/settings/general",
+		{
+			status: 403,
+			message:
+				/Sorry, you are not allowed to access this page\.|抱歉，您不能访问此页面。/iu,
+		},
 	);
-	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 });
 
 test("rejects an unsupported settings center route explicitly", async ({
@@ -146,18 +171,24 @@ test("rejects an unsupported settings center route explicitly", async ({
 	);
 });
 
-test("keeps the former Options URL on the isolated legacy screen", async ({
+test("rejects the removed Options URLs without loading their form or assets", async ({
 	page,
 }) => {
 	await login(page);
-	await page.goto("/wp-admin/options-general.php?page=easymde");
-
-	await expect(page).toHaveURL(
-		/\/wp-admin\/options-general\.php\?page=easymde-legacy$/u,
+	await expectRemovedSettingsPage(
+		page,
+		"/wp-admin/options-general.php?page=easymde-legacy",
+		{
+			status: 403,
+			message:
+				/Sorry, you are not allowed to access this page\.|抱歉，您不能访问此页面。/iu,
+		},
 	);
-	await expect(page.locator(".wrap > h1")).toHaveText("EasyMDE");
-	await expect(page.locator(".easymde-settings-shortcuts")).toBeVisible();
-	await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
+	await expectRemovedSettingsPage(
+		page,
+		"/wp-admin/options-general.php?page=easymde",
+		{ status: 200, assertNoOptionsForm: false },
+	);
 });
 
 test("keeps the settings save action clickable after scrolling", async ({

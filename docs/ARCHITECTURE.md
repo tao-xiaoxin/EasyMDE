@@ -356,11 +356,15 @@ can update plugins. The React Settings Center reads and writes through
 the protected `easymde/v1/settings` route. Only General settings with an
 implemented editor owner are enabled; unsupported fields stay explicitly
 disabled instead of reporting a persistence success that has no runtime
-consumer. The legacy Options screen uses the internal `easymde-legacy` slug so
-it cannot collide with the canonical `easymde` page hook; its former
-`options-general.php?page=easymde` URL redirects explicitly to that screen, and
-the former `admin.php?page=easymde/settings/general` entry redirects to the
-canonical General route.
+consumer. The removed Settings API page and `settings.css` owner are not
+registered or enqueued. Existing `easymde_editor_settings` values remain
+compatible: `SettingsCenterRepository` imports historical toolbar shortcut
+values, preserves their Windows/macOS mappings, and writes the canonical
+settings document through its revisioned compare-and-swap path. The old
+`options-general.php?page=easymde` URL remains WordPress's native General
+Settings screen without EasyMDE injection, and
+`admin.php?page=easymde/settings/general` is no longer an active screen. The
+canonical General route is the sole Settings Center entry.
 
 The supported General runtime settings are passed from `AdminAssets` through
 the validated Editor Root bootstrap and consumed by the Editor Root's

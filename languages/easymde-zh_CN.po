@@ -1256,13 +1256,11 @@ msgstr ""
 msgid "You are not allowed to create this EasyMDE post."
 msgstr "你无权创建此 EasyMDE 文章。"
 
-#: src/Admin/SettingsCenterStrings.php:13 src/Admin/SettingsPage.php:49
-#: src/Admin/SettingsPage.php:78 src/Admin/SettingsPage.php:79
-#: templates/admin/settings-page.php:13
+#: src/Admin/SettingsCenterStrings.php:13 src/Admin/SettingsPage.php:35
 msgid "EasyMDE"
 msgstr "EasyMDE"
 
-#: src/Admin/SettingsCenterStrings.php:14 src/Admin/SettingsPage.php:59
+#: src/Admin/SettingsCenterStrings.php:14 src/Admin/SettingsPage.php:45
 msgid "Settings Center"
 msgstr "配置中心"
 
@@ -1608,13 +1606,11 @@ msgstr "恢复默认快捷键"
 msgid "Function"
 msgstr "功能"
 
-#: src/Admin/SettingsCenterStrings.php:103 src/Admin/SettingsPage.php:637
-#: templates/admin/settings-page.php:61
+#: src/Admin/SettingsCenterStrings.php:103
 msgid "Windows / Linux"
 msgstr "Windows / Linux"
 
-#: src/Admin/SettingsCenterStrings.php:104 src/Admin/SettingsPage.php:637
-#: templates/admin/settings-page.php:62
+#: src/Admin/SettingsCenterStrings.php:104
 msgid "macOS"
 msgstr "macOS"
 
@@ -1698,8 +1694,8 @@ msgid "Settings saved."
 msgstr "设置已保存。"
 
 #: src/Admin/SettingsCenterStrings.php:124
-#: src/Support/SettingsCenterRepository.php:325
-#: src/Support/SettingsCenterRepository.php:333
+#: src/Support/SettingsCenterRepository.php:193
+#: src/Support/SettingsCenterRepository.php:201
 msgid "Settings could not be saved. Try again."
 msgstr "设置无法保存，请重试。"
 
@@ -2969,37 +2965,22 @@ msgstr "此关于操作尚未连接到 WordPress。"
 msgid "Close About Feedback"
 msgstr "关闭关于反馈"
 
-#: src/Admin/SettingsPage.php:48 src/Admin/SettingsPage.php:58
-#: src/Admin/SettingsPage.php:173
+#: src/Admin/SettingsPage.php:34 src/Admin/SettingsPage.php:44
+#: src/Admin/SettingsPage.php:124
 msgid "EasyMDE Settings Center"
 msgstr "EasyMDE 设置中心"
 
-#: src/Admin/SettingsPage.php:70
+#: src/Admin/SettingsPage.php:56
 msgid "EasyMDE Updates"
 msgstr "EasyMDE 更新"
 
-#: src/Admin/SettingsPage.php:71
+#: src/Admin/SettingsPage.php:57
 msgid "Updates"
 msgstr "更新"
 
-#: src/Admin/SettingsPage.php:172
+#: src/Admin/SettingsPage.php:123
 msgid "The EasyMDE settings route is not supported."
 msgstr "不支持此 EasyMDE 设置路由。"
-
-#. translators: 1: toolbar command label, 2: platform label.
-#: src/Admin/SettingsPage.php:471
-#, php-format
-msgid ""
-"Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or "
-"Command+Option+C."
-msgstr ""
-"%1$s（%2$s）的快捷键格式无效。请使用 Ctrl+B 或 Command+Option+C 这类组合。"
-
-#. translators: 1: first toolbar command label, 2: second toolbar command label, 3: shortcut, 4: platform label.
-#: src/Admin/SettingsPage.php:488
-#, php-format
-msgid "Shortcut conflict: %1$s and %2$s both use %3$s on %4$s."
-msgstr "快捷键冲突：%1$s 与 %2$s 在 %4$s 上都使用了 %3$s。"
 
 #: src/Frontend/FrontendAssets.php:104
 msgid "Copy code"
@@ -3069,7 +3050,6 @@ msgstr "找不到请求的修订版本。"
 #: src/Rest/SettingsController.php:81 src/Rest/SettingsController.php:124
 #: src/Rest/SettingsController.php:341
 #: src/Support/SettingsCenterRepository.php:99
-#: src/Support/SettingsCenterRepository.php:317
 msgid "The settings payload is invalid."
 msgstr "The settings payload is invalid."
 
@@ -3081,9 +3061,7 @@ msgstr "无法验证设置请求。"
 msgid "The settings payload is too large."
 msgstr "设置负载过大。"
 
-#: src/Support/SettingsCenterRepository.php:223
-#: src/Support/SettingsCenterRepository.php:231
-#: src/Support/SettingsCenterRepository.php:525
+#: src/Support/SettingsCenterRepository.php:393
 msgid "One or more shortcut values are invalid."
 msgstr "One or more shortcut values are invalid."
 
@@ -3372,78 +3350,6 @@ msgstr "EasyMDE 编辑器无法启动。WordPress 原生字段仍然可用。"
 msgid "EasyMDE requires JavaScript to edit Markdown on this screen."
 msgstr "EasyMDE 需要 JavaScript 才能在此页面编辑 Markdown。"
 
-#: templates/admin/settings-page.php:14
-msgid ""
-"EasyMDE adds a scoped split-pane Markdown editor to supported post editing "
-"screens."
-msgstr "EasyMDE 会在支持的内容编辑页面中添加作用域限定的分栏 Markdown 编辑器。"
-
-#: templates/admin/settings-page.php:20
-msgid "Supported post types"
-msgstr "支持的内容类型"
-
-#: templates/admin/settings-page.php:24
-msgid "Server renderer"
-msgstr "服务器端渲染器"
-
-#: templates/admin/settings-page.php:28
-msgid "league/commonmark is active."
-msgstr "league/commonmark 已启用。"
-
-#: templates/admin/settings-page.php:29
-msgid ""
-"league/commonmark is required but unavailable. Install Composer dependencies "
-"before rendering or saving EasyMDE Markdown."
-msgstr ""
-"league/commonmark 是必需依赖但当前不可用。请先安装 Composer 依赖，再渲染或保"
-"存 EasyMDE Markdown。"
-
-#: templates/admin/settings-page.php:34
-msgid "Admin behavior"
-msgstr "后台行为"
-
-#: templates/admin/settings-page.php:35
-msgid "No activation redirect and no unrelated admin-page redirect."
-msgstr "不会在启用插件后跳转，也不会重定向无关后台页面。"
-
-#: templates/admin/settings-page.php:38
-msgid "Toolbar layout"
-msgstr "工具栏布局"
-
-#: templates/admin/settings-page.php:39
-msgid "Hybrid icon toolbar"
-msgstr "混合图标工具栏"
-
-#: templates/admin/settings-page.php:42
-msgid "Current preset"
-msgstr "当前预设"
-
-#: templates/admin/settings-page.php:43
-msgid "Typora-inspired shortcuts"
-msgstr "Typora 风格快捷键"
-
-#: templates/admin/settings-page.php:53
-msgid "Shortcut settings"
-msgstr "快捷键设置"
-
-#: templates/admin/settings-page.php:54
-msgid "Typora-inspired defaults are active unless overridden below."
-msgstr "默认启用 Typora 风格快捷键，除非在下方覆盖。"
-
-#: templates/admin/settings-page.php:55
-msgid "Use the current Typora-inspired default by leaving the field blank."
-msgstr "留空即可继续使用当前 Typora 风格默认值。"
-
-#: templates/admin/settings-page.php:60
-msgid "Command"
-msgstr "命令"
-
-#. translators: %s: default keyboard shortcut.
-#: templates/admin/settings-page.php:93 templates/admin/settings-page.php:107
-#, php-format
-msgid "Default: %s"
-msgstr "默认：%s"
-
 #. translators: %s: Locale-formatted character count.
 #: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:26
 #, javascript-format
@@ -3471,6 +3377,73 @@ msgstr[0] "%s 个修订版本"
 msgid "%s word"
 msgid_plural "%s words"
 msgstr[0] "%s 个词"
+
+#, php-format
+#~ msgid ""
+#~ "Invalid shortcut value for %1$s (%2$s). Use combinations like Ctrl+B or "
+#~ "Command+Option+C."
+#~ msgstr ""
+#~ "%1$s（%2$s）的快捷键格式无效。请使用 Ctrl+B 或 Command+Option+C 这类组合。"
+
+#, php-format
+#~ msgid "Shortcut conflict: %1$s and %2$s both use %3$s on %4$s."
+#~ msgstr "快捷键冲突：%1$s 与 %2$s 在 %4$s 上都使用了 %3$s。"
+
+#~ msgid ""
+#~ "EasyMDE adds a scoped split-pane Markdown editor to supported post "
+#~ "editing screens."
+#~ msgstr ""
+#~ "EasyMDE 会在支持的内容编辑页面中添加作用域限定的分栏 Markdown 编辑器。"
+
+#~ msgid "Supported post types"
+#~ msgstr "支持的内容类型"
+
+#~ msgid "Server renderer"
+#~ msgstr "服务器端渲染器"
+
+#~ msgid "league/commonmark is active."
+#~ msgstr "league/commonmark 已启用。"
+
+#~ msgid ""
+#~ "league/commonmark is required but unavailable. Install Composer "
+#~ "dependencies before rendering or saving EasyMDE Markdown."
+#~ msgstr ""
+#~ "league/commonmark 是必需依赖但当前不可用。请先安装 Composer 依赖，再渲染或"
+#~ "保存 EasyMDE Markdown。"
+
+#~ msgid "Admin behavior"
+#~ msgstr "后台行为"
+
+#~ msgid "No activation redirect and no unrelated admin-page redirect."
+#~ msgstr "不会在启用插件后跳转，也不会重定向无关后台页面。"
+
+#~ msgid "Toolbar layout"
+#~ msgstr "工具栏布局"
+
+#~ msgid "Hybrid icon toolbar"
+#~ msgstr "混合图标工具栏"
+
+#~ msgid "Current preset"
+#~ msgstr "当前预设"
+
+#~ msgid "Typora-inspired shortcuts"
+#~ msgstr "Typora 风格快捷键"
+
+#~ msgid "Shortcut settings"
+#~ msgstr "快捷键设置"
+
+#~ msgid "Typora-inspired defaults are active unless overridden below."
+#~ msgstr "默认启用 Typora 风格快捷键，除非在下方覆盖。"
+
+#~ msgid "Use the current Typora-inspired default by leaving the field blank."
+#~ msgstr "留空即可继续使用当前 Typora 风格默认值。"
+
+#~ msgid "Command"
+#~ msgstr "命令"
+
+#, php-format
+#~ msgid "Default: %s"
+#~ msgstr "默认：%s"
 
 #~ msgid "EasyMDE Settings"
 #~ msgstr "EasyMDE 设置"

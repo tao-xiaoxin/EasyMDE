@@ -185,40 +185,6 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame( $current, get_option( Options::EDITOR_SETTINGS ) );
     }
 
-    public function test_unchanged_legacy_shortcuts_are_a_no_op()
-    {
-        $registry = new ToolbarRegistry();
-        $registry->register_toolbar_button(
-            'strike',
-            array(
-                'defaultShortcutWin' => 'Ctrl+Alt+5',
-                'defaultShortcutMac' => 'Cmd+Alt+5',
-            )
-        );
-        $options   = new Options();
-        $shortcuts = array();
-        foreach ( $registry->get_command_registry() as $command_id => $command ) {
-            $shortcuts[ $command_id ] = array(
-                'win' => $command['defaultShortcutWin'],
-                'mac' => $command['defaultShortcutMac'],
-            );
-        }
-        $stored = array(
-            'version'        => $options->editor_settings_version(),
-            'toolbar_layout' => 'hybrid-icons',
-            'shortcuts'      => $shortcuts,
-        );
-        update_option( Options::EDITOR_SETTINGS, $stored, false );
-        $expected   = $options->get_editor_settings_snapshot();
-        $repository = new SettingsCenterRepository( $options, $registry );
-
-        $result = $repository->update_legacy_shortcuts( $shortcuts, $expected );
-
-        $this->assertIsArray( $result );
-        $this->assertSame( 0, $result['revision'] );
-        $this->assertSame( $stored, get_option( Options::EDITOR_SETTINGS ) );
-    }
-
     public function test_option_write_failure_is_reported_as_an_error()
     {
         $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());

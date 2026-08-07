@@ -343,11 +343,11 @@ test("gettext catalog files are current and contain real zh_CN translations", ()
 	const poEntries = parsePoEntries(
 		join(repoRoot, "languages/easymde-zh_CN.po"),
 	);
-	const shortcutEntry = poEntries.find(
-		(entry) => "Shortcut settings" === entry.msgid,
+	const settingsCenterEntry = poEntries.find(
+		(entry) => "Settings Center" === entry.msgid,
 	);
 
-	assert.equal(shortcutEntry.msgstr[0], "快捷键设置");
+	assert.equal(settingsCenterEntry.msgstr[0], "配置中心");
 	assert.ok(statSync(join(repoRoot, "languages/easymde-zh_CN.mo")).size > 0);
 
 	const result = spawnSync(
@@ -359,7 +359,7 @@ test("gettext catalog files are current and contain real zh_CN translations", ()
 	);
 
 	assert.equal(result.status, 0, result.stderr);
-	assert.match(result.stdout, /msgid "Shortcut settings"\nmsgstr "快捷键设置"/);
+	assert.match(result.stdout, /msgid "Settings Center"\nmsgstr "配置中心"/);
 });
 
 test("React immersive counters ship one handle-based WordPress Jed catalog", () => {
@@ -385,7 +385,7 @@ test("removed browser spellcheck setting is absent from runtime docs and catalog
 		"src/Admin/SettingsPage.php",
 		"src/Admin/EditorScreen.php",
 		"src/Support/Options.php",
-		"templates/admin/settings-page.php",
+		"templates/admin/settings-center.php",
 		"templates/admin/editor-shell.php",
 		"README.md",
 		"README.zh-CN.md",

@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
 
+// The preview session debounces ordinary input for 180ms. Keep the evidence
+// barrier longer than that window so slow CI cannot leak a stale request into
+// the next theme transition.
+const PREVIEW_QUIET_WINDOW_MS = 220;
+
 export function classifyPreviewRequestOutcomes(observed, markdownTheme) {
   const cancelled = observed.filter(({ cancelled: wasCancelled }) => wasCancelled);
   const active = observed.filter(({ cancelled: wasCancelled }) => !wasCancelled);
@@ -186,9 +191,25 @@ export function collectPreviewRequestOutcomes(page) {
     settleByOutcome.get(outcome)?.();
   });
 
+  async function waitForStableOutcomes() {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const observedEnd = outcomes.length;
+      await waitForPreviewRequestSettlements(
+        outcomes.slice(0, observedEnd).map((outcome) => settledByOutcome.get(outcome)),
+        { markdownTheme: 'checkpoint', startIndex: 0 }
+      );
+      await page.waitForTimeout(PREVIEW_QUIET_WINDOW_MS);
+      if (outcomes.length === observedEnd) return observedEnd;
+    }
+    throw new Error('preview-request-evidence-did-not-stabilize');
+  }
+
   return {
     get length() {
       return outcomes.length;
+    },
+    async checkpoint() {
+      return waitForStableOutcomes();
     },
     async evidence(startIndex, markdownTheme) {
       let observed = [];
@@ -200,9 +221,7 @@ export function collectPreviewRequestOutcomes(page) {
           observed.map((outcome) => settledByOutcome.get(outcome)),
           { markdownTheme, startIndex }
         );
-        await page.evaluate(() => new Promise((resolve) => {
-          requestAnimationFrame(() => requestAnimationFrame(resolve));
-        }));
+        await page.waitForTimeout(PREVIEW_QUIET_WINDOW_MS);
         if (outcomes.length === observedEnd) {
           stabilized = true;
           break;

@@ -1,9 +1,7 @@
 import { expect } from '@playwright/test';
 
 export async function selectOrdinaryOption(page, combobox, optionLabel) {
-  await combobox.focus();
-  await expect(combobox).toBeFocused();
-  await page.keyboard.press('Enter');
+  await combobox.click();
   await expect(combobox).toHaveAttribute('aria-expanded', 'true');
   const listboxId = await combobox.getAttribute('aria-controls');
   if (!listboxId) {
@@ -18,22 +16,10 @@ export async function selectOrdinaryOption(page, combobox, optionLabel) {
     throw new Error(`ordinary-select-option-unavailable:${optionLabel}`);
   }
 
-  const lastOptionIndex = optionLabels.length - 1;
-  const startAtEnd = optionIndex > lastOptionIndex / 2;
-  await page.keyboard.press(startAtEnd ? 'End' : 'Home');
-  const distance = startAtEnd
-    ? lastOptionIndex - optionIndex
-    : optionIndex;
-  for (let index = 0; index < distance; index += 1) {
-    await page.keyboard.press(startAtEnd ? 'ArrowUp' : 'ArrowDown');
-  }
-
-  const optionId = await options.nth(optionIndex).getAttribute('id');
-  if (!optionId) {
-    throw new Error('ordinary-select-option-id-unavailable');
-  }
-  await expect(combobox).toHaveAttribute('aria-activedescendant', optionId);
-  await page.keyboard.press('Enter');
+  // The menu option is the component's single commit boundary. Clicking it
+  // keeps that real handler path while removing one Playwright round-trip for
+  // every Home/Arrow key in the 46-theme visual matrix.
+  await options.nth(optionIndex).click();
   await expect(combobox).toHaveAttribute('aria-expanded', 'false');
   await expect(combobox).toContainText(optionLabel);
 }

@@ -632,13 +632,26 @@ async function articleVisualFingerprint(preview) {
 async function setImmersiveSplitRatio(page, ratio, resizeLabel) {
   const divider = page.getByRole('separator', { name: resizeLabel });
   await expect(divider).toBeVisible();
-  await divider.focus();
-  await divider.press('Home');
-
   const key = ratio < 50 ? 'ArrowLeft' : 'ArrowRight';
-  for (let step = 0; step < Math.abs(ratio - 50); step += 1) {
-    await divider.press(key);
-  }
+  const steps = Math.abs(ratio - 50);
+  await divider.focus();
+  await divider.evaluate((element, { key: arrowKey, steps: arrowSteps }) => {
+    const dispatch = (eventType, keyValue) => {
+      element.dispatchEvent(new KeyboardEvent(eventType, {
+        bubbles: true,
+        cancelable: true,
+        code: keyValue,
+        key: keyValue
+      }));
+    };
+
+    dispatch('keydown', 'Home');
+    dispatch('keyup', 'Home');
+    for (let step = 0; step < arrowSteps; step += 1) {
+      dispatch('keydown', arrowKey);
+      dispatch('keyup', arrowKey);
+    }
+  }, { key, steps });
 
   await expect(divider).toHaveAttribute('aria-valuenow', String(ratio));
 }
@@ -668,11 +681,12 @@ async function measureArticleThemeGeometry(
   position,
   expectedThemeBackgroundImage = null
 ) {
-  return page.locator('.easymde-pane-preview article').evaluate(
-    (root, {
+  const positions = Array.isArray(position) ? position : [position];
+  const results = await page.locator('.easymde-pane-preview article').evaluate(
+    async (root, {
       expectedThemeBackgroundImage,
       longHeadingPrefix,
-      scrollPosition
+      scrollPositions
     }) => {
       const tolerance = 1;
       const pane = root.closest('.easymde-pane-preview');
@@ -684,6 +698,8 @@ async function measureArticleThemeGeometry(
         throw new Error('theme-preview-canvas-unavailable');
       }
 
+      const results = [];
+      for (const scrollPosition of scrollPositions) {
       const maximumScrollTop = Math.max(
         0,
         previewCanvas.scrollHeight - previewCanvas.clientHeight
@@ -959,7 +975,7 @@ async function measureArticleThemeGeometry(
         }
       };
 
-      return {
+      results.push({
         decoration: {
           headings: headings.length,
           parts: headingParts.length,
@@ -1138,14 +1154,17 @@ async function measureArticleThemeGeometry(
         tableResults,
         codeResults,
         imageDiagnostic: outsideImage ?? null
-      };
+      });
+      }
+      return results;
     },
     {
       expectedThemeBackgroundImage,
       longHeadingPrefix: longFixtureHeadingPrefix,
-      scrollPosition: position
+      scrollPositions: positions
     }
   );
+  return Array.isArray(position) ? results : results[0];
 }
 
 test.describe('EasyMDE editor workflows', () => {
@@ -1999,6 +2018,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     const catalog = await editorThemeCatalog(page);
     const markdown = await canonicalMarkdownForPage(page);
+    const previewRequests = collectPreviewRequestOutcomes(page);
     await fillMarkdownAndWaitForPreview(
       page,
       markdown,
@@ -2016,6 +2036,7 @@ test.describe('EasyMDE editor workflows', () => {
     ), {
       message: 'the authoritative full-capability fixture image should load'
     }).toBe(true);
+    await previewRequests.checkpoint();
 
     const labels = await page.evaluate(() => ({
       articleTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.articleTheme,
@@ -2044,7 +2065,6 @@ test.describe('EasyMDE editor workflows', () => {
       boxes: decoration.boxes.map(({ selector, flexBasis }) => ({ selector, flexBasis }))
     });
     let mainFrameNavigations = 0;
-    const previewRequests = collectPreviewRequestOutcomes(page);
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) mainFrameNavigations += 1;
     });
@@ -2054,35 +2074,38 @@ test.describe('EasyMDE editor workflows', () => {
       position,
       expectedDecoration = null
     ) => {
-      const geometry = await measureArticleThemeGeometry(
+      const measured = await measureArticleThemeGeometry(
         page,
         position,
         expectedThemeBackgroundImage
       );
-      matrix.push({
-        themeId,
-        state,
-        decoration: geometry.decoration,
-        surfaces: geometry.surfaces,
-        scroll: geometry.scroll,
-        topContent: geometry.topContent,
-        tables: geometry.tableResults.map(({ overflow }) => overflow),
-        code: geometry.codeResults.map(({ overflow }) => overflow)
-      });
-      for (const failure of geometry.failures) {
-        failures.push(`${themeId}/${state}/${position}: ${failure}`);
-      }
-      if (
-        expectedDecoration
-        && JSON.stringify(decorationInventory(geometry.decoration))
-          !== JSON.stringify(decorationInventory(expectedDecoration))
-      ) {
-        failures.push(
-          `${themeId}/${state}/${position}: heading-decoration-inventory-changed`
-        );
+      const geometries = Array.isArray(measured) ? measured : [measured];
+      for (const geometry of geometries) {
+        matrix.push({
+          themeId,
+          state,
+          decoration: geometry.decoration,
+          surfaces: geometry.surfaces,
+          scroll: geometry.scroll,
+          topContent: geometry.topContent,
+          tables: geometry.tableResults.map(({ overflow }) => overflow),
+          code: geometry.codeResults.map(({ overflow }) => overflow)
+        });
+        for (const failure of geometry.failures) {
+          failures.push(`${themeId}/${state}/${geometry.scroll.position}: ${failure}`);
+        }
+        if (
+          expectedDecoration
+          && JSON.stringify(decorationInventory(geometry.decoration))
+            !== JSON.stringify(decorationInventory(expectedDecoration))
+        ) {
+          failures.push(
+            `${themeId}/${state}/${geometry.scroll.position}: heading-decoration-inventory-changed`
+          );
+        }
       }
 
-      return geometry.decoration;
+      return geometries[0]?.decoration;
     };
 
     const recordHeadingRhythm = async (themeId, state, expectedBorderGap) => {
@@ -2254,16 +2277,14 @@ test.describe('EasyMDE editor workflows', () => {
       for (const width of [1200, 760, 680]) {
         await page.setViewportSize({ width, height: 900 });
         expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
-        for (const position of ['top', 'middle', 'bottom']) {
-          const decoration = await recordGeometry(
-            id,
-            `ordinary-${width}`,
-            position,
-            desktopDecoration
-          );
-          if (1200 === width && !desktopDecoration) {
-            desktopDecoration = decoration;
-          }
+        const decoration = await recordGeometry(
+          id,
+          `ordinary-${width}`,
+          ['top', 'middle', 'bottom'],
+          desktopDecoration
+        );
+        if (1200 === width && !desktopDecoration) {
+          desktopDecoration = decoration;
         }
       }
 
@@ -2336,14 +2357,12 @@ test.describe('EasyMDE editor workflows', () => {
           ratio,
           labels.immersive.resizeSplit
         );
-        for (const position of ['top', 'middle', 'bottom']) {
-          await recordGeometry(
-            id,
-            `immersive-outline-shown-ratio-${ratio}`,
-            position,
-            desktopDecoration
-          );
-        }
+        await recordGeometry(
+          id,
+          `immersive-outline-shown-ratio-${ratio}`,
+          ['top', 'middle', 'bottom'],
+          desktopDecoration
+        );
       }
 
       await page.locator('.easymde-immersive-outline-close').click();
@@ -2355,14 +2374,12 @@ test.describe('EasyMDE editor workflows', () => {
           ratio,
           labels.immersive.resizeSplit
         );
-        for (const position of ['top', 'middle', 'bottom']) {
-          await recordGeometry(
-            id,
-            `immersive-outline-hidden-ratio-${ratio}`,
-            position,
-            desktopDecoration
-          );
-        }
+        await recordGeometry(
+          id,
+          `immersive-outline-hidden-ratio-${ratio}`,
+          ['top', 'middle', 'bottom'],
+          desktopDecoration
+        );
       }
 
       await page.setViewportSize({ width: 680, height: 900 });
@@ -2372,26 +2389,22 @@ test.describe('EasyMDE editor workflows', () => {
         50,
         labels.immersive.resizeSplit
       );
-      for (const position of ['top', 'middle', 'bottom']) {
-        await recordGeometry(
-          id,
-          'immersive-680-outline-hidden-ratio-50',
-          position
-        );
-      }
+      await recordGeometry(
+        id,
+        'immersive-680-outline-hidden-ratio-50',
+        ['top', 'middle', 'bottom']
+      );
       await page.getByRole('button', {
         name: labels.immersive.previewMode,
         exact: true
       }).click();
       await expect(editorOwner).toHaveClass(/is-immersive-preview/);
-      for (const position of ['top', 'middle', 'bottom']) {
-        await recordGeometry(
-          id,
-          'immersive-preview-680',
-          position,
-          desktopDecoration
-        );
-      }
+      await recordGeometry(
+        id,
+        'immersive-preview-680',
+        ['top', 'middle', 'bottom'],
+        desktopDecoration
+      );
       await page.setViewportSize({ width: 1200, height: 900 });
       await page.getByRole('button', {
         name: labels.immersive.exit,

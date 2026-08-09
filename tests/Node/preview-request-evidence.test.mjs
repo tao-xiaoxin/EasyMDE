@@ -7,6 +7,7 @@ import {
 
 function outcome(overrides = {}) {
   return {
+    markdownDigest: 'markdown',
     markdownTheme: 'spring',
     payloadDigest: 'payload',
     status: 200,
@@ -55,6 +56,15 @@ test('rejects malformed payload evidence even when the request was cancelled', (
   assert.deepEqual(evidence.cancelled, [cancelled]);
   assert.deepEqual(evidence.payloadInvalid, [cancelled]);
   assert.deepEqual(evidence.invalid, [cancelled]);
+});
+
+test('rejects preview payload evidence without a canonical Markdown digest', () => {
+  const missingMarkdown = outcome({ markdownDigest: null });
+
+  const evidence = classifyPreviewRequestOutcomes([missingMarkdown], 'spring');
+
+  assert.deepEqual(evidence.payloadInvalid, [missingMarkdown]);
+  assert.deepEqual(evidence.invalid, [missingMarkdown]);
 });
 
 test('accepts one adjacent nonce retry while ignoring an observed cancellation', () => {

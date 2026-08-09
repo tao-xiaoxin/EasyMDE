@@ -466,7 +466,7 @@ jobs:
         with:
           php-version: '8.3'
           extensions: mysqli, dom
-          tools: composer:v2
+          tools: none
           coverage: none
 
       - name: Set up Node.js
@@ -480,9 +480,6 @@ jobs:
 
       - name: Install WP-CLI
         run: bash scripts/install-wp-cli.sh
-
-      - name: Install PHP runtime dependencies
-        run: composer install --no-dev --no-interaction --no-progress --prefer-dist
 
       - name: Install Node dependencies
         run: npm ci

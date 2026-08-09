@@ -73,6 +73,34 @@ test('Plugin Check and E2E validate the release job ZIP artifact', () => {
   });
 });
 
+test('E2E uses packaged Composer dependencies without reinstalling the checkout', () => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const releaseJob = workflowJobBlock(workflow, 'release');
+  const e2eJob = workflowJobBlock(workflow, 'e2e');
+
+  assert.match(
+    releaseJob,
+    /name:\s+Install PHP runtime dependencies[\s\S]*composer install --no-dev/
+  );
+  assert.match(e2eJob, /tools:\s+none/);
+  assert.doesNotMatch(e2eJob, /tools:\s+composer/);
+  assert.doesNotMatch(e2eJob, /composer install/);
+});
+
+test('Playwright records trace and video only on the retained CI retry', () => {
+  const config = readFileSync(join(repoRoot, 'playwright.config.mjs'), 'utf8');
+
+  assert.match(config, /retries:\s*process\.env\.CI \? 1 : 0/);
+  assert.match(
+    config,
+    /trace:\s*process\.env\.CI \? 'on-first-retry' : 'retain-on-failure'/
+  );
+  assert.match(
+    config,
+    /video:\s*process\.env\.CI \? 'on-first-retry' : 'retain-on-failure'/
+  );
+});
+
 test('Node and release jobs validate committed runtime assets without refreshing them', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
   const nodeJob = workflowJobBlock(workflow, 'node');

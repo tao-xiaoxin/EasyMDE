@@ -9,11 +9,13 @@ export function classifyPreviewRequestOutcomes(observed, markdownTheme) {
   const cancelled = observed.filter(({ cancelled: wasCancelled }) => wasCancelled);
   const active = observed.filter(({ cancelled: wasCancelled }) => !wasCancelled);
   const invalidPayload = ({
+    markdownDigest,
     markdownTheme: observedTheme,
     payloadDigest,
     parseError
   }) => (
     parseError
+    || null === markdownDigest
     || null === observedTheme
     || null === payloadDigest
   );
@@ -138,6 +140,10 @@ export function collectPreviewRequestOutcomes(page) {
       markdownLength:
         payload && 'object' === typeof payload && 'string' === typeof payload.markdown
           ? payload.markdown.length
+          : null,
+      markdownDigest:
+        payload && 'object' === typeof payload && 'string' === typeof payload.markdown
+          ? createHash('sha256').update(payload.markdown).digest('hex')
           : null,
       postId:
         payload && 'object' === typeof payload

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import { selectOrdinaryOption } from './helpers/ordinary-select.mjs';
@@ -537,6 +537,53 @@ async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
   const preview = page.locator('.easymde-pane-preview article');
   await expect(preview).toHaveAttribute('aria-busy', 'false');
   await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
+  if (expectedText) await expect(preview).toContainText(expectedText);
+}
+
+async function seedMarkdownAndWaitForPreview(page, markdown, expectedText) {
+  const field = page.locator('#easymde-source');
+  const preview = page.locator('.easymde-pane-preview article');
+  const previousSignature = await readyPreviewSignature(preview);
+  const response = page.waitForResponse((candidate) => {
+    const request = candidate.request();
+    if (
+      'POST' !== request.method()
+      || !new URL(candidate.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+      || !candidate.ok()
+    ) {
+      return false;
+    }
+
+    try {
+      return request.postDataJSON()?.markdown === markdown;
+    } catch {
+      return false;
+    }
+  });
+
+  await field.evaluate((element, value) => {
+    if (!(element instanceof HTMLTextAreaElement)) {
+      throw new Error('markdown-submission-field-unavailable');
+    }
+    element.value = value;
+    element.setSelectionRange(value.length, value.length, 'none');
+    element.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'insertReplacementText'
+    }));
+  }, markdown);
+
+  await expect(field).toHaveValue(markdown);
+  await response;
+  await waitForPreviewRefresh(
+    preview,
+    previousSignature,
+    'seeded Markdown should produce a new complete Preview generation'
+  );
+  await expect.poll(
+    () => readyPreviewSignature(preview),
+    { message: 'Preview signature should identify the complete seeded Markdown' }
+  ).toMatch(new RegExp(`:${markdown.length}$`));
   if (expectedText) await expect(preview).toContainText(expectedText);
 }
 
@@ -2044,8 +2091,9 @@ test.describe('EasyMDE editor workflows', () => {
     const catalog = await editorThemeCatalog(page);
     const articleThemes = articleThemesForE2ESuite(catalog.articleThemes);
     const markdown = await canonicalMarkdownForPage(page);
+    const expectedMarkdownDigest = createHash('sha256').update(markdown).digest('hex');
     const previewRequests = collectPreviewRequestOutcomes(page);
-    await fillMarkdownAndWaitForPreview(
+    await seedMarkdownAndWaitForPreview(
       page,
       markdown,
       longFixtureHeadingPrefix
@@ -2247,6 +2295,9 @@ test.describe('EasyMDE editor workflows', () => {
         previewRequestsBefore,
         id
       );
+      const markdownMismatches = requestEvidence.successful.filter(
+        ({ markdownDigest }) => markdownDigest !== expectedMarkdownDigest
+      );
       if (requestEvidence.invalid.length || requestEvidence.nonTarget.length) {
         failures.push(
           `${id}/ordinary-1200/top: preview-request-payload-invalid-`
@@ -2254,6 +2305,12 @@ test.describe('EasyMDE editor workflows', () => {
               invalid: requestEvidence.invalid,
               nonTarget: requestEvidence.nonTarget
             })
+        );
+      }
+      if (markdownMismatches.length) {
+        failures.push(
+          `${id}/ordinary-1200/top: preview-request-markdown-mismatch-`
+            + JSON.stringify(markdownMismatches)
         );
       }
       if (
@@ -2501,7 +2558,14 @@ test.describe('EasyMDE editor workflows', () => {
       '',
       '$$\\int_0^1 x^2 \\,dx = \\frac{1}{3}$$'
     ].join('\n');
-    await fillMarkdownAndWaitForPreview(page, markdown, 'Ordinary preview boundary probe');
+    const expectedMarkdownDigest = createHash('sha256').update(markdown).digest('hex');
+    const previewRequests = collectPreviewRequestOutcomes(page);
+    await seedMarkdownAndWaitForPreview(
+      page,
+      markdown,
+      'Ordinary preview boundary probe'
+    );
+    await previewRequests.checkpoint();
 
     const labels = await page.evaluate(() => ({
       articleTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.articleTheme,
@@ -2512,7 +2576,6 @@ test.describe('EasyMDE editor workflows', () => {
     const preview = page.locator('.easymde-pane-preview article');
     const measurements = [];
     const requestFailures = [];
-    const previewRequests = collectPreviewRequestOutcomes(page);
     const selectedTheme = catalog.articleThemes.find(
       ({ id }) => id === catalog.selectedArticleTheme
     );
@@ -2552,6 +2615,9 @@ test.describe('EasyMDE editor workflows', () => {
           previewRequestsBefore,
           id
         );
+        const markdownMismatches = requestEvidence.successful.filter(
+          ({ markdownDigest }) => markdownDigest !== expectedMarkdownDigest
+        );
         if (requestEvidence.invalid.length || requestEvidence.nonTarget.length) {
           requestFailures.push(
             `${id}/${width}:invalid-preview-request-`
@@ -2559,6 +2625,12 @@ test.describe('EasyMDE editor workflows', () => {
                 invalid: requestEvidence.invalid,
                 nonTarget: requestEvidence.nonTarget
               })
+          );
+        }
+        if (markdownMismatches.length) {
+          requestFailures.push(
+            `${id}/${width}:preview-request-markdown-mismatch-`
+              + JSON.stringify(markdownMismatches)
           );
         }
         if (

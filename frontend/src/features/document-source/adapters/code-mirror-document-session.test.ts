@@ -208,11 +208,11 @@ describe('createCodeMirrorDocumentSession', () => {
       submissionField
     });
 
-    submissionField.value = 'external command result';
+    submissionField.value = 'external ⚠️ 🚀 command result';
     submissionField.setSelectionRange(9, 16, 'backward');
     submissionField.dispatchEvent(new InputEvent('input', { bubbles: true }));
 
-    expect(session.getValue()).toBe('external command result');
+    expect(session.getValue()).toBe('external ⚠️ 🚀 command result');
     expect(session.getSelection()).toEqual({
       end: 16,
       start: 9,

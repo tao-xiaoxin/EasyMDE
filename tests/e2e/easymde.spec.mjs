@@ -560,6 +560,7 @@ async function seedMarkdownAndWaitForPreview(page, markdown, expectedText) {
       return false;
     }
   });
+  void response.catch(() => undefined);
 
   await field.evaluate((element, value) => {
     if (!(element instanceof HTMLTextAreaElement)) {
@@ -1824,6 +1825,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('[data-easymde-editor-owner="react"]')).toHaveCount(1);
     await expect(reactSource).toBeVisible();
     await expect(sourceEditor).toHaveAttribute('contenteditable', 'true');
+    await expect(page.locator('#wp-emoji-settings')).toHaveCount(0);
     await expect(nativeSource).toBeHidden();
     await expect(page.locator('.easymde-pane-source .easymde-source:visible')).toHaveCount(1);
     await expect(activePreview).toBeVisible();
@@ -1833,17 +1835,18 @@ test.describe('EasyMDE editor workflows', () => {
       page.locator('.easymde-pane-preview article')
     ).toHaveCount(1);
 
-    await sourceEditor.fill('# React source\n\nBridge value');
-    await expect(nativeSource).toHaveValue('# React source\n\nBridge value');
-    await expect(activePreview).toContainText('Bridge value');
+    await sourceEditor.fill('# React source\n\nBridge value ⚠️ 🚀');
+    await expect(nativeSource).toHaveValue('# React source\n\nBridge value ⚠️ 🚀');
+    await expect(activePreview).toContainText('Bridge value ⚠️ 🚀');
+    await expect(nativeSource).toHaveValue('# React source\n\nBridge value ⚠️ 🚀');
 
     await sourceEditor.focus();
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z');
     await expect(nativeSource).toHaveValue('');
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+Z' : 'Control+Shift+Z');
-    await expect(nativeSource).toHaveValue('# React source\n\nBridge value');
+    await expect(nativeSource).toHaveValue('# React source\n\nBridge value ⚠️ 🚀');
     await page.keyboard.insertText('Z');
-    await expect(nativeSource).toHaveValue('# React source\n\nBridge valueZ');
+    await expect(nativeSource).toHaveValue('# React source\n\nBridge value ⚠️ 🚀Z');
 
     const cdp = await page.context().newCDPSession(page);
     await sourceEditor.fill('# IME\n\n');

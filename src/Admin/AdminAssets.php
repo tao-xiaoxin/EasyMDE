@@ -60,6 +60,9 @@ final class AdminAssets {
 			return;
 		}
 
+		// WordPress Emoji detection mutates editor text nodes after EasyMDE mounts CodeMirror.
+		remove_action( 'admin_print_scripts', 'print_emoji_detection_script' );
+
 		$post_id = $this->get_post_id();
 		wp_enqueue_style( 'dashicons' );
 		wp_enqueue_style(

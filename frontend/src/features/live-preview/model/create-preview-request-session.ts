@@ -56,6 +56,15 @@ export function createPreviewRequestSession({
 
       onState({ kind: 'loading', request, revision: currentRevision });
       const run = async () => {
+        // A cleared timer callback may already be queued. Recheck ownership at
+        // the transport boundary so superseded work cannot start a request.
+        if (
+          destroyed
+          || revision !== currentRevision
+          || currentSignature !== request.signature
+        ) {
+          return;
+        }
         timer = null;
         controller = new AbortController();
         const currentController = controller;

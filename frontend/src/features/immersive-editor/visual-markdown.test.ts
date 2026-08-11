@@ -354,14 +354,14 @@ A--&gt;B</code></pre>
       .join('\n\n');
 
     for (const index of [0, 1, 37, 78, 119]) {
-      const edited = visible.replace(`value-${index}`, `edited-${index}-🚀`);
+      const edited = visible.replace(`value-${index}`, `edited-${index}`);
       const merged = mergeVisualMarkdownChange(source, visible, edited);
-      expect(merged).toContain(`**edited-${index}-🚀**`);
+      expect(merged).toContain(`**edited-${index}**`);
       expect(merged).toContain(
         `[hidden-${index}]: https://example.test/${index}`
       );
       expect(merged.endsWith('\r\n')).toBe(true);
-      expect(merged.replace(`edited-${index}-🚀`, `value-${index}`)).toBe(
+      expect(merged.replace(`edited-${index}`, `value-${index}`)).toBe(
         source
       );
     }

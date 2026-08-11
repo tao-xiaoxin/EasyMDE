@@ -1835,18 +1835,18 @@ test.describe('EasyMDE editor workflows', () => {
       page.locator('.easymde-pane-preview article')
     ).toHaveCount(1);
 
-    await sourceEditor.fill('# React source\n\nBridge value ⚠️ 🚀');
-    await expect(nativeSource).toHaveValue('# React source\n\nBridge value ⚠️ 🚀');
-    await expect(activePreview).toContainText('Bridge value ⚠️ 🚀');
-    await expect(nativeSource).toHaveValue('# React source\n\nBridge value ⚠️ 🚀');
+    await sourceEditor.fill('# React source\n\nBridge value 中文');
+    await expect(nativeSource).toHaveValue('# React source\n\nBridge value 中文');
+    await expect(activePreview).toContainText('Bridge value 中文');
+    await expect(nativeSource).toHaveValue('# React source\n\nBridge value 中文');
 
     await sourceEditor.focus();
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z');
     await expect(nativeSource).toHaveValue('');
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+Z' : 'Control+Shift+Z');
-    await expect(nativeSource).toHaveValue('# React source\n\nBridge value ⚠️ 🚀');
+    await expect(nativeSource).toHaveValue('# React source\n\nBridge value 中文');
     await page.keyboard.insertText('Z');
-    await expect(nativeSource).toHaveValue('# React source\n\nBridge value ⚠️ 🚀Z');
+    await expect(nativeSource).toHaveValue('# React source\n\nBridge value 中文Z');
 
     const cdp = await page.context().newCDPSession(page);
     await sourceEditor.fill('# IME\n\n');

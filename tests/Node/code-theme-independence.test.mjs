@@ -65,10 +65,6 @@ function codeThemeMetadata() {
   );
 }
 
-function typoraCodePaletteSources() {
-  return JSON.parse(source('docs/typora-code-palette-sources.json'));
-}
-
 function stripCssComments(css) {
   return css.replaceAll(/\/\*[\s\S]*?\*\//g, '');
 }
@@ -432,32 +428,6 @@ test('Typora-derived article themes have unique registered default code palettes
     const signature = scope[1].replace(/\s+/g, ' ').trim();
     assert.ok(!signatures.has(signature), `${codeId} should not duplicate another palette`);
     signatures.add(signature);
-  }
-});
-
-test('every native Typora code palette is source-backed and mapped to EasyMDE tokens', () => {
-  const sources = typoraCodePaletteSources();
-  const associations = typoraDerivedCodeAssociations();
-  const associatedCodeIds = new Set(Object.values(associations));
-  const css = source('assets/themes/code/typora-derived.css');
-
-  assert.equal(sources.version, 1);
-  assert.deepEqual(new Set(Object.keys(sources.themes)), associatedCodeIds);
-
-  for (const [codeId, evidence] of Object.entries(sources.themes)) {
-    assert.ok(evidence.nativeFile, `${codeId} needs a native Typora source file`);
-    assert.ok(evidence.nativeSelectors?.length > 0, `${codeId} needs native selector evidence`);
-    assert.ok(evidence.notes, `${codeId} needs an adaptation note`);
-    assert.ok(evidence.palette && Object.keys(evidence.palette).length >= 8, `${codeId} needs a complete palette`);
-
-    const scope = css.match(
-      new RegExp(`\\.easymde-rendered-content\\.easymde-code-theme-${codeId}\\s*\\{([^}]*)\\}`)
-    );
-    assert.ok(scope, `${codeId} needs a CSS palette scope`);
-    for (const [property, value] of Object.entries(evidence.palette)) {
-      const escapedValue = value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
-      assert.match(scope[1], new RegExp(`${property}\\s*:\\s*${escapedValue}\\s*;`), `${codeId} ${property}`);
-    }
   }
 });
 

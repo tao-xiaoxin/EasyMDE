@@ -89,16 +89,6 @@ Start the local site:
 docker compose up -d
 ```
 
-The Compose project owns the `easymde-typora-themes-net` bridge and pins it to
-`10.250.1.0/24` by default. This avoids consuming Docker's global predefined
-bridge pools, which can fail with `all predefined address pools have been
-fully subnetted` after other local projects have created many networks. If
-that subnet is already in use on a particular machine, set
-`EASYMDE_DOCKER_NETWORK` and `EASYMDE_DOCKER_SUBNET` in the ignored `.env`
-before starting Compose. Do not attach this project to an unlabeled network
-from another Compose project; use an explicitly configured external network
-only when its ownership and subnet are known.
-
 By default, the example environment points the site URL to `http://localhost:8088`, installs WordPress using the configured version/locale, activates EasyMDE, and mounts the working tree into the plugin directory.
 
 Optional Composer install through the Docker service:

@@ -1,10 +1,8 @@
 /*
  * Native Typora CodeMirror palettes adapted to EasyMDE Highlight.js.
  *
- * The source evidence for every block lives in
- * docs/typora-code-palette-sources.json. The shared Mac frame remains
- * owned by assets/css/frontend/code-frame.css; this file only maps colors
- * and token emphasis.
+ * The shared Mac frame remains owned by assets/css/frontend/code-frame.css;
+ * this file only maps colors and token emphasis.
  */
 
 .easymde-rendered-content.easymde-code-theme-inkwell-code {

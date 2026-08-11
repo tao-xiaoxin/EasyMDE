@@ -5,6 +5,18 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const TYPORA_CODE_PALETTE_ROLES = [
+  '--easymde-typora-code-bg',
+  '--easymde-typora-code-text',
+  '--easymde-typora-code-muted',
+  '--easymde-typora-code-keyword',
+  '--easymde-typora-code-string',
+  '--easymde-typora-code-number',
+  '--easymde-typora-code-blue',
+  '--easymde-typora-code-link',
+  '--easymde-typora-code-variable',
+  '--easymde-typora-code-operator'
+];
 
 function source(path) {
   return readFileSync(join(repoRoot, path), 'utf8');
@@ -54,6 +66,67 @@ function typoraDerivedCodeAssociations() {
     'bloom-spring': 'bloom-spring-code',
     spring: 'spring-code'
   };
+}
+
+function typoraCodePaletteBaseline() {
+  return JSON.parse(source('tests/fixtures/typora-code-palettes.json'));
+}
+
+function assertTyporaCodePalettesMatch(css, baseline, associations) {
+  const associatedCodeIds = [...new Set(Object.values(associations))].sort();
+  const sourceIds = Object.keys(baseline.sources).sort();
+  const paletteIds = Object.keys(baseline.palettes).sort();
+
+  assert.equal(baseline.version, 1);
+  assert.deepEqual(
+    baseline.roles,
+    TYPORA_CODE_PALETTE_ROLES,
+    'palette baseline must retain every canonical semantic role'
+  );
+  assert.deepEqual(sourceIds, associatedCodeIds, 'palette sources must cover the associated code themes');
+  assert.deepEqual(paletteIds, associatedCodeIds, 'palette values must cover the associated code themes');
+
+  for (const codeId of associatedCodeIds) {
+    assert.match(
+      baseline.sources[codeId],
+      /^[^@\s]+@[0-9a-f]{40}\/\S+$/,
+      `${codeId} needs a revision-pinned upstream source`
+    );
+    assert.equal(
+      baseline.palettes[codeId].length,
+      baseline.roles.length,
+      `${codeId} needs one value for every palette role`
+    );
+
+    const scopes = Array.from(
+      css.matchAll(
+        new RegExp(
+          `\\.easymde-rendered-content\\.easymde-code-theme-${codeId}\\s*\\{([^}]*)\\}`,
+          'g'
+        )
+      )
+    );
+    assert.equal(scopes.length, 1, `${codeId} needs exactly one CSS palette scope`);
+    const declarations = new Map(
+      cssDeclarations(scopes[0][1]).map(({ property, value }) => [property, value])
+    );
+
+    for (const [index, role] of baseline.roles.entries()) {
+      assert.equal(declarations.get(role), baseline.palettes[codeId][index], `${codeId} ${role}`);
+    }
+  }
+
+  const uncommentedCss = stripCssComments(css);
+  for (const role of baseline.roles) {
+    const declarationCount = Array.from(
+      uncommentedCss.matchAll(new RegExp(`${role}\\s*:`, 'g'))
+    ).length;
+    assert.equal(
+      declarationCount,
+      associatedCodeIds.length,
+      `${role} must be declared exactly ${associatedCodeIds.length} times`
+    );
+  }
 }
 
 function codeThemeMetadata() {
@@ -429,6 +502,67 @@ test('Typora-derived article themes have unique registered default code palettes
     assert.ok(!signatures.has(signature), `${codeId} should not duplicate another palette`);
     signatures.add(signature);
   }
+});
+
+test('every Typora-derived code palette matches its source-backed color baseline', () => {
+  assertTyporaCodePalettesMatch(
+    source('assets/themes/code/typora-derived.css'),
+    typoraCodePaletteBaseline(),
+    typoraDerivedCodeAssociations()
+  );
+});
+
+test('Typora-derived code palette gate rejects a changed color value', () => {
+  const css = source('assets/themes/code/typora-derived.css');
+  const changedCss = css.replace(
+    '--easymde-typora-code-bg: #f6f8fb;',
+    '--easymde-typora-code-bg: #000000;'
+  );
+
+  assert.notEqual(changedCss, css, 'the mutation must change the Inkwell background');
+  assert.throws(
+    () =>
+      assertTyporaCodePalettesMatch(
+        changedCss,
+        typoraCodePaletteBaseline(),
+        typoraDerivedCodeAssociations()
+      ),
+    /inkwell-code --easymde-typora-code-bg/
+  );
+});
+
+test('Typora-derived code palette gate rejects a later duplicate scope override', () => {
+  const changedCss = `${source('assets/themes/code/typora-derived.css')}
+.easymde-rendered-content.easymde-code-theme-inkwell-code {
+  --easymde-typora-code-bg: #000000;
+}`;
+
+  assert.throws(
+    () =>
+      assertTyporaCodePalettesMatch(
+        changedCss,
+        typoraCodePaletteBaseline(),
+        typoraDerivedCodeAssociations()
+      ),
+    /inkwell-code needs exactly one CSS palette scope/
+  );
+});
+
+test('Typora-derived code palette gate rejects a more-specific color override', () => {
+  const changedCss = `${source('assets/themes/code/typora-derived.css')}
+.easymde-rendered-content.easymde-code-theme-inkwell-code .hljs {
+  --easymde-typora-code-bg: #000000;
+}`;
+
+  assert.throws(
+    () =>
+      assertTyporaCodePalettesMatch(
+        changedCss,
+        typoraCodePaletteBaseline(),
+        typoraDerivedCodeAssociations()
+      ),
+    /--easymde-typora-code-bg must be declared exactly 18 times/
+  );
 });
 
 test('associated code-theme assets are independent from article-theme selectors', () => {

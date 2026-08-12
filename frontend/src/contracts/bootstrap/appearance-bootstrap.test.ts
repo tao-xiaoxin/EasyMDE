@@ -65,6 +65,7 @@ const bootstrap = {
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
     cssSaveFailed: 'CSS save failed.',
+    themeApplyFailed: 'Theme could not be applied. The saved theme is still available.',
     cssNameDuplicate: 'A theme with this name already exists.',
     namedCustomCss: 'Named custom CSS'
   }

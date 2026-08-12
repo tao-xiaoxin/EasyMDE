@@ -515,6 +515,7 @@ export function EditorRoot(props: EditorRootProps) {
     customCss: props.appearance.customCss,
     state: props.appearance.state
   }));
+  const appearanceSnapshotRef = useRef(appearanceSnapshot);
   const appearanceState = appearanceSnapshot.state;
   const [codeThemeExplicit, setCodeThemeExplicit] = useState(
     props.appearance.codeThemeExplicit
@@ -718,6 +719,10 @@ export function EditorRoot(props: EditorRootProps) {
   useEffect(
     () => () => props.enhancementPort.dispose?.(),
     [props.enhancementPort]
+  );
+  useEffect(
+    () => () => props.appearancePort.dispose(),
+    [props.appearancePort]
   );
   const handlePreviewReady = useCallback((runtime: PreviewSurfaceRuntime) => {
     previewRuntimeRef.current = runtime;
@@ -942,7 +947,7 @@ export function EditorRoot(props: EditorRootProps) {
   }, [leaveVisualPreview]);
   const appearancePort = useMemo<AppearancePort>(
     () => ({
-      applyState: (state, codeThemeExplicit) => {
+      applyState: async (state, codeThemeExplicit) => {
         const previousState = previewAppearanceRef.current;
         const markupChanged =
           articleMarkupProfile(props.appearance, previousState)
@@ -951,10 +956,28 @@ export function EditorRoot(props: EditorRootProps) {
         if (visualPreviewWasEditing && !prepareSourceMutation()) {
           throw new Error('visual-editor-source-sync-failed');
         }
-        props.appearancePort.applyState(state, codeThemeExplicit);
+        let applied: boolean;
+        try {
+          applied = await props.appearancePort.applyState(
+            state,
+            codeThemeExplicit
+          );
+        } catch {
+          if (rootActiveRef.current) {
+            props.onFailure('react-editor-appearance-failed');
+          }
+          return false;
+        }
+        if (!applied || !rootActiveRef.current) return false;
         codeThemeExplicitRef.current = codeThemeExplicit;
         setCodeThemeExplicit(codeThemeExplicit);
-        setAppearanceSnapshot((snapshot) => ({ ...snapshot, state }));
+        const nextSnapshot = { ...appearanceSnapshotRef.current, state };
+        appearanceSnapshotRef.current = nextSnapshot;
+        setAppearanceSnapshot(nextSnapshot);
+        appearanceSessionRef.current?.replaceSnapshot(
+          nextSnapshot,
+          codeThemeExplicit
+        );
         submissionStateRef.current = {
           ...submissionStateRef.current,
           ...state,
@@ -968,14 +991,13 @@ export function EditorRoot(props: EditorRootProps) {
         if (defaults) {
           fontControlsSessionRef.current?.replaceState(defaults);
         }
-        if (!visualPreviewWasEditing) {
-          if (markupChanged) {
-            previewRefreshPendingRef.current = true;
-            schedulePreview(true);
-          } else {
-            scheduleCurrentWechatPreviewPreparation();
-          }
+        if (markupChanged || visualPreviewWasEditing) {
+          previewRefreshPendingRef.current = true;
+          schedulePreview(true);
+        } else {
+          scheduleCurrentWechatPreviewPreparation();
         }
+        return true;
       },
       closeOtherPopovers: () => {
         toolbarSessionRef.current?.closePopovers();
@@ -983,6 +1005,7 @@ export function EditorRoot(props: EditorRootProps) {
         ordinarySettingsSessionRef.current?.close();
         props.appearancePort.closeOtherPopovers();
       },
+      dispose: () => undefined,
       previewCustomCss: (css, signal) =>
         props.appearancePort.previewCustomCss(css, signal),
       saveCustomCss: async (input) => {
@@ -994,28 +1017,22 @@ export function EditorRoot(props: EditorRootProps) {
         }
         const result = await props.appearancePort.saveCustomCss(input);
         if ('saved' === result.status) {
-          const previousState = previewAppearanceRef.current;
-          const markupChanged =
-            articleMarkupProfile(props.appearance, previousState)
-            !== articleMarkupProfile(props.appearance, result.snapshot.state);
-          props.appearancePort.applyState(
-            result.snapshot.state,
-            codeThemeExplicitRef.current
-          );
-          setAppearanceSnapshot(result.snapshot);
-          submissionStateRef.current = {
-            ...submissionStateRef.current,
-            ...result.snapshot.state
-          };
-          documentSession?.replaceSubmissionState(submissionStateRef.current);
-          previewAppearanceRef.current = result.snapshot.state;
-          if (!visualPreviewWasEditing) {
-            if (markupChanged) {
-              previewRefreshPendingRef.current = true;
-              schedulePreview(true);
-            } else {
-              scheduleCurrentWechatPreviewPreparation();
-            }
+          // The server mutation and local theme activation are separate
+          // operations. Publish the authoritative saved library immediately;
+          // AppearanceControls applies the selected theme exactly once through
+          // applyState, which commits preview and submission state only after
+          // its stylesheet has loaded.
+          if (rootActiveRef.current) {
+            const nextSnapshot = {
+              ...appearanceSnapshotRef.current,
+              customCss: result.snapshot.customCss
+            };
+            appearanceSnapshotRef.current = nextSnapshot;
+            setAppearanceSnapshot(nextSnapshot);
+            appearanceSessionRef.current?.replaceSnapshot(
+              nextSnapshot,
+              codeThemeExplicitRef.current
+            );
           }
         }
         return result;

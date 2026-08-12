@@ -49,6 +49,7 @@ export type AppearanceStrings = Readonly<{
   saveCss: string;
   cssSaved: string;
   cssSaveFailed: string;
+  themeApplyFailed: string;
   cssNameDuplicate: string;
   namedCustomCss: string;
 }>;
@@ -406,6 +407,7 @@ function parseStrings(value: unknown): AppearanceStrings {
     'saveCss',
     'cssSaved',
     'cssSaveFailed',
+    'themeApplyFailed',
     'cssNameDuplicate',
     'namedCustomCss'
   ];

@@ -443,83 +443,83 @@
     margin: 0 0.2em;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid {
     background: var(--surface) !important;
     border-radius: 12px;
     padding: 10px;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid text {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid text {
     fill: var(--text) !important;
     font-family: var(--font-sans) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .node rect,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .node circle,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .node ellipse,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .node polygon,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .node path,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .actor,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid rect.actor,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid g.actor rect {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .node rect,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .node circle,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .node ellipse,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .node polygon,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .node path,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .actor,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid rect.actor,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid g.actor rect {
     fill: var(--bg) !important;
     stroke: var(--accent) !important;
     stroke-width: 1.5px !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid text.actor,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid text.actor tspan,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .actor tspan {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid text.actor,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid text.actor tspan,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .actor tspan {
     fill: var(--text) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid line,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .actor-line,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .messageLine0,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .messageLine1 {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid line,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .actor-line,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .messageLine0,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .messageLine1 {
     stroke: var(--accent) !important;
     stroke-width: 1.5px !important;
     fill: none;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .messageText {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .messageText {
     fill: var(--text) !important;
     stroke: none !important;
     font-size: 14px !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid marker {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid marker {
     fill: var(--accent) !important;
     stroke: var(--accent) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid marker path {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid marker path {
     fill: var(--accent) !important;
     stroke: var(--accent) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .loopText,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .noteText {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .loopText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .noteText {
     fill: var(--text) !important;
     stroke: none !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .note {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .note {
     fill: rgba(var(--accent-rgb), 0.08) !important;
     stroke: var(--accent) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .edgePath .path {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .edgePath .path {
     stroke: var(--text-semi) !important;
     stroke-width: 1.5px !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .messageText,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .loopText,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .loopText tspan,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .noteText,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .labelText,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .labelText tspan {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .messageText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .loopText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .loopText tspan,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .noteText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .labelText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .labelText tspan {
     fill: var(--text) !important;
     paint-order: stroke;
     stroke: var(--bg) !important;
@@ -527,38 +527,20 @@
     stroke-linejoin: round;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .labelBox {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .labelBox {
     fill: var(--surface-2) !important;
     stroke: var(--accent) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .activation0,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .activation1,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .activation2 {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .activation0,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .activation1,
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .activation2 {
     fill: var(--surface-2) !important;
     stroke: var(--text-semi) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage .mermaid .loopLine {
+.easymde-rendered-content.easymde-markdown-theme-bloom-sage .easymde-mermaid .loopLine {
     stroke: var(--text-semi) !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage.on-focus-mode > * {
-    opacity: 0.15 !important;
-    filter: blur(1px);
-    transition:
-        opacity 0.5s ease,
-        filter 0.5s ease;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage.on-focus-mode > .md-focus-element {
-    opacity: 1 !important;
-    filter: blur(0);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage.on-focus-mode .md-focus-element h1,
-.easymde-rendered-content.easymde-markdown-theme-bloom-sage.on-focus-mode .md-focus-element h2 {
-    border-bottom-color: var(--accent);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-sage a,

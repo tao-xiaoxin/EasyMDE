@@ -33,10 +33,12 @@ const mountedFields: Array<HTMLElement> = [];
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 }
 
 function BrokenEditorRoot(): never {
@@ -149,6 +151,7 @@ function fixture(): EditorRootProps &
         cssSaveFailed: 'CSS save failed',
         cssNameDuplicate: 'A theme with this name already exists',
         cssSaved: 'CSS saved',
+        themeApplyFailed: 'Theme could not be applied. The saved theme is still available.',
         customCss: 'Custom CSS',
         customCssTheme: 'Custom CSS theme',
         customCssDialog: customCssDialogStrings,
@@ -157,8 +160,9 @@ function fixture(): EditorRootProps &
       }
     },
     appearancePort: {
-      applyState: vi.fn(),
+      applyState: vi.fn().mockResolvedValue(true),
       closeOtherPopovers: vi.fn(),
+      dispose: vi.fn(),
       previewCustomCss: vi.fn().mockResolvedValue({
         scopedCss: '',
         status: 'ready'
@@ -2048,18 +2052,106 @@ describe('EditorRoot', () => {
     expect(
       view.queryByRole('textbox', { name: '可视化文章编辑器' })
     ).toBeNull();
-    await waitFor(() =>
-      expect(renderPreview.mock.calls.length).toBeGreaterThan(renderCount)
-    );
-    expect(renderPreview).toHaveBeenLastCalledWith(
-      expect.objectContaining({ markdownTheme: 'newsprint' }),
-      expect.any(AbortSignal)
-    );
+    await waitFor(() => {
+      expect(renderPreview.mock.calls.length).toBeGreaterThan(renderCount);
+      expect(renderPreview).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        expect.any(AbortSignal)
+      );
+    });
     expect(
       view.container
         .querySelector('[data-easymde-preview-html-sink]')
         ?.classList.contains('easymde-markdown-theme-newsprint')
     ).toBe(true);
+  });
+
+  it('keeps the visible article theme unchanged until its stylesheet is ready', async () => {
+    const props = fixture();
+    const pending = deferred<boolean>();
+    vi.mocked(props.appearancePort.applyState).mockReturnValueOnce(
+      pending.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+    expect(
+      view.container
+        .querySelector('[data-easymde-preview-html-sink]')
+        ?.classList.contains('easymde-markdown-theme-default')
+    ).toBe(true);
+    expect(
+      view.container
+        .querySelector('[data-easymde-preview-html-sink]')
+        ?.classList.contains('easymde-markdown-theme-newsprint')
+    ).toBe(false);
+
+    pending.resolve(true);
+
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector('[data-easymde-preview-html-sink]')
+          ?.classList.contains('easymde-markdown-theme-newsprint')
+      ).toBe(true)
+    );
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.getByText('未保存')).not.toBeNull();
+  });
+
+  it('synchronizes a committed pending theme into Appearance after a mode remount', async () => {
+    const props = fixture();
+    const pending = deferred<boolean>();
+    vi.mocked(props.appearancePort.applyState).mockReturnValueOnce(
+      pending.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+
+    expect(
+      view.getByRole('button', { name: 'Article theme' }).textContent
+    ).toContain('Default');
+
+    pending.resolve(true);
+
+    await waitFor(() =>
+      expect(
+        view.getByRole('button', { name: 'Article theme' }).textContent
+      ).toContain('Newsprint')
+    );
+  });
+
+  it('reports a pending appearance failure after its initiating control remounts', async () => {
+    const props = fixture();
+    const pending = deferred<boolean>();
+    vi.mocked(props.appearancePort.applyState).mockReturnValueOnce(
+      pending.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+
+    pending.reject(new Error('appearance-article-theme-stylesheet-load-failed'));
+
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'react-editor-appearance-failed'
+      )
+    );
   });
 
   it('rejects explicit code-theme intent when visual Preview cannot synchronize', async () => {
@@ -2074,8 +2166,9 @@ describe('EditorRoot', () => {
       ]
     };
     vi.mocked(props.appearancePort.applyState).mockImplementation(
-      (_state, explicit) => {
+      async (_state, explicit) => {
         codeThemeExplicitField.value = explicit ? '1' : '0';
+        return true;
       }
     );
     const view = render(<EditorRoot {...props} appearance={appearance} />);
@@ -2095,7 +2188,9 @@ describe('EditorRoot', () => {
 
     expect(props.appearancePort.applyState).not.toHaveBeenCalled();
     expect(codeThemeExplicitField.value).toBe('0');
-    expect(codeTheme.textContent).toContain('Atom One Dark');
+    await waitFor(() =>
+      expect(codeTheme.textContent).toContain('Atom One Dark')
+    );
   });
 
   it('rejects a saved Custom CSS snapshot when visual Preview cannot synchronize', async () => {
@@ -4213,8 +4308,9 @@ describe('EditorRoot', () => {
       ]
     };
     vi.mocked(props.appearancePort.applyState).mockImplementation(
-      (_state, explicit) => {
+      async (_state, explicit) => {
         codeThemeExplicitField.value = explicit ? '1' : '0';
+        return true;
       }
     );
     const view = render(<EditorRoot {...props} appearance={appearance} />);
@@ -4222,18 +4318,21 @@ describe('EditorRoot', () => {
     fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
     fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+    await waitFor(() => expect(codeThemeExplicitField.value).toBe('1'));
     fireEvent.keyDown(window, { key: 'Escape' });
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '主题' }));
     fireEvent.click(view.getByRole('button', { name: 'Article theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
-    expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        codeTheme: 'terminal-noir',
-        markdownTheme: 'newsprint'
-      }),
-      true
+    await waitFor(() =>
+      expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          codeTheme: 'terminal-noir',
+          markdownTheme: 'newsprint'
+        }),
+        true
+      )
     );
     expect(codeThemeExplicitField.value).toBe('1');
   });
@@ -4256,8 +4355,9 @@ describe('EditorRoot', () => {
       ]
     };
     vi.mocked(props.appearancePort.applyState).mockImplementation(
-      (_state, explicit) => {
+      async (_state, explicit) => {
         codeThemeExplicitField.value = explicit ? '1' : '0';
+        return true;
       }
     );
     const view = render(<EditorRoot {...props} appearance={appearance} />);
@@ -4268,17 +4368,20 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: '主题' }));
     fireEvent.click(view.getByRole('button', { name: 'Code theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+    await waitFor(() => expect(codeThemeExplicitField.value).toBe('1'));
     fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
-    expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        codeTheme: 'terminal-noir',
-        markdownTheme: 'newsprint'
-      }),
-      true
+    await waitFor(() =>
+      expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          codeTheme: 'terminal-noir',
+          markdownTheme: 'newsprint'
+        }),
+        true
+      )
     );
     expect(codeThemeExplicitField.value).toBe('1');
   });
@@ -4335,6 +4438,7 @@ describe('EditorRoot', () => {
           codeThemeName: 'EasyMDE Blue Code'
         })
       );
+      expect(appearancePort.applyState).toHaveBeenCalledOnce();
       expect(
         view.queryByRole('dialog', { name: 'Custom CSS theme' })
       ).toBeNull();
@@ -4362,6 +4466,12 @@ describe('EditorRoot', () => {
     fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
     fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    await waitFor(() =>
+      expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        false
+      )
+    );
     fireEvent.keyDown(window, { key: 'Escape' });
 
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
@@ -5087,6 +5197,15 @@ describe('EditorRoot', () => {
     view.unmount();
     expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(1);
     expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('disposes pending appearance work with the Root', () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    view.unmount();
+
+    expect(props.appearancePort.dispose).toHaveBeenCalledTimes(1);
   });
 
   it('rebinds a single canvas scroll owner across ordinary, split and preview modes', async () => {

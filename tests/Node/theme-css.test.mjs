@@ -1228,9 +1228,20 @@ test('DogsChoice keeps the upstream 七彩虹 pink palette in a scoped adapter',
   assert.equal(cssVariable(css, '--blockquote-bg-color'), '#E4FFEA');
   assert.doesNotMatch(css, /(^|\n)\s*(?:html|body|:root)\s*\{/m);
   assert.doesNotMatch(css, /dogs-(?:jidilan|yuanshanlv)\.css/);
+  assert.doesNotMatch(
+    css,
+    new RegExp(`${escapedRegExp(root)}\\s+tt\\s*\\{`),
+    'plain tt must not retain the upstream oversized inline box'
+  );
+  const ttBody = cssRuleBodyMatching(css, `${root} :not(pre) > tt`);
+  assert.ok(ttBody, 'inline tt must share the scoped inline-code adapter');
+  assert.match(ttBody, /padding:\s*2px;/);
+  assert.match(ttBody, /font-size:\s*95%;/);
+  assert.match(ttBody, /display:\s*inline;/);
+  assert.match(ttBody, /vertical-align:\s*middle;/);
 });
 
-test('Bloom focus-mode effects stay opt-in in EasyMDE adapters', () => {
+test('Bloom adapters target live Mermaid roots and contain no unreachable focus hooks', () => {
   const bloomFiles = readdirSync(join(repoRoot, 'assets/themes/article'))
     .filter((name) => /^bloom-.*\.css$/.test(name));
 
@@ -1244,18 +1255,43 @@ test('Bloom focus-mode effects stay opt-in in EasyMDE adapters', () => {
     assert.ok(css.includes(root), `${file} should declare its own EasyMDE root`);
     const literalRoot = escapedRegExp(root);
 
-    assert.doesNotMatch(
+    assert.match(
       css,
-      new RegExp(`${literalRoot}\\s*>\\s*\\*`),
-      `${file} must not blur ordinary preview children`
+      new RegExp(`${literalRoot}\\s+\\.easymde-mermaid(?:\\b|\\s)`),
+      `${file} must style the live EasyMDE Mermaid root`
     );
-    assert.doesNotMatch(
-      css,
-      new RegExp(`${literalRoot}\\s*\\{\\s*background:\\s*transparent\\s*!important`),
-      `${file} must not clear the ordinary preview surface`
-    );
-    assert.match(css, new RegExp(`${literalRoot}\\.on-focus-mode`), `${file} focus rules should remain opt-in`);
+    assert.doesNotMatch(css, /(^|[\s,>+~])\.mermaid(?:\b|[\s>.:#[])/m, `${file} has a dead Mermaid class`);
+    assert.doesNotMatch(css, /\.on-focus-mode\b|\.md-focus-element\b/, `${file} has dead Typora focus hooks`);
   }
+});
+
+test('Phycat and Mdmdt adapters contain no document-host numbering, scrollbar, or page rules', () => {
+  const phycatThemes = [
+    'phycat-cherry',
+    'phycat-caramel',
+    'phycat-forest',
+    'phycat-mint',
+    'phycat-sky',
+    'phycat-prussian',
+    'phycat-sakura',
+    'phycat-mauve'
+  ];
+
+  for (const theme of phycatThemes) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const root = escapedRegExp(scopedArticleRoot(theme));
+
+    assert.doesNotMatch(css, /--autonum-h[1-6]\s*:/, `${theme} has automatic heading variables`);
+    assert.doesNotMatch(css, /\bcounter-(?:reset|increment)\s*:/, `${theme} has automatic heading counters`);
+    assert.doesNotMatch(css, new RegExp(`${root}::\\-webkit-scrollbar`), `${theme} owns the host scrollbar`);
+    assert.doesNotMatch(css, /@page\b/, `${theme} owns the global print page`);
+  }
+
+  assert.doesNotMatch(
+    readFileSync(join(repoRoot, 'assets/themes/article/mdmdt.css'), 'utf8'),
+    /@page\b/,
+    'Mdmdt must not own the global print page'
+  );
 });
 
 test('Terminal Noir preserves the reference terminal palette and readable contrast', () => {

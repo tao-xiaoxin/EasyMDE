@@ -35,6 +35,7 @@ function validBootstrap() {
         cssSaveFailed: 'CSS save failed',
         cssNameDuplicate: 'A theme with this name already exists',
         cssSaved: 'CSS saved',
+        themeApplyFailed: 'Theme could not be applied. The saved theme is still available.',
         customCss: 'Custom CSS',
         customCssTheme: 'Custom CSS theme',
         customCssDialog: customCssDialogStrings,

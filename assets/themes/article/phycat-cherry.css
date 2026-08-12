@@ -224,65 +224,6 @@
     transform: translateX(6px)
 }
 
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry {
-    counter-reset: h1
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry h1 {
-    counter-reset: h2
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry h2 {
-    counter-reset: h3
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry h3 {
-    counter-reset: h4
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry h4 {
-    counter-reset: h5
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry h5 {
-    counter-reset: h6
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry h1:before {
-    counter-increment: h1;
-    content: var(--autonum-h1)
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry h2:before {
-    counter-increment: h2;
-    content: var(--autonum-h2);
-    color: var(--head-title-h2-color)
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry h3>span:first-of-type::before {
-    counter-increment: h3;
-    content: var(--autonum-h3);
-    color: var(--element-color)
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry h4>span:first-of-type::before {
-    counter-increment: h4;
-    content: var(--autonum-h4);
-    color: var(--element-color)
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry h5>span:first-of-type::before {
-    counter-increment: h5;
-    content: var(--autonum-h5);
-    color: var(--element-color)
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry h6>span:first-of-type::before {
-    counter-increment: h6;
-    content: var(--autonum-h6);
-    color: var(--element-color)
-}
-
 .easymde-rendered-content.easymde-markdown-theme-phycat-cherry::marker {
     color: var(--element-color-deep)
 }
@@ -1001,30 +942,7 @@
     content: "🔥"
 }
 
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry::-webkit-scrollbar-track {
-    border-radius: 10px
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry::-webkit-scrollbar-thumb {
-    border-radius: 10px;
-    background: var(--element-color)
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry::-webkit-scrollbar-thumb:active {
-    background: var(--element-color-shallow)
-}
-
-.easymde-rendered-content.easymde-markdown-theme-phycat-cherry::-webkit-scrollbar {
-    width: 5px;
-    height: 8px
-}
-
 @media print {
-    @page {
-        margin: 10mm;
-        size: A4
-    }
-
     .easymde-rendered-content.easymde-markdown-theme-phycat-cherry * {
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important

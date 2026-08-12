@@ -1089,6 +1089,10 @@ msgstr "CSS 已保存。"
 msgid "CSS save failed."
 msgstr "CSS 保存失败。"
 
+#: src/Admin/AdminAssets.php:898
+msgid "Theme could not be applied. The saved theme is still available."
+msgstr "主题无法应用，但已保存的主题仍然可用。"
+
 #: src/Admin/AdminAssets.php:893
 msgid "Custom font"
 msgstr "自定义字体"

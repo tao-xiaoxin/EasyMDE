@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
+import { JSDOM } from 'jsdom';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const TYPORA_CODE_PALETTE_ROLES = [
@@ -16,6 +19,18 @@ const TYPORA_CODE_PALETTE_ROLES = [
   '--easymde-typora-code-link',
   '--easymde-typora-code-variable',
   '--easymde-typora-code-operator'
+];
+const TYPORA_CODE_ROLE_PROBES = [
+  { className: 'hljs', property: 'background', role: '--easymde-typora-code-bg' },
+  { className: 'hljs', property: 'color', role: '--easymde-typora-code-text' },
+  { className: 'hljs-comment', property: 'color', role: '--easymde-typora-code-muted' },
+  { className: 'hljs-keyword', property: 'color', role: '--easymde-typora-code-keyword' },
+  { className: 'hljs-string', property: 'color', role: '--easymde-typora-code-string' },
+  { className: 'hljs-number', property: 'color', role: '--easymde-typora-code-number' },
+  { className: 'hljs-title', property: 'color', role: '--easymde-typora-code-blue' },
+  { className: 'hljs-link', property: 'color', role: '--easymde-typora-code-link' },
+  { className: 'hljs-variable', property: 'color', role: '--easymde-typora-code-variable' },
+  { className: 'hljs-operator', property: 'color', role: '--easymde-typora-code-operator' }
 ];
 
 function source(path) {
@@ -72,19 +87,176 @@ function typoraCodePaletteBaseline() {
   return JSON.parse(source('tests/fixtures/typora-code-palettes.json'));
 }
 
-function assertTyporaCodePalettesMatch(css, baseline, associations) {
-  const associatedCodeIds = [...new Set(Object.values(associations))].sort();
-  const sourceIds = Object.keys(baseline.sources).sort();
-  const paletteIds = Object.keys(baseline.palettes).sort();
+function stableJsonValue(value) {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, stableJsonValue(value[key])])
+    );
+  }
+  return value;
+}
 
-  assert.equal(baseline.version, 1);
+function cssColor(value) {
+  const normalized = value.trim().toLowerCase();
+  const hex = normalized.match(/^#([0-9a-f]{6})$/);
+
+  if (hex) {
+    return {
+      red: Number.parseInt(hex[1].slice(0, 2), 16),
+      green: Number.parseInt(hex[1].slice(2, 4), 16),
+      blue: Number.parseInt(hex[1].slice(4, 6), 16),
+      alpha: 1
+    };
+  }
+
+  const rgb = normalized.match(/^rgba?\((.+)\)$/);
+  assert.ok(rgb, `unsupported CSS color: ${value}`);
+  const [channels, slashAlpha] = rgb[1].split('/').map((part) => part.trim());
+  const parts = channels.split(/[\s,]+/).filter(Boolean);
+  const legacyAlpha = parts.length === 4 ? parts.pop() : undefined;
+  const alphaValue = slashAlpha ?? legacyAlpha ?? '1';
+  const alpha = alphaValue.endsWith('%')
+    ? Number.parseFloat(alphaValue) / 100
+    : Number.parseFloat(alphaValue);
+  const [red, green, blue] = parts.map(Number);
+
+  assert.ok([red, green, blue, alpha].every(Number.isFinite), `invalid CSS color: ${value}`);
+  return { red, green, blue, alpha };
+}
+
+function compositeColor(foreground, background) {
+  return {
+    red: foreground.red * foreground.alpha + background.red * (1 - foreground.alpha),
+    green: foreground.green * foreground.alpha + background.green * (1 - foreground.alpha),
+    blue: foreground.blue * foreground.alpha + background.blue * (1 - foreground.alpha),
+    alpha: 1
+  };
+}
+
+function colorLuminance(color) {
+  const linear = [color.red, color.green, color.blue].map((channel) => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+function cssContrast(foregroundValue, backgroundValue) {
+  const background = cssColor(backgroundValue);
+  const foreground = compositeColor(cssColor(foregroundValue), background);
+  const lighter = Math.max(colorLuminance(foreground), colorLuminance(background));
+  const darker = Math.min(colorLuminance(foreground), colorLuminance(background));
+
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function normalizedComputedColor(windowRef, value) {
+  const probe = windowRef.document.createElement('span');
+  probe.style.color = value;
+  assert.ok(probe.style.color, `browser rejected CSS color: ${value}`);
+  windowRef.document.body.append(probe);
+  const normalized = windowRef.getComputedStyle(probe).color;
+  probe.remove();
+  return normalized;
+}
+
+function resolvedComputedValue(computed, property) {
+  let value = computed.getPropertyValue(property).trim();
+  const visited = new Set();
+
+  while (/^var\(\s*(--[\w-]+)\s*\)$/.test(value)) {
+    const variable = value.match(/^var\(\s*(--[\w-]+)\s*\)$/)[1];
+    assert.ok(!visited.has(variable), `cyclic computed custom property: ${variable}`);
+    visited.add(variable);
+    value = computed.getPropertyValue(variable).trim();
+  }
+
+  return value;
+}
+
+function assertTyporaCodeFinalColors(css, baseline, associations) {
+  const codeIds = [...new Set(Object.values(associations))].sort();
+  assert.deepEqual(
+    TYPORA_CODE_ROLE_PROBES.map(({ role }) => role),
+    baseline.roles,
+    'computed palette probes must cover every canonical semantic role in order'
+  );
+  const tokenMarkup = TYPORA_CODE_ROLE_PROBES
+    .filter(({ className }) => className !== 'hljs')
+    .map(({ className }) => `<span class="${className}">token</span>`)
+    .join('');
+  const dom = new JSDOM(`<style>${css}</style><body></body>`);
+  const { document } = dom.window;
+
+  for (const codeId of codeIds) {
+    const root = document.createElement('div');
+    root.className = `easymde-rendered-content easymde-code-theme-${codeId}`;
+    root.innerHTML = `<code class="hljs">plain${tokenMarkup}</code>`;
+    document.body.append(root);
+
+    const finalColors = TYPORA_CODE_ROLE_PROBES.map(({ className, property, role }, index) => {
+      const element = root.querySelector(`.${className}`);
+      const computed = dom.window.getComputedStyle(element);
+      let value = resolvedComputedValue(computed, property);
+
+      if (property === 'background') {
+        const backgroundColor = computed.backgroundColor.trim();
+        if (backgroundColor && backgroundColor !== 'rgba(0, 0, 0, 0)') value = backgroundColor;
+      }
+
+      const normalized = normalizedComputedColor(dom.window, value);
+      const expected = normalizedComputedColor(dom.window, baseline.effectivePalettes[codeId][index]);
+      assert.equal(normalized, expected, `${codeId} ${role} final color`);
+      return normalized;
+    });
+
+    for (let index = 1; index < finalColors.length; index += 1) {
+      const contrast = cssContrast(finalColors[index], finalColors[0]);
+      assert.ok(
+        contrast >= baseline.minimumContrast,
+        `${codeId} ${baseline.roles[index]} final contrast ${contrast.toFixed(2)}`
+      );
+    }
+
+    root.remove();
+  }
+}
+
+function assertTyporaCodePaletteEvidence(baseline) {
+  assert.equal(baseline.version, 2);
+  assert.equal(baseline.minimumContrast, 4.5);
+  assert.equal(
+    createHash('sha256')
+      .update(JSON.stringify(stableJsonValue({
+        version: baseline.version,
+        minimumContrast: baseline.minimumContrast,
+        roles: baseline.roles,
+        sources: baseline.sources,
+        sourcePalettes: baseline.sourcePalettes,
+        effectivePalettes: baseline.effectivePalettes
+      })))
+      .digest('hex'),
+    '70d5d3748e4b1aa5dba8fdd415d19219bd6164cc48545027a5ddee898ab57877',
+    'adapted effective palette evidence changed'
+  );
   assert.deepEqual(
     baseline.roles,
     TYPORA_CODE_PALETTE_ROLES,
     'palette baseline must retain every canonical semantic role'
   );
+}
+
+function assertTyporaCodePaletteValues(css, baseline, associations) {
+  const associatedCodeIds = [...new Set(Object.values(associations))].sort();
+  const sourceIds = Object.keys(baseline.sources).sort();
+  const sourcePaletteIds = Object.keys(baseline.sourcePalettes).sort();
+  const effectivePaletteIds = Object.keys(baseline.effectivePalettes).sort();
+
   assert.deepEqual(sourceIds, associatedCodeIds, 'palette sources must cover the associated code themes');
-  assert.deepEqual(paletteIds, associatedCodeIds, 'palette values must cover the associated code themes');
+  assert.deepEqual(sourcePaletteIds, associatedCodeIds, 'source palettes must cover the associated code themes');
+  assert.deepEqual(effectivePaletteIds, associatedCodeIds, 'effective palettes must cover the associated code themes');
 
   for (const codeId of associatedCodeIds) {
     assert.match(
@@ -93,9 +265,19 @@ function assertTyporaCodePalettesMatch(css, baseline, associations) {
       `${codeId} needs a revision-pinned upstream source`
     );
     assert.equal(
-      baseline.palettes[codeId].length,
+      baseline.sourcePalettes[codeId].length,
+      baseline.roles.length,
+      `${codeId} needs one source value for every palette role`
+    );
+    assert.equal(
+      baseline.effectivePalettes[codeId].length,
       baseline.roles.length,
       `${codeId} needs one value for every palette role`
+    );
+    assert.equal(
+      baseline.effectivePalettes[codeId][0],
+      baseline.sourcePalettes[codeId][0],
+      `${codeId} must retain the source background`
     );
 
     const scopes = Array.from(
@@ -112,7 +294,29 @@ function assertTyporaCodePalettesMatch(css, baseline, associations) {
     );
 
     for (const [index, role] of baseline.roles.entries()) {
-      assert.equal(declarations.get(role), baseline.palettes[codeId][index], `${codeId} ${role}`);
+      assert.equal(declarations.get(role), baseline.effectivePalettes[codeId][index], `${codeId} ${role}`);
+      if (index === 0) continue;
+
+      const sourceContrast = cssContrast(
+        baseline.sourcePalettes[codeId][index],
+        baseline.sourcePalettes[codeId][0]
+      );
+      const effectiveContrast = cssContrast(
+        baseline.effectivePalettes[codeId][index],
+        baseline.effectivePalettes[codeId][0]
+      );
+
+      assert.ok(
+        effectiveContrast >= baseline.minimumContrast,
+        `${codeId} ${role} contrast ${effectiveContrast.toFixed(2)}`
+      );
+      if (sourceContrast >= baseline.minimumContrast) {
+        assert.equal(
+          baseline.effectivePalettes[codeId][index],
+          baseline.sourcePalettes[codeId][index],
+          `${codeId} ${role} must keep an already-readable source color`
+        );
+      }
     }
   }
 
@@ -127,6 +331,12 @@ function assertTyporaCodePalettesMatch(css, baseline, associations) {
       `${role} must be declared exactly ${associatedCodeIds.length} times`
     );
   }
+}
+
+function assertTyporaCodePalettesMatch(css, baseline, associations) {
+  assertTyporaCodePaletteEvidence(baseline);
+  assertTyporaCodePaletteValues(css, baseline, associations);
+  assertTyporaCodeFinalColors(css, baseline, associations);
 }
 
 function codeThemeMetadata() {
@@ -328,37 +538,16 @@ function withoutFunctionalPseudoClass(selector, pseudoClass) {
   return result;
 }
 
-const BLOOM_FOCUS_HOOK_THEMES = new Set([
-  'bloom-petal',
-  'bloom-mist',
-  'bloom-verdant',
-  'bloom-stone',
-  'bloom-wheat',
-  'bloom-ink',
-  'bloom-amber',
-  'bloom-lapis',
-  'bloom-ripple',
-  'bloom-cinnabar',
-  'bloom-sage',
-  'bloom-spring'
-]);
-
-function unreachableTyporaClasses(selector, themeId) {
+function unreachableTyporaClasses(selector) {
   const positiveSelector = withoutFunctionalPseudoClass(normalizeSelector(selector), 'not');
   const classes = Array.from(
     positiveSelector.matchAll(/\.((?:md)-[\w-]+)/gi),
     ([, className]) => className.toLowerCase()
   );
 
-  return Array.from(new Set(classes.filter((className) => {
-    if ('md-focus-element' === className) {
-      return !(
-        BLOOM_FOCUS_HOOK_THEMES.has(themeId)
-        && /\.on-focus-mode\b/.test(positiveSelector)
-      );
-    }
-    return !/^md-alert(?:-[\w-]+)?$/.test(className);
-  })));
+  return Array.from(new Set(classes.filter(
+    (className) => !/^md-alert(?:-[\w-]+)?$/.test(className)
+  )));
 }
 
 function legacyMathAdapterSelector(selector) {
@@ -481,6 +670,7 @@ test('Typora-derived article themes have unique registered default code palettes
   const codeThemes = new Map(codeThemeMetadata().map((theme) => [theme.id, theme]));
   const labels = codeThemeMetadata().map(({ label }) => label);
   const css = source('assets/themes/code/typora-derived.css');
+  const baseline = typoraCodePaletteBaseline();
   const signatures = new Set();
   const associatedCodeIds = new Set(Object.values(associations));
 
@@ -498,18 +688,49 @@ test('Typora-derived article themes have unique registered default code palettes
       new RegExp(`\\.easymde-rendered-content\\.easymde-code-theme-${codeId}\\s*\\{([^}]*)\\}`)
     );
     assert.ok(scope, `${codeId} should define an independent scope`);
-    const signature = scope[1].replace(/\s+/g, ' ').trim();
+    const signature = JSON.stringify(baseline.effectivePalettes[codeId]);
     assert.ok(!signatures.has(signature), `${codeId} should not duplicate another palette`);
     signatures.add(signature);
   }
 });
 
-test('every Typora-derived code palette matches its source-backed color baseline', () => {
+test('every Typora-derived code palette preserves its source record and exposes readable effective colors', () => {
   assertTyporaCodePalettesMatch(
     source('assets/themes/code/typora-derived.css'),
     typoraCodePaletteBaseline(),
     typoraDerivedCodeAssociations()
   );
+});
+
+test('Typora-derived Highlight.js rules preserve Markdown emphasis and link semantics', () => {
+  const context = {};
+  runInNewContext(source('assets/vendor/highlight/highlight.min.js'), context);
+  const highlighted = context.hljs.highlight(
+    '**bold** *italic* [label](https://example.test)',
+    { language: 'markdown' }
+  ).value;
+  const css = source('assets/themes/code/typora-derived.css');
+
+  assert.match(highlighted, /class="hljs-strong"/);
+  assert.match(highlighted, /class="hljs-emphasis"/);
+  assert.match(highlighted, /class="hljs-link"/);
+  assert.match(css, /\.hljs-strong\s*\{[^}]*font-weight:\s*700;/s);
+  assert.match(css, /\.hljs-emphasis\s*\{[^}]*font-style:\s*italic;/s);
+  assert.match(css, /\.hljs-link\s*\{[^}]*text-decoration:\s*underline;/s);
+
+  const dom = new JSDOM(`
+    <style>${css}</style>
+    <div class="easymde-rendered-content easymde-code-theme-inkwell-code">
+      <code class="hljs">${highlighted}</code>
+    </div>
+  `);
+  const computed = (token) => dom.window.getComputedStyle(
+    dom.window.document.querySelector(`.hljs-${token}`)
+  );
+
+  assert.equal(computed('strong').fontWeight, '700');
+  assert.equal(computed('emphasis').fontStyle, 'italic');
+  assert.match(computed('link').textDecoration, /underline/);
 });
 
 test('Typora-derived code palette gate rejects a changed color value', () => {
@@ -528,6 +749,38 @@ test('Typora-derived code palette gate rejects a changed color value', () => {
         typoraDerivedCodeAssociations()
       ),
     /inkwell-code --easymde-typora-code-bg/
+  );
+});
+
+test('Typora-derived code palette gate rejects a matching low-contrast runtime and fixture mutation', () => {
+  const baseline = typoraCodePaletteBaseline();
+  baseline.effectivePalettes['inkwell-code'][2] = '#ffffff';
+  const css = source('assets/themes/code/typora-derived.css');
+  const changedCss = css.replace(
+    '--easymde-typora-code-muted: #697382;',
+    '--easymde-typora-code-muted: #ffffff;'
+  );
+
+  assert.notEqual(changedCss, css, 'the mutation must change the Inkwell muted color');
+  assert.throws(
+    () => assertTyporaCodePaletteValues(changedCss, baseline, typoraDerivedCodeAssociations()),
+    /inkwell-code --easymde-typora-code-muted contrast 1\.06/
+  );
+});
+
+test('Typora-derived code palette gate rejects a matching high-contrast runtime and fixture drift', () => {
+  const baseline = typoraCodePaletteBaseline();
+  baseline.effectivePalettes['inkwell-code'][2] = '#000000';
+  const css = source('assets/themes/code/typora-derived.css');
+  const changedCss = css.replace(
+    '--easymde-typora-code-muted: #697382;',
+    '--easymde-typora-code-muted: #000000;'
+  );
+
+  assert.notEqual(changedCss, css, 'the mutation must change the Inkwell muted color');
+  assert.throws(
+    () => assertTyporaCodePalettesMatch(changedCss, baseline, typoraDerivedCodeAssociations()),
+    /adapted effective palette evidence changed/
   );
 });
 
@@ -562,6 +815,23 @@ test('Typora-derived code palette gate rejects a more-specific color override', 
         typoraDerivedCodeAssociations()
       ),
     /--easymde-typora-code-bg must be declared exactly 18 times/
+  );
+});
+
+test('Typora-derived code palette gate rejects a higher-specificity final token color', () => {
+  const changedCss = `${source('assets/themes/code/typora-derived.css')}
+.easymde-rendered-content.easymde-code-theme-inkwell-code .hljs .hljs-keyword {
+  color: #ffffff;
+}`;
+
+  assert.throws(
+    () =>
+      assertTyporaCodePalettesMatch(
+        changedCss,
+        typoraCodePaletteBaseline(),
+        typoraDerivedCodeAssociations()
+      ),
+    /inkwell-code --easymde-typora-code-keyword final color/
   );
 });
 
@@ -792,16 +1062,14 @@ test('Typora DOM classifier rejects unreachable positive md classes and preserve
     '.theme blockquote.md-alert-note',
     '.theme .md-alert-title-icon',
     '.theme table > tbody',
-    '.theme .footnote-ref',
-    '.easymde-rendered-content.easymde-markdown-theme-bloom-petal.on-focus-mode > .md-focus-element',
-    '.easymde-rendered-content.easymde-markdown-theme-bloom-petal.on-focus-mode .md-focus-element h2'
+    '.theme .footnote-ref'
   ];
 
   for (const selector of unreachableSelectors) {
-    assert.notDeepEqual(unreachableTyporaClasses(selector, 'inkwell'), [], selector);
+    assert.notDeepEqual(unreachableTyporaClasses(selector), [], selector);
   }
   for (const selector of reachableSelectors) {
-    assert.deepEqual(unreachableTyporaClasses(selector, 'bloom-petal'), [], selector);
+    assert.deepEqual(unreachableTyporaClasses(selector), [], selector);
   }
 });
 
@@ -811,7 +1079,7 @@ test('registered article themes contain no unreachable positive Typora md select
   assert.ok(themes.length > 0, 'article themes should be discovered from the registry');
   for (const theme of themes) {
     const violations = cssSelectors(source(theme.assetPath)).flatMap((selector) => {
-      const classes = unreachableTyporaClasses(selector, theme.id);
+      const classes = unreachableTyporaClasses(selector);
       return classes.length > 0 ? [{ classes, selector }] : [];
     });
 

@@ -95,6 +95,7 @@ const appearance: AppearanceBootstrap = {
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
     cssSaveFailed: 'CSS save failed.',
+    themeApplyFailed: 'Theme could not be applied. The saved theme is still available.',
     cssNameDuplicate: 'A theme with this name already exists.',
     namedCustomCss: 'Named custom CSS'
   }
@@ -137,8 +138,9 @@ function renderSettings() {
     <OrdinaryEditorSettings
       appearance={appearance}
       appearancePort={{
-        applyState: vi.fn(),
+        applyState: vi.fn().mockResolvedValue(true),
         closeOtherPopovers: vi.fn(),
+        dispose: vi.fn(),
         previewCustomCss: vi.fn(),
         saveCustomCss: vi.fn()
       }}

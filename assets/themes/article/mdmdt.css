@@ -593,19 +593,6 @@
     margin: 12pt 0;
   }
 
-  @page{
-    margin: 15mm !important;
-    size: auto;
-
-    @top-center {
-      content: '';
-      font-size: 9pt;
-    }
-    @bottom-center {
-      content: counter(page) '/' counter(pages);
-      font-size: 9pt;
-    }
-  }
 }
 
 .easymde-rendered-content.easymde-markdown-theme-mdmdt :not(pre) > code,

@@ -446,83 +446,83 @@
     margin: 0 0.2em;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid {
     background: var(--surface) !important;
     border-radius: 12px;
     padding: 10px;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid text {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid text {
     fill: var(--text) !important;
     font-family: var(--font-sans) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .node rect,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .node circle,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .node ellipse,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .node polygon,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .node path,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .actor,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid rect.actor,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid g.actor rect {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .node rect,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .node circle,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .node ellipse,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .node polygon,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .node path,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .actor,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid rect.actor,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid g.actor rect {
     fill: var(--bg) !important;
     stroke: var(--accent) !important;
     stroke-width: 1.5px !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid text.actor,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid text.actor tspan,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .actor tspan {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid text.actor,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid text.actor tspan,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .actor tspan {
     fill: var(--text) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid line,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .actor-line,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .messageLine0,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .messageLine1 {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid line,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .actor-line,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .messageLine0,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .messageLine1 {
     stroke: var(--accent) !important;
     stroke-width: 1.5px !important;
     fill: none;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .messageText {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .messageText {
     fill: var(--text) !important;
     stroke: none !important;
     font-size: 14px !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid marker {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid marker {
     fill: var(--accent) !important;
     stroke: var(--accent) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid marker path {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid marker path {
     fill: var(--accent) !important;
     stroke: var(--accent) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .loopText,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .noteText {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .loopText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .noteText {
     fill: var(--text) !important;
     stroke: none !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .note {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .note {
     fill: rgba(var(--accent-rgb), 0.08) !important;
     stroke: var(--accent) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .edgePath .path {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .edgePath .path {
     stroke: var(--text-semi) !important;
     stroke-width: 1.5px !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .messageText,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .loopText,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .loopText tspan,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .noteText,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .labelText,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .labelText tspan {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .messageText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .loopText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .loopText tspan,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .noteText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .labelText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .labelText tspan {
     fill: var(--text) !important;
     paint-order: stroke;
     stroke: var(--bg) !important;
@@ -530,38 +530,20 @@
     stroke-linejoin: round;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .labelBox {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .labelBox {
     fill: var(--surface-2) !important;
     stroke: var(--accent) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .activation0,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .activation1,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .activation2 {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .activation0,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .activation1,
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .activation2 {
     fill: var(--surface-2) !important;
     stroke: var(--text-semi) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .mermaid .loopLine {
+.easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .loopLine {
     stroke: var(--text-semi) !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat.on-focus-mode > * {
-    opacity: 0.15 !important;
-    filter: blur(1px);
-    transition:
-        opacity 0.5s ease,
-        filter 0.5s ease;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat.on-focus-mode > .md-focus-element {
-    opacity: 1 !important;
-    filter: blur(0);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat.on-focus-mode .md-focus-element h1,
-.easymde-rendered-content.easymde-markdown-theme-bloom-wheat.on-focus-mode .md-focus-element h2 {
-    border-bottom-color: var(--accent);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-wheat a,

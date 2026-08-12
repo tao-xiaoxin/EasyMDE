@@ -72,14 +72,16 @@ const bootstrap: AppearanceBootstrap = {
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
     cssSaveFailed: 'CSS save failed.',
+    themeApplyFailed: 'Theme could not be applied. The saved theme is still available.',
     namedCustomCss: 'Named custom CSS'
   }
 };
 
 function createPort(overrides: Partial<AppearancePort> = {}): AppearancePort {
   return {
-    applyState: vi.fn(),
+    applyState: vi.fn().mockResolvedValue(true),
     closeOtherPopovers: vi.fn(),
+    dispose: vi.fn(),
     previewCustomCss: vi.fn().mockResolvedValue({
       scopedCss: '',
       status: 'ready'
@@ -1005,7 +1007,7 @@ describe('AppearanceControls', () => {
 
   it('shows each saved custom theme name only in its owned embedded menu', async () => {
     const user = userEvent.setup();
-    const applyState = vi.fn();
+    const applyState = vi.fn().mockResolvedValue(true);
     render(
       <AppearanceControls
         bootstrap={bootstrap}
@@ -1056,7 +1058,7 @@ describe('AppearanceControls', () => {
   });
 
   it('uses a custom code label to select its paired Custom CSS preset', async () => {
-    const applyState = vi.fn();
+    const applyState = vi.fn().mockResolvedValue(true);
     const user = userEvent.setup();
     render(
       <AppearanceControls
@@ -1365,7 +1367,7 @@ describe('AppearanceControls', () => {
   });
 
   it('applies complete theme state for registered article, custom CSS, and code selections', async () => {
-    const applyState = vi.fn();
+    const applyState = vi.fn().mockResolvedValue(true);
     const user = userEvent.setup();
     render(
       <AppearanceControls
@@ -1409,8 +1411,125 @@ describe('AppearanceControls', () => {
     }, true);
   });
 
+  it('merges a code theme selection into the pending article theme intent', async () => {
+    let resolveArticleApply: ((applied: boolean) => void) | undefined;
+    const applyState = vi.fn()
+      .mockImplementationOnce(() => new Promise<boolean>((resolve) => {
+        resolveArticleApply = resolve;
+      }))
+      .mockResolvedValueOnce(true);
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort({ applyState })}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Article theme' }),
+      'theme:newsprint'
+    );
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Code theme' }),
+      'theme:github'
+    );
+
+    expect(applyState).toHaveBeenNthCalledWith(2, {
+      markdownTheme: 'newsprint',
+      codeTheme: 'github',
+      customCssId: ''
+    }, true);
+
+    resolveArticleApply?.(false);
+    await waitFor(() => {
+      expect(
+        screen.getByRole<HTMLSelectElement>('combobox', {
+          name: 'Article theme'
+        }).value
+      ).toBe('theme:newsprint');
+      expect(
+        screen.getByRole<HTMLSelectElement>('combobox', {
+          name: 'Code theme'
+        }).value
+      ).toBe('theme:github');
+    });
+  });
+
+  it('cancels a pending article theme intent when the committed theme is reselected', async () => {
+    const applyState = vi.fn()
+      .mockImplementationOnce(() => new Promise<boolean>(() => undefined))
+      .mockResolvedValueOnce(true);
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort({ applyState })}
+        onFailure={vi.fn()}
+        onReady={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    const articleTheme = screen.getByRole('combobox', {
+      name: 'Article theme'
+    });
+    await user.selectOptions(articleTheme, 'theme:newsprint');
+    expect((articleTheme as HTMLSelectElement).value).toBe('theme:newsprint');
+    await user.selectOptions(articleTheme, 'theme:default');
+
+    expect(applyState).toHaveBeenNthCalledWith(2, {
+      markdownTheme: 'default',
+      codeTheme: 'atom-one-dark',
+      customCssId: ''
+    }, false);
+  });
+
+  it('shows and rolls back the latest failed immersive theme intent', async () => {
+    let rejectApply: ((reason?: unknown) => void) | undefined;
+    const applyState = vi.fn(() => new Promise<boolean>((_resolve, reject) => {
+      rejectApply = reject;
+    }));
+    const onFailure = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AppearanceControls
+        bootstrap={bootstrap}
+        port={createPort({ applyState })}
+        onFailure={onFailure}
+        onReady={vi.fn()}
+        messageAlertTimer={messageAlertTimer}
+        variant="immersive"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    await user.click(screen.getByRole('button', { name: 'Article theme' }));
+    await user.click(screen.getByRole('option', { name: 'Newsprint' }));
+
+    expect(
+      screen.getByRole('button', { name: 'Article theme' }).textContent
+    ).toContain('Newsprint');
+    expect(
+      screen.getByRole('button', { name: 'Appearance' })
+        .querySelector('.easymde-immersive-theme-accent')
+        ?.getAttribute('data-theme')
+    ).toBe('newsprint');
+
+    rejectApply?.(new Error('synthetic apply failure'));
+    await waitFor(() => {
+      expect(onFailure).toHaveBeenCalledOnce();
+      expect(
+        screen.getByRole('button', { name: 'Article theme' }).textContent
+      ).toContain('Default');
+    });
+  });
+
   it('uses the default article code theme for implicit custom CSS in immersive mode', async () => {
-    const applyState = vi.fn();
+    const applyState = vi.fn().mockResolvedValue(true);
     const user = userEvent.setup();
     render(
       <AppearanceControls
@@ -1445,7 +1564,7 @@ describe('AppearanceControls', () => {
   });
 
   it('applies the implicit custom CSS code theme after a successful save', async () => {
-    const applyState = vi.fn();
+    const applyState = vi.fn().mockResolvedValue(true);
     const saveCustomCss = vi.fn().mockResolvedValue({
       status: 'saved',
       snapshot: {
@@ -1495,7 +1614,7 @@ describe('AppearanceControls', () => {
     });
   });
 
-  it('does not publish a saved Custom CSS snapshot when applying it fails', async () => {
+  it('retains a server-saved Custom CSS item without committing its failed preview state', async () => {
     const applyState = vi.fn(() => {
       throw new Error('synthetic apply failure');
     });
@@ -1517,12 +1636,14 @@ describe('AppearanceControls', () => {
       }
     });
     const onFailure = vi.fn();
+    const onNotification = vi.fn();
     const user = userEvent.setup();
     render(
       <AppearanceControls
         bootstrap={bootstrap}
         port={createPort({ applyState, saveCustomCss })}
         onFailure={onFailure}
+        onNotification={onNotification}
         onReady={vi.fn()}
         messageAlertTimer={messageAlertTimer}
         variant="immersive"
@@ -1533,21 +1654,23 @@ describe('AppearanceControls', () => {
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
     await user.click(screen.getByRole('button', { name: 'Apply theme' }));
 
-    await screen.findByText('CSS save failed.');
+    await waitFor(() => expect(onNotification).toHaveBeenCalledWith({
+      id: 'appearance-custom-css',
+      message: 'Theme could not be applied. The saved theme is still available.',
+      type: 'error'
+    }));
     expect(onFailure).toHaveBeenCalledOnce();
-    expect(screen.queryByText('CSS saved.')).toBeNull();
-    const dialog = screen.getByRole('dialog', { name: 'Custom CSS theme' });
-    await user.click(
-      within(dialog).getAllByRole('button', { name: 'Close' })[0] as HTMLElement
-    );
+    expect(saveCustomCss).toHaveBeenCalledOnce();
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     expect(
       screen.getByRole('button', { name: 'Article theme' }).textContent
     ).toContain('Default');
+    await user.click(screen.getByRole('button', { name: 'Article theme' }));
+    expect(screen.getByRole('option', { name: 'Saved Article' })).toBeTruthy();
   });
 
   it('keeps a valid persisted code theme authoritative when the article theme changes', async () => {
-    const applyState = vi.fn();
+    const applyState = vi.fn().mockResolvedValue(true);
     const user = userEvent.setup();
     render(
       <AppearanceControls

@@ -425,27 +425,18 @@ jobs:
         run: scripts/run-plugin-check.sh dist/EasyMDE.zip
 
   e2e:
-    name: Playwright Chromium E2E (${{ matrix.suite }})
+    name: Playwright Chromium E2E
     runs-on: ubuntu-latest
     needs: release
-    strategy:
-      fail-fast: false
-      matrix:
-        suite:
-          - core
-          - theme_matrix_a
-          - theme_matrix_b
-          - visual
     env:
       WORDPRESS_ADMIN_USER: easymde-ci-admin
-      WORDPRESS_ADMIN_PASSWORD: easymde-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.suite }}
-      EASYMDE_E2E_SUITE: ${{ matrix.suite }}
+      WORDPRESS_ADMIN_PASSWORD: easymde-ci-${{ github.run_id }}-${{ github.run_attempt }}
 
     services:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_DATABASE: easymde_e2e_${{ matrix.suite }}
+          MYSQL_DATABASE: easymde_e2e
           MYSQL_ROOT_PASSWORD: root
         ports:
           - 3306:3306
@@ -495,54 +486,42 @@ jobs:
 
       - name: Install release ZIP into clean WordPress
         env:
-          EASYMDE_DB_NAME: easymde_e2e_${{ matrix.suite }}
+          EASYMDE_DB_NAME: easymde_e2e
           EASYMDE_DB_USER: root
           EASYMDE_DB_PASS: root
           EASYMDE_DB_HOST: 127.0.0.1:3306
-          EASYMDE_WP_PATH: /tmp/easymde-e2e-wp-${{ matrix.suite }}
+          EASYMDE_WP_PATH: /tmp/easymde-e2e-wp
           EASYMDE_WP_URL: http://127.0.0.1:8089
         run: scripts/setup-wordpress-release.sh dist/EasyMDE.zip
 
       - name: Start WordPress server
         run: |
-          wp server --path=/tmp/easymde-e2e-wp-${{ matrix.suite }} --host=127.0.0.1 --port=8089 > /tmp/easymde-wp-server-${{ matrix.suite }}.log 2>&1 &
+          wp server --path=/tmp/easymde-e2e-wp --host=127.0.0.1 --port=8089 > /tmp/easymde-wp-server.log 2>&1 &
           for attempt in {1..30}; do
             if curl -fsS http://127.0.0.1:8089/wp-login.php >/dev/null; then
               exit 0
             fi
             sleep 2
           done
-          cat /tmp/easymde-wp-server-${{ matrix.suite }}.log
+          cat /tmp/easymde-wp-server.log
           exit 1
 
       - name: Run Playwright Chromium E2E
         env:
           EASYMDE_E2E_BASE_URL: http://127.0.0.1:8089
-          EASYMDE_E2E_WP_PATH: /tmp/easymde-e2e-wp-${{ matrix.suite }}
-        run: |
-          case "$EASYMDE_E2E_SUITE" in
-            core)
-              npx playwright test tests/e2e/easymde.spec.mjs \
-                --grep-invert 'keeps every registered article theme contained|keeps newly added article themes within the ordinary preview boundary'
-              ;;
-            theme_matrix_a|theme_matrix_b)
-              npx playwright test tests/e2e/easymde.spec.mjs \
-                --grep 'keeps every registered article theme contained|keeps newly added article themes within the ordinary preview boundary'
-              ;;
-            visual)
-              npx playwright test tests/e2e/inkwell.spec.mjs tests/e2e/theme-layout-audit.spec.mjs
-              ;;
-            *)
-              echo "Unknown E2E suite: $EASYMDE_E2E_SUITE" >&2
-              exit 1
-              ;;
-          esac
+          EASYMDE_E2E_WP_PATH: /tmp/easymde-e2e-wp
+        run: >-
+          npx playwright test
+          tests/e2e/easymde.spec.mjs
+          tests/e2e/inkwell.spec.mjs
+          tests/e2e/theme-layout-audit.spec.mjs
+          --project=chromium
 
       - name: Upload Playwright failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-failure-artifacts-${{ matrix.suite }}
+          name: playwright-failure-artifacts
           path: |
             test-results/playwright
             test-results/playwright-junit.xml

@@ -87,6 +87,18 @@ test('E2E uses packaged Composer dependencies without reinstalling the checkout'
   assert.doesNotMatch(e2eJob, /composer install/);
 });
 
+test('E2E runs one Chromium job over every tracked spec', () => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const e2eJob = workflowJobBlock(workflow, 'e2e');
+
+  assert.doesNotMatch(e2eJob, /\bmatrix\b|EASYMDE_E2E_SUITE|theme_matrix_[ab]/);
+  assert.equal((e2eJob.match(/npx playwright test/g) || []).length, 1);
+  assert.match(e2eJob, /tests\/e2e\/easymde\.spec\.mjs/);
+  assert.match(e2eJob, /tests\/e2e\/inkwell\.spec\.mjs/);
+  assert.match(e2eJob, /tests\/e2e\/theme-layout-audit\.spec\.mjs/);
+  assert.match(e2eJob, /--project=chromium/);
+});
+
 test('Playwright records trace and video only on the retained CI retry', () => {
   const config = readFileSync(join(repoRoot, 'playwright.config.mjs'), 'utf8');
 

@@ -10,12 +10,12 @@ function workflowStepBlocks(source) {
   let current = [];
 
   source.split(/\r?\n/).forEach((line) => {
-    if (/^\s{6}-\s+name:/.test(line) && current.length) {
+    if (/^\s{6}-\s+/.test(line) && current.length) {
       blocks.push(current.join('\n'));
       current = [];
     }
 
-    if (current.length || /^\s{6}-\s+name:/.test(line)) {
+    if (current.length || /^\s{6}-\s+/.test(line)) {
       current.push(line);
     }
   });
@@ -41,6 +41,13 @@ function workflowJobBlock(source, jobName) {
 function assertJobChecksAssetsWithoutPreparing(job) {
   assert.match(job, /name:\s+Check local runtime assets[\s\S]*run:\s+npm run assets:check/);
   assert.doesNotMatch(job, /\bnpm run prepare:assets\b/);
+}
+
+function hasFailureOnlyServerLogStep(job) {
+  return workflowStepBlocks(job).some(
+    (step) => /^ {8}if:\s*failure\(\)\s*$/m.test(step)
+      && step.includes('/tmp/easymde-wp-server.log')
+  );
 }
 
 test('GitHub Actions checkouts do not persist repository credentials', () => {
@@ -107,7 +114,22 @@ test('Playwright fails fast and retains evidence from the failing attempt', () =
   assert.match(config, /retries:\s*0/);
   assert.match(config, /trace:\s*'retain-on-failure'/);
   assert.match(config, /video:\s*'retain-on-failure'/);
-  assert.match(e2eJob, /if:\s*failure\(\)[\s\S]*\/tmp\/easymde-wp-server\.log/);
+  assert.ok(
+    hasFailureOnlyServerLogStep(e2eJob),
+    'the server log must be captured by a step guarded with if: failure()'
+  );
+  assert.equal(
+    hasFailureOnlyServerLogStep(`
+      - name: Earlier failure handler
+        if: failure()
+        run: echo "failure"
+      - uses: actions/upload-artifact@v4
+        with:
+          path: /tmp/easymde-wp-server.log
+    `),
+    false,
+    'an unguarded unnamed step must not inherit an earlier failure condition'
+  );
 });
 
 test('Node and release jobs validate committed runtime assets without refreshing them', () => {

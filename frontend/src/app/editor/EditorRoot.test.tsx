@@ -2107,6 +2107,49 @@ describe('EditorRoot', () => {
     expect(view.getByText('未保存')).not.toBeNull();
   });
 
+  it.each([
+    { control: 'Article theme', option: 'Newsprint' },
+    { control: 'Code theme', option: 'GitHub' }
+  ])(
+    'blocks native submission and autosave until the pending $control transaction settles',
+    async ({ control, option }) => {
+      const props = fixture();
+      const pending = deferred<boolean>();
+      vi.mocked(props.appearancePort.applyState).mockReturnValueOnce(
+        pending.promise
+      );
+      const view = render(<EditorRoot {...props} />);
+
+      fireEvent.click(await view.findByRole('button', {
+        name: '编辑器设置'
+      }));
+      fireEvent.click(view.getByRole('combobox', { name: control }));
+      fireEvent.click(view.getByRole('option', { name: option }));
+
+      const pendingSubmit = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true
+      });
+      expect(props.nativeForm.dispatchEvent(pendingSubmit)).toBe(false);
+      expect(props.sessionAutosave()).toBe('blocked');
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'editor-appearance-pending'
+      );
+
+      pending.resolve(true);
+      await waitFor(() => {
+        expect(props.appearancePort.applyState).toHaveResolvedTimes(1);
+      });
+
+      const settledSubmit = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true
+      });
+      expect(props.nativeForm.dispatchEvent(settledSubmit)).toBe(true);
+      expect(props.sessionAutosave()).toBe('continue');
+    }
+  );
+
   it('synchronizes a committed pending theme into Appearance after a mode remount', async () => {
     const props = fixture();
     const pending = deferred<boolean>();

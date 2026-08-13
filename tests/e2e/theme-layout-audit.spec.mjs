@@ -445,7 +445,6 @@ function caseEvidence(root, { mode }) {
 		["code-block", "pre"],
 		["formula", ".katex, .easymde-math-block"],
 		["image", "img"],
-		["details", "details"],
 	];
 	for (const [kind, selector] of keyElements) {
 		const element = root.querySelector(selector);

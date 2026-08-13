@@ -9,6 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class ArticleThemeRegistry {
+	private const MAX_THEME_ID_LENGTH = 200;
 
 	public function all() {
 		$themes = array(
@@ -19,31 +20,31 @@ final class ArticleThemeRegistry {
 			'red-crimson'     => $this->theme( 'red-crimson', __( 'Red crimson', 'easymde' ), 'assets/themes/article/red-crimson.css', 'atom-one-dark', true, '#f83929' ),
 			'blue-ying'       => $this->theme( 'blue-ying', __( 'Blue ying', 'easymde' ), 'assets/themes/article/blue-ying.css', 'atom-one-dark', true, '#5c9dff' ),
 			'crimson-focus'   => $this->theme( 'crimson-focus', __( 'Crimson focus', 'easymde' ), 'assets/themes/article/crimson-focus.css', 'atom-one-dark', true, '#e74c3c' ),
-			'inkwell'         => $this->theme( 'inkwell', __( '墨砚', 'easymde' ), 'assets/themes/article/inkwell.css', 'inkwell-code', true, '#3b82c4' ),
-			'animal-island'   => $this->theme( 'animal-island', __( '动物岛', 'easymde' ), 'assets/themes/article/animal-island.css', 'animal-island-code', true, '#19c8b9' ),
-			'phycat-cherry'   => $this->theme( 'phycat-cherry', __( '樱桃猫', 'easymde' ), 'assets/themes/article/phycat-cherry.css', 'phycat-code', true, '#aa1111' ),
-			'phycat-caramel'  => $this->theme( 'phycat-caramel', __( '焦糖猫', 'easymde' ), 'assets/themes/article/phycat-caramel.css', 'phycat-code', true, '#f59e0b' ),
-			'phycat-forest'   => $this->theme( 'phycat-forest', __( '森林猫', 'easymde' ), 'assets/themes/article/phycat-forest.css', 'phycat-code', true, '#11aa63' ),
-			'phycat-mint'     => $this->theme( 'phycat-mint', __( '薄荷猫', 'easymde' ), 'assets/themes/article/phycat-mint.css', 'phycat-code', true, '#3db8bf' ),
-			'phycat-sky'      => $this->theme( 'phycat-sky', __( '天蓝猫', 'easymde' ), 'assets/themes/article/phycat-sky.css', 'phycat-code', true, '#3498db' ),
-			'phycat-prussian' => $this->theme( 'phycat-prussian', __( '普鲁士猫', 'easymde' ), 'assets/themes/article/phycat-prussian.css', 'phycat-code', true, '#1d4e89' ),
-			'phycat-sakura'   => $this->theme( 'phycat-sakura', __( '樱花猫', 'easymde' ), 'assets/themes/article/phycat-sakura.css', 'phycat-code', true, '#ff7096' ),
-			'phycat-mauve'    => $this->theme( 'phycat-mauve', __( '淡紫猫', 'easymde' ), 'assets/themes/article/phycat-mauve.css', 'phycat-code', true, '#a06eb4' ),
-			'mdmdt'           => $this->theme( 'mdmdt', __( 'Mdmdt 浅色', 'easymde' ), 'assets/themes/article/mdmdt.css', 'mdmdt-code', true, '#3e69d7' ),
-			'dogschoice-pink' => $this->theme( 'dogschoice-pink', __( '狗狗粉', 'easymde' ), 'assets/themes/article/dogschoice-pink.css', 'dogschoice-pink-code', true, '#f55066' ),
-			'bloom-petal'     => $this->theme( 'bloom-petal', __( '花瓣', 'easymde' ), 'assets/themes/article/bloom-petal.css', 'bloom-petal-code', true, '#e63f9f' ),
-			'bloom-mist'      => $this->theme( 'bloom-mist', __( '雾蓝', 'easymde' ), 'assets/themes/article/bloom-mist.css', 'bloom-mist-code', true, '#34698c' ),
-			'bloom-verdant'   => $this->theme( 'bloom-verdant', __( '草木', 'easymde' ), 'assets/themes/article/bloom-verdant.css', 'bloom-verdant-code', true, '#3d7055' ),
-			'bloom-stone'     => $this->theme( 'bloom-stone', __( '暖石', 'easymde' ), 'assets/themes/article/bloom-stone.css', 'bloom-stone-code', true, '#82564f' ),
-			'bloom-wheat'     => $this->theme( 'bloom-wheat', __( '麦穗', 'easymde' ), 'assets/themes/article/bloom-wheat.css', 'bloom-wheat-code', true, '#947d53' ),
-			'bloom-ink'       => $this->theme( 'bloom-ink', __( '水墨', 'easymde' ), 'assets/themes/article/bloom-ink.css', 'bloom-ink-code', true, '#a74639' ),
-			'bloom-amber'     => $this->theme( 'bloom-amber', __( '琥珀', 'easymde' ), 'assets/themes/article/bloom-amber.css', 'bloom-amber-code', true, '#b77b29' ),
-			'bloom-lapis'     => $this->theme( 'bloom-lapis', __( '青金', 'easymde' ), 'assets/themes/article/bloom-lapis.css', 'bloom-lapis-code', true, '#2f62ac' ),
-			'bloom-ripple'    => $this->theme( 'bloom-ripple', __( '涟漪', 'easymde' ), 'assets/themes/article/bloom-ripple.css', 'bloom-ripple-code', true, '#009c9c' ),
-			'bloom-cinnabar'  => $this->theme( 'bloom-cinnabar', __( '丹红', 'easymde' ), 'assets/themes/article/bloom-cinnabar.css', 'bloom-cinnabar-code', true, '#c53637' ),
-			'bloom-sage'      => $this->theme( 'bloom-sage', __( '鼠尾草', 'easymde' ), 'assets/themes/article/bloom-sage.css', 'bloom-sage-code', true, '#848e38' ),
-			'bloom-spring'    => $this->theme( 'bloom-spring', __( '紫语', 'easymde' ), 'assets/themes/article/bloom-spring.css', 'bloom-spring-code', true, '#877deb' ),
-			'spring'          => $this->theme( 'spring', __( '春日', 'easymde' ), 'assets/themes/article/spring.css', 'spring-code', true, '#3ea173' ),
+			'inkwell'         => $this->theme( 'inkwell', __( 'Inkwell', 'easymde' ), 'assets/themes/article/inkwell.css', 'inkwell-code', true, '#3b82c4' ),
+			'animal-island'   => $this->theme( 'animal-island', __( 'Animal Island', 'easymde' ), 'assets/themes/article/animal-island.css', 'animal-island-code', true, '#19c8b9' ),
+			'phycat-cherry'   => $this->theme( 'phycat-cherry', __( 'Phycat Cherry', 'easymde' ), 'assets/themes/article/phycat-cherry.css', 'phycat-code', true, '#aa1111' ),
+			'phycat-caramel'  => $this->theme( 'phycat-caramel', __( 'Phycat Caramel', 'easymde' ), 'assets/themes/article/phycat-caramel.css', 'phycat-code', true, '#f59e0b' ),
+			'phycat-forest'   => $this->theme( 'phycat-forest', __( 'Phycat Forest', 'easymde' ), 'assets/themes/article/phycat-forest.css', 'phycat-code', true, '#11aa63' ),
+			'phycat-mint'     => $this->theme( 'phycat-mint', __( 'Phycat Mint', 'easymde' ), 'assets/themes/article/phycat-mint.css', 'phycat-code', true, '#3db8bf' ),
+			'phycat-sky'      => $this->theme( 'phycat-sky', __( 'Phycat Sky', 'easymde' ), 'assets/themes/article/phycat-sky.css', 'phycat-code', true, '#3498db' ),
+			'phycat-prussian' => $this->theme( 'phycat-prussian', __( 'Phycat Prussian', 'easymde' ), 'assets/themes/article/phycat-prussian.css', 'phycat-code', true, '#1d4e89' ),
+			'phycat-sakura'   => $this->theme( 'phycat-sakura', __( 'Phycat Sakura', 'easymde' ), 'assets/themes/article/phycat-sakura.css', 'phycat-code', true, '#ff7096' ),
+			'phycat-mauve'    => $this->theme( 'phycat-mauve', __( 'Phycat Mauve', 'easymde' ), 'assets/themes/article/phycat-mauve.css', 'phycat-code', true, '#a06eb4' ),
+			'mdmdt'           => $this->theme( 'mdmdt', __( 'Mdmdt Light', 'easymde' ), 'assets/themes/article/mdmdt.css', 'mdmdt-code', true, '#3e69d7' ),
+			'dogschoice-pink' => $this->theme( 'dogschoice-pink', __( 'Dog\'s Choice Pink', 'easymde' ), 'assets/themes/article/dogschoice-pink.css', 'dogschoice-pink-code', true, '#f55066' ),
+			'bloom-petal'     => $this->theme( 'bloom-petal', __( 'Bloom Petal', 'easymde' ), 'assets/themes/article/bloom-petal.css', 'bloom-petal-code', true, '#e63f9f' ),
+			'bloom-mist'      => $this->theme( 'bloom-mist', __( 'Bloom Mist', 'easymde' ), 'assets/themes/article/bloom-mist.css', 'bloom-mist-code', true, '#34698c' ),
+			'bloom-verdant'   => $this->theme( 'bloom-verdant', __( 'Bloom Verdant', 'easymde' ), 'assets/themes/article/bloom-verdant.css', 'bloom-verdant-code', true, '#3d7055' ),
+			'bloom-stone'     => $this->theme( 'bloom-stone', __( 'Bloom Stone', 'easymde' ), 'assets/themes/article/bloom-stone.css', 'bloom-stone-code', true, '#82564f' ),
+			'bloom-wheat'     => $this->theme( 'bloom-wheat', __( 'Bloom Wheat', 'easymde' ), 'assets/themes/article/bloom-wheat.css', 'bloom-wheat-code', true, '#947d53' ),
+			'bloom-ink'       => $this->theme( 'bloom-ink', __( 'Bloom Ink', 'easymde' ), 'assets/themes/article/bloom-ink.css', 'bloom-ink-code', true, '#a74639' ),
+			'bloom-amber'     => $this->theme( 'bloom-amber', __( 'Bloom Amber', 'easymde' ), 'assets/themes/article/bloom-amber.css', 'bloom-amber-code', true, '#b77b29' ),
+			'bloom-lapis'     => $this->theme( 'bloom-lapis', __( 'Bloom Lapis', 'easymde' ), 'assets/themes/article/bloom-lapis.css', 'bloom-lapis-code', true, '#2f62ac' ),
+			'bloom-ripple'    => $this->theme( 'bloom-ripple', __( 'Bloom Ripple', 'easymde' ), 'assets/themes/article/bloom-ripple.css', 'bloom-ripple-code', true, '#009c9c' ),
+			'bloom-cinnabar'  => $this->theme( 'bloom-cinnabar', __( 'Bloom Cinnabar', 'easymde' ), 'assets/themes/article/bloom-cinnabar.css', 'bloom-cinnabar-code', true, '#c53637' ),
+			'bloom-sage'      => $this->theme( 'bloom-sage', __( 'Bloom Sage', 'easymde' ), 'assets/themes/article/bloom-sage.css', 'bloom-sage-code', true, '#848e38' ),
+			'bloom-spring'    => $this->theme( 'bloom-spring', __( 'Bloom Spring', 'easymde' ), 'assets/themes/article/bloom-spring.css', 'bloom-spring-code', true, '#877deb' ),
+			'spring'          => $this->theme( 'spring', __( 'Spring', 'easymde' ), 'assets/themes/article/spring.css', 'spring-code', true, '#3ea173' ),
 			'lanqing'         => $this->theme( 'lanqing', __( 'Lanqing', 'easymde' ), 'assets/themes/article/lanqing.css', 'atom-one-dark', true, '#009688' ),
 			'yamabuki'        => $this->theme( 'yamabuki', __( 'Yamabuki', 'easymde' ), 'assets/themes/article/yamabuki.css', 'atom-one-dark', true, '#ffb11b' ),
 			'grid-black'      => $this->theme( 'grid-black', __( 'Grid black', 'easymde' ), 'assets/themes/article/grid-black.css', 'atom-one-dark', true, '#212122' ),
@@ -68,9 +69,12 @@ final class ArticleThemeRegistry {
 			}
 		}
 
-		$filtered_themes = apply_filters( 'easymde_article_themes', $themes );
+		$filtered_themes = $this->normalize_filtered_themes(
+			apply_filters( 'easymde_article_themes', $themes ),
+			$themes
+		);
 		foreach ( $filtered_themes as $key => $theme ) {
-			$theme_id = isset( $theme['id'] ) ? sanitize_key( $theme['id'] ) : sanitize_key( $key );
+			$theme_id = $theme['id'];
 			if (
 				isset( $themes[ $theme_id ]['swatch'] )
 				&& ( ! array_key_exists( 'swatch', $theme ) || null === $theme['swatch'] )
@@ -212,6 +216,102 @@ final class ArticleThemeRegistry {
 		$theme = $this->get( $markdown_theme );
 
 		return ! empty( $theme['uses_theme_font_family'] );
+	}
+
+	private function normalize_filtered_themes( $filtered_themes, $registered_themes ) {
+		if ( ! is_array( $filtered_themes ) ) {
+			$this->warn( 'invalid-article-theme-registry' );
+
+			return $registered_themes;
+		}
+
+		$normalized_themes = array();
+		$required_fields   = array( 'id', 'label', 'asset_path', 'origin', 'class_name' );
+		foreach ( $filtered_themes as $key => $theme ) {
+			if (
+				! is_string( $key )
+				|| '' === $key
+				|| self::MAX_THEME_ID_LENGTH < strlen( $key )
+				|| sanitize_key( $key ) !== $key
+			) {
+				$key_code = is_string( $key ) ? sanitize_key( $key ) : 'numeric-key';
+				if ( is_string( $key ) && self::MAX_THEME_ID_LENGTH < strlen( $key ) ) {
+					$key_code = 'too-long-key';
+				}
+				$this->warn( 'invalid-article-theme-key:' . ( $key_code ? $key_code : 'empty-key' ) );
+				continue;
+			}
+
+			if ( ! is_array( $theme ) ) {
+				$this->warn( 'invalid-article-theme-descriptor:' . $key );
+				continue;
+			}
+
+			if (
+				! isset( $theme['id'] )
+				|| ! is_string( $theme['id'] )
+				|| '' === $theme['id']
+				|| self::MAX_THEME_ID_LENGTH < strlen( $theme['id'] )
+				|| sanitize_key( $theme['id'] ) !== $theme['id']
+			) {
+				$this->warn( 'invalid-article-theme-field:' . $key . ':id' );
+				continue;
+			}
+
+			$theme_id = $theme['id'];
+			if ( isset( $normalized_themes[ $theme_id ] ) ) {
+				$this->warn( 'duplicate-article-theme-id:' . $theme_id );
+				continue;
+			}
+
+			if ( $key !== $theme_id ) {
+				$this->warn( 'article-theme-key-id-mismatch:' . $key . ':' . $theme_id );
+				continue;
+			}
+
+			$valid = true;
+			foreach ( $required_fields as $field ) {
+				if ( ! isset( $theme[ $field ] ) || ! is_string( $theme[ $field ] ) || '' === trim( $theme[ $field ] ) ) {
+					$this->warn( 'invalid-article-theme-field:' . $theme_id . ':' . $field );
+					$valid = false;
+					break;
+				}
+			}
+
+			if ( ! $valid ) {
+				continue;
+			}
+
+			if (
+				array_key_exists( 'default_code_theme', $theme )
+				&& (
+					! is_string( $theme['default_code_theme'] )
+					|| '' === $theme['default_code_theme']
+					|| self::MAX_THEME_ID_LENGTH < strlen( $theme['default_code_theme'] )
+					|| sanitize_key( $theme['default_code_theme'] ) !== $theme['default_code_theme']
+				)
+			) {
+				$this->warn( 'invalid-article-theme-field:' . $theme_id . ':default_code_theme' );
+				continue;
+			}
+
+			$normalized_themes[ $theme_id ] = $theme;
+		}
+
+		if ( ! isset( $normalized_themes['default'] ) ) {
+			$this->warn( 'article-theme-fallback-restored:default' );
+			$normalized_themes = array( 'default' => $registered_themes['default'] ) + $normalized_themes;
+		}
+
+		return $normalized_themes;
+	}
+
+	private function warn( $code ) {
+		wp_trigger_error(
+			__METHOD__,
+			'Article theme registry entry was ignored (' . $code . ').',
+			E_USER_WARNING
+		);
 	}
 
 	private function theme( $id, $label, $asset_path, $default_code_theme, $uses_theme_font_family = true, $swatch = null ) {

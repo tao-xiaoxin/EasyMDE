@@ -1478,6 +1478,7 @@ export function EditorRoot(props: EditorRootProps) {
       return;
     }
     return props.sessionPort.subscribeBeforeAutosave(() => {
+      if (codeThemePreparationRef.current) return 'blocked';
       if (visualPreviewEditingRef.current) {
         const runtime = visualEditorRuntimeRef.current;
         if (!runtime) throw new Error('visual-editor-runtime-unavailable');
@@ -1495,6 +1496,10 @@ export function EditorRoot(props: EditorRootProps) {
     return props.nativeSubmissionPort.subscribeBeforeSubmit(() => {
       const sessionError = protectedOperationError('post-write');
       if (sessionError) return 'blocked';
+      if (codeThemePreparationRef.current) {
+        props.onFailure('editor-appearance-pending');
+        return 'blocked';
+      }
       if (
         visualPreviewEditingRef.current
         && !prepareSourceMutation()
@@ -1508,6 +1513,7 @@ export function EditorRoot(props: EditorRootProps) {
     documentSession,
     prepareSourceMutation,
     props.nativeSubmissionPort,
+    props.onFailure,
     protectedOperationError
   ]);
 

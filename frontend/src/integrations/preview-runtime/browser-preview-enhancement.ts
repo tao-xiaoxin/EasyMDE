@@ -41,9 +41,26 @@ type StyleLoad = Readonly<{
 }>;
 
 type PreparedStyleLoad = Readonly<{
+  attemptCommit: () => void;
   cancel: () => void;
+  owner: PreparedStyleOwner;
   promise: Promise<PreparedCodeTheme>;
+  sequence: number;
 }>;
+
+type PreparedStyleOwner = 'activation' | 'enhancement';
+
+type PreparedStyleSlot = {
+  activationOutcomes: Map<number, string>;
+  activeActivations: Set<number>;
+  authoritativeActivationUrl: string | null;
+  committedActivationSequence: number;
+  committedEnhancementSequence: number;
+  enhancementBarriers: Map<number, Set<number>>;
+  loads: Set<PreparedStyleLoad>;
+  nextSequence: number;
+  reconciling: boolean;
+};
 
 type ScriptLoad = Readonly<{
   cancel: () => void;
@@ -88,7 +105,7 @@ function createResourceLoader(documentRef: Document) {
   const scriptLoads = new Map<string, ScriptLoad>();
   const scriptLoadsByUrl = new Map<string, ScriptLoad>();
   const styleLoads = new Map<string, StyleLoad>();
-  const preparedStyleLoads = new Map<string, PreparedStyleLoad>();
+  const preparedStyleSlots = new Map<string, PreparedStyleSlot>();
   let disposed = false;
 
   function head(): HTMLHeadElement {
@@ -190,7 +207,10 @@ function createResourceLoader(documentRef: Document) {
 
   function loadStylesheet(id: string, url: string, signal: AbortSignal): Promise<void> {
     if (disposed) return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
-    preparedStyleLoads.get(id)?.cancel();
+    const preparedSlot = preparedStyleSlots.get(id);
+    if (preparedSlot) {
+      for (const load of [...preparedSlot.loads]) load.cancel();
+    }
     const cached = styleLoads.get(id);
     const existing = documentRef.getElementById(id);
     if (
@@ -299,124 +319,255 @@ function createResourceLoader(documentRef: Document) {
   function prepareStylesheet(
     id: string,
     url: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    owner: PreparedStyleOwner
   ): PreparedStyleLoad {
     if (disposed) {
       return {
+        attemptCommit: () => undefined,
         cancel: () => undefined,
-        promise: Promise.reject(resourceError('preview-enhancement-runtime-unavailable'))
+        owner,
+        promise: Promise.reject(resourceError('preview-enhancement-runtime-unavailable')),
+        sequence: 0
       };
     }
     if (signal.aborted) {
       return {
+        attemptCommit: () => undefined,
         cancel: () => undefined,
-        promise: Promise.reject(resourceError('preview-enhancement-resource-stale'))
+        owner,
+        promise: Promise.reject(resourceError('preview-enhancement-resource-stale')),
+        sequence: 0
       };
     }
+    let slot = preparedStyleSlots.get(id);
+    if (!slot) {
+      slot = {
+        activationOutcomes: new Map(),
+        activeActivations: new Set(),
+        authoritativeActivationUrl: null,
+        committedActivationSequence: 0,
+        committedEnhancementSequence: 0,
+        enhancementBarriers: new Map(),
+        loads: new Set(),
+        nextSequence: 0,
+        reconciling: false
+      };
+      preparedStyleSlots.set(id, slot);
+    }
+    const sequence = ++slot.nextSequence;
     const existing = documentRef.getElementById(id);
     if (existing && !(existing instanceof HTMLLinkElement)) {
       return {
+        attemptCommit: () => undefined,
         cancel: () => undefined,
-        promise: Promise.reject(resourceError('preview-enhancement-resource-conflict'))
+        owner,
+        promise: Promise.reject(resourceError('preview-enhancement-resource-conflict')),
+        sequence
       };
     }
-    if (
-      existing instanceof HTMLLinkElement
-      && existing.getAttribute('href') === url
-      && existing.dataset.easymdeLoadedHref === url
-    ) {
-      return {
-        cancel: () => undefined,
-        promise: Promise.resolve({ cancel: () => undefined, commit: () => undefined })
-      };
-    }
-    preparedStyleLoads.get(id)?.cancel();
 
-    const link = documentRef.createElement('link');
-    link.rel = 'stylesheet';
-    link.media = 'not all';
-    link.dataset.easymdeStylesheetOwner = id;
-    link.href = url;
-    let settled = false;
-    let active = true;
+    const reused = existing instanceof HTMLLinkElement
+      && existing.getAttribute('href') === url
+      && existing.dataset.easymdeLoadedHref === url;
+    const link = reused ? null : documentRef.createElement('link');
+    if (link) {
+      link.rel = 'stylesheet';
+      link.media = 'not all';
+      link.dataset.easymdeStylesheetOwner = id;
+      link.href = url;
+    }
+    let state: 'pending' | 'ready' | 'terminal' = reused ? 'ready' : 'pending';
+    let commitRequested = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let resolveLoad!: (prepared: PreparedCodeTheme) => void;
     let rejectLoad!: (error: Error) => void;
     let handleLoad: () => void = () => undefined;
     let handleError: () => void = () => undefined;
     let handleAbort: () => void = () => undefined;
-    const cleanupPending = () => {
-      link.removeEventListener('load', handleLoad);
-      link.removeEventListener('error', handleError);
-      signal.removeEventListener('abort', handleAbort);
+    const cleanupLoad = () => {
+      link?.removeEventListener('load', handleLoad);
+      link?.removeEventListener('error', handleError);
       if (null !== timer) clearTimeout(timer);
       timer = null;
     };
-    const clearOwner = (load: PreparedStyleLoad) => {
-      if (preparedStyleLoads.get(id) === load) preparedStyleLoads.delete(id);
+    const cleanup = () => {
+      cleanupLoad();
+      signal.removeEventListener('abort', handleAbort);
     };
-    let load!: PreparedStyleLoad;
-    const cancel = () => {
-      if (!active) return;
-      active = false;
-      cleanupPending();
-      link.remove();
-      clearOwner(load);
-      if (!settled) {
-        settled = true;
-        rejectLoad(resourceError('preview-enhancement-resource-stale'));
+    const clearOwner = (load: PreparedStyleLoad) => {
+      slot.loads.delete(load);
+    };
+    const latestSuccessfulOverlappingActivation = () => {
+      const barrier = slot.enhancementBarriers.get(sequence);
+      if (!barrier) return null;
+      const successfulSequence = [...barrier]
+        .filter((activationSequence) => slot.activationOutcomes.has(activationSequence))
+        .sort((left, right) => right - left)[0];
+      if (undefined === successfulSequence) return null;
+      return slot.activationOutcomes.get(successfulSequence) ?? null;
+    };
+    const activationBlocksEnhancement = () => {
+      const barrier = slot.enhancementBarriers.get(sequence);
+      return !!barrier && [...barrier].some((activationSequence) =>
+        slot.activeActivations.has(activationSequence)
+      );
+    };
+    const pruneActivationOutcomes = () => {
+      const referenced = new Set<number>();
+      for (const barrier of slot.enhancementBarriers.values()) {
+        for (const activationSequence of barrier) referenced.add(activationSequence);
+      }
+      for (const activationSequence of slot.activationOutcomes.keys()) {
+        if (!referenced.has(activationSequence)) {
+          slot.activationOutcomes.delete(activationSequence);
+        }
       }
     };
-    const commit = () => {
-      if (!active || !settled) return;
-      active = false;
-      cleanupPending();
-      const current = documentRef.getElementById(id);
-      if (current instanceof HTMLLinkElement) current.remove();
-      link.id = id;
-      link.media = 'all';
-      link.dataset.easymdeLoadedHref = url;
+    const reconcile = () => {
+      if (slot.reconciling) return;
+      slot.reconciling = true;
+      try {
+        for (const candidate of [...slot.loads].sort((left, right) => {
+          if (left.owner !== right.owner) return 'activation' === left.owner ? -1 : 1;
+          return right.sequence - left.sequence;
+        })) {
+          candidate.attemptCommit();
+        }
+      } finally {
+        slot.reconciling = false;
+      }
+    };
+    let load!: PreparedStyleLoad;
+    const finish = (
+      errorCode?: string,
+      committedActivationUrl?: string,
+      preserveLink = false
+    ) => {
+      if ('terminal' === state) return;
+      const pending = 'pending' === state;
+      state = 'terminal';
+      cleanup();
+      if (!preserveLink) link?.remove();
+      if ('activation' === owner) {
+        slot.activeActivations.delete(sequence);
+        if (committedActivationUrl) {
+          slot.activationOutcomes.set(sequence, committedActivationUrl);
+        }
+      } else {
+        slot.enhancementBarriers.delete(sequence);
+      }
       clearOwner(load);
+      if (pending && errorCode) rejectLoad(resourceError(errorCode));
+      reconcile();
+      pruneActivationOutcomes();
+    };
+    const applyCommit = () => {
+      if ('ready' !== state || !commitRequested || disposed) return;
+      if ('activation' === owner) {
+        if (sequence < slot.committedActivationSequence) {
+          finish();
+          return;
+        }
+      } else {
+        if (activationBlocksEnhancement()) return;
+        const overlappingActivationUrl = latestSuccessfulOverlappingActivation();
+        if (overlappingActivationUrl && overlappingActivationUrl !== url) {
+          finish();
+          return;
+        }
+        if (slot.authoritativeActivationUrl && slot.authoritativeActivationUrl !== url) {
+          finish();
+          return;
+        }
+        if (sequence < slot.committedEnhancementSequence) {
+          finish();
+          return;
+        }
+      }
+
+      const current = documentRef.getElementById(id);
+      if (current && !(current instanceof HTMLLinkElement)) {
+        finish();
+        return;
+      }
+      let activeLink: HTMLLinkElement;
+      if (link) {
+        if (!link.isConnected) {
+          finish();
+          return;
+        }
+        current?.remove();
+        link.id = id;
+        link.media = 'all';
+        link.dataset.easymdeLoadedHref = url;
+        activeLink = link;
+      } else {
+        if (!(existing instanceof HTMLLinkElement) || current !== existing) {
+          finish();
+          return;
+        }
+        activeLink = existing;
+      }
+      if ('activation' === owner) {
+        slot.committedActivationSequence = sequence;
+        slot.authoritativeActivationUrl = url;
+      } else {
+        slot.committedEnhancementSequence = sequence;
+      }
       const ready = Promise.resolve();
       styleLoads.set(id, {
         cancel: () => undefined,
-        link,
+        link: activeLink,
         loaded: () => true,
         promise: ready,
         url
       });
+      finish(undefined, 'activation' === owner ? url : undefined, true);
+    };
+    const cancel = () => finish('preview-enhancement-resource-stale');
+    const commit = () => {
+      if ('ready' !== state || signal.aborted || disposed) {
+        cancel();
+        return;
+      }
+      commitRequested = true;
+      reconcile();
     };
     const promise = new Promise<PreparedCodeTheme>((resolve, reject) => {
+      resolveLoad = resolve;
       rejectLoad = reject;
-      const finishFailure = (code: string) => {
-        if (settled) return;
-        settled = true;
-        active = false;
-        cleanupPending();
-        link.remove();
-        clearOwner(load);
-        reject(resourceError(code));
-      };
-      handleLoad = () => {
-        if (settled) return;
-        settled = true;
-        cleanupPending();
-        link.dataset.easymdeLoadedHref = url;
-        resolve({ cancel, commit });
-      };
-      handleError = () => finishFailure('preview-enhancement-resource-load-failed');
-      handleAbort = () => finishFailure('preview-enhancement-resource-stale');
-      link.addEventListener('load', handleLoad);
-      link.addEventListener('error', handleError);
-      signal.addEventListener('abort', handleAbort, { once: true });
-      timer = setTimeout(handleError, RESOURCE_LOAD_TIMEOUT_MS);
-      try {
-        head().appendChild(link);
-      } catch {
-        finishFailure('preview-enhancement-document-head-missing');
-      }
     });
-    load = { cancel, promise };
-    preparedStyleLoads.set(id, load);
+    load = { attemptCommit: applyCommit, cancel, owner, promise, sequence };
+    slot.loads.add(load);
+    if ('activation' === owner) {
+      slot.activeActivations.add(sequence);
+      for (const barrier of slot.enhancementBarriers.values()) barrier.add(sequence);
+    } else {
+      slot.enhancementBarriers.set(sequence, new Set(slot.activeActivations));
+    }
+    handleAbort = cancel;
+    signal.addEventListener('abort', handleAbort, { once: true });
+    if (reused) {
+      resolveLoad({ cancel, commit });
+      return load;
+    }
+    handleLoad = () => {
+      if ('pending' !== state || !link) return;
+      state = 'ready';
+      cleanupLoad();
+      link.dataset.easymdeLoadedHref = url;
+      resolveLoad({ cancel, commit });
+    };
+    handleError = () => finish('preview-enhancement-resource-load-failed');
+    link?.addEventListener('load', handleLoad);
+    link?.addEventListener('error', handleError);
+    timer = setTimeout(handleError, RESOURCE_LOAD_TIMEOUT_MS);
+    try {
+      if (link) head().appendChild(link);
+    } catch {
+      finish('preview-enhancement-document-head-missing');
+    }
     return load;
   }
 
@@ -429,11 +580,13 @@ function createResourceLoader(documentRef: Document) {
     for (const load of styleLoads.values()) {
       if (!load.loaded()) load.cancel();
     }
-    for (const load of preparedStyleLoads.values()) load.cancel();
+    for (const slot of preparedStyleSlots.values()) {
+      for (const load of [...slot.loads]) load.cancel();
+    }
     scriptLoads.clear();
     scriptLoadsByUrl.clear();
     styleLoads.clear();
-    preparedStyleLoads.clear();
+    preparedStyleSlots.clear();
   }
 
   return { dispose, loadScript, loadStylesheet, prepareStylesheet };
@@ -457,15 +610,17 @@ export function createBrowserPreviewEnhancementPort(
   const loader = createResourceLoader(options.documentRef);
   const assets = bootstrap.assets;
 
-  async function prepareCodeTheme(
-    context: PreviewEnhancementContext
+  async function prepareCodeThemeForOwner(
+    context: PreviewEnhancementContext,
+    owner: PreparedStyleOwner
   ): Promise<PreparedCodeTheme> {
     const theme = bootstrap.codeThemes.find(({ id }) => id === context.codeTheme);
     if (!theme) throw resourceError('preview-enhancement-code-theme-missing');
     const preparation = loader.prepareStylesheet(
       assets.highlightThemeLinkId,
       theme.cssUrl,
-      context.signal
+      context.signal,
+      owner
     );
     try {
       const [prepared] = await Promise.all([
@@ -483,8 +638,17 @@ export function createBrowserPreviewEnhancementPort(
     }
   }
 
+  function prepareCodeTheme(
+    context: PreviewEnhancementContext
+  ): Promise<PreparedCodeTheme> {
+    return prepareCodeThemeForOwner(context, 'activation');
+  }
+
   async function prepareHighlight(codeTheme: string, signal: AbortSignal): Promise<void> {
-    const preparedCodeTheme = await prepareCodeTheme({ codeTheme, signal });
+    const preparedCodeTheme = await prepareCodeThemeForOwner(
+      { codeTheme, signal },
+      'enhancement'
+    );
     try {
       await loadRuntime(options.runtime.hasHighlight, () =>
         loader.loadScript('easymde-highlight-js', assets.highlightScriptUrl, signal));
@@ -548,7 +712,10 @@ export function createBrowserPreviewEnhancementPort(
       if (fallbackFeatures.syntaxHighlight) {
         tasks.push(prepareHighlight(context.codeTheme, context.signal));
       } else if (mermaidAssetFailure) {
-        tasks.push(prepareCodeTheme(context).then((prepared) => prepared.commit()));
+        tasks.push(
+          prepareCodeThemeForOwner(context, 'enhancement')
+            .then((prepared) => prepared.commit())
+        );
       }
       if (fallbackFeatures.math) tasks.push(prepareMath(context.signal));
       if (fallbackFeatures.mermaid) tasks.push(prepareMermaid(context.signal));

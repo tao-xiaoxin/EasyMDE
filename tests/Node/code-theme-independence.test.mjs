@@ -24,13 +24,30 @@ const TYPORA_CODE_ROLE_PROBES = [
   { className: 'hljs', property: 'background', role: '--easymde-typora-code-bg' },
   { className: 'hljs', property: 'color', role: '--easymde-typora-code-text' },
   { className: 'hljs-comment', property: 'color', role: '--easymde-typora-code-muted' },
+  { className: 'hljs-quote', property: 'color', role: '--easymde-typora-code-muted' },
   { className: 'hljs-keyword', property: 'color', role: '--easymde-typora-code-keyword' },
+  { className: 'hljs-selector-tag', property: 'color', role: '--easymde-typora-code-keyword' },
+  { className: 'hljs-subst', property: 'color', role: '--easymde-typora-code-keyword' },
+  { className: 'hljs-name', property: 'color', role: '--easymde-typora-code-keyword' },
+  { className: 'hljs-tag', property: 'color', role: '--easymde-typora-code-keyword' },
   { className: 'hljs-string', property: 'color', role: '--easymde-typora-code-string' },
+  { className: 'hljs-doctag', property: 'color', role: '--easymde-typora-code-string' },
   { className: 'hljs-number', property: 'color', role: '--easymde-typora-code-number' },
+  { className: 'hljs-literal', property: 'color', role: '--easymde-typora-code-number' },
+  { className: 'hljs-symbol', property: 'color', role: '--easymde-typora-code-number' },
   { className: 'hljs-title', property: 'color', role: '--easymde-typora-code-blue' },
+  { className: 'hljs-section', property: 'color', role: '--easymde-typora-code-blue' },
+  { className: 'hljs-type', property: 'color', role: '--easymde-typora-code-blue' },
+  { className: 'hljs-built_in', property: 'color', role: '--easymde-typora-code-blue' },
+  { className: 'hljs-attr', property: 'color', role: '--easymde-typora-code-blue' },
+  { className: 'hljs-attribute', property: 'color', role: '--easymde-typora-code-blue' },
+  { className: 'hljs-selector-class', property: 'color', role: '--easymde-typora-code-blue' },
+  { className: 'hljs-selector-id', property: 'color', role: '--easymde-typora-code-blue' },
   { className: 'hljs-link', property: 'color', role: '--easymde-typora-code-link' },
   { className: 'hljs-variable', property: 'color', role: '--easymde-typora-code-variable' },
-  { className: 'hljs-operator', property: 'color', role: '--easymde-typora-code-operator' }
+  { className: 'hljs-operator', property: 'color', role: '--easymde-typora-code-operator' },
+  { className: 'hljs-emphasis', property: 'color', role: '--easymde-typora-code-text' },
+  { className: 'hljs-strong', property: 'color', role: '--easymde-typora-code-text' }
 ];
 
 function source(path) {
@@ -179,9 +196,9 @@ function resolvedComputedValue(computed, property) {
 function assertTyporaCodeFinalColors(css, baseline, associations) {
   const codeIds = [...new Set(Object.values(associations))].sort();
   assert.deepEqual(
-    TYPORA_CODE_ROLE_PROBES.map(({ role }) => role),
+    Array.from(new Set(TYPORA_CODE_ROLE_PROBES.map(({ role }) => role))),
     baseline.roles,
-    'computed palette probes must cover every canonical semantic role in order'
+    'computed palette probes must cover every canonical semantic role'
   );
   const tokenMarkup = TYPORA_CODE_ROLE_PROBES
     .filter(({ className }) => className !== 'hljs')
@@ -196,7 +213,7 @@ function assertTyporaCodeFinalColors(css, baseline, associations) {
     root.innerHTML = `<code class="hljs">plain${tokenMarkup}</code>`;
     document.body.append(root);
 
-    const finalColors = TYPORA_CODE_ROLE_PROBES.map(({ className, property, role }, index) => {
+    const finalColors = TYPORA_CODE_ROLE_PROBES.map(({ className, property, role }) => {
       const element = root.querySelector(`.${className}`);
       const computed = dom.window.getComputedStyle(element);
       let value = resolvedComputedValue(computed, property);
@@ -207,16 +224,21 @@ function assertTyporaCodeFinalColors(css, baseline, associations) {
       }
 
       const normalized = normalizedComputedColor(dom.window, value);
-      const expected = normalizedComputedColor(dom.window, baseline.effectivePalettes[codeId][index]);
-      assert.equal(normalized, expected, `${codeId} ${role} final color`);
-      return normalized;
+      const roleIndex = baseline.roles.indexOf(role);
+      assert.notEqual(roleIndex, -1, `${role} must be a canonical palette role`);
+      const expected = normalizedComputedColor(dom.window, baseline.effectivePalettes[codeId][roleIndex]);
+      assert.equal(normalized, expected, `${codeId} ${role} final color (${className})`);
+      return { normalized, role };
     });
 
-    for (let index = 1; index < finalColors.length; index += 1) {
-      const contrast = cssContrast(finalColors[index], finalColors[0]);
+    const background = finalColors.find(({ role }) => role === '--easymde-typora-code-bg')?.normalized;
+    assert.ok(background, `${codeId} background probe`);
+    for (const { normalized, role } of finalColors) {
+      if (role === '--easymde-typora-code-bg') continue;
+      const contrast = cssContrast(normalized, background);
       assert.ok(
         contrast >= baseline.minimumContrast,
-        `${codeId} ${baseline.roles[index]} final contrast ${contrast.toFixed(2)}`
+        `${codeId} ${role} final contrast ${contrast.toFixed(2)}`
       );
     }
 
@@ -342,9 +364,13 @@ function assertTyporaCodePalettesMatch(css, baseline, associations) {
 function codeThemeMetadata() {
   return Array.from(
     source('src/Theme/CodeThemeRegistry.php').matchAll(
-      /=>\s*\$this->theme\(\s*'([^']+)'\s*,\s*__\(\s*'([^']+)'\s*,\s*'easymde'\s*\)\s*,\s*'([^']+\.css)'/g
+      /=>\s*\$this->theme\(\s*'([^']+)'\s*,\s*__\(\s*'((?:\\.|[^'])*)'\s*,\s*'easymde'\s*\)\s*,\s*'([^']+\.css)'/g
     ),
-    ([, id, label, assetPath]) => ({ id, label, assetPath })
+    ([, id, label, assetPath]) => ({
+      id,
+      label: label.replaceAll(/\\(['\\])/g, '$1'),
+      assetPath
+    })
   );
 }
 
@@ -499,6 +525,84 @@ function cssSelectors(css) {
 
 function normalizeSelector(selector) {
   return selector.replaceAll(/\s+/g, ' ').trim();
+}
+
+function functionalPseudoClassBranches(selector, pseudoClass) {
+  const normalized = normalizeSelector(selector);
+  const marker = `:${pseudoClass}(`;
+  if (!normalized.toLowerCase().startsWith(marker)) return null;
+
+  let depth = 1;
+  let quote = null;
+  let escaped = false;
+  let end = marker.length;
+
+  for (; end < normalized.length && depth > 0; end += 1) {
+    const character = normalized[end];
+
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = null;
+      continue;
+    }
+
+    if (character === '"' || character === "'") quote = character;
+    else if (character === '(') depth += 1;
+    else if (character === ')') depth -= 1;
+  }
+
+  if (depth > 0) throw new Error(`Unclosed :${pseudoClass}() in selector: ${selector}`);
+  return splitCssList(normalized.slice(marker.length, end - 1), ',');
+}
+
+function leadingOwnedCodeThemeIds(selector) {
+  const rootPattern = /^\.easymde-rendered-content\.easymde-code-theme-([a-z0-9-]+)(?=$|[.#:[\]\s>+~])/;
+  const normalized = normalizeSelector(selector);
+  const branches = functionalPseudoClassBranches(normalized, 'is');
+
+  if (branches) {
+    return branches.map((branch) => normalizeSelector(branch).match(rootPattern)?.[1] ?? null);
+  }
+
+  return [normalized.match(rootPattern)?.[1] ?? null];
+}
+
+function assertOwnedCodeThemeAsset(css, themes) {
+  const assetPath = themes[0]?.assetPath ?? 'unknown owned code-theme asset';
+  const allowedIds = new Set(themes.map(({ id }) => id));
+  const effectivePaletteIds = new Set();
+  const paletteProperties = new Set(['background', 'background-color', 'color']);
+  const rules = cssRules(css);
+
+  assert.ok(rules.length > 0, `${assetPath} must contain parsed CSS rules`);
+  for (const rule of rules) {
+    const declarations = cssDeclarations(rule.body);
+    const effectivePaletteRule = declarations.some(({ property }) => paletteProperties.has(property));
+
+    for (const selector of rule.selectors) {
+      const themeIds = leadingOwnedCodeThemeIds(selector);
+      assert.ok(
+        themeIds.length > 0 && themeIds.every(Boolean),
+        `${assetPath} selector is not rooted in a served code theme: ${normalizeSelector(selector)}`
+      );
+      assert.ok(
+        themeIds.every((id) => allowedIds.has(id)),
+        `${assetPath} selector references an unserved code theme: ${normalizeSelector(selector)}`
+      );
+      if (effectivePaletteRule) {
+        for (const themeId of themeIds) effectivePaletteIds.add(themeId);
+      }
+    }
+  }
+
+  assert.ok(effectivePaletteIds.size > 0, `${assetPath} must contain effective palette declarations`);
+  for (const theme of themes) {
+    assert.ok(
+      effectivePaletteIds.has(theme.id),
+      `${assetPath} must apply an effective palette declaration to ${theme.id}`
+    );
+  }
 }
 
 function withoutFunctionalPseudoClass(selector, pseudoClass) {
@@ -832,6 +936,23 @@ test('Typora-derived code palette gate rejects a higher-specificity final token 
   );
 });
 
+test('Typora-derived code palette gate rejects a higher-specificity grouped token color', () => {
+  const changedCss = `${source('assets/themes/code/typora-derived.css')}
+.easymde-rendered-content.easymde-code-theme-inkwell-code .hljs .hljs-selector-tag {
+  color: #ffffff;
+}`;
+
+  assert.throws(
+    () =>
+      assertTyporaCodePalettesMatch(
+        changedCss,
+        typoraCodePaletteBaseline(),
+        typoraDerivedCodeAssociations()
+      ),
+    /inkwell-code --easymde-typora-code-keyword final color \(hljs-selector-tag\)/
+  );
+});
+
 test('associated code-theme assets are independent from article-theme selectors', () => {
   const articleThemes = articleThemeAssociations();
   const codeThemes = new Map(
@@ -861,6 +982,30 @@ test('EasyMDE-owned code themes contain palette rules but no shared frame geomet
   for (const theme of ownedThemes) {
     assert.doesNotMatch(source(theme.assetPath), geometryProperties, theme.id);
   }
+});
+
+test('every EasyMDE-owned code-theme selector is rooted in a theme served by its asset', () => {
+  const themesByAsset = new Map();
+  for (const theme of registeredThemes('src/Theme/CodeThemeRegistry.php')) {
+    if (!theme.assetPath.startsWith('assets/themes/code/')) continue;
+    themesByAsset.set(theme.assetPath, [...(themesByAsset.get(theme.assetPath) ?? []), theme]);
+  }
+
+  assert.ok(themesByAsset.size > 0);
+  for (const [assetPath, themes] of themesByAsset) {
+    assertOwnedCodeThemeAsset(source(assetPath), themes);
+  }
+});
+
+test('owned code-theme selector gate ignores comment-only scope claims', () => {
+  assert.throws(
+    () => assertOwnedCodeThemeAsset(
+      `/* .easymde-rendered-content.easymde-code-theme-example */
+.hljs { color: #000000; }`,
+      [{ id: 'example', assetPath: 'assets/themes/code/example.css' }]
+    ),
+    /selector is not rooted in a served code theme: \.hljs/
+  );
 });
 
 test('Fullstack Blue preserves its distinct token palette without content rewriting', () => {

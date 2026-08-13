@@ -58,7 +58,7 @@
     letter-spacing: 0.01em;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-animal-island > *:first-child{
+.easymde-rendered-content.easymde-markdown-theme-animal-island > *:first-child:not(pre){
     margin-top: 0 !important;
 }
 

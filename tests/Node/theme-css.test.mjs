@@ -1002,6 +1002,14 @@ test('Bloom retains source heading tracking and Petal release heading color', ()
     const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
     const root = scopedArticleRoot(theme);
     const rootPattern = escapedRegExp(root);
+    const printColorRule = cssRuleBodyMatching(
+      css,
+      `${root} *`,
+      (body) => /(?:-webkit-)?print-color-adjust:\s*exact\s*!important;/.test(body)
+    );
+    assert.ok(printColorRule, `${theme} should preserve printed theme colors`);
+    assert.match(printColorRule, /-webkit-print-color-adjust:\s*exact\s*!important;/);
+    assert.match(printColorRule, /(?:^|\s)print-color-adjust:\s*exact\s*!important;/);
     const headingGroup = css.match(
       new RegExp(
         `${rootPattern} h1\\s*,\\s*${rootPattern} h2\\s*,\\s*${rootPattern} h3\\s*,\\s*${rootPattern} h4\\s*,\\s*${rootPattern} h5\\s*,\\s*${rootPattern} h6\\s*\\{([^}]*)\\}`,
@@ -1341,14 +1349,26 @@ test('Terminal Noir remains authoritative across every registered article theme'
     ].join('\n');
     const dom = new JSDOM(
       `<style>${css}</style>
-      <article class="easymde-rendered-content easymde-markdown-theme-${articleTheme} easymde-code-theme-terminal-noir easymde-code-mac">
+      <article data-code-frame class="easymde-rendered-content easymde-markdown-theme-${articleTheme} easymde-code-theme-terminal-noir easymde-code-mac">
         <pre><code class="hljs"><span class="hljs-title">Title</span><span class="hljs-number">1</span></code></pre>
+      </article>
+      <article data-ordinary-first class="easymde-rendered-content easymde-markdown-theme-${articleTheme}">
+        <p>Ordinary first child</p>
       </article>`
     );
     const { window } = dom;
-    assert.equal(window.getComputedStyle(window.document.querySelector('pre')).backgroundColor, 'rgb(13, 16, 23)', articleTheme);
+    const preStyle = window.getComputedStyle(window.document.querySelector('[data-code-frame] pre'));
+    assert.equal(preStyle.backgroundColor, 'rgb(13, 16, 23)', articleTheme);
+    assert.equal(preStyle.margin, '16px 0px', articleTheme);
     assert.equal(window.getComputedStyle(window.document.querySelector('code')).color, 'rgb(202, 209, 217)', articleTheme);
     assert.equal(window.getComputedStyle(window.document.querySelector('.hljs-title')).color, 'rgb(221, 226, 232)', articleTheme);
     assert.equal(window.getComputedStyle(window.document.querySelector('.hljs-number')).color, 'rgb(159, 184, 208)', articleTheme);
+    if (articleTheme === 'animal-island') {
+      assert.equal(
+        window.getComputedStyle(window.document.querySelector('[data-ordinary-first] > p')).marginTop,
+        '0px',
+        'Animal Island should still reset the top margin of an ordinary first child'
+      );
+    }
   });
 });

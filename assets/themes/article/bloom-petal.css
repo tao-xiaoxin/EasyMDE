@@ -473,6 +473,11 @@
 
 
 @media print{
+    .easymde-rendered-content.easymde-markdown-theme-bloom-petal *{
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+
     .easymde-rendered-content.easymde-markdown-theme-bloom-petal table{
         box-shadow: none !important;
     }

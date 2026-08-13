@@ -9,7 +9,6 @@
 .easymde-rendered-content.easymde-markdown-theme-bloom-verdant {
 
     --space-unit: 8px;
-    --space-xs: calc(var(--space-unit) * 1);
     --space-md: calc(var(--space-unit) * 2);
     --space-lg: calc(var(--space-unit) * 3);
     --space-xl: calc(var(--space-unit) * 4);
@@ -19,15 +18,6 @@
 
     --accent: #3d7055;
     --accent-rgb: 160, 176, 167;
-
-
-
-
-    --success: #80b38a;
-    --warning: #d6b17d;
-    --error: #bb6d67;
-    --info: #6993be;
-    --important: #7e80ee;
 
 
     --bg: #ecf4ef;
@@ -224,95 +214,6 @@
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote p:last-child {
     margin-bottom: 0;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type^="alert-"] {
-    padding: var(--space-md) var(--space-lg);
-    border-radius: 12px;
-    box-shadow: none;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type^="alert-"]::before {
-    content: none;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type^="alert-"] > p:first-child,
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type^="alert-"] > p.md-alert-title {
-    margin: 0 0 var(--space-xs);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--alert-color);
-    opacity: 0.85;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type^="alert-"] .md-alert-icon,
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type^="alert-"] .md-alert-title-icon {
-    display: inline-block;
-    margin-right: 0.5em;
-    transform: translateY(1px);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant .md-alert::before {
-    content: none;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant .md-alert .md-alert-text {
-    color: var(--alert-color);
-    font-weight: 600;
-    font-size: 0.92em;
-    letter-spacing: 0.04em;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant .md-alert > p {
-    margin: 0.5em 0;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type],
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant .md-alert {
-    border-radius: 12px;
-    padding: 1.1em 1.25em;
-    margin: 1.8em 0;
-    border: 1px solid transparent;
-    position: relative;
-    transition: all 0.2s ease;
-    border-left: 4.5px solid var(--alert-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type="alert-note"],
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant .md-alert-note {
-    --alert-color: var(--info);
-    background: #dce8e9 !important;
-    border-color: #c5d7e0 !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type="alert-tip"],
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant .md-alert-tip {
-    --alert-color: var(--success);
-    background: #dfece3 !important;
-    border-color: #cce1d1 !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type="alert-warning"],
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant .md-alert-warning {
-    --alert-color: var(--warning);
-    background: #e9eade !important;
-    border-color: #e4ddc7 !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type="alert-important"],
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant .md-alert-important {
-    --alert-color: var(--important);
-    background: #dfe6ef !important;
-    border-color: #cbd1ef !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type="alert-caution"],
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant .md-alert-caution {
-    --alert-color: var(--error);
-    background: #e5e0db !important;
-    border-color: #dbc5bf !important;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-verdant ul,
@@ -546,9 +447,7 @@
     stroke: var(--text-semi) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant a,
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant .md-alert,
-.easymde-rendered-content.easymde-markdown-theme-bloom-verdant blockquote[data-type] {
+.easymde-rendered-content.easymde-markdown-theme-bloom-verdant a {
     transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 

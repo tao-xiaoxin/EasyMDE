@@ -982,7 +982,7 @@ test('Mdmdt retains the pinned nested-list rhythm', () => {
   );
 });
 
-test('Bloom retains source heading tracking and Petal release alert colors', () => {
+test('Bloom retains source heading tracking and Petal release heading color', () => {
   const bloomThemes = [
     'bloom-petal',
     'bloom-mist',
@@ -1026,23 +1026,13 @@ test('Bloom retains source heading tracking and Petal release alert colors', () 
     /\.easymde-rendered-content\.easymde-markdown-theme-bloom-petal h1\s*\{[^}]*border-bottom:\s*1px solid rgba\(var\(--accent-rgb\), 0\.3\);/s,
     'Bloom Petal h1 border should retain the release alpha color'
   );
-  const alertColors = {
-    note: ['#eae9f2', '#cbd6e8'],
-    tip: ['#edeeea', '#d3e1d4'],
-    warning: ['#f8eae3', '#efdac5'],
-    important: ['#efe8f8', '#d8d3f6'],
-    caution: ['#f4e0e1', '#e7c2c2']
-  };
-  for (const [kind, [background, border]] of Object.entries(alertColors)) {
-    const rule = petal.match(
-      new RegExp(
-        `${escapedRegExp(scopedArticleRoot('bloom-petal'))} blockquote\\[data-type="alert-${kind}"\\]\\s*,\\s*${escapedRegExp(scopedArticleRoot('bloom-petal'))} \\.md-alert-${kind}\\s*\\{([^}]*)\\}`,
-        's'
-      )
-    );
-    assert.ok(rule, `Bloom Petal should define the pinned ${kind} alert adapter`);
-    assert.match(rule[1], new RegExp(`background:\\s*${background}\\s*!important;`));
-    assert.match(rule[1], new RegExp(`border-color:\\s*${border}\\s*!important;`));
+});
+
+test('registered Typora article themes contain no unreachable alert adapters', () => {
+  for (const theme of TYPORA_ARTICLE_THEME_IDS) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+
+    assert.doesNotMatch(css, /\.md-alert(?:[\w-]*)?|blockquote\s*\[\s*data-type/iu, theme);
   }
 });
 

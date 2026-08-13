@@ -80,6 +80,7 @@ const bootstrap: AppearanceBootstrap = {
 function createPort(overrides: Partial<AppearancePort> = {}): AppearancePort {
   return {
     applyState: vi.fn().mockResolvedValue(true),
+    cancelPendingApply: vi.fn(),
     closeOtherPopovers: vi.fn(),
     dispose: vi.fn(),
     previewCustomCss: vi.fn().mockResolvedValue({

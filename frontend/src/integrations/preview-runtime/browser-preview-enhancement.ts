@@ -1,6 +1,7 @@
 import type { PreviewEnhancementBootstrap } from '../../contracts/bootstrap/preview-enhancement-bootstrap';
 import type { PreviewFeatures } from '../../contracts/ports/preview-request';
 import type {
+  PreparedCodeTheme,
   PreviewEnhancementContext,
   PreviewEnhancementPort
 } from '../../features/live-preview/ports/preview-enhancement-port';
@@ -37,6 +38,11 @@ type StyleLoad = Readonly<{
   loaded: () => boolean;
   promise: Promise<void>;
   url: string;
+}>;
+
+type PreparedStyleLoad = Readonly<{
+  cancel: () => void;
+  promise: Promise<PreparedCodeTheme>;
 }>;
 
 type ScriptLoad = Readonly<{
@@ -82,6 +88,7 @@ function createResourceLoader(documentRef: Document) {
   const scriptLoads = new Map<string, ScriptLoad>();
   const scriptLoadsByUrl = new Map<string, ScriptLoad>();
   const styleLoads = new Map<string, StyleLoad>();
+  const preparedStyleLoads = new Map<string, PreparedStyleLoad>();
   let disposed = false;
 
   function head(): HTMLHeadElement {
@@ -183,6 +190,7 @@ function createResourceLoader(documentRef: Document) {
 
   function loadStylesheet(id: string, url: string, signal: AbortSignal): Promise<void> {
     if (disposed) return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
+    preparedStyleLoads.get(id)?.cancel();
     const cached = styleLoads.get(id);
     const existing = documentRef.getElementById(id);
     if (
@@ -288,6 +296,130 @@ function createResourceLoader(documentRef: Document) {
     return waitForResource(promise, signal);
   }
 
+  function prepareStylesheet(
+    id: string,
+    url: string,
+    signal: AbortSignal
+  ): PreparedStyleLoad {
+    if (disposed) {
+      return {
+        cancel: () => undefined,
+        promise: Promise.reject(resourceError('preview-enhancement-runtime-unavailable'))
+      };
+    }
+    if (signal.aborted) {
+      return {
+        cancel: () => undefined,
+        promise: Promise.reject(resourceError('preview-enhancement-resource-stale'))
+      };
+    }
+    const existing = documentRef.getElementById(id);
+    if (existing && !(existing instanceof HTMLLinkElement)) {
+      return {
+        cancel: () => undefined,
+        promise: Promise.reject(resourceError('preview-enhancement-resource-conflict'))
+      };
+    }
+    if (
+      existing instanceof HTMLLinkElement
+      && existing.getAttribute('href') === url
+      && existing.dataset.easymdeLoadedHref === url
+    ) {
+      return {
+        cancel: () => undefined,
+        promise: Promise.resolve({ cancel: () => undefined, commit: () => undefined })
+      };
+    }
+    preparedStyleLoads.get(id)?.cancel();
+
+    const link = documentRef.createElement('link');
+    link.rel = 'stylesheet';
+    link.media = 'not all';
+    link.dataset.easymdeStylesheetOwner = id;
+    link.href = url;
+    let settled = false;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let rejectLoad!: (error: Error) => void;
+    let handleLoad: () => void = () => undefined;
+    let handleError: () => void = () => undefined;
+    let handleAbort: () => void = () => undefined;
+    const cleanupPending = () => {
+      link.removeEventListener('load', handleLoad);
+      link.removeEventListener('error', handleError);
+      signal.removeEventListener('abort', handleAbort);
+      if (null !== timer) clearTimeout(timer);
+      timer = null;
+    };
+    const clearOwner = (load: PreparedStyleLoad) => {
+      if (preparedStyleLoads.get(id) === load) preparedStyleLoads.delete(id);
+    };
+    let load!: PreparedStyleLoad;
+    const cancel = () => {
+      if (!active) return;
+      active = false;
+      cleanupPending();
+      link.remove();
+      clearOwner(load);
+      if (!settled) {
+        settled = true;
+        rejectLoad(resourceError('preview-enhancement-resource-stale'));
+      }
+    };
+    const commit = () => {
+      if (!active || !settled) return;
+      active = false;
+      cleanupPending();
+      const current = documentRef.getElementById(id);
+      if (current instanceof HTMLLinkElement) current.remove();
+      link.id = id;
+      link.media = 'all';
+      link.dataset.easymdeLoadedHref = url;
+      clearOwner(load);
+      const ready = Promise.resolve();
+      styleLoads.set(id, {
+        cancel: () => undefined,
+        link,
+        loaded: () => true,
+        promise: ready,
+        url
+      });
+    };
+    const promise = new Promise<PreparedCodeTheme>((resolve, reject) => {
+      rejectLoad = reject;
+      const finishFailure = (code: string) => {
+        if (settled) return;
+        settled = true;
+        active = false;
+        cleanupPending();
+        link.remove();
+        clearOwner(load);
+        reject(resourceError(code));
+      };
+      handleLoad = () => {
+        if (settled) return;
+        settled = true;
+        cleanupPending();
+        link.dataset.easymdeLoadedHref = url;
+        resolve({ cancel, commit });
+      };
+      handleError = () => finishFailure('preview-enhancement-resource-load-failed');
+      handleAbort = () => finishFailure('preview-enhancement-resource-stale');
+      link.addEventListener('load', handleLoad);
+      link.addEventListener('error', handleError);
+      signal.addEventListener('abort', handleAbort, { once: true });
+      timer = setTimeout(handleError, RESOURCE_LOAD_TIMEOUT_MS);
+      try {
+        head().appendChild(link);
+      } catch {
+        finishFailure('preview-enhancement-document-head-missing');
+      }
+    });
+    load = { cancel, promise };
+    preparedStyleLoads.set(id, load);
+    return load;
+  }
+
   function dispose(): void {
     if (disposed) return;
     disposed = true;
@@ -297,12 +429,14 @@ function createResourceLoader(documentRef: Document) {
     for (const load of styleLoads.values()) {
       if (!load.loaded()) load.cancel();
     }
+    for (const load of preparedStyleLoads.values()) load.cancel();
     scriptLoads.clear();
     scriptLoadsByUrl.clear();
     styleLoads.clear();
+    preparedStyleLoads.clear();
   }
 
-  return { dispose, loadScript, loadStylesheet };
+  return { dispose, loadScript, loadStylesheet, prepareStylesheet };
 }
 
 async function loadRuntime(
@@ -325,29 +459,44 @@ export function createBrowserPreviewEnhancementPort(
 
   async function prepareCodeTheme(
     context: PreviewEnhancementContext
-  ): Promise<void> {
+  ): Promise<PreparedCodeTheme> {
     const theme = bootstrap.codeThemes.find(({ id }) => id === context.codeTheme);
     if (!theme) throw resourceError('preview-enhancement-code-theme-missing');
-    await Promise.all([
-      loader.loadStylesheet(
-        assets.codeFrameLinkId,
-        assets.codeFrameCssUrl,
-        context.signal
-      ),
-      loader.loadStylesheet(
-        assets.highlightThemeLinkId,
-        theme.cssUrl,
-        context.signal
-      )
-    ]);
+    const preparation = loader.prepareStylesheet(
+      assets.highlightThemeLinkId,
+      theme.cssUrl,
+      context.signal
+    );
+    try {
+      const [prepared] = await Promise.all([
+        preparation.promise,
+        loader.loadStylesheet(
+          assets.codeFrameLinkId,
+          assets.codeFrameCssUrl,
+          context.signal
+        )
+      ]);
+      return prepared;
+    } catch (error) {
+      preparation.cancel();
+      throw error;
+    }
   }
 
   async function prepareHighlight(codeTheme: string, signal: AbortSignal): Promise<void> {
-    await Promise.all([
-      prepareCodeTheme({ codeTheme, signal }),
-      loadRuntime(options.runtime.hasHighlight, () =>
-        loader.loadScript('easymde-highlight-js', assets.highlightScriptUrl, signal))
-    ]);
+    const preparedCodeTheme = await prepareCodeTheme({ codeTheme, signal });
+    try {
+      await loadRuntime(options.runtime.hasHighlight, () =>
+        loader.loadScript('easymde-highlight-js', assets.highlightScriptUrl, signal));
+    } catch (error) {
+      preparedCodeTheme.cancel();
+      throw error;
+    }
+    if (signal.aborted) {
+      preparedCodeTheme.cancel();
+      throw resourceError('preview-enhancement-resource-stale');
+    }
+    preparedCodeTheme.commit();
   }
 
   async function prepareMath(signal: AbortSignal): Promise<void> {
@@ -399,7 +548,7 @@ export function createBrowserPreviewEnhancementPort(
       if (fallbackFeatures.syntaxHighlight) {
         tasks.push(prepareHighlight(context.codeTheme, context.signal));
       } else if (mermaidAssetFailure) {
-        tasks.push(prepareCodeTheme(context));
+        tasks.push(prepareCodeTheme(context).then((prepared) => prepared.commit()));
       }
       if (fallbackFeatures.math) tasks.push(prepareMath(context.signal));
       if (fallbackFeatures.mermaid) tasks.push(prepareMermaid(context.signal));

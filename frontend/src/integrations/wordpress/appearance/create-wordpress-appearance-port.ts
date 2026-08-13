@@ -287,6 +287,10 @@ export function createWordPressAppearancePort({
 
   return {
     applyState,
+    cancelPendingApply: () => {
+      pendingArticleTheme?.cancel();
+      pendingArticleTheme = null;
+    },
     closeOtherPopovers: () => undefined,
     dispose: () => {
       if (disposed) return;

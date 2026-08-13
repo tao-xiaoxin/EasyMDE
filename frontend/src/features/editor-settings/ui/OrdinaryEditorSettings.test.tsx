@@ -139,6 +139,7 @@ function renderSettings() {
       appearance={appearance}
       appearancePort={{
         applyState: vi.fn().mockResolvedValue(true),
+        cancelPendingApply: vi.fn(),
         closeOtherPopovers: vi.fn(),
         dispose: vi.fn(),
         previewCustomCss: vi.fn(),

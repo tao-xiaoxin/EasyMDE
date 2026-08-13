@@ -161,6 +161,7 @@ function fixture(): EditorRootProps &
     },
     appearancePort: {
       applyState: vi.fn().mockResolvedValue(true),
+      cancelPendingApply: vi.fn(),
       closeOtherPopovers: vi.fn(),
       dispose: vi.fn(),
       previewCustomCss: vi.fn().mockResolvedValue({
@@ -175,7 +176,10 @@ function fixture(): EditorRootProps &
     enhancementPort: {
       dispose: vi.fn(),
       enhance: vi.fn().mockResolvedValue(undefined),
-      prepareCodeTheme: vi.fn().mockResolvedValue(undefined),
+      prepareCodeTheme: vi.fn().mockResolvedValue({
+        cancel: vi.fn(),
+        commit: vi.fn()
+      }),
       syncCodeFrameBackgrounds: vi.fn()
     },
     executeExternalCommand: vi.fn(),
@@ -4149,11 +4153,26 @@ describe('EditorRoot', () => {
     expect(props.enhancementPort.enhance).toHaveBeenCalledTimes(enhanceCount);
   });
 
-  it('keeps the rendered code theme when code CSS preparation fails', async () => {
+  it('keeps code theme authority unchanged after preparation failure and retries the same theme', async () => {
     const props = fixture();
-    vi.mocked(props.enhancementPort.prepareCodeTheme).mockRejectedValue(
-      new Error('preview-enhancement-resource-load-failed')
+    const nativeFields = {
+      codeTheme: 'atom-one-dark',
+      codeThemeExplicit: '0'
+    };
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      async (state, explicit) => {
+        nativeFields.codeTheme = state.codeTheme;
+        nativeFields.codeThemeExplicit = explicit ? '1' : '0';
+        return true;
+      }
     );
+    vi.mocked(props.enhancementPort.prepareCodeTheme)
+      .mockRejectedValueOnce(
+        new Error('preview-enhancement-resource-load-failed')
+      );
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    vi.mocked(props.enhancementPort.prepareCodeTheme)
+      .mockResolvedValueOnce(prepared);
     const view = render(<EditorRoot {...props} />);
     await waitFor(() =>
       expect(props.previewPort.render).toHaveBeenCalledTimes(1)
@@ -4175,12 +4194,55 @@ describe('EditorRoot', () => {
       'easymde-code-theme-atom-one-dark'
     )).toBe(true);
     expect(sink?.classList.contains('easymde-code-theme-github')).toBe(false);
+    expect(props.appearancePort.applyState).not.toHaveBeenCalled();
+    expect(nativeFields).toEqual({
+      codeTheme: 'atom-one-dark',
+      codeThemeExplicit: '0'
+    });
+    expect(
+      view.getByRole('combobox', { name: 'Code theme' }).textContent
+    ).toContain('Atom One Dark');
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.getByText('已保存')).not.toBeNull();
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+
+    await waitFor(() =>
+      expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledTimes(2)
+    );
+    await waitFor(() => expect(props.appearancePort.applyState).toHaveBeenCalledWith(
+      {
+        codeTheme: 'github',
+        customCssId: '',
+        markdownTheme: 'default'
+      },
+      true
+    ));
+    await waitFor(() => expect(sink?.classList.contains(
+      'easymde-code-theme-github'
+    )).toBe(true));
+    expect(nativeFields).toEqual({
+      codeTheme: 'github',
+      codeThemeExplicit: '1'
+    });
+    expect(prepared.commit).toHaveBeenCalledTimes(1);
+    expect(prepared.cancel).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.getByText('未保存')).not.toBeNull();
   });
 
   it('cancels superseded code CSS preparation and commits only the latest theme', async () => {
     const props = fixture();
-    const github = deferred<void>();
-    const terminal = deferred<void>();
+    const github = deferred<Readonly<{ cancel: () => void; commit: () => void }>>();
+    const terminal = deferred<Readonly<{ cancel: () => void; commit: () => void }>>();
+    const githubTransaction = { cancel: vi.fn(), commit: vi.fn() };
+    const terminalTransaction = { cancel: vi.fn(), commit: vi.fn() };
     const signals = new Map<string, AbortSignal>();
     vi.mocked(props.enhancementPort.prepareCodeTheme).mockImplementation(
       ({ codeTheme, signal }) => {
@@ -4210,14 +4272,17 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
     await waitFor(() => expect(signals.has('terminal-noir')).toBe(true));
     expect(signals.get('github')?.aborted).toBe(true);
+    expect(props.appearancePort.cancelPendingApply).toHaveBeenCalledTimes(2);
 
-    await act(async () => github.resolve());
+    await act(async () => github.resolve(githubTransaction));
     expect(view.container.querySelector(
       '[data-easymde-preview-html-sink]'
     )?.classList.contains('easymde-code-theme-github')).toBe(false);
     expect(props.enhancementPort.syncCodeFrameBackgrounds).not.toHaveBeenCalled();
+    expect(githubTransaction.cancel).toHaveBeenCalledTimes(1);
+    expect(githubTransaction.commit).not.toHaveBeenCalled();
 
-    await act(async () => terminal.resolve());
+    await act(async () => terminal.resolve(terminalTransaction));
     await waitFor(() => expect(view.container.querySelector(
       '[data-easymde-preview-html-sink]'
     )?.classList.contains('easymde-code-theme-terminal-noir')).toBe(true));
@@ -4227,6 +4292,8 @@ describe('EditorRoot', () => {
       )
     );
     expect(props.enhancementPort.syncCodeFrameBackgrounds).toHaveBeenCalledTimes(1);
+    expect(terminalTransaction.commit).toHaveBeenCalledTimes(1);
+    expect(terminalTransaction.cancel).not.toHaveBeenCalled();
     expect(props.previewPort.render).toHaveBeenCalledTimes(renderCount);
   });
 

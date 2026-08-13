@@ -26,9 +26,6 @@
     --blockquote-hover-effect: 1;
 
 
-    --alert-hover-effect: 1;
-
-
     --strong-hover-effect: 1;
 
 
@@ -67,47 +64,6 @@
     --blockquote-thead-bg-color: #54a12bd4;
     --blockquote-thead-text-color: #3b3b3b4e;
     --blockquote-td-bg-color: #fafafa;
-
-    --alert-tip-border-color: #1F883D;
-    --alert-tip-bg-color: #e8f4eb90;
-    --alert-tip-hover-border-color: #1F883D;
-    --alert-tip-thead-bg-color: #3b9457;
-    --alert-tip-thead-text-color: #fafbfa;
-
-    --alert-caution-border-color: #CF222E;
-    --alert-caution-bg-color: #f5ecec86;
-    --alert-caution-hover-border-color: #CF222E;
-    --alert-caution-hover-bg-color: #cf222d0a;
-    --alter-caution-selection-bg-color: #cf222d17;
-    --alert-caution-text-color: #CF222E;
-    --alert-caution-thead-bg-color: #d83c46;
-    --alert-caution-thead-text-color: #fafbfa;
-    --alert-caution-td-hover-bg-color: #f5ecec;
-    --alert-warning-border-color: #9A6700;
-    --alert-warning-bg-color: #f4f1e97d;
-    --alert-warning-hover-border-color: #9A6700;
-    --alert-warning-hover-bg-color: #9a67000a;
-    --alert-warning-selection-bg-color: #9a670017;
-    --alert-warning-text-color: #9A6700;
-    --alert-warning-thead-bg-color: #b7831c;
-    --alert-warning-thead-text-color: #fafbfa;
-    --alert-important-border-color: #8250DF;
-    --alert-important-bg-color: #eae6f286;
-    --alert-important-hover-border-color: #8250DF;
-    --alert-important-hover-bg-color: #8250df0a;
-    --alert-important-selection-bg-color: #8250df17;
-    --alert-important-text-color: #8250DF;
-    --alert-important-thead-bg-color: #8250DF;
-    --alert-important-thead-text-color: #fafbfa;
-    --alert-note-border-color: #0969DA;
-    --alert-note-bg-color: #e5ebf179;
-    --alert-note-hover-border-color: #0969DA;
-    --alert-note-hover-bg-color: #0969da0a;
-    --alert-note-selection-bg-color: #0969da17;
-    --alert-note-text-color: #0969DA;
-    --alert-note-thead-bg-color: #0969DA;
-    --alert-note-thead-text-color: #fafbfa;
-    --alert-code-bg-color: #67676716;
     --alert-td-bg-color: #fafafa;
 
     --hr-bg-image: linear-gradient(90deg, #5ea67c, #2f845e, #5ea67c);
@@ -116,11 +72,6 @@
     --table-border-color: #02362215;
     --table-td-hover-bg: rgba(239, 245, 242, calc(0.7 * var(--table-hover-effect))) calc(var(--table-hover-effect) * 100%);
     --blockquote-td-hover-bg: rgba(239, 245, 242, calc(0.7 * var(--table-hover-effect))) calc(var(--table-hover-effect) * 100%);
-    --alert-tip-td-hover-bg: rgba(239, 245, 242, calc(0.7 * var(--table-hover-effect))) calc(var(--table-hover-effect) * 100%);
-    --alert-caution-td-hover-bg: rgba(245, 236, 236, calc(0.7 * var(--table-hover-effect))) calc(var(--table-hover-effect) * 100%);
-    --alert-warning-td-hover-bg: rgba(245, 241, 236, calc(0.7 * var(--table-hover-effect))) calc(var(--table-hover-effect) * 100%);
-    --alert-important-td-hover-bg: rgba(236, 236, 245, calc(0.7 * var(--table-hover-effect))) calc(var(--table-hover-effect) * 100%);
-    --alert-note-td-hover-bg: rgba(236, 236, 245, calc(0.7 * var(--table-hover-effect))) calc(var(--table-hover-effect) * 100%);
 
     --table-thead-bg-color: #eff5f2;
     --table-thead-text-color: #06621e;
@@ -341,180 +292,8 @@
     background-color: var(--blockquote-td-bg-color);
 }
 
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-tip{
-    padding: 0.5rem 1rem;
-    border-left: 8px solid var(--alert-tip-border-color);
-    background-color: var(--alert-tip-bg-color);
-    border-radius: 7px;
-    transition: box-shadow 0.3s ease, border-radius 0.3s ease, border-left 0.3s ease;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-tip:hover{
-    border-left: calc(8px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) solid var(--alert-tip-hover-border-color);
-    box-shadow: calc(0px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) calc(0px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) calc(1px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) rgba(0, 0, 0, calc(0.1 * var(--alert-hover-effect) * var(--use-dynamic-effect)));
-    border-radius: calc(7px + 8px * var(--alert-hover-effect) * var(--use-dynamic-effect));
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-tip table thead{
-    background-color: var(--alert-tip-thead-bg-color);
-    color: var(--alert-tip-thead-text-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-caution{
-    padding: 0.5rem 1rem;
-    border-left: 8px solid var(--alert-caution-border-color);
-    background-color: var(--alert-caution-bg-color);
-    border-radius: 7px;
-    transition: box-shadow 0.3s ease, border-radius 0.3s ease, border-left 0.3s ease;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-caution:hover{
-    border-left: calc(8px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) solid var(--alert-caution-hover-border-color);
-    box-shadow: calc(0px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) calc(0px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) calc(1px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) rgba(0, 0, 0, calc(0.1 * var(--alert-hover-effect) * var(--use-dynamic-effect)));
-    border-radius: calc(7px + 8px * var(--alert-hover-effect) * var(--use-dynamic-effect));
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-caution p:hover{
-    background-color: var(--alert-caution-hover-bg-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-caution ::selection{
-    background-color: var(--alter-caution-selection-bg-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-caution strong,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-caution em,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-caution a{
-    color: var(--alert-caution-text-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-caution table thead{
-    background-color: var(--alert-caution-thead-bg-color);
-    color: var(--alert-caution-thead-text-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-caution td:hover{
-    background-color: var(--alert-caution-td-hover-bg-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-warning{
-    padding: 0.5rem 1rem;
-    border-left: 8px solid var(--alert-warning-border-color);
-    background-color: var(--alert-warning-bg-color);
-    border-radius: 7px;
-    transition: box-shadow 0.3s ease, border-radius 0.3s ease, border-left 0.3s ease;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-warning:hover{
-    border-left: calc(8px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) solid var(--alert-warning-hover-border-color);
-    box-shadow: calc(0px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) calc(0px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) calc(1px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) rgba(0, 0, 0, calc(0.1 * var(--alert-hover-effect) * var(--use-dynamic-effect)));
-    border-radius: calc(7px + 8px * var(--alert-hover-effect) * var(--use-dynamic-effect));
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-warning p:hover{
-    background-color: var(--alert-warning-hover-bg-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-warning ::selection{
-    background-color: var(--alert-warning-selection-bg-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-warning strong,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-warning em,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-warning a{
-    color: var(--alert-warning-text-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-warning table thead{
-    background-color: var(--alert-warning-thead-bg-color);
-    color: var(--alert-warning-thead-text-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-important{
-    padding: 0.5rem 1rem;
-    border-left: 8px solid var(--alert-important-border-color);
-    background-color: var(--alert-important-bg-color);
-    border-radius: 7px;
-    transition: box-shadow 0.3s ease, border-radius 0.3s ease, border-left 0.3s ease;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-important:hover{
-    border-left: calc(8px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) solid var(--alert-important-hover-border-color);
-    box-shadow: calc(0px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) calc(0px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) calc(1px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) rgba(0, 0, 0, calc(0.1 * var(--alert-hover-effect) * var(--use-dynamic-effect)));
-    border-radius: calc(7px + 8px * var(--alert-hover-effect) * var(--use-dynamic-effect));
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-important p:hover{
-    background-color: var(--alert-important-hover-bg-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-important ::selection{
-    background-color: var(--alert-important-selection-bg-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-important strong,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-important em,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-important a{
-    color: var(--alert-important-text-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-important table thead{
-    background-color: var(--alert-important-thead-bg-color);
-    color: var(--alert-important-thead-text-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-note{
-    padding: 0.5rem 1rem;
-    border-left: 8px solid var(--alert-note-border-color);
-    background-color: var(--alert-note-bg-color);
-    border-radius: 7px;
-    transition: box-shadow 0.3s ease, border-radius 0.3s ease, border-left 0.3s ease;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-note:hover{
-    border-left: calc(8px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) solid var(--alert-note-hover-border-color);
-    box-shadow: calc(0px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) calc(0px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) calc(1px + 1px * var(--alert-hover-effect) * var(--use-dynamic-effect)) rgba(0, 0, 0, calc(0.1 * var(--alert-hover-effect) * var(--use-dynamic-effect)));
-    border-radius: calc(7px + 8px * var(--alert-hover-effect) * var(--use-dynamic-effect));
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-note p:hover{
-    background-color: var(--alert-note-hover-bg-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-note ::selection{
-    background-color: var(--alert-note-selection-bg-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-note strong,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-note em,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-note a{
-    color: var(--alert-note-text-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-note table thead{
-    background-color: var(--alert-note-thead-bg-color);
-    color: var(--alert-note-thead-text-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert p{
-    margin: 0.1rem 0;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-tip code{
-    background-color: var(--alert-code-bg-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring blockquote td,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-tip td,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-caution td,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-warning td,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-important td,
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-note td{
+.easymde-rendered-content.easymde-markdown-theme-spring blockquote td{
     background-color: var(--alert-td-bg-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert-text-container{
-    font-size: 20px;
 }
 
 
@@ -584,26 +363,6 @@
 
 .easymde-rendered-content.easymde-markdown-theme-spring blockquote td:hover{
     background: var(--blockquote-td-hover-bg);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-tip td:hover{
-    background: var(--alert-tip-td-hover-bg);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-caution td:hover{
-    background: var(--alert-caution-td-hover-bg);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-warning td:hover{
-    background: var(--alert-warning-td-hover-bg);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-important td:hover{
-    background: var(--alert-important-td-hover-bg);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-note td:hover{
-    background: var(--alert-note-td-hover-bg);
 }
 
 .easymde-rendered-content.easymde-markdown-theme-spring table thead{
@@ -782,31 +541,6 @@
     .easymde-rendered-content.easymde-markdown-theme-spring blockquote table th{
         background-color: var(--blockquote-thead-bg-color);
         color: var(--blockquote-thead-text-color);
-    }
-
-    .easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-tip table th{
-        background-color: var(--alert-tip-thead-bg-color);
-        color: var(--alert-tip-thead-text-color);
-    }
-
-    .easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-caution table th{
-        background-color: var(--alert-caution-thead-bg-color);
-        color: var(--alert-caution-thead-text-color);
-    }
-
-    .easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-warning table th{
-        background-color: var(--alert-warning-thead-bg-color);
-        color: var(--alert-warning-thead-text-color);
-    }
-
-    .easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-important table th{
-        background-color: var(--alert-important-thead-bg-color);
-        color: var(--alert-important-thead-text-color);
-    }
-
-    .easymde-rendered-content.easymde-markdown-theme-spring .md-alert.md-alert-note table th{
-        background-color: var(--alert-note-thead-bg-color);
-        color: var(--alert-note-thead-text-color);
     }
 
     .easymde-rendered-content.easymde-markdown-theme-spring hr{

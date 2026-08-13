@@ -20,20 +20,23 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringContainsString('<strong>safe</strong>', $html);
     }
 
-    public function test_blocks_dangerous_urls_and_event_attributes()
+    public function test_rejects_raw_html_and_dangerous_urls()
     {
         $html = MarkdownRenderer::render(
             "[bad link](javascript:alert(1))\n\n" .
             '<details open onclick="alert(1)"><summary>Safe label</summary>' .
-            '<script>alert("x")</script><img src="x" onerror="alert(1)"></details>'
+            '<script>alert("x")</script><img src="x" onerror="alert(1)"></details>' .
+            "\n\n**safe Markdown**"
         );
 
         $this->assertStringNotContainsString('javascript:', $html);
         $this->assertStringNotContainsString('onclick', $html);
         $this->assertStringNotContainsString('onerror', $html);
         $this->assertStringNotContainsString('<script', $html);
-        $this->assertStringContainsString('<details open>', $html);
-        $this->assertStringContainsString('<summary>Safe label</summary>', $html);
+        $this->assertStringNotContainsString('<details', $html);
+        $this->assertStringNotContainsString('<summary', $html);
+        $this->assertStringNotContainsString('Safe label', $html);
+        $this->assertStringContainsString('<strong>safe Markdown</strong>', $html);
     }
 
     public function test_keeps_expected_gfm_markdown_output()
@@ -122,33 +125,6 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertSame( 1, substr_count( $html, '<table>' ) );
         $this->assertStringNotContainsString('<section class="table-container"><table>', $html);
         $this->assertStringNotContainsString('<section class="easymde-table-container"><table>', $html);
-    }
-
-    /**
-     * A theme may provide either legacy wrapper class. Preserve it and add the
-     * shared compatibility class without introducing a nested scroll owner.
-     *
-     * @dataProvider table_wrapper_class_provider
-     */
-    public function test_does_not_double_wrap_existing_table_compatibility_wrapper( $class_name )
-    {
-        $html = MarkdownRenderer::render(
-            '<section class="' . $class_name . '"><table><thead><tr><th>Name</th></tr></thead><tbody><tr><td>One</td></tr></tbody></table></section>',
-            'default'
-        );
-
-        $this->assertSame( 1, substr_count( $html, '<table>' ) );
-        $this->assertSame( 1, substr_count( $html, '<section' ) );
-        $this->assertSame( 1, substr_count( $html, '<section class="table-container easymde-table-container">' ) );
-        $this->assertStringNotContainsString('<section class="table-container easymde-table-container"><section', $html);
-    }
-
-    public static function table_wrapper_class_provider()
-    {
-        return array(
-            array( 'table-container' ),
-            array( 'easymde-table-container' ),
-        );
     }
 
     public function test_crimson_focus_marks_task_lists_for_theme_css_fallback()

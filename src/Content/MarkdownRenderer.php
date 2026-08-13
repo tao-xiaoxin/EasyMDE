@@ -31,32 +31,10 @@ final class MarkdownRenderer {
 
 		$converter = new GithubFlavoredMarkdownConverter(
 			array(
-				// Raw HTML is constrained by the allowlist below. It must reach KSES
-				// so supported semantic elements such as details/summary survive.
-				'html_input'              => 'allow',
+				'html_input'              => 'strip',
 				'allow_unsafe_links'      => false,
 				'max_nesting_level'       => self::MAX_NESTING_LEVEL,
 				'max_delimiters_per_line' => self::MAX_DELIMITERS_PER_LINE,
-				'disallowed_raw_html'     => array(
-					'disallowed_tags' => array(
-						'title',
-						'textarea',
-						'style',
-						'xmp',
-						'iframe',
-						'noembed',
-						'noframes',
-						'script',
-						'plaintext',
-						'button',
-						'fieldset',
-						'form',
-						'input',
-						'option',
-						'optgroup',
-						'select',
-					),
-				),
 			)
 		);
 
@@ -168,11 +146,6 @@ final class MarkdownRenderer {
 		foreach ( $disallowed_form_elements as $element ) {
 			unset( $allowed_html[ $element ] );
 		}
-
-		$allowed_html['details'] = array(
-			'open' => true,
-		);
-		$allowed_html['summary'] = array();
 
 		if ( $allow_task_inputs ) {
 			$allowed_html['input'] = array(

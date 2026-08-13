@@ -545,9 +545,7 @@ function unreachableTyporaClasses(selector) {
     ([, className]) => className.toLowerCase()
   );
 
-  return Array.from(new Set(classes.filter(
-    (className) => !/^md-alert(?:-[\w-]+)?$/.test(className)
-  )));
+  return Array.from(new Set(classes));
 }
 
 function legacyMathAdapterSelector(selector) {
@@ -564,8 +562,7 @@ function blockCodeSelector(selector) {
     .replaceAll(/:not\(\s*\.md-fencescode\s*\)/gi, '');
   const inlineOnly = /(?:^|[\s>+~])(?:p|li|h[1-6])(?:[.#:[\][\]\w-]*)?\s+(?:[^,{]+\s+)?code(?=$|[\s>+~:.[#])/i
     .test(normalizedSelector)
-    || /:not\(\s*pre\s*\)\s*>\s*code(?=$|[\s>+~:.[#])/i.test(normalizedSelector)
-    || /\.md-alert(?:-[\w-]+)?\s+code(?=$|[\s>+~:.[#])/i.test(normalizedSelector);
+    || /:not\(\s*pre\s*\)\s*>\s*code(?=$|[\s>+~:.[#])/i.test(normalizedSelector);
   const codeElement = /(^|[\s,(>+~])code(?=$|[\s,)>+~:.[#])/i.test(positiveSelector);
 
   return /#typora-source\b/i.test(positiveSelector)
@@ -894,8 +891,7 @@ test('article code ownership classifier rejects legacy fenced selectors without 
     .theme :not(pre) > code:not(.md-fencescode),
     .theme p code,
     .theme li code:hover,
-    .theme h6 code,
-    .theme .md-alert-tip code {
+    .theme h6 code {
       color: red;
     }
   `);
@@ -1051,6 +1047,8 @@ test('Typora DOM classifier rejects unreachable positive md classes and preserve
     '.theme .md-table-fig .md-table',
     '.theme .md-content .md-before',
     '.theme .md-fencescode',
+    '.theme blockquote.md-alert-note',
+    '.theme .md-alert-title-icon',
     '.theme .md-future-editor-wrapper',
     '.theme.on-focus-mode > .md-focus-element'
   ];
@@ -1059,8 +1057,6 @@ test('Typora DOM classifier rejects unreachable positive md classes and preserve
     '.theme :not(pre) > code:not(.md-fencescode)',
     '.theme .easymde-toc a',
     '.theme .task-list-item input',
-    '.theme blockquote.md-alert-note',
-    '.theme .md-alert-title-icon',
     '.theme table > tbody',
     '.theme .footnote-ref'
   ];

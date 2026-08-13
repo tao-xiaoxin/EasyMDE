@@ -9,7 +9,6 @@
 .easymde-rendered-content.easymde-markdown-theme-bloom-spring {
 
     --space-unit: 8px;
-    --space-xs: calc(var(--space-unit) * 1);
     --space-md: calc(var(--space-unit) * 2);
     --space-lg: calc(var(--space-unit) * 3);
     --space-xl: calc(var(--space-unit) * 4);
@@ -19,13 +18,6 @@
 
     --accent: #877deb;
     --accent-rgb: 160, 115, 215;
-
-
-    --success: #6fb07d;
-    --warning: #d3a563;
-    --error: #bd615b;
-    --info: #558ac0;
-    --important: #7e80ee;
 
 
     --bg: #f5f5f8;
@@ -209,95 +201,6 @@
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote p:last-child {
     margin-bottom: 0;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type^="alert-"] {
-    padding: var(--space-md) var(--space-lg);
-    border-radius: 12px;
-    box-shadow: none;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type^="alert-"]::before {
-    content: none;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type^="alert-"] > p:first-child,
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type^="alert-"] > p.md-alert-title {
-    margin: 0 0 var(--space-xs);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--alert-color);
-    opacity: 0.85;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type^="alert-"] .md-alert-icon,
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type^="alert-"] .md-alert-title-icon {
-    display: inline-block;
-    margin-right: 0.5em;
-    transform: translateY(1px);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring .md-alert::before {
-    content: none;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring .md-alert .md-alert-text {
-    color: var(--alert-color);
-    font-weight: 600;
-    font-size: 0.92em;
-    letter-spacing: 0.04em;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring .md-alert > p {
-    margin: 0.5em 0;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type],
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring .md-alert {
-    border-radius: 12px;
-    padding: 1.1em 1.25em;
-    margin: 1.8em 0;
-    border: 1px solid transparent;
-    position: relative;
-    transition: all 0.2s ease;
-    border-left: 4.5px solid var(--alert-color);
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type="alert-note"],
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring .md-alert-note {
-    --alert-color: var(--info);
-    background: #e2e8f1 !important;
-    border-color: #c5d5e7 !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type="alert-tip"],
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring .md-alert-tip {
-    --alert-color: var(--success);
-    background: #e5ede9 !important;
-    border-color: #cde0d3 !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type="alert-warning"],
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring .md-alert-warning {
-    --alert-color: var(--warning);
-    background: #f0e9e2 !important;
-    border-color: #e9d9c4 !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type="alert-important"],
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring .md-alert-important {
-    --alert-color: var(--important);
-    background: #e7e7f7 !important;
-    border-color: #d1d2f5 !important;
-}
-
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type="alert-caution"],
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring .md-alert-caution {
-    --alert-color: var(--error);
-    background: #eddfe0 !important;
-    border-color: #e1c1c1 !important;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-spring ul,
@@ -543,9 +446,7 @@
     stroke: var(--text-semi) !important;
 }
 
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring a,
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring .md-alert,
-.easymde-rendered-content.easymde-markdown-theme-bloom-spring blockquote[data-type] {
+.easymde-rendered-content.easymde-markdown-theme-bloom-spring a {
     transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 

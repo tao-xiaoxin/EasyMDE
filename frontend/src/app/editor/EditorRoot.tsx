@@ -88,6 +88,7 @@ import {
 import { EditorWorkspace } from '../../features/editor-layout/ui/EditorWorkspace';
 import { useEditorSession } from '../../features/editor-session/use-editor-session';
 import {
+  type PreparedCodeTheme,
   previewEnhancementFailureCode,
   type PreviewEnhancementPort
 } from '../../features/live-preview/ports/preview-enhancement-port';
@@ -459,6 +460,7 @@ export function EditorRoot(props: EditorRootProps) {
   const codeThemePreparationRef = useRef<{
     controller: AbortController;
     generation: number;
+    prepared: PreparedCodeTheme | null;
   } | null>(null);
   const codeThemePreparationGenerationRef = useRef(0);
   const codeThemeFrameSyncPendingRef = useRef<string | null>(null);
@@ -949,12 +951,48 @@ export function EditorRoot(props: EditorRootProps) {
     () => ({
       applyState: async (state, codeThemeExplicit) => {
         const previousState = previewAppearanceRef.current;
+        const codeThemeChanged = previousState.codeTheme !== state.codeTheme;
         const markupChanged =
           articleMarkupProfile(props.appearance, previousState)
           !== articleMarkupProfile(props.appearance, state);
         const visualPreviewWasEditing = visualPreviewEditingRef.current;
         if (visualPreviewWasEditing && !prepareSourceMutation()) {
           throw new Error('visual-editor-source-sync-failed');
+        }
+        codeThemePreparationRef.current?.controller.abort();
+        codeThemePreparationRef.current?.prepared?.cancel();
+        props.appearancePort.cancelPendingApply();
+        const controller = new AbortController();
+        const generation = ++codeThemePreparationGenerationRef.current;
+        const preparation = { controller, generation, prepared: null as PreparedCodeTheme | null };
+        codeThemePreparationRef.current = preparation;
+        if (codeThemeChanged) {
+          try {
+            preparation.prepared = await props.enhancementPort.prepareCodeTheme({
+              codeTheme: state.codeTheme,
+              signal: controller.signal
+            });
+          } catch (error: unknown) {
+            if (
+              !controller.signal.aborted
+              && codeThemePreparationRef.current?.generation === generation
+              && rootActiveRef.current
+            ) {
+              props.onFailure(previewEnhancementFailureCode(error));
+            }
+            if (codeThemePreparationRef.current?.generation === generation) {
+              codeThemePreparationRef.current = null;
+            }
+            return false;
+          }
+          if (
+            controller.signal.aborted
+            || codeThemePreparationRef.current?.generation !== generation
+            || !rootActiveRef.current
+          ) {
+            preparation.prepared.cancel();
+            return false;
+          }
         }
         let applied: boolean;
         try {
@@ -963,12 +1001,33 @@ export function EditorRoot(props: EditorRootProps) {
             codeThemeExplicit
           );
         } catch {
+          preparation.prepared?.cancel();
+          if (codeThemePreparationRef.current?.generation === generation) {
+            codeThemePreparationRef.current = null;
+          }
           if (rootActiveRef.current) {
             props.onFailure('react-editor-appearance-failed');
           }
           return false;
         }
-        if (!applied || !rootActiveRef.current) return false;
+        if (
+          !applied
+          || controller.signal.aborted
+          || codeThemePreparationRef.current?.generation !== generation
+          || !rootActiveRef.current
+        ) {
+          preparation.prepared?.cancel();
+          if (codeThemePreparationRef.current?.generation === generation) {
+            codeThemePreparationRef.current = null;
+          }
+          return false;
+        }
+        preparation.prepared?.commit();
+        codeThemePreparationRef.current = null;
+        if (codeThemeChanged) {
+          codeThemeFrameSyncPendingRef.current = state.codeTheme;
+          setRenderedCodeTheme(state.codeTheme);
+        }
         codeThemeExplicitRef.current = codeThemeExplicit;
         setCodeThemeExplicit(codeThemeExplicit);
         const nextSnapshot = { ...appearanceSnapshotRef.current, state };
@@ -998,6 +1057,12 @@ export function EditorRoot(props: EditorRootProps) {
           scheduleCurrentWechatPreviewPreparation();
         }
         return true;
+      },
+      cancelPendingApply: () => {
+        codeThemePreparationRef.current?.controller.abort();
+        codeThemePreparationRef.current?.prepared?.cancel();
+        codeThemePreparationRef.current = null;
+        props.appearancePort.cancelPendingApply();
       },
       closeOtherPopovers: () => {
         toolbarSessionRef.current?.closePopovers();
@@ -1326,60 +1391,6 @@ export function EditorRoot(props: EditorRootProps) {
     immersiveToggleRef.current?.focus();
   }, [immersive]);
 
-  useEffect(() => {
-    if (
-      visualPreviewEditing
-      || 'ready' !== previewSurfaceStatus
-      || previewRefreshPendingRef.current
-      || renderedCodeTheme === appearanceState.codeTheme
-    ) {
-      return undefined;
-    }
-
-    codeThemePreparationRef.current?.controller.abort();
-    const controller = new AbortController();
-    const generation = ++codeThemePreparationGenerationRef.current;
-    codeThemePreparationRef.current = { controller, generation };
-
-    void props.enhancementPort.prepareCodeTheme({
-      codeTheme: appearanceState.codeTheme,
-      signal: controller.signal
-    }).then(
-      () => {
-        const current = codeThemePreparationRef.current;
-        if (
-          !rootActiveRef.current
-          || controller.signal.aborted
-          || current?.generation !== generation
-        ) {
-          return;
-        }
-        codeThemeFrameSyncPendingRef.current = appearanceState.codeTheme;
-        setRenderedCodeTheme(appearanceState.codeTheme);
-      },
-      (error: unknown) => {
-        const current = codeThemePreparationRef.current;
-        if (
-          controller.signal.aborted
-          || current?.generation !== generation
-        ) {
-          return;
-        }
-        props.onFailure(previewEnhancementFailureCode(error));
-      }
-    );
-
-    return () => controller.abort();
-  }, [
-    appearanceState.codeTheme,
-    previewSurfaceStatus,
-    props.enhancementPort,
-    props.onFailure,
-    renderedCodeTheme,
-    scheduleCurrentWechatPreviewPreparation,
-    visualPreviewEditing
-  ]);
-
   useLayoutEffect(() => {
     if (codeThemeFrameSyncPendingRef.current !== renderedCodeTheme) return;
     codeThemeFrameSyncPendingRef.current = null;
@@ -1449,8 +1460,12 @@ export function EditorRoot(props: EditorRootProps) {
     rootActiveRef.current = true;
     return () => {
       rootActiveRef.current = false;
+      codeThemePreparationRef.current?.controller.abort();
+      codeThemePreparationRef.current?.prepared?.cancel();
+      codeThemePreparationRef.current = null;
+      props.appearancePort.cancelPendingApply();
     };
-  }, []);
+  }, [props.appearancePort]);
 
   useEffect(() => () => wechatSession.dispose(), [wechatSession]);
   useEffect(

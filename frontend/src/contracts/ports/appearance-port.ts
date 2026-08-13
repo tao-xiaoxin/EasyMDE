@@ -26,6 +26,7 @@ export interface AppearancePort {
     state: AppearanceState,
     codeThemeExplicit: boolean
   ): Promise<boolean>;
+  cancelPendingApply(): void;
   closeOtherPopovers(): void;
   dispose(): void;
   previewCustomCss(

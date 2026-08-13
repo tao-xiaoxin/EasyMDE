@@ -110,15 +110,75 @@ describe('createBrowserPreviewEnhancementPort', () => {
       { documentRef: document, runtime: runtime(enhance) }
     );
 
-    await port.prepareCodeTheme({
+    const prepared = await port.prepareCodeTheme({
       codeTheme: 'github',
       signal: new AbortController().signal
     });
 
     expect(document.querySelector('#easymde-code-frame-css')).not.toBeNull();
+    expect(document.querySelector('#easymde-highlight-theme-css')).toBeNull();
+    prepared.commit();
     expect(document.querySelector<HTMLLinkElement>('#easymde-highlight-theme-css')?.href)
       .toContain('/assets/vendor/highlight/styles/github.min.css');
     expect(enhance).not.toHaveBeenCalled();
+  });
+
+  it('keeps the active code stylesheet until commit and removes a cancelled candidate', async () => {
+    const append = autoLoadResources();
+    const active = document.createElement('link');
+    active.id = 'easymde-highlight-theme-css';
+    active.rel = 'stylesheet';
+    active.href = previewEnhancementBootstrapFixture.codeThemes.find(
+      ({ id }) => 'atom-one-dark' === id
+    )?.cssUrl ?? '';
+    active.dataset.easymdeLoadedHref = active.getAttribute('href') ?? '';
+    document.head.appendChild(active);
+    append.mockClear();
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      { documentRef: document, runtime: runtime() }
+    );
+
+    const prepared = await port.prepareCodeTheme(context('github'));
+    const candidate = document.querySelector<HTMLLinkElement>(
+      '[data-easymde-stylesheet-owner="easymde-highlight-theme-css"]:not(#easymde-highlight-theme-css)'
+    );
+    expect(candidate?.media).toBe('not all');
+    expect(document.querySelector('#easymde-highlight-theme-css')).toBe(active);
+
+    prepared.cancel();
+
+    expect(candidate?.isConnected).toBe(false);
+    expect(document.querySelector('#easymde-highlight-theme-css')).toBe(active);
+    active.remove();
+  });
+
+  it('does not cancel a prepared theme when an old enhancement reuses the active stylesheet', async () => {
+    autoLoadResources();
+    const active = document.createElement('link');
+    active.id = 'easymde-highlight-theme-css';
+    active.rel = 'stylesheet';
+    active.href = previewEnhancementBootstrapFixture.codeThemes.find(
+      ({ id }) => 'atom-one-dark' === id
+    )?.cssUrl ?? '';
+    active.dataset.easymdeLoadedHref = active.getAttribute('href') ?? '';
+    document.head.appendChild(active);
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      { documentRef: document, runtime: runtime() }
+    );
+
+    const preparedGithub = await port.prepareCodeTheme(context('github'));
+    const reusedAtom = await port.prepareCodeTheme(context('atom-one-dark'));
+
+    reusedAtom.commit();
+    preparedGithub.commit();
+
+    expect(document.querySelector<HTMLLinkElement>('#easymde-highlight-theme-css')?.href)
+      .toContain('/assets/vendor/highlight/styles/github.min.css');
+    expect(document.querySelectorAll(
+      '[data-easymde-stylesheet-owner="easymde-highlight-theme-css"]'
+    )).toHaveLength(1);
   });
 
   it('forwards lightweight code-frame background synchronization', () => {
@@ -161,7 +221,9 @@ describe('createBrowserPreviewEnhancementPort', () => {
       () => firstCurrent,
       context('github')
     );
-    const firstTheme = document.querySelector<HTMLLinkElement>('#easymde-highlight-theme-css');
+    const firstTheme = document.querySelector<HTMLLinkElement>(
+      '[data-easymde-stylesheet-owner="easymde-highlight-theme-css"]'
+    );
     firstCurrent = false;
     const second = port.enhance(
       surface,
@@ -169,7 +231,9 @@ describe('createBrowserPreviewEnhancementPort', () => {
       () => secondCurrent,
       context('atom-one-dark')
     );
-    const secondTheme = document.querySelector<HTMLLinkElement>('#easymde-highlight-theme-css');
+    const secondTheme = document.querySelector<HTMLLinkElement>(
+      '[data-easymde-stylesheet-owner="easymde-highlight-theme-css"]'
+    );
     secondCurrent = false;
     const third = port.enhance(
       surface,
@@ -177,7 +241,9 @@ describe('createBrowserPreviewEnhancementPort', () => {
       () => true,
       context('monokai')
     );
-    const thirdTheme = document.querySelector<HTMLLinkElement>('#easymde-highlight-theme-css');
+    const thirdTheme = document.querySelector<HTMLLinkElement>(
+      '[data-easymde-stylesheet-owner="easymde-highlight-theme-css"]'
+    );
     const codeFrame = document.querySelector<HTMLLinkElement>('#easymde-code-frame-css');
     if (!firstTheme || !secondTheme || !thirdTheme || !codeFrame) {
       throw new Error('expected pending stylesheets');

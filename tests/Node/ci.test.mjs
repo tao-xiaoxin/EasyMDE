@@ -87,30 +87,27 @@ test('E2E uses packaged Composer dependencies without reinstalling the checkout'
   assert.doesNotMatch(e2eJob, /composer install/);
 });
 
-test('E2E runs one Chromium job over every tracked spec', () => {
+test('E2E runs one Chromium job over the E2E directory', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
   const e2eJob = workflowJobBlock(workflow, 'e2e');
+  const config = readFileSync(join(repoRoot, 'playwright.config.mjs'), 'utf8');
 
   assert.doesNotMatch(e2eJob, /\bmatrix\b|EASYMDE_E2E_SUITE|theme_matrix_[ab]/);
   assert.equal((e2eJob.match(/npx playwright test/g) || []).length, 1);
-  assert.match(e2eJob, /tests\/e2e\/easymde\.spec\.mjs/);
-  assert.match(e2eJob, /tests\/e2e\/inkwell\.spec\.mjs/);
-  assert.match(e2eJob, /tests\/e2e\/theme-layout-audit\.spec\.mjs/);
+  assert.doesNotMatch(e2eJob, /tests\/e2e\/[^\s]+\.spec\.mjs/);
   assert.match(e2eJob, /--project=chromium/);
+  assert.match(config, /testDir:\s*['"]\.\/tests\/e2e['"]/);
 });
 
-test('Playwright records trace and video only on the retained CI retry', () => {
+test('Playwright fails fast and retains evidence from the failing attempt', () => {
   const config = readFileSync(join(repoRoot, 'playwright.config.mjs'), 'utf8');
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const e2eJob = workflowJobBlock(workflow, 'e2e');
 
-  assert.match(config, /retries:\s*process\.env\.CI \? 1 : 0/);
-  assert.match(
-    config,
-    /trace:\s*process\.env\.CI \? 'on-first-retry' : 'retain-on-failure'/
-  );
-  assert.match(
-    config,
-    /video:\s*process\.env\.CI \? 'on-first-retry' : 'retain-on-failure'/
-  );
+  assert.match(config, /retries:\s*0/);
+  assert.match(config, /trace:\s*'retain-on-failure'/);
+  assert.match(config, /video:\s*'retain-on-failure'/);
+  assert.match(e2eJob, /if:\s*failure\(\)[\s\S]*\/tmp\/easymde-wp-server\.log/);
 });
 
 test('Node and release jobs validate committed runtime assets without refreshing them', () => {

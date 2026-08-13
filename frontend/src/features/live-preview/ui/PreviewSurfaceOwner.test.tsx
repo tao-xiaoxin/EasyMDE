@@ -76,7 +76,10 @@ function setup(options?: {
     return response.promise;
   });
   const enhancementPort: PreviewEnhancementPort = {
-    prepareCodeTheme: vi.fn().mockResolvedValue(undefined),
+    prepareCodeTheme: vi.fn().mockResolvedValue({
+      cancel: vi.fn(),
+      commit: vi.fn()
+    }),
     syncCodeFrameBackgrounds: vi.fn(),
     enhance: options?.enhance ?? vi.fn().mockResolvedValue(undefined)
   };

@@ -67,6 +67,24 @@ function fixture() {
 }
 
 describe('createWordPressAppearancePort', () => {
+  it('cancels a pending article stylesheet without committing hidden fields', async () => {
+    const options = fixture();
+    const port = createWordPressAppearancePort(options);
+    const pending = port.applyState(
+      { codeTheme: 'github', customCssId: '', markdownTheme: 'newsprint' },
+      true
+    );
+
+    port.cancelPendingApply();
+
+    await expect(pending).resolves.toBe(false);
+    expect(options.fields.markdownTheme.value).toBe('default');
+    expect(options.fields.codeTheme.value).toBe('atom-one-dark');
+    expect(document.querySelector(
+      'link[href*="newsprint"]:not(#easymde-article-theme-css)'
+    )).toBeNull();
+  });
+
   it('applies the saved appearance before the first user interaction', () => {
     const options = fixture();
     options.bootstrap = {

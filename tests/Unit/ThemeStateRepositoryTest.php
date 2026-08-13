@@ -145,6 +145,24 @@ final class ThemeStateRepositoryTest extends WP_UnitTestCase
         $this->assertSame('fullstack-blue', $article_themes['fullstack-blue']['defaultCodeTheme']);
     }
 
+    public function test_script_options_expose_server_markup_equivalence_profiles()
+    {
+        $options = $this->theme_state_repository()->get_theme_options_for_script(0);
+        $themes = array_column(
+            $options['markdownThemes'],
+            null,
+            'id'
+        );
+
+        $this->assertSame('common-v1', $options['customMarkupProfile']);
+        $this->assertSame('common-v1', $themes['default']['markupProfile']);
+        $this->assertSame('common-v1', $themes['animal-island']['markupProfile']);
+        $this->assertSame('markdown2html-v1', $themes['orange-heart']['markupProfile']);
+        $this->assertSame('image-figures-v1', $themes['qingbi-liujin']['markupProfile']);
+        $this->assertSame('rose-purple-v1', $themes['rose-purple']['markupProfile']);
+        $this->assertSame('cupid-busy-v1', $themes['cupid-busy']['markupProfile']);
+    }
+
     public function test_filtered_article_association_uses_a_filtered_code_theme()
     {
         $article_callback = static function ($themes) {

@@ -1,0 +1,589 @@
+/*
+ * EasyMDE Spring article theme.
+ * Source: Spring (Typora theme, adapted to the scoped EasyMDE preview surface).
+ */
+.easymde-rendered-content.easymde-markdown-theme-spring{
+
+
+    --use-dynamic-effect: 1;
+
+
+    --h1-hover-effect: 1;
+
+
+    --h2-after-effect: 1;
+
+
+    --h3-6-hover-effect: 1;
+
+
+    --p-hover-effect: 1;
+
+
+    --img-hover-effect: 1;
+
+
+    --blockquote-hover-effect: 1;
+
+
+    --strong-hover-effect: 1;
+
+
+    --em-hover-effect: 1;
+
+
+    --u-hover-effect: 1;
+
+
+    --mark-hover-effect: 1;
+
+
+    --del-hover-effect: 1;
+
+
+    --code-hover-effect: 1;
+
+
+    --hr-hover-effect: 1;
+
+
+    --table-hover-effect: 1;
+
+
+    --selection-color: #def2e8;
+
+    --write-h1-before-bg: linear-gradient(90deg, rgba(152, 251, 152, 0), #e8f4ee, rgba(152, 251, 152, 0));
+
+    --write-h2-after-bg: linear-gradient(90deg, rgba(69, 158, 106, 0), #3ea173a6, rgba(87, 158, 69, 0));
+
+    --p-hover-bg-color: rgba(123, 181, 147, calc(0.1 * var(--p-hover-effect) * var(--use-dynamic-effect)));
+
+    --blockquote-border-color: #54a12b;
+    --blockquote-bg-color: #eef4e886;
+    --blockquote-hover-border-color: #54a12b;
+    --blockquote-thead-bg-color: #54a12bd4;
+    --blockquote-thead-text-color: #3b3b3b4e;
+    --blockquote-td-bg-color: #fafafa;
+    --alert-td-bg-color: #fafafa;
+
+    --hr-bg-image: linear-gradient(90deg, #5ea67c, #2f845e, #5ea67c);
+    --hr-box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
+
+    --table-border-color: #02362215;
+    --table-td-hover-bg: rgba(239, 245, 242, calc(0.7 * var(--table-hover-effect))) calc(var(--table-hover-effect) * 100%);
+    --blockquote-td-hover-bg: rgba(239, 245, 242, calc(0.7 * var(--table-hover-effect))) calc(var(--table-hover-effect) * 100%);
+
+    --table-thead-bg-color: #eff5f2;
+    --table-thead-text-color: #06621e;
+
+    --table-tbody-border-color: #e8f4ee;
+    --strong-color: #06621e;
+    --em-color: #000000;
+    --em-hover-color: #006400;
+    --u-border-color: rgb(9, 156, 70);
+
+    --code-bg-color: rgba(221, 235, 213, 0.5);
+    --code-color: #359d09;
+    --code-hover-bg-color: rgba(221, 235, 213, calc(0.5 + 0.5 * var(--code-hover-effect) * var(--use-dynamic-effect)));
+
+    --del-color: rgba(50, 100, 50, 0.5);
+    --del-text-decoration-color: rgba(76, 175, 80, 0.7);
+    --del-hover-color: rgba(50, 100, 50, calc(0.5 + 0.5 * var(--del-hover-effect) * var(--use-dynamic-effect)));
+    --del-hover-text-decoration-color: rgba(76, 175, 80, calc(0.7 + 0.3 * var(--del-hover-effect) * var(--use-dynamic-effect)));
+
+    --mark-bg-color: #aee6c3;
+    --mark-hover-bg-color: rgba(174, 230, 195, calc(1 - 0.5 * var(--mark-hover-effect) * var(--use-dynamic-effect)));
+
+    --a-color: #0c8f94;
+    --a-hover-color: #02502a;
+
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring p{
+    word-spacing: 0.1rem;
+    line-height: 1.9rem;
+    margin: 3px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring ol li{
+    padding-left: 0.3rem;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring::-moz-selection{
+    background-color: var(--selection-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring::selection{
+    background-color: var(--selection-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h1,
+.easymde-rendered-content.easymde-markdown-theme-spring h2,
+.easymde-rendered-content.easymde-markdown-theme-spring h3{
+    font-style: normal;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h1,
+.easymde-rendered-content.easymde-markdown-theme-spring h2{
+    text-align: center;
+    margin-top: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring h1{
+    position: relative;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h1:after{
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--write-h1-before-bg);
+    transition: transform 0.4s ease;
+    transform: scaleX(0);
+    transform-origin: center;
+    z-index: -1;
+    display: calc(var(--h1-hover-effect) * var(--use-dynamic-effect));
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h1:hover{
+    transform: scale(calc(1 + 0.1 * var(--h1-hover-effect) * var(--use-dynamic-effect)));
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h1:hover:after{
+    transform: scaleX(calc(var(--h1-hover-effect) * var(--use-dynamic-effect)));
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h2{
+    font-size: 1.8rem;
+    position: relative;
+    padding-bottom: 0rem;
+    font-weight: bold;
+    margin-bottom: 0rem;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h2:after{
+    content: "";
+    display: block;
+    width: min(30rem, 100%);
+    max-width: 100%;
+    height: 2.5px;
+    margin: 0.5rem auto 0.3rem;
+    background: var(--write-h2-after-bg);
+    border-radius: 10px;
+    transform: scaleX(0);
+    transition: transform 0.4s ease, background 0.4s ease;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h2:hover:after{
+    transform: scaleX(calc(1 * var(--h2-after-effect) * var(--use-dynamic-effect)));
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h3{
+    font-size: 1.6rem;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h4{
+    font-size: 1.4rem;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h5{
+    font-size: 1.2rem;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h6{
+    font-size: 1rem;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h3,
+.easymde-rendered-content.easymde-markdown-theme-spring h4,
+.easymde-rendered-content.easymde-markdown-theme-spring h5,
+.easymde-rendered-content.easymde-markdown-theme-spring h6{
+    position: relative;
+    margin-top: 1.0rem;
+    margin-bottom: 0.5rem;
+    transition: transform 0.3s ease;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring h3:hover,
+.easymde-rendered-content.easymde-markdown-theme-spring h4:hover,
+.easymde-rendered-content.easymde-markdown-theme-spring h5:hover,
+.easymde-rendered-content.easymde-markdown-theme-spring h6:hover{
+    transform: scale(calc(1 + 0.01 * var(--h3-6-hover-effect) * var(--use-dynamic-effect)));
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring img{
+    border-radius: 10px;
+    max-width: 100%;
+    display: block;
+    margin: 1em auto;
+    transition: transform 0.15s ease, border-radius 0.15s ease;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring img:hover{
+    transform: scale(calc(1 + 0.01 * var(--img-hover-effect) * var(--use-dynamic-effect)));
+    border-radius: calc(10px - 10px * var(--img-hover-effect) * var(--use-dynamic-effect));
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring p{
+    font-size: 1rem;
+    padding: 0 0.3rem;
+    transition: all 0.25s ease;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring p:not(:has(img)):hover{
+    background-color: var(--p-hover-bg-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring ul,
+.easymde-rendered-content.easymde-markdown-theme-spring ol{
+    margin: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring blockquote{
+    padding: 0.5rem 1rem;
+    border-left: 8px solid var(--blockquote-border-color);
+    background-color: var(--blockquote-bg-color);
+    border-radius: 7px;
+    transition: box-shadow 0.3s ease, border-radius 0.3s ease, border-left 0.3s ease;
+
+
+        backdrop-filter: blur(15px) saturate(180%) brightness(110%);
+        -webkit-backdrop-filter: blur(15px) saturate(180%) brightness(110%);
+
+
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-right: 1px solid rgba(255, 255, 255, 0.1);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring blockquote p{
+    margin: 0.1rem 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring blockquote:hover{
+    border-left: calc(8px + 1px * var(--blockquote-hover-effect) * var(--use-dynamic-effect)) solid var(--blockquote-hover-border-color);
+    box-shadow: calc(0px + 1px * var(--blockquote-hover-effect) * var(--use-dynamic-effect)) calc(0px + 1px * var(--blockquote-hover-effect) * var(--use-dynamic-effect)) calc(1px + 1px * var(--blockquote-hover-effect) * var(--use-dynamic-effect)) rgba(0, 0, 0, calc(0.1 * var(--blockquote-hover-effect) * var(--use-dynamic-effect)));
+    border-radius: calc(7px + 8px * var(--blockquote-hover-effect) * var(--use-dynamic-effect));
+
+
+    backdrop-filter: blur(calc(25px + 15px * var(--blockquote-hover-effect) * var(--use-dynamic-effect)))
+                    saturate(calc(200% + 80% * var(--blockquote-hover-effect) * var(--use-dynamic-effect)))
+                    contrast(calc(115% + 15% * var(--blockquote-hover-effect) * var(--use-dynamic-effect)))
+                    brightness(calc(105% + 10% * var(--blockquote-hover-effect) * var(--use-dynamic-effect)));
+    -webkit-backdrop-filter: blur(calc(25px + 15px * var(--blockquote-hover-effect) * var(--use-dynamic-effect)))
+                            saturate(calc(200% + 80% * var(--blockquote-hover-effect) * var(--use-dynamic-effect)))
+                            contrast(calc(115% + 15% * var(--blockquote-hover-effect) * var(--use-dynamic-effect)))
+                            brightness(calc(105% + 10% * var(--blockquote-hover-effect) * var(--use-dynamic-effect)));
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring blockquote table thead{
+    background-color: var(--blockquote-thead-bg-color);
+    color: var(--blockquote-thead-text-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring blockquote td{
+    background-color: var(--blockquote-td-bg-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring blockquote td{
+    background-color: var(--alert-td-bg-color);
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring hr{
+    position: relative;
+    margin-top: 2rem;
+    margin-bottom: 2rem;
+    border: none;
+    border-top: 2px solid transparent;
+    background-image: var(--hr-bg-image);
+    height: 1.5px;
+    overflow: visible;
+    color: #abb2bf;
+    opacity: 0.8;
+    border-radius: 5px;
+    box-shadow: var(--hr-box-shadow);
+    animation: dashAnimation 0.5s ease-in-out;
+
+    transition: transform 0.3s ease, background-position 0.3s ease, height 0.3s ease;
+    background-size: 200% 100%;
+    background-position: 0 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring hr:hover{
+    background-position: calc(100% * var(--hr-hover-effect) * var(--use-dynamic-effect)), 0;
+    transform: scale(calc(1 + 0.02 * var(--hr-hover-effect) * var(--use-dynamic-effect)));
+    height: calc(1.5px + 1px * var(--hr-hover-effect) * var(--use-dynamic-effect));
+}
+
+@keyframes dashAnimation{
+    0% {
+        width: calc(100% - 100% * var(--hr-hover-effect) * var(--use-dynamic-effect));
+        opacity: calc(1 - 1 * var(--hr-hover-effect) * var(--use-dynamic-effect));
+    }
+
+    100% {
+        width: 100%;
+        opacity: 1;
+    }
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring table{
+    border: 1px solid var(--table-border-color);
+    border-radius: 10px;
+    border-collapse: separate;
+    overflow: hidden;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring table th,
+.easymde-rendered-content.easymde-markdown-theme-spring table td{
+    padding: 10px 16px;
+    border-top: 1px solid var(--table-border-color);
+    border: 0.5px solid var(--table-border-color);
+    transition: all 0.3s ease;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring table th{
+    border-bottom: 1px solid var(--table-border-color);
+    border-top: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring table td:hover{
+    background: var(--table-td-hover-bg);
+    transition: all calc(0.3s * var(--table-hover-effect)) ease;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring blockquote td:hover{
+    background: var(--blockquote-td-hover-bg);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring table thead{
+    background-color: var(--table-thead-bg-color);
+    color: var(--table-thead-text-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring table tbody+tbody{
+    border-top: 2px solid var(--table-tbody-border-color);
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring .footnotes{
+    font-size: 1rem;
+}
+
+
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring strong{
+    font-weight: bold;
+    color: var(--strong-color);
+    font-size: 1.05rem;
+    transition: font-size 0.3s ease, padding 0.3s ease;
+    display: inline-block;
+    margin: 0 2px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring strong:hover{
+    font-size: calc(1.05rem + 0.05rem * var(--strong-hover-effect) * var(--use-dynamic-effect));
+    padding: calc(0px + 3px * var(--strong-hover-effect) * var(--use-dynamic-effect));
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring em{
+    background-color: inherit;
+    color: var(--em-color);
+    transition: all 0.3s ease;
+    padding-left: 1px;
+    padding-right: 1px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring em:hover{
+    color: var(--em-hover-color);
+    font-weight: calc(500 + 100 * var(--em-hover-effect) * var(--use-dynamic-effect));
+    padding-left: calc(1px + 2px * var(--em-hover-effect) * var(--use-dynamic-effect));
+    padding-right: calc(1px + 2px * var(--em-hover-effect) * var(--use-dynamic-effect));
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring u{
+    background-color: inherit;
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 2px solid var(--u-border-color);
+    padding-bottom: 2.5px;
+    transition: all 0.3s ease;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring u:hover{
+    border: calc(2px * var(--u-hover-effect) * var(--use-dynamic-effect)) solid var(--u-border-color);
+    padding: calc(0px + 4px * var(--u-hover-effect) * var(--use-dynamic-effect));
+    margin: calc(0px + 4px * var(--u-hover-effect) * var(--use-dynamic-effect));
+    border-radius: calc(0px + 7px * var(--u-hover-effect) * var(--use-dynamic-effect));
+    border-bottom: 2px solid var(--u-border-color);
+    padding-bottom: 2.5px;
+}
+
+
+/* inline code */
+.easymde-rendered-content.easymde-markdown-theme-spring :not(pre) > code{
+    background-color: var(--code-bg-color);
+    color: var(--code-color);
+    font-family: var(--easymde-code-font-family);
+    font-size: 1rem;
+    font-weight: 550;
+    margin: 0 2px;
+    padding: 3px 3px 1px;
+    border-radius: 7px;
+    transition: all 0.3s ease;
+    z-index: -1;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring :not(pre) > code:hover{
+    background-color: var(--code-hover-bg-color);
+    font-weight: calc(550 + 150 * var(--code-hover-effect) * var(--use-dynamic-effect));
+    padding: 3px 3px calc(1px + 2px * var(--code-hover-effect) * var(--use-dynamic-effect));
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring h1 code,
+.easymde-rendered-content.easymde-markdown-theme-spring h2 code,
+.easymde-rendered-content.easymde-markdown-theme-spring h3 code,
+.easymde-rendered-content.easymde-markdown-theme-spring h4 code,
+.easymde-rendered-content.easymde-markdown-theme-spring h5 code,
+.easymde-rendered-content.easymde-markdown-theme-spring h6 code{
+    font-size: inherit;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring del{
+    color: var(--del-color);
+    text-decoration: line-through;
+    text-decoration-color: var(--del-text-decoration-color);
+    text-decoration-thickness: 1.5px;
+    font-style: italic;
+    opacity: 0.8;
+    transition: color 0.3s ease, opacity 0.3s ease;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring del:hover{
+    color: var(--del-hover-color);
+    opacity: calc(0.8 + 0.2 * var(--del-hover-effect) * var(--use-dynamic-effect));
+    text-decoration-color: var(--del-hover-text-decoration-color);
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring mark{
+    font-weight: 500;
+    background-color: var(--mark-bg-color);
+    color: inherit;
+    margin: 0 2px;
+    padding: 3px 3px 2.5px;
+    border-radius: 0px;
+    transition: all 0.3s ease
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring mark:hover{
+    border-radius: calc(0px + 7px * var(--mark-hover-effect) * var(--use-dynamic-effect));
+    background-color: var(--mark-hover-bg-color);
+    padding: 3px 3px calc(2.5px + 1.5px * var(--mark-hover-effect) * var(--use-dynamic-effect));
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-spring a{
+    background-color: inherit;
+    color: var(--a-color);
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring a:hover{
+    text-decoration: underline;
+    color: var(--a-hover-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring a img{
+    border: none;
+}
+
+
+
+
+
+
+@media print{
+    .easymde-rendered-content.easymde-markdown-theme-spring table{
+        border: none;
+        border-radius: 10px;
+        border-collapse: separate;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-spring table th,
+.easymde-rendered-content.easymde-markdown-theme-spring table td{
+        padding: 10px 16px;
+        border-top: none;
+        border: none;
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-spring table th{
+        background-color: var(--table-thead-bg-color);
+        color: var(--table-thead-text-color);
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-spring blockquote table th{
+        background-color: var(--blockquote-thead-bg-color);
+        color: var(--blockquote-thead-text-color);
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-spring hr{
+        position: relative;
+        margin: 1.2rem auto;
+        border: none;
+        background-color: #2f845e;
+        height: 2.5px;
+        width: 1024px !important;
+        opacity: 0.8;
+        border-radius: 1.75px;
+    }
+}
+
+@media only screen and (min-width: 1400px){
+    .easymde-rendered-content.easymde-markdown-theme-spring hr{
+        position: relative;
+        margin: 2rem auto;
+        border: none;
+        background-color: #2f845e;
+        height: 3px;
+        opacity: 0.8;
+        border-radius: 1.5px;
+    }
+}
+
+@media only screen and (min-width: 1800px){
+    .easymde-rendered-content.easymde-markdown-theme-spring hr{
+        position: relative;
+        margin: 2rem auto;
+        border: none;
+        background-color: #2f845e;
+        height: 3px;
+        opacity: 0.8;
+        border-radius: 1.5px;
+    }
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring{
+    font-size: 17px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-spring :not(pre) > code,
+.easymde-rendered-content.easymde-markdown-theme-spring :not(pre) > tt {
+  font-family: var(--easymde-code-font-family);
+}

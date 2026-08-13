@@ -809,6 +809,12 @@ test('release requirements include the distinct associated Fullstack Blue code t
   assert.ok(requirements.includes('assets/themes/code/fullstack-blue.css'));
 });
 
+test('release requirements include the shared Typora-derived code palette asset', () => {
+  const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
+
+  assert.ok(requirements.includes('assets/themes/code/typora-derived.css'));
+});
+
 test('release requirements do not include the removed md2html-normal article theme stylesheet', () => {
   const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
 

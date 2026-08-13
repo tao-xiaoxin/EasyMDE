@@ -1,0 +1,445 @@
+/*
+ * EasyMDE Inkwell article theme.
+ * Source: Inkwell (Typora theme, adapted to the scoped EasyMDE preview surface).
+ */
+.easymde-rendered-content.easymde-markdown-theme-inkwell{
+
+    --text-color: #3d4852;
+    --heading-color: #1a2332;
+    --heading-secondary: #2c3e50;
+    --link-color: #3b82c4;
+    --link-hover: #2563a0;
+    --border-color: #e2e8f0;
+    --border-light: #eef2f7;
+    --code-bg: #f6f8fb;
+    --code-text: #c7254e;
+    --blockquote-bg: #f8fafc;
+    --blockquote-border: #94a3b8;
+    --blockquote-text: #5a6872;
+    --table-header-bg: #f1f5f9;
+    --table-stripe-bg: #f8fafc;
+    --table-border: #e2e8f0;
+    --mark-bg: #fef3cd;
+    --selection-bg: #d4e4f7;
+    --meta-color: #8896a4;
+    --hr-color: #d1d9e0;
+    --shadow-light: rgba(0, 0, 0, 0.04);
+
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --font-size-base: 15px;
+    --line-height: 1.75;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell{
+    font-size: var(--font-size-base);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell{
+    font-family: var(--font-sans);
+    color: var(--text-color);
+    line-height: var(--line-height);
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell h1,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h2,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h3,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h4,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h5,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h6{
+    color: var(--heading-color);
+    font-weight: 600;
+    line-height: 1.35;
+    margin-top: 1.8em;
+    margin-bottom: 0.65em;
+    position: relative;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell h1{
+    font-size: 2em;
+    font-weight: 700;
+    margin-top: 1.2em;
+    padding-bottom: 0.35em;
+    border-bottom: 2px solid var(--border-color);
+    color: var(--heading-color);
+    letter-spacing: -0.02em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell h2{
+    font-size: 1.55em;
+    font-weight: 650;
+    padding-bottom: 0.25em;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--heading-secondary);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell h3{
+    font-size: 1.3em;
+    color: var(--heading-secondary);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell h4{
+    font-size: 1.12em;
+    color: var(--heading-secondary);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell h5{
+    font-size: 1em;
+    color: #5a6872;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell h6{
+    font-size: 0.92em;
+    color: #6b7a88;
+    font-weight: 500;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell h1:hover::after,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h2:hover::after{
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    width: 60px;
+    height: 2px;
+    background: var(--link-color);
+    border-radius: 1px;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell p{
+    margin: 0 0 1em 0;
+    line-height: var(--line-height);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell strong{
+    font-weight: 600;
+    color: #2c3644;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell em{
+    font-style: italic;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell del{
+    color: #94a3b8;
+    text-decoration: line-through;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell mark{
+    background-color: var(--mark-bg);
+    padding: 0.15em 0.35em;
+    border-radius: 3px;
+    color: #7c6200;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell a{
+    color: var(--link-color);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell a:hover{
+    color: var(--link-hover);
+    border-bottom-color: var(--link-hover);
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell ul,
+.easymde-rendered-content.easymde-markdown-theme-inkwell ol{
+    margin: 0 0 1em 0;
+    padding-left: 1.8em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell li{
+    margin-bottom: 0.35em;
+    line-height: 1.7;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell li > p{
+    margin-bottom: 0.4em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell ul ul,
+.easymde-rendered-content.easymde-markdown-theme-inkwell ol ol,
+.easymde-rendered-content.easymde-markdown-theme-inkwell ul ol,
+.easymde-rendered-content.easymde-markdown-theme-inkwell ol ul{
+    margin-top: 0.3em;
+    margin-bottom: 0.3em;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell ul > li::marker{
+    color: #94a3b8;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell ol > li::marker{
+    color: var(--heading-secondary);
+    font-weight: 500;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell .task-list-item{
+    list-style: none;
+    margin-left: -1.5em;
+    padding-left: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell .task-list-item input[type="checkbox"]{
+    margin-right: 0.5em;
+    vertical-align: middle;
+    accent-color: var(--link-color);
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell blockquote{
+    margin: 1em 0;
+    padding: 0.8em 1.2em;
+    border-left: 4px solid var(--blockquote-border);
+    background-color: var(--blockquote-bg);
+    border-radius: 0 6px 6px 0;
+    color: var(--blockquote-text);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell blockquote p{
+    margin-bottom: 0.5em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell blockquote p:last-child{
+    margin-bottom: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell blockquote blockquote{
+    margin-top: 0.6em;
+    border-left-color: #cbd5e1;
+}
+
+
+
+
+
+
+
+
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell table{
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.2em 0;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px var(--shadow-light);
+    font-size: 0.93em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell thead{
+    background-color: var(--table-header-bg);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell th{
+    padding: 0.75em 1em;
+    text-align: left;
+    font-weight: 600;
+    color: var(--heading-secondary);
+    border-bottom: 2px solid var(--table-border);
+    white-space: nowrap;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell td{
+    padding: 0.65em 1em;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-color);
+    vertical-align: top;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell tr:nth-child(even){
+    background-color: var(--table-stripe-bg);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell tr:last-child td{
+    border-bottom: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell tr:hover{
+    background-color: #eef4fb;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell hr{
+    border: none;
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--hr-color), transparent);
+    margin: 2.5em 0;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell img{
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    margin: 1em 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell img + em,
+.easymde-rendered-content.easymde-markdown-theme-inkwell figure figcaption{
+    display: block;
+    text-align: center;
+    font-size: 0.85em;
+    color: var(--meta-color);
+    margin-top: 0.5em;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell .footnotes-area{
+    margin-top: 2em;
+    padding-top: 1em;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.88em;
+    color: var(--meta-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell .footnotes-area ol{
+    padding-left: 1.5em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell dt{
+    font-weight: 600;
+    color: var(--heading-secondary);
+    margin-top: 0.8em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell dd{
+    margin-left: 1.5em;
+    margin-bottom: 0.5em;
+    color: var(--text-color);
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell::selection{
+    background-color: var(--selection-bg);
+    color: inherit;
+}
+
+
+@media print{
+    .easymde-rendered-content.easymde-markdown-theme-inkwell{
+        font-size: 12pt;
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-inkwell h1,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h2,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h3,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h4,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h5,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h6{
+        page-break-after: avoid;
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-inkwell blockquote,
+.easymde-rendered-content.easymde-markdown-theme-inkwell table{
+        page-break-inside: avoid;
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-inkwell img{
+        page-break-inside: avoid;
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-inkwell a{
+        color: var(--link-color);
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-inkwell a::after{
+        content: " (" attr(href) ")";
+        font-size: 0.8em;
+        color: #8896a4;
+    }
+}
+
+
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell h1,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h2,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h3,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h4,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h5,
+.easymde-rendered-content.easymde-markdown-theme-inkwell h6,
+.easymde-rendered-content.easymde-markdown-theme-inkwell a,
+.easymde-rendered-content.easymde-markdown-theme-inkwell blockquote,
+.easymde-rendered-content.easymde-markdown-theme-inkwell table{
+    transition: all 0.2s ease;
+}
+
+
+
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell kbd{
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    line-height: 1;
+    color: var(--heading-secondary);
+    background-color: #f8fafc;
+    border: 1px solid #d1d9e0;
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 0.15em 0.45em;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
+    white-space: nowrap;
+    vertical-align: baseline;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell kbd + kbd{
+    margin-left: 0.15em;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell kbd > kbd{
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    background: none;
+    font-size: 1em;
+}
+
+
+@media (max-width: 768px){
+    .easymde-rendered-content.easymde-markdown-theme-inkwell h1{
+        font-size: 1.6em;
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-inkwell h2{
+        font-size: 1.35em;
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-inkwell table{
+        font-size: 0.85em;
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-inkwell th,
+.easymde-rendered-content.easymde-markdown-theme-inkwell td{
+        padding: 0.5em 0.7em;
+    }
+}
+
+.easymde-rendered-content.easymde-markdown-theme-inkwell :not(pre) > code,
+.easymde-rendered-content.easymde-markdown-theme-inkwell :not(pre) > tt {
+  color: var(--code-text);
+  background-color: var(--code-bg);
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  font-size: 0.88em;
+  font-family: var(--easymde-code-font-family);
+}

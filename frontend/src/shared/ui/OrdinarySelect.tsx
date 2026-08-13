@@ -181,7 +181,7 @@ export function OrdinarySelect({
   };
 
   const commit = (nextValue: string) => {
-    onChange(nextValue);
+    if (nextValue !== value || !selected) onChange(nextValue);
     close();
     triggerRef.current?.focus();
   };

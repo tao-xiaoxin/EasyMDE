@@ -17,10 +17,18 @@ function fixture() {
       cssUrl: `${assetBaseUrl}assets/themes/article/default.css`,
       id: 'default',
       label: 'Default',
-      defaultCodeTheme: 'atom-one-dark'
+      defaultCodeTheme: 'atom-one-dark',
+      markupProfile: 'common-v1'
+    }, {
+      cssUrl: `${assetBaseUrl}assets/themes/article/newsprint.css`,
+      id: 'newsprint',
+      label: 'Newsprint',
+      defaultCodeTheme: 'atom-one-dark',
+      markupProfile: 'common-v1'
     }],
     canManageCustomCss: true,
     codeThemeExplicit: false,
+    customMarkupProfile: 'common-v1',
     codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
     customCss: [{
       articleThemeName: 'Writer Article',
@@ -35,6 +43,7 @@ function fixture() {
       appearance: 'Appearance', articleTheme: 'Article theme', codeTheme: 'Code theme',
       cssName: 'CSS name', cssNameDuplicate: 'This theme name is already in use. Choose another name and try again.',
       cssSaveFailed: 'CSS save failed', cssSaved: 'CSS saved',
+      themeApplyFailed: 'Theme could not be applied. The saved theme is still available.',
       customCss: 'Custom CSS', customCssTheme: 'Custom CSS theme',
       customCssDialog: customCssDialogStrings,
       namedCustomCss: 'Named CSS', saveCss: 'Save CSS'
@@ -58,6 +67,24 @@ function fixture() {
 }
 
 describe('createWordPressAppearancePort', () => {
+  it('cancels a pending article stylesheet without committing hidden fields', async () => {
+    const options = fixture();
+    const port = createWordPressAppearancePort(options);
+    const pending = port.applyState(
+      { codeTheme: 'github', customCssId: '', markdownTheme: 'newsprint' },
+      true
+    );
+
+    port.cancelPendingApply();
+
+    await expect(pending).resolves.toBe(false);
+    expect(options.fields.markdownTheme.value).toBe('default');
+    expect(options.fields.codeTheme.value).toBe('atom-one-dark');
+    expect(document.querySelector(
+      'link[href*="newsprint"]:not(#easymde-article-theme-css)'
+    )).toBeNull();
+  });
+
   it('applies the saved appearance before the first user interaction', () => {
     const options = fixture();
     options.bootstrap = {
@@ -115,6 +142,155 @@ describe('createWordPressAppearancePort', () => {
       .toBe('.easymde-rendered-content .note { color: navy; }');
   });
 
+  it('commits a changed article theme only after its stylesheet loads', async () => {
+    const options = fixture();
+    const port = createWordPressAppearancePort(options);
+    const applied = port.applyState(
+      { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'newsprint' },
+      false
+    );
+    const candidate = Array.from(document.head.querySelectorAll('link'))
+      .find((link) => link.id !== 'easymde-article-theme-css');
+
+    expect(candidate?.href).toBe(`${assetBaseUrl}assets/themes/article/newsprint.css`);
+    expect(options.fields.markdownTheme.value).toBe('default');
+
+    candidate?.dispatchEvent(new Event('load'));
+
+    await expect(applied).resolves.toBe(true);
+    expect(options.fields.markdownTheme.value).toBe('newsprint');
+    expect(document.querySelector<HTMLLinkElement>('#easymde-article-theme-css')?.href)
+      .toBe(`${assetBaseUrl}assets/themes/article/newsprint.css`);
+  });
+
+  it('rejects stylesheet load failure without replacing the active theme', async () => {
+    const options = fixture();
+    const port = createWordPressAppearancePort(options);
+    const activeLink = document.querySelector<HTMLLinkElement>(
+      '#easymde-article-theme-css'
+    );
+    const applied = port.applyState(
+      { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'newsprint' },
+      false
+    );
+    const candidate = Array.from(document.head.querySelectorAll('link'))
+      .find((link) => link !== activeLink);
+
+    candidate?.dispatchEvent(new Event('error'));
+
+    await expect(applied).rejects.toThrowError(
+      'appearance-article-theme-stylesheet-load-failed'
+    );
+    expect(document.querySelector('#easymde-article-theme-css')).toBe(activeLink);
+    expect(options.fields.markdownTheme.value).toBe('default');
+  });
+
+  it('times out a stalled stylesheet without replacing the active theme', async () => {
+    vi.useFakeTimers();
+    try {
+      const options = fixture();
+      const port = createWordPressAppearancePort(options);
+      const activeLink = document.querySelector<HTMLLinkElement>(
+        '#easymde-article-theme-css'
+      );
+      const applied = port.applyState(
+        { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'newsprint' },
+        false
+      );
+      const rejection = expect(applied).rejects.toThrowError(
+        'appearance-article-theme-stylesheet-load-timeout'
+      );
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      await rejection;
+
+      expect(document.querySelector('#easymde-article-theme-css')).toBe(activeLink);
+      expect(document.head.querySelectorAll('link')).toHaveLength(1);
+      expect(options.fields.markdownTheme.value).toBe('default');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['load', 'error', 'cancel', 'dispose'] as const)(
+    'clears the stylesheet timeout after %s',
+    async (exit) => {
+      vi.useFakeTimers();
+      try {
+        const options = fixture();
+        const port = createWordPressAppearancePort(options);
+        const applied = port.applyState(
+          { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'newsprint' },
+          false
+        );
+        const candidate = Array.from(document.head.querySelectorAll('link'))
+          .find((link) => link.id !== 'easymde-article-theme-css');
+
+        if ('load' === exit) candidate?.dispatchEvent(new Event('load'));
+        if ('error' === exit) candidate?.dispatchEvent(new Event('error'));
+        if ('cancel' === exit) {
+          await port.applyState(
+            { codeTheme: 'github', customCssId: '', markdownTheme: 'default' },
+            true
+          );
+        }
+        if ('dispose' === exit) port.dispose();
+
+        if ('error' === exit) {
+          await expect(applied).rejects.toThrowError(
+            'appearance-article-theme-stylesheet-load-failed'
+          );
+        } else {
+          await expect(applied).resolves.toBe('load' === exit);
+        }
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  it('lets only the latest rapid article-theme request commit', async () => {
+    const options = fixture();
+    const port = createWordPressAppearancePort(options);
+    const first = port.applyState(
+      { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'newsprint' },
+      false
+    );
+    const firstCandidate = Array.from(document.head.querySelectorAll('link'))
+      .find((link) => link.id !== 'easymde-article-theme-css');
+    const second = port.applyState(
+      { codeTheme: 'github', customCssId: '', markdownTheme: 'default' },
+      true
+    );
+
+    firstCandidate?.dispatchEvent(new Event('load'));
+
+    await expect(first).resolves.toBe(false);
+    await expect(second).resolves.toBe(true);
+    expect(options.fields.markdownTheme.value).toBe('default');
+    expect(options.fields.codeTheme.value).toBe('github');
+    expect(options.fields.codeThemeExplicit.value).toBe('1');
+  });
+
+  it('cancels a pending stylesheet without a late commit when disposed', async () => {
+    const options = fixture();
+    const port = createWordPressAppearancePort(options);
+    const applied = port.applyState(
+      { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'newsprint' },
+      false
+    );
+    const candidate = Array.from(document.head.querySelectorAll('link'))
+      .find((link) => link.id !== 'easymde-article-theme-css');
+
+    port.dispose();
+    candidate?.dispatchEvent(new Event('load'));
+
+    await expect(applied).resolves.toBe(false);
+    expect(candidate?.isConnected).toBe(false);
+    expect(options.fields.markdownTheme.value).toBe('default');
+  });
+
   it('uses the server snapshot after a successful Custom CSS mutation', async () => {
     const options = fixture();
     options.apiFetch.mockResolvedValue({
@@ -145,6 +321,12 @@ describe('createWordPressAppearancePort', () => {
       method: 'POST',
       url: 'https://example.test/wp-json/easymde/v1/custom-css'
     });
+
+    await expect(port.applyState({
+      markdownTheme: 'custom',
+      codeTheme: 'atom-one-dark',
+      customCssId: 'saved-css'
+    }, false)).resolves.toBe(true);
   });
 
   it('maps duplicate-name failures to a controlled code without exposing the REST message', async () => {
@@ -232,8 +414,8 @@ describe('createWordPressAppearancePort', () => {
 
   it.each([
     { customCssUrl: 'https://remote.test/custom-css' },
-    { bootstrap: { ...fixture().bootstrap, articleThemes: [{ cssUrl: 'https://remote.test/theme.css', id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' }] } },
-    { bootstrap: { ...fixture().bootstrap, articleThemes: [{ cssUrl: `${assetBaseUrl}%2e%2e/%2e%2e/escape.css`, id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' }] } }
+    { bootstrap: { ...fixture().bootstrap, articleThemes: [{ cssUrl: 'https://remote.test/theme.css', id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark', markupProfile: 'common-v1' }] } },
+    { bootstrap: { ...fixture().bootstrap, articleThemes: [{ cssUrl: `${assetBaseUrl}%2e%2e/%2e%2e/escape.css`, id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark', markupProfile: 'common-v1' }] } }
   ])('rejects remote or escaping runtime URLs', (override) => {
     expect(() => createWordPressAppearancePort({ ...fixture(), ...override }))
       .toThrowError();

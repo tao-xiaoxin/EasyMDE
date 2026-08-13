@@ -34,7 +34,7 @@ EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_con
 ## Requirements
 
 - WordPress 6.7 or newer.
-- PHP 7.4 or newer.
+- PHP 7.4 or newer with the DOM extension enabled.
 - Composer runtime dependencies included in production release ZIPs.
 
 ## Installation

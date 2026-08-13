@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -41,6 +41,378 @@ function cssRuleSelectors(source) {
   }
 
   return selectors;
+}
+
+function cssRuleBodyMatching(source, selector, predicate = () => true) {
+  const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+  let match;
+
+  while ((match = rulePattern.exec(source)) !== null) {
+    const selectors = match[1]
+      .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+      .split(',')
+      .map((item) => item.trim());
+    if (selectors.includes(selector) && predicate(match[2])) return match[2];
+  }
+
+  return undefined;
+}
+
+function escapedRegExp(value) {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+}
+
+function scopedArticleRoot(theme) {
+  return `.easymde-rendered-content.easymde-markdown-theme-${theme}`;
+}
+
+function assertInlineCodeRule(theme, selectorSuffix, declarations) {
+  const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+  const selector = `${scopedArticleRoot(theme)} ${selectorSuffix}`;
+  const body = cssRuleBodyMatching(css, selector, (candidate) => (
+    declarations.every((declaration) => declaration.test(candidate))
+  ));
+
+  assert.ok(body, `${theme} should preserve the pinned inline-code rule ${selectorSuffix}`);
+  return css;
+}
+
+const TYPORA_ARTICLE_THEME_IDS = Object.freeze([
+  'inkwell',
+  'animal-island',
+  'phycat-cherry',
+  'phycat-caramel',
+  'phycat-forest',
+  'phycat-mint',
+  'phycat-sky',
+  'phycat-prussian',
+  'phycat-sakura',
+  'phycat-mauve',
+  'mdmdt',
+  'dogschoice-pink',
+  'bloom-petal',
+  'bloom-mist',
+  'bloom-verdant',
+  'bloom-stone',
+  'bloom-wheat',
+  'bloom-ink',
+  'bloom-amber',
+  'bloom-lapis',
+  'bloom-ripple',
+  'bloom-cinnabar',
+  'bloom-sage',
+  'bloom-spring',
+  'spring'
+]);
+
+const ROOT_FRAME_PROPERTY_PATTERNS = Object.freeze([
+  /^(?:width|min-width|max-width|height|min-height|max-height)$/,
+  /^(?:margin|padding|border|background|outline|overflow|scroll-padding|scroll-behavior)(?:-|$)/,
+  /^(?:box-shadow|position|z-index|inset|top|right|bottom|left)$/
+]);
+
+const ROOT_PSEUDO_SELECTORS = Object.freeze(['::before', '::after', ':before', ':after']);
+const NESTED_CSS_AT_RULES = /^(?:@media|@supports|@container|@layer|@document|@scope)\b/i;
+
+function stripCssComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+function findCssBlockEnd(source, openingBrace) {
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+
+  for (let index = openingBrace; index < source.length; index += 1) {
+    const character = source[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '{') {
+      depth += 1;
+    } else if (character === '}') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+
+  throw new Error(`Unclosed CSS block starting at offset ${openingBrace}`);
+}
+
+function findCssStatement(source, start, end) {
+  let quote = null;
+  let escaped = false;
+  let parentheses = 0;
+  let brackets = 0;
+
+  for (let index = start; index < end; index += 1) {
+    const character = source[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '(') {
+      parentheses += 1;
+    } else if (character === ')') {
+      parentheses = Math.max(0, parentheses - 1);
+    } else if (character === '[') {
+      brackets += 1;
+    } else if (character === ']') {
+      brackets = Math.max(0, brackets - 1);
+    } else if (parentheses === 0 && brackets === 0 && character === '{') {
+      return { kind: 'block', index };
+    } else if (parentheses === 0 && brackets === 0 && character === ';') {
+      return { kind: 'statement', index };
+    }
+  }
+
+  return undefined;
+}
+
+function splitCssSelectors(prelude) {
+  const selectors = [];
+  let start = 0;
+  let quote = null;
+  let escaped = false;
+  let parentheses = 0;
+  let brackets = 0;
+
+  for (let index = 0; index < prelude.length; index += 1) {
+    const character = prelude[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '(') {
+      parentheses += 1;
+    } else if (character === ')') {
+      parentheses = Math.max(0, parentheses - 1);
+    } else if (character === '[') {
+      brackets += 1;
+    } else if (character === ']') {
+      brackets = Math.max(0, brackets - 1);
+    } else if (character === ',' && parentheses === 0 && brackets === 0) {
+      selectors.push(prelude.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  const finalSelector = prelude.slice(start).trim();
+  if (finalSelector) selectors.push(finalSelector);
+  return selectors;
+}
+
+function parseCssRules(source) {
+  const css = stripCssComments(source);
+  const rules = [];
+
+  function walk(start, end, atRules = []) {
+    let position = start;
+
+    while (position < end) {
+      while (position < end && /[\s;]/.test(css[position])) position += 1;
+      if (position >= end) break;
+
+      const statement = findCssStatement(css, position, end);
+      if (!statement) break;
+
+      const prelude = css.slice(position, statement.index).trim();
+      if (statement.kind === 'statement') {
+        position = statement.index + 1;
+        continue;
+      }
+
+      const blockEnd = findCssBlockEnd(css, statement.index);
+      if (prelude.startsWith('@')) {
+        if (NESTED_CSS_AT_RULES.test(prelude)) {
+          walk(statement.index + 1, blockEnd, [...atRules, prelude]);
+        }
+      } else if (prelude) {
+        rules.push({
+          atRules,
+          body: css.slice(statement.index + 1, blockEnd),
+          selectors: splitCssSelectors(prelude)
+        });
+      }
+      position = blockEnd + 1;
+    }
+  }
+
+  walk(0, css.length);
+  return rules;
+}
+
+function splitCssDeclarations(body) {
+  const declarations = [];
+  let start = 0;
+  let quote = null;
+  let escaped = false;
+  let parentheses = 0;
+  let brackets = 0;
+
+  function addDeclaration(segment) {
+    const match = segment.match(/^\s*([a-zA-Z_][\w-]*)\s*:/);
+    if (!match) return;
+    declarations.push({
+      property: match[1].toLowerCase(),
+      value: segment.slice(match[0].length).trim()
+    });
+  }
+
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '(') {
+      parentheses += 1;
+    } else if (character === ')') {
+      parentheses = Math.max(0, parentheses - 1);
+    } else if (character === '[') {
+      brackets += 1;
+    } else if (character === ']') {
+      brackets = Math.max(0, brackets - 1);
+    } else if (character === ';' && parentheses === 0 && brackets === 0) {
+      addDeclaration(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+
+  addDeclaration(body.slice(start));
+  return declarations;
+}
+
+function normalizeCssSelector(selector) {
+  return selector.replace(/\s+/g, ' ').trim();
+}
+
+function isRootFrameProperty(property) {
+  return ROOT_FRAME_PROPERTY_PATTERNS.some((pattern) => pattern.test(property));
+}
+
+function rootPseudoSelector(root, selector) {
+  const normalized = normalizeCssSelector(selector);
+  return ROOT_PSEUDO_SELECTORS.some((pseudo) => normalized === `${root}${pseudo}`);
+}
+
+function rootOwnershipViolations(source, root) {
+  const violations = [];
+
+  for (const rule of parseCssRules(source)) {
+    for (const selector of rule.selectors) {
+      const normalizedSelector = normalizeCssSelector(selector);
+      if (normalizedSelector !== root && !rootPseudoSelector(root, normalizedSelector)) continue;
+
+      for (const declaration of splitCssDeclarations(rule.body)) {
+        if (normalizedSelector === root && isRootFrameProperty(declaration.property)) {
+          violations.push({
+            atRules: rule.atRules,
+            property: declaration.property,
+            selector: normalizedSelector
+          });
+        }
+        if (rootPseudoSelector(root, normalizedSelector) && (
+          declaration.property === 'content' || isRootFrameProperty(declaration.property)
+        )) {
+          violations.push({
+            atRules: rule.atRules,
+            property: declaration.property,
+            selector: normalizedSelector
+          });
+        }
+      }
+    }
+  }
+
+  return violations;
+}
+
+function rootPseudoRules(source, root) {
+  return parseCssRules(source).flatMap((rule) => rule.selectors
+    .map(normalizeCssSelector)
+    .filter((selector) => rootPseudoSelector(root, selector)));
+}
+
+function registeredArticleThemes() {
+  const registry = readFileSync(join(repoRoot, 'src/Theme/ArticleThemeRegistry.php'), 'utf8');
+
+  return Array.from(
+    registry.matchAll(
+      /=>\s*\$this->theme\(\s*'([^']+)'[\s\S]*?'(assets\/themes\/article\/[^']+\.css)'/g
+    ),
+    ([, id, assetPath]) => ({ id, assetPath })
+  );
+}
+
+function selectorPreludeFailures(css, dom) {
+  const element = dom.window.document.createElement('div');
+  const failures = [];
+
+  for (const rule of parseCssRules(css)) {
+    for (const selector of rule.selectors) {
+      const normalized = normalizeCssSelector(selector);
+      if (!normalized || /\/\*|\*\//.test(normalized)) {
+        failures.push({ selector: normalized, reason: 'comment-marker-in-selector-prelude' });
+        continue;
+      }
+      if (/[.#][-_a-zA-Z0-9]+\*/.test(normalized)) {
+        failures.push({ selector: normalized, reason: 'unseparated-universal-selector' });
+        continue;
+      }
+
+      try {
+        element.matches(normalized);
+      } catch (error) {
+        // jsdom does not expose Firefox's selection pseudo-element, although it is valid CSS.
+        if (normalized.endsWith('::-moz-selection')) continue;
+        failures.push({ reason: String(error.message), selector: normalized });
+      }
+    }
+  }
+
+  return failures;
 }
 
 function targetsCodeFrame(selector) {
@@ -356,17 +728,17 @@ test('Crimson focus follows the reference light surface and preserves code-theme
   assert.equal(cssVariable(css, '--easymde-crimson-focus-heading'), '#0f172a');
 });
 
-test('Geek Black changes only its final H1 top rhythm', () => {
-  const css = readFileSync(join(repoRoot, 'assets/themes/article/geek-black.css'), 'utf8');
-  const selector = '.easymde-rendered-content.easymde-markdown-theme-geek-black h1';
-  const h1Rules = cssRuleBodies(css, selector);
-  const fontRule = h1Rules.find((body) => /font-size:\s*24px;/.test(body));
-  const finalH1Rule = h1Rules.at(-1);
+test('the retired black article theme has no source or release ownership', () => {
+  const retiredThemeId = ['geek', 'black'].join('-');
+  const registry = readFileSync(join(repoRoot, 'src/Theme/ArticleThemeRegistry.php'), 'utf8');
+  const transformer = readFileSync(join(repoRoot, 'src/Content/ThemeMarkupTransformer.php'), 'utf8');
 
-  assert.ok(fontRule);
-  assert.ok(finalH1Rule);
-  assert.match(finalH1Rule, /margin-top:\s*30px;/);
-  assert.doesNotMatch(css, /margin-top:\s*-0\.46em;/);
+  assert.doesNotMatch(registry, new RegExp(`['"]${retiredThemeId}['"]`));
+  assert.doesNotMatch(transformer, new RegExp(`['"]${retiredThemeId}['"]`));
+  assert.equal(
+    existsSync(join(repoRoot, `assets/themes/article/${retiredThemeId}.css`)),
+    false
+  );
 });
 
 test('Cupid Busy keeps heading decorations at their declared sizes', () => {
@@ -442,6 +814,484 @@ test('shared code typography prefers the neutral Mac terminal font stack', () =>
   assert.doesNotMatch(css, /--easymde-code-font-family:[^;]*Operator Mono/);
 });
 
+test('Inkwell light keeps its scoped palette', () => {
+  const light = readFileSync(join(repoRoot, 'assets/themes/article/inkwell.css'), 'utf8');
+  const root = scopedArticleRoot('inkwell');
+  const rootPalette = cssRuleBodyMatching(
+    light,
+    root,
+    (body) => /--text-color:\s*#3d4852;/.test(body)
+  );
+  const palette = [
+    ['--text-color', '#3d4852'],
+    ['--heading-color', '#1a2332'],
+    ['--heading-secondary', '#2c3e50'],
+    ['--link-color', '#3b82c4'],
+    ['--code-bg', '#f6f8fb'],
+    ['--code-text', '#c7254e'],
+    ['--border-color', '#e2e8f0']
+  ];
+
+  assert.ok(rootPalette, 'Inkwell light palette must be declared on its scoped article root');
+  const dom = new JSDOM(
+    `<style>${light}</style><div class="easymde-rendered-content easymde-markdown-theme-inkwell"></div>`
+  );
+  const renderedRoot = dom.window.document.querySelector(root);
+  const computedRoot = dom.window.getComputedStyle(renderedRoot);
+
+  assert.ok(renderedRoot, 'Inkwell light root should match a rendered preview element');
+  for (const [name, expected] of palette) {
+    assert.equal(cssVariable(rootPalette, name), expected, `${name} should stay on the Inkwell root`);
+    assert.equal(
+      computedRoot.getPropertyValue(name).trim(),
+      expected,
+      `${name} should be reachable from the rendered Inkwell root`
+    );
+  }
+  assert.doesNotMatch(light, /(?:^|[,{])\s*(?:html|body|:root)\s*(?:[,\{])/m);
+});
+
+test('Spring heading decoration remains contained in narrow preview panes', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/spring.css'), 'utf8');
+  const rule = cssRuleBodies(
+    css,
+    '.easymde-rendered-content.easymde-markdown-theme-spring h2:after'
+  ).at(-1);
+
+  assert.ok(rule);
+  assert.match(rule, /width:\s*min\(30rem,\s*100%\);/);
+  assert.match(rule, /max-width:\s*100%;/);
+  assert.match(
+    rule,
+    /background:\s*var\(--write-h2-after-bg\);/,
+    'Spring H2 decoration should retain the source gradient variable'
+  );
+});
+
+test('Typora-derived adapters preserve their pinned scoped inline-code rules', () => {
+  assertInlineCodeRule('animal-island', ':not(pre) > code', [
+    /font-family:\s*var\(--ai-mono\);/,
+    /font-size:\s*0\.9em;/,
+    /color:\s*var\(--ai-primary-active\);/,
+    /background:\s*var\(--ai-primary-bg\);/,
+    /padding:\s*2px 8px;/,
+    /border:\s*1\.5px solid #cdeeea;/,
+    /border-radius:\s*6px;/
+  ]);
+  assertInlineCodeRule('mdmdt', ':not(pre) > code', [
+    /border-radius:\s*4px;/,
+    /background:\s*var\(--color-1-0-a\);/,
+    /padding:\s*3px 5px;/,
+    /color:\s*var\(--text-code\);/,
+    /font-size:\s*14px;/,
+    /box-decoration-break:\s*clone;/
+  ]);
+  assertInlineCodeRule('dogschoice-pink', ':not(pre) > code', [
+    /color:\s*var\(--code-inline--color\);/,
+    /background-color:\s*var\(--code-inline-bg-color\);/,
+    /padding:\s*2px;/,
+    /font-size:\s*95%;/,
+    /display:\s*inline;/,
+    /vertical-align:\s*middle;/
+  ]);
+  assertInlineCodeRule('spring', ':not(pre) > code', [
+    /background-color:\s*var\(--code-bg-color\);/,
+    /color:\s*var\(--code-color\);/,
+    /font-size:\s*1rem;/,
+    /font-weight:\s*550;/,
+    /margin:\s*0 2px;/,
+    /padding:\s*3px 3px 1px;/,
+    /border-radius:\s*7px;/
+  ]);
+
+  const phycatThemes = {
+    'phycat-cherry': ':not(pre) > code:not(.md-fencescode)',
+    'phycat-caramel': ':not(pre) > code:not(.md-fencescode)',
+    'phycat-forest': ':not(pre) > code:not(.md-fencescode)',
+    'phycat-mint': ':not(pre) > code:not(.md-fencescode)',
+    'phycat-sky': ':not(pre) > code',
+    'phycat-prussian': ':not(pre) > code',
+    'phycat-sakura': ':not(pre) > code',
+    'phycat-mauve': ':not(pre) > code'
+  };
+  for (const [theme, selector] of Object.entries(phycatThemes)) {
+    assertInlineCodeRule(theme, selector, [
+      /font-family:\s*var\(--easymde-code-font-family\);/,
+      /font-size:\s*\.9em;/,
+      /letter-spacing:\s*\.5px;/,
+      /padding:\s*5px 5px;/,
+      /margin:\s*0 2px;/,
+      /border-radius:\s*6px;/,
+      /vertical-align:\s*middle;/
+    ]);
+  }
+
+  const bloomThemes = [
+    'bloom-petal',
+    'bloom-mist',
+    'bloom-verdant',
+    'bloom-stone',
+    'bloom-wheat',
+    'bloom-ink',
+    'bloom-amber',
+    'bloom-lapis',
+    'bloom-ripple',
+    'bloom-cinnabar',
+    'bloom-sage',
+    'bloom-spring'
+  ];
+  for (const theme of bloomThemes) {
+    assertInlineCodeRule(theme, ':not(pre) > code', [
+      /font-size:\s*0\.88em;/,
+      /padding:\s*0\.2em 0\.45em;/,
+      /border-radius:\s*7px;/,
+      /background:\s*rgba\(var\(--accent-rgb\), 0\.14\);/,
+      /color:\s*var\(--accent\);/,
+      /font-weight:\s*600;/,
+      /border:\s*1px solid rgba\(var\(--accent-rgb\), 0\.32\);/
+    ]);
+  }
+});
+
+test('Mdmdt retains the pinned nested-list rhythm', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/mdmdt.css'), 'utf8');
+  const root = scopedArticleRoot('mdmdt');
+  const expected = [
+    [`${root} ul`, /padding-left:\s*36px;/],
+    [`${root} ol`, /padding-left:\s*40px;/],
+    [`${root} ol ol`, /margin-left:\s*-7px;/],
+    [`${root} ol > li > ul`, /margin-left:\s*-7px;/],
+    [`${root} ul > li > ol`, /margin-left:\s*-2px;/],
+    [`${root} ul > li > p`, /margin:\s*0 0 0 -2px;/],
+    [`${root} ol > li > p`, /margin:\s*0 0 0 -6px;/],
+    [`${root} ul > .task-list-item > input`, /margin-left:\s*-22px;/],
+    [`${root} li`, /margin-top:\s*6px;/],
+    [`${root} li > p`, /margin:\s*-5px 0;/]
+  ];
+
+  for (const [selector, declaration] of expected) {
+    assert.ok(
+      cssRuleBodyMatching(css, selector, (body) => declaration.test(body)),
+      `Mdmdt should keep ${selector} ${declaration}`
+    );
+  }
+  assert.doesNotMatch(
+    css,
+    new RegExp(`${escapedRegExp(root)} ul\\s*,\\s*${escapedRegExp(root)} ul\\s*\\{`),
+    'Mdmdt must not reintroduce the duplicate broad-list override'
+  );
+});
+
+test('Bloom retains source heading tracking and Petal release heading color', () => {
+  const bloomThemes = [
+    'bloom-petal',
+    'bloom-mist',
+    'bloom-verdant',
+    'bloom-stone',
+    'bloom-wheat',
+    'bloom-ink',
+    'bloom-amber',
+    'bloom-lapis',
+    'bloom-ripple',
+    'bloom-cinnabar',
+    'bloom-sage',
+    'bloom-spring'
+  ];
+
+  for (const theme of bloomThemes) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const root = scopedArticleRoot(theme);
+    const rootPattern = escapedRegExp(root);
+    const printColorRule = cssRuleBodyMatching(
+      css,
+      `${root} *`,
+      (body) => /(?:-webkit-)?print-color-adjust:\s*exact\s*!important;/.test(body)
+    );
+    assert.ok(printColorRule, `${theme} should preserve printed theme colors`);
+    assert.match(printColorRule, /-webkit-print-color-adjust:\s*exact\s*!important;/);
+    assert.match(printColorRule, /(?:^|\s)print-color-adjust:\s*exact\s*!important;/);
+    const headingGroup = css.match(
+      new RegExp(
+        `${rootPattern} h1\\s*,\\s*${rootPattern} h2\\s*,\\s*${rootPattern} h3\\s*,\\s*${rootPattern} h4\\s*,\\s*${rootPattern} h5\\s*,\\s*${rootPattern} h6\\s*\\{([^}]*)\\}`,
+        's'
+      )
+    );
+    assert.ok(headingGroup, `${theme} should define the shared heading group`);
+    assert.match(headingGroup[1], /letter-spacing:\s*-0\.015em;/, `${theme} heading tracking`);
+
+    const h1Rule = cssRuleBodyMatching(
+      css,
+      `${root} h1`,
+      (body) => /font-size:\s*2\.25em;/.test(body)
+    );
+    assert.ok(h1Rule, `${theme} should define its h1 rule`);
+    assert.match(h1Rule, /letter-spacing:\s*-0\.02em;/, `${theme} h1 tracking`);
+  }
+
+  const petal = readFileSync(join(repoRoot, 'assets/themes/article/bloom-petal.css'), 'utf8');
+  assert.match(
+    petal,
+    /\.easymde-rendered-content\.easymde-markdown-theme-bloom-petal h1\s*\{[^}]*border-bottom:\s*1px solid rgba\(var\(--accent-rgb\), 0\.3\);/s,
+    'Bloom Petal h1 border should retain the release alpha color'
+  );
+});
+
+test('registered Typora article themes contain no unreachable alert adapters', () => {
+  for (const theme of TYPORA_ARTICLE_THEME_IDS) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+
+    assert.doesNotMatch(css, /\.md-alert(?:[\w-]*)?|blockquote\s*\[\s*data-type/iu, theme);
+  }
+});
+
+test('Typora-derived article roots delegate frame geometry to the owning preview surface', () => {
+  assert.equal(TYPORA_ARTICLE_THEME_IDS.length, 25);
+  const failures = [];
+
+  for (const theme of TYPORA_ARTICLE_THEME_IDS) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const root = scopedArticleRoot(theme);
+    const rootRules = parseCssRules(css).filter((rule) => rule.selectors
+      .map(normalizeCssSelector)
+      .includes(root));
+    const violations = rootOwnershipViolations(css, root);
+    const pseudoRules = rootPseudoRules(css, root);
+
+    if (rootRules.length === 0 || violations.length > 0 || pseudoRules.length > 0) {
+      failures.push({
+        theme,
+        violations,
+        pseudoRules,
+        hasExactRootRule: rootRules.length > 0
+      });
+    }
+  }
+
+  assert.deepEqual(failures, [], `article root contract failures: ${JSON.stringify(failures)}`);
+});
+
+test('registered article CSS has valid selector preludes and reachable scoped roots', () => {
+  const themes = registeredArticleThemes();
+  const dom = new JSDOM('<!doctype html><div></div>');
+  const failures = [];
+
+  assert.ok(themes.length > 0, 'article theme registry should expose CSS assets');
+
+  for (const { id, assetPath } of themes) {
+    const css = readFileSync(join(repoRoot, assetPath), 'utf8');
+    const root = scopedArticleRoot(id);
+    const parsedRules = parseCssRules(css);
+    const rootRules = parsedRules.filter((rule) => rule.selectors
+      .map(normalizeCssSelector)
+      .includes(root));
+    const selectorFailures = selectorPreludeFailures(css, dom);
+
+    if (selectorFailures.length > 0 || rootRules.length === 0) {
+      failures.push({
+        assetPath,
+        id,
+        rootReachable: rootRules.length > 0,
+        selectorFailures
+      });
+    }
+  }
+
+  assert.deepEqual(
+    failures,
+    [],
+    `registered article CSS selector contract failures: ${JSON.stringify(failures)}`
+  );
+});
+
+test('Rose Purple owns the article-scoped 20px light-gray grid while Ningye Purple remains plain', () => {
+  const exactRootDeclarations = (css, root) => parseCssRules(css).flatMap((rule) => {
+    if (!rule.selectors.map(normalizeCssSelector).includes(root)) return [];
+    return splitCssDeclarations(rule.body);
+  });
+  const valuesFor = (declarations, property) => declarations
+    .filter((declaration) => declaration.property === property)
+    .map((declaration) => declaration.value.replace(/\s+/g, ' '));
+
+  const roseTheme = 'rose-purple';
+  const roseRoot = scopedArticleRoot(roseTheme);
+  const roseCss = readFileSync(join(repoRoot, `assets/themes/article/${roseTheme}.css`), 'utf8');
+  const roseDeclarations = exactRootDeclarations(roseCss, roseRoot);
+  const roseRootRule = cssRuleBodyMatching(
+    roseCss,
+    roseRoot,
+    (body) => body.includes('background-image:')
+  );
+
+  assert.ok(roseRootRule, 'Rose Purple must define its own article grid rule');
+  assert.deepEqual(
+    valuesFor(roseDeclarations, 'background-image'),
+    [
+      'linear-gradient(90deg, rgba(50, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0) 6.76%), linear-gradient(360deg, rgba(50, 0, 0, 0.05) 0%, rgba(249, 247, 252, 0) 9.46%)'
+    ],
+    'Rose Purple must have exactly one root background-image declaration'
+  );
+  assert.deepEqual(valuesFor(roseDeclarations, 'background-size'), ['20px 20px, 20px 20px']);
+  assert.deepEqual(valuesFor(roseDeclarations, 'background-repeat'), ['repeat, repeat']);
+  assert.deepEqual(valuesFor(roseDeclarations, 'background-position'), ['0% 0%']);
+  assert.deepEqual(
+    valuesFor(roseDeclarations, 'background'),
+    [],
+    'Rose Purple must not use a root background shorthand that can erase its grid'
+  );
+  assert.equal(
+    rootPseudoRules(roseCss, roseRoot).length,
+    0,
+    'the grid must not be implemented by a root pseudo-element'
+  );
+
+  const ningyeTheme = 'ningye-purple';
+  const ningyeRoot = scopedArticleRoot(ningyeTheme);
+  const ningyeCss = readFileSync(join(repoRoot, `assets/themes/article/${ningyeTheme}.css`), 'utf8');
+  const ningyeDeclarations = exactRootDeclarations(ningyeCss, ningyeRoot);
+  assert.deepEqual(
+    valuesFor(ningyeDeclarations, 'background-image'),
+    ['none'],
+    'Ningye Purple must have exactly one root background-image declaration'
+  );
+  assert.deepEqual(
+    valuesFor(ningyeDeclarations, 'background'),
+    [],
+    'Ningye Purple must not use a root background shorthand that can add a grid'
+  );
+  assert.deepEqual(
+    ningyeDeclarations.filter((declaration) => (
+      declaration.property === 'background-size'
+      || declaration.property === 'background-repeat'
+      || declaration.property === 'background-position'
+    )),
+    [],
+    'Ningye Purple must not carry grid geometry on any exact root rule'
+  );
+});
+
+test('article-root geometry contract catches root frames without rejecting nested decorations', () => {
+  const root = scopedArticleRoot('contract-fixture');
+  const invalidFixture = `
+    @media (max-width: 640px) {
+      ${root} {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 24px;
+        background: #eeeeee;
+        border-left: 4px solid #d9d9d9;
+        box-shadow: 0 4px 12px rgb(0 0 0 / 20%);
+      }
+      ${root}::before {
+        content: "rail";
+        position: absolute;
+        width: 8px;
+        background: #eeeeee;
+      }
+      ${root} blockquote {
+        border-left: 3px solid #e74c3c;
+      }
+    }
+  `;
+  const violations = rootOwnershipViolations(invalidFixture, root);
+
+  assert.ok(violations.some(({ property }) => property === 'max-width'));
+  assert.ok(violations.some(({ property }) => property === 'margin'));
+  assert.ok(violations.some(({ property }) => property === 'padding'));
+  assert.ok(violations.some(({ property }) => property === 'background'));
+  assert.ok(violations.some(({ property }) => property === 'border-left'));
+  assert.ok(violations.some(({ property }) => property === 'box-shadow'));
+  assert.ok(violations.some(({ selector }) => selector.endsWith('::before')));
+  assert.equal(
+    violations.some(({ selector }) => selector === `${root} blockquote`),
+    false,
+    'nested blockquote decorations must remain theme-owned'
+  );
+
+  const validFixture = `${root} blockquote { border-left: 3px solid #e74c3c; }`;
+  assert.deepEqual(
+    rootOwnershipViolations(validFixture, root),
+    [],
+    'nested blockquote decoration should not count as root geometry'
+  );
+});
+
+test('DogsChoice keeps the upstream 七彩虹 pink palette in a scoped adapter', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/dogschoice-pink.css'), 'utf8');
+  const root = '.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink';
+
+  assert.match(css, new RegExp(`${root.replaceAll('.', '\\.')}`));
+  assert.equal(cssVariable(css, '--img-border-color'), '#FFE8F7');
+  assert.equal(cssVariable(css, '--text-em-color'), '#f55066');
+  assert.equal(cssVariable(css, '--h1-background-color'), '#FFE8E8');
+  assert.equal(cssVariable(css, '--blockquote-bg-color'), '#E4FFEA');
+  assert.doesNotMatch(css, /(^|\n)\s*(?:html|body|:root)\s*\{/m);
+  assert.doesNotMatch(css, /dogs-(?:jidilan|yuanshanlv)\.css/);
+  assert.doesNotMatch(
+    css,
+    new RegExp(`${escapedRegExp(root)}\\s+tt\\s*\\{`),
+    'plain tt must not retain the upstream oversized inline box'
+  );
+  const ttBody = cssRuleBodyMatching(css, `${root} :not(pre) > tt`);
+  assert.ok(ttBody, 'inline tt must share the scoped inline-code adapter');
+  assert.match(ttBody, /padding:\s*2px;/);
+  assert.match(ttBody, /font-size:\s*95%;/);
+  assert.match(ttBody, /display:\s*inline;/);
+  assert.match(ttBody, /vertical-align:\s*middle;/);
+});
+
+test('Bloom adapters target live Mermaid roots and contain no unreachable focus hooks', () => {
+  const bloomFiles = readdirSync(join(repoRoot, 'assets/themes/article'))
+    .filter((name) => /^bloom-.*\.css$/.test(name));
+
+  assert.equal(bloomFiles.length, 12, 'all Bloom light variants should be present');
+
+  for (const file of bloomFiles) {
+    const css = readFileSync(join(repoRoot, 'assets/themes/article', file), 'utf8');
+    const themeId = file.replace(/\.css$/, '');
+    const root = scopedArticleRoot(themeId);
+
+    assert.ok(css.includes(root), `${file} should declare its own EasyMDE root`);
+    const literalRoot = escapedRegExp(root);
+
+    assert.match(
+      css,
+      new RegExp(`${literalRoot}\\s+\\.easymde-mermaid(?:\\b|\\s)`),
+      `${file} must style the live EasyMDE Mermaid root`
+    );
+    assert.doesNotMatch(css, /(^|[\s,>+~])\.mermaid(?:\b|[\s>.:#[])/m, `${file} has a dead Mermaid class`);
+    assert.doesNotMatch(css, /\.on-focus-mode\b|\.md-focus-element\b/, `${file} has dead Typora focus hooks`);
+  }
+});
+
+test('Phycat and Mdmdt adapters contain no document-host numbering, scrollbar, or page rules', () => {
+  const phycatThemes = [
+    'phycat-cherry',
+    'phycat-caramel',
+    'phycat-forest',
+    'phycat-mint',
+    'phycat-sky',
+    'phycat-prussian',
+    'phycat-sakura',
+    'phycat-mauve'
+  ];
+
+  for (const theme of phycatThemes) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const root = escapedRegExp(scopedArticleRoot(theme));
+
+    assert.doesNotMatch(css, /--autonum-h[1-6]\s*:/, `${theme} has automatic heading variables`);
+    assert.doesNotMatch(css, /\bcounter-(?:reset|increment)\s*:/, `${theme} has automatic heading counters`);
+    assert.doesNotMatch(css, new RegExp(`${root}::\\-webkit-scrollbar`), `${theme} owns the host scrollbar`);
+    assert.doesNotMatch(css, /@page\b/, `${theme} owns the global print page`);
+  }
+
+  assert.doesNotMatch(
+    readFileSync(join(repoRoot, 'assets/themes/article/mdmdt.css'), 'utf8'),
+    /@page\b/,
+    'Mdmdt must not own the global print page'
+  );
+});
+
 test('Terminal Noir preserves the reference terminal palette and readable contrast', () => {
   const css = readFileSync(join(repoRoot, 'assets/themes/code/terminal-noir.css'), 'utf8');
   const macFrameSelector = '.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac pre';
@@ -499,14 +1349,26 @@ test('Terminal Noir remains authoritative across every registered article theme'
     ].join('\n');
     const dom = new JSDOM(
       `<style>${css}</style>
-      <article class="easymde-rendered-content easymde-markdown-theme-${articleTheme} easymde-code-theme-terminal-noir easymde-code-mac">
+      <article data-code-frame class="easymde-rendered-content easymde-markdown-theme-${articleTheme} easymde-code-theme-terminal-noir easymde-code-mac">
         <pre><code class="hljs"><span class="hljs-title">Title</span><span class="hljs-number">1</span></code></pre>
+      </article>
+      <article data-ordinary-first class="easymde-rendered-content easymde-markdown-theme-${articleTheme}">
+        <p>Ordinary first child</p>
       </article>`
     );
     const { window } = dom;
-    assert.equal(window.getComputedStyle(window.document.querySelector('pre')).backgroundColor, 'rgb(13, 16, 23)', articleTheme);
+    const preStyle = window.getComputedStyle(window.document.querySelector('[data-code-frame] pre'));
+    assert.equal(preStyle.backgroundColor, 'rgb(13, 16, 23)', articleTheme);
+    assert.equal(preStyle.margin, '16px 0px', articleTheme);
     assert.equal(window.getComputedStyle(window.document.querySelector('code')).color, 'rgb(202, 209, 217)', articleTheme);
     assert.equal(window.getComputedStyle(window.document.querySelector('.hljs-title')).color, 'rgb(221, 226, 232)', articleTheme);
     assert.equal(window.getComputedStyle(window.document.querySelector('.hljs-number')).color, 'rgb(159, 184, 208)', articleTheme);
+    if (articleTheme === 'animal-island') {
+      assert.equal(
+        window.getComputedStyle(window.document.querySelector('[data-ordinary-first] > p')).marginTop,
+        '0px',
+        'Animal Island should still reset the top margin of an ordinary first child'
+      );
+    }
   });
 });

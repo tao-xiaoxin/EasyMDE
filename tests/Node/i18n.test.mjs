@@ -228,6 +228,30 @@ test("PHP translation calls use the EasyMDE text domain", () => {
 	assert.deepEqual(offenders, []);
 });
 
+test("theme registry labels use English source messages", () => {
+	const registryFiles = [
+		"src/Theme/ArticleThemeRegistry.php",
+		"src/Theme/CodeThemeRegistry.php",
+	];
+	const nonEnglishLabels = [];
+
+	for (const file of registryFiles) {
+		const source = readFileSync(join(repoRoot, file), "utf8");
+		const labels = [...source.matchAll(phpTranslationCallPattern())]
+			.filter((match) => "__" === match[1])
+			.map((match) => phpStringArguments(match[2])[0]);
+
+		assert.ok(labels.length > 0, `${file} should expose translated labels`);
+		for (const label of labels) {
+			if (/[^\x20-\x7e]/u.test(label)) {
+				nonEnglishLabels.push(`${file}: ${label}`);
+			}
+		}
+	}
+
+	assert.deepEqual(nonEnglishLabels, []);
+});
+
 test("PHP translation domain check matches real gettext calls", () => {
 	const source = [
 		"<?php",

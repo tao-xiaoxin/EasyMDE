@@ -122,7 +122,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php-version }}
-          extensions: mysqli
+          extensions: mysqli, dom
           tools: composer:v2
           coverage: none
 
@@ -209,7 +209,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
-          extensions: mysqli
+          extensions: mysqli, dom
           tools: composer:v2
           coverage: none
 
@@ -392,7 +392,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
-          extensions: mysqli
+          extensions: mysqli, dom
           tools: composer:v2
           coverage: none
 
@@ -456,8 +456,8 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
-          extensions: mysqli
-          tools: composer:v2
+          extensions: mysqli, dom
+          tools: none
           coverage: none
 
       - name: Set up Node.js
@@ -471,9 +471,6 @@ jobs:
 
       - name: Install WP-CLI
         run: bash scripts/install-wp-cli.sh
-
-      - name: Install PHP runtime dependencies
-        run: composer install --no-dev --no-interaction --no-progress --prefer-dist
 
       - name: Install Node dependencies
         run: npm ci
@@ -513,7 +510,7 @@ jobs:
         env:
           EASYMDE_E2E_BASE_URL: http://127.0.0.1:8089
           EASYMDE_E2E_WP_PATH: /tmp/easymde-e2e-wp
-        run: npm run test:e2e
+        run: npx playwright test --project=chromium
 
       - name: Upload Playwright failure artifacts
         if: failure()
@@ -523,4 +520,5 @@ jobs:
           path: |
             test-results/playwright
             test-results/playwright-junit.xml
+            /tmp/easymde-wp-server.log
           if-no-files-found: ignore

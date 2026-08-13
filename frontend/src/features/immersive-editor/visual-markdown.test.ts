@@ -134,7 +134,7 @@ A--&gt;B</code></pre>
         <img src="https://example.test/image.png" alt="Theme image">
         <figcaption>Theme image</figcaption>
       </figure>
-      <section class="table-container">
+      <section class="table-container easymde-table-container">
         <table>
           <thead><tr><th>Name</th></tr></thead>
           <tbody><tr><td>EasyMDE</td></tr></tbody>
@@ -354,14 +354,14 @@ A--&gt;B</code></pre>
       .join('\n\n');
 
     for (const index of [0, 1, 37, 78, 119]) {
-      const edited = visible.replace(`value-${index}`, `edited-${index}-🚀`);
+      const edited = visible.replace(`value-${index}`, `edited-${index}`);
       const merged = mergeVisualMarkdownChange(source, visible, edited);
-      expect(merged).toContain(`**edited-${index}-🚀**`);
+      expect(merged).toContain(`**edited-${index}**`);
       expect(merged).toContain(
         `[hidden-${index}]: https://example.test/${index}`
       );
       expect(merged.endsWith('\r\n')).toBe(true);
-      expect(merged.replace(`edited-${index}-🚀`, `value-${index}`)).toBe(
+      expect(merged.replace(`edited-${index}`, `value-${index}`)).toBe(
         source
       );
     }

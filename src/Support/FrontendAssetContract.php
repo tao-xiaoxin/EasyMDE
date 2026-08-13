@@ -11,6 +11,7 @@ final class FrontendAssetContract {
 	private const CODE_COPY_PREFIX = 'frontend-code-copy-';
 
 	private const ERROR_PREFIXES = array(
+		'frontend-asset-',
 		'frontend-enhancement-',
 		self::CODE_COPY_PREFIX,
 	);

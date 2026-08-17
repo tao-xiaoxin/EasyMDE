@@ -15,1210 +15,1214 @@ msgid ""
 "your site administrator."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:347
+#: src/Admin/AdminAssets.php:352
 msgid "Auto save"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:348
+#: src/Admin/AdminAssets.php:353
 msgid "Automatically save a local draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:349
+#: src/Admin/AdminAssets.php:354
 msgid "Auto save is enabled"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:350
+#: src/Admin/AdminAssets.php:355
 msgid "Article outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:351 src/Admin/AdminAssets.php:819
+#: src/Admin/AdminAssets.php:356 src/Admin/AdminAssets.php:824
 #: src/Admin/SettingsPage.php:531
 msgid "Cancel"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:352 src/Admin/AdminAssets.php:785
+#: src/Admin/AdminAssets.php:357 src/Admin/AdminAssets.php:790
 #: src/Admin/SettingsPage.php:787 src/Admin/SettingsPage.php:857
 msgid "Close"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:353
+#: src/Admin/AdminAssets.php:358
 msgid "Column"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:354
+#: src/Admin/AdminAssets.php:359
 msgid "Edit"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:355
+#: src/Admin/AdminAssets.php:360
 msgid "Edit mode"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:356
+#: src/Admin/AdminAssets.php:361
 msgid "Editor settings"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:357
+#: src/Admin/AdminAssets.php:362
 msgid "Enter immersive writing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:358
+#: src/Admin/AdminAssets.php:363
 msgid "Expand"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:359
+#: src/Admin/AdminAssets.php:364
 msgid "Exit immersive writing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:360
+#: src/Admin/AdminAssets.php:365
 msgid "Close outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:361
+#: src/Admin/AdminAssets.php:366
 msgid "History"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:362
+#: src/Admin/AdminAssets.php:367
 msgid "No revisions are available."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:363
+#: src/Admin/AdminAssets.php:368
 msgid "Revisions could not be loaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:364
+#: src/Admin/AdminAssets.php:369
 msgid "Loading revisions..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:365 src/Admin/SettingsPage.php:488
+#: src/Admin/AdminAssets.php:370 src/Admin/SettingsPage.php:488
 msgid "All"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:366
+#: src/Admin/AdminAssets.php:371
 msgid "Revision history"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:367
+#: src/Admin/AdminAssets.php:372
 msgid "Immersive writing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:368
+#: src/Admin/AdminAssets.php:373
 msgid "Insert"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:369
+#: src/Admin/AdminAssets.php:374
 msgid "Insert table"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:370
+#: src/Admin/AdminAssets.php:375
 msgid "Line"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:371
+#: src/Admin/AdminAssets.php:376
 msgid "Manual save"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:372
+#: src/Admin/AdminAssets.php:377
 msgid "More actions"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:373 src/Admin/AdminAssets.php:457
+#: src/Admin/AdminAssets.php:378 src/Admin/AdminAssets.php:462
 #: src/Admin/SettingsPage.php:848
 msgid "Markdown"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:374
+#: src/Admin/AdminAssets.php:379
 msgid "No headings"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:375
+#: src/Admin/AdminAssets.php:380
 msgid "Outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:376
+#: src/Admin/AdminAssets.php:381
 msgid "Show heading navigation on the left"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:377 src/Admin/AdminAssets.php:456
+#: src/Admin/AdminAssets.php:382 src/Admin/AdminAssets.php:461
 msgid "Preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:378
+#: src/Admin/AdminAssets.php:383
 msgid "Changes recorded"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:379
+#: src/Admin/AdminAssets.php:384
 msgid "Content loaded"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:380
+#: src/Admin/AdminAssets.php:385
 msgid "Editable"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:381
+#: src/Admin/AdminAssets.php:386
 msgid "Visual article editor"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:382
+#: src/Admin/AdminAssets.php:387
 msgid "Lock as read only"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:383
+#: src/Admin/AdminAssets.php:388
 msgid "Read only"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:384
+#: src/Admin/AdminAssets.php:389
 msgid "Unlock and edit"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:385
+#: src/Admin/AdminAssets.php:390
 msgid "Preview mode"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:386
+#: src/Admin/AdminAssets.php:391
 msgid "Publish article"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:387
+#: src/Admin/AdminAssets.php:392
 msgid "Restore revision"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:388
+#: src/Admin/AdminAssets.php:393
 msgid ""
 "Unsaved changes will be lost when WordPress restores this revision. Continue?"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:389
+#: src/Admin/AdminAssets.php:394
 msgid "Restore this revision"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:390
+#: src/Admin/AdminAssets.php:395
 msgid "Resize article outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:391
+#: src/Admin/AdminAssets.php:396
 msgid "Resize editor and Preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:392
+#: src/Admin/AdminAssets.php:397
 msgid "Saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:393
+#: src/Admin/AdminAssets.php:398
 msgid "Settings"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:394
+#: src/Admin/AdminAssets.php:399
 msgid "Open outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:395
+#: src/Admin/AdminAssets.php:400
 msgid "Split"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:396
+#: src/Admin/AdminAssets.php:401
 msgid "Split mode"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:397
+#: src/Admin/AdminAssets.php:402
 msgid "Split preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:398
+#: src/Admin/AdminAssets.php:403
 msgid "Show live preview by default"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:399
+#: src/Admin/AdminAssets.php:404
 msgid "Synchronized scrolling"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:400
+#: src/Admin/AdminAssets.php:405
 msgid "Keep the editor and preview in sync"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:401
+#: src/Admin/AdminAssets.php:406
 msgid "Table"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:402
+#: src/Admin/AdminAssets.php:407
 msgid "Columns"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:403
+#: src/Admin/AdminAssets.php:408
 msgid "Rows"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:404
+#: src/Admin/AdminAssets.php:409
 msgid "Theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:405
+#: src/Admin/AdminAssets.php:410
 msgid "Theme settings"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:406
+#: src/Admin/AdminAssets.php:411
 msgid "Add tags"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:407
+#: src/Admin/AdminAssets.php:412
 msgid "Categories"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:408
+#: src/Admin/AdminAssets.php:413
 msgid "Choose the sections this article belongs to."
 msgstr ""
 
 #. translators: %s: Number of selected categories.
-#: src/Admin/AdminAssets.php:410
+#: src/Admin/AdminAssets.php:415
 #, php-format
 msgid "Selected: %s"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:411
+#: src/Admin/AdminAssets.php:416
 msgid "Close publish dialog"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:412
+#: src/Admin/AdminAssets.php:417
 msgid "Collapse"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:413
+#: src/Admin/AdminAssets.php:418
 msgid "Continue adding..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:414
+#: src/Admin/AdminAssets.php:419
 msgid "Excerpt"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:415
+#: src/Admin/AdminAssets.php:420
 msgid ""
 "Write a short excerpt for search results, article lists, and sharing "
 "previews..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:416
+#: src/Admin/AdminAssets.php:421
 msgid "Featured image"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:417
+#: src/Admin/AdminAssets.php:422
 msgid "Landscape images are recommended"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:419
+#: src/Admin/AdminAssets.php:424
 msgid "Supports JPG, PNG, and WebP, max 5MB"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:420
+#: src/Admin/AdminAssets.php:425
 msgid "Nothing is written to WordPress before submission."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:421
+#: src/Admin/AdminAssets.php:426
 msgid "Open the article page after publishing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:422
+#: src/Admin/AdminAssets.php:427
 msgid ""
 "After submission, open the article page with the same article styling as the "
 "current Preview."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:423
+#: src/Admin/AdminAssets.php:428
 msgid "Open the article page after updating"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:424
+#: src/Admin/AdminAssets.php:429
 msgid "Password"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:425
+#: src/Admin/AdminAssets.php:430
 msgid "Enter access password"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:426
+#: src/Admin/AdminAssets.php:431
 msgid "Enter an access password before submitting."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:427
+#: src/Admin/AdminAssets.php:432
 msgid "Ready to publish"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:428 src/Admin/SettingsPage.php:270
+#: src/Admin/AdminAssets.php:433 src/Admin/SettingsPage.php:270
 msgid "Private"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:429
+#: src/Admin/AdminAssets.php:434
 msgid "Only site administrators and editors can view this article."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:430 src/Admin/SettingsPage.php:269
+#: src/Admin/AdminAssets.php:435 src/Admin/SettingsPage.php:269
 msgid "Public"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:431
+#: src/Admin/AdminAssets.php:436
 msgid ""
 "Confirm the article details to publish it to the current WordPress site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:432
+#: src/Admin/AdminAssets.php:437
 msgid ""
 "WordPress did not accept the publish request. Check the page state and try "
 "again."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:433
+#: src/Admin/AdminAssets.php:438
 msgid "Loading preview..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:434
+#: src/Admin/AdminAssets.php:439
 msgid "Publish options"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:435
+#: src/Admin/AdminAssets.php:440
 msgid "Remove"
 msgstr ""
 
 #. translators: %s: Tag name.
-#: src/Admin/AdminAssets.php:437
+#: src/Admin/AdminAssets.php:442
 #, php-format
 msgid "Remove tag: %s"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:438
+#: src/Admin/AdminAssets.php:443
 msgid "Replace"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:439
+#: src/Admin/AdminAssets.php:444
 msgid "Select featured image"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:440
+#: src/Admin/AdminAssets.php:445
 msgid "Stick to the top of the blog"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:441
+#: src/Admin/AdminAssets.php:446
 msgid "Tags"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:442
+#: src/Admin/AdminAssets.php:447
 msgid "Press Enter or comma to add a tag."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:443
+#: src/Admin/AdminAssets.php:448
 msgid "Update article"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:444
+#: src/Admin/AdminAssets.php:449
 msgid "Confirm these changes to update the current WordPress article."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:445
+#: src/Admin/AdminAssets.php:450
 msgid "Update existing article"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:446
+#: src/Admin/AdminAssets.php:451
 msgid "Visibility"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:447
+#: src/Admin/AdminAssets.php:452
 msgid "Article title"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:448
+#: src/Admin/AdminAssets.php:453
 msgid "Unsaved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:449
+#: src/Admin/AdminAssets.php:454
 msgid "View modes"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:450 src/Support/ToolbarRegistry.php:291
+#: src/Admin/AdminAssets.php:455 src/Support/ToolbarRegistry.php:291
 msgid "Copy to WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:451 src/Frontend/FrontendAssets.php:105
+#: src/Admin/AdminAssets.php:456 src/Frontend/FrontendAssets.php:105
 msgid "Copied"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:452
+#: src/Admin/AdminAssets.php:457
 msgid "Word count"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:453
+#: src/Admin/AdminAssets.php:458
 msgid "Show words, characters, and reading time beside the title"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:564
+#: src/Admin/AdminAssets.php:569
 msgid "Not saved yet."
 msgstr ""
 
 #. translators: 1: display name of the last editor, 2: localized post modified date and time.
-#: src/Admin/AdminAssets.php:588
+#: src/Admin/AdminAssets.php:593
 #, php-format
 msgid "Last edited by %1$s on %2$s"
 msgstr ""
 
 #. translators: %s: localized post modified date and time.
-#: src/Admin/AdminAssets.php:596
+#: src/Admin/AdminAssets.php:601
 #, php-format
 msgid "Last edited on %s"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:613
+#: src/Admin/AdminAssets.php:618
 msgid "Primary color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:614
+#: src/Admin/AdminAssets.php:619
 msgid "H1, list markers, and task checkmarks"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:619
+#: src/Admin/AdminAssets.php:624
 msgid "Heading color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:620
+#: src/Admin/AdminAssets.php:625
 msgid "H2-H6, bold text, and definition terms"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:625
+#: src/Admin/AdminAssets.php:630
 msgid "Text color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:626
+#: src/Admin/AdminAssets.php:631
 msgid "Paragraphs, lists, and table body"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:631
+#: src/Admin/AdminAssets.php:636
 msgid "Muted color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:632
+#: src/Admin/AdminAssets.php:637
 msgid "Strikethrough, footnotes, and image captions"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:637
+#: src/Admin/AdminAssets.php:642
 msgid "Link color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:638
+#: src/Admin/AdminAssets.php:643
 msgid "Body links and footnote links"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:643
+#: src/Admin/AdminAssets.php:648
 msgid "Background color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:644
+#: src/Admin/AdminAssets.php:649
 msgid "Article and content block base background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:649
+#: src/Admin/AdminAssets.php:654
 msgid "Border color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:650
+#: src/Admin/AdminAssets.php:655
 msgid "Dividers, tables, and control borders"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:655
+#: src/Admin/AdminAssets.php:660
 msgid "Highlight background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:656
+#: src/Admin/AdminAssets.php:661
 msgid "Marked text and emphasized content"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:661
+#: src/Admin/AdminAssets.php:666
 msgid "Selection background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:662
+#: src/Admin/AdminAssets.php:667
 msgid "Selected article text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:667
+#: src/Admin/AdminAssets.php:672
 msgid "Quote accent"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:668
+#: src/Admin/AdminAssets.php:673
 msgid "Blockquote left border"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:673
+#: src/Admin/AdminAssets.php:678
 msgid "Quote background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:674
+#: src/Admin/AdminAssets.php:679
 msgid "Blockquote content background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:679
+#: src/Admin/AdminAssets.php:684
 msgid "Table header background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:680
+#: src/Admin/AdminAssets.php:685
 msgid "Table heading row background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:685
+#: src/Admin/AdminAssets.php:690
 msgid "Table zebra stripes"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:686
+#: src/Admin/AdminAssets.php:691
 msgid "Even content row background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:691
+#: src/Admin/AdminAssets.php:696
 msgid "Inline code color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:692
+#: src/Admin/AdminAssets.php:697
 msgid "Inline code and keyboard shortcut text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:697
+#: src/Admin/AdminAssets.php:702
 msgid "Inline code background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:698
+#: src/Admin/AdminAssets.php:703
 msgid "Inline code and keyboard shortcut background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:703
+#: src/Admin/AdminAssets.php:708
 msgid "Code text color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:704
+#: src/Admin/AdminAssets.php:709
 msgid "Plain code and punctuation"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:709
+#: src/Admin/AdminAssets.php:714
 msgid "Code block background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:710
+#: src/Admin/AdminAssets.php:715
 msgid "Code block and line number area"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:715
+#: src/Admin/AdminAssets.php:720
 msgid "Keyword color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:716
+#: src/Admin/AdminAssets.php:721
 msgid "Keywords, functions, and booleans"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:721
+#: src/Admin/AdminAssets.php:726
 msgid "String color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:722
+#: src/Admin/AdminAssets.php:727
 msgid "Strings, property values, and numbers"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:727
+#: src/Admin/AdminAssets.php:732
 msgid "Comment color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:728
+#: src/Admin/AdminAssets.php:733
 msgid "Comments, line numbers, and auxiliary markers"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:733
+#: src/Admin/AdminAssets.php:738
 msgid "Information accent"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:734
+#: src/Admin/AdminAssets.php:739
 msgid "NOTE and information callout border"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:739
+#: src/Admin/AdminAssets.php:744
 msgid "Information background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:740
+#: src/Admin/AdminAssets.php:745
 msgid "NOTE and information callout background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:745
+#: src/Admin/AdminAssets.php:750
 msgid "Success accent"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:746
+#: src/Admin/AdminAssets.php:751
 msgid "TIP, success, and completed states"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:751
+#: src/Admin/AdminAssets.php:756
 msgid "Success background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:752
+#: src/Admin/AdminAssets.php:757
 msgid "TIP and success callout background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:757
+#: src/Admin/AdminAssets.php:762
 msgid "Warning accent"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:758
+#: src/Admin/AdminAssets.php:763
 msgid "WARNING callout border"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:763
+#: src/Admin/AdminAssets.php:768
 msgid "Warning background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:764
+#: src/Admin/AdminAssets.php:769
 msgid "WARNING callout background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:769
+#: src/Admin/AdminAssets.php:774
 msgid "Danger accent"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:770
+#: src/Admin/AdminAssets.php:775
 msgid "CAUTION and error callout border"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:775
+#: src/Admin/AdminAssets.php:780
 msgid "Danger background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:776
+#: src/Admin/AdminAssets.php:781
 msgid "CAUTION and error callout background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:783
+#: src/Admin/AdminAssets.php:788
 msgid "Create a personal article and code theme with live preview."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:784
+#: src/Admin/AdminAssets.php:789
 msgid "Close custom CSS theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:786
+#: src/Admin/AdminAssets.php:791
 msgid "Article theme name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:787
+#: src/Admin/AdminAssets.php:792
 msgid "Code theme name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:788
+#: src/Admin/AdminAssets.php:793
 msgid "Enter article theme name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:789
+#: src/Admin/AdminAssets.php:794
 msgid "Enter code theme name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:790
+#: src/Admin/AdminAssets.php:795
 msgid "Changes have not been applied"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:791
+#: src/Admin/AdminAssets.php:796
 msgid "Enter a valid six-digit hex color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:792
+#: src/Admin/AdminAssets.php:797
 msgid "Enter both theme names"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:793
+#: src/Admin/AdminAssets.php:798
 msgid "Modified style preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:794
+#: src/Admin/AdminAssets.php:799
 msgid "Live"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:795
+#: src/Admin/AdminAssets.php:800
 msgid "The preview updates with the selected colors."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:796
+#: src/Admin/AdminAssets.php:801
 msgid "Fix invalid CSS to update the live preview."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:797
+#: src/Admin/AdminAssets.php:802
 msgid "Live preview is temporarily unavailable."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:798
+#: src/Admin/AdminAssets.php:803
 msgid "Theme variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:799
+#: src/Admin/AdminAssets.php:804
 msgid "Theme variable categories"
 msgstr ""
 
 #. translators: %s: Custom CSS theme variable category label.
-#: src/Admin/AdminAssets.php:801
+#: src/Admin/AdminAssets.php:806
 #, php-format
 msgid "%s theme variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:802 src/Admin/AdminAssets.php:816
+#: src/Admin/AdminAssets.php:807 src/Admin/AdminAssets.php:821
 msgid "Custom CSS code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:803
+#: src/Admin/AdminAssets.php:808
 msgid "Reset"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:804
+#: src/Admin/AdminAssets.php:809
 msgid "Expand code editor"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:805
+#: src/Admin/AdminAssets.php:810
 msgid "Shrink code editor"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:806
+#: src/Admin/AdminAssets.php:811
 msgid "Back to variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:807
+#: src/Admin/AdminAssets.php:812
 msgid "CSS target"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:808
+#: src/Admin/AdminAssets.php:813
 msgid "Article CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:809
+#: src/Admin/AdminAssets.php:814
 msgid "Code CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:810
+#: src/Admin/AdminAssets.php:815
 msgid "These rules are applied to article content."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:811
+#: src/Admin/AdminAssets.php:816
 msgid "These rules are applied to code content."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:812
+#: src/Admin/AdminAssets.php:817
 msgid "Foundation"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:813
+#: src/Admin/AdminAssets.php:818
 msgid "Blocks"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:814
+#: src/Admin/AdminAssets.php:819
 msgid "Code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:815
+#: src/Admin/AdminAssets.php:820
 msgid "Alerts"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:817
+#: src/Admin/AdminAssets.php:822
 msgid "Add detailed CSS rules"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:818
+#: src/Admin/AdminAssets.php:823
 msgid "Back to theme variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:820
+#: src/Admin/AdminAssets.php:825
 msgid "Reset all"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:821
+#: src/Admin/AdminAssets.php:826
 msgid "Apply theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:822
+#: src/Admin/AdminAssets.php:827
 msgid "EasyMDE Blue"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:823
+#: src/Admin/AdminAssets.php:828
 msgid "EasyMDE Blue Code"
 msgstr ""
 
 #. translators: %s: Custom CSS color variable label.
-#: src/Admin/AdminAssets.php:825
+#: src/Admin/AdminAssets.php:830
 #, php-format
 msgid "%s color picker"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:826
+#: src/Admin/AdminAssets.php:831
 msgid "Current theme variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:827
+#: src/Admin/AdminAssets.php:832
 msgid "Add custom rules below"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:828
+#: src/Admin/AdminAssets.php:833
 msgid "Heading 1 preview sample"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:829
+#: src/Admin/AdminAssets.php:834
 msgid "Heading 2 preview sample"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:830
+#: src/Admin/AdminAssets.php:835
 msgid ""
 "This body text demonstrates the current theme typography, spacing, and "
 "layout."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:831
+#: src/Admin/AdminAssets.php:836
 msgid "Theme preview with"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:832
+#: src/Admin/AdminAssets.php:837
 msgid "bold text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:833
+#: src/Admin/AdminAssets.php:838
 msgid "italic text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:834
+#: src/Admin/AdminAssets.php:839
 msgid "deleted text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:835
+#: src/Admin/AdminAssets.php:840
 msgid "highlight"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:836
+#: src/Admin/AdminAssets.php:841
 msgid "inline code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:837
+#: src/Admin/AdminAssets.php:842
 msgid "Theme preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:838
+#: src/Admin/AdminAssets.php:843
 msgid "Blockquote and callout styling preview."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:839
+#: src/Admin/AdminAssets.php:844
 msgid "Unordered list item"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:840
+#: src/Admin/AdminAssets.php:845
 msgid "Completed task"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:841
+#: src/Admin/AdminAssets.php:846
 msgid "Ordered list item"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:842
+#: src/Admin/AdminAssets.php:847
 msgid "Second step"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:843
+#: src/Admin/AdminAssets.php:848
 msgid "Header"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:844
+#: src/Admin/AdminAssets.php:849
 msgid "Content"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:845
+#: src/Admin/AdminAssets.php:850
 msgid "Link color preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:846
+#: src/Admin/AdminAssets.php:851
 msgid "NOTE"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:847
+#: src/Admin/AdminAssets.php:852
 msgid "TIP"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:848
+#: src/Admin/AdminAssets.php:853
 msgid "WARNING"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:849
+#: src/Admin/AdminAssets.php:854
 msgid "CAUTION"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:850
+#: src/Admin/AdminAssets.php:855
 msgid "Information"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:851
+#: src/Admin/AdminAssets.php:856
 msgid "Success"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:852
+#: src/Admin/AdminAssets.php:857
 msgid "Warning"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:853
+#: src/Admin/AdminAssets.php:858
 msgid "Danger"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:854
+#: src/Admin/AdminAssets.php:859
 msgid "Additional details"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:855
+#: src/Admin/AdminAssets.php:860
 msgid "Longer supporting content can be previewed here."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:856
+#: src/Admin/AdminAssets.php:861
 msgid "Definition list"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:857
+#: src/Admin/AdminAssets.php:862
 msgid "Used to explain terms or add structured details."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:858
+#: src/Admin/AdminAssets.php:863
 msgid "Tertiary heading and supporting content"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:859
+#: src/Admin/AdminAssets.php:864
 msgid ""
 "Images, mathematical formulas, and footnotes use the body text system. "
 "Example footnote"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:860
+#: src/Admin/AdminAssets.php:865
 msgid "[1] Footnote and supporting text color sample."
 msgstr ""
 
 #. translators: Separator between inline Custom CSS preview examples.
-#: src/Admin/AdminAssets.php:862
+#: src/Admin/AdminAssets.php:867
 msgctxt "inline Custom CSS preview separator"
 msgid ", "
 msgstr ""
 
 #. translators: Conjunction before the keyboard shortcut in the inline Custom CSS preview.
-#: src/Admin/AdminAssets.php:864
+#: src/Admin/AdminAssets.php:869
 msgctxt "inline Custom CSS preview conjunction"
 msgid "and "
 msgstr ""
 
 #. translators: Sentence-ending punctuation in the inline Custom CSS preview.
-#: src/Admin/AdminAssets.php:866
+#: src/Admin/AdminAssets.php:871
 msgctxt "inline Custom CSS preview sentence end"
 msgid "."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:872
+#: src/Admin/AdminAssets.php:877
 msgid "Markdown source"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:873
+#: src/Admin/AdminAssets.php:878
 msgid "Start writing Markdown to preview the article."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:874
+#: src/Admin/AdminAssets.php:879
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:875
+#: src/Admin/AdminAssets.php:880
 msgid "Insert Media"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:876
+#: src/Admin/AdminAssets.php:881
 msgid "Markdown toolbar"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:877
+#: src/Admin/AdminAssets.php:882
 msgid "Undo"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:878
+#: src/Admin/AdminAssets.php:883
 msgid "Appearance"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:879
+#: src/Admin/AdminAssets.php:884
 msgid "Font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:880
+#: src/Admin/AdminAssets.php:885
 msgid "Headings"
 msgstr ""
 
 #. translators: %s: Heading level from 1 through 6.
-#: src/Admin/AdminAssets.php:882
+#: src/Admin/AdminAssets.php:887
 #, php-format
 msgid "Heading %s"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:883
+#: src/Admin/AdminAssets.php:888
 msgid "Heading level"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:884
+#: src/Admin/AdminAssets.php:889
 msgid "Article theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:885
+#: src/Admin/AdminAssets.php:890
 msgid "Code theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:886
+#: src/Admin/AdminAssets.php:891
 msgid "Custom CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:887
+#: src/Admin/AdminAssets.php:892
 msgid "Custom CSS theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:888
+#: src/Admin/AdminAssets.php:893
 msgid "Named custom CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:889
+#: src/Admin/AdminAssets.php:894
 msgid "CSS name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:890
+#: src/Admin/AdminAssets.php:895
 msgid "Save CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:891
+#: src/Admin/AdminAssets.php:896
 msgid "Saved CSS."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:892
+#: src/Admin/AdminAssets.php:897
 msgid "CSS save failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:893
+#: src/Admin/AdminAssets.php:898
+msgid "Theme could not be applied. The saved theme is still available."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:899
 msgid "Custom font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:894
+#: src/Admin/AdminAssets.php:900
 msgid "Windows font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:895
+#: src/Admin/AdminAssets.php:901
 msgid "Apple font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:896
+#: src/Admin/AdminAssets.php:902
 msgid "Serif font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:897
+#: src/Admin/AdminAssets.php:903
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:898
+#: src/Admin/AdminAssets.php:904
 msgid "Local draft saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:899
+#: src/Admin/AdminAssets.php:905
 msgid "A newer local draft is available."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:900
+#: src/Admin/AdminAssets.php:906
 msgid "Restore draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:901
+#: src/Admin/AdminAssets.php:907
 msgid "Discard draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:902
+#: src/Admin/AdminAssets.php:908
 msgid "Draft restored."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:903
+#: src/Admin/AdminAssets.php:909
 msgid "Draft discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:904
+#: src/Admin/AdminAssets.php:910
 msgid "Local draft could not be read."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:905
+#: src/Admin/AdminAssets.php:911
 msgid "Local draft could not be saved."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:906
+#: src/Admin/AdminAssets.php:912
 msgid "Local draft could not be discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:907
+#: src/Admin/AdminAssets.php:913
 msgid "A different local draft was saved in another tab."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:908 src/Frontend/FrontendAssets.php:103
+#: src/Admin/AdminAssets.php:914 src/Frontend/FrontendAssets.php:103
 msgid "Rendering failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:909
+#: src/Admin/AdminAssets.php:915
 msgid "Copied preview for WeChat."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:910
+#: src/Admin/AdminAssets.php:916
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:911
+#: src/Admin/AdminAssets.php:917
 msgid "Clipboard access is not available in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:912
+#: src/Admin/AdminAssets.php:918
 msgid "Uploading pasted image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:913
+#: src/Admin/AdminAssets.php:919
 msgid "Pasted image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:914
+#: src/Admin/AdminAssets.php:920
 msgid "Pasted image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:915
+#: src/Admin/AdminAssets.php:921
 msgid "Pasted image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:916
+#: src/Admin/AdminAssets.php:922
 msgid "Uploading dropped image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:917
+#: src/Admin/AdminAssets.php:923
 msgid "Dropped image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:918
+#: src/Admin/AdminAssets.php:924
 msgid "Dropped image upload failed. Please use the media library instead."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:919
+#: src/Admin/AdminAssets.php:925
 msgid "Dropped image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:920
+#: src/Admin/AdminAssets.php:926
 msgid "alt text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:921
+#: src/Admin/AdminAssets.php:927
 msgid "image"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:922
+#: src/Admin/AdminAssets.php:928
 msgid "The WordPress media library could not be opened."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:923
+#: src/Admin/AdminAssets.php:929
 msgid "link text"
 msgstr ""
 
 #. translators: %s: Locale-formatted Markdown character count.
-#: src/Admin/AdminAssets.php:925
+#: src/Admin/AdminAssets.php:931
 #, php-format
 msgid "Character count: %s"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:926 src/Rest/CustomCssController.php:154
+#: src/Admin/AdminAssets.php:932 src/Rest/CustomCssController.php:154
 msgid ""
 "A theme with this name already exists. Please choose another name and try "
 "again."
@@ -4127,128 +4131,296 @@ msgstr ""
 msgid "Image"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:15
+#: src/Theme/ArticleThemeRegistry.php:16
 msgid "Default theme"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:16
+#: src/Theme/ArticleThemeRegistry.php:17
 msgid "Orange heart"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:17
+#: src/Theme/ArticleThemeRegistry.php:18
 msgid "Chazi purple"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:18
+#: src/Theme/ArticleThemeRegistry.php:19
 msgid "Green vitality"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:19
+#: src/Theme/ArticleThemeRegistry.php:20
 msgid "Red crimson"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:20
+#: src/Theme/ArticleThemeRegistry.php:21
 msgid "Blue ying"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:21
+#: src/Theme/ArticleThemeRegistry.php:22
 msgid "Crimson focus"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:22
-msgid "Lanqing"
-msgstr ""
-
 #: src/Theme/ArticleThemeRegistry.php:23
-msgid "Yamabuki"
+msgid "Inkwell"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:24
-msgid "Grid black"
+msgid "Animal Island"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:25
-msgid "Geek black"
+msgid "Phycat Cherry"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:26
-msgid "Rose purple"
+msgid "Phycat Caramel"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:27
-msgid "Ningye purple"
+msgid "Phycat Forest"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:28
-msgid "Tech blue"
+msgid "Phycat Mint"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:29
-msgid "Qingbi Liujin"
+msgid "Phycat Sky"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:30
-msgid "Qinghe Zhusha"
+msgid "Phycat Prussian"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:31
-msgid "Cute green"
+msgid "Phycat Sakura"
 msgstr ""
 
-#: src/Theme/ArticleThemeRegistry.php:32 src/Theme/CodeThemeRegistry.php:24
-msgid "Fullstack blue"
+#: src/Theme/ArticleThemeRegistry.php:32
+msgid "Phycat Mauve"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:33
-msgid "Minimal black"
+msgid "Mdmdt Light"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:34
-msgid "Orange blue"
+msgid "Dog's Choice Pink"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:35
-msgid "Frontend peak"
+msgid "Bloom Petal"
 msgstr ""
 
 #: src/Theme/ArticleThemeRegistry.php:36
+msgid "Bloom Mist"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:37
+msgid "Bloom Verdant"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:38
+msgid "Bloom Stone"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:39
+msgid "Bloom Wheat"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:40
+msgid "Bloom Ink"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:41
+msgid "Bloom Amber"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:42
+msgid "Bloom Lapis"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:43
+msgid "Bloom Ripple"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:44
+msgid "Bloom Cinnabar"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:45
+msgid "Bloom Sage"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:46
+msgid "Bloom Spring"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:47
+msgid "Spring"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:48
+msgid "Lanqing"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:49
+msgid "Yamabuki"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:50
+msgid "Grid black"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:51
+msgid "Rose purple"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:52
+msgid "Ningye purple"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:53
+msgid "Tech blue"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:54
+msgid "Qingbi Liujin"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:55
+msgid "Qinghe Zhusha"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:56
+msgid "Cute green"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:57 src/Theme/CodeThemeRegistry.php:25
+msgid "Fullstack blue"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:58
+msgid "Minimal black"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:59
+msgid "Orange blue"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:60
+msgid "Frontend peak"
+msgstr ""
+
+#: src/Theme/ArticleThemeRegistry.php:61
 msgid "Cupid busy"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:15
+#: src/Theme/CodeThemeRegistry.php:16
 msgid "GitHub"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:16
+#: src/Theme/CodeThemeRegistry.php:17
 msgid "GitHub Dark"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:17
+#: src/Theme/CodeThemeRegistry.php:18
 msgid "Atom One Dark"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:18
+#: src/Theme/CodeThemeRegistry.php:19
 msgid "Atom One Light"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:19
+#: src/Theme/CodeThemeRegistry.php:20
 msgid "Monokai"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:20
+#: src/Theme/CodeThemeRegistry.php:21
 msgid "VS2015"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:21
+#: src/Theme/CodeThemeRegistry.php:22
 msgid "Xcode"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:22
+#: src/Theme/CodeThemeRegistry.php:23
 msgid "Wechat inspired"
 msgstr ""
 
-#: src/Theme/CodeThemeRegistry.php:23
+#: src/Theme/CodeThemeRegistry.php:24
 msgid "Terminal Noir"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:26
+msgid "Inkwell code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:27
+msgid "Animal Island code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:28
+msgid "Phycat code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:29
+msgid "Mdmdt code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:30
+msgid "Dog's Choice Pink code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:31
+msgid "Bloom Petal code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:32
+msgid "Bloom Mist code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:33
+msgid "Bloom Verdant code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:34
+msgid "Bloom Stone code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:35
+msgid "Bloom Wheat code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:36
+msgid "Bloom Ink code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:37
+msgid "Bloom Amber code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:38
+msgid "Bloom Lapis code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:39
+msgid "Bloom Ripple code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:40
+msgid "Bloom Cinnabar code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:41
+msgid "Bloom Sage code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:42
+msgid "Bloom Spring code"
+msgstr ""
+
+#: src/Theme/CodeThemeRegistry.php:43
+msgid "Spring code"
 msgstr ""
 
 #: src/Theme/CustomCssPolicy.php:64
@@ -4273,76 +4445,76 @@ msgstr ""
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:473
-#: src/Theme/ThemeStateRepository.php:520
-#: src/Theme/ThemeStateRepository.php:547
-#: src/Theme/ThemeStateRepository.php:569
+#: src/Theme/ThemeStateRepository.php:475
+#: src/Theme/ThemeStateRepository.php:522
+#: src/Theme/ThemeStateRepository.php:549
+#: src/Theme/ThemeStateRepository.php:571
 msgctxt "font selection option"
 msgid "None"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:478
+#: src/Theme/ThemeStateRepository.php:480
 msgid "Optima"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:483
+#: src/Theme/ThemeStateRepository.php:485
 msgid "Inter"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:488
+#: src/Theme/ThemeStateRepository.php:490
 msgid "Helvetica"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:493
+#: src/Theme/ThemeStateRepository.php:495
 msgid "Georgia"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:498
+#: src/Theme/ThemeStateRepository.php:500
 msgid "Times"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:503
+#: src/Theme/ThemeStateRepository.php:505
 msgid "Cochin"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:508
+#: src/Theme/ThemeStateRepository.php:510
 msgid "Helvetica Neue"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:515
+#: src/Theme/ThemeStateRepository.php:517
 msgid "Microsoft YaHei"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:527
+#: src/Theme/ThemeStateRepository.php:529
 msgid "PingFang SC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:532
+#: src/Theme/ThemeStateRepository.php:534
 msgid "PingFang SC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:537
+#: src/Theme/ThemeStateRepository.php:539
 msgid "PingFang TC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:542
+#: src/Theme/ThemeStateRepository.php:544
 msgid "PingFang TC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:554
+#: src/Theme/ThemeStateRepository.php:556
 msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:559
+#: src/Theme/ThemeStateRepository.php:561
 msgid "serif"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:564
+#: src/Theme/ThemeStateRepository.php:566
 msgid "sans-serif"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:574
+#: src/Theme/ThemeStateRepository.php:576
 msgctxt "font selection option"
 msgid "Theme default"
 msgstr ""

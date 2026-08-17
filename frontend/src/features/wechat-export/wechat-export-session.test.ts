@@ -67,6 +67,33 @@ describe('createWechatExportSession', () => {
     expect(onStatus).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'success' }));
   });
 
+  it('releases the pending slot after a failed clipboard operation', async () => {
+    const first = deferred<Awaited<ReturnType<WechatClipboardPort['copy']>>>();
+    const second = deferred<Awaited<ReturnType<WechatClipboardPort['copy']>>>();
+    const clipboard: WechatClipboardPort = {
+      copy: vi.fn()
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(second.promise)
+    };
+    const session = createWechatExportSession({
+      clipboard,
+      enabled: true,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic: vi.fn(),
+      onStatus: vi.fn(),
+      strings
+    });
+
+    const firstCopy = session.copy();
+    first.resolve({ code: 'wechat-copy-failed', status: 'failed' });
+    await expect(firstCopy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+
+    const secondCopy = session.copy();
+    expect(clipboard.copy).toHaveBeenCalledTimes(2);
+    second.resolve({ method: 'clipboard', status: 'copied' });
+    await expect(secondCopy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+  });
+
   it('does not publish stale completion after teardown', async () => {
     const operation = deferred<Awaited<ReturnType<WechatClipboardPort['copy']>>>();
     const onDiagnostic = vi.fn();

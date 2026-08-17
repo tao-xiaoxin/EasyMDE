@@ -10,12 +10,12 @@ function workflowStepBlocks(source) {
   let current = [];
 
   source.split(/\r?\n/).forEach((line) => {
-    if (/^\s{6}-\s+name:/.test(line) && current.length) {
+    if (/^\s{6}-\s+/.test(line) && current.length) {
       blocks.push(current.join('\n'));
       current = [];
     }
 
-    if (current.length || /^\s{6}-\s+name:/.test(line)) {
+    if (current.length || /^\s{6}-\s+/.test(line)) {
       current.push(line);
     }
   });
@@ -41,6 +41,13 @@ function workflowJobBlock(source, jobName) {
 function assertJobChecksAssetsWithoutPreparing(job) {
   assert.match(job, /name:\s+Check local runtime assets[\s\S]*run:\s+npm run assets:check/);
   assert.doesNotMatch(job, /\bnpm run prepare:assets\b/);
+}
+
+function hasFailureOnlyServerLogStep(job) {
+  return workflowStepBlocks(job).some(
+    (step) => /^ {8}if:\s*failure\(\)\s*$/m.test(step)
+      && step.includes('/tmp/easymde-wp-server.log')
+  );
 }
 
 test('GitHub Actions checkouts do not persist repository credentials', () => {
@@ -71,6 +78,58 @@ test('Plugin Check and E2E validate the release job ZIP artifact', () => {
     assert.doesNotMatch(job, /run:\s+npm run i18n:check/);
     assert.doesNotMatch(job, /run:\s+npm run notices:check/);
   });
+});
+
+test('E2E uses packaged Composer dependencies without reinstalling the checkout', () => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const releaseJob = workflowJobBlock(workflow, 'release');
+  const e2eJob = workflowJobBlock(workflow, 'e2e');
+
+  assert.match(
+    releaseJob,
+    /name:\s+Install PHP runtime dependencies[\s\S]*composer install --no-dev/
+  );
+  assert.match(e2eJob, /tools:\s+none/);
+  assert.doesNotMatch(e2eJob, /tools:\s+composer/);
+  assert.doesNotMatch(e2eJob, /composer install/);
+});
+
+test('E2E runs one Chromium job over the E2E directory', () => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const e2eJob = workflowJobBlock(workflow, 'e2e');
+  const config = readFileSync(join(repoRoot, 'playwright.config.mjs'), 'utf8');
+
+  assert.doesNotMatch(e2eJob, /\bmatrix\b|EASYMDE_E2E_SUITE|theme_matrix_[ab]/);
+  assert.equal((e2eJob.match(/npx playwright test/g) || []).length, 1);
+  assert.doesNotMatch(e2eJob, /tests\/e2e\/[^\s]+\.spec\.mjs/);
+  assert.match(e2eJob, /--project=chromium/);
+  assert.match(config, /testDir:\s*['"]\.\/tests\/e2e['"]/);
+});
+
+test('Playwright fails fast and retains evidence from the failing attempt', () => {
+  const config = readFileSync(join(repoRoot, 'playwright.config.mjs'), 'utf8');
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const e2eJob = workflowJobBlock(workflow, 'e2e');
+
+  assert.match(config, /retries:\s*0/);
+  assert.match(config, /trace:\s*'retain-on-failure'/);
+  assert.match(config, /video:\s*'retain-on-failure'/);
+  assert.ok(
+    hasFailureOnlyServerLogStep(e2eJob),
+    'the server log must be captured by a step guarded with if: failure()'
+  );
+  assert.equal(
+    hasFailureOnlyServerLogStep(`
+      - name: Earlier failure handler
+        if: failure()
+        run: echo "failure"
+      - uses: actions/upload-artifact@v4
+        with:
+          path: /tmp/easymde-wp-server.log
+    `),
+    false,
+    'an unguarded unnamed step must not inherit an earlier failure condition'
+  );
 });
 
 test('Node and release jobs validate committed runtime assets without refreshing them', () => {

@@ -5,6 +5,11 @@ export type PreviewEnhancementContext = Readonly<{
   signal: AbortSignal;
 }>;
 
+export type PreparedCodeTheme = Readonly<{
+  cancel: () => void;
+  commit: () => void;
+}>;
+
 export type PreviewEnhancementFailureCode =
   | 'preview-enhancement-code-theme-missing'
   | 'preview-enhancement-document-head-missing'
@@ -39,6 +44,10 @@ export function previewEnhancementFailureCode(error: unknown): PreviewEnhancemen
 
 export type PreviewEnhancementPort = Readonly<{
   dispose?: () => void;
+  prepareCodeTheme: (
+    context: PreviewEnhancementContext
+  ) => Promise<PreparedCodeTheme>;
+  syncCodeFrameBackgrounds: (surface: HTMLElement) => void;
   enhance: (
     surface: HTMLElement,
     features: PreviewFeatures,

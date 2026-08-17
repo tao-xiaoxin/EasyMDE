@@ -28,7 +28,7 @@
 
 ~~删除线文本~~、`行内代码`、<u>下划线文本</u>、<mark>高亮文本</mark>。
 
-H<sub>2</sub>O、x<sup>2</sup>、© 2026、™、✓、⚠️、🚀。
+H<sub>2</sub>O、x<sup>2</sup>、© 2026、™、✓。
 
 支持 Emoji：😀 😎 🎉 🔥 💡 ✅ ❌ 📌 🧠 🤖
 
@@ -624,7 +624,7 @@ Markdown 支持脚注功能。[^1]
 | API Gateway  | `https://api.example.com` |  ✅ 正常 |  82ms |
 | Redis Cache  | `redis://127.0.0.1:6379`  |  ✅ 正常 |   4ms |
 | PostgreSQL   | `postgres://db:5432`      |  ✅ 正常 |  12ms |
-| Worker Queue | `amqp://rabbitmq:5672`    | ⚠️ 延迟 | 420ms |
+| Worker Queue | `amqp://rabbitmq:5672`    |   延迟  | 420ms |
 
 ### 核心指标
 

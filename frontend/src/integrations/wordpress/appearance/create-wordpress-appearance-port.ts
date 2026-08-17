@@ -31,11 +31,16 @@ type CreateWordPressAppearancePortOptions = Readonly<{
   siteUrl: string;
 }>;
 
+type PendingArticleTheme = Readonly<{
+  cancel: () => void;
+}>;
+
 const CUSTOM_CSS_VALIDATION_ERRORS = new Set([
   'easymde_blocked_custom_css',
   'easymde_custom_css_too_large',
   'easymde_invalid_custom_css'
 ]);
+const ARTICLE_THEME_STYLESHEET_LOAD_TIMEOUT_MS = 15_000;
 
 function restErrorCode(error: unknown): string {
   if (!error || 'object' !== typeof error || Array.isArray(error)) return '';
@@ -133,7 +138,10 @@ export function createWordPressAppearancePort({
     state: bootstrap.state
   };
 
-  const applyState = (state: AppearanceState, codeThemeExplicit: boolean): void => {
+  let disposed = false;
+  let pendingArticleTheme: PendingArticleTheme | null = null;
+
+  const resolveState = (state: AppearanceState) => {
     const customCss = selectedCustomCss(snapshot.customCss, state);
     if ('custom' === state.markdownTheme && !customCss) {
       throw new Error('appearance-custom-css-unavailable');
@@ -146,12 +154,6 @@ export function createWordPressAppearancePort({
       throw new Error('appearance-article-theme-asset-unavailable');
     }
 
-    const articleLink = document.getElementById('easymde-article-theme-css');
-    if (!(articleLink instanceof HTMLLinkElement)) {
-      throw new Error('appearance-article-theme-link-unavailable');
-    }
-    articleLink.href = articleThemeUrl;
-
     let customStyle = document.getElementById('easymde-custom-css-preview');
     if (!customStyle) {
       customStyle = document.createElement('style');
@@ -161,6 +163,16 @@ export function createWordPressAppearancePort({
     if (!(customStyle instanceof HTMLStyleElement)) {
       throw new Error('appearance-custom-css-style-unavailable');
     }
+
+    return { articleThemeUrl, customCss, customStyle };
+  };
+
+  const commitState = (
+    state: AppearanceState,
+    codeThemeExplicit: boolean,
+    customCss: CustomCssItem | null,
+    customStyle: HTMLStyleElement
+  ): void => {
     customStyle.textContent = customCss?.scopedCss ?? '';
 
     fields.markdownTheme.value = state.markdownTheme;
@@ -170,11 +182,122 @@ export function createWordPressAppearancePort({
     snapshot = { ...snapshot, state };
   };
 
-  applyState(snapshot.state, bootstrap.codeThemeExplicit);
+  const applyInitialState = (
+    state: AppearanceState,
+    codeThemeExplicit: boolean
+  ): void => {
+    const { articleThemeUrl, customCss, customStyle } = resolveState(state);
+
+    const articleLink = document.getElementById('easymde-article-theme-css');
+    if (!(articleLink instanceof HTMLLinkElement)) {
+      throw new Error('appearance-article-theme-link-unavailable');
+    }
+    articleLink.href = articleThemeUrl;
+    commitState(state, codeThemeExplicit, customCss, customStyle);
+  };
+
+  const applyState = async (
+    state: AppearanceState,
+    codeThemeExplicit: boolean
+  ): Promise<boolean> => {
+    if (disposed) {
+      throw new Error('appearance-port-disposed');
+    }
+    const { articleThemeUrl, customCss, customStyle } = resolveState(state);
+    const articleLink = document.getElementById('easymde-article-theme-css');
+    if (!(articleLink instanceof HTMLLinkElement)) {
+      throw new Error('appearance-article-theme-link-unavailable');
+    }
+
+    pendingArticleTheme?.cancel();
+    pendingArticleTheme = null;
+
+    if (articleLink.href === articleThemeUrl) {
+      commitState(state, codeThemeExplicit, customCss, customStyle);
+      return true;
+    }
+
+    return new Promise<boolean>((resolve, reject) => {
+      const candidate = articleLink.cloneNode(false) as HTMLLinkElement;
+      const activeMedia = articleLink.media;
+      candidate.removeAttribute('id');
+      candidate.media = 'not all';
+      candidate.href = articleThemeUrl;
+
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const cleanup = () => {
+        if (null !== timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        candidate.removeEventListener('load', handleLoad);
+        candidate.removeEventListener('error', handleError);
+        if (pendingArticleTheme?.cancel === cancel) pendingArticleTheme = null;
+      };
+      const cancel = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        candidate.remove();
+        resolve(false);
+      };
+      const handleLoad = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (disposed) {
+          candidate.remove();
+          resolve(false);
+          return;
+        }
+        commitState(state, codeThemeExplicit, customCss, customStyle);
+        candidate.id = articleLink.id;
+        candidate.media = activeMedia;
+        articleLink.replaceWith(candidate);
+        resolve(true);
+      };
+      const handleError = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        candidate.remove();
+        reject(new Error('appearance-article-theme-stylesheet-load-failed'));
+      };
+      const handleTimeout = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        candidate.remove();
+        reject(new Error('appearance-article-theme-stylesheet-load-timeout'));
+      };
+
+      pendingArticleTheme = { cancel };
+      candidate.addEventListener('load', handleLoad);
+      candidate.addEventListener('error', handleError);
+      timer = setTimeout(
+        handleTimeout,
+        ARTICLE_THEME_STYLESHEET_LOAD_TIMEOUT_MS
+      );
+      articleLink.after(candidate);
+    });
+  };
+
+  applyInitialState(snapshot.state, bootstrap.codeThemeExplicit);
 
   return {
     applyState,
+    cancelPendingApply: () => {
+      pendingArticleTheme?.cancel();
+      pendingArticleTheme = null;
+    },
     closeOtherPopovers: () => undefined,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      pendingArticleTheme?.cancel();
+      pendingArticleTheme = null;
+    },
     async previewCustomCss(
       css: string,
       signal: AbortSignal
@@ -230,7 +353,7 @@ export function createWordPressAppearancePort({
         throw new Error('custom-css-response-invalid');
       }
       const item = result.item as Record<string, unknown>;
-      const next = parseAppearanceSnapshot({
+      const saved = parseAppearanceSnapshot({
         customCss: result.customCss,
         state: {
           codeTheme: snapshot.state.codeTheme,
@@ -238,8 +361,8 @@ export function createWordPressAppearancePort({
           markdownTheme: 'custom'
         }
       }, bootstrap);
-      snapshot = next;
-      return { snapshot: next, status: 'saved' };
+      snapshot = { ...snapshot, customCss: saved.customCss };
+      return { snapshot: saved, status: 'saved' };
     }
   };
 }

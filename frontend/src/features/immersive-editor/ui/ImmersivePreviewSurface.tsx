@@ -50,6 +50,11 @@ export function ImmersivePreviewSurface({
           ? strings.previewChangesRecorded
           : strings.previewContentLoaded
         : null;
+  const previewContent = (
+    <div className="easymde-immersive-preview-canvas">
+      {children}
+    </div>
+  );
 
   if (!active) {
     return (
@@ -57,9 +62,7 @@ export function ImmersivePreviewSurface({
         {ordinaryLabel ? (
           <header className="easymde-pane-header">{ordinaryLabel}</header>
         ) : null}
-        <div className="easymde-immersive-preview-canvas">
-          <div className="easymde-immersive-preview-page">{children}</div>
-        </div>
+        {previewContent}
       </section>
     );
   }
@@ -116,9 +119,7 @@ export function ImmersivePreviewSurface({
           </div>
         </Fragment>
       </header>
-      <div className="easymde-immersive-preview-canvas">
-        <div className="easymde-immersive-preview-page">{children}</div>
-      </div>
+      {previewContent}
     </section>
   );
 }

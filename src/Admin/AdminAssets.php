@@ -60,6 +60,9 @@ final class AdminAssets {
 			return;
 		}
 
+		// WordPress Emoji detection mutates editor text nodes after EasyMDE mounts CodeMirror.
+		remove_action( 'admin_print_scripts', 'print_emoji_detection_script' );
+
 		$post_id = $this->get_post_id();
 		wp_enqueue_style( 'dashicons' );
 		wp_enqueue_style(
@@ -211,18 +214,19 @@ final class AdminAssets {
 				'strings' => array( 'editorLabel' => $strings['editorLabel'] ),
 			),
 			'appearance'         => array(
-				'articleThemes'      => $theme_options['markdownThemes'],
-				'canManageCustomCss' => current_user_can( 'unfiltered_html' ),
-				'codeThemeExplicit'  => $theme_options['codeThemeExplicit'],
-				'codeThemes'         => $theme_options['codeThemes'],
-				'customCss'          => $custom_css,
-				'customCssVariables' => $this->get_custom_css_variables(),
-				'state'              => array(
+				'articleThemes'       => $theme_options['markdownThemes'],
+				'canManageCustomCss'  => current_user_can( 'unfiltered_html' ),
+				'codeThemeExplicit'   => $theme_options['codeThemeExplicit'],
+				'codeThemes'          => $theme_options['codeThemes'],
+				'customCss'           => $custom_css,
+				'customMarkupProfile' => $theme_options['customMarkupProfile'],
+				'customCssVariables'  => $this->get_custom_css_variables(),
+				'state'               => array(
 					'markdownTheme' => $theme_state['markdownTheme'],
 					'codeTheme'     => $theme_state['codeTheme'],
 					'customCssId'   => $theme_state['customCssId'],
 				),
-				'strings'            => array(
+				'strings'             => array(
 					'appearance'       => $strings['appearance'],
 					'articleTheme'     => $strings['articleTheme'],
 					'codeTheme'        => $strings['codeTheme'],
@@ -232,6 +236,7 @@ final class AdminAssets {
 					'saveCss'          => $strings['saveCss'],
 					'cssSaved'         => $strings['cssSaved'],
 					'cssSaveFailed'    => $strings['cssSaveFailed'],
+					'themeApplyFailed' => $strings['themeApplyFailed'],
 					'cssNameDuplicate' => $strings['cssNameDuplicate'],
 					'namedCustomCss'   => $strings['namedCustomCss'],
 					'customCssDialog'  => $this->get_custom_css_dialog_strings(),
@@ -890,6 +895,7 @@ final class AdminAssets {
 			'saveCss'               => __( 'Save CSS', 'easymde' ),
 			'cssSaved'              => __( 'Saved CSS.', 'easymde' ),
 			'cssSaveFailed'         => __( 'CSS save failed.', 'easymde' ),
+			'themeApplyFailed'      => __( 'Theme could not be applied. The saved theme is still available.', 'easymde' ),
 			'customFont'            => __( 'Custom font', 'easymde' ),
 			'windowsFont'           => __( 'Windows font', 'easymde' ),
 			'appleFont'             => __( 'Apple font', 'easymde' ),

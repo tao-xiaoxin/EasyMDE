@@ -1,0 +1,470 @@
+/*
+ * EasyMDE article adapter generated from webkubor/typora-Bloom-theme@v1.3.5/ink.
+ * Typora-global selectors and block-code frame ownership are intentionally
+ * scoped or omitted; the shared editor owns code-frame geometry.
+ */
+
+@charset "UTF-8";
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink {
+
+    --space-unit: 8px;
+    --space-md: calc(var(--space-unit) * 2);
+    --space-lg: calc(var(--space-unit) * 3);
+    --space-xl: calc(var(--space-unit) * 4);
+    --space-2xl: calc(var(--space-unit) * 6);
+    --space-3xl: calc(var(--space-unit) * 8);
+
+
+    --accent: #a74639;
+    --accent-rgb: 167, 70, 57;
+
+
+    --bg: #f7f5f1;
+    --surface: #f0eeea;
+    --surface-2: #e7e4df;
+
+    --text: #1a1813;
+    --text-rgb: 26, 24, 19;
+    --text-semi: #504d47;
+
+    --border: rgba(26, 24, 19, 0.1);
+    --border-semi: rgba(26, 24, 19, 0.2);
+
+
+    --shadow: 0 10px 30px rgba(26, 24, 19, 0.06);
+
+
+    --font-sans: "MiSans", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+
+    --selection: rgba(167, 70, 57, 0.2);
+    --black-rgb: 0, 0, 0;
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink::selection {
+    background: var(--selection);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink {
+    line-height: 1.8;
+    font-size: 16px;
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink p {
+    margin: 1.1em 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink a {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color 0.2s ease;
+    border-bottom: 1px solid transparent;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink a:hover {
+    border-bottom-color: var(--accent);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h1,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h2,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h3,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h4,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h5,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h6 {
+    color: var(--text);
+    font-weight: 800;
+    line-height: 1.25;
+    margin: var(--space-2xl) 0 var(--space-md);
+    letter-spacing: -0.015em;
+    position: relative;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h1 {
+    font-size: 2.25em;
+    letter-spacing: -0.02em;
+    border-bottom: 1px solid rgba(var(--accent-rgb), 0.3);
+    padding-bottom: 0.3em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h2 {
+    font-size: 1.68em;
+    border-bottom: 1px solid rgba(var(--accent-rgb), 0.22);
+    padding-bottom: 0.24em;
+    color: rgba(var(--text-rgb), 0.9);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h3 {
+    font-size: 1.32em;
+    color: rgba(var(--text-rgb), 0.86);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h4 {
+    font-size: 1.15em;
+    color: rgba(var(--text-rgb), 0.8);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h1::after,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h2::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: -0.5em;
+    width: 76px;
+    height: 3px;
+    background: linear-gradient(
+        90deg,
+        rgba(var(--accent-rgb), 0.45),
+        transparent
+    );
+    border-radius: 999px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h3::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: -0.38em;
+    width: 44px;
+    height: 2px;
+    background: linear-gradient(
+        90deg,
+        rgba(var(--accent-rgb), 0.32),
+        transparent
+    );
+    border-radius: 999px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink h4::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: -0.34em;
+    width: 32px;
+    height: 2px;
+    background: linear-gradient(
+        90deg,
+        rgba(var(--accent-rgb), 0.22),
+        transparent
+    );
+    border-radius: 999px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink :not(pre) > code,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink :not(pre) > tt {
+    font-family: var(--easymde-code-font-family);
+    font-size: 0.88em;
+    padding: 0.2em 0.45em;
+    border-radius: 7px;
+    background: rgba(var(--accent-rgb), 0.14);
+    color: var(--accent);
+    font-weight: 600;
+    border: 1px solid rgba(var(--accent-rgb), 0.32);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink hr {
+    border: 0;
+    height: 1px;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        var(--border-semi),
+        transparent
+    );
+    margin: var(--space-3xl) 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink blockquote {
+    margin: var(--space-xl) 0;
+    padding: var(--space-lg) var(--space-xl);
+    background: rgba(var(--accent-rgb), 0.08);
+    border-left: 4px solid var(--accent);
+    border-radius: 14px;
+    color: var(--text);
+    position: relative;
+    box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.08);
+    overflow: hidden;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink blockquote::before {
+    content: "";
+    position: absolute;
+    right: 16px;
+    bottom: 12px;
+    width: 48px;
+    height: 48px;
+    opacity: 0.06;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    pointer-events: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink blockquote p:first-child {
+    margin-top: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink blockquote p:last-child {
+    margin-bottom: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink ul,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink ol {
+    padding-left: 1.5em;
+    margin: 1em 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink li {
+    margin: 0.5em 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink li > ul,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink li > ol {
+    margin: 0.4em 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink ul li::marker {
+    color: rgba(var(--accent-rgb), 0.72);
+    font-size: 0.98em;
+    font-weight: 700;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink ol li::marker {
+    color: rgba(var(--accent-rgb), 0.72);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .task-list-item {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .task-list-item input {
+    margin-right: 0.6em;
+    accent-color: var(--accent);
+    transform: translateY(1px);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink table {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
+    margin: 2em 0;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+
+    box-shadow: 0 4px 12px rgba(var(--black-rgb), 0.02);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink th:first-child {
+    border-radius: 13px 0 0 0;
+}
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink th:last-child {
+    border-radius: 0 13px 0 0;
+}
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink tr:last-child td:first-child {
+    border-radius: 0 0 0 13px;
+}
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink tr:last-child td:last-child {
+    border-radius: 0 0 13px 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink th,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink td {
+    padding: 0.75em 1em;
+    border-bottom: 1px solid var(--border);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink th {
+    text-align: left;
+    background: var(--surface);
+    font-weight: 600;
+    color: var(--text);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink tr:last-child td {
+    border-bottom: 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink tr:nth-child(even) td {
+    background: rgba(var(--accent-rgb), 0.02);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    display: block;
+    margin: 1.5em auto;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink mark {
+    background: linear-gradient(
+        120deg,
+        rgba(var(--accent-rgb), 0.25),
+        rgba(var(--accent-rgb), 0.12)
+    );
+    color: inherit;
+    padding: 0.12em 0.26em;
+    border-radius: 9px;
+    border: 1px solid rgba(var(--accent-rgb), 0.32);
+    box-shadow: 0 10px 26px rgba(var(--accent-rgb), 0.18);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink u {
+    text-decoration: none;
+    background-image: linear-gradient(
+        120deg,
+        rgba(var(--accent-rgb), 0.5),
+        rgba(var(--accent-rgb), 0.18)
+    );
+    background-repeat: no-repeat;
+    background-size: 100% 0.16em;
+    background-position: 0 90%;
+    border-radius: 4px;
+    padding-bottom: 2px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink kbd {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    padding: 0.2em 0.5em;
+    border: 1px solid var(--border-semi);
+    border-bottom-width: 3px;
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0 0.2em;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid {
+    background: var(--surface) !important;
+    border-radius: 12px;
+    padding: 10px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid text {
+    fill: var(--text) !important;
+    font-family: var(--font-sans) !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .node rect,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .node circle,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .node ellipse,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .node polygon,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .node path,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .actor,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid rect.actor,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid g.actor rect {
+    fill: var(--bg) !important;
+    stroke: var(--accent) !important;
+    stroke-width: 1.5px !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid text.actor,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid text.actor tspan,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .actor tspan {
+    fill: var(--text) !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid line,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .actor-line,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .messageLine0,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .messageLine1 {
+    stroke: var(--accent) !important;
+    stroke-width: 1.5px !important;
+    fill: none;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .messageText {
+    fill: var(--text) !important;
+    stroke: none !important;
+    font-size: 14px !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid marker {
+    fill: var(--accent) !important;
+    stroke: var(--accent) !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid marker path {
+    fill: var(--accent) !important;
+    stroke: var(--accent) !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .loopText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .noteText {
+    fill: var(--text) !important;
+    stroke: none !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .note {
+    fill: rgba(var(--accent-rgb), 0.08) !important;
+    stroke: var(--accent) !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .edgePath .path {
+    stroke: var(--text-semi) !important;
+    stroke-width: 1.5px !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .messageText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .loopText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .loopText tspan,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .noteText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .labelText,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .labelText tspan {
+    fill: var(--text) !important;
+    paint-order: stroke;
+    stroke: var(--bg) !important;
+    stroke-width: 3px !important;
+    stroke-linejoin: round;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .labelBox {
+    fill: var(--surface-2) !important;
+    stroke: var(--accent) !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .activation0,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .activation1,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .activation2 {
+    fill: var(--surface-2) !important;
+    stroke: var(--text-semi) !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .loopLine {
+    stroke: var(--text-semi) !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink a {
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink a:hover {
+    transform: translateY(-0.5px);
+}
+
+@media print {
+    .easymde-rendered-content.easymde-markdown-theme-bloom-ink * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+
+    .easymde-rendered-content.easymde-markdown-theme-bloom-ink table {
+        box-shadow: none !important;
+    }
+    .easymde-rendered-content.easymde-markdown-theme-bloom-ink blockquote {
+        box-shadow: none !important;
+    }
+    .easymde-rendered-content.easymde-markdown-theme-bloom-ink img {
+        box-shadow: none !important;
+    }
+}

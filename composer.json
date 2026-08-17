@@ -5,6 +5,7 @@
   "license": "Apache-2.0",
   "require": {
     "php": ">=7.4",
+    "ext-dom": "*",
     "league/commonmark": "^2.6",
     "sabberworm/php-css-parser": "^8.9"
   },

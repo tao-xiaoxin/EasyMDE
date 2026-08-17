@@ -35,7 +35,10 @@ type MessageAlertTimer = Pick<
 
 export type AppearanceControlsSession = Readonly<{
   close: () => void;
-  replaceSnapshot: (snapshot: AppearanceSnapshot) => boolean;
+  replaceSnapshot: (
+    snapshot: AppearanceSnapshot,
+    codeThemeExplicit: boolean
+  ) => boolean;
 }>;
 
 export type AppearanceNotification = Readonly<{
@@ -323,10 +326,15 @@ export function AppearanceControls({
       ? (immersiveTitle ?? controlLabel)
       : bootstrap.strings.appearance;
   const codeThemeExplicitRef = useRef(bootstrap.codeThemeExplicit);
+  const desiredCodeThemeExplicitRef = useRef(bootstrap.codeThemeExplicit);
   const [snapshot, setSnapshot] = useState<AppearanceSnapshot>({
     customCss: bootstrap.customCss,
     state: bootstrap.state
   });
+  const [desiredState, setDesiredState] = useState(bootstrap.state);
+  const [desiredCodeThemeExplicit, setDesiredCodeThemeExplicit] = useState(
+    bootstrap.codeThemeExplicit
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [panelPosition, setPanelPosition] =
     useState<ImmersivePanelPosition | null>(null);
@@ -337,6 +345,9 @@ export function AppearanceControls({
   const activeRef = useRef(true);
   const savingRef = useRef(false);
   const snapshotRef = useRef(snapshot);
+  const desiredStateRef = useRef(snapshot.state);
+  const applyRequestRef = useRef(0);
+  const applyPendingRef = useRef(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -361,12 +372,20 @@ export function AppearanceControls({
     setPanelPosition({ left, top, width });
   };
 
-  const replaceSnapshot = (nextSnapshot: AppearanceSnapshot): boolean => {
+  const replaceSnapshot = (
+    nextSnapshot: AppearanceSnapshot,
+    nextCodeThemeExplicit = codeThemeExplicitRef.current
+  ): boolean => {
     if (!activeRef.current) {
       return false;
     }
     snapshotRef.current = nextSnapshot;
+    desiredStateRef.current = nextSnapshot.state;
+    codeThemeExplicitRef.current = nextCodeThemeExplicit;
+    desiredCodeThemeExplicitRef.current = nextCodeThemeExplicit;
     setSnapshot(nextSnapshot);
+    setDesiredState(nextSnapshot.state);
+    setDesiredCodeThemeExplicit(nextCodeThemeExplicit);
     if (isCustomOpen) {
       const item = selectedCustomCss(nextSnapshot);
       setCustomArticleThemeName(item?.articleThemeName ?? '');
@@ -384,7 +403,8 @@ export function AppearanceControls({
         setIsCustomOpen(false);
       }
     },
-    replaceSnapshot: (nextSnapshot) => replaceSnapshotRef.current(nextSnapshot)
+    replaceSnapshot: (nextSnapshot, nextCodeThemeExplicit) =>
+      replaceSnapshotRef.current(nextSnapshot, nextCodeThemeExplicit)
   });
 
   useLayoutEffect(() => {
@@ -393,6 +413,8 @@ export function AppearanceControls({
 
     return () => {
       activeRef.current = false;
+      applyRequestRef.current += 1;
+      applyPendingRef.current = false;
     };
   }, [onReady]);
 
@@ -441,17 +463,57 @@ export function AppearanceControls({
     };
   }, [isOpen]);
 
-  const applyState = (
+  const applyState = async (
     nextState: AppearanceState,
-    nextCodeThemeExplicit = codeThemeExplicitRef.current
-  ): boolean => {
+    nextCodeThemeExplicit = desiredCodeThemeExplicitRef.current
+  ): Promise<boolean> => {
+    const request = applyRequestRef.current + 1;
+    applyRequestRef.current = request;
+    desiredStateRef.current = nextState;
+    desiredCodeThemeExplicitRef.current = nextCodeThemeExplicit;
+    setDesiredState(nextState);
+    setDesiredCodeThemeExplicit(nextCodeThemeExplicit);
+    const currentState = snapshotRef.current.state;
+    if (
+      !applyPendingRef.current
+      && currentState.markdownTheme === nextState.markdownTheme
+      && currentState.codeTheme === nextState.codeTheme
+      && currentState.customCssId === nextState.customCssId
+      && codeThemeExplicitRef.current === nextCodeThemeExplicit
+    ) {
+      return true;
+    }
+    applyPendingRef.current = true;
     try {
-      port.applyState(nextState, nextCodeThemeExplicit);
+      if (!await port.applyState(nextState, nextCodeThemeExplicit)) {
+        if (request === applyRequestRef.current) {
+          applyPendingRef.current = false;
+          desiredStateRef.current = snapshotRef.current.state;
+          desiredCodeThemeExplicitRef.current = codeThemeExplicitRef.current;
+          if (activeRef.current) {
+            setDesiredState(snapshotRef.current.state);
+            setDesiredCodeThemeExplicit(codeThemeExplicitRef.current);
+          }
+        }
+        return false;
+      }
     } catch {
-      onFailure();
+      if (request === applyRequestRef.current) {
+        applyPendingRef.current = false;
+        desiredStateRef.current = snapshotRef.current.state;
+        desiredCodeThemeExplicitRef.current = codeThemeExplicitRef.current;
+        if (activeRef.current) {
+          setDesiredState(snapshotRef.current.state);
+          setDesiredCodeThemeExplicit(codeThemeExplicitRef.current);
+          onFailure();
+        }
+      }
       return false;
     }
 
+    if (!activeRef.current || request !== applyRequestRef.current) return false;
+
+    applyPendingRef.current = false;
     codeThemeExplicitRef.current = nextCodeThemeExplicit;
     const nextSnapshot = { ...snapshotRef.current, state: nextState };
     snapshotRef.current = nextSnapshot;
@@ -513,11 +575,17 @@ export function AppearanceControls({
         css: input.css
       });
       if (!activeRef.current) {
-        return {
-          code: 'save-failed',
-          status: 'failed',
-          message: bootstrap.strings.cssSaveFailed
-        };
+        return 'saved' === result.status
+          ? { status: 'saved' }
+          : {
+              code: 'duplicate-name' === result.code
+                ? 'duplicate-name'
+                : 'save-failed',
+              status: 'failed',
+              message: 'duplicate-name' === result.code
+                ? bootstrap.strings.cssNameDuplicate
+                : bootstrap.strings.cssSaveFailed
+            };
       }
       if ('saved' === result.status) {
         const nextSnapshot = {
@@ -531,19 +599,20 @@ export function AppearanceControls({
             )
           }
         };
-        if (!applyState(nextSnapshot.state)) {
-          if (onNotification && 'immersive' !== variant) {
+        const savedLibrarySnapshot = {
+          customCss: nextSnapshot.customCss,
+          state: snapshotRef.current.state
+        };
+        replaceSnapshot(savedLibrarySnapshot);
+        if (!await applyState(nextSnapshot.state)) {
+          if (onNotification) {
             onNotification({
               id: 'appearance-custom-css',
-              message: bootstrap.strings.cssSaveFailed,
+              message: bootstrap.strings.themeApplyFailed,
               type: 'error'
             });
           }
-          return {
-            code: 'save-failed',
-            status: 'failed',
-            message: bootstrap.strings.cssSaveFailed
-          };
+          return { status: 'saved' };
         }
         replaceSnapshot(nextSnapshot);
         if (onNotification) {
@@ -592,6 +661,7 @@ export function AppearanceControls({
       savingRef.current = false;
     }
   };
+  const visibleSnapshot = { ...snapshot, state: desiredState };
   const articleOptions: ReadonlyArray<ImmersiveThemeOption> = [
     ...bootstrap.articleThemes.map((theme) => ({
       id: `theme:${theme.id}`,
@@ -604,10 +674,10 @@ export function AppearanceControls({
       swatch: CUSTOM_CSS_THEME_SWATCH
     }))
   ];
-  const selectedArticleSwatch = 'custom' === snapshot.state.markdownTheme
+  const selectedArticleSwatch = 'custom' === desiredState.markdownTheme
     ? CUSTOM_CSS_THEME_SWATCH
     : articleOptions.find(
-      ({ id }) => id === selectedArticleValue(snapshot)
+      ({ id }) => id === selectedArticleValue(visibleSnapshot)
     )?.swatch;
   const activeArticleSwatch = typeof selectedArticleSwatch === 'string'
     ? selectedArticleSwatch
@@ -626,23 +696,23 @@ export function AppearanceControls({
   ];
   const selectArticleTheme = (value: string) => {
     if (value.startsWith('custom:')) {
-      applyState({
-        ...snapshotRef.current.state,
+      void applyState({
+        ...desiredStateRef.current,
         markdownTheme: 'custom',
         codeTheme: customCssCodeTheme(
           bootstrap,
-          snapshotRef.current.state.codeTheme,
-          codeThemeExplicitRef.current
+          desiredStateRef.current.codeTheme,
+          desiredCodeThemeExplicitRef.current
         ),
         customCssId: value.slice(7)
       });
     } else {
       const markdownTheme = value.slice(6);
-      applyState({
-        ...snapshotRef.current.state,
+      void applyState({
+        ...desiredStateRef.current,
         markdownTheme,
-        codeTheme: codeThemeExplicitRef.current
-          ? snapshotRef.current.state.codeTheme
+        codeTheme: desiredCodeThemeExplicitRef.current
+          ? desiredStateRef.current.codeTheme
           : associatedCodeTheme(bootstrap, markdownTheme),
         customCssId: ''
       });
@@ -651,9 +721,9 @@ export function AppearanceControls({
   const selectCodeTheme = (value: string) => {
     if (value.startsWith('custom:')) {
       // One customCssId owns the paired article and code CSS preset.
-      applyState(
+      void applyState(
         {
-          ...snapshotRef.current.state,
+          ...desiredStateRef.current,
           markdownTheme: 'custom',
           codeTheme: associatedCodeTheme(bootstrap, 'default'),
           customCssId: value.slice(7)
@@ -662,18 +732,19 @@ export function AppearanceControls({
       );
       return;
     }
-    applyState(
+    void applyState(
       {
-        ...snapshotRef.current.state,
+        ...desiredStateRef.current,
         codeTheme: value.slice(6)
       },
       true
     );
   };
   const selectedCodeValue =
-    !codeThemeExplicitRef.current && selectedCustomCss(snapshot) !== undefined
-      ? `custom:${snapshot.state.customCssId}`
-      : `theme:${snapshot.state.codeTheme}`;
+    !desiredCodeThemeExplicit
+      && selectedCustomCss(visibleSnapshot) !== undefined
+      ? `custom:${desiredState.customCssId}`
+      : `theme:${desiredState.codeTheme}`;
   const ordinaryFields = (
     <Fragment>
       <label className="easymde-toolbar-control">
@@ -682,7 +753,7 @@ export function AppearanceControls({
         </span>
         <select
           className="easymde-theme-select"
-          value={selectedArticleValue(snapshot)}
+          value={selectedArticleValue(visibleSnapshot)}
           onChange={(event) => selectArticleTheme(event.currentTarget.value)}
         >
           {bootstrap.articleThemes.map((theme) => (
@@ -737,7 +808,7 @@ export function AppearanceControls({
             <OrdinarySelect
               className="easymde-theme-select"
               label={bootstrap.strings.articleTheme}
-              value={selectedArticleValue(snapshot)}
+              value={selectedArticleValue(visibleSnapshot)}
               options={articleOptions}
               onChange={selectArticleTheme}
             />
@@ -804,7 +875,7 @@ export function AppearanceControls({
             </span>
             <span
               className="easymde-immersive-theme-accent"
-              data-theme={snapshot.state.markdownTheme}
+              data-theme={desiredState.markdownTheme}
               style={{ background: activeArticleSwatch }}
               aria-hidden="true"
             />
@@ -881,7 +952,7 @@ export function AppearanceControls({
             <div className="easymde-immersive-theme-panel-body">
               <ImmersiveThemeSelect
                 label={bootstrap.strings.articleTheme}
-                value={selectedArticleValue(snapshot)}
+                value={selectedArticleValue(visibleSnapshot)}
                 options={articleOptions}
                 onChange={selectArticleTheme}
               />

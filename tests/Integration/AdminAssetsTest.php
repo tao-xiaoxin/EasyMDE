@@ -567,6 +567,128 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		);
 	}
 
+	public function test_admitted_existing_post_editor_removes_core_emoji_detection_script() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+
+		$remaining = $this->enqueue_admin_assets_with_emoji_action(
+			'post.php',
+			function () use ( $user_id, $post_id ) {
+				wp_set_current_user( $user_id );
+				$_GET = array( 'post' => (string) $post_id );
+				$GLOBALS['pagenow'] = 'post.php';
+				set_current_screen( 'post' );
+			}
+		);
+
+		$this->assertFalse( $remaining );
+	}
+
+	public function test_admitted_new_post_editor_removes_core_emoji_detection_script() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+
+		$remaining = $this->enqueue_admin_assets_with_emoji_action(
+			'post-new.php',
+			function () use ( $user_id ) {
+				wp_set_current_user( $user_id );
+				$_GET = array( 'post_type' => 'post' );
+				$GLOBALS['pagenow'] = 'post-new.php';
+				set_current_screen( 'post' );
+			}
+		);
+
+		$this->assertFalse( $remaining );
+	}
+
+	public function test_non_editor_hook_retains_core_emoji_detection_script() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+
+		$remaining = $this->enqueue_admin_assets_with_emoji_action(
+			'edit.php',
+			function () use ( $user_id, $post_id ) {
+				wp_set_current_user( $user_id );
+				$_GET = array( 'post' => (string) $post_id );
+				$GLOBALS['pagenow'] = 'edit.php';
+				set_current_screen( 'post' );
+			}
+		);
+
+		$this->assertNotFalse( $remaining );
+	}
+
+	public function test_missing_current_screen_retains_core_emoji_detection_script() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+
+		$remaining = $this->enqueue_admin_assets_with_emoji_action(
+			'post.php',
+			function () use ( $user_id, $post_id ) {
+				wp_set_current_user( $user_id );
+				$_GET = array( 'post' => (string) $post_id );
+				$GLOBALS['pagenow'] = 'post.php';
+				$GLOBALS['current_screen'] = null;
+			}
+		);
+
+		$this->assertNotFalse( $remaining );
+	}
+
+	public function test_should_load_editor_false_retains_core_emoji_detection_script() {
+		$owner_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$user_id  = self::factory()->user->create( array( 'role' => 'subscriber' ) );
+		$post_id  = self::factory()->post->create( array( 'post_author' => $owner_id ) );
+
+		$remaining = $this->enqueue_admin_assets_with_emoji_action(
+			'post.php',
+			function () use ( $user_id, $post_id ) {
+				wp_set_current_user( $user_id );
+				$_GET = array( 'post' => (string) $post_id );
+				$GLOBALS['pagenow'] = 'post.php';
+				set_current_screen( 'post' );
+			}
+		);
+
+		$this->assertNotFalse( $remaining );
+	}
+
+	private function enqueue_admin_assets_with_emoji_action( $hook, $prepare ) {
+		$this->assertTrue( function_exists( 'print_emoji_detection_script' ) );
+
+		$previous_get            = $_GET;
+		$previous_pagenow       = array_key_exists( 'pagenow', $GLOBALS ) ? $GLOBALS['pagenow'] : null;
+		$had_pagenow            = array_key_exists( 'pagenow', $GLOBALS );
+		$previous_screen        = array_key_exists( 'current_screen', $GLOBALS ) ? $GLOBALS['current_screen'] : null;
+		$had_screen             = array_key_exists( 'current_screen', $GLOBALS );
+		$previous_emoji_priority = has_action( 'admin_print_scripts', 'print_emoji_detection_script' );
+		add_action( 'admin_print_scripts', 'print_emoji_detection_script' );
+
+		try {
+			$prepare();
+			$this->assertNotFalse( has_action( 'admin_print_scripts', 'print_emoji_detection_script' ) );
+			$this->admin_assets->enqueue_admin_assets( $hook );
+
+			return has_action( 'admin_print_scripts', 'print_emoji_detection_script' );
+		} finally {
+			remove_action( 'admin_print_scripts', 'print_emoji_detection_script' );
+			if ( false !== $previous_emoji_priority ) {
+				add_action( 'admin_print_scripts', 'print_emoji_detection_script', $previous_emoji_priority );
+			}
+
+			$_GET = $previous_get;
+			if ( $had_pagenow ) {
+				$GLOBALS['pagenow'] = $previous_pagenow;
+			} else {
+				unset( $GLOBALS['pagenow'] );
+			}
+			if ( $had_screen ) {
+				$GLOBALS['current_screen'] = $previous_screen;
+			} else {
+				unset( $GLOBALS['current_screen'] );
+			}
+		}
+	}
+
 	public function tear_down() {
 		remove_all_actions( 'admin_enqueue_scripts' );
 		remove_all_actions( 'admin_notices' );

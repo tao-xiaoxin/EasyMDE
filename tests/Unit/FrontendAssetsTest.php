@@ -121,10 +121,18 @@ final class FrontendAssetsTest extends WP_UnitTestCase
 
     public function test_optional_code_copy_asset_errors_are_classified_without_hiding_core_asset_errors()
     {
+        $asset_unreadable_error = new RuntimeException('frontend-asset-unreadable');
+        $asset_version_error = new RuntimeException('frontend-asset-version-invalid');
         $code_copy_error = new RuntimeException('frontend-code-copy-build-missing');
         $enhancement_error = new RuntimeException('frontend-enhancement-frontend-enhancements-build-missing');
         $unknown_error = new RuntimeException('unexpected-asset-failure');
 
+        $this->assertTrue(FrontendAssetContract::is_error($asset_unreadable_error));
+        $this->assertFalse(FrontendAssetContract::is_code_copy_error($asset_unreadable_error));
+        $this->assertSame('frontend-asset-unreadable', FrontendAssetContract::error_code($asset_unreadable_error));
+        $this->assertTrue(FrontendAssetContract::is_error($asset_version_error));
+        $this->assertFalse(FrontendAssetContract::is_code_copy_error($asset_version_error));
+        $this->assertSame('frontend-asset-version-invalid', FrontendAssetContract::error_code($asset_version_error));
         $this->assertTrue(FrontendAssetContract::is_error($code_copy_error));
         $this->assertTrue(FrontendAssetContract::is_code_copy_error($code_copy_error));
         $this->assertTrue(FrontendAssetContract::is_error($enhancement_error));

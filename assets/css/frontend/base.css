@@ -2,14 +2,46 @@
 .easymde-preview .easymde-mermaid,
 .entry-content .easymde-mermaid,
 .wp-block-post-content .easymde-mermaid {
+    box-sizing: border-box;
+    display: block;
+    min-width: 0;
+    max-width: 100%;
     margin: 1.25em 0;
     overflow-x: auto;
+    overflow-y: visible;
     text-align: center;
 }
 
 .easymde-mermaid svg {
+    display: block;
+    margin-inline: auto;
     max-width: 100%;
     height: auto;
+}
+
+/* This geometry must match the Mermaid themeCSS used while foreignObject
+ * labels are measured. It prevents article themes from changing fixed SVG
+ * label boxes after the diagram is inserted. */
+.easymde-mermaid .node .label,
+.easymde-mermaid .node .label *,
+.easymde-mermaid .edgeLabel,
+.easymde-mermaid .edgeLabel *,
+.easymde-mermaid foreignObject > div,
+.easymde-mermaid foreignObject > div * {
+    box-sizing: border-box !important;
+    font-family: "trebuchet ms", verdana, arial, sans-serif !important;
+    font-size: 16px !important;
+    font-weight: 400 !important;
+    line-height: 20px !important;
+    letter-spacing: normal !important;
+    word-spacing: normal !important;
+    white-space: nowrap !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.easymde-mermaid foreignObject > div {
+    display: table-cell !important;
 }
 
 .easymde-render-error {
@@ -46,6 +78,11 @@
   --easymde-code-font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace;
   word-break: break-word;
   overflow-wrap: break-word;
+}
+
+/* EasyMDE owns this scroll surface for outline/preview synchronization. */
+.easymde-rendered-content.easymde-markdown-theme-mdmdt {
+  scroll-behavior: auto !important;
 }
 
 .easymde-rendered-content.easymde-font-overrides,

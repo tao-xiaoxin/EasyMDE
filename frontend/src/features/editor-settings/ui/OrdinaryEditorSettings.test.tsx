@@ -51,11 +51,22 @@ function emitIntersection(
 
 const appearance: AppearanceBootstrap = {
   articleThemes: [
-    { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
-    { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'atom-one-dark' }
+    {
+      id: 'default',
+      label: 'Default',
+      defaultCodeTheme: 'atom-one-dark',
+      markupProfile: 'common-v1'
+    },
+    {
+      id: 'newsprint',
+      label: 'Newsprint',
+      defaultCodeTheme: 'atom-one-dark',
+      markupProfile: 'common-v1'
+    }
   ],
   canManageCustomCss: true,
   codeThemeExplicit: false,
+  customMarkupProfile: 'common-v1',
   codeThemes: [
     { id: 'atom-one-dark', label: 'Atom One Dark' },
     { id: 'github', label: 'GitHub' }
@@ -84,6 +95,7 @@ const appearance: AppearanceBootstrap = {
     saveCss: 'Save CSS',
     cssSaved: 'CSS saved.',
     cssSaveFailed: 'CSS save failed.',
+    themeApplyFailed: 'Theme could not be applied. The saved theme is still available.',
     cssNameDuplicate: 'A theme with this name already exists.',
     namedCustomCss: 'Named custom CSS'
   }
@@ -126,8 +138,10 @@ function renderSettings() {
     <OrdinaryEditorSettings
       appearance={appearance}
       appearancePort={{
-        applyState: vi.fn(),
+        applyState: vi.fn().mockResolvedValue(true),
+        cancelPendingApply: vi.fn(),
         closeOtherPopovers: vi.fn(),
+        dispose: vi.fn(),
         previewCustomCss: vi.fn(),
         saveCustomCss: vi.fn()
       }}

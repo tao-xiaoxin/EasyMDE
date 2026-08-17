@@ -1,0 +1,271 @@
+/*
+ * EasyMDE Dog's Choice Pink article theme.
+ * Source: Dog's Choice Pink (Typora theme, adapted to the scoped EasyMDE preview surface).
+ */
+
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
+    font-family: "Noto Sans SC Medium", "HanChanJinShuSong", Helvetica, Arial, sans-serif;
+    color: rgb(51, 51, 51);
+    line-height: 1.6;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
+    color: var(--main-text-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink header,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink footer{
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink > ul:first-child,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink > ol:first-child{
+    margin-top: 30px;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink cursor{
+    color: var(--text-cursor-color)
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink a{
+    color: var(--a-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink strong{
+    font-weight: bold;
+    color: var(--text-strong-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink em{
+    font-style: italic;
+    color: var(--text-em-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink :not(pre) > code,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink :not(pre) > tt{
+    color: var(--code-inline--color);
+    background-color: var(--code-inline-bg-color);
+    padding: 2px;
+    font-size: 95%;
+    display: inline;
+    vertical-align: middle;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h1,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h2,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h3,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h4,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h5,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h6{
+    position: relative;
+    font-weight: bold;
+    line-height: 1.4;
+    cursor: text;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h1:hover a.anchor,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h2:hover a.anchor,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h3:hover a.anchor,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h4:hover a.anchor,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h5:hover a.anchor,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h6:hover a.anchor{
+    text-decoration: none;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h1 tt,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h1 code{
+    font-size: inherit;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h2 tt,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h2 code{
+    font-size: inherit;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h3 tt,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h3 code{
+    font-size: inherit;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h4 tt,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h4 code{
+    font-size: inherit;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h5 tt,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h5 code{
+    font-size: inherit;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h6 tt,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h6 code{
+    font-size: inherit;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h1{
+    font-size: 2.1em;
+    line-height: 1.2;
+    color: var(--h1-4-text-color);
+    text-align: center;
+    padding-top: 0.3rem;
+    padding-bottom: 0.3rem;
+    background-color: var(--h1-background-color);
+    border-left: 0.5rem solid var(--header-lr-border-color);
+    border-right: 0.5rem solid var(--header-lr-border-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h2{
+    font-size: 1.8em;
+    line-height: 1.225;
+    color: var(--h1-4-text-color);
+    border-bottom: .13rem solid var(--header-bottom-border-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h3{
+    font-size: 1.5em;
+    line-height: 1.43;
+    color: var(--h1-4-text-color);
+    border-bottom: .12rem dashed var(--header-bottom-border-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h4{
+    font-size: 1.2em;
+    color: var(--h1-4-text-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h5{
+    font-size: 1.1em;
+    color: var(--h5-text-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h6{
+    font-size: 1em;
+    color: var(--h6-text-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink h4:before{
+    content: "";
+    display: inline-block;
+    background: var(--header-lr-border-color);
+    opacity: 1;
+    pointer-events: none;
+    width: .3rem;
+    vertical-align: middle;
+    margin-right: .5rem;
+    height: 1.2rem;
+    transform: translateY(-0.1rem);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink img{
+    border: 1px solid var(--img-border-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink mark{
+    background: var(--mark-bg-color);
+    color: var(--main-text-color);
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink p,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink blockquote,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ul,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ol,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink dl,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table{
+    margin: .7em 0;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink li>ol,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink li>ul{
+    margin: 0 0;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink hr{
+    height: .1rem;
+    padding: 0;
+    margin: 16px 0;
+    background-color: var(--hr-color);
+    border: 0 none;
+    overflow: hidden;
+    box-sizing: content-box;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink li p.first{
+    display: inline-block;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ul,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ol{
+    padding-left: 30px;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ul:first-child,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ol:first-child{
+    margin-top: 0;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ul:last-child,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink ol:last-child{
+    margin-bottom: 0;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink blockquote{
+    border-left: 4px solid var(--blockquote-decoration-color);
+    background-color: var(--blockquote-bg-color);
+    padding: 8px 10px;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink blockquote blockquote{
+    padding-right: 0;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table{
+    padding: 0;
+    word-break: initial;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink thead{
+    background-color: var(--table-thead-bg-color);
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table th{
+    font-weight: bold;
+    border: 0.05rem solid var(--table-border-color);
+    border-bottom: 0;
+    margin: 0;
+    padding: 6px 13px;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table td{
+    border: 0.05rem solid var(--table-border-color);
+    margin: 0;
+    padding: 6px 13px;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table th:first-child,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table td:first-child{
+    margin-top: 0;
+}
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table th:last-child,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink table td:last-child{
+    margin-bottom: 0;
+}
+@media print{
+    .easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
+        font-size: 13px;
+    }
+}
+
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink{
+
+    --main-text-color: #000;
+    --a-color: #768cce;
+    --text-strong-color: #8F00D2;
+    --text-em-color: #f55066;
+
+    --mark-bg-color: #FCFFC8;
+
+    --text-cursor-color: var(--main-text-color);
+
+    --h1-4-text-color: #000;
+    --h1-background-color: #FFE8E8;
+    --header-lr-border-color: #FDB7B7;
+    --header-bottom-border-color: #FFBFBF;
+    --h5-text-color: #000;
+    --h6-text-color: #000;
+    --table-thead-bg-color: #FFF3E4;
+    --table-border-color: #F3D6B3;
+
+    --blockquote-bg-color: #E4FFEA;
+    --blockquote-decoration-color: #96F3AC;
+
+    --img-border-color: #FFE8F7;
+
+    --code-inline--color: #224F94;
+    --code-inline-bg-color: #B3BEC946;
+
+    --hr-color: #FFE8F7;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink :not(pre) > code,
+.easymde-rendered-content.easymde-markdown-theme-dogschoice-pink :not(pre) > tt {
+  font-family: var(--easymde-code-font-family);
+}

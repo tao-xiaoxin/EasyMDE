@@ -164,6 +164,7 @@ export type BrowserWechatClipboardRuntime = Readonly<{
 type BackgroundAssetCache = Map<string, Promise<string>>;
 const MAX_BACKGROUND_ASSET_CACHE_ENTRIES = 32;
 const THEME_IMAGE_FETCH_TIMEOUT_MS = 10_000;
+export const CLIPBOARD_COMMIT_TIMEOUT_MS = 10_000;
 type ThemeImageLayer = Readonly<{
   src: string;
   layerIndex: number;
@@ -203,6 +204,21 @@ type BackgroundPreparationState = {
 };
 type BackgroundPreparationCache = WeakMap<HTMLElement, BackgroundPreparationState>;
 type SerializationYield = () => Promise<void>;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error('wechat-clipboard-commit-timeout'));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (null !== timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  });
+}
 
 function createSerializationYield(
   runtime: BrowserWechatClipboardRuntime,
@@ -2512,7 +2528,16 @@ export function createBrowserWechatClipboard(
           return fallbackAfterSynchronousModernFailure();
         }
         try {
-          await Promise.all([writePromise, payload, htmlBlob, textBlob]);
+          const writeOutcome = writePromise.then(
+            () => ({ error: null }),
+            (error: unknown) => ({ error })
+          );
+          await Promise.all([payload, htmlBlob, textBlob]);
+          const { error } = await withTimeout(
+            writeOutcome,
+            CLIPBOARD_COMMIT_TIMEOUT_MS
+          );
+          if (null !== error) throw error;
           return { method: 'clipboard', status: 'copied' };
         } catch {
           // A rejected modern write resumes after an await and cannot safely

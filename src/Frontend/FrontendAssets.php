@@ -120,7 +120,7 @@ final class FrontendAssets {
 			'easymde-content',
 			Asset::url( 'assets/css/frontend/base.css' ),
 			array(),
-			EASYMDE_VERSION
+			$this->get_static_asset_version( 'assets/css/frontend/base.css' )
 		);
 
 		wp_enqueue_style(
@@ -288,7 +288,7 @@ final class FrontendAssets {
 			'easymde-content',
 			Asset::url( 'assets/css/frontend/base.css' ),
 			array(),
-			EASYMDE_VERSION
+			$this->get_static_asset_version( 'assets/css/frontend/base.css' )
 		);
 
 		wp_enqueue_style(
@@ -375,6 +375,20 @@ final class FrontendAssets {
 
 	private function versioned_asset_url( $asset_path ) {
 		return add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( $asset_path ) );
+	}
+
+	private function get_static_asset_version( $asset_path ) {
+		$path = Asset::path( $asset_path );
+		if ( ! is_readable( $path ) ) {
+			throw new \RuntimeException( 'frontend-asset-unreadable' );
+		}
+
+		$hash = hash_file( 'sha256', $path );
+		if ( ! is_string( $hash ) || ! preg_match( '/^[a-f0-9]{64}$/', $hash ) ) {
+			throw new \RuntimeException( 'frontend-asset-version-invalid' );
+		}
+
+		return substr( $hash, 0, 16 );
 	}
 
 	private function get_frontend_enhancement_asset( $entry_key, $build_dir, $expected_handle, $verify_integrity = true, $file_prefix = '' ) {

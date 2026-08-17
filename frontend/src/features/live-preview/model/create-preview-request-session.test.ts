@@ -61,6 +61,99 @@ describe('createPreviewRequestSession', () => {
     vi.useRealTimers();
   });
 
+  it('does not start transport from a superseded queued callback', async () => {
+    let queuedRun: (() => void) | undefined;
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((callback) => {
+        if ('function' !== typeof callback) {
+          throw new Error('preview-test-timeout-callback-invalid');
+        }
+        queuedRun = callback;
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      });
+    const clearTimeoutSpy = vi
+      .spyOn(globalThis, 'clearTimeout')
+      .mockImplementation(() => undefined);
+    const render = vi.fn().mockResolvedValue({
+      html: safeHtml('<p>current</p>'),
+      features: {}
+    });
+    const onState = vi.fn();
+    const session = createPreviewRequestSession({
+      initialRevision: 0,
+      onState,
+      port: { render }
+    });
+
+    try {
+      session.schedule(request('stale'));
+      const runStale = queuedRun;
+      expect(runStale).toBeTypeOf('function');
+
+      session.schedule(request('current'), true);
+      expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+      runStale?.();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(render.mock.calls.map(([scheduledRequest]) => scheduledRequest.markdown))
+        .toEqual(['current']);
+      expect(onState.mock.calls.map(([state]) => [state.kind, state.revision]))
+        .toEqual([
+          ['loading', 1],
+          ['loading', 2],
+          ['success', 2]
+        ]);
+    } finally {
+      session.destroy();
+      clearTimeoutSpy.mockRestore();
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it('does not start transport from a queued callback after destroy', async () => {
+    let queuedRun: (() => void) | undefined;
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((callback) => {
+        if ('function' !== typeof callback) {
+          throw new Error('preview-test-timeout-callback-invalid');
+        }
+        queuedRun = callback;
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      });
+    const clearTimeoutSpy = vi
+      .spyOn(globalThis, 'clearTimeout')
+      .mockImplementation(() => undefined);
+    const render = vi.fn().mockResolvedValue({
+      html: safeHtml('<p>stale</p>'),
+      features: {}
+    });
+    const session = createPreviewRequestSession({
+      initialRevision: 0,
+      onState: vi.fn(),
+      port: { render }
+    });
+
+    try {
+      session.schedule(request('stale'));
+      const runStale = queuedRun;
+      expect(runStale).toBeTypeOf('function');
+
+      session.destroy();
+      expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+      runStale?.();
+      await Promise.resolve();
+
+      expect(render).not.toHaveBeenCalled();
+    } finally {
+      session.destroy();
+      clearTimeoutSpy.mockRestore();
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
   it('handles empty input without transport and reports failures honestly', async () => {
     const render = vi.fn().mockRejectedValue(new Error('synthetic'));
     const onState = vi.fn();

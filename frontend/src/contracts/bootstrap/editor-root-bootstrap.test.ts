@@ -13,10 +13,12 @@ function validBootstrap() {
       articleThemes: [{
         id: 'default',
         label: 'Default',
-        defaultCodeTheme: 'atom-one-dark'
+        defaultCodeTheme: 'atom-one-dark',
+        markupProfile: 'common-v1'
       }],
       canManageCustomCss: true,
       codeThemeExplicit: false,
+      customMarkupProfile: 'common-v1',
       codeThemes: [{ id: 'atom-one-dark', label: 'Atom One Dark' }],
       customCss: [],
       customCssVariables,
@@ -33,6 +35,7 @@ function validBootstrap() {
         cssSaveFailed: 'CSS save failed',
         cssNameDuplicate: 'A theme with this name already exists',
         cssSaved: 'CSS saved',
+        themeApplyFailed: 'Theme could not be applied. The saved theme is still available.',
         customCss: 'Custom CSS',
         customCssTheme: 'Custom CSS theme',
         customCssDialog: customCssDialogStrings,
@@ -353,7 +356,8 @@ describe('parseEditorRootBootstrap', () => {
               },
               id: 'default',
               label: 'Default',
-              defaultCodeTheme: 'atom-one-dark'
+              defaultCodeTheme: 'atom-one-dark',
+              markupProfile: 'common-v1'
             }
           ]
         }

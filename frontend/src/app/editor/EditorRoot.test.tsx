@@ -33,10 +33,12 @@ const mountedFields: Array<HTMLElement> = [];
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 }
 
 function BrokenEditorRoot(): never {
@@ -114,11 +116,22 @@ function fixture(): EditorRootProps &
   return {
     appearance: {
       articleThemes: [
-        { id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark' },
-        { id: 'newsprint', label: 'Newsprint', defaultCodeTheme: 'atom-one-dark' }
+        {
+          id: 'default',
+          label: 'Default',
+          defaultCodeTheme: 'atom-one-dark',
+          markupProfile: 'common-v1'
+        },
+        {
+          id: 'newsprint',
+          label: 'Newsprint',
+          defaultCodeTheme: 'atom-one-dark',
+          markupProfile: 'common-v1'
+        }
       ],
       canManageCustomCss: true,
       codeThemeExplicit: false,
+      customMarkupProfile: 'common-v1',
       codeThemes: [
         { id: 'atom-one-dark', label: 'Atom One Dark' },
         { id: 'github', label: 'GitHub' }
@@ -138,6 +151,7 @@ function fixture(): EditorRootProps &
         cssSaveFailed: 'CSS save failed',
         cssNameDuplicate: 'A theme with this name already exists',
         cssSaved: 'CSS saved',
+        themeApplyFailed: 'Theme could not be applied. The saved theme is still available.',
         customCss: 'Custom CSS',
         customCssTheme: 'Custom CSS theme',
         customCssDialog: customCssDialogStrings,
@@ -146,8 +160,10 @@ function fixture(): EditorRootProps &
       }
     },
     appearancePort: {
-      applyState: vi.fn(),
+      applyState: vi.fn().mockResolvedValue(true),
+      cancelPendingApply: vi.fn(),
       closeOtherPopovers: vi.fn(),
+      dispose: vi.fn(),
       previewCustomCss: vi.fn().mockResolvedValue({
         scopedCss: '',
         status: 'ready'
@@ -159,7 +175,12 @@ function fixture(): EditorRootProps &
     document: { editorLabel: 'Markdown source' },
     enhancementPort: {
       dispose: vi.fn(),
-      enhance: vi.fn().mockResolvedValue(undefined)
+      enhance: vi.fn().mockResolvedValue(undefined),
+      prepareCodeTheme: vi.fn().mockResolvedValue({
+        cancel: vi.fn(),
+        commit: vi.fn()
+      }),
+      syncCodeFrameBackgrounds: vi.fn()
     },
     executeExternalCommand: vi.fn(),
     fontControlsPort: { applyState: vi.fn(), closeOtherPopovers: vi.fn() },
@@ -660,6 +681,28 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(view.getByRole('button', { name: '进入沉浸写作' })).not.toBeNull()
     );
+    const assertPreviewPaperFrame = (pane: Element | null) => {
+      expect(pane).not.toBeNull();
+      expect(
+        pane?.querySelectorAll(':scope > .easymde-immersive-preview-canvas')
+      ).toHaveLength(1);
+      expect(
+        pane?.querySelectorAll(
+          ':scope > .easymde-immersive-preview-canvas > [data-easymde-preview-html-sink]'
+        )
+      ).toHaveLength(1);
+      expect(
+        pane?.querySelectorAll(
+          ':scope > .easymde-immersive-preview-canvas .easymde-immersive-preview-canvas'
+        )
+      ).toHaveLength(0);
+    };
+    assertPreviewPaperFrame(
+      view.container.querySelector('.easymde-pane-preview')
+    );
+    expect(
+      view.container.querySelector('.easymde-immersive-preview-page')
+    ).toBeNull();
 
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
     expect(view.getByRole('region', { name: '沉浸写作' })).not.toBeNull();
@@ -682,6 +725,9 @@ describe('EditorRoot', () => {
         '.easymde-pane-preview [data-easymde-preview-html-sink]'
       )
     ).not.toBeNull();
+    assertPreviewPaperFrame(
+      view.container.querySelector('.easymde-pane-preview')
+    );
 
     fireEvent.click(view.getByRole('button', { name: '预览' }));
     expect(
@@ -693,14 +739,10 @@ describe('EditorRoot', () => {
     expect(
       previewPane?.classList.contains('easymde-immersive-preview-surface')
     ).toBe(true);
+    assertPreviewPaperFrame(previewPane);
     expect(
-      previewPane?.querySelector('.easymde-immersive-preview-canvas')
-    ).not.toBeNull();
-    expect(
-      previewPane?.querySelector(
-        '.easymde-immersive-preview-page > [data-easymde-preview-html-sink]'
-      )
-    ).not.toBeNull();
+      previewPane?.querySelector('.easymde-immersive-preview-page')
+    ).toBeNull();
     const previewSink = previewPane?.querySelector<HTMLElement>(
       '[data-easymde-preview-html-sink]'
     );
@@ -818,7 +860,7 @@ describe('EditorRoot', () => {
     expect(view.queryByText('Rendering')).toBeNull();
     expect(
       view.container.querySelector(
-        '.easymde-immersive-preview-page [data-easymde-preview-html-sink]'
+        '.easymde-pane-preview > .easymde-immersive-preview-canvas > [data-easymde-preview-html-sink]'
       )?.textContent
     ).toContain('Initial');
   });
@@ -2014,18 +2056,149 @@ describe('EditorRoot', () => {
     expect(
       view.queryByRole('textbox', { name: '可视化文章编辑器' })
     ).toBeNull();
-    await waitFor(() =>
-      expect(renderPreview.mock.calls.length).toBeGreaterThan(renderCount)
-    );
-    expect(renderPreview).toHaveBeenLastCalledWith(
-      expect.objectContaining({ markdownTheme: 'newsprint' }),
-      expect.any(AbortSignal)
-    );
+    await waitFor(() => {
+      expect(renderPreview.mock.calls.length).toBeGreaterThan(renderCount);
+      expect(renderPreview).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        expect.any(AbortSignal)
+      );
+    });
     expect(
       view.container
         .querySelector('[data-easymde-preview-html-sink]')
         ?.classList.contains('easymde-markdown-theme-newsprint')
     ).toBe(true);
+  });
+
+  it('keeps the visible article theme unchanged until its stylesheet is ready', async () => {
+    const props = fixture();
+    const pending = deferred<boolean>();
+    vi.mocked(props.appearancePort.applyState).mockReturnValueOnce(
+      pending.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+    expect(
+      view.container
+        .querySelector('[data-easymde-preview-html-sink]')
+        ?.classList.contains('easymde-markdown-theme-default')
+    ).toBe(true);
+    expect(
+      view.container
+        .querySelector('[data-easymde-preview-html-sink]')
+        ?.classList.contains('easymde-markdown-theme-newsprint')
+    ).toBe(false);
+
+    pending.resolve(true);
+
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector('[data-easymde-preview-html-sink]')
+          ?.classList.contains('easymde-markdown-theme-newsprint')
+      ).toBe(true)
+    );
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.getByText('未保存')).not.toBeNull();
+  });
+
+  it.each([
+    { control: 'Article theme', option: 'Newsprint' },
+    { control: 'Code theme', option: 'GitHub' }
+  ])(
+    'blocks native submission and autosave until the pending $control transaction settles',
+    async ({ control, option }) => {
+      const props = fixture();
+      const pending = deferred<boolean>();
+      vi.mocked(props.appearancePort.applyState).mockReturnValueOnce(
+        pending.promise
+      );
+      const view = render(<EditorRoot {...props} />);
+
+      fireEvent.click(await view.findByRole('button', {
+        name: '编辑器设置'
+      }));
+      fireEvent.click(view.getByRole('combobox', { name: control }));
+      fireEvent.click(view.getByRole('option', { name: option }));
+
+      const pendingSubmit = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true
+      });
+      expect(props.nativeForm.dispatchEvent(pendingSubmit)).toBe(false);
+      expect(props.sessionAutosave()).toBe('blocked');
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'editor-appearance-pending'
+      );
+
+      pending.resolve(true);
+      await waitFor(() => {
+        expect(props.appearancePort.applyState).toHaveResolvedTimes(1);
+      });
+
+      const settledSubmit = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true
+      });
+      expect(props.nativeForm.dispatchEvent(settledSubmit)).toBe(true);
+      expect(props.sessionAutosave()).toBe('continue');
+    }
+  );
+
+  it('synchronizes a committed pending theme into Appearance after a mode remount', async () => {
+    const props = fixture();
+    const pending = deferred<boolean>();
+    vi.mocked(props.appearancePort.applyState).mockReturnValueOnce(
+      pending.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+
+    expect(
+      view.getByRole('button', { name: 'Article theme' }).textContent
+    ).toContain('Default');
+
+    pending.resolve(true);
+
+    await waitFor(() =>
+      expect(
+        view.getByRole('button', { name: 'Article theme' }).textContent
+      ).toContain('Newsprint')
+    );
+  });
+
+  it('reports a pending appearance failure after its initiating control remounts', async () => {
+    const props = fixture();
+    const pending = deferred<boolean>();
+    vi.mocked(props.appearancePort.applyState).mockReturnValueOnce(
+      pending.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+
+    pending.reject(new Error('appearance-article-theme-stylesheet-load-failed'));
+
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'react-editor-appearance-failed'
+      )
+    );
   });
 
   it('rejects explicit code-theme intent when visual Preview cannot synchronize', async () => {
@@ -2040,8 +2213,9 @@ describe('EditorRoot', () => {
       ]
     };
     vi.mocked(props.appearancePort.applyState).mockImplementation(
-      (_state, explicit) => {
+      async (_state, explicit) => {
         codeThemeExplicitField.value = explicit ? '1' : '0';
+        return true;
       }
     );
     const view = render(<EditorRoot {...props} appearance={appearance} />);
@@ -2061,7 +2235,9 @@ describe('EditorRoot', () => {
 
     expect(props.appearancePort.applyState).not.toHaveBeenCalled();
     expect(codeThemeExplicitField.value).toBe('0');
-    expect(codeTheme.textContent).toContain('Atom One Dark');
+    await waitFor(() =>
+      expect(codeTheme.textContent).toContain('Atom One Dark')
+    );
   });
 
   it('rejects a saved Custom CSS snapshot when visual Preview cannot synchronize', async () => {
@@ -3727,7 +3903,8 @@ describe('EditorRoot', () => {
     expect(view.queryByRole('complementary', { name: '文章大纲' })).toBeNull();
     expect(view.container.querySelector('.easymde-immersive-stats')).toBeNull();
     expect(view.queryByText('自动保存已开启')).toBeNull();
-    expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledOnce();
+    expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledTimes(4);
+    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(4);
     expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(6);
   });
 
@@ -3974,9 +4151,206 @@ describe('EditorRoot', () => {
     fireEvent.click(headingItem);
   });
 
-  it('renders Preview from the current Appearance state', async () => {
+  it('reuses Preview HTML for equivalent article markup and prepares code CSS without enhancing', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+    const renderCount = vi.mocked(props.previewPort.render).mock.calls.length;
+    const enhanceCount = vi.mocked(props.enhancementPort.enhance).mock.calls.length;
+    const sink = view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+    await waitFor(() => expect(
+      view.container
+        .querySelector('[data-easymde-preview-html-sink]')
+        ?.classList.contains('easymde-markdown-theme-newsprint')
+    ).toBe(true));
+    expect(view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    )).toBe(sink);
+    expect(props.previewPort.render).toHaveBeenCalledTimes(renderCount);
+
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+    await waitFor(() =>
+      expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledWith(
+        expect.objectContaining({
+          codeTheme: 'github',
+          signal: expect.any(AbortSignal)
+        })
+      )
+    );
+    await waitFor(() =>
+      expect(props.enhancementPort.syncCodeFrameBackgrounds).toHaveBeenCalledWith(
+        sink
+      )
+    );
+    expect(props.previewPort.render).toHaveBeenCalledTimes(renderCount);
+    expect(props.enhancementPort.enhance).toHaveBeenCalledTimes(enhanceCount);
+  });
+
+  it('keeps code theme authority unchanged after preparation failure and retries the same theme', async () => {
+    const props = fixture();
+    const nativeFields = {
+      codeTheme: 'atom-one-dark',
+      codeThemeExplicit: '0'
+    };
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      async (state, explicit) => {
+        nativeFields.codeTheme = state.codeTheme;
+        nativeFields.codeThemeExplicit = explicit ? '1' : '0';
+        return true;
+      }
+    );
+    vi.mocked(props.enhancementPort.prepareCodeTheme)
+      .mockRejectedValueOnce(
+        new Error('preview-enhancement-resource-load-failed')
+      );
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    vi.mocked(props.enhancementPort.prepareCodeTheme)
+      .mockResolvedValueOnce(prepared);
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'preview-enhancement-resource-load-failed'
+      )
+    );
+    const sink = view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    );
+    expect(sink?.classList.contains(
+      'easymde-code-theme-atom-one-dark'
+    )).toBe(true);
+    expect(sink?.classList.contains('easymde-code-theme-github')).toBe(false);
+    expect(props.appearancePort.applyState).not.toHaveBeenCalled();
+    expect(nativeFields).toEqual({
+      codeTheme: 'atom-one-dark',
+      codeThemeExplicit: '0'
+    });
+    expect(
+      view.getByRole('combobox', { name: 'Code theme' }).textContent
+    ).toContain('Atom One Dark');
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.getByText('已保存')).not.toBeNull();
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+
+    await waitFor(() =>
+      expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledTimes(2)
+    );
+    await waitFor(() => expect(props.appearancePort.applyState).toHaveBeenCalledWith(
+      {
+        codeTheme: 'github',
+        customCssId: '',
+        markdownTheme: 'default'
+      },
+      true
+    ));
+    await waitFor(() => expect(sink?.classList.contains(
+      'easymde-code-theme-github'
+    )).toBe(true));
+    expect(nativeFields).toEqual({
+      codeTheme: 'github',
+      codeThemeExplicit: '1'
+    });
+    expect(prepared.commit).toHaveBeenCalledTimes(1);
+    expect(prepared.cancel).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.getByText('未保存')).not.toBeNull();
+  });
+
+  it('cancels superseded code CSS preparation and commits only the latest theme', async () => {
+    const props = fixture();
+    const github = deferred<Readonly<{ cancel: () => void; commit: () => void }>>();
+    const terminal = deferred<Readonly<{ cancel: () => void; commit: () => void }>>();
+    const githubTransaction = { cancel: vi.fn(), commit: vi.fn() };
+    const terminalTransaction = { cancel: vi.fn(), commit: vi.fn() };
+    const signals = new Map<string, AbortSignal>();
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockImplementation(
+      ({ codeTheme, signal }) => {
+        signals.set(codeTheme, signal);
+        return 'github' === codeTheme ? github.promise : terminal.promise;
+      }
+    );
+    const appearance = {
+      ...props.appearance,
+      codeThemes: [
+        ...props.appearance.codeThemes,
+        { id: 'terminal-noir', label: 'Terminal Noir' }
+      ]
+    };
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+    const renderCount = vi.mocked(props.previewPort.render).mock.calls.length;
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+    await waitFor(() => expect(signals.has('github')).toBe(true));
+
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+    await waitFor(() => expect(signals.has('terminal-noir')).toBe(true));
+    expect(signals.get('github')?.aborted).toBe(true);
+    expect(props.appearancePort.cancelPendingApply).toHaveBeenCalledTimes(2);
+
+    await act(async () => github.resolve(githubTransaction));
+    expect(view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    )?.classList.contains('easymde-code-theme-github')).toBe(false);
+    expect(props.enhancementPort.syncCodeFrameBackgrounds).not.toHaveBeenCalled();
+    expect(githubTransaction.cancel).toHaveBeenCalledTimes(1);
+    expect(githubTransaction.commit).not.toHaveBeenCalled();
+
+    await act(async () => terminal.resolve(terminalTransaction));
+    await waitFor(() => expect(view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    )?.classList.contains('easymde-code-theme-terminal-noir')).toBe(true));
+    await waitFor(() =>
+      expect(props.enhancementPort.syncCodeFrameBackgrounds).toHaveBeenCalledWith(
+        view.container.querySelector('[data-easymde-preview-html-sink]')
+      )
+    );
+    expect(props.enhancementPort.syncCodeFrameBackgrounds).toHaveBeenCalledTimes(1);
+    expect(terminalTransaction.commit).toHaveBeenCalledTimes(1);
+    expect(terminalTransaction.cancel).not.toHaveBeenCalled();
+    expect(props.previewPort.render).toHaveBeenCalledTimes(renderCount);
+  });
+
+  it('rerenders Preview when the article markup profile changes', async () => {
+    const props = fixture();
+    const appearance = {
+      ...props.appearance,
+      articleThemes: props.appearance.articleThemes.map((theme) => ({
+        ...theme,
+        markupProfile:
+          'newsprint' === theme.id ? 'markdown2html-v1' : 'common-v1'
+      }))
+    };
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
     await waitFor(() =>
       expect(props.previewPort.render).toHaveBeenCalledTimes(1)
     );
@@ -3986,19 +4360,44 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
     await waitFor(() => {
+      expect(props.previewPort.render).toHaveBeenCalledTimes(2);
       expect(props.previewPort.render).toHaveBeenLastCalledWith(
         expect.objectContaining({ markdownTheme: 'newsprint' }),
         expect.any(AbortSignal)
       );
     });
+  });
 
-    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
-    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
-    await waitFor(() => {
-      expect(
-        vi.mocked(props.enhancementPort.enhance).mock.calls.at(-1)?.[3]
-      ).toEqual(expect.objectContaining({ codeTheme: 'github' }));
-    });
+  it('does not let a late native bridge event duplicate an article theme refresh', async () => {
+    const props = fixture();
+    const appearance = {
+      ...props.appearance,
+      articleThemes: props.appearance.articleThemes.map((theme) => ({
+        ...theme,
+        markupProfile:
+          'newsprint' === theme.id ? 'markdown2html-v1' : 'common-v1'
+      }))
+    };
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(2)
+    );
+
+    vi.useFakeTimers();
+    try {
+      props.submissionField.dispatchEvent(new Event('input', { bubbles: true }));
+      act(() => vi.advanceTimersByTime(180));
+      expect(props.previewPort.render).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('preserves an explicit code theme when Appearance remounts in immersive mode', async () => {
@@ -4019,8 +4418,9 @@ describe('EditorRoot', () => {
       ]
     };
     vi.mocked(props.appearancePort.applyState).mockImplementation(
-      (_state, explicit) => {
+      async (_state, explicit) => {
         codeThemeExplicitField.value = explicit ? '1' : '0';
+        return true;
       }
     );
     const view = render(<EditorRoot {...props} appearance={appearance} />);
@@ -4028,18 +4428,21 @@ describe('EditorRoot', () => {
     fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
     fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+    await waitFor(() => expect(codeThemeExplicitField.value).toBe('1'));
     fireEvent.keyDown(window, { key: 'Escape' });
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '主题' }));
     fireEvent.click(view.getByRole('button', { name: 'Article theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
-    expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        codeTheme: 'terminal-noir',
-        markdownTheme: 'newsprint'
-      }),
-      true
+    await waitFor(() =>
+      expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          codeTheme: 'terminal-noir',
+          markdownTheme: 'newsprint'
+        }),
+        true
+      )
     );
     expect(codeThemeExplicitField.value).toBe('1');
   });
@@ -4062,8 +4465,9 @@ describe('EditorRoot', () => {
       ]
     };
     vi.mocked(props.appearancePort.applyState).mockImplementation(
-      (_state, explicit) => {
+      async (_state, explicit) => {
         codeThemeExplicitField.value = explicit ? '1' : '0';
+        return true;
       }
     );
     const view = render(<EditorRoot {...props} appearance={appearance} />);
@@ -4074,17 +4478,20 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: '主题' }));
     fireEvent.click(view.getByRole('button', { name: 'Code theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+    await waitFor(() => expect(codeThemeExplicitField.value).toBe('1'));
     fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
-    expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        codeTheme: 'terminal-noir',
-        markdownTheme: 'newsprint'
-      }),
-      true
+    await waitFor(() =>
+      expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          codeTheme: 'terminal-noir',
+          markdownTheme: 'newsprint'
+        }),
+        true
+      )
     );
     expect(codeThemeExplicitField.value).toBe('1');
   });
@@ -4141,6 +4548,7 @@ describe('EditorRoot', () => {
           codeThemeName: 'EasyMDE Blue Code'
         })
       );
+      expect(appearancePort.applyState).toHaveBeenCalledOnce();
       expect(
         view.queryByRole('dialog', { name: 'Custom CSS theme' })
       ).toBeNull();
@@ -4168,6 +4576,12 @@ describe('EditorRoot', () => {
     fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
     fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    await waitFor(() =>
+      expect(props.appearancePort.applyState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        false
+      )
+    );
     fireEvent.keyDown(window, { key: 'Escape' });
 
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
@@ -4235,7 +4649,8 @@ describe('EditorRoot', () => {
               },
               defaultCodeTheme: theme.defaultCodeTheme,
               id: 'newsprint',
-              label: 'Newsprint'
+              label: 'Newsprint',
+              markupProfile: theme.markupProfile
             }
           : theme
       )
@@ -4875,7 +5290,7 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
-  it('activates synchronized scrolling once and disposes it with the Root', async () => {
+  it('binds synchronized scrolling to the preview canvas and disposes it with the Root', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
 
@@ -4884,7 +5299,7 @@ describe('EditorRoot', () => {
     );
     expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledWith({
       preview: view.container.querySelector(
-        '[data-easymde-preview-html-sink="1"]'
+        '.easymde-immersive-preview-canvas'
       ),
       source: view.container.querySelector('.cm-scroller')
     });
@@ -4892,5 +5307,42 @@ describe('EditorRoot', () => {
     view.unmount();
     expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(1);
     expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('disposes pending appearance work with the Root', () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    view.unmount();
+
+    expect(props.appearancePort.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('rebinds a single canvas scroll owner across ordinary, split and preview modes', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() =>
+      expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(1)
+    );
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    await waitFor(() =>
+      expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(2)
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() =>
+      expect(props.scrollSyncBinding.activate).toHaveBeenCalledTimes(3)
+    );
+
+    expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledTimes(3);
+    for (const [options] of vi.mocked(props.scrollSyncPort.prepareBinding).mock.calls) {
+      expect(options.preview).toBe(
+        view.container.querySelector('.easymde-immersive-preview-canvas')
+      );
+    }
+    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(2);
+
+    view.unmount();
+    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(3);
   });
 });

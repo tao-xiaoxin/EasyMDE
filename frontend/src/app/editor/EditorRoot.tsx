@@ -87,7 +87,11 @@ import {
 } from '../../features/image-upload/image-upload-session';
 import { EditorWorkspace } from '../../features/editor-layout/ui/EditorWorkspace';
 import { useEditorSession } from '../../features/editor-session/use-editor-session';
-import type { PreviewEnhancementPort } from '../../features/live-preview/ports/preview-enhancement-port';
+import {
+  type PreparedCodeTheme,
+  previewEnhancementFailureCode,
+  type PreviewEnhancementPort
+} from '../../features/live-preview/ports/preview-enhancement-port';
 import type { PreviewScrollPort } from '../../features/live-preview/ports/preview-scroll-port';
 import {
   PreviewSurfaceOwner,
@@ -379,6 +383,14 @@ function previewRequest(
   };
 }
 
+function previewScrollCanvas(surface: HTMLElement): HTMLElement {
+  const canvas = surface.parentElement;
+  if (!canvas?.classList.contains('easymde-immersive-preview-canvas')) {
+    throw new Error('preview-scroll-canvas-missing');
+  }
+  return canvas;
+}
+
 function documentPort(
   session: EditorDocumentSession,
   isActive: () => boolean
@@ -414,6 +426,20 @@ function mediaPickerFailureCode(error: unknown): string {
     : 'media-picker-operation-failed';
 }
 
+function articleMarkupProfile(
+  bootstrap: AppearanceBootstrap,
+  state: AppearanceState
+): string {
+  if ('custom' === state.markdownTheme) return bootstrap.customMarkupProfile;
+  const theme = bootstrap.articleThemes.find(
+    ({ id }) => id === state.markdownTheme
+  );
+  if (!theme) {
+    throw new Error('appearance-article-theme-markup-profile-missing');
+  }
+  return theme.markupProfile;
+}
+
 export function EditorRoot(props: EditorRootProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const immersiveToggleRef = useRef<HTMLButtonElement>(null);
@@ -430,6 +456,14 @@ export function EditorRoot(props: EditorRootProps) {
   const scheduledWechatPreparationRef = useRef<(() => void) | null>(null);
   const previewRevisionRef = useRef(0);
   const previewAppearanceRef = useRef(props.appearance.state);
+  const previewRefreshPendingRef = useRef(false);
+  const codeThemePreparationRef = useRef<{
+    controller: AbortController;
+    generation: number;
+    prepared: PreparedCodeTheme | null;
+  } | null>(null);
+  const codeThemePreparationGenerationRef = useRef(0);
+  const codeThemeFrameSyncPendingRef = useRef<string | null>(null);
   const codeThemeExplicitRef = useRef(props.appearance.codeThemeExplicit);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
@@ -483,9 +517,13 @@ export function EditorRoot(props: EditorRootProps) {
     customCss: props.appearance.customCss,
     state: props.appearance.state
   }));
+  const appearanceSnapshotRef = useRef(appearanceSnapshot);
   const appearanceState = appearanceSnapshot.state;
   const [codeThemeExplicit, setCodeThemeExplicit] = useState(
     props.appearance.codeThemeExplicit
+  );
+  const [renderedCodeTheme, setRenderedCodeTheme] = useState(
+    props.appearance.state.codeTheme
   );
   const currentAppearance = useMemo<AppearanceBootstrap>(
     () => ({
@@ -684,6 +722,10 @@ export function EditorRoot(props: EditorRootProps) {
     () => () => props.enhancementPort.dispose?.(),
     [props.enhancementPort]
   );
+  useEffect(
+    () => () => props.appearancePort.dispose(),
+    [props.appearancePort]
+  );
   const handlePreviewReady = useCallback((runtime: PreviewSurfaceRuntime) => {
     previewRuntimeRef.current = runtime;
     setPreviewRuntimeGeneration((generation) => generation + 1);
@@ -795,6 +837,7 @@ export function EditorRoot(props: EditorRootProps) {
   const handlePreviewStatusChange = useCallback(
     (status: PreviewSurfaceStatus) => {
       setPreviewSurfaceStatus(status);
+      if ('ready' === status) previewRefreshPendingRef.current = false;
       if ('empty' === status) setVisualPreviewSnapshot(null);
     },
     []
@@ -843,9 +886,12 @@ export function EditorRoot(props: EditorRootProps) {
   );
   const schedulePreview = useCallback(
     (immediate = false) => {
-      schedulePreviewMarkdown(props.submissionField.value, immediate);
+      schedulePreviewMarkdown(
+        documentSession?.document.getValue() ?? props.submissionField.value,
+        immediate
+      );
     },
-    [props.submissionField, schedulePreviewMarkdown]
+    [documentSession, props.submissionField, schedulePreviewMarkdown]
   );
   const handleVisualFailure = useCallback(
     (code: string) => {
@@ -882,6 +928,7 @@ export function EditorRoot(props: EditorRootProps) {
     setVisualPreviewEditing(false);
     setVisualPreviewPending(false);
     setVisualPreviewChanged(false);
+    previewRefreshPendingRef.current = true;
     setPreviewRefreshRevision((revision) => revision + 1);
     return true;
   }, []);
@@ -902,15 +949,94 @@ export function EditorRoot(props: EditorRootProps) {
   }, [leaveVisualPreview]);
   const appearancePort = useMemo<AppearancePort>(
     () => ({
-      applyState: (state, codeThemeExplicit) => {
+      applyState: async (state, codeThemeExplicit) => {
+        const previousState = previewAppearanceRef.current;
+        const codeThemeChanged = previousState.codeTheme !== state.codeTheme;
+        const markupChanged =
+          articleMarkupProfile(props.appearance, previousState)
+          !== articleMarkupProfile(props.appearance, state);
         const visualPreviewWasEditing = visualPreviewEditingRef.current;
         if (visualPreviewWasEditing && !prepareSourceMutation()) {
           throw new Error('visual-editor-source-sync-failed');
         }
-        props.appearancePort.applyState(state, codeThemeExplicit);
+        codeThemePreparationRef.current?.controller.abort();
+        codeThemePreparationRef.current?.prepared?.cancel();
+        props.appearancePort.cancelPendingApply();
+        const controller = new AbortController();
+        const generation = ++codeThemePreparationGenerationRef.current;
+        const preparation = { controller, generation, prepared: null as PreparedCodeTheme | null };
+        codeThemePreparationRef.current = preparation;
+        if (codeThemeChanged) {
+          try {
+            preparation.prepared = await props.enhancementPort.prepareCodeTheme({
+              codeTheme: state.codeTheme,
+              signal: controller.signal
+            });
+          } catch (error: unknown) {
+            if (
+              !controller.signal.aborted
+              && codeThemePreparationRef.current?.generation === generation
+              && rootActiveRef.current
+            ) {
+              props.onFailure(previewEnhancementFailureCode(error));
+            }
+            if (codeThemePreparationRef.current?.generation === generation) {
+              codeThemePreparationRef.current = null;
+            }
+            return false;
+          }
+          if (
+            controller.signal.aborted
+            || codeThemePreparationRef.current?.generation !== generation
+            || !rootActiveRef.current
+          ) {
+            preparation.prepared.cancel();
+            return false;
+          }
+        }
+        let applied: boolean;
+        try {
+          applied = await props.appearancePort.applyState(
+            state,
+            codeThemeExplicit
+          );
+        } catch {
+          preparation.prepared?.cancel();
+          if (codeThemePreparationRef.current?.generation === generation) {
+            codeThemePreparationRef.current = null;
+          }
+          if (rootActiveRef.current) {
+            props.onFailure('react-editor-appearance-failed');
+          }
+          return false;
+        }
+        if (
+          !applied
+          || controller.signal.aborted
+          || codeThemePreparationRef.current?.generation !== generation
+          || !rootActiveRef.current
+        ) {
+          preparation.prepared?.cancel();
+          if (codeThemePreparationRef.current?.generation === generation) {
+            codeThemePreparationRef.current = null;
+          }
+          return false;
+        }
+        preparation.prepared?.commit();
+        codeThemePreparationRef.current = null;
+        if (codeThemeChanged) {
+          codeThemeFrameSyncPendingRef.current = state.codeTheme;
+          setRenderedCodeTheme(state.codeTheme);
+        }
         codeThemeExplicitRef.current = codeThemeExplicit;
         setCodeThemeExplicit(codeThemeExplicit);
-        setAppearanceSnapshot((snapshot) => ({ ...snapshot, state }));
+        const nextSnapshot = { ...appearanceSnapshotRef.current, state };
+        appearanceSnapshotRef.current = nextSnapshot;
+        setAppearanceSnapshot(nextSnapshot);
+        appearanceSessionRef.current?.replaceSnapshot(
+          nextSnapshot,
+          codeThemeExplicit
+        );
         submissionStateRef.current = {
           ...submissionStateRef.current,
           ...state,
@@ -924,9 +1050,19 @@ export function EditorRoot(props: EditorRootProps) {
         if (defaults) {
           fontControlsSessionRef.current?.replaceState(defaults);
         }
-        if (!visualPreviewWasEditing) {
+        if (markupChanged || visualPreviewWasEditing) {
+          previewRefreshPendingRef.current = true;
           schedulePreview(true);
+        } else {
+          scheduleCurrentWechatPreviewPreparation();
         }
+        return true;
+      },
+      cancelPendingApply: () => {
+        codeThemePreparationRef.current?.controller.abort();
+        codeThemePreparationRef.current?.prepared?.cancel();
+        codeThemePreparationRef.current = null;
+        props.appearancePort.cancelPendingApply();
       },
       closeOtherPopovers: () => {
         toolbarSessionRef.current?.closePopovers();
@@ -934,6 +1070,7 @@ export function EditorRoot(props: EditorRootProps) {
         ordinarySettingsSessionRef.current?.close();
         props.appearancePort.closeOtherPopovers();
       },
+      dispose: () => undefined,
       previewCustomCss: (css, signal) =>
         props.appearancePort.previewCustomCss(css, signal),
       saveCustomCss: async (input) => {
@@ -945,19 +1082,22 @@ export function EditorRoot(props: EditorRootProps) {
         }
         const result = await props.appearancePort.saveCustomCss(input);
         if ('saved' === result.status) {
-          props.appearancePort.applyState(
-            result.snapshot.state,
-            codeThemeExplicitRef.current
-          );
-          setAppearanceSnapshot(result.snapshot);
-          submissionStateRef.current = {
-            ...submissionStateRef.current,
-            ...result.snapshot.state
-          };
-          documentSession?.replaceSubmissionState(submissionStateRef.current);
-          previewAppearanceRef.current = result.snapshot.state;
-          if (!visualPreviewWasEditing) {
-            schedulePreview(true);
+          // The server mutation and local theme activation are separate
+          // operations. Publish the authoritative saved library immediately;
+          // AppearanceControls applies the selected theme exactly once through
+          // applyState, which commits preview and submission state only after
+          // its stylesheet has loaded.
+          if (rootActiveRef.current) {
+            const nextSnapshot = {
+              ...appearanceSnapshotRef.current,
+              customCss: result.snapshot.customCss
+            };
+            appearanceSnapshotRef.current = nextSnapshot;
+            setAppearanceSnapshot(nextSnapshot);
+            appearanceSessionRef.current?.replaceSnapshot(
+              nextSnapshot,
+              codeThemeExplicitRef.current
+            );
           }
         }
         return result;
@@ -969,6 +1109,7 @@ export function EditorRoot(props: EditorRootProps) {
       props.appearancePort,
       prepareSourceMutation,
       protectedOperationError,
+      scheduleCurrentWechatPreviewPreparation,
       schedulePreview
     ]
   );
@@ -1251,6 +1392,27 @@ export function EditorRoot(props: EditorRootProps) {
   }, [immersive]);
 
   useLayoutEffect(() => {
+    if (codeThemeFrameSyncPendingRef.current !== renderedCodeTheme) return;
+    codeThemeFrameSyncPendingRef.current = null;
+    const surface = previewRuntimeRef.current?.surface;
+    if (!surface) {
+      props.onFailure('preview-enhancement-runtime-unavailable');
+      return;
+    }
+    try {
+      props.enhancementPort.syncCodeFrameBackgrounds(surface);
+      scheduleCurrentWechatPreviewPreparation();
+    } catch (error) {
+      props.onFailure(previewEnhancementFailureCode(error));
+    }
+  }, [
+    props.enhancementPort,
+    props.onFailure,
+    renderedCodeTheme,
+    scheduleCurrentWechatPreviewPreparation
+  ]);
+
+  useLayoutEffect(() => {
     if (!immersive || !documentSession || !rootRef.current) return;
     const releaseFocusBoundary =
       props.immersiveEnvironment.activateFocusBoundary(rootRef.current);
@@ -1276,7 +1438,7 @@ export function EditorRoot(props: EditorRootProps) {
     'easymde-rendered-content',
     'easymde-code-mac',
     `easymde-markdown-theme-${appearanceState.markdownTheme}`,
-    `easymde-code-theme-${appearanceState.codeTheme}`,
+    `easymde-code-theme-${renderedCodeTheme}`,
     visualPreviewEditing ? 'easymde-immersive-visual-editor' : '',
     'custom' === appearanceState.markdownTheme
       ? 'easymde-custom-css-active'
@@ -1298,8 +1460,12 @@ export function EditorRoot(props: EditorRootProps) {
     rootActiveRef.current = true;
     return () => {
       rootActiveRef.current = false;
+      codeThemePreparationRef.current?.controller.abort();
+      codeThemePreparationRef.current?.prepared?.cancel();
+      codeThemePreparationRef.current = null;
+      props.appearancePort.cancelPendingApply();
     };
-  }, []);
+  }, [props.appearancePort]);
 
   useEffect(() => () => wechatSession.dispose(), [wechatSession]);
   useEffect(
@@ -1312,6 +1478,7 @@ export function EditorRoot(props: EditorRootProps) {
       return;
     }
     return props.sessionPort.subscribeBeforeAutosave(() => {
+      if (codeThemePreparationRef.current) return 'blocked';
       if (visualPreviewEditingRef.current) {
         const runtime = visualEditorRuntimeRef.current;
         if (!runtime) throw new Error('visual-editor-runtime-unavailable');
@@ -1329,6 +1496,10 @@ export function EditorRoot(props: EditorRootProps) {
     return props.nativeSubmissionPort.subscribeBeforeSubmit(() => {
       const sessionError = protectedOperationError('post-write');
       if (sessionError) return 'blocked';
+      if (codeThemePreparationRef.current) {
+        props.onFailure('editor-appearance-pending');
+        return 'blocked';
+      }
       if (
         visualPreviewEditingRef.current
         && !prepareSourceMutation()
@@ -1342,6 +1513,7 @@ export function EditorRoot(props: EditorRootProps) {
     documentSession,
     prepareSourceMutation,
     props.nativeSubmissionPort,
+    props.onFailure,
     protectedOperationError
   ]);
 
@@ -1462,13 +1634,15 @@ export function EditorRoot(props: EditorRootProps) {
       return;
     }
     const binding = props.scrollSyncPort.prepareBinding({
-      preview: previewRuntime.surface,
+      preview: previewScrollCanvas(previewRuntime.surface),
       source: documentSession.document.getScrollElement()
     });
     binding.activate();
     return () => binding.dispose();
   }, [
     documentSession,
+    immersive,
+    immersiveMode,
     previewRuntimeGeneration,
     props.scrollSyncPort,
     scrollSyncEnabled
@@ -1476,19 +1650,23 @@ export function EditorRoot(props: EditorRootProps) {
 
   useLayoutEffect(() => {
     const runtime = previewRuntimeRef.current;
-    if (!runtime || visualPreviewEditing) return;
-    const handleInput = () => schedulePreview(false);
-    props.submissionField.addEventListener('input', handleInput);
+    if (!runtime || !documentSession || visualPreviewEditing) return;
+    // CodeMirror is the canonical document source. The hidden WordPress
+    // field remains synchronized for submission, but its bridge input event
+    // must not be a second Preview trigger: a late bridge event can race an
+    // immediate theme transition and submit two different Markdown values.
+    const unsubscribeDocument = documentSession.document.subscribe(() => {
+      schedulePreview(false);
+    });
     if (scheduledPreviewRuntimeRef.current !== runtime) {
       scheduledPreviewRuntimeRef.current = runtime;
       schedulePreview(true);
     }
 
-    return () =>
-      props.submissionField.removeEventListener('input', handleInput);
+    return unsubscribeDocument;
   }, [
+    documentSession,
     previewRuntimeGeneration,
-    props.submissionField,
     schedulePreview,
     visualPreviewEditing
   ]);

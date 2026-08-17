@@ -22,8 +22,13 @@ export type CustomCssPreviewResult =
   | Readonly<{ status: 'invalid' }>;
 
 export interface AppearancePort {
-  applyState(state: AppearanceState, codeThemeExplicit: boolean): void;
+  applyState(
+    state: AppearanceState,
+    codeThemeExplicit: boolean
+  ): Promise<boolean>;
+  cancelPendingApply(): void;
   closeOtherPopovers(): void;
+  dispose(): void;
   previewCustomCss(
     css: string,
     signal: AbortSignal

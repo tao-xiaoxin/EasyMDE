@@ -66,6 +66,7 @@ function setup(options?: {
   onDiagnostic?: (code: string) => void;
   onHtmlChange?: (html: SafePreviewHtml) => void;
   onStatusChange?: (status: PreviewSurfaceStatus) => void;
+  scrollPort?: PreviewScrollPort;
 }) {
   let session!: PreviewRequestSession;
   const responses: Array<ReturnType<typeof deferred<PreviewResponse>>> = [];
@@ -75,10 +76,15 @@ function setup(options?: {
     return response.promise;
   });
   const enhancementPort: PreviewEnhancementPort = {
+    prepareCodeTheme: vi.fn().mockResolvedValue({
+      cancel: vi.fn(),
+      commit: vi.fn()
+    }),
+    syncCodeFrameBackgrounds: vi.fn(),
     enhance: options?.enhance ?? vi.fn().mockResolvedValue(undefined)
   };
   const onDiagnostic = options?.onDiagnostic ?? vi.fn();
-  const scrollPort: PreviewScrollPort = {
+  const defaultScrollPort: PreviewScrollPort = {
     capture: (surface) => ({
       left: surface.scrollLeft,
       ratio: 0,
@@ -90,37 +96,43 @@ function setup(options?: {
     }
   };
   const owner = (emptyMode = options?.emptyMode) => (
-    <PreviewSurfaceOwner
-      {...(undefined !== options?.contentEditable
-        ? { contentEditable: options.contentEditable }
-        : {})}
-      enhancementPort={enhancementPort}
-      initial={{
-        codeTheme: 'github',
-        features: {},
-        html: safeHtml(options?.initialHtml ?? '<p>Initial preview</p>'),
-        signature: options?.initialSignature ?? 'initial'
-      }}
-      initialRevision={0}
-      messages={messages}
-      {...(emptyMode ? { emptyMode } : {})}
-      onDiagnostic={onDiagnostic}
-      {...(options?.onHtmlChange
-        ? { onHtmlChange: options.onHtmlChange }
-        : {})}
-      {...(options?.onStatusChange
-        ? { onStatusChange: options.onStatusChange }
-        : {})}
-      onReady={(readySession) => {
-        session = readySession.session;
-      }}
-      port={{ render: renderPreview }}
-      scrollPort={scrollPort}
-    />
+    <div className="easymde-immersive-preview-canvas">
+      <PreviewSurfaceOwner
+        {...(undefined !== options?.contentEditable
+          ? { contentEditable: options.contentEditable }
+          : {})}
+        enhancementPort={enhancementPort}
+        initial={{
+          codeTheme: 'github',
+          features: {},
+          html: safeHtml(options?.initialHtml ?? '<p>Initial preview</p>'),
+          signature: options?.initialSignature ?? 'initial'
+        }}
+        initialRevision={0}
+        messages={messages}
+        {...(emptyMode ? { emptyMode } : {})}
+        onDiagnostic={onDiagnostic}
+        {...(options?.onHtmlChange
+          ? { onHtmlChange: options.onHtmlChange }
+          : {})}
+        {...(options?.onStatusChange
+          ? { onStatusChange: options.onStatusChange }
+          : {})}
+        onReady={(readySession) => {
+          session = readySession.session;
+        }}
+        port={{ render: renderPreview }}
+        scrollPort={options?.scrollPort ?? defaultScrollPort}
+      />
+    </div>
   );
   const result = render(owner());
   const surface = result.container.querySelector('article');
   if (!(surface instanceof HTMLElement)) throw new Error('surface missing');
+  const canvas = result.container.querySelector(
+    '.easymde-immersive-preview-canvas'
+  );
+  if (!(canvas instanceof HTMLElement)) throw new Error('canvas missing');
   return {
     enhancementPort,
     onDiagnostic,
@@ -129,6 +141,7 @@ function setup(options?: {
     session,
     setEmptyMode: (emptyMode: 'message' | 'paper') =>
       result.rerender(owner(emptyMode)),
+    canvas,
     surface,
     ...result
   };
@@ -586,24 +599,39 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface.easymdePreviewSignature).toBe('second');
   });
 
-  it('restores the latest preview scroll position after replacing HTML', async () => {
-    const current = setup();
-    current.surface.scrollLeft = 9;
-    current.surface.scrollTop = 42;
+  it('captures and restores the canvas scroll position after replacing HTML', async () => {
+    const capture = vi.fn<PreviewScrollPort['capture']>((surface) => ({
+      left: surface.scrollLeft,
+      ratio: 0,
+      top: surface.scrollTop
+    }));
+    const restore = vi.fn<PreviewScrollPort['restore']>((surface, snapshot) => {
+      surface.scrollLeft = snapshot.left;
+      surface.scrollTop = snapshot.top;
+    });
+    const current = setup({ scrollPort: { capture, restore } });
+    current.canvas.scrollLeft = 9;
+    current.canvas.scrollTop = 42;
 
     act(() => {
       current.session.schedule(request('# Updated', 'updated'), true);
     });
-    current.surface.scrollLeft = 12;
-    current.surface.scrollTop = 78;
+    current.canvas.scrollLeft = 12;
+    current.canvas.scrollTop = 78;
     await act(async () => {
       current.responses[0]?.resolve({ html: safeHtml('<p>Updated</p>'), features: {} });
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(current.surface.scrollLeft).toBe(12);
-    expect(current.surface.scrollTop).toBe(78);
+    expect(capture).toHaveBeenCalledWith(current.canvas);
+    expect(restore).toHaveBeenCalledWith(current.canvas, {
+      left: 12,
+      ratio: 0,
+      top: 78
+    });
+    expect(current.canvas.scrollLeft).toBe(12);
+    expect(current.canvas.scrollTop).toBe(78);
     expect(current.surface.textContent).toBe('Updated');
   });
 

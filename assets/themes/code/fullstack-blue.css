@@ -1,72 +1,72 @@
-.hljs {
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs {
   color: #abb2bf;
   background: #282c34;
 }
 
-.hljs-comment,
-.hljs-quote {
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-comment,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-quote {
   color: #5c6370;
   font-style: italic;
 }
 
-.hljs-doctag,
-.hljs-formula,
-.hljs-keyword {
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-doctag,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-formula,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-keyword {
   color: #c678dd;
 }
 
-.hljs-deletion,
-.hljs-name,
-.hljs-section,
-.hljs-selector-tag,
-.hljs-subst {
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-deletion,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-name,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-section,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-selector-tag,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-subst {
   color: #e06c75;
 }
 
-.hljs-literal {
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-literal {
   color: #56b6c2;
 }
 
-.hljs-addition,
-.hljs-attribute,
-.hljs-meta .hljs-string,
-.hljs-regexp,
-.hljs-string {
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-addition,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-attribute,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-meta .hljs-string,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-regexp,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-string {
   color: #98c379;
 }
 
-.hljs-attr,
-.hljs-selector-attr,
-.hljs-selector-class,
-.hljs-selector-pseudo,
-.hljs-template-variable,
-.hljs-type,
-.hljs-variable {
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-attr,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-selector-attr,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-selector-class,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-selector-pseudo,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-template-variable,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-type,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-variable {
   color: #d19a66;
 }
 
-.hljs-bullet,
-.hljs-link,
-.hljs-selector-id,
-.hljs-symbol {
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-bullet,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-link,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-selector-id,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-symbol {
   color: #61aeee;
 }
 
-.hljs-built_in,
-.hljs-class .hljs-title,
-.hljs-title.class_ {
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-built_in,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-class .hljs-title,
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-title.class_ {
   color: #e6c07b;
 }
 
-.hljs-emphasis {
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-emphasis {
   font-style: italic;
 }
 
-.hljs-strong {
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-strong {
   font-weight: 700;
 }
 
-.hljs-link {
+.easymde-rendered-content.easymde-code-theme-fullstack-blue .hljs-link {
   text-decoration: underline;
 }
 

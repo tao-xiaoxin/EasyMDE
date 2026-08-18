@@ -2061,34 +2061,58 @@ test.describe('EasyMDE editor workflows', () => {
     await openEasyMdeNewPost(page);
     await expect(page.locator('.easymde-draft-notice')).toHaveCount(0);
 
-    await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
-    await expect(page.locator('#easymde-editor')).toBeVisible();
-    await page.locator('.easymde-source-react .cm-content').fill(markdown);
-    await expect.poll(() => page.evaluate(() => {
-      const config = window.EasyMDEEditorRootBootstrap.localDrafts;
-      const postIdValue = document.querySelector('#post_ID')?.value || 'new';
-      const identity = config.siteKey + ':' + config.userId + ':' + postIdValue;
-      return window.localStorage.getItem('easymde:draft:v' + config.schemaVersion + ':' + identity);
-    }), { timeout: localDraftDelayMs + 15_000 }).not.toBeNull();
+    // Keep this recovery assertion before WordPress native autosave can consume the local draft.
+    const adminAjaxPattern = /\/wp-admin\/admin-ajax\.php(?:\?.*)?$/u;
+    const preserveLocalDraftRoute = async (route) => {
+      const request = route.request();
+      const parameters = new URLSearchParams(request.postData() ?? '');
+      if (
+        parameters.get('action') !== 'heartbeat'
+        || ![...parameters.keys()].some((key) => key.startsWith('data[wp_autosave]'))
+      ) {
+        await route.continue();
+        return;
+      }
 
-    await page.reload();
-    const notice = page.locator('.easymde-draft-notice');
-    await expect(notice).toBeVisible();
-    const restoreDraft = notice.getByRole('button', {
-      name: await page.evaluate(() => window.EasyMDEEditorRootBootstrap.localDrafts.strings.restore)
-    });
-    await restoreDraft.focus();
-    await expect(restoreDraft).toBeFocused();
-    await page.keyboard.press('Enter');
-    await expect(page.locator('#easymde-source')).toHaveValue(markdown);
+      for (const key of [...parameters.keys()]) {
+        if (key.startsWith('data[wp_autosave]')) parameters.delete(key);
+      }
+      await route.continue({ postData: parameters.toString() });
+    };
+    await page.route(adminAjaxPattern, preserveLocalDraftRoute);
 
-    const savePost = page.locator('#save-post');
-    await savePost.focus();
-    await expect(savePost).toBeFocused();
-    const savedNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-    await page.keyboard.press('Enter');
-    await savedNavigation;
-    expect(normalizeMarkdown(postMetaValue(postId, '_easymde_markdown'))).toBe(markdown);
+    try {
+      await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
+      await expect(page.locator('#easymde-editor')).toBeVisible();
+      await page.locator('.easymde-source-react .cm-content').fill(markdown);
+      await expect.poll(() => page.evaluate(() => {
+        const config = window.EasyMDEEditorRootBootstrap.localDrafts;
+        const postIdValue = document.querySelector('#post_ID')?.value || 'new';
+        const identity = config.siteKey + ':' + config.userId + ':' + postIdValue;
+        return window.localStorage.getItem('easymde:draft:v' + config.schemaVersion + ':' + identity);
+      }), { timeout: localDraftDelayMs + 15_000 }).not.toBeNull();
+
+      await page.reload();
+      const notice = page.locator('.easymde-draft-notice');
+      await expect(notice).toBeVisible();
+      const restoreDraft = notice.getByRole('button', {
+        name: await page.evaluate(() => window.EasyMDEEditorRootBootstrap.localDrafts.strings.restore)
+      });
+      await restoreDraft.focus();
+      await expect(restoreDraft).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(page.locator('#easymde-source')).toHaveValue(markdown);
+
+      const savePost = page.locator('#save-post');
+      await savePost.focus();
+      await expect(savePost).toBeFocused();
+      const savedNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+      await page.keyboard.press('Enter');
+      await savedNavigation;
+      expect(normalizeMarkdown(postMetaValue(postId, '_easymde_markdown'))).toBe(markdown);
+    } finally {
+      await page.unroute(adminAjaxPattern, preserveLocalDraftRoute);
+    }
   });
 
   test('keeps every registered article theme contained across ordinary and immersive preview states', async ({ page }, testInfo) => {

@@ -9,9 +9,9 @@
 | Implement real WordPress-backed settings interactions | Completed | Settings REST controller, nonce/capability checks, revision conflict handling, shortcut/editor bootstrap wiring, transfer validation, and save/reload states are present |
 | Preserve hidden AI/article-sync surface and add regression coverage | Completed | Frontend tests and E2E assert no AI/comment/article-sync navigation or content; server contracts remain separate |
 | Match full-page visual layout and responsive states | Completed | Desktop screenshot geometry matches reference; mobile E2E confirms 390px viewport, 1100px internal crop, no document overflow |
-| Run frontend, Node, PHP, i18n, release, and browser verification | In progress | Local frontend 63 suites/755 tests, Node 241 tests, PHPUnit 239 tests/1,898 assertions, build, production comparison, PHPCS, i18n, and settings E2E 8/8 pass; hosted E2E exposed a locale assertion and an autosave timing contract that are corrected in the working tree |
-| Local code review and automatic defect loop | In progress | Fixed the ordered-list parser omission, hosted PHPUnit defects, generated POT drift, localized native-menu assertions, and the draft test's configured autosave timeout; final review must cover these test-only changes |
-| Commit, push, PR linkage, and bot review request | In progress | PR #165 is open at `00bb9b2`; the hosted E2E correction must be committed and pass exact-head CI before the CodeRabbit request |
+| Run frontend, Node, PHP, i18n, release, and browser verification | In progress | Local frontend 63 suites/755 tests, Node 241 tests, PHPUnit 239 tests/1,898 assertions, build, production comparison, PHPCS, i18n, and settings E2E 8/8 pass; hosted E2E exposed locale, configured autosave timing, and native-autosave recovery-boundary assertions |
+| Local code review and automatic defect loop | In progress | Fixed the ordered-list parser omission, hosted PHPUnit defects, generated POT drift, localized native-menu assertions, configured draft timing, and the native-autosave test boundary; final review must cover this correction |
+| Commit, push, PR linkage, and bot review request | In progress | PR #165 is open; the native-autosave correction must be committed and pass exact-head CI before the CodeRabbit request |
 
 ## Verification Log
 
@@ -42,6 +42,12 @@
   supported English/Chinese labels and derive the draft wait/timeout from the
   live bootstrap setting. A one-browser local probe confirmed the 60-second
   draft persists with the real plugin runtime.
+- Replacement hosted run `32095066844` reached 27 passing browser tests but
+  showed the remaining recovery assertion crossing WordPress's native
+  heartbeat autosave boundary after the configured 60-second wait. The test
+  now strips only the autosave payload from heartbeat requests during the
+  local-draft recovery phase, preserving the native Save assertion and the
+  production autosave behavior.
 - Browser console and request-failure capture were empty for reference and local
   Settings Center desktop/mobile captures.
 - Local `codex-review` pass: the staged settings/build/release diff was checked

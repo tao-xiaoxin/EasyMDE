@@ -8,6 +8,27 @@ type SettingsCenterBrowserRuntime = Readonly<{
   window: Window;
 }>;
 
+export function showSettingsCenterStartupFailure(
+  root: HTMLElement | null,
+  message: string,
+  code: string
+): void {
+  if (root) {
+    root.replaceChildren();
+    const notice = root.ownerDocument.createElement('div');
+    notice.className =
+      'notice notice-error easymde-settings-center-startup-error';
+    notice.setAttribute('role', 'alert');
+    const paragraph = root.ownerDocument.createElement('p');
+    paragraph.textContent =
+      message.trim() ||
+      'EasyMDE Settings Center could not start. WordPress settings remain available.';
+    notice.append(paragraph);
+    root.append(notice);
+  }
+  console.error(`[EasyMDE] ${code}`);
+}
+
 function assertSameOriginUrl(value: string, windowRef: Window): void {
   const url = new URL(value, windowRef.location.href);
   if (url.origin !== windowRef.location.origin || url.username || url.password) {
@@ -46,6 +67,9 @@ declare global {
 }
 
 function start(): void {
+  const root = document.querySelector<HTMLElement>(
+    '#easymde-settings-center-root'
+  );
   try {
     const unmount = mountSettingsCenter(window.EasyMDESettingsCenterBootstrap, {
       document,
@@ -56,7 +80,11 @@ function start(): void {
     const code = error instanceof Error && /^[a-z0-9-]{1,120}$/.test(error.message)
       ? error.message
       : 'settings-center-startup-failed';
-    console.error(`[EasyMDE] ${code}`);
+    showSettingsCenterStartupFailure(
+      root,
+      root?.dataset.failureMessage ?? '',
+      code
+    );
   }
 }
 

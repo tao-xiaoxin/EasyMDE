@@ -10,7 +10,10 @@ import {
   SETTINGS_CENTER_DEFAULT_SETTINGS,
   SETTINGS_CENTER_TEST_SETTINGS
 } from '../test/settings-center-settings-fixture';
-import { mountSettingsCenter } from './settings-center';
+import {
+  mountSettingsCenter,
+  showSettingsCenterStartupFailure
+} from './settings-center';
 
 vi.hoisted(() => {
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -112,5 +115,34 @@ describe('mountSettingsCenter', () => {
 
     expect(() => mountSettingsCenter({}, { document, window })).not.toThrow();
     expect(render).toHaveBeenCalledOnce();
+  });
+
+  it('shows a visible startup failure without exposing the raw error', () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    const root = document.querySelector<HTMLElement>(
+      '#easymde-settings-center-root'
+    );
+    try {
+      if (!root) throw new Error('settings-center-root-missing');
+
+      showSettingsCenterStartupFailure(
+        root,
+        'The EasyMDE settings center could not start. WordPress settings remain available.',
+        'settings-center-startup-failed'
+      );
+
+      expect(root.textContent).toContain(
+        'The EasyMDE settings center could not start. WordPress settings remain available.'
+      );
+      expect(root.querySelector('[role="alert"]')).not.toBeNull();
+      expect(consoleError).toHaveBeenCalledWith(
+        '[EasyMDE] settings-center-startup-failed'
+      );
+      expect(root.textContent).not.toContain('private-error-details');
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

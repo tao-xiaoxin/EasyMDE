@@ -3503,6 +3503,12 @@ msgstr ""
 msgid "EasyMDE requires JavaScript to edit Markdown on this screen."
 msgstr ""
 
+#: templates/admin/settings-center.php:17
+msgid ""
+"The EasyMDE settings center could not start. WordPress settings remain "
+"available."
+msgstr ""
+
 #. translators: %s: Locale-formatted character count.
 #: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:26
 #, javascript-format

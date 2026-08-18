@@ -12,5 +12,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	<div class="easymde-settings-center__notices" aria-live="polite">
 		<?php settings_errors(); ?>
 	</div>
-	<div id="easymde-settings-center-root"></div>
+	<div
+		id="easymde-settings-center-root"
+		data-failure-message="<?php echo esc_attr__( 'The EasyMDE settings center could not start. WordPress settings remain available.', 'easymde' ); ?>"
+	></div>
 </div>

@@ -57,6 +57,7 @@ final class SettingsPageTest extends WP_UnitTestCase
         $output = ob_get_clean();
 
         $this->assertStringContainsString('id="easymde-settings-center-root"', $output);
+        $this->assertStringContainsString('data-failure-message=', $output);
         $this->assertStringNotContainsString('options.php', $output);
         $this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
     }

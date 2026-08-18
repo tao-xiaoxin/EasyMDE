@@ -9,9 +9,9 @@
 | Implement real WordPress-backed settings interactions | Completed | Settings REST controller, nonce/capability checks, revision conflict handling, shortcut/editor bootstrap wiring, transfer validation, and save/reload states are present |
 | Preserve hidden AI/article-sync surface and add regression coverage | Completed | Frontend tests and E2E assert no AI/comment/article-sync navigation or content; server contracts remain separate |
 | Match full-page visual layout and responsive states | Completed | Desktop screenshot geometry matches reference; mobile E2E confirms 390px viewport, 1100px internal crop, no document overflow |
-| Run frontend, Node, PHP, i18n, release, and browser verification | In progress | Local frontend 63 suites/755 tests, Node 241 tests, PHPUnit 239 tests/1,903 assertions, build, production comparison, PHPCS, i18n, and settings E2E pass; the Transfer mutation correction needs a fresh exact-head CI run |
-| Local code review and automatic defect loop | In progress | Prior re-review found Transfer import/reset/clear-cache controls still mutating state; the source fix and 31/31 focused tests pass, pending new-head review |
-| Commit, push, PR linkage, and bot review request | In progress | PR #165 is open; the Transfer correction must be committed, pushed, CI-verified, and sent through complete re-review |
+| Run frontend, Node, PHP, i18n, release, and browser verification | In progress | Local frontend 63 suites/756 tests, Node 241 tests, PHPUnit 239 tests/1,904 assertions, build, production comparison, PHPCS, i18n, and one-browser settings E2E pass; the startup-failure correction needs a fresh exact-head CI run |
+| Local code review and automatic defect loop | In progress | Prior re-review found Transfer mutations and swallowed startup failures; both source owners now disable unsupported mutations or render a visible failure, focused tests and full validation pass, pending new-head review |
+| Commit, push, PR linkage, and bot review request | In progress | PR #165 is open; the startup-failure correction must be committed, pushed, CI-verified, and sent through complete re-review |
 
 ## Verification Log
 
@@ -56,6 +56,11 @@
   import, reset, and clear-cache controls could still mutate browser or draft
   state despite the unavailable notice. The controls are now disabled and the
   mutation dialog path fails explicitly if invoked outside the UI owner.
+- The same re-review identified a confirmed startup availability issue: Settings
+  Center bootstrap and mount failures logged only a bounded code and left the
+  React root blank. The template now provides a translated failure message and
+  the entrypoint replaces the root with an accessible error notice while
+  retaining privacy-safe bounded logging.
 - Browser console and request-failure capture were empty for reference and local
   Settings Center desktop/mobile captures.
 - Local `codex-review` pass: the staged settings/build/release diff was checked
@@ -65,6 +70,6 @@
 
 ## Known Limitations
 
-- The prior head had green exact-head CI. CodeRabbit findings are being
-  independently verified; this correction set requires a fresh CI run and
-  complete re-review before the PR is considered finished.
+- The prior head had green exact-head CI. The Transfer and startup corrections
+  require a fresh CI run and complete re-review before the PR is considered
+  finished.

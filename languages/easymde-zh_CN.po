@@ -3439,6 +3439,12 @@ msgstr "EasyMDE 编辑器无法启动。WordPress 原生字段仍然可用。"
 msgid "EasyMDE requires JavaScript to edit Markdown on this screen."
 msgstr "EasyMDE 需要 JavaScript 才能在此页面编辑 Markdown。"
 
+#: templates/admin/settings-center.php:17
+msgid ""
+"The EasyMDE settings center could not start. WordPress settings remain "
+"available."
+msgstr "EasyMDE 设置中心无法启动。WordPress 设置仍然可用。"
+
 #. translators: %s: Locale-formatted character count.
 #: frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts:26
 #, javascript-format

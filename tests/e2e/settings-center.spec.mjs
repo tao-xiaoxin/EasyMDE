@@ -119,16 +119,16 @@ test("opens the native plugin updates list from the EasyMDE submenu", async ({
 		'.wp-submenu a[href*="plugins.php?plugin_status=upgrade"]',
 	);
 
-	await expect(updatesLink).toHaveText("更新");
+	await expect(updatesLink).toHaveText(/^(?:更新|Updates)$/u);
 	await updatesLink.click();
 	await expect(page).toHaveURL(
 		/\/wp-admin\/plugins\.php\?plugin_status=upgrade$/u,
 	);
-	await expect(page.locator("#wpbody-content h1")).toHaveText("插件");
+	await expect(page.locator("#wpbody-content h1")).toHaveText(/^\s*(?:插件|Plugins)\s*$/u);
 	const activePluginFilter = page.locator(".subsubsub a.current");
 	await expect(activePluginFilter).toHaveCount(1);
 	const activeFilterText = await activePluginFilter.textContent();
-	expect(activeFilterText).toMatch(/(?:可供更新|全部)/u);
+	expect(activeFilterText).toMatch(/(?:可供更新|全部|Available updates|All)/u);
 });
 
 test("opens the settings center through the explicit General route", async ({

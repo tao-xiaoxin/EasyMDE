@@ -2030,6 +2030,15 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
+    const localDraftDelayMs = await page.evaluate(() => {
+      const rawInterval = window.EasyMDEEditorRootBootstrap?.settings?.general?.autoSaveInterval;
+      const seconds = Number(rawInterval);
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        throw new Error('local-draft-auto-save-interval-unavailable');
+      }
+      return seconds * 1000;
+    });
+    testInfo.setTimeout(Math.max(testInfo.timeout, (localDraftDelayMs * 2) + 60_000));
     const source = page.locator('.easymde-source-react .cm-content');
     await source.fill(initialMarkdown);
 
@@ -2038,7 +2047,7 @@ test.describe('EasyMDE editor workflows', () => {
       const postId = document.querySelector('#post_ID')?.value || 'new';
       const identity = config.siteKey + ':' + config.userId + ':' + postId;
       return window.localStorage.getItem('easymde:draft:v' + config.schemaVersion + ':' + identity);
-    })).not.toBeNull();
+    }), { timeout: localDraftDelayMs + 15_000 }).not.toBeNull();
 
     await page.locator('#title').fill(title);
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
@@ -2060,7 +2069,7 @@ test.describe('EasyMDE editor workflows', () => {
       const postIdValue = document.querySelector('#post_ID')?.value || 'new';
       const identity = config.siteKey + ':' + config.userId + ':' + postIdValue;
       return window.localStorage.getItem('easymde:draft:v' + config.schemaVersion + ':' + identity);
-    })).not.toBeNull();
+    }), { timeout: localDraftDelayMs + 15_000 }).not.toBeNull();
 
     await page.reload();
     const notice = page.locator('.easymde-draft-notice');

@@ -191,6 +191,30 @@ test("matches the reference Settings Center header geometry", async ({
 			frame: measure(".easymde-settings-center__frame"),
 			aside: measure(".easymde-settings-center__sidebar"),
 			main: measure(".easymde-settings-center main"),
+			relationships: (() => {
+				const frame = measure(".easymde-settings-center__frame");
+				const aside = measure(".easymde-settings-center__sidebar");
+				const main = measure(".easymde-settings-center main");
+				const title = measure(".easymde-settings-center__header-scale h1");
+				const description = measure(
+					".easymde-settings-center__header-scale header p",
+				);
+				const closeLink = measure(
+					".easymde-settings-center__header-scale header > a",
+				);
+				const search = measure(".easymde-settings-center__search input");
+
+				return {
+					frameLeft: frame.x,
+					asideFrameOffsetX: aside.x - frame.x,
+					mainFrameOffsetX: main.x - frame.x,
+					titleMainOffsetX: title.x - main.x,
+					descriptionMainOffsetX: description.x - main.x,
+					closeFrameRightGap: frame.x + frame.width - closeLink.x - closeLink.width,
+					searchMainLeftGap: search.x - main.x,
+					searchMainRightGap: main.x + main.width - search.x - search.width,
+				};
+			})(),
 		};
 	});
 
@@ -201,13 +225,23 @@ test("matches the reference Settings Center header geometry", async ({
 		closeLink: { x: 1377.42, y: 17.2, width: 30.375, height: 30.375 },
 		search: { x: 291.6, y: 199, width: 1099.1, height: 38.7 },
 		searchIcon: { x: 309.6, y: 209.35, width: 18, height: 18 },
-		frame: { x: 0, y: 0, width: 1425 },
-		aside: { x: 1, y: 1, width: 260 },
-		main: { x: 261, y: 1, width: 1163 },
 	})) {
 		for (const [property, value] of Object.entries(expected)) {
 			expectNear(geometry[key][property], value);
 		}
+	}
+
+	for (const [property, value] of Object.entries({
+		frameLeft: 0,
+		asideFrameOffsetX: 1,
+		mainFrameOffsetX: 261,
+		titleMainOffsetX: 33.3,
+		descriptionMainOffsetX: 32.4,
+		closeFrameRightGap: 17.2,
+		searchMainLeftGap: 30.6,
+		searchMainRightGap: 33.3,
+	})) {
+		expectNear(geometry.relationships[property], value);
 	}
 });
 

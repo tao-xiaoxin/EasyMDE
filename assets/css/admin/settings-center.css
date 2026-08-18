@@ -342,14 +342,14 @@
 
 .easymde-settings-center__header-scale header > a {
 	position: absolute;
-	top: 16px;
-	right: 16px;
+	top: 16.2px;
+	right: 16.2px;
 	z-index: 1;
 	display: grid;
-	width: 30px;
-	height: 30px;
+	width: 30.375px;
+	height: 30.375px;
 	place-items: center;
-	border-radius: 5px;
+	border-radius: 5.625px;
 	color: #06132f;
 	font-weight: 500;
 	text-decoration: none;
@@ -361,38 +361,42 @@
 
 .easymde-settings-center__header-scale header > div {
 	position: absolute;
-	top: 94px;
-	left: 33px;
+	top: 93.6px;
+	left: 33.3px;
 	z-index: 1;
 }
 
 .easymde-settings-center__header-scale h1 {
+	padding: 0;
 	color: #101b38;
-	font-size: 34px;
+	font-size: 30.6px;
 	font-weight: 700;
 	letter-spacing: -.55px;
-	line-height: 42px;
+	line-height: 37.8px;
 }
 
 .easymde-settings-center__header-scale header p {
-	margin-top: 7px;
+	margin-top: 7.2px;
 	transform: translateX(-1px);
 	color: #667696;
-	font-size: 14px;
+	font-size: 14.4px;
 	font-weight: 500;
+	line-height: 21.6px;
 }
 
 .easymde-settings-center__search {
 	position: relative;
 	display: block;
-	height: 39px;
-	margin: 0 33px 0 31px;
+	height: 38.7px;
+	margin: 0 33.3px 0 30.6px;
 }
 
 .easymde-settings-center__search > svg {
 	position: absolute;
 	top: 50%;
-	left: 20px;
+	left: 18px;
+	width: 18px;
+	height: 18px;
 	translate: 0 -50%;
 	color: #5f7193;
 	pointer-events: none;

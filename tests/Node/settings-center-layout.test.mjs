@@ -64,6 +64,8 @@ test('Settings Center header title resets WordPress admin padding', () => {
 	assert.match(cssRuleBody('\.easymde-settings-center__header-scale header > a'), /\bwidth:\s*30\.375px;/);
 	assert.match(cssRuleBody('\.easymde-settings-center__header-scale header > a'), /\bheight:\s*30\.375px;/);
 	assert.match(cssRuleBody('\.easymde-settings-center__header-scale header > a'), /\bborder-radius:\s*5\.625px;/);
+	assert.match(cssRuleBody('\\.easymde-settings-center__header-scale header > a svg'), /\bwidth:\s*20\.7px;/);
+	assert.match(cssRuleBody('\\.easymde-settings-center__header-scale header > a svg'), /\bheight:\s*20\.7px;/);
 });
 
 test('Settings Center search surface preserves reference scale geometry', () => {

@@ -359,6 +359,11 @@
 	background: #f3f6fb;
 }
 
+.easymde-settings-center__header-scale header > a svg {
+	width: 20.7px;
+	height: 20.7px;
+}
+
 .easymde-settings-center__header-scale header > div {
 	position: absolute;
 	top: 93.6px;

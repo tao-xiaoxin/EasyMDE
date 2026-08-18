@@ -474,8 +474,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 		).not.toBeNull();
 	});
 
-	it("keeps filename and selected import file in browser-session state", async () => {
-		const user = userEvent.setup();
+	it("keeps unsupported import controls disabled", async () => {
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
 		);
@@ -485,33 +484,18 @@ describe("SettingsCenterRoot Transfer section", () => {
 		if (!(transferSection instanceof HTMLElement))
 			throw new Error("settings-center-transfer-section-missing");
 		const transfer = within(transferSection);
-		const fileName = transfer.getByRole<HTMLInputElement>("textbox", {
-			name: "transferExportFileName",
-		});
 		const fileInput = transfer.getByLabelText<HTMLInputElement>(
 			"transferChooseConfigurationFile",
 		);
 
-		await user.clear(fileName);
-		await user.type(fileName, "easymde-visual-audit");
-		expect(fileName.value).toBe("easymde-visual-audit");
-
-		await user.upload(
-			fileInput,
-			new File(["{}"], "settings.json", {
-				type: "application/json",
-			}),
-		);
-		expect(transfer.getByText("settings.json")).not.toBeNull();
+		expect(fileInput.disabled).toBe(true);
 		expect(
-			transfer.getByRole("button", { name: "transferConfirmImport" }),
-		).not.toBeNull();
-		expect(screen.getByRole("status").textContent).toContain(
-			"transferFileSelectedNotice settings.json",
-		);
+			transfer.getByRole("button", { name: "transferChooseConfigurationFile" })
+			.matches(":disabled"),
+		).toBe(true);
 	});
 
-	it("exports the current draft and imports a validated configuration into the draft", async () => {
+	it("exports the current draft while import remains unavailable", async () => {
 		const user = userEvent.setup();
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
@@ -522,9 +506,6 @@ describe("SettingsCenterRoot Transfer section", () => {
 		if (!(transferSection instanceof HTMLElement))
 			throw new Error("settings-center-transfer-section-missing");
 		const transfer = within(transferSection);
-		const fileInput = transfer.getByLabelText<HTMLInputElement>(
-			"transferChooseConfigurationFile",
-		);
 		const createObjectUrl = vi.fn((value: Blob) => {
 			void value;
 			return "blob:settings-center";
@@ -561,56 +542,17 @@ describe("SettingsCenterRoot Transfer section", () => {
 				settings: SettingsCenterSettings;
 			};
 			expect(exported.schemaVersion).toBe(1);
-		expect(exported.settings.general.autoFocusEditor).toBe(false);
+			expect(exported.settings.general.autoFocusEditor).toBe(false);
 			expect(exported.settings.images.accessKey).toBe("");
 			expect(exported.settings.images.secretKey).toBe("");
 			expect(exported.settings.images.backupAccessKey).toBe("");
 			expect(exported.settings.images.backupSecretKey).toBe("");
 			expect(click).toHaveBeenCalledOnce();
 
-			const imported = {
-				...bootstrap().settings,
-				general: { ...bootstrap().settings.general, autoFocusEditor: false },
-				images: {
-					...bootstrap().settings.images,
-					accessKey: "imported-access-key",
-					secretKey: "imported-secret-key",
-				},
-			};
-			await user.upload(
-				fileInput,
-				new File(
-					[JSON.stringify({ schemaVersion: 1, settings: imported })],
-					"import.json",
-					{ type: "application/json" },
-				),
-			);
-			await user.click(
-				transfer.getByRole("button", { name: "transferConfirmImport" }),
-			);
-			await waitFor(() =>
-				expect(
-					screen
-						.getByRole("switch", { name: "autoFocusEditor" })
-						.getAttribute("aria-checked"),
-				).toBe("false"),
-			);
-			const imagesSection = container.querySelector(
-				'[data-settings-section="images"]',
-			);
-			if (!(imagesSection instanceof HTMLElement))
-				throw new Error("settings-center-images-section-missing");
 			expect(
-				within(imagesSection).getByLabelText<HTMLInputElement>("accessKey")
-					.value,
-			).toBe("");
-			expect(
-				within(imagesSection).getByLabelText<HTMLInputElement>("secretKey")
-					.value,
-			).toBe("");
-			expect(within(container).getByRole("status").textContent).toContain(
-				"transferImportApplied",
-			);
+			transfer.getByLabelText<HTMLInputElement>("transferChooseConfigurationFile")
+				.disabled,
+		).toBe(true);
 		} finally {
 			Object.defineProperty(URL, "createObjectURL", {
 				configurable: true,
@@ -687,21 +629,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 		}
 	});
 
-	it("resets the browser draft to defaults and reports the applied change", async () => {
-		const user = userEvent.setup();
-		const fetch = vi
-			.spyOn(window, "fetch")
-			.mockImplementation(async (_input, init) => {
-				const payload = JSON.parse(String(init?.body)) as Record<
-					string,
-					unknown
-				>;
-				expect(payload.resetSecrets).toBe(true);
-				return {
-					ok: true,
-					json: async () => ({ settings: bootstrap().settings }),
-				} as Response;
-			});
+	it("keeps unsupported transfer mutations disabled", async () => {
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
 		);
@@ -709,46 +637,19 @@ describe("SettingsCenterRoot Transfer section", () => {
 		if (!(overlayRoot instanceof HTMLElement))
 			throw new Error("settings-center-overlay-missing");
 
-		const autoFocus = screen.getByRole("switch", { name: "autoFocusEditor" });
-		expect(autoFocus.matches(":disabled")).toBe(false);
 		const resetTrigger = screen.getByRole("button", {
 			name: /transferResetCurrentConfiguration/,
 		});
-		await user.click(resetTrigger);
-		const dialog = within(overlayRoot).getByRole("dialog", {
-			name: "transferResetCurrentConfiguration",
-		});
-		expect(within(dialog).getByText("transferResetWarning")).not.toBeNull();
-
-		const close = within(dialog).getByRole("button", {
-			name: "transferCloseOperationDialog",
-		});
-		const cancel = within(dialog).getByRole("button", { name: "cancel" });
-		const confirm = within(dialog).getByRole("button", {
-			name: "transferConfirmReset",
-		});
-		expect(document.activeElement).toBe(close);
-		await user.tab();
-		expect(document.activeElement).toBe(cancel);
-		await user.tab();
-		expect(document.activeElement).toBe(confirm);
-		await user.tab();
-		expect(document.activeElement).toBe(close);
-		await user.keyboard("{Shift>}{Tab}{/Shift}");
-		expect(document.activeElement).toBe(confirm);
-
-		await user.click(confirm);
-		expect(autoFocus.getAttribute("aria-checked")).toBe("true");
-		expect(within(overlayRoot).getByRole("status").textContent).toContain(
-			"transferResetApplied",
-		);
-		await waitFor(() => expect(document.activeElement).toBe(resetTrigger));
+		expect(resetTrigger.matches(":disabled")).toBe(true);
 		expect(
-			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" })
-				.disabled,
-		).toBe(true);
-		expect(fetch).not.toHaveBeenCalled();
-		fetch.mockRestore();
+			within(overlayRoot).queryByRole("dialog", {
+				name: "transferResetCurrentConfiguration",
+			}),
+		).toBeNull();
+		const clearCacheTrigger = screen.getByRole("button", {
+			name: /transferClearLocalCache/,
+		});
+		expect(clearCacheTrigger.matches(":disabled")).toBe(true);
 	});
 
 	it("shows truthful storage and configuration checks in operation dialogs", async () => {

@@ -304,6 +304,8 @@ export function TransferSettingsPage({
 		);
 	};
 	const openDialog = (kind: DialogKind, trigger: HTMLButtonElement) => {
+		if (kind === "reset" || kind === "clear-cache")
+			throw new Error("settings-center-transfer-mutation-unavailable");
 		dialogTriggerRef.current = trigger;
 		setDialog(kind);
 	};
@@ -483,6 +485,7 @@ export function TransferSettingsPage({
 					<div className="easymde-settings-center__transfer-import-actions">
 						<button
 							type="button"
+							disabled
 							onClick={() => importFileRef.current?.click()}
 						>
 							<Upload size={17} />
@@ -491,6 +494,7 @@ export function TransferSettingsPage({
 						<input
 							ref={importFileRef}
 							type="file"
+							disabled
 							accept="application/json,.json"
 							aria-label={strings.transferChooseConfigurationFile}
 							onChange={(event) =>
@@ -505,7 +509,7 @@ export function TransferSettingsPage({
 								</span>
 								<button
 									type="button"
-									disabled={importing}
+									disabled
 									onClick={() => {
 										void importConfiguration();
 									}}
@@ -569,6 +573,7 @@ export function TransferSettingsPage({
 						<button
 							type="button"
 							key={kind}
+							disabled={kind === "reset" || kind === "clear-cache"}
 							onClick={(event) => openDialog(kind, event.currentTarget)}
 						>
 							<Icon size={25} />

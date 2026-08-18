@@ -183,15 +183,27 @@ test("matches the reference Settings Center header geometry", async ({
 			closeIcon: measure(
 				".easymde-settings-center__header-scale header > a svg",
 			),
+			closeLink: measure(
+				".easymde-settings-center__header-scale header > a",
+			),
 			search: measure(".easymde-settings-center__search input"),
+			searchIcon: measure(".easymde-settings-center__search > svg"),
+			frame: measure(".easymde-settings-center__frame"),
+			aside: measure(".easymde-settings-center__sidebar"),
+			main: measure(".easymde-settings-center main"),
 		};
 	});
 
 	for (const [key, expected] of Object.entries({
-		title: { x: 294.3, y: 94.6, width: 312.98, height: 37.8 },
-		description: { x: 293.4, y: 139.6, width: 312.98, height: 21.6 },
+		title: { x: 294.3, y: 94.6, height: 37.8 },
+		description: { x: 293.4, y: 139.6, height: 21.6 },
 		closeIcon: { x: 1382.26, y: 22.04, width: 20.7, height: 20.7 },
+		closeLink: { x: 1377.42, y: 17.2, width: 30.375, height: 30.375 },
 		search: { x: 291.6, y: 199, width: 1099.1, height: 38.7 },
+		searchIcon: { x: 309.6, y: 209.35, width: 18, height: 18 },
+		frame: { x: 0, y: 0, width: 1425 },
+		aside: { x: 1, y: 1, width: 260 },
+		main: { x: 261, y: 1, width: 1163 },
 	})) {
 		for (const [property, value] of Object.entries(expected)) {
 			expectNear(geometry[key][property], value);

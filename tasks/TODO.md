@@ -9,9 +9,9 @@
 | Implement real WordPress-backed settings interactions | Completed | Settings REST controller, nonce/capability checks, revision conflict handling, shortcut/editor bootstrap wiring, transfer validation, and save/reload states are present |
 | Preserve hidden AI/article-sync surface and add regression coverage | Completed | Frontend tests and E2E assert no AI/comment/article-sync navigation or content; server contracts remain separate |
 | Match full-page visual layout and responsive states | Completed | Desktop screenshot geometry matches reference; mobile E2E confirms 390px viewport, 1100px internal crop, no document overflow |
-| Run frontend, Node, PHP, i18n, release, and browser verification | Completed | Frontend 63 suites/754 tests, Node 241 tests, build, production comparison, PHPCS, i18n, and 8/8 E2E pass; PHPUnit unavailable without WP test suite |
+| Run frontend, Node, PHP, i18n, release, and browser verification | Completed | Frontend 63 suites/755 tests, Node 241 tests, build, production comparison, PHPCS, i18n, and 8/8 E2E pass; PHPUnit unavailable without WP test suite |
 | Local code review and automatic defect loop | Completed | Found the browser settings parser omitted `ordered-list`; added the required field and regression test, rebuilt the settings bundle, and reran affected gates. No merge-blocking findings remain. |
-| Commit, push, PR linkage, and bot review request | Pending | Requires final green evidence |
+| Commit, push, PR linkage, and bot review request | In progress | Verified commit `e545775` is pushed; continuation PR and CodeRabbit request remain |
 
 ## Verification Log
 
@@ -19,7 +19,7 @@
   the catalogs were rebuilt from merged sources and committed in `ba89eca`.
 - `npm run i18n:compile` and `npm run i18n:check` pass after catalog repair.
 - `npm run icons:check`, `npm run lint:frontend`, `npm run typecheck:frontend`, and
-  `npm run test:frontend` pass (63 suites, 754 tests).
+  `npm run test:frontend` pass (63 suites, 755 tests).
 - `npm test` passes (241 Node tests); `npm run build:frontend` and production
   artifact validation pass after removing duplicate merge declarations.
 - `composer run lint:phpcs` passes after enabling the locked WPCS installer.

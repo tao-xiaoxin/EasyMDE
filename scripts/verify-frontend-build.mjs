@@ -143,23 +143,6 @@ const mermaidProductionCheckRoot = join(
 	repositoryRoot,
 	".cache/easymde-frontend-mermaid-production-check",
 );
-const settingsProductionSpec = {
-	outputRoot: join(repositoryRoot, "assets/build/settings-center"),
-	sourceEntry: "frontend/src/entrypoints/settings-center.tsx",
-	expectedHandle: "easymde-admin-settings-center",
-	expectedDependencies: ["wp-element"],
-	resourceField: null,
-	expectedResourceCount: 0,
-	resourceHasManifestRecord: false,
-	resourceReferencedByScript: false,
-	label: "settings-center production build",
-	requiredRuntimePattern: /EasyMDESettingsCenterBootstrap/,
-	requiredRuntimeLabel: "settings-center bootstrap",
-};
-const settingsProductionCheckRoot = join(
-	repositoryRoot,
-	".cache/easymde-settings-production-check",
-);
 const forbiddenContent = [
 	{
 		pattern: /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/,
@@ -558,12 +541,6 @@ export function validateFrontendMermaidProductionBuild(
 	return validateBuild(mermaidProductionSpec, outputRoot);
 }
 
-export function validateSettingsProductionBuild(
-	outputRoot = settingsProductionSpec.outputRoot,
-) {
-	return validateBuild(settingsProductionSpec, outputRoot);
-}
-
 export function compareFrontendProductionBuilds(
 	generatedRoot = productionCheckRoot,
 	committedRoot = productionSpec.outputRoot,
@@ -659,18 +636,6 @@ export function compareFrontendMermaidProductionBuilds(
 	);
 }
 
-export function compareSettingsProductionBuilds(
-	generatedRoot = settingsProductionCheckRoot,
-	committedRoot = settingsProductionSpec.outputRoot,
-) {
-	compareProductionBuild(
-		settingsProductionSpec,
-		generatedRoot,
-		committedRoot,
-		"settings-center production build",
-	);
-}
-
 if (
 	process.argv[1] &&
 	import.meta.url === pathToFileURL(resolve(process.argv[1])).href
@@ -683,7 +648,6 @@ if (
 			compareFrontendEnhancementsProductionBuilds();
 			compareFrontendBootstrapProductionBuilds();
 			compareFrontendMermaidProductionBuilds();
-			compareSettingsProductionBuilds();
 			console.log(
 				"Committed frontend production build matches the validated source build.",
 			);

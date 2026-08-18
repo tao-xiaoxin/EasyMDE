@@ -615,6 +615,7 @@ export function parseSettingsCenterSettings(
 		"heading-two",
 		"quote",
 		"unordered-list",
+		"ordered-list",
 	]) {
 		const shortcut = parseObject(
 			shortcutValues[id],

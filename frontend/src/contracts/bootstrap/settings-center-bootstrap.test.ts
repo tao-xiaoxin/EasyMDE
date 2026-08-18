@@ -181,4 +181,23 @@ describe("parseSettingsCenterBootstrap", () => {
 			);
 		},
 	);
+
+	it("rejects a missing ordered-list shortcut", () => {
+		const value = bootstrap();
+		const shortcutValues = {
+			...value.settings.shortcuts.values,
+		} as Record<string, unknown>;
+		delete shortcutValues["ordered-list"];
+		value.settings = {
+			...value.settings,
+			shortcuts: {
+				...value.settings.shortcuts,
+				values: shortcutValues as typeof value.settings.shortcuts.values,
+			},
+		};
+
+		expect(() => parseSettingsCenterBootstrap(value)).toThrow(
+			"settings-center-shortcut-ordered-list-invalid",
+		);
+	});
 });

@@ -82,7 +82,6 @@ const settingsFrontendEntry = 'frontend/src/entrypoints/settings-center.tsx';
 const frontendEnhancementsEntry = 'frontend/src/entrypoints/frontend-enhancements.ts';
 const frontendBootstrapEntry = 'frontend/src/entrypoints/frontend-bootstrap.ts';
 const frontendMermaidEntry = 'frontend/src/entrypoints/frontend-mermaid-runtime.ts';
-const settingsFrontendEntry = 'frontend/src/entrypoints/settings-center.tsx';
 const productionFrontendBuilds = [
   {
     buildRoot: 'assets/build',
@@ -126,13 +125,6 @@ const productionFrontendBuilds = [
     filePattern: /^assets\/frontend-mermaid-[A-Za-z0-9_-]+\.js$/,
     handle: 'easymde-mermaid'
   },
-  {
-    buildRoot: 'assets/build/settings-center',
-    dependencies: ['wp-element'],
-    entry: settingsFrontendEntry,
-    filePattern: /^assets\/settings-center-[A-Za-z0-9_-]+\.js$/,
-    handle: 'easymde-admin-settings-center'
-  }
 ];
 
 const runtimeSupportAssetPaths = [

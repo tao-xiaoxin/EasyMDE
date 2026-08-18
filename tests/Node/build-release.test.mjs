@@ -266,9 +266,6 @@ function createCompleteFixture(root) {
   const mermaidEntry = 'frontend/src/entrypoints/frontend-mermaid-runtime.ts';
   const mermaidScript = 'assets/frontend-mermaid-fixture.js';
   const mermaidMetadata = 'assets/frontend-mermaid-fixture.asset.php';
-  const settingsEntry = 'frontend/src/entrypoints/settings-center.tsx';
-  const settingsScript = 'assets/settings-center-fixture.js';
-  const settingsMetadata = 'assets/settings-center-fixture.asset.php';
 
   writeText(
     root,

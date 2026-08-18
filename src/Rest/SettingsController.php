@@ -44,16 +44,10 @@ final class SettingsController {
 				'callback'            => array( $this, 'handle_update_request' ),
 				'permission_callback' => array( $this, 'can_update_settings' ),
 				'args'                => array(
-					'settings'     => array(
-						'type'              => 'object',
-						'required'          => true,
-						'validate_callback' => array( $this, 'validate_settings_payload' ),
-					),
-					'resetSecrets' => array(
-						'type'              => 'boolean',
-						'default'           => false,
-						'validate_callback' => array( $this, 'validate_reset_secrets' ),
-					),
+					// Validation happens in the callback so the endpoint can return its
+					// stable domain error codes instead of REST's generic param error.
+					'settings'     => array(),
+					'resetSecrets' => array(),
 				),
 			)
 		);
@@ -71,16 +65,18 @@ final class SettingsController {
 
 	public function handle_update_request( WP_REST_Request $request ) {
 		$settings = $request->get_param( 'settings' );
-		$reset    = $request->get_param( 'resetSecrets' );
+		$valid    = $this->validate_settings_payload( $settings );
+		if ( true !== $valid ) {
+			return $valid;
+		}
+
+		$reset = $request->get_param( 'resetSecrets' );
 		if ( null === $reset ) {
 			$reset = false;
 		}
-		if ( ! is_bool( $reset ) ) {
-			return new WP_Error(
-				'easymde_settings_invalid_payload',
-				__( 'The settings payload is invalid.', 'easymde' ),
-				array( 'status' => 400 )
-			);
+		$valid_reset = $this->validate_reset_secrets( $reset );
+		if ( true !== $valid_reset ) {
+			return $valid_reset;
 		}
 
 		$result = $this->settings_repository->update_settings( $settings, $reset );
@@ -293,13 +289,15 @@ final class SettingsController {
 
 	private function update_request_is_too_large( WP_REST_Request $request ) {
 		$content_length = $request->get_header( 'content-length' );
-		if ( '' !== $content_length ) {
+		if ( null !== $content_length && '' !== $content_length ) {
 			if ( ! preg_match( '/^(?:0|[1-9][0-9]*)$/', $content_length ) || strlen( ltrim( $content_length, '0' ) ) > strlen( (string) self::MAX_UPDATE_BODY_BYTES ) || (int) $content_length > self::MAX_UPDATE_BODY_BYTES ) {
 				return true;
 			}
 		}
 
-		return strlen( $request->get_body() ) > self::MAX_UPDATE_BODY_BYTES;
+		$body = $request->get_body();
+
+		return is_string( $body ) && strlen( $body ) > self::MAX_UPDATE_BODY_BYTES;
 	}
 
 	private function is_valid_domain( $value ) {

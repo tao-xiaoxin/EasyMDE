@@ -7,8 +7,24 @@ use EasyMDE\Support\ToolbarRegistry;
 
 final class SettingsPageTest extends WP_UnitTestCase
 {
+    private $previous_pagenow;
+
+    public function set_up()
+    {
+        parent::set_up();
+
+        $this->previous_pagenow = array_key_exists('pagenow', $GLOBALS) ? $GLOBALS['pagenow'] : null;
+        $GLOBALS['pagenow'] = 'admin.php';
+    }
+
     public function tear_down()
     {
+        if (null === $this->previous_pagenow) {
+            unset($GLOBALS['pagenow']);
+        } else {
+            $GLOBALS['pagenow'] = $this->previous_pagenow;
+        }
+
         delete_option(Options::EDITOR_SETTINGS);
         wp_dequeue_style('easymde-admin-menu');
         wp_dequeue_script('easymde-admin-settings-center');
@@ -76,13 +92,13 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertSame('', $bootstrap['drafts']['images']['domain']);
         $this->assertNotEmpty( $bootstrap['api']['actionNonce'] );
         $this->assertArrayNotHasKey('testingConnection', $bootstrap['strings']);
-        $this->assertArrayHasKey('pendingTest', $bootstrap['strings']);
+        $this->assertArrayHasKey('settingsUnavailable', $bootstrap['strings']);
         $this->assertArrayNotHasKey('connected', $bootstrap['strings']);
         $this->assertArrayNotHasKey('lastTest', $bootstrap['strings']);
-        $this->assertArrayHasKey('promptManagement', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('promptManagement', $bootstrap['strings']);
         $this->assertArrayHasKey('transferExportConfiguration', $bootstrap['strings']);
         $this->assertArrayHasKey('transferConfigurationManagement', $bootstrap['strings']);
-        $this->assertArrayHasKey('transferIntegrationPendingNotice', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('transferIntegrationPendingNotice', $bootstrap['strings']);
         $this->assertArrayHasKey('aboutVersionInformation', $bootstrap['strings']);
         $this->assertArrayHasKey('aboutPluginIntroduction', $bootstrap['strings']);
         $this->assertArrayHasKey('saveSettings', $bootstrap['strings']);
@@ -96,12 +112,9 @@ final class SettingsPageTest extends WP_UnitTestCase
             'shortcutsDescription', 'imagesDescription', 'markdownDescription', 'transferDescription',
             'transferPageTitle', 'aboutDescription', 'sectionPending', 'sectionPendingDescription',
             'saveSettings', 'savingSettings', 'settingsSaved', 'settingsSaveFailed',
-            'settingsUnsavedChanges', 'pendingTest', 'currentAllowedUploads', 'insertFileNameVariable',
-            'transferExportConfiguration', 'transferConfigurationManagement', 'transferIntegrationPendingNotice',
+            'settingsUnsavedChanges', 'settingsUnavailable', 'currentAllowedUploads', 'insertFileNameVariable',
+            'transferExportConfiguration', 'transferConfigurationManagement',
             'transferFileSelectedNotice', 'transferChecksSummary', 'transferChecksPassed',
-            'aboutVersionInformation', 'aboutPluginIntroduction', 'editPrompt', 'duplicatePrompt',
-            'deletePrompt', 'promptCategoryEmpty', 'deletePromptConfirmation', 'promptCreated',
-            'promptSaved', 'promptDuplicated', 'promptDeleted', 'promptImportSuccess',
             'aboutVersionInformation', 'aboutPluginIntroduction',
         );
         foreach ( $required_string_keys as $key ) {

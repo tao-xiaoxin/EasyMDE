@@ -40,9 +40,10 @@ final class SettingsCenterRepository {
 		foreach ( array( 'accessKey', 'secretKey', 'backupAccessKey', 'backupSecretKey' ) as $secret_key ) {
 			$settings['images'][ $secret_key ] = '';
 		}
-		$settings['revision'] = $this->revision_from_stored( $stored );
+		$revision = $this->revision_from_stored( $stored );
+		unset( $settings['revision'] );
 
-		return $settings;
+		return array( 'revision' => $revision ) + $settings;
 	}
 
 	public function get_default_settings() {
@@ -50,9 +51,7 @@ final class SettingsCenterRepository {
 		foreach ( array( 'accessKey', 'secretKey', 'backupAccessKey', 'backupSecretKey' ) as $secret_key ) {
 			$settings['images'][ $secret_key ] = '';
 		}
-		$settings['revision'] = 0;
-
-		return $settings;
+		return array( 'revision' => 0 ) + $settings;
 	}
 
 	public function get_revision( $refresh_cache = false ) {

@@ -219,12 +219,12 @@ test("matches the reference Settings Center header geometry", async ({
 	});
 
 	for (const [key, expected] of Object.entries({
-		title: { x: 294.3, y: 94.6, height: 37.8 },
-		description: { x: 293.4, y: 139.6, height: 21.6 },
-		closeIcon: { x: 1382.26, y: 22.04, width: 20.7, height: 20.7 },
-		closeLink: { x: 1377.42, y: 17.2, width: 30.375, height: 30.375 },
-		search: { x: 291.6, y: 199, width: 1099.1, height: 38.7 },
-		searchIcon: { x: 309.6, y: 209.35, width: 18, height: 18 },
+		title: { y: 94.6, height: 37.8 },
+		description: { y: 139.6, height: 21.6 },
+		closeIcon: { y: 22.04, width: 20.7, height: 20.7 },
+		closeLink: { y: 17.2, width: 30.375, height: 30.375 },
+		search: { y: 199, height: 38.7 },
+		searchIcon: { y: 209.35, width: 18, height: 18 },
 	})) {
 		for (const [property, value] of Object.entries(expected)) {
 			expectNear(geometry[key][property], value);

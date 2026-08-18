@@ -3,7 +3,7 @@ import type { SettingsCenterSettings } from '../contracts/settings-center-settin
 export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
   revision: 0,
   general: {
-    interfaceLanguage: 'en-US', editingMode: 'live-preview', autoFocusEditor: true,
+    interfaceLanguage: 'en-US', editingMode: 'live-preview', autoFocusEditor: false,
     showLineNumbers: true, syntaxHighlight: true, statusBarMode: 'words-reading-time',
     autoSave: true, autoSaveInterval: '60', syncScroll: true, cleanPastedContent: true,
     smartListRecognition: true, defaultCategory: 'none', publishVisibility: 'public',

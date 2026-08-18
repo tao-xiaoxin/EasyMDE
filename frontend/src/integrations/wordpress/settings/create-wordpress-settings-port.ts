@@ -53,9 +53,9 @@ async function requestSettings(
 			...init,
 			credentials: "same-origin",
 			headers: {
+				...(init.headers ?? {}),
 				"X-WP-Nonce": nonce,
 				"X-EasyMDE-Settings-Nonce": actionNonce,
-				...(init.headers ?? {}),
 			},
 			signal,
 		});

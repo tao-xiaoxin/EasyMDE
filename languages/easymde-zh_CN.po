@@ -2049,7 +2049,9 @@ msgstr "允许上传 WebP 格式"
 msgid "Allow Uploading GIF Format"
 msgstr "允许上传 GIF 格式"
 
-#: src/Admin/SettingsCenterStrings.php:218
+#. translators: Separator between image upload format labels.
+#: src/Admin/SettingsCenterStrings.php:219
+msgctxt "image upload format list separator"
 msgid ","
 msgstr ","
 
@@ -2580,6 +2582,10 @@ msgid "The configuration file could not be downloaded."
 msgstr "无法下载配置文件。"
 
 #: src/Admin/SettingsCenterStrings.php:352
+msgid "The export file name is invalid."
+msgstr "导出文件名无效。"
+
+#: src/Admin/SettingsCenterStrings.php:353
 msgid "The selected configuration file is invalid or incompatible."
 msgstr "所选配置文件无效或不兼容。"
 

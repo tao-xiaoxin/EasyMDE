@@ -56,20 +56,21 @@ function bootstrap(): SettingsCenterBootstrap {
 	};
 }
 
+let originalLocation: Location;
+
 beforeEach(() => {
-	const secureWindow = new Proxy(window, {
-		get(target, property, receiver) {
-			if (property === "location") {
-				return new URL("https://example.test/wp-admin/options.php");
-			}
-			return Reflect.get(target, property, receiver);
-		},
+	originalLocation = window.location;
+	Object.defineProperty(window, "location", {
+		configurable: true,
+		value: new URL("https://example.test/wp-admin/options.php"),
 	});
-	vi.stubGlobal("window", secureWindow);
 });
 
 afterEach(() => {
-	vi.unstubAllGlobals();
+	Object.defineProperty(window, "location", {
+		configurable: true,
+		value: originalLocation,
+	});
 });
 describe("SettingsCenterRoot global search", () => {
 	it("scrolls implemented tabs within the settings container using measured sticky offsets", async () => {
@@ -274,7 +275,7 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		expect(headingWindows.value).toBe("Ctrl+Shift+1");
 	});
 
-	it("restores one shortcut default when its field is cleared", async () => {
+	it("preserves an empty shortcut binding when its field is cleared", async () => {
 		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const windowsSave = screen.getByRole<HTMLInputElement>("textbox", {
@@ -284,11 +285,10 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		await user.clear(windowsSave);
 		await user.tab();
 
-		expect(windowsSave.value).toBe("Ctrl+S");
+		expect(windowsSave.value).toBe("");
 	});
 
-	it("keeps shortcut behavior switches in browser-session state", async () => {
-		const user = userEvent.setup();
+	it("keeps unsupported shortcut behavior switches disabled", async () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const behavior = screen
 			.getByRole("heading", { name: "shortcutBehavior" })
@@ -299,8 +299,7 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		});
 
 		expect(hints.getAttribute("aria-checked")).toBe("true");
-		await user.click(hints);
-		expect(hints.getAttribute("aria-checked")).toBe("false");
+		expect(hints.matches(":disabled")).toBe(true);
 	});
 });
 
@@ -562,7 +561,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				settings: SettingsCenterSettings;
 			};
 			expect(exported.schemaVersion).toBe(1);
-			expect(exported.settings.general.autoFocusEditor).toBe(true);
+		expect(exported.settings.general.autoFocusEditor).toBe(false);
 			expect(exported.settings.images.accessKey).toBe("");
 			expect(exported.settings.images.secretKey).toBe("");
 			expect(exported.settings.images.backupAccessKey).toBe("");
@@ -673,7 +672,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 			expect(click).toHaveBeenCalledOnce();
 			expect(createObjectUrl).toHaveBeenCalledOnce();
 			expect(within(container).getByRole("status").textContent).toContain(
-				"transferExportFailed",
+			"transferExportNameInvalid",
 			);
 		} finally {
 			Object.defineProperty(URL, "createObjectURL", {
@@ -795,13 +794,10 @@ describe("SettingsCenterRoot Transfer section", () => {
 			name: "transferConfigurationStatusCheck",
 		});
 		expect(
-			within(statusDialog).getByText("transferCheckBootstrap"),
-		).not.toBeNull();
-		expect(
 			within(statusDialog).getByText("transferCheckImageDraftIncomplete"),
 		).not.toBeNull();
 		expect(
-			within(statusDialog).getByText("transferCheckSettingsEndpointConfigured"),
+			within(statusDialog).getByText("transferCheckRuntimeAssetsReady"),
 		).not.toBeNull();
 	});
 });

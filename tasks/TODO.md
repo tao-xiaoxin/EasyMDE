@@ -2,16 +2,16 @@
 
 | Task | Status | Verification / blocker |
 | --- | --- | --- |
-| Create isolated worktree and inspect branch state | Completed | `/root/workspace/EasyMDE-settings-center`, branch `codex/issue-126-settings-center` |
+| Create isolated worktree and inspect branch state | Completed | Isolated settings-center worktree, branch `codex/issue-126-settings-center` |
 | Fetch and merge latest `origin/main` | Completed | Merge commit `ba89eca`; `origin/main` is an ancestor; generated catalogs reconciled and `npm run i18n:check` passed |
 | Audit reference UI, React settings code, PHP owner, and tests | Completed | Owner-backed general/shortcut fields use REST + option CAS; unsupported fields remain explicitly disabled; AI/article-sync are absent from production navigation/search |
-| Run reference UI locally for baseline evidence | Completed | Reference Vite server `http://127.0.0.1:5180/settings/general`; one Playwright page captured reference and local screenshots |
+| Run reference UI locally for baseline evidence | Completed | Reference Vite server and one Playwright page captured reference and local screenshots; committed evidence contains no local endpoint |
 | Implement real WordPress-backed settings interactions | Completed | Settings REST controller, nonce/capability checks, revision conflict handling, shortcut/editor bootstrap wiring, transfer validation, and save/reload states are present |
 | Preserve hidden AI/article-sync surface and add regression coverage | Completed | Frontend tests and E2E assert no AI/comment/article-sync navigation or content; server contracts remain separate |
 | Match full-page visual layout and responsive states | Completed | Desktop screenshot geometry matches reference; mobile E2E confirms 390px viewport, 1100px internal crop, no document overflow |
-| Run frontend, Node, PHP, i18n, release, and browser verification | In progress | Local frontend 63 suites/755 tests, Node 241 tests, PHPUnit 239 tests/1,898 assertions, build, production comparison, PHPCS, i18n, and settings E2E 8/8 pass; hosted E2E exposed locale, configured autosave timing, and native-autosave recovery-boundary assertions |
-| Local code review and automatic defect loop | In progress | Fixed the ordered-list parser omission, hosted PHPUnit defects, generated POT drift, localized native-menu assertions, configured draft timing, and the native-autosave test boundary; final review must cover this correction |
-| Commit, push, PR linkage, and bot review request | In progress | PR #165 is open; the native-autosave correction must be committed and pass exact-head CI before the CodeRabbit request |
+| Run frontend, Node, PHP, i18n, release, and browser verification | In progress | Local frontend 63 suites/755 tests, Node 241 tests, PHPUnit 239 tests/1,903 assertions, build, production comparison, PHPCS, i18n, and settings E2E pass; the correction set needs a fresh exact-head CI run |
+| Local code review and automatic defect loop | In progress | Prior exact-head review returned 15 actionable comments and 17 nitpicks; confirmed Settings Center findings are corrected and require a fresh local review/re-review |
+| Commit, push, PR linkage, and bot review request | In progress | PR #165 is open; correction changes are uncommitted and must pass local review, exact-head CI, and complete bot re-review |
 
 ## Verification Log
 
@@ -23,7 +23,7 @@
 - `npm test` passes (241 Node tests); `npm run build:frontend` and production
   artifact validation pass after removing duplicate merge declarations.
 - `composer run lint:phpcs` passes after enabling the locked WPCS installer.
-- Full local PHPUnit now passes (239 tests, 1,898 assertions) after installing the
+- Full local PHPUnit now passes (239 tests, 1,903 assertions) after installing the
   WordPress 6.7 test suite against the disposable MySQL service. The first
   hosted run exposed a null `Content-Length` guard, REST generic validation
   errors, stale response ordering, and stale page-test context/string checks;
@@ -31,8 +31,8 @@
 - The replacement Node validation exposed a stale gettext POT reference after
   the controller fix; `npm run i18n:make-pot`, `npm run i18n:compile`, and
   `npm run i18n:check` now pass with the regenerated catalog.
-- Settings E2E passes 8/8 tests against the isolated WordPress site on port
-  8090. The native updates-menu check accepts WordPress's available-updates tab
+- Settings E2E passes 8/8 tests against the isolated WordPress site. The native
+  updates-menu check accepts WordPress's available-updates tab
   when an update exists and its all-plugins tab when the disposable site has no
   update, while still asserting the native upgrade route.
 - Hosted CI run `32091725671` reached all 28 browser tests but reported two
@@ -57,7 +57,6 @@
 
 ## Known Limitations
 
-- The correction and catalog commits have not yet completed their replacement
-  remote CI run;
-  CodeRabbit must wait for that exact head to become green or intentionally
-  skipped by repository policy.
+- The prior head had green exact-head CI. CodeRabbit findings are being
+  independently verified; this correction set requires a fresh CI run and
+  complete re-review before the PR is considered finished.

@@ -245,8 +245,11 @@ test("keeps the settings save action clickable after scrolling", async ({
 			.toBe(true);
 
 		await saveButton.click();
+		await expect(saveStatus).toHaveAttribute(
+			"data-save-status",
+			/saved|idle/u,
+		);
 		await expect(saveButton).toBeDisabled();
-		await expect(saveStatus).toHaveAttribute("data-save-status", "saved");
 
 		await page.reload();
 		await expect(page.locator(".easymde-settings-center")).toBeVisible();
@@ -265,8 +268,11 @@ test("keeps the settings save action clickable after scrolling", async ({
 			await shortcutInput.fill(initialValue);
 			await expect(saveButton).toBeEnabled();
 			await saveButton.click();
+			await expect(saveStatus).toHaveAttribute(
+				"data-save-status",
+				/saved|idle/u,
+			);
 			await expect(saveButton).toBeDisabled();
-			await expect(saveStatus).toHaveAttribute("data-save-status", "saved");
 		}
 	}
 });

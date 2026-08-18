@@ -95,7 +95,7 @@ final class Options {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- The option row predicate is the atomic compare-and-swap boundary for the canonical settings option.
 		$updated = $wpdb->query(
 			$wpdb->prepare(
-				"UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND BINARY option_value = BINARY %s",
+				"UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND CAST(option_value AS BINARY) = CAST(%s AS BINARY)",
 				maybe_serialize( $settings ),
 				self::EDITOR_SETTINGS,
 				maybe_serialize( $expected )

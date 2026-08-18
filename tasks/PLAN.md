@@ -11,11 +11,12 @@ are preserved.
 
 ## Scope
 
-- Keep all work in `/root/workspace/EasyMDE-settings-center` on
+- Keep all work in the isolated settings-center worktree on
   `codex/issue-126-settings-center`.
 - Preserve and verify the merged mainline editor/theme/runtime changes.
 - Run the reference UI locally for source and visual comparison, then run the
-  EasyMDE settings page with one browser session/window.
+  EasyMDE settings page with one browser session/window. Keep local endpoints
+  out of committed evidence.
 - Complete only Settings Center frontend, settings bootstrap/persistence,
   focused admin template/CSS, tests, build/release metadata, and required
   translations. Do not change unrelated editor or public-page code.

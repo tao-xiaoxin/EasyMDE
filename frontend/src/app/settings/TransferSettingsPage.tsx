@@ -348,8 +348,13 @@ export function TransferSettingsPage({
 			anchor.remove();
 			URL.revokeObjectURL(url);
 			setFeedback(strings.transferExportSuccess);
-		} catch {
-			setFeedback(strings.transferExportFailed);
+		} catch (error) {
+			setFeedback(
+				error instanceof Error &&
+					error.message === "settings-center-transfer-export-name-invalid"
+					? strings.transferExportNameInvalid
+					: strings.transferExportFailed,
+			);
 		}
 	};
 	const importConfiguration = async () => {
@@ -370,11 +375,6 @@ export function TransferSettingsPage({
 	const imageDraftReady = Boolean(settings.images.domain.trim());
 	const configurationChecks: ReadonlyArray<ConfigurationCheck> = [
 		{
-			label: strings.transferCheckBootstrap,
-			valid: true,
-			detail: strings.transferCheckBootstrapReady,
-		},
-		{
 			label: strings.transferCheckRuntimeAssets,
 			valid: Boolean(
 				assets.brandMarkUrl.trim() &&
@@ -389,11 +389,6 @@ export function TransferSettingsPage({
 			detail: imageDraftReady
 				? strings.transferCheckImageDraftReady
 				: strings.transferCheckImageDraftIncomplete,
-		},
-		{
-			label: strings.transferCheckSettingsEndpoint,
-			valid: true,
-			detail: strings.transferCheckSettingsEndpointConfigured,
 		},
 	];
 	const copyStorageLocation = async () => {

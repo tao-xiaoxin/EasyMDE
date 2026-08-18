@@ -14,8 +14,11 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 
     public function tear_down()
     {
+        global $wp_rest_server;
+
         delete_option(Options::EDITOR_SETTINGS);
         wp_set_current_user(0);
+        $wp_rest_server = null;
         parent::tear_down();
     }
 
@@ -264,9 +267,9 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 
         $subscriber_id = self::factory()->user->create(array('role' => 'subscriber'));
         wp_set_current_user($subscriber_id);
+        $request->set_header('X-EasyMDE-Settings-Nonce', wp_create_nonce('easymde_update_settings'));
         $forbidden = rest_do_request($request);
         $this->assertSame(403, $forbidden->get_status());
-
-        $wp_rest_server = null;
+        $this->assertSame('easymde_rest_cannot_manage_settings', $forbidden->as_error()->get_error_code());
     }
 }

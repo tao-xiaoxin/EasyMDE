@@ -2,6 +2,8 @@ import type {
 	SettingsCenterApi,
 	SettingsCenterSettings,
 } from "../settings-center-settings";
+
+const SETTINGS_STRING_MAX_LENGTH = 512;
 export const SETTINGS_CENTER_STRING_KEYS = [
 	"brandName",
 	"settingsCenter",
@@ -334,6 +336,7 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"transferCheckSettingsEndpointConfigured",
 	"transferExportSuccess",
 	"transferExportFailed",
+	"transferExportNameInvalid",
 	"transferImportInvalid",
 	"transferImportApplied",
 	"transferResetApplied",
@@ -436,7 +439,11 @@ function parseSettingsStringFields(
 		`settings-center-${section}-settings-invalid`,
 	);
 	for (const key of keys) {
-		if (typeof value[key] !== "string")
+		const field = value[key];
+		if (
+			typeof field !== "string" ||
+			field.length > SETTINGS_STRING_MAX_LENGTH
+		)
 			throw new Error(`settings-center-${section}-${key}-invalid`);
 	}
 	return value;

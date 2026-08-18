@@ -885,7 +885,6 @@
 	height: 40px;
 	padding: 0 37.5px 0 14px;
 	appearance: none;
-	background-image: none;
 	border: 1px solid #edf0f4;
 	border-radius: 6px;
 	outline: 0;
@@ -1161,7 +1160,6 @@
 	height: 39px;
 	min-height: 0;
 	padding: 0 37.5px 0 14px;
-	background-image: none;
 	border: 1px solid #edf0f4;
 	border-radius: 6px;
 	outline: none;
@@ -1227,7 +1225,7 @@
 	width: auto;
 	height: auto;
 	padding: 0;
-	appearance: button;
+	appearance: auto;
 	border: 0 solid rgba(15, 23, 42, .07);
 	color: #56698e;
 	cursor: default;

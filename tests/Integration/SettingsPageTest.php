@@ -13,12 +13,21 @@ final class SettingsPageTest extends WP_UnitTestCase
     {
         parent::set_up();
 
+        global $menu, $submenu;
+        $menu    = array();
+        $submenu = array();
+
         $this->previous_pagenow = array_key_exists('pagenow', $GLOBALS) ? $GLOBALS['pagenow'] : null;
         $GLOBALS['pagenow'] = 'admin.php';
     }
 
     public function tear_down()
     {
+        global $menu, $submenu;
+
+        $menu    = array();
+        $submenu = array();
+
         if (null === $this->previous_pagenow) {
             unset($GLOBALS['pagenow']);
         } else {
@@ -48,6 +57,7 @@ final class SettingsPageTest extends WP_UnitTestCase
         $output = ob_get_clean();
 
         $this->assertStringContainsString('id="easymde-settings-center-root"', $output);
+        $this->assertStringNotContainsString('options.php', $output);
         $this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
     }
 
@@ -114,7 +124,7 @@ final class SettingsPageTest extends WP_UnitTestCase
             'saveSettings', 'savingSettings', 'settingsSaved', 'settingsSaveFailed',
             'settingsUnsavedChanges', 'settingsUnavailable', 'currentAllowedUploads', 'insertFileNameVariable',
             'transferExportConfiguration', 'transferConfigurationManagement',
-            'transferFileSelectedNotice', 'transferChecksSummary', 'transferChecksPassed',
+            'transferFileSelectedNotice', 'transferExportNameInvalid', 'transferChecksSummary', 'transferChecksPassed',
             'aboutVersionInformation', 'aboutPluginIntroduction',
         );
         foreach ( $required_string_keys as $key ) {

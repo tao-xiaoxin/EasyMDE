@@ -334,39 +334,6 @@ function createCompleteFixture(root) {
     "<?php return array( 'dependencies' => array(), 'version' => 'fedcba9876543210' );\n"
   );
 
-  writeText(
-    root,
-    'assets/build/settings-center/manifest.json',
-    JSON.stringify({
-      [settingsEntry]: {
-        file: settingsScript,
-        isEntry: true,
-        src: settingsEntry
-      }
-    })
-  );
-  writeText(
-    root,
-    'assets/build/settings-center/wordpress-manifest.json',
-    JSON.stringify({
-      schemaVersion: 1,
-      entries: {
-        [settingsEntry]: {
-          handle: 'easymde-admin-settings-center',
-          file: settingsScript,
-          asset: settingsMetadata,
-          dependencies: ['wp-element'],
-          resources: []
-        }
-      }
-    })
-  );
-  writeText(root, `assets/build/settings-center/${settingsScript}`, 'window.EasyMDESettingsCenterBootstrap = {};\n');
-  writeText(
-    root,
-    `assets/build/settings-center/${settingsMetadata}`,
-    "<?php return array( 'dependencies' => array( 'wp-element' ), 'version' => '0011223344556677' );\n"
-  );
   for (const build of [
     {
       root: 'assets/build/frontend-enhancements',

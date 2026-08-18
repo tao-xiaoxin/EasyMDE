@@ -67,14 +67,12 @@ function ShortcutCard({
   group,
   onChange,
   onReset,
-  onResetValue,
   strings: s,
   values
 }: {
   group: ShortcutGroup;
   onChange: (id: ShortcutId, platform: keyof ShortcutValue, value: string) => void;
   onReset: (() => void) | undefined;
-  onResetValue: (id: ShortcutId, platform: keyof ShortcutValue) => void;
   strings: Strings;
   values: ShortcutValues;
 }) {
@@ -104,11 +102,9 @@ function ShortcutCard({
         data-setting-group={s[group.title]}>
         <span>{s[row.label]}</span>
         <input aria-label={`${s[row.label]} ${s.windowsLinux}`} value={value.windows}
-          onChange={(event) => onChange(row.id, 'windows', event.target.value)}
-          onBlur={() => onResetValue(row.id, 'windows')} />
+          onChange={(event) => onChange(row.id, 'windows', event.target.value)} />
         <input aria-label={`${s[row.label]} ${s.macOS}`} value={value.mac}
-          onChange={(event) => onChange(row.id, 'mac', event.target.value)}
-          onBlur={() => onResetValue(row.id, 'mac')} />
+          onChange={(event) => onChange(row.id, 'mac', event.target.value)} />
       </div>;
     })}
   </section>;
@@ -148,14 +144,6 @@ export function ShortcutsSettingsPage({
       [id]: { ...values[id], [platform]: value }
     }});
   };
-  const resetShortcut = (id: ShortcutId, platform: keyof ShortcutValue) => {
-    if (values[id][platform].trim() === '') {
-      update({ ...settings, values: {
-        ...values,
-        [id]: { ...values[id], [platform]: resetValues[id][platform] }
-      }});
-    }
-  };
   const resetGroup = (group: ShortcutGroup) => {
     const nextValues = { ...values };
     group.rows.forEach(({ id }) => {
@@ -172,22 +160,24 @@ export function ShortcutsSettingsPage({
         strings={s}
         values={values}
         onChange={updateShortcut}
-        onResetValue={resetShortcut}
         onReset={() => resetGroup(group)}
       />)}
     </div>
     <section className="easymde-settings-center__shortcut-behavior">
       <h2><SlidersIcon size={25} />{s.shortcutBehavior}</h2>
-      <SettingsRow label={s.showShortcutHints} description={s.showShortcutHintsDescription}>
+      <SettingsRow label={s.showShortcutHints} description={s.settingsUnavailableDescription}>
         <SettingsToggle label={s.showShortcutHints} checked={settings.showHints}
+          disabled
           onChange={() => update({ ...settings, showHints: !settings.showHints })} />
       </SettingsRow>
-      <SettingsRow label={s.detectShortcutConflicts} description={s.detectShortcutConflictsDescription}>
+      <SettingsRow label={s.detectShortcutConflicts} description={s.settingsUnavailableDescription}>
         <SettingsToggle label={s.detectShortcutConflicts} checked={settings.detectConflicts}
+          disabled
           onChange={() => update({ ...settings, detectConflicts: !settings.detectConflicts })} />
       </SettingsRow>
-      <SettingsRow label={s.customShortcutSuggestions} description={s.customShortcutSuggestionsDescription}>
+      <SettingsRow label={s.customShortcutSuggestions} description={s.settingsUnavailableDescription}>
         <SettingsToggle label={s.customShortcutSuggestions} checked={settings.showSuggestions}
+          disabled
           onChange={() => update({ ...settings, showSuggestions: !settings.showSuggestions })} />
       </SettingsRow>
     </section>

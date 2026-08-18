@@ -128,7 +128,9 @@ test("opens the native plugin updates list from the EasyMDE submenu", async ({
 	const activePluginFilter = page.locator(".subsubsub a.current");
 	await expect(activePluginFilter).toHaveCount(1);
 	const activeFilterText = await activePluginFilter.textContent();
-	expect(activeFilterText).toMatch(/(?:可供更新|全部|Available updates|All)/u);
+	expect(activeFilterText).toMatch(
+		/(?:可供更新|全部|Update Available|Available updates|All)/iu,
+	);
 });
 
 test("opens the settings center through the explicit General route", async ({

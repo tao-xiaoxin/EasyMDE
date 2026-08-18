@@ -10,8 +10,8 @@
 | Preserve hidden AI/article-sync surface and add regression coverage | Completed | Frontend tests and E2E assert no AI/comment/article-sync navigation or content; server contracts remain separate |
 | Match full-page visual layout and responsive states | Completed | Desktop screenshot geometry matches reference; mobile E2E confirms 390px viewport, 1100px internal crop, no document overflow |
 | Run frontend, Node, PHP, i18n, release, and browser verification | Completed | Frontend 63 suites/755 tests, Node 241 tests, PHPUnit 239 tests/1,898 assertions, build, production comparison, PHPCS, i18n, and 8/8 E2E pass; remote CI correction is pending |
-| Local code review and automatic defect loop | Completed | Fixed the ordered-list parser omission plus hosted PHPUnit defects in request sizing, REST domain errors, response ordering, page context, and hidden-string assertions. Final local review found no merge blockers. |
-| Commit, push, PR linkage, and bot review request | In progress | PR #165 is open at `af19c02`; correction commit and fresh CI/CodeRabbit request remain |
+| Local code review and automatic defect loop | In progress | Fixed the ordered-list parser omission, hosted PHPUnit defects, and generated POT drift; final review must cover the new catalog commit |
+| Commit, push, PR linkage, and bot review request | In progress | PR #165 is open at `9590a84`; catalog correction commit and fresh CI/CodeRabbit request remain |
 
 ## Verification Log
 
@@ -28,6 +28,9 @@
   hosted run exposed a null `Content-Length` guard, REST generic validation
   errors, stale response ordering, and stale page-test context/string checks;
   each root cause is corrected in the working tree.
+- The replacement Node validation exposed a stale gettext POT reference after
+  the controller fix; `npm run i18n:make-pot`, `npm run i18n:compile`, and
+  `npm run i18n:check` now pass with the regenerated catalog.
 - Settings E2E passes 8/8 tests against the isolated WordPress site on port
   8090. The native updates-menu check accepts WordPress's available-updates tab
   when an update exists and its all-plugins tab when the disposable site has no
@@ -41,6 +44,7 @@
 
 ## Known Limitations
 
-- The correction commit has not yet completed its replacement remote CI run;
+- The correction and catalog commits have not yet completed their replacement
+  remote CI run;
   CodeRabbit must wait for that exact head to become green or intentionally
   skipped by repository policy.

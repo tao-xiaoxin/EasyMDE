@@ -1688,8 +1688,8 @@ msgid "Settings saved."
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:124
-#: src/Support/SettingsCenterRepository.php:193
-#: src/Support/SettingsCenterRepository.php:201
+#: src/Support/SettingsCenterRepository.php:192
+#: src/Support/SettingsCenterRepository.php:200
 msgid "Settings could not be saved. Try again."
 msgstr ""
 
@@ -3031,21 +3031,20 @@ msgstr ""
 msgid "The requested revision could not be found."
 msgstr ""
 
-#: src/Rest/SettingsController.php:81 src/Rest/SettingsController.php:124
-#: src/Rest/SettingsController.php:341
-#: src/Support/SettingsCenterRepository.php:99
-msgid "The settings payload is invalid."
-msgstr ""
-
-#: src/Rest/SettingsController.php:103
+#: src/Rest/SettingsController.php:99
 msgid "The settings request could not be verified."
 msgstr ""
 
-#: src/Rest/SettingsController.php:111
+#: src/Rest/SettingsController.php:107
 msgid "The settings payload is too large."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:393
+#: src/Rest/SettingsController.php:120 src/Rest/SettingsController.php:339
+#: src/Support/SettingsCenterRepository.php:98
+msgid "The settings payload is invalid."
+msgstr ""
+
+#: src/Support/SettingsCenterRepository.php:392
 msgid "One or more shortcut values are invalid."
 msgstr ""
 

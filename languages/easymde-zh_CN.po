@@ -1728,7 +1728,7 @@ msgstr "自定义上传"
 
 #: src/Admin/SettingsCenterStrings.php:139
 msgid "Storage Space / Bucket"
-msgstr "存储空间 / 存储桶"
+msgstr "存储空间 / Bucket"
 
 #: src/Admin/SettingsCenterStrings.php:140
 #: src/Admin/SettingsCenterStrings.php:363
@@ -1737,11 +1737,11 @@ msgstr "自定义域名"
 
 #: src/Admin/SettingsCenterStrings.php:141
 msgid "Access Key"
-msgstr "访问密钥"
+msgstr "Access Key"
 
 #: src/Admin/SettingsCenterStrings.php:142
 msgid "Secret Key"
-msgstr "私密密钥"
+msgstr "Secret Key"
 
 #: src/Admin/SettingsCenterStrings.php:143
 msgid "Show Secret"
@@ -1851,25 +1851,25 @@ msgstr "输入文件名规则"
 
 #: src/Admin/SettingsCenterStrings.php:170
 msgid "Backup Image Host"
-msgstr "备用图床"
+msgstr "备份图床"
 
 #: src/Admin/SettingsCenterStrings.php:171
 msgid "Reference dual-write upload flow: after the primary image host succeeds, continue writing to backup storage. By default, backup failures do not affect the primary URL."
-msgstr "参考双写上传流程：主图床成功后继续写入备用存储。默认情况下，备用存储失败不会影响主 URL。"
+msgstr "参考双写上传流程：主图床成功后继续写入备份存储，默认情况下备份失败不会影响主图床链接。"
 
 #: src/Admin/SettingsCenterStrings.php:172
 #: src/Admin/SettingsCenterStrings.php:371
 msgid "Enable Backup Image Host"
-msgstr "启用备用图床"
+msgstr "启用备份图床"
 
 #: src/Admin/SettingsCenterStrings.php:173
 msgid "Write the same file content and object path to a second storage service."
-msgstr "将相同的文件内容和对象路径写入第二个存储服务。"
+msgstr "将相同文件内容和对象路径写入第二个存储服务。"
 
 #: src/Admin/SettingsCenterStrings.php:174
 #: src/Admin/SettingsCenterStrings.php:364
 msgid "Backup Image Host Service"
-msgstr "备用图床服务"
+msgstr "备份图床服务"
 
 #: src/Admin/SettingsCenterStrings.php:175
 msgid "Qiniu Kodo"
@@ -1877,35 +1877,35 @@ msgstr "Qiniu Kodo"
 
 #: src/Admin/SettingsCenterStrings.php:176
 msgid "Backup Storage Space / Bucket"
-msgstr "备用存储空间 / 存储桶"
+msgstr "备份存储空间 / Bucket"
 
 #: src/Admin/SettingsCenterStrings.php:177
 msgid "Backup Custom Domain"
-msgstr "备用自定义域名"
+msgstr "备份自定义域名"
 
 #: src/Admin/SettingsCenterStrings.php:178
 msgid "Backup Access Key"
-msgstr "备用访问密钥"
+msgstr "备份 Access Key"
 
 #: src/Admin/SettingsCenterStrings.php:179
 msgid "Backup Secret Key"
-msgstr "备用私密密钥"
+msgstr "备份 Secret Key"
 
 #: src/Admin/SettingsCenterStrings.php:180
 msgid "Show Backup Access Key"
-msgstr "显示备用访问密钥"
+msgstr "显示备份 Access Key"
 
 #: src/Admin/SettingsCenterStrings.php:181
 msgid "Hide Backup Access Key"
-msgstr "隐藏备用访问密钥"
+msgstr "隐藏备份 Access Key"
 
 #: src/Admin/SettingsCenterStrings.php:182
 msgid "Show Backup Secret Key"
-msgstr "显示备用私密密钥"
+msgstr "显示备份 Secret Key"
 
 #: src/Admin/SettingsCenterStrings.php:183
 msgid "Hide Backup Secret Key"
-msgstr "隐藏备用私密密钥"
+msgstr "隐藏备份 Secret Key"
 
 #: src/Admin/SettingsCenterStrings.php:184
 #: src/Admin/SettingsCenterStrings.php:372
@@ -1914,16 +1914,16 @@ msgstr "保持对象路径一致"
 
 #: src/Admin/SettingsCenterStrings.php:185
 msgid "Use the same file-name rule and object key for the primary and backup hosts."
-msgstr "主图床和备用图床使用相同的文件名规则和对象键。"
+msgstr "主图床与备份图床使用同一文件名规则和对象 Key。"
 
 #: src/Admin/SettingsCenterStrings.php:186
 #: src/Admin/SettingsCenterStrings.php:365
 msgid "Backup Failure Handling"
-msgstr "备用存储失败处理"
+msgstr "备份失败处理"
 
 #: src/Admin/SettingsCenterStrings.php:187
 msgid "Control whether the primary upload result remains available when the backup write fails."
-msgstr "控制备用写入失败时是否保留主上传结果。"
+msgstr "控制备份写入失败时主上传结果是否仍然可用。"
 
 #: src/Admin/SettingsCenterStrings.php:188
 msgid "Record Error and Return Primary Image Host URL"
@@ -1931,7 +1931,7 @@ msgstr "记录错误并返回主图床 URL"
 
 #: src/Admin/SettingsCenterStrings.php:189
 msgid "Fail Entire Upload and Prompt to Retry"
-msgstr "整个上传失败并提示重试"
+msgstr "整体失败并提示重试"
 
 #: src/Admin/SettingsCenterStrings.php:190
 msgid "Upload Behavior"
@@ -1948,7 +1948,7 @@ msgstr "自动压缩图片"
 
 #: src/Admin/SettingsCenterStrings.php:193
 msgid "Compress images before upload to save storage space."
-msgstr "上传前压缩图片以节省存储空间。"
+msgstr "上传前自动压缩图片以节省存储空间。"
 
 #: src/Admin/SettingsCenterStrings.php:194
 #: src/Admin/SettingsCenterStrings.php:374
@@ -1978,20 +1978,20 @@ msgstr "不重试"
 
 #: src/Admin/SettingsCenterStrings.php:200
 msgid "Retry Once"
-msgstr "重试一次"
+msgstr "重试 1 次"
 
 #: src/Admin/SettingsCenterStrings.php:201
 msgid "Retry Twice"
-msgstr "重试两次"
+msgstr "重试 2 次"
 
 #: src/Admin/SettingsCenterStrings.php:202
 msgid "Retry Three Times"
-msgstr "重试三次"
+msgstr "重试 3 次"
 
 #: src/Admin/SettingsCenterStrings.php:203
 #: src/Admin/SettingsCenterStrings.php:367
 msgid "Maximum Image Size"
-msgstr "图片最大尺寸"
+msgstr "最大图片尺寸"
 
 #: src/Admin/SettingsCenterStrings.php:204
 msgid "Original Size"
@@ -2011,7 +2011,7 @@ msgstr "3840px"
 
 #: src/Admin/SettingsCenterStrings.php:208
 msgid "Allowed Upload Formats"
-msgstr "允许上传的格式"
+msgstr "允许上传格式"
 
 #: src/Admin/SettingsCenterStrings.php:209
 msgid "Select the image file formats that the editor may choose and upload."
@@ -2053,11 +2053,11 @@ msgstr "允许上传 GIF 格式"
 #: src/Admin/SettingsCenterStrings.php:219
 msgctxt "image upload format list separator"
 msgid ","
-msgstr ","
+msgstr "、"
 
 #: src/Admin/SettingsCenterStrings.php:219
 msgid "Default Insertion and Description"
-msgstr "默认插入和描述"
+msgstr "默认插入与说明"
 
 #: src/Admin/SettingsCenterStrings.php:220
 #: src/Admin/SettingsCenterStrings.php:368
@@ -2079,7 +2079,7 @@ msgstr "仅插入 URL"
 #: src/Admin/SettingsCenterStrings.php:224
 #: src/Admin/SettingsCenterStrings.php:369
 msgid "Alt Text Source"
-msgstr "替代文本来源"
+msgstr "Alt 文本来源"
 
 #: src/Admin/SettingsCenterStrings.php:225
 msgid "Use File Name"
@@ -2109,7 +2109,7 @@ msgstr "特色图片占位提示"
 #: src/Admin/SettingsCenterStrings.php:231
 msgctxt "image upload settings"
 msgid "Show a placeholder prompt when no featured image is set"
-msgstr "未设置特色图片时显示占位提示"
+msgstr "在没有特色图片时显示占位提示。"
 
 #. translators: %s: comma-separated image upload format labels.
 #: src/Admin/SettingsCenterStrings.php:233
@@ -2119,7 +2119,7 @@ msgstr "当前允许上传：%s。"
 
 #: src/Admin/SettingsCenterStrings.php:234
 msgid "We recommend enabling automatic compression before uploading large images."
-msgstr "上传大图片前，建议启用自动压缩。"
+msgstr "建议大图上传前开启自动压缩。"
 
 #: src/Admin/SettingsCenterStrings.php:235
 msgid "Editor Settings"
@@ -2172,7 +2172,7 @@ msgstr "深色"
 
 #: src/Admin/SettingsCenterStrings.php:247
 msgid "Editor Font Size"
-msgstr "编辑器字号"
+msgstr "编辑器字体大小"
 
 #: src/Admin/SettingsCenterStrings.php:248
 msgid "Editor Font"
@@ -2192,7 +2192,7 @@ msgstr "思源黑体"
 
 #: src/Admin/SettingsCenterStrings.php:252
 msgid "Markdown Parsing and Rendering"
-msgstr "Markdown 解析和渲染"
+msgstr "Markdown 解析与渲染"
 
 #: src/Admin/SettingsCenterStrings.php:253
 msgid "GitHub Flavored Markdown"
@@ -2393,7 +2393,7 @@ msgstr "从本地 JSON 配置文件导入设置，并在确认后覆盖当前配
 
 #: src/Admin/SettingsCenterStrings.php:302
 msgid "Choose Configuration File"
-msgstr "选择配置文件"
+msgstr "选择导入配置文件"
 
 #: src/Admin/SettingsCenterStrings.php:303
 msgid "Confirm Import"

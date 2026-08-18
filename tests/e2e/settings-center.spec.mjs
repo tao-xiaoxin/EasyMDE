@@ -14,6 +14,10 @@ function requiredEnvironment(name) {
 	return value;
 }
 
+function expectNear(actual, expected, tolerance = 0.5) {
+	expect(Math.abs(actual - expected)).toBeLessThanOrEqual(tolerance);
+}
+
 async function login(page) {
 	await page.goto("/wp-login.php");
 	if ((await page.locator("#loginform").count()) === 0) {
@@ -145,6 +149,54 @@ test("opens the settings center through the explicit General route", async ({
 		/\/wp-admin\/admin\.php\?page=easymde&route=(?:%2F|\/)general_setting$/iu,
 	);
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+});
+
+test("matches the reference Settings Center header geometry", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	const geometry = await page.evaluate(() => {
+		const measure = (selector) => {
+			const element = document.querySelector(selector);
+			if (!element) {
+				throw new Error(`settings-geometry-missing-${selector}`);
+			}
+
+			const rect = element.getBoundingClientRect();
+			return {
+				x: rect.x,
+				y: rect.y,
+				width: rect.width,
+				height: rect.height,
+			};
+		};
+
+		return {
+			title: measure(".easymde-settings-center__header-scale h1"),
+			description: measure(
+				".easymde-settings-center__header-scale header p",
+			),
+			closeIcon: measure(
+				".easymde-settings-center__header-scale header > a svg",
+			),
+			search: measure(".easymde-settings-center__search input"),
+		};
+	});
+
+	for (const [key, expected] of Object.entries({
+		title: { x: 294.3, y: 94.6, width: 312.98, height: 37.8 },
+		description: { x: 293.4, y: 139.6, width: 312.98, height: 21.6 },
+		closeIcon: { x: 1382.26, y: 22.04, width: 20.7, height: 20.7 },
+		search: { x: 291.6, y: 199, width: 1099.1, height: 38.7 },
+	})) {
+		for (const [property, value] of Object.entries(expected)) {
+			expectNear(geometry[key][property], value);
+		}
+	}
 });
 
 test("rejects the removed Settings Center URL without loading its form or assets", async ({

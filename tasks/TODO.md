@@ -11,7 +11,7 @@
 | Match full-page visual layout and responsive states | Completed | Desktop screenshot geometry matches reference; mobile E2E confirms 390px viewport, 1100px internal crop, no document overflow |
 | Run frontend, Node, PHP, i18n, release, and browser verification | Completed | Local frontend 63 suites/756 tests, Node 241 tests, PHPUnit 239 tests/1,904 assertions, build, production comparison, PHPCS, i18n, one-browser settings E2E, and exact-head CI `32107093577` pass |
 | Local code review and automatic defect loop | Completed | The Transfer mutation and swallowed startup-failure findings were fixed at their source owners; staged review and CodeRabbit re-review approve the exact pushed head |
-| Commit, push, PR linkage, and bot review request | Completed | PR #165 is open at current evidence head `d6db493`; production behavior last changed at `4bad582`, exact-head CI is green, and CodeRabbit returned the required new-head `APPROVE` verdict |
+| Commit, push, PR linkage, and bot review request | Completed | PR #165 remains open under human maintainer control; production behavior last changed at `4bad582`, and the latest branch-tip CI and CodeRabbit evidence is recorded below |
 
 ## Verification Log
 

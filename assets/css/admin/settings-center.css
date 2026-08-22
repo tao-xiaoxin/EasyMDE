@@ -62,10 +62,7 @@
 	min-height: 100vh;
 	margin: 0 auto;
 	overflow: clip;
-	border: 1px solid #9dbbff;
-	border-radius: 13px;
 	background: #fdfdfe;
-	box-shadow: 0 8px 36px rgba(27, 51, 96, .13);
 }
 
 .easymde-settings-center__sidebar {
@@ -77,7 +74,6 @@
 	max-height: 1320px;
 	flex: 0 0 260px;
 	padding: 24px 17px 112px;
-	border-radius: 12px 0 0 12px;
 	background: #fdfdfe;
 }
 
@@ -102,22 +98,24 @@
 
 .easymde-settings-center__brand {
 	display: flex;
-	height: 53px;
+	height: 72px;
 	align-items: flex-start;
-	gap: 12px;
-	translate: -3px;
+	gap: 16px;
+	translate: -4px;
+	scale: .73;
+	transform-origin: top;
 }
 
 .easymde-settings-center__brand > img {
-	width: 53px;
-	height: 44px;
-	margin-right: 3px;
-	translate: -1px 2px;
+	width: 72px;
+	height: 60px;
+	margin-right: 4px;
+	translate: -1px 3px;
 	object-fit: contain;
 }
 
 .easymde-settings-center__brand > div {
-	padding-top: 3px;
+	padding-top: 4px;
 	white-space: nowrap;
 }
 
@@ -125,10 +123,10 @@
 	display: block;
 	translate: -1px;
 	color: #101d3a;
-	font-size: 24px;
+	font-size: 33px;
 	font-weight: 500;
-	letter-spacing: -1px;
-	line-height: 25px;
+	letter-spacing: 0;
+	line-height: 34px;
 }
 
 .easymde-settings-center__brand strong b {
@@ -140,12 +138,12 @@
 
 .easymde-settings-center__brand span {
 	display: block;
-	margin-top: 3px;
-	translate: -1px 1px;
+	margin-top: 4px;
+	translate: -1px 2px;
 	color: #111e39;
-	font-size: 13px;
+	font-size: 18px;
 	font-weight: 500;
-	line-height: 14px;
+	line-height: 20px;
 }
 
 .easymde-settings-center__sidebar nav {
@@ -319,14 +317,16 @@
 }
 
 .easymde-settings-center__header-scale {
-	width: 100%;
+	width: 111.111111%;
+	scale: .9;
+	transform-origin: top left;
 }
 
 .easymde-settings-center__header-scale header {
 	position: relative;
-	height: 198px;
+	height: 220px;
 	overflow: hidden;
-	padding: 94px 33px 0;
+	padding: 104px 37px 0;
 }
 
 .easymde-settings-center__header-scale header > img {
@@ -335,21 +335,21 @@
 	right: 0;
 	width: auto;
 	max-width: none;
-	height: 198px;
+	height: 220px;
 	pointer-events: none;
 	object-fit: contain;
 }
 
 .easymde-settings-center__header-scale header > a {
 	position: absolute;
-	top: 16px;
-	right: 16px;
+	top: 18px;
+	right: 18px;
 	z-index: 1;
 	display: grid;
-	width: 30px;
-	height: 30px;
+	width: 33.75px;
+	height: 33.75px;
 	place-items: center;
-	border-radius: 5px;
+	border-radius: 5.625px;
 	color: #06132f;
 	font-weight: 500;
 	text-decoration: none;
@@ -359,40 +359,49 @@
 	background: #f3f6fb;
 }
 
+.easymde-settings-center__header-scale header > a svg {
+	width: 23px;
+	height: 23px;
+}
+
 .easymde-settings-center__header-scale header > div {
 	position: absolute;
-	top: 94px;
-	left: 33px;
+	top: 104px;
+	left: 37px;
 	z-index: 1;
 }
 
 .easymde-settings-center__header-scale h1 {
+	padding: 0;
 	color: #101b38;
 	font-size: 34px;
 	font-weight: 700;
-	letter-spacing: -.55px;
+	letter-spacing: 0;
 	line-height: 42px;
 }
 
 .easymde-settings-center__header-scale header p {
-	margin-top: 7px;
+	margin-top: 8px;
 	transform: translateX(-1px);
 	color: #667696;
-	font-size: 14px;
+	font-size: 16px;
 	font-weight: 500;
+	line-height: 24px;
 }
 
 .easymde-settings-center__search {
 	position: relative;
 	display: block;
-	height: 39px;
-	margin: 0 33px 0 31px;
+	height: 43px;
+	margin: 0 37px 0 34px;
 }
 
 .easymde-settings-center__search > svg {
 	position: absolute;
 	top: 50%;
 	left: 20px;
+	width: 20px;
+	height: 20px;
 	translate: 0 -50%;
 	color: #5f7193;
 	pointer-events: none;
@@ -532,7 +541,11 @@
 .easymde-settings-center__transfer-unavailable-notice { margin: 20px 36px 0; color: #657695; font-size: 14px; }
 
 .easymde-settings-center__content {
-	padding: 0 37px 104px 34px;
+	padding: 0 37px 0 34px;
+}
+
+.easymde-settings-center__content-footer-space {
+	height: 30px;
 }
 
 .easymde-settings-center__sections,
@@ -750,7 +763,7 @@
 
 .easymde-settings-center__section {
 	position: relative;
-	border-bottom: 1px solid #dfe4ec;
+	border-bottom: 1px solid #e5e9ef;
 	background: #fefefe;
 }
 
@@ -767,7 +780,7 @@
 	color: #111d38;
 	font-size: 18.5px;
 	font-weight: 700;
-	letter-spacing: -.18px;
+	letter-spacing: 0;
 	line-height: 1.5;
 }
 
@@ -829,27 +842,27 @@
 	padding-left: 24px;
 }
 
-.easymde-settings-center__section:first-child .easymde-settings-center__row-label {
+.easymde-settings-center__general-settings > .easymde-settings-center__section:first-child .easymde-settings-center__row-label {
 	transform: translateX(-1px);
 }
 
-.easymde-settings-center__section:first-child .easymde-settings-center__row:last-child .easymde-settings-center__row-label {
+.easymde-settings-center__general-settings > .easymde-settings-center__section:first-child > .easymde-settings-center__section-body > .easymde-settings-center__row:last-child .easymde-settings-center__row-label {
 	transform: none;
 }
 
-.easymde-settings-center__section:nth-child(2) .easymde-settings-center__row:nth-child(-n+2) .easymde-settings-center__row-label {
+.easymde-settings-center__general-settings > .easymde-settings-center__section:nth-child(2) > .easymde-settings-center__section-body > .easymde-settings-center__row:nth-child(-n+2) .easymde-settings-center__row-label {
 	transform: translateX(1px);
 }
 
-.easymde-settings-center__section:first-child > h2 svg {
+.easymde-settings-center__general-settings > .easymde-settings-center__section:first-child > h2 svg {
 	margin-top: -1px;
 }
 
-.easymde-settings-center__section:nth-child(2) > h2 svg {
+.easymde-settings-center__general-settings > .easymde-settings-center__section:nth-child(2) > h2 svg {
 	margin-left: -2px;
 }
 
-.easymde-settings-center__section:nth-child(3) > h2 svg {
+.easymde-settings-center__general-settings > .easymde-settings-center__unavailable-fields:nth-child(3) > .easymde-settings-center__section > h2 svg {
 	margin-left: -1px;
 }
 
@@ -857,7 +870,7 @@
 	color: #46526a;
 	font-size: 16px;
 	font-weight: 500;
-	letter-spacing: -.04px;
+	letter-spacing: 0;
 	line-height: 22px;
 }
 
@@ -1108,7 +1121,7 @@
 	background: #fefefe;
 }
 
-.easymde-settings-center__images-page > :not(:last-child),
+.easymde-settings-center__images-page > .easymde-settings-center__unavailable-fields > :not(:last-child),
 .easymde-settings-center__image-secondary-groups > :not(:last-child) {
 	border-color: #e5e9ef;
 	border-bottom-width: 1px;
@@ -1655,7 +1668,7 @@
 	padding-left: 27px;
 }
 
-.easymde-settings-center__markdown-page > :not(:last-child) {
+.easymde-settings-center__markdown-page > .easymde-settings-center__unavailable-fields > .easymde-settings-center__markdown-group:not(:last-child) {
 	border-color: #e5e9ef;
 	border-bottom-width: 1px;
 }

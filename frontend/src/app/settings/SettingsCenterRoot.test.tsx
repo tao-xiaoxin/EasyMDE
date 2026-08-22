@@ -123,7 +123,7 @@ describe("SettingsCenterRoot global search", () => {
 		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
 		await user.click(screen.getByRole("button", { name: "markdown" }));
 
-		expect(scrollTo).toHaveBeenCalledWith({ top: 816, behavior: "auto" });
+		expect(scrollTo).toHaveBeenCalledWith({ top: 807, behavior: "auto" });
 		expect(windowScrollTo).not.toHaveBeenCalled();
 		windowScrollTo.mockRestore();
 	});
@@ -169,7 +169,14 @@ describe("SettingsCenterRoot global search", () => {
 
 	it("marks image settings unavailable while keeping them searchable", async () => {
 		const user = userEvent.setup();
-		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const settingsRoot = container.firstElementChild;
+		if (!(settingsRoot instanceof HTMLDivElement))
+			throw new Error("settings-search-root-missing");
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: vi.fn(),
+		});
 
 		expect(
 			screen
@@ -185,6 +192,45 @@ describe("SettingsCenterRoot global search", () => {
 				.getByRole("textbox", { name: "backupBucket" })
 				.matches(":disabled"),
 		).toBe(true);
+		await user.click(
+			await screen.findByRole("button", { name: "backupBucket" }),
+		);
+
+		const target = screen
+			.getByRole("textbox", { name: "backupBucket" })
+			.closest<HTMLElement>("[data-setting-label]");
+		if (!target) throw new Error("settings-search-unavailable-target-missing");
+		await waitFor(() => expect(document.activeElement).toBe(target));
+		expect(target.tabIndex).toBe(-1);
+	});
+
+	it("focuses a group heading when its search result has no control", async () => {
+		const user = userEvent.setup();
+		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const settingsRoot = container.firstElementChild;
+		if (!(settingsRoot instanceof HTMLDivElement))
+			throw new Error("settings-search-root-missing");
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: vi.fn(),
+		});
+
+		await user.type(
+			screen.getByRole("searchbox", { name: "searchSettings" }),
+			"aboutVersionInformation",
+		);
+		const resultLabel = await screen.findByText("aboutVersionInformation", {
+			selector: ".easymde-settings-center__search-results strong",
+		});
+		const result = resultLabel.closest<HTMLButtonElement>("button");
+		if (!result) throw new Error("settings-search-group-result-missing");
+		await user.click(result);
+
+		const target = screen.getByRole("heading", {
+			name: "aboutVersionInformation",
+		});
+		await waitFor(() => expect(document.activeElement).toBe(target));
+		expect(target.tabIndex).toBe(-1);
 	});
 
 	it("cancels pending result navigation when the settings root unmounts", async () => {
@@ -238,7 +284,7 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		).not.toBeNull();
 	});
 
-	it("restores defaults only within the selected shortcut group", async () => {
+	it("restores every shortcut from the single reference reset command", async () => {
 		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const windowsSave = screen.getByRole<HTMLInputElement>("textbox", {
@@ -272,7 +318,30 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		);
 		expect(windowsSave.value).toBe("Ctrl+S");
 		expect(macSave.value).toBe("Cmd+S");
-		expect(headingWindows.value).toBe("Ctrl+Shift+1");
+		expect(headingWindows.value).toBe("Ctrl+1");
+	});
+
+	it("shows the reset command only on the reference common-shortcuts group", () => {
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const commonGroup = screen
+			.getByRole("heading", { name: "commonShortcuts" })
+			.closest("section");
+		const headingGroup = screen
+			.getByRole("heading", { name: "headingAndFormatting" })
+			.closest("section");
+		if (!(commonGroup instanceof HTMLElement) || !(headingGroup instanceof HTMLElement))
+			throw new Error("shortcut-reset-visibility-groups-missing");
+
+		expect(
+			within(commonGroup).getByRole("button", {
+				name: "restoreDefaultShortcuts",
+			}),
+		).not.toBeNull();
+		expect(
+			within(headingGroup).queryByRole("button", {
+				name: "restoreDefaultShortcuts",
+			}),
+		).toBeNull();
 	});
 
 	it("preserves an empty shortcut binding when its field is cleared", async () => {

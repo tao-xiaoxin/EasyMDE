@@ -346,8 +346,35 @@ test("gettext catalog files are current and contain real zh_CN translations", ()
 	const settingsCenterEntry = poEntries.find(
 		(entry) => "Settings Center" === entry.msgid,
 	);
+	const noSearchResultsEntry = poEntries.find(
+		(entry) => 'No settings related to "%s" were found' === entry.msgid,
+	);
+	const searchPageDescriptionEntry = poEntries.find(
+		(entry) => 'Only settings matching "%s" are shown.' === entry.msgid,
+	);
+	const noSearchResultsDescriptionEntry = poEntries.find(
+		(entry) =>
+			"Try a setting name, feature keyword, or service name." === entry.msgid,
+	);
+	const searchSettingsEntry = poEntries.find(
+		(entry) => "Search all settings" === entry.msgid,
+	);
+	const clearSearchEntry = poEntries.find(
+		(entry) => "Clear search" === entry.msgid,
+	);
 
 	assert.equal(settingsCenterEntry.msgstr[0], "配置中心");
+	assert.equal(noSearchResultsEntry.msgstr[0], "未找到“%s”相关设置");
+	assert.equal(
+		searchPageDescriptionEntry.msgstr[0],
+		"仅展示与“%s”匹配的配置项。",
+	);
+	assert.equal(
+		noSearchResultsDescriptionEntry.msgstr[0],
+		"请尝试设置名称、功能关键词或服务名称。",
+	);
+	assert.equal(searchSettingsEntry.msgstr[0], "搜索全部设置");
+	assert.equal(clearSearchEntry.msgstr[0], "清空搜索");
 	assert.ok(statSync(join(repoRoot, "languages/easymde-zh_CN.mo")).size > 0);
 
 	const result = spawnSync(
@@ -360,6 +387,10 @@ test("gettext catalog files are current and contain real zh_CN translations", ()
 
 	assert.equal(result.status, 0, result.stderr);
 	assert.match(result.stdout, /msgid "Settings Center"\nmsgstr "配置中心"/);
+	assert.match(
+		result.stdout,
+		/msgid "No settings related to \\"%s\\" were found"\nmsgstr "未找到“%s”相关设置"/,
+	);
 });
 
 test("React immersive counters ship one handle-based WordPress Jed catalog", () => {

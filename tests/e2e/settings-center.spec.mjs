@@ -14,6 +14,10 @@ function requiredEnvironment(name) {
 	return value;
 }
 
+function expectNear(actual, expected, tolerance = 0.5) {
+	expect(Math.abs(actual - expected)).toBeLessThanOrEqual(tolerance);
+}
+
 async function login(page) {
 	await page.goto("/wp-login.php");
 	if ((await page.locator("#loginform").count()) === 0) {
@@ -145,6 +149,304 @@ test("opens the settings center through the explicit General route", async ({
 		/\/wp-admin\/admin\.php\?page=easymde&route=(?:%2F|\/)general_setting$/iu,
 	);
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+});
+
+test("keeps section navigation, the sticky boundary, and the localized heading in sync", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	const steps = [
+		{ id: "images", previousId: "general" },
+		{ id: "markdown", previousId: "images" },
+	];
+
+	for (const step of steps) {
+		const navItem = page.locator(`[data-nav-id="${step.id}"]`);
+		const expectedHeading = (await navItem.textContent())?.trim();
+		expect(expectedHeading).toBeTruthy();
+		await navItem.click();
+		await expect
+			.poll(async () =>
+				page.evaluate(({ id, previousId }) => {
+					const section = document.querySelector(
+						`[data-settings-section="${id}"]`,
+					);
+					const stickyHeader = document.querySelector(
+						".easymde-settings-center__sticky-header",
+					);
+					const currentNav = document.querySelector(`[data-nav-id="${id}"]`);
+					const previousNav = document.querySelector(
+						`[data-nav-id="${previousId}"]`,
+					);
+					const heading = document.querySelector(
+						".easymde-settings-center__sticky-header h1",
+					);
+					if (
+						!section ||
+						!stickyHeader ||
+						!currentNav ||
+						!previousNav ||
+						!heading
+					) {
+						throw new Error(`settings-navigation-${id}-state-missing`);
+					}
+
+					return {
+						referenceSectionGap:
+							Math.abs(
+								section.getBoundingClientRect().top -
+									stickyHeader.getBoundingClientRect().bottom -
+									9,
+							) <= 0.5,
+						current: currentNav.getAttribute("aria-current"),
+						previous: previousNav.getAttribute("aria-current"),
+						heading: heading.textContent?.trim(),
+					};
+				}, step),
+			)
+			.toEqual({
+				referenceSectionGap: true,
+				current: "page",
+				previous: null,
+				heading: expectedHeading,
+			});
+	}
+});
+
+test("opens a search result at the reference offset and focuses its control", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	const targetControl = page.getByRole("switch").first();
+	const targetRow = targetControl.locator(
+		"xpath=ancestor::*[@data-setting-label][1]",
+	);
+	const targetLabel = await targetRow.getAttribute("data-setting-label");
+	if (!targetLabel) throw new Error("settings-search-target-label-missing");
+
+	await page.getByRole("searchbox").fill(targetLabel);
+	await page
+		.locator(".easymde-settings-center__search-results button")
+		.filter({ hasText: targetLabel })
+		.click();
+
+	await expect
+		.poll(() =>
+			page.evaluate((label) => {
+				const target = [
+					...document.querySelectorAll("[data-setting-label]"),
+				].find(
+					(element) => element.getAttribute("data-setting-label") === label,
+				);
+				const stickyHeader = document.querySelector(
+					".easymde-settings-center__sticky-header",
+				);
+				const control = target?.querySelector("button");
+				if (!target || !stickyHeader || !control)
+					throw new Error("settings-search-result-target-missing");
+
+				return {
+					referenceTargetGap:
+						Math.abs(
+							target.getBoundingClientRect().top -
+								stickyHeader.getBoundingClientRect().bottom -
+								33,
+						) <= 0.5,
+					focused: document.activeElement === control,
+				};
+				}, targetLabel),
+		)
+		.toEqual({ referenceTargetGap: true, focused: true });
+});
+
+test("keeps focus on an unavailable search result without implying availability", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	const disabledControl = page
+		.locator(
+			'[data-settings-section="images"] [data-setting-label] input:disabled',
+		)
+		.first();
+	const targetRow = disabledControl.locator(
+		"xpath=ancestor::*[@data-setting-label][1]",
+	);
+	const targetLabel = await targetRow.getAttribute("data-setting-label");
+	if (!targetLabel)
+		throw new Error("settings-search-unavailable-label-missing");
+
+	await page.getByRole("searchbox").fill(targetLabel);
+	await page
+		.locator(".easymde-settings-center__search-results button")
+		.filter({ hasText: targetLabel })
+		.click();
+
+	await expect(targetRow).toBeFocused();
+	await expect(targetRow).toHaveAttribute("tabindex", "-1");
+	await expect(disabledControl).toBeDisabled();
+	await expect
+		.poll(async () => {
+			const [targetBox, headerBox] = await Promise.all([
+				targetRow.boundingBox(),
+				page
+					.locator(".easymde-settings-center__sticky-header")
+					.boundingBox(),
+			]);
+			if (!targetBox || !headerBox)
+				throw new Error("settings-search-unavailable-geometry-missing");
+
+			return Math.abs(targetBox.y - headerBox.y - headerBox.height - 33);
+		})
+		.toBeLessThanOrEqual(0.5);
+});
+
+test("focuses a group-only search result at the reference offset", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	const targetHeading = page
+		.locator('[data-settings-section="about"] h2')
+		.first();
+	const targetLabel = (await targetHeading.textContent())?.trim();
+	if (!targetLabel) throw new Error("settings-search-group-label-missing");
+
+	await page.getByRole("searchbox").fill(targetLabel);
+	await page
+		.locator(".easymde-settings-center__search-results")
+		.getByText(targetLabel, { exact: true })
+		.locator("xpath=ancestor::button[1]")
+		.click();
+
+	await expect(targetHeading).toBeFocused();
+	await expect(targetHeading).toHaveAttribute("tabindex", "-1");
+	await expect
+		.poll(async () => {
+			const [targetBox, headerBox] = await Promise.all([
+				targetHeading.boundingBox(),
+				page
+					.locator(".easymde-settings-center__sticky-header")
+					.boundingBox(),
+			]);
+			if (!targetBox || !headerBox)
+				throw new Error("settings-search-group-geometry-missing");
+
+			return Math.abs(targetBox.y - headerBox.y - headerBox.height - 33);
+		})
+		.toBeLessThanOrEqual(0.5);
+});
+
+test("matches the reference Settings Center header geometry", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	const geometry = await page.evaluate(() => {
+		const measure = (selector) => {
+			const element = document.querySelector(selector);
+			if (!element) {
+				throw new Error(`settings-geometry-missing-${selector}`);
+			}
+
+			const rect = element.getBoundingClientRect();
+			return {
+				x: rect.x,
+				y: rect.y,
+				width: rect.width,
+				height: rect.height,
+			};
+		};
+
+		return {
+			title: measure(".easymde-settings-center__header-scale h1"),
+			description: measure(
+				".easymde-settings-center__header-scale header p",
+			),
+			closeIcon: measure(
+				".easymde-settings-center__header-scale header > a svg",
+			),
+			closeLink: measure(
+				".easymde-settings-center__header-scale header > a",
+			),
+			search: measure(".easymde-settings-center__search input"),
+			searchIcon: measure(".easymde-settings-center__search > svg"),
+			footerSpace: measure(
+				".easymde-settings-center__content-footer-space",
+			),
+			frame: measure(".easymde-settings-center__frame"),
+			aside: measure(".easymde-settings-center__sidebar"),
+			main: measure(".easymde-settings-center main"),
+			relationships: (() => {
+				const frame = measure(".easymde-settings-center__frame");
+				const aside = measure(".easymde-settings-center__sidebar");
+				const main = measure(".easymde-settings-center main");
+				const title = measure(".easymde-settings-center__header-scale h1");
+				const description = measure(
+					".easymde-settings-center__header-scale header p",
+				);
+				const closeLink = measure(
+					".easymde-settings-center__header-scale header > a",
+				);
+				const search = measure(".easymde-settings-center__search input");
+
+				return {
+					frameLeft: frame.x,
+					asideFrameOffsetX: aside.x - frame.x,
+					mainFrameOffsetX: main.x - frame.x,
+					titleMainOffsetX: title.x - main.x,
+					descriptionMainOffsetX: description.x - main.x,
+					closeFrameRightGap: frame.x + frame.width - closeLink.x - closeLink.width,
+					searchMainLeftGap: search.x - main.x,
+					searchMainRightGap: main.x + main.width - search.x - search.width,
+				};
+			})(),
+		};
+	});
+
+	for (const [key, expected] of Object.entries({
+		title: { y: 93.6, height: 37.8 },
+		description: { y: 138.6, height: 21.6 },
+		closeIcon: { y: 21.04, width: 20.7, height: 20.7 },
+		closeLink: { y: 16.2, width: 30.375, height: 30.375 },
+		search: { y: 198, height: 38.7 },
+		searchIcon: { y: 208.35, width: 18, height: 18 },
+		footerSpace: { height: 30 },
+	})) {
+		for (const [property, value] of Object.entries(expected)) {
+			expectNear(geometry[key][property], value);
+		}
+	}
+
+	for (const [property, value] of Object.entries({
+		frameLeft: 0,
+		asideFrameOffsetX: 0,
+		mainFrameOffsetX: 260,
+		titleMainOffsetX: 33.3,
+		descriptionMainOffsetX: 32.4,
+		closeFrameRightGap: 16.2,
+		searchMainLeftGap: 30.6,
+		searchMainRightGap: 33.3,
+	})) {
+		expectNear(geometry.relationships[property], value);
+	}
 });
 
 test("rejects the removed Settings Center URL without loading its form or assets", async ({

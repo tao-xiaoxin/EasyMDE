@@ -1263,7 +1263,7 @@ msgstr "关闭配置中心"
 
 #: src/Admin/SettingsCenterStrings.php:20
 msgid "Search all settings"
-msgstr "搜索所有设置"
+msgstr "搜索全部设置"
 
 #: src/Admin/SettingsCenterStrings.php:21
 msgid "Search all plugin settings..."
@@ -1271,7 +1271,7 @@ msgstr "搜索全部插件配置项..."
 
 #: src/Admin/SettingsCenterStrings.php:22
 msgid "Clear search"
-msgstr "清除搜索"
+msgstr "清空搜索"
 
 #: src/Admin/SettingsCenterStrings.php:24
 msgid "Search Settings"
@@ -1281,7 +1281,7 @@ msgstr "搜索设置"
 #: src/Admin/SettingsCenterStrings.php:26
 #, php-format
 msgid "Only settings matching \"%s\" are shown."
-msgstr "仅显示匹配“%s”的设置。"
+msgstr "仅展示与“%s”匹配的配置项。"
 
 #: src/Admin/SettingsCenterStrings.php:27
 msgid "Search Results"
@@ -1297,11 +1297,11 @@ msgstr "%s 项"
 #: src/Admin/SettingsCenterStrings.php:31
 #, php-format
 msgid "No settings related to \"%s\" were found"
-msgstr "未找到与“%s”相关的设置"
+msgstr "未找到“%s”相关设置"
 
 #: src/Admin/SettingsCenterStrings.php:32
 msgid "Try a setting name, feature keyword, or service name."
-msgstr "请尝试输入设置名称、功能关键词或服务名称。"
+msgstr "请尝试设置名称、功能关键词或服务名称。"
 
 #: src/Admin/SettingsCenterStrings.php:33
 msgid "General Settings"

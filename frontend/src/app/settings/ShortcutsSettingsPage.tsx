@@ -144,23 +144,17 @@ export function ShortcutsSettingsPage({
       [id]: { ...values[id], [platform]: value }
     }});
   };
-  const resetGroup = (group: ShortcutGroup) => {
-    const nextValues = { ...values };
-    group.rows.forEach(({ id }) => {
-      nextValues[id] = resetValues[id];
-    });
-    update({ ...settings, values: nextValues });
-  };
+  const resetShortcuts = () => update({ ...settings, values: resetValues });
 
   return <div className="easymde-settings-center__shortcuts-settings">
     <div className="easymde-settings-center__shortcut-groups">
-      {SHORTCUT_GROUPS.map((group) => <ShortcutCard
+      {SHORTCUT_GROUPS.map((group, groupIndex) => <ShortcutCard
         key={group.title}
         group={group}
         strings={s}
         values={values}
         onChange={updateShortcut}
-        onReset={() => resetGroup(group)}
+        onReset={groupIndex === 0 ? resetShortcuts : undefined}
       />)}
     </div>
     <section className="easymde-settings-center__shortcut-behavior">

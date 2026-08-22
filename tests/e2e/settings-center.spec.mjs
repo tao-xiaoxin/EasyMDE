@@ -151,6 +151,112 @@ test("opens the settings center through the explicit General route", async ({
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 });
 
+test("keeps section navigation, the sticky boundary, and the Chinese heading in sync", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	const steps = [
+		{ id: "images", previousId: "general", title: "图床设置" },
+		{ id: "markdown", previousId: "images", title: "Markdown 设置" },
+	];
+
+	for (const step of steps) {
+		await page.locator(`[data-nav-id="${step.id}"]`).click();
+		await expect
+			.poll(async () =>
+				page.evaluate(({ id, previousId }) => {
+					const section = document.querySelector(
+						`[data-settings-section="${id}"]`,
+					);
+					const stickyHeader = document.querySelector(
+						".easymde-settings-center__sticky-header",
+					);
+					const currentNav = document.querySelector(`[data-nav-id="${id}"]`);
+					const previousNav = document.querySelector(
+						`[data-nav-id="${previousId}"]`,
+					);
+					const heading = document.querySelector(
+						".easymde-settings-center__sticky-header h1",
+					);
+					if (
+						!section ||
+						!stickyHeader ||
+						!currentNav ||
+						!previousNav ||
+						!heading
+					) {
+						throw new Error(`settings-navigation-${id}-state-missing`);
+					}
+
+					return {
+						referenceSectionGap:
+							Math.abs(
+								section.getBoundingClientRect().top -
+									stickyHeader.getBoundingClientRect().bottom -
+									9,
+							) <= 0.5,
+						current: currentNav.getAttribute("aria-current"),
+						previous: previousNav.getAttribute("aria-current"),
+						heading: heading.textContent?.trim(),
+					};
+				}, step),
+			)
+			.toEqual({
+				referenceSectionGap: true,
+				current: "page",
+				previous: null,
+				heading: step.title,
+			});
+	}
+});
+
+test("opens a search result at the reference offset and focuses its control", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	await page
+		.getByRole("searchbox", { name: "搜索全部设置" })
+		.fill("自动聚焦编辑器");
+	await page
+		.locator(".easymde-settings-center__search-results button")
+		.filter({ hasText: "自动聚焦编辑器" })
+		.click();
+
+	await expect
+		.poll(() =>
+			page.evaluate(() => {
+				const target = document.querySelector(
+					'[data-setting-label="自动聚焦编辑器"]',
+				);
+				const stickyHeader = document.querySelector(
+					".easymde-settings-center__sticky-header",
+				);
+				const control = target?.querySelector("button");
+				if (!target || !stickyHeader || !control)
+					throw new Error("settings-search-result-target-missing");
+
+				return {
+					referenceTargetGap:
+						Math.abs(
+							target.getBoundingClientRect().top -
+								stickyHeader.getBoundingClientRect().bottom -
+								33,
+						) <= 0.5,
+					focused: document.activeElement === control,
+				};
+			}),
+		)
+		.toEqual({ referenceTargetGap: true, focused: true });
+});
+
 test("matches the reference Settings Center header geometry", async ({
 	page,
 }) => {
@@ -188,6 +294,9 @@ test("matches the reference Settings Center header geometry", async ({
 			),
 			search: measure(".easymde-settings-center__search input"),
 			searchIcon: measure(".easymde-settings-center__search > svg"),
+			footerSpace: measure(
+				".easymde-settings-center__content-footer-space",
+			),
 			frame: measure(".easymde-settings-center__frame"),
 			aside: measure(".easymde-settings-center__sidebar"),
 			main: measure(".easymde-settings-center main"),
@@ -219,12 +328,13 @@ test("matches the reference Settings Center header geometry", async ({
 	});
 
 	for (const [key, expected] of Object.entries({
-		title: { y: 94.6, height: 37.8 },
-		description: { y: 139.6, height: 21.6 },
-		closeIcon: { y: 22.04, width: 20.7, height: 20.7 },
-		closeLink: { y: 17.2, width: 30.375, height: 30.375 },
-		search: { y: 199, height: 38.7 },
-		searchIcon: { y: 209.35, width: 18, height: 18 },
+		title: { y: 93.6, height: 37.8 },
+		description: { y: 138.6, height: 21.6 },
+		closeIcon: { y: 21.04, width: 20.7, height: 20.7 },
+		closeLink: { y: 16.2, width: 30.375, height: 30.375 },
+		search: { y: 198, height: 38.7 },
+		searchIcon: { y: 208.35, width: 18, height: 18 },
+		footerSpace: { height: 30 },
 	})) {
 		for (const [property, value] of Object.entries(expected)) {
 			expectNear(geometry[key][property], value);
@@ -233,11 +343,11 @@ test("matches the reference Settings Center header geometry", async ({
 
 	for (const [property, value] of Object.entries({
 		frameLeft: 0,
-		asideFrameOffsetX: 1,
-		mainFrameOffsetX: 261,
+		asideFrameOffsetX: 0,
+		mainFrameOffsetX: 260,
 		titleMainOffsetX: 33.3,
 		descriptionMainOffsetX: 32.4,
-		closeFrameRightGap: 17.2,
+		closeFrameRightGap: 16.2,
 		searchMainLeftGap: 30.6,
 		searchMainRightGap: 33.3,
 	})) {

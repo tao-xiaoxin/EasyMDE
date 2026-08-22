@@ -108,6 +108,9 @@ const NAV_ITEMS: ReadonlyArray<
 ];
 
 const SETTINGS_SAVE_CONFIRMATION_DURATION = 2000;
+const SETTINGS_SECTION_ACTIVATION_OFFSET = 15;
+const SETTINGS_SECTION_SCROLL_LEAD = 6;
+const SETTINGS_SEARCH_RESULT_SCROLL_TRAIL = 18;
 export function SettingsCenterRoot({
 	bootstrap,
 }: {
@@ -345,7 +348,8 @@ export function SettingsCenterRoot({
 			throw new Error("settings-center-navigation-header-missing");
 		let viewportTop = Math.max(
 			container.getBoundingClientRect().top,
-			stickyHeader.getBoundingClientRect().bottom,
+			stickyHeader.getBoundingClientRect().bottom +
+				SETTINGS_SECTION_ACTIVATION_OFFSET,
 		);
 		if (saveBarVisible) {
 			const saveBar = saveBarRef.current;
@@ -353,7 +357,8 @@ export function SettingsCenterRoot({
 				throw new Error("settings-center-navigation-save-bar-missing");
 			viewportTop = Math.max(
 				viewportTop,
-				saveBar.getBoundingClientRect().bottom,
+				saveBar.getBoundingClientRect().bottom +
+					SETTINGS_SECTION_ACTIVATION_OFFSET,
 			);
 		}
 		return viewportTop;
@@ -362,11 +367,12 @@ export function SettingsCenterRoot({
 	const scrollTargetIntoView = (
 		container: HTMLDivElement,
 		target: HTMLElement,
+		viewportOffset: number,
 	) => {
 		const targetTop =
 			container.scrollTop +
 			target.getBoundingClientRect().top -
-			navigationViewportTop(container);
+			(navigationViewportTop(container) + viewportOffset);
 		container.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
 	};
 
@@ -388,7 +394,17 @@ export function SettingsCenterRoot({
 		);
 	};
 
-	const scheduleScrollToTarget = (tabId: NavId, targetId: string) => {
+	const scheduleScrollToTarget = (
+		tabId: NavId,
+		targetId: string,
+		{
+			focusFirstControl = false,
+			viewportOffset = -SETTINGS_SECTION_SCROLL_LEAD,
+		}: {
+			focusFirstControl?: boolean;
+			viewportOffset?: number;
+		} = {},
+	) => {
 		const windowRef = scrollContainerRef.current?.ownerDocument.defaultView;
 		if (!windowRef)
 			throw new Error("settings-center-navigation-window-missing");
@@ -406,7 +422,14 @@ export function SettingsCenterRoot({
 					throw new Error(
 						`settings-center-navigation-target-${targetId}-missing`,
 					);
-				scrollTargetIntoView(container, target);
+				scrollTargetIntoView(container, target, viewportOffset);
+				if (focusFirstControl) {
+					target
+						.querySelector<HTMLElement>(
+							"input, select, textarea, button, a[href]",
+						)
+						?.focus({ preventScroll: true });
+				}
 			});
 		});
 	};
@@ -422,13 +445,16 @@ export function SettingsCenterRoot({
 		const section = sectionRefs.current[id];
 		if (!container || !section)
 			throw new Error(`settings-center-section-${id}-unavailable`);
-		scrollTargetIntoView(container, section);
+		scrollTargetIntoView(container, section, -SETTINGS_SECTION_SCROLL_LEAD);
 		setActiveTab(id);
 	};
 
 	const openSearchResult = (item: SearchItem) => {
 		setQuery("");
-		scheduleScrollToTarget(item.tabId, item.targetId);
+		scheduleScrollToTarget(item.tabId, item.targetId, {
+			focusFirstControl: true,
+			viewportOffset: SETTINGS_SEARCH_RESULT_SCROLL_TRAIL,
+		});
 	};
 	const settingsPort = useMemo(
 		() => createWordPressSettingsPort(bootstrap.api),
@@ -931,6 +957,10 @@ export function SettingsCenterRoot({
 							</div>
 						</div>
 					</div>
+					<div
+						className="easymde-settings-center__content-footer-space"
+						aria-hidden="true"
+					/>
 				</main>
 			</div>
 			<div ref={setOverlayRoot} data-settings-overlay-root="" />

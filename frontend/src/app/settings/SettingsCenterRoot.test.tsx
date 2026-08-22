@@ -123,7 +123,7 @@ describe("SettingsCenterRoot global search", () => {
 		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
 		await user.click(screen.getByRole("button", { name: "markdown" }));
 
-		expect(scrollTo).toHaveBeenCalledWith({ top: 816, behavior: "auto" });
+		expect(scrollTo).toHaveBeenCalledWith({ top: 807, behavior: "auto" });
 		expect(windowScrollTo).not.toHaveBeenCalled();
 		windowScrollTo.mockRestore();
 	});
@@ -238,7 +238,7 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		).not.toBeNull();
 	});
 
-	it("restores defaults only within the selected shortcut group", async () => {
+	it("restores every shortcut from the single reference reset command", async () => {
 		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const windowsSave = screen.getByRole<HTMLInputElement>("textbox", {
@@ -272,7 +272,30 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		);
 		expect(windowsSave.value).toBe("Ctrl+S");
 		expect(macSave.value).toBe("Cmd+S");
-		expect(headingWindows.value).toBe("Ctrl+Shift+1");
+		expect(headingWindows.value).toBe("Ctrl+1");
+	});
+
+	it("shows the reset command only on the reference common-shortcuts group", () => {
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const commonGroup = screen
+			.getByRole("heading", { name: "commonShortcuts" })
+			.closest("section");
+		const headingGroup = screen
+			.getByRole("heading", { name: "headingAndFormatting" })
+			.closest("section");
+		if (!(commonGroup instanceof HTMLElement) || !(headingGroup instanceof HTMLElement))
+			throw new Error("shortcut-reset-visibility-groups-missing");
+
+		expect(
+			within(commonGroup).getByRole("button", {
+				name: "restoreDefaultShortcuts",
+			}),
+		).not.toBeNull();
+		expect(
+			within(headingGroup).queryByRole("button", {
+				name: "restoreDefaultShortcuts",
+			}),
+		).toBeNull();
 	});
 
 	it("preserves an empty shortcut binding when its field is cleared", async () => {

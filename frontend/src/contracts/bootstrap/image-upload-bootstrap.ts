@@ -10,7 +10,14 @@ export type ImageUploadStrings = Readonly<{
   pasteUploading: string;
 }>;
 
+export type ImageUploadMimeType =
+  | 'image/jpeg'
+  | 'image/png'
+  | 'image/webp'
+  | 'image/gif';
+
 export type ImageUploadBootstrap = Readonly<{
+  allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
   enabled: boolean;
   endpoint: string;
   maxBytes: number;
@@ -18,6 +25,27 @@ export type ImageUploadBootstrap = Readonly<{
   postId: number;
   strings: ImageUploadStrings;
 }>;
+
+const IMAGE_UPLOAD_MIME_TYPES: ReadonlyArray<ImageUploadMimeType> = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif'
+];
+
+function mimeTypesValue(value: unknown): ReadonlyArray<ImageUploadMimeType> {
+  if (
+    !Array.isArray(value)
+    || value.some((mimeType) =>
+      'string' !== typeof mimeType
+      || !IMAGE_UPLOAD_MIME_TYPES.includes(mimeType as ImageUploadMimeType)
+    )
+    || new Set(value).size !== value.length
+  ) {
+    throw new Error('image-upload-mime-types-invalid');
+  }
+  return value as ReadonlyArray<ImageUploadMimeType>;
+}
 
 function stringValue(value: unknown, code: string): string {
   if ('string' !== typeof value || '' === value.trim() || value.length > 512) {
@@ -44,6 +72,7 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
   const messages = strings as Record<string, unknown>;
 
   return {
+    allowedMimeTypes: mimeTypesValue(bootstrap.allowedMimeTypes),
     enabled: true === bootstrap.enabled,
     endpoint: stringValue(bootstrap.endpoint, 'image-upload-endpoint-invalid'),
     maxBytes: integerValue(bootstrap.maxBytes, 1, 'image-upload-max-bytes-invalid'),

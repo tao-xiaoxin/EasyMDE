@@ -118,7 +118,7 @@ final class Plugin {
 		$this->rest_controllers = array(
 			new PreviewController( $capabilities, $theme_state_repository, $feature_detector ),
 			new RevisionController( $capabilities, $post_document, $feature_detector ),
-			new MediaController( $capabilities ),
+			new MediaController( $capabilities, $settings_center_repository ),
 			new ThemeController( $capabilities, $theme_state_repository ),
 			new CustomCssController( $capabilities, $theme_state_repository, $custom_css_policy ),
 			new SettingsController( $capabilities, $settings_center_repository ),

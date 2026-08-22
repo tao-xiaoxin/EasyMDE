@@ -194,7 +194,7 @@ export type EditorRootProps = Readonly<{
   fonts: FontControlsBootstrap;
   imageUpload: Pick<
     ImageUploadBootstrap,
-    'enabled' | 'maxBytes' | 'postId' | 'strings'
+    'allowedMimeTypes' | 'enabled' | 'maxBytes' | 'postId' | 'strings'
   >;
   imageUploadPort: ImageUploadPort;
   isNewPost: boolean;
@@ -1631,6 +1631,7 @@ export function EditorRoot(props: EditorRootProps) {
       ? visualEditorRuntimeRef.current
       : null;
     return createImageUploadSession({
+      allowedMimeTypes: props.imageUpload.allowedMimeTypes,
       document: visualRuntime
         ? {
             applyTextChange: (change) => {

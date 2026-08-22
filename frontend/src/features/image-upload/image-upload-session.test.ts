@@ -4,6 +4,7 @@ import type {
   ImageUploadDocumentSnapshot,
   ImageUploadResult
 } from '../../contracts/ports/image-upload-port';
+import type { ImageUploadMimeType } from '../../contracts/bootstrap/image-upload-bootstrap';
 import { createImageUploadSession } from './image-upload-session';
 
 const strings = {
@@ -44,7 +45,13 @@ function operationIdSequence() {
 
 function setup(
   uploadResult: Promise<ImageUploadResult>,
-  nextOperationId = operationIdSequence()
+  nextOperationId = operationIdSequence(),
+  allowedMimeTypes: ReadonlyArray<ImageUploadMimeType> = [
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/gif'
+  ]
 ) {
   let snapshot: ImageUploadDocumentSnapshot = {
     selection: { direction: 'none', end: 5, start: 5 },
@@ -58,7 +65,9 @@ function setup(
   }> = [];
   const diagnostics: string[] = [];
   const focus = vi.fn();
+  const upload = vi.fn(() => uploadResult);
   const cleanup = createImageUploadSession({
+    allowedMimeTypes,
     document: {
       applyTextChange: (value) => {
         snapshot = value;
@@ -74,7 +83,7 @@ function setup(
     postId: 17,
     strings,
     target,
-    upload: { upload: () => uploadResult }
+    upload: { upload }
   });
   return {
     cleanup,
@@ -85,7 +94,8 @@ function setup(
       snapshot = value;
     },
     statuses,
-    target
+    target,
+    upload
   };
 }
 
@@ -196,6 +206,27 @@ describe('createImageUploadSession', () => {
     expect(pending.getSnapshot().value).toBe('Hello world');
   });
 
+  it('rejects a disabled image format before the WordPress upload request', () => {
+    const session = setup(
+      Promise.resolve({ alt: '', status: 'uploaded', url: '/unused' }),
+      operationIdSequence(),
+      ['image/png']
+    );
+    const event = transferEvent('paste', new File(['image'], 'photo.jpg', {
+      type: 'image/jpeg'
+    }));
+
+    session.target.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(session.upload).not.toHaveBeenCalled();
+    expect(session.statuses).toEqual([{
+      message: 'Paste failed',
+      operationId: 'image-upload-1',
+      type: 'error'
+    }]);
+  });
+
   it('keeps concurrent upload statuses bound to distinct operation IDs', async () => {
     const pending: Array<(value: ImageUploadResult) => void> = [];
     let snapshot: ImageUploadDocumentSnapshot = {
@@ -209,6 +240,7 @@ describe('createImageUploadSession', () => {
     }> = [];
     const target = document.createElement('div');
     createImageUploadSession({
+      allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       document: {
         applyTextChange: (value) => {
           snapshot = value;

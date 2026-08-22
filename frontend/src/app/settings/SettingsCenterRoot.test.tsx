@@ -274,6 +274,45 @@ describe("SettingsCenterRoot global search", () => {
 		expect(target.tabIndex).toBe(-1);
 	});
 
+	it("enables only owner-backed upload formats and keeps one format selected", async () => {
+		const user = userEvent.setup();
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const formats = [
+			"allowUploadJpg",
+			"allowUploadPng",
+			"allowUploadWebp",
+			"allowUploadGif",
+		];
+		const controls = formats.map((name) =>
+			screen.getByRole<HTMLInputElement>("checkbox", { name }),
+		);
+		const [jpg, png, webp, gif] = controls;
+		if (!jpg || !png || !webp || !gif)
+			throw new Error("settings-upload-format-controls-missing");
+
+		expect(controls.every((control) => !control.disabled)).toBe(true);
+		await user.click(jpg);
+		await user.click(png);
+		await user.click(webp);
+
+		expect(gif.checked).toBe(true);
+		expect(gif.disabled).toBe(false);
+		await user.click(gif);
+		expect(gif.checked).toBe(true);
+		expect(screen.getByRole("alert").textContent).toContain(
+			"uploadFormatRequired",
+		);
+		await user.click(
+			screen.getByRole("button", { name: "closeImageFeedback" }),
+		);
+		expect(screen.queryByRole("alert")).toBeNull();
+		expect(
+			screen
+				.getByRole("switch", { name: "compressImages" })
+				.matches(":disabled"),
+		).toBe(true);
+	});
+
 	it("excludes the About page from the settings search index", async () => {
 		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
@@ -542,7 +581,7 @@ describe("SettingsCenterRoot images section", () => {
 		);
 	});
 
-	it("keeps filename and upload controls unavailable", () => {
+	it("keeps filename behavior unavailable while enabling upload formats", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const rule = screen.getByRole<HTMLInputElement>("textbox", {
 			name: "fileNameRule",
@@ -550,7 +589,7 @@ describe("SettingsCenterRoot images section", () => {
 		const gif = screen.getByRole("checkbox", { name: "allowUploadGif" });
 
 		expect(rule.matches(":disabled")).toBe(true);
-		expect(gif.matches(":disabled")).toBe(true);
+		expect(gif.matches(":disabled")).toBe(false);
 		expect(
 			screen
 				.getByRole("button", { name: "fileNamePresetMd5" })

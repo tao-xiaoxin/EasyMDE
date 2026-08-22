@@ -68,6 +68,10 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( $post_id, $bootstrap['preview']['postId'] );
 		$this->assertIsObject( $bootstrap['preview']['features'] );
 		$this->assertSame( $post_id, $bootstrap['imageUpload']['postId'] );
+		$this->assertSame(
+			array( 'image/jpeg', 'image/png', 'image/webp', 'image/gif' ),
+			$bootstrap['imageUpload']['allowedMimeTypes']
+		);
 		$this->assertSame( $post_id, $bootstrap['localDrafts']['postId'] );
 		$this->assertArrayHasKey( 'document', $bootstrap );
 		$this->assertArrayHasKey( 'appearance', $bootstrap );

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseImageUploadBootstrap } from './image-upload-bootstrap';
 
 const validBootstrap = {
+  allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
   enabled: true,
   endpoint: '/wp-json/easymde/v1/media',
   maxBytes: 1024,
@@ -33,5 +34,9 @@ describe('parseImageUploadBootstrap', () => {
       ...validBootstrap,
       strings: { ...validBootstrap.strings, pasteFailed: '' }
     })).toThrow('image-upload-string-invalid');
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
+      allowedMimeTypes: ['image/svg+xml']
+    })).toThrow('image-upload-mime-types-invalid');
   });
 });

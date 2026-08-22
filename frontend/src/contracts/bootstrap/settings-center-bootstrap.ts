@@ -198,6 +198,8 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"imageSize3840",
 	"allowedUploadFormats",
 	"allowedUploadFormatsDescription",
+	"uploadFormatRequired",
+	"closeImageFeedback",
 	"uploadFormatJpg",
 	"uploadFormatPng",
 	"uploadFormatWebp",
@@ -440,10 +442,7 @@ function parseSettingsStringFields(
 	);
 	for (const key of keys) {
 		const field = value[key];
-		if (
-			typeof field !== "string" ||
-			field.length > SETTINGS_STRING_MAX_LENGTH
-		)
+		if (typeof field !== "string" || field.length > SETTINGS_STRING_MAX_LENGTH)
 			throw new Error(`settings-center-${section}-${key}-invalid`);
 	}
 	return value;

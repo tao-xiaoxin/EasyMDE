@@ -2018,6 +2018,14 @@ msgid "Select the image file formats that the editor may choose and upload."
 msgstr "选择编辑器可以选择并上传的图片格式。"
 
 #: src/Admin/SettingsCenterStrings.php:210
+msgid "Keep at least one image upload format enabled."
+msgstr "至少需要保留一种允许上传的图片格式。"
+
+#: src/Admin/SettingsCenterStrings.php:211
+msgid "Close Image Upload Feedback"
+msgstr "关闭图片上传提示"
+
+#: src/Admin/SettingsCenterStrings.php:210
 msgid "JPG / JPEG / JFIF"
 msgstr "JPG / JPEG / JFIF"
 
@@ -2935,9 +2943,9 @@ msgstr "未提供要上传的图片文件。"
 msgid "The image could not be uploaded."
 msgstr "无法上传图片。"
 
-#: src/Rest/MediaController.php:74 src/Rest/MediaController.php:162
-msgid "Only JPEG, PNG, GIF, or WebP images can be uploaded into EasyMDE."
-msgstr "只能将 JPEG、PNG、GIF 或 WebP 图片上传到 EasyMDE。"
+#: src/Rest/MediaController.php:77 src/Rest/MediaController.php:156
+msgid "This image format is not allowed by the current EasyMDE settings."
+msgstr "当前 EasyMDE 设置不允许上传这种图片格式。"
 
 #: src/Rest/MediaController.php:82
 msgid "The image is larger than the allowed upload size."

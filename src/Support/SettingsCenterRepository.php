@@ -91,6 +91,26 @@ final class SettingsCenterRepository {
 		return $shortcuts;
 	}
 
+	public function get_allowed_image_mime_types() {
+		$settings             = $this->get_settings();
+		$formats              = $settings['images']['uploadFormats'];
+		$mime_types_by_format = array(
+			'jpg'  => 'image/jpeg',
+			'png'  => 'image/png',
+			'webp' => 'image/webp',
+			'gif'  => 'image/gif',
+		);
+		$mime_types           = array();
+
+		foreach ( $mime_types_by_format as $format => $mime_type ) {
+			if ( ! empty( $formats[ $format ] ) ) {
+				$mime_types[] = $mime_type;
+			}
+		}
+
+		return $mime_types;
+	}
+
 	public function update_settings( $input, $reset_secrets = false ) {
 		if ( ! is_array( $input ) || ! array_key_exists( 'revision', $input ) || ! is_int( $input['revision'] ) || $input['revision'] < 0 ) {
 			return new WP_Error(

@@ -40,6 +40,21 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame($saved, $repository->get_settings());
     }
 
+    public function test_upload_format_runtime_contract_uses_only_enabled_formats()
+    {
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+        $settings = $repository->get_settings();
+        $settings['images']['uploadFormats'] = array(
+            'jpg' => false,
+            'png' => true,
+            'webp' => false,
+            'gif' => false,
+        );
+
+        $this->assertIsArray($repository->update_settings($settings));
+        $this->assertSame(array('image/png'), $repository->get_allowed_image_mime_types());
+    }
+
     public function test_get_settings_normalizes_legacy_values_without_writing_or_exposing_secrets()
     {
         $legacy = array(
@@ -271,5 +286,31 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $forbidden = rest_do_request($request);
         $this->assertSame(403, $forbidden->get_status());
         $this->assertSame('easymde_rest_cannot_manage_settings', $forbidden->as_error()->get_error_code());
+    }
+
+    public function test_rest_update_rejects_disabling_every_upload_format()
+    {
+        global $wp_rest_server;
+        $wp_rest_server = new WP_REST_Server();
+        do_action('rest_api_init');
+
+        $administrator_id = self::factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($administrator_id);
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+        $settings = $repository->get_settings();
+        $settings['images']['uploadFormats'] = array(
+            'jpg' => false,
+            'png' => false,
+            'webp' => false,
+            'gif' => false,
+        );
+
+        $request = new WP_REST_Request('POST', '/easymde/v1/settings');
+        $request->set_header('X-EasyMDE-Settings-Nonce', wp_create_nonce('easymde_update_settings'));
+        $request->set_body_params(array('settings' => $settings));
+        $response = rest_do_request($request);
+
+        $this->assertSame(400, $response->get_status());
+        $this->assertSame('easymde_settings_invalid_payload', $response->as_error()->get_error_code());
     }
 }

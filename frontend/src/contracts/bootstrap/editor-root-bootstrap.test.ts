@@ -68,6 +68,7 @@ function validBootstrap() {
       }
     },
     imageUpload: {
+      allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       enabled: true,
       endpoint: 'https://example.test/wp-json/easymde/v1/media',
       maxBytes: 1024,
@@ -273,6 +274,7 @@ function validBootstrap() {
           surface: 'main'
         }
       ],
+      showShortcutHints: true,
       shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } },
       strings: {
         headingLabelFormat: 'Heading %s',

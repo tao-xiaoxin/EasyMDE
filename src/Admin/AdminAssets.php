@@ -266,12 +266,13 @@ final class AdminAssets {
 				),
 			),
 			'imageUpload'        => array(
-				'enabled'  => $this->get_image_upload_config()['enabled'],
-				'endpoint' => esc_url_raw( rest_url( 'easymde/v1/media' ) ),
-				'maxBytes' => $this->get_image_upload_config()['maxBytes'],
-				'nonce'    => $nonce,
-				'postId'   => absint( $post_id ),
-				'strings'  => array(
+				'allowedMimeTypes' => $this->settings_center_repository->get_allowed_image_mime_types(),
+				'enabled'          => $this->get_image_upload_config()['enabled'],
+				'endpoint'         => esc_url_raw( rest_url( 'easymde/v1/media' ) ),
+				'maxBytes'         => $this->get_image_upload_config()['maxBytes'],
+				'nonce'            => $nonce,
+				'postId'           => absint( $post_id ),
+				'strings'          => array(
 					'defaultAlt'     => $strings['mediaDefaultAlt'],
 					'dropFailed'     => $strings['imageDropFailed'],
 					'dropTooLarge'   => $strings['imageDropTooLarge'],
@@ -337,11 +338,11 @@ final class AdminAssets {
 				'codeThemes'   => $code_themes,
 				'strings'      => array( 'renderingFailed' => $strings['renderingFailed'] ),
 			),
-				'toolbar'            => array(
-					'commands'          => $this->toolbar_registry->get_commands_for_script(),
-					'showShortcutHints' => (bool) $settings['shortcuts']['showHints'],
-					'shortcuts'         => $this->settings_center_repository->get_shortcut_config_for_script(),
-				'strings'   => array(
+			'toolbar'            => array(
+				'commands'          => $this->toolbar_registry->get_commands_for_script(),
+				'showShortcutHints' => (bool) $settings['shortcuts']['showHints'],
+				'shortcuts'         => $this->settings_center_repository->get_shortcut_config_for_script(),
+				'strings'           => array(
 					'headingLabelFormat' => $strings['headingLabelFormat'],
 					'headingLevel'       => $strings['headingLevel'],
 					'headings'           => $strings['headings'],

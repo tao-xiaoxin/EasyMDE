@@ -1,4 +1,10 @@
-import { createElement, useEffect, useRef, useState } from "@wordpress/element";
+import {
+	createElement,
+	createPortal,
+	useEffect,
+	useRef,
+	useState,
+} from "@wordpress/element";
 import type {
 	SettingsCenterBootstrap,
 	SettingsCenterStringKey,
@@ -7,7 +13,7 @@ import type {
 	ImageSettings,
 	ImageUploadFormat,
 } from "../../contracts/settings-center-settings";
-import { ChevronDown, Copy, Eye, Info } from "../../generated/lucide-icons";
+import { ChevronDown, Copy, Eye, Info, X } from "../../generated/lucide-icons";
 import {
 	SettingsRow,
 	SettingsToggle,
@@ -340,11 +346,13 @@ function FileNameRuleEditor({
 export function ImagesSettingsPage({
 	draft,
 	onChange,
+	overlayRoot,
 	settings: externalSettings,
 	strings,
 }: {
 	draft: SettingsCenterBootstrap["drafts"]["images"];
 	onChange?: (settings: ImageSettingsDraft) => void;
+	overlayRoot: HTMLDivElement | null;
 	settings?: ImageSettingsDraft;
 	strings: SettingsCenterBootstrap["strings"];
 }) {
@@ -421,6 +429,7 @@ export function ImagesSettingsPage({
 			featuredPlaceholder: true,
 		}),
 	);
+	const [formatError, setFormatError] = useState(false);
 	const rawSettings = externalSettings ?? localSettings;
 	const settings: ImageSettingsDraft = {
 		...rawSettings,
@@ -476,6 +485,42 @@ export function ImagesSettingsPage({
 		if (onChange) onChange(next);
 		else setLocalSettings(next);
 	}
+	function toggleUploadFormat(key: ImageUploadFormat) {
+		const checked = settings.uploadFormats[key];
+		if (checked && selectedFormats.length === 1) {
+			setFormatError(true);
+			console.error("[EasyMDE settings] Upload format change rejected", {
+				format: key,
+				reason: "no-upload-format",
+			});
+			return;
+		}
+		setFormatError(false);
+		setValue("uploadFormats", {
+			...settings.uploadFormats,
+			[key]: !checked,
+		});
+	}
+	const feedbackPortal =
+		formatError && overlayRoot
+			? createPortal(
+					<div
+						className="easymde-settings-center__transfer-feedback is-error"
+						role="alert"
+					>
+						<Info size={19} />
+						<span>{strings.uploadFormatRequired}</span>
+						<button
+							type="button"
+							aria-label={strings.closeImageFeedback}
+							onClick={() => setFormatError(false)}
+						>
+							<X size={16} />
+						</button>
+					</div>,
+					overlayRoot,
+				)
+			: null;
 
 	return (
 		<div className="easymde-settings-center__images-page">
@@ -484,159 +529,161 @@ export function ImagesSettingsPage({
 				label={strings.settingsUnavailable}
 				description={strings.settingsUnavailableDescription}
 			/>
-			<fieldset
-				disabled
-				aria-describedby="easymde-images-unavailable"
-				title={strings.settingsUnavailableDescription}
-				className="easymde-settings-center__unavailable-fields"
-			>
-				<section className="easymde-settings-center__image-group is-host-service">
-					<h2>
-						<ImageLibraryIcon size={25} />
-						{strings.imageHostService}
-					</h2>
-					<div>
+			<div aria-describedby="easymde-images-unavailable">
+				<fieldset
+					disabled
+					aria-describedby="easymde-images-unavailable"
+					title={strings.settingsUnavailableDescription}
+					className="easymde-settings-center__unavailable-fields"
+				>
+					<section className="easymde-settings-center__image-group is-host-service">
+						<h2>
+							<ImageLibraryIcon size={25} />
+							{strings.imageHostService}
+						</h2>
 						<div>
-							<ImageField label={strings.selectImageHostService}>
-								<CompactSelect
-									label={strings.selectImageHostService}
-									value={settings.service}
-									options={imageHostOptions}
-									onChange={(value) => setValue("service", value)}
+							<div>
+								<ImageField label={strings.selectImageHostService}>
+									<CompactSelect
+										label={strings.selectImageHostService}
+										value={settings.service}
+										options={imageHostOptions}
+										onChange={(value) => setValue("service", value)}
+									/>
+								</ImageField>
+								<ImageField label={strings.bucket}>
+									<ImageTextInput
+										label={strings.bucket}
+										value={settings.bucket}
+										onChange={(value) => setValue("bucket", value)}
+									/>
+								</ImageField>
+								<ImageField label={strings.customDomain}>
+									<ImageTextInput
+										label={strings.customDomain}
+										value={settings.domain}
+										onChange={(value) => setValue("domain", value)}
+									/>
+								</ImageField>
+								<ImageField label={strings.accessKey}>
+									<SecretInput
+										label={strings.accessKey}
+										value={settings.accessKey}
+										showLabel={strings.showSecret}
+										hideLabel={strings.hideSecret}
+										onChange={(value) => setValue("accessKey", value)}
+									/>
+								</ImageField>
+								<ImageField label={strings.secretKey}>
+									<SecretInput
+										label={strings.secretKey}
+										value={settings.secretKey}
+										showLabel={strings.showSecret}
+										hideLabel={strings.hideSecret}
+										onChange={(value) => setValue("secretKey", value)}
+									/>
+								</ImageField>
+								<FileNameRuleEditor
+									strings={strings}
+									value={settings.fileNameRule}
+									onChange={(value) => setValue("fileNameRule", value)}
 								/>
-							</ImageField>
-							<ImageField label={strings.bucket}>
-								<ImageTextInput
-									label={strings.bucket}
-									value={settings.bucket}
-									onChange={(value) => setValue("bucket", value)}
-								/>
-							</ImageField>
-							<ImageField label={strings.customDomain}>
-								<ImageTextInput
-									label={strings.customDomain}
-									value={settings.domain}
-									onChange={(value) => setValue("domain", value)}
-								/>
-							</ImageField>
-							<ImageField label={strings.accessKey}>
-								<SecretInput
-									label={strings.accessKey}
-									value={settings.accessKey}
-									showLabel={strings.showSecret}
-									hideLabel={strings.hideSecret}
-									onChange={(value) => setValue("accessKey", value)}
-								/>
-							</ImageField>
-							<ImageField label={strings.secretKey}>
-								<SecretInput
-									label={strings.secretKey}
-									value={settings.secretKey}
-									showLabel={strings.showSecret}
-									hideLabel={strings.hideSecret}
-									onChange={(value) => setValue("secretKey", value)}
-								/>
-							</ImageField>
-							<FileNameRuleEditor
-								strings={strings}
-								value={settings.fileNameRule}
-								onChange={(value) => setValue("fileNameRule", value)}
-							/>
+							</div>
 						</div>
-					</div>
-				</section>
+					</section>
 
-				<section className="easymde-settings-center__image-group is-backup-host">
-					<h2>
-						<Copy size={25} />
-						{strings.backupImageHost}
-					</h2>
-					<p className="easymde-settings-center__backup-description">
-						{strings.backupImageHostDescription}
-					</p>
-					<ImageBehaviorRow
-						label={strings.enableBackupImageHost}
-						description={strings.enableBackupImageHostDescription}
-					>
-						<SettingsToggle
+					<section className="easymde-settings-center__image-group is-backup-host">
+						<h2>
+							<Copy size={25} />
+							{strings.backupImageHost}
+						</h2>
+						<p className="easymde-settings-center__backup-description">
+							{strings.backupImageHostDescription}
+						</p>
+						<ImageBehaviorRow
 							label={strings.enableBackupImageHost}
-							checked={settings.backupEnabled}
-							onChange={() =>
-								setValue("backupEnabled", !settings.backupEnabled)
-							}
-						/>
-					</ImageBehaviorRow>
-					{settings.backupEnabled ? (
-						<div className="easymde-settings-center__backup-fields">
-							<ImageField label={strings.backupImageHostService}>
-								<CompactSelect
-									label={strings.backupImageHostService}
-									value={settings.backupService}
-									options={backupHostOptions}
-									onChange={(value) => setValue("backupService", value)}
-								/>
-							</ImageField>
-							<ImageField label={strings.backupBucket}>
-								<ImageTextInput
-									label={strings.backupBucket}
-									value={settings.backupBucket}
-									onChange={(value) => setValue("backupBucket", value)}
-								/>
-							</ImageField>
-							<ImageField label={strings.backupDomain}>
-								<ImageTextInput
-									label={strings.backupDomain}
-									value={settings.backupDomain}
-									onChange={(value) => setValue("backupDomain", value)}
-								/>
-							</ImageField>
-							<ImageField label={strings.backupAccessKey}>
-								<SecretInput
-									label={strings.backupAccessKey}
-									value={settings.backupAccessKey}
-									showLabel={strings.showBackupAccessKey}
-									hideLabel={strings.hideBackupAccessKey}
-									onChange={(value) => setValue("backupAccessKey", value)}
-								/>
-							</ImageField>
-							<ImageField label={strings.backupSecretKey}>
-								<SecretInput
-									label={strings.backupSecretKey}
-									value={settings.backupSecretKey}
-									showLabel={strings.showBackupSecretKey}
-									hideLabel={strings.hideBackupSecretKey}
-									onChange={(value) => setValue("backupSecretKey", value)}
-								/>
-							</ImageField>
-							<ImageBehaviorRow
-								label={strings.keepSameObjectPath}
-								description={strings.keepSameObjectPathDescription}
-							>
-								<SettingsToggle
+							description={strings.enableBackupImageHostDescription}
+						>
+							<SettingsToggle
+								label={strings.enableBackupImageHost}
+								checked={settings.backupEnabled}
+								onChange={() =>
+									setValue("backupEnabled", !settings.backupEnabled)
+								}
+							/>
+						</ImageBehaviorRow>
+						{settings.backupEnabled ? (
+							<div className="easymde-settings-center__backup-fields">
+								<ImageField label={strings.backupImageHostService}>
+									<CompactSelect
+										label={strings.backupImageHostService}
+										value={settings.backupService}
+										options={backupHostOptions}
+										onChange={(value) => setValue("backupService", value)}
+									/>
+								</ImageField>
+								<ImageField label={strings.backupBucket}>
+									<ImageTextInput
+										label={strings.backupBucket}
+										value={settings.backupBucket}
+										onChange={(value) => setValue("backupBucket", value)}
+									/>
+								</ImageField>
+								<ImageField label={strings.backupDomain}>
+									<ImageTextInput
+										label={strings.backupDomain}
+										value={settings.backupDomain}
+										onChange={(value) => setValue("backupDomain", value)}
+									/>
+								</ImageField>
+								<ImageField label={strings.backupAccessKey}>
+									<SecretInput
+										label={strings.backupAccessKey}
+										value={settings.backupAccessKey}
+										showLabel={strings.showBackupAccessKey}
+										hideLabel={strings.hideBackupAccessKey}
+										onChange={(value) => setValue("backupAccessKey", value)}
+									/>
+								</ImageField>
+								<ImageField label={strings.backupSecretKey}>
+									<SecretInput
+										label={strings.backupSecretKey}
+										value={settings.backupSecretKey}
+										showLabel={strings.showBackupSecretKey}
+										hideLabel={strings.hideBackupSecretKey}
+										onChange={(value) => setValue("backupSecretKey", value)}
+									/>
+								</ImageField>
+								<ImageBehaviorRow
 									label={strings.keepSameObjectPath}
-									checked={settings.backupSameObjectKey}
-									onChange={() =>
-										setValue(
-											"backupSameObjectKey",
-											!settings.backupSameObjectKey,
-										)
-									}
-								/>
-							</ImageBehaviorRow>
-							<ImageBehaviorRow
-								label={strings.backupFailureHandling}
-								description={strings.backupFailureHandlingDescription}
-							>
-								<CompactSelect
+									description={strings.keepSameObjectPathDescription}
+								>
+									<SettingsToggle
+										label={strings.keepSameObjectPath}
+										checked={settings.backupSameObjectKey}
+										onChange={() =>
+											setValue(
+												"backupSameObjectKey",
+												!settings.backupSameObjectKey,
+											)
+										}
+									/>
+								</ImageBehaviorRow>
+								<ImageBehaviorRow
 									label={strings.backupFailureHandling}
-									value={settings.backupFailureMode}
-									options={backupFailureOptions}
-									onChange={(value) => setValue("backupFailureMode", value)}
-								/>
-							</ImageBehaviorRow>
-						</div>
-					) : null}
-				</section>
+									description={strings.backupFailureHandlingDescription}
+								>
+									<CompactSelect
+										label={strings.backupFailureHandling}
+										value={settings.backupFailureMode}
+										options={backupFailureOptions}
+										onChange={(value) => setValue("backupFailureMode", value)}
+									/>
+								</ImageBehaviorRow>
+							</div>
+						) : null}
+					</section>
+				</fieldset>
 
 				<div className="easymde-settings-center__image-secondary-groups">
 					<section className="easymde-settings-center__image-group is-upload-behavior">
@@ -644,65 +691,72 @@ export function ImagesSettingsPage({
 							<SlidersIcon size={25} />
 							{strings.uploadBehavior}
 						</h2>
-						<ImageBehaviorRow label={strings.insertMarkdownAfterUpload}>
-							<SettingsToggle
-								label={strings.insertMarkdownAfterUpload}
-								checked={settings.insertMarkdown}
-								onChange={() =>
-									setValue("insertMarkdown", !settings.insertMarkdown)
-								}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow
-							label={strings.compressImages}
-							description={strings.compressImagesDescription}
+						<fieldset
+							disabled
+							aria-describedby="easymde-images-unavailable"
+							title={strings.settingsUnavailableDescription}
+							className="easymde-settings-center__unavailable-fields"
 						>
-							<SettingsToggle
+							<ImageBehaviorRow label={strings.insertMarkdownAfterUpload}>
+								<SettingsToggle
+									label={strings.insertMarkdownAfterUpload}
+									checked={settings.insertMarkdown}
+									onChange={() =>
+										setValue("insertMarkdown", !settings.insertMarkdown)
+									}
+								/>
+							</ImageBehaviorRow>
+							<ImageBehaviorRow
 								label={strings.compressImages}
-								checked={settings.compressImages}
-								onChange={() =>
-									setValue("compressImages", !settings.compressImages)
-								}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow
-							label={strings.preserveOriginalFileName}
-							description={strings.preserveOriginalFileNameDescription}
-						>
-							<SettingsToggle
+								description={strings.compressImagesDescription}
+							>
+								<SettingsToggle
+									label={strings.compressImages}
+									checked={settings.compressImages}
+									onChange={() =>
+										setValue("compressImages", !settings.compressImages)
+									}
+								/>
+							</ImageBehaviorRow>
+							<ImageBehaviorRow
 								label={strings.preserveOriginalFileName}
-								checked={settings.preserveFileName}
-								onChange={() =>
-									setValue("preserveFileName", !settings.preserveFileName)
-								}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow
-							label={strings.copyImageUrl}
-							description={strings.copyImageUrlDescription}
-						>
-							<SettingsToggle
+								description={strings.preserveOriginalFileNameDescription}
+							>
+								<SettingsToggle
+									label={strings.preserveOriginalFileName}
+									checked={settings.preserveFileName}
+									onChange={() =>
+										setValue("preserveFileName", !settings.preserveFileName)
+									}
+								/>
+							</ImageBehaviorRow>
+							<ImageBehaviorRow
 								label={strings.copyImageUrl}
-								checked={settings.copyUrl}
-								onChange={() => setValue("copyUrl", !settings.copyUrl)}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow label={strings.retryFailedUpload}>
-							<CompactSelect
-								label={strings.retryFailedUpload}
-								value={settings.retryCount}
-								options={retryOptions}
-								onChange={(value) => setValue("retryCount", value)}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow label={strings.maximumImageSize}>
-							<CompactSelect
-								label={strings.maximumImageSize}
-								value={settings.maxImageSize}
-								options={maxImageSizeOptions}
-								onChange={(value) => setValue("maxImageSize", value)}
-							/>
-						</ImageBehaviorRow>
+								description={strings.copyImageUrlDescription}
+							>
+								<SettingsToggle
+									label={strings.copyImageUrl}
+									checked={settings.copyUrl}
+									onChange={() => setValue("copyUrl", !settings.copyUrl)}
+								/>
+							</ImageBehaviorRow>
+							<ImageBehaviorRow label={strings.retryFailedUpload}>
+								<CompactSelect
+									label={strings.retryFailedUpload}
+									value={settings.retryCount}
+									options={retryOptions}
+									onChange={(value) => setValue("retryCount", value)}
+								/>
+							</ImageBehaviorRow>
+							<ImageBehaviorRow label={strings.maximumImageSize}>
+								<CompactSelect
+									label={strings.maximumImageSize}
+									value={settings.maxImageSize}
+									options={maxImageSizeOptions}
+									onChange={(value) => setValue("maxImageSize", value)}
+								/>
+							</ImageBehaviorRow>
+						</fieldset>
 						<SettingsRow
 							label={strings.allowedUploadFormats}
 							description={strings.allowedUploadFormatsDescription}
@@ -718,12 +772,7 @@ export function ImagesSettingsPage({
 													type="checkbox"
 													aria-label={strings[accessibleLabel]}
 													checked={checked}
-													onChange={() =>
-														setValue("uploadFormats", {
-															...settings.uploadFormats,
-															[key]: !checked,
-														})
-													}
+													onChange={() => toggleUploadFormat(key)}
 												/>
 												<span>{strings[label]}</span>
 											</label>
@@ -739,42 +788,52 @@ export function ImagesSettingsPage({
 							<DocumentIcon size={25} />
 							{strings.defaultInsertion}
 						</h2>
-						<ImageBehaviorRow label={strings.defaultInsertFormat}>
-							<CompactSelect
-								label={strings.defaultInsertFormat}
-								value={settings.insertFormat}
-								options={insertFormatOptions}
-								onChange={(value) => setValue("insertFormat", value)}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow label={strings.altTextSource}>
-							<CompactSelect
-								label={strings.altTextSource}
-								value={settings.altSource}
-								options={altSourceOptions}
-								onChange={(value) => setValue("altSource", value)}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow label={strings.imageTitleField}>
-							<CompactSelect
-								label={strings.imageTitleField}
-								value={settings.captionMode}
-								options={captionModeOptions}
-								onChange={(value) => setValue("captionMode", value)}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow
-							label={strings.imageFeaturedPlaceholder}
-							description={strings.imageFeaturedPlaceholderDescription}
+						<fieldset
+							disabled
+							aria-describedby="easymde-images-unavailable"
+							title={strings.settingsUnavailableDescription}
+							className="easymde-settings-center__unavailable-fields"
 						>
-							<SettingsToggle
+							<ImageBehaviorRow label={strings.defaultInsertFormat}>
+								<CompactSelect
+									label={strings.defaultInsertFormat}
+									value={settings.insertFormat}
+									options={insertFormatOptions}
+									onChange={(value) => setValue("insertFormat", value)}
+								/>
+							</ImageBehaviorRow>
+							<ImageBehaviorRow label={strings.altTextSource}>
+								<CompactSelect
+									label={strings.altTextSource}
+									value={settings.altSource}
+									options={altSourceOptions}
+									onChange={(value) => setValue("altSource", value)}
+								/>
+							</ImageBehaviorRow>
+							<ImageBehaviorRow label={strings.imageTitleField}>
+								<CompactSelect
+									label={strings.imageTitleField}
+									value={settings.captionMode}
+									options={captionModeOptions}
+									onChange={(value) => setValue("captionMode", value)}
+								/>
+							</ImageBehaviorRow>
+							<ImageBehaviorRow
 								label={strings.imageFeaturedPlaceholder}
-								checked={settings.featuredPlaceholder}
-								onChange={() =>
-									setValue("featuredPlaceholder", !settings.featuredPlaceholder)
-								}
-							/>
-						</ImageBehaviorRow>
+								description={strings.imageFeaturedPlaceholderDescription}
+							>
+								<SettingsToggle
+									label={strings.imageFeaturedPlaceholder}
+									checked={settings.featuredPlaceholder}
+									onChange={() =>
+										setValue(
+											"featuredPlaceholder",
+											!settings.featuredPlaceholder,
+										)
+									}
+								/>
+							</ImageBehaviorRow>
+						</fieldset>
 						<div className="easymde-settings-center__upload-summary">
 							<div>
 								<Info size={17} />
@@ -786,7 +845,8 @@ export function ImagesSettingsPage({
 						</div>
 					</section>
 				</div>
-			</fieldset>
+			</div>
+			{feedbackPortal}
 		</div>
 	);
 }

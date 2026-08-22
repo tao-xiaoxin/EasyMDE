@@ -918,6 +918,7 @@ export function SettingsCenterRoot({
 								>
 									<ImagesSettingsPage
 										draft={bootstrap.drafts.images}
+										overlayRoot={overlayRoot}
 										settings={settings.images}
 										onChange={(value) => updateSettingsSection("images", value)}
 										strings={strings}

@@ -447,6 +447,8 @@ final class SettingsCenterStrings {
 			'aboutVersion017ChangeShortcuts'               => __( 'Add Typora-inspired shortcuts and rich-text WeChat export.', 'easymde' ),
 			'aboutActionPendingNotice'                     => __( 'This About action is not connected to WordPress yet.', 'easymde' ),
 			'closeAboutFeedback'                           => __( 'Close About Feedback', 'easymde' ),
+			'uploadFormatRequired'                         => __( 'Keep at least one image upload format enabled.', 'easymde' ),
+			'closeImageFeedback'                           => __( 'Close Image Upload Feedback', 'easymde' ),
 		);
 	}
 }

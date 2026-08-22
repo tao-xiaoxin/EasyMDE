@@ -4,7 +4,10 @@ import type {
   ImageUploadPort,
   ImageUploadSelection
 } from '../../contracts/ports/image-upload-port';
-import type { ImageUploadStrings } from '../../contracts/bootstrap/image-upload-bootstrap';
+import type {
+  ImageUploadMimeType,
+  ImageUploadStrings
+} from '../../contracts/bootstrap/image-upload-bootstrap';
 
 export type ImageUploadSource = 'drop' | 'paste';
 
@@ -15,6 +18,7 @@ export type ImageUploadStatus = Readonly<{
 }>;
 
 type CreateImageUploadSessionOptions = Readonly<{
+  allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
   document: ImageUploadDocumentPort;
   enabled: boolean;
   maxBytes: number;
@@ -26,6 +30,24 @@ type CreateImageUploadSessionOptions = Readonly<{
   target: HTMLElement;
   upload: ImageUploadPort;
 }>;
+
+function imageMimeType(file: File): ImageUploadMimeType | null {
+  const mimeType = file.type.toLowerCase();
+  if ('image/jpg' === mimeType) return 'image/jpeg';
+  if (['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mimeType)) {
+    return mimeType as ImageUploadMimeType;
+  }
+  const extension = file.name.toLowerCase().match(/\.([^.]+)$/)?.[1];
+  const extensionMimeTypes: Readonly<Record<string, ImageUploadMimeType>> = {
+    gif: 'image/gif',
+    jfif: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    jpg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp'
+  };
+  return extension ? extensionMimeTypes[extension] ?? null : null;
+}
 
 function validSelection(selection: ImageUploadSelection, value: string): boolean {
   return Number.isInteger(selection.start)
@@ -114,6 +136,7 @@ function statusMessage(strings: ImageUploadStrings, source: ImageUploadSource, s
 }
 
 export function createImageUploadSession({
+  allowedMimeTypes,
   document,
   enabled,
   maxBytes,
@@ -144,6 +167,11 @@ export function createImageUploadSession({
     }
     if (file.size > maxBytes) {
       reportStatus(statusMessage(strings, source, 'TooLarge'), 'error');
+      return;
+    }
+    const mimeType = imageMimeType(file);
+    if (!mimeType || !allowedMimeTypes.includes(mimeType)) {
+      reportStatus(statusMessage(strings, source, 'Failed'), 'error');
       return;
     }
 

@@ -2441,6 +2441,16 @@
 	color: #1682ff;
 }
 
+.easymde-settings-center__transfer-feedback.is-error {
+	border-color: #ffc4c8;
+	background: #fff7f7;
+	color: #cf2f38;
+}
+
+.easymde-settings-center__transfer-feedback.is-error > svg {
+	color: #e23a43;
+}
+
 .easymde-settings-center__transfer-feedback > span {
 	line-height: 20px;
 }

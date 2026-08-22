@@ -321,8 +321,8 @@ test("focuses a group-only search result at the reference offset", async ({
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 
 	const targetHeading = page
-		.locator('[data-settings-section="about"] h2')
-		.first();
+		.locator('[data-settings-section="shortcuts"] h2')
+		.nth(1);
 	const targetLabel = (await targetHeading.textContent())?.trim();
 	if (!targetLabel) throw new Error("settings-search-group-label-missing");
 

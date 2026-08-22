@@ -217,6 +217,9 @@ final class SettingsController {
 				return $this->invalid_payload_error();
 			}
 		}
+		if ( ! in_array( true, $value['images']['uploadFormats'], true ) ) {
+			return $this->invalid_payload_error();
+		}
 
 		$shortcut_ids = array( 'save', 'bold', 'italic', 'link', 'image', 'heading-one', 'heading-two', 'quote', 'unordered-list', 'ordered-list' );
 		if ( ! is_array( $value['shortcuts']['values'] ) || ! $this->has_exact_keys( $value['shortcuts']['values'], $shortcut_ids ) ) {

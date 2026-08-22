@@ -71,6 +71,7 @@ function validBootstrap() {
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       enabled: true,
       endpoint: 'https://example.test/wp-json/easymde/v1/media',
+      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
       maxBytes: 1024,
       nonce: 'synthetic-nonce',
       postId: 7,

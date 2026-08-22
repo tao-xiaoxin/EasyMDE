@@ -75,7 +75,11 @@ const UPLOAD_FORMAT_OPTIONS: ReadonlyArray<
 	},
 	{ key: "gif", label: "uploadFormatGif", accessibleLabel: "allowUploadGif" },
 ];
-type SelectOption = Readonly<{ value: string; label: string }>;
+type SelectOption = Readonly<{
+	disabled?: boolean;
+	value: string;
+	label: string;
+}>;
 
 const LEGACY_IMAGE_VALUE_ALIASES: Readonly<Record<string, string>> = {
 	"Cloudflare R2": "cloudflare-r2",
@@ -134,7 +138,11 @@ function CompactSelect({
 				onChange={(event) => onChange(event.target.value)}
 			>
 				{options.map((option) => (
-					<option key={option.value} value={option.value}>
+					<option
+						key={option.value}
+						value={option.value}
+						disabled={option.disabled}
+					>
 						{option.label}
 					</option>
 				))}
@@ -387,7 +395,7 @@ export function ImagesSettingsPage({
 	];
 	const insertFormatOptions: ReadonlyArray<SelectOption> = [
 		{ value: "markdown", label: strings.markdownImage },
-		{ value: "html", label: strings.htmlImage },
+		{ value: "html", label: strings.htmlImage, disabled: true },
 		{ value: "url", label: strings.urlOnly },
 	];
 	const altSourceOptions: ReadonlyArray<SelectOption> = [
@@ -788,36 +796,36 @@ export function ImagesSettingsPage({
 							<DocumentIcon size={25} />
 							{strings.defaultInsertion}
 						</h2>
+						<ImageBehaviorRow label={strings.defaultInsertFormat}>
+							<CompactSelect
+								label={strings.defaultInsertFormat}
+								value={settings.insertFormat}
+								options={insertFormatOptions}
+								onChange={(value) => setValue("insertFormat", value)}
+							/>
+						</ImageBehaviorRow>
+						<ImageBehaviorRow label={strings.altTextSource}>
+							<CompactSelect
+								label={strings.altTextSource}
+								value={settings.altSource}
+								options={altSourceOptions}
+								onChange={(value) => setValue("altSource", value)}
+							/>
+						</ImageBehaviorRow>
+						<ImageBehaviorRow label={strings.imageTitleField}>
+							<CompactSelect
+								label={strings.imageTitleField}
+								value={settings.captionMode}
+								options={captionModeOptions}
+								onChange={(value) => setValue("captionMode", value)}
+							/>
+						</ImageBehaviorRow>
 						<fieldset
 							disabled
 							aria-describedby="easymde-images-unavailable"
 							title={strings.settingsUnavailableDescription}
 							className="easymde-settings-center__unavailable-fields"
 						>
-							<ImageBehaviorRow label={strings.defaultInsertFormat}>
-								<CompactSelect
-									label={strings.defaultInsertFormat}
-									value={settings.insertFormat}
-									options={insertFormatOptions}
-									onChange={(value) => setValue("insertFormat", value)}
-								/>
-							</ImageBehaviorRow>
-							<ImageBehaviorRow label={strings.altTextSource}>
-								<CompactSelect
-									label={strings.altTextSource}
-									value={settings.altSource}
-									options={altSourceOptions}
-									onChange={(value) => setValue("altSource", value)}
-								/>
-							</ImageBehaviorRow>
-							<ImageBehaviorRow label={strings.imageTitleField}>
-								<CompactSelect
-									label={strings.imageTitleField}
-									value={settings.captionMode}
-									options={captionModeOptions}
-									onChange={(value) => setValue("captionMode", value)}
-								/>
-							</ImageBehaviorRow>
 							<ImageBehaviorRow
 								label={strings.imageFeaturedPlaceholder}
 								description={strings.imageFeaturedPlaceholderDescription}

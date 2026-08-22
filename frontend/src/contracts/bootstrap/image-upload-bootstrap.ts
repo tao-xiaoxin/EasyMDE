@@ -16,10 +16,17 @@ export type ImageUploadMimeType =
   | 'image/webp'
   | 'image/gif';
 
+export type ImageUploadInsertion = Readonly<{
+  altSource: 'filename' | 'empty' | 'upload';
+  captionMode: 'none' | 'filename' | 'upload';
+  format: 'markdown' | 'url';
+}>;
+
 export type ImageUploadBootstrap = Readonly<{
   allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
   enabled: boolean;
   endpoint: string;
+  insertion: ImageUploadInsertion;
   maxBytes: number;
   nonce: string;
   postId: number;
@@ -45,6 +52,21 @@ function mimeTypesValue(value: unknown): ReadonlyArray<ImageUploadMimeType> {
     throw new Error('image-upload-mime-types-invalid');
   }
   return value as ReadonlyArray<ImageUploadMimeType>;
+}
+
+function insertionValue(value: unknown): ImageUploadInsertion {
+  if (!value || 'object' !== typeof value || Array.isArray(value)) {
+    throw new Error('image-upload-insertion-invalid');
+  }
+  const insertion = value as Record<string, unknown>;
+  if (
+    !['filename', 'empty', 'upload'].includes(String(insertion.altSource))
+    || !['none', 'filename', 'upload'].includes(String(insertion.captionMode))
+    || !['markdown', 'url'].includes(String(insertion.format))
+  ) {
+    throw new Error('image-upload-insertion-invalid');
+  }
+  return insertion as ImageUploadInsertion;
 }
 
 function stringValue(value: unknown, code: string): string {
@@ -75,6 +97,7 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
     allowedMimeTypes: mimeTypesValue(bootstrap.allowedMimeTypes),
     enabled: true === bootstrap.enabled,
     endpoint: stringValue(bootstrap.endpoint, 'image-upload-endpoint-invalid'),
+    insertion: insertionValue(bootstrap.insertion),
     maxBytes: integerValue(bootstrap.maxBytes, 1, 'image-upload-max-bytes-invalid'),
     nonce: stringValue(bootstrap.nonce, 'image-upload-nonce-invalid'),
     postId: integerValue(bootstrap.postId, 0, 'image-upload-post-id-invalid'),

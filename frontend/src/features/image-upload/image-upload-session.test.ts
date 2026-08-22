@@ -4,7 +4,10 @@ import type {
   ImageUploadDocumentSnapshot,
   ImageUploadResult
 } from '../../contracts/ports/image-upload-port';
-import type { ImageUploadMimeType } from '../../contracts/bootstrap/image-upload-bootstrap';
+import type {
+  ImageUploadInsertion,
+  ImageUploadMimeType
+} from '../../contracts/bootstrap/image-upload-bootstrap';
 import { createImageUploadSession } from './image-upload-session';
 
 const strings = {
@@ -51,7 +54,12 @@ function setup(
     'image/png',
     'image/webp',
     'image/gif'
-  ]
+  ],
+  insertion: ImageUploadInsertion = {
+    altSource: 'filename',
+    captionMode: 'none',
+    format: 'markdown'
+  }
 ) {
   let snapshot: ImageUploadDocumentSnapshot = {
     selection: { direction: 'none', end: 5, start: 5 },
@@ -76,6 +84,7 @@ function setup(
       getSnapshot: () => snapshot
     },
     enabled: true,
+    insertion,
     maxBytes: 1024,
     nextOperationId,
     onDiagnostic: (code) => diagnostics.push(code),
@@ -104,6 +113,7 @@ describe('createImageUploadSession', () => {
     const session = setup(Promise.resolve({
       alt: 'screen shot',
       status: 'uploaded',
+      title: 'Uploaded title',
       url: 'https://example.test/image.png'
     }));
     const event = transferEvent('paste', new File(['image'], 'screen-shot.png', {
@@ -135,6 +145,7 @@ describe('createImageUploadSession', () => {
     const session = setup(Promise.resolve({
       alt: 'clipboard image',
       status: 'uploaded',
+      title: '',
       url: 'https://example.test/clipboard.png'
     }));
     const event = transferEvent(
@@ -148,7 +159,7 @@ describe('createImageUploadSession', () => {
 
     expect(event.defaultPrevented).toBe(true);
     expect(session.getSnapshot().value)
-      .toBe('Hello![clipboard image](https://example.test/clipboard.png) world');
+      .toBe('Hello![clipboard](https://example.test/clipboard.png) world');
   });
 
   it('rebases a pending drop after text is appended and preserves failure boundaries', async () => {
@@ -163,7 +174,7 @@ describe('createImageUploadSession', () => {
       selection: { direction: 'none', end: 17, start: 17 },
       value: 'Hello world later'
     });
-    resolveUpload({ alt: 'drop', status: 'uploaded', url: 'https://example.test/drop.png' });
+    resolveUpload({ alt: 'drop', status: 'uploaded', title: '', url: 'https://example.test/drop.png' });
     await vi.waitFor(() => expect(session.statuses).toHaveLength(2));
     expect(session.getSnapshot().value)
       .toBe('Hello![drop](https://example.test/drop.png) world later');
@@ -182,7 +193,7 @@ describe('createImageUploadSession', () => {
   });
 
   it('rejects oversized images before upload and ignores completion after teardown', async () => {
-    const oversized = setup(Promise.resolve({ alt: '', status: 'uploaded', url: '/unused' }));
+    const oversized = setup(Promise.resolve({ alt: '', status: 'uploaded', title: '', url: '/unused' }));
     oversized.target.dispatchEvent(transferEvent('paste', new File([new Uint8Array(2048)], 'large.png', {
       type: 'image/png'
     })));
@@ -200,7 +211,7 @@ describe('createImageUploadSession', () => {
       type: 'image/png'
     })));
     pending.cleanup();
-    resolveUpload({ alt: 'late', status: 'uploaded', url: 'https://example.test/late.png' });
+    resolveUpload({ alt: 'late', status: 'uploaded', title: '', url: 'https://example.test/late.png' });
     await vi.waitFor(() => expect(pending.diagnostics)
       .toContain('image-upload-completed-after-teardown'));
     expect(pending.getSnapshot().value).toBe('Hello world');
@@ -208,7 +219,7 @@ describe('createImageUploadSession', () => {
 
   it('rejects a disabled image format before the WordPress upload request', () => {
     const session = setup(
-      Promise.resolve({ alt: '', status: 'uploaded', url: '/unused' }),
+      Promise.resolve({ alt: '', status: 'uploaded', title: '', url: '/unused' }),
       operationIdSequence(),
       ['image/png']
     );
@@ -249,6 +260,11 @@ describe('createImageUploadSession', () => {
         getSnapshot: () => snapshot
       },
       enabled: true,
+      insertion: {
+        altSource: 'filename',
+        captionMode: 'none',
+        format: 'markdown'
+      },
       maxBytes: 1024,
       nextOperationId: operationIdSequence(),
       onDiagnostic: vi.fn(),
@@ -281,6 +297,7 @@ describe('createImageUploadSession', () => {
     pending[0]?.({
       alt: 'a',
       status: 'uploaded',
+      title: '',
       url: 'https://example.test/a.png'
     });
     await vi.waitFor(() => expect(statuses).toHaveLength(4));
@@ -297,5 +314,47 @@ describe('createImageUploadSession', () => {
         type: 'success'
       }
     ]);
+  });
+
+  it('applies the selected URL, Alt, and title insertion behavior', async () => {
+    const titled = setup(
+      Promise.resolve({
+        alt: 'WordPress alt',
+        status: 'uploaded',
+        title: 'WordPress title',
+        url: 'https://example.test/titled.png'
+      }),
+      operationIdSequence(),
+      ['image/png'],
+      { altSource: 'empty', captionMode: 'upload', format: 'markdown' }
+    );
+    titled.target.dispatchEvent(transferEvent(
+      'paste',
+      new File(['image'], 'local-name.png', { type: 'image/png' })
+    ));
+    await vi.waitFor(() => expect(titled.statuses).toHaveLength(2));
+    expect(titled.getSnapshot().value).toBe(
+      'Hello![](https://example.test/titled.png "WordPress title") world'
+    );
+
+    const urlOnly = setup(
+      Promise.resolve({
+        alt: 'WordPress alt',
+        status: 'uploaded',
+        title: 'WordPress title',
+        url: 'https://example.test/plain.png'
+      }),
+      operationIdSequence(),
+      ['image/png'],
+      { altSource: 'upload', captionMode: 'filename', format: 'url' }
+    );
+    urlOnly.target.dispatchEvent(transferEvent(
+      'drop',
+      new File(['image'], 'local-name.png', { type: 'image/png' })
+    ));
+    await vi.waitFor(() => expect(urlOnly.statuses).toHaveLength(2));
+    expect(urlOnly.getSnapshot().value).toBe(
+      'Hellohttps://example.test/plain.png world'
+    );
   });
 });

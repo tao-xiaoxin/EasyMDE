@@ -237,11 +237,13 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 
         $settings['images']['service'] = 'Cloudflare R2';
         $settings['images']['retryCount'] = 'Retry once';
+        $settings['images']['insertFormat'] = 'html';
         $settings['markdown']['editorTheme'] = 'Follow System';
         $saved = $repository->update_settings($settings);
 
         $this->assertSame('cloudflare-r2', $saved['images']['service']);
         $this->assertSame('once', $saved['images']['retryCount']);
+        $this->assertSame('markdown', $saved['images']['insertFormat']);
         $this->assertSame('system', $saved['markdown']['editorTheme']);
     }
 

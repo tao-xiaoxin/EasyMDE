@@ -116,6 +116,7 @@ final class MediaController {
 				'url'      => $url,
 				'alt'      => $alt_text,
 				'filename' => $file['name'],
+				'title'    => get_the_title( $attachment_id ),
 			)
 		);
 	}

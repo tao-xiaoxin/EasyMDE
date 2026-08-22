@@ -5,6 +5,7 @@ import type {
   ImageUploadSelection
 } from '../../contracts/ports/image-upload-port';
 import type {
+  ImageUploadInsertion,
   ImageUploadMimeType,
   ImageUploadStrings
 } from '../../contracts/bootstrap/image-upload-bootstrap';
@@ -21,6 +22,7 @@ type CreateImageUploadSessionOptions = Readonly<{
   allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
   document: ImageUploadDocumentPort;
   enabled: boolean;
+  insertion: ImageUploadInsertion;
   maxBytes: number;
   nextOperationId: () => string;
   onDiagnostic: (code: string) => void;
@@ -100,8 +102,15 @@ function escapeAltText(value: string): string {
     .trim();
 }
 
-function imageMarkdown(url: string, alt: string): string {
-  return `![${escapeAltText(alt)}](${url.replace(/\)/g, '%29')})`;
+function imageMarkdown(url: string, alt: string, title: string): string {
+  const escapedTitle = title
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const titleSuffix = escapedTitle ? ` "${escapedTitle}"` : '';
+  return `![${escapeAltText(alt)}](${url.replace(/\)/g, '%29')}${titleSuffix})`;
 }
 
 function rebaseSelection(
@@ -139,6 +148,7 @@ export function createImageUploadSession({
   allowedMimeTypes,
   document,
   enabled,
+  insertion,
   maxBytes,
   nextOperationId,
   onDiagnostic,
@@ -186,8 +196,9 @@ export function createImageUploadSession({
 
     reportStatus(statusMessage(strings, source, 'Uploading'), 'info');
     try {
+      const fileNameAlt = defaultAltFromFile(file, strings.defaultAlt);
       const result = await upload.upload({
-        altText: defaultAltFromFile(file, strings.defaultAlt),
+        altText: 'filename' === insertion.altSource ? fileNameAlt : '',
         file,
         postId
       });
@@ -202,11 +213,23 @@ export function createImageUploadSession({
 
       const current = documentSnapshot(document);
       const selection = rebaseSelection(initial, current.value);
-      const markdown = imageMarkdown(result.url, result.alt || strings.defaultAlt);
-      const cursor = selection.start + markdown.length;
+      const alt = 'empty' === insertion.altSource
+        ? ''
+        : 'upload' === insertion.altSource
+          ? result.alt
+          : fileNameAlt;
+      const title = 'filename' === insertion.captionMode
+        ? fileNameAlt
+        : 'upload' === insertion.captionMode
+          ? result.title
+          : '';
+      const inserted = 'url' === insertion.format
+        ? result.url
+        : imageMarkdown(result.url, alt, title);
+      const cursor = selection.start + inserted.length;
       document.applyTextChange({
         selection: { direction: selection.direction, end: cursor, start: cursor },
-        value: current.value.slice(0, selection.start) + markdown + current.value.slice(selection.end)
+        value: current.value.slice(0, selection.start) + inserted + current.value.slice(selection.end)
       });
       document.focus();
       reportStatus(statusMessage(strings, source, 'Uploaded'), 'success');

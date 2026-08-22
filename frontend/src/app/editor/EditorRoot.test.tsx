@@ -361,6 +361,7 @@ function fixture(): EditorRootProps &
     imageUpload: {
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       enabled: true,
+      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
       maxBytes: 1024,
       postId: 7,
       strings: {
@@ -379,6 +380,7 @@ function fixture(): EditorRootProps &
       upload: vi.fn().mockResolvedValue({
         alt: 'uploaded image',
         status: 'uploaded',
+        title: '',
         url: 'https://example.test/upload.png'
       } satisfies ImageUploadResult)
     },
@@ -2062,7 +2064,7 @@ describe('EditorRoot', () => {
     await waitFor(() => {
       expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(1);
       expect(props.submissionField.value).toBe(
-        'Before **![uploaded image](https://example.test/upload.png)** after'
+        'Before **![visual](https://example.test/upload.png)** after'
       );
     });
     expect(
@@ -4969,7 +4971,7 @@ describe('EditorRoot', () => {
     await waitFor(() => {
       expect(view.getByText('Paste uploaded')).not.toBeNull();
       expect(props.submissionField.value).toBe(
-        '![uploaded image](https://example.test/upload.png)'
+        '![screen shot](https://example.test/upload.png)'
       );
     });
 

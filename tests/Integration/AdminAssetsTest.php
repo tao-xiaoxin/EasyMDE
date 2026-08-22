@@ -72,6 +72,10 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			array( 'image/jpeg', 'image/png', 'image/webp', 'image/gif' ),
 			$bootstrap['imageUpload']['allowedMimeTypes']
 		);
+		$this->assertSame(
+			array( 'format' => 'markdown', 'altSource' => 'filename', 'captionMode' => 'none' ),
+			$bootstrap['imageUpload']['insertion']
+		);
 		$this->assertSame( $post_id, $bootstrap['localDrafts']['postId'] );
 		$this->assertArrayHasKey( 'document', $bootstrap );
 		$this->assertArrayHasKey( 'appearance', $bootstrap );

@@ -194,7 +194,7 @@ export type EditorRootProps = Readonly<{
   fonts: FontControlsBootstrap;
   imageUpload: Pick<
     ImageUploadBootstrap,
-    'allowedMimeTypes' | 'enabled' | 'maxBytes' | 'postId' | 'strings'
+    'allowedMimeTypes' | 'enabled' | 'insertion' | 'maxBytes' | 'postId' | 'strings'
   >;
   imageUploadPort: ImageUploadPort;
   isNewPost: boolean;
@@ -1648,6 +1648,7 @@ export function EditorRoot(props: EditorRootProps) {
           }
         : canonicalDocument,
       enabled: props.imageUpload.enabled,
+      insertion: props.imageUpload.insertion,
       maxBytes: props.imageUpload.maxBytes,
       nextOperationId: nextImageUploadOperationId,
       onDiagnostic: props.onFailure,

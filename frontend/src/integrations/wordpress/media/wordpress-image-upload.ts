@@ -43,10 +43,16 @@ function uploadedResult(value: unknown): ImageUploadResult {
     || 'string' !== typeof response.url
     || '' === response.url.trim()
     || 'string' !== typeof response.alt
+    || 'string' !== typeof response.title
   ) {
     throw new Error('image-upload-response-invalid');
   }
-  return { alt: response.alt, status: 'uploaded', url: response.url };
+  return {
+    alt: response.alt,
+    status: 'uploaded',
+    title: response.title,
+    url: response.url
+  };
 }
 
 export function createWordPressImageUploadPort({

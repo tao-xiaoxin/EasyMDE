@@ -8,6 +8,7 @@ describe('createWordPressImageUploadPort', () => {
       alt: 'screen shot',
       filename: 'screen-shot.png',
       id: 42,
+      title: 'Uploaded title',
       url: 'https://example.test/uploads/screen-shot.png'
     });
     const port = createWordPressImageUploadPort({
@@ -22,6 +23,7 @@ describe('createWordPressImageUploadPort', () => {
     await expect(port.upload({ altText: 'screen shot', file, postId: 17 })).resolves.toEqual({
       alt: 'screen shot',
       status: 'uploaded',
+      title: 'Uploaded title',
       url: 'https://example.test/uploads/screen-shot.png'
     });
     const request = apiFetch.mock.calls[0]?.[0];

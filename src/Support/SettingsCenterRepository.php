@@ -543,8 +543,8 @@ final class SettingsCenterRepository {
 				'insertFormat'      => array(
 					'markdown'       => 'markdown',
 					'Markdown image' => 'markdown',
-					'html'           => 'html',
-					'HTML image'     => 'html',
+					'html'           => 'markdown',
+					'HTML image'     => 'markdown',
 					'url'            => 'url',
 					'URL only'       => 'url',
 				),

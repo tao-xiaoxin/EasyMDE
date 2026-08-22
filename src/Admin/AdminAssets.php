@@ -269,6 +269,11 @@ final class AdminAssets {
 				'allowedMimeTypes' => $this->settings_center_repository->get_allowed_image_mime_types(),
 				'enabled'          => $this->get_image_upload_config()['enabled'],
 				'endpoint'         => esc_url_raw( rest_url( 'easymde/v1/media' ) ),
+				'insertion'        => array(
+					'format'      => 'url' === $settings['images']['insertFormat'] ? 'url' : 'markdown',
+					'altSource'   => $settings['images']['altSource'],
+					'captionMode' => $settings['images']['captionMode'],
+				),
 				'maxBytes'         => $this->get_image_upload_config()['maxBytes'],
 				'nonce'            => $nonce,
 				'postId'           => absint( $post_id ),

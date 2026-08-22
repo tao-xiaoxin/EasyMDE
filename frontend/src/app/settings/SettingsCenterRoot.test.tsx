@@ -596,6 +596,35 @@ describe("SettingsCenterRoot images section", () => {
 				.matches(":disabled"),
 		).toBe(true);
 	});
+
+	it("enables owner-backed insertion metadata while keeping raw HTML unavailable", () => {
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const format = screen.getByRole<HTMLSelectElement>("combobox", {
+			name: "defaultInsertFormat",
+		});
+
+		expect(format.disabled).toBe(false);
+		expect(
+			within(format).getByRole<HTMLOptionElement>("option", {
+				name: "htmlImage",
+			}).disabled,
+		).toBe(true);
+		expect(
+			screen.getByRole<HTMLSelectElement>("combobox", {
+				name: "altTextSource",
+			}).disabled,
+		).toBe(false);
+		expect(
+			screen.getByRole<HTMLSelectElement>("combobox", {
+				name: "imageTitleField",
+			}).disabled,
+		).toBe(false);
+		expect(
+			screen
+				.getByRole("switch", { name: "imageFeaturedPlaceholder" })
+				.matches(":disabled"),
+		).toBe(true);
+	});
 	it("retains stable IDs in unavailable select controls", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const service = screen.getByRole<HTMLSelectElement>("combobox", {

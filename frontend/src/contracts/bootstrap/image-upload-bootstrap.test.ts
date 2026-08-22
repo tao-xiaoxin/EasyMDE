@@ -6,6 +6,11 @@ const validBootstrap = {
   allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
   enabled: true,
   endpoint: '/wp-json/easymde/v1/media',
+  insertion: {
+    altSource: 'filename',
+    captionMode: 'none',
+    format: 'markdown'
+  },
   maxBytes: 1024,
   nonce: 'synthetic-nonce',
   postId: 17,
@@ -38,5 +43,9 @@ describe('parseImageUploadBootstrap', () => {
       ...validBootstrap,
       allowedMimeTypes: ['image/svg+xml']
     })).toThrow('image-upload-mime-types-invalid');
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
+      insertion: { ...validBootstrap.insertion, format: 'html' }
+    })).toThrow('image-upload-insertion-invalid');
   });
 });

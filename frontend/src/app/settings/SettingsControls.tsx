@@ -11,11 +11,13 @@ export function matchesSettingsQuery(
 }
 
 export function SettingsToggle({
+	ariaDescribedBy,
 	checked,
 	disabled = false,
 	label,
 	onChange,
 }: {
+	ariaDescribedBy?: string;
 	checked: boolean;
 	disabled?: boolean;
 	label: string;
@@ -27,6 +29,7 @@ export function SettingsToggle({
 			role="switch"
 			aria-checked={checked}
 			aria-label={label}
+			aria-describedby={ariaDescribedBy}
 			disabled={disabled}
 			onClick={onChange}
 			className="easymde-settings-center__switch"

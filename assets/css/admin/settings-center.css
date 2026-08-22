@@ -537,7 +537,7 @@
 .easymde-settings-center__unavailable-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
 .easymde-settings-center__unavailable-fields:disabled { opacity: 1; }
 .easymde-settings-center__unavailable-fields:disabled :is(button, input, select, textarea) { opacity: 1; color: inherit; }
-.easymde-settings-center__unavailable-fields :is(button, input, select) { cursor: not-allowed; }
+.easymde-settings-center__unavailable-fields :is(button, input, select):disabled { cursor: not-allowed; }
 .easymde-settings-center__transfer-unavailable-notice { margin: 20px 36px 0; color: #657695; font-size: 14px; }
 
 .easymde-settings-center__visually-hidden {

@@ -526,7 +526,8 @@ function fixture(): EditorRootProps &
         summaryMode: 'auto-55',
         syncScroll: true,
         syntaxHighlight: true
-      }
+      },
+      markdown: { wordWrap: true }
     },
     shortcutBinding,
     submissionField,
@@ -2920,7 +2921,8 @@ describe('EditorRoot', () => {
         featuredImagePlaceholder: false,
         openPreviewAfterPublish: false,
         publishVisibility: 'private'
-      }
+      },
+      markdown: props.settings.markdown
     }} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
 
@@ -3994,7 +3996,8 @@ describe('EditorRoot', () => {
           ...baseProps.settings.general,
           autoSave: false,
           syncScroll: false
-        }
+        },
+        markdown: baseProps.settings.markdown
       }
     };
     const view = render(<EditorRoot {...props} />);

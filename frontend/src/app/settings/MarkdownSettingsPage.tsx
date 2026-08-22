@@ -79,11 +79,15 @@ function createDefaultSettings(): MarkdownSettingsDraft {
 }
 
 function MarkdownSelect({
+	ariaDescribedBy,
+	disabled = false,
 	label,
 	onChange,
 	options,
 	value,
 }: {
+	ariaDescribedBy?: string;
+	disabled?: boolean;
 	label: string;
 	onChange: (value: string) => void;
 	options: ReadonlyArray<SelectOption>;
@@ -93,6 +97,8 @@ function MarkdownSelect({
 		<div className="easymde-settings-center__compact-select">
 			<select
 				aria-label={label}
+				aria-describedby={ariaDescribedBy}
+				disabled={disabled}
 				value={value}
 				onChange={(event) => onChange(event.target.value)}
 			>
@@ -243,12 +249,7 @@ export function MarkdownSettingsPage({
 				label={strings.settingsUnavailable}
 				description={strings.settingsUnavailableDescription}
 			/>
-			<fieldset
-				disabled
-				aria-describedby="easymde-markdown-unavailable"
-				title={strings.settingsUnavailableDescription}
-				className="easymde-settings-center__unavailable-fields"
-			>
+			<div className="easymde-settings-center__unavailable-fields">
 				<section className="easymde-settings-center__markdown-group">
 					<h2>
 						<EditPencilIcon size={25} />
@@ -276,14 +277,20 @@ export function MarkdownSettingsPage({
 					).map(([key, label, description]) => (
 						<MarkdownRow key={key} label={label} description={description}>
 							<SettingsToggle
+								{...("wordWrap" === key
+									? {}
+									: { ariaDescribedBy: "easymde-markdown-unavailable" })}
 								label={label}
 								checked={settings[key]}
+								disabled={"wordWrap" !== key}
 								onChange={() => setValue(key, !settings[key])}
 							/>
 						</MarkdownRow>
 					))}
 					<MarkdownRow label={strings.editorTheme}>
 						<MarkdownSelect
+							ariaDescribedBy="easymde-markdown-unavailable"
+							disabled
 							label={strings.editorTheme}
 							value={settings.editorTheme}
 							options={editorThemeOptions}
@@ -292,6 +299,8 @@ export function MarkdownSettingsPage({
 					</MarkdownRow>
 					<MarkdownRow label={strings.editorFontSize}>
 						<MarkdownSelect
+							ariaDescribedBy="easymde-markdown-unavailable"
+							disabled
 							label={strings.editorFontSize}
 							value={settings.editorFontSize}
 							options={editorFontSizeOptions}
@@ -300,6 +309,8 @@ export function MarkdownSettingsPage({
 					</MarkdownRow>
 					<MarkdownRow label={strings.editorFont}>
 						<MarkdownSelect
+							ariaDescribedBy="easymde-markdown-unavailable"
+							disabled
 							label={strings.editorFont}
 							value={settings.editorFont}
 							options={editorFontOptions}
@@ -329,14 +340,18 @@ export function MarkdownSettingsPage({
 					).map(([key, label, description]) => (
 						<MarkdownRow key={key} label={label} description={description}>
 							<SettingsToggle
+								ariaDescribedBy="easymde-markdown-unavailable"
 								label={label}
 								checked={settings[key]}
+								disabled
 								onChange={() => setValue(key, !settings[key])}
 							/>
 						</MarkdownRow>
 					))}
 					<MarkdownRow label={strings.tableAlignment}>
 						<MarkdownSelect
+							ariaDescribedBy="easymde-markdown-unavailable"
+							disabled
 							label={strings.tableAlignment}
 							value={settings.tableAlignment}
 							options={tableAlignmentOptions}
@@ -345,6 +360,8 @@ export function MarkdownSettingsPage({
 					</MarkdownRow>
 					<MarkdownRow label={strings.codeBlockTheme}>
 						<MarkdownSelect
+							ariaDescribedBy="easymde-markdown-unavailable"
+							disabled
 							label={strings.codeBlockTheme}
 							value={settings.codeTheme}
 							options={codeThemeOptions}
@@ -353,6 +370,8 @@ export function MarkdownSettingsPage({
 					</MarkdownRow>
 					<MarkdownRow label={strings.codeBlockLineNumbers}>
 						<MarkdownSelect
+							ariaDescribedBy="easymde-markdown-unavailable"
+							disabled
 							label={strings.codeBlockLineNumbers}
 							value={settings.codeLineNumbers}
 							options={codeLineNumberOptions}
@@ -373,8 +392,10 @@ export function MarkdownSettingsPage({
 					).map(([key, label, description]) => (
 						<MarkdownRow key={key} label={label} description={description}>
 							<SettingsToggle
+								ariaDescribedBy="easymde-markdown-unavailable"
 								label={label}
 								checked={settings[key]}
+								disabled
 								onChange={() => setValue(key, !settings[key])}
 							/>
 						</MarkdownRow>
@@ -409,8 +430,10 @@ export function MarkdownSettingsPage({
 					).map(([key, label, description]) => (
 						<MarkdownRow key={key} label={label} description={description}>
 							<SettingsToggle
+								ariaDescribedBy="easymde-markdown-unavailable"
 								label={label}
 								checked={settings[key]}
+								disabled
 								onChange={() => setValue(key, !settings[key])}
 							/>
 						</MarkdownRow>
@@ -427,8 +450,10 @@ export function MarkdownSettingsPage({
 						description={strings.pasteAsMarkdownDescription}
 					>
 						<SettingsToggle
+							ariaDescribedBy="easymde-markdown-unavailable"
 							label={strings.pasteAsMarkdown}
 							checked={settings.pasteAsMarkdown}
+							disabled
 							onChange={() =>
 								setValue("pasteAsMarkdown", !settings.pasteAsMarkdown)
 							}
@@ -436,6 +461,8 @@ export function MarkdownSettingsPage({
 					</MarkdownRow>
 					<MarkdownRow label={strings.defaultLineEnding}>
 						<MarkdownSelect
+							ariaDescribedBy="easymde-markdown-unavailable"
+							disabled
 							label={strings.defaultLineEnding}
 							value={settings.lineEnding}
 							options={lineEndingOptions}
@@ -446,6 +473,8 @@ export function MarkdownSettingsPage({
 						<input
 							className="easymde-settings-center__markdown-input"
 							aria-label={strings.unorderedListMarker}
+							aria-describedby="easymde-markdown-unavailable"
+							disabled
 							value={settings.unorderedMarker}
 							onChange={(event) =>
 								setValue("unorderedMarker", event.target.value)
@@ -456,12 +485,16 @@ export function MarkdownSettingsPage({
 						<input
 							className="easymde-settings-center__markdown-input"
 							aria-label={strings.orderedListStart}
+							aria-describedby="easymde-markdown-unavailable"
+							disabled
 							value={settings.orderedStart}
 							onChange={(event) => setValue("orderedStart", event.target.value)}
 						/>
 					</MarkdownRow>
 					<MarkdownRow label={strings.blockquoteIndentStyle}>
 						<MarkdownSelect
+							ariaDescribedBy="easymde-markdown-unavailable"
+							disabled
 							label={strings.blockquoteIndentStyle}
 							value={settings.blockquoteStyle}
 							options={blockquoteOptions}
@@ -469,7 +502,7 @@ export function MarkdownSettingsPage({
 						/>
 					</MarkdownRow>
 				</section>
-			</fieldset>
+			</div>
 		</div>
 	);
 }

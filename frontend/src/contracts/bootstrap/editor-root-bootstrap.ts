@@ -4,7 +4,7 @@ import {
   type SafePreviewHtml
 } from '../ports/preview-request';
 import type { NativePublishCategory } from '../ports/native-publish-port';
-import type { GeneralSettings } from '../settings-center-settings';
+import type { GeneralSettings, MarkdownSettings } from '../settings-center-settings';
 import {
   parseAppearanceBootstrap,
   type AppearanceBootstrap
@@ -74,6 +74,7 @@ export type EditorRootWordPressBootstrap = Readonly<{
 
 export type EditorRootSettingsBootstrap = Readonly<{
   general: GeneralSettings;
+  markdown: Pick<MarkdownSettings, 'wordWrap'>;
 }>;
 
 export type EditorRootBootstrap = Readonly<{
@@ -417,6 +418,10 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
       settingsValue.general,
       'editor-root-settings-invalid'
     );
+    const markdown = objectValue(
+      settingsValue.markdown,
+      'editor-root-settings-invalid'
+    );
     const stringFields = [
       'interfaceLanguage',
       'editingMode',
@@ -449,13 +454,17 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     if (
       stringFields.some((key) => 'string' !== typeof general[key])
       || booleanFields.some((key) => 'boolean' !== typeof general[key])
+      || 'boolean' !== typeof markdown.wordWrap
       || stringFields.some(
         (key) => !allowedValues[key]?.has(general[key] as string)
       )
     ) {
       throw new Error('editor-root-settings-invalid');
     }
-    settings = { general: general as unknown as GeneralSettings };
+    settings = {
+      general: general as unknown as GeneralSettings,
+      markdown: { wordWrap: markdown.wordWrap }
+    };
   } catch {
     throw new EditorRootBootstrapError('editor-root-settings-invalid');
   }

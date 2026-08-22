@@ -44,7 +44,8 @@ export function EditorDocumentSource({
       lineNumbers: settings.general.showLineNumbers,
       smartListRecognition: settings.general.smartListRecognition,
       submissionField,
-      syntaxHighlight: settings.general.syntaxHighlight
+      syntaxHighlight: settings.general.syntaxHighlight,
+      wordWrap: settings.markdown.wordWrap
     });
     let titleSession: NativeTitleSession;
     let editorSession: EditorDocumentSession;

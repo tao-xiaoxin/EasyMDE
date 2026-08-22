@@ -290,7 +290,10 @@ final class AdminAssets {
 				),
 			),
 			'settings'           => array(
-				'general' => $settings['general'],
+				'general'  => $settings['general'],
+				'markdown' => array(
+					'wordWrap' => $settings['markdown']['wordWrap'],
+				),
 			),
 			'layout'             => array(
 				'direction' => is_rtl() ? 'rtl' : 'ltr',

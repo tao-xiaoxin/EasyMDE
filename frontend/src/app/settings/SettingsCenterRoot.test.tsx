@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "@wordpress/element";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -669,7 +669,7 @@ describe("SettingsCenterRoot Markdown section", () => {
 		).not.toBeNull();
 	});
 
-	it("keeps Markdown controls unavailable without a runtime owner", () => {
+	it("enables word wrapping and keeps Markdown controls without runtime owners unavailable", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const markdown = document.querySelector(
 			'[data-settings-section="markdown"]',
@@ -680,6 +680,7 @@ describe("SettingsCenterRoot Markdown section", () => {
 		const lineNumbers = controls.getByRole("switch", {
 			name: "showLineNumbers",
 		});
+		const wordWrap = controls.getByRole("switch", { name: "wordWrap" });
 		const theme = controls.getByRole<HTMLSelectElement>("combobox", {
 			name: "editorTheme",
 		});
@@ -687,13 +688,17 @@ describe("SettingsCenterRoot Markdown section", () => {
 			name: "unorderedListMarker",
 		});
 
+		expect(wordWrap.matches(":disabled")).toBe(false);
+		fireEvent.click(wordWrap);
+		expect(wordWrap.getAttribute("aria-checked")).toBe("false");
+		expect(screen.getByRole("button", { name: "saveSettings" })).not.toBeNull();
 		expect(lineNumbers.matches(":disabled")).toBe(true);
 		expect(theme.matches(":disabled")).toBe(true);
 		expect(unorderedMarker.matches(":disabled")).toBe(true);
-		const fieldset = lineNumbers.closest("fieldset");
-		expect(fieldset?.getAttribute("aria-describedby")).toBe(
+		expect(lineNumbers.getAttribute("aria-describedby")).toBe(
 			"easymde-markdown-unavailable",
 		);
+		expect(wordWrap.getAttribute("aria-describedby")).toBeNull();
 		expect(
 			document.getElementById("easymde-markdown-unavailable"),
 		).not.toBeNull();

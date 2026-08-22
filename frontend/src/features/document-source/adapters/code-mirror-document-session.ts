@@ -69,6 +69,7 @@ type CreateCodeMirrorDocumentSessionOptions = Readonly<{
   smartListRecognition?: boolean;
   submissionField: HTMLTextAreaElement;
   syntaxHighlight?: boolean;
+  wordWrap?: boolean;
 }>;
 
 const markdownHighlightStyle = HighlightStyle.define([
@@ -172,7 +173,8 @@ export function createCodeMirrorDocumentSession({
   lineNumbers: showLineNumbers = true,
   smartListRecognition = true,
   submissionField,
-  syntaxHighlight = true
+  syntaxHighlight = true,
+  wordWrap = true
 }: CreateCodeMirrorDocumentSessionOptions): CodeMirrorDocumentSession {
   let syncingFromNative = false;
   let destroyed = false;
@@ -215,7 +217,7 @@ export function createCodeMirrorDocumentSession({
     ...(showLineNumbers ? [lineNumbers()] : []),
     // Keep line numbers in CodeMirror's own scroll-synchronized gutter;
     // each editor surface owns its presentation.
-    EditorView.lineWrapping,
+    ...(wordWrap ? [EditorView.lineWrapping] : []),
     editability.of(editabilityExtensions(submissionField)),
     EditorView.contentAttributes.of({
       'aria-label': label,

@@ -105,7 +105,8 @@ function validBootstrap() {
         summaryMode: 'auto-55',
         syncScroll: true,
         syntaxHighlight: true
-      }
+      },
+      markdown: { wordWrap: true }
     },
     layout: {
       direction: 'ltr' as const,
@@ -449,6 +450,16 @@ describe('parseEditorRootBootstrap', () => {
             ...validBootstrap().settings.general,
             autoSaveInterval: 'invalid'
           }
+        }
+      },
+      'editor-root-settings-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        settings: {
+          ...validBootstrap().settings,
+          markdown: { wordWrap: 'yes' }
         }
       },
       'editor-root-settings-invalid'

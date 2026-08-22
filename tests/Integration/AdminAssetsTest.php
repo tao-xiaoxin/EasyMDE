@@ -76,6 +76,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			array( 'format' => 'markdown', 'altSource' => 'filename', 'captionMode' => 'none' ),
 			$bootstrap['imageUpload']['insertion']
 		);
+		$this->assertTrue( $bootstrap['settings']['markdown']['wordWrap'] );
 		$this->assertSame( $post_id, $bootstrap['localDrafts']['postId'] );
 		$this->assertArrayHasKey( 'document', $bootstrap );
 		$this->assertArrayHasKey( 'appearance', $bootstrap );

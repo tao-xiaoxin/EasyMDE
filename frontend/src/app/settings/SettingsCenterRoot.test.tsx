@@ -169,7 +169,14 @@ describe("SettingsCenterRoot global search", () => {
 
 	it("marks image settings unavailable while keeping them searchable", async () => {
 		const user = userEvent.setup();
-		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const settingsRoot = container.firstElementChild;
+		if (!(settingsRoot instanceof HTMLDivElement))
+			throw new Error("settings-search-root-missing");
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: vi.fn(),
+		});
 
 		expect(
 			screen
@@ -185,6 +192,45 @@ describe("SettingsCenterRoot global search", () => {
 				.getByRole("textbox", { name: "backupBucket" })
 				.matches(":disabled"),
 		).toBe(true);
+		await user.click(
+			await screen.findByRole("button", { name: "backupBucket" }),
+		);
+
+		const target = screen
+			.getByRole("textbox", { name: "backupBucket" })
+			.closest<HTMLElement>("[data-setting-label]");
+		if (!target) throw new Error("settings-search-unavailable-target-missing");
+		await waitFor(() => expect(document.activeElement).toBe(target));
+		expect(target.tabIndex).toBe(-1);
+	});
+
+	it("focuses a group heading when its search result has no control", async () => {
+		const user = userEvent.setup();
+		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const settingsRoot = container.firstElementChild;
+		if (!(settingsRoot instanceof HTMLDivElement))
+			throw new Error("settings-search-root-missing");
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: vi.fn(),
+		});
+
+		await user.type(
+			screen.getByRole("searchbox", { name: "searchSettings" }),
+			"aboutVersionInformation",
+		);
+		const resultLabel = await screen.findByText("aboutVersionInformation", {
+			selector: ".easymde-settings-center__search-results strong",
+		});
+		const result = resultLabel.closest<HTMLButtonElement>("button");
+		if (!result) throw new Error("settings-search-group-result-missing");
+		await user.click(result);
+
+		const target = screen.getByRole("heading", {
+			name: "aboutVersionInformation",
+		});
+		await waitFor(() => expect(document.activeElement).toBe(target));
+		expect(target.tabIndex).toBe(-1);
 	});
 
 	it("cancels pending result navigation when the settings root unmounts", async () => {

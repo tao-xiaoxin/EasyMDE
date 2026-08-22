@@ -111,6 +111,13 @@ const SETTINGS_SAVE_CONFIRMATION_DURATION = 2000;
 const SETTINGS_SECTION_ACTIVATION_OFFSET = 15;
 const SETTINGS_SECTION_SCROLL_LEAD = 6;
 const SETTINGS_SEARCH_RESULT_SCROLL_TRAIL = 18;
+const SETTINGS_SEARCH_FOCUSABLE_CONTROL_SELECTOR = [
+	'input:not([type="hidden"]):not(:disabled):not([aria-disabled="true"])',
+	'select:not(:disabled):not([aria-disabled="true"])',
+	'textarea:not(:disabled):not([aria-disabled="true"])',
+	'button:not(:disabled):not([aria-disabled="true"])',
+	'a[href]:not([aria-disabled="true"])',
+].join(", ");
 export function SettingsCenterRoot({
 	bootstrap,
 }: {
@@ -424,11 +431,16 @@ export function SettingsCenterRoot({
 					);
 				scrollTargetIntoView(container, target, viewportOffset);
 				if (focusFirstControl) {
-					target
-						.querySelector<HTMLElement>(
-							"input, select, textarea, button, a[href]",
-						)
-						?.focus({ preventScroll: true });
+					const control = target.querySelector<HTMLElement>(
+						SETTINGS_SEARCH_FOCUSABLE_CONTROL_SELECTOR,
+					);
+					const focusTarget = control ?? target;
+					if (!control) target.tabIndex = -1;
+					focusTarget.focus({ preventScroll: true });
+					if (focusTarget.ownerDocument.activeElement !== focusTarget)
+						throw new Error(
+							`settings-center-navigation-focus-target-${targetId}-failed`,
+						);
 				}
 			});
 		});

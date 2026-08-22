@@ -267,6 +267,90 @@ test("opens a search result at the reference offset and focuses its control", as
 		.toEqual({ referenceTargetGap: true, focused: true });
 });
 
+test("keeps focus on an unavailable search result without implying availability", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	const disabledControl = page
+		.locator(
+			'[data-settings-section="images"] [data-setting-label] input:disabled',
+		)
+		.first();
+	const targetRow = disabledControl.locator(
+		"xpath=ancestor::*[@data-setting-label][1]",
+	);
+	const targetLabel = await targetRow.getAttribute("data-setting-label");
+	if (!targetLabel)
+		throw new Error("settings-search-unavailable-label-missing");
+
+	await page.getByRole("searchbox").fill(targetLabel);
+	await page
+		.locator(".easymde-settings-center__search-results button")
+		.filter({ hasText: targetLabel })
+		.click();
+
+	await expect(targetRow).toBeFocused();
+	await expect(targetRow).toHaveAttribute("tabindex", "-1");
+	await expect(disabledControl).toBeDisabled();
+	await expect
+		.poll(async () => {
+			const [targetBox, headerBox] = await Promise.all([
+				targetRow.boundingBox(),
+				page
+					.locator(".easymde-settings-center__sticky-header")
+					.boundingBox(),
+			]);
+			if (!targetBox || !headerBox)
+				throw new Error("settings-search-unavailable-geometry-missing");
+
+			return Math.abs(targetBox.y - headerBox.y - headerBox.height - 33);
+		})
+		.toBeLessThanOrEqual(0.5);
+});
+
+test("focuses a group-only search result at the reference offset", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	const targetHeading = page
+		.locator('[data-settings-section="about"] h2')
+		.first();
+	const targetLabel = (await targetHeading.textContent())?.trim();
+	if (!targetLabel) throw new Error("settings-search-group-label-missing");
+
+	await page.getByRole("searchbox").fill(targetLabel);
+	await page
+		.locator(".easymde-settings-center__search-results")
+		.getByText(targetLabel, { exact: true })
+		.locator("xpath=ancestor::button[1]")
+		.click();
+
+	await expect(targetHeading).toBeFocused();
+	await expect(targetHeading).toHaveAttribute("tabindex", "-1");
+	await expect
+		.poll(async () => {
+			const [targetBox, headerBox] = await Promise.all([
+				targetHeading.boundingBox(),
+				page
+					.locator(".easymde-settings-center__sticky-header")
+					.boundingBox(),
+			]);
+			if (!targetBox || !headerBox)
+				throw new Error("settings-search-group-geometry-missing");
+
+			return Math.abs(targetBox.y - headerBox.y - headerBox.height - 33);
+		})
+		.toBeLessThanOrEqual(0.5);
+});
+
 test("matches the reference Settings Center header geometry", async ({
 	page,
 }) => {

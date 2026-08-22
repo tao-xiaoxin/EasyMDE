@@ -77,11 +77,11 @@ test("Settings Center brand preserves the reference parent scale", () => {
 	assert.match(image, /\btranslate:\s*-1px 3px;/);
 	assert.match(copy, /\bpadding-top:\s*4px;/);
 	assert.match(title, /\bfont-size:\s*33px;/);
-	assert.match(title, /\bletter-spacing:\s*0;/);
+	assert.match(title, /\bletter-spacing:\s*-1\.35px;/);
 	assert.match(title, /\bline-height:\s*34px;/);
 	assert.match(subtitle, /\bmargin-top:\s*4px;/);
 	assert.match(subtitle, /\bfont-size:\s*18px;/);
-	assert.match(subtitle, /\bline-height:\s*20px;/);
+	assert.match(subtitle, /\bline-height:\s*18\.75px;/);
 	assert.match(subtitle, /\btranslate:\s*-1px 2px;/);
 });
 
@@ -131,6 +131,7 @@ test("Settings Center title preserves unscaled reference placement and type", ()
 	assert.match(titleWrap, /\bleft:\s*37px;/);
 	assert.match(title, /\bpadding:\s*0;/);
 	assert.match(title, /\bfont-size:\s*34px;/);
+	assert.match(title, /\bletter-spacing:\s*-\.55px;/);
 	assert.match(title, /\bline-height:\s*42px;/);
 });
 

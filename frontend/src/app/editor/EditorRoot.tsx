@@ -625,7 +625,9 @@ export function EditorRoot(props: EditorRootProps) {
       : props.settings.general.autoSave && props.localDrafts.enabled
   );
   const localDraftsEnabledRef = useRef(localDraftsEnabled);
-  localDraftsEnabledRef.current = localDraftsEnabled;
+  useEffect(() => {
+    localDraftsEnabledRef.current = localDraftsEnabled;
+  }, [localDraftsEnabled]);
   const [scrollSyncEnabled, setScrollSyncEnabled] = useState(() =>
     'loaded' === immersivePreferences.status
       ? immersivePreferences.preferences.syncScroll

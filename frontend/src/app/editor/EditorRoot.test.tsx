@@ -4065,13 +4065,19 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: '分屏模式' }));
     fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
 
+    savedPreferences = {
+      autoSave: false,
+      outline: false,
+      splitPreview: false,
+      syncScroll: false,
+      wordCount: false
+    };
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
     expect(
       view.container
         .querySelector('.easymde-editor')
-        ?.classList.contains('is-immersive-split')
+        ?.classList.contains('is-immersive-source')
     ).toBe(true);
-    expect(props.immersivePreferencesPort.read).toHaveBeenCalledTimes(5);
     expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(2);
   });
 

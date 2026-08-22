@@ -151,7 +151,7 @@ test("opens the settings center through the explicit General route", async ({
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 });
 
-test("keeps section navigation, the sticky boundary, and the Chinese heading in sync", async ({
+test("keeps section navigation, the sticky boundary, and the localized heading in sync", async ({
 	page,
 }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
@@ -160,12 +160,15 @@ test("keeps section navigation, the sticky boundary, and the Chinese heading in 
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 
 	const steps = [
-		{ id: "images", previousId: "general", title: "图床设置" },
-		{ id: "markdown", previousId: "images", title: "Markdown 设置" },
+		{ id: "images", previousId: "general" },
+		{ id: "markdown", previousId: "images" },
 	];
 
 	for (const step of steps) {
-		await page.locator(`[data-nav-id="${step.id}"]`).click();
+		const navItem = page.locator(`[data-nav-id="${step.id}"]`);
+		const expectedHeading = (await navItem.textContent())?.trim();
+		expect(expectedHeading).toBeTruthy();
+		await navItem.click();
 		await expect
 			.poll(async () =>
 				page.evaluate(({ id, previousId }) => {
@@ -209,7 +212,7 @@ test("keeps section navigation, the sticky boundary, and the Chinese heading in 
 				referenceSectionGap: true,
 				current: "page",
 				previous: null,
-				heading: step.title,
+				heading: expectedHeading,
 			});
 	}
 });
@@ -222,19 +225,26 @@ test("opens a search result at the reference offset and focuses its control", as
 	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 
-	await page
-		.getByRole("searchbox", { name: "搜索全部设置" })
-		.fill("自动聚焦编辑器");
+	const targetControl = page.getByRole("switch").first();
+	const targetRow = targetControl.locator(
+		"xpath=ancestor::*[@data-setting-label][1]",
+	);
+	const targetLabel = await targetRow.getAttribute("data-setting-label");
+	if (!targetLabel) throw new Error("settings-search-target-label-missing");
+
+	await page.getByRole("searchbox").fill(targetLabel);
 	await page
 		.locator(".easymde-settings-center__search-results button")
-		.filter({ hasText: "自动聚焦编辑器" })
+		.filter({ hasText: targetLabel })
 		.click();
 
 	await expect
 		.poll(() =>
-			page.evaluate(() => {
-				const target = document.querySelector(
-					'[data-setting-label="自动聚焦编辑器"]',
+			page.evaluate((label) => {
+				const target = [
+					...document.querySelectorAll("[data-setting-label]"),
+				].find(
+					(element) => element.getAttribute("data-setting-label") === label,
 				);
 				const stickyHeader = document.querySelector(
 					".easymde-settings-center__sticky-header",
@@ -252,7 +262,7 @@ test("opens a search result at the reference offset and focuses its control", as
 						) <= 0.5,
 					focused: document.activeElement === control,
 				};
-			}),
+				}, targetLabel),
 		)
 		.toEqual({ referenceTargetGap: true, focused: true });
 });

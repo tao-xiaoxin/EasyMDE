@@ -138,8 +138,6 @@ export function SettingsCenterRoot({
 	>("idle");
 	const [saveConflict, setSaveConflict] = useState(false);
 	const [saveError, setSaveError] = useState<SaveError>(null);
-	const [transferMutationUnavailable, setTransferMutationUnavailable] =
-		useState(false);
 	const saveControllerRef = useRef<AbortController | null>(null);
 	const [query, setQuery] = useState("");
 	const [searchItems, setSearchItems] = useState<ReadonlyArray<SearchItem>>([]);
@@ -247,6 +245,7 @@ export function SettingsCenterRoot({
 						`settings-center-search-section-${tabId ?? "missing"}-invalid`,
 					);
 				}
+				if (tabId === "about") continue;
 				const headings = Array.from(
 					section.querySelectorAll<HTMLElement>("h2, h3"),
 				);
@@ -498,11 +497,7 @@ export function SettingsCenterRoot({
 	const settingsDirty =
 		resetSecretsRef.current ||
 		JSON.stringify(settings) !== JSON.stringify(savedSettings);
-	const saveBarVisible =
-		settingsDirty ||
-		"idle" !== saveStatus ||
-		saveConflict ||
-		transferMutationUnavailable;
+	const saveBarVisible = settingsDirty || "idle" !== saveStatus || saveConflict;
 	const updateSettingsSection = <Key extends keyof SettingsCenterSettings>(
 		key: Key,
 		value: SettingsCenterSettings[Key],
@@ -536,7 +531,6 @@ export function SettingsCenterRoot({
 		resetSecretsRef.current = false;
 		setSaveConflict(false);
 		setSaveError(null);
-		setTransferMutationUnavailable(true);
 		settingsRef.current = nextSettings;
 		setSettings(nextSettings);
 		setSaveStatus("idle");
@@ -545,19 +539,12 @@ export function SettingsCenterRoot({
 		resetSecretsRef.current = true;
 		setSaveConflict(false);
 		setSaveError(null);
-		setTransferMutationUnavailable(true);
 		settingsRef.current = nextSettings;
 		setSettings(nextSettings);
 		setSaveStatus("idle");
 	};
 	const saveSettings = async () => {
-		if (
-			!settingsDirty ||
-			"saving" === saveStatus ||
-			saveConflict ||
-			transferMutationUnavailable
-		)
-			return;
+		if (!settingsDirty || "saving" === saveStatus || saveConflict) return;
 		saveControllerRef.current?.abort();
 		const controller = new AbortController();
 		const requestedSettings = settings;
@@ -589,7 +576,6 @@ export function SettingsCenterRoot({
 			}
 			setSaveConflict(false);
 			setSaveError(null);
-			setTransferMutationUnavailable(false);
 			setSaveStatus(currentSettingsUnchanged ? "saved" : "idle");
 		} catch (error) {
 			if (!controller.signal.aborted) {
@@ -629,7 +615,6 @@ export function SettingsCenterRoot({
 			resetSecretsRef.current = false;
 			setSaveConflict(false);
 			setSaveError(null);
-			setTransferMutationUnavailable(false);
 			setSaveStatus("idle");
 		} catch (error) {
 			if (!controller.signal.aborted) {
@@ -775,24 +760,15 @@ export function SettingsCenterRoot({
 											: strings.settingsSaveRejected
 								: "saved" === saveStatus
 									? strings.settingsSaved
-									: transferMutationUnavailable
-										? strings.settingsUnavailable
-										: settingsDirty
-											? strings.settingsUnsavedChanges
-											: ""}
+									: settingsDirty
+										? strings.settingsUnsavedChanges
+										: ""}
 						</span>
 						<button
 							type="button"
 							aria-busy={"saving" === saveStatus}
 							disabled={
-								"saving" === saveStatus ||
-								transferMutationUnavailable ||
-								(!settingsDirty && !saveConflict)
-							}
-							title={
-								transferMutationUnavailable
-									? strings.settingsUnavailableDescription
-									: undefined
+								"saving" === saveStatus || (!settingsDirty && !saveConflict)
 							}
 							onClick={() => {
 								if (saveConflict) {

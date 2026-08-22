@@ -129,14 +129,22 @@ describe("SettingsCenterRoot global search", () => {
 			}),
 		);
 
-		await user.keyboard("{Escape}");
+		const dialogLayer = dialog.parentElement;
+		const backdrop = dialogLayer?.querySelector<HTMLButtonElement>(
+			".easymde-settings-center__dialog-backdrop",
+		);
+		if (!backdrop)
+			throw new Error("settings-center-help-dialog-backdrop-missing");
+		await user.click(backdrop);
 		await waitFor(() => expect(document.activeElement).toBe(trigger));
 	});
 
 	it("scrolls implemented tabs within the settings container using measured sticky offsets", async () => {
 		const user = userEvent.setup();
 		const windowScrollTo = vi.spyOn(window, "scrollTo");
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
 		const settingsRoot = container.firstElementChild;
 		const stickyHeader = container.querySelector(
 			".easymde-settings-center__sticky-header",
@@ -229,7 +237,9 @@ describe("SettingsCenterRoot global search", () => {
 
 	it("marks image settings unavailable while keeping them searchable", async () => {
 		const user = userEvent.setup();
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
 		const settingsRoot = container.firstElementChild;
 		if (!(settingsRoot instanceof HTMLDivElement))
 			throw new Error("settings-search-root-missing");
@@ -264,33 +274,20 @@ describe("SettingsCenterRoot global search", () => {
 		expect(target.tabIndex).toBe(-1);
 	});
 
-	it("focuses a group heading when its search result has no control", async () => {
+	it("excludes the About page from the settings search index", async () => {
 		const user = userEvent.setup();
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-		const settingsRoot = container.firstElementChild;
-		if (!(settingsRoot instanceof HTMLDivElement))
-			throw new Error("settings-search-root-missing");
-		Object.defineProperty(settingsRoot, "scrollTo", {
-			configurable: true,
-			value: vi.fn(),
-		});
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
 		await user.type(
 			screen.getByRole("searchbox", { name: "searchSettings" }),
 			"aboutVersionInformation",
 		);
-		const resultLabel = await screen.findByText("aboutVersionInformation", {
-			selector: ".easymde-settings-center__search-results strong",
-		});
-		const result = resultLabel.closest<HTMLButtonElement>("button");
-		if (!result) throw new Error("settings-search-group-result-missing");
-		await user.click(result);
-
-		const target = screen.getByRole("heading", {
-			name: "aboutVersionInformation",
-		});
-		await waitFor(() => expect(document.activeElement).toBe(target));
-		expect(target.tabIndex).toBe(-1);
+		expect(await screen.findByText("noSearchResults")).not.toBeNull();
+		expect(
+			screen.queryByText("aboutVersionInformation", {
+				selector: ".easymde-settings-center__search-results strong",
+			}),
+		).toBeNull();
 	});
 
 	it("cancels pending result navigation when the settings root unmounts", async () => {
@@ -389,7 +386,10 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		const headingGroup = screen
 			.getByRole("heading", { name: "headingAndFormatting" })
 			.closest("section");
-		if (!(commonGroup instanceof HTMLElement) || !(headingGroup instanceof HTMLElement))
+		if (
+			!(commonGroup instanceof HTMLElement) ||
+			!(headingGroup instanceof HTMLElement)
+		)
 			throw new Error("shortcut-reset-visibility-groups-missing");
 
 		expect(
@@ -404,7 +404,7 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		).toBeNull();
 	});
 
-	it("preserves an empty shortcut binding when its field is cleared", async () => {
+	it("restores an empty shortcut from defaults when suggestions are enabled", async () => {
 		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const windowsSave = screen.getByRole<HTMLInputElement>("textbox", {
@@ -414,10 +414,25 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		await user.clear(windowsSave);
 		await user.tab();
 
+		expect(windowsSave.value).toBe("Ctrl+S");
+	});
+
+	it("preserves an empty shortcut when suggestions are disabled", async () => {
+		const user = userEvent.setup();
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		await user.click(
+			screen.getByRole("switch", { name: "customShortcutSuggestions" }),
+		);
+		const windowsSave = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "saveArticle windowsLinux",
+		});
+		await user.clear(windowsSave);
+		await user.tab();
 		expect(windowsSave.value).toBe("");
 	});
 
-	it("keeps unsupported shortcut behavior switches disabled", async () => {
+	it("enables shortcut behavior and marks duplicate bindings by platform", async () => {
+		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const behavior = screen
 			.getByRole("heading", { name: "shortcutBehavior" })
@@ -428,7 +443,32 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		});
 
 		expect(hints.getAttribute("aria-checked")).toBe("true");
-		expect(hints.matches(":disabled")).toBe(true);
+		expect(hints.matches(":disabled")).toBe(false);
+		await user.clear(
+			screen.getByRole("textbox", { name: "bold windowsLinux" }),
+		);
+		await user.type(
+			screen.getByRole("textbox", { name: "bold windowsLinux" }),
+			"Ctrl+S",
+		);
+		expect(
+			screen
+				.getByRole("textbox", { name: "saveArticle windowsLinux" })
+				.getAttribute("aria-invalid"),
+		).toBe("true");
+		expect(
+			screen
+				.getByRole("textbox", { name: "bold windowsLinux" })
+				.getAttribute("aria-invalid"),
+		).toBe("true");
+		await user.click(
+			screen.getByRole("switch", { name: "detectShortcutConflicts" }),
+		);
+		expect(
+			screen
+				.getByRole("textbox", { name: "bold windowsLinux" })
+				.getAttribute("aria-invalid"),
+		).toBeNull();
 	});
 });
 
@@ -479,7 +519,9 @@ describe("SettingsCenterRoot images section", () => {
 		expect(fieldset?.getAttribute("aria-describedby")).toBe(
 			"easymde-images-unavailable",
 		);
-		expect(document.getElementById("easymde-images-unavailable")).not.toBeNull();
+		expect(
+			document.getElementById("easymde-images-unavailable"),
+		).not.toBeNull();
 	});
 
 	it("does not expose a fake image-host connection test", () => {
@@ -615,7 +657,23 @@ describe("SettingsCenterRoot Transfer section", () => {
 		).not.toBeNull();
 	});
 
-	it("keeps unsupported import controls disabled", async () => {
+	it("imports a valid configuration into the draft and saves it explicitly", async () => {
+		const user = userEvent.setup();
+		const importedSettings: SettingsCenterSettings = {
+			...bootstrap().settings,
+			general: {
+				...bootstrap().settings.general,
+				autoFocusEditor: true,
+			},
+		};
+		const savedSettings = {
+			...importedSettings,
+			revision: importedSettings.revision + 1,
+		};
+		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+			ok: true,
+			json: async () => ({ settings: savedSettings }),
+		} as Response);
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
 		);
@@ -629,20 +687,36 @@ describe("SettingsCenterRoot Transfer section", () => {
 			"transferChooseConfigurationFile",
 		);
 
-		expect(fileInput.disabled).toBe(true);
+		expect(fileInput.disabled).toBe(false);
 		const chooseFile = transfer.getByRole("button", {
 			name: "transferChooseConfigurationFile",
 		});
-		expect(chooseFile.matches(":disabled")).toBe(true);
-		expect(chooseFile.getAttribute("aria-describedby")).toBe(
-			"easymde-transfer-unavailable",
+		expect(chooseFile.matches(":disabled")).toBe(false);
+		await user.upload(
+			fileInput,
+			new File(
+				[JSON.stringify({ schemaVersion: 1, settings: importedSettings })],
+				"settings.json",
+				{ type: "application/json" },
+			),
 		);
-		expect(chooseFile.getAttribute("title")).toBe(
-			"transferUnavailableSettingsNotice",
+		await user.click(
+			transfer.getByRole("button", { name: "transferConfirmImport" }),
 		);
+		expect(
+			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" })
+				.disabled,
+		).toBe(false);
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+		await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+		const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
+			settings: SettingsCenterSettings;
+		};
+		expect(body.settings.general.autoFocusEditor).toBe(true);
+		fetch.mockRestore();
 	});
 
-	it("exports the current draft while import remains unavailable", async () => {
+	it("exports the current draft with secrets redacted", async () => {
 		const user = userEvent.setup();
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
@@ -697,9 +771,10 @@ describe("SettingsCenterRoot Transfer section", () => {
 			expect(click).toHaveBeenCalledOnce();
 
 			expect(
-			transfer.getByLabelText<HTMLInputElement>("transferChooseConfigurationFile")
-				.disabled,
-		).toBe(true);
+				transfer.getByLabelText<HTMLInputElement>(
+					"transferChooseConfigurationFile",
+				).disabled,
+			).toBe(false);
 		} finally {
 			Object.defineProperty(URL, "createObjectURL", {
 				configurable: true,
@@ -761,7 +836,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 			expect(click).toHaveBeenCalledOnce();
 			expect(createObjectUrl).toHaveBeenCalledOnce();
 			expect(within(container).getByRole("status").textContent).toContain(
-			"transferExportNameInvalid",
+				"transferExportNameInvalid",
 			);
 		} finally {
 			Object.defineProperty(URL, "createObjectURL", {
@@ -776,7 +851,8 @@ describe("SettingsCenterRoot Transfer section", () => {
 		}
 	});
 
-	it("keeps unsupported transfer mutations disabled", async () => {
+	it("resets the configuration through the explicit save path and keeps cache deletion unavailable", async () => {
+		const user = userEvent.setup();
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
 		);
@@ -787,12 +863,18 @@ describe("SettingsCenterRoot Transfer section", () => {
 		const resetTrigger = screen.getByRole("button", {
 			name: /transferResetCurrentConfiguration/,
 		});
-		expect(resetTrigger.matches(":disabled")).toBe(true);
+		expect(resetTrigger.matches(":disabled")).toBe(false);
+		await user.click(resetTrigger);
+		const resetDialog = within(overlayRoot).getByRole("dialog", {
+			name: "transferResetCurrentConfiguration",
+		});
+		await user.click(
+			within(resetDialog).getByRole("button", { name: "transferConfirmReset" }),
+		);
 		expect(
-			within(overlayRoot).queryByRole("dialog", {
-				name: "transferResetCurrentConfiguration",
-			}),
-		).toBeNull();
+			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" })
+				.disabled,
+		).toBe(false);
 		const clearCacheTrigger = screen.getByRole("button", {
 			name: /transferClearLocalCache/,
 		});
@@ -971,7 +1053,9 @@ describe("SettingsCenterRoot persistence", () => {
 				.matches(":disabled"),
 		).toBe(false);
 		expect(
-			screen.getByRole("combobox", { name: "interfaceLanguage" }).matches(":disabled"),
+			screen
+				.getByRole("combobox", { name: "interfaceLanguage" })
+				.matches(":disabled"),
 		).toBe(true);
 		expect(
 			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" })
@@ -982,22 +1066,27 @@ describe("SettingsCenterRoot persistence", () => {
 	it("changes an owner-backed dropdown and sends the selected value", async () => {
 		const user = userEvent.setup();
 		const payloadRef = { current: null as Record<string, unknown> | null };
-		const fetch = vi.spyOn(window, "fetch").mockImplementation(async (_input, init) => {
-			payloadRef.current = JSON.parse(String(init?.body)) as Record<string, unknown>;
-			return {
-				ok: true,
-				json: async () => ({
-					settings: {
-						...bootstrap().settings,
-						revision: bootstrap().settings.revision + 1,
-						general: {
-							...bootstrap().settings.general,
-							statusBarMode: "hidden",
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (_input, init) => {
+				payloadRef.current = JSON.parse(String(init?.body)) as Record<
+					string,
+					unknown
+				>;
+				return {
+					ok: true,
+					json: async () => ({
+						settings: {
+							...bootstrap().settings,
+							revision: bootstrap().settings.revision + 1,
+							general: {
+								...bootstrap().settings.general,
+								statusBarMode: "hidden",
+							},
 						},
-					},
-				}),
-			} as Response;
-		});
+					}),
+				} as Response;
+			});
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
 		const select = screen.getByRole<HTMLSelectElement>("combobox", {
@@ -1005,12 +1094,18 @@ describe("SettingsCenterRoot persistence", () => {
 		});
 		await user.selectOptions(select, "hidden");
 		expect(select.value).toBe("hidden");
-		await user.click(screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" }));
+		await user.click(
+			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" }),
+		);
 
-		await waitFor(() => expect(screen.getByText("settingsSaved")).not.toBeNull());
+		await waitFor(() =>
+			expect(screen.getByText("settingsSaved")).not.toBeNull(),
+		);
 		if (!payloadRef.current) throw new Error("settings-save-payload-missing");
 		const general = payloadRef.current.settings as Record<string, unknown>;
-		expect((general.general as Record<string, unknown>).statusBarMode).toBe("hidden");
+		expect((general.general as Record<string, unknown>).statusBarMode).toBe(
+			"hidden",
+		);
 		fetch.mockRestore();
 	});
 
@@ -1045,9 +1140,7 @@ describe("SettingsCenterRoot persistence", () => {
 		try {
 			render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-			await user.click(
-				screen.getByRole("switch", { name: "autoFocusEditor" }),
-			);
+			await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
 			await user.click(
 				screen.getByRole<HTMLButtonElement>("button", {
 					name: "saveSettings",
@@ -1131,7 +1224,7 @@ describe("SettingsCenterRoot persistence", () => {
 		await user.click(save);
 
 		await waitFor(() =>
-			 expect(screen.getByText("settingsSaveNetworkFailed")).not.toBeNull(),
+			expect(screen.getByText("settingsSaveNetworkFailed")).not.toBeNull(),
 		);
 		expect(screen.queryByText("settingsSaved")).toBeNull();
 		expect(save.disabled).toBe(false);

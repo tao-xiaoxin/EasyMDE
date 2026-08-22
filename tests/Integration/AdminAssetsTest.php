@@ -117,11 +117,13 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 		$settings   = $repository->get_settings();
 		$settings['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+B';
+		$settings['shortcuts']['showHints']                  = false;
 		$this->assertNotWPError( $repository->update_settings( $settings ) );
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
 
 		$this->assertSame( 'Ctrl+Alt+B', $bootstrap['toolbar']['shortcuts']['bold']['win'] );
+		$this->assertFalse( $bootstrap['toolbar']['showShortcutHints'] );
 		$this->assertSame( 'Cmd+Shift+B', get_option( Options::EDITOR_SETTINGS )['shortcuts']['bold']['mac'] );
 	}
 

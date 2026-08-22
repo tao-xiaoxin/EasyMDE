@@ -55,6 +55,12 @@ export function AboutDialog({
 			className="easymde-settings-center__transfer-dialog-layer"
 			role="presentation"
 		>
+			<button
+				type="button"
+				className="easymde-settings-center__dialog-backdrop"
+				aria-label={strings.aboutCloseOperationDialog}
+				onClick={onClose}
+			/>
 			<div
 				ref={dialogRef}
 				role="dialog"

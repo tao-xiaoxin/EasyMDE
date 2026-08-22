@@ -337,9 +337,10 @@ final class AdminAssets {
 				'codeThemes'   => $code_themes,
 				'strings'      => array( 'renderingFailed' => $strings['renderingFailed'] ),
 			),
-			'toolbar'            => array(
-				'commands'  => $this->toolbar_registry->get_commands_for_script(),
-				'shortcuts' => $this->settings_center_repository->get_shortcut_config_for_script(),
+				'toolbar'            => array(
+					'commands'          => $this->toolbar_registry->get_commands_for_script(),
+					'showShortcutHints' => (bool) $settings['shortcuts']['showHints'],
+					'shortcuts'         => $this->settings_center_repository->get_shortcut_config_for_script(),
 				'strings'   => array(
 					'headingLabelFormat' => $strings['headingLabelFormat'],
 					'headingLevel'       => $strings['headingLevel'],

@@ -1121,6 +1121,11 @@
 	box-shadow: 0 0 0 2px #dce9ff;
 }
 
+.easymde-settings-center__shortcut-row input[aria-invalid="true"] {
+	border-color: #dc2626;
+	box-shadow: 0 0 0 2px #fee2e2;
+}
+
 .easymde-settings-center__shortcut-behavior > h2 {
 	margin-bottom: 20px;
 }
@@ -2008,6 +2013,16 @@
 	place-items: center;
 	background: rgba(15, 29, 57, .32);
 	backdrop-filter: blur(2px);
+}
+
+.easymde-settings-center__dialog-backdrop {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	padding: 0;
+	border: 0;
+	background: transparent;
 }
 
 .easymde-settings-center__transfer-dialog {

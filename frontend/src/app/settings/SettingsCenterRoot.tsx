@@ -1,5 +1,6 @@
 import {
 	createElement,
+	createPortal,
 	useEffect,
 	useMemo,
 	useRef,
@@ -12,7 +13,7 @@ import type {
 import type { SettingsCenterSettings } from "../../contracts/settings-center-settings";
 import { ChevronRight, X } from "../../generated/lucide-icons";
 import { createWordPressSettingsPort } from "../../integrations/wordpress/settings/create-wordpress-settings-port";
-import { AboutSettingsPage } from "./AboutSettingsPage";
+import { AboutDialog, AboutSettingsPage } from "./AboutSettingsPage";
 import { GeneralSettingsPage } from "./GeneralSettingsPage";
 import { ImagesSettingsPage } from "./ImagesSettingsPage";
 import { MarkdownSettingsPage } from "./MarkdownSettingsPage";
@@ -143,6 +144,9 @@ export function SettingsCenterRoot({
 	const [query, setQuery] = useState("");
 	const [searchItems, setSearchItems] = useState<ReadonlyArray<SearchItem>>([]);
 	const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null);
+	const [sidebarHelpOpen, setSidebarHelpOpen] = useState(false);
+	const sidebarHelpTriggerRef = useRef<HTMLButtonElement>(null);
+	const sidebarHelpWasOpenRef = useRef(false);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const stickyHeaderRef = useRef<HTMLDivElement>(null);
 	const saveBarRef = useRef<HTMLDivElement>(null);
@@ -203,6 +207,25 @@ export function SettingsCenterRoot({
 	const pageDescription = normalizedQuery
 		? formatSinglePlaceholder(strings.searchPageDescription, query.trim())
 		: strings[current.description];
+
+	useEffect(() => {
+		if (!sidebarHelpOpen) return;
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setSidebarHelpOpen(false);
+		};
+		window.addEventListener("keydown", closeOnEscape);
+		return () => window.removeEventListener("keydown", closeOnEscape);
+	}, [sidebarHelpOpen]);
+
+	useEffect(() => {
+		if (sidebarHelpOpen) {
+			sidebarHelpWasOpenRef.current = true;
+			return;
+		}
+		if (!sidebarHelpWasOpenRef.current) return;
+		sidebarHelpWasOpenRef.current = false;
+		sidebarHelpTriggerRef.current?.focus();
+	}, [sidebarHelpOpen]);
 
 	useEffect(() => {
 		const root = scrollContainerRef.current;
@@ -686,7 +709,11 @@ export function SettingsCenterRoot({
 								<p>{strings.helpDescription}</p>
 							</div>
 						</div>
-						<button type="button" onClick={() => navigateToSection("about")}>
+						<button
+							ref={sidebarHelpTriggerRef}
+							type="button"
+							onClick={() => setSidebarHelpOpen(true)}
+						>
 							{strings.openDocumentation}
 							<ChevronRight size={12} />
 						</button>
@@ -976,6 +1003,17 @@ export function SettingsCenterRoot({
 				</main>
 			</div>
 			<div ref={setOverlayRoot} data-settings-overlay-root="" />
+			{sidebarHelpOpen && overlayRoot
+				? createPortal(
+						<AboutDialog
+							kind="help"
+							strings={strings}
+							documentationUrl={bootstrap.links.documentationUrl}
+							onClose={() => setSidebarHelpOpen(false)}
+						/>,
+						overlayRoot,
+					)
+				: null}
 		</div>
 	);
 }

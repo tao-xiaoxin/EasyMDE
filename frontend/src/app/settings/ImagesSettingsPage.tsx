@@ -480,11 +480,14 @@ export function ImagesSettingsPage({
 	return (
 		<div className="easymde-settings-center__images-page">
 			<UnavailableSettingsNotice
+				id="easymde-images-unavailable"
 				label={strings.settingsUnavailable}
 				description={strings.settingsUnavailableDescription}
 			/>
 			<fieldset
 				disabled
+				aria-describedby="easymde-images-unavailable"
+				title={strings.settingsUnavailableDescription}
 				className="easymde-settings-center__unavailable-fields"
 			>
 				<section className="easymde-settings-center__image-group is-host-service">

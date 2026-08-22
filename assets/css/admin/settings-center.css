@@ -540,6 +540,19 @@
 .easymde-settings-center__unavailable-fields :is(button, input, select) { cursor: not-allowed; }
 .easymde-settings-center__transfer-unavailable-notice { margin: 20px 36px 0; color: #657695; font-size: 14px; }
 
+.easymde-settings-center__visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	clip-path: inset(50%);
+	border: 0;
+	white-space: nowrap;
+}
+
 .easymde-settings-center__content {
 	padding: 0 37px 0 34px;
 }
@@ -1814,7 +1827,7 @@
 }
 
 .easymde-settings-center__transfer-export-form > button:hover,
-.easymde-settings-center__transfer-import-actions > button:last-child:hover {
+.easymde-settings-center__transfer-import-actions > button:last-child:hover:not(:disabled) {
 	background: #075dde;
 }
 
@@ -1835,8 +1848,12 @@
 	color: #0867f4;
 }
 
-.easymde-settings-center__transfer-import-actions > button:hover {
+.easymde-settings-center__transfer-import-actions > button:hover:not(:disabled) {
 	background: #f7faff;
+}
+
+.easymde-settings-center__transfer-import-actions > button:disabled {
+	cursor: not-allowed;
 }
 
 .easymde-settings-center__transfer-import-actions > button:last-child:not(:first-child) {
@@ -1951,8 +1968,12 @@
 	border-bottom-width: 1px;
 }
 
-.easymde-settings-center__transfer-management > div > button:hover {
+.easymde-settings-center__transfer-management > div > button:hover:not(:disabled) {
 	background: #fbfdff;
+}
+
+.easymde-settings-center__transfer-management > div > button:disabled {
+	cursor: not-allowed;
 }
 
 .easymde-settings-center__transfer-management > div > button > svg {
@@ -2252,11 +2273,18 @@
 
 .easymde-settings-center__about-dialog > footer .is-primary-action {
 	display: inline-flex;
+	height: 38px;
 	align-items: center;
 	gap: 7px;
 	margin-right: auto;
-	border-color: #cfe0fa;
+	padding: 0 15px;
+	border: 1px solid #cfe0fa;
+	border-radius: 7px;
+	background: #fff;
 	color: #0867f4;
+	font-size: 14px;
+	font-weight: 500;
+	text-decoration: none;
 }
 
 .easymde-settings-center__about-dialog > footer .is-primary-action:hover {

@@ -444,7 +444,8 @@ export function TransferSettingsPage({
 	return (
 		<div className="easymde-settings-center__transfer-page">
 			<p
-				className="easymde-settings-center__transfer-unavailable-notice"
+				id="easymde-transfer-unavailable"
+				className="easymde-settings-center__transfer-unavailable-notice easymde-settings-center__visually-hidden"
 				role="note"
 			>
 				{strings.transferUnavailableSettingsNotice}
@@ -486,6 +487,8 @@ export function TransferSettingsPage({
 						<button
 							type="button"
 							disabled
+							aria-describedby="easymde-transfer-unavailable"
+							title={strings.transferUnavailableSettingsNotice}
 							onClick={() => importFileRef.current?.click()}
 						>
 							<Upload size={17} />
@@ -510,6 +513,8 @@ export function TransferSettingsPage({
 								<button
 									type="button"
 									disabled
+									aria-describedby="easymde-transfer-unavailable"
+									title={strings.transferUnavailableSettingsNotice}
 									onClick={() => {
 										void importConfiguration();
 									}}
@@ -574,6 +579,16 @@ export function TransferSettingsPage({
 							type="button"
 							key={kind}
 							disabled={kind === "reset" || kind === "clear-cache"}
+							aria-describedby={
+								kind === "reset" || kind === "clear-cache"
+									? "easymde-transfer-unavailable"
+									: undefined
+							}
+							title={
+								kind === "reset" || kind === "clear-cache"
+									? strings.transferUnavailableSettingsNotice
+									: undefined
+							}
 							onClick={(event) => openDialog(kind, event.currentTarget)}
 						>
 							<Icon size={25} />

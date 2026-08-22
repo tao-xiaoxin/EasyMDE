@@ -38,13 +38,19 @@ export function SettingsToggle({
 
 export function UnavailableSettingsNotice({
 	description,
+	id,
 	label,
 }: {
 	description: string;
+	id: string;
 	label: string;
 }) {
 	return (
-		<div className="easymde-settings-center__unavailable" role="note">
+		<div
+			id={id}
+			className="easymde-settings-center__unavailable easymde-settings-center__visually-hidden"
+			role="note"
+		>
 			<strong>{label}</strong>
 			<p>{description}</p>
 		</div>

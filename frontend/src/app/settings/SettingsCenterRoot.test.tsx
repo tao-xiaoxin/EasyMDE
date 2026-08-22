@@ -73,6 +73,66 @@ afterEach(() => {
 	});
 });
 describe("SettingsCenterRoot global search", () => {
+	it("renders only the six implemented navigation items and sections", () => {
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+
+		expect(
+			Array.from(container.querySelectorAll("[data-nav-id]"), (element) =>
+				element.getAttribute("data-nav-id"),
+			),
+		).toEqual([
+			"general",
+			"shortcuts",
+			"images",
+			"markdown",
+			"transfer",
+			"about",
+		]);
+		expect(
+			Array.from(
+				container.querySelectorAll("[data-settings-section]"),
+				(element) => element.getAttribute("data-settings-section"),
+			),
+		).toEqual([
+			"general",
+			"shortcuts",
+			"images",
+			"markdown",
+			"transfer",
+			"about",
+		]);
+	});
+
+	it("opens Help from the sidebar and restores its trigger focus", async () => {
+		const user = userEvent.setup();
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
+		if (!(overlayRoot instanceof HTMLElement))
+			throw new Error("settings-center-overlay-missing");
+
+		const trigger = screen.getByRole("button", { name: "openDocumentation" });
+		await user.click(trigger);
+
+		const dialog = within(overlayRoot).getByRole("dialog", {
+			name: "aboutHelpDialogTitle",
+		});
+		expect(
+			within(dialog).getByText("aboutHelpEditorWorkflowDescription"),
+		).not.toBeNull();
+		expect(document.activeElement).toBe(
+			within(dialog).getByRole("button", {
+				name: "aboutCloseOperationDialog",
+			}),
+		);
+
+		await user.keyboard("{Escape}");
+		await waitFor(() => expect(document.activeElement).toBe(trigger));
+	});
+
 	it("scrolls implemented tabs within the settings container using measured sticky offsets", async () => {
 		const user = userEvent.setup();
 		const windowScrollTo = vi.spyOn(window, "scrollTo");
@@ -415,6 +475,11 @@ describe("SettingsCenterRoot images section", () => {
 				.matches(":disabled"),
 		).toBe(true);
 		expect(backup.matches(":disabled")).toBe(true);
+		const fieldset = backup.closest("fieldset");
+		expect(fieldset?.getAttribute("aria-describedby")).toBe(
+			"easymde-images-unavailable",
+		);
+		expect(document.getElementById("easymde-images-unavailable")).not.toBeNull();
 	});
 
 	it("does not expose a fake image-host connection test", () => {
@@ -515,6 +580,13 @@ describe("SettingsCenterRoot Markdown section", () => {
 		expect(lineNumbers.matches(":disabled")).toBe(true);
 		expect(theme.matches(":disabled")).toBe(true);
 		expect(unorderedMarker.matches(":disabled")).toBe(true);
+		const fieldset = lineNumbers.closest("fieldset");
+		expect(fieldset?.getAttribute("aria-describedby")).toBe(
+			"easymde-markdown-unavailable",
+		);
+		expect(
+			document.getElementById("easymde-markdown-unavailable"),
+		).not.toBeNull();
 	});
 });
 
@@ -558,10 +630,16 @@ describe("SettingsCenterRoot Transfer section", () => {
 		);
 
 		expect(fileInput.disabled).toBe(true);
-		expect(
-			transfer.getByRole("button", { name: "transferChooseConfigurationFile" })
-			.matches(":disabled"),
-		).toBe(true);
+		const chooseFile = transfer.getByRole("button", {
+			name: "transferChooseConfigurationFile",
+		});
+		expect(chooseFile.matches(":disabled")).toBe(true);
+		expect(chooseFile.getAttribute("aria-describedby")).toBe(
+			"easymde-transfer-unavailable",
+		);
+		expect(chooseFile.getAttribute("title")).toBe(
+			"transferUnavailableSettingsNotice",
+		);
 	});
 
 	it("exports the current draft while import remains unavailable", async () => {

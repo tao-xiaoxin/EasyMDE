@@ -239,11 +239,14 @@ export function MarkdownSettingsPage({
 	return (
 		<div className="easymde-settings-center__markdown-page">
 			<UnavailableSettingsNotice
+				id="easymde-markdown-unavailable"
 				label={strings.settingsUnavailable}
 				description={strings.settingsUnavailableDescription}
 			/>
 			<fieldset
 				disabled
+				aria-describedby="easymde-markdown-unavailable"
+				title={strings.settingsUnavailableDescription}
 				className="easymde-settings-center__unavailable-fields"
 			>
 				<section className="easymde-settings-center__markdown-group">

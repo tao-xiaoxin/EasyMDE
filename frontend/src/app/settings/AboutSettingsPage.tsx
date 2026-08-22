@@ -33,7 +33,7 @@ import { useDialogFocusTrap } from "./settings-center-utils";
 type Strings = SettingsCenterBootstrap["strings"];
 type DialogKind = "help" | "changelog";
 
-function AboutDialog({
+export function AboutDialog({
 	kind,
 	onClose,
 	strings,

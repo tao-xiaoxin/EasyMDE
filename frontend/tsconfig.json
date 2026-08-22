@@ -26,6 +26,7 @@
     "vite.config.ts",
     "vite.production.config.ts",
     "vite.code-copy.config.ts",
+    "vite.settings.config.ts",
     "vitest.config.ts",
     "wordpress-classic-metadata.ts",
     "src/**/*.ts",

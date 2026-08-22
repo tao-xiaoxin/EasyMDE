@@ -1,0 +1,13 @@
+/* WordPress renders image menu icons at their intrinsic size. Keep EasyMDE's
+ * local brand mark inside the native 36x34px menu icon slot. */
+#adminmenu #toplevel_page_easymde > a > .wp-menu-image img {
+    display: block;
+    box-sizing: border-box;
+    width: 20px;
+    height: 20px;
+    max-width: 20px;
+    max-height: 20px;
+    margin: 7px 8px;
+    padding: 0;
+    object-fit: contain;
+}

@@ -2,11 +2,11 @@
 
 use EasyMDE\Admin\AdminAssets;
 use EasyMDE\Admin\PostModeController;
-use EasyMDE\Admin\SettingsPage;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Support\Asset;
 use EasyMDE\Support\Options;
+use EasyMDE\Support\SettingsCenterRepository;
 use EasyMDE\Support\ToolbarRegistry;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
@@ -35,7 +35,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			new FrontendAssets( $post_document, $theme_state_repository ),
 			$theme_state_repository,
 			$toolbar_registry,
-			new SettingsPage( $toolbar_registry, new Options() )
+			new SettingsCenterRepository( new Options(), $toolbar_registry )
 		);
 		$reflection                = new ReflectionClass( AdminAssets::class );
 		$this->get_react_editor_asset = $reflection->getMethod( 'get_react_editor_asset' );
@@ -92,12 +92,37 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertArrayHasKey( 'wechatExport', $bootstrap );
 		$this->assertArrayHasKey( 'wordpress', $bootstrap );
 		$this->assertArrayHasKey( 'publishCategories', $bootstrap['wordpress'] );
+		$this->assertFalse( $bootstrap['wordpress']['isNewPost'] );
 		$this->assertSame( rest_url( 'easymde/v1/preview' ), $bootstrap['wordpress']['previewUrl'] );
 		$this->assertArrayNotHasKey( 'revisionAdminUrl', $bootstrap['wordpress'] );
 		$this->assertSame( rest_url( 'easymde/v1/posts/' ), $bootstrap['wordpress']['revisionsUrl'] );
 		$this->assertSame( rest_url( 'easymde/v1/media' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
+	}
+
+	public function test_editor_root_bootstrap_consumes_saved_settings_center_shortcuts() {
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'shortcuts' => array(
+					'bold' => array(
+						'win' => 'Ctrl+Shift+B',
+						'mac' => 'Cmd+Shift+B',
+					),
+				),
+			),
+			false
+		);
+		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+		$settings   = $repository->get_settings();
+		$settings['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+B';
+		$this->assertNotWPError( $repository->update_settings( $settings ) );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
+
+		$this->assertSame( 'Ctrl+Alt+B', $bootstrap['toolbar']['shortcuts']['bold']['win'] );
+		$this->assertSame( 'Cmd+Shift+B', get_option( Options::EDITOR_SETTINGS )['shortcuts']['bold']['mac'] );
 	}
 
 	public function test_editor_status_uses_the_last_editor_and_localized_modified_time() {
@@ -169,6 +194,22 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
 
 		$this->assertSame( 'Not saved yet.', $bootstrap['layout']['status']['lastEdited'] );
+		$this->assertTrue( $bootstrap['wordpress']['isNewPost'] );
+	}
+
+	public function test_auto_draft_bootstrap_is_marked_as_a_new_post_even_with_a_nonzero_id() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create(
+			array(
+				'post_author' => $user_id,
+				'post_status' => 'auto-draft',
+			)
+		);
+		wp_set_current_user( $user_id );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id, 'post' );
+
+		$this->assertTrue( $bootstrap['wordpress']['isNewPost'] );
 	}
 
 	public function test_new_post_bootstrap_exposes_the_post_category_tree_without_a_post_id() {
@@ -692,6 +733,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	public function tear_down() {
 		remove_all_actions( 'admin_enqueue_scripts' );
 		remove_all_actions( 'admin_notices' );
+		delete_option( Options::EDITOR_SETTINGS );
 		wp_cache_flush();
 
 		parent::tear_down();

@@ -94,11 +94,6 @@ function createAssetSourceFiles(root) {
   );
   writeText(
     root,
-    'src/Admin/SettingsPage.php',
-    "<?php\nAsset::url( 'assets/css/admin/settings.css' );\n"
-  );
-  writeText(
-    root,
     'src/Frontend/FrontendAssets.php',
     [
     '<?php',
@@ -259,6 +254,9 @@ function createCompleteFixture(root) {
   const codeCopyEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
   const codeCopyScript = 'assets/frontend-code-copy-fixture.js';
   const codeCopyMetadata = 'assets/frontend-code-copy-fixture.asset.php';
+  const settingsEntry = 'frontend/src/entrypoints/settings-center.tsx';
+  const settingsScript = 'assets/settings-center-fixture.js';
+  const settingsMetadata = 'assets/settings-center-fixture.asset.php';
   const enhancementsEntry = 'frontend/src/entrypoints/frontend-enhancements.ts';
   const enhancementsScript = 'assets/frontend-enhancements-fixture.js';
   const enhancementsMetadata = 'assets/frontend-enhancements-fixture.asset.php';
@@ -360,6 +358,15 @@ function createCompleteFixture(root) {
       metadata: mermaidMetadata,
       handle: 'easymde-mermaid',
       source: 'window.mermaid = { initialize: function () {}, render: async function () { return { svg: "" }; } };\n'
+    },
+    {
+      root: 'assets/build/settings-center',
+      entry: settingsEntry,
+      script: settingsScript,
+      metadata: settingsMetadata,
+      handle: 'easymde-admin-settings-center',
+      dependencies: ['wp-element'],
+      source: 'window.EasyMDESettingsCenterBootstrap = {};\n'
     }
   ]) {
     writeText(
@@ -383,7 +390,7 @@ function createCompleteFixture(root) {
             handle: build.handle,
             file: build.script,
             asset: build.metadata,
-            dependencies: [],
+            dependencies: build.dependencies || [],
             resources: []
           }
         }
@@ -393,7 +400,7 @@ function createCompleteFixture(root) {
     writeText(
       root,
       `${build.root}/${build.metadata}`,
-      "<?php return array( 'dependencies' => array(), 'version' => 'abcdef0123456789' );\n"
+      `<?php return array( 'dependencies' => array( ${(build.dependencies || []).map((dependency) => `'${dependency}'`).join(', ')} ), 'version' => 'abcdef0123456789' );\n`
     );
   }
 
@@ -482,6 +489,13 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/assets/build/code-copy/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/code-copy\/assets\/frontend-code-copy-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/code-copy\/assets\/frontend-code-copy-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/build/settings-center/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/css/admin/settings-center.css'));
+    assert.ok(entries.includes('easymde/assets/images/settings-center/brand-icon-clean.png'));
+    assert.ok(entries.includes('easymde/assets/images/settings-center/header-illustration.png'));
+    assert.ok(entries.includes('easymde/assets/images/settings-center/search-empty-illustration.png'));
     assert.ok(entries.includes('easymde/assets/build/frontend-enhancements/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/frontend-enhancements\/assets\/frontend-enhancements-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/frontend-enhancements\/assets\/frontend-enhancements-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
@@ -491,6 +505,9 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/assets/build/frontend-mermaid/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/frontend-mermaid\/assets\/frontend-mermaid-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/frontend-mermaid\/assets\/frontend-mermaid-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/build/settings-center/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/css/frontend/code-copy.css'));
     assert.ok(entries.includes('easymde/vendor/league/commonmark/runtime/Parser.php'));
     assert.equal(existsSync(join(packageRoot, 'vendor/league/commonmark/tests/bootstrap.php')), false);

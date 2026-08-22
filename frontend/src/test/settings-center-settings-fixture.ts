@@ -1,0 +1,52 @@
+import type { SettingsCenterSettings } from '../contracts/settings-center-settings';
+
+export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
+  revision: 0,
+  general: {
+    interfaceLanguage: 'en-US', editingMode: 'live-preview', autoFocusEditor: false,
+    showLineNumbers: true, syntaxHighlight: true, statusBarMode: 'words-reading-time',
+    autoSave: true, autoSaveInterval: '60', syncScroll: true, cleanPastedContent: true,
+    smartListRecognition: true, defaultCategory: 'none', publishVisibility: 'public',
+    openPreviewAfterPublish: true, summaryMode: 'auto-55', featuredImagePlaceholder: true
+  },
+  images: {
+    service: 'Cloudflare R2', bucket: 'easymde-assets', domain: '', accessKey: '', secretKey: '',
+    fileNameRule: '{date}/{uuid}.{ext}', backupEnabled: true, backupService: 'Qiniu Kodo',
+    backupBucket: 'easymde-backup', backupDomain: '', backupAccessKey: '', backupSecretKey: '',
+    backupSameObjectKey: true, backupFailureMode: 'Return primary URL on backup failure',
+    insertMarkdown: true, compressImages: true, preserveFileName: false, copyUrl: false,
+    retryCount: 'Retry twice', maxImageSize: '2560px',
+    uploadFormats: { jpg: true, png: true, webp: true, gif: true },
+    insertFormat: 'Markdown image', altSource: 'Use file name', captionMode: 'Do not insert',
+    featuredPlaceholder: true
+  },
+  markdown: {
+    livePreview: true, wordWrap: true, lineNumbers: false, fixedToolbar: true,
+    editorTheme: 'Follow System', editorFontSize: '14px', editorFont: 'System Default',
+    githubFlavor: true, smartPunctuation: true, tableAlignment: 'Auto align by content',
+    codeTheme: 'Light', codeLineNumbers: 'Show', taskLists: true, emoji: true, math: true,
+    htmlRendering: false, tableExtension: true, footnotes: true, definitionLists: true,
+    toc: false, imageSizeSyntax: true, pasteAsMarkdown: true, lineEnding: 'Follow System',
+    unorderedMarker: '-', orderedStart: '1', blockquoteStyle: 'Standard'
+  },
+  shortcuts: {
+    values: {
+      save: { windows: 'Ctrl+S', mac: 'Cmd+S' }, bold: { windows: 'Ctrl+B', mac: 'Cmd+B' },
+      italic: { windows: 'Ctrl+I', mac: 'Cmd+I' }, link: { windows: 'Ctrl+K', mac: 'Cmd+K' },
+      image: { windows: 'Ctrl+Shift+I', mac: 'Cmd+Ctrl+I' },
+      'heading-one': { windows: 'Ctrl+1', mac: 'Cmd+1' },
+      'heading-two': { windows: 'Ctrl+2', mac: 'Cmd+2' },
+      quote: { windows: 'Ctrl+Shift+Q', mac: 'Cmd+Option+Q' },
+      'unordered-list': { windows: 'Ctrl+Shift+U', mac: 'Cmd+Shift+U' },
+      'ordered-list': { windows: 'Ctrl+Shift+O', mac: 'Cmd+Shift+O' }
+    }, showHints: true, detectConflicts: true, showSuggestions: true
+  }
+};
+export const SETTINGS_CENTER_DEFAULT_SETTINGS: SettingsCenterSettings = {
+  ...SETTINGS_CENTER_TEST_SETTINGS,
+  revision: 0,
+  general: {
+    ...SETTINGS_CENTER_TEST_SETTINGS.general,
+    autoFocusEditor: true
+  }
+};

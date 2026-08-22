@@ -56,7 +56,7 @@ public PHP compatibility contracts remain preserved as described below.
 - `assets/themes/article/`: EasyMDE-owned article themes.
 - `assets/themes/code/`: EasyMDE-owned code themes.
 - `assets/vendor/`: committed third-party runtime assets prepared from locked npm packages or verified upstream repository sources; compiled TypeScript bundles have their own manifest-backed `assets/build/` roots.
-- `frontend/`: strict TypeScript, React, CodeMirror, and Vite source for the production normal-editor Toolbar, document session, Preview Surface, synchronized scrolling, Font controls, Appearance controls, Media-picker session, pasted/dropped image upload session, Local Draft session, WeChat export, public code-copy enhancement, shared public code/math enhancement runtime, and the on-demand Mermaid package runtime, plus the test-only WordPress React build-contract fixture.
+- `frontend/`: strict TypeScript, React, CodeMirror, and Vite source for the production normal-editor Toolbar, document session, Preview Surface, synchronized scrolling, Font controls, Appearance controls, Media-picker session, pasted/dropped image upload session, Local Draft session, WeChat export, the independent Settings Center, public code-copy enhancement, shared public code/math enhancement runtime, and the on-demand Mermaid package runtime, plus the test-only WordPress React build-contract fixture.
 - `scripts/`: local asset preparation, i18n/notices, test setup, Plugin Check, clean WordPress install, and release package assembly scripts.
 - `tests/Unit/` and `tests/Integration/`: PHPUnit coverage for rendering, CSS policy, frontend assets, REST permissions, revisions, migration, editor gating, and compatibility facade behavior.
 - `tests/Node/`: Node tests for release packaging, CI invariants, i18n/notices, Plugin Check parsing, and destructive-script safety.
@@ -104,6 +104,18 @@ boundary. It is built independently under `assets/build/frontend-mermaid/`
 and loaded only when Markdown feature detection reports Mermaid content, so
 the shared enhancement bundle does not carry the approximately 3.3 MB Mermaid
 runtime on ordinary pages.
+
+`frontend/src/entrypoints/settings-center.tsx` is the separate React entry for
+the dedicated EasyMDE administration screen. `SettingsPage` requires
+`manage_options`, validates the manifest-backed
+`assets/build/settings-center/wordpress-manifest.json` contract, enqueues the
+stable `easymde-admin-settings-center` handle only on that screen, and emits a
+same-origin presentation Bootstrap contract. The Settings Center has its own
+Root and does not share mutable State with the Editor Root. A setting is shown
+only when a real PHP/WordPress owner and browser Adapter exist; presentation
+controls never claim persistence until the authoritative Settings API result
+succeeds. The comment-AI and article-sync surfaces are intentionally absent
+from the current navigation and DOM.
 
 The entrypoint parses external data before mounting, constructs focused
 WordPress and browser Adapters, mounts one `EditorRoot`, and owns idempotent
@@ -333,6 +345,39 @@ The decision rationale and rejected alternatives are in
 
 Admin HTML is prepared by PHP services and rendered by templates under `templates/admin/`. Templates should receive prepared data and avoid owning business rules.
 
+The Settings Center is registered by `EasyMDE\\Admin\\SettingsPage` at the
+canonical WordPress URL `admin.php?page=easymde&route=/general_setting`. Its
+top-level WordPress menu uses the valid `easymde` page slug, labels the entry
+`EasyMDE`, and uses the local `assets/images/easymde-editor-icon.png`; its first
+submenu item owns the explicit General route and it exposes WordPress's native
+plugin updates list at `plugins.php?plugin_status=upgrade` when the current user
+can update plugins. The React Settings Center reads and writes through
+`SettingsCenterRepository` and
+the protected `easymde/v1/settings` route. Only General settings with an
+implemented editor owner are enabled; unsupported fields stay explicitly
+disabled instead of reporting a persistence success that has no runtime
+consumer. The removed Settings API page and `settings.css` owner are not
+registered or enqueued. Existing `easymde_editor_settings` values remain
+compatible: `SettingsCenterRepository` imports historical toolbar shortcut
+values, preserves their Windows/macOS mappings, and writes the canonical
+settings document through its revisioned compare-and-swap path. The old
+`options-general.php?page=easymde` URL remains WordPress's native General
+Settings screen without EasyMDE injection, and
+`admin.php?page=easymde/settings/general` is no longer an active screen. The
+canonical General route is the sole Settings Center entry.
+
+The supported General runtime settings are passed from `AdminAssets` through
+the validated Editor Root bootstrap and consumed by the Editor Root's
+document source, workspace layout, Preview feature overrides, focus behavior,
+and local-draft session. This keeps WordPress settings authoritative while
+leaving browser-session immersive preferences as a separate presentation
+override. When the server temporarily disables immersive auto-save or
+synchronized scrolling, a loaded browser preference is preserved for a later
+re-enable rather than being rewritten as false by an unrelated immersive
+setting change. The bootstrap marks both `post-new.php` and nonzero
+`auto-draft` contexts as new documents so the auto-focus preference cannot
+focus an existing post.
+
 ## Editor Mode
 
 EasyMDE editor mode is scoped to supported post types, `post` and `page` by default. The supported post type list can be filtered with `easymde_supported_post_types`.
@@ -474,8 +519,12 @@ Current routes:
 - `DELETE /easymde/v1/custom-css/{id}`
 - `GET /easymde/v1/posts/{post_id}/revisions`
 - `GET /easymde/v1/posts/{post_id}/revisions/{revision_id}`
+- `GET /easymde/v1/settings`
+- `POST /easymde/v1/settings`
 
 Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Pasted-image media uploads require `upload_files`; when a `post_id` is present they also require `current_user_can( 'edit_post', $post_id )`, and without a `post_id` they require `edit_posts`. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
+
+Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including toolbar shortcut mappings. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged legacy shortcut submission is a successful no-op and does not increment the revision. Settings bootstrap and transfer exports do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials.
 
 Preview Markdown payloads are capped at 1 MiB. EasyMDE media uploads accept local JPEG, PNG, GIF, and WebP image files only; remote image-provider uploads are not part of the REST surface.
 

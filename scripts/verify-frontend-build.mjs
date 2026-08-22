@@ -38,7 +38,7 @@ const productionSpec = {
 	resourceHasManifestRecord: false,
 	resourceReferencedByScript: false,
 	label: "production build",
-	ignoredOutputPrefixes: ["code-copy/", "frontend-enhancements/", "frontend-bootstrap/", "frontend-mermaid/"],
+	ignoredOutputPrefixes: ["code-copy/", "frontend-enhancements/", "frontend-bootstrap/", "frontend-mermaid/", "settings-center/"],
 	requiredRuntimePatterns: [
 		{ pattern: /\bwp\.element\b/, label: "WordPress element runtime" },
 		{ pattern: /\bwp\.i18n\b/, label: "WordPress i18n runtime" },
@@ -65,6 +65,24 @@ const codeCopyProductionCheckRoot = join(
 	repositoryRoot,
 	".cache/easymde-code-copy-production-check",
 );
+const settingsProductionSpec = {
+	outputRoot: join(repositoryRoot, "assets/build/settings-center"),
+	sourceEntry: "frontend/src/entrypoints/settings-center.tsx",
+	expectedHandle: "easymde-admin-settings-center",
+	expectedDependencies: ["wp-element"],
+	resourceField: null,
+	expectedResourceCount: 0,
+	resourceHasManifestRecord: false,
+	resourceReferencedByScript: false,
+	label: "settings-center production build",
+	requiredRuntimePattern: /EasyMDESettingsCenterBootstrap/,
+	requiredRuntimeLabel: "settings-center bootstrap",
+};
+const settingsProductionCheckRoot = join(
+	repositoryRoot,
+	".cache/easymde-settings-production-check",
+);
+
 const enhancementsProductionSpec = {
 	outputRoot: join(repositoryRoot, "assets/build/frontend-enhancements"),
 	sourceEntry: "frontend/src/entrypoints/frontend-enhancements.ts",
@@ -498,6 +516,12 @@ export function validateCodeCopyProductionBuild(
 ) {
 	return validateBuild(codeCopyProductionSpec, outputRoot);
 }
+export function validateSettingsProductionBuild(
+	outputRoot = settingsProductionSpec.outputRoot,
+) {
+	return validateBuild(settingsProductionSpec, outputRoot);
+}
+
 
 export function validateFrontendEnhancementsProductionBuild(
 	outputRoot = enhancementsProductionSpec.outputRoot,
@@ -540,6 +564,18 @@ export function compareCodeCopyProductionBuilds(
 		"code-copy production",
 	);
 }
+export function compareSettingsProductionBuilds(
+	generatedRoot = settingsProductionCheckRoot,
+	committedRoot = settingsProductionSpec.outputRoot,
+) {
+	compareProductionBuild(
+		settingsProductionSpec,
+		generatedRoot,
+		committedRoot,
+		"settings-center production",
+	);
+}
+
 
 function compareProductionBuild(spec, generatedRoot, committedRoot, label) {
 	validateBuild(spec, generatedRoot);
@@ -608,6 +644,7 @@ if (
 		if (process.argv.includes("--production-check")) {
 			compareFrontendProductionBuilds();
 			compareCodeCopyProductionBuilds();
+			compareSettingsProductionBuilds();
 			compareFrontendEnhancementsProductionBuilds();
 			compareFrontendBootstrapProductionBuilds();
 			compareFrontendMermaidProductionBuilds();
@@ -616,6 +653,7 @@ if (
 			);
 		} else if (process.argv.includes("--production")) {
 			validateFrontendProductionBuild();
+			validateSettingsProductionBuild();
 			validateCodeCopyProductionBuild();
 			validateFrontendEnhancementsProductionBuild();
 			validateFrontendBootstrapProductionBuild();

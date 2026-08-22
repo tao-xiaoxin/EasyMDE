@@ -6,6 +6,7 @@ use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Support\Asset;
 use EasyMDE\Support\FrontendAssetContract;
 use EasyMDE\Support\ManifestAssetResolver;
+use EasyMDE\Support\SettingsCenterRepository;
 use EasyMDE\Support\ToolbarRegistry;
 use EasyMDE\Theme\ThemeStateRepository;
 
@@ -18,7 +19,7 @@ final class AdminAssets {
 	private $frontend_assets;
 	private $theme_state_repository;
 	private $toolbar_registry;
-	private $settings_page;
+	private $settings_center_repository;
 	private $react_editor_asset_error = false;
 
 	public function __construct(
@@ -26,13 +27,13 @@ final class AdminAssets {
 		FrontendAssets $frontend_assets,
 		ThemeStateRepository $theme_state_repository,
 		ToolbarRegistry $toolbar_registry,
-		SettingsPage $settings_page
+		SettingsCenterRepository $settings_center_repository
 	) {
-		$this->post_mode_controller   = $post_mode_controller;
-		$this->frontend_assets        = $frontend_assets;
-		$this->theme_state_repository = $theme_state_repository;
-		$this->toolbar_registry       = $toolbar_registry;
-		$this->settings_page          = $settings_page;
+		$this->post_mode_controller       = $post_mode_controller;
+		$this->frontend_assets            = $frontend_assets;
+		$this->theme_state_repository     = $theme_state_repository;
+		$this->toolbar_registry           = $toolbar_registry;
+		$this->settings_center_repository = $settings_center_repository;
 	}
 
 	public function register_hooks() {
@@ -103,7 +104,11 @@ final class AdminAssets {
 		wp_enqueue_media();
 		if ( $this->enqueue_react_editor_asset() ) {
 			try {
-				$root_bootstrap = $this->get_editor_root_bootstrap( $post_id, $screen->post_type );
+				$root_bootstrap = $this->get_editor_root_bootstrap(
+					$post_id,
+					$screen->post_type,
+					'post-new.php' === $hook
+				);
 			} catch ( \Throwable $error ) {
 				if ( ! FrontendAssetContract::is_error( $error ) ) {
 					throw $error;
@@ -168,7 +173,7 @@ final class AdminAssets {
 		return true;
 	}
 
-	private function get_editor_root_bootstrap( $post_id, $post_type = '' ) {
+	private function get_editor_root_bootstrap( $post_id, $post_type = '', $is_new_post = false ) {
 		$nonce         = wp_create_nonce( 'wp_rest' );
 		$strings       = $this->get_strings();
 		$storage       = $this->get_storage_config( $post_id );
@@ -198,6 +203,7 @@ final class AdminAssets {
 		}
 
 		$preview_assets = $this->frontend_assets->get_editor_preview_assets();
+		$settings       = $this->settings_center_repository->get_settings();
 		$code_themes    = array_map(
 			static function ( $theme ) {
 				return array(
@@ -277,6 +283,9 @@ final class AdminAssets {
 					'pasteUploading' => $strings['imagePasteUploading'],
 				),
 			),
+			'settings'           => array(
+				'general' => $settings['general'],
+			),
 			'layout'             => array(
 				'direction' => is_rtl() ? 'rtl' : 'ltr',
 				'status'    => array(
@@ -330,7 +339,7 @@ final class AdminAssets {
 			),
 			'toolbar'            => array(
 				'commands'  => $this->toolbar_registry->get_commands_for_script(),
-				'shortcuts' => $this->settings_page->get_shortcut_config_for_script(),
+				'shortcuts' => $this->settings_center_repository->get_shortcut_config_for_script(),
 				'strings'   => array(
 					'headingLabelFormat' => $strings['headingLabelFormat'],
 					'headingLevel'       => $strings['headingLevel'],
@@ -464,6 +473,7 @@ final class AdminAssets {
 			),
 			'wordpress'          => array(
 				'customCssUrl'      => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
+				'isNewPost'         => (bool) $is_new_post || 0 === absint( $post_id ) || 'auto-draft' === get_post_status( $post_id ),
 				'nonce'             => $nonce,
 				'previewUrl'        => esc_url_raw( rest_url( 'easymde/v1/preview' ) ),
 				'publishCategories' => $this->get_publish_categories( $post_type ),

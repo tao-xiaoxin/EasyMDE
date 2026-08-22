@@ -65,7 +65,9 @@ export type CodeMirrorDocumentSession = Readonly<{
 type CreateCodeMirrorDocumentSessionOptions = Readonly<{
   container: HTMLElement;
   label: string;
+  lineNumbers?: boolean;
   submissionField: HTMLTextAreaElement;
+  syntaxHighlight?: boolean;
 }>;
 
 const markdownHighlightStyle = HighlightStyle.define([
@@ -166,7 +168,9 @@ function hasImageFileTransfer(transfer: DataTransfer | null): boolean {
 export function createCodeMirrorDocumentSession({
   container,
   label,
-  submissionField
+  lineNumbers: showLineNumbers = true,
+  submissionField,
+  syntaxHighlight = true
 }: CreateCodeMirrorDocumentSessionOptions): CodeMirrorDocumentSession {
   let syncingFromNative = false;
   let destroyed = false;
@@ -189,64 +193,63 @@ export function createCodeMirrorDocumentSession({
     }
   };
   const editability = new Compartment();
+  const extensions = [
+    history(),
+    markdownLanguage,
+    ...(syntaxHighlight ? [syntaxHighlighting(markdownHighlightStyle)] : []),
+    EditorView.domEventHandlers({
+      drop(event) {
+        return hasImageFileTransfer(event.dataTransfer);
+      },
+      paste(event) {
+        return hasImageFileTransfer(event.clipboardData);
+      }
+    }),
+    keymap.of([...defaultKeymap, ...historyKeymap]),
+    ...(showLineNumbers ? [lineNumbers()] : []),
+    // Keep line numbers in CodeMirror's own scroll-synchronized gutter;
+    // each editor surface owns its presentation.
+    EditorView.lineWrapping,
+    editability.of(editabilityExtensions(submissionField)),
+    EditorView.contentAttributes.of({
+      'aria-label': label,
+      autocapitalize: 'off',
+      autocorrect: 'off',
+      spellcheck: 'false'
+    }),
+    EditorView.updateListener.of((update) => {
+      if (
+        destroyed
+        || syncingFromNative
+        || (!update.docChanged && !update.selectionSet)
+      ) {
+        return;
+      }
+
+      const selection = sessionSelection(update.view);
+      if (update.docChanged) {
+        submissionField.value = update.state.doc.toString();
+      }
+      submissionField.setSelectionRange(
+        selection.start,
+        selection.end,
+        selection.direction
+      );
+
+      if (update.docChanged) {
+        submissionField.dispatchEvent(new Event('input', { bubbles: true }));
+        publishValue(update.state.doc.toString());
+      }
+      if (update.selectionSet) {
+        for (const listener of selectionListeners) listener();
+      }
+    })
+  ];
   const view = new EditorView({
     parent: container,
     state: EditorState.create({
       doc: initialValue,
-      extensions: [
-        history(),
-        markdownLanguage,
-        syntaxHighlighting(markdownHighlightStyle),
-        EditorView.domEventHandlers({
-          drop(event) {
-            return hasImageFileTransfer(event.dataTransfer);
-          },
-          paste(event) {
-            return hasImageFileTransfer(event.clipboardData);
-          }
-        }),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
-        // Keep line numbers in CodeMirror's own scroll-synchronized gutter;
-        // each editor surface owns its presentation.
-        lineNumbers(),
-        EditorView.lineWrapping,
-        editability.of(editabilityExtensions(submissionField)),
-        EditorView.contentAttributes.of({
-          'aria-label': label,
-          autocapitalize: 'off',
-          autocorrect: 'off',
-          spellcheck: 'false'
-        }),
-        EditorView.updateListener.of((update) => {
-          if (
-            destroyed
-            || syncingFromNative
-            || (!update.docChanged && !update.selectionSet)
-          ) {
-            return;
-          }
-
-          const selection = sessionSelection(update.view);
-          if (update.docChanged) {
-            submissionField.value = update.state.doc.toString();
-          }
-          submissionField.setSelectionRange(
-            selection.start,
-            selection.end,
-            selection.direction
-          );
-
-          if (update.docChanged) {
-            submissionField.dispatchEvent(new Event('input', { bubbles: true }));
-            publishValue(update.state.doc.toString());
-          }
-          if (update.selectionSet) {
-            for (const listener of selectionListeners) {
-              listener();
-            }
-          }
-        })
-      ],
+      extensions,
       selection: editorSelection(initialSelection, initialValue.length)
     })
   });

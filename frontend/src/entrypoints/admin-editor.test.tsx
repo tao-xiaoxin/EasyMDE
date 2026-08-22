@@ -193,6 +193,7 @@ const bootstrap = {
   wechatExport: {},
   wordpress: {
     customCssUrl: '/custom-css',
+    isNewPost: false,
     nonce: 'nonce',
     publishCategories: [],
     previewUrl: '/preview',

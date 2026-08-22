@@ -85,6 +85,26 @@ function validBootstrap() {
         pasteUploading: 'Paste uploading'
       }
     },
+    settings: {
+      general: {
+        autoFocusEditor: true,
+        autoSave: true,
+        autoSaveInterval: '60',
+        cleanPastedContent: true,
+        defaultCategory: 'none',
+        editingMode: 'live-preview',
+        featuredImagePlaceholder: true,
+        interfaceLanguage: 'en-US',
+        openPreviewAfterPublish: true,
+        publishVisibility: 'public',
+        showLineNumbers: true,
+        smartListRecognition: true,
+        statusBarMode: 'words-reading-time',
+        summaryMode: 'auto-55',
+        syncScroll: true,
+        syntaxHighlight: true
+      }
+    },
     layout: {
       direction: 'ltr' as const,
       status: {
@@ -272,6 +292,7 @@ function validBootstrap() {
     },
     wordpress: {
       customCssUrl: 'https://example.test/wp-json/easymde/v1/custom-css',
+      isNewPost: false,
       nonce: 'synthetic-nonce',
       publishCategories: [
         {
@@ -294,6 +315,7 @@ describe('parseEditorRootBootstrap', () => {
       document: { editorLabel: 'Markdown source' },
       fonts: validBootstrap().fonts,
       imageUpload: validBootstrap().imageUpload,
+      settings: validBootstrap().settings,
       immersiveStrings: validBootstrap().strings.immersive,
       layout: {
         direction: 'ltr',
@@ -414,6 +436,26 @@ describe('parseEditorRootBootstrap', () => {
         preview: { ...validBootstrap().preview, html: null }
       },
       'editor-root-preview-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        settings: {
+          ...validBootstrap().settings,
+          general: {
+            ...validBootstrap().settings.general,
+            autoSaveInterval: 'invalid'
+          }
+        }
+      },
+      'editor-root-settings-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        wordpress: { ...validBootstrap().wordpress, isNewPost: 'yes' }
+      },
+      'editor-root-wordpress-invalid'
     ]
   ])('rejects an invalid external contract with stable code', (value, code) => {
     expect(() => parseEditorRootBootstrap(value)).toThrowError(

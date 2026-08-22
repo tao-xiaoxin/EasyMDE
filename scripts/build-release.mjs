@@ -78,6 +78,7 @@ const baseRequirements = [
 ];
 const productionFrontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const codeCopyFrontendEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
+const settingsFrontendEntry = 'frontend/src/entrypoints/settings-center.tsx';
 const frontendEnhancementsEntry = 'frontend/src/entrypoints/frontend-enhancements.ts';
 const frontendBootstrapEntry = 'frontend/src/entrypoints/frontend-bootstrap.ts';
 const frontendMermaidEntry = 'frontend/src/entrypoints/frontend-mermaid-runtime.ts';
@@ -95,6 +96,13 @@ const productionFrontendBuilds = [
     entry: codeCopyFrontendEntry,
     filePattern: /^assets\/frontend-code-copy-[A-Za-z0-9_-]+\.js$/,
     handle: 'easymde-code-copy'
+  },
+  {
+    buildRoot: 'assets/build/settings-center',
+    dependencies: ['wp-element'],
+    entry: settingsFrontendEntry,
+    filePattern: /^assets\/settings-center-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-admin-settings-center'
   },
   {
     buildRoot: 'assets/build/frontend-enhancements',
@@ -116,7 +124,7 @@ const productionFrontendBuilds = [
     entry: frontendMermaidEntry,
     filePattern: /^assets\/frontend-mermaid-[A-Za-z0-9_-]+\.js$/,
     handle: 'easymde-mermaid'
-  }
+  },
 ];
 
 const runtimeSupportAssetPaths = [
@@ -125,7 +133,11 @@ const runtimeSupportAssetPaths = [
   'assets/images/easymde-editor-icon.png',
   'assets/images/fullstack-blue-h2.png',
   'assets/images/fullstack-blue-h3.png',
-  'assets/images/fullstack-blue-h4.png'
+  'assets/images/fullstack-blue-h4.png',
+  'assets/css/admin/settings-center.css',
+  'assets/images/settings-center/brand-icon-clean.png',
+  'assets/images/settings-center/header-illustration.png',
+  'assets/images/settings-center/search-empty-illustration.png',
 ];
 
 export const packagePaths = [

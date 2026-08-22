@@ -16,10 +16,12 @@ use EasyMDE\Rest\CustomCssController;
 use EasyMDE\Rest\MediaController;
 use EasyMDE\Rest\PreviewController;
 use EasyMDE\Rest\RevisionController;
+use EasyMDE\Rest\SettingsController;
 use EasyMDE\Rest\ThemeController;
 use EasyMDE\Support\Capabilities;
 use EasyMDE\Support\Migration;
 use EasyMDE\Support\Options;
+use EasyMDE\Support\SettingsCenterRepository;
 use EasyMDE\Support\ToolbarRegistry;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
@@ -82,6 +84,7 @@ final class Plugin {
 		$migration              = new Migration();
 		$options                = new Options();
 		$post_document          = new PostDocument( $migration );
+		$post_mode_controller   = new PostModeController( $post_document );
 		$capabilities           = new Capabilities();
 		$article_themes         = new ArticleThemeRegistry();
 		$code_themes            = new CodeThemeRegistry();
@@ -91,15 +94,15 @@ final class Plugin {
 
 		$this->toolbar_registry = new ToolbarRegistry();
 
-		$settings_page        = new SettingsPage( $this->toolbar_registry, $options );
-		$post_mode_controller = new PostModeController( $post_document );
-		$frontend_assets      = new FrontendAssets( $post_document, $theme_state_repository, $feature_detector );
+		$settings_center_repository = new SettingsCenterRepository( $options, $this->toolbar_registry );
+		$settings_page              = new SettingsPage( $settings_center_repository );
+		$frontend_assets            = new FrontendAssets( $post_document, $theme_state_repository, $feature_detector );
 
 		$modules = array(
 			$settings_page,
 			$post_mode_controller,
 			new EditorScreen( $post_document, $post_mode_controller, $theme_state_repository ),
-			new AdminAssets( $post_mode_controller, $frontend_assets, $theme_state_repository, $this->toolbar_registry, $settings_page ),
+			new AdminAssets( $post_mode_controller, $frontend_assets, $theme_state_repository, $this->toolbar_registry, $settings_center_repository ),
 			new EditorSaveHandler( $post_document, $theme_state_repository ),
 			$frontend_assets,
 			new ContentFilter( $post_document, $theme_state_repository ),
@@ -118,6 +121,7 @@ final class Plugin {
 			new MediaController( $capabilities ),
 			new ThemeController( $capabilities, $theme_state_repository ),
 			new CustomCssController( $capabilities, $theme_state_repository, $custom_css_policy ),
+			new SettingsController( $capabilities, $settings_center_repository ),
 		);
 	}
 

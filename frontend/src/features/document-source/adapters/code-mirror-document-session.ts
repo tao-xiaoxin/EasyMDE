@@ -9,7 +9,7 @@ import {
   HighlightStyle,
   syntaxHighlighting
 } from '@codemirror/language';
-import { markdownLanguage } from '@codemirror/lang-markdown';
+import { markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown';
 import {
   Compartment,
   EditorSelection,
@@ -66,6 +66,7 @@ type CreateCodeMirrorDocumentSessionOptions = Readonly<{
   container: HTMLElement;
   label: string;
   lineNumbers?: boolean;
+  smartListRecognition?: boolean;
   submissionField: HTMLTextAreaElement;
   syntaxHighlight?: boolean;
 }>;
@@ -169,6 +170,7 @@ export function createCodeMirrorDocumentSession({
   container,
   label,
   lineNumbers: showLineNumbers = true,
+  smartListRecognition = true,
   submissionField,
   syntaxHighlight = true
 }: CreateCodeMirrorDocumentSessionOptions): CodeMirrorDocumentSession {
@@ -205,7 +207,11 @@ export function createCodeMirrorDocumentSession({
         return hasImageFileTransfer(event.clipboardData);
       }
     }),
-    keymap.of([...defaultKeymap, ...historyKeymap]),
+    keymap.of([
+      ...(smartListRecognition ? markdownKeymap : []),
+      ...defaultKeymap,
+      ...historyKeymap
+    ]),
     ...(showLineNumbers ? [lineNumbers()] : []),
     // Keep line numbers in CodeMirror's own scroll-synchronized gutter;
     // each editor surface owns its presentation.

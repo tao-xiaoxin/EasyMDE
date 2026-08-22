@@ -47,12 +47,14 @@ import type {
   ImmersiveSettings,
   ImmersiveStrings
 } from './immersive-editor-ui-types';
+import type { GeneralSettings } from '../../../contracts/settings-center-settings';
 
 export type { ImmersiveStrings } from './immersive-editor-ui-types';
 
 type Props = Readonly<{
   autoSaveAllowed?: boolean;
   direction: 'ltr' | 'rtl';
+  generalSettings: GeneralSettings;
   documentSession: EditorDocumentSession;
   environment: ImmersiveEnvironmentPort;
   immersivePreferencesPort: ImmersivePreferencesPort;
@@ -448,6 +450,7 @@ export function ImmersiveEditor({
   direction,
   documentSession,
   environment,
+  generalSettings,
   i18n,
   immersivePreferencesPort,
   initialPreferences = null,
@@ -644,6 +647,7 @@ export function ImmersiveEditor({
       ) : null}
       {publishSnapshot ? (
         <ImmersivePublishDialog
+          defaults={generalSettings}
           environment={environment}
           snapshot={publishSnapshot}
           strings={strings}

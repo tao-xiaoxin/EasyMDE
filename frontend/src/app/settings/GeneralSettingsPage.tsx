@@ -294,65 +294,65 @@ export function GeneralSettingsPage({
 							}
 						/>
 					</SettingsRow>
-					<SettingsRow
-						label={s.smartListRecognition}
-						description={s.smartListRecognitionDescription}
-						query={normalizedQuery}
-					>
-						<SettingsToggle
-							label={s.smartListRecognition}
-							checked={draft.smartListRecognition}
-							onChange={() =>
-								setValue("smartListRecognition", !draft.smartListRecognition)
-							}
-						/>
-					</SettingsRow>
 				</fieldset>
+				<SettingsRow
+					label={s.smartListRecognition}
+					description={s.smartListRecognitionDescription}
+					query={normalizedQuery}
+				>
+					<SettingsToggle
+						label={s.smartListRecognition}
+						checked={draft.smartListRecognition}
+						onChange={() =>
+							setValue("smartListRecognition", !draft.smartListRecognition)
+						}
+					/>
+				</SettingsRow>
 			</SettingsSection>
-			<fieldset
-				disabled
-				className="easymde-settings-center__unavailable-fields"
-			>
-				<SettingsSection icon={DocumentIcon} title={s.documentDefaults}>
-					<SettingsRow label={s.defaultCategory} query={normalizedQuery}>
-						<NativeSelect
-							label={s.defaultCategory}
-							value={draft.defaultCategory}
-							onChange={(value) => setValue("defaultCategory", value)}
-							options={[
-								["none", s.noAutomaticCategory],
-								["current", s.currentCategory],
-							]}
-						/>
-					</SettingsRow>
-					<SettingsRow label={s.defaultVisibility} query={normalizedQuery}>
-						<NativeSelect
-							label={s.defaultVisibility}
-							value={draft.publishVisibility}
-							onChange={(value) => setValue("publishVisibility", value)}
-							options={[
-								["public", s.publicVisibility],
-								["private", s.privateVisibility],
-								["password", s.passwordProtected],
-							]}
-						/>
-					</SettingsRow>
-					<SettingsRow
+			<SettingsSection icon={DocumentIcon} title={s.documentDefaults}>
+				<SettingsRow label={s.defaultCategory} query={normalizedQuery}>
+					<NativeSelect
+						label={s.defaultCategory}
+						value={draft.defaultCategory}
+						onChange={(value) => setValue("defaultCategory", value)}
+						options={[
+							["none", s.noAutomaticCategory],
+							["current", s.currentCategory],
+						]}
+					/>
+				</SettingsRow>
+				<SettingsRow label={s.defaultVisibility} query={normalizedQuery}>
+					<NativeSelect
+						label={s.defaultVisibility}
+						value={draft.publishVisibility}
+						onChange={(value) => setValue("publishVisibility", value)}
+						options={[
+							["public", s.publicVisibility],
+							["private", s.privateVisibility],
+							["password", s.passwordProtected],
+						]}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label={s.openPreviewAfterPublish}
+					description={s.openPreviewAfterPublishDescription}
+					query={normalizedQuery}
+				>
+					<SettingsToggle
 						label={s.openPreviewAfterPublish}
-						description={s.openPreviewAfterPublishDescription}
-						query={normalizedQuery}
-					>
-						<SettingsToggle
-							label={s.openPreviewAfterPublish}
-							checked={draft.openPreviewAfterPublish}
-							onChange={() =>
-								setValue(
-									"openPreviewAfterPublish",
-									!draft.openPreviewAfterPublish,
-								)
-							}
-						/>
-					</SettingsRow>
+						checked={draft.openPreviewAfterPublish}
+						onChange={() =>
+							setValue(
+								"openPreviewAfterPublish",
+								!draft.openPreviewAfterPublish,
+							)
+						}
+					/>
+				</SettingsRow>
+				<fieldset
+					disabled
+					className="easymde-settings-center__unavailable-fields"
+				>
 					<SettingsRow
 						label={s.summaryMode}
 						description={s.summaryModeDescription}
@@ -369,24 +369,24 @@ export function GeneralSettingsPage({
 							]}
 						/>
 					</SettingsRow>
-					<SettingsRow
+				</fieldset>
+				<SettingsRow
+					label={s.featuredImagePlaceholder}
+					description={s.featuredImagePlaceholderDescription}
+					query={normalizedQuery}
+				>
+					<SettingsToggle
 						label={s.featuredImagePlaceholder}
-						description={s.featuredImagePlaceholderDescription}
-						query={normalizedQuery}
-					>
-						<SettingsToggle
-							label={s.featuredImagePlaceholder}
-							checked={draft.featuredImagePlaceholder}
-							onChange={() =>
-								setValue(
-									"featuredImagePlaceholder",
-									!draft.featuredImagePlaceholder,
-								)
-							}
-						/>
-					</SettingsRow>
-				</SettingsSection>
-			</fieldset>
+						checked={draft.featuredImagePlaceholder}
+						onChange={() =>
+							setValue(
+								"featuredImagePlaceholder",
+								!draft.featuredImagePlaceholder,
+							)
+						}
+					/>
+				</SettingsRow>
+			</SettingsSection>
 		</div>
 	);
 }

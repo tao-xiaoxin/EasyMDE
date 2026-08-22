@@ -1058,6 +1058,21 @@ describe("SettingsCenterRoot persistence", () => {
 				.matches(":disabled"),
 		).toBe(true);
 		expect(
+			screen
+				.getByRole("combobox", { name: "defaultVisibility" })
+				.matches(":disabled"),
+		).toBe(false);
+		expect(
+			screen
+				.getByRole("switch", { name: "smartListRecognition" })
+				.matches(":disabled"),
+		).toBe(false);
+		expect(
+			screen
+				.getByRole("combobox", { name: "summaryMode" })
+				.matches(":disabled"),
+		).toBe(true);
+		expect(
 			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" })
 				.disabled,
 		).toBe(true);

@@ -59,6 +59,31 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
   });
 
+  it('continues Markdown list markers only when smart recognition is enabled', () => {
+    for (const [smartListRecognition, expected] of [
+      [true, '- item\n- '],
+      [false, '- item\n']
+    ] as const) {
+      const { container, submissionField } = createFixture('- item');
+      submissionField.setSelectionRange(6, 6);
+      const session = createCodeMirrorDocumentSession({
+        container,
+        label: 'Markdown source',
+        smartListRecognition,
+        submissionField
+      });
+      session.getInputElement().dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Enter'
+      }));
+      expect(session.getValue()).toBe(expected);
+      session.destroy();
+      container.remove();
+      submissionField.remove();
+    }
+  });
+
   it('keeps heading markers regular and colors quote content as one block', () => {
     const { container, submissionField } = createFixture('# Title\n> Quote');
     const session = createCodeMirrorDocumentSession({

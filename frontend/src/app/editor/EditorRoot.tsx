@@ -1802,6 +1802,7 @@ export function EditorRoot(props: EditorRootProps) {
         <ImmersiveEditor
           documentSession={documentSession}
           environment={props.immersiveEnvironment}
+          generalSettings={props.settings.general}
           immersivePreferencesPort={immersivePreferencesPort}
           autoSaveAllowed={props.settings.general.autoSave}
           i18n={props.immersiveI18n}

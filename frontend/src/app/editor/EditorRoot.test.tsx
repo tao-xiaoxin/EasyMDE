@@ -2906,14 +2906,34 @@ describe('EditorRoot', () => {
     const props = fixture();
     vi.mocked(props.nativePublishPort.read).mockReturnValue({
       ...props.nativePublishPort.read(),
-      existing: false
+      categoryIds: ['current-category'],
+      existing: false,
+      openPreview: true
     });
-    const view = render(<EditorRoot {...props} />);
+    const view = render(<EditorRoot {...props} settings={{
+      general: {
+        ...props.settings.general,
+        defaultCategory: 'none',
+        featuredImagePlaceholder: false,
+        openPreviewAfterPublish: false,
+        publishVisibility: 'private'
+      }
+    }} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
 
     fireEvent.click(view.getByRole('button', { name: '发布文章' }));
-    expect(view.getByRole('dialog', { name: '发布文章' })).not.toBeNull();
+    const dialog = view.getByRole('dialog', { name: '发布文章' });
+    expect(dialog).not.toBeNull();
     expect(view.queryByRole('button', { name: '更新文章' })).toBeNull();
+    expect(
+      (within(dialog).getByRole('radio', { name: '私密' }) as HTMLInputElement).checked
+    ).toBe(true);
+    expect(
+      (within(dialog).getByRole('switch', {
+        name: '发布后打开文章页面'
+      }) as HTMLInputElement).checked
+    ).toBe(false);
+    expect(dialog.querySelector('.easymde-publish-featured-placeholder')).toBeNull();
   });
 
   it('keeps hierarchical WordPress category selections independent', async () => {

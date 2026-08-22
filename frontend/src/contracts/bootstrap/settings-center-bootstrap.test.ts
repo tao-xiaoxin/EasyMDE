@@ -5,6 +5,7 @@ import {
 } from "../../test/settings-center-settings-fixture";
 import {
 	parseSettingsCenterBootstrap,
+	parseSettingsCenterSettings,
 	SETTINGS_CENTER_STRING_KEYS,
 } from "./settings-center-bootstrap";
 
@@ -57,7 +58,58 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 	};
 }
 
+type MutableSettingsRecord = Record<string, unknown> & {
+	general: Record<string, unknown>;
+	images: Record<string, unknown>;
+};
+
 describe("parseSettingsCenterBootstrap", () => {
+	it.each([
+		[
+			"an extra field",
+			(settings: MutableSettingsRecord) => {
+				settings.general.unexpected = true;
+			},
+		],
+		[
+			"an invalid enum",
+			(settings: MutableSettingsRecord) => {
+				settings.images.retryCount = "forever";
+			},
+		],
+		[
+			"no enabled upload format",
+			(settings: MutableSettingsRecord) => {
+				settings.images.uploadFormats = {
+					jpg: false,
+					png: false,
+					webp: false,
+					gif: false,
+				};
+			},
+		],
+	])(
+		"rejects settings with %s before they reach the REST save",
+		(_label, mutate) => {
+			const settings = structuredClone(
+				SETTINGS_CENTER_TEST_SETTINGS,
+			) as unknown as MutableSettingsRecord;
+			mutate(settings);
+			expect(() => parseSettingsCenterSettings(settings)).toThrow();
+		},
+	);
+
+	it("measures imported string limits as UTF-8 bytes like the REST contract", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.bucket = "界".repeat(160);
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-images-bucket-invalid",
+		);
+	});
+
 	it("does not admit AI strings into the settings bootstrap contract", () => {
 		expect(
 			SETTINGS_CENTER_STRING_KEYS.some(

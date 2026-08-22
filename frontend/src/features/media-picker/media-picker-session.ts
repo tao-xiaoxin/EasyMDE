@@ -2,9 +2,10 @@ import type {
   MediaPickerDocumentPort,
   MediaPickerDocumentSnapshot,
   MediaPickerFramePort,
-  MediaPickerSelection
+  MediaPickerSelection,
 } from '../../contracts/ports/media-picker-port';
 import type { MediaPickerBootstrap } from '../../contracts/bootstrap/media-picker-bootstrap';
+import { imageInsertionText } from '../image-upload/image-insertion';
 
 export type MediaPickerResult = 'cancelled' | 'inserted' | 'placeholder';
 
@@ -15,12 +16,14 @@ type OpenMediaPickerSessionOptions = Readonly<{
 }>;
 
 function validSelection(selection: MediaPickerSelection, value: string): boolean {
-  return Number.isInteger(selection.start)
-    && Number.isInteger(selection.end)
-    && selection.start >= 0
-    && selection.end >= selection.start
-    && selection.end <= value.length
-    && ['backward', 'forward', 'none'].includes(selection.direction);
+  return (
+    Number.isInteger(selection.start) &&
+    Number.isInteger(selection.end) &&
+    selection.start >= 0 &&
+    selection.end >= selection.start &&
+    selection.end <= value.length &&
+    ['backward', 'forward', 'none'].includes(selection.direction)
+  );
 }
 
 function documentSnapshot(document: MediaPickerDocumentPort): MediaPickerDocumentSnapshot {
@@ -32,10 +35,7 @@ function documentSnapshot(document: MediaPickerDocumentPort): MediaPickerDocumen
   return snapshot;
 }
 
-function replacementSnapshot(
-  snapshot: MediaPickerDocumentSnapshot,
-  markdown: string
-): MediaPickerDocumentSnapshot {
+function replacementSnapshot(snapshot: MediaPickerDocumentSnapshot, markdown: string): MediaPickerDocumentSnapshot {
   const { end, start } = snapshot.selection;
   const cursor = start + markdown.length;
 
@@ -43,13 +43,13 @@ function replacementSnapshot(
     selection: {
       direction: snapshot.selection.direction,
       end: cursor,
-      start: cursor
+      start: cursor,
     },
-    value: snapshot.value.slice(0, start) + markdown + snapshot.value.slice(end)
+    value: snapshot.value.slice(0, start) + markdown + snapshot.value.slice(end),
   };
 }
 
-function attachmentMarkdown(value: unknown, defaultAlt: string): string {
+function attachmentInsertion(value: unknown, strings: MediaPickerBootstrap): string {
   if (!value || 'object' !== typeof value || Array.isArray(value)) {
     throw new Error('media-picker-attachment-invalid');
   }
@@ -57,19 +57,20 @@ function attachmentMarkdown(value: unknown, defaultAlt: string): string {
   if ('string' !== typeof attachment.url || '' === attachment.url.trim()) {
     throw new Error('media-picker-attachment-invalid');
   }
-  const alt = 'string' === typeof attachment.alt && attachment.alt
-    ? attachment.alt
-    : 'string' === typeof attachment.title && attachment.title
-      ? attachment.title
-      : defaultAlt;
-
-  return `![${alt}](${attachment.url})`;
+  return imageInsertionText({
+    defaultAlt: strings.defaultAlt,
+    fileName: 'string' === typeof attachment.filename ? attachment.filename : '',
+    insertion: strings.insertion,
+    uploadedAlt: 'string' === typeof attachment.alt ? attachment.alt : '',
+    uploadedTitle: 'string' === typeof attachment.title ? attachment.title : '',
+    url: attachment.url,
+  });
 }
 
 export function openMediaPickerSession({
   document,
   frame,
-  strings
+  strings,
 }: OpenMediaPickerSessionOptions): Promise<MediaPickerResult> {
   let initial: MediaPickerDocumentSnapshot;
   try {
@@ -117,15 +118,13 @@ export function openMediaPickerSession({
             if (documentSnapshot(document).value !== initial.value) {
               throw new Error('media-picker-document-stale');
             }
-            document.applyTextChange(
-              replacementSnapshot(initial, attachmentMarkdown(attachment, strings.defaultAlt))
-            );
+            document.applyTextChange(replacementSnapshot(initial, attachmentInsertion(attachment, strings)));
             inserted = true;
           } catch (error) {
             failure = error;
           }
         },
-        title: strings.insertMedia
+        title: strings.insertMedia,
       });
     } catch (error) {
       document.focus();

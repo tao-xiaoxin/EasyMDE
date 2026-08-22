@@ -77,6 +77,10 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			$bootstrap['imageUpload']['insertion']
 		);
 		$this->assertTrue( $bootstrap['settings']['markdown']['wordWrap'] );
+		$this->assertSame(
+			array( 'format' => 'markdown', 'altSource' => 'filename', 'captionMode' => 'none' ),
+			$bootstrap['mediaPicker']['insertion']
+		);
 		$this->assertSame( $post_id, $bootstrap['localDrafts']['postId'] );
 		$this->assertArrayHasKey( 'document', $bootstrap );
 		$this->assertArrayHasKey( 'appearance', $bootstrap );
@@ -108,6 +112,25 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( rest_url( 'easymde/v1/media' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
+	}
+
+	public function test_editor_root_bootstrap_intersects_image_formats_with_wordpress_policy() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		wp_set_current_user( $user_id );
+		$remove_webp = static function ( $mime_types ) {
+			unset( $mime_types['webp'] );
+			return $mime_types;
+		};
+		add_filter( 'upload_mimes', $remove_webp );
+
+		try {
+			$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
+			$this->assertNotContains( 'image/webp', $bootstrap['imageUpload']['allowedMimeTypes'] );
+			$this->assertContains( 'image/png', $bootstrap['imageUpload']['allowedMimeTypes'] );
+		} finally {
+			remove_filter( 'upload_mimes', $remove_webp );
+		}
 	}
 
 	public function test_editor_root_bootstrap_consumes_saved_settings_center_shortcuts() {

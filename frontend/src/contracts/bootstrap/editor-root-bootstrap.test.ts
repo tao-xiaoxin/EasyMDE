@@ -141,6 +141,7 @@ function validBootstrap() {
     mediaPicker: {
       defaultAlt: 'image',
       insertMedia: 'Insert Media',
+      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
       placeholderAlt: 'alt text'
     },
     preview: {

@@ -2,13 +2,14 @@ import type {
   ImageUploadDocumentPort,
   ImageUploadDocumentSnapshot,
   ImageUploadPort,
-  ImageUploadSelection
+  ImageUploadSelection,
 } from '../../contracts/ports/image-upload-port';
 import type {
   ImageUploadInsertion,
   ImageUploadMimeType,
-  ImageUploadStrings
+  ImageUploadStrings,
 } from '../../contracts/bootstrap/image-upload-bootstrap';
+import { defaultImageAlt, imageInsertionText } from './image-insertion';
 
 export type ImageUploadSource = 'drop' | 'paste';
 
@@ -46,18 +47,20 @@ function imageMimeType(file: File): ImageUploadMimeType | null {
     jpeg: 'image/jpeg',
     jpg: 'image/jpeg',
     png: 'image/png',
-    webp: 'image/webp'
+    webp: 'image/webp',
   };
-  return extension ? extensionMimeTypes[extension] ?? null : null;
+  return extension ? (extensionMimeTypes[extension] ?? null) : null;
 }
 
 function validSelection(selection: ImageUploadSelection, value: string): boolean {
-  return Number.isInteger(selection.start)
-    && Number.isInteger(selection.end)
-    && selection.start >= 0
-    && selection.end >= selection.start
-    && selection.end <= value.length
-    && ['backward', 'forward', 'none'].includes(selection.direction);
+  return (
+    Number.isInteger(selection.start) &&
+    Number.isInteger(selection.end) &&
+    selection.start >= 0 &&
+    selection.end >= selection.start &&
+    selection.end <= value.length &&
+    ['backward', 'forward', 'none'].includes(selection.direction)
+  );
 }
 
 function documentSnapshot(document: ImageUploadDocumentPort): ImageUploadDocumentSnapshot {
@@ -82,41 +85,13 @@ function firstImageFile(transfer: DataTransfer | null): File | null {
 }
 
 function hasImageFile(transfer: DataTransfer | null): boolean {
-  return Array.from(transfer?.items ?? []).some(
-    (item) => 'file' === item.kind && /^image\//i.test(item.type)
-  ) || Array.from(transfer?.files ?? []).some((file) => /^image\//i.test(file.type));
+  return (
+    Array.from(transfer?.items ?? []).some((item) => 'file' === item.kind && /^image\//i.test(item.type)) ||
+    Array.from(transfer?.files ?? []).some((file) => /^image\//i.test(file.type))
+  );
 }
 
-function defaultAltFromFile(file: File, fallback: string): string {
-  if (!file.name) {
-    return fallback;
-  }
-  return file.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ');
-}
-
-function escapeAltText(value: string): string {
-  return value
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/[[\]]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function imageMarkdown(url: string, alt: string, title: string): string {
-  const escapedTitle = title
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const titleSuffix = escapedTitle ? ` "${escapedTitle}"` : '';
-  return `![${escapeAltText(alt)}](${url.replace(/\)/g, '%29')}${titleSuffix})`;
-}
-
-function rebaseSelection(
-  initial: ImageUploadDocumentSnapshot,
-  currentValue: string
-): ImageUploadSelection {
+function rebaseSelection(initial: ImageUploadDocumentSnapshot, currentValue: string): ImageUploadSelection {
   if (currentValue === initial.value) {
     return initial.selection;
   }
@@ -156,20 +131,17 @@ export function createImageUploadSession({
   postId,
   strings,
   target,
-  upload
+  upload,
 }: CreateImageUploadSessionOptions): () => void {
   let active = true;
 
   const handleFile = async (
     event: ClipboardEvent | DragEvent,
     file: File,
-    source: ImageUploadSource
+    source: ImageUploadSource,
   ): Promise<void> => {
     const operationId = nextOperationId();
-    const reportStatus = (
-      message: string,
-      type: ImageUploadStatus['type']
-    ) => onStatus({ message, operationId, type });
+    const reportStatus = (message: string, type: ImageUploadStatus['type']) => onStatus({ message, operationId, type });
     event.preventDefault();
     const dropTransfer = 'drop' === source ? (event as DragEvent).dataTransfer : null;
     if (dropTransfer) {
@@ -196,11 +168,11 @@ export function createImageUploadSession({
 
     reportStatus(statusMessage(strings, source, 'Uploading'), 'info');
     try {
-      const fileNameAlt = defaultAltFromFile(file, strings.defaultAlt);
+      const fileNameAlt = defaultImageAlt(file.name, strings.defaultAlt);
       const result = await upload.upload({
         altText: 'filename' === insertion.altSource ? fileNameAlt : '',
         file,
-        postId
+        postId,
       });
       if (!active) {
         onDiagnostic('image-upload-completed-after-teardown');
@@ -213,23 +185,18 @@ export function createImageUploadSession({
 
       const current = documentSnapshot(document);
       const selection = rebaseSelection(initial, current.value);
-      const alt = 'empty' === insertion.altSource
-        ? ''
-        : 'upload' === insertion.altSource
-          ? result.alt
-          : fileNameAlt;
-      const title = 'filename' === insertion.captionMode
-        ? fileNameAlt
-        : 'upload' === insertion.captionMode
-          ? result.title
-          : '';
-      const inserted = 'url' === insertion.format
-        ? result.url
-        : imageMarkdown(result.url, alt, title);
+      const inserted = imageInsertionText({
+        defaultAlt: strings.defaultAlt,
+        fileName: file.name,
+        insertion,
+        uploadedAlt: result.alt,
+        uploadedTitle: result.title,
+        url: result.url,
+      });
       const cursor = selection.start + inserted.length;
       document.applyTextChange({
         selection: { direction: selection.direction, end: cursor, start: cursor },
-        value: current.value.slice(0, selection.start) + inserted + current.value.slice(selection.end)
+        value: current.value.slice(0, selection.start) + inserted + current.value.slice(selection.end),
       });
       document.focus();
       reportStatus(statusMessage(strings, source, 'Uploaded'), 'success');

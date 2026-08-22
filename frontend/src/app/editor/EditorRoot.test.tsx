@@ -419,6 +419,7 @@ function fixture(): EditorRootProps &
     mediaPicker: {
       defaultAlt: 'image',
       insertMedia: 'Insert Media',
+      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
       placeholderAlt: 'alt text'
     },
     mediaPickerFailureMessage: 'The media library could not be opened.',

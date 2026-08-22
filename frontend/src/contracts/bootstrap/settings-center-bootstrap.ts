@@ -3,7 +3,6 @@ import type {
 	SettingsCenterSettings,
 } from "../settings-center-settings";
 
-const SETTINGS_STRING_MAX_LENGTH = 512;
 export const SETTINGS_CENTER_STRING_KEYS = [
 	"brandName",
 	"settingsCenter",
@@ -434,18 +433,66 @@ export type SettingsCenterBootstrap = Readonly<{
 function parseSettingsStringFields(
 	root: Record<string, unknown>,
 	section: "general" | "images" | "markdown",
-	keys: ReadonlyArray<string>,
+	fields: Readonly<Record<string, number>>,
 ): Record<string, unknown> {
 	const value = parseObject(
 		root[section],
 		`settings-center-${section}-settings-invalid`,
 	);
-	for (const key of keys) {
+	for (const [key, maximumLength] of Object.entries(fields)) {
 		const field = value[key];
-		if (typeof field !== "string" || field.length > SETTINGS_STRING_MAX_LENGTH)
+		if (typeof field !== "string" || utf8ByteLength(field) > maximumLength)
 			throw new Error(`settings-center-${section}-${key}-invalid`);
 	}
 	return value;
+}
+
+function utf8ByteLength(value: string): number {
+	return new TextEncoder().encode(value).length;
+}
+
+function assertExactKeys(
+	value: Record<string, unknown>,
+	expected: ReadonlyArray<string>,
+	code: string,
+): void {
+	const actual = Object.keys(value);
+	if (
+		actual.length !== expected.length ||
+		expected.some((key) => !Object.hasOwn(value, key))
+	) {
+		throw new Error(code);
+	}
+}
+
+function assertEnumFields(
+	value: Record<string, unknown>,
+	section: string,
+	fields: Readonly<Record<string, ReadonlyArray<string>>>,
+): void {
+	for (const [key, allowed] of Object.entries(fields)) {
+		if (!allowed.includes(value[key] as string))
+			throw new Error(`settings-center-${section}-${key}-invalid`);
+	}
+}
+
+function assertSettingsDomain(value: unknown, code: string): void {
+	if (value === "") return;
+	if (typeof value !== "string") throw new Error(code);
+	try {
+		const url = new URL(value);
+		if (
+			(url.protocol !== "http:" && url.protocol !== "https:") ||
+			url.username ||
+			url.password ||
+			url.search ||
+			url.hash
+		) {
+			throw new Error(code);
+		}
+	} catch {
+		throw new Error(code);
+	}
 }
 
 function parseSettingsBooleanFields(
@@ -504,20 +551,25 @@ export function parseSettingsCenterSettings(
 	value: unknown,
 ): SettingsCenterSettings {
 	const root = parseObject(value, "settings-center-settings-invalid");
+	assertExactKeys(
+		root,
+		["revision", "general", "images", "markdown", "shortcuts"],
+		"settings-center-settings-invalid",
+	);
 	if (!Number.isInteger(root.revision) || (root.revision as number) < 0) {
 		throw new Error("settings-center-revision-invalid");
 	}
 
-	const general = parseSettingsStringFields(root, "general", [
-		"interfaceLanguage",
-		"editingMode",
-		"statusBarMode",
-		"autoSaveInterval",
-		"defaultCategory",
-		"publishVisibility",
-		"summaryMode",
-	]);
-	parseSettingsBooleanFields(general, "general", [
+	const generalStrings = {
+		interfaceLanguage: 16,
+		editingMode: 16,
+		statusBarMode: 32,
+		autoSaveInterval: 8,
+		defaultCategory: 16,
+		publishVisibility: 16,
+		summaryMode: 16,
+	};
+	const generalBooleans = [
 		"autoFocusEditor",
 		"showLineNumbers",
 		"syntaxHighlight",
@@ -527,28 +579,44 @@ export function parseSettingsCenterSettings(
 		"smartListRecognition",
 		"openPreviewAfterPublish",
 		"featuredImagePlaceholder",
-	]);
+	];
+	const general = parseSettingsStringFields(root, "general", generalStrings);
+	parseSettingsBooleanFields(general, "general", generalBooleans);
+	assertExactKeys(
+		general,
+		[...Object.keys(generalStrings), ...generalBooleans],
+		"settings-center-general-settings-invalid",
+	);
+	assertEnumFields(general, "general", {
+		interfaceLanguage: ["zh-CN", "zh-TW", "en-US"],
+		editingMode: ["live-preview", "source", "preview"],
+		statusBarMode: ["words-reading-time", "words", "hidden"],
+		autoSaveInterval: ["30", "60", "120", "300"],
+		defaultCategory: ["none", "current"],
+		publishVisibility: ["public", "private", "password"],
+		summaryMode: ["auto-55", "auto-100", "manual"],
+	});
 
-	const images = parseSettingsStringFields(root, "images", [
-		"service",
-		"bucket",
-		"domain",
-		"accessKey",
-		"secretKey",
-		"fileNameRule",
-		"backupService",
-		"backupBucket",
-		"backupDomain",
-		"backupAccessKey",
-		"backupSecretKey",
-		"backupFailureMode",
-		"retryCount",
-		"maxImageSize",
-		"insertFormat",
-		"altSource",
-		"captionMode",
-	]);
-	parseSettingsBooleanFields(images, "images", [
+	const imageStrings = {
+		service: 32,
+		bucket: 160,
+		domain: 255,
+		accessKey: 255,
+		secretKey: 255,
+		fileNameRule: 160,
+		backupService: 32,
+		backupBucket: 160,
+		backupDomain: 255,
+		backupAccessKey: 255,
+		backupSecretKey: 255,
+		backupFailureMode: 32,
+		retryCount: 16,
+		maxImageSize: 16,
+		insertFormat: 16,
+		altSource: 16,
+		captionMode: 16,
+	};
+	const imageBooleans = [
 		"backupEnabled",
 		"backupSameObjectKey",
 		"insertMarkdown",
@@ -556,9 +624,42 @@ export function parseSettingsCenterSettings(
 		"preserveFileName",
 		"copyUrl",
 		"featuredPlaceholder",
-	]);
+	];
+	const images = parseSettingsStringFields(root, "images", imageStrings);
+	parseSettingsBooleanFields(images, "images", imageBooleans);
+	assertExactKeys(
+		images,
+		[...Object.keys(imageStrings), ...imageBooleans, "uploadFormats"],
+		"settings-center-images-settings-invalid",
+	);
+	assertEnumFields(images, "images", {
+		service: ["cloudflare-r2", "aliyun-oss", "tencent-cos", "custom"],
+		backupService: [
+			"qiniu-kodo",
+			"cloudflare-r2",
+			"aliyun-oss",
+			"tencent-cos",
+			"custom",
+		],
+		backupFailureMode: ["return-primary-url", "fail-upload"],
+		retryCount: ["none", "once", "twice", "three-times"],
+		maxImageSize: ["original", "1920", "2560", "3840"],
+		insertFormat: ["markdown", "html", "url"],
+		altSource: ["filename", "empty", "upload"],
+		captionMode: ["none", "filename", "upload"],
+	});
+	assertSettingsDomain(images.domain, "settings-center-images-domain-invalid");
+	assertSettingsDomain(
+		images.backupDomain,
+		"settings-center-images-backupDomain-invalid",
+	);
 	const uploadFormats = parseObject(
 		images.uploadFormats,
+		"settings-center-images-upload-formats-invalid",
+	);
+	assertExactKeys(
+		uploadFormats,
+		["jpg", "png", "webp", "gif"],
 		"settings-center-images-upload-formats-invalid",
 	);
 	for (const format of ["jpg", "png", "webp", "gif"]) {
@@ -566,20 +667,23 @@ export function parseSettingsCenterSettings(
 			throw new Error(`settings-center-images-upload-format-${format}-invalid`);
 		}
 	}
+	if (!["jpg", "png", "webp", "gif"].some((format) => uploadFormats[format])) {
+		throw new Error("settings-center-images-upload-formats-empty");
+	}
 
-	const markdown = parseSettingsStringFields(root, "markdown", [
-		"editorTheme",
-		"editorFontSize",
-		"editorFont",
-		"tableAlignment",
-		"codeTheme",
-		"codeLineNumbers",
-		"lineEnding",
-		"unorderedMarker",
-		"orderedStart",
-		"blockquoteStyle",
-	]);
-	parseSettingsBooleanFields(markdown, "markdown", [
+	const markdownStrings = {
+		editorTheme: 16,
+		editorFontSize: 16,
+		editorFont: 32,
+		tableAlignment: 16,
+		codeTheme: 16,
+		codeLineNumbers: 16,
+		lineEnding: 16,
+		unorderedMarker: 120,
+		orderedStart: 120,
+		blockquoteStyle: 16,
+	};
+	const markdownBooleans = [
 		"livePreview",
 		"wordWrap",
 		"lineNumbers",
@@ -596,10 +700,32 @@ export function parseSettingsCenterSettings(
 		"toc",
 		"imageSizeSyntax",
 		"pasteAsMarkdown",
-	]);
+	];
+	const markdown = parseSettingsStringFields(root, "markdown", markdownStrings);
+	parseSettingsBooleanFields(markdown, "markdown", markdownBooleans);
+	assertExactKeys(
+		markdown,
+		[...Object.keys(markdownStrings), ...markdownBooleans],
+		"settings-center-markdown-settings-invalid",
+	);
+	assertEnumFields(markdown, "markdown", {
+		editorTheme: ["system", "light", "dark"],
+		editorFontSize: ["12px", "13px", "14px", "15px", "16px", "18px"],
+		editorFont: ["system", "monospace", "source-han-sans"],
+		tableAlignment: ["auto", "left", "center"],
+		codeTheme: ["light", "dark", "follow-editor"],
+		codeLineNumbers: ["show", "hide"],
+		lineEnding: ["system", "lf", "crlf"],
+		blockquoteStyle: ["standard", "spaced"],
+	});
 
 	const shortcuts = parseObject(
 		root.shortcuts,
+		"settings-center-shortcuts-settings-invalid",
+	);
+	assertExactKeys(
+		shortcuts,
+		["values", "showHints", "detectConflicts", "showSuggestions"],
 		"settings-center-shortcuts-settings-invalid",
 	);
 	parseSettingsBooleanFields(shortcuts, "shortcuts", [
@@ -611,7 +737,7 @@ export function parseSettingsCenterSettings(
 		shortcuts.values,
 		"settings-center-shortcut-values-invalid",
 	);
-	for (const id of [
+	const shortcutIds = [
 		"save",
 		"bold",
 		"italic",
@@ -622,18 +748,31 @@ export function parseSettingsCenterSettings(
 		"quote",
 		"unordered-list",
 		"ordered-list",
-	]) {
+	];
+	for (const id of shortcutIds) {
 		const shortcut = parseObject(
 			shortcutValues[id],
 			`settings-center-shortcut-${id}-invalid`,
 		);
+		assertExactKeys(
+			shortcut,
+			["windows", "mac"],
+			`settings-center-shortcut-${id}-invalid`,
+		);
 		if (
 			typeof shortcut.windows !== "string" ||
-			typeof shortcut.mac !== "string"
+			utf8ByteLength(shortcut.windows) > 64 ||
+			typeof shortcut.mac !== "string" ||
+			utf8ByteLength(shortcut.mac) > 64
 		) {
 			throw new Error(`settings-center-shortcut-${id}-invalid`);
 		}
 	}
+	assertExactKeys(
+		shortcutValues,
+		shortcutIds,
+		"settings-center-shortcut-values-invalid",
+	);
 
 	return root as unknown as SettingsCenterSettings;
 }

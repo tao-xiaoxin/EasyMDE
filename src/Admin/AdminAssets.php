@@ -202,9 +202,10 @@ final class AdminAssets {
 			}
 		}
 
-		$preview_assets = $this->frontend_assets->get_editor_preview_assets();
-		$settings       = $this->settings_center_repository->get_settings();
-		$code_themes    = array_map(
+		$preview_assets           = $this->frontend_assets->get_editor_preview_assets();
+		$settings                 = $this->settings_center_repository->get_settings();
+		$allowed_image_mime_types = $this->get_allowed_editor_image_mime_types();
+		$code_themes              = array_map(
 			static function ( $theme ) {
 				return array(
 					'id'     => $theme['id'],
@@ -266,8 +267,8 @@ final class AdminAssets {
 				),
 			),
 			'imageUpload'        => array(
-				'allowedMimeTypes' => $this->settings_center_repository->get_allowed_image_mime_types(),
-				'enabled'          => $this->get_image_upload_config()['enabled'],
+				'allowedMimeTypes' => $allowed_image_mime_types,
+				'enabled'          => $this->get_image_upload_config()['enabled'] && ! empty( $allowed_image_mime_types ),
 				'endpoint'         => esc_url_raw( rest_url( 'easymde/v1/media' ) ),
 				'insertion'        => array(
 					'format'      => 'url' === $settings['images']['insertFormat'] ? 'url' : 'markdown',
@@ -328,6 +329,11 @@ final class AdminAssets {
 			'mediaPicker'        => array(
 				'defaultAlt'     => $strings['mediaDefaultAlt'],
 				'insertMedia'    => $strings['insertMedia'],
+				'insertion'      => array(
+					'format'      => 'url' === $settings['images']['insertFormat'] ? 'url' : 'markdown',
+					'altSource'   => $settings['images']['altSource'],
+					'captionMode' => $settings['images']['captionMode'],
+				),
 				'placeholderAlt' => $strings['mediaAltText'],
 			),
 			'preview'            => array(
@@ -628,6 +634,13 @@ final class AdminAssets {
 			'enabled'  => current_user_can( 'upload_files' ),
 			'maxBytes' => min( 10485760, (int) wp_max_upload_size() ),
 		);
+	}
+
+	private function get_allowed_editor_image_mime_types() {
+		$configured = $this->settings_center_repository->get_allowed_image_mime_types();
+		$wordpress  = array_values( get_allowed_mime_types() );
+
+		return array_values( array_intersect( $configured, $wordpress ) );
 	}
 
 	private function get_custom_css_variables() {

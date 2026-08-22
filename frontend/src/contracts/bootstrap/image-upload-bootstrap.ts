@@ -10,11 +10,7 @@ export type ImageUploadStrings = Readonly<{
   pasteUploading: string;
 }>;
 
-export type ImageUploadMimeType =
-  | 'image/jpeg'
-  | 'image/png'
-  | 'image/webp'
-  | 'image/gif';
+export type ImageUploadMimeType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
 
 export type ImageUploadInsertion = Readonly<{
   altSource: 'filename' | 'empty' | 'upload';
@@ -37,32 +33,31 @@ const IMAGE_UPLOAD_MIME_TYPES: ReadonlyArray<ImageUploadMimeType> = [
   'image/jpeg',
   'image/png',
   'image/webp',
-  'image/gif'
+  'image/gif',
 ];
 
 function mimeTypesValue(value: unknown): ReadonlyArray<ImageUploadMimeType> {
   if (
-    !Array.isArray(value)
-    || value.some((mimeType) =>
-      'string' !== typeof mimeType
-      || !IMAGE_UPLOAD_MIME_TYPES.includes(mimeType as ImageUploadMimeType)
-    )
-    || new Set(value).size !== value.length
+    !Array.isArray(value) ||
+    value.some(
+      (mimeType) => 'string' !== typeof mimeType || !IMAGE_UPLOAD_MIME_TYPES.includes(mimeType as ImageUploadMimeType),
+    ) ||
+    new Set(value).size !== value.length
   ) {
     throw new Error('image-upload-mime-types-invalid');
   }
   return value as ReadonlyArray<ImageUploadMimeType>;
 }
 
-function insertionValue(value: unknown): ImageUploadInsertion {
+export function parseImageUploadInsertion(value: unknown): ImageUploadInsertion {
   if (!value || 'object' !== typeof value || Array.isArray(value)) {
     throw new Error('image-upload-insertion-invalid');
   }
   const insertion = value as Record<string, unknown>;
   if (
-    !['filename', 'empty', 'upload'].includes(String(insertion.altSource))
-    || !['none', 'filename', 'upload'].includes(String(insertion.captionMode))
-    || !['markdown', 'url'].includes(String(insertion.format))
+    !['filename', 'empty', 'upload'].includes(String(insertion.altSource)) ||
+    !['none', 'filename', 'upload'].includes(String(insertion.captionMode)) ||
+    !['markdown', 'url'].includes(String(insertion.format))
   ) {
     throw new Error('image-upload-insertion-invalid');
   }
@@ -97,7 +92,7 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
     allowedMimeTypes: mimeTypesValue(bootstrap.allowedMimeTypes),
     enabled: true === bootstrap.enabled,
     endpoint: stringValue(bootstrap.endpoint, 'image-upload-endpoint-invalid'),
-    insertion: insertionValue(bootstrap.insertion),
+    insertion: parseImageUploadInsertion(bootstrap.insertion),
     maxBytes: integerValue(bootstrap.maxBytes, 1, 'image-upload-max-bytes-invalid'),
     nonce: stringValue(bootstrap.nonce, 'image-upload-nonce-invalid'),
     postId: integerValue(bootstrap.postId, 0, 'image-upload-post-id-invalid'),
@@ -110,7 +105,7 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
       pasteFailed: stringValue(messages.pasteFailed, 'image-upload-string-invalid'),
       pasteTooLarge: stringValue(messages.pasteTooLarge, 'image-upload-string-invalid'),
       pasteUploaded: stringValue(messages.pasteUploaded, 'image-upload-string-invalid'),
-      pasteUploading: stringValue(messages.pasteUploading, 'image-upload-string-invalid')
-    }
+      pasteUploading: stringValue(messages.pasteUploading, 'image-upload-string-invalid'),
+    },
   };
 }

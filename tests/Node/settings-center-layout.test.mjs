@@ -73,10 +73,7 @@ test("Settings Center frame does not add an outer border, radius, or shadow", ()
 });
 
 test("Settings Center replaces the fixed desktop crop at compact and narrow widths", () => {
-	assert.match(
-		settingsCss,
-		/@media\s*\(max-width:\s*1099px\)[\s\S]*?\.easymde-settings-center__frame\s*\{[^}]*min-width:\s*0;/,
-	);
+	assert.match(frameRuleBody(), /min-width:\s*0;/);
 	assert.match(
 		settingsCss,
 		/@media\s*\(max-width:\s*840px\)[\s\S]*?\.easymde-settings-center__frame\s*\{[^}]*display:\s*block;/,
@@ -108,6 +105,33 @@ test("Settings Center replaces the fixed desktop crop at compact and narrow widt
 	assert.match(
 		settingsCss,
 		/\.easymde-settings-center__frame:has\([^}]+main\s*\{[^}]*padding-bottom:\s*var\(--easymde-mobile-save-bar-height\);/,
+	);
+});
+
+test("Settings Center preserves reference Help geometry until the mobile layout", () => {
+	const compactRules = settingsCss.match(
+		/@media\s*\(max-width:\s*1099px\)[\s\S]*?(?=@media\s*\(max-width:\s*840px\))/,
+	)?.[0];
+	assert.ok(compactRules, "compact Settings Center rules must exist");
+	assert.doesNotMatch(
+		compactRules,
+		/\.easymde-settings-center__sidebar\s*\{[^}]*width:/,
+	);
+	assert.doesNotMatch(
+		compactRules,
+		/\.easymde-settings-center__help\s*\{[^}]*(?:left|right):/,
+	);
+	assert.match(
+		settingsCss,
+		/@media\s*\(min-width:\s*841px\)[\s\S]*?\.easymde-settings-center__sidebar nav\s*\{[^}]*bottom:\s*136px;[^}]*overflow-y:\s*auto;/,
+	);
+	assert.match(
+		settingsCss,
+		/\.easymde-settings-center__upload-formats\s*\{[^}]*width:\s*min\(620px,\s*100%\);/,
+	);
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*840px\)\s*and\s*\(max-height:\s*500px\)[\s\S]*?grid-template-columns:\s*116px\s+minmax\(0,\s*1fr\)\s+148px;/,
 	);
 });
 

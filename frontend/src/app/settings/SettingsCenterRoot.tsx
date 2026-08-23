@@ -200,7 +200,11 @@ export function SettingsCenterRoot({
 		const navigation = navigationRef.current;
 		if (!navigation)
 			throw new Error("settings-center-navigation-element-missing");
-		if (navigation.scrollWidth <= navigation.clientWidth) return;
+		if (
+			navigation.scrollWidth <= navigation.clientWidth &&
+			navigation.scrollHeight <= navigation.clientHeight
+		)
+			return;
 		const activeItem = navigation.querySelector<HTMLElement>(
 			`[data-nav-id="${highlightedNavId}"]`,
 		);

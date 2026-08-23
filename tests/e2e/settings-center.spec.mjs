@@ -937,3 +937,122 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 	).toBeDisabled();
 	await expect(saveButton).toBeDisabled();
 });
+
+test("keeps reference Help geometry stable while compact content stays inside its owners", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1200, height: 753 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+
+	const settingsCenter = page.locator(".easymde-settings-center");
+	const sidebar = settingsCenter.locator(
+		".easymde-settings-center__sidebar",
+	);
+	const nav = sidebar.locator("nav");
+	const help = sidebar.locator(".easymde-settings-center__help");
+	const uploadFormats = settingsCenter.locator(
+		".easymde-settings-center__upload-formats",
+	);
+
+	await expect(settingsCenter).toBeVisible();
+
+	const expectReferenceSidebar = async () => {
+		const geometry = await Promise.all([
+			sidebar.boundingBox(),
+			help.boundingBox(),
+		]);
+		const [sidebarBox, helpBox] = geometry;
+		if (!sidebarBox || !helpBox)
+			throw new Error("settings-center-reference-help-bounds-missing");
+
+		expect(Math.abs(sidebarBox.width - 260)).toBeLessThanOrEqual(0.5);
+		expect(Math.abs(helpBox.x - 16.5)).toBeLessThanOrEqual(0.5);
+		expect(Math.abs(helpBox.width - 217.92)).toBeLessThanOrEqual(0.5);
+		expect(
+			Math.abs(sidebarBox.x + sidebarBox.width - helpBox.x - helpBox.width - 25.58),
+		).toBeLessThanOrEqual(0.75);
+	};
+
+	const expectUploadFormatsContained = async () => {
+		const overflow = await uploadFormats.evaluate((element) => {
+			const section = element.closest(
+				".easymde-settings-center__settings-section",
+			);
+			if (!section)
+				throw new Error("settings-center-upload-formats-section-missing");
+			const elementBounds = element.getBoundingClientRect();
+			const sectionBounds = section.getBoundingClientRect();
+			return elementBounds.right - sectionBounds.right;
+		});
+		expect(overflow).toBeLessThanOrEqual(0.75);
+	};
+
+	for (const width of [1200, 1100, 1099, 900, 841]) {
+		await page.setViewportSize({ width, height: 753 });
+		await expectReferenceSidebar();
+		await expectUploadFormatsContained();
+		await expect
+			.poll(async () =>
+				settingsCenter.evaluate(
+					(element) => element.scrollWidth - element.clientWidth,
+				),
+			)
+			.toBeLessThanOrEqual(1);
+	}
+
+	await page.setViewportSize({ width: 1099, height: 753 });
+	const helpBeforeReload = await help.boundingBox();
+	await page.reload();
+	await expect(settingsCenter).toBeVisible();
+	await expectReferenceSidebar();
+	const helpAfterReload = await help.boundingBox();
+	if (!helpBeforeReload || !helpAfterReload)
+		throw new Error("settings-center-reloaded-help-bounds-missing");
+	for (const coordinate of ["x", "y", "width", "height"]) {
+		expect(
+			Math.abs(helpAfterReload[coordinate] - helpBeforeReload[coordinate]),
+		).toBeLessThanOrEqual(0.5);
+	}
+
+	await page.setViewportSize({ width: 841, height: 500 });
+	await expectReferenceSidebar();
+	const shortDesktopOverlap = await Promise.all([
+		nav.boundingBox(),
+		help.boundingBox(),
+	]).then(([navBox, helpBox]) => {
+		if (!navBox || !helpBox)
+			throw new Error("settings-center-short-desktop-bounds-missing");
+		return navBox.y + navBox.height - helpBox.y;
+	});
+	expect(shortDesktopOverlap).toBeLessThanOrEqual(0.5);
+	await settingsCenter.evaluate((element) => {
+		element.scrollTop = element.scrollHeight;
+		element.dispatchEvent(new Event("scroll"));
+	});
+	const aboutNav = nav.locator('button[data-nav-id="about"]');
+	await expect(aboutNav).toHaveAttribute("aria-current", "page");
+	const activeNavOverflow = await Promise.all([
+		nav.boundingBox(),
+		aboutNav.boundingBox(),
+	]).then(([navBox, activeBox]) => {
+		if (!navBox || !activeBox)
+			throw new Error("settings-center-short-active-nav-bounds-missing");
+		return activeBox.y + activeBox.height - (navBox.y + navBox.height);
+	});
+	expect(activeNavOverflow).toBeLessThanOrEqual(0.5);
+
+	await page.setViewportSize({ width: 740, height: 360 });
+	const shortMobileOverflow = await Promise.all([
+		sidebar.boundingBox(),
+		help.boundingBox(),
+		sidebar.evaluate((element) =>
+			Number.parseFloat(getComputedStyle(element).paddingRight),
+		),
+	]).then(([sidebarBox, helpBox, paddingRight]) => {
+		if (!sidebarBox || !helpBox)
+			throw new Error("settings-center-short-mobile-bounds-missing");
+		return helpBox.x + helpBox.width - (sidebarBox.x + sidebarBox.width - paddingRight);
+	});
+	expect(shortMobileOverflow).toBeLessThanOrEqual(0.5);
+});

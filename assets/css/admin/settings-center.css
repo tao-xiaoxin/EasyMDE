@@ -136,7 +136,7 @@ body.toplevel_page_easymde #easymde-settings-center-root {
 	position: relative;
 	display: flex;
 	width: 100%;
-	min-width: 1100px;
+	min-width: 0;
 	max-width: 1448px;
 	min-height: 100vh;
 	margin: 0 auto;
@@ -1678,7 +1678,7 @@ body.toplevel_page_easymde #easymde-settings-center-root {
 
 .easymde-settings-center__upload-formats {
 	display: flex;
-	width: 620px;
+	width: min(620px, 100%);
 	max-width: 100%;
 	flex-wrap: wrap;
 	gap: 8px;
@@ -2900,52 +2900,33 @@ body.toplevel_page_easymde #easymde-settings-center-root {
 	opacity: .86;
 }
 
+@media (min-width: 841px) {
+	.easymde-settings-center__sidebar nav {
+		bottom: 136px;
+		overflow-y: auto;
+		scrollbar-width: none;
+	}
+
+	.easymde-settings-center__sidebar nav::-webkit-scrollbar {
+		display: none;
+	}
+
+	.easymde-settings-center__sidebar nav button {
+		flex: 0 0 48px;
+	}
+}
+
 @media (max-width: 1099px) {
 	.easymde-settings-center {
 		overflow-x: hidden;
 	}
 
 	.easymde-settings-center__frame {
-		min-width: 0;
 		max-width: none;
-	}
-
-	.easymde-settings-center__sidebar {
-		width: 220px;
-		flex-basis: 220px;
-		padding-right: 13px;
-		padding-left: 13px;
-	}
-
-	.easymde-settings-center__sidebar::after {
-		right: 0;
-	}
-
-	.easymde-settings-center__sidebar nav {
-		left: 12px;
-		right: 12px;
-	}
-
-	.easymde-settings-center__sidebar nav button {
-		padding: 0 12px;
-		font-size: 16px;
-	}
-
-	.easymde-settings-center__sidebar nav button svg {
-		margin-right: 12px;
-	}
-
-	.easymde-settings-center__help {
-		right: 12px;
-		left: 12px;
 	}
 
 	.easymde-settings-center__help > div > div {
 		min-width: 0;
-	}
-
-	.easymde-settings-center__help p {
-		max-width: 115px;
 	}
 
 	.easymde-settings-center__sticky-header {
@@ -3035,7 +3016,7 @@ body.toplevel_page_easymde #easymde-settings-center-root {
 	}
 
 	.easymde-settings-center__action-bar {
-		left: 220px;
+		left: 260px;
 	}
 }
 
@@ -3497,7 +3478,7 @@ body.toplevel_page_easymde #easymde-settings-center-root {
 @media (max-width: 840px) and (max-height: 500px) {
 	.easymde-settings-center__sidebar {
 		height: 64px;
-		grid-template-columns: 116px minmax(0, 1fr) 140px;
+		grid-template-columns: 116px minmax(0, 1fr) 148px;
 		grid-template-rows: 64px;
 		padding: 0 12px;
 	}

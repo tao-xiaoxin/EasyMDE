@@ -68,9 +68,6 @@ final class ImageHostingRuntime {
 		}
 		try {
 			$primary_provider = $this->create_provider( $settings['primary'] );
-			$backup_provider  = ! empty( $settings['backup']['enabled'] )
-				? $this->create_provider( $settings['backup'] )
-				: null;
 		} catch ( Throwable $throwable ) {
 			return $this->configuration_error();
 		}
@@ -111,9 +108,10 @@ final class ImageHostingRuntime {
 			}
 
 			$backup = array( 'status' => 'disabled' );
-			if ( null !== $backup_provider ) {
+			if ( ! empty( $settings['backup']['enabled'] ) ) {
 				try {
-					$backup_result = $backup_provider->upload(
+					$backup_provider = $this->create_provider( $settings['backup'] );
+					$backup_result   = $backup_provider->upload(
 						$prepared['bytes'],
 						$prepared['mime_type'],
 						$key

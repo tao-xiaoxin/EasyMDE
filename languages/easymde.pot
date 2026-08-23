@@ -1674,8 +1674,8 @@ msgid "Settings saved."
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:120
-#: src/Support/SettingsCenterRepository.php:301
-#: src/Support/SettingsCenterRepository.php:309
+#: src/Support/SettingsCenterRepository.php:348
+#: src/Support/SettingsCenterRepository.php:356
 msgid "Settings could not be saved. Try again."
 msgstr ""
 
@@ -3063,7 +3063,7 @@ msgstr ""
 msgid "Unable to copy code. Try again."
 msgstr ""
 
-#: src/ImageHosting/ImageHostingRuntime.php:368
+#: src/ImageHosting/ImageHostingRuntime.php:366
 msgid "The image-hosting operation could not be completed."
 msgstr ""
 
@@ -3157,21 +3157,21 @@ msgstr ""
 msgid "The requested revision could not be found."
 msgstr ""
 
-#: src/Rest/SettingsController.php:99
+#: src/Rest/SettingsController.php:95
 msgid "The settings request could not be verified."
 msgstr ""
 
-#: src/Rest/SettingsController.php:107
+#: src/Rest/SettingsController.php:103
 msgid "The settings payload is too large."
 msgstr ""
 
-#: src/Rest/SettingsController.php:120 src/Rest/SettingsController.php:370
-#: src/Support/SettingsCenterRepository.php:207
-#: src/Support/SettingsCenterRepository.php:474
+#: src/Rest/SettingsController.php:116 src/Rest/SettingsController.php:366
+#: src/Support/SettingsCenterRepository.php:245
+#: src/Support/SettingsCenterRepository.php:521
 msgid "The settings payload is invalid."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:515
+#: src/Support/SettingsCenterRepository.php:562
 msgid "One or more shortcut values are invalid."
 msgstr ""
 

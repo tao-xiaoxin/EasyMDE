@@ -153,6 +153,38 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		$this->assertCount( 0, $abort_transport->requests );
 	}
 
+	public function test_invalid_backup_configuration_does_not_block_the_primary_upload() {
+		$file = $this->file( 'image.png', 'image/png', 'source-image-bytes' );
+		foreach ( array( 'missing-credentials', 'unsupported-service' ) as $case ) {
+			$transport = new ImageHostingRuntimeFakeTransport( array( HttpResponse::success( 200, '' ) ) );
+			$settings  = $this->settings();
+			if ( 'missing-credentials' === $case ) {
+				unset( $settings['backup']['accessKey'], $settings['backup']['secretKey'] );
+			} else {
+				$settings['backup']['service'] = 'unsupported-provider';
+			}
+
+			$result = $this->runtime( $transport )->upload( $settings, $file );
+
+			$this->assertIsArray( $result, $case );
+			$this->assertSame(
+				'https://images.example.test/20260713/00000000-0000-4000-8000-000000000000.png',
+				$result['url'],
+				$case
+			);
+			$this->assertSame(
+				array(
+					'status' => 'failed',
+					'code'   => 'easymde_image_hosting_backup_upload_failed',
+				),
+				$result['backup'],
+				$case
+			);
+			$this->assertCount( 1, $transport->requests, $case );
+			$this->assertSame( 'PUT', $transport->requests[0][0], $case );
+		}
+	}
+
 	public function test_preserve_original_name_still_uses_the_validated_key_builder() {
 		$transport = new ImageHostingRuntimeFakeTransport( array( HttpResponse::success( 200, '' ) ) );
 		$settings  = $this->settings();

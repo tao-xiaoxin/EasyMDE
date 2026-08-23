@@ -28,8 +28,47 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         $data     = $response->get_data();
 
         $this->assertSame( 200, $response->get_status() );
-        $this->assertSame( array( 'settings' ), array_keys( $data ) );
+        $this->assertSame( array( 'settings', 'credentialStatus' ), array_keys( $data ) );
         $this->assertSame( array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ), array_keys( $data['settings'] ) );
+        $this->assertSame(
+            array(
+                'primaryConfigured' => false,
+                'backupConfigured'  => false,
+            ),
+            $data['credentialStatus']
+        );
+        $this->assertSame( '', $data['settings']['images']['accessKey'] );
+        $this->assertSame( '', $data['settings']['images']['secretKey'] );
+    }
+
+    public function test_get_projects_settings_and_credential_status_from_one_option_snapshot() {
+        $reads = 0;
+        $filter = static function () use ( &$reads ) {
+            $reads++;
+
+            return array(
+                'settings_center_revision' => 41,
+                'settings_center'          => array(
+                    'images' => array(
+                        'accessKey' => 'snapshot-access',
+                        'secretKey' => 'snapshot-secret',
+                    ),
+                ),
+            );
+        };
+        add_filter( 'pre_option_' . Options::EDITOR_SETTINGS, $filter );
+
+        try {
+            $response = rest_do_request( new WP_REST_Request( 'GET', '/easymde/v1/settings' ) );
+        } finally {
+            remove_filter( 'pre_option_' . Options::EDITOR_SETTINGS, $filter );
+        }
+
+        $data = $response->get_data();
+        $this->assertSame( 1, $reads );
+        $this->assertSame( 41, $data['settings']['revision'] );
+        $this->assertTrue( $data['credentialStatus']['primaryConfigured'] );
+        $this->assertFalse( $data['credentialStatus']['backupConfigured'] );
         $this->assertSame( '', $data['settings']['images']['accessKey'] );
         $this->assertSame( '', $data['settings']['images']['secretKey'] );
     }
@@ -43,9 +82,77 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         $data     = $response->get_data();
 
         $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( array( 'settings', 'credentialStatus' ), array_keys( $data ) );
+        $this->assertSame(
+            array(
+                'primaryConfigured' => false,
+                'backupConfigured'  => false,
+            ),
+            $data['credentialStatus']
+        );
         $this->assertSame( 1, $data['settings']['revision'] );
         $this->assertFalse( $data['settings']['general']['autoSave'] );
         $this->assertSame( 'Ctrl+Alt+B', $data['settings']['shortcuts']['values']['bold']['windows'] );
+    }
+
+    public function test_successful_post_and_following_get_return_authoritative_credential_status_without_secrets() {
+        $settings = $this->current_settings();
+        $settings['images']['accessKey'] = 'synthetic-primary-access';
+        $settings['images']['secretKey'] = 'synthetic-primary-secret';
+        $settings['images']['backupAccessKey'] = 'synthetic-backup-access';
+        $settings['images']['backupSecretKey'] = 'synthetic-backup-secret';
+
+        $post_response = $this->post_json( array( 'settings' => $settings ) );
+        $post_data     = $post_response->get_data();
+        $get_response  = rest_do_request( new WP_REST_Request( 'GET', '/easymde/v1/settings' ) );
+        $get_data      = $get_response->get_data();
+        $expected_status = array(
+            'primaryConfigured' => true,
+            'backupConfigured'  => true,
+        );
+
+        $this->assertSame( 200, $post_response->get_status() );
+        $this->assertSame( array( 'settings', 'credentialStatus' ), array_keys( $post_data ) );
+        $this->assertSame( $expected_status, $post_data['credentialStatus'] );
+        $this->assertSame( '', $post_data['settings']['images']['accessKey'] );
+        $this->assertSame( '', $post_data['settings']['images']['secretKey'] );
+        $this->assertSame( '', $post_data['settings']['images']['backupAccessKey'] );
+        $this->assertSame( '', $post_data['settings']['images']['backupSecretKey'] );
+
+        $this->assertSame( 200, $get_response->get_status() );
+        $this->assertSame( array( 'settings', 'credentialStatus' ), array_keys( $get_data ) );
+        $this->assertSame( $expected_status, $get_data['credentialStatus'] );
+        $this->assertSame( '', $get_data['settings']['images']['accessKey'] );
+        $this->assertSame( '', $get_data['settings']['images']['secretKey'] );
+        $this->assertStringNotContainsString( 'synthetic-primary-secret', wp_json_encode( $post_data ) );
+        $this->assertStringNotContainsString( 'synthetic-backup-secret', wp_json_encode( $get_data ) );
+    }
+
+    public function test_successful_post_projects_the_cas_result_without_a_second_option_read() {
+        $settings = $this->current_settings();
+        $settings['images']['accessKey'] = 'cas-access';
+        $settings['images']['secretKey'] = 'cas-secret';
+        $reads = 0;
+        $filter = static function ( $value ) use ( &$reads ) {
+            $reads++;
+
+            return $value;
+        };
+        add_filter( 'pre_option_' . Options::EDITOR_SETTINGS, $filter );
+
+        try {
+            $response = $this->post_json( array( 'settings' => $settings ) );
+        } finally {
+            remove_filter( 'pre_option_' . Options::EDITOR_SETTINGS, $filter );
+        }
+
+        $data = $response->get_data();
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 0, $reads );
+        $this->assertSame( 1, $data['settings']['revision'] );
+        $this->assertTrue( $data['credentialStatus']['primaryConfigured'] );
+        $this->assertSame( '', $data['settings']['images']['accessKey'] );
+        $this->assertSame( '', $data['settings']['images']['secretKey'] );
     }
 
     public function test_first_post_creates_the_missing_option_with_revision_one() {
@@ -140,6 +247,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 
         $this->assertSame( 409, $response->get_status() );
         $this->assertSame( 'easymde_settings_conflict', $response->as_error()->get_error_code() );
+        $this->assertArrayNotHasKey( 'credentialStatus', $response->get_data() );
         $this->assertFalse( $this->current_settings()['general']['autoSave'] );
     }
 

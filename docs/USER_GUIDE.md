@@ -26,23 +26,29 @@ The compact toolbar includes common Markdown actions for formatting, headings, q
 
 ## Media Insertion
 
-Use the image/media toolbar action to open the WordPress media library. After selecting one image, EasyMDE inserts Markdown image syntax using the attachment URL and available alt/title text.
+Use the image/media toolbar action to open the WordPress media library. After
+selecting one image, EasyMDE inserts Markdown image syntax using the attachment
+URL and available alt/title text. This WordPress-native picker is an explicit
+toolbar entry point; it does not own image paste or drag-and-drop uploads.
 
 When the current user can upload media, pasting a local clipboard image or
 dropping a local image file into the Markdown source uploads that image and
 inserts the configured Markdown or URL form only after the upload succeeds.
-EasyMDE accepts local JPEG, PNG, GIF, and WebP images. The default destination
-is the WordPress media library.
+EasyMDE accepts local JPEG, PNG, GIF, and WebP images. Paste and drag-and-drop
+use the protected same-origin Image Hosting upload path configured by the site
+administrator; there is no destination selector or WordPress media-library
+fallback for these actions.
 
-An administrator may instead choose **Remote image host** in **EasyMDE > Image
-Hosting**, configure Cloudflare R2, save the settings, and test the saved
-connection. Qiniu Kodo can be enabled as an optional same-key backup. Provider
-credentials remain on the WordPress server and are not returned to the browser.
-The settings page shows whether credentials are configured; entering a new key
-replaces it on save, while an empty field keeps the stored value. Uploads are
-not retried automatically. If the backup upload fails after R2 succeeds, the R2
-URL remains usable and EasyMDE reports the partial failure. EasyMDE does not
-offer an all-or-nothing mode because these providers do not expose a reliable
+An administrator configures Cloudflare R2 in **EasyMDE > Image Hosting**, saves
+the settings, and tests the saved connection. Without a valid saved primary
+configuration, paste and drag-and-drop fail explicitly. Qiniu Kodo can be
+enabled as an optional same-key backup. Provider credentials remain on the
+WordPress server and are not returned to the browser. The settings page shows
+whether credentials are configured; entering a new key replaces it on save,
+while an empty field keeps the stored value. Uploads are not retried
+automatically. If the backup upload fails after R2 succeeds, the R2 URL remains
+usable and EasyMDE reports the partial failure. EasyMDE does not offer an
+all-or-nothing mode because these providers do not expose a reliable
 cross-provider rollback transaction.
 
 If the WordPress media frame is unavailable, the command falls back to inserting Markdown image delimiters so the source text remains editable.

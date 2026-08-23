@@ -299,8 +299,9 @@ JS;
 	}
 
 	private function get_settings_center_bootstrap() {
-		$settings          = $this->settings_center_repository->get_settings();
-		$credential_status = $this->settings_center_repository->get_image_credential_status();
+		$settings_response = $this->settings_center_repository->get_settings_response();
+		$settings          = $settings_response['settings'];
+		$credential_status = $settings_response['credentialStatus'];
 
 		return array(
 			'schemaVersion'   => 2,

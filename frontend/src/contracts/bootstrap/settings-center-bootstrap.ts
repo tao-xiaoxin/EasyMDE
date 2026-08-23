@@ -479,6 +479,7 @@ function assertExactKeys(
 	if (
 		actual.length !== expected.length ||
 		expected.some(
+			// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is outside the supported browser baseline.
 			(key) => !Object.prototype.hasOwnProperty.call(value, key),
 		)
 	) {

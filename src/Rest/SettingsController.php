@@ -56,11 +56,7 @@ final class SettingsController {
 	public function handle_get_request( WP_REST_Request $request ) {
 		unset( $request );
 
-		return rest_ensure_response(
-			array(
-				'settings' => $this->settings_repository->get_settings(),
-			)
-		);
+		return rest_ensure_response( $this->settings_repository->get_settings_response() );
 	}
 
 	public function handle_update_request( WP_REST_Request $request ) {
@@ -79,12 +75,12 @@ final class SettingsController {
 			return $valid_reset;
 		}
 
-		$result = $this->settings_repository->update_settings( $settings, $reset );
+		$result = $this->settings_repository->update_settings_response( $settings, $reset );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
 
-		return rest_ensure_response( array( 'settings' => $result ) );
+		return rest_ensure_response( $result );
 	}
 
 	public function can_update_settings( WP_REST_Request $request ) {

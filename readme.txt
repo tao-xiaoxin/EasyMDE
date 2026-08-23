@@ -25,7 +25,8 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 * Compact icon toolbar for common Markdown formatting actions.
 * Heading, appearance, and output controls in compact popovers.
 * Typora-inspired keyboard shortcuts with configurable Windows/Linux and macOS bindings.
-* WordPress media library insertion, plus local image paste and drag-and-drop upload to WordPress or an explicitly configured Cloudflare R2 image host with optional Qiniu Kodo backup.
+* Explicit WordPress media library insertion through the toolbar media picker.
+* Local image paste and drag-and-drop upload through the protected same-origin Image Hosting path to configured Cloudflare R2, with optional Qiniu Kodo backup and no WordPress media fallback.
 * REST-powered server preview.
 * Browser local draft autosave and recovery.
 * Fixed 50/50 desktop source/preview workspace with the historical responsive stack at narrow widths.
@@ -128,11 +129,11 @@ Yes. Add `[TOC]` or `[toc]` on its own line in the Markdown source.
 
 = Can I insert WordPress media? =
 
-Yes. Use the media button in the EasyMDE toolbar to insert an image from the WordPress media library. Authors who can upload media can also paste or drop local JPEG, PNG, GIF, or WebP images into the Markdown source; EasyMDE uploads them to the WordPress media library before inserting Markdown image syntax.
+Yes. Use the media button in the EasyMDE toolbar to insert an image from the WordPress media library. This native media picker is a separate explicit entry point from image paste and drag-and-drop.
 
 = Does EasyMDE send images to an external service? =
 
-Not by default. The default destination is the WordPress media library. A site administrator may explicitly configure Cloudflare R2 as the primary remote image host and optionally enable Qiniu Kodo as a same-key backup. For remote uploads, EasyMDE sends the selected image bytes, MIME type, and generated object key from the WordPress server to the configured provider. Provider credentials remain on the WordPress server and are not sent to the browser.
+Yes, when an author pastes or drops a local JPEG, PNG, GIF, or WebP image into the Markdown source. Those actions use the protected same-origin Image Hosting path; the WordPress server sends the image bytes, MIME type, and generated object key to the configured Cloudflare R2 primary host, with optional Qiniu Kodo same-key backup. Provider credentials remain on the WordPress server and are not sent to the browser. Paste and drag-and-drop have no destination switch or WordPress media-library fallback; use the toolbar media button for the separate WordPress-native media workflow.
 
 Cloudflare R2 documentation and policies: https://developers.cloudflare.com/r2/ , https://www.cloudflare.com/privacypolicy/ , https://www.cloudflare.com/terms/
 

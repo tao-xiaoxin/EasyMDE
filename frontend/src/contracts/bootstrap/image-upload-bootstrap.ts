@@ -100,6 +100,7 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
   if (
     Object.keys(bootstrap).length !== expectedKeys.length ||
     expectedKeys.some(
+      // biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is outside the supported browser baseline.
       (key) => !Object.prototype.hasOwnProperty.call(bootstrap, key),
     )
   ) {

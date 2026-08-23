@@ -86,6 +86,39 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		$this->assertSame('synthetic-secret-key', $runtime['primary']['secretKey']);
 	}
 
+	public function test_public_settings_response_uses_one_raw_option_snapshot()
+	{
+		$reads = 0;
+		$filter = static function () use ( &$reads ) {
+			$reads++;
+
+			return array(
+				'settings_center_revision' => 27,
+				'settings_center'          => array(
+					'images' => array(
+						'accessKey' => 'snapshot-access',
+						'secretKey' => 'snapshot-secret',
+					),
+				),
+			);
+		};
+		add_filter( 'pre_option_' . Options::EDITOR_SETTINGS, $filter );
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		try {
+			$response = $repository->get_settings_response();
+		} finally {
+			remove_filter( 'pre_option_' . Options::EDITOR_SETTINGS, $filter );
+		}
+
+		$this->assertSame(1, $reads);
+		$this->assertSame(27, $response['settings']['revision']);
+		$this->assertTrue($response['credentialStatus']['primaryConfigured']);
+		$this->assertFalse($response['credentialStatus']['backupConfigured']);
+		$this->assertSame('', $response['settings']['images']['accessKey']);
+		$this->assertSame('', $response['settings']['images']['secretKey']);
+	}
+
 	public function test_image_settings_do_not_expose_or_persist_an_upload_destination()
 	{
 		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());

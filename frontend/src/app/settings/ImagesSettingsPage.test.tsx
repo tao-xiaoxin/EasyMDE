@@ -38,12 +38,14 @@ function deferred<T>() {
 }
 
 function Harness({
+	connectionInvalidationTokens,
 	connectionTestDisabled,
 	connectionTestPort,
 	initialSettings = settings(),
 	overlayRoot = null,
 	runtimeCapabilities,
 }: {
+	connectionInvalidationTokens?: Readonly<{ primary: number; backup: number }>;
 	connectionTestDisabled?: boolean;
 	connectionTestPort?: ImageConnectionTestPort;
 	initialSettings?: ImageSettings;
@@ -53,6 +55,7 @@ function Harness({
 	const [current, setCurrent] = useState(initialSettings);
 	return (
 		<ImagesSettingsPage
+			{...(connectionInvalidationTokens ? { connectionInvalidationTokens } : {})}
 			{...(connectionTestDisabled ? { connectionTestDisabled } : {})}
 			{...(connectionTestPort ? { connectionTestPort } : {})}
 			draft={{
@@ -268,6 +271,40 @@ describe("ImagesSettingsPage", () => {
 		);
 		expect(screen.getAllByRole("status")[0]?.textContent).toBe(
 			"connectionStale",
+		);
+	});
+
+	it("invalidates only the connection targeted by an authoritative save token", async () => {
+		const testConnection = vi.fn(
+			async () => ({ testedAt: "2026-08-23 08:00" }),
+		);
+		const user = userEvent.setup();
+		const { rerender } = render(
+			<Harness
+				connectionInvalidationTokens={{ primary: 0, backup: 0 }}
+				connectionTestPort={{ testConnection }}
+			/>,
+		);
+
+		await user.click(
+			screen.getByRole("button", { name: "testPrimaryConnection" }),
+		);
+		await user.click(
+			screen.getByRole("button", { name: "testBackupConnection" }),
+		);
+		expect(screen.getAllByRole("status").map((status) => status.textContent)).toEqual(
+			["connected", "connected"],
+		);
+
+		rerender(
+			<Harness
+				connectionInvalidationTokens={{ primary: 1, backup: 0 }}
+				connectionTestPort={{ testConnection }}
+			/>,
+		);
+
+		expect(screen.getAllByRole("status").map((status) => status.textContent)).toEqual(
+			["connectionStale", "connected"],
 		);
 	});
 

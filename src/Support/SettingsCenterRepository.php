@@ -19,8 +19,20 @@ final class SettingsCenterRepository {
 	}
 
 	public function get_settings( $refresh_cache = false ) {
+		return $this->settings_from_stored( $this->options->get_editor_settings( $refresh_cache ) );
+	}
+
+	/**
+	 * Return the complete public settings response from one stored snapshot.
+	 *
+	 * @return array{settings: array, credentialStatus: array}
+	 */
+	public function get_settings_response( $refresh_cache = false ) {
+		return $this->settings_response_from_stored( $this->options->get_editor_settings( $refresh_cache ) );
+	}
+
+	private function settings_from_stored( array $stored ) {
 		$defaults             = $this->get_defaults();
-		$stored               = $this->options->get_editor_settings( $refresh_cache );
 		$settings             = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
 			? $stored['settings_center']
 			: array();
@@ -127,7 +139,10 @@ final class SettingsCenterRepository {
 	 * @return array
 	 */
 	public function get_image_hosting_settings() {
-		$stored   = $this->options->get_editor_settings();
+		return $this->image_hosting_settings_from_stored( $this->options->get_editor_settings() );
+	}
+
+	private function image_hosting_settings_from_stored( array $stored ) {
 		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
 			? $stored['settings_center']
 			: array();
@@ -195,12 +210,35 @@ final class SettingsCenterRepository {
 	 * @return array{primaryConfigured: bool, backupConfigured: bool}
 	 */
 	public function get_image_credential_status() {
-		$runtime = $this->get_image_hosting_settings();
+		$response = $this->get_settings_response();
 
-		return $runtime['credentialStatus'];
+		return $response['credentialStatus'];
 	}
 
 	public function update_settings( $input, $reset_secrets = false ) {
+		$next = $this->persist_settings( $input, $reset_secrets );
+		if ( is_wp_error( $next ) ) {
+			return $next;
+		}
+
+		return $this->settings_from_stored( $next );
+	}
+
+	/**
+	 * Persist settings and return the public response from the exact CAS result.
+	 *
+	 * @return array|WP_Error
+	 */
+	public function update_settings_response( $input, $reset_secrets = false ) {
+		$next = $this->persist_settings( $input, $reset_secrets );
+		if ( is_wp_error( $next ) ) {
+			return $next;
+		}
+
+		return $this->settings_response_from_stored( $next );
+	}
+
+	private function persist_settings( $input, $reset_secrets = false ) {
 		if ( ! is_array( $input ) || ! array_key_exists( 'revision', $input ) || ! is_int( $input['revision'] ) || $input['revision'] < 0 ) {
 			return new WP_Error(
 				'easymde_settings_invalid_payload',
@@ -251,7 +289,16 @@ final class SettingsCenterRepository {
 				: $this->persistence_error();
 		}
 
-		return $this->get_settings( true );
+		return $next;
+	}
+
+	private function settings_response_from_stored( array $stored ) {
+		$runtime = $this->image_hosting_settings_from_stored( $stored );
+
+		return array(
+			'settings'         => $this->settings_from_stored( $stored ),
+			'credentialStatus' => $runtime['credentialStatus'],
+		);
 	}
 
 	private function stored_settings_for_write( array $stored ) {

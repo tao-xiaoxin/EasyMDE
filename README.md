@@ -52,7 +52,8 @@ EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_con
 - Scroll synchronization between source and preview panes.
 - Compact icon toolbar for common Markdown actions.
 - Typora-inspired keyboard shortcuts with site-wide Windows/Linux and macOS overrides.
-- WordPress media library image insertion, plus local clipboard paste and drag-and-drop upload to WordPress or an explicitly configured Cloudflare R2 image host with optional Qiniu Kodo backup.
+- Explicit WordPress media-library insertion through the toolbar media picker.
+- Local clipboard paste and drag-and-drop upload through the protected same-origin Image Hosting path to configured Cloudflare R2, with optional Qiniu Kodo backup and no WordPress media fallback.
 - Browser local draft recovery with explicit restore, discard, and cross-tab conflict handling.
 - Fixed 50/50 desktop source/preview workspace with the historical responsive stack at narrow widths.
 - WordPress-native publishing, categories, tags, excerpts, featured images, and revisions remain available in their existing Meta Boxes.

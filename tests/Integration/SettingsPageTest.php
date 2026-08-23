@@ -154,6 +154,44 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey('customUpload', $bootstrap['strings']);
     }
 
+    public function test_settings_center_bootstrap_projects_one_authoritative_option_snapshot()
+    {
+        $reads = 0;
+        $filter = static function () use ( &$reads ) {
+            $reads++;
+
+            return array(
+                'settings_center_revision' => 19,
+                'settings_center'          => array(
+                    'images' => array(
+                        'domain'    => 'https://snapshot.example.test',
+                        'accessKey' => 'snapshot-access',
+                        'secretKey' => 'snapshot-secret',
+                    ),
+                ),
+            );
+        };
+        add_filter( 'pre_option_' . Options::EDITOR_SETTINGS, $filter );
+        $settings_page = $this->settings_page();
+        $method = new ReflectionMethod(SettingsPage::class, 'get_settings_center_bootstrap');
+        $method->setAccessible(true);
+
+        try {
+            $bootstrap = $method->invoke($settings_page);
+        } finally {
+            remove_filter( 'pre_option_' . Options::EDITOR_SETTINGS, $filter );
+        }
+
+        $this->assertSame(1, $reads);
+        $this->assertSame(19, $bootstrap['settings']['revision']);
+        $this->assertSame('https://snapshot.example.test', $bootstrap['drafts']['images']['domain']);
+        $this->assertTrue($bootstrap['drafts']['images']['primaryCredentialsConfigured']);
+        $this->assertFalse($bootstrap['drafts']['images']['backupCredentialsConfigured']);
+        $this->assertSame('', $bootstrap['settings']['images']['accessKey']);
+        $this->assertSame('', $bootstrap['settings']['images']['secretKey']);
+        $this->assertStringNotContainsString('snapshot-secret', wp_json_encode($bootstrap));
+    }
+
     public function test_settings_center_assets_load_only_on_the_canonical_screen()
     {
         wp_set_current_user(self::factory()->user->create(array('role' => 'administrator')));

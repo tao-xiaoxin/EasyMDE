@@ -524,17 +524,25 @@ Current routes:
 - `GET /easymde/v1/settings`
 - `POST /easymde/v1/settings`
 
-Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Pasted-image media uploads require `upload_files`; when a `post_id` is present they also require `current_user_can( 'edit_post', $post_id )`, and without a `post_id` they require `edit_posts`. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
+Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Both image-upload routes require `upload_files`; when a `post_id` is present they also require `current_user_can( 'edit_post', $post_id )`, and without a `post_id` they require `edit_posts`. `/image-hosting/upload` additionally requires its action-specific Nonce. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
 
 Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including toolbar shortcut mappings. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged legacy shortcut submission is a successful no-op and does not increment the revision. Settings bootstrap and transfer exports do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials.
 
-Preview Markdown payloads are capped at 1 MiB. EasyMDE image uploads accept
-local JPEG, PNG, GIF, and WebP files only. The default destination remains the
-WordPress media library through `/media`. When an administrator explicitly
-selects remote image hosting, the editor instead sends the file to the
-same-origin `/image-hosting/upload` proxy. PHP validates the current capability,
-action Nonce, real MIME, extension, byte size, configured format, and optional
-post authority before it reads server-only credentials or contacts a provider.
+Preview Markdown payloads are capped at 1 MiB. EasyMDE paste and drop uploads
+accept local JPEG, PNG, GIF, and WebP files only and follow one browser path:
+the editor sends each file to the protected same-origin
+`/image-hosting/upload` proxy. The Image Hosting settings are the provider
+configuration owner; there is no persisted or client-side destination switch
+and no fallback to `/media`. PHP validates the current
+capability, action Nonce, real MIME, extension, byte size, configured format,
+and optional post authority before it reads server-only credentials or
+contacts a provider.
+
+The toolbar media command is a separate explicit entry point. It opens the
+WordPress-native media frame and inserts the selected attachment without
+changing the paste/drop upload owner. `/media` remains the protected WordPress
+media-library upload route, but it is not the editor's paste/drop default or
+fallback.
 
 `EasyMDE\ImageHosting\ImageHostingRuntime` owns remote image preparation,
 object-key construction, provider selection, and backup orchestration.

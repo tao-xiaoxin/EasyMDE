@@ -61,6 +61,45 @@ type SearchSection = Readonly<{
 	groups: ReadonlyArray<SearchGroup>;
 }>;
 type SaveError = "conflict" | "invalid" | "network" | "rejected" | null;
+type ImageConnectionInvalidation = Readonly<{
+	primary: boolean;
+	backup: boolean;
+}>;
+const PRIMARY_CONNECTION_SETTING_KEYS = [
+	"service",
+	"accountId",
+	"bucket",
+	"domain",
+	"accessKey",
+	"secretKey",
+] as const;
+const BACKUP_CONNECTION_SETTING_KEYS = [
+	"backupEnabled",
+	"backupService",
+	"backupBucket",
+	"backupDomain",
+	"backupAccessKey",
+	"backupSecretKey",
+] as const;
+
+function imageConnectionInvalidation(
+	previous: SettingsCenterSettings["images"],
+	requested: SettingsCenterSettings["images"],
+	resetSecrets: boolean,
+): ImageConnectionInvalidation {
+	return {
+		primary:
+			resetSecrets ||
+			PRIMARY_CONNECTION_SETTING_KEYS.some(
+				(key) => previous[key] !== requested[key],
+			),
+		backup:
+			resetSecrets ||
+			BACKUP_CONNECTION_SETTING_KEYS.some(
+				(key) => previous[key] !== requested[key],
+			),
+	};
+}
 const NAV_ITEMS: ReadonlyArray<
 	Readonly<{
 		id: NavId;
@@ -129,6 +168,9 @@ export function SettingsCenterRoot({
 	const [settings, setSettings] = useState<SettingsCenterSettings>(
 		bootstrap.settings,
 	);
+	const [imageDraft, setImageDraft] = useState(bootstrap.drafts.images);
+	const [connectionInvalidationTokens, setConnectionInvalidationTokens] =
+		useState({ primary: 0, backup: 0 });
 	const settingsRef = useRef<SettingsCenterSettings>(bootstrap.settings);
 	const resetSecretsRef = useRef(false);
 	const [savedSettings, setSavedSettings] = useState<SettingsCenterSettings>(
@@ -554,21 +596,6 @@ export function SettingsCenterRoot({
 			...previousSettings,
 			[key]: value,
 		};
-		if ("images" === key && resetSecretsRef.current) {
-			const secretKeys = [
-				"accessKey",
-				"secretKey",
-				"backupAccessKey",
-				"backupSecretKey",
-			] as const;
-			const changedSecret = secretKeys.some(
-				(secretKey) =>
-					nextSettings.images[secretKey] !==
-						previousSettings.images[secretKey] &&
-					"" !== nextSettings.images[secretKey].trim(),
-			);
-			if (changedSecret) resetSecretsRef.current = false;
-		}
 		settingsRef.current = nextSettings;
 		setSettings(nextSettings);
 		setSaveError(null);
@@ -596,15 +623,35 @@ export function SettingsCenterRoot({
 		const controller = new AbortController();
 		const requestedSettings = settings;
 		const resetSecrets = resetSecretsRef.current;
+		const connectionInvalidation = imageConnectionInvalidation(
+			savedSettings.images,
+			requestedSettings.images,
+			resetSecrets,
+		);
 		saveControllerRef.current = controller;
 		setSaveStatus("saving");
 		try {
-			const saved = await settingsPort.save(
+			const result = await settingsPort.save(
 				requestedSettings,
 				controller.signal,
 				{ resetSecrets },
 			);
 			if (controller.signal.aborted) return;
+			const saved = result.settings;
+			setImageDraft((current) => ({
+				...current,
+				primaryCredentialsConfigured:
+					result.credentialStatus.primaryConfigured,
+				backupCredentialsConfigured:
+					result.credentialStatus.backupConfigured,
+			}));
+			if (connectionInvalidation.primary || connectionInvalidation.backup) {
+				setConnectionInvalidationTokens((current) => ({
+					primary:
+						current.primary + (connectionInvalidation.primary ? 1 : 0),
+					backup: current.backup + (connectionInvalidation.backup ? 1 : 0),
+				}));
+			}
 			const currentSettingsUnchanged =
 				JSON.stringify(settingsRef.current) ===
 				JSON.stringify(requestedSettings);
@@ -654,11 +701,23 @@ export function SettingsCenterRoot({
 		saveControllerRef.current = controller;
 		setSaveStatus("saving");
 		try {
-			const latest = await settingsPort.get(controller.signal);
+			const result = await settingsPort.get(controller.signal);
 			if (controller.signal.aborted) return;
+			const latest = result.settings;
 			setSavedSettings(latest);
 			settingsRef.current = latest;
 			setSettings(latest);
+			setImageDraft((current) => ({
+				...current,
+				primaryCredentialsConfigured:
+					result.credentialStatus.primaryConfigured,
+				backupCredentialsConfigured:
+					result.credentialStatus.backupConfigured,
+			}));
+			setConnectionInvalidationTokens((current) => ({
+				primary: current.primary + 1,
+				backup: current.backup + 1,
+			}));
 			resetSecretsRef.current = false;
 			setSaveConflict(false);
 			setSaveError(null);
@@ -955,6 +1014,7 @@ export function SettingsCenterRoot({
 									className="easymde-settings-center__settings-section"
 								>
 									<ImagesSettingsPage
+										connectionInvalidationTokens={connectionInvalidationTokens}
 										connectionTestDisabled={settingsDirty}
 										connectionTestPort={imageHostingConnectionPort}
 										runtimeCapabilities={{
@@ -963,7 +1023,7 @@ export function SettingsCenterRoot({
 											maximumImageSize: true,
 											preserveOriginalFileName: true,
 										}}
-										draft={bootstrap.drafts.images}
+										draft={imageDraft}
 										overlayRoot={overlayRoot}
 										settings={settings.images}
 										onChange={(value) => updateSettingsSection("images", value)}

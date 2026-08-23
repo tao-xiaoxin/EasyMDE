@@ -677,9 +677,12 @@ external-service feature is administrator-configured image hosting: Cloudflare
 R2 is the primary provider and Qiniu Kodo may be enabled as an explicit same-key
 backup. WordPress owns provider requests and credentials; the browser receives
 only same-origin REST URLs, capability presentation, and redacted status. The
-default destination remains the WordPress media library. Remote image hosting
-must never be inferred from credentials, silently substituted, automatically
-retried, or reported successful before the provider result is authoritative.
+editor's local image paste and drag-and-drop path always uses the protected
+same-origin Image Hosting proxy; there is no destination setting or WordPress
+media fallback. The toolbar media picker remains a separate explicit
+WordPress-native insertion entry point. Image hosting must never be silently
+substituted, automatically retried, or reported successful before the provider
+result is authoritative.
 This approval does not change CSP, Enqueue behavior, local runtime assets, or
 package/build ownership. The complete external-service Decision Record and
 official-policy sources belong to

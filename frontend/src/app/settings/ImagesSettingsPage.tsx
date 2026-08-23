@@ -49,7 +49,18 @@ type ConnectionState = Readonly<{
 	status: ImageConnectionStatus;
 	testedAt?: string;
 	testedFingerprint?: string;
+	testedInvalidationToken?: number;
 }>;
+
+type ConnectionInvalidationTokens = Readonly<{
+	primary: number;
+	backup: number;
+}>;
+
+const DEFAULT_CONNECTION_INVALIDATION_TOKENS: ConnectionInvalidationTokens = {
+	primary: 0,
+	backup: 0,
+};
 
 const FILE_NAME_RULE_PRESETS: ReadonlyArray<
 	Readonly<{
@@ -478,6 +489,7 @@ function ConnectionRow({
 }
 
 export function ImagesSettingsPage({
+	connectionInvalidationTokens = DEFAULT_CONNECTION_INVALIDATION_TOKENS,
 	connectionTestDisabled = false,
 	connectionTestPort,
 	draft,
@@ -487,6 +499,7 @@ export function ImagesSettingsPage({
 	strings,
 	runtimeCapabilities,
 }: {
+	connectionInvalidationTokens?: ConnectionInvalidationTokens;
 	connectionTestDisabled?: boolean;
 	connectionTestPort?: ImageConnectionTestPort;
 	draft: SettingsCenterBootstrap["drafts"]["images"];
@@ -582,6 +595,8 @@ export function ImagesSettingsPage({
 	const connectionAbortRef = useRef<
 		Partial<Record<ImageConnectionTarget, AbortController>>
 	>({});
+	const connectionInvalidationTokensRef = useRef(connectionInvalidationTokens);
+	connectionInvalidationTokensRef.current = connectionInvalidationTokens;
 	const rawSettings = externalSettings ?? localSettings;
 	const settings: ImageSettingsDraft = {
 		...rawSettings,
@@ -663,10 +678,12 @@ export function ImagesSettingsPage({
 		state: ConnectionState,
 		target: ImageConnectionTarget,
 	): ConnectionState {
+		const invalidationToken = connectionInvalidationTokens[target];
 		if (
 			state.status !== "testing" &&
 			state.testedFingerprint &&
-			state.testedFingerprint !== connectionFingerprint(settings, target)
+			(state.testedFingerprint !== connectionFingerprint(settings, target) ||
+				state.testedInvalidationToken !== invalidationToken)
 		) {
 			return { ...state, status: "stale" };
 		}
@@ -681,9 +698,15 @@ export function ImagesSettingsPage({
 		connectionAbortRef.current[target] = controller;
 		const snapshot = settingsRef.current;
 		const testedFingerprint = connectionFingerprint(snapshot, target);
+		const testedInvalidationToken =
+			connectionInvalidationTokensRef.current[target];
 		const setState =
 			target === "primary" ? setPrimaryConnection : setBackupConnection;
-		setState({ status: "testing", testedFingerprint });
+		setState({
+			status: "testing",
+			testedFingerprint,
+			testedInvalidationToken,
+		});
 		try {
 			const result = await connectionTestPort.testConnection({
 				target,
@@ -694,11 +717,14 @@ export function ImagesSettingsPage({
 			setState({
 				status:
 					connectionFingerprint(settingsRef.current, target) ===
-					testedFingerprint
+						testedFingerprint &&
+					connectionInvalidationTokensRef.current[target] ===
+						testedInvalidationToken
 						? "connected"
 						: "stale",
 				testedAt: result.testedAt,
 				testedFingerprint,
+				testedInvalidationToken,
 			});
 		} catch {
 			if (controller.signal.aborted) return;
@@ -706,7 +732,11 @@ export function ImagesSettingsPage({
 				target,
 				reason: "connection-test-rejected",
 			});
-			setState({ status: "error", testedFingerprint });
+			setState({
+				status: "error",
+				testedFingerprint,
+				testedInvalidationToken,
+			});
 		}
 	}
 	const feedbackPortal =

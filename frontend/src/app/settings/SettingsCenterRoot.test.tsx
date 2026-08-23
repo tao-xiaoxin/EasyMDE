@@ -816,7 +816,13 @@ describe("SettingsCenterRoot Transfer section", () => {
 		};
 		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
 			ok: true,
-			json: async () => ({ settings: savedSettings }),
+			json: async () => ({
+				settings: savedSettings,
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
 		} as Response);
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
@@ -1019,6 +1025,60 @@ describe("SettingsCenterRoot Transfer section", () => {
 			name: /transferClearLocalCache/,
 		});
 		expect(clearCacheTrigger.matches(":disabled")).toBe(true);
+	});
+
+	it("keeps clearing blank secrets when one credential is entered after reset", async () => {
+		const user = userEvent.setup();
+		const savedSettings = {
+			...SETTINGS_CENTER_DEFAULT_SETTINGS,
+			revision: SETTINGS_CENTER_DEFAULT_SETTINGS.revision + 1,
+		};
+		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				settings: savedSettings,
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
+		} as Response);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
+		if (!(overlayRoot instanceof HTMLElement))
+			throw new Error("settings-center-overlay-missing");
+
+		await user.click(
+			screen.getByRole("button", {
+				name: /transferResetCurrentConfiguration/,
+			}),
+		);
+		const resetDialog = within(overlayRoot).getByRole("dialog", {
+			name: "transferResetCurrentConfiguration",
+		});
+		await user.click(
+			within(resetDialog).getByRole("button", {
+				name: "transferConfirmReset",
+			}),
+		);
+		await user.type(screen.getByLabelText("accessKey"), "replacement-key");
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+
+		await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+		const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
+			resetSecrets?: boolean;
+			settings: SettingsCenterSettings;
+		};
+		expect(body.resetSecrets).toBe(true);
+		expect(body.settings.images).toMatchObject({
+			accessKey: "replacement-key",
+			secretKey: "",
+			backupAccessKey: "",
+			backupSecretKey: "",
+		});
+		fetch.mockRestore();
 	});
 
 	it("shows truthful storage and configuration checks in operation dialogs", async () => {
@@ -1237,6 +1297,10 @@ describe("SettingsCenterRoot persistence", () => {
 								statusBarMode: "hidden",
 							},
 						},
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
 					}),
 				} as Response;
 			});
@@ -1267,7 +1331,13 @@ describe("SettingsCenterRoot persistence", () => {
 		const user = userEvent.setup();
 		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
 			ok: true,
-			json: async () => ({ settings: bootstrap().settings }),
+			json: async () => ({
+				settings: bootstrap().settings,
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
 		} as Response);
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
@@ -1285,11 +1355,228 @@ describe("SettingsCenterRoot persistence", () => {
 		fetch.mockRestore();
 	});
 
+	it("shows newly saved primary credentials as configured immediately", async () => {
+		const user = userEvent.setup();
+		const savedSettings = {
+			...bootstrap().settings,
+			revision: bootstrap().settings.revision + 1,
+			images: {
+				...bootstrap().settings.images,
+				accessKey: "",
+				secretKey: "",
+			},
+		};
+		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				settings: savedSettings,
+				credentialStatus: {
+					primaryConfigured: true,
+					backupConfigured: false,
+				},
+			}),
+		} as Response);
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+
+		await user.type(screen.getByLabelText("accessKey"), "new-access-key");
+		await user.type(screen.getByLabelText("secretKey"), "new-secret-key");
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+
+		await waitFor(() =>
+			expect(screen.getByLabelText<HTMLInputElement>("accessKey").placeholder).toBe(
+				"••••••••••••",
+			),
+		);
+		expect(screen.getByLabelText<HTMLInputElement>("secretKey").placeholder).toBe(
+			"••••••••••••",
+		);
+		fetch.mockRestore();
+	});
+
+	it("keeps a replaced primary connection stale after the saved secrets are redacted", async () => {
+		const user = userEvent.setup();
+		const fetch = vi.spyOn(window, "fetch").mockImplementation(
+			async (input, init) => {
+				const url = String(input);
+				if (url.endsWith("/image-hosting/connection")) {
+					const request = JSON.parse(String(init?.body)) as {
+						target: "primary" | "backup";
+					};
+					return {
+						ok: true,
+						json: async () => ({
+							service:
+								request.target === "primary" ? "cloudflare-r2" : "qiniu-kodo",
+							status: "connected",
+							target: request.target,
+							testedAt: "2026-08-23T08:00:00Z",
+						}),
+					} as Response;
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						settings: {
+							...bootstrap().settings,
+							revision: bootstrap().settings.revision + 1,
+						},
+						credentialStatus: {
+							primaryConfigured: true,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			},
+		);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const imagesSection = container.querySelector(
+			'[data-settings-section="images"]',
+		);
+		if (!(imagesSection instanceof HTMLElement))
+			throw new Error("settings-center-images-section-missing");
+		const images = within(imagesSection);
+
+		await user.click(
+			images.getByRole("button", { name: "testPrimaryConnection" }),
+		);
+		await user.click(
+			images.getByRole("button", { name: "testBackupConnection" }),
+		);
+		await waitFor(() =>
+			expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual(
+				["connected", "connected"],
+			),
+		);
+
+		await user.type(images.getByLabelText("secretKey"), "replacement-secret");
+		expect(images.getAllByRole("status")[0]?.textContent).toBe(
+			"connectionStale",
+		);
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+
+		await waitFor(() =>
+			expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual(
+				["connectionStale", "connected"],
+			),
+		);
+		fetch.mockRestore();
+	});
+
+	it("clears configured credential presentation after a reset is saved", async () => {
+		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap();
+		const fetch = vi.spyOn(window, "fetch").mockImplementation(
+			async (input, init) => {
+				if (String(input).endsWith("/image-hosting/connection")) {
+					const request = JSON.parse(String(init?.body)) as {
+						target: "primary" | "backup";
+					};
+					return {
+						ok: true,
+						json: async () => ({
+							service:
+								request.target === "primary" ? "cloudflare-r2" : "qiniu-kodo",
+							status: "connected",
+							target: request.target,
+							testedAt: "2026-08-23T08:00:00Z",
+						}),
+					} as Response;
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						settings: {
+							...configuredBootstrap.defaultSettings,
+							revision: configuredBootstrap.settings.revision + 1,
+						},
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			},
+		);
+		const { container } = render(
+			<SettingsCenterRoot
+				bootstrap={{
+					...configuredBootstrap,
+					drafts: {
+						images: {
+							...configuredBootstrap.drafts.images,
+							primaryCredentialsConfigured: true,
+							backupCredentialsConfigured: true,
+						},
+					},
+				}}
+			/>,
+		);
+		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
+		const imagesSection = container.querySelector(
+			'[data-settings-section="images"]',
+		);
+		if (!(overlayRoot instanceof HTMLElement))
+			throw new Error("settings-center-overlay-missing");
+		if (!(imagesSection instanceof HTMLElement))
+			throw new Error("settings-center-images-section-missing");
+		const images = within(imagesSection);
+		expect(screen.getByLabelText<HTMLInputElement>("accessKey").placeholder).toBe(
+			"••••••••••••",
+		);
+		await user.click(
+			images.getByRole("button", { name: "testPrimaryConnection" }),
+		);
+		await user.click(
+			images.getByRole("button", { name: "testBackupConnection" }),
+		);
+		await waitFor(() =>
+			expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual(
+				["connected", "connected"],
+			),
+		);
+
+		await user.click(
+			screen.getByRole("button", {
+				name: /transferResetCurrentConfiguration/,
+			}),
+		);
+		const resetDialog = within(overlayRoot).getByRole("dialog", {
+			name: "transferResetCurrentConfiguration",
+		});
+		await user.click(
+			within(resetDialog).getByRole("button", {
+				name: "transferConfirmReset",
+			}),
+		);
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+
+		await waitFor(() =>
+			expect(screen.getByLabelText<HTMLInputElement>("accessKey").placeholder).toBe(
+				"",
+			),
+		);
+		expect(
+			screen.getByLabelText<HTMLInputElement>("backupAccessKey").placeholder,
+		).toBe("");
+		expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual(
+			["connectionStale", "connectionStale"],
+		);
+		fetch.mockRestore();
+	});
+
 	it("returns the successful save status to idle after a bounded acknowledgement", async () => {
 		const user = userEvent.setup();
 		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
 			ok: true,
-			json: async () => ({ settings: bootstrap().settings }),
+			json: async () => ({
+				settings: bootstrap().settings,
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
 		} as Response);
 		try {
 			render(<SettingsCenterRoot bootstrap={bootstrap()} />);
@@ -1335,7 +1622,13 @@ describe("SettingsCenterRoot persistence", () => {
 				expect(new Headers(init?.headers).get("X-WP-Nonce")).toBe("test-nonce");
 				return {
 					ok: true,
-					json: async () => ({ settings: latestSettings }),
+					json: async () => ({
+						settings: latestSettings,
+						credentialStatus: {
+							primaryConfigured: true,
+							backupConfigured: false,
+						},
+					}),
 				} as Response;
 			});
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
@@ -1361,6 +1654,81 @@ describe("SettingsCenterRoot persistence", () => {
 			).toBe("true"),
 		);
 		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(screen.getByLabelText<HTMLInputElement>("accessKey").placeholder).toBe(
+			"••••••••••••",
+		);
+		fetch.mockRestore();
+	});
+
+	it("invalidates both connection tests after an authoritative conflict reload", async () => {
+		const user = userEvent.setup();
+		const fetch = vi.spyOn(window, "fetch").mockImplementation(
+			async (input, init) => {
+				const url = String(input);
+				if (url.endsWith("/image-hosting/connection")) {
+					const request = JSON.parse(String(init?.body)) as {
+						target: "primary" | "backup";
+					};
+					return {
+						ok: true,
+						json: async () => ({
+							service:
+								request.target === "primary" ? "cloudflare-r2" : "qiniu-kodo",
+							status: "connected",
+							target: request.target,
+							testedAt: "2026-08-23T08:00:00Z",
+						}),
+					} as Response;
+				}
+				if (init?.method === "POST") {
+					return { ok: false, status: 409 } as Response;
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						settings: bootstrap().settings,
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			},
+		);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const imagesSection = container.querySelector(
+			'[data-settings-section="images"]',
+		);
+		if (!(imagesSection instanceof HTMLElement))
+			throw new Error("settings-center-images-section-missing");
+		const images = within(imagesSection);
+
+		await user.click(
+			images.getByRole("button", { name: "testPrimaryConnection" }),
+		);
+		await user.click(
+			images.getByRole("button", { name: "testBackupConnection" }),
+		);
+		await waitFor(() =>
+			expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual(
+				["connected", "connected"],
+			),
+		);
+
+		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+		await waitFor(() =>
+			expect(screen.getByText("settingsConflict")).not.toBeNull(),
+		);
+		await user.click(screen.getByRole("button", { name: "reloadSettings" }));
+
+		await waitFor(() =>
+			expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual(
+				["connectionStale", "connectionStale"],
+			),
+		);
 		fetch.mockRestore();
 	});
 

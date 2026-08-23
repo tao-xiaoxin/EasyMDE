@@ -172,6 +172,18 @@ export function GeneralSettingsPage({
 						]}
 					/>
 				</SettingsRow>
+				<SettingsRow label={s.statusBarDisplay} query={normalizedQuery}>
+					<NativeSelect
+						label={s.statusBarDisplay}
+						value={draft.statusBarMode}
+						onChange={(value) => setValue("statusBarMode", value)}
+						options={[
+							["words-reading-time", s.wordsAndReadingTime],
+							["words", s.wordsOnly],
+							["hidden", s.hiddenStatusBar],
+						]}
+					/>
+				</SettingsRow>
 				<SettingsRow
 					label={s.autoFocusEditor}
 					description={s.autoFocusEditorDescription}
@@ -203,18 +215,6 @@ export function GeneralSettingsPage({
 						label={s.syntaxHighlight}
 						checked={draft.syntaxHighlight}
 						onChange={() => setValue("syntaxHighlight", !draft.syntaxHighlight)}
-					/>
-				</SettingsRow>
-				<SettingsRow label={s.statusBarDisplay} query={normalizedQuery}>
-					<NativeSelect
-						label={s.statusBarDisplay}
-						value={draft.statusBarMode}
-						onChange={(value) => setValue("statusBarMode", value)}
-						options={[
-							["words-reading-time", s.wordsAndReadingTime],
-							["words", s.wordsOnly],
-							["hidden", s.hiddenStatusBar],
-						]}
 					/>
 				</SettingsRow>
 			</SettingsSection>

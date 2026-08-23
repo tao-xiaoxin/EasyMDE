@@ -67,6 +67,7 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 type MutableSettingsRecord = Record<string, unknown> & {
 	general: Record<string, unknown>;
 	images: Record<string, unknown>;
+	markdown: Record<string, unknown>;
 };
 
 describe("parseSettingsCenterBootstrap", () => {
@@ -171,6 +172,123 @@ describe("parseSettingsCenterBootstrap", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("traditionalChinese");
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("english");
 	});
+
+	it("does not expose removed Markdown settings strings", () => {
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
+			expect.arrayContaining([
+				"editorFontSize",
+				"editorFont",
+				"systemDefault",
+				"monospaceFont",
+				"sourceHanSans",
+				"codeBlockTheme",
+				"lightCodeTheme",
+				"darkCodeTheme",
+				"followEditor",
+				"tocDirectory",
+				"tocDirectoryDescription",
+				"codeTheme",
+				"toc",
+				"markdownLivePreview",
+				"livePreviewDescription",
+				"fixedToolbar",
+				"fixedToolbarDescription",
+				"taskLists",
+				"taskListsDescription",
+				"emoji",
+				"emojiDescription",
+				"mathSupport",
+				"mathSupportDescription",
+				"markdownExtensions",
+				"tableExtension",
+				"tableExtensionDescription",
+				"footnotes",
+				"footnotesDescription",
+				"definitionLists",
+				"definitionListsDescription",
+				"imageSizeSyntax",
+				"imageSizeSyntaxDescription",
+			]),
+		);
+		expect(SETTINGS_CENTER_STRING_KEYS).toEqual(
+			expect.arrayContaining(["livePreview", "general", "about"]),
+		);
+	});
+
+	it("parses the Markdown settings contract without removed presentation fields", () => {
+		expect(Object.keys(parseSettingsCenterSettings(SETTINGS_CENTER_TEST_SETTINGS).markdown)).toEqual([
+			"wordWrap",
+			"lineNumbers",
+			"editorTheme",
+			"githubFlavor",
+			"smartPunctuation",
+			"tableAlignment",
+			"codeLineNumbers",
+			"htmlRendering",
+			"pasteAsMarkdown",
+			"lineEnding",
+			"unorderedMarker",
+			"orderedStart",
+			"blockquoteStyle",
+		]);
+	});
+
+	it.each([
+		"editorFontSize",
+		"editorFont",
+		"codeTheme",
+		"toc",
+		"livePreview",
+		"fixedToolbar",
+		"taskLists",
+		"emoji",
+		"math",
+		"tableExtension",
+		"footnotes",
+		"definitionLists",
+		"imageSizeSyntax",
+	])(
+		"rejects the removed Markdown field %s as an exact-shape violation",
+		(removedKey) => {
+			const settings = structuredClone(
+				SETTINGS_CENTER_TEST_SETTINGS,
+			) as unknown as MutableSettingsRecord;
+			for (const key of [
+				"editorFontSize",
+				"editorFont",
+				"codeTheme",
+				"toc",
+				"livePreview",
+				"fixedToolbar",
+				"taskLists",
+				"emoji",
+				"math",
+				"tableExtension",
+				"footnotes",
+				"definitionLists",
+				"imageSizeSyntax",
+			])
+				delete settings.markdown[key];
+			settings.markdown[removedKey] = [
+				"toc",
+				"livePreview",
+				"fixedToolbar",
+				"taskLists",
+				"emoji",
+				"math",
+				"tableExtension",
+				"footnotes",
+				"definitionLists",
+				"imageSizeSyntax",
+			].includes(removedKey)
+				? false
+				: "removed";
+
+			expect(() => parseSettingsCenterSettings(settings)).toThrow(
+				"settings-center-markdown-settings-invalid",
+			);
+		},
+	);
 
 	it("declares the PHP-owned remote image-host interaction strings", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("uploadDestination");

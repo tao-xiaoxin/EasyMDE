@@ -17,6 +17,10 @@ const settingsControlsSource = readFileSync(
 	join(repoRoot, "frontend/src/app/settings/SettingsControls.tsx"),
 	"utf8",
 );
+const settingsTemplateSource = readFileSync(
+	join(repoRoot, "templates/admin/settings-center.php"),
+	"utf8",
+);
 
 function frameRuleBody() {
 	const match = settingsCss.match(
@@ -66,6 +70,17 @@ test("Settings Center owns an opaque viewport before React mounts", () => {
 	assert.match(startupHost, /z-index:\s*100001;/);
 	assert.match(startupHost, /overflow:\s*auto;/);
 	assert.match(startupHost, /background:\s*#fdfefe;/);
+});
+
+test("Settings Center pre-mount brand occupies the final sidebar geometry instead of the viewport center", () => {
+	const startup = cssRuleBody(".easymde-settings-center-startup");
+
+	assert.doesNotMatch(startup, /align-items:\s*center;/);
+	assert.doesNotMatch(startup, /justify-content:\s*center;/);
+	assert.match(
+		settingsTemplateSource,
+		/data-settings-center-startup[\s\S]*?easymde-settings-center__frame[\s\S]*?easymde-settings-center__sidebar[\s\S]*?easymde-settings-center__brand-wrap[\s\S]*?easymde-settings-center__brand/,
+	);
 });
 
 test("Settings Center frame does not add an outer border, radius, or shadow", () => {

@@ -2133,15 +2133,6 @@ msgstr "建议大图上传前开启自动压缩。"
 msgid "Editor Settings"
 msgstr "编辑器设置"
 
-#: src/Admin/SettingsCenterStrings.php:236
-msgctxt "Markdown editor setting"
-msgid "Live Preview"
-msgstr "实时预览"
-
-#: src/Admin/SettingsCenterStrings.php:237
-msgid "Render Markdown content in real time while editing."
-msgstr "编辑时实时渲染 Markdown 内容。"
-
 #: src/Admin/SettingsCenterStrings.php:238
 msgid "Word Wrap"
 msgstr "自动换行"
@@ -2153,14 +2144,6 @@ msgstr "在编辑器中换行，而不是水平滚动。"
 #: src/Admin/SettingsCenterStrings.php:240
 msgid "Show line numbers on the left side of the editor."
 msgstr "在编辑器左侧显示行号。"
-
-#: src/Admin/SettingsCenterStrings.php:241
-msgid "Fixed Toolbar"
-msgstr "固定工具栏"
-
-#: src/Admin/SettingsCenterStrings.php:242
-msgid "Keep the toolbar fixed at the top while scrolling."
-msgstr "滚动时将工具栏固定在顶部。"
 
 #: src/Admin/SettingsCenterStrings.php:243
 msgid "Editor Theme"
@@ -2177,26 +2160,6 @@ msgstr "浅色"
 #: src/Admin/SettingsCenterStrings.php:246
 msgid "Dark"
 msgstr "深色"
-
-#: src/Admin/SettingsCenterStrings.php:247
-msgid "Editor Font Size"
-msgstr "编辑器字体大小"
-
-#: src/Admin/SettingsCenterStrings.php:248
-msgid "Editor Font"
-msgstr "编辑器字体"
-
-#: src/Admin/SettingsCenterStrings.php:249
-msgid "System Default"
-msgstr "系统默认"
-
-#: src/Admin/SettingsCenterStrings.php:250
-msgid "Monospace Font"
-msgstr "等宽字体"
-
-#: src/Admin/SettingsCenterStrings.php:251
-msgid "Source Han Sans"
-msgstr "思源黑体"
 
 #: src/Admin/SettingsCenterStrings.php:252
 msgid "Markdown Parsing and Rendering"
@@ -2234,22 +2197,6 @@ msgstr "全部左对齐"
 msgid "Align All Center"
 msgstr "全部居中对齐"
 
-#: src/Admin/SettingsCenterStrings.php:261
-msgid "Code Block Theme"
-msgstr "代码块主题"
-
-#: src/Admin/SettingsCenterStrings.php:262
-msgid "Light (Light)"
-msgstr "浅色（浅色）"
-
-#: src/Admin/SettingsCenterStrings.php:263
-msgid "Dark (Dark)"
-msgstr "深色（深色）"
-
-#: src/Admin/SettingsCenterStrings.php:264
-msgid "Follow Editor"
-msgstr "跟随编辑器"
-
 #: src/Admin/SettingsCenterStrings.php:265
 msgid "Code Block Line Numbers"
 msgstr "代码块行号"
@@ -2262,30 +2209,6 @@ msgstr "显示"
 msgid "Hide"
 msgstr "隐藏"
 
-#: src/Admin/SettingsCenterStrings.php:268
-msgid "Task Lists"
-msgstr "任务列表"
-
-#: src/Admin/SettingsCenterStrings.php:269
-msgid "Enable task lists (- [ ] / - [x])."
-msgstr "启用任务列表（- [ ] / - [x]）。"
-
-#: src/Admin/SettingsCenterStrings.php:270
-msgid "Emoji"
-msgstr "表情符号"
-
-#: src/Admin/SettingsCenterStrings.php:271
-msgid "Enable emoji shortcode parsing."
-msgstr "启用表情符号短代码解析。"
-
-#: src/Admin/SettingsCenterStrings.php:272
-msgid "Math Formula Support"
-msgstr "数学公式支持"
-
-#: src/Admin/SettingsCenterStrings.php:273
-msgid "Enable LaTeX math rendering (requires a supported renderer)."
-msgstr "启用 LaTeX 数学公式渲染（需要受支持的渲染器）。"
-
 #: src/Admin/SettingsCenterStrings.php:274
 msgid "HTML Rendering"
 msgstr "HTML 渲染"
@@ -2293,50 +2216,6 @@ msgstr "HTML 渲染"
 #: src/Admin/SettingsCenterStrings.php:275
 msgid "Allow HTML rendering (security risk; enable with caution)."
 msgstr "允许 HTML 渲染（存在安全风险，请谨慎启用）。"
-
-#: src/Admin/SettingsCenterStrings.php:276
-msgid "Markdown Extensions"
-msgstr "Markdown 扩展"
-
-#: src/Admin/SettingsCenterStrings.php:277
-msgid "Table Extension"
-msgstr "表格扩展"
-
-#: src/Admin/SettingsCenterStrings.php:278
-msgid "Enable advanced table features such as merged cells."
-msgstr "启用合并单元格等高级表格功能。"
-
-#: src/Admin/SettingsCenterStrings.php:279
-msgid "Footnotes"
-msgstr "脚注"
-
-#: src/Admin/SettingsCenterStrings.php:280
-msgid "Enable footnote syntax."
-msgstr "启用脚注语法。"
-
-#: src/Admin/SettingsCenterStrings.php:281
-msgid "Definition Lists"
-msgstr "定义列表"
-
-#: src/Admin/SettingsCenterStrings.php:282
-msgid "Enable definition list syntax."
-msgstr "启用定义列表语法。"
-
-#: src/Admin/SettingsCenterStrings.php:283
-msgid "TOC Directory"
-msgstr "TOC 目录"
-
-#: src/Admin/SettingsCenterStrings.php:284
-msgid "Enable automatic directory generation with [TOC]."
-msgstr "启用使用 [TOC] 自动生成目录。"
-
-#: src/Admin/SettingsCenterStrings.php:285
-msgid "Image Size Syntax"
-msgstr "图片尺寸语法"
-
-#: src/Admin/SettingsCenterStrings.php:286
-msgid "Enable image size syntax such as ![](/... =300x200)."
-msgstr "启用类似 ![](/... =300x200) 的图片尺寸语法。"
 
 #: src/Admin/SettingsCenterStrings.php:287
 msgid "Other"
@@ -2641,10 +2520,6 @@ msgstr "重试次数"
 msgid "Image Caption Mode"
 msgstr "图片说明模式"
 
-#: src/Admin/SettingsCenterStrings.php:377
-msgid "Code Theme"
-msgstr "代码主题"
-
 #: src/Admin/SettingsCenterStrings.php:378
 msgid "Code Line Numbers"
 msgstr "代码块行号"
@@ -2668,10 +2543,6 @@ msgstr "显示行号"
 #: src/Admin/SettingsCenterStrings.php:384
 msgid "Math"
 msgstr "数学公式"
-
-#: src/Admin/SettingsCenterStrings.php:385
-msgid "Table of Contents"
-msgstr "目录"
 
 #: src/Admin/SettingsCenterStrings.php:387
 msgid "Detect Shortcut Conflicts"

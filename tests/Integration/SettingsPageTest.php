@@ -59,6 +59,10 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertStringContainsString('id="easymde-settings-center-root"', $output);
         $this->assertStringContainsString('data-failure-message=', $output);
         $this->assertStringContainsString('data-settings-center-startup', $output);
+        $this->assertStringContainsString('easymde-settings-center__frame', $output);
+        $this->assertStringContainsString('easymde-settings-center__sidebar', $output);
+        $this->assertStringContainsString('easymde-settings-center__brand-wrap', $output);
+        $this->assertStringContainsString('easymde-settings-center__brand', $output);
         $this->assertStringContainsString('data-loading-message=', $output);
         $this->assertStringContainsString('Loading EasyMDE Settings Center', $output);
         $this->assertStringContainsString(esc_url(admin_url('options-general.php')), $output);
@@ -152,6 +156,34 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey('wordpressMediaLibrary', $bootstrap['strings']);
         $this->assertArrayNotHasKey('remoteImageHost', $bootstrap['strings']);
         $this->assertArrayNotHasKey('customUpload', $bootstrap['strings']);
+		foreach (
+			array(
+				'markdownLivePreview',
+				'livePreviewDescription',
+				'fixedToolbar',
+				'fixedToolbarDescription',
+				'taskLists',
+				'taskListsDescription',
+				'emoji',
+				'emojiDescription',
+				'mathSupport',
+				'mathSupportDescription',
+				'markdownExtensions',
+				'tableExtension',
+				'tableExtensionDescription',
+				'footnotes',
+				'footnotesDescription',
+				'definitionLists',
+				'definitionListsDescription',
+				'imageSizeSyntax',
+				'imageSizeSyntaxDescription',
+			)
+			as $removed_key
+		) {
+			$this->assertArrayNotHasKey($removed_key, $bootstrap['strings']);
+		}
+		$this->assertArrayHasKey('livePreview', $bootstrap['strings']);
+		$this->assertArrayHasKey('math', $bootstrap['strings']);
     }
 
     public function test_settings_center_bootstrap_projects_one_authoritative_option_snapshot()

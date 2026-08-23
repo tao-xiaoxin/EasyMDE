@@ -169,6 +169,34 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame($legacy, get_option(Options::EDITOR_SETTINGS));
     }
 
+	public function test_markdown_settings_contract_omits_removed_presentation_and_capability_fields()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$markdown = $repository->get_settings()['markdown'];
+
+		foreach (
+			array(
+				'editorFontSize',
+				'editorFont',
+				'codeTheme',
+				'toc',
+				'livePreview',
+				'fixedToolbar',
+				'taskLists',
+				'emoji',
+				'math',
+				'tableExtension',
+				'footnotes',
+				'definitionLists',
+				'imageSizeSyntax',
+			)
+			as $removed_key
+		) {
+			$this->assertArrayNotHasKey($removed_key, $markdown);
+		}
+	}
+
     public function test_get_settings_imports_legacy_shortcuts_before_first_center_save()
     {
         $legacy = array(

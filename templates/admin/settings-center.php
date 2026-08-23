@@ -25,22 +25,33 @@ $settings_center_failure_message = __( 'The EasyMDE settings center could not st
 			class="easymde-settings-center-startup"
 			data-settings-center-startup
 		>
-			<div class="easymde-settings-center-startup__brand">
-				<img src="<?php echo esc_url( $settings_center_brand_mark_url ); ?>" alt="">
-				<strong><?php esc_html_e( 'EasyMDE Settings Center', 'easymde' ); ?></strong>
+			<div class="easymde-settings-center__frame">
+				<aside class="easymde-settings-center__sidebar easymde-settings-center-startup__sidebar">
+					<div class="easymde-settings-center__brand-wrap">
+						<div class="easymde-settings-center__brand">
+							<img src="<?php echo esc_url( $settings_center_brand_mark_url ); ?>" alt="<?php esc_attr_e( 'EasyMDE', 'easymde' ); ?>">
+							<div>
+								<strong>Easy<b>MDE</b></strong>
+								<span><?php esc_html_e( 'Settings Center', 'easymde' ); ?></span>
+							</div>
+						</div>
+					</div>
+					<div class="easymde-settings-center-startup__fallback">
+						<div
+							class="easymde-settings-center-startup__status"
+							data-settings-center-startup-status
+							aria-live="polite"
+							aria-busy="false"
+						></div>
+						<a href="<?php echo esc_url( $settings_center_close_url ); ?>">
+							<?php esc_html_e( 'Return to WordPress settings', 'easymde' ); ?>
+						</a>
+						<noscript>
+							<p class="easymde-settings-center-startup__noscript" role="alert"><?php echo esc_html( $settings_center_failure_message ); ?></p>
+						</noscript>
+					</div>
+				</aside>
 			</div>
-			<div
-				class="easymde-settings-center-startup__status"
-				data-settings-center-startup-status
-				aria-live="polite"
-				aria-busy="false"
-			></div>
-			<a href="<?php echo esc_url( $settings_center_close_url ); ?>">
-				<?php esc_html_e( 'Return to WordPress settings', 'easymde' ); ?>
-			</a>
-			<noscript>
-				<p class="easymde-settings-center-startup__noscript" role="alert"><?php echo esc_html( $settings_center_failure_message ); ?></p>
-			</noscript>
 		</div>
 	</div>
 </div>

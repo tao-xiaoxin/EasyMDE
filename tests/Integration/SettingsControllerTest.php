@@ -39,7 +39,37 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         );
         $this->assertSame( '', $data['settings']['images']['accessKey'] );
         $this->assertSame( '', $data['settings']['images']['secretKey'] );
+		$this->assertSame(
+			array(
+				'wordWrap',
+				'lineNumbers',
+				'editorTheme',
+				'githubFlavor',
+				'smartPunctuation',
+				'tableAlignment',
+				'codeLineNumbers',
+				'htmlRendering',
+				'pasteAsMarkdown',
+				'lineEnding',
+				'unorderedMarker',
+				'orderedStart',
+				'blockquoteStyle',
+			),
+			array_keys( $data['settings']['markdown'] )
+		);
     }
+
+	public function test_post_rejects_removed_markdown_fields_as_unknown_contract_keys() {
+		foreach ( array( 'editorFontSize', 'editorFont', 'codeTheme', 'toc', 'livePreview', 'fixedToolbar', 'taskLists', 'emoji', 'math', 'tableExtension', 'footnotes', 'definitionLists', 'imageSizeSyntax' ) as $removed_key ) {
+			$settings = $this->current_settings();
+			$settings['markdown'][ $removed_key ] = 'toc' === $removed_key ? false : 'removed';
+
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 400, $response->get_status(), $removed_key );
+			$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code(), $removed_key );
+		}
+	}
 
     public function test_get_projects_settings_and_credential_status_from_one_option_snapshot() {
         $reads = 0;

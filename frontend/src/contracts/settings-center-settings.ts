@@ -50,27 +50,14 @@ export type ImageSettings = Readonly<{
 }>;
 
 export type MarkdownSettings = Readonly<{
-	livePreview: boolean;
 	wordWrap: boolean;
 	lineNumbers: boolean;
-	fixedToolbar: boolean;
 	editorTheme: string;
-	editorFontSize: string;
-	editorFont: string;
 	githubFlavor: boolean;
 	smartPunctuation: boolean;
 	tableAlignment: string;
-	codeTheme: string;
 	codeLineNumbers: string;
-	taskLists: boolean;
-	emoji: boolean;
-	math: boolean;
 	htmlRendering: boolean;
-	tableExtension: boolean;
-	footnotes: boolean;
-	definitionLists: boolean;
-	toc: boolean;
-	imageSizeSyntax: boolean;
 	pasteAsMarkdown: boolean;
 	lineEnding: string;
 	unorderedMarker: string;

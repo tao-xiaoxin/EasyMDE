@@ -127,7 +127,7 @@ final class SettingsController {
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
 			'general'   => array( 'interfaceLanguage', 'editingMode', 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'cleanPastedContent', 'smartListRecognition', 'defaultCategory', 'publishVisibility', 'openPreviewAfterPublish', 'summaryMode', 'featuredImagePlaceholder' ),
 			'images'    => array( 'service', 'accountId', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'backupEnabled', 'backupService', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'backupSameObjectKey', 'backupFailureMode', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'retryCount', 'maxImageSize', 'uploadFormats', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ),
-			'markdown'  => array( 'livePreview', 'wordWrap', 'lineNumbers', 'fixedToolbar', 'editorTheme', 'editorFontSize', 'editorFont', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeTheme', 'codeLineNumbers', 'taskLists', 'emoji', 'math', 'htmlRendering', 'tableExtension', 'footnotes', 'definitionLists', 'toc', 'imageSizeSyntax', 'pasteAsMarkdown', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle' ),
+			'markdown'  => array( 'wordWrap', 'lineNumbers', 'editorTheme', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'htmlRendering', 'pasteAsMarkdown', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle' ),
 			'shortcuts' => array( 'values', 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
 
@@ -173,10 +173,7 @@ final class SettingsController {
 			),
 			'markdown' => array(
 				'editorTheme'     => 16,
-				'editorFontSize'  => 16,
-				'editorFont'      => 32,
 				'tableAlignment'  => 16,
-				'codeTheme'       => 16,
 				'codeLineNumbers' => 16,
 				'lineEnding'      => 16,
 				'unorderedMarker' => 120,
@@ -187,7 +184,7 @@ final class SettingsController {
 		$boolean_fields = array(
 			'general'   => array( 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll', 'cleanPastedContent', 'smartListRecognition', 'openPreviewAfterPublish', 'featuredImagePlaceholder' ),
 			'images'    => array( 'backupEnabled', 'backupSameObjectKey', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'featuredPlaceholder' ),
-			'markdown'  => array( 'livePreview', 'wordWrap', 'lineNumbers', 'fixedToolbar', 'githubFlavor', 'smartPunctuation', 'taskLists', 'emoji', 'math', 'htmlRendering', 'tableExtension', 'footnotes', 'definitionLists', 'toc', 'imageSizeSyntax', 'pasteAsMarkdown' ),
+			'markdown'  => array( 'wordWrap', 'lineNumbers', 'githubFlavor', 'smartPunctuation', 'htmlRendering', 'pasteAsMarkdown' ),
 			'shortcuts' => array( 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
 
@@ -255,10 +252,7 @@ final class SettingsController {
 			),
 			'markdown' => array(
 				'editorTheme'     => array( 'system', 'light', 'dark' ),
-				'editorFontSize'  => array( '12px', '13px', '14px', '15px', '16px', '18px' ),
-				'editorFont'      => array( 'system', 'monospace', 'source-han-sans' ),
 				'tableAlignment'  => array( 'auto', 'left', 'center' ),
-				'codeTheme'       => array( 'light', 'dark', 'follow-editor' ),
 				'codeLineNumbers' => array( 'show', 'hide' ),
 				'lineEnding'      => array( 'system', 'lf', 'crlf' ),
 				'blockquoteStyle' => array( 'standard', 'spaced' ),

@@ -2,7 +2,7 @@ import { createElement, useState } from "@wordpress/element";
 import type { ReactNode } from "react";
 import type { SettingsCenterBootstrap } from "../../contracts/bootstrap/settings-center-bootstrap";
 import type { MarkdownSettings } from "../../contracts/settings-center-settings";
-import { Code2, Puzzle } from "../../generated/lucide-icons";
+import { Code2 } from "../../generated/lucide-icons";
 import {
 	SettingsRow,
 	SettingsSelect,
@@ -20,13 +20,9 @@ const LEGACY_MARKDOWN_VALUE_ALIASES: Readonly<Record<string, string>> = {
 	"Follow System": "system",
 	Light: "light",
 	Dark: "dark",
-	"System Default": "system",
-	Monospace: "monospace",
-	"Source Han Sans": "source-han-sans",
 	"Auto align by content": "auto",
 	"Align left": "left",
 	"Align center": "center",
-	"Follow editor": "follow-editor",
 	Show: "show",
 	Hide: "hide",
 	LF: "lf",
@@ -50,27 +46,14 @@ function normalizeMarkdownValue(
 
 function createDefaultSettings(): MarkdownSettingsDraft {
 	return {
-		livePreview: true,
 		wordWrap: true,
 		lineNumbers: false,
-		fixedToolbar: true,
 		editorTheme: "system",
-		editorFontSize: "14px",
-		editorFont: "system",
 		githubFlavor: true,
 		smartPunctuation: true,
 		tableAlignment: "auto",
-		codeTheme: "light",
 		codeLineNumbers: "show",
-		taskLists: true,
-		emoji: true,
-		math: true,
 		htmlRendering: false,
-		tableExtension: true,
-		footnotes: true,
-		definitionLists: true,
-		toc: false,
-		imageSizeSyntax: true,
 		pasteAsMarkdown: true,
 		lineEnding: "system",
 		unorderedMarker: "-",
@@ -143,28 +126,10 @@ export function MarkdownSettingsPage({
 		{ value: "light", label: strings.light },
 		{ value: "dark", label: strings.dark },
 	];
-	const editorFontSizeOptions: ReadonlyArray<SelectOption> = [
-		"12px",
-		"13px",
-		"14px",
-		"15px",
-		"16px",
-		"18px",
-	].map((value) => ({ value, label: value }));
-	const editorFontOptions: ReadonlyArray<SelectOption> = [
-		{ value: "system", label: strings.systemDefault },
-		{ value: "monospace", label: strings.monospaceFont },
-		{ value: "source-han-sans", label: strings.sourceHanSans },
-	];
 	const tableAlignmentOptions: ReadonlyArray<SelectOption> = [
 		{ value: "auto", label: strings.autoAlignByContent },
 		{ value: "left", label: strings.alignLeft },
 		{ value: "center", label: strings.alignCenter },
-	];
-	const codeThemeOptions: ReadonlyArray<SelectOption> = [
-		{ value: "light", label: strings.lightCodeTheme },
-		{ value: "dark", label: strings.darkCodeTheme },
-		{ value: "follow-editor", label: strings.followEditor },
 	];
 	const codeLineNumberOptions: ReadonlyArray<SelectOption> = [
 		{ value: "show", label: strings.show },
@@ -190,25 +155,10 @@ export function MarkdownSettingsPage({
 			editorThemeOptions,
 			"system",
 		),
-		editorFontSize: normalizeMarkdownValue(
-			rawSettings.editorFontSize,
-			editorFontSizeOptions,
-			"14px",
-		),
-		editorFont: normalizeMarkdownValue(
-			rawSettings.editorFont,
-			editorFontOptions,
-			"system",
-		),
 		tableAlignment: normalizeMarkdownValue(
 			rawSettings.tableAlignment,
 			tableAlignmentOptions,
 			"auto",
-		),
-		codeTheme: normalizeMarkdownValue(
-			rawSettings.codeTheme,
-			codeThemeOptions,
-			"light",
 		),
 		codeLineNumbers: normalizeMarkdownValue(
 			rawSettings.codeLineNumbers,
@@ -251,32 +201,22 @@ export function MarkdownSettingsPage({
 					</h2>
 					{(
 						[
-							[
-								"livePreview",
-								strings.markdownLivePreview,
-								strings.livePreviewDescription,
-							],
 							["wordWrap", strings.wordWrap, strings.wordWrapDescription],
 							[
 								"lineNumbers",
 								strings.showLineNumbers,
 								strings.markdownLineNumbersDescription,
 							],
-							[
-								"fixedToolbar",
-								strings.fixedToolbar,
-								strings.fixedToolbarDescription,
-							],
 						] as const
 					).map(([key, label, description]) => (
 						<MarkdownRow key={key} label={label} description={description}>
 							<SettingsToggle
-								{...("wordWrap" === key
+								{...(key === "wordWrap"
 									? {}
 									: { ariaDescribedBy: "easymde-markdown-unavailable" })}
 								label={label}
 								checked={settings[key]}
-								disabled={"wordWrap" !== key}
+								disabled={key !== "wordWrap"}
 								onChange={() => setValue(key, !settings[key])}
 							/>
 						</MarkdownRow>
@@ -289,26 +229,6 @@ export function MarkdownSettingsPage({
 							value={settings.editorTheme}
 							options={editorThemeOptions}
 							onChange={(value) => setValue("editorTheme", value)}
-						/>
-					</MarkdownRow>
-					<MarkdownRow label={strings.editorFontSize}>
-						<MarkdownSelect
-							ariaDescribedBy="easymde-markdown-unavailable"
-							disabled
-							label={strings.editorFontSize}
-							value={settings.editorFontSize}
-							options={editorFontSizeOptions}
-							onChange={(value) => setValue("editorFontSize", value)}
-						/>
-					</MarkdownRow>
-					<MarkdownRow label={strings.editorFont}>
-						<MarkdownSelect
-							ariaDescribedBy="easymde-markdown-unavailable"
-							disabled
-							label={strings.editorFont}
-							value={settings.editorFont}
-							options={editorFontOptions}
-							onChange={(value) => setValue("editorFont", value)}
 						/>
 					</MarkdownRow>
 				</section>
@@ -352,16 +272,6 @@ export function MarkdownSettingsPage({
 							onChange={(value) => setValue("tableAlignment", value)}
 						/>
 					</MarkdownRow>
-					<MarkdownRow label={strings.codeBlockTheme}>
-						<MarkdownSelect
-							ariaDescribedBy="easymde-markdown-unavailable"
-							disabled
-							label={strings.codeBlockTheme}
-							value={settings.codeTheme}
-							options={codeThemeOptions}
-							onChange={(value) => setValue("codeTheme", value)}
-						/>
-					</MarkdownRow>
 					<MarkdownRow label={strings.codeBlockLineNumbers}>
 						<MarkdownSelect
 							ariaDescribedBy="easymde-markdown-unavailable"
@@ -374,51 +284,10 @@ export function MarkdownSettingsPage({
 					</MarkdownRow>
 					{(
 						[
-							["taskLists", strings.taskLists, strings.taskListsDescription],
-							["emoji", strings.emoji, strings.emojiDescription],
-							["math", strings.mathSupport, strings.mathSupportDescription],
 							[
 								"htmlRendering",
 								strings.htmlRendering,
 								strings.htmlRenderingDescription,
-							],
-						] as const
-					).map(([key, label, description]) => (
-						<MarkdownRow key={key} label={label} description={description}>
-							<SettingsToggle
-								ariaDescribedBy="easymde-markdown-unavailable"
-								label={label}
-								checked={settings[key]}
-								disabled
-								onChange={() => setValue(key, !settings[key])}
-							/>
-						</MarkdownRow>
-					))}
-				</section>
-
-				<section className="easymde-settings-center__markdown-group is-compact-heading">
-					<h2>
-						<Puzzle size={25} />
-						{strings.markdownExtensions}
-					</h2>
-					{(
-						[
-							[
-								"tableExtension",
-								strings.tableExtension,
-								strings.tableExtensionDescription,
-							],
-							["footnotes", strings.footnotes, strings.footnotesDescription],
-							[
-								"definitionLists",
-								strings.definitionLists,
-								strings.definitionListsDescription,
-							],
-							["toc", strings.tocDirectory, strings.tocDirectoryDescription],
-							[
-								"imageSizeSyntax",
-								strings.imageSizeSyntax,
-								strings.imageSizeSyntaxDescription,
 							],
 						] as const
 					).map(([key, label, description]) => (

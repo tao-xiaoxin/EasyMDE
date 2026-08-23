@@ -191,9 +191,9 @@ test("anchors every Settings selector to a translucent white shared popup", asyn
 	if (!initialTriggerBox || !initialListboxBox)
 		throw new Error("settings-select-initial-geometry-missing");
 	expect(Math.abs(initialListboxBox.x - initialTriggerBox.x)).toBeLessThan(0.5);
-	expect(Math.abs(initialListboxBox.width - initialTriggerBox.width)).toBeLessThan(
-		0.5,
-	);
+	expect(
+		Math.abs(initialListboxBox.width - initialTriggerBox.width),
+	).toBeLessThan(0.5);
 	expect(initialListboxBox.height).toBe(82);
 	const selectedOptionBox = await listbox
 		.getByRole("option", { selected: true })
@@ -202,7 +202,8 @@ test("anchors every Settings selector to a translucent white shared popup", asyn
 		throw new Error("settings-select-selected-option-geometry-missing");
 	expect(
 		Math.abs(
-			selectedOptionBox.y + selectedOptionBox.height / 2 -
+			selectedOptionBox.y +
+				selectedOptionBox.height / 2 -
 				(initialTriggerBox.y + initialTriggerBox.height / 2),
 		),
 	).toBeLessThan(0.5);
@@ -244,18 +245,23 @@ test("anchors every Settings selector to a translucent white shared popup", asyn
 	]);
 	if (!scrolledTriggerBox || !scrolledListboxBox)
 		throw new Error("settings-select-scrolled-geometry-missing");
-	expect(Math.abs(scrolledListboxBox.x - scrolledTriggerBox.x)).toBeLessThan(0.5);
-	expect(Math.abs(scrolledListboxBox.width - scrolledTriggerBox.width)).toBeLessThan(
+	expect(Math.abs(scrolledListboxBox.x - scrolledTriggerBox.x)).toBeLessThan(
 		0.5,
 	);
+	expect(
+		Math.abs(scrolledListboxBox.width - scrolledTriggerBox.width),
+	).toBeLessThan(0.5);
 	const scrolledSelectedOptionBox = await listbox
 		.getByRole("option", { selected: true })
 		.boundingBox();
 	if (!scrolledSelectedOptionBox)
-		throw new Error("settings-select-scrolled-selected-option-geometry-missing");
+		throw new Error(
+			"settings-select-scrolled-selected-option-geometry-missing",
+		);
 	expect(
 		Math.abs(
-			scrolledSelectedOptionBox.y + scrolledSelectedOptionBox.height / 2 -
+			scrolledSelectedOptionBox.y +
+				scrolledSelectedOptionBox.height / 2 -
 				(scrolledTriggerBox.y + scrolledTriggerBox.height / 2),
 		),
 	).toBeLessThan(0.5);
@@ -273,7 +279,8 @@ test("anchors every Settings selector to a translucent white shared popup", asyn
 		throw new Error("settings-select-changed-selection-geometry-missing");
 	expect(
 		Math.abs(
-			changedSelectedOptionBox.y + changedSelectedOptionBox.height / 2 -
+			changedSelectedOptionBox.y +
+				changedSelectedOptionBox.height / 2 -
 				(changedTriggerBox.y + changedTriggerBox.height / 2),
 		),
 	).toBeLessThan(0.5);
@@ -287,6 +294,7 @@ test("anchors every Settings selector to a translucent white shared popup", asyn
 test("covers the WordPress Admin shell before the Settings Center bundle mounts", async ({
 	page,
 }) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
 	await login(page);
 	let releaseBundle = () => undefined;
 	const bundleGate = new Promise((resolve) => {
@@ -329,7 +337,11 @@ test("covers the WordPress Admin shell before the Settings Center bundle mounts"
 			const host = document.querySelector("#easymde-settings-center-root");
 			if (!(host instanceof HTMLElement))
 				throw new Error("settings-center-startup-host-missing");
+			const brand = host.querySelector(".easymde-settings-center__brand");
+			if (!(brand instanceof HTMLElement))
+				throw new Error("settings-center-startup-brand-missing");
 			const hostBox = host.getBoundingClientRect();
+			const brandBox = brand.getBoundingClientRect();
 			const hostStyle = getComputedStyle(host);
 			const points = [
 				[8, 8],
@@ -348,6 +360,15 @@ test("covers the WordPress Admin shell before the Settings Center bundle mounts"
 					const target = document.elementFromPoint(x, y);
 					return target === host || Boolean(target && host.contains(target));
 				}),
+				brandBox: {
+					x: brandBox.x,
+					y: brandBox.y,
+					width: brandBox.width,
+					height: brandBox.height,
+				},
+				brandAvoidsViewportCenter:
+					brandBox.right < window.innerWidth / 2 &&
+					brandBox.bottom < window.innerHeight / 2,
 			};
 		});
 	} finally {
@@ -356,14 +377,20 @@ test("covers the WordPress Admin shell before the Settings Center bundle mounts"
 		await page.unroute(settingsBundle);
 	}
 
-	expect(startupFrame).toEqual({
+	expect(startupFrame).toMatchObject({
 		background: "rgb(253, 254, 254)",
 		position: "fixed",
 		coversViewport: true,
 		pointsOwnedByHost: true,
+		brandAvoidsViewportCenter: true,
 	});
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 	await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
+	const mountedBrandBox = await page
+		.locator(".easymde-settings-center__brand")
+		.boundingBox();
+	expect(mountedBrandBox).not.toBeNull();
+	expect(startupFrame.brandBox).toEqual(mountedBrandBox);
 });
 
 test("keeps a visible exit when the Settings Center bundle cannot load", async ({
@@ -496,6 +523,83 @@ test("keeps section navigation, the sticky boundary, and the localized heading i
 				previous: null,
 				heading: expectedHeading,
 			});
+	}
+});
+
+test("keeps only the remaining Markdown settings inside their responsive section", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1152, height: 753 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	await page
+		.getByRole("button", { name: /^(?:Markdown 设置|Markdown Settings)$/u })
+		.click();
+	const markdownSection = page.locator('[data-settings-section="markdown"]');
+	await expect(markdownSection).toBeVisible();
+
+	const removedSettings = [
+		/^(?:实时预览|Live Preview)$/u,
+		/^(?:固定工具栏|Fixed Toolbar)$/u,
+		/^(?:任务列表|Task Lists)$/u,
+		/^(?:表情符号|Emoji)$/u,
+		/^(?:数学公式支持|Math Formula Support)$/u,
+		/^(?:表格扩展|Table Extension)$/u,
+		/^(?:脚注|Footnotes)$/u,
+		/^(?:定义列表|Definition Lists)$/u,
+		/^(?:图片尺寸语法|Image Size Syntax)$/u,
+	];
+	for (const name of removedSettings) {
+		await expect(markdownSection.getByRole("switch", { name })).toHaveCount(0);
+	}
+	await expect(
+		markdownSection.getByRole("heading", {
+			name: /^(?:Markdown 扩展|Markdown Extensions)$/u,
+		}),
+	).toHaveCount(0);
+
+	for (const name of [
+		/^(?:编辑器设置|Editor Settings)$/u,
+		/^(?:Markdown 解析与渲染|Markdown Parsing and Rendering)$/u,
+		/^(?:其他|Other)$/u,
+	]) {
+		await expect(markdownSection.getByRole("heading", { name })).toBeVisible();
+	}
+
+	for (const width of [1152, 390]) {
+		await page.setViewportSize({ width, height: 753 });
+		const overflow = await markdownSection.evaluate((section) => {
+			const owner = section.getBoundingClientRect();
+			const visibleDescendants = Array.from(
+				section.querySelectorAll("*"),
+			).filter((element) => {
+				const style = getComputedStyle(element);
+				const bounds = element.getBoundingClientRect();
+				return (
+					style.display !== "none" &&
+					style.visibility !== "hidden" &&
+					bounds.width > 0 &&
+					bounds.height > 0
+				);
+			});
+			return visibleDescendants.reduce(
+				(result, element) => {
+					const bounds = element.getBoundingClientRect();
+					return {
+						left: Math.max(result.left, owner.left - bounds.left),
+						right: Math.max(result.right, bounds.right - owner.right),
+					};
+				},
+				{
+					left: Math.max(0, -section.scrollLeft),
+					right: Math.max(0, section.scrollWidth - section.clientWidth),
+				},
+			);
+		});
+		expect(overflow.left).toBeLessThanOrEqual(1);
+		expect(overflow.right).toBeLessThanOrEqual(1);
 	}
 });
 
@@ -1199,9 +1303,11 @@ test("keeps reference Help geometry stable while compact content stays inside it
 	const uploadFormats = settingsCenter.locator(
 		".easymde-settings-center__upload-formats",
 	);
-	const primaryConnection = settingsCenter.locator(
-		'[data-settings-section="images"] .easymde-settings-center__connection-row',
-	).first();
+	const primaryConnection = settingsCenter
+		.locator(
+			'[data-settings-section="images"] .easymde-settings-center__connection-row',
+		)
+		.first();
 
 	await expect(settingsCenter).toBeVisible();
 

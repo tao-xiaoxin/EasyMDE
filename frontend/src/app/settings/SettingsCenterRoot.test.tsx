@@ -713,7 +713,7 @@ describe("SettingsCenterRoot images section", () => {
 });
 
 describe("SettingsCenterRoot Markdown section", () => {
-	it("renders every Markdown group after Images in the continuous settings card", () => {
+	it("renders only the remaining Markdown groups after Images in the continuous settings card", () => {
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
 		);
@@ -733,11 +733,29 @@ describe("SettingsCenterRoot Markdown section", () => {
 			screen.getByRole("heading", { name: "markdownParsingRendering" }),
 		).not.toBeNull();
 		expect(
-			screen.getByRole("heading", { name: "markdownExtensions" }),
-		).not.toBeNull();
+			screen.queryByRole("heading", { name: "markdownExtensions" }),
+		).toBeNull();
 		expect(
 			screen.getByRole("heading", { name: "otherSettings" }),
 		).not.toBeNull();
+	});
+
+	it("does not render settings for parser defaults or editor-owned presentation", () => {
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+
+		for (const name of [
+			"markdownLivePreview",
+			"fixedToolbar",
+			"taskLists",
+			"emoji",
+			"mathSupport",
+			"tableExtension",
+			"footnotes",
+			"definitionLists",
+			"imageSizeSyntax",
+		]) {
+			expect(screen.queryByRole("switch", { name })).toBeNull();
+		}
 	});
 
 	it("enables word wrapping and keeps Markdown controls without runtime owners unavailable", () => {

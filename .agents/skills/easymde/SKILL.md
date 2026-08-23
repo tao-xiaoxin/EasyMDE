@@ -1532,6 +1532,25 @@ browser evidence from a cross-task or contaminated tree. Preserve pre-existing
 unrelated changes outside the recorded set and never read or hash their content
 as task evidence.
 
+When target evidence attaches to an existing human-owned Chrome or Chrome Dev
+window, treat its native window and tab geometry as protected state. Do not call
+Playwright `page.setViewportSize()`, CDP device-metrics emulation, browser zoom,
+or another viewport mutation on that tab. Run viewport matrices in a separate
+isolated browser window or context instead. The attached human tab may be used
+only for read-only native-window evidence and explicitly requested interactions.
+Before and after that evidence, compare the browser window bounds with
+`window.outerWidth`/`outerHeight`, `window.innerWidth`/`innerHeight`, the visual
+viewport, and `Page.getLayoutMetrics`; a mismatch introduced by test tooling
+invalidates the evidence. If the mismatch already exists when attaching and
+its owner is unknown, stop without reloading, resizing, or clearing it and
+report the browser evidence as blocked. Only an override introduced by the
+current automation may be removed, and that automation must clear it in a
+`finally` path, then re-check the same target `windowId`, native window bounds,
+JavaScript layout and visual viewports, and `Page.getLayoutMetrics` before any
+reload or visual result is accepted. A failed re-check remains blocked. Closing
+or detaching the automation client is not proof that a device-metrics override
+was cleared.
+
 Record the target implementation revision as the current commit ID. If the
 index or worktree state of any recorded task path differs from that commit,
 also record a `ui-fidelity-worktree-v1` SHA-256 digest computed as follows:

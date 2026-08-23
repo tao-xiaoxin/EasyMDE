@@ -143,7 +143,8 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 	}
 
 	public function test_upload_validates_the_file_and_returns_only_the_stable_browser_contract() {
-		$file     = $this->png_file();
+		$file              = $this->png_file();
+		$file['full_path'] = 'browser-folder/image.png';
 		$response = rest_do_request( $this->upload_request( $file ) );
 
 		try {
@@ -160,9 +161,52 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			$this->assertCount( 1, $this->runtime->upload_calls );
 			$this->assertSame( 'image.png', $this->runtime->upload_calls[0][1]['name'] );
 			$this->assertSame( 'image/png', $this->runtime->upload_calls[0][1]['type'] );
+			$this->assertArrayNotHasKey( 'full_path', $this->runtime->upload_calls[0][1] );
 			$this->assertArrayNotHasKey( 'objectKey', $response->get_data() );
 			$this->assertStringNotContainsString( 'synthetic-secret', wp_json_encode( $response->get_data() ) );
 			$this->assertSame( $this->post_id, $this->runtime->upload_calls[0][1]['post_id'] );
+		} finally {
+			unlink( $file['tmp_name'] );
+		}
+	}
+
+	public function test_upload_with_full_path_rejects_svg_after_file_shape_validation() {
+		$file     = $this->svg_file();
+		$response = rest_do_request( $this->upload_request( $file ) );
+
+		try {
+			$this->assertSame( 415, $response->get_status() );
+			$this->assertSame( 'easymde_image_hosting_unsupported_media_type', $response->as_error()->get_error_code() );
+			$this->assertCount( 0, $this->runtime->upload_calls );
+		} finally {
+			unlink( $file['tmp_name'] );
+		}
+	}
+
+	public function test_upload_rejects_unknown_file_metadata_keys() {
+		$file                = $this->png_file();
+		$file['full_path']   = 'browser-folder/image.png';
+		$file['client_path'] = '/untrusted/image.png';
+		$response            = rest_do_request( $this->upload_request( $file ) );
+
+		try {
+			$this->assertSame( 400, $response->get_status() );
+			$this->assertSame( 'easymde_image_hosting_invalid_file', $response->as_error()->get_error_code() );
+			$this->assertCount( 0, $this->runtime->upload_calls );
+		} finally {
+			unlink( $file['tmp_name'] );
+		}
+	}
+
+	public function test_upload_rejects_unsafe_full_path_metadata() {
+		$file              = $this->png_file();
+		$file['full_path'] = '../image.png';
+		$response          = rest_do_request( $this->upload_request( $file ) );
+
+		try {
+			$this->assertSame( 400, $response->get_status() );
+			$this->assertSame( 'easymde_image_hosting_invalid_file', $response->as_error()->get_error_code() );
+			$this->assertCount( 0, $this->runtime->upload_calls );
 		} finally {
 			unlink( $file['tmp_name'] );
 		}
@@ -301,6 +345,20 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			'tmp_name' => $path,
 			'error'    => UPLOAD_ERR_OK,
 			'size'     => filesize( $path ),
+		);
+	}
+
+	private function svg_file() {
+		$path = wp_tempnam( 'image.svg' );
+		file_put_contents( $path, '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>' );
+
+		return array(
+			'name'      => 'image.svg',
+			'full_path' => 'browser-folder/image.svg',
+			'type'      => 'image/svg+xml',
+			'tmp_name'  => $path,
+			'error'     => UPLOAD_ERR_OK,
+			'size'      => filesize( $path ),
 		);
 	}
 }

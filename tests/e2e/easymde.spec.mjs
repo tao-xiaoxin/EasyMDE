@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -1773,6 +1774,7 @@ test.describe('EasyMDE editor workflows', () => {
   test('hands the normal document session to React with one visible source and a fresh native bridge', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const imageUploadRequests = [];
+    const imageHostingUploadPath = '/wp-json/easymde/v1/image-hosting/upload';
     const browserErrors = [];
     const failedRequests = [];
     const cancelledPreviewRequests = [];
@@ -1804,7 +1806,7 @@ test.describe('EasyMDE editor workflows', () => {
     });
 
     page.on('request', (request) => {
-      if (new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/media')) {
+      if (new URL(request.url()).pathname.endsWith(imageHostingUploadPath)) {
         imageUploadRequests.push(request);
       }
     });
@@ -1900,9 +1902,32 @@ test.describe('EasyMDE editor workflows', () => {
     await sourceEditor.fill(beforeRejectedDrop);
     await expect(nativeSource).toHaveValue(beforeRejectedDrop);
     await expect(sourceEditor).toHaveText(beforeRejectedDrop);
-    const rejectedUploadResponse = page.waitForResponse(
-      (response) => new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/media')
+    const imageUploadBootstrap = await page.evaluate(() => ({
+      actionNonce: window.EasyMDEEditorRootBootstrap.imageUpload.actionNonce,
+      endpoint: window.EasyMDEEditorRootBootstrap.imageUpload.endpoint,
+      nonce: window.EasyMDEEditorRootBootstrap.imageUpload.nonce
+    }));
+    const rejectedControllerResponse = await page.request.post(
+      imageUploadBootstrap.endpoint,
+      {
+        headers: {
+          'X-EasyMDE-Image-Hosting-Nonce': imageUploadBootstrap.actionNonce,
+          'X-WP-Nonce': imageUploadBootstrap.nonce
+        },
+        multipart: {
+          alt_text: '',
+          file: {
+            buffer: Buffer.from(
+              '<svg xmlns="http://www.w3.org/2000/svg"><text>unsupported</text></svg>'
+            ),
+            mimeType: 'image/svg+xml',
+            name: 'rejected.svg'
+          },
+          post_id: '0'
+        }
+      }
     );
+    expect(rejectedControllerResponse.status()).toBe(415);
     await sourceEditor.evaluate((editor) => {
       const transfer = new DataTransfer();
       transfer.items.add(new File(
@@ -1916,7 +1941,6 @@ test.describe('EasyMDE editor workflows', () => {
         dataTransfer: transfer
       }));
     });
-    expect((await rejectedUploadResponse).status()).toBe(415);
     const editorMessageHost = page.locator(
       '.easymde-editor > .easymde-editor-message-alert-host'
     );
@@ -1932,13 +1956,27 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(sourceEditor).toBeFocused();
     await expect(nativeSource).toHaveValue(beforeRejectedDrop);
     await expect(sourceEditor).toHaveText(beforeRejectedDrop);
-    expect(imageUploadRequests).toHaveLength(1);
+    expect(imageUploadRequests).toHaveLength(0);
 
     const beforeAcceptedDrop = 'Before accepted image drop.';
     await sourceEditor.fill(beforeAcceptedDrop);
     await sourceEditor.press('End');
+    const isImageHostingUpload = (url) =>
+      new URL(url).pathname.endsWith(imageHostingUploadPath);
+    await page.route(isImageHostingUpload, async (route) => {
+      await route.fulfill({
+        body: JSON.stringify({
+          alt: 'synthetic pixel',
+          backup: { status: 'disabled' },
+          title: '',
+          url: 'https://images.example.test/e2e/synthetic-pixel.png'
+        }),
+        contentType: 'application/json',
+        status: 200
+      });
+    });
     const acceptedUploadResponse = page.waitForResponse(
-      (response) => new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/media')
+      (response) => new URL(response.url()).pathname.endsWith(imageHostingUploadPath)
     );
     await sourceEditor.evaluate((source) => {
       const binary = atob(
@@ -1959,7 +1997,12 @@ test.describe('EasyMDE editor workflows', () => {
     );
     await expect(nativeSource).toHaveValue(/^Before accepted image drop\.\!\[synthetic pixel\]\(.+\)$/);
     await expect(sourceEditor).toBeFocused();
-    expect(imageUploadRequests).toHaveLength(2);
+    expect(imageUploadRequests).toHaveLength(1);
+    expect(
+      await imageUploadRequests[0].headerValue('X-EasyMDE-Image-Hosting-Nonce')
+    ).toBeTruthy();
+    expect(await imageUploadRequests[0].headerValue('X-WP-Nonce')).toBeTruthy();
+    await page.unroute(isImageHostingUpload);
     expect(await page.evaluate(() => typeof window.EasyMDEImagePaste)).toBe('undefined');
     if (cancelledPreviewRequests.length) {
       await testInfo.attach('cancelled-preview-requests', {
@@ -1967,8 +2010,7 @@ test.describe('EasyMDE editor workflows', () => {
         contentType: 'application/json'
       });
     }
-    expect(browserErrors.filter((message) => !message.includes('status of 415'))).toEqual([]);
-    expect(browserErrors.filter((message) => message.includes('status of 415'))).toHaveLength(1);
+    expect(browserErrors).toEqual([]);
     expect(failedRequests).toEqual([]);
   });
 

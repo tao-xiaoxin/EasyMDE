@@ -109,10 +109,8 @@ describe("ImagesSettingsPage", () => {
 				.getAttribute("aria-disabled"),
 		).toBe("true");
 		expect(
-			screen
-				.getByRole("combobox", { name: "retryFailedUpload" })
-				.matches(":disabled"),
-		).toBe(true);
+			screen.queryByRole("combobox", { name: "retryFailedUpload" }),
+		).toBeNull();
 		expect(
 			screen.getByRole("switch", { name: "copyImageUrl" }).matches(":disabled"),
 		).toBe(true);

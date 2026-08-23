@@ -528,12 +528,6 @@ export function ImagesSettingsPage({
 			label: strings.returnPrimaryUrlOnBackupFailure,
 		},
 	];
-	const retryOptions: ReadonlyArray<SelectOption> = [
-		{ value: "none", label: strings.doNotRetry },
-		{ value: "once", label: strings.retryOnce, disabled: true },
-		{ value: "twice", label: strings.retryTwice, disabled: true },
-		{ value: "three-times", label: strings.retryThreeTimes, disabled: true },
-	];
 	const maxImageSizeOptions: ReadonlyArray<SelectOption> = [
 		{ value: "original", label: strings.originalImageSize },
 		{ value: "1920", label: strings.imageSize1920 },
@@ -612,11 +606,7 @@ export function ImagesSettingsPage({
 			],
 			"return-primary-url",
 		),
-		retryCount: normalizeImageValue(
-			rawSettings.retryCount,
-			[{ value: "none", label: strings.doNotRetry }],
-			"none",
-		),
+		retryCount: "none",
 		maxImageSize: normalizeImageValue(
 			rawSettings.maxImageSize,
 			maxImageSizeOptions,
@@ -1035,14 +1025,6 @@ export function ImagesSettingsPage({
 									label={strings.copyImageUrl}
 									checked={settings.copyUrl}
 									onChange={() => setValue("copyUrl", !settings.copyUrl)}
-								/>
-							</ImageBehaviorRow>
-							<ImageBehaviorRow label={strings.retryFailedUpload}>
-								<CompactSelect
-									label={strings.retryFailedUpload}
-									value={settings.retryCount}
-									options={retryOptions}
-									onChange={(value) => setValue("retryCount", value)}
 								/>
 							</ImageBehaviorRow>
 						</fieldset>

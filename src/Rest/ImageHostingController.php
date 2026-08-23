@@ -175,7 +175,12 @@ final class ImageHostingController {
 	}
 
 	private function validate_file( $file, array $settings ) {
-		if ( ! is_array( $file ) || ! $this->has_exact_keys( $file, array( 'name', 'type', 'tmp_name', 'error', 'size' ) ) ) {
+		$base_keys      = array( 'name', 'type', 'tmp_name', 'error', 'size' );
+		$full_path_keys = array_merge( $base_keys, array( 'full_path' ) );
+		if (
+			! is_array( $file ) ||
+			( ! $this->has_exact_keys( $file, $base_keys ) && ! $this->has_exact_keys( $file, $full_path_keys ) )
+		) {
 			return $this->invalid_file_error();
 		}
 		if ( UPLOAD_ERR_OK !== (int) $file['error'] || ! is_string( $file['tmp_name'] ) || ! is_file( $file['tmp_name'] ) || ! is_readable( $file['tmp_name'] ) ) {
@@ -197,7 +202,7 @@ final class ImageHostingController {
 		}
 
 		$file_name = sanitize_file_name( is_string( $file['name'] ) ? $file['name'] : '' );
-		if ( '' === $file_name ) {
+		if ( '' === $file_name || ( array_key_exists( 'full_path', $file ) && ! $this->is_valid_full_path_metadata( $file['full_path'], $file_name ) ) ) {
 			return $this->invalid_file_error();
 		}
 
@@ -223,8 +228,31 @@ final class ImageHostingController {
 		$file['name'] = $file_name;
 		$file['type'] = $type;
 		$file['size'] = $actual_size;
+		unset( $file['full_path'] );
 
 		return $file;
+	}
+
+	private function is_valid_full_path_metadata( $full_path, $file_name ) {
+		if (
+			! is_string( $full_path ) ||
+			'' === $full_path ||
+			strlen( $full_path ) > 1024 ||
+			'/' === $full_path[0] ||
+			false !== strpos( $full_path, '\\' ) ||
+			1 === preg_match( '/[\x00-\x1F\x7F]/', $full_path )
+		) {
+			return false;
+		}
+
+		$segments = explode( '/', $full_path );
+		foreach ( $segments as $segment ) {
+			if ( '' === $segment || '.' === $segment || '..' === $segment ) {
+				return false;
+			}
+		}
+
+		return sanitize_file_name( end( $segments ) ) === $file_name;
 	}
 
 	private function extension_matches_type( $extension, $type ) {

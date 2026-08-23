@@ -660,11 +660,11 @@ test("runs the image-hosting interaction contract without exposing credentials",
 			name: /上传后插入 Markdown 链接|Insert Markdown Link After Upload/u,
 		}),
 	).toBeEnabled();
-	const retryCount = images.getByRole("combobox", {
-		name: /上传失败时重试|Retry Failed Upload/u,
-	});
-	await expect(retryCount).toBeDisabled();
-	await expect(retryCount).toContainText(/不重试|No retries/u);
+	await expect(
+		images.getByRole("combobox", {
+			name: /上传失败时重试|Retry Failed Upload/u,
+		}),
+	).toHaveCount(0);
 	const primary = images.locator(".is-host-service");
 	const connection = primary.locator(
 		".easymde-settings-center__connection-row",
@@ -1239,7 +1239,7 @@ test("keeps reference Help geometry stable while compact content stays inside it
 	};
 
 	const expectPrimaryConnectionContained = async () => {
-		const overflow = await primaryConnection.evaluate((element) => {
+		const containment = await primaryConnection.evaluate((element) => {
 			const section = element.closest(
 				".easymde-settings-center__settings-section",
 			);
@@ -1247,18 +1247,62 @@ test("keeps reference Help geometry stable while compact content stays inside it
 				throw new Error("settings-center-connection-section-missing");
 			const elementBounds = element.getBoundingClientRect();
 			const sectionBounds = section.getBoundingClientRect();
-			return elementBounds.right - sectionBounds.right;
+			const rightmost = [element, ...element.querySelectorAll("*")].reduce(
+				(current, descendant) => {
+					const bounds = descendant.getBoundingClientRect();
+					return bounds.right > current.bounds.right
+						? { bounds, descendant }
+						: current;
+				},
+				{ bounds: elementBounds, descendant: element },
+			);
+			return {
+				contents: rightmost.bounds.right - sectionBounds.right,
+				offender: `${rightmost.descendant.tagName.toLowerCase()}.${rightmost.descendant.className}`,
+				owner: elementBounds.right - sectionBounds.right,
+			};
 		});
-		expect(overflow).toBeLessThanOrEqual(0.75);
+		expect(containment.owner).toBeLessThanOrEqual(0.75);
+		expect(containment.contents, containment.offender).toBeLessThanOrEqual(
+			0.75,
+		);
 	};
 
 	const expectEverySectionContained = async () => {
-		const overflows = await settingsCenter
+		const measurements = await settingsCenter
 			.locator("[data-settings-section]")
 			.evaluateAll((sections) =>
-				sections.map((section) => section.scrollWidth - section.clientWidth),
+				sections.map((section) => {
+					const sectionBounds = section.getBoundingClientRect();
+					const descendants = Array.from(section.querySelectorAll("*")).map(
+						(element) => ({
+							className:
+								typeof element.className === "string" ? element.className : "",
+							right: element.getBoundingClientRect().right,
+							tagName: element.tagName.toLowerCase(),
+						}),
+					);
+					const rightmost = descendants.reduce(
+						(current, candidate) =>
+							candidate.right > current.right ? candidate : current,
+						{
+							className: "",
+							right: sectionBounds.right,
+							tagName: section.tagName.toLowerCase(),
+						},
+					);
+					return {
+						descendantOverflow: rightmost.right - sectionBounds.right,
+						id: section.getAttribute("data-settings-section"),
+						offender: `${rightmost.tagName}.${rightmost.className}`,
+						scrollOverflow: section.scrollWidth - section.clientWidth,
+					};
+				}),
 			);
-		expect(Math.max(...overflows)).toBeLessThanOrEqual(1);
+		const overflowing = measurements.filter(
+			(measurement) => measurement.scrollOverflow > 1,
+		);
+		expect(overflowing, JSON.stringify(measurements)).toEqual([]);
 	};
 
 	for (const width of [1200, 1100, 1099, 900, 841]) {

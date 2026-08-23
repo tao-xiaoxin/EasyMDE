@@ -3087,36 +3087,36 @@ msgstr ""
 msgid "The image-hosting configuration is unavailable."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:194 src/Rest/MediaController.php:85
+#: src/Rest/ImageHostingController.php:199 src/Rest/MediaController.php:85
 msgid "The image is larger than the allowed upload size."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:218 src/Rest/MediaController.php:77
+#: src/Rest/ImageHostingController.php:223 src/Rest/MediaController.php:77
 #: src/Rest/MediaController.php:157
 msgid "This image format is not allowed by the current EasyMDE settings."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:316
+#: src/Rest/ImageHostingController.php:344
 msgid "The image-hosting request could not be verified."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:324
+#: src/Rest/ImageHostingController.php:352
 msgid "The image-hosting request is invalid."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:332
+#: src/Rest/ImageHostingController.php:360
 msgid "The image upload is invalid."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:340
+#: src/Rest/ImageHostingController.php:368
 msgid "The image-hosting connection could not be verified."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:348
+#: src/Rest/ImageHostingController.php:376
 msgid "The image could not be uploaded to the configured image host."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:356
+#: src/Rest/ImageHostingController.php:384
 msgid "The image-hosting service returned an invalid result."
 msgstr ""
 

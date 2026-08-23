@@ -191,6 +191,10 @@ test("Settings Center preserves reference Help geometry until the mobile layout"
 		/\.easymde-settings-center__connection-row\s*\{[^}]*width:\s*520px;[^}]*max-width:\s*100%;/,
 	);
 	assert.match(
+		compactRules,
+		/\.easymde-settings-center__connection-row\s*\{[^}]*flex-wrap:\s*wrap;/,
+	);
+	assert.match(
 		settingsCss,
 		/@media\s*\(max-width:\s*840px\)\s*and\s*\(max-height:\s*500px\)[\s\S]*?grid-template-columns:\s*116px\s+minmax\(0,\s*1fr\)\s+148px;/,
 	);

@@ -3137,6 +3137,11 @@ body.toplevel_page_easymde #easymde-settings-center-root {
 		justify-self: stretch;
 	}
 
+	.easymde-settings-center__connection-row {
+		flex-wrap: wrap;
+		row-gap: 8px;
+	}
+
 	.easymde-settings-center__file-name-details > div:last-child {
 		width: 100%;
 	}

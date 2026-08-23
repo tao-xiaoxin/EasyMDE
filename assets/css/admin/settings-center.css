@@ -2820,3 +2820,646 @@
 	cursor: not-allowed;
 	opacity: .86;
 }
+
+@media (max-width: 1099px) {
+	.easymde-settings-center {
+		overflow-x: hidden;
+	}
+
+	.easymde-settings-center__frame {
+		min-width: 0;
+		max-width: none;
+	}
+
+	.easymde-settings-center__sidebar {
+		width: 220px;
+		flex-basis: 220px;
+		padding-right: 13px;
+		padding-left: 13px;
+	}
+
+	.easymde-settings-center__sidebar::after {
+		right: 0;
+	}
+
+	.easymde-settings-center__sidebar nav {
+		left: 12px;
+		right: 12px;
+	}
+
+	.easymde-settings-center__sidebar nav button {
+		padding: 0 12px;
+		font-size: 16px;
+	}
+
+	.easymde-settings-center__sidebar nav button svg {
+		margin-right: 12px;
+	}
+
+	.easymde-settings-center__help {
+		right: 12px;
+		left: 12px;
+	}
+
+	.easymde-settings-center__help > div > div {
+		min-width: 0;
+	}
+
+	.easymde-settings-center__help p {
+		max-width: 115px;
+	}
+
+	.easymde-settings-center__sticky-header {
+		height: 203px;
+	}
+
+	.easymde-settings-center__header-scale {
+		width: 100%;
+		scale: 1;
+	}
+
+	.easymde-settings-center__header-scale header {
+		height: 160px;
+		padding: 68px 24px 0;
+	}
+
+	.easymde-settings-center__header-scale header > img {
+		height: 160px;
+	}
+
+	.easymde-settings-center__header-scale header > div {
+		top: 68px;
+		left: 24px;
+	}
+
+	.easymde-settings-center__header-scale h1 {
+		font-size: 30px;
+		line-height: 38px;
+	}
+
+	.easymde-settings-center__header-scale header p {
+		max-width: calc(100vw - 330px);
+		margin-top: 5px;
+		font-size: 15px;
+		line-height: 22px;
+	}
+
+	.easymde-settings-center__header-scale header > a {
+		top: 14px;
+		right: 14px;
+	}
+
+	.easymde-settings-center__search {
+		margin: 0 24px;
+	}
+
+	.easymde-settings-center__save-bar {
+		top: 203px;
+		padding-right: 24px;
+		padding-left: 24px;
+	}
+
+	.easymde-settings-center__content-scale {
+		zoom: 1;
+	}
+
+	.easymde-settings-center__content {
+		padding: 0 24px;
+	}
+
+	.easymde-settings-center__settings-section {
+		scroll-margin-top: 180px;
+	}
+
+	.easymde-settings-center__section-body {
+		padding-right: 24px;
+		padding-left: 24px;
+	}
+
+	.easymde-settings-center__row,
+	.easymde-settings-center__file-name-details {
+		grid-template-columns: minmax(160px, 224px) minmax(0, 1fr);
+		gap: 32px;
+	}
+
+	.easymde-settings-center__row-label {
+		padding-left: 8px;
+	}
+
+	.easymde-settings-center__row-control {
+		width: 100%;
+		justify-self: stretch;
+	}
+
+	.easymde-settings-center__file-name-details > div:last-child {
+		width: 100%;
+	}
+
+	.easymde-settings-center__action-bar {
+		left: 220px;
+	}
+}
+
+@media (max-width: 840px) {
+	.easymde-settings-center__frame {
+		--easymde-mobile-save-bar-height: 98px;
+
+		display: block;
+	}
+
+	.easymde-settings-center__sidebar {
+		position: sticky;
+		top: 0;
+		z-index: 30;
+		display: grid;
+		width: 100%;
+		height: 112px;
+		max-height: none;
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-rows: 58px 54px;
+		padding: 0 16px;
+	}
+
+	.easymde-settings-center__sidebar::after {
+		top: auto;
+		left: 0;
+		width: auto;
+		height: 1px;
+	}
+
+	.easymde-settings-center__brand-wrap {
+		position: static;
+		grid-row: 1;
+		grid-column: 1;
+		align-self: center;
+		justify-content: flex-start;
+	}
+
+	.easymde-settings-center__brand {
+		height: 48px;
+		gap: 9px;
+		translate: 0;
+		scale: .58;
+		transform-origin: left center;
+	}
+
+	.easymde-settings-center__sidebar nav {
+		position: static;
+		grid-row: 2;
+		grid-column: 1 / -1;
+		display: flex;
+		min-width: 0;
+		flex-direction: row;
+		gap: 6px;
+		overflow-x: auto;
+		overscroll-behavior-x: contain;
+		scrollbar-width: none;
+		transform: none;
+	}
+
+	.easymde-settings-center__sidebar nav::-webkit-scrollbar {
+		display: none;
+	}
+
+	.easymde-settings-center__sidebar nav button,
+	.easymde-settings-center__sidebar nav button[data-nav-id],
+	.easymde-settings-center__sidebar nav button[aria-current="page"] {
+		width: auto;
+		height: 44px;
+		flex: none;
+		padding: 0 13px;
+		transform: none;
+		font-size: 14px;
+		white-space: nowrap;
+	}
+
+	.easymde-settings-center__sidebar nav button svg {
+		width: 20px;
+		height: 20px;
+		margin-right: 8px;
+	}
+
+	.easymde-settings-center__sidebar nav button i {
+		top: auto;
+		right: 12px;
+		bottom: 0;
+		left: 12px;
+		width: auto;
+		height: 3px;
+	}
+
+	.easymde-settings-center__help {
+		position: static;
+		display: flex;
+		grid-row: 1;
+		grid-column: 2;
+		align-self: center;
+		align-items: center;
+		width: 148px;
+		height: 42px;
+		padding: 5px 7px;
+		transform: none;
+	}
+
+	.easymde-settings-center__help > div {
+		min-width: 0;
+		flex: 1;
+		height: 30px;
+		gap: 7px;
+	}
+
+	.easymde-settings-center__help > div > span {
+		width: 30px;
+		height: 30px;
+	}
+
+	.easymde-settings-center__help img {
+		width: 27px;
+		height: 23px;
+	}
+
+	.easymde-settings-center__help h2 {
+		font-size: 12px;
+		line-height: 16px;
+	}
+
+	.easymde-settings-center__help p {
+		display: none;
+	}
+
+	.easymde-settings-center__help button {
+		position: static;
+		width: 30px;
+		height: 30px;
+		margin-left: 5px;
+		padding: 0;
+		font-size: 0;
+	}
+
+	.easymde-settings-center__help button svg {
+		width: 16px;
+		height: 16px;
+	}
+
+	.easymde-settings-center main {
+		width: 100%;
+	}
+
+	.easymde-settings-center__sticky-header {
+		top: 112px;
+		height: auto;
+	}
+
+	.easymde-settings-center__header-scale header {
+		height: auto;
+		min-height: 137px;
+		padding: 48px 52px 18px 16px;
+	}
+
+	.easymde-settings-center__header-scale header > img {
+		top: 0;
+		right: -54px;
+		height: 137px;
+		opacity: .62;
+	}
+
+	.easymde-settings-center__header-scale header > div {
+		position: relative;
+		top: auto;
+		left: auto;
+	}
+
+	.easymde-settings-center__header-scale h1 {
+		font-size: 27px;
+		line-height: 34px;
+	}
+
+	.easymde-settings-center__header-scale header p {
+		max-width: calc(100vw - 72px);
+		font-size: 14px;
+		line-height: 20px;
+	}
+
+	.easymde-settings-center__header-scale header > a {
+		top: 10px;
+		right: 10px;
+	}
+
+	.easymde-settings-center__search {
+		margin: 0 16px;
+	}
+
+	.easymde-settings-center__save-bar {
+		position: fixed;
+		top: auto;
+		right: 0;
+		bottom: 0;
+		left: 0;
+		z-index: 40;
+		height: var(--easymde-mobile-save-bar-height);
+		min-height: 0;
+		flex-wrap: nowrap;
+		gap: 8px;
+		padding: 7px 16px;
+		border-top: 1px solid #dfe5ee;
+		box-shadow: 0 -4px 16px rgba(35, 55, 88, .05);
+	}
+
+	.easymde-settings-center__save-bar > span {
+		min-width: 0;
+		line-height: 18px;
+	}
+
+	.easymde-settings-center__frame:has(.easymde-settings-center__save-bar:not(.is-hidden)) main {
+		padding-bottom: var(--easymde-mobile-save-bar-height);
+	}
+
+	.easymde-settings-center__save-bar > button {
+		min-width: 112px;
+	}
+
+	.easymde-settings-center__content {
+		padding: 0 16px;
+	}
+
+	.easymde-settings-center__sections,
+	.easymde-settings-center__search-results,
+	.easymde-settings-center__no-results,
+	.easymde-settings-center__pending {
+		margin-top: 14px;
+	}
+
+	.easymde-settings-center__settings-section {
+		scroll-margin-top: 168px;
+	}
+
+	.easymde-settings-center__section > h2 {
+		height: 54px;
+		padding-right: 16px;
+		padding-left: 54px;
+		font-size: 17px;
+	}
+
+	.easymde-settings-center__section > h2 svg {
+		left: 22px;
+	}
+
+	.easymde-settings-center__section-body {
+		padding: 8px 18px 20px;
+	}
+
+	.easymde-settings-center__row {
+		min-height: 0;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 8px;
+		padding: 11px 0;
+	}
+
+	.easymde-settings-center__row.has-description,
+	.easymde-settings-center__row.is-height-60,
+	.easymde-settings-center__row.is-height-65,
+	.easymde-settings-center__row.is-height-70,
+	.easymde-settings-center__row.is-height-76,
+	.easymde-settings-center__row.is-height-82,
+	.easymde-settings-center__row.is-height-150 {
+		min-height: 0;
+	}
+
+	.easymde-settings-center__row-label {
+		padding-left: 0;
+	}
+
+	.easymde-settings-center__row-control,
+	.easymde-settings-center__select-wrap,
+	.easymde-settings-center__image-field-control,
+	.easymde-settings-center__compact-select,
+	.easymde-settings-center__markdown-field-control {
+		width: 100%;
+	}
+
+	.easymde-settings-center__shortcut-card,
+	.easymde-settings-center__shortcut-behavior,
+	.easymde-settings-center__image-group,
+	.easymde-settings-center__transfer-group,
+	.easymde-settings-center__transfer-management {
+		padding-right: 18px;
+		padding-left: 18px;
+	}
+
+	.easymde-settings-center__shortcut-card {
+		overflow-x: auto;
+	}
+
+	.easymde-settings-center__shortcut-table-heading,
+	.easymde-settings-center__shortcut-row {
+		min-width: 650px;
+	}
+
+	.easymde-settings-center__file-name-details {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 8px;
+	}
+
+	.easymde-settings-center__file-name-presets {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.easymde-settings-center__file-name-presets > button[data-preset-index] {
+		border-right: 0;
+		border-bottom: 1px solid #e2e7ef;
+	}
+
+	.easymde-settings-center__file-name-presets > button:last-child {
+		border-bottom: 0;
+	}
+
+	.easymde-settings-center__file-name-variables,
+	.easymde-settings-center__connection-row,
+	.easymde-settings-center__transfer-export-form,
+	.easymde-settings-center__transfer-import-actions {
+		width: 100%;
+	}
+
+	.easymde-settings-center__file-name-variables,
+	.easymde-settings-center__connection-row {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+
+	.easymde-settings-center__connection-row {
+		gap: 10px;
+	}
+
+	.easymde-settings-center__last-test,
+	.easymde-settings-center__connection-row > button {
+		margin-left: 0;
+	}
+
+	.easymde-settings-center__upload-formats > label {
+		min-width: 0;
+	}
+
+	.easymde-settings-center__search-result-groups > div {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0;
+	}
+
+	.easymde-settings-center__search-result-groups h3 {
+		padding-bottom: 4px;
+	}
+
+	.easymde-settings-center__transfer-dialog-layer {
+		padding: 16px;
+	}
+
+	.easymde-settings-center__transfer-dialog {
+		width: 100%;
+		max-height: calc(100vh - 32px);
+	}
+
+	.easymde-settings-center__transfer-directory > div {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.easymde-settings-center__transfer-directory button {
+		align-self: flex-end;
+	}
+
+	.easymde-settings-center__action-bar {
+		left: 0;
+		height: 64px;
+		padding: 0 16px;
+	}
+}
+
+@media (max-width: 480px) {
+	.easymde-settings-center__sidebar {
+		grid-template-columns: minmax(0, 1fr) 140px;
+		padding: 0 12px;
+	}
+
+	.easymde-settings-center__help {
+		width: 140px;
+	}
+
+	.easymde-settings-center__header-scale header {
+		padding-right: 12px;
+		padding-left: 12px;
+	}
+
+	.easymde-settings-center__header-scale header > div {
+		left: auto;
+	}
+
+	.easymde-settings-center__header-scale header p {
+		max-width: calc(100vw - 48px);
+	}
+
+	.easymde-settings-center__search {
+		margin-right: 12px;
+		margin-left: 12px;
+	}
+
+	.easymde-settings-center__content {
+		padding-right: 12px;
+		padding-left: 12px;
+	}
+
+	.easymde-settings-center__search input {
+		padding-left: 46px;
+	}
+
+	.easymde-settings-center__search > svg {
+		left: 16px;
+	}
+
+	.easymde-settings-center__section-body,
+	.easymde-settings-center__shortcut-card,
+	.easymde-settings-center__shortcut-behavior,
+	.easymde-settings-center__image-group,
+	.easymde-settings-center__transfer-group,
+	.easymde-settings-center__transfer-management {
+		padding-right: 14px;
+		padding-left: 14px;
+	}
+
+	.easymde-settings-center__transfer-dialog-layer {
+		padding: 12px;
+	}
+
+	.easymde-settings-center__transfer-dialog {
+		max-height: calc(100vh - 24px);
+	}
+
+	.easymde-settings-center__transfer-dialog > header,
+	.easymde-settings-center__transfer-dialog-body,
+	.easymde-settings-center__transfer-dialog > footer {
+		padding-right: 16px;
+		padding-left: 16px;
+	}
+
+	.easymde-settings-center__transfer-dialog > footer {
+		flex-wrap: wrap;
+	}
+
+	.easymde-settings-center__transfer-dialog > footer :is(button, a) {
+		flex: 1 1 auto;
+	}
+
+	.easymde-settings-center__notices,
+	.easymde-settings-center__transfer-feedback {
+		right: 12px;
+		left: 12px;
+		max-width: none;
+	}
+}
+
+@media (max-width: 840px) and (max-height: 500px) {
+	.easymde-settings-center__sidebar {
+		height: 64px;
+		grid-template-columns: 116px minmax(0, 1fr) 140px;
+		grid-template-rows: 64px;
+		padding: 0 12px;
+	}
+
+	.easymde-settings-center__brand-wrap,
+	.easymde-settings-center__sidebar nav,
+	.easymde-settings-center__help {
+		grid-row: 1;
+	}
+
+	.easymde-settings-center__brand-wrap {
+		grid-column: 1;
+	}
+
+	.easymde-settings-center__brand {
+		scale: .46;
+	}
+
+	.easymde-settings-center__sidebar nav {
+		grid-column: 2;
+		align-self: center;
+	}
+
+	.easymde-settings-center__help {
+		grid-column: 3;
+	}
+
+	.easymde-settings-center__sticky-header {
+		top: 64px;
+	}
+
+	.easymde-settings-center__header-scale header {
+		min-height: 94px;
+		padding: 8px 52px 6px 16px;
+	}
+
+	.easymde-settings-center__header-scale header > img {
+		height: 94px;
+	}
+
+	.easymde-settings-center__settings-section {
+		scroll-margin-top: 128px;
+	}
+}

@@ -53,6 +53,67 @@ test("Settings Center frame does not add an outer border, radius, or shadow", ()
 	assert.doesNotMatch(body, /(?:^|;)\s*box-shadow\s*:/);
 });
 
+test("Settings Center replaces the fixed desktop crop at compact and narrow widths", () => {
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*1099px\)[\s\S]*?\.easymde-settings-center__frame\s*\{[^}]*min-width:\s*0;/,
+	);
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*840px\)[\s\S]*?\.easymde-settings-center__frame\s*\{[^}]*display:\s*block;/,
+	);
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*840px\)[\s\S]*?\.easymde-settings-center__row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/,
+	);
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*840px\)[\s\S]*?\.easymde-settings-center__sticky-header\s*\{[^}]*height:\s*auto;/,
+	);
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*840px\)[\s\S]*?\.easymde-settings-center__header-scale header\s*\{[^}]*height:\s*auto;/,
+	);
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*840px\)[\s\S]*?\.easymde-settings-center__save-bar\s*\{[^}]*position:\s*fixed;[^}]*top:\s*auto;[^}]*bottom:\s*0;/,
+	);
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*840px\)[\s\S]*?\.easymde-settings-center__frame\s*\{[^}]*--easymde-mobile-save-bar-height:\s*98px;/,
+	);
+	assert.match(
+		settingsCss,
+		/\.easymde-settings-center__save-bar\s*\{[^}]*height:\s*var\(--easymde-mobile-save-bar-height\);/,
+	);
+	assert.match(
+		settingsCss,
+		/\.easymde-settings-center__frame:has\([^}]+main\s*\{[^}]*padding-bottom:\s*var\(--easymde-mobile-save-bar-height\);/,
+	);
+});
+
+test("Settings Center Help card leaves the scrolling desktop sidebar at narrow widths", () => {
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*840px\)[\s\S]*?\.easymde-settings-center__help\s*\{[^}]*position:\s*static;/,
+	);
+});
+
+test("Settings Center short landscape layout keeps sticky actions clear of the header", () => {
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*840px\)\s*and\s*\(max-height:\s*500px\)[\s\S]*?\.easymde-settings-center__sidebar\s*\{[^}]*height:\s*64px;/,
+	);
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*840px\)\s*and\s*\(max-height:\s*500px\)[\s\S]*?\.easymde-settings-center__sticky-header\s*\{[^}]*top:\s*64px;/,
+	);
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*840px\)\s*and\s*\(max-height:\s*500px\)[\s\S]*?\.easymde-settings-center__header-scale header\s*\{[^}]*min-height:\s*94px;/,
+	);
+});
+
 test("Settings Center sidebar does not inherit frame-only corner rounding", () => {
 	const sidebar = cssRuleBody(".easymde-settings-center__sidebar");
 

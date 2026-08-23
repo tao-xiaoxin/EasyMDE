@@ -581,7 +581,7 @@ test("keeps the settings save action clickable after scrolling", async ({
 	}
 });
 
-test("preserves the reference mobile crop and unavailable settings remain non-saveable", async ({
+test("adapts the Settings Center to a narrow viewport and unavailable settings remain non-saveable", async ({
 	page,
 }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
@@ -599,12 +599,24 @@ test("preserves the reference mobile crop and unavailable settings remain non-sa
 		'[data-settings-section="general"]',
 	);
 	const nav = settingsCenter.locator(".easymde-settings-center__sidebar nav");
+	const frame = settingsCenter.locator(".easymde-settings-center__frame");
+	const sidebar = settingsCenter.locator(".easymde-settings-center__sidebar");
+	const help = settingsCenter.locator(".easymde-settings-center__help");
+	const header = settingsCenter.locator(
+		".easymde-settings-center__header-scale header",
+	);
+	const headerDescription = header.locator("p");
+	const main = settingsCenter.locator("main");
 
 	await expect(settingsCenter).toBeVisible();
 	await expect(saveBar).toHaveCSS("display", "none");
 	await expect
-		.poll(async () => settingsCenter.evaluate((element) => element.scrollWidth))
-		.toBe(1100);
+		.poll(async () =>
+			settingsCenter.evaluate(
+				(element) => element.scrollWidth - element.clientWidth,
+			),
+		)
+		.toBeLessThanOrEqual(1);
 	await expect
 		.poll(async () => settingsCenter.evaluate((element) => element.clientWidth))
 		.toBeGreaterThanOrEqual(375);
@@ -620,6 +632,127 @@ test("preserves the reference mobile crop and unavailable settings remain non-sa
 			),
 		)
 		.toBeLessThanOrEqual(1);
+	await expect(frame).toHaveCSS("display", "block");
+	await expect(sidebar).toHaveCSS("width", "390px");
+	await expect(main).toHaveCSS("width", "390px");
+	await expect(nav).toHaveCSS("overflow-x", "auto");
+	await expect(help).toBeInViewport();
+	await headerDescription.evaluate((element) => {
+		element.textContent =
+			"Configure image upload and storage services with common hosts and custom upload destinations.";
+	});
+	await expect
+		.poll(async () => {
+			const headerBox = await header.boundingBox();
+			const descriptionBox = await headerDescription.boundingBox();
+			if (!headerBox || !descriptionBox)
+				throw new Error("settings-center-mobile-header-bounds-missing");
+			return descriptionBox.y + descriptionBox.height - (headerBox.y + headerBox.height);
+		})
+		.toBeLessThanOrEqual(0.5);
+
+	const initialHelpBox = await help.boundingBox();
+	expect(initialHelpBox).not.toBeNull();
+	await settingsCenter.evaluate((element) => {
+		element.scrollTop = 700;
+	});
+	await expect.poll(async () => settingsCenter.evaluate((element) => element.scrollTop)).toBe(700);
+	await expect(help).toBeInViewport();
+	await settingsCenter.evaluate((element) => {
+		element.scrollTop = 0;
+	});
+	await expect.poll(async () => settingsCenter.evaluate((element) => element.scrollTop)).toBe(0);
+	const restoredHelpBox = await help.boundingBox();
+	expect(restoredHelpBox).not.toBeNull();
+	expect(Math.abs((restoredHelpBox?.x ?? 0) - (initialHelpBox?.x ?? 0))).toBeLessThanOrEqual(0.5);
+	expect(Math.abs((restoredHelpBox?.y ?? 0) - (initialHelpBox?.y ?? 0))).toBeLessThanOrEqual(0.5);
+
+	const enabledToggle = generalSection.locator('[role="switch"]').first();
+	await enabledToggle.click();
+	await expect(saveButton).toBeEnabled();
+	const saveStatus = saveBar.locator("span").first();
+	await saveStatus.evaluate((element) => {
+		element.textContent =
+			"The settings could not be saved because the network request failed. Try again.";
+	});
+	await settingsCenter.evaluate((element) => {
+		element.scrollTop = 700;
+	});
+	await expect(saveButton).toBeInViewport();
+	await expect
+		.poll(async () => {
+			const barBox = await saveBar.boundingBox();
+			return barBox?.height ?? 0;
+		})
+		.toBe(98);
+	await expect
+		.poll(async () =>
+			page.locator(".easymde-settings-center__frame").evaluate((frame) => {
+				const main = frame.querySelector("main");
+				if (!main) throw new Error("settings-center-mobile-main-missing");
+				return Number.parseFloat(getComputedStyle(main).paddingBottom);
+			}),
+		)
+		.toBe(98);
+	await expect
+		.poll(async () => {
+			const buttonBox = await saveButton.boundingBox();
+			if (!buttonBox)
+				throw new Error("settings-center-mobile-save-button-bounds-missing");
+			return saveButton.evaluate(
+				(button, point) => {
+					const hit = button.ownerDocument.elementFromPoint(point.x, point.y);
+					return hit === button || Boolean(hit && button.contains(hit));
+				},
+				{
+					x: buttonBox.x + buttonBox.width / 2,
+					y: buttonBox.y + buttonBox.height / 2,
+				},
+			);
+		})
+		.toBe(true);
+
+	await settingsCenter.evaluate((element) => {
+		element.scrollTop = 0;
+	});
+	await page.setViewportSize({ width: 740, height: 360 });
+	await expect
+		.poll(async () =>
+			settingsCenter.evaluate(
+				(element) => element.scrollWidth - element.clientWidth,
+			),
+		)
+		.toBeLessThanOrEqual(1);
+	await expect(help).toBeInViewport();
+	const searchInput = settingsCenter.locator(
+		".easymde-settings-center__search input",
+	);
+	for (const control of [searchInput, saveButton]) {
+		await expect(control).toBeInViewport();
+		await expect
+			.poll(async () => {
+				const controlBox = await control.boundingBox();
+				if (!controlBox)
+					throw new Error("settings-center-landscape-control-bounds-missing");
+				return control.evaluate(
+					(element, point) => {
+						const hit = element.ownerDocument.elementFromPoint(point.x, point.y);
+						return hit === element || Boolean(hit && element.contains(hit));
+					},
+					{
+						x: controlBox.x + controlBox.width / 2,
+						y: controlBox.y + controlBox.height / 2,
+					},
+				);
+			})
+			.toBe(true);
+	}
+	await page.setViewportSize({ width: 390, height: 844 });
+	await settingsCenter.evaluate((element) => {
+		element.scrollTop = 0;
+	});
+	await enabledToggle.click();
+	await expect(saveButton).toBeDisabled();
 
 	const navIds = await nav
 		.locator("button[data-nav-id]")
@@ -632,6 +765,14 @@ test("preserves the reference mobile crop and unavailable settings remain non-sa
 	await expect(nav).not.toContainText(
 		/AI|comment|评论|article\s*sync|文章同步/i,
 	);
+
+	await settingsCenter.evaluate((element) => {
+		element.scrollTop = element.scrollHeight;
+		element.dispatchEvent(new Event("scroll"));
+	});
+	const aboutNav = nav.locator('button[data-nav-id="about"]');
+	await expect(aboutNav).toHaveAttribute("aria-current", "page");
+	await expect(aboutNav).toBeInViewport();
 
 	await expect(generalSection.locator("fieldset[disabled]")).toHaveCount(2);
 	await expect(

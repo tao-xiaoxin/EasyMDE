@@ -146,6 +146,7 @@ export function SettingsCenterRoot({
 	const sidebarHelpTriggerRef = useRef<HTMLButtonElement>(null);
 	const sidebarHelpWasOpenRef = useRef(false);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
+	const navigationRef = useRef<HTMLElement>(null);
 	const stickyHeaderRef = useRef<HTMLDivElement>(null);
 	const saveBarRef = useRef<HTMLDivElement>(null);
 	const sectionRefs = useRef<Partial<Record<NavId, HTMLElement | null>>>({});
@@ -190,6 +191,23 @@ export function SettingsCenterRoot({
 				: [];
 		});
 	}, [normalizedQuery, searchItems, strings]);
+	const highlightedNavId =
+		normalizedQuery && searchSections.length === 1
+			? searchSections[0]?.tabId
+			: activeTab;
+
+	useEffect(() => {
+		const navigation = navigationRef.current;
+		if (!navigation)
+			throw new Error("settings-center-navigation-element-missing");
+		if (navigation.scrollWidth <= navigation.clientWidth) return;
+		const activeItem = navigation.querySelector<HTMLElement>(
+			`[data-nav-id="${highlightedNavId}"]`,
+		);
+		if (!activeItem)
+			throw new Error("settings-center-active-navigation-item-missing");
+		activeItem.scrollIntoView({ block: "nearest", inline: "nearest" });
+	}, [highlightedNavId]);
 	const searchResultCount = searchSections.reduce(
 		(total, section) =>
 			total +
@@ -660,22 +678,13 @@ export function SettingsCenterRoot({
 							</div>
 						</div>
 					</div>
-					<nav aria-label={strings.settingsNavigation}>
+					<nav ref={navigationRef} aria-label={strings.settingsNavigation}>
 						{NAV_ITEMS.map(({ id, icon: NavIcon, label }) => (
 							<button
 								key={id}
 								type="button"
 								data-nav-id={id}
-								aria-current={
-									normalizedQuery
-										? searchSections.length === 1 &&
-											searchSections[0]?.tabId === id
-											? "page"
-											: undefined
-										: activeTab === id
-											? "page"
-											: undefined
-								}
+								aria-current={highlightedNavId === id ? "page" : undefined}
 								onClick={() => navigateToSection(id)}
 							>
 								<NavIcon size={25} />

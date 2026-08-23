@@ -198,7 +198,17 @@ describe("SettingsCenterRoot global search", () => {
 
 	it("indexes and opens results from sections beyond General", async () => {
 		const user = userEvent.setup();
-		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const settingsRoot = container.firstElementChild;
+		if (!(settingsRoot instanceof HTMLDivElement))
+			throw new Error("settings-search-root-missing");
+		const scrollTo = vi.fn();
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: scrollTo,
+		});
 		const search = screen.getByRole<HTMLInputElement>("searchbox", {
 			name: "searchSettings",
 		});
@@ -217,6 +227,7 @@ describe("SettingsCenterRoot global search", () => {
 
 		expect(search.value).toBe("");
 		expect(screen.getByText("tableAlignment")).not.toBeNull();
+		await waitFor(() => expect(scrollTo).toHaveBeenCalledOnce());
 	});
 
 	it("reports no results only after searching the complete settings index", async () => {

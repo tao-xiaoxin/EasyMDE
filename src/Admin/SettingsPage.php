@@ -23,6 +23,7 @@ final class SettingsPage {
 	public function register_hooks() {
 		add_action( 'admin_menu', array( $this, 'register_admin_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
+		add_action( 'admin_head-toplevel_page_' . self::SETTINGS_CENTER_PAGE_SLUG, array( $this, 'render_settings_center_favicon' ) );
 		add_action( 'load-toplevel_page_' . self::SETTINGS_CENTER_PAGE_SLUG, array( $this, 'enforce_settings_center_route' ) );
 		add_filter( 'submenu_file', array( $this, 'filter_settings_center_submenu_file' ), 10, 2 );
 	}
@@ -227,6 +228,17 @@ final class SettingsPage {
 		$settings_center_close_url      = admin_url( 'options-general.php' );
 
 		require EASYMDE_PLUGIN_DIR . 'templates/admin/settings-center.php';
+	}
+
+	public function render_settings_center_favicon() {
+		?>
+		<link
+			rel="icon"
+			type="image/png"
+			href="<?php echo esc_url( Asset::url( 'assets/images/easymde-editor-icon.png' ) ); ?>"
+			data-easymde-settings-favicon="true"
+		>
+		<?php
 	}
 
 	private function is_canonical_settings_screen() {

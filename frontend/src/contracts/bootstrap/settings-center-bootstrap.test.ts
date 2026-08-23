@@ -117,7 +117,7 @@ describe("parseSettingsCenterBootstrap", () => {
 	});
 
 	it.each([
-		["an unsupported upload destination", "destination", "automatic"],
+		["a removed upload destination", "destination", "remote"],
 		["an unsupported primary provider", "service", "aliyun-oss"],
 		["an invalid R2 account ID", "accountId", "invalid account id"],
 	] as const)("rejects %s", (_label, key, value) => {
@@ -173,11 +173,12 @@ describe("parseSettingsCenterBootstrap", () => {
 	});
 
 	it("declares the PHP-owned remote image-host interaction strings", () => {
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("uploadDestination");
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("wordpressMediaLibrary");
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("remoteImageHost");
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("customUpload");
 		expect(SETTINGS_CENTER_STRING_KEYS).toEqual(
 			expect.arrayContaining([
-				"uploadDestination",
-				"wordpressMediaLibrary",
-				"remoteImageHost",
 				"r2AccountId",
 				"primaryCredentialsConfigured",
 				"backupCredentialsConfigured",

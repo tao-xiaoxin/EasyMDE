@@ -21,7 +21,6 @@ export type GeneralSettings = Readonly<{
 export type ImageUploadFormat = "jpg" | "png" | "webp" | "gif";
 
 export type ImageSettings = Readonly<{
-	destination: "wordpress" | "remote";
 	service: "cloudflare-r2";
 	accountId: string;
 	bucket: string;

@@ -130,7 +130,7 @@ final class SettingsController {
 		$shapes = array(
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
 			'general'   => array( 'interfaceLanguage', 'editingMode', 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'cleanPastedContent', 'smartListRecognition', 'defaultCategory', 'publishVisibility', 'openPreviewAfterPublish', 'summaryMode', 'featuredImagePlaceholder' ),
-			'images'    => array( 'destination', 'service', 'accountId', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'backupEnabled', 'backupService', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'backupSameObjectKey', 'backupFailureMode', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'retryCount', 'maxImageSize', 'uploadFormats', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ),
+			'images'    => array( 'service', 'accountId', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'backupEnabled', 'backupService', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'backupSameObjectKey', 'backupFailureMode', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'retryCount', 'maxImageSize', 'uploadFormats', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ),
 			'markdown'  => array( 'livePreview', 'wordWrap', 'lineNumbers', 'fixedToolbar', 'editorTheme', 'editorFontSize', 'editorFont', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeTheme', 'codeLineNumbers', 'taskLists', 'emoji', 'math', 'htmlRendering', 'tableExtension', 'footnotes', 'definitionLists', 'toc', 'imageSizeSyntax', 'pasteAsMarkdown', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle' ),
 			'shortcuts' => array( 'values', 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
@@ -156,7 +156,6 @@ final class SettingsController {
 				'summaryMode'       => 16,
 			),
 			'images'   => array(
-				'destination'       => 16,
 				'service'           => 32,
 				'accountId'         => 64,
 				'bucket'            => 128,
@@ -249,7 +248,6 @@ final class SettingsController {
 				'summaryMode'       => array( 'auto-55', 'auto-100', 'manual' ),
 			),
 			'images'   => array(
-				'destination'       => array( 'wordpress', 'remote' ),
 				'service'           => array( 'cloudflare-r2' ),
 				'backupService'     => array( 'qiniu-kodo' ),
 				'backupFailureMode' => array( 'return-primary-url' ),

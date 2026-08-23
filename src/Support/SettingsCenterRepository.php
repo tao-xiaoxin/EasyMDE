@@ -150,7 +150,6 @@ final class SettingsCenterRepository {
 
 		return array(
 			'revision'         => $this->revision_from_stored( $stored ),
-			'destination'      => $images['destination'],
 			'primary'          => array(
 				'service'   => $images['service'],
 				'accountId' => $images['accountId'],
@@ -353,7 +352,6 @@ final class SettingsCenterRepository {
 				'featuredImagePlaceholder' => true,
 			),
 			'images'    => array(
-				'destination'         => 'wordpress',
 				'service'             => 'cloudflare-r2',
 				'accountId'           => '',
 				'bucket'              => 'easymde-assets',
@@ -539,7 +537,6 @@ final class SettingsCenterRepository {
 				'summaryMode'       => 'auto-55',
 			),
 			'images'   => array(
-				'destination'       => 'wordpress',
 				'service'           => 'cloudflare-r2',
 				'backupService'     => 'qiniu-kodo',
 				'backupFailureMode' => 'return-primary-url',
@@ -598,10 +595,6 @@ final class SettingsCenterRepository {
 				),
 			),
 			'images'   => array(
-				'destination'       => array(
-					'wordpress' => 'wordpress',
-					'remote'    => 'remote',
-				),
 				'service'           => array(
 					'cloudflare-r2'     => 'cloudflare-r2',
 					'Cloudflare R2'     => 'cloudflare-r2',
@@ -609,8 +602,6 @@ final class SettingsCenterRepository {
 					'Aliyun OSS'        => 'cloudflare-r2',
 					'tencent-cos'       => 'cloudflare-r2',
 					'Tencent Cloud COS' => 'cloudflare-r2',
-					'custom'            => 'cloudflare-r2',
-					'Custom Upload'     => 'cloudflare-r2',
 				),
 				'backupService'     => array(
 					'qiniu-kodo'        => 'qiniu-kodo',
@@ -621,8 +612,6 @@ final class SettingsCenterRepository {
 					'Aliyun OSS'        => 'qiniu-kodo',
 					'tencent-cos'       => 'qiniu-kodo',
 					'Tencent Cloud COS' => 'qiniu-kodo',
-					'custom'            => 'qiniu-kodo',
-					'Custom Upload'     => 'qiniu-kodo',
 				),
 				'backupFailureMode' => array(
 					'return-primary-url'                   => 'return-primary-url',

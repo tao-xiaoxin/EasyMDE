@@ -68,9 +68,9 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( $post_id, $bootstrap['preview']['postId'] );
 		$this->assertIsObject( $bootstrap['preview']['features'] );
 		$this->assertSame( $post_id, $bootstrap['imageUpload']['postId'] );
-		$this->assertSame( 'wordpress', $bootstrap['imageUpload']['destination'] );
+		$this->assertArrayNotHasKey( 'destination', $bootstrap['imageUpload'] );
 		$this->assertTrue( $bootstrap['imageUpload']['insertAfterUpload'] );
-		$this->assertNull( $bootstrap['imageUpload']['actionNonce'] );
+		$this->assertNotEmpty( $bootstrap['imageUpload']['actionNonce'] );
 		$this->assertSame(
 			array( 'image/jpeg', 'image/png', 'image/webp', 'image/gif' ),
 			$bootstrap['imageUpload']['allowedMimeTypes']
@@ -112,7 +112,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( rest_url( 'easymde/v1/preview' ), $bootstrap['wordpress']['previewUrl'] );
 		$this->assertArrayNotHasKey( 'revisionAdminUrl', $bootstrap['wordpress'] );
 		$this->assertSame( rest_url( 'easymde/v1/posts/' ), $bootstrap['wordpress']['revisionsUrl'] );
-		$this->assertSame( rest_url( 'easymde/v1/media' ), $bootstrap['imageUpload']['endpoint'] );
+		$this->assertSame( rest_url( 'easymde/v1/image-hosting/upload' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
 	}
@@ -140,19 +140,9 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
 		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
 		wp_set_current_user( $user_id );
-		update_option(
-			Options::EDITOR_SETTINGS,
-			array(
-				'settings_center' => array(
-					'images' => array( 'destination' => 'remote' ),
-				),
-			),
-			false
-		);
-
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
 
-		$this->assertSame( 'remote', $bootstrap['imageUpload']['destination'] );
+		$this->assertArrayNotHasKey( 'destination', $bootstrap['imageUpload'] );
 		$this->assertSame(
 			rest_url( 'easymde/v1/image-hosting/upload' ),
 			$bootstrap['imageUpload']['endpoint']

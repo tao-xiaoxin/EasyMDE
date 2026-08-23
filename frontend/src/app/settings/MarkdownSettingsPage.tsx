@@ -2,9 +2,10 @@ import { createElement, useState } from "@wordpress/element";
 import type { ReactNode } from "react";
 import type { SettingsCenterBootstrap } from "../../contracts/bootstrap/settings-center-bootstrap";
 import type { MarkdownSettings } from "../../contracts/settings-center-settings";
-import { ChevronDown, Code2, Puzzle } from "../../generated/lucide-icons";
+import { Code2, Puzzle } from "../../generated/lucide-icons";
 import {
 	SettingsRow,
+	SettingsSelect,
 	SettingsToggle,
 	UnavailableSettingsNotice,
 } from "./SettingsControls";
@@ -94,22 +95,15 @@ function MarkdownSelect({
 	value: string;
 }) {
 	return (
-		<div className="easymde-settings-center__compact-select">
-			<select
-				aria-label={label}
-				aria-describedby={ariaDescribedBy}
-				disabled={disabled}
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
-			>
-				{options.map((option) => (
-					<option key={option.value} value={option.value}>
-						{option.label}
-					</option>
-				))}
-			</select>
-			<ChevronDown size={15} />
-		</div>
+		<SettingsSelect
+			{...(ariaDescribedBy ? { ariaDescribedBy } : {})}
+			className="easymde-settings-center__compact-select"
+			disabled={disabled}
+			label={label}
+			value={value}
+			onChange={onChange}
+			options={options}
+		/>
 	);
 }
 

@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { parseImageUploadBootstrap } from './image-upload-bootstrap';
 
 const validBootstrap = {
+  actionNonce: 'synthetic-action-nonce',
   allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
   enabled: true,
-  endpoint: '/wp-json/easymde/v1/media',
+  endpoint: '/wp-json/easymde/v1/image-hosting/upload',
   insertAfterUpload: true,
   insertion: {
     altSource: 'filename',
@@ -30,24 +31,17 @@ const validBootstrap = {
 };
 
 describe('parseImageUploadBootstrap', () => {
-  it('defaults the upload destination to WordPress for backward-compatible bootstraps', () => {
-    expect(parseImageUploadBootstrap(validBootstrap)).toEqual({
-      ...validBootstrap,
-      destination: 'wordpress'
-    });
-  });
-
-  it('accepts a PHP-owned remote destination without exposing provider credentials', () => {
-    const remoteBootstrap = {
-      ...validBootstrap,
-      actionNonce: 'synthetic-action-nonce',
-      destination: 'remote'
-    };
-    expect(parseImageUploadBootstrap(remoteBootstrap).destination).toBe('remote');
-    expect(parseImageUploadBootstrap(remoteBootstrap)).not.toHaveProperty('credentials');
+  it('parses only the PHP-owned remote proxy contract', () => {
+    expect(parseImageUploadBootstrap(validBootstrap)).toEqual(validBootstrap);
+    expect(parseImageUploadBootstrap(validBootstrap)).not.toHaveProperty('destination');
+    expect(parseImageUploadBootstrap(validBootstrap)).not.toHaveProperty('credentials');
   });
 
   it('rejects invalid limits and incomplete translated strings', () => {
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
+      destination: 'wordpress'
+    })).toThrow('image-upload-bootstrap-fields-invalid');
     expect(() => parseImageUploadBootstrap({ ...validBootstrap, maxBytes: 0 }))
       .toThrow('image-upload-max-bytes-invalid');
     expect(() => parseImageUploadBootstrap({
@@ -64,11 +58,7 @@ describe('parseImageUploadBootstrap', () => {
     })).toThrow('image-upload-insertion-invalid');
     expect(() => parseImageUploadBootstrap({
       ...validBootstrap,
-      destination: 'external'
-    })).toThrow('image-upload-destination-invalid');
-    expect(() => parseImageUploadBootstrap({
-      ...validBootstrap,
-      destination: 'remote'
+      actionNonce: undefined
     })).toThrow('image-upload-action-nonce-invalid');
     expect(() => parseImageUploadBootstrap({
       ...validBootstrap,

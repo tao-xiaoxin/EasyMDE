@@ -362,6 +362,15 @@ test("gettext catalog files are current and contain real zh_CN translations", ()
 	const clearSearchEntry = poEntries.find(
 		(entry) => "Clear search" === entry.msgid,
 	);
+	const qiniuKodoEntry = poEntries.find(
+		(entry) => "Qiniu Kodo" === entry.msgid,
+	);
+	const alibabaCloudOssEntry = poEntries.find(
+		(entry) => "Alibaba Cloud OSS" === entry.msgid,
+	);
+	const tencentCloudCosEntry = poEntries.find(
+		(entry) => "Tencent Cloud COS" === entry.msgid,
+	);
 
 	assert.equal(settingsCenterEntry.msgstr[0], "配置中心");
 	assert.equal(noSearchResultsEntry.msgstr[0], "未找到“%s”相关设置");
@@ -375,6 +384,9 @@ test("gettext catalog files are current and contain real zh_CN translations", ()
 	);
 	assert.equal(searchSettingsEntry.msgstr[0], "搜索全部设置");
 	assert.equal(clearSearchEntry.msgstr[0], "清空搜索");
+	assert.equal(qiniuKodoEntry.msgstr[0], "七牛云 Kodo");
+	assert.equal(alibabaCloudOssEntry.msgstr[0], "阿里云 OSS");
+	assert.equal(tencentCloudCosEntry.msgstr[0], "腾讯云 COS");
 	assert.ok(statSync(join(repoRoot, "languages/easymde-zh_CN.mo")).size > 0);
 
 	const result = spawnSync(

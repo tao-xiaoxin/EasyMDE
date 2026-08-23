@@ -154,6 +154,9 @@ export function SettingsCenterRoot({
 	const searchIndexSignatureRef = useRef("");
 	const searchNavigationFrameRef = useRef<number | null>(null);
 	const searchNavigationWindowRef = useRef<Window | null>(null);
+	const scrollSpyFrameRef = useRef<number | null>(null);
+	const scrollSpyWindowRef = useRef<Window | null>(null);
+	const normalizedQueryRef = useRef("");
 	const strings = bootstrap.strings;
 	const brandSuffixLength = 3;
 	const brandPrefix = strings.brandName.slice(0, -brandSuffixLength);
@@ -161,6 +164,7 @@ export function SettingsCenterRoot({
 	const current = NAV_ITEMS.find((item) => item.id === activeTab);
 	if (!current) throw new Error("settings-center-active-tab-invalid");
 	const normalizedQuery = query.trim().toLowerCase();
+	normalizedQueryRef.current = normalizedQuery;
 	const searchSections = useMemo<ReadonlyArray<SearchSection>>(() => {
 		if (!normalizedQuery) return [];
 
@@ -378,6 +382,10 @@ export function SettingsCenterRoot({
 			if (windowRef && searchNavigationFrameRef.current !== null) {
 				windowRef.cancelAnimationFrame(searchNavigationFrameRef.current);
 			}
+			const scrollWindowRef = scrollSpyWindowRef.current;
+			if (scrollWindowRef && scrollSpyFrameRef.current !== null) {
+				scrollWindowRef.cancelAnimationFrame(scrollSpyFrameRef.current);
+			}
 			saveControllerRef.current?.abort();
 		},
 		[],
@@ -428,8 +436,8 @@ export function SettingsCenterRoot({
 		container.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
 	};
 
-	const handleSettingsScroll = () => {
-		if (normalizedQuery) return;
+	const updateActiveTabFromScroll = () => {
+		if (normalizedQueryRef.current) return;
 		const container = scrollContainerRef.current;
 		if (!container) throw new Error("settings-center-scroll-container-missing");
 		const activationLine = navigationViewportTop(container);
@@ -444,6 +452,18 @@ export function SettingsCenterRoot({
 		setActiveTab((currentTab) =>
 			currentTab === visibleTab ? currentTab : visibleTab,
 		);
+	};
+
+	const handleSettingsScroll = () => {
+		if (normalizedQueryRef.current || scrollSpyFrameRef.current !== null)
+			return;
+		const windowRef = scrollContainerRef.current?.ownerDocument.defaultView;
+		if (!windowRef) throw new Error("settings-center-scrollspy-window-missing");
+		scrollSpyWindowRef.current = windowRef;
+		scrollSpyFrameRef.current = windowRef.requestAnimationFrame(() => {
+			scrollSpyFrameRef.current = null;
+			updateActiveTabFromScroll();
+		});
 	};
 
 	const scheduleScrollToTarget = (

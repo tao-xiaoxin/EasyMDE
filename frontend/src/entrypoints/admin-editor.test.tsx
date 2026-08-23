@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseEditorRootBootstrap } from '../contracts/bootstrap/editor-root-bootstrap';
 import { createBrowserLocalDraftStorage } from '../integrations/browser/local-drafts/browser-local-draft-storage';
 import { createBrowserWechatClipboard } from '../integrations/browser/wechat/create-browser-wechat-clipboard';
+import { createWordPressImageUploadPort } from '../integrations/wordpress/media/wordpress-image-upload';
 import { mountAdminEditor } from './admin-editor';
 
 vi.hoisted(() => {
@@ -76,7 +77,12 @@ const bootstrap = {
   appearance: {},
   document: {},
   fonts: {},
-  imageUpload: { destination: 'wordpress', endpoint: '/media', nonce: 'nonce', postId: 7 },
+  imageUpload: {
+    actionNonce: 'image-hosting-nonce',
+    endpoint: '/image-hosting/upload',
+    nonce: 'nonce',
+    postId: 7
+  },
   immersiveStrings: {
     autoSave: 'Auto save',
     autoSaveDescription: 'Automatically save a local draft',
@@ -265,6 +271,16 @@ describe('mountAdminEditor', () => {
         config: { ...bootstrap.localDrafts, postId: 11 }
       })
     );
+    expect(createWordPressImageUploadPort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionNonce: 'image-hosting-nonce',
+        endpoint: '/image-hosting/upload',
+        nonce: 'nonce'
+      })
+    );
+    expect(
+      vi.mocked(createWordPressImageUploadPort).mock.calls[0]?.[0]
+    ).not.toHaveProperty('destination');
     expect(render).toHaveBeenCalledTimes(1);
     const rendered = render.mock.calls[0]?.[0] as {
       props: {

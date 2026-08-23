@@ -21,7 +21,6 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
     featuredImagePlaceholder: true,
   },
   images: {
-    destination: 'wordpress',
     service: 'cloudflare-r2',
     accountId: '',
     bucket: 'easymde-assets',

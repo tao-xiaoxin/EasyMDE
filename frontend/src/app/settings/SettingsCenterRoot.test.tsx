@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "@wordpress/element";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,8 +28,7 @@ function bootstrap(): SettingsCenterBootstrap {
 			settingsUrl: "/wp-json/easymde/v1/settings",
 			actionNonce: "test-action-nonce",
 			imageHostingActionNonce: "test-image-hosting-action-nonce",
-			imageHostingConnectionUrl:
-				"/wp-json/easymde/v1/image-hosting/connection",
+			imageHostingConnectionUrl: "/wp-json/easymde/v1/image-hosting/connection",
 			nonce: "test-nonce",
 		},
 		assets: {
@@ -201,6 +206,56 @@ describe("SettingsCenterRoot global search", () => {
 		windowScrollTo.mockRestore();
 	});
 
+	it("coalesces repeated scrollspy layout reads into one animation frame", () => {
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const settingsRoot = container.firstElementChild;
+		const stickyHeader = container.querySelector(
+			".easymde-settings-center__sticky-header",
+		);
+		const general = container.querySelector("#settings-section-general");
+		if (
+			!(settingsRoot instanceof HTMLDivElement) ||
+			!(stickyHeader instanceof HTMLDivElement) ||
+			!(general instanceof HTMLElement)
+		)
+			throw new Error("settings-center-scroll-coalescing-target-missing");
+
+		Object.defineProperty(settingsRoot, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({ bottom: 900, top: 0 }),
+		});
+		Object.defineProperty(stickyHeader, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({ bottom: 237, top: 0 }),
+		});
+		const generalRect = vi.fn(() => ({ bottom: 900, top: 240 }));
+		Object.defineProperty(general, "getBoundingClientRect", {
+			configurable: true,
+			value: generalRect,
+		});
+		let scheduledFrame: FrameRequestCallback | null = null;
+		const requestFrame = vi
+			.spyOn(window, "requestAnimationFrame")
+			.mockImplementation((callback) => {
+				scheduledFrame = callback;
+				return 91;
+			});
+
+		fireEvent.scroll(settingsRoot);
+		fireEvent.scroll(settingsRoot);
+		fireEvent.scroll(settingsRoot);
+
+		expect(requestFrame).toHaveBeenCalledTimes(1);
+		expect(generalRect).not.toHaveBeenCalled();
+		if (!scheduledFrame)
+			throw new Error("settings-center-scroll-coalescing-frame-missing");
+		(scheduledFrame as FrameRequestCallback)(16);
+		expect(generalRect).toHaveBeenCalledOnce();
+		requestFrame.mockRestore();
+	});
+
 	it("indexes and opens results from sections beyond General", async () => {
 		const user = userEvent.setup();
 		const { container } = render(
@@ -274,7 +329,9 @@ describe("SettingsCenterRoot global search", () => {
 			"backupBucket",
 		);
 		expect(
-			screen.getByRole("textbox", { name: "backupBucket" }).matches(":disabled"),
+			screen
+				.getByRole("textbox", { name: "backupBucket" })
+				.matches(":disabled"),
 		).toBe(false);
 		await user.click(
 			await screen.findByRole("button", { name: "backupBucket" }),
@@ -560,7 +617,9 @@ describe("SettingsCenterRoot images section", () => {
 			screen.getByRole("textbox", { name: "backupBucket" }),
 		).not.toBeNull();
 		expect(
-			screen.getByRole("textbox", { name: "backupBucket" }).matches(":disabled"),
+			screen
+				.getByRole("textbox", { name: "backupBucket" })
+				.matches(":disabled"),
 		).toBe(false);
 		expect(backup.matches(":disabled")).toBe(false);
 		await user.click(backup);
@@ -586,10 +645,9 @@ describe("SettingsCenterRoot images section", () => {
 				.getByRole("button", { name: "testBackupConnection" })
 				.matches(":disabled"),
 		).toBe(false);
-		expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual([
-			"connectionPending",
-			"connectionPending",
-		]);
+		expect(
+			images.getAllByRole("status").map((status) => status.textContent),
+		).toEqual(["connectionPending", "connectionPending"]);
 	});
 
 	it("enables the server-owned filename behavior and upload formats", () => {
@@ -608,18 +666,20 @@ describe("SettingsCenterRoot images section", () => {
 		).toBe(false);
 	});
 
-	it("enables owner-backed insertion metadata while keeping raw HTML unavailable", () => {
+	it("enables owner-backed insertion metadata while keeping raw HTML unavailable", async () => {
+		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-		const format = screen.getByRole<HTMLSelectElement>("combobox", {
+		const format = screen.getByRole<HTMLButtonElement>("combobox", {
 			name: "defaultInsertFormat",
 		});
 
 		expect(format.disabled).toBe(false);
+		await user.click(format);
 		expect(
-			within(format).getByRole<HTMLOptionElement>("option", {
-				name: "htmlImage",
-			}).disabled,
-		).toBe(true);
+			screen
+				.getByRole("option", { name: "htmlImage" })
+				.getAttribute("aria-disabled"),
+		).toBe("true");
 		expect(
 			screen.getByRole<HTMLSelectElement>("combobox", {
 				name: "altTextSource",
@@ -638,15 +698,15 @@ describe("SettingsCenterRoot images section", () => {
 	});
 	it("retains stable IDs while enabling the supported image provider", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-		const service = screen.getByRole<HTMLSelectElement>("combobox", {
+		const service = screen.getByRole<HTMLButtonElement>("combobox", {
 			name: "selectImageHostService",
 		});
-		const theme = screen.getByRole<HTMLSelectElement>("combobox", {
+		const theme = screen.getByRole<HTMLButtonElement>("combobox", {
 			name: "editorTheme",
 		});
 
-		expect(service.value).toBe("cloudflare-r2");
-		expect(theme.value).toBe("system");
+		expect(service.textContent).toContain("cloudflareR2");
+		expect(theme.textContent).toContain("automaticFollowSystem");
 		expect(service.matches(":disabled")).toBe(false);
 		expect(theme.matches(":disabled")).toBe(true);
 	});
@@ -1182,11 +1242,12 @@ describe("SettingsCenterRoot persistence", () => {
 			});
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-		const select = screen.getByRole<HTMLSelectElement>("combobox", {
+		const select = screen.getByRole<HTMLButtonElement>("combobox", {
 			name: "statusBarDisplay",
 		});
-		await user.selectOptions(select, "hidden");
-		expect(select.value).toBe("hidden");
+		await user.click(select);
+		await user.click(screen.getByRole("option", { name: "hiddenStatusBar" }));
+		expect(select.textContent).toContain("hiddenStatusBar");
 		await user.click(
 			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" }),
 		);

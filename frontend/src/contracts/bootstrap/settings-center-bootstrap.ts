@@ -117,15 +117,11 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"settingsUnsavedChanges",
 	"settingsUnavailable",
 	"settingsUnavailableDescription",
-	"uploadDestination",
-	"wordpressMediaLibrary",
-	"remoteImageHost",
 	"imageHostService",
 	"selectImageHostService",
 	"cloudflareR2",
 	"aliyunOss",
 	"tencentCloudCos",
-	"customUpload",
 	"r2AccountId",
 	"bucket",
 	"customDomain",
@@ -482,7 +478,9 @@ function assertExactKeys(
 	const actual = Object.keys(value);
 	if (
 		actual.length !== expected.length ||
-		expected.some((key) => !Object.hasOwn(value, key))
+		expected.some(
+			(key) => !Object.prototype.hasOwnProperty.call(value, key),
+		)
 	) {
 		throw new Error(code);
 	}
@@ -681,7 +679,6 @@ export function parseSettingsCenterSettings(
 	});
 
 	const imageStrings = {
-		destination: 16,
 		service: 32,
 		accountId: 64,
 		bucket: 128,
@@ -720,7 +717,6 @@ export function parseSettingsCenterSettings(
 	assertImageAccountId(images.accountId);
 	assertImageFileNameRule(images.fileNameRule);
 	assertEnumFields(images, "images", {
-		destination: ["wordpress", "remote"],
 		service: ["cloudflare-r2"],
 		backupService: ["qiniu-kodo"],
 		backupFailureMode: ["return-primary-url"],

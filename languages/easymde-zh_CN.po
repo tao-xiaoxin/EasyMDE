@@ -1340,8 +1340,8 @@ msgid "Configure shortcuts for common actions on Windows, Linux, and macOS."
 msgstr "配置常用操作的快捷键，支持 Windows / Linux 与 macOS。"
 
 #: src/Admin/SettingsCenterStrings.php:41
-msgid "Configure image upload and storage services, including common hosts and custom upload solutions."
-msgstr "配置图片上传与存储服务，支持常见图床与自定义上传方案。"
+msgid "Configure image upload and storage services with supported image hosts."
+msgstr "配置图片上传与存储服务，支持已接入的图床服务。"
 
 #: src/Admin/SettingsCenterStrings.php:42
 msgid "Customize Markdown editor behavior and rendering for a more comfortable writing experience."
@@ -1720,15 +1720,11 @@ msgstr "Cloudflare R2"
 
 #: src/Admin/SettingsCenterStrings.php:136
 msgid "Alibaba Cloud OSS"
-msgstr "Alibaba Cloud OSS"
+msgstr "阿里云 OSS"
 
 #: src/Admin/SettingsCenterStrings.php:137
 msgid "Tencent Cloud COS"
-msgstr "Tencent Cloud COS"
-
-#: src/Admin/SettingsCenterStrings.php:138
-msgid "Custom Upload"
-msgstr "自定义上传"
+msgstr "腾讯云 COS"
 
 #: src/Admin/SettingsCenterStrings.php:139
 msgid "Storage Space / Bucket"
@@ -1877,7 +1873,7 @@ msgstr "备份图床服务"
 
 #: src/Admin/SettingsCenterStrings.php:175
 msgid "Qiniu Kodo"
-msgstr "Qiniu Kodo"
+msgstr "七牛云 Kodo"
 
 #: src/Admin/SettingsCenterStrings.php:176
 msgid "Backup Storage Space / Bucket"
@@ -3492,18 +3488,6 @@ msgstr[0] "%s 个修订版本"
 msgid "%s word"
 msgid_plural "%s words"
 msgstr[0] "%s 个词"
-
-#: src/Admin/SettingsCenterStrings.php:129
-msgid "Upload Destination"
-msgstr "上传目标"
-
-#: src/Admin/SettingsCenterStrings.php:130
-msgid "WordPress Media Library"
-msgstr "WordPress 媒体库"
-
-#: src/Admin/SettingsCenterStrings.php:131
-msgid "Remote Image Host"
-msgstr "远程图床"
 
 #: src/Admin/SettingsCenterStrings.php:138
 msgid "Cloudflare Account ID"

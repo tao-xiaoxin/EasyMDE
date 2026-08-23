@@ -2,10 +2,10 @@ import { createElement, useState } from "@wordpress/element";
 import type { ReactNode } from "react";
 import type { SettingsCenterBootstrap } from "../../contracts/bootstrap/settings-center-bootstrap";
 import type { GeneralSettings } from "../../contracts/settings-center-settings";
-import { ChevronDown } from "../../generated/lucide-icons";
 import {
 	matchesSettingsQuery,
 	SettingsRow,
+	SettingsSelect,
 	SettingsToggle,
 } from "./SettingsControls";
 import {
@@ -50,20 +50,15 @@ function NativeSelect({
 	value: string;
 }) {
 	return (
-		<span className="easymde-settings-center__select-wrap">
-			<select
-				aria-label={label}
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
-			>
-				{options.map(([optionValue, optionLabel]) => (
-					<option key={optionValue} value={optionValue}>
-						{optionLabel}
-					</option>
-				))}
-			</select>
-			<ChevronDown size={15} strokeWidth={2.2} />
-		</span>
+		<SettingsSelect
+			label={label}
+			value={value}
+			onChange={onChange}
+			options={options.map(([optionValue, optionLabel]) => ({
+				value: optionValue,
+				label: optionLabel,
+			}))}
+		/>
 	);
 }
 

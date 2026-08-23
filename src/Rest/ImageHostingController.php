@@ -148,14 +148,6 @@ final class ImageHostingController {
 		if ( is_wp_error( $settings ) ) {
 			return $settings;
 		}
-		if ( ! isset( $settings['destination'] ) || 'remote' !== $settings['destination'] ) {
-			return new WP_Error(
-				'easymde_image_hosting_not_enabled',
-				__( 'Remote image hosting is not enabled in the current EasyMDE settings.', 'easymde' ),
-				array( 'status' => 409 )
-			);
-		}
-
 		$file = $this->validate_file( $file, $settings );
 		if ( is_wp_error( $file ) ) {
 			return $file;

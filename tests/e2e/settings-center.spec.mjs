@@ -155,6 +155,135 @@ test("opens the settings center through the explicit General route", async ({
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 });
 
+test("anchors every Settings selector to a translucent white shared popup", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1152, height: 753 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	const root = page.locator(".easymde-settings-center");
+	await expect(root).toBeVisible();
+	await expect(root.locator("select")).toHaveCount(0);
+
+	const trigger = page.getByRole("combobox", {
+		name: /默认编辑模式|Default Editing Mode/u,
+	});
+	await trigger.click();
+	const listbox = page.getByRole("listbox", {
+		name: /默认编辑模式|Default Editing Mode/u,
+	});
+	await expect(listbox).toBeVisible();
+	const initialGeometry = await Promise.all([
+		trigger.boundingBox(),
+		listbox.boundingBox(),
+		listbox.evaluate((element) => ({
+			animationDuration: getComputedStyle(element).animationDuration,
+			animationName: getComputedStyle(element).animationName,
+			background: getComputedStyle(element).backgroundColor,
+			backdropFilter: getComputedStyle(element).backdropFilter,
+			borderRadius: getComputedStyle(element).borderRadius,
+			colorScheme: getComputedStyle(element).colorScheme,
+			padding: getComputedStyle(element).padding,
+			position: getComputedStyle(element).position,
+		})),
+	]);
+	const [initialTriggerBox, initialListboxBox, initialStyle] = initialGeometry;
+	if (!initialTriggerBox || !initialListboxBox)
+		throw new Error("settings-select-initial-geometry-missing");
+	expect(Math.abs(initialListboxBox.x - initialTriggerBox.x)).toBeLessThan(0.5);
+	expect(Math.abs(initialListboxBox.width - initialTriggerBox.width)).toBeLessThan(
+		0.5,
+	);
+	expect(initialListboxBox.height).toBe(82);
+	const selectedOptionBox = await listbox
+		.getByRole("option", { selected: true })
+		.boundingBox();
+	if (!selectedOptionBox)
+		throw new Error("settings-select-selected-option-geometry-missing");
+	expect(
+		Math.abs(
+			selectedOptionBox.y + selectedOptionBox.height / 2 -
+				(initialTriggerBox.y + initialTriggerBox.height / 2),
+		),
+	).toBeLessThan(0.5);
+	expect(initialStyle).toEqual({
+		animationDuration: "0.11s",
+		animationName: "easymde-settings-select-enter",
+		background: "rgba(255, 255, 255, 0.92)",
+		backdropFilter: "blur(20px) saturate(1.12)",
+		borderRadius: "12px",
+		colorScheme: "light",
+		padding: "4px",
+		position: "fixed",
+	});
+	const firstOptionStyle = await listbox
+		.getByRole("option")
+		.first()
+		.evaluate((element) => ({
+			fontSize: getComputedStyle(element).fontSize,
+			fontWeight: getComputedStyle(element).fontWeight,
+			height: element.getBoundingClientRect().height,
+			padding: getComputedStyle(element).padding,
+		}));
+	expect(firstOptionStyle).toEqual({
+		fontSize: "14px",
+		fontWeight: "400",
+		height: 24,
+		padding: "2px 10px 2px 4px",
+	});
+
+	await root.evaluate((element) => {
+		element.scrollTop += 40;
+	});
+	await page.evaluate(
+		() => new Promise((resolve) => requestAnimationFrame(() => resolve())),
+	);
+	const [scrolledTriggerBox, scrolledListboxBox] = await Promise.all([
+		trigger.boundingBox(),
+		listbox.boundingBox(),
+	]);
+	if (!scrolledTriggerBox || !scrolledListboxBox)
+		throw new Error("settings-select-scrolled-geometry-missing");
+	expect(Math.abs(scrolledListboxBox.x - scrolledTriggerBox.x)).toBeLessThan(0.5);
+	expect(Math.abs(scrolledListboxBox.width - scrolledTriggerBox.width)).toBeLessThan(
+		0.5,
+	);
+	const scrolledSelectedOptionBox = await listbox
+		.getByRole("option", { selected: true })
+		.boundingBox();
+	if (!scrolledSelectedOptionBox)
+		throw new Error("settings-select-scrolled-selected-option-geometry-missing");
+	expect(
+		Math.abs(
+			scrolledSelectedOptionBox.y + scrolledSelectedOptionBox.height / 2 -
+				(scrolledTriggerBox.y + scrolledTriggerBox.height / 2),
+		),
+	).toBeLessThan(0.5);
+
+	await page.keyboard.press("ArrowDown");
+	await page.keyboard.press("Enter");
+	await expect(trigger).toContainText(/源码编辑|Source Editing/u);
+	await trigger.click();
+	const changedSelectedOption = listbox.getByRole("option", { selected: true });
+	const [changedTriggerBox, changedSelectedOptionBox] = await Promise.all([
+		trigger.boundingBox(),
+		changedSelectedOption.boundingBox(),
+	]);
+	if (!changedTriggerBox || !changedSelectedOptionBox)
+		throw new Error("settings-select-changed-selection-geometry-missing");
+	expect(
+		Math.abs(
+			changedSelectedOptionBox.y + changedSelectedOptionBox.height / 2 -
+				(changedTriggerBox.y + changedTriggerBox.height / 2),
+		),
+	).toBeLessThan(0.5);
+	await expect(changedSelectedOption.locator("svg")).toHaveCount(1);
+	await page
+		.getByRole("option", { name: /实时预览（所见即所得）|Live Preview/u })
+		.click();
+	await expect(trigger).toContainText(/实时预览|Live Preview/u);
+});
+
 test("covers the WordPress Admin shell before the Settings Center bundle mounts", async ({
 	page,
 }) => {
@@ -535,7 +664,7 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		name: /上传失败时重试|Retry Failed Upload/u,
 	});
 	await expect(retryCount).toBeDisabled();
-	await expect(retryCount).toHaveValue("none");
+	await expect(retryCount).toContainText(/不重试|No retries/u);
 	const primary = images.locator(".is-host-service");
 	const connection = primary.locator(
 		".easymde-settings-center__connection-row",
@@ -893,7 +1022,7 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 	await expect(help).toBeInViewport();
 	await headerDescription.evaluate((element) => {
 		element.textContent =
-			"Configure image upload and storage services with common hosts and custom upload destinations.";
+			"Configure image upload and storage services with supported image hosts.";
 	});
 	await expect
 		.poll(async () => {
@@ -1051,7 +1180,7 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 	).toHaveCount(0);
 	await expect(generalSection.locator('[role="switch"]').first()).toBeEnabled();
 	await expect(
-		generalSection.locator("fieldset[disabled] select").first(),
+		generalSection.locator('fieldset[disabled] [role="combobox"]').first(),
 	).toBeDisabled();
 	await expect(saveButton).toBeDisabled();
 });
@@ -1070,6 +1199,9 @@ test("keeps reference Help geometry stable while compact content stays inside it
 	const uploadFormats = settingsCenter.locator(
 		".easymde-settings-center__upload-formats",
 	);
+	const primaryConnection = settingsCenter.locator(
+		'[data-settings-section="images"] .easymde-settings-center__connection-row',
+	).first();
 
 	await expect(settingsCenter).toBeVisible();
 
@@ -1106,10 +1238,35 @@ test("keeps reference Help geometry stable while compact content stays inside it
 		expect(overflow).toBeLessThanOrEqual(0.75);
 	};
 
+	const expectPrimaryConnectionContained = async () => {
+		const overflow = await primaryConnection.evaluate((element) => {
+			const section = element.closest(
+				".easymde-settings-center__settings-section",
+			);
+			if (!section)
+				throw new Error("settings-center-connection-section-missing");
+			const elementBounds = element.getBoundingClientRect();
+			const sectionBounds = section.getBoundingClientRect();
+			return elementBounds.right - sectionBounds.right;
+		});
+		expect(overflow).toBeLessThanOrEqual(0.75);
+	};
+
+	const expectEverySectionContained = async () => {
+		const overflows = await settingsCenter
+			.locator("[data-settings-section]")
+			.evaluateAll((sections) =>
+				sections.map((section) => section.scrollWidth - section.clientWidth),
+			);
+		expect(Math.max(...overflows)).toBeLessThanOrEqual(1);
+	};
+
 	for (const width of [1200, 1100, 1099, 900, 841]) {
 		await page.setViewportSize({ width, height: 753 });
 		await expectReferenceSidebar();
 		await expectUploadFormatsContained();
+		await expectPrimaryConnectionContained();
+		await expectEverySectionContained();
 		await expect
 			.poll(async () =>
 				settingsCenter.evaluate(

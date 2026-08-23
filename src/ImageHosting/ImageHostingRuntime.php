@@ -321,8 +321,7 @@ final class ImageHostingRuntime {
 
 	private function is_valid_upload_configuration( array $settings ) {
 		if (
-			! isset( $settings['destination'], $settings['primary'], $settings['backup'], $settings['fileNameRule'], $settings['behaviors'] ) ||
-			'remote' !== $settings['destination'] ||
+			! isset( $settings['primary'], $settings['backup'], $settings['fileNameRule'], $settings['behaviors'] ) ||
 			! is_array( $settings['primary'] ) ||
 			! is_array( $settings['backup'] ) ||
 			! is_array( $settings['behaviors'] )

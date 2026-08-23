@@ -3,8 +3,8 @@
   "entries": {
     "frontend/src/entrypoints/settings-center.tsx": {
       "handle": "easymde-admin-settings-center",
-      "file": "assets/settings-center-CoarTuEm.js",
-      "asset": "assets/settings-center-CoarTuEm.asset.php",
+      "file": "assets/settings-center-C4GUsA8-.js",
+      "asset": "assets/settings-center-C4GUsA8-.asset.php",
       "dependencies": [
         "wp-element"
       ],

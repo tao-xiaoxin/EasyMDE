@@ -20,11 +20,8 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		remove_action( 'rest_api_init', array( $this->plugin, 'register_rest_routes' ) );
 
 		$this->settings_provider = new class() {
-			public $destination = 'remote';
-
 			public function get_image_hosting_settings() {
 				return array(
-					'destination' => $this->destination,
 					'primary'     => array(
 						'service'   => 'cloudflare-r2',
 						'accountId' => 'synthetic-account',
@@ -186,20 +183,6 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			$this->assertSame( 'easymde_rest_cannot_upload_media', $forbidden->as_error()->get_error_code() );
 			$this->assertSame( 403, $invalid->get_status() );
 			$this->assertSame( 'easymde_rest_invalid_image_hosting_nonce', $invalid->as_error()->get_error_code() );
-			$this->assertCount( 0, $this->runtime->upload_calls );
-		} finally {
-			unlink( $file['tmp_name'] );
-		}
-	}
-
-	public function test_upload_is_unavailable_when_the_saved_destination_is_wordpress() {
-		$this->settings_provider->destination = 'wordpress';
-		$file     = $this->png_file();
-		$response = rest_do_request( $this->upload_request( $file ) );
-
-		try {
-			$this->assertSame( 409, $response->get_status() );
-			$this->assertSame( 'easymde_image_hosting_not_enabled', $response->as_error()->get_error_code() );
 			$this->assertCount( 0, $this->runtime->upload_calls );
 		} finally {
 			unlink( $file['tmp_name'] );

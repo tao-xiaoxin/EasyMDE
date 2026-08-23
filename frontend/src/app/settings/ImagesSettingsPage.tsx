@@ -17,15 +17,12 @@ import type {
 	ImageSettings,
 	ImageUploadFormat,
 } from "../../contracts/settings-center-settings";
+import { Copy, Eye, Info, RefreshCcw, X } from "../../generated/lucide-icons";
 import {
-	ChevronDown,
-	Copy,
-	Eye,
-	Info,
-	RefreshCcw,
-	X,
-} from "../../generated/lucide-icons";
-import { SettingsRow, SettingsToggle } from "./SettingsControls";
+	SettingsRow,
+	SettingsSelect,
+	SettingsToggle,
+} from "./SettingsControls";
 import {
 	DocumentIcon,
 	ImageLibraryIcon,
@@ -112,7 +109,6 @@ const LEGACY_IMAGE_VALUE_ALIASES: Readonly<Record<string, string>> = {
 	"Cloudflare R2": "cloudflare-r2",
 	"Aliyun OSS": "aliyun-oss",
 	"Tencent Cloud COS": "tencent-cos",
-	"Custom Upload": "custom",
 	"Qiniu Kodo": "qiniu-kodo",
 	"Return primary URL on backup failure": "return-primary-url",
 	"Fail entire upload": "fail-upload",
@@ -158,24 +154,13 @@ function CompactSelect({
 	value: string;
 }) {
 	return (
-		<div className="easymde-settings-center__compact-select">
-			<select
-				aria-label={label}
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
-			>
-				{options.map((option) => (
-					<option
-						key={option.value}
-						value={option.value}
-						disabled={option.disabled}
-					>
-						{option.label}
-					</option>
-				))}
-			</select>
-			<ChevronDown size={15} />
-		</div>
+		<SettingsSelect
+			className="easymde-settings-center__compact-select"
+			label={label}
+			value={value}
+			onChange={onChange}
+			options={options}
+		/>
 	);
 }
 
@@ -403,7 +388,6 @@ function connectionFingerprint(
 	const values =
 		target === "primary"
 			? [
-					settings.destination,
 					settings.service,
 					settings.accountId,
 					settings.bucket,
@@ -520,11 +504,6 @@ export function ImagesSettingsPage({
 			label: strings.tencentCloudCos,
 			disabled: true,
 		},
-		{ value: "custom", label: strings.customUpload, disabled: true },
-	];
-	const destinationOptions: ReadonlyArray<SelectOption> = [
-		{ value: "wordpress", label: strings.wordpressMediaLibrary },
-		{ value: "remote", label: strings.remoteImageHost },
 	];
 	const backupHostOptions: ReadonlyArray<SelectOption> = [
 		{ value: "qiniu-kodo", label: strings.qiniuKodo },
@@ -565,7 +544,6 @@ export function ImagesSettingsPage({
 	];
 	const [localSettings, setLocalSettings] = useState<ImageSettingsDraft>(
 		() => ({
-			destination: "wordpress",
 			service: "cloudflare-r2",
 			accountId: "",
 			bucket: "easymde-assets",
@@ -762,18 +740,6 @@ export function ImagesSettingsPage({
 					</h2>
 					<div>
 						<div>
-							<ImageField label={strings.uploadDestination}>
-								<CompactSelect
-									label={strings.uploadDestination}
-									value={settings.destination}
-									options={destinationOptions}
-									onChange={(value) => {
-										if (value === "wordpress" || value === "remote") {
-											setValue("destination", value);
-										}
-									}}
-								/>
-							</ImageField>
 							<ImageField label={strings.selectImageHostService}>
 								<CompactSelect
 									label={strings.selectImageHostService}

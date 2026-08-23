@@ -1,4 +1,3 @@
-import type { ImageUploadDestination } from '../../../contracts/bootstrap/image-upload-bootstrap';
 import type {
   ImageUploadPort,
   ImageUploadResult
@@ -16,9 +15,8 @@ type ApiFetch = (
 ) => Promise<unknown>;
 
 type CreateWordPressImageUploadPortOptions = Readonly<{
-  actionNonce?: string;
+  actionNonce: string;
   apiFetch: unknown;
-  destination: ImageUploadDestination;
   endpoint: string;
   formData: unknown;
   nonce: string;
@@ -38,17 +36,12 @@ function uploadFileName(file: File): string {
   };
   return `${file.name || 'pasted-image'}.${extensions[file.type.toLowerCase()] ?? 'png'}`;
 }
-function uploadedResult(
-  value: unknown,
-  destination: ImageUploadDestination
-): ImageUploadResult {
+function uploadedResult(value: unknown): ImageUploadResult {
   if (!value || 'object' !== typeof value || Array.isArray(value)) {
     throw new Error('image-upload-response-invalid');
   }
   const response = value as Record<string, unknown>;
   if (
-    ('wordpress' === destination &&
-      (!Number.isInteger(response.id) || (response.id as number) <= 0)) ||
     'string' !== typeof response.url ||
     '' === response.url.trim() ||
     response.url.length > 2048 ||
@@ -69,23 +62,19 @@ function uploadedResult(
     throw new Error('image-upload-response-invalid');
   }
   let warning: 'backup-upload-failed' | undefined;
-  if ('remote' === destination) {
-    const backup = response.backup;
-    if (!backup || 'object' !== typeof backup || Array.isArray(backup)) {
+  const backup = response.backup;
+  if (!backup || 'object' !== typeof backup || Array.isArray(backup)) {
+    throw new Error('image-upload-response-invalid');
+  }
+  const backupResult = backup as Record<string, unknown>;
+  if (!['disabled', 'uploaded', 'failed'].includes(String(backupResult.status))) {
+    throw new Error('image-upload-response-invalid');
+  }
+  if ('failed' === backupResult.status) {
+    if ('easymde_image_hosting_backup_upload_failed' !== backupResult.code) {
       throw new Error('image-upload-response-invalid');
     }
-    const backupResult = backup as Record<string, unknown>;
-    if (
-      !['disabled', 'uploaded', 'failed'].includes(String(backupResult.status))
-    ) {
-      throw new Error('image-upload-response-invalid');
-    }
-    if ('failed' === backupResult.status) {
-      if ('easymde_image_hosting_backup_upload_failed' !== backupResult.code) {
-        throw new Error('image-upload-response-invalid');
-      }
-      warning = 'backup-upload-failed';
-    }
+    warning = 'backup-upload-failed';
   }
   return {
     alt: response.alt,
@@ -107,7 +96,6 @@ function isAbortError(error: unknown): boolean {
 export function createWordPressImageUploadPort({
   actionNonce,
   apiFetch,
-  destination,
   endpoint,
   formData,
   nonce,
@@ -123,7 +111,7 @@ export function createWordPressImageUploadPort({
     siteUrl,
     'image-upload-url-invalid'
   ).toString();
-  if ('remote' === destination && (!actionNonce || '' === actionNonce.trim())) {
+  if (!actionNonce || '' === actionNonce.trim()) {
     throw new Error('image-upload-action-nonce-invalid');
   }
 
@@ -144,17 +132,12 @@ export function createWordPressImageUploadPort({
             body,
             headers: {
               'X-WP-Nonce': nonce,
-              ...('remote' === destination
-                ? {
-                    'X-EasyMDE-Image-Hosting-Nonce': actionNonce as string
-                  }
-                : {})
+              'X-EasyMDE-Image-Hosting-Nonce': actionNonce
             },
             method: 'POST',
             signal,
             url: uploadUrl
-          }),
-          destination
+          })
         );
       } catch (error) {
         if (

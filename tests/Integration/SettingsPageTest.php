@@ -132,7 +132,7 @@ final class SettingsPageTest extends WP_UnitTestCase
             'transferPageTitle', 'aboutDescription', 'sectionPending', 'sectionPendingDescription',
             'saveSettings', 'savingSettings', 'settingsSaved', 'settingsSaveFailed',
             'settingsUnsavedChanges', 'settingsUnavailable', 'currentAllowedUploads', 'insertFileNameVariable',
-            'uploadDestination', 'wordpressMediaLibrary', 'remoteImageHost', 'r2AccountId',
+            'r2AccountId',
             'primaryCredentialsConfigured', 'backupCredentialsConfigured', 'credentialsConfiguredHint',
             'replaceCredentialsHint', 'connectionStatus', 'backupConnectionStatus', 'connectionPending', 'testingConnection', 'connected',
             'connectionFailed', 'connectionStale', 'lastTested', 'testPrimaryConnection',
@@ -148,6 +148,10 @@ final class SettingsPageTest extends WP_UnitTestCase
             $this->assertIsString( $bootstrap['strings'][ $key ] );
             $this->assertNotSame( '', $bootstrap['strings'][ $key ] );
         }
+        $this->assertArrayNotHasKey('uploadDestination', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('wordpressMediaLibrary', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('remoteImageHost', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('customUpload', $bootstrap['strings']);
     }
 
     public function test_settings_center_assets_load_only_on_the_canonical_screen()
@@ -170,6 +174,34 @@ final class SettingsPageTest extends WP_UnitTestCase
         );
         $this->assertNotEmpty(
             wp_scripts()->get_data('easymde-admin-settings-center', 'after')
+        );
+    }
+
+    public function test_settings_center_uses_the_immersive_editor_logo_as_its_favicon()
+    {
+        $settings_page = $this->settings_page();
+        $settings_page->register_hooks();
+
+        $this->assertSame(
+            10,
+            has_action(
+                'admin_head-toplevel_page_easymde',
+                array($settings_page, 'render_settings_center_favicon')
+            )
+        );
+
+        ob_start();
+        $settings_page->render_settings_center_favicon();
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('data-easymde-settings-favicon="true"', $output);
+        $this->assertStringContainsString('rel="icon"', $output);
+        $this->assertStringContainsString('type="image/png"', $output);
+        $this->assertStringContainsString('/assets/images/easymde-editor-icon.png', $output);
+
+        remove_action(
+            'admin_head-toplevel_page_easymde',
+            array($settings_page, 'render_settings_center_favicon')
         );
     }
 

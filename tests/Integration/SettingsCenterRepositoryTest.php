@@ -62,7 +62,6 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 			array(
 				'settings_center' => array(
 					'images' => array(
-						'destination' => 'remote',
 						'accountId' => str_repeat('a', 32),
 						'domain' => 'https://img.example.test',
 						'accessKey' => 'synthetic-access-key',
@@ -79,23 +78,23 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 
 		$this->assertSame('', $public['images']['accessKey']);
 		$this->assertSame('', $public['images']['secretKey']);
-		$this->assertSame('remote', $runtime['destination']);
+		$this->assertArrayNotHasKey('destination', $public['images']);
+		$this->assertArrayNotHasKey('destination', $runtime);
 		$this->assertTrue($runtime['credentialStatus']['primaryConfigured']);
 		$this->assertFalse($runtime['credentialStatus']['backupConfigured']);
 		$this->assertSame('synthetic-access-key', $runtime['primary']['accessKey']);
 		$this->assertSame('synthetic-secret-key', $runtime['primary']['secretKey']);
 	}
 
-	public function test_new_image_destination_defaults_to_wordpress_for_legacy_settings()
+	public function test_image_settings_do_not_expose_or_persist_an_upload_destination()
 	{
-		update_option(
-			Options::EDITOR_SETTINGS,
-			array('settings_center' => array('images' => array('service' => 'Cloudflare R2'))),
-			false
-		);
 		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
 
-		$this->assertSame('wordpress', $repository->get_settings()['images']['destination']);
+		$this->assertArrayNotHasKey('destination', $settings['images']);
+		$this->assertIsArray($repository->update_settings($settings));
+		$stored = get_option(Options::EDITOR_SETTINGS);
+		$this->assertArrayNotHasKey('destination', $stored['settings_center']['images']);
 	}
 
 	public function test_update_rejects_invalid_image_runtime_identifiers_without_writing()

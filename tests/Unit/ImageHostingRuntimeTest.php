@@ -293,7 +293,6 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 
 	private function settings() {
 		return array(
-			'destination' => 'remote',
 			'primary'     => array(
 				'service'   => 'cloudflare-r2',
 				'accountId' => 'synthetic-account',

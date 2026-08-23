@@ -19,12 +19,9 @@ export type ImageUploadInsertion = Readonly<{
   format: 'markdown' | 'url';
 }>;
 
-export type ImageUploadDestination = 'wordpress' | 'remote';
-
 export type ImageUploadBootstrap = Readonly<{
-  actionNonce?: string;
+  actionNonce: string;
   allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
-  destination: ImageUploadDestination;
   enabled: boolean;
   endpoint: string;
   insertAfterUpload: boolean;
@@ -88,29 +85,42 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
     throw new Error('image-upload-bootstrap-invalid');
   }
   const bootstrap = value as Record<string, unknown>;
+  const expectedKeys = [
+    'actionNonce',
+    'allowedMimeTypes',
+    'enabled',
+    'endpoint',
+    'insertAfterUpload',
+    'insertion',
+    'maxBytes',
+    'nonce',
+    'postId',
+    'strings'
+  ];
+  if (
+    Object.keys(bootstrap).length !== expectedKeys.length ||
+    expectedKeys.some(
+      (key) => !Object.prototype.hasOwnProperty.call(bootstrap, key),
+    )
+  ) {
+    throw new Error('image-upload-bootstrap-fields-invalid');
+  }
   const strings = bootstrap.strings;
   if (!strings || 'object' !== typeof strings || Array.isArray(strings)) {
     throw new Error('image-upload-strings-invalid');
   }
   const messages = strings as Record<string, unknown>;
-  const destination = undefined === bootstrap.destination ? 'wordpress' : bootstrap.destination;
-  if (!['wordpress', 'remote'].includes(String(destination))) {
-    throw new Error('image-upload-destination-invalid');
-  }
   if ('boolean' !== typeof bootstrap.insertAfterUpload) {
     throw new Error('image-upload-insert-after-upload-invalid');
   }
   const actionNonce = bootstrap.actionNonce;
-  if ('remote' === destination && ('string' !== typeof actionNonce || '' === actionNonce.trim())) {
+  if ('string' !== typeof actionNonce || '' === actionNonce.trim()) {
     throw new Error('image-upload-action-nonce-invalid');
   }
 
   return {
-    ...('remote' === destination
-      ? { actionNonce: stringValue(actionNonce, 'image-upload-action-nonce-invalid') }
-      : {}),
+    actionNonce: stringValue(actionNonce, 'image-upload-action-nonce-invalid'),
     allowedMimeTypes: mimeTypesValue(bootstrap.allowedMimeTypes),
-    destination: destination as ImageUploadDestination,
     enabled: true === bootstrap.enabled,
     endpoint: stringValue(bootstrap.endpoint, 'image-upload-endpoint-invalid'),
     insertAfterUpload: bootstrap.insertAfterUpload,

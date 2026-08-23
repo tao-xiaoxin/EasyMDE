@@ -13,6 +13,10 @@ const settingsRootSource = readFileSync(
 	join(repoRoot, "frontend/src/app/settings/SettingsCenterRoot.tsx"),
 	"utf8",
 );
+const settingsControlsSource = readFileSync(
+	join(repoRoot, "frontend/src/app/settings/SettingsControls.tsx"),
+	"utf8",
+);
 
 function frameRuleBody() {
 	const match = settingsCss.match(
@@ -72,6 +76,55 @@ test("Settings Center frame does not add an outer border, radius, or shadow", ()
 	assert.doesNotMatch(body, /(?:^|;)\s*box-shadow\s*:/);
 });
 
+test("Settings Center selectors use one translucent white viewport-owned popup", () => {
+	const listbox = cssRuleBody(".easymde-settings-center__select-listbox");
+	const option = cssRuleBody(
+		'.easymde-settings-center__select-listbox [role="option"]',
+	);
+	const activeOption = cssRuleBody(
+		'.easymde-settings-center__select-listbox [role="option"][data-active="true"]',
+	);
+
+	assert.match(listbox, /position:\s*fixed;/);
+	assert.match(listbox, /z-index:\s*100002;/);
+	assert.match(listbox, /box-sizing:\s*border-box;/);
+	assert.match(listbox, /padding:\s*4px;/);
+	assert.match(listbox, /border-radius:\s*12px;/);
+	assert.match(listbox, /background:\s*rgba\(255,\s*255,\s*255,\s*\.92\);/);
+	assert.match(listbox, /backdrop-filter:\s*blur\(20px\) saturate\(1\.12\);/);
+	assert.match(
+		listbox,
+		/-webkit-backdrop-filter:\s*blur\(20px\) saturate\(1\.12\);/,
+	);
+	assert.match(listbox, /inset 0 1px 0 rgba\(255,\s*255,\s*255,\s*\.72\)/);
+	assert.match(listbox, /animation:\s*easymde-settings-select-enter 110ms/);
+	assert.match(listbox, /font-size:\s*14px;/);
+	assert.match(listbox, /font-weight:\s*400;/);
+	assert.match(listbox, /color-scheme:\s*light;/);
+	assert.match(option, /min-height:\s*24px;/);
+	assert.match(option, /grid-template-columns:\s*14px minmax\(0,\s*1fr\);/);
+	assert.match(option, /gap:\s*1px;/);
+	assert.match(option, /padding:\s*2px 10px 2px 4px;/);
+	assert.match(option, /border-radius:\s*7px;/);
+	assert.match(
+		option,
+		/transition:\s*background-color 100ms ease,\s*color 100ms ease,\s*box-shadow 100ms ease;/,
+	);
+	assert.match(activeOption, /background:\s*rgba\(52,\s*132,\s*244,\s*\.96\);/);
+	assert.match(settingsControlsSource, /const SELECT_OPTION_HEIGHT = 24;/);
+	assert.match(settingsControlsSource, /const SELECT_POPUP_PADDING = 10;/);
+	assert.match(settingsControlsSource, /<Check size=\{13\}/);
+	assert.match(
+		settingsCss,
+		/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.easymde-settings-center__select-listbox\s*\{[^}]*animation:\s*none;/,
+	);
+	assert.match(settingsRootSource, /scrollSpyFrameRef/);
+	assert.match(
+		settingsRootSource,
+		/scrollSpyFrameRef\.current\s*=\s*windowRef\.requestAnimationFrame/,
+	);
+});
+
 test("Settings Center replaces the fixed desktop crop at compact and narrow widths", () => {
 	assert.match(frameRuleBody(), /min-width:\s*0;/);
 	assert.match(
@@ -128,6 +181,14 @@ test("Settings Center preserves reference Help geometry until the mobile layout"
 	assert.match(
 		settingsCss,
 		/\.easymde-settings-center__upload-formats\s*\{[^}]*width:\s*min\(620px,\s*100%\);/,
+	);
+	assert.match(
+		settingsCss,
+		/\.easymde-settings-center__connection-divider \.easymde-settings-center__row-control,[\s\S]*?\.easymde-settings-center__backup-connection-divider \.easymde-settings-center__row-control\s*\{[^}]*width:\s*100%;[^}]*justify-self:\s*stretch;/,
+	);
+	assert.match(
+		settingsCss,
+		/\.easymde-settings-center__connection-row\s*\{[^}]*width:\s*520px;[^}]*max-width:\s*100%;/,
 	);
 	assert.match(
 		settingsCss,

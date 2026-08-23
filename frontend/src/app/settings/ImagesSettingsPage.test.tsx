@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, useState } from "@wordpress/element";
 import { describe, expect, it, vi } from "vitest";
@@ -22,7 +22,6 @@ const strings = Object.fromEntries(
 function settings(overrides: Partial<ImageSettings> = {}): ImageSettings {
 	return {
 		...SETTINGS_CENTER_TEST_SETTINGS.images,
-		destination: "remote",
 		accountId: "example-account",
 		...overrides,
 	};
@@ -72,25 +71,40 @@ function Harness({
 }
 
 describe("ImagesSettingsPage", () => {
-	it("keeps unsupported providers visible but unavailable", () => {
+	it("does not render an upload destination control that is absent from the reference UI", () => {
 		render(<Harness />);
-		const primary = screen.getByRole<HTMLSelectElement>("combobox", {
-			name: "selectImageHostService",
-		});
-		const backup = screen.getByRole<HTMLSelectElement>("combobox", {
-			name: "backupImageHostService",
-		});
 
 		expect(
-			within(primary).getByRole<HTMLOptionElement>("option", {
-				name: "aliyunOss",
-			}).disabled,
-		).toBe(true);
+			screen.queryByRole("combobox", { name: "uploadDestination" }),
+		).toBeNull();
+		expect(screen.queryByText("uploadDestination")).toBeNull();
+	});
+
+	it("keeps unsupported providers visible but unavailable", async () => {
+		const user = userEvent.setup();
+		render(<Harness />);
+		const primary = screen.getByRole<HTMLButtonElement>("combobox", {
+			name: "selectImageHostService",
+		});
+		const backup = screen.getByRole<HTMLButtonElement>("combobox", {
+			name: "backupImageHostService",
+		});
+		await user.click(primary);
+		expect(screen.queryByRole("option", { name: "customUpload" })).toBeNull();
 		expect(
-			within(backup).getByRole<HTMLOptionElement>("option", {
-				name: "cloudflareR2",
-			}).disabled,
-		).toBe(true);
+			screen
+				.getByRole("option", {
+					name: "aliyunOss",
+				})
+				.getAttribute("aria-disabled"),
+		).toBe("true");
+		await user.click(backup);
+		expect(screen.queryByRole("option", { name: "customUpload" })).toBeNull();
+		expect(
+			screen
+				.getByRole("option", { name: "cloudflareR2" })
+				.getAttribute("aria-disabled"),
+		).toBe("true");
 		expect(
 			screen
 				.getByRole("combobox", { name: "retryFailedUpload" })

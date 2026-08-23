@@ -45,6 +45,25 @@ function cssRuleBody(selector) {
 	return match[1];
 }
 
+test("Settings Center owns an opaque viewport before React mounts", () => {
+	const startupVeil = cssRuleBody("body.toplevel_page_easymde::before");
+	const startupHost = cssRuleBody(
+		"body.toplevel_page_easymde #easymde-settings-center-root",
+	);
+
+	assert.match(startupVeil, /position:\s*fixed;/);
+	assert.match(startupVeil, /inset:\s*0;/);
+	assert.match(startupVeil, /z-index:\s*100000;/);
+	assert.match(startupVeil, /background:\s*#fdfefe;/);
+	assert.match(startupVeil, /content:\s*"";/);
+
+	assert.match(startupHost, /position:\s*fixed;/);
+	assert.match(startupHost, /inset:\s*0;/);
+	assert.match(startupHost, /z-index:\s*100001;/);
+	assert.match(startupHost, /overflow:\s*auto;/);
+	assert.match(startupHost, /background:\s*#fdfefe;/);
+});
+
 test("Settings Center frame does not add an outer border, radius, or shadow", () => {
 	const body = frameRuleBody();
 

@@ -58,6 +58,10 @@ final class SettingsPageTest extends WP_UnitTestCase
 
         $this->assertStringContainsString('id="easymde-settings-center-root"', $output);
         $this->assertStringContainsString('data-failure-message=', $output);
+        $this->assertStringContainsString('data-settings-center-startup', $output);
+        $this->assertStringContainsString('data-loading-message=', $output);
+        $this->assertStringContainsString('Loading EasyMDE Settings Center', $output);
+        $this->assertStringContainsString(esc_url(admin_url('options-general.php')), $output);
         $this->assertStringNotContainsString('options.php', $output);
         $this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
     }
@@ -152,6 +156,9 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertTrue(wp_style_is('easymde-admin-settings-center', 'enqueued'));
         $this->assertNotEmpty(
             wp_scripts()->get_data('easymde-admin-settings-center', 'before')
+        );
+        $this->assertNotEmpty(
+            wp_scripts()->get_data('easymde-admin-settings-center', 'after')
         );
     }
 

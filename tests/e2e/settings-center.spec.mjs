@@ -151,6 +151,159 @@ test("opens the settings center through the explicit General route", async ({
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 });
 
+test("covers the WordPress Admin shell before the Settings Center bundle mounts", async ({
+	page,
+}) => {
+	await login(page);
+	let releaseBundle = () => undefined;
+	const bundleGate = new Promise((resolve) => {
+		releaseBundle = resolve;
+	});
+	let reportBundleIntercepted = () => undefined;
+	const bundleIntercepted = new Promise((resolve) => {
+		reportBundleIntercepted = resolve;
+	});
+	const settingsBundle = (url) =>
+		url.pathname.includes(
+			"/assets/build/settings-center/assets/settings-center-",
+		) && url.pathname.endsWith(".js");
+
+	await page.route(settingsBundle, async (route) => {
+		reportBundleIntercepted();
+		const response = await route.fetch();
+		await bundleGate;
+		await route.fulfill({ response });
+	});
+
+	let navigation;
+	let startupFrame;
+	try {
+		navigation = page.goto(
+			"/wp-admin/admin.php?page=easymde&route=/general_setting",
+		);
+		await bundleIntercepted;
+
+		const startupHost = page.locator("#easymde-settings-center-root");
+		await expect(startupHost).toBeAttached();
+		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
+		await expect(
+			startupHost.locator("[data-settings-center-startup]"),
+		).toBeVisible();
+		startupFrame = await page.evaluate(async () => {
+			await new Promise((resolve) =>
+				requestAnimationFrame(() => requestAnimationFrame(resolve)),
+			);
+			const host = document.querySelector("#easymde-settings-center-root");
+			if (!(host instanceof HTMLElement))
+				throw new Error("settings-center-startup-host-missing");
+			const hostBox = host.getBoundingClientRect();
+			const hostStyle = getComputedStyle(host);
+			const points = [
+				[8, 8],
+				[80, 200],
+				[window.innerWidth / 2, window.innerHeight / 2],
+			];
+			return {
+				background: hostStyle.backgroundColor,
+				position: hostStyle.position,
+				coversViewport:
+					hostBox.left <= 0 &&
+					hostBox.top <= 0 &&
+					hostBox.right >= window.innerWidth &&
+					hostBox.bottom >= window.innerHeight,
+				pointsOwnedByHost: points.every(([x, y]) => {
+					const target = document.elementFromPoint(x, y);
+					return target === host || Boolean(target && host.contains(target));
+				}),
+			};
+		});
+	} finally {
+		releaseBundle();
+		if (navigation) await navigation;
+		await page.unroute(settingsBundle);
+	}
+
+	expect(startupFrame).toEqual({
+		background: "rgb(253, 254, 254)",
+		position: "fixed",
+		coversViewport: true,
+		pointsOwnedByHost: true,
+	});
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
+});
+
+test("keeps a visible exit when the Settings Center bundle cannot load", async ({
+	page,
+}) => {
+	await login(page);
+	const settingsBundle = (url) =>
+		url.pathname.includes(
+			"/assets/build/settings-center/assets/settings-center-",
+		) && url.pathname.endsWith(".js");
+
+	await page.route(settingsBundle, (route) => route.abort("failed"));
+	try {
+		await page.goto(
+			"/wp-admin/admin.php?page=easymde&route=/general_setting",
+		);
+		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
+		const startup = page.locator("[data-settings-center-startup]");
+		await expect(startup).toBeVisible();
+		await expect(startup).toContainText(/EasyMDE/u);
+		const status = startup.locator("[data-settings-center-startup-status]");
+		await expect(status).toHaveAttribute("role", "alert");
+		await expect(status).toHaveAttribute("aria-busy", "false");
+		await expect(status).toContainText(/could not start|无法启动/iu);
+		const exit = startup.locator("a");
+		await expect(exit).toBeVisible();
+		await exit.click();
+		await expect(page).toHaveURL(/\/wp-admin\/options-general\.php$/u);
+		await expect(page.locator("#wpwrap")).toBeVisible();
+	} finally {
+		await page.unroute(settingsBundle);
+	}
+});
+
+test("keeps a neutral exit surface when Content Security Policy blocks scripts", async ({
+	page,
+}) => {
+	await login(page);
+	const settingsDocument = (url) =>
+		url.pathname.endsWith("/wp-admin/admin.php") &&
+		url.searchParams.get("page") === "easymde";
+
+	await page.route(settingsDocument, async (route) => {
+		const response = await route.fetch();
+		await route.fulfill({
+			response,
+			headers: {
+				...response.headers(),
+				"content-security-policy":
+					"script-src 'none'; style-src 'self'; img-src 'self' data:",
+			},
+		});
+	});
+	try {
+		await page.goto(
+			"/wp-admin/admin.php?page=easymde&route=/general_setting",
+		);
+		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
+		const startup = page.locator("[data-settings-center-startup]");
+		await expect(startup).toBeVisible();
+		const status = startup.locator("[data-settings-center-startup-status]");
+		await expect(status).toHaveAttribute("aria-busy", "false");
+		await expect(status).not.toHaveAttribute("role", "status");
+		await expect(status).not.toContainText(/Loading|正在加载/iu);
+		const exit = startup.locator("a");
+		await expect(exit).toBeVisible();
+		await exit.click();
+		await expect(page).toHaveURL(/\/wp-admin\/options-general\.php$/u);
+	} finally {
+		await page.unroute(settingsDocument);
+	}
+});
+
 test("keeps section navigation, the sticky boundary, and the localized heading in sync", async ({
 	page,
 }) => {

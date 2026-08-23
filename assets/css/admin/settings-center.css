@@ -1,3 +1,82 @@
+body.toplevel_page_easymde::before {
+	position: fixed;
+	inset: 0;
+	z-index: 100000;
+	background: #fdfefe;
+	content: "";
+}
+
+body.toplevel_page_easymde #easymde-settings-center-root {
+	position: fixed;
+	inset: 0;
+	z-index: 100001;
+	overflow: auto;
+	background: #fdfefe;
+}
+
+.easymde-settings-center-startup {
+	display: flex;
+	min-height: 100%;
+	align-items: center;
+	justify-content: center;
+	flex-direction: column;
+	gap: 16px;
+	padding: 32px;
+	background: #fdfefe;
+	color: #101a34;
+	font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+	text-align: center;
+}
+
+.easymde-settings-center-startup__brand {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+}
+
+.easymde-settings-center-startup__brand img {
+	display: block;
+	width: 58px;
+	height: 49px;
+	object-fit: contain;
+}
+
+.easymde-settings-center-startup__brand strong {
+	font-size: 24px;
+	line-height: 1.25;
+}
+
+.easymde-settings-center-startup p {
+	margin: 0;
+	color: #667696;
+	font-size: 15px;
+}
+
+.easymde-settings-center-startup__status {
+	color: #667696;
+	font-size: 15px;
+}
+
+.easymde-settings-center-startup > a {
+	display: inline-flex;
+	min-height: 38px;
+	align-items: center;
+	justify-content: center;
+	padding: 0 16px;
+	border: 1px solid #c8d7f3;
+	border-radius: 6px;
+	background: #fff;
+	color: #0867f4;
+	font-size: 14px;
+	font-weight: 600;
+	text-decoration: none;
+}
+
+.easymde-settings-center-startup > a:focus-visible {
+	outline: 2px solid #0867f4;
+	outline-offset: 2px;
+}
+
 .easymde-settings-center,
 .easymde-settings-center * {
 	box-sizing: border-box;

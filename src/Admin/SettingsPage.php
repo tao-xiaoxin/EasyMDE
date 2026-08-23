@@ -208,8 +208,13 @@ final class SettingsPage {
 			'window.EasyMDESettingsCenterBootstrap = ' . wp_json_encode(
 				$this->get_settings_center_bootstrap(),
 				JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
-			) . ';',
+			) . ';' . "\n" . $this->get_settings_center_startup_loading_script(),
 			'before'
+		);
+		wp_add_inline_script(
+			$asset['handle'],
+			$this->get_settings_center_startup_failure_script(),
+			'after'
 		);
 	}
 
@@ -217,6 +222,9 @@ final class SettingsPage {
 		if ( ! $this->is_canonical_settings_screen() || ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
+
+		$settings_center_brand_mark_url = Asset::url( 'assets/images/settings-center/brand-icon-clean.png' );
+		$settings_center_close_url      = admin_url( 'options-general.php' );
 
 		require EASYMDE_PLUGIN_DIR . 'templates/admin/settings-center.php';
 	}
@@ -235,6 +243,47 @@ final class SettingsPage {
 			),
 			admin_url( 'admin.php' )
 		);
+	}
+
+	private function get_settings_center_startup_failure_script() {
+		return <<<'JS'
+(function () {
+	if (window.EasyMDESettingsCenterStarted === true) {
+		return;
+	}
+
+	var root = document.getElementById('easymde-settings-center-root');
+	var status = root && root.querySelector('[data-settings-center-startup-status]');
+	if (!root || !status) {
+		console.error('[EasyMDE] settings-center-startup-fallback-unavailable');
+		return;
+	}
+
+	status.setAttribute('role', 'alert');
+	status.setAttribute('aria-live', 'assertive');
+	status.setAttribute('aria-busy', 'false');
+	status.textContent = root.getAttribute('data-failure-message') || '';
+	console.error('[EasyMDE] settings-center-bundle-unavailable');
+}());
+JS;
+	}
+
+	private function get_settings_center_startup_loading_script() {
+		return <<<'JS'
+(function () {
+	var root = document.getElementById('easymde-settings-center-root');
+	var status = root && root.querySelector('[data-settings-center-startup-status]');
+	if (!root || !status) {
+		console.error('[EasyMDE] settings-center-loading-surface-unavailable');
+		return;
+	}
+
+	status.setAttribute('role', 'status');
+	status.setAttribute('aria-live', 'polite');
+	status.setAttribute('aria-busy', 'true');
+	status.textContent = root.getAttribute('data-loading-message') || '';
+}());
+JS;
 	}
 
 	private function get_settings_center_bootstrap() {

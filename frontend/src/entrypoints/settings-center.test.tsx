@@ -89,6 +89,37 @@ describe('mountSettingsCenter', () => {
     expect(unmount).toHaveBeenCalledOnce();
   });
 
+  it('accepts the server-rendered startup surface for React to replace', () => {
+    const render = vi.fn();
+    vi.mocked(createRoot).mockReturnValue({ render, unmount: vi.fn() } as never);
+    const container = document.querySelector<HTMLElement>(
+      '#easymde-settings-center-root'
+    );
+    if (!container) throw new Error('settings-center-root-missing');
+    container.innerHTML = `
+      <div data-settings-center-startup>
+        <strong>EasyMDE Settings Center</strong>
+        <a href="/wp-admin/options-general.php">Return to WordPress settings</a>
+      </div>
+    `;
+
+    expect(() => mountSettingsCenter({}, { document, window })).not.toThrow();
+    expect(render).toHaveBeenCalledOnce();
+  });
+
+  it('rejects unexpected pre-existing root content', () => {
+    const container = document.querySelector<HTMLElement>(
+      '#easymde-settings-center-root'
+    );
+    if (!container) throw new Error('settings-center-root-missing');
+    container.innerHTML = '<div data-unexpected-content></div>';
+
+    expect(() => mountSettingsCenter({}, { document, window })).toThrow(
+      'settings-center-root-not-empty'
+    );
+    expect(createRoot).not.toHaveBeenCalled();
+  });
+
   it('rejects cross-origin navigation', () => {
     vi.mocked(parseSettingsCenterBootstrap).mockReturnValue({
       ...bootstrap(),

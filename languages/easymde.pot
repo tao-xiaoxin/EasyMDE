@@ -2944,7 +2944,7 @@ msgid "Close Image Upload Feedback"
 msgstr ""
 
 #: src/Admin/SettingsPage.php:34 src/Admin/SettingsPage.php:44
-#: src/Admin/SettingsPage.php:127
+#: src/Admin/SettingsPage.php:127 templates/admin/settings-center.php:30
 msgid "EasyMDE Settings Center"
 msgstr ""
 
@@ -3495,10 +3495,18 @@ msgstr ""
 msgid "EasyMDE requires JavaScript to edit Markdown on this screen."
 msgstr ""
 
-#: templates/admin/settings-center.php:17
+#: templates/admin/settings-center.php:13
 msgid ""
 "The EasyMDE settings center could not start. WordPress settings remain "
 "available."
+msgstr ""
+
+#: templates/admin/settings-center.php:22
+msgid "Loading EasyMDE Settings Center..."
+msgstr ""
+
+#: templates/admin/settings-center.php:39
+msgid "Return to WordPress settings"
 msgstr ""
 
 #. translators: %s: Locale-formatted character count.

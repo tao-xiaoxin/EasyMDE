@@ -27,7 +27,14 @@ final class SettingsCenterRepository {
 		$legacy_shortcut_mode = empty( $settings ) && isset( $stored['shortcuts'] ) && is_array( $stored['shortcuts'] );
 		$settings             = $this->merge_legacy_shortcuts_into_settings( $settings, $stored );
 
-		$settings = $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
+		$settings                                  = $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
+		$settings['images']['accountId']           = $this->sanitize_account_id( $settings['images']['accountId'] );
+		$settings['images']['domain']              = $this->sanitize_domain( $settings['images']['domain'] );
+		$settings['images']['backupDomain']        = $this->sanitize_domain( $settings['images']['backupDomain'] );
+		$settings['images']['backupSameObjectKey'] = true;
+		if ( ! $this->is_valid_file_name_rule( $settings['images']['fileNameRule'] ) ) {
+			$settings['images']['fileNameRule'] = $defaults['images']['fileNameRule'];
+		}
 		foreach ( $settings['shortcuts']['values'] as $center_id => $shortcut ) {
 			foreach ( array( 'windows', 'mac' ) as $platform ) {
 				$normalized = $this->normalize_shortcut( $shortcut[ $platform ], 'mac' === $platform );
@@ -109,6 +116,89 @@ final class SettingsCenterRepository {
 		}
 
 		return $mime_types;
+	}
+
+	/**
+	 * Return the server-only image-hosting runtime configuration.
+	 *
+	 * This method intentionally includes stored credentials. Callers must never
+	 * serialize its result into Bootstrap data, REST responses, logs, or errors.
+	 *
+	 * @return array
+	 */
+	public function get_image_hosting_settings() {
+		$stored   = $this->options->get_editor_settings();
+		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
+			? $stored['settings_center']
+			: array();
+		$settings = $this->normalize_enum_settings( $this->merge_settings( $this->get_defaults(), $settings ) );
+		$images   = $settings['images'];
+
+		$images['accountId']           = $this->sanitize_account_id( $images['accountId'] );
+		$images['bucket']              = $this->bounded_text( $images['bucket'], 128 );
+		$images['domain']              = $this->sanitize_domain( $images['domain'] );
+		$images['accessKey']           = $this->bounded_text( $images['accessKey'], 255 );
+		$images['secretKey']           = $this->bounded_text( $images['secretKey'], 255 );
+		$images['backupBucket']        = $this->bounded_text( $images['backupBucket'], 128 );
+		$images['backupDomain']        = $this->sanitize_domain( $images['backupDomain'] );
+		$images['backupAccessKey']     = $this->bounded_text( $images['backupAccessKey'], 255 );
+		$images['backupSecretKey']     = $this->bounded_text( $images['backupSecretKey'], 255 );
+		$images['backupSameObjectKey'] = true;
+		if ( ! $this->is_valid_file_name_rule( $images['fileNameRule'] ) ) {
+			$images['fileNameRule'] = $this->get_defaults()['images']['fileNameRule'];
+		}
+
+		return array(
+			'revision'         => $this->revision_from_stored( $stored ),
+			'destination'      => $images['destination'],
+			'primary'          => array(
+				'service'   => $images['service'],
+				'accountId' => $images['accountId'],
+				'bucket'    => $images['bucket'],
+				'domain'    => $images['domain'],
+				'accessKey' => $images['accessKey'],
+				'secretKey' => $images['secretKey'],
+			),
+			'backup'           => array(
+				'enabled'       => $images['backupEnabled'],
+				'service'       => $images['backupService'],
+				'bucket'        => $images['backupBucket'],
+				'domain'        => $images['backupDomain'],
+				'accessKey'     => $images['backupAccessKey'],
+				'secretKey'     => $images['backupSecretKey'],
+				'sameObjectKey' => $images['backupSameObjectKey'],
+				'failureMode'   => 'continue',
+			),
+			'fileNameRule'     => $images['fileNameRule'],
+			'behaviors'        => array(
+				'insertAfterUpload'    => $images['insertMarkdown'],
+				'autoCompress'         => $images['compressImages'],
+				'preserveOriginalName' => $images['preserveFileName'],
+				'copyUrl'              => $images['copyUrl'],
+				'retryCount'           => $images['retryCount'],
+				'maxImageSize'         => $images['maxImageSize'],
+				'uploadFormats'        => array_keys( array_filter( $images['uploadFormats'] ) ),
+				'insertFormat'         => $images['insertFormat'],
+				'altSource'            => $images['altSource'],
+				'captionMode'          => $images['captionMode'],
+				'featuredPlaceholder'  => $images['featuredPlaceholder'],
+			),
+			'credentialStatus' => array(
+				'primaryConfigured' => '' !== $images['accessKey'] && '' !== $images['secretKey'],
+				'backupConfigured'  => '' !== $images['backupAccessKey'] && '' !== $images['backupSecretKey'],
+			),
+		);
+	}
+
+	/**
+	 * Return non-secret credential-presence metadata for presentation adapters.
+	 *
+	 * @return array{primaryConfigured: bool, backupConfigured: bool}
+	 */
+	public function get_image_credential_status() {
+		$runtime = $this->get_image_hosting_settings();
+
+		return $runtime['credentialStatus'];
 	}
 
 	public function update_settings( $input, $reset_secrets = false ) {
@@ -263,7 +353,9 @@ final class SettingsCenterRepository {
 				'featuredImagePlaceholder' => true,
 			),
 			'images'    => array(
+				'destination'         => 'wordpress',
 				'service'             => 'cloudflare-r2',
+				'accountId'           => '',
 				'bucket'              => 'easymde-assets',
 				'domain'              => '',
 				'accessKey'           => '',
@@ -281,7 +373,7 @@ final class SettingsCenterRepository {
 				'compressImages'      => true,
 				'preserveFileName'    => false,
 				'copyUrl'             => false,
-				'retryCount'          => 'twice',
+				'retryCount'          => 'none',
 				'maxImageSize'        => '2560',
 				'uploadFormats'       => array(
 					'jpg'  => true,
@@ -374,6 +466,17 @@ final class SettingsCenterRepository {
 			);
 		}
 		$settings = $this->normalize_enum_settings( $settings );
+		if (
+			! $this->is_valid_account_id( $settings['images']['accountId'] ) ||
+			! $this->is_valid_file_name_rule( $settings['images']['fileNameRule'] ) ||
+			true !== $settings['images']['backupSameObjectKey']
+		) {
+			return new WP_Error(
+				'easymde_settings_invalid_payload',
+				__( 'The settings payload is invalid.', 'easymde' ),
+				array( 'status' => 400 )
+			);
+		}
 
 		foreach ( $settings['general'] as $key => $value ) {
 			$settings['general'][ $key ] = is_bool( $value ) ? $value : $this->bounded_text( $value, 80 );
@@ -396,6 +499,8 @@ final class SettingsCenterRepository {
 				}
 			} elseif ( 'domain' === $key || 'backupDomain' === $key ) {
 				$settings['images'][ $key ] = $this->sanitize_domain( $value );
+			} elseif ( 'accountId' === $key ) {
+				$settings['images'][ $key ] = $this->sanitize_account_id( $value );
 			} elseif ( is_bool( $value ) ) {
 				$settings['images'][ $key ] = $value;
 			} else {
@@ -434,10 +539,11 @@ final class SettingsCenterRepository {
 				'summaryMode'       => 'auto-55',
 			),
 			'images'   => array(
+				'destination'       => 'wordpress',
 				'service'           => 'cloudflare-r2',
 				'backupService'     => 'qiniu-kodo',
 				'backupFailureMode' => 'return-primary-url',
-				'retryCount'        => 'twice',
+				'retryCount'        => 'none',
 				'maxImageSize'      => '2560',
 				'insertFormat'      => 'markdown',
 				'altSource'         => 'filename',
@@ -492,43 +598,47 @@ final class SettingsCenterRepository {
 				),
 			),
 			'images'   => array(
+				'destination'       => array(
+					'wordpress' => 'wordpress',
+					'remote'    => 'remote',
+				),
 				'service'           => array(
 					'cloudflare-r2'     => 'cloudflare-r2',
 					'Cloudflare R2'     => 'cloudflare-r2',
-					'aliyun-oss'        => 'aliyun-oss',
-					'Aliyun OSS'        => 'aliyun-oss',
-					'tencent-cos'       => 'tencent-cos',
-					'Tencent Cloud COS' => 'tencent-cos',
-					'custom'            => 'custom',
-					'Custom Upload'     => 'custom',
+					'aliyun-oss'        => 'cloudflare-r2',
+					'Aliyun OSS'        => 'cloudflare-r2',
+					'tencent-cos'       => 'cloudflare-r2',
+					'Tencent Cloud COS' => 'cloudflare-r2',
+					'custom'            => 'cloudflare-r2',
+					'Custom Upload'     => 'cloudflare-r2',
 				),
 				'backupService'     => array(
 					'qiniu-kodo'        => 'qiniu-kodo',
 					'Qiniu Kodo'        => 'qiniu-kodo',
-					'cloudflare-r2'     => 'cloudflare-r2',
-					'Cloudflare R2'     => 'cloudflare-r2',
-					'aliyun-oss'        => 'aliyun-oss',
-					'Aliyun OSS'        => 'aliyun-oss',
-					'tencent-cos'       => 'tencent-cos',
-					'Tencent Cloud COS' => 'tencent-cos',
-					'custom'            => 'custom',
-					'Custom Upload'     => 'custom',
+					'cloudflare-r2'     => 'qiniu-kodo',
+					'Cloudflare R2'     => 'qiniu-kodo',
+					'aliyun-oss'        => 'qiniu-kodo',
+					'Aliyun OSS'        => 'qiniu-kodo',
+					'tencent-cos'       => 'qiniu-kodo',
+					'Tencent Cloud COS' => 'qiniu-kodo',
+					'custom'            => 'qiniu-kodo',
+					'Custom Upload'     => 'qiniu-kodo',
 				),
 				'backupFailureMode' => array(
 					'return-primary-url'                   => 'return-primary-url',
 					'Return primary URL on backup failure' => 'return-primary-url',
-					'fail-upload'                          => 'fail-upload',
-					'Fail entire upload'                   => 'fail-upload',
+					'fail-upload'                          => 'return-primary-url',
+					'Fail entire upload'                   => 'return-primary-url',
 				),
 				'retryCount'        => array(
 					'none'              => 'none',
 					'Do not retry'      => 'none',
-					'once'              => 'once',
-					'Retry once'        => 'once',
-					'twice'             => 'twice',
-					'Retry twice'       => 'twice',
-					'three-times'       => 'three-times',
-					'Retry three times' => 'three-times',
+					'once'              => 'none',
+					'Retry once'        => 'none',
+					'twice'             => 'none',
+					'Retry twice'       => 'none',
+					'three-times'       => 'none',
+					'Retry three times' => 'none',
 				),
 				'maxImageSize'      => array(
 					'original'            => 'original',
@@ -553,16 +663,16 @@ final class SettingsCenterRepository {
 					'Use file name'  => 'filename',
 					'empty'          => 'empty',
 					'Leave empty'    => 'empty',
-					'upload'         => 'upload',
-					'Fill on upload' => 'upload',
+					'upload'         => 'empty',
+					'Fill on upload' => 'empty',
 				),
 				'captionMode'       => array(
 					'none'           => 'none',
 					'Do not insert'  => 'none',
 					'filename'       => 'filename',
 					'Use file name'  => 'filename',
-					'upload'         => 'upload',
-					'Fill on upload' => 'upload',
+					'upload'         => 'none',
+					'Fill on upload' => 'none',
 				),
 			),
 			'markdown' => array(
@@ -649,15 +759,46 @@ final class SettingsCenterRepository {
 			return '';
 		}
 		$parts = wp_parse_url( $value );
-		if ( ! is_array( $parts ) || ! isset( $parts['scheme'], $parts['host'] ) || isset( $parts['user'], $parts['pass'], $parts['query'], $parts['fragment'] ) ) {
+		if ( ! is_array( $parts ) || ! isset( $parts['scheme'], $parts['host'] ) || isset( $parts['user'] ) || isset( $parts['pass'] ) || isset( $parts['port'] ) || isset( $parts['query'] ) || isset( $parts['fragment'] ) || ( isset( $parts['path'] ) && '' !== $parts['path'] && '/' !== $parts['path'] ) ) {
 			return '';
 		}
-		if ( ! in_array( strtolower( (string) $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
+		if ( 'https' !== strtolower( (string) $parts['scheme'] ) ) {
 			return '';
 		}
-		$url = esc_url_raw( $value, array( 'http', 'https' ) );
+		$url = esc_url_raw( $value, array( 'https' ) );
 
 		return is_string( $url ) ? $this->bounded_text( $url, 255 ) : '';
+	}
+
+	private function sanitize_account_id( $value ) {
+		$value = $this->bounded_text( $value, 64 );
+
+		return $this->is_valid_account_id( $value ) ? $value : '';
+	}
+
+	private function is_valid_account_id( $value ) {
+		return is_string( $value ) && ( '' === $value || 1 === preg_match( '/^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/D', $value ) );
+	}
+
+	private function is_valid_file_name_rule( $rule ) {
+		if ( ! is_string( $rule ) || '' === $rule || strlen( $rule ) > 160 || '/' === $rule[0] || '/' === substr( $rule, -1 ) || false !== strpos( $rule, '\\' ) || false !== strpos( $rule, '..' ) || false !== strpos( $rule, '//' ) || preg_match( '/[\x00-\x1F\x7F?#]/', $rule ) ) {
+			return false;
+		}
+
+		if ( ! preg_match_all( '/\{([A-Za-z0-9_]+)\}/', $rule, $matches ) || ! in_array( 'ext', $matches[1], true ) ) {
+			return false;
+		}
+
+		$allowed = array( 'year', 'month', 'day', 'date', 'time', 'post_id', 'md5', 'uuid', 'name', 'ext' );
+		foreach ( $matches[1] as $variable ) {
+			if ( ! in_array( $variable, $allowed, true ) ) {
+				return false;
+			}
+		}
+
+		$literal = preg_replace( '/\{[A-Za-z0-9_]+\}/', '', $rule );
+
+		return is_string( $literal ) && 1 === preg_match( '/^[A-Za-z0-9._\/-]*$/D', $literal ) && false === strpos( $literal, '{' ) && false === strpos( $literal, '}' );
 	}
 
 	private function normalize_shortcut( $value, $is_mac ) {

@@ -28,7 +28,22 @@ The compact toolbar includes common Markdown actions for formatting, headings, q
 
 Use the image/media toolbar action to open the WordPress media library. After selecting one image, EasyMDE inserts Markdown image syntax using the attachment URL and available alt/title text.
 
-When the current user can upload media, pasting a local clipboard image or dropping a local image file into the Markdown source uploads that image to the WordPress media library and inserts Markdown image syntax after the upload succeeds. EasyMDE accepts local JPEG, PNG, GIF, and WebP images; remote image-provider uploads are not used.
+When the current user can upload media, pasting a local clipboard image or
+dropping a local image file into the Markdown source uploads that image and
+inserts the configured Markdown or URL form only after the upload succeeds.
+EasyMDE accepts local JPEG, PNG, GIF, and WebP images. The default destination
+is the WordPress media library.
+
+An administrator may instead choose **Remote image host** in **EasyMDE > Image
+Hosting**, configure Cloudflare R2, save the settings, and test the saved
+connection. Qiniu Kodo can be enabled as an optional same-key backup. Provider
+credentials remain on the WordPress server and are not returned to the browser.
+The settings page shows whether credentials are configured; entering a new key
+replaces it on save, while an empty field keeps the stored value. Uploads are
+not retried automatically. If the backup upload fails after R2 succeeds, the R2
+URL remains usable and EasyMDE reports the partial failure. EasyMDE does not
+offer an all-or-nothing mode because these providers do not expose a reliable
+cross-provider rollback transaction.
 
 If the WordPress media frame is unavailable, the command falls back to inserting Markdown image delimiters so the source text remains editable.
 

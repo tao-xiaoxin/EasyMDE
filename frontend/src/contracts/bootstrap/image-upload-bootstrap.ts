@@ -1,4 +1,5 @@
 export type ImageUploadStrings = Readonly<{
+  backupFailed: string;
   defaultAlt: string;
   dropFailed: string;
   dropTooLarge: string;
@@ -18,10 +19,15 @@ export type ImageUploadInsertion = Readonly<{
   format: 'markdown' | 'url';
 }>;
 
+export type ImageUploadDestination = 'wordpress' | 'remote';
+
 export type ImageUploadBootstrap = Readonly<{
+  actionNonce?: string;
   allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
+  destination: ImageUploadDestination;
   enabled: boolean;
   endpoint: string;
+  insertAfterUpload: boolean;
   insertion: ImageUploadInsertion;
   maxBytes: number;
   nonce: string;
@@ -87,16 +93,33 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
     throw new Error('image-upload-strings-invalid');
   }
   const messages = strings as Record<string, unknown>;
+  const destination = undefined === bootstrap.destination ? 'wordpress' : bootstrap.destination;
+  if (!['wordpress', 'remote'].includes(String(destination))) {
+    throw new Error('image-upload-destination-invalid');
+  }
+  if ('boolean' !== typeof bootstrap.insertAfterUpload) {
+    throw new Error('image-upload-insert-after-upload-invalid');
+  }
+  const actionNonce = bootstrap.actionNonce;
+  if ('remote' === destination && ('string' !== typeof actionNonce || '' === actionNonce.trim())) {
+    throw new Error('image-upload-action-nonce-invalid');
+  }
 
   return {
+    ...('remote' === destination
+      ? { actionNonce: stringValue(actionNonce, 'image-upload-action-nonce-invalid') }
+      : {}),
     allowedMimeTypes: mimeTypesValue(bootstrap.allowedMimeTypes),
+    destination: destination as ImageUploadDestination,
     enabled: true === bootstrap.enabled,
     endpoint: stringValue(bootstrap.endpoint, 'image-upload-endpoint-invalid'),
+    insertAfterUpload: bootstrap.insertAfterUpload,
     insertion: parseImageUploadInsertion(bootstrap.insertion),
     maxBytes: integerValue(bootstrap.maxBytes, 1, 'image-upload-max-bytes-invalid'),
     nonce: stringValue(bootstrap.nonce, 'image-upload-nonce-invalid'),
     postId: integerValue(bootstrap.postId, 0, 'image-upload-post-id-invalid'),
     strings: {
+      backupFailed: stringValue(messages.backupFailed, 'image-upload-string-invalid'),
       defaultAlt: stringValue(messages.defaultAlt, 'image-upload-string-invalid'),
       dropFailed: stringValue(messages.dropFailed, 'image-upload-string-invalid'),
       dropTooLarge: stringValue(messages.dropTooLarge, 'image-upload-string-invalid'),

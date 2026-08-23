@@ -21,6 +21,9 @@ function bootstrap(): SettingsCenterBootstrap {
 		api: {
 			settingsUrl: "/wp-json/easymde/v1/settings",
 			actionNonce: "test-action-nonce",
+			imageHostingActionNonce: "test-image-hosting-action-nonce",
+			imageHostingConnectionUrl:
+				"/wp-json/easymde/v1/image-hosting/connection",
 			nonce: "test-nonce",
 		},
 		assets: {
@@ -40,6 +43,8 @@ function bootstrap(): SettingsCenterBootstrap {
 			images: {
 				domain: "https://img.example.test",
 				backupDomain: "https://backup.example.test",
+				primaryCredentialsConfigured: false,
+				backupCredentialsConfigured: false,
 			},
 		},
 		settings: SETTINGS_CENTER_TEST_SETTINGS,
@@ -246,7 +251,7 @@ describe("SettingsCenterRoot global search", () => {
 		).not.toBeNull();
 	});
 
-	it("marks image settings unavailable while keeping them searchable", async () => {
+	it("keeps owner-backed image settings searchable and focuses their control", async () => {
 		const user = userEvent.setup();
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
@@ -263,26 +268,20 @@ describe("SettingsCenterRoot global search", () => {
 			screen
 				.getByRole("switch", { name: "enableBackupImageHost" })
 				.matches(":disabled"),
-		).toBe(true);
+		).toBe(false);
 		await user.type(
 			screen.getByRole("searchbox", { name: "searchSettings" }),
 			"backupBucket",
 		);
 		expect(
-			screen
-				.getByRole("textbox", { name: "backupBucket" })
-				.matches(":disabled"),
-		).toBe(true);
+			screen.getByRole("textbox", { name: "backupBucket" }).matches(":disabled"),
+		).toBe(false);
 		await user.click(
 			await screen.findByRole("button", { name: "backupBucket" }),
 		);
 
-		const target = screen
-			.getByRole("textbox", { name: "backupBucket" })
-			.closest<HTMLElement>("[data-setting-label]");
-		if (!target) throw new Error("settings-search-unavailable-target-missing");
+		const target = screen.getByRole("textbox", { name: "backupBucket" });
 		await waitFor(() => expect(document.activeElement).toBe(target));
-		expect(target.tabIndex).toBe(-1);
 	});
 
 	it("enables only owner-backed upload formats and keeps one format selected", async () => {
@@ -321,7 +320,7 @@ describe("SettingsCenterRoot global search", () => {
 			screen
 				.getByRole("switch", { name: "compressImages" })
 				.matches(":disabled"),
-		).toBe(true);
+		).toBe(false);
 	});
 
 	it("excludes the About page from the settings search index", async () => {
@@ -550,7 +549,8 @@ describe("SettingsCenterRoot images section", () => {
 		).not.toBeNull();
 	});
 
-	it("keeps backup image-host fields visible but unavailable", () => {
+	it("toggles the owner-backed backup image-host fields", async () => {
+		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const backup = screen.getByRole("switch", {
 			name: "enableBackupImageHost",
@@ -560,21 +560,14 @@ describe("SettingsCenterRoot images section", () => {
 			screen.getByRole("textbox", { name: "backupBucket" }),
 		).not.toBeNull();
 		expect(
-			screen
-				.getByRole("textbox", { name: "backupBucket" })
-				.matches(":disabled"),
-		).toBe(true);
-		expect(backup.matches(":disabled")).toBe(true);
-		const fieldset = backup.closest("fieldset");
-		expect(fieldset?.getAttribute("aria-describedby")).toBe(
-			"easymde-images-unavailable",
-		);
-		expect(
-			document.getElementById("easymde-images-unavailable"),
-		).not.toBeNull();
+			screen.getByRole("textbox", { name: "backupBucket" }).matches(":disabled"),
+		).toBe(false);
+		expect(backup.matches(":disabled")).toBe(false);
+		await user.click(backup);
+		expect(screen.queryByRole("textbox", { name: "backupBucket" })).toBeNull();
 	});
 
-	it("does not expose a fake image-host connection test", () => {
+	it("exposes real server-backed image-host connection tests", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const imagesSection = screen
 			.getByRole("heading", { name: "imageHostService" })
@@ -583,29 +576,36 @@ describe("SettingsCenterRoot images section", () => {
 			throw new Error("images-settings-section-missing");
 		const images = within(imagesSection);
 
-		expect(images.queryByRole("button", { name: "testConnection" })).toBeNull();
 		expect(
-			images.queryByRole("button", { name: "testBackupConnection" }),
-		).toBeNull();
-		expect(images.getByRole("note").textContent).toContain(
-			"settingsUnavailable",
-		);
+			images
+				.getByRole("button", { name: "testPrimaryConnection" })
+				.matches(":disabled"),
+		).toBe(false);
+		expect(
+			images
+				.getByRole("button", { name: "testBackupConnection" })
+				.matches(":disabled"),
+		).toBe(false);
+		expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual([
+			"connectionPending",
+			"connectionPending",
+		]);
 	});
 
-	it("keeps filename behavior unavailable while enabling upload formats", () => {
+	it("enables the server-owned filename behavior and upload formats", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const rule = screen.getByRole<HTMLInputElement>("textbox", {
 			name: "fileNameRule",
 		});
 		const gif = screen.getByRole("checkbox", { name: "allowUploadGif" });
 
-		expect(rule.matches(":disabled")).toBe(true);
+		expect(rule.matches(":disabled")).toBe(false);
 		expect(gif.matches(":disabled")).toBe(false);
 		expect(
 			screen
 				.getByRole("button", { name: "fileNamePresetMd5" })
 				.matches(":disabled"),
-		).toBe(true);
+		).toBe(false);
 	});
 
 	it("enables owner-backed insertion metadata while keeping raw HTML unavailable", () => {
@@ -636,7 +636,7 @@ describe("SettingsCenterRoot images section", () => {
 				.matches(":disabled"),
 		).toBe(true);
 	});
-	it("retains stable IDs in unavailable select controls", () => {
+	it("retains stable IDs while enabling the supported image provider", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const service = screen.getByRole<HTMLSelectElement>("combobox", {
 			name: "selectImageHostService",
@@ -647,7 +647,7 @@ describe("SettingsCenterRoot images section", () => {
 
 		expect(service.value).toBe("cloudflare-r2");
 		expect(theme.value).toBe("system");
-		expect(service.matches(":disabled")).toBe(true);
+		expect(service.matches(":disabled")).toBe(false);
 		expect(theme.matches(":disabled")).toBe(true);
 	});
 });
@@ -834,9 +834,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 			await user.click(
 				transfer.getByRole("button", { name: /transferExportConfiguration/ }),
 			);
-			expect(within(container).getByRole("status").textContent).toContain(
-				"transferExportSuccess",
-			);
+			expect(screen.getByText("transferExportSuccess")).not.toBeNull();
 			const calls = createObjectUrl.mock.calls as ReadonlyArray<
 				Readonly<[Blob]>
 			>;
@@ -919,9 +917,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 			);
 			expect(click).toHaveBeenCalledOnce();
 			expect(createObjectUrl).toHaveBeenCalledOnce();
-			expect(within(container).getByRole("status").textContent).toContain(
-				"transferExportNameInvalid",
-			);
+			expect(screen.getByText("transferExportNameInvalid")).not.toBeNull();
 		} finally {
 			Object.defineProperty(URL, "createObjectURL", {
 				configurable: true,

@@ -1610,6 +1610,33 @@ body.toplevel_page_easymde #easymde-settings-center-root {
 	background: #13b45b;
 }
 
+.easymde-settings-center__connection-status[data-state="testing"] {
+	background: #eef4ff;
+	color: #0867f4;
+}
+
+.easymde-settings-center__connection-status[data-state="testing"] > span {
+	background: #0867f4;
+}
+
+.easymde-settings-center__connection-status[data-state="error"] {
+	background: #fff0f0;
+	color: #c43b3b;
+}
+
+.easymde-settings-center__connection-status[data-state="error"] > span {
+	background: #d44a4a;
+}
+
+.easymde-settings-center__connection-status[data-state="stale"] {
+	background: #f1f3f7;
+	color: #65718a;
+}
+
+.easymde-settings-center__connection-status[data-state="stale"] > span {
+	background: #7b879d;
+}
+
 .easymde-settings-center__backup-connection-divider .easymde-settings-center__connection-status {
 	gap: 8px;
 	padding: 0 12px;
@@ -1663,6 +1690,16 @@ body.toplevel_page_easymde #easymde-settings-center-root {
 .easymde-settings-center__connection-row > button:disabled {
 	cursor: default;
 	opacity: .6;
+}
+
+.easymde-settings-center__connection-spinner {
+	animation: easymde-settings-center-spin .8s linear infinite;
+}
+
+@keyframes easymde-settings-center-spin {
+	to {
+		transform: rotate(360deg);
+	}
 }
 
 .easymde-settings-center .easymde-settings-center__backup-description {

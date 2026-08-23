@@ -76,7 +76,7 @@ const bootstrap = {
   appearance: {},
   document: {},
   fonts: {},
-  imageUpload: { endpoint: '/media', nonce: 'nonce', postId: 7 },
+  imageUpload: { destination: 'wordpress', endpoint: '/media', nonce: 'nonce', postId: 7 },
   immersiveStrings: {
     autoSave: 'Auto save',
     autoSaveDescription: 'Automatically save a local draft',

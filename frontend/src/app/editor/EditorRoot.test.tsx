@@ -361,10 +361,12 @@ function fixture(): EditorRootProps &
     imageUpload: {
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       enabled: true,
+      insertAfterUpload: true,
       insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
       maxBytes: 1024,
       postId: 7,
       strings: {
+        backupFailed: 'Primary uploaded; backup failed',
         defaultAlt: 'image',
         dropFailed: 'Drop failed',
         dropTooLarge: 'Drop too large',

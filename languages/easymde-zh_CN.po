@@ -1191,6 +1191,10 @@ msgstr "拖放图片上传失败。请改用媒体库。"
 msgid "Dropped image is too large for this site."
 msgstr "拖放的图片超过了本站允许的大小。"
 
+#: src/Admin/AdminAssets.php:972
+msgid "The primary image was uploaded, but the backup image host failed."
+msgstr "主图床图片已上传，但备份图床上传失败。"
+
 #: src/Admin/AdminAssets.php:936
 msgid "alt text"
 msgstr "替代文本"
@@ -3489,6 +3493,154 @@ msgid "%s word"
 msgid_plural "%s words"
 msgstr[0] "%s 个词"
 
+#: src/Admin/SettingsCenterStrings.php:129
+msgid "Upload Destination"
+msgstr "上传目标"
+
+#: src/Admin/SettingsCenterStrings.php:130
+msgid "WordPress Media Library"
+msgstr "WordPress 媒体库"
+
+#: src/Admin/SettingsCenterStrings.php:131
+msgid "Remote Image Host"
+msgstr "远程图床"
+
+#: src/Admin/SettingsCenterStrings.php:138
+msgid "Cloudflare Account ID"
+msgstr "Cloudflare 账户 ID"
+
+#: src/Admin/SettingsCenterStrings.php:145
+msgid "Primary credentials configured"
+msgstr "主图床凭据已配置"
+
+#: src/Admin/SettingsCenterStrings.php:146
+msgid "Backup credentials configured"
+msgstr "备份图床凭据已配置"
+
+#: src/Admin/SettingsCenterStrings.php:147
+msgid "Credentials are configured and remain stored securely in WordPress."
+msgstr "凭据已配置，并安全存储在 WordPress 中。"
+
+#: src/Admin/SettingsCenterStrings.php:148
+msgid ""
+"Leave blank to keep the saved credentials, or enter new values to replace "
+"them."
+msgstr "留空以保留已保存的凭据，或输入新值进行替换。"
+
+#: src/Admin/SettingsCenterStrings.php:149
+msgid "Connection Status"
+msgstr "连接状态"
+
+#: src/Admin/SettingsCenterStrings.php:150
+msgid "Backup Connection Status"
+msgstr "备份连接状态"
+
+#: src/Admin/SettingsCenterStrings.php:151
+msgid "Not Tested"
+msgstr "尚未测试"
+
+#: src/Admin/SettingsCenterStrings.php:152
+msgid "Testing Connection…"
+msgstr "正在测试连接…"
+
+#: src/Admin/SettingsCenterStrings.php:153
+msgid "Connected"
+msgstr "已连接"
+
+#: src/Admin/SettingsCenterStrings.php:154
+msgid "Connection Failed"
+msgstr "连接失败"
+
+#: src/Admin/SettingsCenterStrings.php:155
+msgid "Settings Changed; Test Again"
+msgstr "设置已更改，请重新测试"
+
+#. translators: %s: localized date and time of the most recent connection test.
+#: src/Admin/SettingsCenterStrings.php:157
+#, php-format
+msgid "Last tested: %s"
+msgstr "上次测试：%s"
+
+#: src/Admin/SettingsCenterStrings.php:158
+msgid "Test Connection"
+msgstr "测试连接"
+
+#: src/Admin/SettingsCenterStrings.php:159
+msgid "Test Backup Connection"
+msgstr "测试备份连接"
+
+#: src/Admin/SettingsCenterStrings.php:160
+msgid "Complete the required image host settings before testing."
+msgstr "请先完整填写必需的图床设置，再进行测试。"
+
+#: src/Admin/SettingsCenterStrings.php:161
+msgid "The image host rejected the configured credentials."
+msgstr "图床拒绝了已配置的凭据。"
+
+#: src/Admin/SettingsCenterStrings.php:162
+msgid "The configured credentials do not allow access to this storage space."
+msgstr "已配置的凭据无权访问此存储空间。"
+
+#: src/Admin/SettingsCenterStrings.php:163
+msgid "Could not reach the image host. Check the network connection and try again."
+msgstr "无法连接图床，请检查网络连接后重试。"
+
+#: src/Admin/SettingsCenterStrings.php:164
+msgid "The image host did not respond in time. Try again."
+msgstr "图床未及时响应，请重试。"
+
+#: src/Admin/SettingsCenterStrings.php:165
+msgid "The image host reported a service error. Try again later."
+msgstr "图床服务发生错误，请稍后重试。"
+
+#: src/Admin/SettingsCenterStrings.php:166
+msgid "The image host returned an invalid response."
+msgstr "图床返回了无效响应。"
+
+#: src/Rest/ImageHostingController.php:86
+msgid "The image-hosting request is too large."
+msgstr "图床请求过大。"
+
+#: src/Rest/ImageHostingController.php:121
+msgid "The selected image-hosting service is not configured."
+msgstr "所选图床服务尚未配置。"
+
+#: src/Rest/ImageHostingController.php:171
+msgid "The image-hosting configuration is unavailable."
+msgstr "图床配置不可用。"
+
+#: src/Rest/ImageHostingController.php:313
+msgid "The image-hosting request could not be verified."
+msgstr "无法验证图床请求。"
+
+#: src/Rest/ImageHostingController.php:321
+msgid "The image-hosting request is invalid."
+msgstr "图床请求无效。"
+
+#: src/Rest/ImageHostingController.php:329
+msgid "The image upload is invalid."
+msgstr "图片上传请求无效。"
+
+#: src/Rest/ImageHostingController.php:337
+msgid "The image-hosting connection could not be verified."
+msgstr "无法验证图床连接。"
+
+#: src/Rest/ImageHostingController.php:345
+msgid "The image could not be uploaded to the configured image host."
+msgstr "无法将图片上传到已配置的图床。"
+
+#: src/Rest/ImageHostingController.php:353
+msgid "The image-hosting service returned an invalid result."
+msgstr "图床服务返回了无效结果。"
+
+#: src/Rest/ImageHostingController.php:154
+msgid "Remote image hosting is not enabled in the current EasyMDE settings."
+msgstr "当前 EasyMDE 设置尚未启用远程图床。"
+
+#: src/ImageHosting/ImageHostingRuntime.php:361
+msgid "The image-hosting operation could not be completed."
+msgstr "无法完成图床操作。"
+
 #~ msgid "Geek black"
 #~ msgstr "极客黑"
 
@@ -3588,29 +3740,14 @@ msgstr[0] "%s 个词"
 #~ msgid "Open AI Assistant"
 #~ msgstr "打开 AI 助手"
 
-#~ msgid "Connection Status"
-#~ msgstr "连接状态"
-
 #~ msgid "Pending Test"
 #~ msgstr "等待测试"
 
 #~ msgid "Testing"
 #~ msgstr "测试中"
 
-#~ msgid "Connected"
-#~ msgstr "已连接"
-
 #~ msgid "Last Test"
 #~ msgstr "上次测试"
-
-#~ msgid "Test Connection"
-#~ msgstr "测试连接"
-
-#~ msgid "Backup Connection Status"
-#~ msgstr "备用连接状态"
-
-#~ msgid "Test Backup Connection"
-#~ msgstr "测试备用连接"
 
 #~ msgid "AI Service Configuration"
 #~ msgstr "AI Service Configuration"

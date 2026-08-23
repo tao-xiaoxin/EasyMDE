@@ -68,6 +68,9 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( $post_id, $bootstrap['preview']['postId'] );
 		$this->assertIsObject( $bootstrap['preview']['features'] );
 		$this->assertSame( $post_id, $bootstrap['imageUpload']['postId'] );
+		$this->assertSame( 'wordpress', $bootstrap['imageUpload']['destination'] );
+		$this->assertTrue( $bootstrap['imageUpload']['insertAfterUpload'] );
+		$this->assertNull( $bootstrap['imageUpload']['actionNonce'] );
 		$this->assertSame(
 			array( 'image/jpeg', 'image/png', 'image/webp', 'image/gif' ),
 			$bootstrap['imageUpload']['allowedMimeTypes']
@@ -131,6 +134,32 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		} finally {
 			remove_filter( 'upload_mimes', $remove_webp );
 		}
+	}
+
+	public function test_editor_root_bootstrap_routes_remote_uploads_through_the_protected_wordpress_proxy() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		wp_set_current_user( $user_id );
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center' => array(
+					'images' => array( 'destination' => 'remote' ),
+				),
+			),
+			false
+		);
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
+
+		$this->assertSame( 'remote', $bootstrap['imageUpload']['destination'] );
+		$this->assertSame(
+			rest_url( 'easymde/v1/image-hosting/upload' ),
+			$bootstrap['imageUpload']['endpoint']
+		);
+		$this->assertNotEmpty( $bootstrap['imageUpload']['actionNonce'] );
+		$this->assertArrayNotHasKey( 'credentials', $bootstrap['imageUpload'] );
+		$this->assertArrayNotHasKey( 'providerEndpoint', $bootstrap['imageUpload'] );
 	}
 
 	public function test_editor_root_bootstrap_consumes_saved_settings_center_shortcuts() {

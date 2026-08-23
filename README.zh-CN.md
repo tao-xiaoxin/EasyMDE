@@ -61,7 +61,7 @@ EasyMDE 是一个独立的 WordPress Markdown 编辑器插件。启用插件后�
 - 分栏源文档和实时预览。
 - 源文档与预览滚动同步。
 - Typora 风格快捷键，并支持 Windows/Linux 与 macOS 分别配置。
-- WordPress 媒体库图片插入，以及本地图片粘贴和拖放上传。
+- WordPress 媒体库图片插入，以及本地图片粘贴和拖放上传；管理员可显式切换到 Cloudflare R2，并按需启用七牛 Kodo 同路径备份。
 - 本地草稿恢复和独立沉浸写作工作台。
 
 **渲染能力**

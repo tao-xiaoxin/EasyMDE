@@ -130,7 +130,7 @@ final class SettingsController {
 		$shapes = array(
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
 			'general'   => array( 'interfaceLanguage', 'editingMode', 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'cleanPastedContent', 'smartListRecognition', 'defaultCategory', 'publishVisibility', 'openPreviewAfterPublish', 'summaryMode', 'featuredImagePlaceholder' ),
-			'images'    => array( 'service', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'backupEnabled', 'backupService', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'backupSameObjectKey', 'backupFailureMode', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'retryCount', 'maxImageSize', 'uploadFormats', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ),
+			'images'    => array( 'destination', 'service', 'accountId', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'backupEnabled', 'backupService', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'backupSameObjectKey', 'backupFailureMode', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'retryCount', 'maxImageSize', 'uploadFormats', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ),
 			'markdown'  => array( 'livePreview', 'wordWrap', 'lineNumbers', 'fixedToolbar', 'editorTheme', 'editorFontSize', 'editorFont', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeTheme', 'codeLineNumbers', 'taskLists', 'emoji', 'math', 'htmlRendering', 'tableExtension', 'footnotes', 'definitionLists', 'toc', 'imageSizeSyntax', 'pasteAsMarkdown', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle' ),
 			'shortcuts' => array( 'values', 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
@@ -156,14 +156,16 @@ final class SettingsController {
 				'summaryMode'       => 16,
 			),
 			'images'   => array(
+				'destination'       => 16,
 				'service'           => 32,
-				'bucket'            => 160,
+				'accountId'         => 64,
+				'bucket'            => 128,
 				'domain'            => 255,
 				'accessKey'         => 255,
 				'secretKey'         => 255,
 				'fileNameRule'      => 160,
 				'backupService'     => 32,
-				'backupBucket'      => 160,
+				'backupBucket'      => 128,
 				'backupDomain'      => 255,
 				'backupAccessKey'   => 255,
 				'backupSecretKey'   => 255,
@@ -247,14 +249,15 @@ final class SettingsController {
 				'summaryMode'       => array( 'auto-55', 'auto-100', 'manual' ),
 			),
 			'images'   => array(
-				'service'           => array( 'cloudflare-r2', 'aliyun-oss', 'tencent-cos', 'custom' ),
-				'backupService'     => array( 'qiniu-kodo', 'cloudflare-r2', 'aliyun-oss', 'tencent-cos', 'custom' ),
-				'backupFailureMode' => array( 'return-primary-url', 'fail-upload' ),
-				'retryCount'        => array( 'none', 'once', 'twice', 'three-times' ),
+				'destination'       => array( 'wordpress', 'remote' ),
+				'service'           => array( 'cloudflare-r2' ),
+				'backupService'     => array( 'qiniu-kodo' ),
+				'backupFailureMode' => array( 'return-primary-url' ),
+				'retryCount'        => array( 'none' ),
 				'maxImageSize'      => array( 'original', '1920', '2560', '3840' ),
-				'insertFormat'      => array( 'markdown', 'html', 'url' ),
-				'altSource'         => array( 'filename', 'empty', 'upload' ),
-				'captionMode'       => array( 'none', 'filename', 'upload' ),
+				'insertFormat'      => array( 'markdown', 'url' ),
+				'altSource'         => array( 'filename', 'empty' ),
+				'captionMode'       => array( 'none', 'filename' ),
 			),
 			'markdown' => array(
 				'editorTheme'     => array( 'system', 'light', 'dark' ),
@@ -279,6 +282,12 @@ final class SettingsController {
 			if ( ! $this->is_valid_domain( $value['images'][ $field ] ) ) {
 				return $this->invalid_payload_error();
 			}
+		}
+		if ( '' !== $value['images']['accountId'] && 1 !== preg_match( '/^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/D', $value['images']['accountId'] ) ) {
+			return $this->invalid_payload_error();
+		}
+		if ( ! $this->is_valid_file_name_rule( $value['images']['fileNameRule'] ) ) {
+			return $this->invalid_payload_error();
 		}
 
 		return true;
@@ -309,17 +318,38 @@ final class SettingsController {
 		}
 
 		$parts = wp_parse_url( $value );
-		if ( ! is_array( $parts ) || ! isset( $parts['scheme'], $parts['host'] ) || isset( $parts['user'], $parts['pass'], $parts['query'], $parts['fragment'] ) ) {
+		if ( ! is_array( $parts ) || ! isset( $parts['scheme'], $parts['host'] ) || isset( $parts['user'] ) || isset( $parts['pass'] ) || isset( $parts['port'] ) || isset( $parts['query'] ) || isset( $parts['fragment'] ) || ( isset( $parts['path'] ) && '' !== $parts['path'] && '/' !== $parts['path'] ) ) {
 			return false;
 		}
 
-		if ( ! in_array( strtolower( (string) $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
+		if ( 'https' !== strtolower( (string) $parts['scheme'] ) ) {
 			return false;
 		}
 
-		$url = esc_url_raw( $value, array( 'http', 'https' ) );
+		$url = esc_url_raw( $value, array( 'https' ) );
 
 		return is_string( $url ) && '' !== $url;
+	}
+
+	private function is_valid_file_name_rule( $rule ) {
+		if ( ! is_string( $rule ) || '' === $rule || strlen( $rule ) > 160 || '/' === $rule[0] || '/' === substr( $rule, -1 ) || false !== strpos( $rule, '\\' ) || false !== strpos( $rule, '..' ) || false !== strpos( $rule, '//' ) || preg_match( '/[\x00-\x1F\x7F?#]/', $rule ) ) {
+			return false;
+		}
+
+		if ( ! preg_match_all( '/\{([A-Za-z0-9_]+)\}/', $rule, $matches ) || ! in_array( 'ext', $matches[1], true ) ) {
+			return false;
+		}
+
+		$allowed = array( 'year', 'month', 'day', 'date', 'time', 'post_id', 'md5', 'uuid', 'name', 'ext' );
+		foreach ( $matches[1] as $variable ) {
+			if ( ! in_array( $variable, $allowed, true ) ) {
+				return false;
+			}
+		}
+
+		$literal = preg_replace( '/\{[A-Za-z0-9_]+\}/', '', $rule );
+
+		return is_string( $literal ) && 1 === preg_match( '/^[A-Za-z0-9._\/-]*$/D', $literal ) && false === strpos( $literal, '{' ) && false === strpos( $literal, '}' );
 	}
 
 	private function has_exact_keys( array $value, array $expected ) {

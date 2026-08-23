@@ -25,7 +25,7 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 * Compact icon toolbar for common Markdown formatting actions.
 * Heading, appearance, and output controls in compact popovers.
 * Typora-inspired keyboard shortcuts with configurable Windows/Linux and macOS bindings.
-* WordPress media library insertion, plus local image paste and drag-and-drop upload.
+* WordPress media library insertion, plus local image paste and drag-and-drop upload to WordPress or an explicitly configured Cloudflare R2 image host with optional Qiniu Kodo backup.
 * REST-powered server preview.
 * Browser local draft autosave and recovery.
 * Fixed 50/50 desktop source/preview workspace with the historical responsive stack at narrow widths.
@@ -129,6 +129,14 @@ Yes. Add `[TOC]` or `[toc]` on its own line in the Markdown source.
 = Can I insert WordPress media? =
 
 Yes. Use the media button in the EasyMDE toolbar to insert an image from the WordPress media library. Authors who can upload media can also paste or drop local JPEG, PNG, GIF, or WebP images into the Markdown source; EasyMDE uploads them to the WordPress media library before inserting Markdown image syntax.
+
+= Does EasyMDE send images to an external service? =
+
+Not by default. The default destination is the WordPress media library. A site administrator may explicitly configure Cloudflare R2 as the primary remote image host and optionally enable Qiniu Kodo as a same-key backup. For remote uploads, EasyMDE sends the selected image bytes, MIME type, and generated object key from the WordPress server to the configured provider. Provider credentials remain on the WordPress server and are not sent to the browser.
+
+Cloudflare R2 documentation and policies: https://developers.cloudflare.com/r2/ , https://www.cloudflare.com/privacypolicy/ , https://www.cloudflare.com/terms/
+
+Qiniu Kodo documentation and privacy policy: https://developer.qiniu.com/kodo , https://www.qiniu.com/static/%E4%B8%83%E7%89%9B%E4%BA%91%E9%9A%90%E7%A7%81%E6%9D%83%E6%94%BF%E7%AD%962021%E7%89%88.pdf
 
 = Can I copy an article into the WeChat Official Accounts editor? =
 

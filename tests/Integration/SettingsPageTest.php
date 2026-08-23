@@ -105,11 +105,15 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertSame('EasyMDE', $bootstrap['strings']['brandName']);
         $this->assertSame('General Settings', $bootstrap['strings']['general']);
         $this->assertSame('', $bootstrap['drafts']['images']['domain']);
+		$this->assertFalse( $bootstrap['drafts']['images']['primaryCredentialsConfigured'] );
+		$this->assertFalse( $bootstrap['drafts']['images']['backupCredentialsConfigured'] );
         $this->assertNotEmpty( $bootstrap['api']['actionNonce'] );
-        $this->assertArrayNotHasKey('testingConnection', $bootstrap['strings']);
+		$this->assertNotEmpty( $bootstrap['api']['imageHostingActionNonce'] );
+		$this->assertStringContainsString(
+			'/easymde/v1/image-hosting/connection',
+			$bootstrap['api']['imageHostingConnectionUrl']
+		);
         $this->assertArrayHasKey('settingsUnavailable', $bootstrap['strings']);
-        $this->assertArrayNotHasKey('connected', $bootstrap['strings']);
-        $this->assertArrayNotHasKey('lastTest', $bootstrap['strings']);
         $this->assertArrayNotHasKey('promptManagement', $bootstrap['strings']);
         $this->assertArrayHasKey('transferExportConfiguration', $bootstrap['strings']);
         $this->assertArrayHasKey('transferConfigurationManagement', $bootstrap['strings']);
@@ -128,6 +132,13 @@ final class SettingsPageTest extends WP_UnitTestCase
             'transferPageTitle', 'aboutDescription', 'sectionPending', 'sectionPendingDescription',
             'saveSettings', 'savingSettings', 'settingsSaved', 'settingsSaveFailed',
             'settingsUnsavedChanges', 'settingsUnavailable', 'currentAllowedUploads', 'insertFileNameVariable',
+            'uploadDestination', 'wordpressMediaLibrary', 'remoteImageHost', 'r2AccountId',
+            'primaryCredentialsConfigured', 'backupCredentialsConfigured', 'credentialsConfiguredHint',
+            'replaceCredentialsHint', 'connectionStatus', 'backupConnectionStatus', 'connectionPending', 'testingConnection', 'connected',
+            'connectionFailed', 'connectionStale', 'lastTested', 'testPrimaryConnection',
+            'testBackupConnection', 'imageHostFailureConfiguration', 'imageHostFailureAuthentication',
+            'imageHostFailureAuthorization', 'imageHostFailureNetwork', 'imageHostFailureTimeout',
+            'imageHostFailureProvider', 'imageHostFailureInvalidResponse',
             'transferExportConfiguration', 'transferConfigurationManagement',
             'transferFileSelectedNotice', 'transferExportNameInvalid', 'transferChecksSummary', 'transferChecksPassed',
             'aboutVersionInformation', 'aboutPluginIntroduction',

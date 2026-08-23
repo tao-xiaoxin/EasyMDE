@@ -36,7 +36,9 @@ function bootstrap(): SettingsCenterBootstrap {
     api: {
       settingsUrl: `${origin}/wp-json/easymde/v1/settings`,
       nonce: 'test-nonce',
-      actionNonce: 'test-action-nonce'
+      actionNonce: 'test-action-nonce',
+      imageHostingActionNonce: 'test-image-hosting-action-nonce',
+      imageHostingConnectionUrl: `${origin}/wp-json/easymde/v1/image-hosting/connection`
     },
     assets: {
       brandMarkUrl: `${origin}/plugin/brand.png`,
@@ -54,7 +56,9 @@ function bootstrap(): SettingsCenterBootstrap {
     drafts: {
       images: {
         domain: 'https://img.example.test',
-        backupDomain: 'https://backup.example.test'
+        backupDomain: 'https://backup.example.test',
+        primaryCredentialsConfigured: false,
+        backupCredentialsConfigured: false
       },
     },
     settings: SETTINGS_CENTER_TEST_SETTINGS,

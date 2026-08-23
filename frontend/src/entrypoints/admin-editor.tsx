@@ -298,7 +298,11 @@ export function mountAdminEditor(
     fonts: bootstrap.fonts,
     imageUpload: { ...bootstrap.imageUpload, postId },
     imageUploadPort: createWordPressImageUploadPort({
+      ...(bootstrap.imageUpload.actionNonce ? {
+        actionNonce: bootstrap.imageUpload.actionNonce
+      } : {}),
       apiFetch,
+      destination: bootstrap.imageUpload.destination,
       endpoint: bootstrap.imageUpload.endpoint,
       formData: FormData,
       nonce: bootstrap.imageUpload.nonce,

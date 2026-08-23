@@ -62,7 +62,9 @@ async function expectRemovedSettingsPage(
 	await expect(page.locator(".easymde-settings-shortcuts")).toHaveCount(0);
 	await expect(page.locator('script[src*="settings-center"]')).toHaveCount(0);
 	await expect(page.locator('link[href*="settings-center"]')).toHaveCount(0);
-	await expect(page.locator('link[href*="/assets/css/admin/settings.css"]')).toHaveCount(0);
+	await expect(
+		page.locator('link[href*="/assets/css/admin/settings.css"]'),
+	).toHaveCount(0);
 	if (message) {
 		await expect(page.locator("body")).toContainText(message);
 	}
@@ -128,7 +130,9 @@ test("opens the native plugin updates list from the EasyMDE submenu", async ({
 	await expect(page).toHaveURL(
 		/\/wp-admin\/plugins\.php\?plugin_status=upgrade$/u,
 	);
-	await expect(page.locator("#wpbody-content h1")).toHaveText(/^\s*(?:插件|Plugins)\s*$/u);
+	await expect(page.locator("#wpbody-content h1")).toHaveText(
+		/^\s*(?:插件|Plugins)\s*$/u,
+	);
 	const activePluginFilter = page.locator(".subsubsub a.current");
 	await expect(activePluginFilter).toHaveCount(1);
 	const activeFilterText = await activePluginFilter.textContent();
@@ -244,9 +248,7 @@ test("keeps a visible exit when the Settings Center bundle cannot load", async (
 
 	await page.route(settingsBundle, (route) => route.abort("failed"));
 	try {
-		await page.goto(
-			"/wp-admin/admin.php?page=easymde&route=/general_setting",
-		);
+		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
 		const startup = page.locator("[data-settings-center-startup]");
 		await expect(startup).toBeVisible();
@@ -285,9 +287,7 @@ test("keeps a neutral exit surface when Content Security Policy blocks scripts",
 		});
 	});
 	try {
-		await page.goto(
-			"/wp-admin/admin.php?page=easymde&route=/general_setting",
-		);
+		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
 		const startup = page.locator("[data-settings-center-startup]");
 		await expect(startup).toBeVisible();
@@ -415,7 +415,7 @@ test("opens a search result at the reference offset and focuses its control", as
 						) <= 0.5,
 					focused: document.activeElement === control,
 				};
-				}, targetLabel),
+			}, targetLabel),
 		)
 		.toEqual({ referenceTargetGap: true, focused: true });
 });
@@ -430,7 +430,7 @@ test("keeps focus on an unavailable search result without implying availability"
 
 	const disabledControl = page
 		.locator(
-			'[data-settings-section="images"] [data-setting-label] input:disabled',
+			'[data-settings-section="images"] [data-setting-label] button[role="switch"]:disabled',
 		)
 		.first();
 	const targetRow = disabledControl.locator(
@@ -453,9 +453,7 @@ test("keeps focus on an unavailable search result without implying availability"
 		.poll(async () => {
 			const [targetBox, headerBox] = await Promise.all([
 				targetRow.boundingBox(),
-				page
-					.locator(".easymde-settings-center__sticky-header")
-					.boundingBox(),
+				page.locator(".easymde-settings-center__sticky-header").boundingBox(),
 			]);
 			if (!targetBox || !headerBox)
 				throw new Error("settings-search-unavailable-geometry-missing");
@@ -492,9 +490,7 @@ test("focuses a group-only search result at the reference offset", async ({
 		.poll(async () => {
 			const [targetBox, headerBox] = await Promise.all([
 				targetHeading.boundingBox(),
-				page
-					.locator(".easymde-settings-center__sticky-header")
-					.boundingBox(),
+				page.locator(".easymde-settings-center__sticky-header").boundingBox(),
 			]);
 			if (!targetBox || !headerBox)
 				throw new Error("settings-search-group-geometry-missing");
@@ -502,6 +498,121 @@ test("focuses a group-only search result at the reference offset", async ({
 			return Math.abs(targetBox.y - headerBox.y - headerBox.height - 33);
 		})
 		.toBeLessThanOrEqual(0.5);
+});
+
+test("runs the image-hosting interaction contract without exposing credentials", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await login(page);
+	await page.route(
+		"**/wp-json/easymde/v1/image-hosting/connection",
+		async (route) => {
+			const payload = route.request().postDataJSON();
+			await route.fulfill({
+				contentType: "application/json",
+				json: {
+					target: payload.target,
+					service: payload.target === "backup" ? "qiniu-kodo" : "cloudflare-r2",
+					status: "connected",
+					testedAt: "2026-08-23T08:00:00+00:00",
+				},
+				status: 200,
+			});
+		},
+	);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await page.locator('button[data-nav-id="images"]').click();
+
+	const images = page.locator('[data-settings-section="images"]');
+	await expect(
+		images.getByRole("switch", {
+			name: /上传后插入 Markdown 链接|Insert Markdown Link After Upload/u,
+		}),
+	).toBeEnabled();
+	const retryCount = images.getByRole("combobox", {
+		name: /上传失败时重试|Retry Failed Upload/u,
+	});
+	await expect(retryCount).toBeDisabled();
+	await expect(retryCount).toHaveValue("none");
+	const primary = images.locator(".is-host-service");
+	const connection = primary.locator(
+		".easymde-settings-center__connection-row",
+	);
+	const connectionStatus = connection.locator(
+		".easymde-settings-center__connection-status",
+	);
+	const connectionButton = connection.locator("> button");
+	await connectionButton.click();
+	await expect(connectionStatus).toHaveAttribute("data-state", "connected");
+
+	const bucket = primary.locator("input").nth(1);
+	await bucket.fill(`${await bucket.inputValue()}-draft`);
+	await expect(connectionStatus).toHaveAttribute("data-state", "stale");
+	await expect(connectionButton).toBeDisabled();
+
+	const accessKey = primary
+		.locator(".easymde-settings-center__secret-input")
+		.first();
+	const accessInput = accessKey.locator("input");
+	await expect(accessInput).toHaveAttribute("type", "password");
+	await accessInput.fill("synthetic-browser-only-key");
+	await accessKey.locator("button").click();
+	await expect(accessInput).toHaveAttribute("type", "text");
+	await accessKey.locator("button").click();
+	await expect(accessInput).toHaveAttribute("type", "password");
+
+	const rule = primary.locator(".easymde-settings-center__file-name-input");
+	await primary
+		.locator(
+			'.easymde-settings-center__file-name-presets [data-preset-index="1"]',
+		)
+		.click();
+	await expect(rule).toHaveValue("{year}/{month}/{md5}.{ext}");
+	await rule.fill("assets/.");
+	await primary
+		.locator(".easymde-settings-center__file-name-variables button")
+		.last()
+		.click();
+	await expect(rule).toHaveValue("assets/.{ext}");
+
+	const backup = images.locator(".is-backup-host");
+	const backupToggle = backup.locator('[role="switch"]').first();
+	if ((await backupToggle.getAttribute("aria-checked")) !== "true") {
+		await backupToggle.click();
+	}
+	await expect(
+		backup.locator(".easymde-settings-center__backup-fields"),
+	).toHaveCount(1);
+	await backupToggle.click();
+	await expect(
+		backup.locator(".easymde-settings-center__backup-fields"),
+	).toHaveCount(0);
+	await backupToggle.click();
+	await expect(
+		backup.locator(".easymde-settings-center__backup-fields"),
+	).toHaveCount(1);
+	await expect(
+		backup.getByRole("switch", {
+			name: /保持.*对象路径|Keep.*Object Path/u,
+		}),
+	).toBeDisabled();
+
+	const formats = images.locator(
+		".easymde-settings-center__upload-formats input",
+	);
+	for (let index = 0; index < 4; index += 1) {
+		const format = formats.nth(index);
+		if (!(await format.isChecked())) await format.check();
+	}
+	for (let index = 0; index < 3; index += 1) await formats.nth(index).uncheck();
+	await formats.nth(3).click();
+	await expect(formats.nth(3)).toBeChecked();
+	await expect(page.getByRole("alert")).toBeVisible();
+
+	await page.reload();
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 });
 
 test("matches the reference Settings Center header geometry", async ({
@@ -530,20 +641,14 @@ test("matches the reference Settings Center header geometry", async ({
 
 		return {
 			title: measure(".easymde-settings-center__header-scale h1"),
-			description: measure(
-				".easymde-settings-center__header-scale header p",
-			),
+			description: measure(".easymde-settings-center__header-scale header p"),
 			closeIcon: measure(
 				".easymde-settings-center__header-scale header > a svg",
 			),
-			closeLink: measure(
-				".easymde-settings-center__header-scale header > a",
-			),
+			closeLink: measure(".easymde-settings-center__header-scale header > a"),
 			search: measure(".easymde-settings-center__search input"),
 			searchIcon: measure(".easymde-settings-center__search > svg"),
-			footerSpace: measure(
-				".easymde-settings-center__content-footer-space",
-			),
+			footerSpace: measure(".easymde-settings-center__content-footer-space"),
 			frame: measure(".easymde-settings-center__frame"),
 			aside: measure(".easymde-settings-center__sidebar"),
 			main: measure(".easymde-settings-center main"),
@@ -566,7 +671,8 @@ test("matches the reference Settings Center header geometry", async ({
 					mainFrameOffsetX: main.x - frame.x,
 					titleMainOffsetX: title.x - main.x,
 					descriptionMainOffsetX: description.x - main.x,
-					closeFrameRightGap: frame.x + frame.width - closeLink.x - closeLink.width,
+					closeFrameRightGap:
+						frame.x + frame.width - closeLink.x - closeLink.width,
 					searchMainLeftGap: search.x - main.x,
 					searchMainRightGap: main.x + main.width - search.x - search.width,
 				};
@@ -702,10 +808,7 @@ test("keeps the settings save action clickable after scrolling", async ({
 			.toBe(true);
 
 		await saveButton.click();
-		await expect(saveStatus).toHaveAttribute(
-			"data-save-status",
-			/saved|idle/u,
-		);
+		await expect(saveStatus).toHaveAttribute("data-save-status", /saved|idle/u);
 		await expect(saveButton).toBeDisabled();
 
 		await page.reload();
@@ -742,9 +845,7 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 
 	const settingsCenter = page.locator(".easymde-settings-center");
-	const saveBar = settingsCenter.locator(
-		".easymde-settings-center__save-bar",
-	);
+	const saveBar = settingsCenter.locator(".easymde-settings-center__save-bar");
 	const saveButton = settingsCenter.locator(
 		".easymde-settings-center__save-bar > button",
 	);
@@ -800,7 +901,11 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 			const descriptionBox = await headerDescription.boundingBox();
 			if (!headerBox || !descriptionBox)
 				throw new Error("settings-center-mobile-header-bounds-missing");
-			return descriptionBox.y + descriptionBox.height - (headerBox.y + headerBox.height);
+			return (
+				descriptionBox.y +
+				descriptionBox.height -
+				(headerBox.y + headerBox.height)
+			);
 		})
 		.toBeLessThanOrEqual(0.5);
 
@@ -809,16 +914,24 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 	await settingsCenter.evaluate((element) => {
 		element.scrollTop = 700;
 	});
-	await expect.poll(async () => settingsCenter.evaluate((element) => element.scrollTop)).toBe(700);
+	await expect
+		.poll(async () => settingsCenter.evaluate((element) => element.scrollTop))
+		.toBe(700);
 	await expect(help).toBeInViewport();
 	await settingsCenter.evaluate((element) => {
 		element.scrollTop = 0;
 	});
-	await expect.poll(async () => settingsCenter.evaluate((element) => element.scrollTop)).toBe(0);
+	await expect
+		.poll(async () => settingsCenter.evaluate((element) => element.scrollTop))
+		.toBe(0);
 	const restoredHelpBox = await help.boundingBox();
 	expect(restoredHelpBox).not.toBeNull();
-	expect(Math.abs((restoredHelpBox?.x ?? 0) - (initialHelpBox?.x ?? 0))).toBeLessThanOrEqual(0.5);
-	expect(Math.abs((restoredHelpBox?.y ?? 0) - (initialHelpBox?.y ?? 0))).toBeLessThanOrEqual(0.5);
+	expect(
+		Math.abs((restoredHelpBox?.x ?? 0) - (initialHelpBox?.x ?? 0)),
+	).toBeLessThanOrEqual(0.5);
+	expect(
+		Math.abs((restoredHelpBox?.y ?? 0) - (initialHelpBox?.y ?? 0)),
+	).toBeLessThanOrEqual(0.5);
 
 	const enabledToggle = generalSection.locator('[role="switch"]').first();
 	await enabledToggle.click();
@@ -889,7 +1002,10 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 					throw new Error("settings-center-landscape-control-bounds-missing");
 				return control.evaluate(
 					(element, point) => {
-						const hit = element.ownerDocument.elementFromPoint(point.x, point.y);
+						const hit = element.ownerDocument.elementFromPoint(
+							point.x,
+							point.y,
+						);
 						return hit === element || Boolean(hit && element.contains(hit));
 					},
 					{
@@ -929,7 +1045,9 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 
 	await expect(generalSection.locator("fieldset[disabled]")).toHaveCount(2);
 	await expect(
-		generalSection.getByRole("combobox", { name: /界面语言|interface language/i }),
+		generalSection.getByRole("combobox", {
+			name: /界面语言|interface language/i,
+		}),
 	).toHaveCount(0);
 	await expect(generalSection.locator('[role="switch"]').first()).toBeEnabled();
 	await expect(
@@ -946,9 +1064,7 @@ test("keeps reference Help geometry stable while compact content stays inside it
 	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 
 	const settingsCenter = page.locator(".easymde-settings-center");
-	const sidebar = settingsCenter.locator(
-		".easymde-settings-center__sidebar",
-	);
+	const sidebar = settingsCenter.locator(".easymde-settings-center__sidebar");
 	const nav = sidebar.locator("nav");
 	const help = sidebar.locator(".easymde-settings-center__help");
 	const uploadFormats = settingsCenter.locator(
@@ -970,7 +1086,9 @@ test("keeps reference Help geometry stable while compact content stays inside it
 		expect(Math.abs(helpBox.x - 16.5)).toBeLessThanOrEqual(0.5);
 		expect(Math.abs(helpBox.width - 217.92)).toBeLessThanOrEqual(0.5);
 		expect(
-			Math.abs(sidebarBox.x + sidebarBox.width - helpBox.x - helpBox.width - 25.58),
+			Math.abs(
+				sidebarBox.x + sidebarBox.width - helpBox.x - helpBox.width - 25.58,
+			),
 		).toBeLessThanOrEqual(0.75);
 	};
 
@@ -1052,7 +1170,11 @@ test("keeps reference Help geometry stable while compact content stays inside it
 	]).then(([sidebarBox, helpBox, paddingRight]) => {
 		if (!sidebarBox || !helpBox)
 			throw new Error("settings-center-short-mobile-bounds-missing");
-		return helpBox.x + helpBox.width - (sidebarBox.x + sidebarBox.width - paddingRight);
+		return (
+			helpBox.x +
+			helpBox.width -
+			(sidebarBox.x + sidebarBox.width - paddingRight)
+		);
 	});
 	expect(shortMobileOverflow).toBeLessThanOrEqual(0.5);
 });

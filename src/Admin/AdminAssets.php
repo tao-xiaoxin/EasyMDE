@@ -204,6 +204,9 @@ final class AdminAssets {
 
 		$preview_assets           = $this->frontend_assets->get_editor_preview_assets();
 		$settings                 = $this->settings_center_repository->get_settings();
+		$image_upload_destination = isset( $settings['images']['destination'] ) && 'remote' === $settings['images']['destination']
+			? 'remote'
+			: 'wordpress'; // phpcs:ignore WordPress.WP.CapitalPDangit.MisspelledInText -- Stable serialized enum.
 		$allowed_image_mime_types = $this->get_allowed_editor_image_mime_types();
 		$code_themes              = array_map(
 			static function ( $theme ) {
@@ -267,18 +270,28 @@ final class AdminAssets {
 				),
 			),
 			'imageUpload'        => array(
-				'allowedMimeTypes' => $allowed_image_mime_types,
-				'enabled'          => $this->get_image_upload_config()['enabled'] && ! empty( $allowed_image_mime_types ),
-				'endpoint'         => esc_url_raw( rest_url( 'easymde/v1/media' ) ),
-				'insertion'        => array(
+				'destination'       => $image_upload_destination,
+				'allowedMimeTypes'  => $allowed_image_mime_types,
+				'enabled'           => $this->get_image_upload_config()['enabled'] && ! empty( $allowed_image_mime_types ),
+				'endpoint'          => esc_url_raw(
+					'remote' === $image_upload_destination
+						? rest_url( 'easymde/v1/image-hosting/upload' )
+						: rest_url( 'easymde/v1/media' )
+				),
+				'insertAfterUpload' => (bool) $settings['images']['insertMarkdown'],
+				'insertion'         => array(
 					'format'      => 'url' === $settings['images']['insertFormat'] ? 'url' : 'markdown',
 					'altSource'   => $settings['images']['altSource'],
 					'captionMode' => $settings['images']['captionMode'],
 				),
-				'maxBytes'         => $this->get_image_upload_config()['maxBytes'],
-				'nonce'            => $nonce,
-				'postId'           => absint( $post_id ),
-				'strings'          => array(
+				'maxBytes'          => $this->get_image_upload_config()['maxBytes'],
+				'nonce'             => $nonce,
+				'actionNonce'       => 'remote' === $image_upload_destination
+					? wp_create_nonce( 'easymde_upload_image_hosting' )
+					: null,
+				'postId'            => absint( $post_id ),
+				'strings'           => array(
+					'backupFailed'   => $strings['imageBackupFailed'],
 					'defaultAlt'     => $strings['mediaDefaultAlt'],
 					'dropFailed'     => $strings['imageDropFailed'],
 					'dropTooLarge'   => $strings['imageDropTooLarge'],
@@ -956,6 +969,7 @@ final class AdminAssets {
 			'imageDropUploaded'     => __( 'Dropped image uploaded.', 'easymde' ),
 			'imageDropFailed'       => __( 'Dropped image upload failed. Please use the media library instead.', 'easymde' ),
 			'imageDropTooLarge'     => __( 'Dropped image is too large for this site.', 'easymde' ),
+			'imageBackupFailed'     => __( 'The primary image was uploaded, but the backup image host failed.', 'easymde' ),
 			'mediaAltText'          => __( 'alt text', 'easymde' ),
 			'mediaDefaultAlt'       => __( 'image', 'easymde' ),
 			'mediaPickerFailed'     => __( 'The WordPress media library could not be opened.', 'easymde' ),

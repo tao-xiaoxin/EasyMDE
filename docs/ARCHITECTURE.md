@@ -513,6 +513,8 @@ Current routes:
 
 - `POST /easymde/v1/preview`
 - `POST /easymde/v1/media`
+- `POST /easymde/v1/image-hosting/connection`
+- `POST /easymde/v1/image-hosting/upload`
 - `GET /easymde/v1/theme-options`
 - `POST /easymde/v1/custom-css`
 - `POST /easymde/v1/custom-css/preview`
@@ -526,7 +528,34 @@ Preview and theme requests with `post_id` require `current_user_can( 'edit_post'
 
 Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including toolbar shortcut mappings. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged legacy shortcut submission is a successful no-op and does not increment the revision. Settings bootstrap and transfer exports do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials.
 
-Preview Markdown payloads are capped at 1 MiB. EasyMDE media uploads accept local JPEG, PNG, GIF, and WebP image files only; remote image-provider uploads are not part of the REST surface.
+Preview Markdown payloads are capped at 1 MiB. EasyMDE image uploads accept
+local JPEG, PNG, GIF, and WebP files only. The default destination remains the
+WordPress media library through `/media`. When an administrator explicitly
+selects remote image hosting, the editor instead sends the file to the
+same-origin `/image-hosting/upload` proxy. PHP validates the current capability,
+action Nonce, real MIME, extension, byte size, configured format, and optional
+post authority before it reads server-only credentials or contacts a provider.
+
+`EasyMDE\ImageHosting\ImageHostingRuntime` owns remote image preparation,
+object-key construction, provider selection, and backup orchestration.
+Cloudflare R2 is the supported primary and Qiniu Kodo is the supported optional
+same-key backup. Provider endpoints are fixed HTTPS origins, requests use a
+ten-second timeout with redirects disabled, and protected uploads are never
+retried automatically. The runtime may resize/compress JPEG, PNG, and WebP
+through WordPress image editors; GIF bytes remain unchanged to preserve
+animation. If the optional backup fails after the primary upload succeeds, the
+runtime returns the authoritative R2 URL plus a stable redacted backup failure
+code. The editor inserts the primary URL and reports the partial failure; it
+does not claim that both writes succeeded. An all-or-nothing mode is not exposed
+because the provider contract has no reliable compensating delete operation.
+Raw provider responses, object keys, credentials, and private endpoint details
+never enter REST responses or browser bootstrap.
+
+The connection route tests the saved server configuration only. Settings must
+be saved before testing, and any relevant draft edit makes the last result
+stale. Credential reads return only configured/not-configured booleans; blank
+secret fields preserve stored values and the explicit reset path remains the
+only deletion owner.
 
 ## Compatibility Facade
 

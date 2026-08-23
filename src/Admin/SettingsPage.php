@@ -287,15 +287,18 @@ JS;
 	}
 
 	private function get_settings_center_bootstrap() {
-		$settings = $this->settings_center_repository->get_settings();
+		$settings          = $this->settings_center_repository->get_settings();
+		$credential_status = $this->settings_center_repository->get_image_credential_status();
 
 		return array(
 			'schemaVersion'   => 2,
 			'closeUrl'        => admin_url( 'options-general.php' ),
 			'api'             => array(
-				'settingsUrl' => rest_url( 'easymde/v1/settings' ),
-				'nonce'       => wp_create_nonce( 'wp_rest' ),
-				'actionNonce' => wp_create_nonce( 'easymde_update_settings' ),
+				'settingsUrl'               => rest_url( 'easymde/v1/settings' ),
+				'nonce'                     => wp_create_nonce( 'wp_rest' ),
+				'actionNonce'               => wp_create_nonce( 'easymde_update_settings' ),
+				'imageHostingConnectionUrl' => rest_url( 'easymde/v1/image-hosting/connection' ),
+				'imageHostingActionNonce'   => wp_create_nonce( 'easymde_test_image_hosting' ),
 			),
 			'assets'          => array(
 				'brandMarkUrl'               => Asset::url( 'assets/images/settings-center/brand-icon-clean.png' ),
@@ -312,8 +315,10 @@ JS;
 			),
 			'drafts'          => array(
 				'images' => array(
-					'domain'       => $settings['images']['domain'],
-					'backupDomain' => $settings['images']['backupDomain'],
+					'domain'                       => $settings['images']['domain'],
+					'backupDomain'                 => $settings['images']['backupDomain'],
+					'primaryCredentialsConfigured' => $credential_status['primaryConfigured'],
+					'backupCredentialsConfigured'  => $credential_status['backupConfigured'],
 				),
 			),
 			'defaultSettings' => $this->settings_center_repository->get_default_settings(),

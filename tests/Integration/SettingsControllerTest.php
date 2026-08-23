@@ -184,14 +184,38 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         $invalid_domain['images']['domain'] = 'javascript:alert(1)';
         $invalid_domain_response = $this->post_json( array( 'settings' => $invalid_domain ) );
 
+		$insecure_domain = $this->current_settings();
+		$insecure_domain['images']['domain'] = 'http://img.example.test';
+		$insecure_domain_response = $this->post_json( array( 'settings' => $insecure_domain ) );
+
+		$invalid_rule = $this->current_settings();
+		$invalid_rule['images']['fileNameRule'] = '../{name}.{ext}';
+		$invalid_rule_response = $this->post_json( array( 'settings' => $invalid_rule ) );
+
+		$unsupported_provider = $this->current_settings();
+		$unsupported_provider['images']['service'] = 'aliyun-oss';
+		$unsupported_provider_response = $this->post_json( array( 'settings' => $unsupported_provider ) );
+
+		$invalid_account = $this->current_settings();
+		$invalid_account['images']['accountId'] = 'invalid account id';
+		$invalid_account_response = $this->post_json( array( 'settings' => $invalid_account ) );
+
         $too_long_bucket = $this->current_settings();
-        $too_long_bucket['images']['bucket'] = str_repeat( 'a', 161 );
+		$too_long_bucket['images']['bucket'] = str_repeat( 'a', 129 );
         $too_long_bucket_response = $this->post_json( array( 'settings' => $too_long_bucket ) );
 
         $this->assertSame( 413, $too_large_response->get_status() );
         $this->assertSame( 'easymde_settings_payload_too_large', $too_large_response->as_error()->get_error_code() );
         $this->assertSame( 400, $invalid_domain_response->get_status() );
         $this->assertSame( 'easymde_settings_invalid_payload', $invalid_domain_response->as_error()->get_error_code() );
+		$this->assertSame( 400, $insecure_domain_response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $insecure_domain_response->as_error()->get_error_code() );
+		$this->assertSame( 400, $invalid_rule_response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $invalid_rule_response->as_error()->get_error_code() );
+		$this->assertSame( 400, $unsupported_provider_response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $unsupported_provider_response->as_error()->get_error_code() );
+		$this->assertSame( 400, $invalid_account_response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $invalid_account_response->as_error()->get_error_code() );
         $this->assertSame( 400, $too_long_bucket_response->get_status() );
         $this->assertSame( 'easymde_settings_invalid_payload', $too_long_bucket_response->as_error()->get_error_code() );
     }

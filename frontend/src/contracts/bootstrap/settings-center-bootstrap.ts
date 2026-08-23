@@ -117,18 +117,43 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"settingsUnsavedChanges",
 	"settingsUnavailable",
 	"settingsUnavailableDescription",
+	"uploadDestination",
+	"wordpressMediaLibrary",
+	"remoteImageHost",
 	"imageHostService",
 	"selectImageHostService",
 	"cloudflareR2",
 	"aliyunOss",
 	"tencentCloudCos",
 	"customUpload",
+	"r2AccountId",
 	"bucket",
 	"customDomain",
 	"accessKey",
 	"secretKey",
 	"showSecret",
 	"hideSecret",
+	"primaryCredentialsConfigured",
+	"backupCredentialsConfigured",
+	"credentialsConfiguredHint",
+	"replaceCredentialsHint",
+	"connectionStatus",
+	"backupConnectionStatus",
+	"connectionPending",
+	"testingConnection",
+	"connected",
+	"connectionFailed",
+	"connectionStale",
+	"lastTested",
+	"testPrimaryConnection",
+	"testBackupConnection",
+	"imageHostFailureConfiguration",
+	"imageHostFailureAuthentication",
+	"imageHostFailureAuthorization",
+	"imageHostFailureNetwork",
+	"imageHostFailureTimeout",
+	"imageHostFailureProvider",
+	"imageHostFailureInvalidResponse",
 	"fileNameRule",
 	"fileNameRuleDescription",
 	"commonFileNameTemplates",
@@ -419,6 +444,8 @@ export type SettingsCenterBootstrap = Readonly<{
 		images: Readonly<{
 			domain: string;
 			backupDomain: string;
+			primaryCredentialsConfigured: boolean;
+			backupCredentialsConfigured: boolean;
 		}>;
 	}>;
 	settings: SettingsCenterSettings;
@@ -478,16 +505,76 @@ function assertSettingsDomain(value: unknown, code: string): void {
 	try {
 		const url = new URL(value);
 		if (
-			(url.protocol !== "http:" && url.protocol !== "https:") ||
+			url.protocol !== "https:" ||
 			url.username ||
 			url.password ||
+			url.port ||
 			url.search ||
-			url.hash
+			url.hash ||
+			(url.pathname !== "" && url.pathname !== "/")
 		) {
 			throw new Error(code);
 		}
 	} catch {
 		throw new Error(code);
+	}
+}
+
+const IMAGE_FILE_NAME_RULE_VARIABLES = new Set([
+	"year",
+	"month",
+	"day",
+	"date",
+	"time",
+	"post_id",
+	"md5",
+	"uuid",
+	"name",
+	"ext",
+]);
+
+function assertImageAccountId(value: unknown): void {
+	if (
+		typeof value !== "string" ||
+		value.length > 64 ||
+		(value !== "" && !/^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/.test(value))
+	) {
+		throw new Error("settings-center-images-accountId-invalid");
+	}
+}
+
+function assertImageFileNameRule(value: unknown): void {
+	if (typeof value !== "string" || value.length === 0 || value.length > 160) {
+		throw new Error("settings-center-images-fileNameRule-invalid");
+	}
+
+	const variables = [...value.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map(
+		(match) => match[1] ?? "",
+	);
+	const literal = value.replace(/\{[A-Za-z0-9_]+\}/g, "");
+	const hasControlCharacter = [...value].some((character) => {
+		const codePoint = character.codePointAt(0) ?? 0;
+
+		return codePoint < 32 || codePoint === 127;
+	});
+	if (
+		value.startsWith("/") ||
+		value.endsWith("/") ||
+		value.includes("\\") ||
+		value.includes("..") ||
+		value.includes("//") ||
+		hasControlCharacter ||
+		value.includes("?") ||
+		value.includes("#") ||
+		!variables.includes("ext") ||
+		variables.some(
+			(variable) => !IMAGE_FILE_NAME_RULE_VARIABLES.has(variable),
+		) ||
+		!/^[A-Za-z0-9._/-]*$/.test(literal) ||
+		literal.includes("{") ||
+		literal.includes("}")
+	) {
+		throw new Error("settings-center-images-fileNameRule-invalid");
 	}
 }
 
@@ -594,14 +681,16 @@ export function parseSettingsCenterSettings(
 	});
 
 	const imageStrings = {
+		destination: 16,
 		service: 32,
-		bucket: 160,
+		accountId: 64,
+		bucket: 128,
 		domain: 255,
 		accessKey: 255,
 		secretKey: 255,
 		fileNameRule: 160,
 		backupService: 32,
-		backupBucket: 160,
+		backupBucket: 128,
 		backupDomain: 255,
 		backupAccessKey: 255,
 		backupSecretKey: 255,
@@ -628,21 +717,18 @@ export function parseSettingsCenterSettings(
 		[...Object.keys(imageStrings), ...imageBooleans, "uploadFormats"],
 		"settings-center-images-settings-invalid",
 	);
+	assertImageAccountId(images.accountId);
+	assertImageFileNameRule(images.fileNameRule);
 	assertEnumFields(images, "images", {
-		service: ["cloudflare-r2", "aliyun-oss", "tencent-cos", "custom"],
-		backupService: [
-			"qiniu-kodo",
-			"cloudflare-r2",
-			"aliyun-oss",
-			"tencent-cos",
-			"custom",
-		],
-		backupFailureMode: ["return-primary-url", "fail-upload"],
-		retryCount: ["none", "once", "twice", "three-times"],
+		destination: ["wordpress", "remote"],
+		service: ["cloudflare-r2"],
+		backupService: ["qiniu-kodo"],
+		backupFailureMode: ["return-primary-url"],
+		retryCount: ["none"],
 		maxImageSize: ["original", "1920", "2560", "3840"],
-		insertFormat: ["markdown", "html", "url"],
-		altSource: ["filename", "empty", "upload"],
-		captionMode: ["none", "filename", "upload"],
+		insertFormat: ["markdown", "url"],
+		altSource: ["filename", "empty"],
+		captionMode: ["none", "filename"],
 	});
 	assertSettingsDomain(images.domain, "settings-center-images-domain-invalid");
 	assertSettingsDomain(
@@ -788,6 +874,22 @@ export function parseSettingsCenterBootstrap(
 		drafts.images,
 		"settings-center-images-draft-invalid",
 	);
+	assertExactKeys(
+		imageDraft,
+		[
+			"domain",
+			"backupDomain",
+			"primaryCredentialsConfigured",
+			"backupCredentialsConfigured",
+		],
+		"settings-center-images-draft-invalid",
+	);
+	if (
+		typeof imageDraft.primaryCredentialsConfigured !== "boolean" ||
+		typeof imageDraft.backupCredentialsConfigured !== "boolean"
+	) {
+		throw new Error("settings-center-images-credential-status-invalid");
+	}
 	const api = parseObject(root.api, "settings-center-api-invalid");
 	const sourceStrings = parseObject(
 		root.strings,
@@ -810,6 +912,7 @@ export function parseSettingsCenterBootstrap(
 		"transferFileSelectedNotice",
 		"transferChecksSummary",
 		"transferChecksPassed",
+		"lastTested",
 	] as const) {
 		if ((strings[key].match(/%s/g) ?? []).length !== 1) {
 			throw new Error(`settings-center-${key}-template-invalid`);
@@ -822,6 +925,14 @@ export function parseSettingsCenterBootstrap(
 			actionNonce: parseString(
 				api.actionNonce,
 				"settings-center-api-action-nonce-invalid",
+			),
+			imageHostingActionNonce: parseString(
+				api.imageHostingActionNonce,
+				"settings-center-image-hosting-action-nonce-invalid",
+			),
+			imageHostingConnectionUrl: parseString(
+				api.imageHostingConnectionUrl,
+				"settings-center-image-hosting-url-invalid",
 			),
 			settingsUrl: parseString(
 				api.settingsUrl,
@@ -879,6 +990,10 @@ export function parseSettingsCenterBootstrap(
 					imageDraft.backupDomain,
 					"settings-center-images-backup-domain-invalid",
 				),
+				primaryCredentialsConfigured:
+					imageDraft.primaryCredentialsConfigured,
+				backupCredentialsConfigured:
+					imageDraft.backupCredentialsConfigured,
 			},
 		},
 		settings: parseSettingsCenterSettings(root.settings),

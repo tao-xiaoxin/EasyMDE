@@ -21,7 +21,9 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
     featuredImagePlaceholder: true,
   },
   images: {
+    destination: 'wordpress',
     service: 'cloudflare-r2',
+    accountId: '',
     bucket: 'easymde-assets',
     domain: '',
     accessKey: '',
@@ -39,7 +41,7 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
     compressImages: true,
     preserveFileName: false,
     copyUrl: false,
-    retryCount: 'twice',
+    retryCount: 'none',
     maxImageSize: '2560',
     uploadFormats: { jpg: true, png: true, webp: true, gif: true },
     insertFormat: 'markdown',

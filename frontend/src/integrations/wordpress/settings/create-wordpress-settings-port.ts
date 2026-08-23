@@ -92,7 +92,7 @@ async function requestSettings(
 }
 
 export function createWordPressSettingsPort(
-	api: SettingsCenterApi,
+	api: Pick<SettingsCenterApi, "actionNonce" | "nonce" | "settingsUrl">,
 	fetchLike: FetchLike = window.fetch.bind(window),
 ): SettingsCenterSettingsPort {
 	let endpoint: URL;

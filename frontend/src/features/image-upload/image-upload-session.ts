@@ -2,6 +2,7 @@ import type {
   ImageUploadDocumentPort,
   ImageUploadDocumentSnapshot,
   ImageUploadPort,
+  ImageUploadResult,
   ImageUploadSelection,
 } from '../../contracts/ports/image-upload-port';
 import type {
@@ -24,6 +25,7 @@ type CreateImageUploadSessionOptions = Readonly<{
   document: ImageUploadDocumentPort;
   enabled: boolean;
   insertion: ImageUploadInsertion;
+  insertAfterUpload: boolean;
   maxBytes: number;
   nextOperationId: () => string;
   onDiagnostic: (code: string) => void;
@@ -124,6 +126,7 @@ export function createImageUploadSession({
   document,
   enabled,
   insertion,
+  insertAfterUpload,
   maxBytes,
   nextOperationId,
   onDiagnostic,
@@ -134,6 +137,7 @@ export function createImageUploadSession({
   upload,
 }: CreateImageUploadSessionOptions): () => void {
   let active = true;
+  const activeUploads = new Set<AbortController>();
 
   const handleFile = async (
     event: ClipboardEvent | DragEvent,
@@ -142,6 +146,14 @@ export function createImageUploadSession({
   ): Promise<void> => {
     const operationId = nextOperationId();
     const reportStatus = (message: string, type: ImageUploadStatus['type']) => onStatus({ message, operationId, type });
+    const reportCompletion = (result: Extract<ImageUploadResult, { status: 'uploaded' }>) => {
+      if ('backup-upload-failed' === result.warning) {
+        onDiagnostic('image-upload-backup-upload-failed');
+        reportStatus(strings.backupFailed, 'error');
+        return;
+      }
+      reportStatus(statusMessage(strings, source, 'Uploaded'), 'success');
+    };
     event.preventDefault();
     const dropTransfer = 'drop' === source ? (event as DragEvent).dataTransfer : null;
     if (dropTransfer) {
@@ -157,22 +169,27 @@ export function createImageUploadSession({
       return;
     }
 
-    let initial: ImageUploadDocumentSnapshot;
-    try {
-      initial = documentSnapshot(document);
-    } catch {
-      onDiagnostic('image-upload-document-snapshot-invalid');
-      reportStatus(statusMessage(strings, source, 'Failed'), 'error');
-      return;
+    let initial: ImageUploadDocumentSnapshot | null = null;
+    if (insertAfterUpload) {
+      try {
+        initial = documentSnapshot(document);
+      } catch {
+        onDiagnostic('image-upload-document-snapshot-invalid');
+        reportStatus(statusMessage(strings, source, 'Failed'), 'error');
+        return;
+      }
     }
 
     reportStatus(statusMessage(strings, source, 'Uploading'), 'info');
+    const controller = new AbortController();
+    activeUploads.add(controller);
     try {
       const fileNameAlt = defaultImageAlt(file.name, strings.defaultAlt);
       const result = await upload.upload({
         altText: 'filename' === insertion.altSource ? fileNameAlt : '',
         file,
         postId,
+        signal: controller.signal,
       });
       if (!active) {
         onDiagnostic('image-upload-completed-after-teardown');
@@ -181,6 +198,13 @@ export function createImageUploadSession({
       if ('failed' === result.status) {
         reportStatus(statusMessage(strings, source, 'Failed'), 'error');
         return;
+      }
+      if (!insertAfterUpload) {
+        reportCompletion(result);
+        return;
+      }
+      if (!initial) {
+        throw new Error('image-upload-document-snapshot-missing');
       }
 
       const current = documentSnapshot(document);
@@ -199,12 +223,14 @@ export function createImageUploadSession({
         value: current.value.slice(0, selection.start) + inserted + current.value.slice(selection.end),
       });
       document.focus();
-      reportStatus(statusMessage(strings, source, 'Uploaded'), 'success');
+      reportCompletion(result);
     } catch {
       if (active) {
         onDiagnostic('image-upload-operation-failed');
         reportStatus(statusMessage(strings, source, 'Failed'), 'error');
       }
+    } finally {
+      activeUploads.delete(controller);
     }
   };
 
@@ -245,6 +271,10 @@ export function createImageUploadSession({
       return;
     }
     active = false;
+    for (const controller of activeUploads) {
+      controller.abort();
+    }
+    activeUploads.clear();
     target.removeEventListener('paste', onPaste);
     target.removeEventListener('dragover', onDragOver);
     target.removeEventListener('drop', onDrop);

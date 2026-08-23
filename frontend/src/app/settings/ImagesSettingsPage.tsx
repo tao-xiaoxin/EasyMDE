@@ -10,15 +10,22 @@ import type {
 	SettingsCenterStringKey,
 } from "../../contracts/bootstrap/settings-center-bootstrap";
 import type {
+	ImageConnectionTarget,
+	ImageConnectionTestPort,
+} from "../../contracts/ports/image-hosting-connection-port";
+import type {
 	ImageSettings,
 	ImageUploadFormat,
 } from "../../contracts/settings-center-settings";
-import { ChevronDown, Copy, Eye, Info, X } from "../../generated/lucide-icons";
 import {
-	SettingsRow,
-	SettingsToggle,
-	UnavailableSettingsNotice,
-} from "./SettingsControls";
+	ChevronDown,
+	Copy,
+	Eye,
+	Info,
+	RefreshCcw,
+	X,
+} from "../../generated/lucide-icons";
+import { SettingsRow, SettingsToggle } from "./SettingsControls";
 import {
 	DocumentIcon,
 	ImageLibraryIcon,
@@ -26,6 +33,26 @@ import {
 } from "./settings-center-icons";
 
 type ImageSettingsDraft = ImageSettings;
+
+export type ImageConnectionStatus =
+	| "pending"
+	| "testing"
+	| "connected"
+	| "error"
+	| "stale";
+
+export type ImageRuntimeCapabilities = Readonly<{
+	compressImages: boolean;
+	insertAfterUpload: boolean;
+	preserveOriginalFileName: boolean;
+	maximumImageSize: boolean;
+}>;
+
+type ConnectionState = Readonly<{
+	status: ImageConnectionStatus;
+	testedAt?: string;
+	testedFingerprint?: string;
+}>;
 
 const FILE_NAME_RULE_PRESETS: ReadonlyArray<
 	Readonly<{
@@ -172,12 +199,14 @@ function ImageTextInput({
 }
 
 function SecretInput({
+	configured,
 	hideLabel,
 	label,
 	onChange,
 	showLabel,
 	value,
 }: {
+	configured: boolean;
 	hideLabel: string;
 	label: string;
 	onChange: (value: string) => void;
@@ -189,6 +218,7 @@ function SecretInput({
 		<div className="easymde-settings-center__secret-input">
 			<input
 				aria-label={label}
+				placeholder={configured && !value ? "••••••••••••" : undefined}
 				type={visible ? "text" : "password"}
 				value={value}
 				onChange={(event) => onChange(event.target.value)}
@@ -276,7 +306,22 @@ function FileNameRuleEditor({
 		onChange(`${value.slice(0, start)}${token}${value.slice(end)}`);
 	};
 
-	const example = value;
+	const exampleValues: Readonly<Record<string, string>> = {
+		"{year}": "2026",
+		"{month}": "07",
+		"{day}": "13",
+		"{date}": "20260713",
+		"{time}": "153042",
+		"{post_id}": "128",
+		"{md5}": "a8f4c2d1",
+		"{uuid}": "a8f4c2d1",
+		"{name}": "easymde-image",
+		"{ext}": "webp",
+	};
+	const example = Object.entries(exampleValues).reduce(
+		(current, [token, replacement]) => current.replaceAll(token, replacement),
+		value,
+	);
 	return (
 		<div className="easymde-settings-center__file-name-editor">
 			<SettingsRow
@@ -351,41 +396,151 @@ function FileNameRuleEditor({
 	);
 }
 
+function connectionFingerprint(
+	settings: ImageSettings,
+	target: ImageConnectionTarget,
+): string {
+	const values =
+		target === "primary"
+			? [
+					settings.destination,
+					settings.service,
+					settings.accountId,
+					settings.bucket,
+					settings.domain,
+					settings.accessKey,
+					settings.secretKey,
+				]
+			: [
+					settings.backupEnabled ? "enabled" : "disabled",
+					settings.backupService,
+					settings.backupBucket,
+					settings.backupDomain,
+					settings.backupAccessKey,
+					settings.backupSecretKey,
+				];
+	return JSON.stringify(values);
+}
+
+function ConnectionRow({
+	disabled,
+	onTest,
+	state,
+	strings,
+	target,
+}: {
+	disabled: boolean;
+	onTest: () => void;
+	state: ConnectionState;
+	strings: SettingsCenterBootstrap["strings"];
+	target: ImageConnectionTarget;
+}) {
+	const labelByStatus: Readonly<Record<ImageConnectionStatus, string>> = {
+		pending: strings.connectionPending,
+		testing: strings.testingConnection,
+		connected: strings.connected,
+		error: strings.connectionFailed,
+		stale: strings.connectionStale,
+	};
+	const isTesting = state.status === "testing";
+	return (
+		<div
+			className={`easymde-settings-center__${target === "backup" ? "backup-" : ""}connection-divider`}
+		>
+			<SettingsRow
+				label={
+					target === "backup"
+						? strings.backupConnectionStatus
+						: strings.connectionStatus
+				}
+				minHeight={target === "backup" ? 70 : 76}
+			>
+				<div className="easymde-settings-center__connection-row">
+					<div
+						className="easymde-settings-center__connection-status"
+						data-state={state.status}
+						role="status"
+						aria-live="polite"
+					>
+						<span />
+						{labelByStatus[state.status]}
+					</div>
+					{state.testedAt ? (
+						<div className="easymde-settings-center__last-test">
+							{strings.lastTested.split("%s")[0]}
+							<span>{state.testedAt}</span>
+							{strings.lastTested.split("%s")[1] ?? ""}
+						</div>
+					) : null}
+					<button
+						type="button"
+						disabled={disabled || isTesting}
+						onClick={onTest}
+					>
+						{isTesting ? (
+							<RefreshCcw
+								size={15}
+								className="easymde-settings-center__connection-spinner"
+							/>
+						) : null}
+						{target === "backup"
+							? strings.testBackupConnection
+							: strings.testPrimaryConnection}
+					</button>
+				</div>
+			</SettingsRow>
+		</div>
+	);
+}
+
 export function ImagesSettingsPage({
+	connectionTestDisabled = false,
+	connectionTestPort,
 	draft,
 	onChange,
 	overlayRoot,
 	settings: externalSettings,
 	strings,
+	runtimeCapabilities,
 }: {
+	connectionTestDisabled?: boolean;
+	connectionTestPort?: ImageConnectionTestPort;
 	draft: SettingsCenterBootstrap["drafts"]["images"];
 	onChange?: (settings: ImageSettingsDraft) => void;
 	overlayRoot: HTMLDivElement | null;
 	settings?: ImageSettingsDraft;
 	strings: SettingsCenterBootstrap["strings"];
+	runtimeCapabilities?: ImageRuntimeCapabilities;
 }) {
 	const imageHostOptions: ReadonlyArray<SelectOption> = [
 		{ value: "cloudflare-r2", label: strings.cloudflareR2 },
-		{ value: "aliyun-oss", label: strings.aliyunOss },
-		{ value: "tencent-cos", label: strings.tencentCloudCos },
-		{ value: "custom", label: strings.customUpload },
+		{ value: "aliyun-oss", label: strings.aliyunOss, disabled: true },
+		{
+			value: "tencent-cos",
+			label: strings.tencentCloudCos,
+			disabled: true,
+		},
+		{ value: "custom", label: strings.customUpload, disabled: true },
+	];
+	const destinationOptions: ReadonlyArray<SelectOption> = [
+		{ value: "wordpress", label: strings.wordpressMediaLibrary },
+		{ value: "remote", label: strings.remoteImageHost },
 	];
 	const backupHostOptions: ReadonlyArray<SelectOption> = [
 		{ value: "qiniu-kodo", label: strings.qiniuKodo },
-		...imageHostOptions,
+		...imageHostOptions.map((option) => ({ ...option, disabled: true })),
 	];
 	const backupFailureOptions: ReadonlyArray<SelectOption> = [
 		{
 			value: "return-primary-url",
 			label: strings.returnPrimaryUrlOnBackupFailure,
 		},
-		{ value: "fail-upload", label: strings.failEntireUpload },
 	];
 	const retryOptions: ReadonlyArray<SelectOption> = [
 		{ value: "none", label: strings.doNotRetry },
-		{ value: "once", label: strings.retryOnce },
-		{ value: "twice", label: strings.retryTwice },
-		{ value: "three-times", label: strings.retryThreeTimes },
+		{ value: "once", label: strings.retryOnce, disabled: true },
+		{ value: "twice", label: strings.retryTwice, disabled: true },
+		{ value: "three-times", label: strings.retryThreeTimes, disabled: true },
 	];
 	const maxImageSizeOptions: ReadonlyArray<SelectOption> = [
 		{ value: "original", label: strings.originalImageSize },
@@ -401,16 +556,18 @@ export function ImagesSettingsPage({
 	const altSourceOptions: ReadonlyArray<SelectOption> = [
 		{ value: "filename", label: strings.useFileName },
 		{ value: "empty", label: strings.leaveEmpty },
-		{ value: "upload", label: strings.fillOnUpload },
+		{ value: "upload", label: strings.fillOnUpload, disabled: true },
 	];
 	const captionModeOptions: ReadonlyArray<SelectOption> = [
 		{ value: "none", label: strings.doNotInsert },
 		{ value: "filename", label: strings.useFileName },
-		{ value: "upload", label: strings.fillOnUpload },
+		{ value: "upload", label: strings.fillOnUpload, disabled: true },
 	];
 	const [localSettings, setLocalSettings] = useState<ImageSettingsDraft>(
 		() => ({
+			destination: "wordpress",
 			service: "cloudflare-r2",
+			accountId: "",
 			bucket: "easymde-assets",
 			domain: draft.domain,
 			accessKey: "",
@@ -428,7 +585,7 @@ export function ImagesSettingsPage({
 			compressImages: true,
 			preserveFileName: false,
 			copyUrl: false,
-			retryCount: "twice",
+			retryCount: "none",
 			maxImageSize: "2560",
 			uploadFormats: { jpg: true, png: true, webp: true, gif: true },
 			insertFormat: "markdown",
@@ -438,28 +595,34 @@ export function ImagesSettingsPage({
 		}),
 	);
 	const [formatError, setFormatError] = useState(false);
+	const [primaryConnection, setPrimaryConnection] = useState<ConnectionState>({
+		status: "pending",
+	});
+	const [backupConnection, setBackupConnection] = useState<ConnectionState>({
+		status: "pending",
+	});
+	const connectionAbortRef = useRef<
+		Partial<Record<ImageConnectionTarget, AbortController>>
+	>({});
 	const rawSettings = externalSettings ?? localSettings;
 	const settings: ImageSettingsDraft = {
 		...rawSettings,
-		service: normalizeImageValue(
-			rawSettings.service,
-			imageHostOptions,
-			"cloudflare-r2",
-		),
-		backupService: normalizeImageValue(
-			rawSettings.backupService,
-			backupHostOptions,
-			"qiniu-kodo",
-		),
+		service: "cloudflare-r2",
+		backupService: "qiniu-kodo",
 		backupFailureMode: normalizeImageValue(
 			rawSettings.backupFailureMode,
-			backupFailureOptions,
+			[
+				{
+					value: "return-primary-url",
+					label: strings.returnPrimaryUrlOnBackupFailure,
+				},
+			],
 			"return-primary-url",
 		),
 		retryCount: normalizeImageValue(
 			rawSettings.retryCount,
-			retryOptions,
-			"twice",
+			[{ value: "none", label: strings.doNotRetry }],
+			"none",
 		),
 		maxImageSize: normalizeImageValue(
 			rawSettings.maxImageSize,
@@ -473,15 +636,24 @@ export function ImagesSettingsPage({
 		),
 		altSource: normalizeImageValue(
 			rawSettings.altSource,
-			altSourceOptions,
+			altSourceOptions.filter((option) => !option.disabled),
 			"filename",
 		),
 		captionMode: normalizeImageValue(
 			rawSettings.captionMode,
-			captionModeOptions,
+			captionModeOptions.filter((option) => !option.disabled),
 			"none",
 		),
 	};
+	const settingsRef = useRef(settings);
+	settingsRef.current = settings;
+	useEffect(
+		() => () => {
+			connectionAbortRef.current.primary?.abort();
+			connectionAbortRef.current.backup?.abort();
+		},
+		[],
+	);
 	const selectedFormats = UPLOAD_FORMAT_OPTIONS.filter(
 		({ key }) => settings.uploadFormats[key],
 	).map(({ label }) => strings[label]);
@@ -509,6 +681,56 @@ export function ImagesSettingsPage({
 			[key]: !checked,
 		});
 	}
+	function effectiveConnectionState(
+		state: ConnectionState,
+		target: ImageConnectionTarget,
+	): ConnectionState {
+		if (
+			state.status !== "testing" &&
+			state.testedFingerprint &&
+			state.testedFingerprint !== connectionFingerprint(settings, target)
+		) {
+			return { ...state, status: "stale" };
+		}
+		return state;
+	}
+	async function testConnection(target: ImageConnectionTarget) {
+		if (!connectionTestPort) {
+			throw new Error("settings-center-image-connection-port-missing");
+		}
+		connectionAbortRef.current[target]?.abort();
+		const controller = new AbortController();
+		connectionAbortRef.current[target] = controller;
+		const snapshot = settingsRef.current;
+		const testedFingerprint = connectionFingerprint(snapshot, target);
+		const setState =
+			target === "primary" ? setPrimaryConnection : setBackupConnection;
+		setState({ status: "testing", testedFingerprint });
+		try {
+			const result = await connectionTestPort.testConnection({
+				target,
+				settings: snapshot,
+				signal: controller.signal,
+			});
+			if (controller.signal.aborted) return;
+			setState({
+				status:
+					connectionFingerprint(settingsRef.current, target) ===
+					testedFingerprint
+						? "connected"
+						: "stale",
+				testedAt: result.testedAt,
+				testedFingerprint,
+			});
+		} catch {
+			if (controller.signal.aborted) return;
+			console.error("[EasyMDE settings] Image connection test failed", {
+				target,
+				reason: "connection-test-rejected",
+			});
+			setState({ status: "error", testedFingerprint });
+		}
+	}
 	const feedbackPortal =
 		formatError && overlayRoot
 			? createPortal(
@@ -532,151 +754,184 @@ export function ImagesSettingsPage({
 
 	return (
 		<div className="easymde-settings-center__images-page">
-			<UnavailableSettingsNotice
-				id="easymde-images-unavailable"
-				label={strings.settingsUnavailable}
-				description={strings.settingsUnavailableDescription}
-			/>
-			<div aria-describedby="easymde-images-unavailable">
-				<fieldset
-					disabled
-					aria-describedby="easymde-images-unavailable"
-					title={strings.settingsUnavailableDescription}
-					className="easymde-settings-center__unavailable-fields"
-				>
-					<section className="easymde-settings-center__image-group is-host-service">
-						<h2>
-							<ImageLibraryIcon size={25} />
-							{strings.imageHostService}
-						</h2>
+			<div>
+				<section className="easymde-settings-center__image-group is-host-service">
+					<h2>
+						<ImageLibraryIcon size={25} />
+						{strings.imageHostService}
+					</h2>
+					<div>
 						<div>
-							<div>
-								<ImageField label={strings.selectImageHostService}>
-									<CompactSelect
-										label={strings.selectImageHostService}
-										value={settings.service}
-										options={imageHostOptions}
-										onChange={(value) => setValue("service", value)}
-									/>
-								</ImageField>
-								<ImageField label={strings.bucket}>
-									<ImageTextInput
-										label={strings.bucket}
-										value={settings.bucket}
-										onChange={(value) => setValue("bucket", value)}
-									/>
-								</ImageField>
-								<ImageField label={strings.customDomain}>
-									<ImageTextInput
-										label={strings.customDomain}
-										value={settings.domain}
-										onChange={(value) => setValue("domain", value)}
-									/>
-								</ImageField>
-								<ImageField label={strings.accessKey}>
-									<SecretInput
-										label={strings.accessKey}
-										value={settings.accessKey}
-										showLabel={strings.showSecret}
-										hideLabel={strings.hideSecret}
-										onChange={(value) => setValue("accessKey", value)}
-									/>
-								</ImageField>
-								<ImageField label={strings.secretKey}>
-									<SecretInput
-										label={strings.secretKey}
-										value={settings.secretKey}
-										showLabel={strings.showSecret}
-										hideLabel={strings.hideSecret}
-										onChange={(value) => setValue("secretKey", value)}
-									/>
-								</ImageField>
-								<FileNameRuleEditor
-									strings={strings}
-									value={settings.fileNameRule}
-									onChange={(value) => setValue("fileNameRule", value)}
+							<ImageField label={strings.uploadDestination}>
+								<CompactSelect
+									label={strings.uploadDestination}
+									value={settings.destination}
+									options={destinationOptions}
+									onChange={(value) => {
+										if (value === "wordpress" || value === "remote") {
+											setValue("destination", value);
+										}
+									}}
 								/>
-							</div>
-						</div>
-					</section>
-
-					<section className="easymde-settings-center__image-group is-backup-host">
-						<h2>
-							<Copy size={25} />
-							{strings.backupImageHost}
-						</h2>
-						<p className="easymde-settings-center__backup-description">
-							{strings.backupImageHostDescription}
-						</p>
-						<ImageBehaviorRow
-							label={strings.enableBackupImageHost}
-							description={strings.enableBackupImageHostDescription}
-						>
-							<SettingsToggle
-								label={strings.enableBackupImageHost}
-								checked={settings.backupEnabled}
-								onChange={() =>
-									setValue("backupEnabled", !settings.backupEnabled)
-								}
+							</ImageField>
+							<ImageField label={strings.selectImageHostService}>
+								<CompactSelect
+									label={strings.selectImageHostService}
+									value={settings.service}
+									options={imageHostOptions}
+									onChange={(value) => {
+										if (value === "cloudflare-r2") setValue("service", value);
+									}}
+								/>
+							</ImageField>
+							<ImageField label={strings.r2AccountId}>
+								<ImageTextInput
+									label={strings.r2AccountId}
+									value={settings.accountId}
+									onChange={(value) => setValue("accountId", value)}
+								/>
+							</ImageField>
+							<ImageField label={strings.bucket}>
+								<ImageTextInput
+									label={strings.bucket}
+									value={settings.bucket}
+									onChange={(value) => setValue("bucket", value)}
+								/>
+							</ImageField>
+							<ImageField label={strings.customDomain}>
+								<ImageTextInput
+									label={strings.customDomain}
+									value={settings.domain}
+									onChange={(value) => setValue("domain", value)}
+								/>
+							</ImageField>
+							<ImageField label={strings.accessKey}>
+								<SecretInput
+									configured={draft.primaryCredentialsConfigured}
+									label={strings.accessKey}
+									value={settings.accessKey}
+									showLabel={strings.showSecret}
+									hideLabel={strings.hideSecret}
+									onChange={(value) => setValue("accessKey", value)}
+								/>
+							</ImageField>
+							<ImageField label={strings.secretKey}>
+								<SecretInput
+									configured={draft.primaryCredentialsConfigured}
+									label={strings.secretKey}
+									value={settings.secretKey}
+									showLabel={strings.showSecret}
+									hideLabel={strings.hideSecret}
+									onChange={(value) => setValue("secretKey", value)}
+								/>
+							</ImageField>
+							<FileNameRuleEditor
+								strings={strings}
+								value={settings.fileNameRule}
+								onChange={(value) => setValue("fileNameRule", value)}
 							/>
-						</ImageBehaviorRow>
-						{settings.backupEnabled ? (
-							<div className="easymde-settings-center__backup-fields">
-								<ImageField label={strings.backupImageHostService}>
-									<CompactSelect
-										label={strings.backupImageHostService}
-										value={settings.backupService}
-										options={backupHostOptions}
-										onChange={(value) => setValue("backupService", value)}
-									/>
-								</ImageField>
-								<ImageField label={strings.backupBucket}>
-									<ImageTextInput
-										label={strings.backupBucket}
-										value={settings.backupBucket}
-										onChange={(value) => setValue("backupBucket", value)}
-									/>
-								</ImageField>
-								<ImageField label={strings.backupDomain}>
-									<ImageTextInput
-										label={strings.backupDomain}
-										value={settings.backupDomain}
-										onChange={(value) => setValue("backupDomain", value)}
-									/>
-								</ImageField>
-								<ImageField label={strings.backupAccessKey}>
-									<SecretInput
-										label={strings.backupAccessKey}
-										value={settings.backupAccessKey}
-										showLabel={strings.showBackupAccessKey}
-										hideLabel={strings.hideBackupAccessKey}
-										onChange={(value) => setValue("backupAccessKey", value)}
-									/>
-								</ImageField>
-								<ImageField label={strings.backupSecretKey}>
-									<SecretInput
-										label={strings.backupSecretKey}
-										value={settings.backupSecretKey}
-										showLabel={strings.showBackupSecretKey}
-										hideLabel={strings.hideBackupSecretKey}
-										onChange={(value) => setValue("backupSecretKey", value)}
-									/>
-								</ImageField>
+						</div>
+					</div>
+					{connectionTestPort ? (
+						<ConnectionRow
+							disabled={connectionTestDisabled}
+							target="primary"
+							strings={strings}
+							state={effectiveConnectionState(primaryConnection, "primary")}
+							onTest={() => void testConnection("primary")}
+						/>
+					) : null}
+				</section>
+
+				<section className="easymde-settings-center__image-group is-backup-host">
+					<h2>
+						<Copy size={25} />
+						{strings.backupImageHost}
+					</h2>
+					<p className="easymde-settings-center__backup-description">
+						{strings.backupImageHostDescription}
+					</p>
+					<ImageBehaviorRow
+						label={strings.enableBackupImageHost}
+						description={strings.enableBackupImageHostDescription}
+					>
+						<SettingsToggle
+							label={strings.enableBackupImageHost}
+							checked={settings.backupEnabled}
+							onChange={() =>
+								setValue("backupEnabled", !settings.backupEnabled)
+							}
+						/>
+					</ImageBehaviorRow>
+					{settings.backupEnabled ? (
+						<div className="easymde-settings-center__backup-fields">
+							<ImageField label={strings.backupImageHostService}>
+								<CompactSelect
+									label={strings.backupImageHostService}
+									value={settings.backupService}
+									options={backupHostOptions}
+									onChange={(value) => {
+										if (value === "qiniu-kodo") {
+											setValue("backupService", value);
+										}
+									}}
+								/>
+							</ImageField>
+							<ImageField label={strings.backupBucket}>
+								<ImageTextInput
+									label={strings.backupBucket}
+									value={settings.backupBucket}
+									onChange={(value) => setValue("backupBucket", value)}
+								/>
+							</ImageField>
+							<ImageField label={strings.backupDomain}>
+								<ImageTextInput
+									label={strings.backupDomain}
+									value={settings.backupDomain}
+									onChange={(value) => setValue("backupDomain", value)}
+								/>
+							</ImageField>
+							<ImageField label={strings.backupAccessKey}>
+								<SecretInput
+									configured={draft.backupCredentialsConfigured}
+									label={strings.backupAccessKey}
+									value={settings.backupAccessKey}
+									showLabel={strings.showBackupAccessKey}
+									hideLabel={strings.hideBackupAccessKey}
+									onChange={(value) => setValue("backupAccessKey", value)}
+								/>
+							</ImageField>
+							<ImageField label={strings.backupSecretKey}>
+								<SecretInput
+									configured={draft.backupCredentialsConfigured}
+									label={strings.backupSecretKey}
+									value={settings.backupSecretKey}
+									showLabel={strings.showBackupSecretKey}
+									hideLabel={strings.hideBackupSecretKey}
+									onChange={(value) => setValue("backupSecretKey", value)}
+								/>
+							</ImageField>
+							<fieldset
+								disabled
+								title={strings.settingsUnavailableDescription}
+								className="easymde-settings-center__unavailable-fields"
+							>
 								<ImageBehaviorRow
 									label={strings.keepSameObjectPath}
 									description={strings.keepSameObjectPathDescription}
 								>
 									<SettingsToggle
 										label={strings.keepSameObjectPath}
-										checked={settings.backupSameObjectKey}
-										onChange={() =>
-											setValue(
-												"backupSameObjectKey",
-												!settings.backupSameObjectKey,
-											)
-										}
+										checked
+										onChange={() => undefined}
 									/>
 								</ImageBehaviorRow>
+							</fieldset>
+							<fieldset
+								disabled
+								title={strings.settingsUnavailableDescription}
+								className="easymde-settings-center__unavailable-fields"
+							>
 								<ImageBehaviorRow
 									label={strings.backupFailureHandling}
 									description={strings.backupFailureHandlingDescription}
@@ -688,10 +943,19 @@ export function ImagesSettingsPage({
 										onChange={(value) => setValue("backupFailureMode", value)}
 									/>
 								</ImageBehaviorRow>
-							</div>
-						) : null}
-					</section>
-				</fieldset>
+							</fieldset>
+							{connectionTestPort ? (
+								<ConnectionRow
+									disabled={connectionTestDisabled}
+									target="backup"
+									strings={strings}
+									state={effectiveConnectionState(backupConnection, "backup")}
+									onTest={() => void testConnection("backup")}
+								/>
+							) : null}
+						</div>
+					) : null}
+				</section>
 
 				<div className="easymde-settings-center__image-secondary-groups">
 					<section className="easymde-settings-center__image-group is-upload-behavior">
@@ -700,9 +964,12 @@ export function ImagesSettingsPage({
 							{strings.uploadBehavior}
 						</h2>
 						<fieldset
-							disabled
-							aria-describedby="easymde-images-unavailable"
-							title={strings.settingsUnavailableDescription}
+							disabled={!runtimeCapabilities?.insertAfterUpload}
+							title={
+								runtimeCapabilities?.insertAfterUpload
+									? undefined
+									: strings.settingsUnavailableDescription
+							}
 							className="easymde-settings-center__unavailable-fields"
 						>
 							<ImageBehaviorRow label={strings.insertMarkdownAfterUpload}>
@@ -714,6 +981,16 @@ export function ImagesSettingsPage({
 									}
 								/>
 							</ImageBehaviorRow>
+						</fieldset>
+						<fieldset
+							disabled={!runtimeCapabilities?.compressImages}
+							title={
+								runtimeCapabilities?.compressImages
+									? undefined
+									: strings.settingsUnavailableDescription
+							}
+							className="easymde-settings-center__unavailable-fields"
+						>
 							<ImageBehaviorRow
 								label={strings.compressImages}
 								description={strings.compressImagesDescription}
@@ -726,6 +1003,16 @@ export function ImagesSettingsPage({
 									}
 								/>
 							</ImageBehaviorRow>
+						</fieldset>
+						<fieldset
+							disabled={!runtimeCapabilities?.preserveOriginalFileName}
+							title={
+								runtimeCapabilities?.preserveOriginalFileName
+									? undefined
+									: strings.settingsUnavailableDescription
+							}
+							className="easymde-settings-center__unavailable-fields"
+						>
 							<ImageBehaviorRow
 								label={strings.preserveOriginalFileName}
 								description={strings.preserveOriginalFileNameDescription}
@@ -738,6 +1025,12 @@ export function ImagesSettingsPage({
 									}
 								/>
 							</ImageBehaviorRow>
+						</fieldset>
+						<fieldset
+							disabled
+							title={strings.settingsUnavailableDescription}
+							className="easymde-settings-center__unavailable-fields"
+						>
 							<ImageBehaviorRow
 								label={strings.copyImageUrl}
 								description={strings.copyImageUrlDescription}
@@ -756,6 +1049,16 @@ export function ImagesSettingsPage({
 									onChange={(value) => setValue("retryCount", value)}
 								/>
 							</ImageBehaviorRow>
+						</fieldset>
+						<fieldset
+							disabled={!runtimeCapabilities?.maximumImageSize}
+							title={
+								runtimeCapabilities?.maximumImageSize
+									? undefined
+									: strings.settingsUnavailableDescription
+							}
+							className="easymde-settings-center__unavailable-fields"
+						>
 							<ImageBehaviorRow label={strings.maximumImageSize}>
 								<CompactSelect
 									label={strings.maximumImageSize}
@@ -822,7 +1125,6 @@ export function ImagesSettingsPage({
 						</ImageBehaviorRow>
 						<fieldset
 							disabled
-							aria-describedby="easymde-images-unavailable"
 							title={strings.settingsUnavailableDescription}
 							className="easymde-settings-center__unavailable-fields"
 						>

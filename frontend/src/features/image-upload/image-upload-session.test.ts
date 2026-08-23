@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ImageUploadDocumentSnapshot, ImageUploadResult } from '../../contracts/ports/image-upload-port';
+import type { ImageUploadDocumentSnapshot, ImageUploadRequest, ImageUploadResult } from '../../contracts/ports/image-upload-port';
 import type { ImageUploadInsertion, ImageUploadMimeType } from '../../contracts/bootstrap/image-upload-bootstrap';
 import { createImageUploadSession } from './image-upload-session';
 
 const strings = {
+  backupFailed: 'Primary uploaded; backup failed',
   defaultAlt: 'image',
   dropFailed: 'Drop failed',
   dropTooLarge: 'Drop too large',
@@ -56,6 +57,7 @@ function setup(
     captionMode: 'none',
     format: 'markdown',
   },
+  insertAfterUpload = true,
 ) {
   let snapshot: ImageUploadDocumentSnapshot = {
     selection: { direction: 'none', end: 5, start: 5 },
@@ -69,7 +71,7 @@ function setup(
   }> = [];
   const diagnostics: string[] = [];
   const focus = vi.fn();
-  const upload = vi.fn(() => uploadResult);
+  const upload = vi.fn((_request: ImageUploadRequest) => uploadResult);
   const cleanup = createImageUploadSession({
     allowedMimeTypes,
     document: {
@@ -81,6 +83,7 @@ function setup(
     },
     enabled: true,
     insertion,
+    insertAfterUpload,
     maxBytes: 1024,
     nextOperationId,
     onDiagnostic: (code) => diagnostics.push(code),
@@ -105,6 +108,46 @@ function setup(
 }
 
 describe('createImageUploadSession', () => {
+  it('reports a backup failure after inserting the successful primary URL', async () => {
+    const session = setup(
+      Promise.resolve({
+        alt: '',
+        status: 'uploaded',
+        title: '',
+        url: 'https://example.test/image.png',
+        warning: 'backup-upload-failed',
+      }),
+    );
+
+    session.target.dispatchEvent(transferEvent('drop', new File(['image'], 'image.png', { type: 'image/png' })));
+    await vi.waitFor(() => expect(session.statuses.at(-1)?.type).toBe('error'));
+
+    expect(session.getSnapshot().value).toContain('https://example.test/image.png');
+    expect(session.statuses.at(-1)?.message).toBe(strings.backupFailed);
+    expect(session.diagnostics).toContain('image-upload-backup-upload-failed');
+  });
+
+  it('uploads without reading or changing the document when insertion is disabled', async () => {
+    const session = setup(
+      Promise.resolve({
+        alt: '',
+        status: 'uploaded',
+        title: '',
+        url: 'https://example.test/image.png',
+      }),
+      operationIdSequence(),
+      ['image/png'],
+      { altSource: 'filename', captionMode: 'none', format: 'markdown' },
+      false,
+    );
+    session.setSnapshot({ selection: { direction: 'none', end: 0, start: 0 }, value: 'unchanged' });
+
+    session.target.dispatchEvent(transferEvent('paste', new File(['image'], 'image.png', { type: 'image/png' })));
+    await vi.waitFor(() => expect(session.statuses.at(-1)?.type).toBe('success'));
+
+    expect(session.getSnapshot().value).toBe('unchanged');
+    expect(session.focus).not.toHaveBeenCalled();
+  });
   it('escapes a trailing backslash in uploaded Alt text as valid Markdown', async () => {
     const session = setup(
       Promise.resolve({
@@ -271,6 +314,7 @@ describe('createImageUploadSession', () => {
       ),
     );
     pending.cleanup();
+    expect(pending.upload.mock.calls[0]?.[0].signal.aborted).toBe(true);
     resolveUpload({
       alt: 'late',
       status: 'uploaded',
@@ -334,6 +378,7 @@ describe('createImageUploadSession', () => {
         getSnapshot: () => snapshot,
       },
       enabled: true,
+      insertAfterUpload: true,
       insertion: {
         altSource: 'filename',
         captionMode: 'none',

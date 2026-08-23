@@ -12,6 +12,7 @@ import type {
 } from "../../contracts/bootstrap/settings-center-bootstrap";
 import type { SettingsCenterSettings } from "../../contracts/settings-center-settings";
 import { ChevronRight, X } from "../../generated/lucide-icons";
+import { createWordPressImageHostingConnectionPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-connection-port";
 import { createWordPressSettingsPort } from "../../integrations/wordpress/settings/create-wordpress-settings-port";
 import { AboutDialog, AboutSettingsPage } from "./AboutSettingsPage";
 import { GeneralSettingsPage } from "./GeneralSettingsPage";
@@ -516,6 +517,10 @@ export function SettingsCenterRoot({
 		() => createWordPressSettingsPort(bootstrap.api),
 		[bootstrap.api],
 	);
+	const imageHostingConnectionPort = useMemo(
+		() => createWordPressImageHostingConnectionPort(bootstrap.api),
+		[bootstrap.api],
+	);
 	const settingsDirty =
 		resetSecretsRef.current ||
 		JSON.stringify(settings) !== JSON.stringify(savedSettings);
@@ -930,6 +935,14 @@ export function SettingsCenterRoot({
 									className="easymde-settings-center__settings-section"
 								>
 									<ImagesSettingsPage
+										connectionTestDisabled={settingsDirty}
+										connectionTestPort={imageHostingConnectionPort}
+										runtimeCapabilities={{
+											compressImages: true,
+											insertAfterUpload: true,
+											maximumImageSize: true,
+											preserveOriginalFileName: true,
+										}}
 										draft={bootstrap.drafts.images}
 										overlayRoot={overlayRoot}
 										settings={settings.images}

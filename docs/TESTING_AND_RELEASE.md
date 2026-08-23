@@ -54,6 +54,19 @@ resources again. Rebuild only when `scripts/build-ci-image.sh --verify` rejects
 the image identity or an intentionally changed pinned input requires a new
 image.
 
+Image-hosting provider, runtime, and REST tests use synthetic credentials,
+fixed fake transports, and local WordPress temporary files. They must not read
+developer upload-tool configuration or contact a real Cloudflare R2 or Qiniu
+Kodo account. The focused PHP suite is:
+
+```bash
+scripts/run-ci-image.sh --filter 'ImageHost|ImageHosting'
+```
+
+Browser tests may intercept the same-origin WordPress connection/upload routes
+to exercise pending, success, failure, stale, and backup states. They must not
+fulfill or redirect a browser request to a provider endpoint.
+
 The builder requires the digest-pinned Composer 2.10.2 and PHP 8.3.32 base
 images to already exist locally, installs the exact `composer.lock` development
 dependencies from the explicitly supplied local Composer cache, uses

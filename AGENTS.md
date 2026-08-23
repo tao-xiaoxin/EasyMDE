@@ -672,10 +672,17 @@ WordPress.org Plugin Directory service and privacy rules remain independently
 binding; maintainer approval cannot waive them. Ask the WordPress.org Plugin
 Review Team when service classification or channel acceptance is unclear.
 
-The current runtime remains local and no external service is approved. This
-policy does not approve a URL, change CSP, alter Enqueue behavior, remove local
-assets, or change a package or build. The complete external-service Decision
-Record and official-policy sources belong to
+The browser runtime and redistributable assets remain local. The only approved
+external-service feature is administrator-configured image hosting: Cloudflare
+R2 is the primary provider and Qiniu Kodo may be enabled as an explicit same-key
+backup. WordPress owns provider requests and credentials; the browser receives
+only same-origin REST URLs, capability presentation, and redacted status. The
+default destination remains the WordPress media library. Remote image hosting
+must never be inferred from credentials, silently substituted, automatically
+retried, or reported successful before the provider result is authoritative.
+This approval does not change CSP, Enqueue behavior, local runtime assets, or
+package/build ownership. The complete external-service Decision Record and
+official-policy sources belong to
 `.agents/skills/easymde/SKILL.md`; durable rationale belongs to
 `docs/REACT_DESIGN_PHILOSOPHY.md`; current facts remain in
 `docs/ARCHITECTURE.md`.

@@ -55,6 +55,62 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame(array('image/png'), $repository->get_allowed_image_mime_types());
     }
 
+	public function test_image_upload_runtime_snapshot_keeps_credentials_server_side()
+	{
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center' => array(
+					'images' => array(
+						'destination' => 'remote',
+						'accountId' => str_repeat('a', 32),
+						'domain' => 'https://img.example.test',
+						'accessKey' => 'synthetic-access-key',
+						'secretKey' => 'synthetic-secret-key',
+					),
+				),
+			),
+			false
+		);
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$public = $repository->get_settings();
+		$runtime = $repository->get_image_hosting_settings();
+
+		$this->assertSame('', $public['images']['accessKey']);
+		$this->assertSame('', $public['images']['secretKey']);
+		$this->assertSame('remote', $runtime['destination']);
+		$this->assertTrue($runtime['credentialStatus']['primaryConfigured']);
+		$this->assertFalse($runtime['credentialStatus']['backupConfigured']);
+		$this->assertSame('synthetic-access-key', $runtime['primary']['accessKey']);
+		$this->assertSame('synthetic-secret-key', $runtime['primary']['secretKey']);
+	}
+
+	public function test_new_image_destination_defaults_to_wordpress_for_legacy_settings()
+	{
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array('settings_center' => array('images' => array('service' => 'Cloudflare R2'))),
+			false
+		);
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$this->assertSame('wordpress', $repository->get_settings()['images']['destination']);
+	}
+
+	public function test_update_rejects_invalid_image_runtime_identifiers_without_writing()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+		$settings['images']['accountId'] = 'invalid account id';
+
+		$result = $repository->update_settings($settings);
+
+		$this->assertWPError($result);
+		$this->assertSame('easymde_settings_invalid_payload', $result->get_error_code());
+		$this->assertFalse(get_option(Options::EDITOR_SETTINGS, false));
+	}
+
     public function test_get_settings_normalizes_legacy_values_without_writing_or_exposing_secrets()
     {
         $legacy = array(
@@ -238,12 +294,18 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $settings['images']['service'] = 'Cloudflare R2';
         $settings['images']['retryCount'] = 'Retry once';
         $settings['images']['insertFormat'] = 'html';
+		$settings['images']['backupFailureMode'] = 'Fail entire upload';
+		$settings['images']['altSource'] = 'Fill on upload';
+		$settings['images']['captionMode'] = 'Fill on upload';
         $settings['markdown']['editorTheme'] = 'Follow System';
         $saved = $repository->update_settings($settings);
 
         $this->assertSame('cloudflare-r2', $saved['images']['service']);
-        $this->assertSame('once', $saved['images']['retryCount']);
+        $this->assertSame('none', $saved['images']['retryCount']);
         $this->assertSame('markdown', $saved['images']['insertFormat']);
+		$this->assertSame('return-primary-url', $saved['images']['backupFailureMode']);
+		$this->assertSame('empty', $saved['images']['altSource']);
+		$this->assertSame('none', $saved['images']['captionMode']);
         $this->assertSame('system', $saved['markdown']['editorTheme']);
     }
 
@@ -260,6 +322,18 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertWPError($result);
         $this->assertSame('easymde_settings_invalid_shortcut', $result->get_error_code());
         $this->assertSame($before, get_option(Options::EDITOR_SETTINGS, array()));
+    }
+
+    public function test_backup_upload_cannot_disable_the_supported_same_key_contract()
+    {
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+        $settings = $repository->get_settings();
+        $settings['images']['backupSameObjectKey'] = false;
+
+        $result = $repository->update_settings($settings);
+
+        $this->assertWPError($result);
+        $this->assertSame('easymde_settings_invalid_payload', $result->get_error_code());
     }
 
     public function test_rest_update_requires_manage_options_and_returns_sanitized_settings()

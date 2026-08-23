@@ -21,14 +21,16 @@ export type GeneralSettings = Readonly<{
 export type ImageUploadFormat = "jpg" | "png" | "webp" | "gif";
 
 export type ImageSettings = Readonly<{
-	service: string;
+	destination: "wordpress" | "remote";
+	service: "cloudflare-r2";
+	accountId: string;
 	bucket: string;
 	domain: string;
 	accessKey: string;
 	secretKey: string;
 	fileNameRule: string;
 	backupEnabled: boolean;
-	backupService: string;
+	backupService: "qiniu-kodo";
 	backupBucket: string;
 	backupDomain: string;
 	backupAccessKey: string;
@@ -109,6 +111,8 @@ export type SettingsCenterSettings = Readonly<{
 
 export type SettingsCenterApi = Readonly<{
 	actionNonce: string;
+	imageHostingActionNonce: string;
+	imageHostingConnectionUrl: string;
 	settingsUrl: string;
 	nonce: string;
 }>;

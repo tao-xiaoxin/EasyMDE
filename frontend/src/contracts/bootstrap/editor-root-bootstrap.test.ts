@@ -69,13 +69,16 @@ function validBootstrap() {
     },
     imageUpload: {
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+      destination: 'wordpress',
       enabled: true,
       endpoint: 'https://example.test/wp-json/easymde/v1/media',
+      insertAfterUpload: true,
       insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
       maxBytes: 1024,
       nonce: 'synthetic-nonce',
       postId: 7,
       strings: {
+        backupFailed: 'Primary uploaded; backup failed',
         defaultAlt: 'image',
         dropFailed: 'Drop failed',
         dropTooLarge: 'Drop too large',

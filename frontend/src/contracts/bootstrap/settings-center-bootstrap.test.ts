@@ -16,6 +16,9 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 		api: {
 			settingsUrl: "/wp-json/easymde/v1/settings",
 			actionNonce: "test-action-nonce",
+			imageHostingActionNonce: "test-image-hosting-action-nonce",
+			imageHostingConnectionUrl:
+				"/wp-json/easymde/v1/image-hosting/connection",
 			nonce: "test-nonce",
 		},
 		assets: {
@@ -35,6 +38,8 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 			images: {
 				domain: "https://img.example.test",
 				backupDomain: "https://backup.example.test",
+				primaryCredentialsConfigured: false,
+				backupCredentialsConfigured: false,
 			},
 		},
 		settings: SETTINGS_CENTER_TEST_SETTINGS,
@@ -53,6 +58,7 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 			transferFileSelectedNotice: "Selected %s",
 			transferChecksSummary: "%s key configuration items checked",
 			transferChecksPassed: "%s items passed",
+			lastTested: "Last tested: %s",
 			noSearchResults,
 		},
 	};
@@ -110,6 +116,47 @@ describe("parseSettingsCenterBootstrap", () => {
 		);
 	});
 
+	it.each([
+		["an unsupported upload destination", "destination", "automatic"],
+		["an unsupported primary provider", "service", "aliyun-oss"],
+		["an invalid R2 account ID", "accountId", "invalid account id"],
+	] as const)("rejects %s", (_label, key, value) => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images[key] = value;
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow();
+	});
+
+	it.each([
+		["domain", "http://img.example.test"],
+		["backupDomain", "//backup.example.test"],
+	] as const)("rejects a non-HTTPS %s", (key, value) => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images[key] = value;
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow();
+	});
+
+	it.each([
+		["../{name}.{ext}"],
+		["/{date}/{uuid}.{ext}"],
+		["{date}/{unknown}.{ext}"],
+		["{date}/{uuid}"],
+	] as const)("rejects an unsafe filename rule: %s", (fileNameRule) => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.fileNameRule = fileNameRule;
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-images-fileNameRule-invalid",
+		);
+	});
+
 	it("does not admit AI strings into the settings bootstrap contract", () => {
 		expect(
 			SETTINGS_CENTER_STRING_KEYS.some(
@@ -124,6 +171,49 @@ describe("parseSettingsCenterBootstrap", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("traditionalChinese");
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("english");
 	});
+
+	it("declares the PHP-owned remote image-host interaction strings", () => {
+		expect(SETTINGS_CENTER_STRING_KEYS).toEqual(
+			expect.arrayContaining([
+				"uploadDestination",
+				"wordpressMediaLibrary",
+				"remoteImageHost",
+				"r2AccountId",
+				"primaryCredentialsConfigured",
+				"backupCredentialsConfigured",
+				"credentialsConfiguredHint",
+				"replaceCredentialsHint",
+				"connectionStatus",
+				"backupConnectionStatus",
+				"connectionPending",
+				"testingConnection",
+				"connected",
+				"connectionFailed",
+				"connectionStale",
+				"lastTested",
+				"testPrimaryConnection",
+				"testBackupConnection",
+				"imageHostFailureConfiguration",
+				"imageHostFailureAuthentication",
+				"imageHostFailureAuthorization",
+				"imageHostFailureNetwork",
+				"imageHostFailureTimeout",
+				"imageHostFailureProvider",
+				"imageHostFailureInvalidResponse",
+			]),
+		);
+	});
+
+	it.each(["Last tested", "%s %s"])(
+		"rejects an invalid last-tested template: %s",
+		(template) => {
+			const value = bootstrap();
+			value.strings.lastTested = template;
+			expect(() => parseSettingsCenterBootstrap(value)).toThrow(
+				"settings-center-lastTested-template-invalid",
+			);
+		},
+	);
 
 	it("accepts exactly one search-query placeholder", () => {
 		expect(
@@ -199,6 +289,8 @@ describe("parseSettingsCenterBootstrap", () => {
 		expect(parseSettingsCenterBootstrap(value).drafts.images).toEqual({
 			domain: "",
 			backupDomain: "",
+			primaryCredentialsConfigured: false,
+			backupCredentialsConfigured: false,
 		});
 	});
 	it.each(["retryCount", "maxImageSize"] as const)(

@@ -1126,10 +1126,8 @@ describe("SettingsCenterRoot persistence", () => {
 				.matches(":disabled"),
 		).toBe(false);
 		expect(
-			screen
-				.getByRole("combobox", { name: "interfaceLanguage" })
-				.matches(":disabled"),
-		).toBe(true);
+			screen.queryByRole("combobox", { name: "interfaceLanguage" }),
+		).toBeNull();
 		expect(
 			screen
 				.getByRole("combobox", { name: "defaultVisibility" })

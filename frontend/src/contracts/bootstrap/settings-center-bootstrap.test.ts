@@ -118,6 +118,13 @@ describe("parseSettingsCenterBootstrap", () => {
 		).toBe(false);
 	});
 
+	it("does not expose a second interface-language setting", () => {
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("interfaceLanguage");
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("simplifiedChinese");
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("traditionalChinese");
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("english");
+	});
+
 	it("accepts exactly one search-query placeholder", () => {
 		expect(
 			parseSettingsCenterBootstrap(bootstrap()).strings.noSearchResults,

@@ -633,7 +633,10 @@ test("preserves the reference mobile crop and unavailable settings remain non-sa
 		/AI|comment|评论|article\s*sync|文章同步/i,
 	);
 
-	await expect(generalSection.locator("fieldset[disabled]")).toHaveCount(3);
+	await expect(generalSection.locator("fieldset[disabled]")).toHaveCount(2);
+	await expect(
+		generalSection.getByRole("combobox", { name: /界面语言|interface language/i }),
+	).toHaveCount(0);
 	await expect(generalSection.locator('[role="switch"]').first()).toBeEnabled();
 	await expect(
 		generalSection.locator("fieldset[disabled] select").first(),

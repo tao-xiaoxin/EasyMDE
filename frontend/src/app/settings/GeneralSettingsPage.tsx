@@ -73,7 +73,6 @@ export function matchesGeneralSettingsQuery(
 ): boolean {
 	const normalizedQuery = query.trim().toLowerCase();
 	const searchFields: ReadonlyArray<ReadonlyArray<string | undefined>> = [
-		[s.interfaceLanguage],
 		[s.defaultEditingMode],
 		[s.autoFocusEditor, s.autoFocusEditorDescription],
 		[s.showLineNumbers, s.showLineNumbersDescription],
@@ -166,23 +165,6 @@ export function GeneralSettingsPage({
 			}
 		>
 			<SettingsSection icon={SlidersIcon} title={s.basePreferences}>
-				<fieldset
-					disabled
-					className="easymde-settings-center__unavailable-fields"
-				>
-					<SettingsRow label={s.interfaceLanguage} query={normalizedQuery}>
-						<NativeSelect
-							label={s.interfaceLanguage}
-							value={draft.interfaceLanguage}
-							onChange={(value) => setValue("interfaceLanguage", value)}
-							options={[
-								["zh-CN", s.simplifiedChinese],
-								["zh-TW", s.traditionalChinese],
-								["en-US", s.english],
-							]}
-						/>
-					</SettingsRow>
-				</fieldset>
 				<SettingsRow label={s.defaultEditingMode} query={normalizedQuery}>
 					<NativeSelect
 						label={s.defaultEditingMode}

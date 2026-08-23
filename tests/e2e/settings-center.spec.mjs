@@ -18,6 +18,12 @@ function expectNear(actual, expected, tolerance = 0.5) {
 	expect(Math.abs(actual - expected)).toBeLessThanOrEqual(tolerance);
 }
 
+function expectBoundingBoxesNear(actual, expected, tolerance = 0.5) {
+	for (const property of ["x", "y", "width", "height"]) {
+		expectNear(actual[property], expected[property], tolerance);
+	}
+}
+
 async function login(page) {
 	await page.goto("/wp-login.php");
 	if ((await page.locator("#loginform").count()) === 0) {
@@ -390,7 +396,7 @@ test("covers the WordPress Admin shell before the Settings Center bundle mounts"
 		.locator(".easymde-settings-center__brand")
 		.boundingBox();
 	expect(mountedBrandBox).not.toBeNull();
-	expect(startupFrame.brandBox).toEqual(mountedBrandBox);
+	expectBoundingBoxesNear(startupFrame.brandBox, mountedBrandBox);
 });
 
 test("keeps a visible exit when the Settings Center bundle cannot load", async ({

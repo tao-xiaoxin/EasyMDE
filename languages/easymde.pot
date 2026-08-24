@@ -2914,7 +2914,7 @@ msgid "Unable to copy code. Try again."
 msgstr ""
 
 #: src/ImageHosting/ImageHostingRuntime.php:508
-#: src/Rest/ImageHostingController.php:656
+#: src/Rest/ImageHostingController.php:659
 #: src/Support/SettingsCenterRepository.php:637
 msgid ""
 "The primary and backup image hosts must use different storage destinations."
@@ -2941,7 +2941,7 @@ msgid "The selected image-hosting service is not configured."
 msgstr ""
 
 #: src/Rest/ImageHostingController.php:272
-#: src/Rest/ImageHostingController.php:648
+#: src/Rest/ImageHostingController.php:651
 #: src/Support/SettingsCenterRepository.php:408
 msgid "The image-hosting configuration is unavailable."
 msgstr ""
@@ -2955,33 +2955,33 @@ msgstr ""
 msgid "This image format is not allowed by the current EasyMDE settings."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:608
+#: src/Rest/ImageHostingController.php:611
 msgid "The image-hosting request could not be verified."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:616
+#: src/Rest/ImageHostingController.php:619
 msgid "The image-hosting request is invalid."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:624
+#: src/Rest/ImageHostingController.php:627
 msgid ""
 "Enter both credentials for the changed image-hosting target before testing "
 "it."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:632
+#: src/Rest/ImageHostingController.php:635
 msgid "The image upload is invalid."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:640
+#: src/Rest/ImageHostingController.php:643
 msgid "The image-hosting validation image could not be uploaded."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:664
+#: src/Rest/ImageHostingController.php:667
 msgid "The image could not be uploaded to the configured image host."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:672
+#: src/Rest/ImageHostingController.php:675
 msgid "The image-hosting service returned an invalid result."
 msgstr ""
 

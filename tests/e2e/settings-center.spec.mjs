@@ -1309,7 +1309,7 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 	await expect(aboutNav).toHaveAttribute("aria-current", "page");
 	await expect(aboutNav).toBeInViewport();
 
-	await expect(generalSection.locator("fieldset[disabled]")).toHaveCount(2);
+	await expect(generalSection.locator("fieldset[disabled]")).toHaveCount(1);
 	await expect(
 		generalSection.getByRole("combobox", {
 			name: /界面语言|interface language/i,
@@ -1317,8 +1317,20 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 	).toHaveCount(0);
 	await expect(generalSection.locator('[role="switch"]').first()).toBeEnabled();
 	await expect(
-		generalSection.locator('fieldset[disabled] [role="combobox"]').first(),
+		generalSection.getByRole("combobox", {
+			name: /默认摘要同步方式|default summary mode/i,
+		}),
 	).toBeDisabled();
+	await expect(
+		generalSection.getByRole("switch", {
+			name: /智能列表识别|smart list recognition/i,
+		}),
+	).toHaveCount(0);
+	await expect(
+		generalSection.getByRole("switch", {
+			name: /粘贴内容清理|clean pasted content/i,
+		}),
+	).toHaveCount(0);
 	await expect(saveButton).toBeDisabled();
 });
 

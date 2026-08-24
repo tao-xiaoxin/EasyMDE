@@ -1968,6 +1968,7 @@ test.describe('EasyMDE editor workflows', () => {
         body: JSON.stringify({
           alt: 'synthetic pixel',
           backup: { status: 'disabled' },
+          fallbackUrl: '',
           title: '',
           url: 'https://images.example.test/e2e/synthetic-pixel.png'
         }),

@@ -163,6 +163,53 @@ describe("SettingsCenterRoot global search", () => {
 		expect(rootScrollTo).toHaveBeenCalledOnce();
 	});
 
+	it("converts scaled navigation geometry into scroll coordinates", async () => {
+		const user = userEvent.setup();
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const settingsRoot = container.firstElementChild;
+		const navigation = container.querySelector("nav");
+		const aboutButton = screen.getByRole("button", { name: "about" });
+		if (!(settingsRoot instanceof HTMLDivElement) || !navigation)
+			throw new Error("settings-center-navigation-test-element-missing");
+
+		const navigationScrollTo = vi.fn();
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: vi.fn(),
+		});
+		Object.defineProperties(navigation, {
+			clientWidth: { configurable: true, value: 100 },
+			scrollWidth: { configurable: true, value: 100 },
+			clientHeight: { configurable: true, value: 40 },
+			scrollHeight: { configurable: true, value: 240 },
+			scrollTop: { configurable: true, value: 100 },
+			scrollTo: { configurable: true, value: navigationScrollTo },
+		});
+		navigation.getBoundingClientRect = () =>
+			({
+				left: 0,
+				right: 96,
+				top: 0,
+				bottom: 38.4,
+				width: 96,
+				height: 38.4,
+			}) as DOMRect;
+		aboutButton.getBoundingClientRect = () =>
+			({ left: 0, right: 96, top: 11.52, bottom: 41.28 }) as DOMRect;
+
+		await user.click(aboutButton);
+
+		await waitFor(() =>
+			expect(navigationScrollTo).toHaveBeenCalledWith({
+				left: 0,
+				top: 103,
+				behavior: "auto",
+			}),
+		);
+	});
+
 	it("opens Help from the sidebar and restores its trigger focus", async () => {
 		const user = userEvent.setup();
 		const { container } = render(

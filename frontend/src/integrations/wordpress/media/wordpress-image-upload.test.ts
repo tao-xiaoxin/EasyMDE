@@ -124,6 +124,31 @@ describe('createWordPressImageUploadPort', () => {
     });
   });
 
+  it('rejects a success response that omits the fallback URL field', async () => {
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'synthetic-image-hosting-nonce',
+      apiFetch: vi.fn().mockResolvedValue({
+        alt: 'remote alt',
+        backup: { status: 'disabled' },
+        title: '',
+        url: 'https://images.example.test/2026/08/image.png'
+      }),
+      endpoint: '/wp-json/easymde/v1/image-hosting/upload',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php'
+    });
+
+    await expect(
+      port.upload({
+        altText: 'remote alt',
+        file: new File(['image'], 'image.png', { type: 'image/png' }),
+        postId: 17,
+        signal: new AbortController().signal
+      })
+    ).rejects.toThrow('image-upload-response-invalid');
+  });
+
   it('maps request rejection and rejects invalid success payloads separately', async () => {
     const rejected = createWordPressImageUploadPort({
       actionNonce: 'synthetic-image-hosting-nonce',

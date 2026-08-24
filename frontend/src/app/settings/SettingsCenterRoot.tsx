@@ -270,6 +270,14 @@ export function SettingsCenterRoot({
 			throw new Error("settings-center-active-navigation-item-missing");
 		const navigationRect = navigation.getBoundingClientRect();
 		const activeItemRect = activeItem.getBoundingClientRect();
+		const horizontalScale =
+			navigation.clientWidth > 0 && navigationRect.width > 0
+				? navigationRect.width / navigation.clientWidth
+				: 1;
+		const verticalScale =
+			navigation.clientHeight > 0 && navigationRect.height > 0
+				? navigationRect.height / navigation.clientHeight
+				: 1;
 		const leftDelta =
 			activeItemRect.left < navigationRect.left
 				? activeItemRect.left - navigationRect.left
@@ -283,8 +291,8 @@ export function SettingsCenterRoot({
 					? activeItemRect.bottom - navigationRect.bottom
 					: 0;
 		navigation.scrollTo({
-			left: navigation.scrollLeft + leftDelta,
-			top: navigation.scrollTop + topDelta,
+			left: navigation.scrollLeft + leftDelta / horizontalScale,
+			top: navigation.scrollTop + topDelta / verticalScale,
 			behavior: "auto",
 		});
 	}, [highlightedNavId]);

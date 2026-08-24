@@ -678,23 +678,24 @@ test("keeps focus on an unavailable search result without implying availability"
 	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 
-	const disabledControl = page
-		.locator(
-			'[data-settings-section="images"] [data-setting-label] button[role="switch"]:disabled',
-		)
-		.first();
+	const targetLabel = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings.pasteAsMarkdown,
+	);
+	const disabledControl = page.getByRole("switch", {
+		name: targetLabel,
+		exact: true,
+	});
 	const targetRow = disabledControl.locator(
 		"xpath=ancestor::*[@data-setting-label][1]",
 	);
-	const targetLabel = await targetRow.getAttribute("data-setting-label");
-	if (!targetLabel)
-		throw new Error("settings-search-unavailable-label-missing");
+	await expect(targetRow).toHaveAttribute("data-setting-label", targetLabel);
 
 	await page.getByRole("searchbox").fill(targetLabel);
-	await page
+	const result = page
 		.locator(".easymde-settings-center__search-results button")
-		.filter({ hasText: targetLabel })
-		.click();
+		.filter({ hasText: targetLabel });
+	await expect(result).toHaveCount(1);
+	await result.click();
 
 	await expect(targetRow).toBeFocused();
 	await expect(targetRow).toHaveAttribute("tabindex", "-1");

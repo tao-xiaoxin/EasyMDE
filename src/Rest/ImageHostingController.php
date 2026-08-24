@@ -21,7 +21,7 @@ final class ImageHostingController {
 	const UPLOAD_NONCE_ACTION        = 'easymde_upload_image_hosting';
 	const NONCE_HEADER               = 'X-EasyMDE-Image-Hosting-Nonce';
 	const SECRET_NONCE_HEADER        = 'X-EasyMDE-Image-Hosting-Secret-Nonce';
-	const MAX_VERIFICATION_BODY = 8192;
+	const MAX_VERIFICATION_BODY      = 8192;
 
 	private $capabilities;
 	private $settings_provider;

@@ -470,30 +470,30 @@ final class SettingsCenterRepository {
 				'featuredImagePlaceholder' => true,
 			),
 			'images'    => array(
-				'service'             => 'cloudflare-r2',
-				'endpoint'            => '',
-				'bucket'              => 'easymde-assets',
-				'domain'              => '',
-				'accessKey'           => '',
-				'secretKey'           => '',
-				'fileNameRule'        => '{date}/{uuid}.{ext}',
-				'backupEnabled'       => false,
-				'backupService'       => 'qiniu-kodo',
-				'backupEndpoint'      => '',
-				'backupBucket'        => 'easymde-backup',
-				'backupDomain'        => '',
-				'backupAccessKey'     => '',
-				'backupSecretKey'     => '',
-				'uploadRetryCount'    => 0,
-				'compressImages'      => true,
-				'maxImageSizeMb'      => 5,
-				'uploadFormats'       => array(
+				'service'          => 'cloudflare-r2',
+				'endpoint'         => '',
+				'bucket'           => 'easymde-assets',
+				'domain'           => '',
+				'accessKey'        => '',
+				'secretKey'        => '',
+				'fileNameRule'     => '{date}/{uuid}.{ext}',
+				'backupEnabled'    => false,
+				'backupService'    => 'qiniu-kodo',
+				'backupEndpoint'   => '',
+				'backupBucket'     => 'easymde-backup',
+				'backupDomain'     => '',
+				'backupAccessKey'  => '',
+				'backupSecretKey'  => '',
+				'uploadRetryCount' => 0,
+				'compressImages'   => true,
+				'maxImageSizeMb'   => 5,
+				'uploadFormats'    => array(
 					'jpg'  => true,
 					'png'  => true,
 					'webp' => true,
 					'gif'  => true,
 				),
-				'titleDisplay'        => 'none',
+				'titleDisplay'     => 'none',
 			),
 			'markdown'  => array(
 				'wordWrap'         => true,
@@ -580,8 +580,8 @@ final class SettingsCenterRepository {
 			}
 		}
 		$stored_settings = $this->migrate_legacy_image_settings( $stored_settings );
-		$base = $this->merge_settings( $defaults, $stored_settings );
-		$settings = $this->merge_settings( $base, $input );
+		$base            = $this->merge_settings( $defaults, $stored_settings );
+		$settings        = $this->merge_settings( $base, $input );
 		if ( isset( $input['images']['uploadFormats'] ) && is_array( $input['images']['uploadFormats'] ) ) {
 			$settings['images']['uploadFormats'] = array_merge(
 				$base['images']['uploadFormats'],
@@ -735,10 +735,10 @@ final class SettingsCenterRepository {
 					'tencent-cos'   => 'tencent-cos',
 				),
 				'titleDisplay'  => array(
-					'none'           => 'none',
-					'Do not insert'  => 'none',
-					'filename'       => 'filename',
-					'Use file name'  => 'filename',
+					'none'          => 'none',
+					'Do not insert' => 'none',
+					'filename'      => 'filename',
+					'Use file name' => 'filename',
 				),
 			),
 			'markdown' => array(
